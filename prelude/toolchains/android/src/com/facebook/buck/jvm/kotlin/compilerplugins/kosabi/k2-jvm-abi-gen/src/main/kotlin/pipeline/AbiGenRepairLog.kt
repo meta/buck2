@@ -119,6 +119,39 @@ data class UnknownReturnValueStatus(
     val unreadableClasses: List<String>,
 )
 
+/** How an unresolvable applier reference was written: a call, or a property read. */
+enum class UnresolvedApplierReferenceKind {
+  CALL,
+  READ,
+}
+
+/**
+ * A reference the Compose applier inference could not resolve, blocking a declaration's applier
+ * annotation.
+ *
+ * [name] is the reference as written (`WaScaffold`, or `colors` for `WdsTheme.colors`); [receiver]
+ * is the qualifier's root identifier when the reference has one (`WdsTheme`); [importFqn] is the
+ * file import that root resolves through, when it is an explicit import.
+ */
+data class UnresolvedApplierReference(
+    val name: String,
+    val kind: UnresolvedApplierReferenceKind,
+    val receiver: String? = null,
+    val importFqn: String? = null,
+    val file: String? = null,
+)
+
+/**
+ * A declaration left without the applier annotation it may need, and the unresolved references that
+ * block it: references in its own body, its nested lambdas, and the in-module callees whose scheme
+ * it shares.
+ */
+data class UncomputedApplier(
+    val declaration: String,
+    val reason: String,
+    val references: List<UnresolvedApplierReference>,
+)
+
 /**
  * Record of every place the ABI generator knowingly emitted something other than what the source
  * says, plus every place a best-effort repair failed outright.
@@ -147,6 +180,15 @@ class AbiGenRepairLog {
       IdentityHashMap()
 
   val errorTypedApiMembers: MutableList<ErrorTypedApiMember> = mutableListOf()
+
+  /**
+   * Declarations whose applier annotation the Compose inference could not compute on the reduced
+   * classpath, with the unresolved references that block each. Unlike every other list here this is
+   * an expected, fail-open residual rather than a defect, so ValidationStage reports it at INFO:
+   * machine-readable for the applicability rule, the codemod and the driver, and never fatal under
+   * `-Werror`.
+   */
+  val uncomputedAppliers: MutableList<UncomputedApplier> = mutableListOf()
 
   fun recordErrorTypedApiMember(
       declarationIdentity: Any,
@@ -201,6 +243,10 @@ class AbiGenRepairLog {
     failedRepairs.add(DiscardedInitializer(owner, detail))
   }
 
+  fun recordUncomputedApplier(entry: UncomputedApplier) {
+    uncomputedAppliers.add(entry)
+  }
+
   /**
    * Count of repairs the generator actually performed. [errorTypedApiMembers] and [failedRepairs]
    * are deliberately excluded: neither is a repair. An error-typed API member is left untouched by
@@ -234,5 +280,6 @@ class AbiGenRepairLog {
           " stripped_supertypes=${strippedSupertypes.size}" +
           " unknown_return_value_statuses=${unknownReturnValueStatuses.size}" +
           " error_typed_api_members=${errorTypedApiMembers.size}" +
+          " uncomputed_appliers=${uncomputedAppliers.size}" +
           " failed_repairs=${failedRepairs.size}"
 }

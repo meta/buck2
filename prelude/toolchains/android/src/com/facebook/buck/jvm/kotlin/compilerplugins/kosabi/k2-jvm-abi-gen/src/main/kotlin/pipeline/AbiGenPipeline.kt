@@ -1569,6 +1569,28 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
       )
     }
 
+    // Unconditional: the declarations whose applier the reduced classpath hid are consumed by
+    // the applicability rule, the codemod and the driver on default builds, where no validation
+    // policy is set. INFO never fails a build under `-Werror`, and the KOSABI_ prefix keeps the
+    // lines greppable. Each reference names the import it resolves through, so tooling can map it
+    // to the target that provides it; the compiler has no view of the build graph, so no target
+    // is named or guessed here.
+    for (entry in repairLog.uncomputedAppliers) {
+      val refs =
+          entry.references.joinToString("; ") { ref ->
+            "name=${ref.name} kind=${ref.kind.name.lowercase()} " +
+                "receiver=${ref.receiver ?: "-"} import=${ref.importFqn ?: "-"} " +
+                "file=${ref.file ?: "-"}"
+          }
+      messageCollector.report(
+          CompilerMessageSeverity.INFO,
+          "KOSABI_UNCOMPUTED_APPLIER declaration=`${entry.declaration}` " +
+              "reason=`${entry.reason}` refs=`$refs`. To fix, add the target that provides each " +
+              "reference to this target's `source_only_abi_deps`, or write the applier " +
+              "explicitly.",
+      )
+    }
+
     if (policy == AbiRepairPolicy.OFF) return
 
     // Always emitted, including at zero, so that "no repairs happened" is distinguishable from

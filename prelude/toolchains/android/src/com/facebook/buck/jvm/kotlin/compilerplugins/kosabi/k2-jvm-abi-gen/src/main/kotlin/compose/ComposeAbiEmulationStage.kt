@@ -58,7 +58,19 @@ internal class ComposeAbiEmulationStage : AbiGenStage {
               nonCapturing = linked.captureUncertainLambdas(),
           )
               .also { it.analyze(files) }
-          linked.annotations.filter { (key, annotation) -> unlinked.annotations[key] == annotation }
+          val decided =
+              linked.annotations.filter { (key, annotation) ->
+                unlinked.annotations[key] == annotation
+              }
+          // Whatever the runs agree to emit, the declarations neither could compute are recorded
+          // for the applicability rule, the codemod and the driver.
+          (linked.notComputed + unlinked.notComputed)
+              .distinct()
+              .forEach(repairLog::recordUncomputedApplier)
+          // Declarations the runs computed differently get no annotation from `decided`; without
+          // an entry they would be discovered only by a failing compare.
+          linked.disagreementEntries(unlinked).forEach(repairLog::recordUncomputedApplier)
+          decided
         } catch (e: Exception) {
           repairLog.recordFailedRepair("Compose applier inference", e.toString())
           emptyMap()

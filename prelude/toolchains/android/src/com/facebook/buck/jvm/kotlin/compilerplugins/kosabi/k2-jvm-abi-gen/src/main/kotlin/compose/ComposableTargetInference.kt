@@ -55,6 +55,7 @@ import org.jetbrains.kotlin.fir.expressions.FirLiteralExpression
 import org.jetbrains.kotlin.fir.expressions.FirOperation
 import org.jetbrains.kotlin.fir.expressions.FirPropertyAccessExpression
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
+import org.jetbrains.kotlin.fir.expressions.FirResolvedQualifier
 import org.jetbrains.kotlin.fir.expressions.FirSafeCallExpression
 import org.jetbrains.kotlin.fir.expressions.FirSmartCastExpression
 import org.jetbrains.kotlin.fir.expressions.FirTypeOperatorCall
@@ -63,6 +64,7 @@ import org.jetbrains.kotlin.fir.expressions.FirWhenExpression
 import org.jetbrains.kotlin.fir.expressions.FirWrappedArgumentExpression
 import org.jetbrains.kotlin.fir.expressions.resolvedArgumentMapping
 import org.jetbrains.kotlin.fir.java.VirtualFileBasedSourceElement
+import org.jetbrains.kotlin.fir.references.FirNamedReference
 import org.jetbrains.kotlin.fir.references.FirResolvedErrorReference
 import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.resolve.fullyExpandedType
@@ -135,7 +137,9 @@ internal sealed class ComposableTargetAnnotation {
  * safe for a plain target. Wherever the effect of such a call or of an unresolved type on a
  * scheme's parameter links is unknown, the declaration is marked incomplete and only a bound target
  * token is emitted for it; a declaration with an unresolved type in its own signature gets nothing.
- * [notComputed] lists the declarations left without the annotation they may need.
+ * [notComputed] lists the declarations left without the annotation they may need, each with the
+ * unresolved references that block it and the import each reference resolves through, so the
+ * applicability rule, the codemod and the driver can act before the compare.
  */
 internal class ComposableTargetInference(
     private val session: FirSession,
@@ -159,8 +163,11 @@ internal class ComposableTargetInference(
   /** Keyed by the declaration's PSI, which survives the FIR copies later stages make. */
   val annotations: MutableMap<PsiElement, ComposableTargetAnnotation> = LinkedHashMap()
 
+  /** Display name of the declaration each emitted annotation belongs to, by annotation key. */
+  val annotationOwners: MutableMap<PsiElement, String> = LinkedHashMap()
+
   /** Declarations whose applier scheme could not be fully computed on this classpath. */
-  val notComputed: MutableList<String> = mutableListOf()
+  val notComputed: MutableList<UncomputedApplier> = mutableListOf()
 
   private val fileOf = HashMap<FirBasedSymbol<*>, FirFile>()
   private val ownerMap = HashMap<Any, FirFunction>()
@@ -176,6 +183,15 @@ internal class ComposableTargetInference(
 
   /** Owners with a call or read that does not resolve on this classpath. */
   private val unknownCalls = HashSet<FirFunction>()
+
+  /** Unresolved references recorded at the site, keyed by the owner attributed there. */
+  private val unknownRefs = HashMap<FirFunction, MutableSet<UnresolvedApplierReference>>()
+
+  /** [unknownRefs] propagated to enclosing owners and shared in-module callees. */
+  private val propagatedRefs = HashMap<FirFunction, Set<UnresolvedApplierReference>>()
+
+  /** Simple name -> imported FQN per file, alias-aware; star imports cannot resolve a name. */
+  private val fileImports = HashMap<FirFile, Map<String, String>>()
 
   /** Owners with an unresolved type in their own signature. */
   private val tainted = HashSet<FirFunction>()
@@ -243,6 +259,7 @@ internal class ComposableTargetInference(
     for (file in sourceFiles) file.accept(FileIndexer(file))
     for (file in sourceFiles) file.accept(InferenceVisitor())
     propagateIncompleteness()
+    propagateReferences()
     // A declaration annotated through its callers before the backend reached it is not tracked,
     // but keeps the annotation.
     val decided = LinkedHashSet(trackedFunctions)
@@ -257,18 +274,26 @@ internal class ComposableTargetInference(
     val scheme = inferredSchemes[function.symbol]
     if (scheme == null || (scheme.parameters.isEmpty() && scheme.target !is Token)) {
       if (function in unknownCalls || function in incomplete || function in tainted) {
-        notComputed += "$name: no applier inferred; its body uses code not on the classpath"
+        recordNotComputed(
+            function,
+            name,
+            "no applier inferred; its body uses code not on the classpath",
+        )
       }
       if (scheme == null) return
     }
     if (function in tainted) {
-      notComputed += "$name: unresolved type in its signature"
+      recordNotComputed(function, name, "unresolved type in its signature")
       return
     }
     val annotation =
         if (scheme.parameters.isNotEmpty()) {
           if (function in incomplete || (function in uncertain && scheme.mayBeBoundElsewhere())) {
-            notComputed += "$name: parameter appliers depend on code not on the classpath"
+            recordNotComputed(
+                function,
+                name,
+                "parameter appliers depend on code not on the classpath",
+            )
             return
           }
           ComposableTargetAnnotation.InferredTarget(scheme.serializeCompat())
@@ -278,12 +303,59 @@ internal class ComposableTargetInference(
             is Open ->
                 if (target.index < 0) return
                 else if (function in incomplete || function in uncertain) {
-                  notComputed += "$name: open target depends on code not on the classpath"
+                  recordNotComputed(
+                      function,
+                      name,
+                      "open target depends on code not on the classpath",
+                  )
                   return
                 } else ComposableTargetAnnotation.OpenTarget(target.index)
           }
         }
     annotations[key] = annotation
+    annotationOwners[key] = name
+  }
+
+  private fun recordNotComputed(function: FirFunction, name: String, reason: String) {
+    notComputed += UncomputedApplier(name, reason, refsFor(function))
+  }
+
+  /** The blocking references of [function], propagated and in a stable order. */
+  private fun refsFor(function: FirFunction): List<UnresolvedApplierReference> =
+      propagatedRefs[function].orEmpty().sortedWith(REF_ORDER)
+
+  /** Blocking references by declaration display name, merged over overloads. */
+  fun referencesByDeclaration(): Map<String, List<UnresolvedApplierReference>> =
+      propagatedRefs.entries.groupBy({ it.key.displayName() }, { it.value }).mapValues { (_, sets)
+        ->
+        sets.flatten().distinct().sortedWith(REF_ORDER)
+      }
+
+  /**
+   * Entries for declarations this run and [other] computed differently: neither run records these
+   * in [notComputed], but no annotation is emitted for them either, so without an entry they would
+   * vanish silently. Declarations already in either run's [notComputed] keep that entry instead.
+   */
+  fun disagreementEntries(other: ComposableTargetInference): List<UncomputedApplier> {
+    val reported = (notComputed + other.notComputed).mapTo(HashSet()) { it.declaration }
+    val ownRefs = referencesByDeclaration()
+    val otherRefs = other.referencesByDeclaration()
+    return (annotations.keys + other.annotations.keys)
+        .filter { key -> annotations[key] != other.annotations[key] }
+        .mapNotNull { key ->
+          val name = annotationOwners[key] ?: other.annotationOwners[key] ?: return@mapNotNull null
+          if (name in reported) return@mapNotNull null
+          name to
+              (ownRefs[name].orEmpty() + otherRefs[name].orEmpty()).distinct().sortedWith(REF_ORDER)
+        }
+        .groupBy({ it.first }, { it.second })
+        .map { (name, refLists) ->
+          UncomputedApplier(
+              declaration = name,
+              reason = "inference runs disagree; applier not reliably computable on this classpath",
+              references = refLists.flatten().distinct().sortedWith(REF_ORDER),
+          )
+        }
   }
 
   private fun propagateIncompleteness() {
@@ -349,6 +421,105 @@ internal class ComposableTargetInference(
     var cursor: FirFunction? = owner
     while (cursor != null && incomplete.add(cursor)) cursor = enclosingOwner[cursor]
   }
+
+  /**
+   * A declaration is blocked by the unresolved references in its own body, its nested lambdas, and
+   * the in-module callees whose scheme it shares: the same fixpoint [propagateIncompleteness] runs
+   * for uncertainty.
+   */
+  private fun propagateReferences() {
+    val merged = HashMap<FirFunction, MutableSet<UnresolvedApplierReference>>()
+    unknownRefs.forEach { (owner, refs) ->
+      merged.getOrPut(owner) { LinkedHashSet() } += refs
+    }
+    var changed = true
+    while (changed) {
+      changed = false
+      for ((nested, outer) in enclosingOwner) {
+        if (merged.getOrPut(outer) { LinkedHashSet() }.addAll(merged[nested].orEmpty())) {
+          changed = true
+        }
+      }
+      for ((owner, callees) in sharedCallees) {
+        val into = merged.getOrPut(owner) { LinkedHashSet() }
+        for (callee in callees) if (into.addAll(merged[callee].orEmpty())) changed = true
+      }
+    }
+    propagatedRefs.putAll(merged)
+  }
+
+  /**
+   * Records a call or read that does not resolve here. [name] is the reference as written;
+   * [receiver] the qualifier's root identifier when it has one. The import is looked up for the
+   * root identifier: the receiver when present, else the name.
+   */
+  private fun recordUnknownReference(
+      owner: FirFunction,
+      element: FirElement,
+      name: String?,
+      receiver: String?,
+      kind: UnresolvedApplierReferenceKind,
+  ) {
+    val file = fileOf[owner.symbol]
+    val root = receiver ?: name
+    unknownRefs.getOrPut(owner) { LinkedHashSet() } +=
+        UnresolvedApplierReference(
+            name = name ?: root ?: sourceTextOf(element) ?: "?",
+            kind = kind,
+            receiver = receiver,
+            importFqn = file?.let { importsOf(it)[root] },
+            file = file?.sourceFile?.path,
+        )
+  }
+
+  /** The root identifier of a call or read qualifier, e.g. `WdsTheme` for `WdsTheme.colors`. */
+  private fun receiverRootOf(access: FirQualifiedAccessExpression): String? {
+    val receiver = access.explicitReceiver ?: access.dispatchReceiver ?: return null
+    return firRootOf(unwrap(receiver)) ?: sourceRootOf(receiver)
+  }
+
+  /**
+   * The root identifier through FIR: qualifier chains recurse to their head (`A.b.c` is rooted at
+   * `A`), and a resolved qualifier reads back as written. Anything else (`this`, a call result) has
+   * no imported root and falls through to the source text.
+   */
+  private fun firRootOf(expression: FirExpression): String? =
+      when (val e = unwrap(expression)) {
+        is FirPropertyAccessExpression -> {
+          val qualifier = e.explicitReceiver ?: e.dispatchReceiver
+          if (qualifier != null) firRootOf(qualifier)
+          else (e.calleeReference as? FirNamedReference)?.name?.asString()
+        }
+        is FirResolvedQualifier -> sourceRootOf(e)
+        else -> null
+      }
+
+  /** The root identifier of a source fragment: `A` for `A`, `A.b`, `(A).b` and `A<T>.b`. */
+  private fun sourceRootOf(element: FirElement): String? =
+      (element.source as? KtPsiSourceElement)?.psi?.text?.let { rootIdent(it) }
+
+  private fun rootIdent(text: String): String? {
+    val ident =
+        text.trimStart().trimStart('(').trimStart().takeWhile { it.isLetterOrDigit() || it == '_' }
+    return ident.ifEmpty { null }?.takeUnless { it == "this" || it == "super" }
+  }
+
+  private fun importsOf(file: FirFile): Map<String, String> =
+      fileImports.getOrPut(file) {
+        file.imports
+            .mapNotNull { import ->
+              if (import.isAllUnder) null
+              else {
+                val fqName = import.importedFqName ?: return@mapNotNull null
+                val simpleName = import.aliasName?.asString() ?: fqName.shortName().asString()
+                simpleName to fqName.asString()
+              }
+            }
+            .toMap()
+      }
+
+  private fun sourceTextOf(element: FirElement): String? =
+      (element.source as? KtPsiSourceElement)?.psi?.text?.take(80)?.replace('\n', ' ')
 
   // --- Traversal -----------------------------------------------------------------------------
 
@@ -495,6 +666,13 @@ internal class ComposableTargetInference(
       if (reference !is FirResolvedNamedReference || reference is FirResolvedErrorReference) {
         // An unresolved read can only constrain the applier of the code it sits in.
         unknownCalls += owner
+        recordUnknownReference(
+            owner,
+            access,
+            (reference as? FirNamedReference)?.name?.asString(),
+            receiverRootOf(access),
+            UnresolvedApplierReferenceKind.READ,
+        )
         access.acceptChildren(this)
         return
       }
@@ -502,6 +680,13 @@ internal class ComposableTargetInference(
       if (symbol != null && !symbol.isLocalCallable() && isStandIn(symbol)) {
         // A stand-in's real getter may be composable.
         unknownCalls += owner
+        recordUnknownReference(
+            owner,
+            access,
+            (reference as? FirNamedReference)?.name?.asString(),
+            receiverRootOf(access),
+            UnresolvedApplierReferenceKind.READ,
+        )
         access.acceptChildren(this)
         return
       }
@@ -591,6 +776,13 @@ internal class ComposableTargetInference(
      */
     private fun handleUnknownCall(call: FirFunctionCall, owner: FirFunction) {
       unknownCalls += owner
+      recordUnknownReference(
+          owner,
+          call,
+          call.calleeReference.name.asString(),
+          receiverRootOf(call),
+          UnresolvedApplierReferenceKind.CALL,
+      )
       val arguments = call.argumentList.arguments.map { unwrap(it) }
       for (expression in flatten(arguments)) {
         if (
@@ -1379,6 +1571,15 @@ internal class ComposableTargetInference(
     val APPLIER = Name.identifier("applier")
     val INDEX = Name.identifier("index")
     val SCHEME = Name.identifier("scheme")
+
+    /** Stable order for reported references: file, then kind, then the reference itself. */
+    val REF_ORDER = compareBy<UnresolvedApplierReference>(
+        { it.file },
+        { it.kind },
+        { it.receiver },
+        { it.name },
+        { it.importFqn },
+    )
 
     fun isKotlinFunctionClass(classId: ClassId): Boolean =
         classId.packageFqName == KOTLIN &&

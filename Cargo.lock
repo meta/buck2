@@ -9400,6 +9400,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-stream",
  "tokio-util 0.7.20",
  "tonic",
  "tower",

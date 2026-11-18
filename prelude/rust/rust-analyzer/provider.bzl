@@ -78,7 +78,7 @@ def _compute_rust_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> l
 
     first_order_deps = [dep.dep for dep in resolve_listed_deps(ctx, dep_ctx) if RustLinkInfo in dep.dep or RustProcMacroMarker in dep.dep]
 
-    return [dep for dep in first_order_deps + get_available_proc_macros(ctx).values() if RustAnalyzerInfo in dep]
+    return first_order_deps + get_available_proc_macros(ctx).values()
 
 def _compute_transitive_target_set(ctx: AnalysisContext, first_order_deps: list[Dependency]) -> set[ConfiguredTargetLabel]:
     transitive_targets = set([ctx.label.configured_target()])
@@ -110,7 +110,7 @@ def rust_analyzer_provider(ctx: AnalysisContext, compile_ctx: CompileContext, de
     toolchain_info = compile_ctx.toolchain_info
     rust_deps = _compute_rust_deps(ctx, compile_ctx.dep_ctx)
     return RustAnalyzerInfo(
-        available_proc_macros = [dep for dep in get_available_proc_macros(ctx).values() if RustAnalyzerInfo in dep],
+        available_proc_macros = get_available_proc_macros(ctx).values(),
         crate = attr_crate(ctx),
         crate_root = crate_root(ctx, default_roots),
         edition = ctx.attrs.edition or toolchain_info.default_edition,

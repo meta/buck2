@@ -132,17 +132,12 @@ impl<'v> StarlarkValue<'v> for Dependency<'v> {
         self.provider_collection.to_value().is_in(other)
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        let other = match Dependency::from_value(other) {
-            Some(other) => other.label(),
-            None => return Ok(false),
-        };
-        Ok(self.label().inner() == other.inner())
+    fn equals(&self, other: &Self) -> bool {
+        self.label().inner() == other.label().inner()
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.label().inner().hash(hasher);
-        Ok(())
     }
 }
 

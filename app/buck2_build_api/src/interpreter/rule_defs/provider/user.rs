@@ -110,11 +110,7 @@ impl<'v> StarlarkValue<'v> for UserProvider<'v> {
         Some(self.attributes[index])
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        let other: &UserProvider = match UserProvider::from_value(other) {
-            Some(other) => other,
-            None => return Ok(false),
-        };
+    fn equals(&self, other: &Self) -> starlark::Result<bool> {
         if self.callable_data().provider_id != other.callable_data().provider_id {
             return Ok(false);
         }

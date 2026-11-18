@@ -441,12 +441,8 @@ impl<'v> StarlarkValue<'v> for StarlarkActionSubError {
         }
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.eq(other))
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.eq(other)
     }
 }
 

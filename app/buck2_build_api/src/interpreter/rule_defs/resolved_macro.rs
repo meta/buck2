@@ -20,6 +20,7 @@ use buck2_node::attrs::attr_type::arg::ConfiguredStringWithMacros;
 use buck2_util::arc_str::ArcStr;
 use buck2_util::size_assert;
 use dupe::Dupe;
+use either::Either;
 use mini_vec::MiniBoxSlice;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
@@ -33,7 +34,6 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::starlark_value;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -330,13 +330,10 @@ impl<'v> StarlarkValue<'v> for ResolvedStringWithMacros<'v> {
         Some(RESOLVED_STRING_WITH_MACROS_METHODS.methods())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        if let Some(other) = ResolvedStringWithMacros::from_value(other) {
-            Ok(*self == *other)
-        } else if let Some(s) = other.unpack_str() {
-            Ok(self.downcast_str() == Some(s))
-        } else {
-            Ok(false)
+    fn equals(&self, other: Either<&Self, &str>) -> bool {
+        match other {
+            Either::Left(other) => *self == *other,
+            Either::Right(s) => self.downcast_str() == Some(s),
         }
     }
 

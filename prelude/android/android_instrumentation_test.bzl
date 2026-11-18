@@ -232,7 +232,9 @@ def android_instrumentation_test_impl(ctx: AnalysisContext):
         labels.append("tpx:supports-test-result-output-spec")
     if _AOSP_REPLAY_OBI_BUILD:
         labels = [label for label in labels if not label.startswith(_AOSP_REPLAY_OBI_BUILD_LABEL_PREFIX)]
-        labels.append(_AOSP_REPLAY_OBI_BUILD_LABEL_PREFIX + _AOSP_REPLAY_OBI_BUILD)
+        # FIXME: `format` instead of `+` because the typechecker types a module-level value by what
+        # it holds at load, `None` when the config is unset, and does not narrow on the `if`.
+        labels.append("{}{}".format(_AOSP_REPLAY_OBI_BUILD_LABEL_PREFIX, _AOSP_REPLAY_OBI_BUILD))
 
     test_info = ExternalRunnerTestInfo(
         type = "android_instrumentation",

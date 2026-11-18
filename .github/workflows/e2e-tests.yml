@@ -36,7 +36,8 @@ jobs:
     - uses: ./.github/actions/setup_reindeer
     # The tests' actions run `fbpython`, Meta's name for Python 3; the
     # completion tests run fish and zsh, `debug thread-dump` LLDB, and the file
-    # watcher tests make Sapling repositories and use Watchman.
+    # watcher tests make Sapling repositories and use Watchman. The tests and
+    # `debug trace-io` run Sapling as `hg` too, which is Mercurial on the runner.
     - name: Install the tools the tests run
       env:
         GH_TOKEN: ${{ github.token }}
@@ -47,6 +48,7 @@ jobs:
         mkdir -p "$RUNNER_TEMP/sapling" "$RUNNER_TEMP/bin"
         tar -xJf "$RUNNER_TEMP"/sapling-*-linux-x64.tar.xz -C "$RUNNER_TEMP/sapling"
         ln -s "$RUNNER_TEMP/sapling/sl" "$RUNNER_TEMP/bin/sl"
+        ln -s "$RUNNER_TEMP/sapling/sl" "$RUNNER_TEMP/bin/hg"
         ln -s "$(command -v python3)" "$RUNNER_TEMP/bin/fbpython"
         echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       shell: bash
@@ -65,6 +67,26 @@ jobs:
         sudo chmod 755 /usr/local/bin/watchman
         sudo chmod 2777 /usr/local/var/run/watchman
         watchman --version
+      shell: bash
+    # `debug thread-dump` attaches LLDB to the daemon, a process that is not
+    # its child, which Ubuntu does not allow by default.
+    - name: Let LLDB attach to a running process
+      run: sudo sysctl -w kernel.yama.ptrace_scope=0
+      shell: bash
+    # With resource control on, buck2 runs its daemon in a scope of the user's
+    # systemd session and expects the cpuset controller there. systemd gives a
+    # session the controllers its `Delegate` names, and the user manager has to
+    # start again to get them. The step fails if a scope still has no cpuset.
+    - name: Give the user's systemd session the cpuset controller
+      run: |
+        sudo mkdir -p /etc/systemd/system/user@.service.d
+        printf '[Service]\nDelegate=cpu cpuset io memory pids\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf
+        sudo systemctl daemon-reload
+        sudo systemctl restart "user@$(id -u).service"
+        controllers=$(systemd-run --user --scope --quiet --collect --property=Delegate=yes --slice=buck2 \
+          sh -c 'cut -d: -f3 /proc/self/cgroup | sed "s|.*|/sys/fs/cgroup&/cgroup.controllers|" | xargs cat')
+        echo "A scope of the session has: $controllers"
+        [[ " $controllers " == *" cpuset "* ]]
       shell: bash
     # The open source test runner runs each test target's binary once, with all
     # its test cases: buck2 runs a binary per core, each with 4 test cases at a

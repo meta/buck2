@@ -293,7 +293,9 @@ class InlineBodyKeepability(
     // The written alias resolved with the type, so the lookup finds it.
     val symbol =
         checkNotNull(session.symbolProvider.getClassLikeSymbolByClassId(classId)) { "$classId" }
-    if (symbol.origin.fromSource) return isOwn(symbol, symbol.origin)
+    if (symbol.origin.fromSource || isOwnDeclaration(symbol, session)) {
+      return isOwn(symbol, symbol.origin)
+    }
     return isLibraryDeclarationAllowed(
         classId.asSingleFqName().asString(),
         symbol is FirTypeAliasSymbol,

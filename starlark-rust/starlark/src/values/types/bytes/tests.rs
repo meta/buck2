@@ -357,6 +357,9 @@ fn test_bytes_elems() {
 list(b"abc".elems()) == [b"a", b"b", b"c"]
 list(b"".elems()) == []
 list(b"\x00\xff".elems()) == [b"\x00", b"\xff"]
+type(b"abc".elems()) == "tuple"
+repr(b"abc".elems()) == '(b"a", b"b", b"c")'
+list(bytes("é").elems()) == [b"\xc3", b"\xa9"]
 "#,
     );
 }

@@ -808,8 +808,7 @@ impl LocalExecutor {
                     // it, that's detected when BuckActionExecutor.execute validates
                     // that all outputs were actually returned.
                     let (outputs, hashing_time) = match self
-                        .calculate_and_declare_output_values(request, digest_config, &outputs_lease)
-                        .boxed()
+                        .finalize_outputs(request, digest_config, &outputs_lease)
                         .await
                     {
                         Ok((output_values, hashing_time, leases)) => {
@@ -916,8 +915,7 @@ impl LocalExecutor {
                 }
                 GatherOutputStatus::TimedOut(duration) => {
                     let (outputs, hashing_time) = match self
-                        .calculate_and_declare_output_values(request, digest_config, &outputs_lease)
-                        .boxed()
+                        .finalize_outputs(request, digest_config, &outputs_lease)
                         .await
                     {
                         Ok((output_values, hashing_time, leases)) => {
@@ -954,6 +952,27 @@ impl LocalExecutor {
         }
 
         result
+    }
+
+    /// [`Self::calculate_and_declare_output_values`], as the action's `LocalFinalizeOutputs` stage.
+    async fn finalize_outputs(
+        &self,
+        request: &CommandExecutionRequest,
+        digest_config: DigestConfig,
+        outputs_lease: &WriteLease,
+    ) -> buck2_error::Result<(
+        BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
+        HashingInfo,
+        Vec<ReadLease>,
+    )> {
+        executor_stage_async(
+            buck2_data::LocalStage {
+                stage: Some(buck2_data::LocalFinalizeOutputs {}.into()),
+            },
+            self.calculate_and_declare_output_values(request, digest_config, outputs_lease)
+                .boxed(),
+        )
+        .await
     }
 
     async fn calculate_and_declare_output_values(

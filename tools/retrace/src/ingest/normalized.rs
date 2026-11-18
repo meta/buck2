@@ -267,7 +267,10 @@ pub(super) fn project_end(sid: u64, dur: i64, end: Box<buck2_data::ActionExecuti
             status: status_name(&command),
             wall_time_us: md.and_then(|m| m.wall_time.as_ref()).map(dur_us),
             start_us: md.and_then(|m| m.start_time.as_ref()).map(ts_us),
-            client_start_us: md.and_then(|m| m.client_start_time.as_ref()).map(ts_us),
+            client_start_us: md
+                .and_then(|m| m.client_attempt.as_ref())
+                .and_then(|a| a.start_time.as_ref())
+                .map(ts_us),
             elastic: command
                 .details
                 .as_ref()
@@ -305,8 +308,14 @@ pub(super) fn project_end(sid: u64, dur: i64, end: Box<buck2_data::ActionExecuti
         cache_upload_result: end.cache_upload_result,
         dep_file_cache_upload_result: end.dep_file_cache_upload_result,
         wall_time_us: end.wall_time.as_ref().map(dur_us),
-        prepare_us: end.prepare_command_us,
-        finish_us: end.finish_action_us,
+        prepare_us: end
+            .run_action_timings
+            .as_ref()
+            .and_then(|t| t.prepare_command_us),
+        finish_us: end
+            .run_action_timings
+            .as_ref()
+            .and_then(|t| t.finish_action_us),
         output_size: end.output_size,
         input_files_bytes: end.input_files_bytes,
         invalidated: end.invalidation_info.is_some(),
@@ -363,8 +372,8 @@ fn project_last(command: &buck2_data::CommandExecution) -> LastCmd {
             match &kind.command {
                 Some(Command::LocalCommand(c)) => {
                     last.local_digest = nonempty(c.action_digest.clone());
-                    last.cwd = c.working_directory.clone();
-                    last.env_rule = c.environment_rule;
+                    last.cwd = c.context.as_ref().and_then(|x| x.working_directory.clone());
+                    last.env_rule = c.context.as_ref().map_or(0, |x| x.environment_rule);
                 }
                 Some(Command::RemoteCommand(c)) => {
                     last.remote = true;
@@ -483,7 +492,11 @@ fn project_attempt(
     report.exit_code = details.signed_exit_code;
     if let Some(metadata) = details.metadata {
         // Worker start_time is not a client-clock attempt anchor.
-        report.start_us = metadata.client_start_time.as_ref().map(ts_us);
+        report.start_us = metadata
+            .client_attempt
+            .as_ref()
+            .and_then(|a| a.start_time.as_ref())
+            .map(ts_us);
         report.wall_time_us = metadata.wall_time.as_ref().map(dur_us);
     }
     if let Some(message) = details.additional_message.filter(|s| !s.is_empty()) {
@@ -759,9 +772,11 @@ mod tests {
                         seconds: 900,
                         nanos: 0,
                     }),
-                    client_start_time: Some(prost_types::Timestamp {
-                        seconds: 100,
-                        nanos: 5000,
+                    client_attempt: Some(buck2_data::ClientAttempt {
+                        start_time: Some(prost_types::Timestamp {
+                            seconds: 100,
+                            nanos: 5000,
+                        }),
                     }),
                     wall_time: Some(prost_types::Duration {
                         seconds: 2,
@@ -1055,9 +1070,11 @@ mod tests {
                     command: Some(Command::LocalCommand(buck2_data::LocalCommand {
                         argv,
                         action_digest: "first-digest".to_owned(),
-                        working_directory: Some("fbcode".to_owned()),
-                        environment_rule: buck2_data::local_command::EnvironmentRule::TestAllowlist
-                            as i32,
+                        context: Some(buck2_data::LocalCommandContext {
+                            working_directory: Some("fbcode".to_owned()),
+                            environment_rule:
+                                buck2_data::local_command::EnvironmentRule::TestAllowlist as i32,
+                        }),
                         ..Default::default()
                     })),
                 }),
@@ -1076,8 +1093,10 @@ mod tests {
             execution_kind: 1,
             input_files_bytes: Some(0),
             failed: true,
-            prepare_command_us: Some(400),
-            finish_action_us: Some(600),
+            run_action_timings: Some(buck2_data::RunActionTimings {
+                prepare_command_us: Some(400),
+                finish_action_us: Some(600),
+            }),
             ..Default::default()
         });
         let reference = super::super::action_projection::project_action(
@@ -1191,7 +1210,7 @@ mod tests {
                         seconds: i64::MIN,
                         nanos: i32::MIN,
                     }),
-                    client_start_time: None,
+                    client_attempt: None,
                     queue_duration: Some(prost_types::Duration {
                         seconds: -1,
                         nanos: 0,

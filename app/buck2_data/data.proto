@@ -2360,12 +2360,21 @@ message CommandExecutionMetadata {
   /// resource control was not enabled.
   optional uint64 suspend_count = 11;
 
+  reserved 12; // client_start_time, now in `client_attempt`
+
+  /// This attempt as the client saw it. Unset when there was no real attempt
+  /// interval. Written to the event log only, not to Scribe.
+  ClientAttempt client_attempt = 13;
+}
+
+/// One command attempt as the client saw it.
+message ClientAttempt {
   /// The client's wall-clock time when this attempt started, read alongside
-  /// the monotonic start of `wall_time`. Unlike `start_time`, which can come
-  /// from an RE worker or from the original execution of a cached result, this
-  /// is always this attempt's own and on the client's clock. Whole
-  /// milliseconds. Unset when there was no real attempt interval.
-  google.protobuf.Timestamp client_start_time = 12;
+  /// the monotonic start of `CommandExecutionMetadata.wall_time`. Unlike
+  /// `CommandExecutionMetadata.start_time`, which can come from an RE worker or
+  /// from the original execution of a cached result, this is always this
+  /// attempt's own and on the client's clock. Whole milliseconds.
+  google.protobuf.Timestamp start_time = 1;
 }
 
 /// What the RE worker reported about running a command for this build. Times
@@ -2595,25 +2604,35 @@ message ActionExecutionEnd {
   // command's total.
   optional uint64 dep_file_db_writes_queued = 47;
 
-  // For `run` actions: time spent before checking caches (expanding the command
-  // line, building the input tree, fingerprinting dep files), and time spent
-  // after the result arrived (unpacking outputs, writing the dep-file
-  // database), in microseconds at two significant figures. Unset for other
-  // actions and for failed ones, and `finish_action_us` is unset when a local
-  // dep-file cache hit skipped execution.
-  optional uint64 prepare_command_us = 48;
-  optional uint64 finish_action_us = 49;
+  // prepare_command_us and finish_action_us, now in `run_action_timings`
+  reserved 48, 49;
 
   // The producers of this action's direct inputs, recorded only with
   // `--log-action-graph`. For an action a dynamic output created, they include
   // the producers of what its lambda read, since the action could not start
   // before those were built. Inputs that arrive through a transitive set are
-  // referenced by the set's id instead of being expanded.
+  // referenced by the set's id instead of being expanded. Written to the event
+  // log only, not to Scribe.
   ActionGraphProducers graph_producers = 50;
 
   // The name of the execution group the action ran in; empty for the default
   // execution group.
   string exec_group = 51;
+
+  // For `run` actions; unset for other actions and for failed ones. Written to
+  // the event log only, not to Scribe.
+  RunActionTimings run_action_timings = 52;
+}
+
+// Where a `run` action spent its time outside the command, in microseconds at
+// two significant figures.
+message RunActionTimings {
+  // Before checking caches: expanding the command line, building the input
+  // tree, fingerprinting dep files.
+  optional uint64 prepare_command_us = 1;
+  // After the result arrived: unpacking outputs, writing the dep-file
+  // database. Unset when a local dep-file cache hit skipped execution.
+  optional uint64 finish_action_us = 2;
 }
 
 enum IncrementalKind {
@@ -3336,9 +3355,10 @@ message LocalCommand {
   repeated string argv = 1;
   repeated EnvironmentEntry env = 2;
   string action_digest = 3;
-  // Working directory, relative to the project root. Unset when it is the
-  // project root, where most commands run; tests run in their cell's root.
-  optional string working_directory = 4;
+  reserved 4, 5; // working_directory and environment_rule, now in `context`
+  // Where and how the command ran beyond `argv` and `env`. Written to the
+  // event log only, not to Scribe.
+  LocalCommandContext context = 6;
   // How the command's environment was built from buck2's own, before `env` was
   // set on top of it.
   enum EnvironmentRule {
@@ -3352,7 +3372,13 @@ message LocalCommand {
     // An empty environment.
     CLEARED = 3;
   }
-  EnvironmentRule environment_rule = 5;
+}
+
+message LocalCommandContext {
+  // Working directory, relative to the project root. Unset when it is the
+  // project root, where most commands run; tests run in their cell's root.
+  optional string working_directory = 1;
+  LocalCommand.EnvironmentRule environment_rule = 2;
 }
 
 message WorkerInitCommand {

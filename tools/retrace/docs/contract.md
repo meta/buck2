@@ -328,7 +328,7 @@ How a fate was decided travels beside it as `fate_basis`. The
 interval relation is exact (`client-interval`) when both the discarded
 attempt and the winner carry `client_start` and positive matching command
 durations, within the containing action: a buck2 whose command
-records include `client_start_time` writes each attempt's start on the
+records include `client_attempt.start_time` writes each attempt's start on the
 buck2 host's clock, and that start with the attempt's wall time is one
 interval on one clock. The winner's duration is `args.winner.dur_us`,
 not the action's total `wall_time_us`. Without comparable starts, an attempt is `concurrent` only

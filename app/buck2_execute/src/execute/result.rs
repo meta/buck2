@@ -234,7 +234,7 @@ impl CommandExecutionMetadata {
             queue_duration: metadata.queue_duration.and_then(|d| d.try_into().ok()),
             suspend_duration: metadata.suspend_duration.and_then(|d| d.try_into().ok()),
             suspend_count: metadata.suspend_count,
-            client_start_time: None,
+            client_attempt: None,
         }
     }
 }
@@ -646,7 +646,7 @@ mod tests {
             }),
             suspend_duration: None,
             suspend_count: None,
-            client_start_time: None,
+            client_attempt: None,
         };
         let command_execution_details = buck2_data::CommandExecutionDetails {
             signed_exit_code: Some(456),

@@ -482,7 +482,9 @@ pub fn demo_log_with(dir: &Path, o: DemoOpts) -> PathBuf {
         // they overlapped.
         metadata: Some(buck2_data::CommandExecutionMetadata {
             wall_time: Some(dur(100_000)),
-            client_start_time: Some(ts(110_000)),
+            client_attempt: Some(buck2_data::ClientAttempt {
+                start_time: Some(ts(110_000)),
+            }),
             execution_time: Some(dur(80_000)),
             execution_stats: Some(buck2_data::CommandExecutionStats {
                 memory_peak: Some(1 << 20),
@@ -497,7 +499,9 @@ pub fn demo_log_with(dir: &Path, o: DemoOpts) -> PathBuf {
             metadata: Some(buck2_data::CommandExecutionMetadata {
                 wall_time: Some(dur(30_000)),
                 start_time: Some(ts(120_000)),
-                client_start_time: Some(ts(120_000)),
+                client_attempt: Some(buck2_data::ClientAttempt {
+                    start_time: Some(ts(120_000)),
+                }),
                 ..Default::default()
             }),
             ..Default::default()

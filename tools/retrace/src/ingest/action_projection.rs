@@ -59,7 +59,10 @@ pub(super) fn project_action(
                 status: status_name(c),
                 wall_time_us: md.and_then(|m| m.wall_time.as_ref()).map(dur_us),
                 start_us: md.and_then(|m| m.start_time.as_ref()).map(ts_us),
-                client_start_us: md.and_then(|m| m.client_start_time.as_ref()).map(ts_us),
+                client_start_us: md
+                    .and_then(|m| m.client_attempt.as_ref())
+                    .and_then(|a| a.start_time.as_ref())
+                    .map(ts_us),
                 elastic: c
                     .details
                     .as_ref()
@@ -114,8 +117,8 @@ pub(super) fn project_action(
                     if !c.argv.is_empty() {
                         last.argv = Some(c.argv.clone());
                     }
-                    last.cwd = c.working_directory.clone();
-                    last.env_rule = c.environment_rule;
+                    last.cwd = c.context.as_ref().and_then(|x| x.working_directory.clone());
+                    last.env_rule = c.context.as_ref().map_or(0, |x| x.environment_rule);
                 }
                 Some(Command::WorkerCommand(c)) if !c.argv.is_empty() => {
                     last.argv = Some(c.argv.clone());
@@ -171,8 +174,14 @@ pub(super) fn project_action(
             cache_upload_result: end.cache_upload_result,
             dep_file_cache_upload_result: end.dep_file_cache_upload_result,
             wall_time_us: end.wall_time.as_ref().map(dur_us),
-            prepare_us: end.prepare_command_us,
-            finish_us: end.finish_action_us,
+            prepare_us: end
+                .run_action_timings
+                .as_ref()
+                .and_then(|t| t.prepare_command_us),
+            finish_us: end
+                .run_action_timings
+                .as_ref()
+                .and_then(|t| t.finish_action_us),
             output_size: end.output_size,
             input_files_bytes: end.input_files_bytes,
             invalidated: end.invalidation_info.is_some(),

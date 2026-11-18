@@ -127,7 +127,7 @@ async fn check_suspends(
             }
             match total_duration {
                 Some(total_duration) => assert!(
-                    (reported_suspends[ident].unwrap() - total_duration as f64).abs() < 500.0
+                    (reported_suspends[ident].unwrap_or(0.0) - total_duration as f64).abs() < 500.0
                 ),
                 None => assert!(reported_suspends[ident].unwrap_or(0.0) < 500.0),
             }

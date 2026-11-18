@@ -10,6 +10,7 @@
 
 //! Records each executed action's direct producers in the event log, for `--log-action-graph`.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -37,6 +38,17 @@ use crate::artifact_groups::TransitiveSetProjectionKey;
 /// The schema of recorded action graphs.
 const ACTION_GRAPH_SCHEMA: u32 = 1;
 
+/// A transitive-set definition bigger than this is split across several events.
+///
+/// Nothing enforces a limit (these events go only to the client and the event log); splitting
+/// only stops one huge set from becoming an event every log reader must decode whole. Real sets
+/// are far smaller: in recorded builds of buck2 and PyTorch (470K sets), the biggest was 125 KB
+/// and 99.9% were under 4 KB.
+const TSET_DEF_BUDGET_BYTES: usize = 4 << 20;
+
+/// Characters of a projection key kept for display.
+const DISPLAY_KEY_CHARS: usize = 200;
+
 /// The action graph recorder's state for one command.
 #[derive(Clone, Dupe, Default)]
 pub struct GraphRecorder(Arc<RecorderState>);
@@ -54,6 +66,8 @@ struct RecorderState {
     tset_ids: Mutex<BuckMutMap<TransitiveSetProjectionKey, u64>>,
     action_ends: AtomicU64,
     capture: TotalTime,
+    tset_def_events: AtomicU64,
+    definitions_walk: TotalTime,
 }
 
 /// A time that threads add to without a lock. It is kept exact, and rounded only when written.
@@ -84,6 +98,24 @@ impl GraphRecorder {
             .insert(action.dupe(), span_id);
     }
 
+    /// The per-command id of `key`, assigning the next one if it has none.
+    fn tset_id(&self, key: &TransitiveSetProjectionKey) -> u64 {
+        let mut ids = self.0.tset_ids.lock().expect("poisoned lock");
+        let next = ids.len() as u64;
+        *ids.entry(key.dupe()).or_insert(next)
+    }
+
+    /// The transitive-set projections that actions referred to, with their ids.
+    fn referenced_tsets(&self) -> Vec<(TransitiveSetProjectionKey, u64)> {
+        self.0
+            .tset_ids
+            .lock()
+            .expect("poisoned lock")
+            .iter()
+            .map(|(key, id)| (key.dupe(), *id))
+            .collect()
+    }
+
     /// Counts an action-end event that was written with graph fields.
     pub(crate) fn action_end_written(&self) {
         self.0.action_ends.fetch_add(1, Ordering::Relaxed);
@@ -101,11 +133,59 @@ impl GraphRecorder {
             incomplete: incomplete.map(|i| i as i32),
             action_ends: self.0.action_ends.load(Ordering::Relaxed),
             capture_us: Micros::from(self.0.capture.get()).into(),
-            tset_def_events: 0,
-            definitions_walk_us: 0,
+            tset_def_events: self.0.tset_def_events.load(Ordering::Relaxed),
+            definitions_walk_us: Micros::from(self.0.definitions_walk.get()).into(),
             structure_defs: 0,
             aliases: 0,
         }
+    }
+
+    /// Writes the definition of projection `id`, split across events if it is big. Sizes are
+    /// estimated, not exact.
+    fn write_tset_def(&self, id: u64, key: &TransitiveSetProjectionKey, node: DirectProducers) {
+        let mut event = buck2_data::TransitiveSetProjectionDef {
+            tset_id: id,
+            display_key: key.to_string().chars().take(DISPLAY_KEY_CHARS).collect(),
+            ..Default::default()
+        };
+        let mut producers = buck2_data::ActionGraphProducers::default();
+        // Encoded sizes, rounded up: `id` takes at most 11 bytes (a 1-byte tag and a varint of up
+        // to 10) and `display_key` adds a tag and a 2-byte length. The producers message and its
+        // three lists add a tag and a length of at most 4 bytes each, and each id in a list takes
+        // at most 10.
+        let mut size = event.display_key.len() + 34;
+        let lists: [(
+            &[u64],
+            fn(&mut buck2_data::ActionGraphProducers) -> &mut Vec<u64>,
+        ); 3] = [
+            (&node.span_ids, |p| &mut p.span_ids),
+            (&node.reused_ids, |p| &mut p.reused_ids),
+            (&node.tset_ids, |p| &mut p.tset_ids),
+        ];
+        for (ids, list) in lists {
+            for &item in ids {
+                if size + 10 > TSET_DEF_BUDGET_BYTES {
+                    event.producers = Some(std::mem::take(&mut producers));
+                    self.emit_tset_def(std::mem::replace(
+                        &mut event,
+                        buck2_data::TransitiveSetProjectionDef {
+                            tset_id: id,
+                            ..Default::default()
+                        },
+                    ));
+                    size = 31;
+                }
+                size += 10;
+                list(&mut producers).push(item);
+            }
+        }
+        event.producers = Some(producers);
+        self.emit_tset_def(event);
+    }
+
+    fn emit_tset_def(&self, event: buck2_data::TransitiveSetProjectionDef) {
+        instant_event(event);
+        self.0.tset_def_events.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -129,6 +209,16 @@ impl DirectProducers {
         inputs: impl IntoIterator<Item = &'a ArtifactGroup>,
     ) -> Self {
         let start = Instant::now();
+        let result = Self::collect_uncounted(recorder, inputs);
+        recorder.0.capture.add(Instant::now() - start);
+        result
+    }
+
+    /// Like `collect`, without adding the time to the footer's `capture_us`.
+    fn collect_uncounted<'a>(
+        recorder: &GraphRecorder,
+        inputs: impl IntoIterator<Item = &'a ArtifactGroup>,
+    ) -> Self {
         let (keys, tsets) = producer_keys(inputs);
         let mut result = DirectProducers::default();
         if !tsets.is_empty() {
@@ -166,7 +256,6 @@ impl DirectProducers {
             }
         }
         result.span_ids.sort_unstable();
-        recorder.0.capture.add(Instant::now() - start);
         result
     }
 
@@ -219,13 +308,13 @@ where
     // `work` is not awaited inside an `async fn` or `async` block, which would hold it twice and
     // double the future's size. See https://github.com/rust-lang/rust/issues/62958
     let recording = start_recording(&ctx.ctx());
-    work.map(move |result| {
+    work.then(async move |result| {
         if recording {
             let incomplete = match &result {
                 Ok(value) => incomplete(value),
                 Err(_) => Some(Incomplete::BuildFailed),
             };
-            finish_recording(&ctx.ctx(), incomplete);
+            finish_recording(&mut ctx.ctx(), incomplete).await;
         }
         result
     })
@@ -243,13 +332,63 @@ fn start_recording(ctx: &DiceComputations<'_>) -> bool {
     recording
 }
 
-/// Ends a command that records the action graph: writes the footer.
-fn finish_recording(ctx: &DiceComputations<'_>, incomplete: Option<Incomplete>) {
-    instant_event(
-        ctx.per_transaction_data()
-            .get_graph_recorder()
-            .footer(incomplete),
-    );
+/// Ends a command that records the action graph: writes the transitive-set definitions the graph
+/// refers to, then the footer.
+async fn finish_recording(ctx: &mut DiceComputations<'_>, incomplete: Option<Incomplete>) {
+    let recorder = ctx.per_transaction_data().get_graph_recorder().dupe();
+    let finished = write_tset_definitions(ctx, &recorder).await;
+    let incomplete = incomplete.or((!finished).then_some(Incomplete::UnfinishedWalk));
+    instant_event(recorder.footer(incomplete));
+}
+
+/// Writes a definition for each transitive-set projection that actions referred to, and each
+/// projection below those, in one walk after the command. Returns `false` if the walk could not
+/// finish, in which case some referenced ids stay undefined.
+async fn write_tset_definitions(ctx: &mut DiceComputations<'_>, recorder: &GraphRecorder) -> bool {
+    let start = Instant::now();
+    let mut referenced = recorder.referenced_tsets();
+    referenced.sort_unstable_by_key(|(_, id)| *id);
+    let mut pending: VecDeque<_> = referenced.into();
+    let mut written = BuckMutSet::default();
+    let mut finished = true;
+    let mut steps: u64 = 0;
+
+    while let Some((key, id)) = pending.pop_front() {
+        // Cached lookups complete without suspending, so without this a large walk would hold
+        // its executor thread for its whole length and delay cancellation.
+        steps += 1;
+        if steps.is_multiple_of(1000) {
+            tokio::task::yield_now().await;
+        }
+        if !written.insert(id) {
+            continue;
+        }
+        let sub_inputs = match key.key.lookup(ctx).await {
+            Ok(set) => set.by_ref(|s| s.get_projection_sub_inputs(key.projection)),
+            Err(e) => Err(e),
+        };
+        let sub_inputs = match sub_inputs {
+            Ok(sub_inputs) => sub_inputs,
+            Err(e) => {
+                tracing::debug!("Could not define transitive set `{key}`: {e:#}");
+                finished = false;
+                continue;
+            }
+        };
+        let node = DirectProducers::collect_uncounted(recorder, &sub_inputs);
+        for input in &sub_inputs {
+            if let ArtifactGroup::TransitiveSetProjection(child) = input {
+                let child_id = recorder.tset_id(&child.key);
+                if !written.contains(&child_id) {
+                    pending.push_back((child.key.dupe(), child_id));
+                }
+            }
+        }
+        recorder.write_tset_def(id, &key, node);
+    }
+
+    recorder.0.definitions_walk.add(Instant::now() - start);
+    finished
 }
 
 pub trait HasGraphRecorder {
@@ -370,6 +509,27 @@ mod tests {
         let second = DirectProducers::collect(&recorder, [&b]);
         assert_eq!(second.tset_ids, vec![1], "the same projection keeps its id");
         assert_eq!(recorder.0.tset_ids.lock().expect("poisoned lock").len(), 2);
+    }
+
+    #[test]
+    fn test_big_tset_definitions_are_split() {
+        let recorder = GraphRecorder::default();
+        let ArtifactGroup::TransitiveSetProjection(t) = tset(1) else {
+            unreachable!()
+        };
+        let node = DirectProducers {
+            span_ids: (0..TSET_DEF_BUDGET_BYTES as u64 / 10 + 1).collect(),
+            ..Default::default()
+        };
+        buck2_events::dispatch::with_dispatcher(
+            buck2_events::dispatch::EventDispatcher::null(),
+            || recorder.write_tset_def(0, &t.key, node),
+        );
+        assert_eq!(
+            recorder.footer(None).tset_def_events,
+            2,
+            "one node over the budget, two events"
+        );
     }
 
     #[test]

@@ -6,3 +6,15 @@ copy(
 )
 
 fail(name = "fail")
+
+leaf(name = "l1")
+
+leaf(
+    name = "l2",
+    deps = [":l1"],
+)
+
+consume(
+    name = "consume",
+    dep = ":l2",
+)

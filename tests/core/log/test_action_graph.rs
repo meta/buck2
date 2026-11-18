@@ -80,6 +80,24 @@ fn by_category<'a>(records: &'a [Value], kind: &str) -> BTreeMap<&'a str, &'a Va
         .collect()
 }
 
+/// The action record of `category` and `identifier`.
+fn action<'a>(records: &'a [Value], category: &str, identifier: &str) -> anyhow::Result<&'a Value> {
+    records
+        .iter()
+        .find(|r| {
+            r["kind"] == "action" && r["category"] == category && r["identifier"] == identifier
+        })
+        .with_context(|| format!("No `{category}` action `{identifier}`"))
+}
+
+/// The one element of a JSON array.
+fn only(values: &Value) -> anyhow::Result<&Value> {
+    let [value] = values.as_array().map(Vec::as_slice).unwrap_or_default() else {
+        anyhow::bail!("Expected one element: {values}");
+    };
+    Ok(value)
+}
+
 #[buck_test]
 async fn test_edges_join_by_span_id(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["//:copy", "--log-action-graph"]).await?;
@@ -177,5 +195,38 @@ async fn test_log_graph_refuses_an_unrecorded_log(buck: &Buck) -> anyhow::Result
         .await
         .expect_failure()
         .assert_stderr_matches("no recorded action graph");
+    Ok(())
+}
+
+#[buck_test]
+async fn test_transitive_set_definitions(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:consume", "--log-action-graph"]).await?;
+    let records = graph(buck).await?;
+    let tsets: BTreeMap<String, &Value> = records
+        .iter()
+        .filter(|r| r["kind"] == "tset")
+        .map(|r| (r["id"].to_string(), r))
+        .collect();
+    let l1 = action(&records, "write", "l1.txt")?;
+    let l2 = action(&records, "write", "l2.txt")?;
+    let consume = records
+        .iter()
+        .find(|r| r["kind"] == "action" && r["category"] == "consume")
+        .context("No `consume` action")?;
+
+    let outer = tsets[&only(&consume["tsets"])?.to_string()];
+    assert_eq!(outer["own"], json!([l2["span"]]));
+    let inner = tsets[&only(&outer["children"])?.to_string()];
+    assert_eq!(inner["own"], json!([l1["span"]]));
+    assert_eq!(inner["children"], json!([]));
+
+    let stats = stats(&records)?;
+    assert_eq!(
+        json!([stats["dangling"], stats["dangling_tsets"]]),
+        json!([0, 0])
+    );
+    assert_eq!(stats["footer"]["tset_def_events"], 2);
+    assert_eq!(stats["tset_def_events"], 2);
+    assert!(json_get(stats, &["footer", "incomplete"]).is_none());
     Ok(())
 }

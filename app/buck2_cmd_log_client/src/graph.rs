@@ -34,11 +34,16 @@ use tokio_stream::StreamExt;
 ///   `deps` (the spans of producers that ran in this command), `reused` (the per-command ids of
 ///   producers this command did not run) and `tsets` (the per-command ids
 ///   of transitive-set projections among its inputs).
-/// - `dangling`, after the actions: a `span` that some action's `deps` refer to but that no
-///   action in the log has, with one action that refers to it.
-/// - `stats`, last: counts of `actions`, `edges` (entries in `deps`), `reused` references and
-///   `dangling` spans; the `schema` from the start event; and the `footer` the build wrote, or
-///   null if the log has none (it was cut off).
+/// - `tset`, after the actions, one per transitive-set projection, by `id`: its `display_key`
+///   (display only), `own` producer spans, `reused` producer ids and `children` ids, merged
+///   across the events a big definition is split into.
+/// - `dangling`: a `span` that an action or a set refers to but that no action in the log has,
+///   with one span that refers to it (0 when only sets refer to it).
+/// - `dangling_tset`: a set `id` that is referred to but never defined.
+/// - `stats`, last: counts of `actions`, `edges` (entries in `deps`), `reused` references,
+///   `tsets`, `tset_def_events`, `dangling` spans and `dangling_tsets`; the `schema` from the
+///   start event; and the `footer` the build wrote, or null if the log has none (it was cut
+///   off).
 #[derive(Debug, clap::Parser)]
 pub struct GraphCommand {
     #[clap(flatten)]
@@ -91,18 +96,40 @@ enum Record<'a> {
         reused: &'a [u64],
         tsets: &'a [u64],
     },
+    Tset {
+        id: u64,
+        display_key: &'a str,
+        own: &'a [u64],
+        reused: &'a [u64],
+        children: &'a [u64],
+    },
     Dangling {
         span: u64,
         referenced_by: u64,
+    },
+    DanglingTset {
+        id: u64,
     },
     Stats {
         actions: u64,
         edges: u64,
         reused: u64,
+        tsets: u64,
+        tset_def_events: u64,
         dangling: u64,
+        dangling_tsets: u64,
         schema: Option<u32>,
         footer: Option<&'a buck2_data::ActionGraphFooter>,
     },
+}
+
+/// A transitive-set definition, merged across the events it was split into.
+#[derive(Default)]
+struct TsetDef {
+    display_key: String,
+    own: Vec<u64>,
+    reused: Vec<u64>,
+    children: Vec<u64>,
 }
 
 #[derive(Default)]
@@ -110,6 +137,10 @@ struct GraphReader {
     actions: u64,
     edges: u64,
     reused: u64,
+    tsets: BuckMutMap<u64, TsetDef>,
+    tset_def_events: u64,
+    /// Set ids referred to by actions.
+    referenced_tsets: BuckMutSet<u64>,
     /// Spans of the actions seen so far.
     defined: BuckMutSet<u64>,
     /// Spans referred to before any action with that span was seen, with one referrer each.
@@ -144,6 +175,17 @@ impl GraphReader {
                 Some(buck2_data::instant_event::Data::ActionGraphFooter(footer)) => {
                     self.footer = Some(*footer);
                 }
+                Some(buck2_data::instant_event::Data::TransitiveSetProjectionDef(def)) => {
+                    self.tset_def_events += 1;
+                    let tset = self.tsets.entry(def.tset_id).or_default();
+                    if tset.display_key.is_empty() {
+                        tset.display_key.clone_from(&def.display_key);
+                    }
+                    let (own, reused, children) = producers(def.producers.as_ref());
+                    tset.own.extend(own);
+                    tset.reused.extend(reused);
+                    tset.children.extend(children);
+                }
                 _ => {}
             },
             _ => {}
@@ -165,6 +207,7 @@ impl GraphReader {
         self.actions += 1;
         self.edges += deps.len() as u64;
         self.reused += reused.len() as u64;
+        self.referenced_tsets.extend(tsets);
         for dep in deps {
             if !self.defined.contains(dep) {
                 self.undefined.entry(*dep).or_insert(span);
@@ -188,10 +231,33 @@ impl GraphReader {
         )
     }
 
-    fn finish(self, w: &mut impl Write) -> buck2_error::Result<()> {
+    fn finish(mut self, w: &mut impl Write) -> buck2_error::Result<()> {
         if self.schema.is_none() {
             return Err(not_recorded());
         }
+        let mut ids: Vec<u64> = self.tsets.keys().copied().collect();
+        ids.sort_unstable();
+        let mut referenced_tsets = std::mem::take(&mut self.referenced_tsets);
+        for id in &ids {
+            let tset = &self.tsets[id];
+            for span in &tset.own {
+                if !self.defined.contains(span) {
+                    self.undefined.entry(*span).or_insert(0);
+                }
+            }
+            referenced_tsets.extend(&tset.children);
+            self.write(
+                w,
+                &Record::Tset {
+                    id: *id,
+                    display_key: &tset.display_key,
+                    own: &tset.own,
+                    reused: &tset.reused,
+                    children: &tset.children,
+                },
+            )?;
+        }
+
         let mut dangling: Vec<_> = self.undefined.iter().map(|(s, r)| (*s, *r)).collect();
         dangling.sort_unstable();
         for (span, referenced_by) in &dangling {
@@ -203,13 +269,24 @@ impl GraphReader {
                 },
             )?;
         }
+        let mut dangling_tsets: Vec<u64> = referenced_tsets
+            .into_iter()
+            .filter(|id| !self.tsets.contains_key(id))
+            .collect();
+        dangling_tsets.sort_unstable();
+        for id in &dangling_tsets {
+            self.write(w, &Record::DanglingTset { id: *id })?;
+        }
         self.write(
             w,
             &Record::Stats {
                 actions: self.actions,
                 edges: self.edges,
                 reused: self.reused,
+                tsets: ids.len() as u64,
+                tset_def_events: self.tset_def_events,
                 dangling: dangling.len() as u64,
+                dangling_tsets: dangling_tsets.len() as u64,
                 schema: self.schema,
                 footer: self.footer.as_ref(),
             },
@@ -298,6 +375,68 @@ mod tests {
         );
         assert_eq!(stats["dangling"], 0);
         assert!(stats["footer"].is_null(), "no footer in this log");
+    }
+
+    fn tset_def(id: u64, own: Vec<u64>, children: Vec<u64>) -> buck2_data::BuckEvent {
+        buck2_data::BuckEvent {
+            data: Some(buck2_data::buck_event::Data::Instant(
+                buck2_data::InstantEvent {
+                    data: Some(
+                        buck2_data::TransitiveSetProjectionDef {
+                            tset_id: id,
+                            producers: Some(buck2_data::ActionGraphProducers {
+                                span_ids: own,
+                                tset_ids: children,
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ),
+                },
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_split_tset_definitions_are_merged() {
+        let mut consumer = action_end(2, vec![1]);
+        let Some(buck2_data::buck_event::Data::SpanEnd(end)) = &mut consumer.data else {
+            unreachable!()
+        };
+        let Some(buck2_data::span_end_event::Data::ActionExecution(action)) = &mut end.data else {
+            unreachable!()
+        };
+        action.graph_producers.as_mut().unwrap().tset_ids = vec![0, 5];
+        let records = read(&[
+            action_end(1, vec![]),
+            consumer,
+            tset_def(0, vec![1], vec![]),
+            tset_def(0, vec![], vec![3]),
+        ]);
+        let tset = records.iter().find(|r| r["kind"] == "tset").unwrap();
+        assert_eq!(tset["own"], serde_json::json!([1]));
+        assert_eq!(
+            tset["children"],
+            serde_json::json!([3]),
+            "both parts of the split definition"
+        );
+        let undefined: Vec<_> = records
+            .iter()
+            .filter(|r| r["kind"] == "dangling_tset")
+            .map(|r| r["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(
+            undefined,
+            vec![3, 5],
+            "a child and an action reference with no definition"
+        );
+        let stats = records.last().unwrap();
+        assert_eq!(
+            (stats["tsets"].as_u64(), stats["tset_def_events"].as_u64()),
+            (Some(1), Some(2))
+        );
     }
 
     #[test]

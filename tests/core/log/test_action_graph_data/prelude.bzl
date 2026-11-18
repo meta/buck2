@@ -23,3 +23,29 @@ def _fail(ctx):
     return [DefaultInfo(default_output = out)]
 
 fail = rule(impl = _fail, attrs = {})
+
+FilesInfo = provider(fields = ["files"])
+
+Files = transitive_set(args_projections = {"paths": lambda value: value})
+
+def _leaf(ctx):
+    out = ctx.actions.write(ctx.label.name + ".txt", ctx.label.name)
+    children = [dep[FilesInfo].files for dep in ctx.attrs.deps]
+    return [
+        DefaultInfo(default_output = out),
+        FilesInfo(files = ctx.actions.tset(Files, value = out, children = children)),
+    ]
+
+leaf = rule(impl = _leaf, attrs = {"deps": attrs.list(attrs.dep(), default = [])})
+
+def _consume(ctx):
+    out = ctx.actions.declare_output("all.txt")
+    files = ctx.attrs.dep[FilesInfo].files.project_as_args("paths")
+    ctx.actions.run(
+        cmd_args(["sh", "-c", 'cat "$@" > "$0"', out.as_output(), files]),
+        category = "consume",
+        local_only = True,
+    )
+    return [DefaultInfo(default_output = out)]
+
+consume = rule(impl = _consume, attrs = {"dep": attrs.dep()})

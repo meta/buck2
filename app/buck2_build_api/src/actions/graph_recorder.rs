@@ -21,6 +21,7 @@ use std::time::Instant;
 
 use buck2_artifact::actions::key::ActionKey;
 use buck2_data::ToProtoMessage;
+use buck2_data::action_graph_alias::Canonical;
 use buck2_data::action_graph_footer::Incomplete;
 use buck2_data::timing::Micros;
 use buck2_events::dispatch::instant_event;
@@ -71,6 +72,7 @@ struct RecorderState {
     tset_def_events: AtomicU64,
     definitions_walk: TotalTime,
     structure_defs: AtomicU64,
+    aliases: AtomicU64,
 }
 
 /// A time that threads add to without a lock. It is kept exact, and rounded only when written.
@@ -166,8 +168,28 @@ impl GraphRecorder {
             tset_def_events: self.0.tset_def_events.load(Ordering::Relaxed),
             definitions_walk_us: Micros::from(self.0.definitions_walk.get()).into(),
             structure_defs: self.0.structure_defs.load(Ordering::Relaxed),
-            aliases: 0,
+            aliases: self.0.aliases.load(Ordering::Relaxed),
         }
+    }
+
+    fn write_alias(&self, key: &ActionKey, canonical: &ActionKey) {
+        let canonical_span = self
+            .0
+            .producer_spans
+            .lock()
+            .expect("poisoned lock")
+            .get(canonical)
+            .copied();
+        let canonical = match canonical_span {
+            Some(span) => Canonical::SpanId(span),
+            None => Canonical::ReusedId(self.reused_id(canonical)),
+        };
+        instant_event(buck2_data::ActionGraphAlias {
+            id: self.reused_id(key),
+            key: Some(key.as_proto()),
+            canonical: Some(canonical),
+        });
+        self.0.aliases.fetch_add(1, Ordering::Relaxed);
     }
 
     fn write_structure_def(
@@ -428,6 +450,17 @@ async fn write_graph_definitions(ctx: &mut DiceComputations<'_>, recorder: &Grap
                     finished = false;
                     continue;
                 }
+            };
+            let key = if action.key() == &key {
+                key
+            } else {
+                // An output bound inside a dynamic output: point the consumers' key at the action.
+                recorder.write_alias(&key, action.key());
+                let canonical = action.key().dupe();
+                if recorder.ran(&canonical) || !written_actions.insert(canonical.dupe()) {
+                    continue;
+                }
+                canonical
             };
             let inputs = match action.inputs() {
                 Ok(inputs) => inputs.into_owned(),

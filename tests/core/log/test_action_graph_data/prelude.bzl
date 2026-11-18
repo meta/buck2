@@ -49,3 +49,23 @@ def _consume(ctx):
     return [DefaultInfo(default_output = out)]
 
 consume = rule(impl = _consume, attrs = {"dep": attrs.dep()})
+
+def _dyn_f_impl(actions: AnalysisActions, src: ArtifactValue, out: OutputArtifact):
+    actions.write(out, src.read_string())
+    return []
+
+_dyn_f = dynamic_actions(
+    impl = _dyn_f_impl,
+    attrs = {
+        "out": dynattrs.output(),
+        "src": dynattrs.artifact_value(),
+    },
+)
+
+def _dyn(ctx):
+    src = ctx.actions.write("dyn_input", "42")
+    out = ctx.actions.declare_output("dyn_output")
+    ctx.actions.dynamic_output_new(_dyn_f(src = src, out = out.as_output()))
+    return [DefaultInfo(default_output = out)]
+
+dyn = rule(impl = _dyn, attrs = {})

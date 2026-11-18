@@ -268,3 +268,34 @@ async fn test_warm_rebuild_keeps_chains_connected(buck: &Buck) -> anyhow::Result
     assert_eq!(stats(&records)?["dangling_reused"], 0);
     Ok(())
 }
+
+#[buck_test]
+async fn test_dynamic_output_alias(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:copy_dyn", "--log-action-graph"]).await?;
+    let records = graph(buck).await?;
+    let actions = of_kind(&records, "action");
+    let copy = actions
+        .iter()
+        .find(|a| a["category"] == "copy")
+        .context("No `copy` action")?;
+    let [alias] = of_kind(&records, "alias")[..] else {
+        anyhow::bail!("Expected one alias: {records:?}");
+    };
+    assert_eq!(
+        copy["reused"],
+        json!([alias["id"]]),
+        "the copy refers to the output by the id of its declared key"
+    );
+    assert!(
+        actions.iter().any(|a| a["span"] == alias["canonical_span"]),
+        "the bound action ran"
+    );
+    let stats = stats(&records)?;
+    assert_eq!(
+        json!([stats["dangling"], stats["dangling_reused"]]),
+        json!([0, 0])
+    );
+    assert_eq!(stats["structures"], 0);
+    assert_eq!(stats["footer"]["aliases"], 1);
+    Ok(())
+}

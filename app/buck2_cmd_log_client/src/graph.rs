@@ -16,6 +16,7 @@ use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::event_log_options::EventLogOptions;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
+use buck2_data::action_graph_alias::Canonical;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_event_log::stream_value::StreamValue;
 use buck2_hash::BuckMutMap;
@@ -42,9 +43,12 @@ use tokio_stream::StreamExt;
 /// - `dangling`: a `span` that an action or a set refers to but that no action in the log has,
 ///   with one span that refers to it (0 when only sets or structures refer to it).
 /// - `dangling_tset`: a set `id` that is referred to but never defined.
-/// - `dangling_reused`: a reused `id` that is referred to but has no `structure`.
+/// - `alias`: a reused `id` and `key` that consumers refer to for an output bound inside a
+///   dynamic output, with the action it stands for: `canonical_span` if that ran, otherwise
+///   `canonical_id`.
+/// - `dangling_reused`: a reused `id` that is referred to but has no `structure` or `alias`.
 /// - `stats`, last: counts of `actions`, `edges` (entries in `deps`), `reused` references,
-///   `tsets`, `tset_def_events`, `structures`, `dangling` spans, `dangling_tsets` and
+///   `tsets`, `tset_def_events`, `structures`, `aliases`, `dangling` spans, `dangling_tsets` and
 ///   `dangling_reused`; the `schema` from the start event; and the `footer` the build wrote, or
 ///   null if the log has none (it was cut off).
 #[derive(Debug, clap::Parser)]
@@ -119,6 +123,12 @@ enum Record<'a> {
         reused: &'a [u64],
         tsets: &'a [u64],
     },
+    Alias {
+        id: u64,
+        key: Option<&'a buck2_data::ActionKey>,
+        canonical_span: Option<u64>,
+        canonical_id: Option<u64>,
+    },
     DanglingTset {
         id: u64,
     },
@@ -132,6 +142,7 @@ enum Record<'a> {
         tsets: u64,
         tset_def_events: u64,
         structures: u64,
+        aliases: u64,
         dangling: u64,
         dangling_tsets: u64,
         dangling_reused: u64,
@@ -157,6 +168,7 @@ struct GraphReader {
     tsets: BuckMutMap<u64, TsetDef>,
     tset_def_events: u64,
     structures: Vec<buck2_data::ActionGraphStructureDef>,
+    aliases: Vec<buck2_data::ActionGraphAlias>,
     /// Set ids referred to by actions.
     referenced_tsets: BuckMutSet<u64>,
     /// Reused-action ids referred to.
@@ -197,6 +209,9 @@ impl GraphReader {
                 }
                 Some(buck2_data::instant_event::Data::ActionGraphStructureDef(def)) => {
                     self.structures.push(def.clone());
+                }
+                Some(buck2_data::instant_event::Data::ActionGraphAlias(alias)) => {
+                    self.aliases.push(alias.clone());
                 }
                 Some(buck2_data::instant_event::Data::TransitiveSetProjectionDef(def)) => {
                     self.tset_def_events += 1;
@@ -309,6 +324,32 @@ impl GraphReader {
             )?;
         }
 
+        for alias in &self.aliases {
+            defined_reused.insert(alias.id);
+            let (canonical_span, canonical_id) = match alias.canonical {
+                Some(Canonical::SpanId(span)) => {
+                    if !self.defined.contains(&span) {
+                        self.undefined.entry(span).or_insert(0);
+                    }
+                    (Some(span), None)
+                }
+                Some(Canonical::ReusedId(id)) => {
+                    self.referenced_reused.insert(id);
+                    (None, Some(id))
+                }
+                None => (None, None),
+            };
+            self.write(
+                w,
+                &Record::Alias {
+                    id: alias.id,
+                    key: alias.key.as_ref(),
+                    canonical_span,
+                    canonical_id,
+                },
+            )?;
+        }
+
         let mut dangling: Vec<_> = self.undefined.iter().map(|(s, r)| (*s, *r)).collect();
         dangling.sort_unstable();
         for (span, referenced_by) in &dangling {
@@ -347,6 +388,7 @@ impl GraphReader {
                 tsets: ids.len() as u64,
                 tset_def_events: self.tset_def_events,
                 structures: self.structures.len() as u64,
+                aliases: self.aliases.len() as u64,
                 dangling: dangling.len() as u64,
                 dangling_tsets: dangling_tsets.len() as u64,
                 dangling_reused: dangling_reused.len() as u64,
@@ -499,6 +541,61 @@ mod tests {
         assert_eq!(
             (stats["tsets"].as_u64(), stats["tset_def_events"].as_u64()),
             (Some(1), Some(2))
+        );
+    }
+
+    fn instant(data: buck2_data::instant_event::Data) -> buck2_data::BuckEvent {
+        buck2_data::BuckEvent {
+            data: Some(buck2_data::buck_event::Data::Instant(
+                buck2_data::InstantEvent { data: Some(data) },
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_aliases_define_reused_ids() {
+        let mut consumer = action_end(1, vec![]);
+        let Some(buck2_data::buck_event::Data::SpanEnd(end)) = &mut consumer.data else {
+            unreachable!()
+        };
+        let Some(buck2_data::span_end_event::Data::ActionExecution(action)) = &mut end.data else {
+            unreachable!()
+        };
+        action.graph_producers.as_mut().unwrap().reused_ids = vec![0, 1];
+        let records = read(&[
+            consumer,
+            instant(
+                buck2_data::ActionGraphAlias {
+                    id: 0,
+                    canonical: Some(Canonical::ReusedId(2)),
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            instant(
+                buck2_data::ActionGraphStructureDef {
+                    reused_id: 2,
+                    inputs_omitted: true,
+                    ..Default::default()
+                }
+                .into(),
+            ),
+        ]);
+        let alias = records.iter().find(|r| r["kind"] == "alias").unwrap();
+        assert_eq!(
+            (alias["id"].as_u64(), alias["canonical_id"].as_u64()),
+            (Some(0), Some(2))
+        );
+        let dangling: Vec<_> = records
+            .iter()
+            .filter(|r| r["kind"] == "dangling_reused")
+            .map(|r| r["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(
+            dangling,
+            vec![1],
+            "the alias and the structure define 0 and 2"
         );
     }
 

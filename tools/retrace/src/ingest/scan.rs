@@ -2066,8 +2066,9 @@ fn project_action(
         last.worker_wall_us = worker.and_then(|w| w.worker_wall_time_us).and_then(us_i64);
         last.worker_bytes_in = worker.and_then(|w| w.input_download_bytes);
         last.worker_bytes_out = worker.and_then(|w| w.output_upload_bytes);
-        last.attempts = worker.and_then(|w| w.execution_attempts).filter(|n| *n > 1);
-        last.final_queue_us = worker.and_then(|w| w.final_queue_us);
+        let attempts = worker.and_then(|w| w.attempts.as_ref());
+        last.attempts = attempts.map(|a| a.count).filter(|n| *n > 1);
+        last.final_queue_us = attempts.and_then(|a| a.final_queue_us);
         last.hashing_us = md.and_then(|m| m.hashing_duration.as_ref()).map(dur_us);
         last.mem_peak = stats.and_then(|s| s.memory_peak);
         last.cpu_us = worker.and_then(cpu_total_us);

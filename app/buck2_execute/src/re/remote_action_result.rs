@@ -264,7 +264,19 @@ fn re_worker_details(meta: &TExecutedActionMetadata) -> Option<buck2_data::ReWor
         elastic_capacity: meta.executed_on_elastic_capacity,
         cpu_time_user_us: positive_us(meta.cpu_stat_user_usec),
         cpu_time_system_us: positive_us(meta.cpu_stat_system_usec),
-        ..Default::default()
+        attempts: u32::try_from(meta.execution_attempts)
+            .ok()
+            .filter(|count| *count > 1)
+            .map(|count| buck2_data::ReAttempts {
+                count,
+                // Stamped by the RE engine and by the worker, so clock skew can make it negative.
+                final_queue_us: meta
+                    .worker_start_timestamp
+                    .duration_since_if_set(&meta.last_queued_timestamp)
+                    .map(|d| Micros::from(d).into()),
+            }),
+        input_download_bytes: positive(meta.storage_stats.inputs_downloads.total_bytes),
+        output_upload_bytes: positive(meta.storage_stats.outputs_uploads.total_bytes),
     };
     (details != buck2_data::ReWorkerDetails::default()).then_some(details)
 }
@@ -354,6 +366,8 @@ mod tests {
             cpu_stat_user_usec: 400,
             cpu_stat_system_usec: 100,
             executed_on_elastic_capacity: true,
+            execution_attempts: 2,
+            last_queued_timestamp: ts(95),
             ..Default::default()
         }
     }
@@ -428,6 +442,52 @@ mod tests {
             response.re_worker(),
             None,
             "the metadata describes the original execution"
+        );
+    }
+
+    #[test]
+    fn test_attempts_final_queue_and_storage() {
+        let mut meta = executed_metadata();
+        let mut storage = (*meta.storage_stats).clone();
+        storage.inputs_downloads.total_bytes = 1_234_567;
+        storage.outputs_uploads.total_bytes = 2000;
+        meta.storage_stats = storage.into();
+        let details = re_worker_details(&meta).unwrap();
+        assert_eq!(
+            details.attempts,
+            Some(buck2_data::ReAttempts {
+                count: 2,
+                final_queue_us: Some(5_000_000),
+            }),
+            "the final attempt queued from last queued to worker receipt"
+        );
+        assert_eq!(
+            (details.input_download_bytes, details.output_upload_bytes),
+            (Some(1_234_567), Some(2000)),
+            "byte counts are exact, unlike the two-significant-figure times"
+        );
+
+        let single = TExecutedActionMetadata {
+            execution_attempts: 1,
+            ..executed_metadata()
+        };
+        let single = re_worker_details(&single).unwrap();
+        assert_eq!(
+            single.attempts, None,
+            "one attempt is the common case, and its queue time is the one recorded already"
+        );
+
+        let skewed = TExecutedActionMetadata {
+            last_queued_timestamp: ts(101),
+            ..executed_metadata()
+        };
+        assert_eq!(
+            re_worker_details(&skewed).unwrap().attempts,
+            Some(buck2_data::ReAttempts {
+                count: 2,
+                final_queue_us: None,
+            }),
+            "the two ends come from different machines, so skew leaves the queue time unset"
         );
     }
 }

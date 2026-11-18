@@ -341,8 +341,9 @@ fn project_last(command: &buck2_data::CommandExecution) -> LastCmd {
             .and_then(super::scan::us_i64);
         last.worker_bytes_in = worker.and_then(|w| w.input_download_bytes);
         last.worker_bytes_out = worker.and_then(|w| w.output_upload_bytes);
-        last.attempts = worker.and_then(|w| w.execution_attempts).filter(|n| *n > 1);
-        last.final_queue_us = worker.and_then(|w| w.final_queue_us);
+        let attempts = worker.and_then(|w| w.attempts.as_ref());
+        last.attempts = attempts.map(|a| a.count).filter(|n| *n > 1);
+        last.final_queue_us = attempts.and_then(|a| a.final_queue_us);
         last.hashing_us = md.and_then(|m| m.hashing_duration.as_ref()).map(dur_us);
         last.mem_peak = stats.and_then(|s| s.memory_peak);
         last.cpu_us = worker.and_then(super::scan::cpu_total_us);
@@ -1162,8 +1163,10 @@ mod tests {
                         elastic_capacity: false,
                         cpu_time_user_us: Some(u64::MAX),
                         cpu_time_system_us: None,
-                        execution_attempts: Some(3),
-                        final_queue_us: Some(2_000),
+                        attempts: Some(buck2_data::ReAttempts {
+                            count: 3,
+                            final_queue_us: Some(2_000),
+                        }),
                         ..Default::default()
                     })
                 }),

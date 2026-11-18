@@ -2387,19 +2387,27 @@ message ReWorkerDetails {
   optional uint64 cpu_time_user_us = 4;
   optional uint64 cpu_time_system_us = 5;
 
-  /// Number of times RE attempted the command, when more than once.
-  optional uint32 execution_attempts = 6;
-
-  /// Microseconds the final attempt spent queued: from RE last queuing the
-  /// command to a worker receiving it. Set only when RE attempted the command
-  /// more than once; after one attempt it equals `queue_duration`. The two ends
-  /// are stamped on different machines, so it is also unset when clock skew
-  /// would make it negative.
-  optional uint64 final_queue_us = 7;
+  reserved 6, 7; // execution_attempts and final_queue_us, now in `attempts`
 
   /// Bytes the worker downloaded for inputs and uploaded for outputs.
   optional uint64 input_download_bytes = 8;
   optional uint64 output_upload_bytes = 9;
+
+  /// Set only when RE attempted the command more than once. After one attempt
+  /// there is nothing to add: the final queue time equals
+  /// `CommandExecutionMetadata.queue_duration`.
+  ReAttempts attempts = 10;
+}
+
+/// The attempts RE made at a command it attempted more than once.
+message ReAttempts {
+  /// Number of attempts, at least two.
+  uint32 count = 1;
+
+  /// Microseconds the final attempt spent queued: from RE last queuing the
+  /// command to a worker receiving it. The two ends are stamped on different
+  /// machines, so it is unset when clock skew would make it negative.
+  optional uint64 final_queue_us = 2;
 }
 
 message CommandOutputsMissing {

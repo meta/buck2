@@ -894,6 +894,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_, '_> {
 
     async fn cache_upload(
         &mut self,
+        request: &CommandExecutionRequest,
         action_digest_and_blobs: &ActionDigestAndBlobs,
         execution_result: &CommandExecutionResult,
         re_result: Option<&mut TActionResult2>,
@@ -911,6 +912,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_, '_> {
                     mergebase: self.mergebase().0.as_ref(),
                     re_platform: self.re_platform(),
                     allow_cache_upload,
+                    paths: request.paths(),
                 },
                 execution_result,
                 re_result,

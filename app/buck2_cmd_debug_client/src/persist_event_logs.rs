@@ -26,8 +26,8 @@ use buck2_error::BuckErrorContext;
 use buck2_event_log::ttl::manifold_event_log_ttl;
 use buck2_events::BuckEvent;
 use buck2_events::daemon_id::DaemonId;
+use buck2_events::sink::remote::RemoteEventConfig;
 use buck2_events::sink::remote::RemoteEventSink;
-use buck2_events::sink::remote::ScribeConfig;
 use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
 use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_wrapper_common::invocation_id::TraceId;
@@ -365,7 +365,19 @@ async fn dispatch_event_to_scribe(
 }
 
 fn create_scribe_sink(ctx: &ClientCommandContext) -> buck2_error::Result<Option<RemoteEventSink>> {
-    new_remote_event_sink_if_enabled(ctx.fbinit(), ScribeConfig::default())
+    let config = buck2_client_ctx::remote_sink_config::with_buckconfig_overrides(
+        ctx.maybe_paths()?,
+        RemoteEventConfig::default(),
+    );
+
+    if buck2_core::is_open_source() {
+        // In OSS, daemon-side BES upload owns invocation lifecycle.
+        // Emitting this subprocess result via a separate client-side stream can
+        // preempt the main invocation stream and produce disconnected attempts.
+        return Ok(None);
+    }
+
+    new_remote_event_sink_if_enabled(ctx.fbinit(), config)
 }
 
 #[cfg(test)]

@@ -46,6 +46,16 @@ enum Shape {
     UnaryOperator,
 }
 
+impl Shape {
+    /// How many parameters the trait's method has after the receiver.
+    fn parameters(self) -> usize {
+        match self {
+            Shape::Equals | Shape::Compare | Shape::WriteHash | Shape::UnaryOperator => 1,
+            Shape::OperatorOrNone | Shape::Operator => 2,
+        }
+    }
+}
+
 /// A method that may be written typed.
 struct Method {
     name: String,
@@ -90,18 +100,20 @@ impl Method {
             Shape::OperatorOrNone => format!(
                 "`fn {name}(&self, other: Operand, heap: Heap<'v>) -> Made`, where `Operand` is \
                  an `UnpackValue` such as `&Self`, `Made` is an `AllocValue` or a \
-                 `starlark::Result` of one, and `fn {name}(&self, other: Value<'v>, heap: \
-                 Heap<'v>) -> Option<starlark::Result<Value<'v>>>` is the trait's own form"
+                 `starlark::Result` of one, and `heap` may be left out; \
+                 `fn {name}(&self, other: Value<'v>, heap: Heap<'v>) -> \
+                 Option<starlark::Result<Value<'v>>>` is the trait's own form"
             ),
             Shape::Operator => format!(
                 "`fn {name}(&self, other: Operand, heap: Heap<'v>) -> Made`, where `Operand` is \
                  an `UnpackValue` such as `&Self`, `Made` is an `AllocValue` or a \
-                 `starlark::Result` of one, and `fn {name}(&self, other: Value<'v>, heap: \
-                 Heap<'v>) -> starlark::Result<Value<'v>>` is the trait's own form"
+                 `starlark::Result` of one, and `heap` may be left out; \
+                 `fn {name}(&self, other: Value<'v>, heap: Heap<'v>) -> \
+                 starlark::Result<Value<'v>>` is the trait's own form"
             ),
             Shape::UnaryOperator => format!(
                 "`fn {name}(&self, heap: Heap<'v>) -> Made`, where `Made` is an `AllocValue` or \
-                 a `starlark::Result` of one, and \
+                 a `starlark::Result` of one, and `heap` may be left out; \
                  `fn {name}(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>>` is the \
                  trait's own form"
             ),
@@ -211,10 +223,11 @@ fn operator_result<'a>(method: &Method, sig: &'a syn::Signature) -> syn::Result<
 
 /// The name of a parameter of the derived method: the name the typed method gave the parameter
 /// it stands for, so that the expansion reads as the method that was written. It cannot be seen
-/// from the typed body, whose own parameter has that name.
-fn derived_parameter(typed: &syn::PatType, default: &str) -> syn::Ident {
-    let name = match &*typed.pat {
-        syn::Pat::Ident(syn::PatIdent { ident, .. }) => {
+/// from the typed body, whose own parameter has that name. `default` is for a parameter the
+/// typed method left out or did not name.
+fn derived_parameter(typed: Option<&syn::PatType>, default: &str) -> syn::Ident {
+    let name = match typed.map(|typed| &*typed.pat) {
+        Some(syn::Pat::Ident(syn::PatIdent { ident, .. })) => {
             ident.to_string().trim_start_matches('_').to_owned()
         }
         _ => String::new(),
@@ -223,13 +236,24 @@ fn derived_parameter(typed: &syn::PatType, default: &str) -> syn::Ident {
     syn::Ident::new(name, proc_macro2::Span::mixed_site())
 }
 
+/// The heap parameter of the method derived from a typed operator, and the parameter of the
+/// typed body that takes it: the one the typed operator wrote, or a `_` if it left the heap out.
+fn heap_parameter(typed: Option<&syn::PatType>) -> (syn::Ident, proc_macro2::TokenStream) {
+    let closure_parameter = match typed {
+        Some(typed) => quote! { #typed },
+        None => quote! { _ },
+    };
+    (derived_parameter(typed, "heap"), closure_parameter)
+}
+
 /// The trait's method derived from `f`, if `f` is one of the methods that may be written typed
 /// and its signature is not the trait's. `None` for every other item, which stays as written.
 ///
 /// A signature is the trait's by its spelling, as `#[starlark_module]` recognises a `Value`
 /// parameter: the operand's type is named `Value` and the result's is spelled as the trait's
 /// (`Result` for `equals` and `compare`, `Option` for `add` and its like, `Result<Value>` for
-/// the other operators).
+/// the other operators). The trait's operators take the heap, which a typed one may leave out,
+/// so an operator without it is typed whatever its types are.
 pub(crate) fn derive_from_typed(
     f: &syn::ImplItemFn,
     lt: &syn::Lifetime,
@@ -255,6 +279,7 @@ pub(crate) fn derive_from_typed(
         (Shape::UnaryOperator, _) | (_, []) => false,
         (_, [operand, ..]) => is_type_name(&operand.ty, "Value"),
     };
+    let every_parameter = params.len() == method.shape.parameters();
 
     let typed = match method.shape {
         Shape::Equals | Shape::Compare => !(operand_is_value && returns_result(&sig.output)),
@@ -266,19 +291,26 @@ pub(crate) fn derive_from_typed(
                 ty => return method.error(ty, "unexpected result type"),
             },
         },
-        Shape::OperatorOrNone => match (operand_is_value, returns_option(&sig.output)) {
-            (true, true) => false,
-            (false, true) => {
-                return method.error(
-                    &sig.output,
-                    "a typed operator returns what it makes, and it is a value that is not of \
-                     the operand's type that is `None`",
-                );
+        Shape::OperatorOrNone => {
+            match (
+                operand_is_value && every_parameter,
+                returns_option(&sig.output),
+            ) {
+                (true, true) => false,
+                (false, true) => {
+                    return method.error(
+                        &sig.output,
+                        "a typed operator returns what it makes, and it is a value that is not \
+                         of the operand's type that is `None`",
+                    );
+                }
+                (_, false) => true,
             }
-            (_, false) => true,
-        },
-        Shape::Operator => !(operand_is_value && returns_result_of_value(&sig.output)),
-        Shape::UnaryOperator => !returns_result_of_value(&sig.output),
+        }
+        Shape::Operator => {
+            !(operand_is_value && every_parameter && returns_result_of_value(&sig.output))
+        }
+        Shape::UnaryOperator => !(every_parameter && returns_result_of_value(&sig.output)),
     };
     if !typed {
         return Ok(None);
@@ -315,7 +347,7 @@ pub(crate) fn derive_from_typed(
     // The call is spanned to the typed signature, which is what a bound it fails is about.
     let (derived, typing): (syn::ImplItemFn, Option<Typing>) = match (method.shape, &params[..]) {
         (Shape::Equals, [operand]) => {
-            let other = derived_parameter(operand, "other");
+            let other = derived_parameter(Some(operand), "other");
             let call = quote_spanned! { sig.span() =>
                 starlark::__derive_refs::behaviour::#glue(#other, |#operand| #output #block)
             };
@@ -328,7 +360,7 @@ pub(crate) fn derive_from_typed(
             (derived, None)
         }
         (Shape::Compare, [operand]) => {
-            let other = derived_parameter(operand, "other");
+            let other = derived_parameter(Some(operand), "other");
             let call = quote_spanned! { sig.span() =>
                 starlark::__derive_refs::behaviour::#glue(self, #other, |#operand| #output #block)
             };
@@ -347,7 +379,7 @@ pub(crate) fn derive_from_typed(
             (derived, Some(typing))
         }
         (Shape::WriteHash, [typed_hasher]) => {
-            let hasher = derived_parameter(typed_hasher, "hasher");
+            let hasher = derived_parameter(Some(typed_hasher), "hasher");
             let call = quote_spanned! { sig.span() =>
                 starlark::__derive_refs::behaviour::#glue(#hasher, |#typed_hasher| #block)
             };
@@ -362,10 +394,12 @@ pub(crate) fn derive_from_typed(
             };
             (derived, None)
         }
-        (Shape::OperatorOrNone | Shape::Operator, [operand, typed_heap]) => {
+        (Shape::OperatorOrNone | Shape::Operator, [operand, typed_heap @ ..])
+            if typed_heap.len() <= 1 =>
+        {
             let result = operator_result(&method, sig)?;
-            let other = derived_parameter(operand, "other");
-            let heap = derived_parameter(typed_heap, "heap");
+            let other = derived_parameter(Some(operand), "other");
+            let (heap, typed_heap) = heap_parameter(typed_heap.first().copied());
             // The error for a value that is not of the operand's type names the type of the
             // receiver, so the glue of an operator that answers with it takes the receiver.
             let this = (method.shape == Shape::Operator).then(|| quote! { self, });
@@ -399,9 +433,9 @@ pub(crate) fn derive_from_typed(
             };
             (derived, Some(typing))
         }
-        (Shape::UnaryOperator, [typed_heap]) => {
+        (Shape::UnaryOperator, typed_heap) if typed_heap.len() <= 1 => {
             let result = operator_result(&method, sig)?;
-            let heap = derived_parameter(typed_heap, "heap");
+            let (heap, typed_heap) = heap_parameter(typed_heap.first().copied());
             let call = quote_spanned! { sig.span() =>
                 starlark::__derive_refs::behaviour::#glue(#heap, |#typed_heap| #output #block)
             };

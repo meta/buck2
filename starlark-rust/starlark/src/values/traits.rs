@@ -757,7 +757,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// An operator is written with the operand it takes and what it makes:
     ///
     /// ```ignore
-    /// fn add(&self, other: &Self, _heap: Heap<'v>) -> Seconds {
+    /// fn add(&self, other: &Self) -> Seconds {
     ///     Seconds(self.0 + other.0)
     /// }
     /// ```
@@ -770,17 +770,19 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// * The operand is any [`UnpackValue`](crate::values::UnpackValue), as for
     ///   [`equals`](Self::equals).
     /// * The result is an [`AllocValue`](crate::values::AllocValue), which the derived method
-    ///   puts on the heap, or a `starlark::Result` of one. A body that allocates returns the
-    ///   handle it got ([`ValueOf`](crate::values::ValueOf)). The type is named, not
+    ///   puts on the heap, or a `starlark::Result` of one. The type is named, not
     ///   `impl AllocValue`: the typechecker reads it.
+    /// * A body that allocates takes the heap as its last parameter, `heap: Heap<'v>`, and
+    ///   returns the handle it got ([`ValueOf`](crate::values::ValueOf)); a body that does not
+    ///   use the heap leaves the parameter out.
     /// * A value that is not of the operand's type gets what the default of the method gives.
     ///   For `add`, `radd`, `mul` and `rmul` that is `None`, so that the other operand gets its
     ///   turn; for the other operators it is the error that the operator is not supported. A
     ///   value that is of the operand's type but does not convert is the conversion's error.
     ///
-    /// A method is taken to be written as declared here, and left as it is, when its operand's
-    /// type is spelled `Value` and its result's `Option`; for the operators that return a
-    /// `starlark::Result<Value>`, when the result is spelled so.
+    /// A method is taken to be written as declared here, and left as it is, when it takes the
+    /// heap, its operand's type is spelled `Value` and its result's `Option`; for the operators
+    /// that return a `starlark::Result<Value>`, when the result is spelled so.
     fn add(&self, _rhs: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         None
     }

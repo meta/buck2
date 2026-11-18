@@ -500,8 +500,8 @@ fn test_handle_hash() {
 }
 
 /// The operators typed: an operand of the type itself, a converted one, a union, any value;
-/// results that are made, and results that may fail. `floor_div` and `bit_not` are written as
-/// the trait declares them.
+/// results that are made, and results that may fail; with the heap and without it. `floor_div`
+/// and `bit_not` are written as the trait declares them.
 #[derive(
     Debug,
     Display,
@@ -520,11 +520,11 @@ struct NegativeSpan;
 
 #[starlark_value(type = "seconds")]
 impl<'v> StarlarkValue<'v> for Seconds {
-    fn add(&self, other: &Self, _heap: Heap<'v>) -> Seconds {
+    fn add(&self, other: &Self) -> Seconds {
         Seconds(self.0 + other.0)
     }
 
-    fn radd(&self, minutes: &str, _heap: Heap<'v>) -> starlark::Result<Seconds> {
+    fn radd(&self, minutes: &str) -> starlark::Result<Seconds> {
         let minutes: i32 = minutes.parse().map_err(starlark::Error::new_other)?;
         Ok(Seconds(minutes * 60 + self.0))
     }
@@ -533,11 +533,11 @@ impl<'v> StarlarkValue<'v> for Seconds {
         Seconds(self.0 * times)
     }
 
-    fn rmul(&self, times: i32, _heap: Heap<'v>) -> Seconds {
+    fn rmul(&self, times: i32) -> Seconds {
         Seconds(times * self.0)
     }
 
-    fn sub(&self, other: &Self, _heap: Heap<'v>) -> starlark::Result<Seconds> {
+    fn sub(&self, other: &Self) -> starlark::Result<Seconds> {
         if other.0 > self.0 {
             return Err(starlark::Error::new_other(NegativeSpan));
         }
@@ -555,6 +555,11 @@ impl<'v> StarlarkValue<'v> for Seconds {
         heap.alloc_str(&format!("{}{}", self.0, unit.to_str()))
     }
 
+    /// Without the heap this is not the trait's signature, whatever its types are.
+    fn bit_xor(&self, other: Value<'v>) -> starlark::Result<Value<'v>> {
+        Ok(other)
+    }
+
     fn floor_div(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         match other.unpack_i32() {
             Some(parts) => Ok(heap.alloc(Seconds(self.0 / parts)).to_value()),
@@ -562,15 +567,15 @@ impl<'v> StarlarkValue<'v> for Seconds {
         }
     }
 
-    fn minus(&self, _heap: Heap<'v>) -> starlark::Result<Seconds> {
+    fn minus(&self) -> starlark::Result<Seconds> {
         if self.0 > 0 {
             return Err(starlark::Error::new_other(NegativeSpan));
         }
         Ok(Seconds(0))
     }
 
-    fn plus(&self, _heap: Heap<'v>) -> i32 {
-        self.0
+    fn plus(&self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc(self.0).to_value()
     }
 
     fn bit_not(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
@@ -611,6 +616,7 @@ fn test_operators() {
         assert_eq!("2s", shown(seconds(6).div(int(3), heap)));
         assert_eq!("6min", shown(seconds(6).percent(str("min"), heap)));
         assert_eq!("2s", shown(seconds(6).floor_div(int(3), heap)));
+        assert_eq!("3", shown(seconds(6).bit_xor(int(3), heap)));
         assert_eq!("0s", shown(seconds(0).minus(heap)));
         assert_eq!("6", shown(seconds(6).plus(heap)));
         assert_eq!("-1s", shown(seconds(0).bit_not(heap)));
@@ -725,7 +731,7 @@ fn test_operator_signatures() {
     assert_eq!(Vec::<OperatorSignature>::new(), reflected(TypingBinOp::Sub));
 
     assert_eq!(Some(seconds()), unary(TypingUnOp::Minus));
-    assert_eq!(Some(Ty::int()), unary(TypingUnOp::Plus));
+    assert_eq!(Some(Ty::any()), unary(TypingUnOp::Plus));
     assert_eq!(Some(seconds()), unary(TypingUnOp::BitNot));
 }
 
@@ -770,7 +776,7 @@ impl<'v, T: Tag> StarlarkValue<'v> for Scaled<T>
 where
     Self: HasTyVTable + ProvidesStaticType<'v>,
 {
-    fn bit_and(&self, other: &Scaled<T>, _heap: Heap<'v>) -> bool {
+    fn bit_and(&self, other: &Scaled<T>) -> bool {
         self.0 == other.0
     }
 
@@ -787,7 +793,7 @@ crate::register_avalue_simple_frozen!(Scaled<ByNumber>);
 
 #[starlark_value(type = "length")]
 impl<'v> StarlarkType<'v> for LengthView<'v> {
-    fn add(&self, other: LengthView<'v>, _heap: Heap<'v>) -> Metres {
+    fn add(&self, other: LengthView<'v>) -> Metres {
         Metres(self.get() + other.get())
     }
 

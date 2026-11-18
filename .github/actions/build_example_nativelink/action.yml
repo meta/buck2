@@ -25,7 +25,8 @@ runs:
       if [[ -z ${NATIVELINK_HEADER_RW_KEY:+x} ]]; then
         echo "Missing NativeLink Api key." >&2
       else
-        $RUNNER_TEMP/artifacts/buck2 build //...
+        bash ../../../.github/scripts/report_failure.sh examples/remote_execution/nativelink \
+          "$RUNNER_TEMP/artifacts/buck2" build //...
       fi
     env:
       NATIVELINK_HEADER_RW_KEY: ${{ inputs.NATIVELINK_HEADER_RW_KEY_SECRET }}

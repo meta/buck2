@@ -275,7 +275,7 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
     fn at(&self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         // This method is disturbingly hot. Use the logic from `convert_index`,
         // but modified to be UTF8 string friendly.
-        let i = i32::unpack_param(index)?;
+        let i = i32::unpack_value_err(index)?;
         if i >= 0 {
             match fast_string::at(self, CharIndex(i as usize)) {
                 None => Err(ValueError::IndexOutOfBound(i).into()),
@@ -304,7 +304,7 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
     }
 
     fn is_in(&self, other: Value) -> crate::Result<bool> {
-        let s = <&str>::unpack_param(other)?;
+        let s = <&str>::unpack_value_err(other)?;
         Ok(fast_string::contains(self, s))
     }
 

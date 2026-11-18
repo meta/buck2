@@ -946,6 +946,28 @@ xs[xs] = xs
 }
 
 #[test]
+fn test_str_index_and_in_of_another_type() {
+    assert::fail(
+        r#"
+def at(s, i):
+    return s[i]
+
+at("abc", None)
+"#,
+        "Expected `int`, but got `NoneType",
+    );
+    assert::fail(
+        r#"
+def is_in(x, s):
+    return x in s
+
+is_in(1, "abc")
+"#,
+        "Expected `str`, but got `int",
+    );
+}
+
+#[test]
 fn test_list_slice_does_not_accept_bool() {
     // TODO(nga): this should fail.
     assert::fail("[1][False]", "Expected `int`, but got `bool");

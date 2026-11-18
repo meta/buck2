@@ -22,6 +22,9 @@ use tokio::io::AsyncWriteExt;
 enum Expected {
     /// These completions, in order.
     Lines(&'static [&'static str]),
+    /// These completions, sorted here, in any order: the shell's own completions of file names,
+    /// which bash gives in the order the directory lists them.
+    Unordered(&'static [&'static str]),
     /// Completions this accepts.
     Matches(fn(&[String]) -> bool),
 }
@@ -146,6 +149,11 @@ async fn completion_test(buck: &Buck, shell: &str, case: Case) -> anyhow::Result
             } else {
                 expected.iter().map(|i| (*i).to_owned()).collect()
             };
+            assert_eq!(actual, expected, "testing shell: {shell}");
+        }
+        Expected::Unordered(expected) => {
+            let mut actual = actual;
+            actual.sort();
             assert_eq!(actual, expected, "testing shell: {shell}");
         }
         Expected::Matches(expected) => {
@@ -427,7 +435,7 @@ all_shells_test!(
     test_default_completions_after_run_dash_dash_zsh,
     Case {
         input: "run :sometarget -- d",
-        expected: Expected::Lines(&["dir1/", "dir2/"]),
+        expected: Expected::Unordered(&["dir1/", "dir2/"]),
         ..DEFAULT
     }
 );

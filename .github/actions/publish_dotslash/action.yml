@@ -66,3 +66,19 @@ runs:
           https://raw.githubusercontent.com/facebook/dotslash-publish-release/2539c4d8ae00a42773306c8731d2dd3724d979d2/process_config.py
         "$RUNNER_TEMP/dotslash-venv/bin/python" "$RUNNER_TEMP/process_config.py" \
           --local-config --config "$CONFIG" --tag "$TAG" --upload
+    # The script runs `gh release upload` without checking its exit status. A rejected upload
+    # leaves the release without the DotSlash file, and the steps above still pass.
+    - name: Check the DotSlash files
+      shell: bash
+      env:
+        CONFIG: ${{ steps.select.outputs.config || '.github/dotslash-config.json' }}
+        GH_REPO: ${{ github.repository }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        assets=$(gh release view "$TAG" --json assets --jq '[.assets[].name]')
+        missing=$(jq -r --argjson assets "$assets" '[.outputs | keys[] | select(IN($assets[]) | not)] | join(" ")' "$CONFIG")
+        if [[ -n "$missing" ]]; then
+          echo "::error::The release $TAG has no DotSlash file for: $missing"
+          exit 1
+        fi

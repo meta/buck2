@@ -10602,6 +10602,7 @@ dependencies = [
  "inventory",
  "itertools 0.15.0",
  "maplit",
+ "memchr",
  "mini_map",
  "mini_vec",
  "num-bigint 0.5.1",

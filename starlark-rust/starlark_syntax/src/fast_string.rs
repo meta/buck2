@@ -269,19 +269,10 @@ pub fn contains(haystack: &str, needle: &str) -> bool {
     } else if haystack.len() < needle.len() {
         false
     } else {
-        assert!(haystack.len() >= needle.len());
-        // `str::contains` is very slow for short strings.
-        // So use basic quadratic algorithm instead.
-        let needle_0 = needle.as_bytes()[0];
-        for start in 0..=haystack.len() - needle.len() {
-            if haystack.as_bytes()[start] != needle_0 {
-                continue;
-            }
-            if haystack.as_bytes()[start..].starts_with(needle.as_bytes()) {
-                return true;
-            }
-        }
-        false
+        // `str::contains` is very slow for short strings, but a naive search is
+        // quadratic in the worst case. `memmem::find` is linear and has a cheap
+        // path for short haystacks.
+        memchr::memmem::find(haystack.as_bytes(), needle.as_bytes()).is_some()
     }
 }
 

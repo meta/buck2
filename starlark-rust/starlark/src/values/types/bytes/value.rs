@@ -238,10 +238,7 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
             if needle.is_empty() {
                 return Ok(true);
             }
-            Ok(self
-                .content
-                .windows(needle.len())
-                .any(|window| window == needle.as_ref()))
+            Ok(memchr::memmem::find(&self.content, needle).is_some())
         } else {
             Err(crate::Error::new_other(anyhow::anyhow!(
                 "argument to 'in bytes' must be an int or bytes, not '{}'",

@@ -10,7 +10,6 @@ load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
 load("@prelude//rust:arch_action.bzl", "rust_arch_program_action")
 load(
     "@prelude//rust:rust_toolchain.bzl",
-    "RustArchToolchainInfo",
     "RustToolchainInfo",
     "get_rust_arch_toolchain_info",
 )
@@ -18,7 +17,7 @@ load(
 def _get_rustc_cfg_impl(ctx: AnalysisContext) -> list[Provider]:
     toolchain = ctx.attrs._rust_toolchain
     toolchain_info = toolchain[RustToolchainInfo]
-    arch_info = get_rust_arch_toolchain_info(ctx.attrs.multi_arch_toolchain, ctx.label)
+    arch_info = get_rust_arch_toolchain_info(toolchain, ctx.label)
 
     out = ctx.actions.declare_output("rustc.cfg", has_content_based_path = True)
 
@@ -72,10 +71,6 @@ get_rustc_cfg = rule(
     impl = _get_rustc_cfg_impl,
     attrs = {
         "enable_nightly_cfgs": attrs.bool(default = False),
-        "multi_arch_toolchain": attrs.option(
-            attrs.dep(providers = [RustArchToolchainInfo]),
-            default = None,
-        ),
         "_rust_toolchain": toolchains_common.rust(),
     },
 )
@@ -83,36 +78,27 @@ get_rustc_cfg = rule(
 def _get_rustc_host_tuple_impl(ctx: AnalysisContext) -> list[Provider]:
     toolchain = ctx.attrs._rust_toolchain
     toolchain_info = toolchain[RustToolchainInfo]
-    arch_info = get_rust_arch_toolchain_info(ctx.attrs.multi_arch_toolchain, ctx.label)
+    if get_rust_arch_toolchain_info(toolchain, ctx.label) != None:
+        fail(
+            "{} targets a dual-arch toolchain, which has no single host tuple; consume the per-arch RustArchToolchainVariant.arch_triple instead".format(
+                ctx.label
+            )
+        )
 
     out = ctx.actions.declare_output("rustc.host_tuple", has_content_based_path = True)
 
-    if arch_info == None:
-        cmd = [
-            toolchain_info.compiler,
-            cmd_args("--print=host-tuple=", out.as_output(), delimiter = ""),
-        ]
-        ctx.actions.run(cmd, category = "rustc_host_tuple")
-    else:
-        # Host tuple is host-dependent, identical for all arch variants (they
-        # execute on the same host). Run one variant's compiler to query it.
-        sorted_arches = sorted(arch_info.arch_variants.keys())
-        variant = arch_info.arch_variants[sorted_arches[0]]
-        cmd = [
-            variant.compiler,
-            cmd_args("--print=host-tuple=", out.as_output(), delimiter = ""),
-        ]
-        ctx.actions.run(cmd, category = "rustc_host_tuple")
+    cmd = [
+        toolchain_info.compiler,
+        cmd_args("--print=host-tuple=", out.as_output(), delimiter = ""),
+    ]
+
+    ctx.actions.run(cmd, category = "rustc_host_tuple")
 
     return [DefaultInfo(default_output = out)]
 
 get_rustc_host_tuple = rule(
     impl = _get_rustc_host_tuple_impl,
     attrs = {
-        "multi_arch_toolchain": attrs.option(
-            attrs.dep(providers = [RustArchToolchainInfo]),
-            default = None,
-        ),
         "_rust_toolchain": toolchains_common.rust(),
     },
 )

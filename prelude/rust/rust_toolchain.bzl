@@ -73,11 +73,10 @@ def require_rust_arch_variants(arch_variants: dict[str, typing.Any], owner: typi
         fail("{} must provide exactly Rust arch variants {}; missing {}, extra {}".format(owner, RUST_ARCH_VARIANTS, missing, extra))
     return arch_variants
 
-def get_rust_arch_toolchain_info(multi_arch_toolchain: Dependency | None, owner: typing.Any) -> RustArchToolchainInfo | None:
-    if multi_arch_toolchain == None:
-        return None
-    arch_info = multi_arch_toolchain[RustArchToolchainInfo]
-    require_rust_arch_variants(arch_info.arch_variants, owner)
+def get_rust_arch_toolchain_info(toolchain: Dependency, owner: typing.Any) -> RustArchToolchainInfo | None:
+    arch_info = toolchain.get(RustArchToolchainInfo)
+    if arch_info != None:
+        require_rust_arch_variants(arch_info.arch_variants, owner)
     return arch_info
 
 # FIXME(JakobDegen): These all have default values for historical reasons. Some of them certainly

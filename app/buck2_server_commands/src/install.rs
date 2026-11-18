@@ -29,6 +29,7 @@ use buck2_artifact::actions::key::ActionKey;
 use buck2_artifact::artifact::artifact_dyn::ArtifactDyn;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use buck2_build_api::actions::graph_recorder::with_graph_recording;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::build_signals::HasBuildSignals;
@@ -231,6 +232,17 @@ fn install_id(installed_target: &ConfiguredTargetLabel) -> String {
 }
 
 async fn install(
+    server_ctx: &dyn ServerCommandContextTrait,
+    ctx: DiceTransaction,
+    request: &InstallRequest,
+) -> buck2_error::Result<InstallResponse> {
+    with_graph_recording(ctx.dupe(), install_inner(server_ctx, ctx, request), |_| {
+        None
+    })
+    .await
+}
+
+async fn install_inner(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
     request: &InstallRequest,

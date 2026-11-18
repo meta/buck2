@@ -17,6 +17,7 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use buck2_build_api::actions::graph_recorder::with_graph_recording;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::build::AsyncBuildTargetResultBuilder;
 use buck2_build_api::build::BuildConfiguredLabelOptions;
@@ -371,6 +372,23 @@ impl ServerCommandTemplate for TestServerCommand {
 }
 
 async fn test(
+    server_ctx: &dyn ServerCommandContextTrait,
+    ctx: DiceTransaction,
+    request: &TestRequest,
+) -> buck2_error::Result<TestResponse> {
+    with_graph_recording(
+        ctx.dupe(),
+        test_inner(server_ctx, ctx, request),
+        |response| {
+            // Test failures don't make the graph incomplete; build errors do.
+            (!response.build_errors.is_empty())
+                .then_some(buck2_data::action_graph_footer::Incomplete::BuildFailed)
+        },
+    )
+    .await
+}
+
+async fn test_inner(
     server_ctx: &dyn ServerCommandContextTrait,
     ctx: DiceTransaction,
     request: &TestRequest,

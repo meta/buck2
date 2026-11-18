@@ -12,6 +12,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::filter_events;
+use buck2_e2e::utils::json_get;
 use buck2_e2e::utils::read_timestamps;
 
 /// Copy pre-built installer binaries into the sandbox project directory.
@@ -57,6 +59,33 @@ async fn test_success_install(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()
     assert!(tmp_dir.join("artifact_b").exists());
     assert!(tmp_dir.join("etc_hosts").exists());
     assert!(!tmp_dir.join("etc_hosts").is_symlink());
+    Ok(())
+}
+
+#[buck_test]
+async fn test_install_records_the_action_graph(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
+    setup_sandbox(buck)?;
+    let (_tmp_dir, dst) = install_dir(tmp_path)?;
+    buck.install(&[
+        "root//:installer_test",
+        "--log-action-graph",
+        "--",
+        "--dst",
+        &dst,
+    ])
+    .await?;
+    let footers = filter_events(
+        buck,
+        &["Event", "data", "Instant", "data", "ActionGraphFooter"],
+    )
+    .await?;
+    let [footer] = footers.as_slice() else {
+        anyhow::bail!("Expected one action graph footer, got {footers:?}");
+    };
+    assert!(
+        json_get(footer, &["incomplete"]).is_none(),
+        "An install that succeeds should record a complete graph: {footer}"
+    );
     Ok(())
 }
 

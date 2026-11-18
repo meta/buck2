@@ -310,3 +310,16 @@ async fn test_complete_build_is_complete(buck: &Buck) -> anyhow::Result<()> {
     assert_eq!(stats["integrity"], json!([]));
     Ok(())
 }
+
+#[buck_test]
+async fn test_bxl_writes_a_footer(buck: &Buck) -> anyhow::Result<()> {
+    buck.bxl(&["//graph.bxl:main", "--log-action-graph"])
+        .await?;
+    let start = graph_event(buck, "ActionGraphStart").await?;
+    let footer = graph_event(buck, "ActionGraphFooter").await?;
+    assert_eq!(start["schema"], 1);
+    assert_eq!(footer["schema"], 1);
+    assert_eq!(footer["action_ends"], 2);
+    assert!(json_get(&footer, &["incomplete"]).is_none());
+    Ok(())
+}

@@ -1,0 +1,11 @@
+load(":defs.bzl", "graph_test")
+
+graph_test(
+    name = "passing",
+    exit_code = 0,
+)
+
+graph_test(
+    name = "failing",
+    exit_code = 1,
+)

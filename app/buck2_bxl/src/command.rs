@@ -14,6 +14,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use buck2_build_api::actions::graph_recorder::with_graph_recording;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::build::build_report::BuildReportOpts;
 use buck2_build_api::build::build_report::write_bxl_build_report;
@@ -108,8 +109,16 @@ impl ServerCommandTemplate for BxlServerCommand {
         mut partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
     ) -> buck2_error::Result<Self::Response> {
-        self.execute(server_ctx, partial_result_dispatcher.as_writer(), ctx)
-            .await
+        let work = self.execute(
+            server_ctx,
+            partial_result_dispatcher.as_writer(),
+            ctx.dupe(),
+        );
+        with_graph_recording(ctx, work, |response| {
+            (!response.errors.is_empty())
+                .then_some(buck2_data::action_graph_footer::Incomplete::BuildFailed)
+        })
+        .await
     }
 }
 

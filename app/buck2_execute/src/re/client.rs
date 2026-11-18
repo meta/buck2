@@ -314,9 +314,12 @@ impl RemoteExecutionClient {
         identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<UploadStats> {
         // Actually upload to CAS
+        let start = Instant::now();
         let _cas = self.data.client.cas_semaphore.acquire().await;
+        let slot_wait = Instant::now() - start;
 
-        self.data
+        let mut stats = self
+            .data
             .uploads
             .op(Uploader::upload(
                 fs,
@@ -328,7 +331,9 @@ impl RemoteExecutionClient {
                 use_case,
                 identity,
             ))
-            .await
+            .await?;
+        stats.phases.slot_wait = slot_wait;
+        Ok(stats)
     }
 
     /// Uploads whichever of `blobs` the CAS does not hold, as `upload` does for an action's

@@ -121,15 +121,7 @@ impl ReExecutor {
                 )
                 .await;
             match res {
-                Ok(stats) => (
-                    Ok(()),
-                    buck2_data::ReUploadEnd {
-                        digests_uploaded: Some(stats.total.digests_uploaded),
-                        bytes_uploaded: Some(stats.total.bytes_uploaded),
-                        stats_by_extension: stats.by_extension,
-                        stats: None,
-                    },
-                ),
+                Ok(stats) => (Ok(()), stats.to_proto()),
                 Err(e) => (Err(e), buck2_data::ReUploadEnd::default()),
             }
         })

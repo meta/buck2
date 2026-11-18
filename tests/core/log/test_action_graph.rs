@@ -57,6 +57,29 @@ async fn graph_event(buck: &Buck, name: &str) -> anyhow::Result<Value> {
     Ok(event.clone())
 }
 
+/// The records `buck2 log graph` exports from the last command's log.
+async fn graph(buck: &Buck) -> anyhow::Result<Vec<Value>> {
+    let out = buck.log(&["graph"]).await?;
+    out.stdout
+        .lines()
+        .map(|line| serde_json::from_str(line).with_context(|| format!("Parsing `{line}`")))
+        .collect()
+}
+
+/// The last record, which holds the export's statistics.
+fn stats(records: &[Value]) -> anyhow::Result<&Value> {
+    records.last().context("No records")
+}
+
+/// The records of `kind`, keyed by category.
+fn by_category<'a>(records: &'a [Value], kind: &str) -> BTreeMap<&'a str, &'a Value> {
+    records
+        .iter()
+        .filter(|r| r["kind"] == kind)
+        .map(|r| (r["category"].as_str().unwrap_or_default(), r))
+        .collect()
+}
+
 #[buck_test]
 async fn test_edges_join_by_span_id(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["//:copy", "--log-action-graph"]).await?;
@@ -126,5 +149,33 @@ async fn test_no_start_or_footer_without_the_flag(buck: &Buck) -> anyhow::Result
     buck.build(&["//:copy"]).await?;
     assert!(graph_events(buck, "ActionGraphStart").await?.is_empty());
     assert!(graph_events(buck, "ActionGraphFooter").await?.is_empty());
+    Ok(())
+}
+
+#[buck_test]
+async fn test_log_graph_exports_the_recorded_graph(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:copy", "--log-action-graph"]).await?;
+    let records = graph(buck).await?;
+    assert_eq!(records[0]["kind"], "header");
+    let actions = by_category(&records, "action");
+    assert_eq!(actions["copy"]["deps"], json!([actions["write"]["span"]]));
+    let stats = stats(&records)?;
+    assert_eq!(stats["kind"], "stats");
+    assert_eq!(
+        json!([stats["actions"], stats["edges"], stats["dangling"]]),
+        json!([2, 1, 0])
+    );
+    assert_eq!(stats["schema"], 1);
+    assert_eq!(stats["footer"]["action_ends"], 2);
+    Ok(())
+}
+
+#[buck_test]
+async fn test_log_graph_refuses_an_unrecorded_log(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["//:copy"]).await?;
+    buck.log(&["graph"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("no recorded action graph");
     Ok(())
 }

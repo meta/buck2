@@ -23,6 +23,7 @@ use dupe::Dupe;
 mod critical_path;
 mod diff;
 mod external_configs;
+mod graph;
 pub(crate) mod path_log;
 mod replay;
 mod shed;
@@ -130,6 +131,8 @@ pub enum LogCommand {
     WhatMaterialized(what_materialized::WhatMaterializedCommand),
     WhatUploaded(what_uploaded::WhatUploadedCommand),
     CriticalPath(critical_path::CriticalPathCommand),
+    #[clap(hide = true)]
+    Graph(graph::GraphCommand),
     SlowestPath(critical_path::SlowestPathCommand),
     Replay(replay::ReplayCommand),
     Snoop(snoop::SnoopCommand),
@@ -166,6 +169,7 @@ impl LogCommand {
             Self::WhatMaterialized(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::WhatUploaded(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::CriticalPath(cmd) => ctx.exec(cmd, matches, events_ctx),
+            Self::Graph(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::SlowestPath(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::Replay(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::Snoop(cmd) => ctx.exec(cmd, matches, events_ctx),
@@ -195,6 +199,7 @@ impl LogCommand {
             Self::WhatMaterialized(cmd) => cmd.logging_name(),
             Self::WhatUploaded(cmd) => cmd.logging_name(),
             Self::CriticalPath(cmd) => cmd.logging_name(),
+            Self::Graph(cmd) => cmd.logging_name(),
             Self::SlowestPath(cmd) => cmd.logging_name(),
             Self::Replay(cmd) => cmd.logging_name(),
             Self::Snoop(cmd) => cmd.logging_name(),

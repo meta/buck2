@@ -2217,21 +2217,49 @@ fn with_re_metadata<T>(
             .insert_bin("re-metadata-bin", MetadataValue::from_bytes(&encoded));
     } else {
         let mut encoded = Vec::new();
+        let RemoteExecutionMetadata {
+            correlated_invocations_id,
+            buck_info,
+            action_id,
+            action_mnemonic,
+            target_id,
+            configuration_id,
+            ..
+        } = metadata.clone();
+
+        let correlated_invocations_id = correlated_invocations_id
+            .filter(|id| !id.is_empty())
+            .or_else(|| {
+                buck_info
+                    .as_ref()
+                    .map(|b| b.build_id.clone())
+                    .filter(|id| !id.is_empty())
+            })
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        let (tool_invocation_id, tool_version) = match buck_info {
+            Some(buck_info) => {
+                let tool_version = if buck_info.version.is_empty() {
+                    "dev".to_owned()
+                } else {
+                    buck_info.version
+                };
+                (buck_info.build_id, tool_version)
+            }
+            None => (String::new(), "dev".to_owned()),
+        };
+
         RequestMetadata {
             tool_details: Some(ToolDetails {
                 tool_name: "buck2".to_owned(),
-                // TODO(#503): Pull the BuckVersion::get_unique_id() from BuckDaemon
-                tool_version: "0.1.0".to_owned(),
+                tool_version,
             }),
-            action_id: "".to_owned(),
-            tool_invocation_id: metadata
-                .buck_info
-                .as_ref()
-                .map_or(String::new(), |buck_info| buck_info.build_id.clone()),
-            correlated_invocations_id: "".to_owned(),
-            action_mnemonic: "".to_owned(),
-            target_id: "".to_owned(),
-            configuration_id: "".to_owned(),
+            action_id: action_id.unwrap_or_default(),
+            tool_invocation_id,
+            correlated_invocations_id,
+            action_mnemonic: action_mnemonic.unwrap_or_default(),
+            target_id: target_id.unwrap_or_default(),
+            configuration_id: configuration_id.unwrap_or_default(),
         }
         .encode(&mut encoded)
         .expect("Encoding into a Vec cannot not fail");

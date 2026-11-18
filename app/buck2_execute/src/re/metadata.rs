@@ -30,15 +30,20 @@ impl RemoteExecutionMetadataExt for RemoteExecutorUseCase {
         RemoteExecutionMetadata {
             use_case_id: self.as_str().to_owned(),
             buck_info: Some(BuckInfo {
-                build_id: trace_id,
+                build_id: trace_id.clone(),
                 ..Default::default()
             }),
+            correlated_invocations_id: Some(trace_id),
             action_history_info: identity.map(|identity| ActionHistoryInfo {
                 action_key: identity.action_key.clone(),
                 disable_retry_on_oom: false,
                 ..Default::default()
             }),
             disable_cancel_on_disconnect: true,
+            action_id: identity.and_then(|identity| identity.action_id.clone()),
+            action_mnemonic: identity.and_then(|identity| identity.action_mnemonic.clone()),
+            target_id: identity.and_then(|identity| identity.target_label.clone()),
+            configuration_id: identity.and_then(|identity| identity.configuration_hash.clone()),
             ..Default::default()
         }
     }

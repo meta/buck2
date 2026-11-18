@@ -43,5 +43,10 @@ pub struct RemoteExecutionMetadata {
     pub respect_file_symlinks: Option<bool>,
     pub client_context: Option<TClientContextMetadata>,
     pub disable_cancel_on_disconnect: bool,
+    pub action_id: Option<String>,
+    pub action_mnemonic: Option<String>,
+    pub target_id: Option<String>,
+    pub configuration_id: Option<String>,
+    pub correlated_invocations_id: Option<String>,
     pub _dot_dot: (),
 }

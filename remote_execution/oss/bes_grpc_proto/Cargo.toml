@@ -1,0 +1,18 @@
+[package]
+description = "BES protobufs used by Buck2 remote event sink"
+edition = "2024"
+license = { workspace = true }
+name = "bes_grpc_proto"
+repository = { workspace = true }
+version = "0.1.0"
+
+[dependencies]
+prost = { workspace = true }
+prost-types = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+
+google_grpc_proto = { path = "../google_grpc_proto" }
+
+[build-dependencies]
+buck2_protoc_dev = { workspace = true }

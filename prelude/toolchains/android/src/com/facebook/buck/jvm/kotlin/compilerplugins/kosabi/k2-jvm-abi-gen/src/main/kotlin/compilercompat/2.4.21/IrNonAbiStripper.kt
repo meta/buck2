@@ -800,10 +800,19 @@ internal class NonAbiDeclarationsStrippingIrVisitor(
 
   override fun visitSimpleFunction(declaration: IrSimpleFunction): IrStatement {
     if (declaration in keptInlineBodies) {
-      // Callers inline this body from the ABI: leave it, and the lambdas in it, unchanged.
+      // Callers inline this body from the ABI: leave it, and the lambdas in it, unchanged. The
+      // `$default` bridge is built from the parameter defaults that [InlineBodyStage] restored,
+      // so a lambda in a default (`noinline block: () -> Any = { "" }`) is left alone too.
       val body = declaration.body
+      val defaults = declaration.compatValueParameters.map { it.defaultValue }
       declaration.body = null
-      return super.visitSimpleFunction(declaration).also { declaration.body = body }
+      declaration.compatValueParameters.forEach { it.defaultValue = null }
+      return super.visitSimpleFunction(declaration).also {
+        declaration.body = body
+        declaration.compatValueParameters.forEachIndexed { index, parameter ->
+          parameter.defaultValue = defaults[index]
+        }
+      }
     }
     // Members of a kept-but-dropped interface cannot carry implementations: the JVM
     // backend moves interface bodies to DefaultImpls and crashes on the emptied

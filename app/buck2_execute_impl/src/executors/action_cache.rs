@@ -110,8 +110,13 @@ async fn query_action_cache_and_download_result(
             ),
         },
         async {
+            let mut timings = buck2_data::CacheQueryTimings::default();
             let result = re_client
-                .action_cache(digest.dupe(), &command.prepared_action.platform)
+                .action_cache(
+                    digest.dupe(),
+                    &command.prepared_action.platform,
+                    &mut timings,
+                )
                 .await;
             let end = buck2_data::ExecutorStageEnd {
                 cache_query_error: result.as_ref().err().map(|e| buck2_data::CacheQueryError {
@@ -120,6 +125,7 @@ async fn query_action_cache_and_download_result(
                         .find_typed_context::<RemoteExecutionError>()
                         .map(|re_err| re_err.code.to_string()),
                 }),
+                cache_query: Some(timings),
                 ..Default::default()
             };
             (result, end)

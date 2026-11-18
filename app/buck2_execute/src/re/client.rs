@@ -9,6 +9,7 @@
  */
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
@@ -29,6 +30,7 @@ use buck2_data::ReQueueAcquiringDependencies;
 use buck2_data::ReQueueCancelled;
 use buck2_data::ReQueueNoWorkerAvailable;
 use buck2_data::ReQueueOverQuota;
+use buck2_data::timing::Micros;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::buck2_error;
@@ -214,6 +216,24 @@ fn map_casd_mode_into_remote_fetch_policy(casd_mode: &CASdMode) -> RemoteFetchPo
     }
 }
 
+/// Runs `operation` while holding a slot from `semaphore`, recording the wait for the slot and the
+/// time the operation took.
+async fn timed_cache_lookup<F: Future>(
+    semaphore: &Semaphore,
+    timings: &mut buck2_data::CacheQueryTimings,
+    operation: impl FnOnce() -> F,
+) -> F::Output {
+    let start = Instant::now();
+    let _slot = semaphore.acquire().await;
+    let admitted = Instant::now();
+    timings.slot_wait_us = Micros::from(admitted - start).into();
+    // `operation` is only called here because `OpStats::op` counts an operation as started when
+    // the future is created.
+    let result = operation().await;
+    timings.remote_lookup_us = Micros::from(Instant::now() - admitted).into();
+    result
+}
+
 impl RemoteExecutionClient {
     pub async fn new(re_config: &RemoteExecutionConfig) -> buck2_error::Result<Self> {
         if buck2_env!("BUCK2_TEST_FAIL_CONNECT", bool, applicability = testing)? {
@@ -291,16 +311,17 @@ impl RemoteExecutionClient {
         metadata: &RemoteExecutionMetadata,
         use_case: RemoteExecutorUseCase,
         platform: &RE::Platform,
+        timings: &mut buck2_data::CacheQueryTimings,
     ) -> buck2_error::Result<Option<ActionResultResponse>> {
-        let _ac = self.data.client.action_cache_semaphore.acquire().await;
-
-        self.data
-            .action_cache
-            .op(self
-                .data
-                .client
-                .action_cache(action_digest, metadata, use_case, platform))
-            .await
+        timed_cache_lookup(&self.data.client.action_cache_semaphore, timings, || {
+            self.data.action_cache.op(self.data.client.action_cache(
+                action_digest,
+                metadata,
+                use_case,
+                platform,
+            ))
+        })
+        .await
     }
 
     pub async fn upload(

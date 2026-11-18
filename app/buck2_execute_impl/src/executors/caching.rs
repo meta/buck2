@@ -271,6 +271,8 @@ impl CacheUploader {
                             .action_cache(
                                 remote_dep_file_action.action,
                                 &self.platform.to_re_platform(),
+                                // Not the action's cache query, so its timings aren't reported.
+                                &mut buck2_data::CacheQueryTimings::default(),
                             )
                             .await,
                         Ok(Some(_))

@@ -80,9 +80,11 @@ impl WriteActionCache for ReWriteActionCache {
         &self,
         action: &ActionDigestAndBlobs,
     ) -> buck2_error::Result<Option<TActionResult2>> {
+        // A write's lookup has no cache-query span to report its timings in.
+        let mut timings = buck2_data::CacheQueryTimings::default();
         let response = self
             .re_client
-            .action_cache(action.action, &self.platform.to_re_platform())
+            .action_cache(action.action, &self.platform.to_re_platform(), &mut timings)
             .await?;
         Ok(response.map(|response| response.action_result))
     }

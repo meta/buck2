@@ -77,3 +77,32 @@ stat_path = rule(
         "project": attrs.option(attrs.string(), default = None),
     },
 )
+
+_SYMLINK_DIR = """
+import os
+import sys
+
+root = sys.argv[1]
+os.makedirs(os.path.join(root, "d"))
+with open(os.path.join(root, "x"), "w") as f:
+    f.write("x")
+os.symlink(".", os.path.join(root, "here"))
+os.symlink("./", os.path.join(root, "dotslash"))
+os.symlink("../x", os.path.join(root, "d", "here"))
+"""
+
+def _symlink_dir_impl(ctx: AnalysisContext):
+    out = ctx.actions.declare_output("out", dir = True, has_content_based_path = ctx.attrs.has_content_based_path)
+    ctx.actions.run(
+        cmd_args("fbpython", "-c", _SYMLINK_DIR, out.as_output()),
+        category = "symlink_dir",
+        local_only = True,
+    )
+    return [DefaultInfo(default_output = out)]
+
+symlink_dir = rule(
+    impl = _symlink_dir_impl,
+    attrs = {
+        "has_content_based_path": attrs.bool(default = True),
+    },
+)

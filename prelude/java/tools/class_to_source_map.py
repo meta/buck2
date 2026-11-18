@@ -9,8 +9,14 @@
 from __future__ import annotations
 
 import os
+import shutil
+import stat
 import zipfile
 from collections.abc import Callable, Iterable
+
+# Entries get a fixed date and mode, so the jar depends only on the sources' contents.
+_FIXED_DATE_TIME = (1985, 2, 1, 0, 0, 0)
+_FILE_MODE = stat.S_IFREG | 0o644
 
 
 def _source_stem(source_path: str) -> str:
@@ -71,7 +77,14 @@ def write_sources_jar(classes: Iterable[dict[str, str]], output: str) -> None:
             archive_path = (
                 package_dir + "/" + source_name if package_dir else source_name
             )
-            sources_jar.write(source_path, archive_path)
+            entry_info = zipfile.ZipInfo(archive_path, date_time=_FIXED_DATE_TIME)
+            entry_info.compress_type = sources_jar.compression
+            entry_info.create_system = 3  # Unix, for the mode in external_attr.
+            entry_info.external_attr = _FILE_MODE << 16
+            with open(source_path, "rb") as source:
+                entry_info.file_size = os.fstat(source.fileno()).st_size
+                with sources_jar.open(entry_info, "w") as dest:
+                    shutil.copyfileobj(source, dest, length=8 * 1024)
 
 
 def build_class_entries(

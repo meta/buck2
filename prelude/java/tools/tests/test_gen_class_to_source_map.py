@@ -9,6 +9,7 @@
 
 import io
 import json
+import os
 import pathlib
 import tempfile
 import unittest
@@ -339,6 +340,43 @@ class GenClassToSourceMapTest(unittest.TestCase):
         self.assertEqual(
             shared_contents, "interface DatError\ninternal class DatErrorImpl\n"
         )
+
+    def test_sources_jar_ignores_source_mtime_and_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = pathlib.Path(temp_dir)
+            source = directory / "Feature.kt"
+            source.write_text("class Feature\n")
+
+            def sources_jar_bytes(name: str) -> bytes:
+                sources_jar = directory / name
+                self._generate(
+                    directory,
+                    jar_classes=["com.example.Feature"],
+                    sources=[source],
+                    debuginfo=[
+                        {
+                            "file_path": str(source),
+                            "classes": [{"name": "com.example.Feature"}],
+                        }
+                    ],
+                    sources_jar=str(sources_jar),
+                )
+                return sources_jar.read_bytes()
+
+            os.utime(source, (1_700_000_000, 1_700_000_000))
+            source.chmod(0o644)
+            first = sources_jar_bytes("first.jar")
+            # Remote execution materializes inputs with a new mtime and read-only.
+            os.utime(source, (1_800_000_000, 1_800_000_000))
+            source.chmod(0o444)
+            second = sources_jar_bytes("second.jar")
+
+        self.assertEqual(first, second)
+        with zipfile.ZipFile(io.BytesIO(first)) as jar:
+            entry = jar.getinfo("com/example/Feature.kt")
+            self.assertEqual(entry.date_time, (1985, 2, 1, 0, 0, 0))
+            self.assertEqual(entry.create_system, 3)
+            self.assertEqual(entry.external_attr >> 16, 0o100644)
 
     def test_defaults_output_to_stdout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

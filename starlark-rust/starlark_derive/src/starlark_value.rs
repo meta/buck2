@@ -492,10 +492,9 @@ impl ImplStarlarkValue {
         })
     }
 
-    /// `fn bin_op_signatures()`, unless the block writes it or the verdict that stands in for
-    /// it.
+    /// `fn bin_op_signatures()`, unless the block writes it.
     fn bin_op_signatures(&self, typed: &TypedMethods) -> Option<syn::ImplItem> {
-        if self.has_fn("bin_op_signatures") || self.has_fn("bin_op_ty") {
+        if self.has_fn("bin_op_signatures") {
             return None;
         }
         Self::operator_signatures(

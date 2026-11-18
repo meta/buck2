@@ -61,7 +61,6 @@ use crate::eval::Evaluator;
 use crate::private::Private;
 use crate::typing::OperatorSignature;
 use crate::typing::Ty;
-use crate::typing::TyBasic;
 use crate::typing::TypingBinOp;
 use crate::typing::TypingUnOp;
 use crate::values::FreezeDynamic;
@@ -983,15 +982,6 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
         None
     }
 
-    /// The typing of `this op rhs` as a verdict on one type of `rhs`, which takes the place
-    /// of [`bin_op_signatures`](Self::bin_op_signatures) where it is written. A verdict
-    /// cannot ask the typechecker whether two types intersect, so it compares `rhs` with the
-    /// types it knows; write the signatures instead.
-    #[doc(hidden)]
-    fn bin_op_ty(_op: TypingBinOp, _rhs: &TyBasic) -> Option<Ty> {
-        None
-    }
-
     /// Called when exporting a value under a specific name,
     fn export_as(
         &self,
@@ -1073,11 +1063,6 @@ pub trait StarlarkValue<'v>:
     /// [`StarlarkType::attr_ty`] of [`Type`](Self::Type).
     fn attr_ty(name: &str) -> Option<Ty> {
         <Self::Type as StarlarkType<'v>>::attr_ty(name)
-    }
-
-    /// [`StarlarkType::bin_op_ty`] of [`Type`](Self::Type).
-    fn bin_op_ty(op: TypingBinOp, rhs: &TyBasic) -> Option<Ty> {
-        <Self::Type as StarlarkType<'v>>::bin_op_ty(op, rhs)
     }
 
     /// Please do not implement this method or `get_type`,

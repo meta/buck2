@@ -380,12 +380,6 @@ impl TyStarlarkValue {
         rhs: &TyBasic,
         oracle: &TypingOracleCtx,
     ) -> Result<Ty, TypingNoContextOrInternalError> {
-        if self.vtable.vtable.HAS_bin_op_ty {
-            return match (self.vtable.vtable.bin_op_ty)(op, rhs) {
-                Some(ty) => Ok(ty),
-                None => Err(TypingNoContextOrInternalError::Typing),
-            };
-        }
         oracle.operator_result((self.vtable.vtable.bin_op_signatures)(op), rhs)
     }
 

@@ -131,3 +131,43 @@ fn symlink_dir(target: &str, link: &std::path::Path) -> std::io::Result<()> {
     // As Python's `os.symlink`, which makes a file symlink unless told otherwise.
     std::os::windows::fs::symlink_file(target, link)
 }
+
+#[buck_test]
+async fn test_typecheck_bundled_cell(buck: &Buck) -> anyhow::Result<()> {
+    // Bundled cells have no files on disk. Typechecking a project file that loads a bundled
+    // cell fails with `File not found ... (internal error)`, and typechecking a bundled file
+    // directly fails with `... does not exist`: both reads go straight off disk.
+    buck.starlark(&["typecheck", "uses_prelude.bzl"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("File not found");
+    buck.starlark(&["typecheck", "nano_prelude/prelude.bzl"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("does not exist");
+    Ok(())
+}
+
+#[buck_test]
+async fn test_lint_bundled_cell(buck: &Buck) -> anyhow::Result<()> {
+    // A bundled cell has no directory on disk. Linting the cell fails with `... does not
+    // exist` instead of listing its materialized files.
+    buck.starlark(&["lint", "nano_prelude"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("does not exist");
+    Ok(())
+}
+
+#[buck_test]
+async fn test_lint_nested_cell(buck: &Buck) -> anyhow::Result<()> {
+    // A directory walk descends into nested on-disk cells: linting the project root reports
+    // lints from files in the nested cell too.
+    let failure = buck.starlark(&["lint", "."]).await.expect_failure();
+    assert!(
+        failure.stdout.contains("nested_warning"),
+        "{}",
+        failure.stdout
+    );
+    Ok(())
+}

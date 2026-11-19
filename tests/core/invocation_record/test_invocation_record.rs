@@ -165,6 +165,28 @@ async fn test_client_metadata_env(buck: &Buck) -> anyhow::Result<()> {
 }
 
 #[buck_test(skip_for_os = ["windows"], write_invocation_record = true)]
+async fn test_client_metadata_env_without_daemon(buck: &Buck) -> anyhow::Result<()> {
+    let res = buck
+        .command(&["kill", "--client-metadata=id=baz"])
+        .env("BUCK2_CLIENT_METADATA", "id=foobar")
+        .await?;
+    res.assert_stderr_matches("no buckd server running");
+
+    let record = res.invocation_record()?;
+
+    assert_eq!(
+        record["client_metadata"],
+        json!([
+            {"key": "id", "value": "foobar"},
+            {"key": "id", "value": "baz"},
+        ])
+    );
+
+    assert_eq!(record["metadata"]["strings"]["client"], "baz");
+    Ok(())
+}
+
+#[buck_test(skip_for_os = ["windows"], write_invocation_record = true)]
 async fn test_agent_context_from_env(buck: &Buck) -> anyhow::Result<()> {
     let res = buck
         .build(&[])

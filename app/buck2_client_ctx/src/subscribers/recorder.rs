@@ -586,7 +586,7 @@ impl InvocationRecorder {
         if let Some(client_id_from_client_metadata) = ctx
             .client_metadata
             .iter()
-            .find(|m| m.key == "id")
+            .rfind(|m| m.key == "id")
             .map(|m| m.value.clone())
         {
             self.metadata.insert(

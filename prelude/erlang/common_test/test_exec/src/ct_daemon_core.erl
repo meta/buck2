@@ -12,10 +12,6 @@ Stateless Core functionality for ct_daemon
 """.
 -compile(warn_missing_spec_all).
 
--include_lib("common/include/tpx_records.hrl").
--include_lib("common/include/buck_ct_records.hrl").
--include_lib("kernel/include/logger.hrl").
-
 %% Public API
 -export([
     test_suites/0,
@@ -28,6 +24,12 @@ Stateless Core functionality for ct_daemon
 -export([
     path_timetrap/1
 ]).
+
+-export_type([reason/0, run_result/0, setup/0]).
+
+-include_lib("common/include/tpx_records.hrl").
+-include_lib("common/include/buck_ct_records.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -type reason() :: term().
 -type run_result() :: term().
@@ -57,8 +59,6 @@ Stateless Core functionality for ct_daemon
     | {error, {term(), term(), term()}}
     | {skip, Where :: atom(), Reason :: term()}
     | {fail, Where :: atom(), Reason :: term()}.
-
--export_type([reason/0, run_result/0, setup/0]).
 
 -define(DEFAULT_TIMETRAP, 30 * 60 * 1000).
 
@@ -142,14 +142,7 @@ list(Suite) ->
             #test_spec_test_case{suite = SuiteName, testcases = TestCases} = list_test:list_tests(
                 Suite, ct_daemon_hooks:get_hooks()
             ),
-            [
-                FullTestName
-             || FullTestName <-
-                    [
-                        to_qualified(SuiteName, TestName)
-                     || #test_spec_test_info{name = TestName} <- TestCases
-                    ]
-            ]
+            [to_qualified(SuiteName, TestName) || #test_spec_test_info{name = TestName} <- TestCases]
     end.
 
 %% running tests

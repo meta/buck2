@@ -9,9 +9,12 @@
  */
 
 use buck2_client_ctx::command_outcome::CommandOutcome;
+use buck2_common::invocation_paths::InvocationPaths;
+use buck2_common::invocation_roots::InvocationRoots;
+use buck2_fs::IoResultExt;
 use buck2_fs::fs_util;
-use buck2_fs::fs_util::IoError;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::working_dir::AbsWorkingDir;
 
 use super::path_sanitizer::PathSanitizer;
@@ -20,6 +23,7 @@ use super::results::CompletionResults;
 
 pub(crate) struct PathCompleter<'a, 'b> {
     cwd: AbsWorkingDir,
+    buck_out: AbsNormPathBuf,
     sanitizer: &'b PathSanitizer,
     results: &'b mut CompletionResults<'a>,
 }
@@ -27,11 +31,15 @@ pub(crate) struct PathCompleter<'a, 'b> {
 impl<'a, 'b> PathCompleter<'a, 'b> {
     pub(crate) fn new(
         cwd: &AbsWorkingDir,
+        roots: &InvocationRoots,
         sanitizer: &'b PathSanitizer,
         results: &'b mut CompletionResults<'a>,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
             cwd: cwd.to_owned(),
+            buck_out: roots
+                .project_root
+                .resolve(InvocationPaths::buck_out_dir_prefix()),
             sanitizer,
             results,
         })
@@ -61,7 +69,7 @@ impl<'a, 'b> PathCompleter<'a, 'b> {
         let given_dir = partial.given();
 
         for entry in partial_dir.read_dir()?.flatten() {
-            if entry.path().is_dir() {
+            if entry.path().is_dir() && !self.is_buck_out(&entry) {
                 let path = self.sanitize(&(given_dir.to_owned() + &file_name_string(&entry)))?;
                 if path.cell_name() == partial.cell_name() {
                     self.results.insert_path(&path).await;
@@ -72,20 +80,31 @@ impl<'a, 'b> PathCompleter<'a, 'b> {
     }
 
     async fn complete_dir_fragment(&mut self, partial: &SanitizedPath) -> CommandOutcome<()> {
+        // The fragment is what was typed after the last `/`. The normalized path's file name
+        // differs from it for `.`, `..` and a `/` after a missing directory, and then there is
+        // nothing to complete.
+        let given = partial.given();
+        let (given_dir, partial_base) = match given.rfind('/') {
+            Some(slash) => given.split_at(slash + 1),
+            None => ("", given),
+        };
+        if matches!(partial_base, "" | "." | "..") {
+            return CommandOutcome::Success(());
+        }
         let partial_path = partial.abs_path();
-        let partial_base = partial_path.file_name().unwrap().to_str().unwrap();
-
-        let given_dir = &partial.given()[..partial.given().len() - partial_base.len()];
 
         let mut scan_dir = self.cwd.path().to_path_buf();
         if let Some(offset_dir) = partial_path.parent() {
             scan_dir = scan_dir.join(offset_dir);
         }
         let scan_dir = AbsNormPath::new(&scan_dir)?;
-        let entries = fs_util::read_dir(scan_dir).map_err(IoError::categorize_for_source_file)?;
+        let entries = fs_util::read_dir(scan_dir).categorize_input()?;
         for entry_result in entries {
             let entry = entry_result?;
-            if entry.path().is_dir() && file_name_string(&entry).starts_with(partial_base) {
+            if entry.path().is_dir()
+                && !self.is_buck_out(&entry)
+                && file_name_string(&entry).starts_with(partial_base)
+            {
                 let given_expanded =
                     self.sanitize(&(given_dir.to_owned() + &file_name_string(&entry)))?;
                 self.results.insert_path(&given_expanded).await;
@@ -104,7 +123,7 @@ impl<'a, 'b> PathCompleter<'a, 'b> {
         }
 
         let scan_dir = AbsNormPath::new(&scan_dir)?;
-        let entries = fs_util::read_dir(scan_dir).map_err(IoError::categorize_for_source_file)?;
+        let entries = fs_util::read_dir(scan_dir).categorize_input()?;
         for entry_result in entries {
             let entry = entry_result?;
             if entry.path().is_dir() && file_name_string(&entry).starts_with(partial_base) {
@@ -116,6 +135,11 @@ impl<'a, 'b> PathCompleter<'a, 'b> {
 
     fn sanitize(&self, given: &str) -> buck2_error::Result<SanitizedPath> {
         self.sanitizer.sanitize(given)
+    }
+
+    /// `buck-out` holds build outputs, never packages.
+    fn is_buck_out(&self, entry: &std::fs::DirEntry) -> bool {
+        entry.path() == self.buck_out.as_path()
     }
 }
 

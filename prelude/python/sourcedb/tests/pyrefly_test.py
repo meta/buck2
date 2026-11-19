@@ -23,11 +23,18 @@ PATH_PREFIX: str = "prelude/python"
 
 
 def strip_prefix(path: str) -> str:
-    if PATH_PREFIX in str(path):
-        return PATH_PREFIX + str(path).split(PATH_PREFIX)[1]
-    elif path.startswith("buck-out"):
+    if path.startswith("buck-out"):
+        catch_all_stub_marker = "/catch_all_sourcedb_stubs/"
+        if catch_all_stub_marker in path:
+            return (
+                "buck-out/v2/gen/prelude/<more generated path output>/out/"
+                + "catch_all_sourcedb_stubs/"
+                + path.split(catch_all_stub_marker, 1)[1]
+            )
         path = Path(path)
         return f"buck-out/v2/gen/prelude/<more generated path output>/out/{path.name}"
+    elif PATH_PREFIX in str(path):
+        return PATH_PREFIX + str(path).split(PATH_PREFIX)[1]
     else:
         return path
 
@@ -86,6 +93,7 @@ class Manifest:
 class DB:
     db: dict[str, Manifest | Alias]
     root: str
+    extra_filetypes: list[str]
 
     def strip_root(self) -> None:
         self.root = strip_prefix(self.root)
@@ -97,12 +105,11 @@ class DB:
 
     @staticmethod
     def from_json(json: Any) -> "DB":
-        for key in ("db", "root"):
-            if key not in json:
-                raise ValueError(
-                    f"Unknown type returned from Buck, does not have '{key}' key. Keys are: "
-                    + ", ".join(json.keys())
-                )
+        expected_keys = {"db", "root", "extra_filetypes"}
+        if set(json.keys()) != expected_keys:
+            raise ValueError(
+                f"Mismatched keys from DB. Expected {expected_keys}, got {json.keys()}"
+            )
 
         inner_db = {}
 
@@ -116,6 +123,7 @@ class DB:
             # strip root, since it's not relevant to these tests
             root="",
             db=inner_db,
+            extra_filetypes=json["extra_filetypes"],
         )
 
         db.strip_root()

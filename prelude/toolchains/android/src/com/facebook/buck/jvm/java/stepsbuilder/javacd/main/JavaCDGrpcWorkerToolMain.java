@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java.stepsbuilder.javacd.main;
 import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.jvm.cd.CompilerDaemonLoggerUtil;
 import com.facebook.buck.jvm.cd.workertool.grpc.WorkerGrpcServer;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 
 /**
@@ -20,6 +21,7 @@ import java.io.IOException;
  *
  * <p>This starts a grpc service over a uds socket, that accepts javacd compilation commands
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaCDGrpcWorkerToolMain {
   private static final String LOG_PATH = "buck-out/v2/javacd";
 

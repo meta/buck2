@@ -8,6 +8,7 @@
 
 load("@prelude//apple:apple_toolchain_types.bzl", "AppleToolchainInfo")
 load("@prelude//apple/swift:swift_toolchain_types.bzl", "SwiftToolchainInfo")
+load("@prelude//apple/validation:required_reasons_tools.bzl", "RequiredReasonsToolsInfo")
 load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxPlatformInfo", "CxxToolchainInfo")
 
 def apple_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
@@ -42,11 +43,12 @@ def apple_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
             merge_index_store = ctx.attrs.merge_index_store[RunInfo],
             metal = ctx.attrs.metal[RunInfo] if ctx.attrs.metal else None,
             metallib = ctx.attrs.metallib[RunInfo] if ctx.attrs.metallib else None,
-            modular_libraries_use_header_maps = ctx.attrs.modular_libraries_use_header_maps,
             momc = ctx.attrs.momc[RunInfo],
             objdump = ctx.attrs.objdump[RunInfo] if ctx.attrs.objdump else None,
             platform_path = platform_path,
+            required_reasons_tools = ctx.attrs.required_reasons_tools[RequiredReasonsToolsInfo],
             sdk_build_version = ctx.attrs.build_version,
+            sdk_canonical_name = ctx.attrs.sdk_canonical_name,
             sdk_name = ctx.attrs.sdk_name,
             sdk_path = sdk_path,
             sdk_version = ctx.attrs.version,

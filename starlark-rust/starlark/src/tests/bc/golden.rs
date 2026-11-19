@@ -21,7 +21,7 @@ use std::mem;
 use starlark_syntax::golden_test_template::golden_test_template;
 
 use crate::assert::Assert;
-use crate::eval::compiler::def::FrozenDef;
+use crate::eval::compiler::def::Def;
 use crate::syntax::Dialect;
 
 fn test_function_bytecode(program: &str) -> String {
@@ -33,7 +33,7 @@ fn test_function_bytecode(program: &str) -> String {
         .module("instrs.star", program)
         .get("test")
         .unwrap()
-        .downcast::<FrozenDef>()
+        .downcast_starlark::<Def>()
         .unwrap();
 
     let mut golden = String::new();
@@ -41,7 +41,12 @@ fn test_function_bytecode(program: &str) -> String {
     writeln!(golden).unwrap();
     writeln!(golden, "# Bytecode:").unwrap();
     writeln!(golden).unwrap();
-    writeln!(golden, "{}", def.bc().dump_debug().trim()).unwrap();
+    writeln!(
+        golden,
+        "{}",
+        def.by_ref(|d| d.as_ref().bc().dump_debug()).trim()
+    )
+    .unwrap();
     golden
 }
 

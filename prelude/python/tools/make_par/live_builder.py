@@ -10,7 +10,6 @@
 
 import os
 import shutil
-import sys
 
 from par_builder import ParBuilder
 from util import (
@@ -23,10 +22,19 @@ from util import (
 )
 
 
+def _shell_assignment(entry):
+    name, _, value = entry.partition("=")
+    # Double-quoted as in the fastzip wrapper: `$VAR`, `${X:-}`, `$(...)` and backticks
+    # still expand, while spaces and apostrophes no longer break the `export` line.
+    # A `\` is escaped so that a value ending in one cannot escape the closing quote.
+    value = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'{name}="{value}"'
+
+
 class LiveBuilder(ParBuilder):
     def __init__(self, options, manifest, mode=0o755, linktree_suffix="#linktree"):
         # Default to "default" warnings, as per buck1/buck2.
-        super(LiveBuilder, self).__init__(options, manifest, mode)
+        super().__init__(options, manifest, mode)
         # foo.par -> foo#linktree
         # foo.bar.par -> foo.bar#linktree
         if self.python_home:
@@ -88,9 +96,7 @@ class LiveBuilder(ParBuilder):
                     handle.write(entry.src_data)
 
         header = self._gen_header()
-        if sys.version_info[0] >= 3:
-            header = bytes(header, "UTF-8")
-        output_file.write(header)
+        output_file.write(bytes(header, "UTF-8"))
 
         bootstrap_template = os.path.join(
             os.path.dirname(__file__), "_lpar_bootstrap.sh.template"
@@ -100,10 +106,8 @@ class LiveBuilder(ParBuilder):
             os.chmod(f.name, self.mode)
 
     def _gen_header(self):
-        # TODO we should use pathlib for all this
         linktreedir = self.linktree.rsplit("/", 1)[-1]
 
-        base_dir = '$(dirname $(readlink -f "$0"))/' + linktreedir
         absolute_base_dir = os.path.abspath(self.linktree)
         if absolute_base_dir.startswith("/re_cwd"):
             # This is a remote execution job, the actual path will be different
@@ -124,16 +128,16 @@ class LiveBuilder(ParBuilder):
             "# Make live par compatible with the par_builder and export the same environment variable\n"
             "# See https://fburl.com/workplace/u561pr0v for more details\n"
             'export FB_XAR_INVOKED_NAME="$0"\n'
-            'if [ -f "{base_dir}/_bootstrap.sh" ]; then\n'
-            '  MAIN_MODULE="{base_dir}/{run_livepar}"\n'
-            '  exec {base_dir}/_bootstrap.sh "${{MAIN_MODULE}}" "$@"\n'
+            '__lpar_dir="$(dirname "$(readlink -f "$0")")"\n'
+            'if [ -f "$__lpar_dir/{linktreedir}/_bootstrap.sh" ]; then\n'
+            '  MAIN_MODULE="$__lpar_dir/{linktreedir}/{run_livepar}"\n'
+            '  exec "$__lpar_dir"/{linktreedir}/_bootstrap.sh "${{MAIN_MODULE}}" "$@"\n'
             "else\n"
             '  MAIN_MODULE="{absolute_base_dir}/{run_livepar}"\n'
-            '  exec {absolute_base_dir}/_bootstrap.sh "${{MAIN_MODULE}}" "$@"\n'
+            '  exec "{absolute_base_dir}/_bootstrap.sh" "${{MAIN_MODULE}}" "$@"\n'
             "fi\n"
         )
         return script.format(
-            base_dir=base_dir,
             absolute_base_dir=absolute_base_dir,
             linktreedir=linktreedir,
             argcomplete_hint=self.options.argcomplete_hint,
@@ -151,10 +155,8 @@ class LiveBuilder(ParBuilder):
         py_cmd = self._get_python_command(base_dir="$BASE_DIR")
         cmd = interp or py_cmd
 
-        if options.runtime_env:
-            env_list = ["export"]
-            env_list.extend(self.options.runtime_env)
-            env = " ".join(env_list)
+        if self.runtime_env:
+            env = "export " + " ".join(_shell_assignment(e) for e in self.runtime_env)
         else:
             env = ""
 

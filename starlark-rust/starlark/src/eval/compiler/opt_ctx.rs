@@ -17,50 +17,98 @@
 
 use crate::environment::FrozenModuleData;
 use crate::eval::Evaluator;
+use crate::eval::compiler::Compiler;
+use crate::eval::compiler::def_inline::local_as_value::LocalAsValue;
 use crate::eval::compiler::stmt::OptimizeOnFreezeContext;
+use crate::eval::runtime::slots::LocalSlotId;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::HeapEdge;
+use crate::values::SealEdge;
+use crate::values::Value;
+use crate::values::ValueTyped;
 
-pub(crate) trait OptCtxEval<'v, 'a, 'e> {
-    fn heap(&self) -> &'v Heap;
-    fn frozen_heap(&self) -> &FrozenHeap;
+/// The context the optimizer runs in: a module's value heap, which it speculates on, and the
+/// module's frozen heap, where the IR it produces is allocated, with the edges between the two.
+pub(crate) trait OptCtxEval<'v, 'a, 'e, 'fm> {
+    fn heap(&self) -> Heap<'v>;
+    fn frozen_heap(&self) -> FrozenHeap<'fm>;
+    /// The edge from the value heap to the frozen heap, see `ModuleHeaps`.
+    fn edge(&self) -> HeapEdge<'v, 'fm>;
+    /// The edge back, for frozen values, see [`OptCtx::demote`].
+    fn seal_edge(&self) -> SealEdge<'fm, 'v>;
     fn eval(&mut self) -> Option<&mut Evaluator<'v, 'a, 'e>>;
-    fn frozen_module(&self) -> Option<&FrozenModuleData>;
+    fn frozen_module(&self) -> Option<&FrozenModuleData<'fm>>;
+    /// Storage for [`OptCtx::local_as_values`].
+    fn local_as_values(&self) -> &[ValueTyped<'fm, LocalAsValue>];
+    fn local_as_values_mut(&mut self) -> &mut Vec<ValueTyped<'fm, LocalAsValue>>;
 }
 
-impl<'v, 'a, 'e> OptCtxEval<'v, 'a, 'e> for OptimizeOnFreezeContext<'v, 'a> {
-    fn heap(&self) -> &'v Heap {
+impl<'v, 'a, 'e, 'fv> OptCtxEval<'v, 'a, 'e, 'fv> for OptimizeOnFreezeContext<'v, 'a, 'fv> {
+    fn heap(&self) -> Heap<'v> {
         self.heap
     }
 
-    fn frozen_heap(&self) -> &FrozenHeap {
+    fn frozen_heap(&self) -> FrozenHeap<'fv> {
         self.frozen_heap
     }
 
+    fn edge(&self) -> HeapEdge<'v, 'fv> {
+        self.edge
+    }
+
+    fn seal_edge(&self) -> SealEdge<'fv, 'v> {
+        self.seal_edge
+    }
+
     fn eval(&mut self) -> Option<&mut Evaluator<'v, 'a, 'e>> {
         None
     }
 
-    fn frozen_module(&self) -> Option<&FrozenModuleData> {
+    fn frozen_module(&self) -> Option<&FrozenModuleData<'fv>> {
         Some(self.module)
+    }
+
+    fn local_as_values(&self) -> &[ValueTyped<'fv, LocalAsValue>] {
+        &self.local_as_values
+    }
+
+    fn local_as_values_mut(&mut self) -> &mut Vec<ValueTyped<'fv, LocalAsValue>> {
+        &mut self.local_as_values
     }
 }
 
-impl<'v, 'a, 'e> OptCtxEval<'v, 'a, 'e> for Evaluator<'v, 'a, 'e> {
-    fn heap(&self) -> &'v Heap {
-        self.heap()
+impl<'v, 'a, 'e, 'x, 'fm> OptCtxEval<'v, 'a, 'e, 'fm> for Compiler<'v, 'a, 'e, 'x, 'fm> {
+    fn heap(&self) -> Heap<'v> {
+        self.eval.heap()
     }
 
-    fn frozen_heap(&self) -> &FrozenHeap {
-        self.frozen_heap()
+    fn frozen_heap(&self) -> FrozenHeap<'fm> {
+        self.fh
+    }
+
+    fn edge(&self) -> HeapEdge<'v, 'fm> {
+        self.edge
+    }
+
+    fn seal_edge(&self) -> SealEdge<'fm, 'v> {
+        self.seal_edge
     }
 
     fn eval(&mut self) -> Option<&mut Evaluator<'v, 'a, 'e>> {
-        Some(self)
+        Some(self.eval)
     }
 
-    fn frozen_module(&self) -> Option<&FrozenModuleData> {
+    fn frozen_module(&self) -> Option<&FrozenModuleData<'fm>> {
         None
+    }
+
+    fn local_as_values(&self) -> &[ValueTyped<'fm, LocalAsValue>] {
+        &self.local_as_values
+    }
+
+    fn local_as_values_mut(&mut self) -> &mut Vec<ValueTyped<'fm, LocalAsValue>> {
+        &mut self.local_as_values
     }
 }
 
@@ -69,33 +117,62 @@ impl<'v, 'a, 'e> OptCtxEval<'v, 'a, 'e> for Evaluator<'v, 'a, 'e> {
 /// We perform optimization
 /// * during compilation of AST to IR, and
 /// * when freezing the heap.
-pub(crate) struct OptCtx<'v, 'a, 'e: 'a, 'x> {
-    pub(crate) eval: &'x mut dyn OptCtxEval<'v, 'a, 'e>,
+pub(crate) struct OptCtx<'v: 'a, 'a, 'e: 'a, 'x, 'fm> {
+    pub(crate) eval: &'x mut dyn OptCtxEval<'v, 'a, 'e, 'fm>,
     /// Current function parameter slot count. Zero when compiling module.
     pub(crate) param_count: u32,
 }
 
-impl<'v, 'a, 'e: 'a, 'x> OptCtx<'v, 'a, 'e, 'x> {
+impl<'v, 'a, 'e: 'a, 'x, 'fm> OptCtx<'v, 'a, 'e, 'x, 'fm> {
     pub(crate) fn new(
-        eval: &'x mut dyn OptCtxEval<'v, 'a, 'e>,
+        eval: &'x mut dyn OptCtxEval<'v, 'a, 'e, 'fm>,
         param_count: u32,
-    ) -> OptCtx<'v, 'a, 'e, 'x> {
+    ) -> OptCtx<'v, 'a, 'e, 'x, 'fm> {
         OptCtx { eval, param_count }
     }
 
-    pub(crate) fn heap(&self) -> &'v Heap {
+    pub(crate) fn heap(&self) -> Heap<'v> {
         self.eval.heap()
     }
 
-    pub(crate) fn frozen_heap(&self) -> &FrozenHeap {
+    pub(crate) fn frozen_heap(&self) -> FrozenHeap<'fm> {
         self.eval.frozen_heap()
+    }
+
+    /// The edge from the value heap to the frozen heap: how the optimizer brings IR constants to
+    /// `'v` to evaluate on them.
+    pub(crate) fn edge(&self) -> HeapEdge<'v, 'fm> {
+        self.eval.edge()
     }
 
     pub(crate) fn eval(&mut self) -> Option<&mut Evaluator<'v, 'a, 'e>> {
         self.eval.eval()
     }
 
-    pub(crate) fn frozen_module(&self) -> Option<&FrozenModuleData> {
+    pub(crate) fn frozen_module(&self) -> Option<&FrozenModuleData<'fm>> {
         self.eval.frozen_module()
+    }
+
+    /// Bring a frozen value the optimizer observed at `'v` to the brand the IR is allocated at,
+    /// or `None` if it is not frozen.
+    ///
+    /// The optimizer evaluates speculatively at `'v` (calls, attribute reads, operators, module
+    /// slots) and folds frozen results into IR stored at `'fm`; the [`SealEdge`] is what makes
+    /// that sound.
+    pub(crate) fn demote(&self, v: Value<'v>) -> Option<Value<'fm>> {
+        self.eval.seal_edge().rebrand(v)
+    }
+
+    /// The placeholders for the first `count` local slots, see [`LocalAsValue`]: one allocation
+    /// per slot for the whole compilation, grown on demand.
+    pub(crate) fn local_as_values(&mut self, count: u32) -> &[ValueTyped<'fm, LocalAsValue>] {
+        let frozen_heap = self.frozen_heap();
+        let cache = self.eval.local_as_values_mut();
+        while cache.len() < count as usize {
+            cache.push(frozen_heap.alloc_simple_typed(LocalAsValue {
+                local: LocalSlotId(cache.len() as u32),
+            }));
+        }
+        &self.eval.local_as_values()[..count as usize]
     }
 }

@@ -10,9 +10,9 @@ def _proto_python_library_impl(ctx: AnalysisContext) -> list[Provider]:
     prefix = ctx.label.package
     depth = len(prefix.split("/"))
     libname = ctx.attrs.src.basename.removesuffix(".proto") + "_pb2"
-    python_out = ctx.actions.declare_output(prefix, "{}.py".format(libname))
-    pyi_out = ctx.actions.declare_output(prefix, "{}.pyi".format(libname))
-    grpc_python_out = ctx.actions.declare_output(prefix, "{}_grpc.py".format(libname))
+    python_out = ctx.actions.declare_output(prefix, "{}.py".format(libname), has_content_based_path = False)
+    pyi_out = ctx.actions.declare_output(prefix, "{}.pyi".format(libname), has_content_based_path = False)
+    grpc_python_out = ctx.actions.declare_output(prefix, "{}_grpc.py".format(libname), has_content_based_path = False)
     ctx.actions.run(
         cmd_args(
             ctx.attrs._protoc[RunInfo],
@@ -27,9 +27,9 @@ def _proto_python_library_impl(ctx: AnalysisContext) -> list[Provider]:
 
     # protoc does not let us control the import prefix and path prefix separately.
     # So, we need to copy the generated files into the correct location after the fact.
-    python_out_copied = ctx.actions.declare_output("{}.py".format(libname))
-    pyi_out_copied = ctx.actions.declare_output("{}.pyi".format(libname))
-    grpc_python_out_copied = ctx.actions.declare_output("{}_grpc.py".format(libname))
+    python_out_copied = ctx.actions.declare_output("{}.py".format(libname), has_content_based_path = False)
+    pyi_out_copied = ctx.actions.declare_output("{}.pyi".format(libname), has_content_based_path = False)
+    grpc_python_out_copied = ctx.actions.declare_output("{}_grpc.py".format(libname), has_content_based_path = False)
     ctx.actions.copy_file(python_out_copied, python_out)
     ctx.actions.copy_file(pyi_out_copied, pyi_out)
     ctx.actions.copy_file(grpc_python_out_copied, grpc_python_out)
@@ -48,9 +48,4 @@ def proto_python_library(*, name, src, **kwargs):
         name = "{}-gen".format(name),
         src = src,
     )
-    native.python_library(
-        name = name,
-        srcs = [":{}-gen".format(name)],
-        deps = ["//python:grpcio"],
-        **kwargs
-    )
+    native.python_library(name = name, srcs = [":{}-gen".format(name)], deps = ["//python:grpcio"], **kwargs)

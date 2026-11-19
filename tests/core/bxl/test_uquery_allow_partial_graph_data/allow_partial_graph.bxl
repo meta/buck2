@@ -1,0 +1,117 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+def _labels(nodes):
+    return sorted([str(node.label) for node in nodes])
+
+def _no_broken(labels):
+    for label in labels:
+        asserts.false(label.startswith("root//broken:"))
+
+# `root//:root` depends on `//broken:b`, whose package fails to parse.
+
+def _deps_default_impl(ctx: bxl.Context):
+    ctx.uquery().deps("root//:root")
+
+deps_default = bxl_main(impl = _deps_default_impl, cli_args = {})
+
+def _deps_partial_impl(ctx: bxl.Context):
+    labels = _labels(ctx.uquery(allow_partial_graph = True).deps("root//:root"))
+    asserts.true("root//:root" in labels)
+    asserts.true("root//good:g" in labels)
+    _no_broken(labels)
+
+deps_partial = bxl_main(impl = _deps_partial_impl, cli_args = {})
+
+def _rdeps_default_impl(ctx: bxl.Context):
+    ctx.uquery().rdeps("root//...", "root//good:g")
+
+rdeps_default = bxl_main(impl = _rdeps_default_impl, cli_args = {})
+
+def _rdeps_partial_impl(ctx: bxl.Context):
+    labels = _labels(ctx.uquery(allow_partial_graph = True).eval("rdeps(root//..., root//good:g)"))
+
+    # `root` and `good_only` both depend on `good:g`.
+    asserts.true("root//good:g" in labels)
+    asserts.true("root//:root" in labels)
+    asserts.true("root//:good_only" in labels)
+    _no_broken(labels)
+
+rdeps_partial = bxl_main(impl = _rdeps_partial_impl, cli_args = {})
+
+# `TargetListExpr` expands a typed pattern argument before the query runs, so the flag
+# does not reach it. Pin that; update this test rather than deleting it if it changes.
+
+def _rdeps_partial_typed_pattern_impl(ctx: bxl.Context):
+    res = ctx.lazy.uquery(allow_partial_graph = True).rdeps("root//...", "root//good:g").catch().resolve()
+    asserts.false(res.is_ok())
+
+rdeps_partial_typed_pattern = bxl_main(impl = _rdeps_partial_typed_pattern_impl, cli_args = {})
+
+def _eval_recursive_default_impl(ctx: bxl.Context):
+    ctx.uquery().eval("root//...")
+
+eval_recursive_default = bxl_main(impl = _eval_recursive_default_impl, cli_args = {})
+
+def _eval_recursive_partial_impl(ctx: bxl.Context):
+    labels = _labels(ctx.uquery(allow_partial_graph = True).eval("root//..."))
+    asserts.equals(
+        ["root//:good_only", "root//:leaf", "root//:root", "root//good:g"],
+        labels,
+    )
+
+eval_recursive_partial = bxl_main(impl = _eval_recursive_partial_impl, cli_args = {})
+
+def _explicit_missing_target_impl(ctx: bxl.Context):
+    ctx.uquery(allow_partial_graph = True).eval("root//:root + root//:nonexistent")
+
+explicit_missing_target = bxl_main(impl = _explicit_missing_target_impl, cli_args = {})
+
+def _explicit_broken_target_impl(ctx: bxl.Context):
+    ctx.uquery(allow_partial_graph = True).rdeps("root//...", "root//broken:b")
+
+explicit_broken_target = bxl_main(impl = _explicit_broken_target_impl, cli_args = {})
+
+def _lazy_deps_default_impl(ctx: bxl.Context):
+    res = ctx.lazy.uquery().deps("root//:root").catch().resolve()
+    asserts.false(res.is_ok())
+
+lazy_deps_default = bxl_main(impl = _lazy_deps_default_impl, cli_args = {})
+
+def _lazy_deps_partial_impl(ctx: bxl.Context):
+    res = ctx.lazy.uquery(allow_partial_graph = True).deps("root//:root").catch().resolve()
+    asserts.true(res.is_ok())
+
+    labels = _labels(res.unwrap())
+    asserts.true("root//:root" in labels)
+    asserts.true("root//good:g" in labels)
+    _no_broken(labels)
+
+lazy_deps_partial = bxl_main(impl = _lazy_deps_partial_impl, cli_args = {})
+
+def _lazy_eval_recursive_default_impl(ctx: bxl.Context):
+    res = ctx.lazy.uquery().eval("root//...").catch().resolve()
+    asserts.false(res.is_ok())
+
+lazy_eval_recursive_default = bxl_main(impl = _lazy_eval_recursive_default_impl, cli_args = {})
+
+def _lazy_eval_recursive_partial_impl(ctx: bxl.Context):
+    res = ctx.lazy.uquery(allow_partial_graph = True).eval("root//...").catch().resolve()
+    asserts.true(res.is_ok())
+    asserts.equals(
+        ["root//:good_only", "root//:leaf", "root//:root", "root//good:g"],
+        _labels(res.unwrap()),
+    )
+
+lazy_eval_recursive_partial = bxl_main(impl = _lazy_eval_recursive_partial_impl, cli_args = {})
+
+def _lazy_explicit_broken_target_impl(ctx: bxl.Context):
+    res = ctx.lazy.uquery(allow_partial_graph = True).rdeps("root//...", "root//broken:b").catch().resolve()
+    asserts.false(res.is_ok())
+
+lazy_explicit_broken_target = bxl_main(impl = _lazy_explicit_broken_target_impl, cli_args = {})

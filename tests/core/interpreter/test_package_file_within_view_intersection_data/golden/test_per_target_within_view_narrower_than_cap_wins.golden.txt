@@ -1,0 +1,27 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error evaluating expression:
+    root//intersect/narrow_target:c
+    ^-----------------------------^
+
+
+Caused by:
+    0: Error evaluating build file: `root//intersect/narrow_target:TARGETS.fixture`
+    1: error: checking `within_view` for attribute `deps` of `root//intersect/narrow_target:c`
+        --> intersect/narrow_target/TARGETS.fixture:4:1
+         |
+       4 | / stub(
+       5 | |     name = "c",
+       6 | |     within_view = ["root//intersect/sub_b/..."],
+       7 | |     deps = ["root//intersect/lib:t"],
+       8 | | )
+         | |_^
+       Traceback (most recent call last):
+         * intersect/narrow_target/TARGETS.fixture:4, in <module>
+             stub(
+       
+    2: Target's effective `within_view` does not allow dependency `root//intersect/lib:t` (within_view = ["root//intersect/sub_b/..."]). Capped to ["root//intersect/..."] by `enforce_within_view_intersection()` in an ancestor PACKAGE

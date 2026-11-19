@@ -162,11 +162,7 @@ def get_excluded(deps: list[Dependency] = []) -> dict[Label, None]:
             excluded_nodes[dep_info.label] = None
     return excluded_nodes
 
-def create_linkable_root(
-        label: Label,
-        link_infos: LinkInfos,
-        name: [str, None] = None,
-        deps: list[LinkableGraph | Dependency] = []) -> LinkableRootInfo:
+def create_linkable_root(label: Label, link_infos: LinkInfos, name: [str, None] = None, deps: list[LinkableGraph | Dependency] = []) -> LinkableRootInfo:
     # Only include dependencies that are linkable.
     return LinkableRootInfo(
         label = label,
@@ -179,11 +175,7 @@ def _omnibus_soname(ctx, name: str):
     linker_info = get_cxx_toolchain_info(ctx).linker_info
     return get_shared_library_name(linker_info, name, apply_default_prefix = True)
 
-def create_dummy_omnibus(
-        ctx: AnalysisContext,
-        omnibus_lib_name: str,
-        extra_ldflags: list[typing.Any] = [],
-        anonymous: bool = False) -> Artifact:
+def create_dummy_omnibus(ctx: AnalysisContext, omnibus_lib_name: str, extra_ldflags: list[typing.Any] = [], anonymous: bool = False) -> Artifact:
     linker_info = get_cxx_toolchain_info(ctx).linker_info
     link_result = cxx_link_shared_library(
         ctx = ctx,
@@ -199,10 +191,7 @@ def create_dummy_omnibus(
     )
     return link_result.linked_object.output
 
-def _link_deps(
-        link_infos: dict[Label, LinkableNode],
-        deps: list[Label],
-        pic_behavior: PicBehavior) -> list[Label]:
+def _link_deps(link_infos: dict[Label, LinkableNode], deps: list[Label], pic_behavior: PicBehavior) -> list[Label]:
     """
     Return transitive deps required to link dynamically against the given deps.
     This will following through deps of statically linked inputs and exported
@@ -215,19 +204,20 @@ def _link_deps(
     return depth_first_traversal_by(link_infos, deps, find_deps)
 
 def _create_root(
-        ctx: AnalysisContext,
-        spec: OmnibusSpec,
-        root_products: dict[Label, OmnibusRootProduct],
-        root: LinkableRootInfo,
-        label: Label,
-        link_deps: list[Label],
-        omnibus: Artifact,
-        pic_behavior: PicBehavior,
-        extra_ldflags: list[typing.Any] = [],
-        prefer_stripped_objects: bool = False,
-        allow_cache_upload: bool = False,
-        anonymous: bool = False,
-        hash_counter = 0) -> OmnibusRootProduct:
+    ctx: AnalysisContext,
+    spec: OmnibusSpec,
+    root_products: dict[Label, OmnibusRootProduct],
+    root: LinkableRootInfo,
+    label: Label,
+    link_deps: list[Label],
+    omnibus: Artifact,
+    pic_behavior: PicBehavior,
+    extra_ldflags: list[typing.Any] = [],
+    prefer_stripped_objects: bool = False,
+    allow_cache_upload: bool = False,
+    anonymous: bool = False,
+    hash_counter = 0,
+) -> OmnibusRootProduct:
     """
     Link a root omnibus node.
     """
@@ -241,9 +231,11 @@ def _create_root(
     # Since we're linking against a dummy omnibus which has no symbols, we need
     # to make sure the linker won't drop it from the link or complain about
     # missing symbols.
-    inputs.append(LinkInfo(
-        pre_flags = get_ignore_undefined_symbols_flags(linker_type),
-    ))
+    inputs.append(
+        LinkInfo(
+            pre_flags = get_ignore_undefined_symbols_flags(linker_type),
+        )
+    )
 
     # add native target link input
     inputs.append(
@@ -260,11 +252,13 @@ def _create_root(
             flags = get_no_as_needed_shared_libs_flags(linker_type),
             post_flags = [],
         )
-        inputs.append(LinkInfo(
-            pre_flags = pre_flags,
-            linkables = [SharedLibLinkable(lib = omnibus)],
-            post_flags = post_flags,
-        ))
+        inputs.append(
+            LinkInfo(
+                pre_flags = pre_flags,
+                linkables = [SharedLibLinkable(lib = omnibus)],
+                post_flags = post_flags,
+            )
+        )
 
     # Add deps of the root to the link line.
     for dep in link_deps:
@@ -277,11 +271,13 @@ def _create_root(
 
         # If this dep needs to be linked statically, then link it directly.
         if output_style != LibOutputStyle("shared_lib"):
-            inputs.append(get_link_info(
-                node,
-                output_style,
-                prefer_stripped = prefer_stripped_objects,
-            ))
+            inputs.append(
+                get_link_info(
+                    node,
+                    output_style,
+                    prefer_stripped = prefer_stripped_objects,
+                )
+            )
             continue
 
         # If this is another root.
@@ -303,10 +299,13 @@ def _create_root(
         expect(output_style == LibOutputStyle("shared_lib"))
         inputs.append(get_link_info(node, output_style))
 
-    output = value_or(root.name, get_default_shared_library_name(
-        linker_info,
-        label,
-    ))
+    output = value_or(
+        root.name,
+        get_default_shared_library_name(
+            linker_info,
+            label,
+        ),
+    )
 
     # link the rule
     link_result = cxx_link_shared_library(
@@ -354,10 +353,8 @@ def _create_root(
     )
 
 def _extract_global_symbols_from_link_args(
-        ctx: AnalysisContext,
-        name: str,
-        link_args: list[[Artifact, ResolvedStringWithMacros, cmd_args, str]],
-        prefer_local: bool = False) -> Artifact:
+    ctx: AnalysisContext, name: str, link_args: list[[Artifact, ResolvedStringWithMacros, cmd_args, str]], prefer_local: bool = False
+) -> Artifact:
     """
     Extract global symbols explicitly set in the given linker args (e.g.
     `-Wl,--export-dynamic-symbol=<sym>`).
@@ -366,12 +363,12 @@ def _extract_global_symbols_from_link_args(
     # TODO(T110378137): This is ported from D24065414, but it might make sense
     # to explicitly tell Buck about the global symbols, rather than us trying to
     # extract it from linker flags (which is brittle).
-    output = ctx.actions.declare_output(name)
+    output = ctx.actions.declare_output(name, has_content_based_path = False)
 
     # We intentionally drop the artifacts referenced in the args when generating
     # the argsfile -- we just want to parse out symbol name flags and don't need
     # to materialize artifacts to do this.
-    argsfile, _ = ctx.actions.write(name + ".args", link_args, allow_args = True)
+    argsfile, _ = ctx.actions.write(name + ".args", link_args, allow_args = True, has_content_based_path = False)
 
     # TODO(T110378133): Make this work with other platforms.
     param = "--export-dynamic-symbol"
@@ -380,11 +377,7 @@ def _extract_global_symbols_from_link_args(
     # Used sed/grep to filter the symbol name from the relevant flags.
     # TODO(T110378130): As is the case in v1, we don't properly extract flags
     # from argsfiles embedded in existing args.
-    script = (
-        "set -euo pipefail; " +
-        'cat "$@" | (grep -- \'{0}\' || [[ $? == 1 ]]) | sed \'s|{0}|\\2|\' | LC_ALL=C sort -S 10% -u > {{}}'
-            .format(pattern)
-    )
+    script = "set -euo pipefail; " + "cat \"$@\" | (grep -- '{0}' || [[ $? == 1 ]]) | sed 's|{0}|\\2|' | LC_ALL=C sort -S 10% -u > {{}}".format(pattern)
     ctx.actions.run(
         [
             "/usr/bin/env",
@@ -401,10 +394,8 @@ def _extract_global_symbols_from_link_args(
     return output
 
 def _create_global_symbols_version_script(
-        ctx: AnalysisContext,
-        roots: list[OmnibusRootProduct],
-        excluded: list[Artifact],
-        link_args: list[[Artifact, ResolvedStringWithMacros, cmd_args, str]]) -> Artifact:
+    ctx: AnalysisContext, roots: list[OmnibusRootProduct], excluded: list[Artifact], link_args: list[[Artifact, ResolvedStringWithMacros, cmd_args, str]]
+) -> Artifact:
     """
     Generate a version script exporting symbols from from the given objects and
     link args.
@@ -413,30 +404,31 @@ def _create_global_symbols_version_script(
     # Get global symbols from roots.  We set a rule to do this per-rule, as
     # using a single rule to process all roots adds overhead to the critical
     # path of incremental flows (e.g. that only update a single root).
-    global_symbols_files = [
-        root.global_syms
-        for root in roots
-    ]
+    global_symbols_files = [root.global_syms for root in roots]
 
     # TODO(T110378126): Processing all excluded libs together may get expensive.
     # We should probably split this up and operate on individual libs.
     if excluded:
-        global_symbols_files.append(extract_symbol_names(
-            ctx = ctx,
-            cxx_toolchain = get_cxx_toolchain_info(ctx),
-            name = "__excluded_libs__.global_syms.txt",
-            objects = excluded,
-            dynamic = True,
-            global_only = True,
-            category = "omnibus_global_syms_excluded_libs",
-        ))
+        global_symbols_files.append(
+            extract_symbol_names(
+                ctx = ctx,
+                cxx_toolchain = get_cxx_toolchain_info(ctx),
+                name = "__excluded_libs__.global_syms.txt",
+                objects = excluded,
+                dynamic = True,
+                global_only = True,
+                category = "omnibus_global_syms_excluded_libs",
+            )
+        )
 
     # Extract explicitly globalized symbols from linker args.
-    global_symbols_files.append(_extract_global_symbols_from_link_args(
-        ctx,
-        "__global_symbols_from_args__.txt",
-        link_args,
-    ))
+    global_symbols_files.append(
+        _extract_global_symbols_from_link_args(
+            ctx,
+            "__global_symbols_from_args__.txt",
+            link_args,
+        )
+    )
 
     return create_global_symbols_version_script(
         actions = ctx.actions,
@@ -465,32 +457,33 @@ def _is_static_deps(info: LinkableNode) -> bool:
     return "omnibus_static_deps" in info.labels
 
 def _create_omnibus(
-        ctx: AnalysisContext,
-        spec: OmnibusSpec,
-        omnibus_lib_name: str,
-        root_products: dict[Label, OmnibusRootProduct],
-        pic_behavior: PicBehavior,
-        extra_ldflags: list[typing.Any] = [],
-        prefer_stripped_objects: bool = False,
-        allow_cache_upload: bool = False,
-        enable_distributed_thinlto = False) -> CxxLinkResult:
+    ctx: AnalysisContext,
+    spec: OmnibusSpec,
+    omnibus_lib_name: str,
+    root_products: dict[Label, OmnibusRootProduct],
+    pic_behavior: PicBehavior,
+    extra_ldflags: list[typing.Any] = [],
+    prefer_stripped_objects: bool = False,
+    allow_cache_upload: bool = False,
+    enable_distributed_thinlto = False,
+) -> CxxLinkResult:
     inputs = []
 
     # Undefined symbols roots...
-    non_body_root_undefined_syms = [
-        root.undefined_syms
-        for label, root in root_products.items()
-        if label not in spec.body
-    ]
+    non_body_root_undefined_syms = [root.undefined_syms for label, root in root_products.items() if label not in spec.body]
     if non_body_root_undefined_syms:
-        inputs.append(LinkInfo(pre_flags = [
-            get_undefined_symbols_args(
-                ctx = ctx,
-                name = "__undefined_symbols__.argsfile",
-                symbol_files = non_body_root_undefined_syms,
-                category = "omnibus_undefined_symbols",
-            ),
-        ]))
+        inputs.append(
+            LinkInfo(
+                pre_flags = [
+                    get_undefined_symbols_args(
+                        ctx = ctx,
+                        name = "__undefined_symbols__.argsfile",
+                        symbol_files = non_body_root_undefined_syms,
+                        category = "omnibus_undefined_symbols",
+                    ),
+                ]
+            )
+        )
 
     # Process all body nodes.
     deps = {}
@@ -537,11 +530,13 @@ def _create_omnibus(
             node.preferred_linkage,
             toolchain_info.pic_behavior,
         )
-        inputs.append(get_link_info(
-            node,
-            output_style,
-            prefer_stripped = prefer_stripped_objects,
-        ))
+        inputs.append(
+            get_link_info(
+                node,
+                output_style,
+                prefer_stripped = prefer_stripped_objects,
+            )
+        )
 
     linker_info = toolchain_info.linker_info
 
@@ -553,22 +548,22 @@ def _create_omnibus(
             # Extract symbols from roots...
             root_products.values(),
             # ... and the shared libs from excluded nodes.
-            [
-                shared_lib.lib.output
-                for label in spec.excluded
-                for shared_lib in spec.link_infos[label].shared_libs.libraries
-            ],
+            [shared_lib.lib.output for label in spec.excluded for shared_lib in spec.link_infos[label].shared_libs.libraries],
             # Extract explicit global symbol names from flags in all body link args.
             global_symbols_link_args,
         )
-        inputs.append(LinkInfo(pre_flags = [
-            "-Wl,--version-script",
-            global_sym_vers,
-            # The version script contains symbols that are not defined. Up to
-            # LLVM 15 this behavior was ignored but LLVM 16 turns it into
-            # warning by default.
-            "-Wl,--undefined-version",
-        ]))
+        inputs.append(
+            LinkInfo(
+                pre_flags = [
+                    "-Wl,--version-script",
+                    global_sym_vers,
+                    # The version script contains symbols that are not defined. Up to
+                    # LLVM 15 this behavior was ignored but LLVM 16 turns it into
+                    # warning by default.
+                    "-Wl,--undefined-version",
+                ]
+            )
+        )
 
     soname = _omnibus_soname(ctx, omnibus_lib_name)
 
@@ -595,9 +590,7 @@ def _create_omnibus(
         ),
     )
 
-def _build_omnibus_spec(
-        ctx: AnalysisContext,
-        graph: OmnibusGraph) -> OmnibusSpec:
+def _build_omnibus_spec(ctx: AnalysisContext, graph: OmnibusGraph) -> OmnibusSpec:
     """
     Divide transitive deps into excluded, root, and body nodes, which we'll
     use to link the various parts of omnibus.
@@ -629,11 +622,7 @@ def _build_omnibus_spec(
         excluded[label] = None
 
     # Finalized root nodes, after removing any excluded roots.
-    roots = {
-        label: root
-        for label, root in graph.roots.items()
-        if label not in excluded
-    }
+    roots = {label: root for label, root in graph.roots.items() if label not in excluded}
 
     # Find the deps of the root nodes that should be linked into
     # 'libomnibus.so'.
@@ -658,11 +647,7 @@ def _build_omnibus_spec(
     # All body nodes.  These included all non-excluded body nodes and any non-
     # excluded roots which are reachable by these body nodes (since they will
     # need to be put on the link line).
-    body = {
-        label: None
-        for label in get_transitive_deps(graph.nodes, first_order_root_deps)
-        if label not in excluded
-    }
+    body = {label: None for label in get_transitive_deps(graph.nodes, first_order_root_deps) if label not in excluded}
 
     dispositions = {}
 
@@ -694,43 +679,33 @@ def _build_omnibus_spec(
         dispositions = dispositions,
     )
 
-def _ordered_roots(
-        spec: OmnibusSpec,
-        pic_behavior: PicBehavior) -> list[(Label, LinkableRootInfo, list[Label])]:
+def _ordered_roots(spec: OmnibusSpec, pic_behavior: PicBehavior) -> list[(Label, LinkableRootInfo, list[Label])]:
     """
     Return information needed to link the roots nodes.
     """
 
     # Calculate all deps each root node needs to link against.
-    link_deps = {
-        label: _link_deps(spec.link_infos, root.deps, pic_behavior)
-        for label, root in spec.roots.items()
-    }
+    link_deps = {label: _link_deps(spec.link_infos, root.deps, pic_behavior) for label, root in spec.roots.items()}
 
     # Used the link deps to create the graph of root nodes.
-    root_graph = {
-        node: [dep for dep in deps if dep in spec.roots]
-        for node, deps in link_deps.items()
-    }
+    root_graph = {node: [dep for dep in deps if dep in spec.roots] for node, deps in link_deps.items()}
 
     # Emit the root link info in post-order, so that we generate root link rules
     # for dependencies before their dependents.
-    ordered_roots = [
-        (label, spec.roots[label], link_deps[label])
-        for label in post_order_traversal(root_graph)
-    ]
+    ordered_roots = [(label, spec.roots[label], link_deps[label]) for label in post_order_traversal(root_graph)]
 
     return ordered_roots
 
 def create_omnibus_libraries(
-        ctx: AnalysisContext,
-        graph: OmnibusGraph,
-        extra_ldflags: list[typing.Any] = [],
-        extra_root_ldflags: dict[Label, list[typing.Any]] = {},
-        prefer_stripped_objects: bool = False,
-        enable_distributed_thinlto = False,
-        omnibus_lib_name: str = "omnibus",
-        anonymous: bool = False) -> OmnibusSharedLibraries:
+    ctx: AnalysisContext,
+    graph: OmnibusGraph,
+    extra_ldflags: list[typing.Any] = [],
+    extra_root_ldflags: dict[Label, list[typing.Any]] = {},
+    prefer_stripped_objects: bool = False,
+    enable_distributed_thinlto = False,
+    omnibus_lib_name: str = "omnibus",
+    anonymous: bool = False,
+) -> OmnibusSharedLibraries:
     spec = _build_omnibus_spec(ctx, graph)
     pic_behavior = get_cxx_toolchain_info(ctx).pic_behavior
 

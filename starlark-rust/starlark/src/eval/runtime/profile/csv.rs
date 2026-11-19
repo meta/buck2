@@ -81,7 +81,7 @@ impl CsvWriter {
 
         impl<V: Debug> CsvValue for Impl<V> {
             fn format_for_csv(&self) -> String {
-                quote_str_for_csv(&format!("{:?}", &self.0))
+                quote_str_for_csv(&format!("{:?}", self.0))
             }
         }
 

@@ -13,6 +13,7 @@ mod digest;
 mod error;
 mod grpc;
 mod metadata;
+mod pool;
 mod request;
 mod response;
 mod stats;

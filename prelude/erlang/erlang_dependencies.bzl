@@ -8,6 +8,7 @@
 
 load(
     ":erlang_info.bzl",
+    "CodePathTSet",
     "ErlangAppIncludeInfo",
     "ErlangAppInfo",
     "ErlangDependencyInfo",
@@ -29,8 +30,6 @@ def _erlang_deps_impl(ctx: AnalysisContext) -> list[Provider]:
     private_include_dirs = {}
     beams = {}
     all_beams = {}
-    ebin_code_path = []
-    plain_code_path = []
 
     for name in dependencies:
         dep = dependencies[name]
@@ -62,17 +61,11 @@ def _erlang_deps_impl(ctx: AnalysisContext) -> list[Provider]:
                     all_includes[hrl] = name
                 private_includes[name] = new_includes
 
-            # collect code path
-            ebin_code_path.append(dep_info.app_folder)
-
         elif ErlangAppIncludeInfo in dep:
             dep_info = dep[ErlangAppIncludeInfo]
 
         elif ErlangTestInfo in dep:
             # for test deps we only care about code path
-
-            dep_info = dep[ErlangTestInfo]
-            plain_code_path.append(dep_info.output_dir)
             continue
         else:
             fail("invalid dep {}", dep)
@@ -91,7 +84,12 @@ def _erlang_deps_impl(ctx: AnalysisContext) -> list[Provider]:
         if dep_info.header_deps_file:
             header_deps_files[name] = dep_info.header_deps_file
 
-    code_path = cmd_args(plain_code_path, cmd_args(ebin_code_path, format = "{}/ebin"))
+    code_path_tset = ctx.actions.tset(
+        CodePathTSet,
+        children = _direct_code_path_tsets(
+            ctx.attrs.deps + ctx.attrs.applications + ctx.attrs.included_applications,
+        ),
+    )
 
     dependency_info = ErlangDependencyInfo(
         dependencies = dependencies,
@@ -101,10 +99,28 @@ def _erlang_deps_impl(ctx: AnalysisContext) -> list[Provider]:
         private_include_dirs = private_include_dirs,
         header_deps_files = header_deps_files,
         beams = beams,
-        code_path = code_path,
+        code_path_tset = code_path_tset,
     )
 
     return [DefaultInfo(), dependency_info]
+
+def _direct_code_path_tsets(deps: list[Dependency]) -> list[CodePathTSet]:
+    """Code path sets of the given dependencies, skipping the ones that contribute nothing.
+
+    Virtual applications carry no directory and no dependencies of their own, and
+    include-only targets are headers, so neither has a set.
+    """
+    tsets = []
+    for dep in deps:
+        if ErlangAppInfo in dep:
+            tset = dep[ErlangAppInfo].code_path_tset
+        elif ErlangTestInfo in dep:
+            tset = dep[ErlangTestInfo].code_path_tset
+        else:
+            tset = None
+        if tset != None:
+            tsets.append(tset)
+    return tsets
 
 def fail_dep_conflict(kind: str, name: str, app1: str, app2: str) -> None:
     fail("conflicting {} `{}` found, defined in applications '{}' and '{}'".format(kind, name, app1, app2))
@@ -129,7 +145,7 @@ def flatten_dependencies(deps: list[Dependency]) -> ErlAppDependencies:
 
 # mutates dependencies in place
 def _flatten_dependencies(deps: list[Dependency], dependencies: ErlAppDependencies):
-    """ collect transitive dependencies
+    """collect transitive dependencies
 
     Flatten all transitive dependencies and merge together with the direct
     ones. This is done at every step (with each `erlang_application_impl ` call),
@@ -161,9 +177,7 @@ def _safe_add_dependency(dependencies: ErlAppDependencies, dep: Dependency):
     if ErlangAppInfo in dep:
         name = dep[ErlangAppInfo].name
         if name in dependencies and ErlangAppInfo in dependencies[name] and dep.label != dependencies[name].label:
-            fail(("duplicated application `%s` in dependency tree:\n" +
-                  "    %s\n" +
-                  "    %s") % (name, str(dep.label), str(dependencies[name].label)))
+            fail(("duplicated application `%s` in dependency tree:\n" + "    %s\n" + "    %s") % (name, str(dep.label), str(dependencies[name].label)))
         else:
             dependencies[name] = dep
     elif ErlangTestInfo in dep:

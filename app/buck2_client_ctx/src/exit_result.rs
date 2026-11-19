@@ -9,6 +9,7 @@
  */
 
 use std::convert::Infallible;
+use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fmt::Display;
 use std::io;
@@ -23,6 +24,7 @@ use buck2_error::classify::ErrorLike;
 use buck2_error::classify::ErrorTagExtra;
 use buck2_error::classify::best_error;
 use buck2_error::conversion::from_any_with_tag;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPathBuf;
@@ -34,7 +36,16 @@ pub struct ExecArgs {
     prog: OsString,
     argv: Vec<OsString>,
     chdir: Option<AbsPathBuf>,
-    env: Vec<(String, String)>,
+    environment: ExecEnvironment,
+}
+
+/// Environment changes applied only to the process launched by [`ExitResult::exec`].
+#[derive(Debug, Default)]
+pub struct ExecEnvironment {
+    /// Variables to set or replace.
+    pub set: Vec<(String, String)>,
+    /// Variables to remove from the inherited environment.
+    pub remove: Vec<String>,
 }
 
 /// ExitResult represents the outcome of a process execution where we care to return a specific
@@ -76,11 +87,7 @@ impl ExitResult {
     }
 
     pub fn is_success(&self) -> bool {
-        if let ExitResultVariant::Status(ExitCode::Success) = &self.variant {
-            true
-        } else {
-            false
-        }
+        matches!(self.variant, ExitResultVariant::Status(ExitCode::Success))
     }
 
     /// Return the stored error that hasn't been shown to the user yet, if there is one.
@@ -122,17 +129,25 @@ impl ExitResult {
         prog: OsString,
         argv: Vec<OsString>,
         chdir: Option<AbsPathBuf>,
-        env: Vec<(String, String)>,
+        environment: ExecEnvironment,
     ) -> Self {
         Self {
             variant: ExitResultVariant::Exec(ExecArgs {
                 prog,
                 argv,
                 chdir,
-                env,
+                environment,
             }),
             stdout: Vec::new(),
             emitted_errors: Vec::new(),
+        }
+    }
+
+    /// The program this result will exec and the environment changes applied to it.
+    pub fn exec_environment(&mut self) -> Option<(&OsStr, &mut ExecEnvironment)> {
+        match &mut self.variant {
+            ExitResultVariant::Exec(args) => Some((&args.prog, &mut args.environment)),
+            _ => None,
         }
     }
 
@@ -154,7 +169,7 @@ impl ExitResult {
 
     pub fn err(err: buck2_error::Error) -> Self {
         Self {
-            variant: ExitResultVariant::StatusWithErr(err.exit_code(), err.into()),
+            variant: ExitResultVariant::StatusWithErr(err.exit_code(), err),
             stdout: Vec::new(),
             emitted_errors: Vec::new(),
         }
@@ -162,19 +177,10 @@ impl ExitResult {
 
     pub fn err_with_exit_code(err: buck2_error::Error, exit_code: ExitCode) -> Self {
         Self {
-            variant: ExitResultVariant::StatusWithErr(exit_code, err.into()),
+            variant: ExitResultVariant::StatusWithErr(exit_code, err),
             stdout: Vec::new(),
             emitted_errors: Vec::new(),
         }
-    }
-
-    /// Return this ExitStatus or call a function to produce a new one.
-    pub fn or_else(self, f: impl FnOnce(Self) -> Self) -> Self {
-        if matches!(self.variant, ExitResultVariant::Status(ExitCode::Success)) {
-            return self;
-        }
-
-        f(self)
     }
 
     pub fn with_stdout(mut self, stdout: Vec<u8>) -> Self {
@@ -199,8 +205,7 @@ impl ExitResult {
         }
         let exit_code = best_error(&errors)
             .and_then(|e| e.best_tag())
-            .map(|t| t.exit_code())
-            .unwrap_or(ExitCode::UnknownFailure);
+            .map_or(ExitCode::UnknownFailure, |t| t.exit_code());
         status_with_error_report(exit_code, errors)
     }
 
@@ -217,7 +222,7 @@ impl ExitResult {
                 exe.into_os_string(),
                 std::env::args_os().collect(),
                 None,
-                Vec::new(),
+                ExecEnvironment::default(),
             )))
         } else {
             Ok(None)
@@ -264,7 +269,7 @@ impl ExitResult {
             // No buck_log_dir, no command_report_path, do nothing.
             return Ok(());
         };
-        let file = fs_util::create_file(&path)?;
+        let file = fs_util::create_file(&path).categorize_internal()?;
         let mut file = std::io::BufWriter::new(file);
 
         let error_messages = self
@@ -290,7 +295,8 @@ impl ExitResult {
                 }
                 // buck wrapper depends on command report being written.
                 file.flush()?;
-                fs_util::copy(path, report_path)?;
+                // input path from --command-report-path
+                fs_util::copy(path, report_path).categorize_input()?;
             }
         }
 
@@ -463,10 +469,19 @@ fn do_exec(command: &mut Command) -> buck2_error::Error {
     command.exec().into()
 }
 
+fn apply_exec_environment(command: &mut Command, environment: ExecEnvironment) {
+    for key in environment.remove {
+        command.env_remove(key);
+    }
+    for (key, value) in environment.set {
+        command.env(key, value);
+    }
+}
+
 /// Invokes the given program with the given argv and replaces the program image with the new program.
 /// Does not return.
 fn execv(args: ExecArgs) -> ! {
-    // patternlint-disable-next-line buck2-no-command-new
+    // ast-grep-ignore: rust/buck2-no-command-new
     let mut command = Command::new(&args.prog);
     command.args(&args.argv[1..]);
     if let Some(dir) = args.chdir {
@@ -475,13 +490,36 @@ fn execv(args: ExecArgs) -> ! {
         // (otherwise this would be a really bad idea, even without the promise).
         command.current_dir(dir);
     }
-    for (k, v) in args.env {
-        // Same as above.
-        command.env(k, v);
-    }
+    apply_exec_environment(&mut command, args.environment);
     let err = do_exec(&mut command).context(format!(
         "Failed to execute target process, running {:?} {:?}",
         args.prog, args.argv
     ));
     ExitResult::err(err).report()
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_util::process::background_command;
+
+    use super::*;
+
+    #[test]
+    fn exec_environment_applies_additions_and_removals() {
+        let mut command = background_command("program");
+        apply_exec_environment(
+            &mut command,
+            ExecEnvironment {
+                set: vec![("SET_ME".to_owned(), "value".to_owned())],
+                remove: vec!["REMOVE_ME".to_owned()],
+            },
+        );
+
+        let environment: Vec<_> = command.get_envs().collect();
+        assert!(environment.contains(&(
+            std::ffi::OsStr::new("SET_ME"),
+            Some(std::ffi::OsStr::new("value"))
+        )));
+        assert!(environment.contains(&(std::ffi::OsStr::new("REMOVE_ME"), None)));
+    }
 }

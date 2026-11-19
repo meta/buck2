@@ -28,15 +28,16 @@ use crate::eval::Evaluator;
 use crate::eval::ProfileData;
 use crate::eval::ProfileMode;
 use crate::eval::runtime::profile::data::ProfileDataImpl;
+use crate::values::layout::heap::name::StarlarkTestHeapName;
 
 fn test_profile_golden_for_mode(mode: ProfileMode) {
-    let module = Module::new();
-    let mut eval = Evaluator::new(&module);
-    eval.enable_profile(&mode).unwrap();
-    eval.eval_module(
-        AstModule::parse(
-            "test.star",
-            r#"
+    Module::with_temp_heap(|module| {
+        let mut eval = Evaluator::new(&module);
+        eval.enable_profile(&mode).unwrap();
+        eval.eval_module(
+            AstModule::parse(
+                "test.star",
+                r#"
 def inner(x: int):
     if noop():
         return 10
@@ -57,66 +58,64 @@ test()
 
 R = test()
 "#
-            .to_owned(),
-            &Dialect::AllOptionsInternal,
+                .to_owned(),
+                &Dialect::AllOptionsInternal,
+            )
+            .unwrap(),
+            &GlobalsBuilder::extended().with(test_functions).build(),
         )
-        .unwrap(),
-        &GlobalsBuilder::extended().with(test_functions).build(),
-    )
-    .unwrap();
+        .unwrap();
 
-    let mut profile_data = match mode {
-        ProfileMode::HeapSummaryRetained | ProfileMode::HeapFlameRetained => {
-            drop(eval);
-            let module = module.freeze().unwrap();
-            module.heap_profile().unwrap()
+        let mut profile_data = match mode {
+            ProfileMode::HeapSummaryRetained | ProfileMode::HeapFlameRetained => {
+                drop(eval);
+                let module = module
+                    .freeze_named(StarlarkTestHeapName::frozen_heap_name())
+                    .unwrap();
+                module.heap_profile().unwrap()
+            }
+            _ => eval.gen_profile().unwrap(),
+        };
+
+        if let ProfileDataImpl::HeapRetained(profile)
+        | ProfileDataImpl::HeapAllocated(profile)
+        | ProfileDataImpl::HeapFlameRetained(profile)
+        | ProfileDataImpl::HeapFlameAllocated(profile)
+        | ProfileDataImpl::HeapSummaryRetained(profile)
+        | ProfileDataImpl::HeapSummaryAllocated(profile) = &mut profile_data.profile
+        {
+            profile.normalize_for_golden_tests();
         }
-        _ => eval.gen_profile().unwrap(),
-    };
 
-    if let ProfileDataImpl::HeapRetained(profile)
-    | ProfileDataImpl::HeapAllocated(profile)
-    | ProfileDataImpl::HeapFlameRetained(profile)
-    | ProfileDataImpl::HeapFlameAllocated(profile)
-    | ProfileDataImpl::HeapSummaryRetained(profile)
-    | ProfileDataImpl::HeapSummaryAllocated(profile) = &mut profile_data.profile
-    {
-        profile.normalize_for_golden_tests();
-    }
-
-    match mode {
-        ProfileMode::HeapRetained
-        | ProfileMode::HeapFlameRetained
-        | ProfileMode::HeapAllocated
-        | ProfileMode::HeapFlameAllocated
-        | ProfileMode::TimeFlame => {
+        if let Some(profile) = profile_data.gen_flame_data().unwrap() {
             golden_test_template(
                 &format!(
                     "src/eval/runtime/profile/golden/{}.flame.golden",
                     mode.name().replace('-', "_")
                 ),
-                &profile_data.gen_flame_data().unwrap(),
+                &profile,
             );
         }
-        _ => {}
-    }
 
-    match mode {
-        ProfileMode::HeapFlameRetained
-        | ProfileMode::HeapFlameAllocated
-        | ProfileMode::TimeFlame => {}
-        _ => {
-            golden_test_template(
-                &format!(
-                    "src/eval/runtime/profile/golden/{}.csv.golden",
-                    mode.name().replace('-', "_")
-                ),
-                &profile_data.gen_csv().unwrap(),
-            );
+        match mode {
+            ProfileMode::HeapFlameRetained
+            | ProfileMode::HeapFlameAllocated
+            | ProfileMode::TimeFlame => {}
+            _ => {
+                golden_test_template(
+                    &format!(
+                        "src/eval/runtime/profile/golden/{}.csv.golden",
+                        mode.name().replace('-', "_")
+                    ),
+                    &profile_data.gen_csv().unwrap(),
+                );
+            }
         }
-    }
-    // Smoke test for profile merging.
-    ProfileData::merge([&profile_data, &profile_data]).unwrap();
+        // Smoke test for profile merging.
+        ProfileData::merge([&profile_data, &profile_data]).unwrap();
+        crate::Result::Ok(())
+    })
+    .unwrap();
 }
 
 #[test]

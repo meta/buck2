@@ -12,7 +12,6 @@ import os
 import sys
 
 from live_builder import LiveBuilder
-
 from util import get_args_parser, get_target_info
 
 
@@ -24,10 +23,13 @@ def main():
         help="write the archive to bootstrap script",
         required=True,
     )
+    parser.add_argument("--linktree-suffix", default="#link-tree")
     args, _ = parser.parse_known_args(sys.argv[1:])
     args.target = get_target_info(args.target)
 
-    builder = LiveBuilder(options=args, manifest=None, linktree_suffix="#link-tree")
+    builder = LiveBuilder(
+        options=args, manifest=None, linktree_suffix=args.linktree_suffix
+    )
     bootstrap_contents = builder._gen_interp_file(args.template)
     with open(args.bootstrap_output, "w") as f:
         f.write(bootstrap_contents)

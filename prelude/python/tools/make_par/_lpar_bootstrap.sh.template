@@ -4,15 +4,19 @@
 BASE_DIR={base_dir}
 DIR={base_dir}
 
-# OSX is not Linux.  To get date to give nanoseconds, we must use gnu date
+# Older macOS date versions may not support the %N nanoseconds format.
 if [[ $(uname) == "Darwin" ]]
 then
-    DATE_CMD="/opt/facebook/coreutils/date"
-    MV_CMD="/opt/facebook/coreutils/mv"
+    if DATE_OUTPUT=$(/bin/date +%s.%N 2>/dev/null) &&
+        [[ "$DATE_OUTPUT" =~ ^[0-9]+\.[0-9]{{9}}$ ]]
+    then
+        export PAR_LAUNCH_TIMESTAMP=$DATE_OUTPUT
+    else
+        export PAR_LAUNCH_TIMESTAMP=$(/bin/date +%s.000000000)
+    fi
 else
-    DATE_CMD="date"
+    export PAR_LAUNCH_TIMESTAMP=$(date +%s.%N)
 fi
-export PAR_LAUNCH_TIMESTAMP=$(${{DATE_CMD}} +%s.%N)
 if [ -n "${{{lib_path_env}+SET}}" ]; then
     export FB_SAVED_{lib_path_env}=${lib_path_env}
 fi

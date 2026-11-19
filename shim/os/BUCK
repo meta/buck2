@@ -6,10 +6,18 @@
 # of this source tree.
 
 config_setting(
+    name = "linux",
+    constraint_values = [
+        "prelude//os/constraints:os[linux]",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+config_setting(
     name = "linux-fedora",
     constraint_values = [
-        "prelude//os/constraints:linux",
-        "//os/linux/distro/constraints:fedora",
+        "prelude//os/constraints:os[linux]",
+        "//os/linux/distro/constraints:distro[fedora]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -17,16 +25,116 @@ config_setting(
 config_setting(
     name = "linux-ubuntu",
     constraint_values = [
-        "prelude//os/constraints:linux",
-        "//os/linux/distro/constraints:ubuntu",
+        "prelude//os/constraints:os[linux]",
+        "//os/linux/distro/constraints:distro[ubuntu]",
     ],
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "android",
+    actual = "prelude//os:android",
+    visibility = ["PUBLIC"],
+)
+
+config_setting(
+    name = "android-arm64",
+    constraint_values = [
+        "prelude//cpu/constraints:cpu[arm64]",
+        "prelude//os/constraints:os[android]",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+config_setting(
+    name = "android-x86_64",
+    constraint_values = [
+        "prelude//cpu/constraints:cpu[x86_64]",
+        "prelude//os/constraints:os[android]",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "appletvos",
+    actual = "prelude//os:tvos",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "iphoneos",
+    actual = "prelude//os:iphoneos",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "linux-arm64",
+    actual = "prelude//os:linux-arm64",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "linux-sgx",
+    actual = "prelude//os:linux-sgx",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "macos",
+    actual = "prelude//os:macos",
     visibility = ["PUBLIC"],
 )
 
 config_setting(
     name = "macos-homebrew",
     constraint_values = [
-        "prelude//os/constraints:macos",
+        "prelude//os/constraints:os[macos]",
     ],
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "watchos",
+    actual = "prelude//os:watchos",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "windows",
+    actual = "prelude//os:windows",
+    visibility = ["PUBLIC"],
+)
+
+# The cxx.windows_compiler_type settings read the root cell's config, so a
+# project that consumes this shim and other projects as cells sets the compiler
+# once, at its root, for every cell.
+config_setting(
+    name = "windows-cl",
+    constraint_values = [
+        "prelude//os/constraints:os[windows]",
+    ],
+    root_values = {"cxx.windows_compiler_type": "windows"},
+    visibility = ["PUBLIC"],
+)
+
+config_setting(
+    name = "windows-clang",
+    constraint_values = [
+        "prelude//os/constraints:os[windows]",
+    ],
+    root_values = {"cxx.windows_compiler_type": "clang"},
+    visibility = ["PUBLIC"],
+)
+
+# Matches the same configurations as windows-clang: gcc is not a supported
+# Windows toolchain in the OSS shim, so "gcc or clang" reduces to clang.
+# Exported selects use this key and windows-cl in the same dict, so the two
+# must never both match one configuration.
+config_setting(
+    name = "windows-gcc-or-clang",
+    constraint_values = [
+        "prelude//os/constraints:os[windows]",
+    ],
+    root_values = {"cxx.windows_compiler_type": "clang"},
     visibility = ["PUBLIC"],
 )

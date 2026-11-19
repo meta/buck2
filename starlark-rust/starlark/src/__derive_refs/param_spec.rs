@@ -16,6 +16,7 @@
  */
 
 use dupe::Dupe;
+use pagable::StaticStr;
 
 use crate::typing::ParamSpec;
 use crate::typing::Ty;
@@ -23,37 +24,43 @@ use crate::typing::callable_param::ParamIsRequired;
 use crate::typing::macro_support::unpack_args_item_ty;
 use crate::typing::macro_support::unpack_kwargs_value_ty;
 use crate::util::arc_str::ArcStr;
-use crate::values::FrozenValue;
+use crate::values::FrozenHeap;
+use crate::values::Value;
 
 pub enum NativeCallableParamDefaultValue {
-    /// Value is used for documentation only, not when the function is called.
-    Value(FrozenValue),
+    /// Allocates the default on the builder's heap. Used for documentation only, not when the
+    /// function is called.
+    Value(for<'fh> fn(FrozenHeap<'fh>) -> Value<'fh>),
     Optional,
 }
 
 pub struct NativeCallableParam {
-    pub name: &'static str,
+    pub name: StaticStr,
     /// Type of the parameter.
     /// For `*args` is the type of the element, and for `**kwargs` is the type of the value.
     pub ty: Ty,
     /// `None` means the parameter is required.
     pub required: Option<NativeCallableParamDefaultValue>,
+    /// Accepted by the callable but omitted from generated documentation.
+    pub doc_hidden: bool,
 }
 
 impl NativeCallableParam {
-    pub fn args(name: &'static str, param_ty: Ty) -> NativeCallableParam {
+    pub fn args(name: StaticStr, param_ty: Ty) -> NativeCallableParam {
         NativeCallableParam {
             name,
             ty: unpack_args_item_ty(param_ty),
             required: None,
+            doc_hidden: false,
         }
     }
 
-    pub fn kwargs(name: &'static str, param_ty: Ty) -> NativeCallableParam {
+    pub fn kwargs(name: StaticStr, param_ty: Ty) -> NativeCallableParam {
         NativeCallableParam {
             name,
             ty: unpack_kwargs_value_ty(param_ty),
             required: None,
+            doc_hidden: false,
         }
     }
 
@@ -73,15 +80,18 @@ pub struct NativeCallableParamSpec {
     pub kwargs: Option<NativeCallableParam>,
 }
 
+pagable::static_str!(ARGS_NAME = "args");
+pagable::static_str!(KWARGS_NAME = "kwargs");
+
 impl NativeCallableParamSpec {
     /// For a function accepting raw `&Arguments`.
     pub fn for_arguments() -> NativeCallableParamSpec {
         NativeCallableParamSpec {
             pos_only: Vec::new(),
             pos_or_named: Vec::new(),
-            args: Some(NativeCallableParam::args("args", Ty::any())),
+            args: Some(NativeCallableParam::args(ARGS_NAME, Ty::any())),
             named_only: Vec::new(),
-            kwargs: Some(NativeCallableParam::kwargs("kwargs", Ty::any())),
+            kwargs: Some(NativeCallableParam::kwargs(KWARGS_NAME, Ty::any())),
         }
     }
 

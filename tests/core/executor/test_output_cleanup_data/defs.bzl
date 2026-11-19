@@ -7,15 +7,31 @@
 # above-listed licenses.
 
 def _action_impl(ctx):
-    out = ctx.actions.declare_output("out")
+    isdir = ctx.attrs.isdir
+    out = ctx.actions.declare_output("out", dir = isdir, has_content_based_path = False)
 
     ctx.actions.run(
         [
             "fbpython",
             "-c",
-            "import sys; open(sys.argv[1], 'w').write(sys.argv[2])",
+            "\n".join([
+                "import os, sys",
+                "path, isdir, seed, mode = sys.argv[1:]",
+                "isdir = int(isdir)",
+                "permtarget = path",
+                "if isdir:",
+                "    permtarget = path",
+                "    os.makedirs(path, exist_ok=True)",
+                "    path = path + os.path.sep + 'out.txt'",
+                "with open(path, 'w') as f:",
+                "    f.write(seed)",
+                "if mode != 'None':",
+                "    os.chmod(permtarget, int(mode))",
+            ]),
             out.as_output(),
+            str(int(ctx.attrs.isdir)),
             ctx.attrs.seed,
+            str(ctx.attrs.mode),
         ],
         local_only = ctx.attrs.local_only,
         category = "write",
@@ -25,15 +41,17 @@ def _action_impl(ctx):
 
 action = rule(
     attrs = {
+        "isdir": attrs.bool(default = False),
         "local_only": attrs.bool(),
+        "mode": attrs.option(attrs.int(), default = None),
         "seed": attrs.string(),
     },
     impl = _action_impl,
 )
 
 def _symlinked_dir_impl(ctx):
-    f = ctx.actions.write("dst/f", "file")
-    out = ctx.actions.symlinked_dir("out", {ctx.attrs.seed: f})
+    f = ctx.actions.write("dst/f", "file", has_content_based_path = False)
+    out = ctx.actions.symlinked_dir("out", {ctx.attrs.seed: f}, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 symlinked_dir = rule(
@@ -44,7 +62,7 @@ symlinked_dir = rule(
 )
 
 def _write_impl(ctx):
-    out = ctx.actions.write("out", ctx.attrs.seed)
+    out = ctx.actions.write("out", ctx.attrs.seed, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 write = rule(
@@ -55,8 +73,8 @@ write = rule(
 )
 
 def _copy_impl(ctx):
-    f = ctx.actions.write("dst/f", ctx.attrs.seed)
-    out = ctx.actions.copy_file("out", f)
+    f = ctx.actions.write("dst/f", ctx.attrs.seed, has_content_based_path = False)
+    out = ctx.actions.copy_file("out", f, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 copy = rule(
@@ -89,5 +107,29 @@ def declare_targets():
         copy(name = "main", seed = "copy-a")
     elif target == "copy-b":
         copy(name = "main", seed = "copy-b")
+    elif target == "local_readonly_file-a":
+        action(name = "main", mode = 0o400, local_only = True, seed = target)
+    elif target == "local_readonly_file-b":
+        action(name = "main", mode = 0o400, local_only = True, seed = target)
+    elif target == "local_readonly_dir-a":
+        action(name = "main", isdir = True, mode = 0o500, local_only = True, seed = target)
+    elif target == "local_readonly_dir-b":
+        action(name = "main", isdir = True, mode = 0o500, local_only = True, seed = target)
+    elif target == "local_nonexec_dir-a":
+        action(name = "main", isdir = True, mode = 0o000, local_only = True, seed = target)
+    elif target == "local_nonexec_dir-b":
+        action(name = "main", isdir = True, mode = 0o000, local_only = True, seed = target)
+    elif target == "remote_readonly_file-a":
+        action(name = "main", mode = 0o400, local_only = False, seed = target)
+    elif target == "remote_readonly_file-b":
+        action(name = "main", mode = 0o400, local_only = False, seed = target)
+    elif target == "remote_readonly_dir-a":
+        action(name = "main", isdir = True, mode = 0o500, local_only = False, seed = target)
+    elif target == "remote_readonly_dir-b":
+        action(name = "main", isdir = True, mode = 0o500, local_only = False, seed = target)
+    elif target == "remote_nonexec_dir-a":
+        action(name = "main", isdir = True, mode = 0o000, local_only = False, seed = target)
+    elif target == "remote_nonexec_dir-b":
+        action(name = "main", isdir = True, mode = 0o000, local_only = False, seed = target)
     else:
         fail("Invalid target: `{}`".format(target))

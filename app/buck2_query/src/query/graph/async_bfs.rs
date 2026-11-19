@@ -10,7 +10,7 @@
 
 use std::future;
 
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::internal_error;
 use futures::StreamExt;
 use futures::future::Either;
@@ -59,11 +59,12 @@ impl<N: LabeledNode + 'static> BfsVisited<N> {
     }
 }
 
-pub(crate) async fn async_bfs_find_path<'a, N: LabeledNode + 'static>(
+pub async fn async_bfs_find_path<'a, N: LabeledNode + 'static>(
     roots: impl IntoIterator<Item = &N>,
     lookup: impl AsyncNodeLookup<N>,
     successors: impl AsyncChildVisitor<N>,
     target: impl Fn(&N::Key) -> Option<N> + Sync,
+    allow_partial_graph: bool,
 ) -> buck2_error::Result<Option<Vec<N>>> {
     let lookup = &lookup;
 
@@ -101,7 +102,7 @@ pub(crate) async fn async_bfs_find_path<'a, N: LabeledNode + 'static>(
         match node {
             Ok(node) => {
                 let mut found: Option<N> = None;
-                successors
+                let children = successors
                     .for_each_child(&node, &mut |succ: &N::Key| {
                         if found.is_some() {
                             return Ok(());
@@ -124,8 +125,9 @@ pub(crate) async fn async_bfs_find_path<'a, N: LabeledNode + 'static>(
                                     },
                                 );
                                 let succ = (*succ.key()).clone();
+                                let requester = node.node_key().clone();
                                 queue.push_back(Either::Right(async move {
-                                    let succ_node = lookup.get(&succ).await;
+                                    let succ_node = lookup.get_from(&succ, Some(&requester)).await;
                                     (succ, succ_node)
                                 }));
                             }
@@ -133,7 +135,18 @@ pub(crate) async fn async_bfs_find_path<'a, N: LabeledNode + 'static>(
 
                         Ok(())
                     })
-                    .await?;
+                    .await;
+                if let Err(e) = children {
+                    if allow_partial_graph {
+                        // The node itself loaded: keep the children enumerated so far and
+                        // carry on, as `Graph::build` does.
+                        tracing::trace!(
+                            "query allow-partial-graph: skipping children of `{key}` due to error: {e:#}"
+                        );
+                    } else {
+                        return Err(e);
+                    }
+                }
 
                 if let Some(found) = found {
                     let key = node.node_key().clone();
@@ -153,6 +166,10 @@ pub(crate) async fn async_bfs_find_path<'a, N: LabeledNode + 'static>(
                 }
             }
             Err(mut e) => {
+                if allow_partial_graph {
+                    // Skip nodes with errors if we allow a partial graph
+                    continue;
+                }
                 e = e.context(format!("traversing {key}"));
                 let mut nodes = Vec::new();
                 visited.take_path(&key, |node| nodes.push(node))?;
@@ -169,13 +186,11 @@ pub(crate) async fn async_bfs_find_path<'a, N: LabeledNode + 'static>(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::collections::HashSet;
-
     use async_trait::async_trait;
+    use buck2_hash::BuckMutMap;
+    use buck2_hash::BuckMutSet;
     use buck2_query::query::traversal::ChildVisitor;
     use dupe::Dupe;
-    use gazebo::prelude::VecExt;
 
     use crate::query::graph::async_bfs::async_bfs_find_path;
     use crate::query::graph::node::LabeledNode;
@@ -201,8 +216,8 @@ mod tests {
 
     #[derive(Default)]
     struct TestGraph {
-        successors: HashMap<u32, Vec<u32>>,
-        errors: HashSet<u32>,
+        successors: BuckMutMap<u32, Vec<u32>>,
+        errors: BuckMutSet<u32>,
     }
 
     impl TestGraph {
@@ -225,15 +240,21 @@ mod tests {
                 .into_iter()
                 .map(|n| TestNode(TestNodeKey(n)))
                 .collect();
-            let path = async_bfs_find_path(&roots, self, self, |n| {
-                if n.0 == target {
-                    Some(TestNode(*n))
-                } else {
-                    None
-                }
-            })
+            let path = async_bfs_find_path(
+                &roots,
+                self,
+                self,
+                |n| {
+                    if n.0 == target {
+                        Some(TestNode(*n))
+                    } else {
+                        None
+                    }
+                },
+                false, // allow_partial_graph
+            )
             .await?;
-            Ok(path.map(|path| path.into_map(|n| n.0.0)))
+            Ok(path.map(|path| path.into_iter().map(|n| n.0.0).collect::<Vec<_>>()))
         }
     }
 

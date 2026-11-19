@@ -42,8 +42,13 @@ pub(crate) trait DebugServer {
 }
 
 pub(crate) fn dispatch(server: &impl DebugServer, r: &Request) -> Response {
-    fn arg<T: for<'a> Deserialize<'a>>(r: &Request) -> T {
-        serde_json::from_value(r.arguments.clone().unwrap()).unwrap()
+    // `arguments` is optional in the protocol, so a missing object means "no arguments".
+    fn arg<T: for<'a> Deserialize<'a>>(r: &Request) -> anyhow::Result<T> {
+        let arguments = r
+            .arguments
+            .clone()
+            .unwrap_or_else(|| Value::Object(Map::new()));
+        Ok(serde_json::from_value(arguments)?)
     }
 
     fn arg_extra(r: &Request) -> Map<String, Value> {
@@ -74,18 +79,20 @@ pub(crate) fn dispatch(server: &impl DebugServer, r: &Request) -> Response {
     }
 
     match r.command.as_str() {
-        "initialize" => ret(r, server.initialize(arg(r))),
-        "setBreakpoints" => ret_some(r, server.set_breakpoints(arg(r))),
-        "setExceptionBreakpoints" => ret_none(r, server.set_exception_breakpoints(arg(r))),
-        "launch" => ret_none(r, server.launch(arg(r), arg_extra(r))),
+        "initialize" => ret(r, arg(r).and_then(|x| server.initialize(x))),
+        "setBreakpoints" => ret_some(r, arg(r).and_then(|x| server.set_breakpoints(x))),
+        "setExceptionBreakpoints" => {
+            ret_none(r, arg(r).and_then(|x| server.set_exception_breakpoints(x)))
+        }
+        "launch" => ret_none(r, arg(r).and_then(|x| server.launch(x, arg_extra(r)))),
         "threads" => ret_some(r, server.threads()),
         "configurationDone" => ret_none(r, server.configuration_done()),
-        "stackTrace" => ret_some(r, server.stack_trace(arg(r))),
-        "scopes" => ret_some(r, server.scopes(arg(r))),
-        "variables" => ret_some(r, server.variables(arg(r))),
-        "continue" => ret_some(r, server.continue_(arg(r))),
-        "evaluate" => ret_some(r, server.evaluate(arg(r))),
-        "disconnect" => ret_none(r, server.disconnect(arg(r))),
+        "stackTrace" => ret_some(r, arg(r).and_then(|x| server.stack_trace(x))),
+        "scopes" => ret_some(r, arg(r).and_then(|x| server.scopes(x))),
+        "variables" => ret_some(r, arg(r).and_then(|x| server.variables(x))),
+        "continue" => ret_some(r, arg(r).and_then(|x| server.continue_(x))),
+        "evaluate" => ret_some(r, arg(r).and_then(|x| server.evaluate(x))),
+        "disconnect" => ret_none(r, arg(r).and_then(|x| server.disconnect(x))),
         _ => ret_none(r, Err(anyhow::anyhow!("Unknown command: {}", r.command))),
     }
 }

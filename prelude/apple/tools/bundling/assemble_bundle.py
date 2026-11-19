@@ -134,7 +134,7 @@ def _create_symlinks(symlinks: set[str], bundle_path: Path) -> None:
 def _assemble_incrementally(
     bundle_path: Path,
     spec: List[BundleSpecItem],
-    action_metadata: Dict[Path, str],
+    action_metadata: Dict[str, str],
     incremental_state: IncrementalState,
     check_conflicts: bool,
     versioned_if_macos: bool,
@@ -178,14 +178,15 @@ def _assemble_incrementally(
             old_digest = old_digests.get(dst, None)
             is_changed = new_digest != old_digest
         else:
-            assert (
-                item.resolved_symlink is not None
-            ), "Expected item to represent a symlink when digest is missing"
+            assert item.resolved_symlink is not None, (
+                "Expected item to represent a symlink when digest is missing"
+            )
             new_resolved_symlink = item.resolved_symlink
             old_resolved_symlink = old_symlink_destinations.get(dst, None)
             is_changed = new_resolved_symlink != old_resolved_symlink
             if is_changed:
-                project_relative_dst.unlink()
+                # A symlink new to the bundle has nothing to replace yet.
+                project_relative_dst.unlink(missing_ok=True)
         if is_changed:
             _LOGGER.debug(
                 f"Bundle item at path `{dst}` changed, updating with `{item.source}`."

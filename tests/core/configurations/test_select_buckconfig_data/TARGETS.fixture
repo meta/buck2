@@ -12,3 +12,31 @@ stub(
         "DEFAULT": ["NO"],
     }),
 )
+
+config_setting(
+    name = "root-cs",
+    root_values = {
+        "select_root.key": "root-value",
+    },
+)
+
+config_setting(
+    name = "root-mismatch",
+    root_values = {
+        "select_root.key": "target-value",
+    },
+)
+
+config_setting(
+    name = "target-cs",
+    values = {
+        "select_target.key": "target-value",
+    },
+)
+
+config_setting(
+    name = "target-mismatch",
+    values = {
+        "select_target.key": "root-value",
+    },
+)

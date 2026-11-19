@@ -1,0 +1,157 @@
+/**
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is dual-licensed under either the MIT license found in the
+ * LICENSE-MIT file in the root directory of this source tree or the Apache
+ * License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+ * of this source tree. You may select, at your option, one of the
+ * above-listed licenses.
+ */
+
+/*
+ * Trailcam design tokens: the shadcn/ui "Neutral" palette in OKLCH, plus the
+ * page background Trailcam uses and the ANSI palette AnsiOutput renders with.
+ *
+ * Hosts import this once from a stylesheet that Tailwind v4 processes; the
+ * `@theme` blocks are what make `bg-card`, `text-muted-foreground`, etc. work.
+ * Dark mode is class based (`<html class="dark">`, toggled by `useTheme`), so
+ * a host stylesheet must also declare
+ *   @custom-variant dark (&:where(.dark, .dark *));
+ */
+
+@layer base {
+  :root {
+    --background: #ffffff;
+    --foreground: #171717;
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --accent: oklch(0.97 0 0);
+    --accent-foreground: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --destructive-foreground: oklch(0.985 0 0);
+    --border: oklch(0.94 0 0);
+    --input: oklch(0.97 0 0);
+    --ring: oklch(0.708 0 0);
+    --switch-track: rgba(0, 8, 20, 0.29);
+
+    /* ANSI palette (One Light) for SGR escape codes in action output. */
+    --ansi-black: #383a42;
+    --ansi-red: #e45649;
+    --ansi-green: #50a14f;
+    --ansi-yellow: #c18401;
+    --ansi-blue: #4078f2;
+    --ansi-magenta: #a626a4;
+    --ansi-cyan: #0184bc;
+    --ansi-white: #fafafa;
+    --ansi-bright-black: #a0a1a7;
+    --ansi-bright-red: #e45649;
+    --ansi-bright-green: #50a14f;
+    --ansi-bright-yellow: #c18401;
+    --ansi-bright-blue: #4078f2;
+    --ansi-bright-magenta: #a626a4;
+    --ansi-bright-cyan: #0184bc;
+    --ansi-bright-white: #000000;
+  }
+
+  .dark {
+    /* A very dark cool grey rather than pure black: easier on the eyes, and
+       the lighter card surfaces read as elevation against it. */
+    --background: #16181d;
+    --foreground: #ededed;
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --destructive-foreground: oklch(0.985 0 0);
+    --border: oklch(1 0 0 / 8%);
+    --input: oklch(1 0 0 / 10%);
+    --ring: oklch(0.556 0 0);
+    --switch-track: rgba(255, 255, 255, 0.4);
+
+    /* ANSI palette (One Dark) */
+    --ansi-black: #282c34;
+    --ansi-red: #e06c75;
+    --ansi-green: #98c379;
+    --ansi-yellow: #e5c07b;
+    --ansi-blue: #61afef;
+    --ansi-magenta: #c678dd;
+    --ansi-cyan: #56b6c2;
+    --ansi-white: #abb2bf;
+    --ansi-bright-black: #5c6370;
+    --ansi-bright-red: #e06c75;
+    --ansi-bright-green: #98c379;
+    --ansi-bright-yellow: #e5c07b;
+    --ansi-bright-blue: #61afef;
+    --ansi-bright-magenta: #c678dd;
+    --ansi-bright-cyan: #56b6c2;
+    --ansi-bright-white: #ffffff;
+  }
+}
+
+/* Map the tokens onto Tailwind's color utilities. `inline` keeps the
+   utilities referencing the token variables, so the `.dark` overrides above
+   apply without regenerating anything. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+/* Slightly larger corner radii than Tailwind's defaults; the components are
+   written against this scale (cards use rounded-xl, buttons rounded-lg). */
+@theme {
+  --radius-sm: 2px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+  --radius-2xl: 30px;
+}
+
+/* Brief highlight overlay used by the critical-path phase collapse to draw
+   the eye to the just-toggled section when scroll preservation could not put
+   it back at the top of the viewport. */
+@keyframes phaseHighlight {
+  from {
+    opacity: 0.22;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.phase-highlight-overlay {
+  animation: phaseHighlight 1200ms ease-out forwards;
+  opacity: 0;
+}

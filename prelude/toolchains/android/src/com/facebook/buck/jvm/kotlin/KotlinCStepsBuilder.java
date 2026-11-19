@@ -23,12 +23,16 @@ import com.facebook.buck.jvm.java.CompilerParameters;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.Optional;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinCStepsBuilder {
 
   static void prepareKotlinCompilation(
@@ -37,7 +41,7 @@ public class KotlinCStepsBuilder {
       BuildTargetValue invokingRule,
       CompilerParameters parameters,
       ImmutableList.Builder<IsolatedStep> steps,
-      ActionMetadata actionMetadata,
+      @Nullable ActionMetadata actionMetadata,
       KotlinExtraParams extraParams,
       String friendPathsArg,
       String kotlinPluginGeneratedFullPath,
@@ -49,8 +53,8 @@ public class KotlinCStepsBuilder {
       RelPath reportsOutput,
       Kotlinc kotlinc,
       KosabiPluginOptions kosabiPluginOptions,
-      KspStepsBuilder.KSPInvocationStatus kspInvocationStatus,
-      ImmutableList<AbsPath> sourceOnlyAbiClasspath,
+      ImmutableList<AbsPath> compilationClasspath,
+      ImmutableList<AbsPath> applicabilityClasspath,
       ImmutableList.Builder<IsolatedStep> postKotlinCompilationFailureSteps,
       ImmutableList<AbsPath> classpathSnapshots,
       KotlinCDAnalytics kotlinCDAnalytics) {
@@ -65,10 +69,6 @@ public class KotlinCStepsBuilder {
             moduleName);
 
     LanguageVersion kotlincLanguageVersion = extraParams.getLanguageVersion();
-
-    if (invokingRule.isSourceOnlyAbi() && !extraParams.getShouldKosabiJvmAbiGenUseK2()) {
-      kotlincLanguageVersion = LanguageVersion.Companion.getK1();
-    }
 
     KotlincStep kotlincStep =
         new KotlincStep(
@@ -87,9 +87,8 @@ public class KotlinCStepsBuilder {
             buckOut,
             kosabiPluginOptions.getKosabiPlugins(),
             extraParams.getKosabiJvmAbiGenEarlyTerminationMessagePrefix().orElse(null),
-            invokingRule.isSourceOnlyAbi()
-                && kspInvocationStatus == KspStepsBuilder.KSPInvocationStatus.KSP2_INVOKED,
-            sourceOnlyAbiClasspath,
+            compilationClasspath,
+            applicabilityClasspath,
             extraParams.getShouldVerifySourceOnlyAbiConstraints(),
             postKotlinCompilationFailureSteps.build(),
             extraParams.getDepTrackerPlugin(),
@@ -97,7 +96,7 @@ public class KotlinCStepsBuilder {
                 .create(
                     invokingRule.isSourceOnlyAbi(),
                     buildCellRootPath,
-                    kotlinOutputDirectory.getParent().toAbsolutePath(),
+                    Objects.requireNonNull(kotlinOutputDirectory.getParent()).toAbsolutePath(),
                     parameters.getShouldTrackClassUsage(),
                     CompilerOutputPaths.getDepFilePath(
                         parameters.getOutputPaths().getOutputJarDirPath()),
@@ -108,7 +107,11 @@ public class KotlinCStepsBuilder {
                     classpathSnapshots),
             kotlinCDAnalytics,
             kotlincLanguageVersion,
-            extraParams.getShouldKosabiJvmAbiGenUseK2() && kotlincLanguageVersion.getSupportsK2());
+            kotlincLanguageVersion.getSupportsK2(),
+            extraParams.getShouldKosabiUseShallowClassUsage(),
+            extraParams.getKosabiAbiValidationMode(),
+            extraParams.getKosabiJvmAbiGenOptions(),
+            extraParams.getDisableKosabiKeptBodyStubCheck());
     steps.add(kotlincStep);
   }
 

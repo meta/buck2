@@ -10,11 +10,13 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.type.NoType;
 import javax.lang.model.type.TypeKind;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class StandalonePackageType extends StandaloneTypeMirror implements NoType {
 
   private final ArtificialPackageElement packageElement;

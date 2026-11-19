@@ -23,6 +23,8 @@ class ClasspathSnapshotGenerator(
     private val granularity: SnapshotGranularity,
 ) {
 
+  // Legacy BTA API is DEPRECATION_ERROR from Kotlin 2.4; KotlinToolchains replaces it.
+  @Suppress("DEPRECATION_ERROR")
   fun run() {
     val timeSpent = measureTimeMillis {
       val compilationService = CompilationService.loadImplementation(this.javaClass.classLoader!!)

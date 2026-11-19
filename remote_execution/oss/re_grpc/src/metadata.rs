@@ -42,5 +42,6 @@ pub struct RemoteExecutionMetadata {
     pub do_not_cache: bool,
     pub respect_file_symlinks: Option<bool>,
     pub client_context: Option<TClientContextMetadata>,
+    pub disable_cancel_on_disconnect: bool,
     pub _dot_dot: (),
 }

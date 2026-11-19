@@ -13,8 +13,7 @@ load(
     "ModifiersMatch",
 )
 
-def _modifiers_match(
-        matcher: dict[str, Modifier]) -> ModifiersMatch:
+def _modifiers_match(matcher: dict[str, Modifier]) -> ModifiersMatch:
     """
     A select operator for modifiers. A `modifiers.match` specifies a way for a
     modifier to be added based on an existing constraint in the configuration.

@@ -10,20 +10,19 @@
 
 package com.facebook.buck.jvm.java.abi;
 
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.not;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.junit.Assume.assumeThat;
 
 import com.facebook.buck.cd.model.java.AbiGenerationMode;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.jvm.java.JarDumper;
+import com.facebook.buck.jvm.java.abi.kotlin.KotlinMetadataReader;
 import com.facebook.buck.jvm.java.testutil.compiler.TestCompiler;
 import com.facebook.buck.jvm.kotlin.testutil.compiler.KotlinTestCompiler;
 import com.facebook.buck.util.environment.EnvVariablesProvider;
-import com.facebook.buck.util.environment.Platform;
 import com.facebook.buck.util.unarchive.Unzip;
 import com.facebook.buck.util.zip.DeterministicManifest;
 import com.facebook.buck.util.zip.JarBuilder;
@@ -33,19 +32,26 @@ import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Lists;
 import com.google.common.hash.HashCode;
 import com.google.common.hash.Hashing;
+import com.google.common.io.ByteStreams;
 import com.google.common.io.CharStreams;
 import com.google.common.io.Files;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -53,6 +59,7 @@ import java.util.SortedSet;
 import java.util.concurrent.Callable;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.jar.JarOutputStream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -63,13 +70,17 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic.Kind;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AnnotationNode;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodNode;
 
 // The stub source is easier to read as long lines, so...
 // CHECKSTYLE.OFF: LineLengthCheck
@@ -101,12 +112,52 @@ public class StubJarTest {
         .toArray(new Object[][] {});
   }
 
-  public boolean isKotlin21() {
-    return EnvVariablesProvider.getSystemEnv().get("KOTLIN_VERSION").equals("2.1.0");
+  public boolean isKotlin22() {
+    return isKotlinVersion("2.2");
+  }
+
+  public boolean isKotlin23() {
+    return isKotlinVersion("2.3");
+  }
+
+  public boolean isKotlin24() {
+    return isKotlinVersion("2.4");
   }
 
   public boolean isKotlin20() {
-    return EnvVariablesProvider.getSystemEnv().get("KOTLIN_VERSION").equals("2.0.20");
+    return isKotlinVersion("2.0");
+  }
+
+  private boolean isKotlinVersion(String majorMinor) {
+    return EnvVariablesProvider.getSystemEnv().get("KOTLIN_VERSION").startsWith(majorMinor + ".");
+  }
+
+  private String metadataForKotlinVersion(String metadata22, String metadata20) {
+    if (isKotlin23()) {
+      return withMetadataVersion(metadata22, "mv={2, 3, 0}");
+    }
+    if (isKotlin24()) {
+      // Kotlin 2.4 also writes the visibility of a synthetic class (k=3) to xi bits 8-10:
+      // public (3 << 8) for the public-ABI (xi=176) lambdas these tests expect.
+      return withMetadataVersion(metadata22, "mv={2, 4, 0}").replace("k=3, xi=176", "k=3, xi=944");
+    }
+    if (isKotlin22()) {
+      return metadata22;
+    }
+    return metadata20;
+  }
+
+  // Kotlin 2.4 also writes annotations to metadata, so annotated declarations need a 2.4 golden.
+  private String metadataForKotlinVersion(String metadata24, String metadata22, String metadata20) {
+    return isKotlin24() ? metadata24 : metadataForKotlinVersion(metadata22, metadata20);
+  }
+
+  private static String withMetadataVersion(String metadata22, String metadataVersion) {
+    String kotlin22Version = "mv={2, 2, 0}";
+    if (!metadata22.contains(kotlin22Version)) {
+      throw new IllegalArgumentException("Missing Kotlin 2.2 metadata version: " + metadata22);
+    }
+    return metadata22.replace(kotlin22Version, metadataVersion);
   }
 
   private static final ImmutableSortedSet<Path> EMPTY_CLASSPATH = ImmutableSortedSet.of();
@@ -152,8 +203,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0002\\u0008\\u0016\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003\"},"
@@ -174,7 +225,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -269,8 +320,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0016\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0016\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -305,7 +356,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -354,8 +405,18 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0012\\n"
+    String metadata24 =
+        "  @Lkotlin/Metadata;(mv={2, 4, 0}, k=1, xi=48, d1={\"\\u0000\\u0016\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0010\\u0000\\n"
+            + "\\u0002\\u0008\\u0003\\n"
+            + "\\u0002\\u0010\\u000e\\n"
+            + "\\u0000\\n"
+            + "\\u0002\\u0018\\u0002\\u0008\\u0016\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003J\\u0009\\u0010\\u0004\\u001a\\u00020\\u0005H\\u0086\\u0008J\\u000c\\u0010\\u0006\\u001a\\u00020\\u0005H\\u0001b\\u0002\\u0008\\u0007\"},"
+            + " d2={\"Lcom/example/buck/A;\", \"\", \"<init>\", \"()V\", \"getString\", \"\","
+            + " \"getPublishedString\", \"Lkotlin/PublishedApi;\"})";
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0012\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -389,7 +450,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata24, metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -440,8 +501,19 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0012\\n"
+    String metadata24 =
+        "  @Lkotlin/Metadata;(mv={2, 4, 0}, k=1, xi=48, d1={\"\\u0000\\u0018\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0010\\u0000\\n"
+            + "\\u0002\\u0008\\u0003\\n"
+            + "\\u0002\\u0010\\u000e\\n"
+            + "\\u0000\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0000\\u0008\\u0016\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003J\\u001c\\u0010\\u0004\\u001a\\u00020\\u0005H\\u0087\\u0008b\\u000c\\u0008\\u0007\\u0012\\u0008\\u0008\\u0008\\u0012\\u0004\\u0008\\u0008(\\u0006\\u00a2\\u0006\\u0002\\u0008\\u0006\"},"
+            + " d2={\"Lcom/example/buck/A;\", \"\", \"<init>\", \"()V\", \"getString\", \"\","
+            + " \"someOtherName\", \"Lkotlin/jvm/JvmName;\", \"name\"})";
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0012\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -474,7 +546,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata24, metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -520,8 +592,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0012\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0012\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -553,7 +625,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -644,7 +716,7 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 = "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=3, xi=176)";
+    String metadata22 = "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=3, xi=176)";
     String metadata20 = "  @Lkotlin/Metadata;(mv={2, 0, 0}, k=3, xi=176)";
     tester
         .setSourceFile(
@@ -663,9 +735,20 @@ public class StubJarTest {
                 + " implements kotlin/jvm/functions/Function0 {",
             "",
             "  // compiled from: A.kt",
+            "  // debug info: SMAP",
+            "A.kt",
+            "Kotlin",
+            "*S Kotlin",
+            "*F",
+            "+ 1 A.kt",
+            "com/example/buck/AKt$test$1",
+            "*L",
+            "1#1,3:1",
+            "*E",
+            "",
             "  OUTERCLASS com/example/buck/AKt test (I)Lkotlin/jvm/functions/Function0;",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "  // access flags 0x19",
             "  public final static INNERCLASS com/example/buck/AKt$test$1 null null",
             "",
@@ -734,8 +817,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=3, xi=176, d1={\"\\u0000\\u000c\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=3, xi=176, d1={\"\\u0000\\u000c\\n"
             + "\\u0000\\n"
             + "\\u0002\\u0010\\u0002\\n"
             + "\\u0000\\n"
@@ -769,12 +852,26 @@ public class StubJarTest {
                 + " kotlin/jvm/functions/Function2 {",
             "",
             "  // compiled from: A.kt",
+            "  // debug info: SMAP",
+            "A.kt",
+            "Kotlin",
+            "*S Kotlin",
+            "*F",
+            "+ 1 A.kt",
+            "com/example/buck/AKt$test$1",
+            "*L",
+            "1#1,3:1",
+            "*E",
+            "",
             "  OUTERCLASS com/example/buck/AKt test ()Lkotlin/jvm/functions/Function2;",
             "",
-            "  @Lkotlin/coroutines/jvm/internal/DebugMetadata;(f=\"A.kt\", l={}, i={}, s={}, n={},"
-                + " m=\"invokeSuspend\", c=\"com.example.buck.AKt$test$1\")",
+            isKotlin23() || isKotlin24()
+                ? "  @Lkotlin/coroutines/jvm/internal/DebugMetadata;(f=\"A.kt\", l={}, nl={}, i={},"
+                    + " s={}, n={}, m=\"invokeSuspend\", c=\"com.example.buck.AKt$test$1\", v=2)"
+                : "  @Lkotlin/coroutines/jvm/internal/DebugMetadata;(f=\"A.kt\", l={}, i={}, s={},"
+                    + " n={}, m=\"invokeSuspend\", c=\"com.example.buck.AKt$test$1\")",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "  // access flags 0x19",
             "  public final static INNERCLASS com/example/buck/AKt$test$1 null null",
             "",
@@ -805,6 +902,9 @@ public class StubJarTest {
             "  // access flags 0x11",
             "  public final invokeSuspend(Ljava/lang/Object;)Ljava/lang/Object;",
             "   L0",
+            "    ALOAD 0",
+            "    GETFIELD com/example/buck/AKt$test$1.I$0 : I",
+            "    ISTORE 2",
             "    INVOKESTATIC kotlin/coroutines/intrinsics/IntrinsicsKt.getCOROUTINE_SUSPENDED"
                 + " ()Ljava/lang/Object;",
             "   L1",
@@ -819,16 +919,12 @@ public class StubJarTest {
             "    ALOAD 1",
             "    INVOKESTATIC kotlin/ResultKt.throwOnFailure (Ljava/lang/Object;)V",
             "   L4",
-            "    ALOAD 0",
-            "    GETFIELD com/example/buck/AKt$test$1.I$0 : I",
-            "    ISTORE 2",
-            "   L5",
-            "    LINENUMBER 2 L5",
+            "    LINENUMBER 2 L4",
             "    GETSTATIC java/lang/System.out : Ljava/io/PrintStream;",
             "    ILOAD 2",
             "    INVOKEVIRTUAL java/io/PrintStream.println (I)V",
-            "   L6",
-            "    LINENUMBER 2 L6",
+            "   L5",
+            "    LINENUMBER 2 L5",
             "    GETSTATIC kotlin/Unit.INSTANCE : Lkotlin/Unit;",
             "    ARETURN",
             "   L3",
@@ -838,10 +934,10 @@ public class StubJarTest {
             "    LDC \"call to 'resume' before 'invoke' with coroutine\"",
             "    INVOKESPECIAL java/lang/IllegalStateException.<init> (Ljava/lang/String;)V",
             "    ATHROW",
-            "   L7",
-            "    LOCALVARIABLE it I L5 L3 2",
-            "    LOCALVARIABLE this Lcom/example/buck/AKt$test$1; L0 L7 0",
-            "    LOCALVARIABLE $result Ljava/lang/Object; L4 L3 1",
+            "   L6",
+            "    LOCALVARIABLE this Lcom/example/buck/AKt$test$1; L0 L6 0",
+            "    LOCALVARIABLE $result Ljava/lang/Object; L0 L6 1",
+            "    LOCALVARIABLE it I L1 L6 2",
             "    MAXSTACK = 3",
             "    MAXLOCALS = 3",
             "",
@@ -933,7 +1029,7 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 = "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=3, xi=176)";
+    String metadata22 = "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=3, xi=176)";
     String metadata20 = "  @Lkotlin/Metadata;(mv={2, 0, 0}, k=3, xi=176)";
     tester
         .setSourceFile(
@@ -955,9 +1051,20 @@ public class StubJarTest {
                 + " implements kotlin/jvm/functions/Function1 {",
             "",
             "  // compiled from: A.kt",
+            "  // debug info: SMAP",
+            "A.kt",
+            "Kotlin",
+            "*S Kotlin",
+            "*F",
+            "+ 1 A.kt",
+            "com/example/buck/AKt$test$1",
+            "*L",
+            "1#1,3:1",
+            "*E",
+            "",
             "  OUTERCLASS com/example/buck/AKt test (I)Lkotlin/jvm/functions/Function1;",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "  // access flags 0x19",
             "  public final static INNERCLASS com/example/buck/AKt$test$1 null null",
             "  // access flags 0x19",
@@ -1035,7 +1142,7 @@ public class StubJarTest {
             "  // compiled from: A.kt",
             "  OUTERCLASS com/example/buck/AKt$test$1 invoke (I)Lkotlin/jvm/functions/Function1;",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "  // access flags 0x19",
             "  public final static INNERCLASS com/example/buck/AKt$test$1 null null",
             "  // access flags 0x19",
@@ -1117,8 +1224,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0016\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0016\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -1153,7 +1260,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -1169,6 +1276,371 @@ public class StubJarTest {
   }
 
   @Test
+  public void kotlinHiddenDeprecatedOverloadRetained() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+    if (!testingMode.equals(MODE_JAR_BASED)) {
+      // Class-ABI stubbing of HIDDEN members only applies to jar-based stubs.
+      return;
+    }
+
+    // `A` is an interface on purpose: concrete classes already keep SYNTHETIC|DEPRECATED
+    // members via `shouldInclude`, so only interfaces (and abstract classes) exercise the
+    // HIDDEN-retention path. `LazyListScope` (the motivating real-world case) is an interface.
+    File outputDir = temp.newFolder();
+    AbsPath fullJar;
+    try (KotlinTestCompiler compiler = new KotlinTestCompiler()) {
+      compiler.init();
+      compiler.addSourceFileContents(
+          "A.kt",
+          "package com.example.buck",
+          "interface A {",
+          "  @Deprecated(message=\"old\", level=DeprecationLevel.HIDDEN)",
+          "  fun f(content: (() -> Unit)?)",
+          "  fun f(content: ((Int) -> Unit)?)",
+          "}");
+      compiler.compile();
+      fullJar = AbsPath.of(outputDir.toPath()).resolve("output.jar");
+      compiler.getClasses().createJar(fullJar.getPath(), false);
+    }
+
+    AbsPath stubJar = AbsPath.of(temp.newFolder().toPath()).resolve("stub.jar");
+    new StubJar(fullJar, false).writeTo(stubJar);
+
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      JarEntry entry = jar.getJarEntry("com/example/buck/A.class");
+      assertNotNull(entry);
+      ClassNode stub = new ClassNode(Opcodes.ASM9);
+      new ClassReader(jar.getInputStream(entry)).accept(stub, ClassReader.SKIP_CODE);
+
+      MethodNode hidden = null;
+      MethodNode visible = null;
+      for (MethodNode method : stub.methods) {
+        if (method.name.equals("f") && method.desc.equals("(Lkotlin/jvm/functions/Function0;)V")) {
+          hidden = method;
+        }
+        if (method.name.equals("f") && method.desc.equals("(Lkotlin/jvm/functions/Function1;)V")) {
+          visible = method;
+        }
+        assertTrue(
+            "compiler-generated synthetics should stay stripped: " + method.name,
+            !method.name.contains("access$")
+                && !method.name.contains("$lambda")
+                && !method.name.contains("$r8$"));
+      }
+      assertNotNull("visible overload kept", visible);
+      assertNotNull("HIDDEN overload kept in interface ABI stub", hidden);
+      assertTrue(
+          "HIDDEN overload must stay synthetic", (hidden.access & Opcodes.ACC_SYNTHETIC) != 0);
+      assertTrue(hasHiddenDeprecation(hidden));
+    }
+
+    // End to end: a call that is ambiguous when both overloads look visible
+    // resolves against the ABI now that the HIDDEN marker is present.
+    try (KotlinTestCompiler compiler = new KotlinTestCompiler()) {
+      compiler.init();
+      compiler.addSourceFileContents(
+          "B.kt",
+          "package com.example.buck",
+          "class B {",
+          "  fun use(a: A) {",
+          "    a.f(null)",
+          "    a.f { println(it) }",
+          "  }",
+          "}");
+      compiler.addClasspath(ImmutableSortedSet.of(stubJar.getPath()));
+      compiler.compile();
+    }
+  }
+
+  @Test
+  public void kotlinHiddenDeprecatedOverloadRetainedAbstractClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+    if (!testingMode.equals(MODE_JAR_BASED)) {
+      // Class-ABI stubbing of HIDDEN members only applies to jar-based stubs.
+      return;
+    }
+
+    // Abstract-class counterpart to the interface case above: `shouldInclude` also drops
+    // SYNTHETIC members on abstract classes, so this exercises the same retention path.
+    File outputDir = temp.newFolder();
+    AbsPath fullJar;
+    try (KotlinTestCompiler compiler = new KotlinTestCompiler()) {
+      compiler.init();
+      compiler.addSourceFileContents(
+          "A.kt",
+          "package com.example.buck",
+          "abstract class A {",
+          "  @Deprecated(message=\"old\", level=DeprecationLevel.HIDDEN)",
+          "  abstract fun f(content: (() -> Unit)?)",
+          "  abstract fun f(content: ((Int) -> Unit)?)",
+          "}");
+      compiler.compile();
+      fullJar = AbsPath.of(outputDir.toPath()).resolve("output.jar");
+      compiler.getClasses().createJar(fullJar.getPath(), false);
+    }
+
+    AbsPath stubJar = AbsPath.of(temp.newFolder().toPath()).resolve("stub.jar");
+    new StubJar(fullJar, false).writeTo(stubJar);
+
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      JarEntry entry = jar.getJarEntry("com/example/buck/A.class");
+      assertNotNull(entry);
+      ClassNode stub = new ClassNode(Opcodes.ASM9);
+      new ClassReader(jar.getInputStream(entry)).accept(stub, ClassReader.SKIP_CODE);
+
+      MethodNode hidden = null;
+      MethodNode visible = null;
+      for (MethodNode method : stub.methods) {
+        if (method.name.equals("f") && method.desc.equals("(Lkotlin/jvm/functions/Function0;)V")) {
+          hidden = method;
+        }
+        if (method.name.equals("f") && method.desc.equals("(Lkotlin/jvm/functions/Function1;)V")) {
+          visible = method;
+        }
+      }
+      assertNotNull("visible overload kept", visible);
+      assertNotNull("HIDDEN overload kept in abstract-class ABI stub", hidden);
+      assertTrue(
+          "HIDDEN overload must stay synthetic", (hidden.access & Opcodes.ACC_SYNTHETIC) != 0);
+      assertTrue(hasHiddenDeprecation(hidden));
+    }
+
+    try (KotlinTestCompiler compiler = new KotlinTestCompiler()) {
+      compiler.init();
+      compiler.addSourceFileContents(
+          "B.kt",
+          "package com.example.buck",
+          "class C : A() {",
+          "  override fun f(content: (() -> Unit)?) {}",
+          "  override fun f(content: ((Int) -> Unit)?) {}",
+          "}",
+          "class B {",
+          "  fun use(a: A) {",
+          "    a.f(null)",
+          "    a.f { println(it) }",
+          "  }",
+          "}");
+      compiler.addClasspath(ImmutableSortedSet.of(stubJar.getPath()));
+      compiler.compile();
+    }
+  }
+
+  /**
+   * Stubbing must still succeed, with inline info intact, when @kotlin.Metadata is newer than the
+   * bundled kotlin-metadata-jvm reads strictly (2.4.0, as shipped in real artifacts such as
+   * clerk-android-api 1.1.7). Jar-based only: the version bump is applied to the compiled jar.
+   */
+  @Test
+  public void kotlinNewerMetadataVersionStillStubs() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+    if (!testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    File outputDir = temp.newFolder();
+    AbsPath fullJar;
+    try (KotlinTestCompiler compiler = new KotlinTestCompiler()) {
+      compiler.init();
+      compiler.addSourceFileContents(
+          "A.kt",
+          "package com.example.buck",
+          "class A {",
+          "  inline fun greet(name: String, greeting: String = \"hi\"): String = greeting + name",
+          "  fun plain(x: Int): Int = x",
+          "}");
+      compiler.compile();
+      fullJar = AbsPath.of(outputDir.toPath()).resolve("output.jar");
+      compiler.getClasses().createJar(fullJar.getPath(), false);
+    }
+
+    AbsPath bumpedJar = AbsPath.of(temp.newFolder().toPath()).resolve("bumped.jar");
+    rewriteKotlinMetadataVersion(fullJar, bumpedJar, new int[] {2, 4, 0});
+
+    AbsPath stubJar = AbsPath.of(temp.newFolder().toPath()).resolve("stub.jar");
+    new StubJar(bumpedJar, false).writeTo(stubJar);
+
+    Set<String> inputMethodNames;
+    try (JarFile jar = new JarFile(bumpedJar.toFile())) {
+      inputMethodNames = methodNames(readClass(jar, "com/example/buck/A.class"));
+    }
+
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      ClassNode stub = readClass(jar, "com/example/buck/A.class");
+      Set<String> stubMethodNames = methodNames(stub);
+
+      assertTrue("inline function kept", stubMethodNames.contains("greet"));
+      assertTrue(
+          "inline $default kept, so the lenient read provided inline info",
+          stubMethodNames.contains("greet$default"));
+      assertTrue("plain function kept", stubMethodNames.contains("plain"));
+      if (inputMethodNames.contains("greet$$forInline")) {
+        assertTrue("inline $$forInline kept", stubMethodNames.contains("greet$$forInline"));
+      }
+
+      assertEquals(
+          "metadata version preserved in stub",
+          Arrays.asList(2, 4, 0),
+          kotlinMetadataVersion(stub));
+    }
+  }
+
+  /**
+   * Metadata the lenient reader cannot parse must fail loudly, naming the kind and version, rather
+   * than degrading to empty inline info. A corrupt `d1` fails both the strict and lenient reads.
+   */
+  @Test
+  public void kotlinUnparsableMetadataFailsLoudly() {
+    AnnotationNode annotation = new AnnotationNode("Lkotlin/Metadata;");
+    annotation.values =
+        Arrays.asList(
+            "k",
+            1,
+            "mv",
+            Arrays.asList(2, 2, 0),
+            "d1",
+            Arrays.asList("bogus"),
+            "d2",
+            Arrays.asList(""),
+            "xs",
+            "",
+            "pn",
+            "",
+            "xi",
+            0);
+    try {
+      KotlinMetadataReader.readMetadata(annotation);
+      fail("expected unreadable Kotlin metadata to fail loudly");
+    } catch (IllegalArgumentException expected) {
+      assertTrue(
+          "message names kind and version: " + expected.getMessage(),
+          expected.getMessage().contains("kind=1") && expected.getMessage().contains("[2, 2, 0]"));
+      assertNotNull("lenient cause is wrapped", expected.getCause());
+    }
+  }
+
+  private static ClassNode readClass(JarFile jar, String entryName) throws IOException {
+    JarEntry entry = jar.getJarEntry(entryName);
+    assertNotNull(entry);
+    ClassNode node = new ClassNode(Opcodes.ASM9);
+    try (InputStream in = jar.getInputStream(entry)) {
+      new ClassReader(in).accept(node, ClassReader.SKIP_CODE);
+    }
+    return node;
+  }
+
+  private static Set<String> methodNames(ClassNode node) {
+    return node.methods.stream().map(method -> method.name).collect(Collectors.toSet());
+  }
+
+  private static List<Integer> kotlinMetadataVersion(ClassNode node) {
+    if (node.visibleAnnotations != null) {
+      for (AnnotationNode annotation : node.visibleAnnotations) {
+        if (!"Lkotlin/Metadata;".equals(annotation.desc) || annotation.values == null) {
+          continue;
+        }
+        for (int i = 0; i + 1 < annotation.values.size(); i += 2) {
+          if ("mv".equals(annotation.values.get(i))) {
+            @SuppressWarnings("unchecked")
+            List<Integer> mv = (List<Integer>) annotation.values.get(i + 1);
+            return mv;
+          }
+        }
+      }
+    }
+    return Collections.emptyList();
+  }
+
+  private static void rewriteKotlinMetadataVersion(
+      AbsPath inputJar, AbsPath outputJar, int[] version) throws IOException {
+    try (JarFile jar = new JarFile(inputJar.toFile());
+        JarOutputStream out =
+            new JarOutputStream(java.nio.file.Files.newOutputStream(outputJar.getPath()))) {
+      for (JarEntry entry : Collections.list(jar.entries())) {
+        out.putNextEntry(new JarEntry(entry.getName()));
+        if (!entry.isDirectory()) {
+          byte[] bytes;
+          try (InputStream in = jar.getInputStream(entry)) {
+            bytes = ByteStreams.toByteArray(in);
+          }
+          if (entry.getName().endsWith(".class")) {
+            bytes = withKotlinMetadataVersion(bytes, version);
+          }
+          out.write(bytes);
+        }
+        out.closeEntry();
+      }
+    }
+  }
+
+  private static byte[] withKotlinMetadataVersion(byte[] classBytes, int[] version) {
+    ClassNode node = new ClassNode(Opcodes.ASM9);
+    new ClassReader(classBytes).accept(node, 0);
+    boolean rewritten = false;
+    if (node.visibleAnnotations != null) {
+      for (AnnotationNode annotation : node.visibleAnnotations) {
+        if (!"Lkotlin/Metadata;".equals(annotation.desc) || annotation.values == null) {
+          continue;
+        }
+        for (int i = 0; i + 1 < annotation.values.size(); i += 2) {
+          if ("mv".equals(annotation.values.get(i))) {
+            List<Integer> mv = new ArrayList<>();
+            for (int v : version) {
+              mv.add(v);
+            }
+            annotation.values.set(i + 1, mv);
+            rewritten = true;
+          }
+        }
+      }
+    }
+    if (!rewritten) {
+      return classBytes;
+    }
+    ClassWriter writer = new ClassWriter(0);
+    node.accept(writer);
+    return writer.toByteArray();
+  }
+
+  private static boolean hasHiddenDeprecation(MethodNode method) {
+    if (hasHiddenDeprecation(method.visibleAnnotations)) {
+      return true;
+    }
+    return hasHiddenDeprecation(method.invisibleAnnotations);
+  }
+
+  private static boolean hasHiddenDeprecation(java.util.List<AnnotationNode> annotations) {
+    if (annotations == null) {
+      return false;
+    }
+    for (AnnotationNode annotation : annotations) {
+      if (!"Lkotlin/Deprecated;".equals(annotation.desc) || annotation.values == null) {
+        continue;
+      }
+      for (int i = 0; i + 1 < annotation.values.size(); i += 2) {
+        if (!"level".equals(annotation.values.get(i))) {
+          continue;
+        }
+        Object level = annotation.values.get(i + 1);
+        if (level instanceof String[]) {
+          String[] enumValue = (String[]) level;
+          if (enumValue.length == 2
+              && "Lkotlin/DeprecationLevel;".equals(enumValue[0])
+              && "HIDDEN".equals(enumValue[1])) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  @Test
   public void kotlinClassWithInlineProperty() throws IOException {
     if (!isValidForKotlin()) {
       return;
@@ -1181,8 +1653,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0014\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0014\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -1223,7 +1695,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -1317,8 +1789,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=2, xi=48, d1={\"\\u0000\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=2, xi=48, d1={\"\\u0000\\n"
             + "\\n"
             + "\\u0000\\n"
             + "\\u0002\\u0010\\u000e\\n"
@@ -1358,7 +1830,7 @@ public class StubJarTest {
             "",
             "  // compiled from: B.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x19",
             "  public final static getString(Lcom/example/buck/A;)Ljava/lang/String;",
@@ -1402,11 +1874,22 @@ public class StubJarTest {
                 + " implements kotlin/jvm/functions/Function1 {",
             "",
             "  // compiled from: B.kt",
+            "  // debug info: SMAP",
+            "B.kt",
+            "Kotlin",
+            "*S Kotlin",
+            "*F",
+            "+ 1 B.kt",
+            "com/example/buck/BKt$getString$1",
+            "*L",
+            "1#1,5:1",
+            "*E",
+            "",
             "  OUTERCLASS com/example/buck/BKt getString (Lcom/example/buck/A;)Ljava/lang/String;",
             "",
-            isKotlin21()
-                ? "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=3, xi=176)"
-                : "  @Lkotlin/Metadata;(mv={2, 0, 0}, k=3, xi=176)",
+            metadataForKotlinVersion(
+                "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=3, xi=176)",
+                "  @Lkotlin/Metadata;(mv={2, 0, 0}, k=3, xi=176)"),
             "  // access flags 0x19",
             "  public final static INNERCLASS com/example/buck/BKt$getString$1 null null",
             "",
@@ -1492,8 +1975,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u001e\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u001e\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -1535,7 +2018,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -1630,12 +2113,23 @@ public class StubJarTest {
                 + " implements kotlin/jvm/functions/Function1 {",
             "",
             "  // compiled from: A.kt",
+            "  // debug info: SMAP",
+            "A.kt",
+            "Kotlin",
+            "*S Kotlin",
+            "*F",
+            "+ 1 A.kt",
+            "com/example/buck/A$someMethod$1",
+            "*L",
+            "1#1,7:1",
+            "*E",
+            "",
             "  OUTERCLASS com/example/buck/A someMethod$default"
                 + " (Lcom/example/buck/A;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V",
             "",
-            isKotlin21()
-                ? "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=3, xi=176)"
-                : "  @Lkotlin/Metadata;(mv={2, 0, 0}, k=3, xi=176)",
+            metadataForKotlinVersion(
+                "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=3, xi=176)",
+                "  @Lkotlin/Metadata;(mv={2, 0, 0}, k=3, xi=176)"),
             "  // access flags 0x19",
             "  public final static INNERCLASS com/example/buck/A$someMethod$1 null null",
             "",
@@ -1720,8 +2214,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=2, xi=48, d1={\"\\u0000\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=2, xi=48, d1={\"\\u0000\\n"
             + "\\n"
             + "\\u0000\\n"
             + "\\u0002\\u0010\\u0002\\n"
@@ -1737,7 +2231,7 @@ public class StubJarTest {
             + "\\u0010\\u0000\\u001a\\u00020\\u0001*\\u00020\\u0002H\\u0086\\u0008\"},"
             + " d2={\"useSomeInterface\", \"\", \"Lcom/example/buck/A;\"})";
     String innerMetadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=176, d1={\"\\u0000\\u000f\\n"
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=176, d1={\"\\u0000\\u000f\\n"
             + "\\u0000\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0000\\n"
@@ -1783,7 +2277,7 @@ public class StubJarTest {
             "",
             "  // compiled from: B.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x19",
             "  public final static useSomeInterface(Lcom/example/buck/A;)V",
@@ -1822,9 +2316,23 @@ public class StubJarTest {
                 + " com/example/buck/A$SomeInterface {",
             "",
             "  // compiled from: B.kt",
+            "  // debug info: SMAP",
+            "B.kt",
+            "Kotlin",
+            "*S Kotlin",
+            "*F",
+            "+ 1 B.kt",
+            "com/example/buck/BKt$useSomeInterface$1",
+            "*L",
+            "1#1,9:1",
+            "*E",
+            "",
             "  OUTERCLASS com/example/buck/BKt useSomeInterface (Lcom/example/buck/A;)V",
             "",
-            isKotlin21() ? innerMetadata21 : innerMetadata20,
+            metadataForKotlinVersion(innerMetadata21, innerMetadata20),
+            "  // access flags 0x609",
+            "  public static abstract INNERCLASS com/example/buck/A$SomeInterface"
+                + " com/example/buck/A SomeInterface",
             "  // access flags 0x19",
             "  public final static INNERCLASS com/example/buck/BKt$useSomeInterface$1 null null",
             "",
@@ -1875,8 +2383,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\u0008\\u0016\\u0018\\u00002\\u00020\\u0001:\\u0001\\u0004B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003\"},"
@@ -1888,7 +2396,7 @@ public class StubJarTest {
             + "\\u0002\\u0008\\u0003\\u0008\\u0016\\u0018\\u00002\\u00020\\u0001:\\u0001\\u0004B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003\"},"
             + " d2={\"Lcom/example/buck/B;\", \"\", \"<init>\", \"()V\", \"C\"})";
     String innerMetadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0010\\n"
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0010\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -1904,7 +2412,7 @@ public class StubJarTest {
             + " d2={\"Lcom/example/buck/B$C;\", \"\", \"<init>\", \"()V\", \"useSomeInterface\","
             + " \"\"})";
     String innerInnerMetadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=176, d1={\"\\u0000\\u000f\\n"
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=176, d1={\"\\u0000\\u000f\\n"
             + "\\u0000\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0000\\n"
@@ -1953,7 +2461,7 @@ public class StubJarTest {
             "",
             "  // compiled from: B.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "  // access flags 0x9",
             "  public static INNERCLASS com/example/buck/B$C com/example/buck/B C",
             "",
@@ -1968,7 +2476,7 @@ public class StubJarTest {
             "",
             "  // compiled from: B.kt",
             "",
-            isKotlin21() ? innerMetadata21 : innerMetadata20,
+            metadataForKotlinVersion(innerMetadata21, innerMetadata20),
             "  // access flags 0x9",
             "  public static INNERCLASS com/example/buck/B$C com/example/buck/B C",
             "",
@@ -2012,9 +2520,23 @@ public class StubJarTest {
                 + " com/example/buck/A$SomeInterface {",
             "",
             "  // compiled from: B.kt",
+            "  // debug info: SMAP",
+            "B.kt",
+            "Kotlin",
+            "*S Kotlin",
+            "*F",
+            "+ 1 B.kt",
+            "com/example/buck/B$C$useSomeInterface$1",
+            "*L",
+            "1#1,12:1",
+            "*E",
+            "",
             "  OUTERCLASS com/example/buck/B$C useSomeInterface ()V",
             "",
-            isKotlin21() ? innerInnerMetadata21 : innerInnerMetadata20,
+            metadataForKotlinVersion(innerInnerMetadata21, innerInnerMetadata20),
+            "  // access flags 0x609",
+            "  public static abstract INNERCLASS com/example/buck/A$SomeInterface"
+                + " com/example/buck/A SomeInterface",
             "  // access flags 0x9",
             "  public static INNERCLASS com/example/buck/B$C com/example/buck/B C",
             "  // access flags 0x19",
@@ -2076,8 +2598,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=2, xi=48, d1={\"\\u0000\\u0018\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=2, xi=48, d1={\"\\u0000\\u0018\\n"
             + "\\u0000\\n"
             + "\\u0002\\u0010\\u0002\\n"
             + "\\u0002\\u0018\\u0002\\n"
@@ -2132,7 +2654,7 @@ public class StubJarTest {
             "",
             "  // compiled from: B.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x19",
             "  // signature"
@@ -2200,9 +2722,9 @@ public class StubJarTest {
             "  // compiled from: B.kt",
             "  OUTERCLASS com/example/buck/BKt null",
             "",
-            isKotlin21()
-                ? "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=3, xi=176)"
-                : "  @Lkotlin/Metadata;(mv={2, 0, 0}, k=3, xi=176)",
+            metadataForKotlinVersion(
+                "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=3, xi=176)",
+                "  @Lkotlin/Metadata;(mv={2, 0, 0}, k=3, xi=176)"),
             "  // access flags 0x19",
             "  public final static INNERCLASS com/example/buck/BKt$sam$i$java_lang_Runnable$0 null"
                 + " null",
@@ -2695,51 +3217,6 @@ public class StubJarTest {
         .createStubJar();
   }
 
-  @Test
-  @Ignore
-  public void failsWhenAnnotationWillNotLoad() throws IOException {
-    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
-      return;
-    }
-
-    tester
-        .setSourceFile(
-            "DepAnno.java", "package com.example.buck.dependency;", "public @interface DepAnno { }")
-        .createStubJar()
-        .addStubJarToClasspath()
-        .setSourceFile(
-            "A.java",
-            "package com.example.buck;",
-            "import com.example.buck.dependency.DepAnno;",
-            "@DepAnno",
-            "public class A {",
-            "  public void foo(@DepAnno int d) { }",
-            "}")
-        .addExpectedCompileError(
-            "A.java:3: error: Could not find the annotation com.example.buck.dependency.DepAnno.\n"
-                + "@DepAnno\n"
-                + "^\n"
-                + "  This can happen for one of two reasons:\n"
-                + "  1. A dependency is missing in the BUCK file for the current target. Try"
-                + " building the current rule without the #source-only-abi flavor, fix any errors"
-                + " that are reported, and then build this flavor again.\n"
-                + "  2. The rule that owns com.example.buck.dependency.DepAnno is not marked with"
-                + " required_for_source_only_abi = True. Add that parameter to the rule and try"
-                + " again.")
-        .addExpectedCompileError(
-            "A.java:5: error: Could not find the annotation com.example.buck.dependency.DepAnno.\n"
-                + "  public void foo(@DepAnno int d) { }\n"
-                + "                  ^\n"
-                + "  This can happen for one of two reasons:\n"
-                + "  1. A dependency is missing in the BUCK file for the current target. Try"
-                + " building the current rule without the #source-only-abi flavor, fix any errors"
-                + " that are reported, and then build this flavor again.\n"
-                + "  2. The rule that owns com.example.buck.dependency.DepAnno is not marked with"
-                + " required_for_source_only_abi = True. Add that parameter to the rule and try"
-                + " again.")
-        .createStubJar();
-  }
-
   /**
    * Regression test for a bug where our error suppressing listener wasn't tracking Context changes
    * across rounds.
@@ -3118,38 +3595,8 @@ public class StubJarTest {
   }
 
   @Test
-  @Ignore
-  public void providesNiceErrorWhenAnnotationMissing() throws IOException {
-    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
-      return;
-    }
-
-    createAnnotationFullJar()
-        .addFullJarToClasspath()
-        .setSourceFile(
-            "A.java",
-            "package com.example.buck;",
-            "public class A {",
-            "  @Foo",
-            "  public void cheese(String key) {}",
-            "}")
-        .addExpectedCompileError(
-            "A.java:3: error: Could not find the annotation com.example.buck.Foo.\n"
-                + "  @Foo\n"
-                + "  ^\n"
-                + "  This can happen for one of two reasons:\n"
-                + "  1. A dependency is missing in the BUCK file for the current target. Try"
-                + " building the current rule without the #source-only-abi flavor, fix any errors"
-                + " that are reported, and then build this flavor again.\n"
-                + "  2. The rule that owns com.example.buck.Foo is not marked with"
-                + " required_for_source_only_abi = True. Add that parameter to the rule and try"
-                + " again.")
-        .createStubJar();
-  }
-
-  @Test
   public void preservesAnnotationsOnMethods() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
 
     createAnnotationFullJar()
         .addFullJarToClasspath()
@@ -3180,7 +3627,7 @@ public class StubJarTest {
 
   @Test
   public void preservesAnnotationsOnFields() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
 
     createAnnotationFullJar()
         .addFullJarToClasspath()
@@ -3211,7 +3658,7 @@ public class StubJarTest {
 
   @Test
   public void preservesAnnotationsOnParameters() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
 
     createAnnotationFullJar()
         .addFullJarToClasspath()
@@ -3474,7 +3921,7 @@ public class StubJarTest {
 
   @Test
   public void preservesAnnotationsWithPrimitiveValues() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
 
     createAnnotationFullJar()
         .addFullJarToClasspath()
@@ -3499,7 +3946,7 @@ public class StubJarTest {
 
   @Test
   public void preservesAnnotationsWithStringArrayValues() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
 
     createAnnotationFullJar()
         .addFullJarToClasspath()
@@ -3621,16 +4068,89 @@ public class StubJarTest {
             "@Foo(stringValue=Dependency.STRING)",
             "public @interface A {}")
         .addExpectedCompileError(
-            "A.java:2: error: Could not resolve constant. Either inline the value or add"
-                + " required_for_source_only_abi = True to the build rule that contains it.\n"
+            "A.java:2: error: Could not resolve constant. Either inline the value or add the"
+                + " build rule that contains it to this target's source_only_abi_deps.\n"
                 + "@Foo(stringValue=Dependency.STRING)\n"
                 + "                           ^")
         .createStubJar();
   }
 
   @Test
+  public void providesNiceErrorWhenAnnotationTypeMissing() throws IOException {
+    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      return;
+    }
+
+    tester
+        .setSourceFile(
+            "Missing.java", "package com.example.buck.dependency;", "public @interface Missing { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dependency.Missing;",
+            "@Missing",
+            "public class A { }")
+        .addExpectedCompileError(
+            "A.java:3: error: Could not find the annotation com.example.buck.dependency.Missing.",
+            "@Missing",
+            "^",
+            "  This can happen for one of two reasons:",
+            "  1. A dependency is missing in the BUCK file for the current target. Try building"
+                + " the current rule without the #source-only-abi flavor, fix any errors that are"
+                + " reported, and then build this flavor again.",
+            "  2. The rule that owns com.example.buck.dependency.Missing is not on this target's"
+                + " source-only ABI classpath. Add that rule to this target's source_only_abi_deps"
+                + " and try again.")
+        .createStubJar();
+  }
+
+  @Test
+  public void noAnnotationTypeErrorWhenProviderIsOnSourceOnlyAbiClasspath() throws IOException {
+    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      return;
+    }
+
+    tester
+        .setSourceFile(
+            "Missing.java", "package com.example.buck.dependency;", "public @interface Missing { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dependency.Missing;",
+            "@Missing",
+            "public class A { }")
+        .createStubJar();
+  }
+
+  @Test
+  public void noConstantErrorWhenProviderIsOnSourceOnlyAbiClasspath() throws IOException {
+    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      return;
+    }
+
+    createAnnotationFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Dependency.java",
+            "package com.example.buck;",
+            "public class Dependency { public static final String STRING = \"string\";}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "@Foo(stringValue=Dependency.STRING)",
+            "public @interface A {}")
+        .createStubJar();
+  }
+
+  @Test
   public void preservesAnnotationsWithConstantValues() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
 
     createAnnotationFullJar()
         .addFullJarToClasspathAlways()
@@ -3685,7 +4205,7 @@ public class StubJarTest {
 
   @Test
   public void preservesAnnotationsWithAnnotationValues() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
 
     createAnnotationFullJar()
         .addFullJarToClasspath()
@@ -3711,7 +4231,7 @@ public class StubJarTest {
 
   @Test
   public void preservesAnnotationsWithAnnotationArrayValues() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
 
     createAnnotationFullJar()
         .addFullJarToClasspath()
@@ -3828,7 +4348,7 @@ public class StubJarTest {
 
   @Test
   public void stubsEnumsOverridingGenericInterface() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile(
             "A.java",
@@ -4251,31 +4771,24 @@ public class StubJarTest {
       return;
     }
 
+    // Members of a private nested class are unreachable however declared, so class-abi keeps
+    // only the shell: getCount/foo drop from bytecode and from @kotlin.Metadata, the default
+    // constructor stays.
     tester = new Tester(Language.KOTLIN);
     String innerMetadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0018\\n"
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
-            + "\\u0002\\u0008\\u0003\\n"
-            + "\\u0002\\u0010\\u0008\\n"
-            + "\\u0002\\u0008\\u0003\\n"
-            + "\\u0002\\u0010\\u0002\\u0008\\u0002\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003J\\u0006\\u0010\\u0008\\u001a\\u00020\\u0009R\\u0014\\u0010\\u0004\\u001a\\u00020\\u0005X\\u0086D\\u00a2\\u0006\\u0008\\n"
-            + "\\u0000\\u001a\\u0004\\u0008\\u0006\\u0010\\u0007\"},"
-            + " d2={\"Lcom/example/buck/A$B;\", \"\", \"<init>\", \"()V\", \"count\", \"\","
-            + " \"getCount\", \"()I\", \"foo\", \"\"})";
+            + "\\u0002\\u0008\\u0002\\u0008\\u0002\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003\"},"
+            + " d2={\"Lcom/example/buck/A$B;\", \"\", \"<init>\", \"()V\"})";
     String innerMetadata20 =
-        "  @Lkotlin/Metadata;(mv={2, 0, 0}, k=1, xi=48, d1={\"\\u0000\\u0018\\n"
+        "  @Lkotlin/Metadata;(mv={2, 0, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
-            + "\\u0002\\u0008\\u0003\\n"
-            + "\\u0002\\u0010\\u0008\\n"
-            + "\\u0002\\u0008\\u0003\\n"
-            + "\\u0002\\u0010\\u0002\\u0008\\u0002\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003J\\u0006\\u0010\\u0008\\u001a\\u00020\\u0009R\\u0014\\u0010\\u0004\\u001a\\u00020\\u0005X\\u0086D\\u00a2\\u0006\\u0008\\n"
-            + "\\u0000\\u001a\\u0004\\u0008\\u0006\\u0010\\u0007\"},"
-            + " d2={\"Lcom/example/buck/A$B;\", \"\", \"<init>\", \"()V\", \"count\", \"\","
-            + " \"getCount\", \"()I\", \"foo\", \"\"})";
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
+            + "\\u0002\\u0008\\u0002\\u0008\\u0002\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003\"},"
+            + " d2={\"Lcom/example/buck/A$B;\", \"\", \"<init>\", \"()V\"})";
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\u0008\\u0016\\u0018\\u00002\\u00020\\u0001:\\u0001\\u0004B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003\"},"
@@ -4306,18 +4819,12 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? innerMetadata21 : innerMetadata20,
+            metadataForKotlinVersion(innerMetadata21, innerMetadata20),
             "  // access flags 0x1A",
             "  private final static INNERCLASS com/example/buck/A$B com/example/buck/A B",
             "",
             "  // access flags 0x1",
             "  public <init>()V",
-            "",
-            "  // access flags 0x11",
-            "  public final getCount()I",
-            "",
-            "  // access flags 0x11",
-            "  public final foo()V",
             "}")
         .addExpectedStub(
             "com/example/buck/A",
@@ -4327,7 +4834,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "  // access flags 0x1A",
             "  private final static INNERCLASS com/example/buck/A$B com/example/buck/A B",
             "",
@@ -5167,7 +5674,7 @@ public class StubJarTest {
 
   @Test
   public void stubsImportedReferencesToInnerClassesOfOtherTypes() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile(
             "Imported.java",
@@ -5211,7 +5718,7 @@ public class StubJarTest {
 
   @Test
   public void stubsStaticImportedReferencesToInnerClassesOfOtherTypes() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
 
     tester
         .setSourceFile(
@@ -5469,7 +5976,7 @@ public class StubJarTest {
 
   @Test
   public void stubsReferencesFromBridgeMethodsToInnerClassesOtherTypes() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile(
             "A.java",
@@ -5660,8 +6167,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0014\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0014\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -5697,7 +6204,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -5778,8 +6285,8 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0010\\n"
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0010\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -5809,7 +6316,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -6076,7 +6583,7 @@ public class StubJarTest {
 
   @Test
   public void shouldIncludeInnerClassTypeParameterReferenceInMethodParameter() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile(
             "Outer.java",
@@ -6525,7 +7032,6 @@ public class StubJarTest {
 
   @Test
   public void bridgeMethodInStubsCanBeCompiledAgainst() throws IOException {
-    notYetImplementedForMissingClasspath();
 
     tester
         .setSourceFile(
@@ -7005,7 +7511,7 @@ public class StubJarTest {
 
   @Test
   public void shouldIncludeInnerClassReferencesInPackageInfoClass() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile(
             "A.java",
@@ -7103,7 +7609,6 @@ public class StubJarTest {
 
   @Test
   public void shouldIncludeGenericBridgeMethods() throws IOException {
-    notYetImplementedForMissingClasspath();
     tester
         .setSourceFile(
             "A.java",
@@ -7158,7 +7663,7 @@ public class StubJarTest {
 
   @Test
   public void shouldIncludeGenericOverrideBridgeMethods() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile(
             "A.java",
@@ -7233,7 +7738,7 @@ public class StubJarTest {
 
   @Test
   public void shouldIncludeCovariantReturnBridgeMethods() throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile(
             "Super.java",
@@ -7297,7 +7802,7 @@ public class StubJarTest {
   public void
       shouldCopyAccessibilityAnnotationsAndParamNamesFromOverriderAndThrowsFromOverriddenToBridgeMethods()
           throws IOException {
-    notYetImplementedForMissingClasspath();
+    if (notYetImplementedForMissingClasspath()) return;
     tester
         .setSourceFile("Anno.java", "package com.example.buck;", "public @interface Anno { }")
         .compileFullJar()
@@ -7390,7 +7895,6 @@ public class StubJarTest {
    */
   @Test
   public void shouldIncludeNonPublicBaseClassBridgeMethods() throws IOException {
-    notYetImplementedForMissingClasspath();
     tester
         .setSourceFile(
             "B.java",
@@ -7460,7 +7964,6 @@ public class StubJarTest {
 
   @Test
   public void shouldNotIncludeNonPublicBaseClassBridgeMethodsWhenManuallyDone() throws IOException {
-    notYetImplementedForMissingClasspath();
     tester
         .setSourceFile(
             "B.java",
@@ -7517,6 +8020,519 @@ public class StubJarTest {
   }
 
   @Test
+  public void shouldIncludeAccessBridgeForGenericMethodOfNonPublicGenericBase() throws IOException {
+    tester
+        .setSourceFile(
+            "B.java",
+            "package com.example.buck;",
+            "abstract class B<T> {",
+            "  public T value() { return null; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java", "package com.example.buck;", "public class A extends B<String> {", "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "// signature Lcom/example/buck/B<Ljava/lang/String;>;",
+            "// declaration: com/example/buck/A extends com.example.buck.B<java.lang.String>",
+            "public class com/example/buck/A extends com/example/buck/B {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge value()Ljava/lang/Object;",
+            "}")
+        .addExpectedStub(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "// signature Lcom/example/buck/B<Ljava/lang/String;>;",
+            "// declaration: com/example/buck/A extends com.example.buck.B<java.lang.String>",
+            "public class com/example/buck/A extends com/example/buck/B {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge value()Ljava/lang/Object;",
+            "}")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeAccessBridgesThroughNonPublicIntermediateClass() throws IOException {
+    tester
+        .setSourceFile(
+            "B.java",
+            "package com.example.buck;",
+            "abstract class B {",
+            "  public void foo() throws java.io.IOException {}",
+            "  public <X> X id(X x) { return x; }",
+            "  protected void bar() {}",
+            "  void baz() {}",
+            "  public static void qux() {}",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Mid.java", "package com.example.buck;", "abstract class Mid extends B {", "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "public class A extends Mid {",
+            "  @Override",
+            "  public <X> X id(X x) { return x; }",
+            "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "public class com/example/buck/A extends com/example/buck/Mid {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  // signature <X:Ljava/lang/Object;>(TX;)TX;",
+            "  // declaration: X id<X>(X)",
+            "  public id(Ljava/lang/Object;)Ljava/lang/Object;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge foo()V throws java/io/IOException",
+            "}")
+        .addExpectedStub(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "public class com/example/buck/A extends com/example/buck/Mid {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  // signature <X:Ljava/lang/Object;>(TX;)TX;",
+            "  // declaration: X id<X>(X)",
+            "  public id(Ljava/lang/Object;)Ljava/lang/Object;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge foo()V throws java/io/IOException",
+            "}")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldNotIncludeAccessBridgesInNonPublicSubclass() throws IOException {
+    tester
+        .setSourceFile(
+            "B.java", "package com.example.buck;", "class B {", "  public void foo() {}", "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile("A.java", "package com.example.buck;", "class A extends B {", "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x20",
+            "class com/example/buck/A extends com/example/buck/B {",
+            "",
+            "",
+            "  // access flags 0x0",
+            "  <init>()V",
+            "}")
+        .addExpectedStub(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x20",
+            "class com/example/buck/A extends com/example/buck/B {",
+            "",
+            "",
+            "  // access flags 0x0",
+            "  <init>()V",
+            "}")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeGenericAndCovariantBridgesWhenSupertypeIsRequired() throws IOException {
+    tester
+        .setSourceFile(
+            "Super.java",
+            "package com.example.buck;",
+            "public abstract class Super<T> {",
+            "  public abstract T get();",
+            "  protected abstract void put(T t);",
+            "  public Object make() { return null; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "public class A extends Super<String> {",
+            "  @Override",
+            "  public String get() { return null; }",
+            "  @Override",
+            "  protected void put(String s) {}",
+            "  @Override",
+            "  public String make() { return null; }",
+            "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "// signature Lcom/example/buck/Super<Ljava/lang/String;>;",
+            "// declaration: com/example/buck/A extends com.example.buck.Super<java.lang.String>",
+            "public class com/example/buck/A extends com/example/buck/Super {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  public get()Ljava/lang/String;",
+            "",
+            "  // access flags 0x4",
+            "  protected put(Ljava/lang/String;)V",
+            "",
+            "  // access flags 0x1",
+            "  public make()Ljava/lang/String;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge make()Ljava/lang/Object;",
+            "",
+            "  // access flags 0x1044",
+            "  protected synthetic bridge put(Ljava/lang/Object;)V",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge get()Ljava/lang/Object;",
+            "}")
+        .addExpectedStub(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "// signature Lcom/example/buck/Super<Ljava/lang/String;>;",
+            "// declaration: com/example/buck/A extends com.example.buck.Super<java.lang.String>",
+            "public class com/example/buck/A extends com/example/buck/Super {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  public get()Ljava/lang/String;",
+            "",
+            "  // access flags 0x4",
+            "  protected put(Ljava/lang/String;)V",
+            "",
+            "  // access flags 0x1",
+            "  public make()Ljava/lang/String;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge make()Ljava/lang/Object;",
+            "",
+            "  // access flags 0x1044",
+            "  protected synthetic bridge put(Ljava/lang/Object;)V",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge get()Ljava/lang/Object;",
+            "}")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldOmitBridgeWhoseParameterTypeIsMissing() throws IOException {
+    tester
+        .setSourceFile("Card.java", "package com.example.buck.dep;", "public class Card { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Card;",
+            "public class A implements SetsCard, SetsName {",
+            "  @Override",
+            "  public A setCard(Card card) { return this; }",
+            "  @Override",
+            "  public A setName(String name) { return this; }",
+            "}",
+            "interface SetsCard {",
+            "  SetsName setCard(Card card);",
+            "}",
+            "interface SetsName {",
+            "  SetsName setName(String name);",
+            "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "public class com/example/buck/A implements com/example/buck/SetsCard"
+                + " com/example/buck/SetsName {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  public setCard(Lcom/example/buck/dep/Card;)Lcom/example/buck/A;",
+            "",
+            "  // access flags 0x1",
+            "  public setName(Ljava/lang/String;)Lcom/example/buck/A;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge"
+                + " setCard(Lcom/example/buck/dep/Card;)Lcom/example/buck/SetsName;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge setName(Ljava/lang/String;)Lcom/example/buck/SetsName;",
+            "}")
+        .addExpectedStub("com/example/buck/SetsCard")
+        .addExpectedStub("com/example/buck/SetsName");
+    if (testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      // `Card` is not on the classpath, so the descriptor of the `setCard` bridge cannot be
+      // computed; the `setName` bridge is.
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A implements com/example/buck/SetsCard"
+              + " com/example/buck/SetsName {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1",
+          "  public setCard(Lcom/example/buck/dep/Card;)Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1",
+          "  public setName(Ljava/lang/String;)Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge setName(Ljava/lang/String;)Lcom/example/buck/SetsName;",
+          "}");
+    } else {
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A implements com/example/buck/SetsCard"
+              + " com/example/buck/SetsName {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1",
+          "  public setCard(Lcom/example/buck/dep/Card;)Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1",
+          "  public setName(Ljava/lang/String;)Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge"
+              + " setCard(Lcom/example/buck/dep/Card;)Lcom/example/buck/SetsName;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge setName(Ljava/lang/String;)Lcom/example/buck/SetsName;",
+          "}");
+    }
+    tester.createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldOmitAccessBridgeWhoseReturnTypeIsMissing() throws IOException {
+    tester
+        .setSourceFile("App.java", "package com.example.buck.dep;", "public class App { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.App;",
+            "public class A extends Base {",
+            "}",
+            "class Base {",
+            "  public App getApp() { return null; }",
+            "  public String getName() { return null; }",
+            "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "public class com/example/buck/A extends com/example/buck/Base {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge getName()Ljava/lang/String;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge getApp()Lcom/example/buck/dep/App;",
+            "}")
+        .addExpectedStub("com/example/buck/Base");
+    if (testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      // `App` is not on the classpath, so the descriptor of the `getApp` access bridge cannot be
+      // computed; the `getName` access bridge is.
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A extends com/example/buck/Base {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge getName()Ljava/lang/String;",
+          "}");
+    } else {
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A extends com/example/buck/Base {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge getName()Ljava/lang/String;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge getApp()Lcom/example/buck/dep/App;",
+          "}");
+    }
+    tester.createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldOmitBridgeWhoseThrownTypeIsMissing() throws IOException {
+    tester
+        .setSourceFile(
+            "Failure.java",
+            "package com.example.buck.dep;",
+            "public class Failure extends Exception { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Failure;",
+            "public class A implements Derivation {",
+            "  @Override",
+            "  public A update(byte[] data) throws Failure { return this; }",
+            "  @Override",
+            "  public A reset() { return this; }",
+            "}",
+            "interface Derivation {",
+            "  Derivation update(byte[] data) throws Failure;",
+            "  Derivation reset();",
+            "}")
+        .addExpectedFullAbi(
+            "com/example/buck/A",
+            "JDK8:// class version 52.0 (52)",
+            "JDK11:// class version 55.0 (55)",
+            "// access flags 0x21",
+            "public class com/example/buck/A implements com/example/buck/Derivation {",
+            "",
+            "",
+            "  // access flags 0x1",
+            "  public <init>()V",
+            "",
+            "  // access flags 0x1",
+            "  public update([B)Lcom/example/buck/A; throws com/example/buck/dep/Failure",
+            "",
+            "  // access flags 0x1",
+            "  public reset()Lcom/example/buck/A;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge reset()Lcom/example/buck/Derivation;",
+            "",
+            "  // access flags 0x1041",
+            "  public synthetic bridge update([B)Lcom/example/buck/Derivation; throws"
+                + " com/example/buck/dep/Failure",
+            "}")
+        .addExpectedStub("com/example/buck/Derivation");
+    if (testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      // `Failure` is not on the classpath, so the thrown types of the `update` bridge cannot be
+      // computed; the `reset` bridge is.
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A implements com/example/buck/Derivation {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1",
+          "  public update([B)Lcom/example/buck/A; throws com/example/buck/dep/Failure",
+          "",
+          "  // access flags 0x1",
+          "  public reset()Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge reset()Lcom/example/buck/Derivation;",
+          "}");
+    } else {
+      tester.addExpectedStub(
+          "com/example/buck/A",
+          "JDK8:// class version 52.0 (52)",
+          "JDK11:// class version 55.0 (55)",
+          "// access flags 0x21",
+          "public class com/example/buck/A implements com/example/buck/Derivation {",
+          "",
+          "",
+          "  // access flags 0x1",
+          "  public <init>()V",
+          "",
+          "  // access flags 0x1",
+          "  public update([B)Lcom/example/buck/A; throws com/example/buck/dep/Failure",
+          "",
+          "  // access flags 0x1",
+          "  public reset()Lcom/example/buck/A;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge reset()Lcom/example/buck/Derivation;",
+          "",
+          "  // access flags 0x1041",
+          "  public synthetic bridge update([B)Lcom/example/buck/Derivation; throws"
+              + " com/example/buck/dep/Failure",
+          "}");
+    }
+    tester.createAndCheckStubJar();
+  }
+
+  @Test
   public void kotlinObjectWithJvmStatic() throws IOException {
     if (!isValidForKotlin()) {
       return;
@@ -7529,8 +8545,19 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
+    String metadata24 =
+        "  @Lkotlin/Metadata;(mv={2, 4, 0}, k=1, xi=48, d1={\"\\u0000\\u0010\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0010\\u0000\\n"
+            + "\\u0002\\u0008\\u0006\\n"
+            + "\\u0002\\u0018\\u0002\\u0008\\u00c6\\u0002\\u0018\\u00002\\u00020\\u0001B\\u0009\\u0008\\u0002\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003R"
+            + " \\u0010\\u0004\\u001a\\u00020\\u00018\\u0006X\\u0087\\u0004r\\u0002\\u0008\\u0008\\u00a2\\u0006\\u000e\\n"
+            + "\\u0000\\u0012\\u0004\\u0008\\u0005\\u0010\\u0003\\u001a\\u0004\\u0008\\u0006\\u0010\\u0007\"},"
+            + " d2={\"Lcom/example/buck/Obj;\", \"\", \"<init>\", \"()V\", \"prop\","
+            + " \"getProp$annotations\", \"getProp\", \"()Ljava/lang/Object;\","
+            + " \"Lkotlin/jvm/JvmStatic;\"})";
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u000c\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0006\\u0008\\u00c6\\u0002\\u0018\\u00002\\u00020\\u0001B\\u0009\\u0008\\u0002\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003R\\u001c\\u0010\\u0004\\u001a\\u00020\\u00018\\u0006X\\u0087\\u0004\\u00a2\\u0006\\u000e\\n"
@@ -7560,7 +8587,7 @@ public class StubJarTest {
             "",
             "  // compiled from: Obj.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata24, metadata22, metadata20),
             "",
             "  // access flags 0x19",
             "  public final static Lcom/example/buck/Obj; INSTANCE",
@@ -7595,8 +8622,26 @@ public class StubJarTest {
     }
 
     tester = new Tester(Language.KOTLIN);
-    String metadata21 =
-        "  @Lkotlin/Metadata;(mv={2, 1, 0}, k=1, xi=48, d1={\"\\u0000\\u0018\\n"
+    String metadata24 =
+        "  @Lkotlin/Metadata;(mv={2, 4, 0}, k=1, xi=48, d1={\"\\u0000&\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0010\\u0000\\n"
+            + "\\u0002\\u0008\\u0003\\n"
+            + "\\u0002\\u0010\\u000e\\n"
+            + "\\u0000\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0008\\u0003\\n"
+            + "\\u0002\\u0018\\u0002\\n"
+            + "\\u0002\\u0008\\u0002\\n"
+            + "\\u0002\\u0010\\u000b\\u0018\\u00002\\u00020\\u0001B\\u0007\\u00a2\\u0006\\u0004\\u0008\\u0002\\u0010\\u0003J,\\u0010\\u0004\\u001a\\u00020\\u00052\\u0008\\u0008\\u0002\\u0010\\u0006\\u001a\\u00020\\u0005H\\u0007b\\u0018\\u0008\\u0007\\u0012\\u0008\\u0008\\u0008\\u0012\\u0004\\u0008\\u0008(\\u0009\\u0012\\n"
+            + "\\u0008\\n"
+            + "\\u0012\\u0006\\u0008\\n"
+            + "0\\u000b8\\u000cJ\\u001a\\u0010\\u0004\\u001a\\u00020\\u00052\\u0008\\u0008\\u0002\\u0010\\u0006\\u001a\\u00020\\u00052\\u0008\\u0008\\u0002\\u0010\\r"
+            + "\\u001a\\u00020\\u000e\"}, d2={\"Lcom/example/buck/A;\", \"\", \"<init>\", \"()V\","
+            + " \"testFunc\", \"\", \"str\", \"Lkotlin/Deprecated;\", \"message\", \"Testing"
+            + " deprecated\", \"level\", \"Lkotlin/DeprecationLevel;\", \"HIDDEN\", \"b\", \"\"})";
+    String metadata22 =
+        "  @Lkotlin/Metadata;(mv={2, 2, 0}, k=1, xi=48, d1={\"\\u0000\\u0018\\n"
             + "\\u0002\\u0018\\u0002\\n"
             + "\\u0002\\u0010\\u0000\\n"
             + "\\u0002\\u0008\\u0003\\n"
@@ -7633,7 +8678,7 @@ public class StubJarTest {
             "",
             "  // compiled from: A.kt",
             "",
-            isKotlin21() ? metadata21 : metadata20,
+            metadataForKotlinVersion(metadata24, metadata22, metadata20),
             "",
             "  // access flags 0x1",
             "  public <init>()V",
@@ -7656,6 +8701,877 @@ public class StubJarTest {
             "    @Lorg/jetbrains/annotations/NotNull;() // invisible, parameter 0",
             "}")
         .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinStripsMembersOfPrivateNestedClassButKeepsShell() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+    if (!testingMode.equals(MODE_JAR_BASED)) {
+      // Class-ABI stubbing of private nested members only applies to jar-based stubs.
+      return;
+    }
+
+    // A public member of a private nested class (e.g. `private companion object { val x ... }`)
+    // is unreachable: Kotlin sees the metadata-private owner, Java sees a non-public nested
+    // class. Class-abi keeps the class shells (InnerClasses/constant-pool/@Metadata references
+    // require the files) but drops all of their members.
+    File outputDir = temp.newFolder();
+    AbsPath fullJar;
+    try (KotlinTestCompiler compiler = new KotlinTestCompiler()) {
+      compiler.init();
+      compiler.addSourceFileContents(
+          "A.kt",
+          "package com.example.buck",
+          "open class A {",
+          "  private companion object {",
+          "    val helper: String = \"x\"",
+          "    fun compute(): Int = 42",
+          "  }",
+          "  private class Helper {",
+          "    fun run(): String = \"y\"",
+          "  }",
+          "  fun publicMethod(): String = \"hello\"",
+          "}");
+      compiler.compile();
+      fullJar = AbsPath.of(outputDir.toPath()).resolve("output.jar");
+      compiler.getClasses().createJar(fullJar.getPath(), false);
+    }
+
+    AbsPath stubJar = AbsPath.of(temp.newFolder().toPath()).resolve("stub.jar");
+    new StubJar(fullJar, false).writeTo(stubJar);
+
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertStrippedToConstructor(jar, "com/example/buck/A$Companion.class");
+      assertStrippedToConstructor(jar, "com/example/buck/A$Helper.class");
+
+      JarEntry outer = jar.getJarEntry("com/example/buck/A.class");
+      assertNotNull(outer);
+      ClassNode outerStub = new ClassNode(Opcodes.ASM9);
+      new ClassReader(jar.getInputStream(outer)).accept(outerStub, ClassReader.SKIP_CODE);
+      assertTrue(
+          "public member of public class kept",
+          outerStub.methods.stream().anyMatch(m -> m.name.equals("publicMethod")));
+    }
+  }
+
+  private static void assertStrippedToConstructor(JarFile jar, String entryName)
+      throws IOException {
+    JarEntry entry = jar.getJarEntry(entryName);
+    assertNotNull(entryName + " shell kept", entry);
+    ClassNode stub = new ClassNode(Opcodes.ASM9);
+    new ClassReader(jar.getInputStream(entry)).accept(stub, ClassReader.SKIP_CODE);
+    assertTrue(entryName + " has no fields", stub.fields.isEmpty());
+    assertTrue(
+        entryName + " keeps only constructors",
+        !stub.methods.isEmpty() && stub.methods.stream().allMatch(m -> m.name.equals("<init>")));
+  }
+
+  @Test
+  public void kotlinKeepsJvmStaticMembersOfPrivateCompanion() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  private companion object {",
+            "    @JvmStatic fun probe(): Boolean = true",
+            "    @JvmStatic val staticProp: String = \"s\"",
+            "    val dropped: String = \"x\"",
+            "  }",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      ClassNode companion = readClass(jar, "com/example/buck/A$Companion.class");
+      Set<String> companionMethods = methodNames(companion);
+      assertTrue(
+          "companion keeps @JvmStatic member: " + companionMethods,
+          companionMethods.contains("probe"));
+      assertTrue(
+          "companion keeps @JvmStatic property: " + companionMethods,
+          companionMethods.contains("getStaticProp")
+              && companionMethods.contains("getStaticProp$annotations"));
+      assertTrue(
+          "companion drops plain member: " + companionMethods,
+          companionMethods.stream().noneMatch(name -> name.equals("getDropped")));
+
+      ClassNode outer = readClass(jar, "com/example/buck/A.class");
+      Set<String> outerMethods = methodNames(outer);
+      assertTrue(
+          "outer keeps @JvmStatic copies: " + outerMethods,
+          outerMethods.contains("probe") && outerMethods.contains("getStaticProp"));
+    }
+  }
+
+  @Test
+  public void kotlinKeepsJvmFieldMembersOfPrivateCompanion() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  private companion object {",
+            "    @JvmField val flag: String = \"f\"",
+            "    val dropped: String = \"x\"",
+            "  }",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      ClassNode companion = readClass(jar, "com/example/buck/A$Companion.class");
+      assertTrue("companion drops unannotated fields", companion.fields.isEmpty());
+      Set<String> companionMethods = methodNames(companion);
+      assertTrue(
+          "companion drops plain member: " + companionMethods,
+          companionMethods.stream().noneMatch(name -> name.equals("getDropped")));
+
+      ClassNode outer = readClass(jar, "com/example/buck/A.class");
+      Set<String> outerFields =
+          outer.fields.stream().map(field -> field.name).collect(Collectors.toSet());
+      assertTrue("outer keeps @JvmField static: " + outerFields, outerFields.contains("flag"));
+    }
+  }
+
+  @Test
+  public void kotlinDropsUnrelatedOverloadOfJvmStaticAccessor() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  private companion object {",
+            "    @JvmStatic val staticProp: String = \"s\"",
+            "    fun getStaticProp(x: Int): Int = x",
+            "  }",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      ClassNode companion = readClass(jar, "com/example/buck/A$Companion.class");
+      Set<String> companionMethods = methodNames(companion);
+      assertTrue(
+          "companion keeps @JvmStatic accessor: " + companionMethods,
+          companionMethods.contains("getStaticProp")
+              && companionMethods.contains("getStaticProp$annotations"));
+      assertTrue(
+          "companion drops unrelated overload: " + companionMethods,
+          companion.methods.stream()
+              .filter(m -> m.name.equals("getStaticProp"))
+              .allMatch(m -> m.desc.equals("()Ljava/lang/String;")));
+    }
+  }
+
+  @Test
+  public void kotlinKeepsMembersOfPrivateValueEnumAndAnnotationClasses() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  @JvmInline private value class State(val x: Int)",
+            "  private enum class Mode { ON, OFF }",
+            "  private annotation class Marker(val x: String)",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertNotStrippedToConstructor(jar, "com/example/buck/A$State.class");
+      assertNotStrippedToConstructor(jar, "com/example/buck/A$Mode.class");
+      assertNotStrippedToConstructor(jar, "com/example/buck/A$Marker.class");
+    }
+  }
+
+  private static void assertNotStrippedToConstructor(JarFile jar, String entryName)
+      throws IOException {
+    ClassNode stub = readClass(jar, entryName);
+    assertTrue(
+        entryName + " keeps members",
+        !stub.methods.isEmpty()
+            && stub.methods.stream().anyMatch(method -> !method.name.equals("<init>")));
+  }
+
+  @Test
+  public void kotlinMetadataOmitsStrippedMembersOfPrivateNestedClass() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  private companion object {",
+            "    @JvmStatic fun probe(): Boolean = true",
+            "    private @JvmStatic fun hidden(): Boolean = true",
+            "    @JvmField val flag: String = \"f\"",
+            "    const val TAG: String = \"t\"",
+            "    private const val HIDDEN_CONST: String = \"h\"",
+            "    val dropped: String = \"x\"",
+            "  }",
+            "  private data class Holder(val kept: String)",
+            "  fun publicMethod(): String = \"hello\"",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      ClassNode companion = readClass(jar, "com/example/buck/A$Companion.class");
+      assertEquals(
+          "companion metadata keeps @JvmStatic function, drops private one",
+          ImmutableSortedSet.of("probe"),
+          ImmutableSortedSet.copyOf(
+              KotlinMetadataReader.getFunctionNames(kotlinMetadataOf(companion))));
+      assertEquals(
+          "companion metadata keeps @JvmField/const, drops plain and private ones",
+          ImmutableSortedSet.of("TAG", "flag"),
+          ImmutableSortedSet.copyOf(
+              KotlinMetadataReader.getPropertyNames(kotlinMetadataOf(companion))));
+
+      ClassNode holder = readClass(jar, "com/example/buck/A$Holder.class");
+      assertTrue(
+          "holder metadata drops functions",
+          KotlinMetadataReader.getFunctionNames(kotlinMetadataOf(holder)).isEmpty());
+      assertTrue(
+          "holder metadata drops properties",
+          KotlinMetadataReader.getPropertyNames(kotlinMetadataOf(holder)).isEmpty());
+
+      ClassNode outer = readClass(jar, "com/example/buck/A.class");
+      assertTrue(
+          "outer metadata untouched",
+          KotlinMetadataReader.getFunctionNames(kotlinMetadataOf(outer)).contains("publicMethod"));
+    }
+  }
+
+  private static KotlinMetadataReader.ParsedMetadata kotlinMetadataOf(ClassNode node) {
+    return KotlinMetadataReader.readMetadata(kotlinMetadataAnnotation(node));
+  }
+
+  private static AnnotationNode kotlinMetadataAnnotation(ClassNode node) {
+    assertNotNull(node.visibleAnnotations);
+    for (AnnotationNode annotation : node.visibleAnnotations) {
+      if ("Lkotlin/Metadata;".equals(annotation.desc)) {
+        return annotation;
+      }
+    }
+    fail("no @kotlin.Metadata on " + node.name);
+    throw new AssertionError("unreachable");
+  }
+
+  @Test
+  public void kotlinMetadataBytesUnchangedWhenNothingStripped() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    File outputDir = temp.newFolder();
+    AbsPath fullJar;
+    try (KotlinTestCompiler compiler = new KotlinTestCompiler()) {
+      compiler.init();
+      compiler.addSourceFileContents(
+          "A.kt",
+          "package com.example.buck",
+          "open class A {",
+          "  private companion object {",
+          "    @JvmStatic fun probe(): Boolean = true",
+          "  }",
+          "}");
+      compiler.compile();
+      fullJar = AbsPath.of(outputDir.toPath()).resolve("output.jar");
+      compiler.getClasses().createJar(fullJar.getPath(), false);
+    }
+
+    AbsPath stubJar = AbsPath.of(temp.newFolder().toPath()).resolve("stub.jar");
+    new StubJar(fullJar, false).writeTo(stubJar);
+
+    List<Object> inputValues;
+    try (JarFile jar = new JarFile(fullJar.toFile())) {
+      inputValues =
+          kotlinMetadataAnnotation(readClass(jar, "com/example/buck/A$Companion.class")).values;
+    }
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertEquals(
+          "metadata bytes preserved when no member strips",
+          inputValues,
+          kotlinMetadataAnnotation(readClass(jar, "com/example/buck/A$Companion.class")).values);
+    }
+  }
+
+  private AbsPath compileKotlinToStubJar(String fileName, String... sourceLines)
+      throws IOException {
+    File outputDir = temp.newFolder();
+    AbsPath fullJar;
+    try (KotlinTestCompiler compiler = new KotlinTestCompiler()) {
+      compiler.init();
+      compiler.addSourceFileContents(fileName, sourceLines);
+      compiler.compile();
+      fullJar = AbsPath.of(outputDir.toPath()).resolve("output.jar");
+      compiler.getClasses().createJar(fullJar.getPath(), false);
+    }
+
+    AbsPath stubJar = AbsPath.of(temp.newFolder().toPath()).resolve("stub.jar");
+    new StubJar(fullJar, false).writeTo(stubJar);
+    return stubJar;
+  }
+
+  @Test
+  public void kotlinExcludesFilePrivateClasses() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      // Source-only-abi already excludes file-private classes via its own mechanism.
+      return;
+    }
+
+    // A file-private class in Kotlin (declared with `private` at the file level) is compiled
+    // to package-private in bytecode. The class-abi filter should detect this via Kotlin metadata
+    // and exclude it, matching source-only-abi behavior.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  fun publicMethod(): String = \"hello\"",
+            "}",
+            "private class FilePrivateHelper {",
+            "  fun helperMethod(): Int = 42",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinExcludesFilePrivateClassButKeepsPublicFromSameFile() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // Verify that when a file contains both public and private classes, only the public
+    // classes are included in the stub jar and the file-private classes are excluded.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt", "package com.example.buck", "open class A", "open class B", "private class C")
+        .addExpectedStub("com/example/buck/A")
+        .addExpectedStub("com/example/buck/B")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinKeepsFilePrivateInterfaceImplementedByPublicEnum() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // A file-private supertype that a retained class still references must be kept, otherwise
+    // consumers fail with "cannot access ... which is a supertype of ...".
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "@Suppress(\"EXPOSED_SUPER_INTERFACE\")",
+            "public enum class RegexLike : FlagEnum<RegexLike> {",
+            "  A;",
+            "  override fun flagValue(): Int = ordinal",
+            "}",
+            "private interface FlagEnum<T> {",
+            "  fun flagValue(): Int",
+            "}")
+        .addExpectedStub("com/example/buck/RegexLike")
+        .addExpectedStub("com/example/buck/FlagEnum")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinKeepsTransitivelyReferencedFilePrivateClasses() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "@Suppress(\"EXPOSED_SUPER_CLASS\")",
+            "open class A : Mid()",
+            "private open class Mid : Base {",
+            "  override fun name(): String = \"mid\"",
+            "}",
+            "private interface Base {",
+            "  fun name(): String",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .addExpectedStub("com/example/buck/Mid")
+        .addExpectedStub("com/example/buck/Base")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinExcludesFilePrivateClassesReferencedOnlyByExcludedOnes() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // UnusedImpl references UnusedBase, but nothing written references either of them,
+    // so both stay excluded.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  fun publicMethod(): String = \"hello\"",
+            "}",
+            "private interface UnusedBase {",
+            "  fun unused(): Int",
+            "}",
+            "private class UnusedImpl : UnusedBase {",
+            "  override fun unused(): Int = 1",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinExcludesNestedClassOfUnreferencedFilePrivateInlineScope() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // The lambda nested in UnusedHolder.provide is captured by an inline scope, but its
+    // outer is a file-private class that nothing references, so both must be dropped.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  fun publicMethod(): String = \"hello\"",
+            "}",
+            "private class UnusedHolder {",
+            "  inline fun provide(): () -> Unit = { println(\"unused\") }",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinKeepsNestedClassOfReferencedFilePrivateInlineScope() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // UsedHolder is kept via A's supertype edge, so its inline scope stays live and the
+    // nested lambda must be kept with it.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "@Suppress(\"EXPOSED_SUPER_CLASS\")",
+            "open class A : UsedHolder()",
+            "private open class UsedHolder {",
+            "  inline fun provide(): () -> Unit = { println(\"used\") }",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .addExpectedStub("com/example/buck/UsedHolder")
+        .addExpectedStub("com/example/buck/UsedHolder$provide$1")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinExcludesCompanionOfUnreferencedFilePrivateClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // The companion declares its own public visibility, but its outer is a file-private
+    // class nothing references, so the companion is effectively private and both must go.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  fun publicMethod(): String = \"hello\"",
+            "}",
+            "private data class FilePrivateConfig(",
+            "  val isConfigured: Boolean,",
+            "  val isEnabled: Boolean,",
+            ") {",
+            "  companion object {",
+            "    val DISABLED = FilePrivateConfig(false, false)",
+            "  }",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinExcludesNestedClassOfUnreferencedFilePrivateClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // Same as above for a plain nested class: unreferenced file-private outer means the
+    // nested class is unreachable however it is declared.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "open class A {",
+            "  fun publicMethod(): String = \"hello\"",
+            "}",
+            "private class FilePrivateOuter {",
+            "  class Nested {",
+            "    fun run(): String = \"nested\"",
+            "  }",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinKeepsCompanionOfReferencedFilePrivateClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // UsedHolder is kept via A's supertype edge, so its companion must be kept with it.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "@Suppress(\"EXPOSED_SUPER_CLASS\")",
+            "open class A : UsedHolder()",
+            "private open class UsedHolder {",
+            "  companion object {",
+            "    val TAG = \"used\"",
+            "  }",
+            "}")
+        .addExpectedStub("com/example/buck/A")
+        .addExpectedStub("com/example/buck/UsedHolder")
+        .addExpectedStub("com/example/buck/UsedHolder$Companion")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinKeepsFilePrivateSubclassOfSealedClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    // S's metadata lists Priv1 as a sealed subclass. Without Priv1, a consumer's
+    // `when (s) { is Pub1 -> ... }` compiles as exhaustive and throws
+    // NoWhenBranchMatchedException at runtime.
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "sealed class S",
+            "class Pub1 : S()",
+            "private class Priv1 : S()")
+        .addExpectedStub("com/example/buck/S")
+        .addExpectedStub("com/example/buck/Pub1")
+        .addExpectedStub("com/example/buck/Priv1")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinKeepsFilePrivateImplementationOfSealedInterface() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "sealed interface S",
+            "object Pub1 : S",
+            "private object Priv1 : S")
+        .addExpectedStub("com/example/buck/S")
+        .addExpectedStub("com/example/buck/Pub1")
+        .addExpectedStub("com/example/buck/Priv1")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinKeepsSealedSubclassNestedInFilePrivateClass() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "sealed class S",
+            "private class Holder {",
+            "  class Sub : S()",
+            "}")
+        .addExpectedStub("com/example/buck/S")
+        .addExpectedStub("com/example/buck/Holder")
+        .addExpectedStub("com/example/buck/Holder$Sub")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void kotlinExcludesFilePrivateClassOutsideSealedHierarchy() throws IOException {
+    if (!isValidForKotlin()) {
+      return;
+    }
+
+    if (testingMode.equals(MODE_SOURCE_BASED)) {
+      return;
+    }
+
+    tester = new Tester(Language.KOTLIN);
+    tester
+        .setSourceFile(
+            "A.kt",
+            "package com.example.buck",
+            "sealed class S",
+            "class Pub1 : S()",
+            "private class Unrelated")
+        .addExpectedStub("com/example/buck/S")
+        .addExpectedStub("com/example/buck/Pub1")
+        .createAndCheckStubJar();
+  }
+
+  private static final String WHEN_COLOR_ENUM = "enum class Color { RED, GREEN, BLUE }";
+
+  private static void assertWhenMappingsKept(JarFile jar, String className) throws IOException {
+    JarEntry entry = jar.getJarEntry(className + ".class");
+    assertNotNull(className + " missing from stub", entry);
+    ClassNode node = new ClassNode(Opcodes.ASM9);
+    try (InputStream in = jar.getInputStream(entry)) {
+      new ClassReader(in).accept(node, 0);
+    }
+    assertTrue(
+        className + " keeps $EnumSwitchMapping$0",
+        node.fields.stream().anyMatch(f -> f.name.equals("$EnumSwitchMapping$0")));
+    assertTrue(
+        className + " keeps a <clinit> body",
+        node.methods.stream()
+            .anyMatch(m -> m.name.equals("<clinit>") && m.instructions.size() > 0));
+  }
+
+  @Test
+  public void kotlinKeepsWhenMappingsReferencedByTopLevelInlineFunction() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    // A caller inlining colorName copies its `when` and regenerates AKt$WhenMappings from the
+    // stub's <clinit>; without it kotlinc fails with "Couldn't inline method call".
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            WHEN_COLOR_ENUM,
+            "@Suppress(\"NOTHING_TO_INLINE\")",
+            "inline fun colorName(c: Color): String = when (c) {",
+            "  Color.RED -> \"r\"",
+            "  Color.GREEN -> \"g\"",
+            "  Color.BLUE -> \"b\"",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertWhenMappingsKept(jar, "com/example/buck/AKt$WhenMappings");
+    }
+  }
+
+  @Test
+  public void kotlinKeepsWhenMappingsReferencedByMemberInlineFunction() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            WHEN_COLOR_ENUM,
+            "class Palette {",
+            "  @Suppress(\"NOTHING_TO_INLINE\")",
+            "  inline fun short(c: Color): Int = when (c) {",
+            "    Color.RED -> 1",
+            "    else -> 2",
+            "  }",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertWhenMappingsKept(jar, "com/example/buck/Palette$WhenMappings");
+    }
+  }
+
+  @Test
+  public void kotlinKeepsWhenMappingsReferencedByLambdaInInlineFunction() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            WHEN_COLOR_ENUM,
+            "inline fun colorTask(c: Color, crossinline sink: (Int) -> Unit): Runnable =",
+            "  Runnable { sink(when (c) { Color.RED -> 1; else -> 2 }) }");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertWhenMappingsKept(jar, "com/example/buck/AKt$colorTask$1$WhenMappings");
+    }
+  }
+
+  @Test
+  public void kotlinStripsWhenMappingsNotReferencedByInlineBodies() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    AbsPath stubJar =
+        compileKotlinToStubJar(
+            "A.kt",
+            "package com.example.buck",
+            WHEN_COLOR_ENUM,
+            "fun colorName(c: Color): String = when (c) {",
+            "  Color.RED -> \"r\"",
+            "  else -> \"x\"",
+            "}");
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      ClassNode node = readClass(jar, "com/example/buck/AKt$WhenMappings.class");
+      assertTrue(
+          "unreferenced WhenMappings stays stripped: " + methodNames(node),
+          node.fields.isEmpty() && !methodNames(node).contains("<clinit>"));
+    }
+  }
+
+  @Test
+  public void kotlinKeepsInlineScopeClassThatSortsBeforeItsOwner() throws IOException {
+    if (!isValidForKotlin() || !testingMode.equals(MODE_JAR_BASED)) {
+      return;
+    }
+
+    // Compose hoists capture-free lambdas of an inline function to
+    // ComposableSingletons$<File>Kt$lambda$N$1, whose path sorts before <File>Kt. Renaming the
+    // anonymous class (same length, so constant pools stay valid) reproduces that order without
+    // the Compose plugin.
+    File outputDir = temp.newFolder();
+    AbsPath compiledJar = AbsPath.of(outputDir.toPath()).resolve("compiled.jar");
+    try (KotlinTestCompiler compiler = new KotlinTestCompiler()) {
+      compiler.init();
+      compiler.addSourceFileContents(
+          "A.kt",
+          "package com.example.buck",
+          "inline fun task(): Runnable = object : Runnable {",
+          "  override fun run() {}",
+          "}");
+      compiler.compile();
+      compiler.getClasses().createJar(compiledJar.getPath(), false);
+    }
+
+    byte[] original = "com/example/buck/AKt$task$1".getBytes(StandardCharsets.UTF_8);
+    byte[] renamed = "com/example/buck/AAA$task$1".getBytes(StandardCharsets.UTF_8);
+    AbsPath fullJar = AbsPath.of(outputDir.toPath()).resolve("output.jar");
+    try (JarFile in = new JarFile(compiledJar.toFile());
+        JarOutputStream out = new JarOutputStream(new FileOutputStream(fullJar.toFile()))) {
+      for (Enumeration<JarEntry> entries = in.entries(); entries.hasMoreElements(); ) {
+        JarEntry entry = entries.nextElement();
+        byte[] bytes;
+        try (InputStream stream = in.getInputStream(entry)) {
+          bytes = ByteStreams.toByteArray(stream);
+        }
+        out.putNextEntry(new JarEntry(entry.getName().replace("AKt$task$1", "AAA$task$1")));
+        out.write(replaceAll(bytes, original, renamed));
+        out.closeEntry();
+      }
+    }
+
+    AbsPath stubJar = AbsPath.of(temp.newFolder().toPath()).resolve("stub.jar");
+    new StubJar(fullJar, false).writeTo(stubJar);
+    try (JarFile jar = new JarFile(stubJar.toFile())) {
+      assertNotNull(
+          "anonymous class of an inline function is kept even when it sorts before its owner",
+          jar.getJarEntry("com/example/buck/AAA$task$1.class"));
+    }
+  }
+
+  private static byte[] replaceAll(byte[] bytes, byte[] from, byte[] to) {
+    byte[] result = bytes.clone();
+    for (int i = 0; i + from.length <= result.length; i++) {
+      boolean match = true;
+      for (int j = 0; j < from.length && match; j++) {
+        match = result[i + j] == from[j];
+      }
+      if (match) {
+        System.arraycopy(to, 0, result, i, to.length);
+      }
+    }
+    return result;
   }
 
   @Test
@@ -7683,6 +9599,27 @@ public class StubJarTest {
       String source,
       File outputDir)
       throws IOException {
+    return compileToJar(
+        classpath,
+        processors,
+        additionalOptions,
+        manifest,
+        fileName,
+        source,
+        Collections.emptyMap(),
+        outputDir);
+  }
+
+  private AbsPath compileToJar(
+      SortedSet<Path> classpath,
+      List<Processor> processors,
+      List<String> additionalOptions,
+      DeterministicManifest manifest,
+      String fileName,
+      String source,
+      Map<String, String> extraSources,
+      File outputDir)
+      throws IOException {
     try (TestCompiler compiler = new TestCompiler()) {
       compiler.init();
       compiler.addCompilerOptions(additionalOptions);
@@ -7690,6 +9627,9 @@ public class StubJarTest {
         compiler.setManifest(manifest);
       }
       compiler.addSourceFileContents(fileName, source);
+      for (Map.Entry<String, String> extra : extraSources.entrySet()) {
+        compiler.addSourceFileContents(extra.getKey(), extra.getValue());
+      }
       compiler.addClasspath(classpath);
       compiler.setSourceLevel(sourceVersion);
       compiler.setTargetLevel(sourceVersion);
@@ -7735,6 +9675,1592 @@ public class StubJarTest {
     }
   }
 
+  @Test
+  public void shouldIncludeCovariantBridgeWhoseOverridingReturnTypeIsMissing() throws IOException {
+    tester
+        .setSourceFile("Message.java", "package com.example.buck.dep;", "public class Message { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Row.java",
+            "package com.example.buck.dep;",
+            "public abstract class Row {",
+            "  public Message getMessage() { return null; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "SystemMessage.java",
+            "package com.example.buck.missing;",
+            "public class SystemMessage extends com.example.buck.dep.Message { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Row;",
+            "import com.example.buck.missing.SystemMessage;",
+            "public class A extends Row {",
+            "  @Override",
+            "  public SystemMessage getMessage() { return null; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", COVARIANT_MISSING_RETURN_ABI)
+        .addExpectedStub("com/example/buck/A", COVARIANT_MISSING_RETURN_ABI)
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeCovariantBridgeWhoseCompletedOverridingReturnTypeIsMissing()
+      throws IOException {
+    tester
+        .setSourceFile("Message.java", "package com.example.buck.dep;", "public class Message { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Row.java",
+            "package com.example.buck.dep;",
+            "public abstract class Row {",
+            "  public Message getMessage() { return null; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "SystemMessage.java",
+            "package com.example.buck.missing;",
+            "public class SystemMessage extends com.example.buck.dep.Message { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Row;",
+            "import com.example.buck.missing.SystemMessage;",
+            "public class A extends Row {",
+            "  @Override",
+            "  public SystemMessage getMessage() { return null; }",
+            "}",
+            "class Special extends SystemMessage { }")
+        .addExpectedFullAbi("com/example/buck/A", COVARIANT_MISSING_RETURN_ABI)
+        .addExpectedStub("com/example/buck/A", COVARIANT_MISSING_RETURN_ABI)
+        .addExpectedStub("com/example/buck/Special")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeToClassFileMethodWhoseTypesAreMissing() throws IOException {
+    tester
+        .setSourceFile("Message.java", "package com.example.buck.dep;", "public class Message { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Row.java",
+            "package com.example.buck.dep2;",
+            "import com.example.buck.dep.Message;",
+            "public abstract class Row {",
+            "  public Message getMessage() { return null; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "SystemMessage.java",
+            "package com.example.buck.missing;",
+            "public class SystemMessage extends com.example.buck.dep.Message { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep2.Row;",
+            "import com.example.buck.missing.SystemMessage;",
+            "public class A extends Row {",
+            "  @Override",
+            "  public SystemMessage getMessage() { return null; }",
+            "}",
+            "class Special extends SystemMessage {",
+            // Completes Message, which turns it into an error type.
+            "  com.example.buck.dep.Message message;",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", MISSING_CLASS_FILE_TYPES_ABI)
+        .addExpectedStub("com/example/buck/A", MISSING_CLASS_FILE_TYPES_ABI)
+        .addExpectedStub("com/example/buck/Special")
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] MISSING_CLASS_FILE_TYPES_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep2/Row {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public getMessage()Lcom/example/buck/missing/SystemMessage;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge getMessage()Lcom/example/buck/dep/Message;",
+    "}"
+  };
+
+  @Test
+  public void shouldNotIncludeBridgeWhenOverrideMatchesClassFileMethodWithMissingTypes()
+      throws IOException {
+    compileFetcherJar();
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Contact;",
+            "import com.example.buck.dep2.Fetcher;",
+            "public class A implements Fetcher {",
+            "  @Override",
+            "  public Contact fetch(Contact contact) { return null; }",
+            "}",
+            "class Special extends Contact { }")
+        .addExpectedFullAbi("com/example/buck/A", MATCHING_CLASS_FILE_MISSING_TYPES_ABI)
+        .addExpectedStub("com/example/buck/A", MATCHING_CLASS_FILE_MISSING_TYPES_ABI)
+        .addExpectedStub("com/example/buck/Special")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldNotIncludeBridgeWhenOverrideMatchesLocalClassMethodWithMissingTypes()
+      throws IOException {
+    // The shape of a mixed module's Java class implementing the module's own Kotlin interface.
+    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      return;
+    }
+    Path fetcherJar = compileFetcherJar();
+    tester.universalClasspath =
+        tester.universalClasspath.stream()
+            .filter(path -> !path.equals(fetcherJar))
+            .collect(ImmutableSortedSet.toImmutableSortedSet(Comparator.naturalOrder()));
+    tester.classpath =
+        ImmutableSortedSet.<Path>naturalOrder().addAll(tester.classpath).add(fetcherJar).build();
+    Path stubDirectory = temp.newFolder().toPath();
+    extractJar(fetcherJar, stubDirectory);
+    tester
+        .addLocalClassDirectory(stubDirectory)
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Contact;",
+            "import com.example.buck.dep2.Fetcher;",
+            "public class A implements Fetcher {",
+            "  @Override",
+            "  public Contact fetch(Contact contact) { return null; }",
+            "}",
+            "class Special extends Contact { }")
+        .addExpectedFullAbi("com/example/buck/A", MATCHING_CLASS_FILE_MISSING_TYPES_ABI)
+        .addExpectedStub("com/example/buck/A", MATCHING_CLASS_FILE_MISSING_TYPES_ABI)
+        .addExpectedStub("com/example/buck/Special")
+        .createAndCheckStubJar();
+  }
+
+  /** `Fetcher.fetch` names `Contact`, which is off the reduced classpath. */
+  private Path compileFetcherJar() throws IOException {
+    tester
+        .setSourceFile("Contact.java", "package com.example.buck.dep;", "public class Contact { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Fetcher.java",
+            "package com.example.buck.dep2;",
+            "import com.example.buck.dep.Contact;",
+            "public interface Fetcher {",
+            "  Contact fetch(Contact contact);",
+            "}")
+        .compileFullJar();
+    Path fetcherJar = tester.fullJarPath.getPath();
+    tester.addFullJarToClasspathAlways();
+    return fetcherJar;
+  }
+
+  private static final String[] MATCHING_CLASS_FILE_MISSING_TYPES_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A implements com/example/buck/dep2/Fetcher {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public fetch(Lcom/example/buck/dep/Contact;)Lcom/example/buck/dep/Contact;",
+    "}"
+  };
+
+  private static final String[] COVARIANT_MISSING_RETURN_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Row {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public getMessage()Lcom/example/buck/missing/SystemMessage;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge getMessage()Lcom/example/buck/dep/Message;",
+    "}"
+  };
+
+  @Test
+  public void shouldIncludeGenericBridgesWhoseTypeArgumentIsMissing() throws IOException {
+    tester
+        .setSourceFile("Holder.java", "package com.example.buck.dep;", "public class Holder { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Adapter.java",
+            "package com.example.buck.dep;",
+            "public abstract class Adapter<H extends Holder> {",
+            "  public abstract void bind(H holder);",
+            "  public abstract H create();",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "MyHolder.java",
+            "package com.example.buck.missing;",
+            "public class MyHolder extends com.example.buck.dep.Holder { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Adapter;",
+            "import com.example.buck.missing.MyHolder;",
+            "public class A extends Adapter<MyHolder> {",
+            "  @Override",
+            "  public void bind(MyHolder holder) {}",
+            "  @Override",
+            "  public MyHolder create() { return null; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", GENERIC_MISSING_ARGUMENT_ABI)
+        .addExpectedStub("com/example/buck/A", GENERIC_MISSING_ARGUMENT_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] GENERIC_MISSING_ARGUMENT_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature Lcom/example/buck/dep/Adapter<Lcom/example/buck/missing/MyHolder;>;",
+    "// declaration: com/example/buck/A extends"
+        + " com.example.buck.dep.Adapter<com.example.buck.missing.MyHolder>",
+    "public class com/example/buck/A extends com/example/buck/dep/Adapter {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public bind(Lcom/example/buck/missing/MyHolder;)V",
+    "",
+    "  // access flags 0x1",
+    "  public create()Lcom/example/buck/missing/MyHolder;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge create()Lcom/example/buck/dep/Holder;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge bind(Lcom/example/buck/dep/Holder;)V",
+    "}"
+  };
+
+  @Test
+  public void shouldNotIncludeBridgeWhenMissingTypesMatch() throws IOException {
+    tester
+        .setSourceFile(
+            "Missing.java", "package com.example.buck.missing;", "public class Missing { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.missing.Missing;",
+            "public class A implements Sink {",
+            "  @Override",
+            "  public void put(Missing m) {}",
+            "  @Override",
+            "  public Missing take() { return null; }",
+            "}",
+            "interface Sink {",
+            "  void put(Missing m);",
+            "  Missing take();",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", MATCHING_MISSING_TYPES_ABI)
+        .addExpectedStub("com/example/buck/A", MATCHING_MISSING_TYPES_ABI)
+        .addExpectedStub("com/example/buck/Sink")
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] MATCHING_MISSING_TYPES_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A implements com/example/buck/Sink {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public put(Lcom/example/buck/missing/Missing;)V",
+    "",
+    "  // access flags 0x1",
+    "  public take()Lcom/example/buck/missing/Missing;",
+    "}"
+  };
+
+  @Test
+  public void shouldIncludeBridgeThatTheSuperclassClassFileLacks() throws IOException {
+    compileLayoutJar(true);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Layout;",
+            "public class A extends Layout { }")
+        .addExpectedFullAbi("com/example/buck/A", LAYOUT_SUBCLASS_WITH_BRIDGE_ABI)
+        .addExpectedStub("com/example/buck/A", LAYOUT_SUBCLASS_WITH_BRIDGE_ABI)
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldNotIncludeBridgeThatTheSuperclassClassFileDeclares() throws IOException {
+    compileLayoutJar(false);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Layout;",
+            "public class A extends Layout { }")
+        .addExpectedFullAbi("com/example/buck/A", LAYOUT_SUBCLASS_ABI)
+        .addExpectedStub("com/example/buck/A", LAYOUT_SUBCLASS_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] LAYOUT_SUBCLASS_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Layout {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "}"
+  };
+
+  private static final String[] LAYOUT_SUBCLASS_WITH_BRIDGE_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Layout {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge generate()Lcom/example/buck/dep/Params;",
+    "}"
+  };
+
+  /**
+   * `Layout` overrides `Group.generate()` with a covariant return, so javac gives `Layout` a
+   * bridge. With {@code stripBridges}, `Layout`'s class file lacks it, as a source-only ABI that
+   * could not compute it does.
+   */
+  @Test
+  public void shouldNotIncludeBridgeWhenKotlinSuperclassGetterPrecedesTheOverride()
+      throws IOException {
+    compileKotlinSameErasureJar(true);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Async;",
+            "import com.example.buck.dep.Attached;",
+            "public class A extends Attached implements Async { }")
+        .addExpectedFullAbi("com/example/buck/A", KOTLIN_SAME_ERASURE_SUBCLASS_ABI)
+        .addExpectedStub("com/example/buck/A", KOTLIN_SAME_ERASURE_SUBCLASS_ABI)
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeToKotlinSuperclassGetterThatFollowsTheOverride()
+      throws IOException {
+    // javac takes the first method of the class that overrides the bridged one, in reverse
+    // class-file order: here the getter, whose return type is narrower.
+    compileKotlinSameErasureJar(false);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Async;",
+            "import com.example.buck.dep.Attached;",
+            "public class A extends Attached implements Async { }")
+        .addExpectedFullAbi("com/example/buck/A", KOTLIN_SAME_ERASURE_SUBCLASS_WITH_BRIDGE_ABI)
+        .addExpectedStub("com/example/buck/A", KOTLIN_SAME_ERASURE_SUBCLASS_WITH_BRIDGE_ABI)
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldKeepBridgeWhenLocalKotlinStubPutsOverrideBeforeGetter() throws IOException {
+    // kotlinc writes the getter first, so javac writes no bridge; the stub's member order is not
+    // kotlinc's, so source-only ABI generation cannot tell and keeps the bridge.
+    checkLocalKotlinStubWithReorderedMembers(true, KOTLIN_SAME_ERASURE_SUBCLASS_ABI);
+  }
+
+  @Test
+  public void shouldKeepBridgeWhenLocalKotlinStubPutsGetterBeforeOverride() throws IOException {
+    checkLocalKotlinStubWithReorderedMembers(false, KOTLIN_SAME_ERASURE_SUBCLASS_WITH_BRIDGE_ABI);
+  }
+
+  /**
+   * Source-only ABI generation reads the module's Kotlin classes as stubs whose member order need
+   * not be kotlinc's, while the library compilation reads kotlinc's classes.
+   */
+  private void checkLocalKotlinStubWithReorderedMembers(boolean getterFirst, String[] fullAbi)
+      throws IOException {
+    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      return;
+    }
+    Path attachedJar = compileKotlinSameErasureJar(getterFirst);
+    tester.universalClasspath =
+        tester.universalClasspath.stream()
+            .filter(path -> !path.equals(attachedJar))
+            .collect(ImmutableSortedSet.toImmutableSortedSet(Comparator.naturalOrder()));
+    tester.classpath =
+        ImmutableSortedSet.<Path>naturalOrder().addAll(tester.classpath).add(attachedJar).build();
+    Path stubJar = temp.newFolder().toPath().resolve("attached.jar");
+    Files.copy(attachedJar.toFile(), stubJar.toFile());
+    rewriteClasses(stubJar, node -> Collections.reverse(node.methods));
+    Path stubDirectory = temp.newFolder().toPath();
+    extractJar(stubJar, stubDirectory);
+    tester
+        .addLocalClassDirectory(stubDirectory)
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Async;",
+            "import com.example.buck.dep.Attached;",
+            "public class A extends Attached implements Async { }")
+        .addExpectedFullAbi("com/example/buck/A", fullAbi)
+        .addExpectedStub("com/example/buck/A", KOTLIN_SAME_ERASURE_SUBCLASS_WITH_BRIDGE_ABI)
+        .createAndCheckStubJar();
+  }
+
+  /**
+   * A Kotlin class with a property getter and an override that have one name and parameter list and
+   * differ only in their return type, as {@code AttachedBanner.getBannerContainer()} in WhatsApp.
+   */
+  private Path compileKotlinSameErasureJar(boolean getterFirst) throws IOException {
+    String getter = "  val container: GroupLike = GroupLike()";
+    String override = "  override fun getContainer(): ViewLike = container";
+    tester
+        .setLanguage(Language.KOTLIN)
+        .setSourceFile(
+            "Attached.kt",
+            "package com.example.buck.dep",
+            "open class ViewLike",
+            "class GroupLike : ViewLike()",
+            "interface Async { fun getContainer(): ViewLike }",
+            "abstract class Banner { abstract fun getContainer(): ViewLike }",
+            "abstract class Attached : Banner() {",
+            getterFirst ? getter : override,
+            getterFirst ? override : getter,
+            "}")
+        .compileFullJar();
+    Path attachedJar = tester.fullJarPath.getPath();
+    stripKotlinNullabilityAnnotations(attachedJar);
+    tester.addFullJarToClasspathAlways().setLanguage(Language.JAVA);
+    return attachedJar;
+  }
+
+  /** The JetBrains nullability annotations are not on the test compiler's classpath. */
+  private static void stripKotlinNullabilityAnnotations(Path jar) throws IOException {
+    rewriteClasses(
+        jar,
+        node -> {
+          node.invisibleAnnotations = null;
+          node.methods.forEach(
+              method -> {
+                method.invisibleAnnotations = null;
+                method.invisibleParameterAnnotations = null;
+              });
+          node.fields.forEach(field -> field.invisibleAnnotations = null);
+        });
+  }
+
+  @Test
+  public void shouldNotIncludeBridgeForBuilderMethodBesideKotlinSetter() throws IOException {
+    tester
+        .setLanguage(Language.KOTLIN)
+        .setSourceFile(
+            "Frame.kt",
+            "package com.example.buck.dep",
+            "interface FrameLike { val matrix: FloatArray? }",
+            "open class Frame : FrameLike {",
+            "  override var matrix: FloatArray? = null",
+            "  fun setMatrix(matrix: FloatArray): Frame {",
+            "    this.matrix = matrix",
+            "    return this",
+            "  }",
+            "}")
+        .compileFullJar();
+    stripKotlinNullabilityAnnotations(tester.fullJarPath.getPath());
+    tester
+        .addFullJarToClasspathAlways()
+        .setLanguage(Language.JAVA)
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Frame;",
+            "public class A extends Frame { }")
+        .addExpectedFullAbi("com/example/buck/A", FRAME_SUBCLASS_ABI)
+        .addExpectedStub("com/example/buck/A", FRAME_SUBCLASS_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] FRAME_SUBCLASS_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Frame {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "}"
+  };
+
+  private static final String[] KOTLIN_SAME_ERASURE_SUBCLASS_WITH_BRIDGE_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Attached implements"
+        + " com/example/buck/dep/Async {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge getContainer()Lcom/example/buck/dep/ViewLike;",
+    "}"
+  };
+
+  private static final String[] KOTLIN_SAME_ERASURE_SUBCLASS_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Attached implements"
+        + " com/example/buck/dep/Async {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "}"
+  };
+
+  @Test
+  public void shouldNotIncludeBridgeForOverloadWhoseParameterTypeIsMissing() throws IOException {
+    tester
+        .setSourceFile("Tri.java", "package com.example.buck.dep;", "public class Tri { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Editor.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Tri;",
+            "interface Writer {",
+            "  Writer set(int key, boolean value);",
+            "  Writer set(int key, Tri value);",
+            "}",
+            "public abstract class Editor implements Writer {",
+            "  public Editor set(int key, boolean value) { return this; }",
+            "  public Editor set(int key, Tri value) { return this; }",
+            "}",
+            "class Impl extends Editor { }")
+        .addExpectedFullAbi("com/example/buck/Editor", OVERLOAD_MISSING_TYPE_EDITOR_ABI)
+        .addExpectedStub(
+            "com/example/buck/Editor",
+            // Writer.set(int, Tri) names a missing class; its bridge cannot be computed.
+            testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)
+                ? new String[0]
+                : OVERLOAD_MISSING_TYPE_EDITOR_ABI)
+        .addExpectedFullAbi("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Writer")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldNotIncludeBridgeForOverloadWhoseParameterTypeIsMissingDeclaredFirst()
+      throws IOException {
+    // The shape of `GatekeeperEditor.override`: the overload that names a missing class comes
+    // first,
+    // so javac does not enter the one that follows.
+    tester
+        .setSourceFile("Tri.java", "package com.example.buck.dep;", "public class Tri { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Editor.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Tri;",
+            "interface Writer {",
+            "  Writer set(int key, boolean value);",
+            "  Writer set(int key, Tri value);",
+            "}",
+            "public abstract class Editor implements Writer {",
+            "  public Editor set(int key, Tri value) { return this; }",
+            "  public Editor set(int key, boolean value) { return this; }",
+            "}",
+            "class Impl extends Editor { }")
+        .addExpectedFullAbi("com/example/buck/Editor", OVERLOAD_MISSING_TYPE_FIRST_EDITOR_ABI)
+        .addExpectedStub(
+            "com/example/buck/Editor",
+            // Writer.set(int, Tri) names a missing class; its bridge cannot be computed.
+            testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)
+                ? OVERLOAD_MISSING_TYPE_FIRST_EDITOR_STUB
+                : OVERLOAD_MISSING_TYPE_FIRST_EDITOR_ABI)
+        .addExpectedFullAbi("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Writer")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldNotIncludeBridgeInSubclassForInterleavedOverloadsWithMissingType()
+      throws IOException {
+    // The shape of `GatekeeperStoreImpl.Editor`: javac drops a different overload of each pair, so
+    // the superclass must keep the bridge for the overload it entered.
+    tester
+        .setSourceFile("Tri.java", "package com.example.buck.dep;", "public class Tri { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Editor.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Tri;",
+            "interface Writer {",
+            "  Writer override(int key, Tri value);",
+            "  Writer override(int key, boolean value);",
+            "  Writer override(String key, boolean value);",
+            "  Writer override(String key, Tri value);",
+            "}",
+            "public abstract class Editor implements Writer {",
+            "  public Editor override(int key, Tri value) { return this; }",
+            "  public Editor override(int key, boolean value) { return this; }",
+            "  public Editor override(String key, boolean value) { return this; }",
+            "  public Editor override(String key, Tri value) { return this; }",
+            "}",
+            "class Impl extends Editor { }")
+        .addExpectedStub("com/example/buck/Editor")
+        .addExpectedFullAbi("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Writer")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeForGenericOverrideBesideOverloadWhoseParameterTypeIsMissing()
+      throws IOException {
+    // javac does not enter `f(T)` beside `f(Missing)`; the dropped override's parameter erases to
+    // `Object`, which its source spelling does not show.
+    tester
+        .setSourceFile(
+            "Base.java",
+            "package com.example.buck.dep;",
+            "public class Base<T> {",
+            "  public Base<T> f(T value) { return this; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Missing.java", "package com.example.buck.missing;", "public class Missing { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Base;",
+            "import com.example.buck.missing.Missing;",
+            "public class A<T> extends Base<T> {",
+            "  public A<T> f(Missing value) { return this; }",
+            "  @Override",
+            "  public A<T> f(T value) { return this; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", GENERIC_OVERRIDE_BESIDE_MISSING_OVERLOAD_ABI)
+        .addExpectedStub("com/example/buck/A", GENERIC_OVERRIDE_BESIDE_MISSING_OVERLOAD_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] GENERIC_OVERRIDE_BESIDE_MISSING_OVERLOAD_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature <T:Ljava/lang/Object;>Lcom/example/buck/dep/Base<TT;>;",
+    "// declaration: com/example/buck/A<T> extends com.example.buck.dep.Base<T>",
+    "public class com/example/buck/A extends com/example/buck/dep/Base {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  // signature (Lcom/example/buck/missing/Missing;)Lcom/example/buck/A<TT;>;",
+    "  // declaration: com.example.buck.A<T> f(com.example.buck.missing.Missing)",
+    "  public f(Lcom/example/buck/missing/Missing;)Lcom/example/buck/A;",
+    "",
+    "  // access flags 0x1",
+    "  // signature (TT;)Lcom/example/buck/A<TT;>;",
+    "  // declaration: com.example.buck.A<T> f(T)",
+    "  public f(Ljava/lang/Object;)Lcom/example/buck/A;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge f(Ljava/lang/Object;)Lcom/example/buck/dep/Base;",
+    "}"
+  };
+
+  @Test
+  public void shouldNotIncludeBridgeForOverloadWhoseMissingParameterClassHasTheSameSimpleName()
+      throws IOException {
+    // `p1.Token` and `p2.Token` are both missing: the same simple name is not the same class.
+    tester
+        .setSourceFile("Token.java", "package com.example.buck.p1;", "public class Token { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile("Token.java", "package com.example.buck.p2;", "public class Token { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Parent.java",
+            "package com.example.buck.dep;",
+            "public class Parent {",
+            "  public Parent f(com.example.buck.p1.Token token) { return this; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Parent;",
+            "import com.example.buck.p2.Token;",
+            "public class A extends Parent {",
+            "  public A f(Token token) { return this; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", SAME_SIMPLE_NAME_OVERLOAD_ABI)
+        .addExpectedStub("com/example/buck/A", SAME_SIMPLE_NAME_OVERLOAD_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] SAME_SIMPLE_NAME_OVERLOAD_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Parent {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public f(Lcom/example/buck/p2/Token;)Lcom/example/buck/A;",
+    "}"
+  };
+
+  @Test
+  public void shouldIncludeBridgeToInheritedGenericImplementationOfMissingTypeArgument()
+      throws IOException {
+    // The shape of `CompanionRegistrationManagerImpl.registerObserver`: an interface method that
+    // names a missing class is implemented by a generic superclass method taking it as type
+    // argument.
+    tester
+        .setSourceFile(
+            "Observable.java",
+            "package com.example.buck.dep;",
+            "public class Observable<T> {",
+            "  public boolean registerObserver(T observer) { return true; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Observer.java", "package com.example.buck.missing;", "public interface Observer { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Manager.java",
+            "package com.example.buck.dep;",
+            "public interface Manager {",
+            "  boolean registerObserver(com.example.buck.missing.Observer observer);",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Manager;",
+            "import com.example.buck.dep.Observable;",
+            "import com.example.buck.missing.Observer;",
+            "public class A extends Observable<Observer> implements Manager { }")
+        .addExpectedFullAbi("com/example/buck/A", INHERITED_GENERIC_IMPLEMENTATION_ABI)
+        .addExpectedStub("com/example/buck/A", INHERITED_GENERIC_IMPLEMENTATION_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] INHERITED_GENERIC_IMPLEMENTATION_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature"
+        + " Lcom/example/buck/dep/Observable<Lcom/example/buck/missing/Observer;>;Lcom/example/buck/dep/Manager;",
+    "// declaration: com/example/buck/A extends"
+        + " com.example.buck.dep.Observable<com.example.buck.missing.Observer> implements"
+        + " com.example.buck.dep.Manager",
+    "public class com/example/buck/A extends com/example/buck/dep/Observable implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+
+  /** {@code Observable<T>} and {@code Manager}, whose method names {@code q.Observer}. */
+  private void compileObservableAndManager(boolean managerDefault) throws IOException {
+    tester
+        .setSourceFile(
+            "Observable.java",
+            "package com.example.buck.dep;",
+            "public class Observable<T> {",
+            "  public boolean registerObserver(T observer) { return true; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Observer.java", "package com.example.buck.missing;", "public interface Observer { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Manager.java",
+            "package com.example.buck.dep;",
+            "public interface Manager {",
+            managerDefault
+                ? "  default boolean registerObserver(com.example.buck.missing.Observer o) { return"
+                    + " false; }"
+                : "  boolean registerObserver(com.example.buck.missing.Observer observer);",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways();
+  }
+
+  @Test
+  public void shouldIncludeBridgeWhenTypeArgumentIsWrittenInAnotherSourceAncestor()
+      throws IOException {
+    // `Mid` writes `Observable<Observer>` with an import of `Observer`; `A`'s file does not import
+    // it, so `Observer` is resolved where `Mid` wrote it.
+    compileObservableAndManager(false);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Manager;",
+            "public class A extends Mid implements Manager { }")
+        .addSourceFile(
+            "Mid.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Observable;",
+            "import com.example.buck.missing.Observer;",
+            "public class Mid extends Observable<Observer> { }")
+        .addExpectedFullAbi("com/example/buck/A", TYPE_ARGUMENT_IN_ANCESTOR_ABI)
+        .addExpectedStub("com/example/buck/A", TYPE_ARGUMENT_IN_ANCESTOR_ABI)
+        .addExpectedStub("com/example/buck/Mid")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeWhenTypeArgumentIsWrittenTwoSourceAncestorsUp()
+      throws IOException {
+    compileObservableAndManager(false);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Manager;",
+            "public class A extends Upper<String> implements Manager { }")
+        .addSourceFile(
+            "Upper.java", "package com.example.buck;", "public class Upper<U> extends Mid { }")
+        .addSourceFile(
+            "Mid.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Observable;",
+            "import com.example.buck.missing.Observer;",
+            "public class Mid extends Observable<Observer> { }")
+        .addExpectedFullAbi("com/example/buck/A", TYPE_ARGUMENT_TWO_UP_ABI)
+        .addExpectedStub("com/example/buck/A", TYPE_ARGUMENT_TWO_UP_ABI)
+        .addExpectedStub("com/example/buck/Mid")
+        .addExpectedStub("com/example/buck/Upper")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeWhenTypeArgumentNameIsUndecidable() throws IOException {
+    // An on-demand import leaves the qualified name of `Observer` unknown; the bridge is kept.
+    compileObservableAndManager(false);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.*;",
+            "import com.example.buck.missing.*;",
+            "public class A extends Observable<Observer> implements Manager { }")
+        .addExpectedFullAbi("com/example/buck/A", TYPE_ARGUMENT_ON_DEMAND_ABI)
+        .addExpectedStub(
+            "com/example/buck/A",
+            // The class signature names the missing class in the class's own package, as
+            // source-only
+            // ABI generation does for a simple name it cannot resolve; the interface validator
+            // rejects such a source in a build.
+            testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)
+                ? Arrays.stream(TYPE_ARGUMENT_ON_DEMAND_ABI)
+                    .map(
+                        line ->
+                            line.startsWith("// ")
+                                ? line.replace("buck/missing/Observer", "buck/Observer")
+                                    .replace("buck.missing.Observer", "buck.Observer")
+                                : line)
+                    .toArray(String[]::new)
+                : TYPE_ARGUMENT_ON_DEMAND_ABI)
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldMatchJavacWhenInterfaceDefaultNamesTheMissingTypeArgument() throws IOException {
+    compileObservableAndManager(true);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Manager;",
+            "public class A extends Mid implements Manager { }")
+        .addSourceFile(
+            "Mid.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Observable;",
+            "import com.example.buck.missing.Observer;",
+            "public class Mid extends Observable<Observer> { }")
+        .addExpectedFullAbi("com/example/buck/A", TYPE_ARGUMENT_INTERFACE_DEFAULT_ABI)
+        .addExpectedStub("com/example/buck/A", TYPE_ARGUMENT_INTERFACE_DEFAULT_ABI)
+        .addExpectedStub("com/example/buck/Mid")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldNotTakeOverloadWithOwnBoundOfAnotherMissingClassAsImplementation()
+      throws IOException {
+    // `registerObserver(U)` erases to the missing `Other`, written as `U`'s bound in `A`; it does
+    // not
+    // override `registerObserver(Observer)`, so javac bridges the interface method to the inherited
+    // `Observable.registerObserver(T)`.
+    checkOwnTypeVariableBound(
+        "public class A<U extends com.example.buck.missing.Other>", OWN_BOUND_ABI);
+  }
+
+  @Test
+  public void shouldNotTakeOverloadWithOwnIntersectionBoundOfAnotherMissingClassAsImplementation()
+      throws IOException {
+    checkOwnTypeVariableBound(
+        "public class A<U extends com.example.buck.missing.Other & java.io.Serializable>",
+        OWN_INTERSECTION_BOUND_ABI);
+  }
+
+  private void checkOwnTypeVariableBound(String classHeader, String[] abi) throws IOException {
+    tester
+        .setSourceFile(
+            "Observable.java",
+            "package com.example.buck.dep;",
+            "public class Observable<T> {",
+            "  public boolean registerObserver(T observer) { return true; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Observer.java", "package com.example.buck.missing;", "public interface Observer { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Other.java", "package com.example.buck.missing;", "public interface Other { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Manager.java",
+            "package com.example.buck.dep;",
+            "public interface Manager {",
+            "  boolean registerObserver(com.example.buck.missing.Observer observer);",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Manager;",
+            "import com.example.buck.dep.Observable;",
+            classHeader,
+            "    extends Observable<com.example.buck.missing.Observer> implements Manager {",
+            "  public boolean registerObserver(U observer) { return false; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", abi)
+        .addExpectedStub("com/example/buck/A", abi)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] OWN_BOUND_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature"
+        + " <U::Lcom/example/buck/missing/Other;>Lcom/example/buck/dep/Observable<Lcom/example/buck/missing/Observer;>;Lcom/example/buck/dep/Manager;",
+    "// declaration: com/example/buck/A<U extends com.example.buck.missing.Other> extends"
+        + " com.example.buck.dep.Observable<com.example.buck.missing.Observer> implements"
+        + " com.example.buck.dep.Manager",
+    "public class com/example/buck/A extends com/example/buck/dep/Observable implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  // signature (TU;)Z",
+    "  // declaration: boolean registerObserver(U)",
+    "  public registerObserver(Lcom/example/buck/missing/Other;)Z",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+  private static final String[] OWN_INTERSECTION_BOUND_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature"
+        + " <U::Lcom/example/buck/missing/Other;:Ljava/io/Serializable;>Lcom/example/buck/dep/Observable<Lcom/example/buck/missing/Observer;>;Lcom/example/buck/dep/Manager;",
+    "// declaration: com/example/buck/A<U extends com.example.buck.missing.Other,"
+        + " java.io.Serializable> extends"
+        + " com.example.buck.dep.Observable<com.example.buck.missing.Observer> implements"
+        + " com.example.buck.dep.Manager",
+    "public class com/example/buck/A extends com/example/buck/dep/Observable implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  // signature (TU;)Z",
+    "  // declaration: boolean registerObserver(U)",
+    "  public registerObserver(Lcom/example/buck/missing/Other;)Z",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+
+  private static final String[] TYPE_ARGUMENT_IN_ANCESTOR_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/Mid implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+  private static final String[] TYPE_ARGUMENT_TWO_UP_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature Lcom/example/buck/Upper<Ljava/lang/String;>;Lcom/example/buck/dep/Manager;",
+    "// declaration: com/example/buck/A extends com.example.buck.Upper<java.lang.String> implements"
+        + " com.example.buck.dep.Manager",
+    "public class com/example/buck/A extends com/example/buck/Upper implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+  private static final String[] TYPE_ARGUMENT_ON_DEMAND_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature"
+        + " Lcom/example/buck/dep/Observable<Lcom/example/buck/missing/Observer;>;Lcom/example/buck/dep/Manager;",
+    "// declaration: com/example/buck/A extends"
+        + " com.example.buck.dep.Observable<com.example.buck.missing.Observer> implements"
+        + " com.example.buck.dep.Manager",
+    "public class com/example/buck/A extends com/example/buck/dep/Observable implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+  private static final String[] TYPE_ARGUMENT_INTERFACE_DEFAULT_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/Mid implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+
+  private static final String[] OVERLOAD_MISSING_TYPE_FIRST_EDITOR_STUB = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x421",
+    "public abstract class com/example/buck/Editor implements com/example/buck/Writer {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public set(ILcom/example/buck/dep/Tri;)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1",
+    "  public set(IZ)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge set(IZ)Lcom/example/buck/Writer;",
+    "}"
+  };
+
+  private static final String[] OVERLOAD_MISSING_TYPE_FIRST_EDITOR_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x421",
+    "public abstract class com/example/buck/Editor implements com/example/buck/Writer {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public set(ILcom/example/buck/dep/Tri;)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1",
+    "  public set(IZ)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge set(ILcom/example/buck/dep/Tri;)Lcom/example/buck/Writer;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge set(IZ)Lcom/example/buck/Writer;",
+    "}"
+  };
+
+  private static final String[] OVERLOAD_MISSING_TYPE_EDITOR_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x421",
+    "public abstract class com/example/buck/Editor implements com/example/buck/Writer {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public set(IZ)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1",
+    "  public set(ILcom/example/buck/dep/Tri;)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge set(ILcom/example/buck/dep/Tri;)Lcom/example/buck/Writer;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge set(IZ)Lcom/example/buck/Writer;",
+    "}"
+  };
+
+  private static final String[] OVERLOAD_MISSING_TYPE_IMPL_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x20",
+    "class com/example/buck/Impl extends com/example/buck/Editor {",
+    "",
+    "",
+    "  // access flags 0x0",
+    "  <init>()V",
+    "}"
+  };
+
+  @Test
+  public void shouldNotIncludeBridgeForOverloadWhoseParameterSubtypeIsMissing() throws IOException {
+    tester
+        .setSourceFile("Client.java", "package com.example.buck.dep;", "public class Client { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "View.java",
+            "package com.example.buck.dep;",
+            "public class View {",
+            "  public void setClient(Client client) { }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "SecureClient.java",
+            "package com.example.buck.missing;",
+            "public class SecureClient extends com.example.buck.dep.Client { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.View;",
+            "import com.example.buck.missing.SecureClient;",
+            "public class A extends View {",
+            "  public final A setClient(SecureClient client) { return this; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", OVERLOAD_MISSING_SUBTYPE_ABI)
+        .addExpectedStub("com/example/buck/A", OVERLOAD_MISSING_SUBTYPE_ABI)
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeWhenOverrideNamesMissingParameterClassBySimpleName()
+      throws IOException {
+    // The shape of `BaseGraphQLRequest.setAcsToken`: the source names the missing class by its
+    // simple name, the class file by its binary name.
+    tester
+        .setSourceFile("Token.java", "package com.example.buck.missing;", "public class Token { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Request.java",
+            "package com.example.buck.dep;",
+            "public interface Request {",
+            "  Request setToken(com.example.buck.missing.Token token);",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Request;",
+            "import com.example.buck.missing.Token;",
+            "public class A implements Request {",
+            "  public A setToken(Token token) { return this; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", MISSING_PARAMETER_SIMPLE_NAME_ABI)
+        .addExpectedStub("com/example/buck/A", MISSING_PARAMETER_SIMPLE_NAME_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] MISSING_PARAMETER_SIMPLE_NAME_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A implements com/example/buck/dep/Request {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public setToken(Lcom/example/buck/missing/Token;)Lcom/example/buck/A;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge"
+        + " setToken(Lcom/example/buck/missing/Token;)Lcom/example/buck/dep/Request;",
+    "}"
+  };
+
+  @Test
+  public void shouldIncludeCovariantBridgeWhoseReturnTypeHasAMissingSuperclass()
+      throws IOException {
+    // The shape of `FbDraweeControllerBuilder.build`: the override returns a class of this target
+    // whose superclass is off the reduced classpath, so the return types cannot be related there.
+    tester
+        .setSourceFile(
+            "Controller.java", "package com.example.buck.dep;", "public class Controller { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Builder.java",
+            "package com.example.buck.dep;",
+            "public abstract class Builder {",
+            "  public abstract Controller build();",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "PipelineController.java",
+            "package com.example.buck.missing;",
+            "public class PipelineController extends com.example.buck.dep.Controller { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Builder;",
+            "import com.example.buck.missing.PipelineController;",
+            "public class A extends Builder {",
+            "  @Override",
+            "  public FbController build() { return null; }",
+            "}",
+            "class FbController extends PipelineController { }")
+        .addExpectedFullAbi("com/example/buck/A", MISSING_RETURN_SUPERCLASS_ABI)
+        .addExpectedStub("com/example/buck/A", MISSING_RETURN_SUPERCLASS_ABI)
+        .addExpectedStub("com/example/buck/FbController")
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] MISSING_RETURN_SUPERCLASS_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Builder {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public build()Lcom/example/buck/FbController;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge build()Lcom/example/buck/dep/Controller;",
+    "}"
+  };
+
+  @Test
+  public void shouldIncludeCovariantBridgeBesideOverloadWhoseParameterTypeIsMissing()
+      throws IOException {
+    // The shape of `LocationUpsellLaunchParams.Builder.setSource`: an overload that names a missing
+    // class precedes the covariant override.
+    tester
+        .setSourceFile(
+            "BaseBuilder.java",
+            "package com.example.buck.dep;",
+            "public class BaseBuilder {",
+            "  public BaseBuilder setSource(String source) { return this; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Source.java", "package com.example.buck.missing;", "public class Source { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.BaseBuilder;",
+            "import com.example.buck.missing.Source;",
+            "public class A extends BaseBuilder {",
+            "  public A setSource(Source source) { return this; }",
+            "  @Override",
+            "  public A setSource(String source) { return this; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", OVERLOAD_BESIDE_COVARIANT_ABI)
+        .addExpectedStub("com/example/buck/A", OVERLOAD_BESIDE_COVARIANT_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] OVERLOAD_BESIDE_COVARIANT_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/BaseBuilder {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public setSource(Lcom/example/buck/missing/Source;)Lcom/example/buck/A;",
+    "",
+    "  // access flags 0x1",
+    "  public setSource(Ljava/lang/String;)Lcom/example/buck/A;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge setSource(Ljava/lang/String;)Lcom/example/buck/dep/BaseBuilder;",
+    "}"
+  };
+
+  private static final String[] OVERLOAD_MISSING_SUBTYPE_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/View {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x11",
+    "  public final setClient(Lcom/example/buck/missing/SecureClient;)Lcom/example/buck/A;",
+    "}"
+  };
+
+  private Path compileLayoutJar(boolean stripBridges) throws IOException {
+    tester
+        .setSourceFile("Params.java", "package com.example.buck.dep;", "public class Params { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "MarginParams.java",
+            "package com.example.buck.dep;",
+            "public class MarginParams extends Params { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Group.java",
+            "package com.example.buck.dep;",
+            "public class Group {",
+            "  public Params generate() { return null; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Layout.java",
+            "package com.example.buck.dep;",
+            "public abstract class Layout extends Group {",
+            "  @Override",
+            "  public MarginParams generate() { return null; }",
+            "}")
+        .compileFullJar();
+    Path layoutJar = tester.fullJarPath.getPath();
+    if (stripBridges) {
+      stripBridgeMethods(layoutJar);
+    }
+    tester.addFullJarToClasspathAlways();
+    return layoutJar;
+  }
+
+  @Test
+  public void shouldComputeBridgesOfLocalClassDirectoryClasses() throws IOException {
+    // A mixed module's Java sources read the module's own Kotlin classes as stubs in source-only
+    // ABI generation and as kotlinc's classes, bridges included, in the library compilation.
+    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      return;
+    }
+    Path layoutJar = compileLayoutJar(false);
+    tester.universalClasspath =
+        tester.universalClasspath.stream()
+            .filter(path -> !path.equals(layoutJar))
+            .collect(ImmutableSortedSet.toImmutableSortedSet(Comparator.naturalOrder()));
+    tester.classpath =
+        ImmutableSortedSet.<Path>naturalOrder().addAll(tester.classpath).add(layoutJar).build();
+    Path strippedJar = temp.newFolder().toPath().resolve("layout.jar");
+    Files.copy(layoutJar.toFile(), strippedJar.toFile());
+    stripBridgeMethods(strippedJar);
+    Path stubDirectory = temp.newFolder().toPath();
+    extractJar(strippedJar, stubDirectory);
+    tester
+        .addLocalClassDirectory(stubDirectory)
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Layout;",
+            "public class A extends Layout { }")
+        .addExpectedFullAbi("com/example/buck/A", LAYOUT_SUBCLASS_ABI)
+        .addExpectedStub("com/example/buck/A", LAYOUT_SUBCLASS_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static void extractJar(Path jar, Path directory) throws IOException {
+    try (JarFile jarFile = new JarFile(jar.toFile())) {
+      Enumeration<JarEntry> entries = jarFile.entries();
+      while (entries.hasMoreElements()) {
+        JarEntry entry = entries.nextElement();
+        if (entry.isDirectory()) {
+          continue;
+        }
+        Path target = directory.resolve(entry.getName());
+        java.nio.file.Files.createDirectories(target.getParent());
+        try (InputStream in = jarFile.getInputStream(entry)) {
+          java.nio.file.Files.copy(in, target);
+        }
+      }
+    }
+  }
+
+  private static void stripBridgeMethods(Path jar) throws IOException {
+    rewriteClasses(
+        jar, node -> node.methods.removeIf(method -> (method.access & Opcodes.ACC_BRIDGE) != 0));
+  }
+
+  private static void rewriteClasses(Path jar, java.util.function.Consumer<ClassNode> rewrite)
+      throws IOException {
+    Map<String, byte[]> entries = new java.util.LinkedHashMap<>();
+    try (JarFile jarFile = new JarFile(jar.toFile())) {
+      Enumeration<JarEntry> jarEntries = jarFile.entries();
+      while (jarEntries.hasMoreElements()) {
+        JarEntry entry = jarEntries.nextElement();
+        if (entry.isDirectory()) {
+          continue;
+        }
+        try (InputStream in = jarFile.getInputStream(entry)) {
+          byte[] bytes = ByteStreams.toByteArray(in);
+          if (entry.getName().endsWith(".class")) {
+            ClassNode node = new ClassNode(Opcodes.ASM9);
+            new ClassReader(bytes).accept(node, 0);
+            rewrite.accept(node);
+            ClassWriter writer = new ClassWriter(0);
+            node.accept(writer);
+            bytes = writer.toByteArray();
+          }
+          entries.put(entry.getName(), bytes);
+        }
+      }
+    }
+    try (JarOutputStream out = new JarOutputStream(new FileOutputStream(jar.toFile()))) {
+      for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+        out.putNextEntry(new JarEntry(entry.getKey()));
+        out.write(entry.getValue());
+        out.closeEntry();
+      }
+    }
+  }
+
   private Tester createAnnotationFullJar() throws IOException {
     return tester
         .setSourceFile(
@@ -7759,18 +11285,11 @@ public class StubJarTest {
         .compileFullJar();
   }
 
-  private void notYetImplementedForMissingClasspath() {
-    assumeThat(testingMode, not(equalTo(MODE_SOURCE_BASED_MISSING_DEPS)));
-  }
-
-  private void notYetImplementedForSource() {
-    assumeThat(testingMode, equalTo(MODE_JAR_BASED));
+  private boolean notYetImplementedForMissingClasspath() {
+    return testingMode == MODE_SOURCE_BASED_MISSING_DEPS;
   }
 
   private boolean isValidForKotlin() {
-    // System.getProperty("java.class.path") returning classpath with ":" as separator which means
-    // that KotlinTestCompiler crashes (separator should be ";" on Windows)
-    assumeThat(Platform.detect(), not(Platform.WINDOWS));
     return !testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS);
   }
 
@@ -7783,7 +11302,6 @@ public class StubJarTest {
 
     private final List<String> expectedStubDirectory = new ArrayList<>();
     private final List<String> actualStubDirectory = new ArrayList<>();
-    private final List<String> actualFullDirectory = new ArrayList<>();
     private final Map<String, List<String>> expectedFullAbis = new HashMap<>();
     private final Map<String, List<String>> actualFullAbis = new HashMap<>();
     private final Map<String, List<String>> expectedStubs = new HashMap<>();
@@ -7796,8 +11314,10 @@ public class StubJarTest {
     private List<String> actualStubManifest;
     private String sourceFileName = "";
     private String sourceFileContents = "";
+    private final Map<String, String> extraSourceFiles = new LinkedHashMap<>();
     private ImmutableSortedSet<Path> universalClasspath = EMPTY_CLASSPATH;
     private ImmutableSortedSet<Path> classpath = EMPTY_CLASSPATH;
+    private final List<Path> localClassDirectories = new ArrayList<>();
     private AbsPath stubJarPath;
     private AbsPath fullJarPath;
     private boolean issueAPWarnings;
@@ -7815,7 +11335,6 @@ public class StubJarTest {
 
     private void resetActuals() {
       actualStubDirectory.clear();
-      actualFullDirectory.clear();
       actualFullAbis.clear();
       actualStubs.clear();
       stubJarPath = null;
@@ -7841,6 +11360,13 @@ public class StubJarTest {
     public Tester setSourceFile(String fileName, String... lines) {
       sourceFileName = fileName;
       sourceFileContents = Joiner.on('\n').join(lines);
+      extraSourceFiles.clear();
+      return this;
+    }
+
+    /** Adds another compilation unit to the sources set by {@link #setSourceFile}. */
+    public Tester addSourceFile(String fileName, String... lines) {
+      extraSourceFiles.put(fileName, Joiner.on('\n').join(lines));
       return this;
     }
 
@@ -7971,8 +11497,12 @@ public class StubJarTest {
                 ? ImmutableSortedSet.<Path>naturalOrder()
                     .addAll(universalClasspath)
                     .addAll(classpath)
+                    .addAll(localClassDirectories)
                     .build()
-                : universalClasspath;
+                : ImmutableSortedSet.<Path>naturalOrder()
+                    .addAll(universalClasspath)
+                    .addAll(localClassDirectories)
+                    .build();
         AbsPath stubJar = AbsPath.of(outputDir.toPath()).resolve("stub.jar");
         JarBuilder jarBuilder = new JarBuilder();
 
@@ -7986,6 +11516,9 @@ public class StubJarTest {
             testCompiler.useFrontendOnlyJavacTask();
           }
           testCompiler.addSourceFileContents(sourceFileName, sourceFileContents);
+          for (Map.Entry<String, String> extra : extraSourceFiles.entrySet()) {
+            testCompiler.addSourceFileContents(extra.getKey(), extra.getValue());
+          }
           testCompiler.addClasspath(classpath1);
           testCompiler.setSourceLevel(sourceVersion);
           testCompiler.setTargetLevel(sourceVersion);
@@ -8016,6 +11549,7 @@ public class StubJarTest {
                       return false;
                     }
                   }));
+          testCompiler.getElements().setLocalClassDirectories(localClassDirectories);
           StubGenerator generator =
               new StubGenerator(
                   SourceVersionUtils.getSourceVersionFromTarget(sourceVersion),
@@ -8071,6 +11605,7 @@ public class StubJarTest {
                 manifest,
                 sourceFileName,
                 sourceFileContents,
+                extraSourceFiles,
                 outputDir);
       }
 
@@ -8093,6 +11628,13 @@ public class StubJarTest {
               .addAll(classpath)
               .add(fullJarPath.getPath())
               .build();
+      resetActuals();
+      return this;
+    }
+
+    /** Adds a directory of classes the module compiles in another step to the stub classpath. */
+    public Tester addLocalClassDirectory(Path directory) {
+      localClassDirectories.add(directory);
       resetActuals();
       return this;
     }
@@ -8165,70 +11707,6 @@ public class StubJarTest {
       assertNotEquals(originalHash, Files.asByteSource(stubJarPath.toFile()).hash(Hashing.sha1()));
     }
 
-    @SuppressWarnings("unused")
-    public Tester dumpTestCode(boolean includeFullAbi) throws IOException {
-      if (includeFullAbi) {
-        compileFullJar();
-        dumpFullJarAbi();
-      }
-      createStubJar();
-      dumpStubJar();
-
-      String indent = "            ";
-      StringBuilder result = new StringBuilder();
-      result.append("Test lines:\n");
-      result.append("    tester\n");
-      result.append("        .setSourceFile(\n");
-      result.append(indent);
-      result.append('"');
-      result.append(sourceFileName);
-      for (String sourceLine : sourceFileContents.split("\n")) {
-        result.append("\",\n");
-        result.append(indent);
-        result.append('"');
-        result.append(sourceLine.replace("\"", "\\\""));
-      }
-      result.append("\")\n");
-      for (String fileName : actualFullDirectory) {
-        if (fileName.endsWith("/") || fileName.equals(JarFile.MANIFEST_NAME)) {
-          continue;
-        }
-        if (includeFullAbi) {
-          result.append("        .addExpectedFullAbi(\n");
-          result.append(indent);
-          result.append('"');
-          result.append(fileName, 0, fileName.length() - ".class".length());
-
-          for (String abiLine : actualFullAbis.get(fileName)) {
-            result.append("\",\n");
-            result.append(indent);
-            result.append('"');
-            result.append(abiLine.replace("\"", "\\\""));
-          }
-          result.append("\")\n");
-        }
-
-        if (actualStubs.containsKey(fileName)) {
-          result.append("        .addExpectedStub(\n");
-          result.append(indent);
-          result.append('"');
-          result.append(fileName, 0, fileName.length() - ".class".length());
-
-          for (String stubLine : actualStubs.get(fileName)) {
-            result.append("\",\n");
-            result.append(indent);
-            result.append('"');
-            result.append(stubLine.replace("\"", "\\\""));
-          }
-          result.append("\")\n");
-        }
-      }
-      result.append("        .createAndCheckStubJar();\n");
-
-      fail(result.toString());
-      return this;
-    }
-
     protected void dumpStubJar() throws IOException {
       try (JarFile file = new JarFile(stubJarPath.toFile())) {
         Iterable<JarEntry> entries = file.stream()::iterator;
@@ -8254,7 +11732,6 @@ public class StubJarTest {
           if (JarFile.MANIFEST_NAME.equals(name)) {
             continue;
           }
-          actualFullDirectory.add(name);
           actualFullAbis.put(
               name,
               new JarDumper()

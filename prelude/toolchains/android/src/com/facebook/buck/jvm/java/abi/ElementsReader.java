@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.java.abi;
 
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
 import com.facebook.buck.util.MoreSuppliers;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.InputStream;
 import java.nio.file.Path;
@@ -32,6 +33,7 @@ import javax.lang.model.util.Types;
 import org.objectweb.asm.ClassVisitor;
 
 /** A {@link LibraryReader} that reads from a list of {@link Element}s and their inner types. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ElementsReader implements LibraryReader {
   private final SourceVersion targetVersion;
   private final ElementsExtended elements;

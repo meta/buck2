@@ -62,7 +62,7 @@ pub(crate) fn register_float(globals: &mut GlobalsBuilder) {
         }
         let a = a.unwrap();
         match a {
-            Either::Left(Either::Left(f)) => Ok(f.as_float()),
+            Either::Left(Either::Left(f)) => f.as_finite_float(),
             Either::Left(Either::Right(b)) => Ok(if b { 1.0 } else { 0.0 }),
             Either::Right(s) => {
                 match s.parse::<f64>() {

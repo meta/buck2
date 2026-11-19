@@ -1,0 +1,14 @@
+# Target inside the opted-in subtree (intersection = `root//intersect/...`) but
+# whose own `visibility = [...]` list extends OUTSIDE the intersection. This is
+# the footgun this feature is meant to fix: without the intersection
+# model, the `root//leak_destination/...` entry in this list would let
+# consumers in `root//leak_destination/` slip through the package
+# wall. With the intersection, those consumers are still blocked even though
+# the target's own visibility allows them.
+stub(
+    name = "t",
+    visibility = [
+        "root//intersect/sub_b/...",
+        "root//leak_destination/...",
+    ],
+)

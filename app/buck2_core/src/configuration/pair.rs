@@ -8,12 +8,14 @@
  * above-listed licenses.
  */
 
+use std::sync::LazyLock;
+
 use allocative::Allocative;
-use buck2_util::hash::BuckHasher;
+use buck2_hash::BuckHasher;
 use dupe::Dupe;
-use once_cell::sync::Lazy;
+use pagable::Pagable;
 use static_interner::Intern;
-use static_interner::Interner;
+use static_interner::interner;
 use strong_hash::StrongHash;
 
 use crate::configuration::data::ConfigurationData;
@@ -25,7 +27,9 @@ enum ConfigurationError {
     HasExecCfg,
 }
 
-#[derive(Debug, Allocative, Hash, Eq, PartialEq, Ord, PartialOrd, StrongHash)]
+#[derive(
+    Debug, Allocative, Hash, Eq, PartialEq, Ord, PartialOrd, Pagable, StrongHash
+)]
 struct ConfigurationPairData {
     cfg: ConfigurationData,
     /// Usually this is None, but for toolchain deps where the exec_cfg isn't picked it is set
@@ -35,11 +39,11 @@ struct ConfigurationPairData {
 /// Pair of `cfg` and `exec_cfg`.
 /// These two are added to `TargetLabel` to make `ConfiguredTargetLabel`.
 #[derive(
-    Debug, Clone, Dupe, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash
+    Debug, Copy, Clone, Dupe, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash, Pagable
 )]
 pub struct Configuration(Intern<ConfigurationPairData>);
 
-static INTERNER: Interner<ConfigurationPairData, BuckHasher> = Interner::new();
+interner!(INTERNER, BuckHasher, ConfigurationPairData);
 
 impl Configuration {
     #[inline]
@@ -69,6 +73,7 @@ impl Configuration {
 /// `ConfigurationPair` where `exec_cfg` is always `None`.
 #[derive(
     Debug,
+    Copy,
     Clone,
     Dupe,
     Eq,
@@ -78,7 +83,8 @@ impl Configuration {
     PartialOrd,
     Allocative,
     derive_more::Display,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 #[display("{}", self.cfg())]
 pub struct ConfigurationNoExec(Configuration);
@@ -91,36 +97,36 @@ impl ConfigurationNoExec {
 
     #[inline]
     pub fn unbound() -> ConfigurationNoExec {
-        static UNBOUND: Lazy<ConfigurationNoExec> =
-            Lazy::new(|| ConfigurationNoExec::new(ConfigurationData::unbound()));
+        static UNBOUND: LazyLock<ConfigurationNoExec> =
+            LazyLock::new(|| ConfigurationNoExec::new(ConfigurationData::unbound()));
         UNBOUND.dupe()
     }
 
     #[inline]
     pub fn unspecified_exec() -> Self {
-        static UNSPECIFIED_EXEC: Lazy<ConfigurationNoExec> =
-            Lazy::new(|| ConfigurationNoExec::new(ConfigurationData::unspecified_exec()));
+        static UNSPECIFIED_EXEC: LazyLock<ConfigurationNoExec> =
+            LazyLock::new(|| ConfigurationNoExec::new(ConfigurationData::unspecified_exec()));
         UNSPECIFIED_EXEC.dupe()
     }
 
     #[inline]
     pub fn unbound_exec() -> Self {
-        static UNBOUND_EXEC: Lazy<ConfigurationNoExec> =
-            Lazy::new(|| ConfigurationNoExec::new(ConfigurationData::unbound_exec()));
+        static UNBOUND_EXEC: LazyLock<ConfigurationNoExec> =
+            LazyLock::new(|| ConfigurationNoExec::new(ConfigurationData::unbound_exec()));
         UNBOUND_EXEC.dupe()
     }
 
     #[inline]
     pub fn unspecified() -> Self {
-        static UNSPECIFIED: Lazy<ConfigurationNoExec> =
-            Lazy::new(|| ConfigurationNoExec::new(ConfigurationData::unspecified()));
+        static UNSPECIFIED: LazyLock<ConfigurationNoExec> =
+            LazyLock::new(|| ConfigurationNoExec::new(ConfigurationData::unspecified()));
         UNSPECIFIED.dupe()
     }
 
     #[inline]
     pub fn testing_new() -> Self {
-        static TESTING_NEW: Lazy<ConfigurationNoExec> =
-            Lazy::new(|| ConfigurationNoExec::new(ConfigurationData::testing_new()));
+        static TESTING_NEW: LazyLock<ConfigurationNoExec> =
+            LazyLock::new(|| ConfigurationNoExec::new(ConfigurationData::testing_new()));
         TESTING_NEW.dupe()
     }
 

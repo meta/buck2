@@ -37,10 +37,7 @@ def _filter_incompatible_constraints(platform_name: str, constraints: dict[Targe
         filtered[constraint_setting_label] = constraint_value_info
     return filtered
 
-def _cpu_split_transition_impl(
-        platform: PlatformInfo,
-        refs: struct,
-        attrs: struct) -> dict[str, PlatformInfo]:
+def _cpu_split_transition_impl(platform: PlatformInfo, refs: struct, attrs: struct) -> dict[str, PlatformInfo]:
     universal = attrs.universal if attrs.universal != None else _universal_constraint_value(platform, refs)
     os = _os_constraint_value(platform, refs)
     if not universal or os == None:

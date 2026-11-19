@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 # @oss-disable[end= ]: load("@fbcode_macros//build_defs:platform_utils.bzl", "platform_utils")
-load(":rules.bzl", "BANNED_DEP_PATHS", "LATE_BINDING_ONLY_CRATES", "TOP_LEVEL_ONLY_CRATES")
+load(":rules.bzl", "BANNED_DEP_PATHS", "BANNED_DIRECTED_DEP_PATHS", "LATE_BINDING_ONLY_CRATES", "TOP_LEVEL_ONLY_CRATES")
 
 platform_utils = None # @oss-enable
 
@@ -88,6 +88,9 @@ def test_buck2_dep_graph(name):
 
         banned_dep_paths.append("somepath({}, {})".format(a, b))
         banned_dep_paths.append("somepath({}, {})".format(b, a))
+
+    for a, b in BANNED_DIRECTED_DEP_PATHS:
+        banned_dep_paths.append("somepath({}, {})".format(a, b))
 
     _test_buck2_dep_graph(
         name = name,

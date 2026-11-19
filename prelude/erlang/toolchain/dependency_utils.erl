@@ -7,6 +7,7 @@
 
 %% @format
 -module(dependency_utils).
+-compile(warn_missing_spec_all).
 
 -export([chars_to_binary/1]).
 

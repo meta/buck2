@@ -15,7 +15,10 @@ worker(
         "jvm_args",
         delimiter = " ",
         required = False,
-    ) or [] if not read("javacd", "jvm_args_target") else [],
+    )
+    or []
+    if not read("javacd", "jvm_args_target")
+    else [],
     main_class = "com.facebook.buck.jvm.java.stepsbuilder.javacd.main.JavaCDGrpcWorkerToolMain",
     visibility = [
         "PUBLIC",

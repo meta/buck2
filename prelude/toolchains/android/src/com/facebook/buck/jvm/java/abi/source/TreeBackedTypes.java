@@ -10,7 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Arrays;
 import java.util.List;
 import javax.lang.model.element.Element;
@@ -27,6 +27,7 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.TypeVariable;
 import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.Types;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link Types} using just the AST of a single module, without its
@@ -34,6 +35,7 @@ import javax.lang.model.util.Types;
  * meanings of some names, and thus must be used with care. See documentation for individual methods
  * and {@link com.facebook.buck.jvm.java.abi.source} for more information.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedTypes implements Types {
 
   private final Types javacTypes;

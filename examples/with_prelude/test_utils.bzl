@@ -9,21 +9,18 @@
 def assert_output(name, command, output):
     return native.genrule(
         name = name,
-        bash = command + " | grep \"" + output + "\" && touch \"$OUT\"",
-        cmd_exe = command + " | findstr \"" + output + "\" && type nul > \"$OUT\"",
+        bash = command + ' | grep "' + output + '" && touch "$OUT"',
+        cmd_exe = command + ' | findstr "' + output + '" && type nul > "$OUT"',
         out = "out.txt",
     )
 
 def haskell_library(deps = [], **kwargs):
-    native.haskell_library(
-        deps = deps + ["//third-party/haskell:base"],
-        **kwargs
-    )
+    native.haskell_library(deps = deps + ["//third-party/haskell:base"], **kwargs)
 
 def haskell_binary(linker_flags = [], deps = [], **kwargs):
     native.haskell_binary(
         # Workaround for as yet not triaged runtime segfault.
         linker_flags = linker_flags + ["-dynamic"] if host_info().os.is_macos else linker_flags,
         deps = deps + ["//third-party/haskell:base"],
-        **kwargs
+        **kwargs,
     )

@@ -1,0 +1,9 @@
+[buildfile]
+name=TARGETS.fixture
+
+[project]
+ignore=ignored
+
+[repositories]
+root = .
+prelude = prelude

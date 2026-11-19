@@ -64,6 +64,15 @@ __buck2_add_target_completions()
     COMPREPLY=("${completions[@]}")
 }
 
+__buck2_add_flagfile_completions()
+{
+    local completions=()
+    while read -r; do
+        completions+=("$REPLY")
+    done < <("${_BUCK_COMPLETE_BIN[@]}" complete --flagfile="$1" 2>/dev/null)
+    COMPREPLY=("${completions[@]}")
+}
+
 __buck2_completions_queued()
 {
     if [[ ${#COMPREPLY[@]} -eq 0 ]]; then
@@ -80,6 +89,13 @@ __buck2_fix()
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
     local pprev="${COMP_WORDS[COMP_CWORD-2]}"
+
+    # Flagfile / mode-file completion: an `@file` argument or the value of
+    # `--flagfile`/`--config-file`.
+    if [[ $cur == @* || $prev == --flagfile || $prev == --config-file ]]; then
+        __buck2_add_flagfile_completions "$cur"
+        return
+    fi
 
     # Bash treats `:` as a separate word, so we have to do some work to
     # recover a partial target name

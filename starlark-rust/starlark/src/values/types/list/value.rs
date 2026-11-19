@@ -24,35 +24,31 @@ use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
+use std::mem;
 use std::slice;
 
 use allocative::Allocative;
 use display_container::fmt_container;
 use serde::Serialize;
+use starlark_derive::StarlarkRepresentations;
 use starlark_derive::Trace;
 use starlark_derive::starlark_value;
-use starlark_syntax::slice_vec_ext::SliceExt;
-use starlark_syntax::slice_vec_ext::VecExt;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::coerce::coerce;
 use crate::environment::Methods;
-use crate::environment::MethodsStatic;
 use crate::hint::likely;
 use crate::hint::unlikely;
 use crate::private::Private;
+use crate::static_starlark_value;
 use crate::typing::Ty;
-use crate::values::AllocFrozenValue;
-use crate::values::AllocValue;
-use crate::values::FrozenHeap;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValue;
 use crate::values::Heap;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
+use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::ValueLike;
+use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::array::Array;
 use crate::values::comparison::compare_slice;
@@ -60,12 +56,8 @@ use crate::values::comparison::equals_slice;
 use crate::values::error::ValueError;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
-use crate::values::layout::avalue::AValueFrozenList;
-use crate::values::layout::avalue::AValueImpl;
-use crate::values::layout::avalue::alloc_static;
-use crate::values::layout::heap::repr::AValueRepr;
 use crate::values::list::ListRef;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::list::ListType;
 
 #[derive(Clone, Default, Trace, Debug, ProvidesStaticType, Allocative)]
 #[repr(transparent)]
@@ -79,16 +71,16 @@ pub(crate) struct ListData<'v> {
     pub(crate) content: Cell<ValueTyped<'v, Array<'v>>>,
 }
 
-/// Define the frozen list type.
+/// Define the frozen list type. [`FrozenList`] is an alias for `ListGen<FrozenListData<'static>>`.
 #[derive(ProvidesStaticType, Allocative)]
 #[repr(C)]
-pub(crate) struct FrozenListData {
+pub(crate) struct FrozenListData<'v> {
     len: usize,
-    /// The data stored by the tuple.
-    content: [FrozenValue; 0],
+    /// The data stored by the list.
+    content: [Value<'v>; 0],
 }
 
-impl Debug for FrozenListData {
+impl<'v> Debug for FrozenListData<'v> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("FrozenList")
             .field("content", &self.content())
@@ -96,17 +88,16 @@ impl Debug for FrozenListData {
     }
 }
 
-/// Alias is used in `StarlarkDocs` derive.
-pub(crate) type FrozenList = ListGen<FrozenListData>;
+/// Runtime type of frozen list. Alias is used in `StarlarkDocs` derive.
+pub(crate) type FrozenList = ListGen<FrozenListData<'static>>;
 
 pub(crate) type List<'v> = ListGen<ListData<'v>>;
 
-pub(crate) static VALUE_EMPTY_FROZEN_LIST: AValueRepr<AValueImpl<'static, AValueFrozenList>> =
-    alloc_static(unsafe { ListGen(FrozenListData::new(0)) });
+static_starlark_value!(pub(crate) VALUE_EMPTY_FROZEN_LIST: FrozenList = unsafe { ListGen(FrozenListData::new(0)) });
 
-impl ListGen<FrozenListData> {
+impl<'v> ListGen<FrozenListData<'v>> {
     pub(crate) fn offset_of_content() -> usize {
-        memoffset::offset_of!(FrozenListData, content)
+        mem::offset_of!(FrozenListData<'v>, content)
     }
 }
 
@@ -120,7 +111,7 @@ impl<'v> ListData<'v> {
         #[cold]
         #[inline(never)]
         fn error<'v>(x: Value<'v>) -> anyhow::Error {
-            if x.downcast_ref::<ListGen<FrozenListData>>().is_some() {
+            if x.downcast_ref::<ListGen<FrozenListData<'v>>>().is_some() {
                 ValueError::CannotMutateImmutableValue.into()
             } else {
                 NotListError(x.get_type()).into()
@@ -144,7 +135,7 @@ impl<'v> ListData<'v> {
     }
 
     pub(crate) fn is_list_type(x: TypeId) -> bool {
-        x == TypeId::of::<ListGen<ListData>>() || x == TypeId::of::<ListGen<FrozenListData>>()
+        x == TypeId::of::<ListGen<ListData>>() || x == TypeId::of::<FrozenList>()
     }
 
     /// Return an error if there's at least one iterator over the list.
@@ -157,7 +148,7 @@ impl<'v> ListData<'v> {
 
     #[cold]
     #[inline(never)]
-    fn reserve_additional_slow(&self, additional: usize, heap: &'v Heap) {
+    fn reserve_additional_slow(&self, additional: usize, heap: Heap<'v>) {
         let new_cap = cmp::max(self.len() + additional, self.len() * 2);
         // Size of `Array` is 2 words and size of `List` is one word,
         // so allocating at least 4 words would not be too large waste.
@@ -171,7 +162,7 @@ impl<'v> ListData<'v> {
     }
 
     #[inline(always)]
-    fn reserve_additional(&self, additional: usize, heap: &'v Heap) {
+    fn reserve_additional(&self, additional: usize, heap: Heap<'v>) {
         if likely(self.content.get().as_ref().remaining_capacity() >= additional) {
             return;
         }
@@ -179,13 +170,13 @@ impl<'v> ListData<'v> {
         self.reserve_additional_slow(additional, heap);
     }
 
-    pub(crate) fn double(&self, heap: &'v Heap) {
+    pub(crate) fn double(&self, heap: Heap<'v>) {
         self.reserve_additional(self.len(), heap);
         self.content.get().double();
     }
 
     #[inline]
-    pub(crate) fn extend<I: IntoIterator<Item = Value<'v>>>(&self, iter: I, heap: &'v Heap) {
+    pub(crate) fn extend<I: IntoIterator<Item = Value<'v>>>(&self, iter: I, heap: Heap<'v>) {
         match self.try_extend(iter.into_iter().map(Ok::<_, Infallible>), heap) {
             Ok(()) => {}
         }
@@ -195,7 +186,7 @@ impl<'v> ListData<'v> {
     pub(crate) fn try_extend<E, I: IntoIterator<Item = Result<Value<'v>, E>>>(
         &self,
         iter: I,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> Result<(), E> {
         let iter = iter.into_iter();
         let (lo, hi) = iter.size_hint();
@@ -222,7 +213,7 @@ impl<'v> ListData<'v> {
         Ok(())
     }
 
-    pub(crate) fn push(&self, value: Value<'v>, heap: &'v Heap) {
+    pub(crate) fn push(&self, value: Value<'v>, heap: Heap<'v>) {
         self.reserve_additional(1, heap);
         self.content.get().push(value);
     }
@@ -231,7 +222,7 @@ impl<'v> ListData<'v> {
         self.content.get().clear();
     }
 
-    pub(crate) fn insert(&self, index: usize, value: Value<'v>, heap: &'v Heap) {
+    pub(crate) fn insert(&self, index: usize, value: Value<'v>, heap: Heap<'v>) {
         self.reserve_additional(1, heap);
         self.content.get().insert(index, value);
     }
@@ -241,49 +232,8 @@ impl<'v> ListData<'v> {
     }
 }
 
-impl<'v, V: AllocValue<'v>> AllocValue<'v> for Vec<V> {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_list_iter(self.into_iter().map(|x| x.alloc_value(heap)))
-    }
-}
-
-impl<V: AllocFrozenValue> AllocFrozenValue for Vec<V> {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        heap.alloc_list(&self.into_map(|x| x.alloc_frozen_value(heap)))
-    }
-}
-
-impl<'a, V: 'a> StarlarkTypeRepr for &'a [V]
-where
-    &'a V: StarlarkTypeRepr,
-{
-    type Canonical = <Vec<&'a V> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Vec::<&'a V>::starlark_type_repr()
-    }
-}
-
-impl<'a, 'v, V: 'a> AllocValue<'v> for &'a [V]
-where
-    &'a V: AllocValue<'v>,
-{
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_list_iter(self.iter().map(|x| x.alloc_value(heap)))
-    }
-}
-
-impl<'a, V: 'a> AllocFrozenValue for &'a [V]
-where
-    &'a V: AllocFrozenValue,
-{
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        heap.alloc_list(&self.map(|x| x.alloc_frozen_value(heap)))
-    }
-}
-
-impl FrozenListData {
-    pub(crate) const unsafe fn new(len: usize) -> FrozenListData {
+impl<'v> FrozenListData<'v> {
+    pub(crate) const unsafe fn new(len: usize) -> FrozenListData<'v> {
         FrozenListData { len, content: [] }
     }
 
@@ -291,15 +241,8 @@ impl FrozenListData {
         self.len
     }
 
-    pub(crate) fn content(&self) -> &[FrozenValue] {
+    pub(crate) fn content(&self) -> &[Value<'v>] {
         unsafe { slice::from_raw_parts(self.content.as_ptr(), self.len) }
-    }
-
-    /// Obtain the [`FrozenListData`] pointed at by a [`FrozenValue`].
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    // We need a lifetime because FrozenValue doesn't contain the right lifetime
-    pub fn from_frozen_value(x: &FrozenValue) -> Option<&FrozenListData> {
-        x.downcast_ref::<ListGen<FrozenListData>>().map(|x| &x.0)
     }
 }
 
@@ -308,8 +251,8 @@ impl<'v> ListData<'v> {
     pub const TYPE: &'static str = "list";
 
     /// Type of list as frozen string value.
-    pub fn get_type_value_static() -> FrozenStringValue {
-        ListGen::<FrozenListData>::get_type_value_static()
+    pub fn get_type_value_static() -> StringValue<'static> {
+        FrozenList::get_type_value_static()
     }
 
     pub(crate) fn new(content: ValueTyped<'v, Array<'v>>) -> Self {
@@ -338,9 +281,9 @@ impl<'v> Display for ListData<'v> {
     }
 }
 
-impl Display for FrozenListData {
+impl<'v> Display for FrozenListData<'v> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        display_list(coerce(&self.content()), f)
+        display_list(self.content(), f)
     }
 }
 
@@ -386,9 +329,9 @@ impl<'v> ListLike<'v> for ListData<'v> {
     }
 }
 
-impl<'v> ListLike<'v> for FrozenListData {
+impl<'v> ListLike<'v> for FrozenListData<'v> {
     fn content(&self) -> &[Value<'v>] {
-        coerce(self.content())
+        self.content()
     }
 
     fn set_at(&self, _i: usize, _v: Value<'v>) -> crate::Result<()> {
@@ -424,33 +367,60 @@ pub(crate) fn display_list(xs: &[Value], f: &mut fmt::Formatter<'_>) -> fmt::Res
     fmt_container(f, "[", "]", xs.iter())
 }
 
-pub(crate) fn list_methods() -> Option<&'static Methods> {
-    static RES: MethodsStatic = MethodsStatic::new();
-    RES.methods(crate::values::types::list::methods::list_methods)
+starlark::methods_static!(LIST_METHODS = crate::values::types::list::methods::list_methods);
+
+/// A `list` in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum ListView<'v> {
+    Frozen(ValueTyped<'v, ListGen<FrozenListData<'v>>>),
+    Unfrozen(ValueTyped<'v, ListGen<ListData<'v>>>),
+}
+
+/// `$e` with `$x` bound to the representation's `ListLike`.
+macro_rules! with_list {
+    ($self:expr, |$x:ident| $e:expr) => {
+        match $self {
+            ListView::Frozen($x) => {
+                let $x = &$x.as_ref().0;
+                $e
+            }
+            ListView::Unfrozen($x) => {
+                let $x = &$x.as_ref().0;
+                $e
+            }
+        }
+    };
+}
+
+impl<'v> ListView<'v> {
+    #[inline]
+    fn content(self) -> &'v [Value<'v>] {
+        with_list!(self, |l| l.content())
+    }
+
+    /// A list of the items `times` times over: `list * times` and `times * list`.
+    // Inlined into `mul` and `rmul`, as `Tuple::repeated` is.
+    #[inline(always)]
+    fn repeated(self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        let content = self.content();
+        let mut result = Vec::with_capacity(content.len() * cmp::max(0, times) as usize);
+        for _ in 0..times {
+            result.extend(content.iter());
+        }
+        heap.alloc_list(&result)
+    }
 }
 
 #[starlark_value(type = ListData::TYPE)]
-impl<'v, T: ListLike<'v> + 'v> StarlarkValue<'v> for ListGen<T>
-where
-    Self: ProvidesStaticType<'v> + Display,
-{
-    type Canonical = FrozenList;
-
-    fn is_special(_: Private) -> bool
-    where
-        Self: Sized,
-    {
-        true
-    }
-
+impl<'v> StarlarkType<'v> for ListView<'v> {
     fn get_methods() -> Option<&'static Methods> {
-        list_methods()
+        Some(LIST_METHODS.methods())
     }
 
     fn collect_repr(&self, s: &mut String) {
         // Fast path as repr() for lists is quite hot
         s.push('[');
-        for (i, v) in self.0.content().iter().enumerate() {
+        for (i, v) in self.content().iter().enumerate() {
             if i != 0 {
                 s.push_str(", ");
             }
@@ -464,34 +434,29 @@ where
     }
 
     fn to_bool(&self) -> bool {
-        !self.0.content().is_empty()
+        !self.content().is_empty()
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        match ListRef::from_value(other) {
-            None => Ok(false),
-            Some(other) => equals_slice(self.0.content(), &other.content, |x, y| x.equals(*y)),
-        }
+    fn equals(&self, other: &ListRef<'v>) -> crate::Result<bool> {
+        equals_slice(self.content(), &other.content, |x, y| x.equals(*y))
     }
 
-    fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
-        match ListRef::from_value(other) {
-            None => ValueError::unsupported_with(self, "cmp()", other),
-            Some(other) => compare_slice(self.0.content(), &other.content, |x, y| x.compare(*y)),
-        }
+    fn compare(&self, other: &ListRef<'v>) -> crate::Result<Ordering> {
+        compare_slice(self.content(), &other.content, |x, y| x.compare(*y))
     }
 
-    fn at(&self, index: Value, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        let i = convert_index(index, self.0.content().len() as i32)? as usize;
-        Ok(self.0.content()[i])
+    fn at(&self, index: i32) -> crate::Result<Value<'v>> {
+        let content = self.content();
+        let i = convert_index(index, content.len() as i32)? as usize;
+        Ok(content[i])
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.0.content().len() as i32)
+    fn length(&self) -> i32 {
+        self.content().len() as i32
     }
 
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
-        for x in self.0.content().iter() {
+        for x in self.content().iter() {
             if x.equals(other)? {
                 return Ok(true);
             }
@@ -504,64 +469,73 @@ where
         start: Option<Value>,
         stop: Option<Value>,
         stride: Option<Value>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
-        let xs = self.0.content();
+        let xs = self.content();
         let res = apply_slice(xs, start, stop, stride)?;
-        Ok(heap.alloc_list(&res))
+        Ok(heap.alloc_list(&res).to_value())
     }
 
-    unsafe fn iterate(&self, me: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        unsafe { Ok(self.0.new_iter(me)) }
+    unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        unsafe { Ok(with_list!(self, |l| l.new_iter(me))) }
     }
 
     unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        unsafe { self.0.iter_size_hint(index) }
+        unsafe { with_list!(self, |l| l.iter_size_hint(index)) }
     }
 
-    unsafe fn iter_next(&self, index: usize, _heap: &'v Heap) -> Option<Value<'v>> {
-        unsafe { self.0.iter_next(index) }
+    unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
+        unsafe { with_list!(self, |l| l.iter_next(index)) }
     }
 
     unsafe fn iter_stop(&self) {
-        unsafe {
-            self.0.iter_stop();
-        }
+        unsafe { with_list!(self, |l| l.iter_stop()) }
     }
 
-    fn add(&self, other: Value<'v>, heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
-        ListRef::from_value(other)
-            .map(|other| Ok(heap.alloc_list_concat(self.0.content(), other.content())))
+    fn add(&self, other: &ListRef<'v>, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        heap.alloc_list_concat(self.content(), other.content())
     }
 
-    fn mul(&self, other: Value, heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
-        let l = match i32::unpack_value(other) {
-            Ok(Some(l)) => l,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-        let mut result = Vec::with_capacity(self.0.content().len() * cmp::max(0, l) as usize);
-        for _ in 0..l {
-            result.extend(self.0.content().iter());
-        }
-        Some(Ok(heap.alloc_list(&result)))
+    fn mul(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        self.repeated(times, heap)
     }
 
-    fn rmul(&self, lhs: Value<'v>, heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
-        self.mul(lhs, heap)
+    fn rmul(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        self.repeated(times, heap)
     }
 
     fn set_at(&self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
-        let i = convert_index(index, self.0.content().len() as i32)? as usize;
-        self.0.set_at(i, alloc_value)
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::any_list())
+        let index = i32::unpack_value_err(index)?;
+        let i = convert_index(index, self.content().len() as i32)? as usize;
+        with_list!(self, |l| l.set_at(i, alloc_value))
     }
 
     fn get_type_starlark_repr() -> Ty {
         Ty::any_list()
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for ListGen<ListData<'v>> {
+    type Type = ListView<'v>;
+
+    fn is_special(_: Private) -> bool
+    where
+        Self: Sized,
+    {
+        true
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for ListGen<FrozenListData<'v>> {
+    type Type = ListView<'v>;
+
+    fn is_special(_: Private) -> bool
+    where
+        Self: Sized,
+    {
+        true
     }
 }
 

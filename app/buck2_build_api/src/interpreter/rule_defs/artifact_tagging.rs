@@ -14,10 +14,8 @@ mod tagged_value;
 mod tagged_visitor;
 
 pub use artifact_tag::ArtifactTag;
-pub use tagged_command_line::FrozenStarlarkTaggedCommandLine;
 pub use tagged_command_line::StarlarkTaggedCommandLine;
 pub(crate) use tagged_command_line::register_tagged_command_line;
 pub use tagged_value::StarlarkTaggedValue;
-use tagged_value::StarlarkTaggedValueGen;
 pub(crate) use tagged_value::register_tagged_value;
 pub use tagged_visitor::TaggedVisitor;

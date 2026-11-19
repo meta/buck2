@@ -83,3 +83,143 @@ read_package_value_not_found = bxl_main(
     impl = _read_package_value_not_found_impl,
     cli_args = {},
 )
+
+def _read_package_visibility_impl(ctx):
+    # Default: `root//` declares no visibility, so it is visible to nothing (`[]`).
+    # Exercise both the PackagePath form (from a node) and the string form.
+    root_pkg_path = ctx.unconfigured_targets("root//:dummy").label.package_path
+    asserts.equals(bxl.read_package_visibility(root_pkg_path), [])
+    asserts.equals(bxl.read_package_visibility("root//"), [])
+
+    # Explicit visibility declared in `vis_dir/PACKAGE`, via both input forms. The
+    # `target_name_glob(...)` entry is rendered as a JSON object, not a string.
+    vis_pkg_path = ctx.unconfigured_targets("root//vis_dir:vis_dummy").label.package_path
+    expected = [
+        "root//bar_dir/...",
+        "root//sub_dir:",
+        {"name_globs": ["*-test"], "within": [], "__type": "target_name_glob"},
+    ]
+    asserts.equals(bxl.read_package_visibility(vis_pkg_path), expected)
+    asserts.equals(bxl.read_package_visibility("root//vis_dir"), expected)
+
+read_package_visibility = bxl_main(
+    impl = _read_package_visibility_impl,
+    cli_args = {},
+)
+
+def _read_package_within_view_impl(ctx):
+    # Default: `root//` declares no within_view, so it defaults to `["PUBLIC"]`.
+    # Exercise both the PackagePath form (from a node) and the string form.
+    root_pkg_path = ctx.unconfigured_targets("root//:dummy").label.package_path
+    asserts.equals(bxl.read_package_within_view(root_pkg_path), ["PUBLIC"])
+    asserts.equals(bxl.read_package_within_view("root//"), ["PUBLIC"])
+
+    # Explicit within_view declared in `vis_dir/PACKAGE`, via both input forms.
+    vis_pkg_path = ctx.unconfigured_targets("root//vis_dir:vis_dummy").label.package_path
+    asserts.equals(bxl.read_package_within_view(vis_pkg_path), ["root//..."])
+    asserts.equals(bxl.read_package_within_view("root//vis_dir"), ["root//..."])
+
+read_package_within_view = bxl_main(
+    impl = _read_package_within_view_impl,
+    cli_args = {},
+)
+
+def _read_package_visibility_cap_impl(ctx):
+    # No ancestor restricts visibility at the root: the legacy shape is ["PUBLIC"] (no restriction).
+    asserts.equals(bxl.read_package_visibility_cap("root//"), ["PUBLIC"])
+
+    # `intersection_dir` opts into intersection-based visibility, so its explicit
+    # `package(visibility=...)` propagates as the intersection. Exercise both input forms.
+    pkg_path = ctx.unconfigured_targets("root//intersection_dir:intersection_dummy").label.package_path
+    asserts.equals(bxl.read_package_visibility_cap(pkg_path), ["root//intersection_dir/..."])
+    asserts.equals(
+        bxl.read_package_visibility_cap("root//intersection_dir"),
+        ["root//intersection_dir/..."],
+    )
+
+    # `intersection_dir/sub_dir` doesn't opt in, so it inherits the ancestor intersection,
+    # distinct from its own visibility. Exercises ancestor->descendant propagation.
+    asserts.equals(
+        bxl.read_package_visibility_cap("root//intersection_dir/sub_dir"),
+        ["root//intersection_dir/..."],
+    )
+    asserts.equals(
+        bxl.read_package_visibility("root//intersection_dir/sub_dir"),
+        ["root//other:thing"],
+    )
+
+    # `intersection_dir/exempt_dir` declares an exemption on its own layer. The legacy
+    # shape cannot represent exemptions and collapses, ignoring them.
+    asserts.equals(
+        bxl.read_package_visibility_cap("root//intersection_dir/exempt_dir"),
+        {"intersection": [["root//intersection_dir/..."], ["root//intersection_dir/..."]]},
+    )
+
+read_package_visibility_cap = bxl_main(
+    impl = _read_package_visibility_cap_impl,
+    cli_args = {},
+)
+
+def _read_package_within_view_cap_impl(ctx):
+    # No ancestor caps `within_view` at the root, so the cap is PUBLIC (no restriction).
+    asserts.equals(bxl.read_package_within_view_cap("root//"), ["PUBLIC"])
+
+    # `within_view_cap_dir` opts into intersection-based `within_view`, so its
+    # `package(within_view=...)` propagates as the cap. Exercise both input forms.
+    cap_pkg_path = ctx.unconfigured_targets("root//within_view_cap_dir:within_view_cap_dummy").label.package_path
+    asserts.equals(bxl.read_package_within_view_cap(cap_pkg_path), ["root//within_view_cap_dir/..."])
+    asserts.equals(
+        bxl.read_package_within_view_cap("root//within_view_cap_dir"),
+        ["root//within_view_cap_dir/..."],
+    )
+
+    # `within_view_cap_dir/sub_dir` declares its own `within_view` but does not opt
+    # in, so its cap is the one propagated from the ancestor -- and is distinct
+    # from the package's own `within_view`.
+    asserts.equals(
+        bxl.read_package_within_view_cap("root//within_view_cap_dir/sub_dir"),
+        ["root//within_view_cap_dir/..."],
+    )
+    asserts.equals(
+        bxl.read_package_within_view("root//within_view_cap_dir/sub_dir"),
+        ["root//other/..."],
+    )
+
+read_package_within_view_cap = bxl_main(
+    impl = _read_package_within_view_cap_impl,
+    cli_args = {},
+)
+
+def _intersection_layers(package_path):
+    return [(layer.patterns, layer.exempt_targets) for layer in bxl.read_package_visibility_intersection(package_path)]
+
+def _read_package_visibility_intersection_impl(ctx):
+    # No ancestor restricts visibility at the root: no layers.
+    asserts.equals(_intersection_layers("root//"), [])
+
+    # `intersection_dir` contributes one exemption-free layer. Exercise both input forms.
+    expected = [(["root//intersection_dir/..."], [])]
+    pkg_path = ctx.unconfigured_targets("root//intersection_dir:intersection_dummy").label.package_path
+    asserts.equals(_intersection_layers(pkg_path), expected)
+    asserts.equals(_intersection_layers("root//intersection_dir"), expected)
+    asserts.equals(
+        type(bxl.read_package_visibility_intersection("root//intersection_dir")[0]),
+        "bxl.VisibilityIntersectionLayer",
+    )
+
+    # Propagated descendant sees the same layer.
+    asserts.equals(_intersection_layers("root//intersection_dir/sub_dir"), expected)
+
+    # The exempt dir adds a second layer carrying its exemption.
+    asserts.equals(
+        _intersection_layers("root//intersection_dir/exempt_dir"),
+        [
+            (["root//intersection_dir/..."], []),
+            (["root//intersection_dir/..."], ["root//intersection_dir/exempt_dir:"]),
+        ],
+    )
+
+read_package_visibility_intersection = bxl_main(
+    impl = _read_package_visibility_intersection_impl,
+    cli_args = {},
+)

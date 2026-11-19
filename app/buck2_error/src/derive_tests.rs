@@ -100,14 +100,16 @@ enum NoAttrsEnum {
 #[test]
 fn test_source_location_no_attrs() {
     let e: crate::Error = NoAttrsStruct.into();
-    assert_eq!(
-        e.source_location().to_string(),
-        "buck2_error/src/derive_tests.rs::NoAttrsStruct"
+    assert!(
+        e.source_location()
+            .to_string()
+            .starts_with("buck2_error/src/derive_tests.rs::NoAttrsStruct::")
     );
     let e: crate::Error = NoAttrsEnum::Variant.into();
-    assert_eq!(
-        e.source_location().to_string(),
-        "buck2_error/src/derive_tests.rs::NoAttrsEnum::Variant"
+    assert!(
+        e.source_location()
+            .to_string()
+            .starts_with("buck2_error/src/derive_tests.rs::NoAttrsEnum::Variant::")
     );
 }
 
@@ -122,9 +124,10 @@ enum EnumWithTypeOption {
 fn test_enum_with_type_option() {
     let e: crate::Error = EnumWithTypeOption::Variant.into();
     assert_eq!(e.get_tier(), Some(crate::Tier::Input));
-    assert_eq!(
-        e.source_location().to_string(),
-        "buck2_error/src/derive_tests.rs::EnumWithTypeOption::Variant",
+    assert!(
+        e.source_location()
+            .to_string()
+            .starts_with("buck2_error/src/derive_tests.rs::EnumWithTypeOption::Variant::")
     );
 }
 

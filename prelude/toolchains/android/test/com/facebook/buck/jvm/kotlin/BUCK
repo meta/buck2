@@ -1,12 +1,16 @@
-load("@prelude//toolchains/android/tools:build_rules.bzl", "standard_java_test")
+load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_kotlin_test")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("android_devxx")
 
 source_listing()
 
-standard_java_test(
+buck_kotlin_test(
     name = "kotlin",
+    srcs = glob([
+        "*Test.java",
+        "*Test.kt",
+    ]),
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/android:helpers",
         "prelude//toolchains/android/src/com/facebook/buck/cd/resources/proto:javacd-model",
@@ -24,8 +28,10 @@ standard_java_test(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/buildtools:buildtools",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/kotlinc:kotlinc",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/kotlinc/incremental:incremental",
-        "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/ksp/incremental:incremental",
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/ksp:ksp",
         "prelude//toolchains/android/src/com/facebook/buck/step:step",
+        "prelude//toolchains/android/src/com/facebook/buck/step/isolatedsteps:isolatedsteps",
+        "prelude//toolchains/android/src/com/facebook/buck/step/isolatedsteps/common:common",
         "prelude//toolchains/android/src/com/facebook/buck/test/result/type:type",
         "prelude//toolchains/android/src/com/facebook/buck/test/selectors:selectors",
         "prelude//toolchains/android/src/com/facebook/buck/util:process_executor",
@@ -34,6 +40,7 @@ standard_java_test(
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:platform",
         "prelude//toolchains/android/src/com/facebook/buck/util/json:json",
         "prelude//toolchains/android/src/com/facebook/buck/util/unit:unit",
+        "prelude//toolchains/android/test/com/facebook/buck/step:testutil",
         "prelude//toolchains/android/test/com/facebook/buck/testutil:testutil",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:asm",
@@ -44,11 +51,12 @@ standard_java_test(
         "prelude//toolchains/android/third-party:jackson-annotations",
         "prelude//toolchains/android/third-party:jackson-core",
         "prelude//toolchains/android/third-party:jackson-databind",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:junit",
         "prelude//toolchains/android/third-party:mockito",
+        "prelude//toolchains/android/third-party:mockito-kotlin",
         "prelude//toolchains/android/third-party:okhttp",
         "prelude//toolchains/android/third-party:okio",
+        "prelude//toolchains/android/third-party:symbol-processing-api",
         "prelude//toolchains/android/third-party:tools-sdk-common",
     ],
 )

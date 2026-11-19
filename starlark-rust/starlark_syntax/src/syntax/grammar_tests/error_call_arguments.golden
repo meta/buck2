@@ -1,0 +1,81 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+f(x = 1, 2)
+
+Error:
+error: positional argument after non positional
+ --> error_call_arguments:1:10
+  |
+1 | f(x = 1, 2)
+  |          ^
+
+
+Program:
+f(x = 1, y = 2, 3)
+
+Error:
+error: positional argument after non positional
+ --> error_call_arguments:1:17
+  |
+1 | f(x = 1, y = 2, 3)
+  |                 ^
+
+
+Program:
+f(x = 1, x = 2)
+
+Error:
+error: repeated named argument
+ --> error_call_arguments:1:10
+  |
+1 | f(x = 1, x = 2)
+  |          ^
+
+
+Program:
+f(x = 1, x = 2, 3)
+
+Error:
+error: repeated named argument
+ --> error_call_arguments:1:10
+  |
+1 | f(x = 1, x = 2, 3)
+  |          ^
+
+
+Program:
+f(*args, x = 1)
+
+Error:
+error: named argument after *args or **kwargs
+ --> error_call_arguments:1:10
+  |
+1 | f(*args, x = 1)
+  |          ^^^^^
+
+
+Program:
+f(*args, *more_args)
+
+Error:
+error: Args array after another args or kwargs
+ --> error_call_arguments:1:10
+  |
+1 | f(*args, *more_args)
+  |          ^^^^^^^^^^
+
+
+Program:
+f(**kwargs, **more_kwargs)
+
+Error:
+error: Multiple kwargs dictionary in arguments
+ --> error_call_arguments:1:13
+  |
+1 | f(**kwargs, **more_kwargs)
+  |             ^^^^^^^^^^^^^

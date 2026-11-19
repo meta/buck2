@@ -7,7 +7,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
 
 """
 Create the link tree for inplace Python binaries.
@@ -35,7 +34,7 @@ $ ls third-party/baz.whl__extracted
 baz/tp_foo.py
 baz/tp_bar.py
 $ cat template.in
-(see prelude/python/run_inplace_lite.py.in)
+(see prelude/python/run_inplace.py.in)
 $ ./make_py_package_inplace.py  \\
     --template prelude/python/run_inplace.py.in \\
     --module-srcs=@srcs \\
@@ -55,12 +54,12 @@ import errno
 import json
 import os
 import platform
+import re
 import shutil
 from pathlib import Path
-from typing import Dict, Set, Tuple
 
 # Suffixes which should trigger `__init__.py` additions.
-# TODO(agallaher): This was coped from v1, but some things below probably
+# TODO(agallaher): This was copied from v1, but some things below probably
 # don't need to be here (e.g. `.pyd`).
 _MODULE_SUFFIXES = {
     ".dll",
@@ -69,11 +68,35 @@ _MODULE_SUFFIXES = {
     ".so",
 }
 
+_CONTENT_HASH_PLACEHOLDER: str = "/output_artifacts/"
+
+
+def create_pyc_hash_dict(args: argparse.Namespace) -> dict[str, str]:
+    """Construct a map of bytecode artifact path prefixes to content hashes."""
+    pyc_hash_dict: dict[str, str] = {}
+    pattern = re.compile(r"(.*)/([a-fA-F0-9]{16})/bytecode_UNCHECKED_HASH")
+    for bytecode_artifact in args.bytecode_artifacts:
+        with open(bytecode_artifact) as f:
+            for line in f:
+                match = pattern.search(line)
+                if match:
+                    prefix = match.group(1)
+                    content_hash = match.group(2)
+                    pyc_hash_dict[prefix] = content_hash
+    return pyc_hash_dict
+
+
+def replace_pyc_hash_placeholder(path: str, pyc_hash_dict: dict[str, str]) -> str:
+    """Replace the placeholder string in a bytecode artifact path with the actual content hash."""
+    if _CONTENT_HASH_PLACEHOLDER in path:
+        prefix = path.split(_CONTENT_HASH_PLACEHOLDER)[0]
+        content_hash = pyc_hash_dict.get(prefix)
+        if content_hash:
+            path = path.replace(_CONTENT_HASH_PLACEHOLDER, f"/{content_hash}/")
+    return path
+
 
 def parse_args() -> argparse.Namespace:
-    # TODO(nmj): Go back and verify all of the various flags that make_xar
-    #                 takes, and standardize on that so that the calling convention
-    #                 is the same regardless of the "make_X" binary that's used.
     parser = argparse.ArgumentParser(
         description=(
             "Create a python inplace binary, writing a symlink tree to a directory, "
@@ -152,11 +175,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Copy files instead of symlinking them",
     )
+    parser.add_argument(
+        "--bytecode-artifacts",
+        action="append",
+        dest="bytecode_artifacts",
+        default=[],
+        help="A file listing resolved bytecode artifact paths for content-based path resolution.",
+    )
 
     return parser.parse_args()
 
 
-def _same_pyc(src1: Tuple[Path, str], src2: Tuple[Path, str]) -> bool:
+def _same_pyc(src1: tuple[Path, str], src2: tuple[Path, str]) -> bool:
     """
     Given two paths to .pyc files, return True if they are the same.
     """
@@ -184,8 +214,8 @@ def _same_pyc(src1: Tuple[Path, str], src2: Tuple[Path, str]) -> bool:
 
 
 def add_path_mapping(
-    path_mapping: Dict[Path, Tuple[str, str]],
-    dirs_to_create: Set[Path],
+    path_mapping: dict[Path, tuple[str, str]],
+    dirs_to_create: set[Path],
     src: Path,
     new_dest: Path,
     origin: str = "unknown",
@@ -253,11 +283,16 @@ def _lexists(path: Path) -> bool:
 def create_modules_dir(args: argparse.Namespace) -> None:
     args.modules_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build a mapping of content-based path prefixes to resolved content hashes.
+    # This is used to replace placeholder "/output_artifacts/" paths in bytecode
+    # manifest entries with their actual content-hashed paths.
+    pyc_hash_dict = create_pyc_hash_dict(args)
+
     # Mapping of destination files -> the symlink target (e.g. "../foo")
-    path_mapping: Dict[Path, Tuple[str, str]] = {}
+    path_mapping: dict[Path, tuple[str, str]] = {}
     # Set of directories that need to be created in the link tree before
     # symlinking
-    dirs_to_create: Set[Path] = set()
+    dirs_to_create: set[Path] = set()
     # Set of __init__.py files that need to be created at the end of the
     # link tree building if they don't exist, so that python recognizes them
     # as modules.
@@ -268,7 +303,7 @@ def create_modules_dir(args: argparse.Namespace) -> None:
         with open(manifest) as manifest_file:
             for dest, src, origin in json.load(manifest_file):
                 dest = Path(dest)
-                src = Path(src)
+                src = Path(replace_pyc_hash_placeholder(src, pyc_hash_dict))
 
                 # Add `__init__.py` files for all parent dirs (except the root).
                 if dest.suffix in _MODULE_SUFFIXES:
@@ -340,7 +375,7 @@ def create_modules_dir(args: argparse.Namespace) -> None:
 
     # Fill in __init__.py for sources that were provided by the user
     # These are filtered such that we only create this for sources specified
-    # by the user; if a .whl fortgets an __init__.py file, that's their problem
+    # by the user; if a .whl forgets an __init__.py file, that's their problem
     for init_py_dir in init_py_paths:
         init_py_path = args.modules_dir / init_py_dir / "__init__.py"
         # We still do this check because python insists on touching some read only

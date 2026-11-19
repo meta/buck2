@@ -72,3 +72,46 @@ table.starlark_members_table td:nth-child(3) {
   margin: 0 auto;
   display: block;
 }
+
+/* Sidebar hierarchy: differentiate category levels with font size, weight, and color */
+
+/* Top-level categories (Getting Started, Rule Authors, etc.) */
+.theme-doc-sidebar-menu > .theme-doc-sidebar-item-category > .menu__list-item-collapsible > .menu__link {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ifm-color-emphasis-800);
+}
+
+html[data-theme='dark'] .theme-doc-sidebar-menu > .theme-doc-sidebar-item-category > .menu__list-item-collapsible > .menu__link {
+  color: var(--ifm-color-emphasis-700);
+}
+
+/* Nested categories (sub-sections) */
+.theme-doc-sidebar-menu .theme-doc-sidebar-item-category .theme-doc-sidebar-item-category > .menu__list-item-collapsible > .menu__link {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ifm-color-emphasis-700);
+}
+
+html[data-theme='dark'] .theme-doc-sidebar-menu .theme-doc-sidebar-item-category .theme-doc-sidebar-item-category > .menu__list-item-collapsible > .menu__link {
+  color: var(--ifm-color-emphasis-600);
+}
+
+/* Leaf items (individual pages) */
+.menu__link {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--ifm-color-emphasis-600);
+}
+
+html[data-theme='dark'] .menu__link {
+  color: var(--ifm-color-emphasis-500);
+}
+
+/* Active link stands out */
+.menu__link--active:not(.menu__link--sublist) {
+  font-weight: 600;
+  color: var(--ifm-color-primary) !important;
+}

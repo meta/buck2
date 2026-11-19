@@ -38,9 +38,9 @@ fn test_unused_loads(name: &str, program: &str) {
         writeln!(out, "Unused loads:").unwrap();
         for load in unused_loads {
             let spans = if load.all_unused() {
-                vec![load.load.span]
+                vec![load.span]
             } else {
-                load.unused_args.iter().map(|x| x.span()).collect()
+                load.unused_args.iter().map(|x| x.span).collect()
             };
             for span in spans {
                 writeln!(out).unwrap();

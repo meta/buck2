@@ -31,14 +31,17 @@ use buck2_common::invocation_roots::InvocationRoots;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
 use buck2_fs::working_dir::AbsWorkingDir;
 use futures::FutureExt;
-use futures::future::BoxFuture;
+use futures::future::LocalBoxFuture;
 
 use super::path_sanitizer::PathSanitizer;
 use super::results::CompletionResults;
 use crate::complete::print_completions;
 
 pub(crate) trait TargetResolver: Send {
-    fn resolve(&mut self, partial_target: String) -> BoxFuture<'_, CommandOutcome<Vec<String>>>;
+    fn resolve(
+        &mut self,
+        partial_target: String,
+    ) -> LocalBoxFuture<'_, CommandOutcome<Vec<String>>>;
 }
 
 pub(crate) struct CompleteTargetCommand {
@@ -73,7 +76,8 @@ impl StreamingCommand for CompleteTargetCommand {
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
         let buckd_client = buckd.with_flushing();
-        let context = ctx.client_context(matches, &self)?;
+        let mut context = ctx.client_context(matches, &self)?;
+        context.reuse_current_config_implicitly = true;
         let mut target_resolver = DaemonTargetResolver {
             buckd_client,
             context,
@@ -144,7 +148,7 @@ impl<'a> TargetCompleter<'a> {
         given_package: &str,
         partial_target: &str,
     ) -> CommandOutcome<Vec<String>> {
-        let sanitizer = PathSanitizer::new(&self.cell_configs, &self.cwd, &self.roots).await?;
+        let sanitizer = PathSanitizer::new(&self.cell_configs, &self.cwd, self.roots).await?;
         let path = sanitizer.sanitize(given_package)?;
         let completions = self
             .target_resolver
@@ -170,7 +174,10 @@ struct DaemonTargetResolver<'a> {
 }
 
 impl TargetResolver for DaemonTargetResolver<'_> {
-    fn resolve(&mut self, partial_target: String) -> BoxFuture<'_, CommandOutcome<Vec<String>>> {
+    fn resolve(
+        &mut self,
+        partial_target: String,
+    ) -> LocalBoxFuture<'_, CommandOutcome<Vec<String>>> {
         let request = NewGenericRequest::Complete(CompleteRequest {
             target_cfg: self.target_cfg.target_cfg(),
             partial_target,
@@ -189,6 +196,6 @@ impl TargetResolver for DaemonTargetResolver<'_> {
                     Err(e) => CommandOutcome::Failure(ExitResult::err(e)),
                 }
             })
-            .boxed()
+            .boxed_local()
     }
 }

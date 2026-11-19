@@ -1,7 +1,42 @@
 # buck2 e2e tests
 
-This directory contains end-to-end tests for buck2. Private tests are not
-exported to GitHub. Prelude tests are not exported to GitHub yet (2024-08).
+This directory contains tests for buck2. Primary constituents:
 
-Currently (2024-08), these tests only work internally in Meta and are not
-executed from GitHub Actions.
+ - `core/` - the primary and fully endorsed set of integration tests for buck2 core code. If you're
+   working on buck2 itself, this is probably what you want.
+ - `e2e_util/` - the test framework for the integration tests.
+ - `e2e/` and `meta_only/e2e` - a hodgepodge of tests covering a combination of buck2 itself, the
+   prelude, some macros, and various integrations. Avoid if possible. Strongly avoid in favor of
+   `core/` if testing buck2 core. A test that runs inplace, building fbsource's own targets, or
+   otherwise needs Meta's infrastructure goes in `meta_only/e2e`, which open source does not get;
+   `e2e/` keeps the tests that set up their own project.
+ - `targets/` - target definitions accessed by `e2e` tests.
+ - `prelude/` - there is currently no fully endorsed testing strategy for the prelude. This
+   directory is an attempt at creating one, however its still immature and there are gaps.
+   Trendsetters are welcome to try it.
+ - An assortment of other things that mostly shouldn't be here.
+
+The Rust tests of `core`, `e2e` and `select_type_params` also run in open source, against the
+buck2 built there (see `buck_e2e.bzl`). A test that needs Meta's infrastructure, such as remote
+execution, says so with `meta_only = "<what it needs>"` (`#[buck_test(...)]`, or `buck2_e2e_test`
+for all of a target's tests), and open source skips it. Where open source buck2 behaves
+differently, a test expects either with `buck2_e2e::utils::is_open_source()`. `prelude` tests are
+visible in open source but not executed there.
+
+## Writing a test
+
+A test module is a `BuckTestCase` subclass (`e2e_util/buck_workspace.py`); each test is an
+`async def test_*(self, buck: Buck)` method decorated with `@buck_test(...)`, which runs it with a
+`Buck` on a fresh daemon (and a `tmp_path: Path` if the method takes one). `@parametrize(...)`
+runs a method once per set of arguments, as pytest's did. The test targets are `python_unittest`s:
+`buck2 test <target> -- --regex <name>` runs one test.
+
+A test module can be written in Rust instead, on the harness in `e2e_util/rust` (see its crate
+documentation): `test_foo.rs` takes the place of `test_foo.py`, next to the same `test_foo_data`.
+Each test is an `async fn test_*(buck: &Buck)` marked `#[buck_test(...)]`, whose options are those
+of `@buck_test(...)`, written `name = value`. The test targets are `rust_unittest`s.
+
+A module still written for pytest is converted with
+`buck2 run fbcode//buck2/tests/tools/pytest_to_unittest:pytest_to_unittest -- <files>`.
+
+Some of these directories have their own `README.md` files.

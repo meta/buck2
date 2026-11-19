@@ -6,8 +6,6 @@
 %%% % @format
 -module(test_list_SUITE).
 
--include_lib("stdlib/include/assert.hrl").
-
 -export([all/0, groups/0]).
 
 -export([
@@ -16,6 +14,8 @@
     'test_extended_ascii_£'/1,
     'test_unicode_🫠'/1
 ]).
+
+-include_lib("stdlib/include/assert.hrl").
 
 all() ->
     [test_pass, {group, default}, 'test_extended_ascii_£', 'test_unicode_🫠'].

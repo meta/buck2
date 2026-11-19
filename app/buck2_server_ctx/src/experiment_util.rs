@@ -20,21 +20,17 @@ pub fn get_experiment_tags(components: &[buck2_data::BuckconfigComponent]) -> Ve
     let mut init = Vec::new();
     for component in components {
         use buck2_data::buckconfig_component::Data;
-        match &component.data {
-            Some(Data::GlobalExternalConfigFile(external_config_file)) => {
-                if external_config_file
-                    .origin_path
-                    .ends_with(EXPERIMENT_PATH_SUFFIX)
-                {
-                    external_config_file.values.iter().for_each(|config_value| {
-                        if config_value.section == EXPERIMENTS {
-                            // all enabled GK experiments have their value set to true by definition
-                            init.push(format!("{}.{}", EXPERIMENTS, config_value.key.clone()));
-                        }
-                    });
+        if let Some(Data::GlobalExternalConfigFile(external_config_file)) = &component.data
+            && external_config_file
+                .origin_path
+                .ends_with(EXPERIMENT_PATH_SUFFIX)
+        {
+            external_config_file.values.iter().for_each(|config_value| {
+                if config_value.section == EXPERIMENTS {
+                    // all enabled GK experiments have their value set to true by definition
+                    init.push(format!("{}.{}", EXPERIMENTS, config_value.key.clone()));
                 }
-            }
-            _ => {}
+            });
         }
     }
     init

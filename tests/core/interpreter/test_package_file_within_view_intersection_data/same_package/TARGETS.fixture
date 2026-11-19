@@ -1,0 +1,13 @@
+stub(
+    name = "sibling",
+)
+
+# `:sibling` is outside the cap (`root//outside/...`) but in the same
+# package, so it is exempt; `root//outside:t` is inside the cap.
+stub(
+    name = "c",
+    deps = [
+        ":sibling",
+        "root//outside:t",
+    ],
+)

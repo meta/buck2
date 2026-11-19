@@ -2,27 +2,29 @@ load(":defs.bzl", "fetch_python_libraries")
 
 oncall("build_infra")
 
-fetch_python_libraries(pkgs = {
-    "grpcio": {
-        "deps": ["protobuf"],
-        "sha256": "f145cc21836c332c67baa6fc81099d1d27e266401565bf481948010d6ea32d46",
-        "url": "https://files.pythonhosted.org/packages/2f/86/a86742f3deaa22385c3bff984c5947fc62d47d3fab26c508730037d027e5/grpcio-1.66.2-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
-    },
-    "grpcio-tools": {
-        "deps": [
-            "grpcio",
-            "protobuf",
-            "setuptools",
-        ],
-        "sha256": "c68642829368f4f83929e0df571dbbc99f1f1553555d8f98d0582da9f6743d9e",
-        "url": "https://files.pythonhosted.org/packages/1d/0f/273d7ac9c7d99b56abb5841d8aff7ffd148fe01b48c2913c8da3de9438e7/grpcio_tools-1.66.2-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
-    },
-    "protobuf": {
-        "sha256": "52235802093bd8a2811abbe8bf0ab9c5f54cca0a751fdd3f6ac2a21438bffece",
-        "url": "https://files.pythonhosted.org/packages/9b/55/f24e3b801d2e108c48aa2b1b59bb791b5cffba89465cbbf66fc98de89270/protobuf-5.28.2-py3-none-any.whl",
-    },
-    "setuptools": {
-        "sha256": "35ab7fd3bcd95e6b7fd704e4a1539513edad446c097797f2985e0e4b960772f2",
-        "url": "https://files.pythonhosted.org/packages/ff/ae/f19306b5a221f6a436d8f2238d5b80925004093fa3edea59835b514d9057/setuptools-75.1.0-py3-none-any.whl",
-    },
-})
+fetch_python_libraries(
+    pkgs = {
+        "grpcio": {
+            "deps": ["protobuf"],
+            "sha256": "f145cc21836c332c67baa6fc81099d1d27e266401565bf481948010d6ea32d46",
+            "url": "https://files.pythonhosted.org/packages/2f/86/a86742f3deaa22385c3bff984c5947fc62d47d3fab26c508730037d027e5/grpcio-1.66.2-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        },
+        "grpcio-tools": {
+            "deps": [
+                "grpcio",
+                "protobuf",
+                "setuptools",
+            ],
+            "sha256": "c68642829368f4f83929e0df571dbbc99f1f1553555d8f98d0582da9f6743d9e",
+            "url": "https://files.pythonhosted.org/packages/1d/0f/273d7ac9c7d99b56abb5841d8aff7ffd148fe01b48c2913c8da3de9438e7/grpcio_tools-1.66.2-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        },
+        "protobuf": {
+            "sha256": "52235802093bd8a2811abbe8bf0ab9c5f54cca0a751fdd3f6ac2a21438bffece",
+            "url": "https://files.pythonhosted.org/packages/9b/55/f24e3b801d2e108c48aa2b1b59bb791b5cffba89465cbbf66fc98de89270/protobuf-5.28.2-py3-none-any.whl",
+        },
+        "setuptools": {
+            "sha256": "35ab7fd3bcd95e6b7fd704e4a1539513edad446c097797f2985e0e4b960772f2",
+            "url": "https://files.pythonhosted.org/packages/ff/ae/f19306b5a221f6a436d8f2238d5b80925004093fa3edea59835b514d9057/setuptools-75.1.0-py3-none-any.whl",
+        },
+    }
+)

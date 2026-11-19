@@ -28,6 +28,7 @@ use buck2_client_ctx::path_arg::PathArg;
 use buck2_client_ctx::streaming::StreamingCommand;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPathBuf;
@@ -150,7 +151,9 @@ impl StreamingCommand for TraceIoCommand {
                 let serialized = serde_json::to_string(&manifest)
                     .buck_error_context("serializing offline archive manifest to json")?;
                 if let Some(output_path) = &out {
+                    // input path from --export-manifest
                     fs_util::write(output_path.resolve(&ctx.working_dir), &serialized)
+                        .categorize_input()
                         .buck_error_context("writing offline archive manifest")?;
                 } else {
                     buck2_client_ctx::println!("{}", serialized)?;

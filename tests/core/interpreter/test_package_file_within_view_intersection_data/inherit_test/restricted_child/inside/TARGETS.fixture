@@ -1,0 +1,5 @@
+# Dep inside the child's explicit list (and the parent's cap): allowed.
+stub(
+    name = "c",
+    deps = ["root//inherit_test/restricted_child/lib:t"],
+)

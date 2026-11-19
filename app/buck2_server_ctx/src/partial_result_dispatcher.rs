@@ -13,6 +13,7 @@ use std::marker::PhantomData;
 use buck2_cli_proto::PartialResult;
 use buck2_cli_proto::partial_result;
 use buck2_events::dispatch::EventDispatcher;
+use dice_futures::cancellation::CancellationPoller;
 
 use crate::stdout_partial_output::StdoutPartialOutput;
 
@@ -20,6 +21,7 @@ use crate::stdout_partial_output::StdoutPartialOutput;
 /// the typing.
 pub struct PartialResultDispatcher<T> {
     dispatcher: EventDispatcher,
+    cancellation: CancellationPoller,
     result_type: PhantomData<T>,
 }
 
@@ -27,9 +29,10 @@ impl<T> PartialResultDispatcher<T>
 where
     T: Into<partial_result::PartialResult>,
 {
-    pub fn new(dispatcher: EventDispatcher) -> Self {
+    pub fn new(dispatcher: EventDispatcher, cancellation: CancellationPoller) -> Self {
         Self {
             dispatcher,
+            cancellation,
             result_type: PhantomData,
         }
     }
@@ -45,7 +48,7 @@ where
 
 impl PartialResultDispatcher<buck2_cli_proto::StdoutBytes> {
     pub fn as_writer(&mut self) -> StdoutPartialOutput<'_> {
-        StdoutPartialOutput::new(self)
+        StdoutPartialOutput::new(self, self.cancellation.clone())
     }
 }
 

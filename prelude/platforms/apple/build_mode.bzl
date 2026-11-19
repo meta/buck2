@@ -6,7 +6,15 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# @oss-disable[end= ]: load("@prelude//platforms/apple/meta_only:build_mode.bzl", _APPLE_BUILD_MODES = "APPLE_BUILD_MODES", _BUILD_MODE = "BUILD_MODE", _REMAPPED_BUILD_MODES = "REMAPPED_BUILD_MODES", _get_build_mode = "get_build_mode", _get_build_mode_debug = "get_build_mode_debug", _get_build_mode_release = "get_build_mode_release")
+# @oss-disable[end= ]: load(
+    # @oss-disable[end= ]: "@prelude//platforms/apple/meta_only:build_mode.bzl",
+    # @oss-disable[end= ]: _APPLE_BUILD_MODES = "APPLE_BUILD_MODES",
+    # @oss-disable[end= ]: _BUILD_MODE = "BUILD_MODE",
+    # @oss-disable[end= ]: _REMAPPED_BUILD_MODES = "REMAPPED_BUILD_MODES",
+    # @oss-disable[end= ]: _get_build_mode = "get_build_mode",
+    # @oss-disable[end= ]: _get_build_mode_debug = "get_build_mode_debug",
+    # @oss-disable[end= ]: _get_build_mode_release = "get_build_mode_release",
+# @oss-disable[end= ]: )
 
 BUILD_MODE_DEBUG = "debug" # @oss-enable
 BUILD_MODE_PROFILE = "profile" # @oss-enable
@@ -19,11 +27,7 @@ APPLE_BUILD_MODES = [BUILD_MODE_DEBUG, BUILD_MODE_PROFILE, BUILD_MODE_RELEASE] #
 REMAPPED_BUILD_MODES = {} # @oss-enable
 # @oss-disable[end= ]: REMAPPED_BUILD_MODES = _REMAPPED_BUILD_MODES
 
-BUILD_MODE = struct( # @oss-enable
-    DEBUG = BUILD_MODE_DEBUG, # @oss-enable
-    PROFILE = BUILD_MODE_PROFILE, # @oss-enable
-    RELEASE = BUILD_MODE_RELEASE, # @oss-enable
-) # @oss-enable
+BUILD_MODE = struct(DEBUG = BUILD_MODE_DEBUG, PROFILE = BUILD_MODE_PROFILE, RELEASE = BUILD_MODE_RELEASE) # @oss-enable
 # @oss-disable[end= ]: BUILD_MODE = _BUILD_MODE
 
 CONSTRAINT_PACKAGE = "prelude//platforms/apple/constraints" # @oss-enable

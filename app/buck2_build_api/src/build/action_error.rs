@@ -20,6 +20,19 @@ use serde::Serialize;
 
 use crate::build::build_report::BuildReportCollector;
 
+/// Maximum size for error content when truncation is enabled (20KB).
+/// This matches the MAX_STRING_BYTES limit used in smart_truncate_event.rs for Scribe logging.
+pub(crate) const MAX_ERROR_CONTENT_BYTES: usize = 20 * 1024;
+
+/// Options for building action errors in build reports.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ActionErrorBuildOptions {
+    /// Exclude error diagnostics from action errors.
+    pub exclude_action_error_diagnostics: bool,
+    /// Truncate error content to reduce build report size.
+    pub truncate_error_content: bool,
+}
+
 #[derive(Debug, Clone, Serialize, PartialOrd, Ord, PartialEq, Eq)]
 struct BuildReportActionName {
     category: String,
@@ -76,7 +89,11 @@ pub(crate) struct BuildReportActionError {
 }
 
 impl BuildReportActionError {
-    pub(crate) fn new<'a>(error: &ActionError, collector: &mut BuildReportCollector<'a>) -> Self {
+    pub(crate) fn new<'a>(
+        error: &ActionError,
+        collector: &mut BuildReportCollector<'a>,
+        opts: ActionErrorBuildOptions,
+    ) -> Self {
         let reason = get_action_error_reason(error).ok().unwrap_or_default();
 
         let command_details = error.last_command.as_ref().and_then(|c| c.details.as_ref());
@@ -101,43 +118,58 @@ impl BuildReportActionError {
                 .map_or(String::default(), |name| name.identifier.clone()),
         };
 
-        let error_diagnostics = error.error_diagnostics.clone().map(|error_diagnostics| {
-            match error_diagnostics.data.unwrap() {
-                buck2_data::action_error_diagnostics::Data::SubErrors(sub_errors) => {
-                    let sub_errors = sub_errors
-                        .sub_errors
-                        .iter()
-                        .map(|s| BuildReportActionSubError {
-                            category: s.category.clone(),
-                            message_content: s
-                                .message
-                                .clone()
-                                .map(|m| collector.update_string_cache(m)),
-                            file: s.file.clone(),
-                            lnum: s.lnum,
-                            end_lnum: s.end_lnum,
-                            col: s.col,
-                            end_col: s.end_col,
-                            error_type: s.error_type.clone(),
-                            error_number: s.error_number,
-                            subcategory: s.subcategory.clone(),
-                            remediation: s.remediation.clone(),
-                        })
-                        .collect();
-                    BuildReportActionErrorDiagnostics::SubErrors(sub_errors)
+        let error_diagnostics = if opts.exclude_action_error_diagnostics {
+            None
+        } else {
+            error.error_diagnostics.clone().map(|error_diagnostics| {
+                match error_diagnostics.data.unwrap() {
+                    buck2_data::action_error_diagnostics::Data::SubErrors(sub_errors) => {
+                        let sub_errors = sub_errors
+                            .sub_errors
+                            .iter()
+                            .map(|s| BuildReportActionSubError {
+                                category: s.category.clone(),
+                                message_content: s
+                                    .message
+                                    .clone()
+                                    .map(|m| collector.update_string_cache(m)),
+                                file: s.file.clone(),
+                                lnum: s.lnum,
+                                end_lnum: s.end_lnum,
+                                col: s.col,
+                                end_col: s.end_col,
+                                error_type: s.error_type.clone(),
+                                error_number: s.error_number,
+                                subcategory: s.subcategory.clone(),
+                                remediation: s.remediation.clone(),
+                            })
+                            .collect();
+                        BuildReportActionErrorDiagnostics::SubErrors(sub_errors)
+                    }
+                    buck2_data::action_error_diagnostics::Data::HandlerInvocationError(
+                        invocation_failure,
+                    ) => BuildReportActionErrorDiagnostics::HandlerInvocationError(
+                        collector.update_string_cache(invocation_failure.clone()),
+                    ),
                 }
-                buck2_data::action_error_diagnostics::Data::HandlerInvocationError(
-                    invocation_failure,
-                ) => BuildReportActionErrorDiagnostics::HandlerInvocationError(
-                    collector.update_string_cache(invocation_failure.clone()),
-                ),
-            }
-        });
+            })
+        };
 
         let stderr = command_details.map_or(String::default(), |c| {
             console::strip_ansi_codes(&c.cmd_stderr).to_string()
         });
         let stdout = command_details.map_or(String::default(), |c| c.cmd_stdout.clone());
+
+        // Apply truncation if enabled
+        let (reason, stderr, stdout) = if opts.truncate_error_content {
+            (
+                buck2_util::truncate::truncate(&reason, MAX_ERROR_CONTENT_BYTES),
+                buck2_util::truncate::truncate(&stderr, MAX_ERROR_CONTENT_BYTES),
+                buck2_util::truncate::truncate(&stdout, MAX_ERROR_CONTENT_BYTES),
+            )
+        } else {
+            (reason, stderr, stdout)
+        };
 
         let error_content = collector.update_string_cache(reason);
         let stderr_content = collector.update_string_cache(stderr);

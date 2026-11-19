@@ -14,14 +14,35 @@ use allocative::Allocative;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_data::RePlatform;
+use buck2_data::local_command::EnvironmentRule;
+use buck2_hash::BuckFixedSortedMap;
 use derive_more::Display;
-use gazebo::prelude::SliceExt;
+use dupe::Dupe;
 use remote_execution as RE;
-use sorted_vector_map::SortedVectorMap;
 
 use crate::execute::action_digest::ActionDigest;
 use crate::execute::dep_file_digest::DepFileDigest;
 use crate::re::convert::platform_to_proto;
+
+/// How the remote execution service produced the result of a command submitted for execution.
+#[derive(Debug, Clone, Copy, Dupe, PartialEq, Eq, Allocative)]
+pub enum RemoteExecutionOrigin {
+    Executed,
+    /// Served from the service's own action cache instead of running.
+    ServedFromCache,
+    /// Deduplicated against an identical execution already in flight instead of running.
+    Deduplicated,
+}
+
+impl From<RemoteExecutionOrigin> for buck2_data::RemoteCommandOrigin {
+    fn from(origin: RemoteExecutionOrigin) -> Self {
+        match origin {
+            RemoteExecutionOrigin::Executed => Self::Executed,
+            RemoteExecutionOrigin::ServedFromCache => Self::ReServedFromCache,
+            RemoteExecutionOrigin::Deduplicated => Self::ReDeduplicated,
+        }
+    }
+}
 
 #[derive(Debug, Display, Clone, Allocative)]
 pub enum CommandExecutionKind {
@@ -32,9 +53,14 @@ pub enum CommandExecutionKind {
         // it.
         digest: ActionDigest,
         command: Vec<String>,
-        env: SortedVectorMap<String, String>,
+        env: BuckFixedSortedMap<String, String>,
+        /// Working directory, relative to the project root.
+        working_directory: ProjectRelativePathBuf,
+        /// How the command's environment was built from buck2's own; `Unspecified` when no rule
+        /// applied.
+        environment_rule: EnvironmentRule,
     },
-    /// This action was executed via a remote executor.
+    /// This action was submitted to a remote executor.
     #[display("remote")]
     Remote {
         details: RemoteCommandExecutionDetails,
@@ -48,6 +74,10 @@ pub enum CommandExecutionKind {
         /// Local paths to the materialized outputs for failed actions, if `--unstable-materialize-failed-action-outputs`
         /// was passed to build options
         materialized_outputs_for_failed_actions: Option<Vec<ProjectRelativePathBuf>>,
+        origin: RemoteExecutionOrigin,
+        /// What the RE worker reported, when RE ran this command for this build rather than
+        /// reusing another execution's result.
+        re_worker: Option<Box<buck2_data::ReWorkerDetails>>,
     },
     /// This action was served by the action cache and not executed.
     #[display("action_cache")]
@@ -63,14 +93,14 @@ pub enum CommandExecutionKind {
     #[display("worker_init")]
     LocalWorkerInit {
         command: Vec<String>,
-        env: SortedVectorMap<String, String>,
+        env: BuckFixedSortedMap<String, String>,
     },
     /// This action was executed via a local worker.
     #[display("worker")]
     LocalWorker {
         digest: ActionDigest,
         command: Vec<String>,
-        env: SortedVectorMap<String, String>,
+        env: BuckFixedSortedMap<String, String>,
         fallback_exe: Vec<String>,
     },
 }
@@ -82,13 +112,40 @@ impl CommandExecutionKind {
             Self::LocalWorker { .. } | Self::LocalWorkerInit { .. } => {
                 buck2_data::ActionExecutionKind::LocalWorker
             }
-            Self::Remote { details, .. } => match details.persistent_worker {
+            Self::Remote {
+                details,
+                origin: RemoteExecutionOrigin::Executed,
+                ..
+            } => match details.persistent_worker {
                 false => buck2_data::ActionExecutionKind::Remote,
                 true => buck2_data::ActionExecutionKind::RemoteWorker,
             },
+            Self::Remote {
+                origin: RemoteExecutionOrigin::ServedFromCache,
+                ..
+            } => buck2_data::ActionExecutionKind::RemoteServedFromCache,
+            Self::Remote {
+                origin: RemoteExecutionOrigin::Deduplicated,
+                ..
+            } => buck2_data::ActionExecutionKind::RemoteDeduplicated,
             Self::ActionCache { .. } => buck2_data::ActionExecutionKind::ActionCache,
             Self::RemoteDepFileCache { .. } => buck2_data::ActionExecutionKind::RemoteDepFileCache,
         }
+    }
+
+    /// Returns the RE platform identifier if executed remotely.
+    ///
+    /// Format: `"platform"`, or `"platform.subplatform"` when a non-empty
+    /// `subplatform` property is also set. Returns `None` if the action did
+    /// not run remotely or no `platform` property is set.
+    pub fn re_platform_name(&self) -> Option<String> {
+        let details = match self {
+            Self::Remote { details, .. }
+            | Self::ActionCache { details }
+            | Self::RemoteDepFileCache { details } => details,
+            _ => return None,
+        };
+        re_platform_name_from_properties(&details.platform.properties)
     }
 
     pub fn to_proto(&self, omit_details: bool) -> buck2_data::CommandExecutionKind {
@@ -99,6 +156,8 @@ impl CommandExecutionKind {
                 command,
                 env,
                 digest,
+                working_directory,
+                environment_rule,
             } => {
                 if omit_details {
                     Command::OmittedLocalCommand(buck2_data::OmittedLocalCommand {
@@ -115,6 +174,11 @@ impl CommandExecutionKind {
                                 value: value.clone(),
                             })
                             .collect(),
+                        context: Some(buck2_data::LocalCommandContext {
+                            working_directory: (!working_directory.as_str().is_empty())
+                                .then(|| working_directory.to_string()),
+                            environment_rule: (*environment_rule).into(),
+                        }),
                     })
                 }
             }
@@ -123,38 +187,54 @@ impl CommandExecutionKind {
                 queue_time,
                 materialized_inputs_for_failed,
                 materialized_outputs_for_failed_actions,
+                origin,
+                re_worker,
             } => Command::RemoteCommand(buck2_data::RemoteCommand {
                 action_digest: details.action_digest.to_string(),
                 cache_hit: false,
-                cache_hit_type: buck2_data::CacheHitType::Executed.into(),
+                cache_hit_type: buck2_data::RemoteCommandOrigin::from(*origin).into(),
                 remote_dep_file_key: None,
                 queue_time: (*queue_time).try_into().ok(),
                 details: details.to_proto(omit_details),
                 materialized_inputs_for_failed: materialized_inputs_for_failed
                     .as_ref()
-                    .map(|paths| paths.clone().map(|p| format!("{p}")))
+                    .map(|paths| {
+                        paths
+                            .clone()
+                            .iter()
+                            .map(|p| format!("{p}"))
+                            .collect::<Vec<_>>()
+                    })
                     .unwrap_or_default(),
                 materialized_outputs_for_failed_actions: materialized_outputs_for_failed_actions
                     .as_ref()
-                    .map(|paths| paths.clone().map(|p| format!("{p}")))
+                    .map(|paths| {
+                        paths
+                            .clone()
+                            .iter()
+                            .map(|p| format!("{p}"))
+                            .collect::<Vec<_>>()
+                    })
                     .unwrap_or_default(),
+                re_worker: re_worker.clone(),
             }),
             Self::ActionCache { details } => Command::RemoteCommand(buck2_data::RemoteCommand {
                 action_digest: details.action_digest.to_string(),
                 cache_hit: true,
-                cache_hit_type: buck2_data::CacheHitType::ActionCache.into(),
+                cache_hit_type: buck2_data::RemoteCommandOrigin::ActionCache.into(),
                 queue_time: None,
                 details: details.to_proto(omit_details),
                 remote_dep_file_key: None,
                 materialized_inputs_for_failed: Vec::new(),
                 materialized_outputs_for_failed_actions: Vec::new(),
+                re_worker: None,
             }),
 
             Self::RemoteDepFileCache { details } => {
                 Command::RemoteCommand(buck2_data::RemoteCommand {
                     action_digest: details.action_digest.to_string(),
                     cache_hit: true,
-                    cache_hit_type: buck2_data::CacheHitType::RemoteDepFileCache.into(),
+                    cache_hit_type: buck2_data::RemoteCommandOrigin::RemoteDepFileCache.into(),
                     queue_time: None,
                     details: details.to_proto(omit_details),
                     remote_dep_file_key: details
@@ -163,6 +243,7 @@ impl CommandExecutionKind {
                         .map(|k| k.to_string()),
                     materialized_inputs_for_failed: Vec::new(),
                     materialized_outputs_for_failed_actions: Vec::new(),
+                    re_worker: None,
                 })
             }
 
@@ -233,15 +314,146 @@ impl RemoteCommandExecutionDetails {
     }
 
     fn to_proto(&self, omit_details: bool) -> Option<buck2_data::RemoteCommandDetails> {
-        if omit_details {
-            return None;
-        }
-
         Some(buck2_data::RemoteCommandDetails {
-            session_id: self.session_id.clone(),
+            session_id: if omit_details {
+                None
+            } else {
+                self.session_id.clone()
+            },
             use_case: self.use_case.to_string(),
             platform: Some(self.platform.clone()),
             persistent_worker: self.persistent_worker,
         })
+    }
+}
+
+fn re_platform_name_from_properties(
+    properties: &[buck2_data::re_platform::Property],
+) -> Option<String> {
+    let mut platform: Option<&str> = None;
+    let mut subplatform: Option<&str> = None;
+    for p in properties {
+        match p.name.as_str() {
+            "platform" => platform = Some(p.value.as_str()),
+            "subplatform" => subplatform = Some(p.value.as_str()),
+            _ => {}
+        }
+    }
+    platform.map(|p| match subplatform {
+        Some(s) if !s.is_empty() => format!("{p}.{s}"),
+        _ => p.to_owned(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_common::cas_digest::CasDigest;
+    use buck2_data::command_execution_kind::Command;
+    use buck2_data::re_platform::Property;
+
+    use super::*;
+    use crate::execute::environment_inheritance::EnvironmentInheritance;
+
+    fn local_context(
+        working_directory: &str,
+        environment_rule: EnvironmentRule,
+    ) -> buck2_data::LocalCommandContext {
+        let kind = CommandExecutionKind::Local {
+            digest: CasDigest::new_blake3([0].repeat(32).as_slice().try_into().unwrap(), 1),
+            command: vec!["cc".to_owned()],
+            env: BuckFixedSortedMap::new(),
+            working_directory: ProjectRelativePathBuf::unchecked_new(working_directory.to_owned()),
+            environment_rule,
+        };
+        match kind.to_proto(false).command {
+            Some(Command::LocalCommand(local)) => local.context,
+            _ => None,
+        }
+        .expect("a local kind converts to a local command with a context")
+    }
+
+    #[test]
+    fn local_command_records_a_non_root_working_directory_and_the_rule() {
+        let test = local_context("fbcode", EnvironmentInheritance::test_allowlist().rule());
+        assert_eq!(test.working_directory.as_deref(), Some("fbcode"));
+        assert_eq!(test.environment_rule(), EnvironmentRule::TestAllowlist);
+
+        let build = local_context(
+            "",
+            EnvironmentInheritance::local_command_exclusions().rule(),
+        );
+        assert_eq!(
+            build.working_directory, None,
+            "the project root is the default"
+        );
+        assert_eq!(
+            build.environment_rule(),
+            EnvironmentRule::InheritExceptExclusions
+        );
+
+        assert_eq!(
+            local_context("", EnvironmentRule::Unspecified).environment_rule(),
+            EnvironmentRule::Unspecified,
+            "no rule: buck2's whole environment"
+        );
+    }
+
+    fn prop(name: &str, value: &str) -> Property {
+        Property {
+            name: name.to_owned(),
+            value: value.to_owned(),
+        }
+    }
+
+    #[test]
+    fn platform_only() {
+        let props = vec![prop("platform", "linux-remote-execution")];
+        assert_eq!(
+            re_platform_name_from_properties(&props),
+            Some("linux-remote-execution".to_owned()),
+        );
+    }
+
+    #[test]
+    fn platform_and_subplatform_joined_with_dot() {
+        let props = vec![
+            prop("platform", "gpu-remote-execution"),
+            prop("subplatform", "H100"),
+        ];
+        assert_eq!(
+            re_platform_name_from_properties(&props),
+            Some("gpu-remote-execution.H100".to_owned()),
+        );
+    }
+
+    #[test]
+    fn empty_subplatform_omits_suffix() {
+        let props = vec![
+            prop("platform", "linux-remote-execution"),
+            prop("subplatform", ""),
+        ];
+        assert_eq!(
+            re_platform_name_from_properties(&props),
+            Some("linux-remote-execution".to_owned()),
+        );
+    }
+
+    #[test]
+    fn missing_platform_returns_none() {
+        let props = vec![prop("subplatform", "H100")];
+        assert_eq!(re_platform_name_from_properties(&props), None);
+    }
+
+    #[test]
+    fn ignores_unrelated_properties() {
+        let props = vec![
+            prop("container-image", "docker://foo"),
+            prop("platform", "mac"),
+            prop("OSFamily", "Darwin"),
+        ];
+        assert_eq!(
+            re_platform_name_from_properties(&props),
+            Some("mac".to_owned()),
+        );
     }
 }

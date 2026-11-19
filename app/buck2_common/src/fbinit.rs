@@ -37,6 +37,13 @@ fn run_init() -> FacebookInit {
             "stderrthreshold",
             GflagValue::U32(5),
         ));
+
+        // force-disable Agent context rehydration for all builds
+        drop(gflags::set_gflag_value(
+            fb,
+            "agentlib_force_disable_rehydration_in_binary",
+            GflagValue::Bool(true),
+        ));
     }
 
     fb

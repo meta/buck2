@@ -25,10 +25,12 @@ use starlark_syntax::syntax::ast::BinOp;
 use crate::codemap::CodeMap;
 use crate::codemap::Span;
 use crate::codemap::Spanned;
+use crate::typing::OperatorSignature;
 use crate::typing::ParamSpec;
 use crate::typing::Ty;
 use crate::typing::TypingBinOp;
 use crate::typing::TypingUnOp;
+use crate::typing::arc_ty::ArcTy;
 use crate::typing::basic::TyBasic;
 use crate::typing::call_args::TyCallArgs;
 use crate::typing::callable::TyCallable;
@@ -142,6 +144,48 @@ impl<'a> TypingOracleCtx<'a> {
         }
     }
 
+    /// Widen `int` to `int | float` (and vice versa) for the purposes of `==` / `!=`.
+    ///
+    /// Starlark compares numbers numerically across the two types, so `1 == 1.0` is
+    /// `True` and such a comparison must not be reported as a type error. The same is
+    /// true of numbers nested in containers — `[1] == [1.0]`, `(1,) == (1.0,)` and
+    /// `{1: "a"} == {1.0: "a"}` are all `True` — so the widening recurses through
+    /// element types.
+    ///
+    /// `bool` is deliberately not widened: it has no `equals` override and
+    /// `True.unpack_num()` is `None`, so `True == 1` really is `False` and flagging
+    /// `bool == int` is correct.
+    ///
+    /// Widening never hides a real mismatch: `list[int] == list[str]` still fails,
+    /// because `list[int | float]` does not intersect `list[str]`.
+    fn widen_numeric(ty: &Ty) -> Ty {
+        Ty::unions(
+            ty.iter_union()
+                .iter()
+                .flat_map(Self::widen_numeric_basic)
+                .collect(),
+        )
+    }
+
+    fn widen_numeric_basic(basic: &TyBasic) -> Vec<Ty> {
+        if *basic == TyBasic::int() || *basic == TyBasic::float() {
+            return vec![Ty::int(), Ty::float()];
+        }
+        let widened = match basic {
+            TyBasic::List(item) => TyBasic::list(Self::widen_numeric(item)),
+            TyBasic::Set(item) => TyBasic::set(Self::widen_numeric(item)),
+            TyBasic::Dict(k, v) => TyBasic::dict(Self::widen_numeric(k), Self::widen_numeric(v)),
+            TyBasic::Tuple(TyTuple::Of(item)) => {
+                TyBasic::Tuple(TyTuple::Of(ArcTy::new(Self::widen_numeric(item))))
+            }
+            TyBasic::Tuple(TyTuple::Elems(elems)) => TyBasic::Tuple(TyTuple::Elems(
+                elems.iter().map(Self::widen_numeric).collect(),
+            )),
+            other => other.clone(),
+        };
+        vec![Ty::basic(widened)]
+    }
+
     #[allow(clippy::redundant_pattern_matching)]
     fn validate_args(
         &self,
@@ -228,12 +272,12 @@ impl<'a> TypingOracleCtx<'a> {
                         }
                     }
                     [arg] => self.validate_type(*arg, &param.ty)?,
-                    [_, _, ..] => {
-                        return Err(TypingOrInternalError::Internal(InternalError::msg(
-                            "Multiple arguments bound to parameter",
-                            span,
-                            self.codemap,
-                        )));
+                    [_, arg, ..] => {
+                        // A user error, like the runtime reports it; not a typechecker bug.
+                        return Err(self.msg_error(
+                            arg.span,
+                            format!("Argument `{}` occurs more than once", param.name_display()),
+                        ));
                     }
                 },
                 ParamMode::Args => {
@@ -373,7 +417,8 @@ impl<'a> TypingOracleCtx<'a> {
                 Ok((**item).dupe())
             }
             TyBasic::Dict(k, v) => {
-                if !self.intersects(&Ty::basic(index.node.dupe()), k)? {
+                // Int and float keys compare equal, as for `==`.
+                if !self.intersects(&Self::widen_numeric(&Ty::basic(index.node.dupe())), k)? {
                     return Err(TypingNoContextOrInternalError::Typing);
                 }
                 Ok((**v).dupe())
@@ -384,7 +429,7 @@ impl<'a> TypingOracleCtx<'a> {
                 }
                 Ok((**item).dupe())
             }
-            TyBasic::StarlarkValue(array) => Ok(array.index(index.node)?),
+            TyBasic::StarlarkValue(array) => array.index(index.node, self),
             TyBasic::Custom(c) => Ok(c.0.index_dyn(index.node, self)?),
         }
     }
@@ -533,10 +578,7 @@ impl<'a> TypingOracleCtx<'a> {
         un_op: TypingUnOp,
     ) -> Result<Ty, TypingNoContextError> {
         match ty {
-            TyBasic::StarlarkValue(ty) => match ty.un_op(un_op) {
-                Ok(x) => Ok(Ty::basic(TyBasic::StarlarkValue(x))),
-                Err(TypingNoContextError) => Err(TypingNoContextError),
-            },
+            TyBasic::StarlarkValue(ty) => ty.un_op(un_op),
             _ => Err(TypingNoContextError),
         }
     }
@@ -556,6 +598,27 @@ impl<'a> TypingOracleCtx<'a> {
         }
     }
 
+    /// The type of the result of an operator with these signatures applied to `operand`: the
+    /// union of the results of the signatures whose operand type `operand` intersects.
+    pub(crate) fn operator_result(
+        &self,
+        signatures: Vec<OperatorSignature>,
+        operand: &TyBasic,
+    ) -> Result<Ty, TypingNoContextOrInternalError> {
+        let operand = Ty::basic(operand.dupe());
+        let mut results = Vec::new();
+        for signature in signatures {
+            if self.intersects(&signature.operand, &operand)? {
+                results.push(signature.result);
+            }
+        }
+        if results.is_empty() {
+            Err(TypingNoContextOrInternalError::Typing)
+        } else {
+            Ok(Ty::unions(results))
+        }
+    }
+
     fn expr_bin_op_ty_basic_lhs(
         &self,
         lhs: &TyBasic,
@@ -564,7 +627,7 @@ impl<'a> TypingOracleCtx<'a> {
     ) -> Result<Ty, TypingNoContextOrInternalError> {
         match lhs {
             TyBasic::Any | TyBasic::Iter(_) | TyBasic::Callable(_) | TyBasic::Type => Ok(Ty::any()),
-            TyBasic::StarlarkValue(lhs) => Ok(lhs.bin_op(bin_op, rhs.node)?),
+            TyBasic::StarlarkValue(lhs) => lhs.bin_op(bin_op, rhs.node, self),
             lhs @ TyBasic::List(elem) => match bin_op {
                 TypingBinOp::Less => {
                     if self.intersects_basic(lhs, rhs.node)? {
@@ -574,7 +637,7 @@ impl<'a> TypingOracleCtx<'a> {
                     }
                 }
                 TypingBinOp::In => {
-                    if self.intersects(elem, &Ty::basic(rhs.node.dupe()))? {
+                    if self.intersects(elem, &Self::widen_numeric(&Ty::basic(rhs.node.dupe())))? {
                         Ok(Ty::bool())
                     } else {
                         Err(TypingNoContextOrInternalError::Typing)
@@ -597,11 +660,11 @@ impl<'a> TypingOracleCtx<'a> {
                         Err(TypingNoContextOrInternalError::Typing)
                     }
                 }
-                _ => Ok(TyStarlarkValue::new::<List>().bin_op(bin_op, rhs.node)?),
+                _ => TyStarlarkValue::new::<List>().bin_op(bin_op, rhs.node, self),
             },
             TyBasic::Tuple(_) => {
                 // TODO(nga): can do better types.
-                Ok(TyStarlarkValue::new::<Tuple>().bin_op(bin_op, rhs.node)?)
+                TyStarlarkValue::new::<Tuple>().bin_op(bin_op, rhs.node, self)
             }
             TyBasic::Dict(k, v) => match bin_op {
                 TypingBinOp::BitOr => {
@@ -615,18 +678,18 @@ impl<'a> TypingOracleCtx<'a> {
                     }
                 }
                 TypingBinOp::In => {
-                    if self.intersects(&Ty::basic(rhs.node.dupe()), k)? {
+                    if self.intersects(&Self::widen_numeric(&Ty::basic(rhs.node.dupe())), k)? {
                         Ok(Ty::bool())
                     } else {
                         Err(TypingNoContextOrInternalError::Typing)
                     }
                 }
-                bin_op => Ok(TyStarlarkValue::new::<MutableDict>().bin_op(bin_op, rhs.node)?),
+                bin_op => TyStarlarkValue::new::<MutableDict>().bin_op(bin_op, rhs.node, self),
             },
             TyBasic::Custom(lhs) => Ok(lhs.0.bin_op_dyn(bin_op, rhs.node, self)?),
             TyBasic::Set(elem) => match bin_op {
                 TypingBinOp::In => {
-                    if self.intersects(&Ty::basic(rhs.node.dupe()), elem)? {
+                    if self.intersects(&Self::widen_numeric(&Ty::basic(rhs.node.dupe())), elem)? {
                         Ok(Ty::bool())
                     } else {
                         Err(TypingNoContextOrInternalError::Typing)
@@ -645,7 +708,7 @@ impl<'a> TypingOracleCtx<'a> {
                         Err(TypingNoContextOrInternalError::Typing)
                     }
                 }
-                bin_op => Ok(TyStarlarkValue::new::<MutableSet>().bin_op(bin_op, rhs.node)?),
+                bin_op => TyStarlarkValue::new::<MutableSet>().bin_op(bin_op, rhs.node, self),
             },
         }
     }
@@ -657,7 +720,7 @@ impl<'a> TypingOracleCtx<'a> {
         rhs: &TyBasic,
     ) -> Result<Ty, TypingNoContextOrInternalError> {
         match rhs {
-            TyBasic::StarlarkValue(rhs) => Ok(rhs.rbin_op(bin_op, lhs)?),
+            TyBasic::StarlarkValue(rhs) => rhs.rbin_op(bin_op, lhs, self),
             rhs @ TyBasic::List(_) => match bin_op {
                 TypingBinOp::Mul => {
                     if self.intersects_basic(lhs, &TyBasic::int())? {
@@ -666,7 +729,7 @@ impl<'a> TypingOracleCtx<'a> {
                         Err(TypingNoContextOrInternalError::Typing)
                     }
                 }
-                _ => Ok(TyStarlarkValue::new::<List>().rbin_op(bin_op, lhs)?),
+                _ => TyStarlarkValue::new::<List>().rbin_op(bin_op, lhs, self),
             },
             TyBasic::Tuple(_) => match bin_op {
                 TypingBinOp::Mul => {
@@ -676,7 +739,7 @@ impl<'a> TypingOracleCtx<'a> {
                         Err(TypingNoContextOrInternalError::Typing)
                     }
                 }
-                _ => Ok(TyStarlarkValue::tuple().rbin_op(bin_op, lhs)?),
+                _ => TyStarlarkValue::tuple().rbin_op(bin_op, lhs, self),
             },
             _ => Err(TypingNoContextOrInternalError::Typing),
         }
@@ -787,8 +850,20 @@ impl<'a> TypingOracleCtx<'a> {
                 }
             }
             BinOp::Equal | BinOp::NotEqual => {
-                // It's not an error to compare two different types, but it is pointless
-                self.validate_type(rhs.as_ref(), &lhs)?;
+                // It's not an error to compare two different types, but it is pointless.
+                // `int` and `float` are the exception: they compare equal numerically
+                // (`1 == 1.0` evaluates to `True`), so comparing across the two is
+                // meaningful and must not be rejected. Widen only for the check, so the
+                // error message still names the type the user actually wrote.
+                if !self.intersects(&rhs.node, &Self::widen_numeric(&lhs.node))? {
+                    return Err(self.mk_error_as_maybe_internal(
+                        rhs.span,
+                        TypingOracleCtxError::IncompatibleType {
+                            got: rhs.to_string(),
+                            require: lhs.to_string(),
+                        },
+                    ));
+                }
                 Ok(bool_ret)
             }
             BinOp::In | BinOp::NotIn => {

@@ -10,9 +10,11 @@
 
 package com.facebook.buck.jvm.java.plugin.api;
 
+import com.facebook.infer.annotation.Nullsafe;
 import javax.tools.JavaCompiler;
 
 /** Factory interface for {@link PluginClassLoader}s for different compiler instances */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface PluginClassLoaderFactory {
   PluginClassLoader getPluginClassLoader(JavaCompiler.CompilationTask task);
 }

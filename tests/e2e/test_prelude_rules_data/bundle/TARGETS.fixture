@@ -1,0 +1,17 @@
+load("@prelude//apple:apple_bundle_destination.bzl", "AppleBundleDestination", "bundle_relative_path_for_destination")
+load("//:defs.bzl", "value")
+
+value(
+    name = "iphoneos_app_extensionkit",
+    value = bundle_relative_path_for_destination(AppleBundleDestination("extensionkit_extensions"), "iphoneos", "app", False),
+)
+
+value(
+    name = "macosx_app_extensionkit",
+    value = bundle_relative_path_for_destination(AppleBundleDestination("extensionkit_extensions"), "macosx", "app", False),
+)
+
+value(
+    name = "maccatalyst_app_extensionkit",
+    value = bundle_relative_path_for_destination(AppleBundleDestination("extensionkit_extensions"), "maccatalyst", "app", False),
+)

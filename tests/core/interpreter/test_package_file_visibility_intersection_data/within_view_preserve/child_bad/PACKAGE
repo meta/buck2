@@ -1,0 +1,3 @@
+# Same redundant call as `child/PACKAGE` -- the inherited within_view
+# restriction must still apply to the deps below.
+enforce_visibility_intersection()

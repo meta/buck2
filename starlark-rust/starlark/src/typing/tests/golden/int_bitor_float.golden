@@ -14,7 +14,6 @@ error: Binary operator `|` is not available on the types `int` and `float`
   |
 3 |     x = 0x60000000000000000000000 | 1.0
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
 
 Types:
 x: typing.Never
@@ -25,4 +24,3 @@ error: Binary operator `|` is not available on the types `int` and `float`
   |
 3 |     x = 0x60000000000000000000000 | 1.0
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |

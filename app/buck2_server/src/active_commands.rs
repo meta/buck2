@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
+use buck2_core::error::SoftErrorContext;
 use buck2_event_observer::dice_state::DiceState;
 use buck2_event_observer::pending_estimate::pending_estimate;
 use buck2_event_observer::span_tracker;
@@ -20,24 +20,54 @@ use buck2_event_observer::span_tracker::Roots;
 use buck2_events::BuckEvent;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::span::SpanId;
+use buck2_hash::BuckMutMap;
+use buck2_hash::BuckMutSet;
 use buck2_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use parking_lot::MutexGuard;
 use tokio::sync::oneshot;
 
-static ACTIVE_COMMANDS: Lazy<Mutex<HashMap<TraceId, ActiveCommandHandle>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static ACTIVE_COMMANDS: LazyLock<Mutex<BuckMutMap<TraceId, ActiveCommandHandle>>> =
+    LazyLock::new(|| Mutex::new(BuckMutMap::default()));
 
 /// Return the active commands, if you can access them.
-pub fn try_active_commands() -> Option<HashMap<TraceId, ActiveCommandHandle>> {
+pub fn try_active_commands() -> Option<BuckMutMap<TraceId, ActiveCommandHandle>> {
     // Note that this function is accessed during panic, so have to be super careful
     Some(ACTIVE_COMMANDS.try_lock()?.clone())
 }
 
-pub fn active_commands() -> MutexGuard<'static, HashMap<TraceId, ActiveCommandHandle>> {
+pub fn active_commands() -> MutexGuard<'static, BuckMutMap<TraceId, ActiveCommandHandle>> {
     ACTIVE_COMMANDS.lock()
+}
+
+/// A point-in-time snapshot of every active command's identity and progress.
+pub fn active_commands_snapshot() -> Vec<buck2_subscription_proto::ActiveCommand> {
+    active_commands()
+        .iter()
+        .map(|(trace_id, handle)| {
+            let state = handle.state();
+            let spans = state.spans();
+
+            buck2_subscription_proto::ActiveCommand {
+                trace_id: trace_id.to_string(),
+                argv: state.argv.clone(),
+                stats: Some(buck2_subscription_proto::ActiveCommandStats {
+                    open_spans: spans.open,
+                    closed_spans: spans.closed,
+                    pending_spans: spans.pending,
+                }),
+            }
+        })
+        .collect()
+}
+
+/// Whether `trace_id` is the one and only active command. False if it isn't
+/// registered (e.g. an empty map), so callers must hold their own active-command
+/// guard when relying on this.
+pub fn is_only_active_command(trace_id: &TraceId) -> bool {
+    let active = ACTIVE_COMMANDS.lock();
+    active.len() == 1 && active.contains_key(trace_id)
 }
 
 /// Broadcasts an instant event, returns whether any subscribers were connected.
@@ -52,6 +82,25 @@ pub fn broadcast_instant_event<E: Into<buck2_data::instant_event::Data> + Clone>
     }
 
     has_subscribers
+}
+
+/// Sends an event only to the active command that owns `context`.
+pub fn dispatch_soft_error_for_context<E: Into<buck2_data::instant_event::Data> + Clone>(
+    context: &Arc<SoftErrorContext>,
+    event: &E,
+) -> bool {
+    let active = ACTIVE_COMMANDS.lock();
+    let Some(command) = active.values().find(|command| {
+        command
+            .dispatcher
+            .soft_error_context()
+            .is_some_and(|candidate| Arc::ptr_eq(&candidate, context))
+    }) else {
+        return false;
+    };
+
+    command.dispatcher.instant_event(event.clone());
+    true
 }
 
 pub fn broadcast_shutdown(shutdown: &buck2_data::DaemonShutdown) {
@@ -100,7 +149,6 @@ impl Drop for ActiveCommandDropGuard {
 
 /// A handle to the stats for this command. We use this to broadcast state about this command.
 pub struct ActiveCommandState {
-    #[allow(unused)]
     pub argv: Vec<String>,
 
     spans: Mutex<SpansSnapshot>,
@@ -130,7 +178,7 @@ pub struct SpansSnapshot {
 pub struct ActiveCommandStateWriter {
     /// Maps a SpanId to whether it is a root (i.e. no parent)
     roots: Roots<Arc<BuckEvent>>,
-    non_roots: HashSet<SpanId>,
+    non_roots: BuckMutSet<SpanId>,
     dice_state: DiceState,
     closed: u64,
     shared: Arc<ActiveCommandState>,
@@ -140,7 +188,7 @@ impl ActiveCommandStateWriter {
     fn new(shared: Arc<ActiveCommandState>) -> Self {
         Self {
             roots: Roots::default(),
-            non_roots: HashSet::new(),
+            non_roots: BuckMutSet::default(),
             dice_state: DiceState::new(),
             closed: 0,
             shared,
@@ -191,12 +239,9 @@ impl ActiveCommandStateWriter {
             Instant(instant) => {
                 use buck2_data::instant_event::Data::*;
 
-                match instant.data.as_ref() {
-                    Some(DiceStateSnapshot(snapshot)) => {
-                        self.dice_state.update(snapshot);
-                        changed = true;
-                    }
-                    _ => {}
+                if let Some(DiceStateSnapshot(snapshot)) = instant.data.as_ref() {
+                    self.dice_state.update(snapshot);
+                    changed = true;
                 }
             }
             _ => {}
@@ -273,6 +318,11 @@ impl ActiveCommand {
     }
 }
 
+/// `cargo test` runs the tests of this crate on threads of one process, which has one registry
+/// of active commands. A test that registers a command holds this until the command is gone.
+#[cfg(test)]
+pub(crate) static REGISTRY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(test)]
 mod tests {
     use std::time::SystemTime;
@@ -281,6 +331,7 @@ mod tests {
     use buck2_events::Event;
     use buck2_events::daemon_id::DaemonId;
     use buck2_events::source::ChannelEventSource;
+    use buck2_hash::IntentionallyStdHashMap;
 
     use super::*;
 
@@ -384,7 +435,7 @@ mod tests {
                 data: Some(
                     buck2_data::DiceStateSnapshot {
                         key_states: {
-                            let mut map = HashMap::new();
+                            let mut map = IntentionallyStdHashMap::new();
                             map.insert(
                                 "BuildKey".to_owned(),
                                 buck2_data::DiceKeyState {
@@ -398,6 +449,8 @@ mod tests {
                             );
                             map
                         },
+                        core_state_queue_depth: 0,
+                        core_state_processed_requests: 0,
                     }
                     .into(),
                 ),
@@ -437,8 +490,8 @@ mod tests {
                     ))
                 }) => {
                     // Use HashSets because  trace ids may not be reported in the same order that we specified.
-                    let trace_ids: HashSet<&String> = trace_ids.iter().collect();
-                    let expected_trace_ids: HashSet<&String> = expected_trace_ids.iter().collect();
+                    let trace_ids: BuckMutSet<&String> = trace_ids.iter().collect();
+                    let expected_trace_ids: BuckMutSet<&String> = expected_trace_ids.iter().collect();
                     assert_eq!(trace_ids, expected_trace_ids);
                 }
             );
@@ -447,6 +500,7 @@ mod tests {
 
     #[test]
     fn test_multiple_active_commands() {
+        let _guard = REGISTRY_TEST_LOCK.blocking_lock();
         let (dispatcher1, mut source1, id1) = create_dispatcher();
         let _active1 = ActiveCommand::new(&dispatcher1, Vec::new());
 
@@ -465,5 +519,61 @@ mod tests {
             source3.try_receive(),
             &[id1.to_string(), id2.to_string()],
         );
+    }
+
+    #[test]
+    fn soft_error_context_routes_to_owning_command() -> buck2_error::Result<()> {
+        let _guard = REGISTRY_TEST_LOCK.blocking_lock();
+        let first_context = Arc::new(SoftErrorContext::new("", "")?);
+        let second_context = Arc::new(SoftErrorContext::new("", "")?);
+
+        let (first_dispatcher, mut first_source, _) = create_dispatcher();
+        let first_dispatcher = first_dispatcher.with_soft_error_context(first_context.dupe());
+        let _first = ActiveCommand::new(&first_dispatcher, Vec::new());
+
+        let (second_dispatcher, mut second_source, _) = create_dispatcher();
+        let second_dispatcher = second_dispatcher.with_soft_error_context(second_context);
+        let _second = ActiveCommand::new(&second_dispatcher, Vec::new());
+
+        first_source.try_receive();
+        second_source.try_receive();
+
+        assert!(dispatch_soft_error_for_context(
+            &first_context,
+            &buck2_data::ConsoleMessage {
+                message: "first only".to_owned(),
+            }
+        ));
+        assert!(first_source.try_receive().is_some());
+        assert!(second_source.try_receive().is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn soft_error_context_does_not_route_after_owner_finishes() -> buck2_error::Result<()> {
+        let _guard = REGISTRY_TEST_LOCK.blocking_lock();
+        let context = Arc::new(SoftErrorContext::new("", "")?);
+
+        let (owner_dispatcher, mut owner_source, _) = create_dispatcher();
+        let owner_dispatcher = owner_dispatcher.with_soft_error_context(context.dupe());
+        let owner = ActiveCommand::new(&owner_dispatcher, Vec::new());
+
+        let (other_dispatcher, mut other_source, _) = create_dispatcher();
+        let _other = ActiveCommand::new(&other_dispatcher, Vec::new());
+
+        owner_source.try_receive();
+        other_source.try_receive();
+        drop(owner);
+
+        assert!(!dispatch_soft_error_for_context(
+            &context,
+            &buck2_data::ConsoleMessage {
+                message: "no owner".to_owned(),
+            }
+        ));
+        assert!(other_source.try_receive().is_none());
+
+        Ok(())
     }
 }

@@ -13,32 +13,37 @@
 
 def _srcs_arg():
     return {
-        "srcs": attrs.named_set(attrs.source(allow_directory = True), sorted = False, default = [], doc = """
+        "srcs": attrs.named_set(
+            attrs.source(allow_directory = True),
+            sorted = False,
+            default = [],
+            doc = """
     Either a list or a map of the source files which Buck makes available to the shell
      command at the path in the `SRCDIR` environment variable.
      If you specify a list, the source files are the names in the list.
      If you specify a map, the source files are made available as the names in
      the keys of the map, where the values of the map are the original source
      file names.
-"""),
+""",
+        ),
     }
 
 def _cmd_arg():
     return {
-        "cmd": attrs.option(attrs.arg(), default = None, doc = """
+        "cmd": attrs.option(
+            attrs.arg(),
+            default = None,
+            doc = """
     The shell command to run to generate the output file. It is the
      fallback for `bash` and `cmd_exe` arguments. The following environment variables are populated by
      Buck and available to the shell command. They are accessed using
      the syntax:
 
-
     ```
     ${<variable>}
     ```
 
-
      Example:
-
 
     ```
     ${SRCS}
@@ -46,28 +51,22 @@ def _cmd_arg():
 
     `${SRCS}`
 
-
      A string expansion of the `srcs` argument delimited
      by the `environment_expansion_separator` argument
      where each element of `srcs` will be translated
      into a relative path.
 
-
     `${SRCDIR}`
-
 
      The relative path to a directory to which sources are copied
      prior to running the command.
 
-
     `${OUT}`
-
 
      The output file or directory for the `genrule()`.
      This variable will have whatever value is specified by
      the `out` argument if not using named outputs. If
      using named outputs, this variable will be the output directory.
-
 
      The value should be a valid filepath. The semantics of the shell
      command determine whether this filepath is treated as a file or a
@@ -77,68 +76,82 @@ def _cmd_arg():
      be readable, writable, and (in the case of directories) executable
      by the current user.
 
-
      The file or directory specified by this variable must always
      be written by this command. If not, the execution of this
      rule will be considered a failure, halting the build process.
 
-
     `${TMP}`
-
 
      A temporary directory which can be used for intermediate
      results and will not be bundled into the output.
 
-"""),
+""",
+        ),
     }
 
 def _bash_arg():
     return {
-        "bash": attrs.option(attrs.arg(), default = None, doc = """
+        "bash": attrs.option(
+            attrs.arg(),
+            default = None,
+            doc = """
     A platform-specific version of the shell command parameter `cmd`.
      It runs on Linux and UNIX systems—including OSX—on which `bash` is installed.
      It has a higher priority than `cmd`. The `bash` argument is run with `/usr/bin/env bash -c`.
      It has access to the same set of macros and variables as the `cmd` argument.
-"""),
+""",
+        ),
     }
 
 def _cmd_exe_arg():
     return {
-        "cmd_exe": attrs.option(attrs.arg(), default = None, doc = """
+        "cmd_exe": attrs.option(
+            attrs.arg(),
+            default = None,
+            doc = """
     A platform-specific version of the shell command parameter `cmd`. It runs on Windows and has a higher
      priority than `cmd`. The `cmd_exe` argument is run with `cmd.exe /v:off /c`.
      It has access to the same set of macros and variables as the `cmd` argument.
-"""),
+""",
+        ),
     }
 
 def _weight_arg():
     return {
-        "weight": attrs.option(attrs.int(), default = None, doc = """
+        "weight": attrs.option(
+            attrs.int(),
+            default = None,
+            doc = """
     How many local slots these genrule should take when executing locally.
-"""),
+""",
+        ),
     }
 
 def _out_arg():
     return {
-        "out": attrs.option(attrs.string(), default = None, doc = """
+        "out": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
     The name of the output file or directory. The complete path to this
      argument is provided to the shell command through
      the `OUT` environment variable.
-"""),
+""",
+        ),
     }
 
 def _type_arg():
     return {
-        "type": attrs.option(attrs.string(), default = None, doc = """
+        "type": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
     Specifies the *type* of this genrule. This is used for logging
      and is particularly useful for grouping genrules that share an
      underlying logical "type".
 
-
      For example, if you have the following `cxx_genrule` defined
      in the root directory of your Buck project
-
-
 
     ```
     cxx_genrule(
@@ -149,53 +162,63 @@ def _type_arg():
     )
     ```
 
-
-
      then the following `buck query` command
-
-
 
     ```
     buck query "attrfilter( type, 'epilog', '//...' )"
     ```
 
-
-
      returns
-
-
 
     ```
     //:cxx_gen
     ```
-"""),
+""",
+        ),
     }
 
 def _environment_expansion_separator():
     return {
-        "environment_expansion_separator": attrs.option(attrs.string(), default = None, doc = """
+        "environment_expansion_separator": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
     The delimiter between paths in environment variables, such as SRCS, that can contain multiple paths.
      It can be useful to specify this parameter if the paths could contain spaces.
-"""),
+""",
+        ),
     }
 
 def _env_arg():
     return {
-        "env": attrs.dict(key = attrs.string(), value = attrs.arg(), sorted = False, default = {}, doc = """
+        "env": attrs.dict(
+            key = attrs.string(),
+            value = attrs.arg(),
+            sorted = False,
+            default = {},
+            doc = """
         A map of variables to be set in the environment where the shell command is run.
-"""),
+""",
+        ),
     }
 
 def _error_handler_arg():
     return {
-        "error_handler_category": attrs.option(attrs.string(), default = None, doc = """
+        "error_handler_category": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
                 The error category name for errors produced by this genrule's error handler.
                  Used in conjunction with `error_handler_stderr_errorformats` and `error_handler_stdout_errorformats`
                  when calling `ActionErrorCtx.parse_with_errorformat()` to categorize parsed errors.
 
                  See https://buck2.build/docs/api/build/ActionErrorCtx/#actionerrorctxparse_with_errorformat for more details.
-            """),
-        "error_handler_stderr_errorformats": attrs.option(attrs.list(attrs.string()), default = None, doc = """
+            """,
+        ),
+        "error_handler_stderr_errorformats": attrs.option(
+            attrs.list(attrs.string()),
+            default = None,
+            doc = """
                 List of Vim errorformat pattern strings used to parse error messages from
                  stderr of failed genrule commands. These patterns extract structured error information
                  (file paths, line numbers, error messages) from command output.
@@ -204,12 +227,44 @@ def _error_handler_arg():
                  against these patterns.
 
                  See https://buck2.build/docs/api/build/ActionErrorCtx/#actionerrorctxparse_with_errorformat for more details.
-            """),
-        "error_handler_stdout_errorformats": attrs.option(attrs.list(attrs.string()), default = None, doc = """
+            """,
+        ),
+        "error_handler_stdout_errorformats": attrs.option(
+            attrs.list(attrs.string()),
+            default = None,
+            doc = """
                 Same as `error_handler_stderr_errorformats`, but for stdout.
 
                  See https://buck2.build/docs/api/build/ActionErrorCtx/#actionerrorctxparse_with_errorformat for more details.
-            """),
+            """,
+        ),
+    }
+
+def _allow_offline_output_cache_arg():
+    return {
+        "allow_offline_output_cache": attrs.bool(
+            default = False,
+            doc = """
+                Enables caching of this genrule's outputs for offline builds.
+
+                 When set to `True`, the genrule's outputs are cached during trace builds
+                 (via `buck2 debug trace-io`) and restored during offline builds without
+                 re-executing the command.
+
+                 This is intended for genrules that read from the network (e.g., downloads,
+                 remote artifact fetches) which cannot execute in offline build environments
+                 where network access is restricted.
+
+                 During trace builds, outputs are copied to `buck-out/offline-cache/` after
+                 successful execution. During offline builds, if all outputs exist in the
+                 offline cache, they are restored without running the genrule; otherwise
+                 the genrule executes normally (graceful fallback).
+
+                 Requires `buck2.use_network_action_output_cache=true` config to take effect.
+
+                 Example use case: caching network downloads in containerized offline build environments.
+            """,
+        ),
     }
 
 genrule_common = struct(
@@ -223,4 +278,5 @@ genrule_common = struct(
     environment_expansion_separator = _environment_expansion_separator,
     env_arg = _env_arg,
     error_handler_arg = _error_handler_arg,
+    allow_offline_output_cache_arg = _allow_offline_output_cache_arg,
 )

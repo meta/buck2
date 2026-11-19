@@ -1,5 +1,15 @@
-load(":defs.bzl", "execution_platforms")
+platform(
+    name = "platform",
+)
+
+execution_platform(
+    name = "exec_platform",
+    platform = ":platform",
+    remote_enabled = True,
+    remote_cache_enabled = True,
+)
 
 execution_platforms(
     name = "platforms",
+    platforms = [":exec_platform"],
 )

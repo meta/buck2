@@ -1,0 +1,13 @@
+load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
+
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    visibility = ["PUBLIC"],
+)
+
+git_fetch(
+    name = "fetch.git",
+    repo = read_config("test_git_fetch", "repo"),
+    rev = read_config("test_git_fetch", "rev"),
+    sub_targets = ["subdir"],
+)

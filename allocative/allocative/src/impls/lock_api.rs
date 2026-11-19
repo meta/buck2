@@ -16,14 +16,14 @@ use parking_lot::lock_api::RawRwLock;
 use parking_lot::lock_api::RwLock;
 
 use crate::allocative_trait::Allocative;
-use crate::key::Key;
+use crate::key;
 use crate::visitor::Visitor;
 
 impl<R: RawMutex + 'static, T: Allocative> Allocative for Mutex<R, T> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         if let Some(data) = self.try_lock() {
-            visitor.visit_field(Key::new("data"), &*data);
+            visitor.visit_field(key!("data"), &*data);
         }
         visitor.exit();
     }
@@ -33,7 +33,7 @@ impl<R: RawRwLock + 'static, T: Allocative> Allocative for RwLock<R, T> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         if let Some(data) = self.try_read() {
-            visitor.visit_field(Key::new("data"), &*data);
+            visitor.visit_field(key!("data"), &*data);
         }
         visitor.exit();
     }

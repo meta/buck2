@@ -20,6 +20,7 @@ load(
     "LinkerType",
     "PicBehavior",
     "RcCompilerInfo",
+    "RuntimeDependencyHandling",
     "ShlibInterfacesMode",
 )
 load("@prelude//cxx:headers.bzl", "HeaderMode")
@@ -53,7 +54,9 @@ def _legacy_equivalent_cxx_tools_info_windows(ctx: AnalysisContext, default_tool
         asm_compiler = default_toolchain.asm_compiler,
         asm_compiler_type = default_toolchain.asm_compiler_type,
         rc_compiler = default_toolchain.rc_compiler if ctx.attrs.rc_compiler == None or ctx.attrs.rc_compiler == "rc.exe" else ctx.attrs.rc_compiler,
-        cvtres_compiler = default_toolchain.cvtres_compiler if ctx.attrs.cvtres_compiler == None or ctx.attrs.cvtres_compiler == "cvtres.exe" else ctx.attrs.cvtres_compiler,
+        cvtres_compiler = default_toolchain.cvtres_compiler
+        if ctx.attrs.cvtres_compiler == None or ctx.attrs.cvtres_compiler == "cvtres.exe"
+        else ctx.attrs.cvtres_compiler,
         archiver = default_toolchain.archiver if ctx.attrs.archiver == None else ctx.attrs.archiver,
         archiver_type = default_toolchain.archiver_type,
         linker = default_toolchain.linker if ctx.attrs.linker == None or ctx.attrs.linker == "link.exe" else ctx.attrs.linker,
@@ -83,7 +86,11 @@ def _system_cxx_toolchain_impl(ctx: AnalysisContext):
     os = ctx.attrs._target_os_type[OsLookup].os.value
     arch_name = ctx.attrs._target_os_type[OsLookup].cpu
     cxx_tools_info = ctx.attrs._cxx_tools_info[CxxToolsInfo]
-    cxx_tools_info = _legacy_equivalent_cxx_tools_info_windows(ctx, cxx_tools_info) if os == "windows" else _legacy_equivalent_cxx_tools_info_non_windows(ctx, cxx_tools_info)
+    cxx_tools_info = (
+        _legacy_equivalent_cxx_tools_info_windows(ctx, cxx_tools_info)
+        if os == "windows"
+        else _legacy_equivalent_cxx_tools_info_non_windows(ctx, cxx_tools_info)
+    )
     target_name = os
     if arch_name:
         target_name += "-" + arch_name
@@ -97,8 +104,8 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
     archiver_supports_argfiles = os != Os("macos")
     additional_linker_flags = ["-fuse-ld=lld"] if os == Os("linux") and cxx_tools_info.linker != "g++" and cxx_tools_info.cxx_compiler != "g++" else []
 
+    linker_type = cxx_tools_info.linker_type
     if os == Os("windows"):
-        linker_type = LinkerType("windows")
         binary_extension = "exe"
         object_file_extension = "obj"
         static_library_extension = "lib"
@@ -115,10 +122,8 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
         shared_library_versioned_name_format = "{}.so.{}"
 
         if os == Os("macos"):
-            linker_type = LinkerType("darwin")
             pic_behavior = PicBehavior("always_enabled")
         else:
-            linker_type = LinkerType("gnu")
             pic_behavior = PicBehavior("supported")
 
     if cxx_tools_info.compiler_type == "clang":
@@ -182,7 +187,6 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
                 ranlib = RunInfo(args = ["ranlib"]),
                 strip = RunInfo(args = ["strip"]),
                 dwp = None,
-                bolt_msdk = None,
             ),
             cxx_compiler_info = CxxCompilerInfo(
                 compiler = _run_info(cxx_tools_info.cxx_compiler),
@@ -202,6 +206,7 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
             as_compiler_info = CCompilerInfo(
                 compiler = _run_info(cxx_tools_info.compiler),
                 compiler_type = cxx_tools_info.compiler_type,
+                supports_content_based_paths = ctx.attrs.supports_content_based_paths,
             ),
             asm_compiler_info = CCompilerInfo(
                 compiler = _run_info(cxx_tools_info.asm_compiler),
@@ -224,6 +229,7 @@ def _cxx_toolchain_from_cxx_tools_info(ctx: AnalysisContext, cxx_tools_info: Cxx
             pic_behavior = pic_behavior,
             llvm_link = llvm_link,
             use_dep_files = True,
+            runtime_dependency_handling = RuntimeDependencyHandling("no_symlink"),
         ),
         CxxPlatformInfo(name = target_name),
     ]
@@ -237,7 +243,7 @@ system_cxx_toolchain = rule(
         "archiver": attrs.option(attrs.string(), default = None),
         "c_flags": attrs.list(attrs.arg(), default = []),
         "compiler": attrs.option(attrs.string(), default = None),
-        "compiler_type": attrs.option(attrs.string(), default = None),  # one of CxxToolProviderType
+        "compiler_type": attrs.option(attrs.string(), default = None),  # One of the supported C++ compiler types.
         "cpp_dep_tracking_mode": attrs.string(default = "makefile"),
         "cvtres_compiler": attrs.option(attrs.string(), default = None),
         "cvtres_flags": attrs.list(attrs.arg(), default = []),
@@ -252,7 +258,10 @@ system_cxx_toolchain = rule(
         "rc_compiler": attrs.option(attrs.string(), default = None),
         "rc_flags": attrs.list(attrs.arg(), default = []),
         "supports_content_based_paths": attrs.bool(default = False),
-        "_cxx_tools_info": attrs.exec_dep(providers = [CxxToolsInfo], default = "prelude//toolchains/msvc:msvc_tools" if host_info().os.is_windows else "prelude//toolchains/cxx/clang:path_clang_tools"),
+        "_cxx_tools_info": attrs.exec_dep(
+            providers = [CxxToolsInfo],
+            default = "prelude//toolchains/msvc:msvc_tools" if host_info().os.is_windows else "prelude//toolchains/cxx/clang:path_clang_tools",
+        ),
         "_target_os_type": buck.target_os_type_arg(),
     },
     is_toolchain_rule = True,
@@ -265,10 +274,13 @@ cxx_tools_info_toolchain = rule(
         "cpp_dep_tracking_mode": attrs.string(default = "makefile"),
         "cvtres_flags": attrs.list(attrs.arg(), default = []),
         "cxx_flags": attrs.list(attrs.arg(), default = []),
-        "cxx_tools_info": attrs.exec_dep(providers = [CxxToolsInfo], default = select({
-            "DEFAULT": "prelude//toolchains/cxx/clang:path_clang_tools",
-            "config//os:windows": "prelude//toolchains/msvc:msvc_tools",
-        })),
+        "cxx_tools_info": attrs.exec_dep(
+            providers = [CxxToolsInfo],
+            default = select({
+                "DEFAULT": "prelude//toolchains/cxx/clang:path_clang_tools",
+                "config//os:windows": "prelude//toolchains/msvc:msvc_tools",
+            }),
+        ),
         "internal_tools": attrs.exec_dep(providers = [CxxInternalTools], default = "prelude//cxx/tools:internal_tools"),
         "link_flags": attrs.list(attrs.arg(), default = []),
         "link_ordering": attrs.option(attrs.enum(LinkOrdering.values()), default = None),

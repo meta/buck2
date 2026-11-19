@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use buck2_artifact::actions::key::ActionKey;
 use buck2_build_signals::env::NodeDuration;
+use buck2_build_signals::env::WaitingData;
+use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use dupe::Dupe;
 
@@ -41,6 +43,7 @@ pub(crate) struct TestExecutionSignal {
     pub(crate) variant: Option<String>,
     pub(crate) deps: Vec<ActionKey>,
     pub(crate) duration: NodeDuration,
+    pub(crate) waiting_data: WaitingData,
 }
 
 /// Build signal emitted at the end of test discovery.
@@ -49,4 +52,21 @@ pub(crate) struct TestListingSignal {
     pub(crate) suite: String,
     pub(crate) deps: Vec<ActionKey>,
     pub(crate) duration: NodeDuration,
+    pub(crate) waiting_data: WaitingData,
+}
+
+#[derive(Hash, Eq, PartialEq, Clone, Dupe, Debug)]
+/// A key to uniquely identify an installer run within a command.
+pub(crate) struct InstallBuildSignalKey {
+    pub(crate) installer: ConfiguredProvidersLabel,
+    pub(crate) targets: Arc<Vec<ConfiguredTargetLabel>>,
+}
+
+/// Build signal emitted when an installer run finishes.
+pub(crate) struct InstallSignal {
+    pub(crate) installer: ConfiguredProvidersLabel,
+    pub(crate) targets: Vec<ConfiguredTargetLabel>,
+    pub(crate) deps: Vec<ActionKey>,
+    pub(crate) duration: NodeDuration,
+    pub(crate) waiting_data: WaitingData,
 }

@@ -37,10 +37,10 @@ analysis (which is passed in, or after looking at an anon target). In many ways,
 anon target is the version of `dynamic_output` at analysis time, rather than
 action time.
 
-The execution platform for an anon target is that of the inherited from the
-calling target, which is part of the hash. If that is too restrictive, you could
-use execution groups, where an anon target gets told which execution group to
-use.
+An anon target inherits the execution platform of the calling target, which
+is part of the hash. If that is too restrictive, pass
+`exec_group` to `anon_target()` to use the platform of one of the calling
+rule's [execution groups](execution_groups.md).
 
 # Creating anon targets
 

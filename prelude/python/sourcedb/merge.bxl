@@ -6,15 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-def do_merge(
-        ctx: bxl.Context,
-        bxl_actions: bxl.Actions,
-        built_sourcedbs: dict[TargetLabel, Artifact],
-        command_category: str) -> bxl.EnsuredArtifact:
+def do_merge(ctx: bxl.Context, bxl_actions: bxl.Actions, built_sourcedbs: dict[TargetLabel, Artifact], command_category: str) -> bxl.EnsuredArtifact:
     actions = bxl_actions.actions
 
-    merger_input = actions.write_json("merge_input.json", built_sourcedbs)
-    merger_output = actions.declare_output("merged_db.json")
+    merger_input = actions.write_json("merge_input.json", built_sourcedbs, has_content_based_path = False)
+    merger_output = actions.declare_output("merged_db.json", has_content_based_path = False)
 
     dependency_key = bxl_actions.exec_deps.keys()[0]
 

@@ -18,4 +18,3 @@ error: Immutable
    |
 11 |   x.append(z)
    |   ^^^^^^^^^^^
-   |

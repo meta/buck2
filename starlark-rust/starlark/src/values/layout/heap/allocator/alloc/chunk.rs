@@ -18,6 +18,7 @@
 use core::slice;
 use std::alloc;
 use std::alloc::Layout;
+use std::cell::UnsafeCell;
 use std::fmt;
 use std::mem;
 use std::mem::MaybeUninit;
@@ -36,7 +37,12 @@ struct ChunkData {
     ref_count: AtomicU32,
     /// Data length in words. Does not include `ChunkData` header.
     len: AlignedSize,
-    data: [MaybeUninit<usize>; 0],
+    /// Chunk payload, which continues past the end of this struct.
+    ///
+    /// `UnsafeCell` because the payload is written through a shared reference to the chunk:
+    /// without it, every pointer into the chunk would be derived from a shared reference to
+    /// freeze-able memory, and writing through such a pointer is undefined behaviour.
+    data: [UnsafeCell<MaybeUninit<usize>>; 0],
 }
 
 /// Identical to `ChunkData`, but does not have `UnsafeCell`, so it is statically allocated.
@@ -113,7 +119,7 @@ impl ChunkData {
 
     #[inline]
     fn begin(&self) -> NonNull<usize> {
-        unsafe { NonNull::new_unchecked(self.data.as_ptr() as *mut usize) }
+        unsafe { NonNull::new_unchecked(UnsafeCell::raw_get(self.data.as_ptr()) as *mut usize) }
     }
 }
 

@@ -1,0 +1,10 @@
+# Declares a `within_view` list that explicitly names the outside dep's
+# package. The target's own list allows the dep; the cap does not.
+stub(
+    name = "c",
+    within_view = [
+        "root//intersect/...",
+        "root//outside/...",
+    ],
+    deps = ["root//outside:t"],
+)

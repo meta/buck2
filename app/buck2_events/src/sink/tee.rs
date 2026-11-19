@@ -8,6 +8,8 @@
  * above-listed licenses.
  */
 
+use async_trait::async_trait;
+
 use crate::Event;
 use crate::EventSink;
 
@@ -20,9 +22,16 @@ impl<A, B> TeeSink<A, B> {
     }
 }
 
+#[async_trait]
 impl<A: EventSink, B: EventSink> EventSink for TeeSink<A, B> {
     fn send(&self, event: Event) {
         self.0.send(event.clone());
         self.1.send(event);
+    }
+
+    async fn send_now(&self, event: Event) {
+        let event_clone = event.clone();
+        self.0.send_now(event_clone).await;
+        self.1.send_now(event).await;
     }
 }

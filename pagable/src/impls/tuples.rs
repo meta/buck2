@@ -14,7 +14,7 @@ use crate::traits::PagableSerialize;
 use crate::traits::PagableSerializer;
 
 impl<T1: PagableSerialize, T2: PagableSerialize> PagableSerialize for (T1, T2) {
-    fn pagable_serialize<S: PagableSerializer>(&self, serializer: &mut S) -> crate::Result<()> {
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> crate::Result<()> {
         let (m1, m2) = self;
         m1.pagable_serialize(serializer)?;
         m2.pagable_serialize(serializer)?;
@@ -25,7 +25,7 @@ impl<T1: PagableSerialize, T2: PagableSerialize> PagableSerialize for (T1, T2) {
 impl<T1: PagableSerialize, T2: PagableSerialize, T3: PagableSerialize> PagableSerialize
     for (T1, T2, T3)
 {
-    fn pagable_serialize<S: PagableSerializer>(&self, serializer: &mut S) -> crate::Result<()> {
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> crate::Result<()> {
         let (m1, m2, m3) = self;
         m1.pagable_serialize(serializer)?;
         m2.pagable_serialize(serializer)?;
@@ -37,7 +37,7 @@ impl<T1: PagableSerialize, T2: PagableSerialize, T3: PagableSerialize> PagableSe
 impl<T1: PagableSerialize, T2: PagableSerialize, T3: PagableSerialize, T4: PagableSerialize>
     PagableSerialize for (T1, T2, T3, T4)
 {
-    fn pagable_serialize<S: PagableSerializer>(&self, serializer: &mut S) -> crate::Result<()> {
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> crate::Result<()> {
         let (m1, m2, m3, m4) = self;
         m1.pagable_serialize(serializer)?;
         m2.pagable_serialize(serializer)?;
@@ -55,7 +55,7 @@ impl<
     T5: PagableSerialize,
 > PagableSerialize for (T1, T2, T3, T4, T5)
 {
-    fn pagable_serialize<S: PagableSerializer>(&self, serializer: &mut S) -> crate::Result<()> {
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> crate::Result<()> {
         let (m1, m2, m3, m4, m5) = self;
         m1.pagable_serialize(serializer)?;
         m2.pagable_serialize(serializer)?;
@@ -69,7 +69,7 @@ impl<
 impl<'de, T1: PagableDeserialize<'de>, T2: PagableDeserialize<'de>> PagableDeserialize<'de>
     for (T1, T2)
 {
-    fn pagable_deserialize<D: PagableDeserializer<'de>>(
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
         deserializer: &mut D,
     ) -> crate::Result<Self> {
         let m1 = T1::pagable_deserialize(deserializer)?;
@@ -81,7 +81,7 @@ impl<'de, T1: PagableDeserialize<'de>, T2: PagableDeserialize<'de>> PagableDeser
 impl<'de, T1: PagableDeserialize<'de>, T2: PagableDeserialize<'de>, T3: PagableDeserialize<'de>>
     PagableDeserialize<'de> for (T1, T2, T3)
 {
-    fn pagable_deserialize<D: PagableDeserializer<'de>>(
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
         deserializer: &mut D,
     ) -> crate::Result<Self> {
         let m1 = T1::pagable_deserialize(deserializer)?;
@@ -99,7 +99,7 @@ impl<
     T4: PagableDeserialize<'de>,
 > PagableDeserialize<'de> for (T1, T2, T3, T4)
 {
-    fn pagable_deserialize<D: PagableDeserializer<'de>>(
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
         deserializer: &mut D,
     ) -> crate::Result<Self> {
         let m1 = T1::pagable_deserialize(deserializer)?;
@@ -119,7 +119,7 @@ impl<
     T5: PagableDeserialize<'de>,
 > PagableDeserialize<'de> for (T1, T2, T3, T4, T5)
 {
-    fn pagable_deserialize<D: PagableDeserializer<'de>>(
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
         deserializer: &mut D,
     ) -> crate::Result<Self> {
         let m1 = T1::pagable_deserialize(deserializer)?;

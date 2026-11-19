@@ -8,20 +8,16 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
 #![feature(min_specialization)]
 #![allow(clippy::large_enum_variant)]
 
-use buck2_core::cells::cell_root_path::CellRootPath;
-use buck2_core::cells::cell_root_path::CellRootPathBuf;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 
 use crate::BuckDaemonProtoError::MissingClientContext;
 
 pub mod new_generic;
 pub mod protobuf_util;
+pub mod test_executor;
 
 tonic::include_proto!("buck.daemon");
 
@@ -40,34 +36,11 @@ fn wrong_request_type(request_type: &'static str) -> buck2_error::Error {
 impl ConfigOverride {
     /// Not `fbcode//config.key=value`
     pub fn flag_no_cell(s: &str) -> Self {
-        Self::flag(s, None)
-    }
-
-    pub fn flag(s: &str, cell: Option<CellRootPathBuf>) -> Self {
         Self {
-            cell: cell.map(|c| c.as_str().to_owned()),
+            cell: None,
             config_override: s.to_owned(),
             config_type: crate::config_override::ConfigType::Value.into(),
         }
-    }
-
-    pub fn file(p: &str, cell: Option<CellRootPathBuf>) -> Self {
-        Self {
-            cell: cell.map(|c| c.as_str().to_owned()),
-            config_override: p.to_owned(),
-            config_type: crate::config_override::ConfigType::File.into(),
-        }
-    }
-
-    pub fn get_cell(&self) -> buck2_error::Result<Option<&CellRootPath>> {
-        self.cell
-            .as_ref()
-            .map(|p| {
-                ProjectRelativePath::new(p)
-                    .map(CellRootPath::new)
-                    .internal_error("Client should have sent a valid path")
-            })
-            .transpose()
     }
 }
 
@@ -299,6 +272,7 @@ result_convert!(TargetsResponse);
 result_convert!(TargetsShowOutputsResponse);
 result_convert!(ConfiguredTargetsResponse);
 result_convert!(GenericResponse);
+result_convert!(HydrationResponse);
 result_convert!(ProfileResponse);
 result_convert!(InstallResponse);
 result_convert!(CleanStaleResponse);
@@ -317,6 +291,9 @@ partial_result_convert!(DapMessage);
 define_request!(KillRequest);
 define_request!(StatusRequest);
 define_request!(PingRequest);
+define_request!(HydrationRequest, has(context));
+define_request!(UnstableDiceDumpRequest, has(context));
+define_request!(FlushDepFilesRequest, has(context));
 
 define_request!(BuildRequest, has(context, build_options));
 define_request!(BxlRequest, has(context, build_options));

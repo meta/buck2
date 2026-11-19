@@ -9,29 +9,49 @@
  */
 
 use std::future::Future;
-use std::ops::Deref;
-use std::ops::DerefMut;
 
-use allocative::Allocative;
+use dice_core::BranchId;
+use dice_core::Version;
 use dice_error::DiceResult;
 use dupe::Dupe;
+use futures::FutureExt;
 
 use crate::api::computations::DiceComputations;
+use crate::api::data::DiceData;
 use crate::api::key::Key;
 use crate::api::user_data::UserComputationData;
-use crate::transaction::DiceTransactionImpl;
-use crate::transaction_update::DiceTransactionUpdaterImpl;
-use crate::versions::VersionNumber;
+use crate::epoch::ctx::TransactionCtx;
+use crate::updater::TransactionUpdater;
 
 /// The struct for which we build transactions. This is where changes are recorded, and committed
 /// to DICE, which returns the Transaction where we spawn computations.
-#[derive(Allocative)]
 #[repr(transparent)]
-pub struct DiceTransactionUpdater(pub(crate) DiceTransactionUpdaterImpl);
+pub struct DiceTransactionUpdater(pub(crate) TransactionUpdater);
+
+// SAFETY: as for `DiceComputations`.
+unsafe impl Send for DiceTransactionUpdater {}
+unsafe impl Sync for DiceTransactionUpdater {}
+
+fn _assert_updater_send_sync(DiceTransactionUpdater(inner): &DiceTransactionUpdater) {
+    fn assert<T: Send + Sync>(_: &T) {}
+    assert(inner);
+}
 
 impl DiceTransactionUpdater {
+    /// The branch this updater commits to.
+    pub fn branch(&self) -> BranchId {
+        self.0.branch()
+    }
+
+    /// Makes `branch` the one this updater commits to. The changes recorded so far go there too,
+    /// and `existing_state` follows.
+    pub fn retarget(&mut self, branch: BranchId) {
+        self.0.retarget(branch)
+    }
+
+    /// A transaction at the branch's newest version, without committing the recorded changes.
     pub fn existing_state(&self) -> impl Future<Output = DiceTransaction> {
-        self.0.existing_state()
+        self.0.existing_state().map(DiceTransaction)
     }
 
     /// Records a set of `Key`s as changed so that they, and any dependents will
@@ -61,7 +81,7 @@ impl DiceTransactionUpdater {
 
     /// Commit the changes registered via 'changed' and 'changed_to' to the current newest version.
     pub fn commit(self) -> impl Future<Output = DiceTransaction> {
-        self.0.commit()
+        self.0.commit().map(DiceTransaction)
     }
 
     /// Commit the changes registered via 'changed' and 'changed_to' to the current newest version,
@@ -70,11 +90,7 @@ impl DiceTransactionUpdater {
         self,
         extra: UserComputationData,
     ) -> impl Future<Output = DiceTransaction> {
-        self.0.commit_with_data(extra)
-    }
-
-    pub fn unstable_take(self) -> Self {
-        Self(self.0.unstable_take())
+        self.0.commit_with_data(extra).map(DiceTransaction)
     }
 }
 
@@ -84,73 +100,56 @@ impl DiceTransactionUpdater {
 /// the time of creation of this transaction.
 ///
 /// This SHOULD NOT be ever stored by computations, or any results of computations.
-#[derive(Allocative, Clone, Dupe)]
-pub struct DiceTransaction(pub(crate) DiceTransactionImpl);
+#[derive(Clone, Dupe)]
+pub struct DiceTransaction(pub(crate) TransactionCtx);
+
+// SAFETY: as for `DiceComputations`.
+unsafe impl Send for DiceTransaction {}
+unsafe impl Sync for DiceTransaction {}
+
+fn _assert_transaction_send_sync(DiceTransaction(inner): &DiceTransaction) {
+    fn assert<T: Send + Sync>(_: &T) {}
+    assert(inner);
+}
 
 impl DiceTransaction {
-    /// Returns whether the `DiceTransaction` is equivalent. Equivalent is defined as whether the
-    /// two Transactions are based off the same underlying set of key states. That is, all
-    /// injected keys are the same, and the same compute keys are dirtied, and that any computations
-    /// that occur between the two transactions can be shared.
-    pub fn equivalent<E>(&self, other: &E) -> bool
+    /// The version this transaction runs at. Two transactions at one version see the same state,
+    /// the same injected values and the same dirties, and share the computations they request.
+    pub fn version(&self) -> Version {
+        self.0.get_version()
+    }
+
+    /// Request the result of computing a particular key.
+    ///
+    /// This is similar to `DiceComputations::compute`, but a bit more flexible as it takes `&self`
+    /// - the standard requirements around structured dependencies don't apply.
+    pub fn compute<'a, K>(
+        &'a self,
+        key: &K,
+    ) -> impl Future<Output = DiceResult<&'a <K as Key>::Value>> + use<'a, K>
     where
-        E: DiceEquivalent,
+        K: Key,
     {
-        self.version_for_equivalence() == other.version_for_equivalence()
+        self.0.compute(key)
     }
 
-    pub fn equality_token(&self) -> DiceEquality {
-        DiceEquality(self.0.get_version())
+    /// Get access to a `DiceComputations` connected to this transaction.
+    ///
+    /// Usually not needed over `compute`, but can be useful for sharing code.
+    pub fn ctx(&self) -> DiceComputations<'_> {
+        DiceComputations(self.0.as_computations())
     }
 
-    /// Creates an Updater to record changes to DICE that upon committing, creates a new transaction
-    /// that keeps the same set of user data. This is equivalent to `Dice::updater_with_user_data(data)`
-    /// where the `data` is taken from the current Transaction.
-    pub fn into_updater(self) -> DiceTransactionUpdater {
-        self.0.into_updater()
+    /// Data that is static for the lifetime of the current request context. This lifetime is
+    /// the lifetime of the top-level `DiceComputation` used for all requests.
+    /// The data is also specific to each request context, so multiple concurrent requests can
+    /// each have their own individual data.
+    pub fn per_transaction_data(&self) -> &UserComputationData {
+        self.0.per_transaction_data()
     }
-}
 
-#[derive(Allocative, Eq, PartialEq, Copy, Clone, derive_more::Display)]
-#[repr(transparent)]
-pub struct DiceEquality(VersionNumber);
-
-mod private {
-    use super::*;
-
-    pub trait Sealed {}
-
-    impl Sealed for DiceTransaction {}
-
-    impl Sealed for DiceEquality {}
-}
-
-pub trait DiceEquivalent: private::Sealed {
-    fn version_for_equivalence(&self) -> DiceEquality;
-}
-
-impl DiceEquivalent for DiceTransaction {
-    fn version_for_equivalence(&self) -> DiceEquality {
-        self.equality_token()
-    }
-}
-
-impl DiceEquivalent for DiceEquality {
-    fn version_for_equivalence(&self) -> DiceEquality {
-        *self
-    }
-}
-
-impl Deref for DiceTransaction {
-    type Target = DiceComputations<'static>;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.as_computations()
-    }
-}
-
-impl DerefMut for DiceTransaction {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0.as_computations_mut()
+    /// Untracked data that is shared by transactions in this branch tree.
+    pub fn global_data(&self) -> &DiceData {
+        self.0.global_data()
     }
 }

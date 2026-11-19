@@ -11,10 +11,13 @@
 package com.facebook.buck.step.isolatedsteps;
 
 import com.facebook.buck.step.StepExecutionResult;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class StepFailedException extends Exception {
 
   @VisibleForTesting static final int KEEP_FIRST_CHARS = 4 * 80;
@@ -34,7 +37,10 @@ public class StepFailedException extends Exception {
 
   @Override
   public String getMessage() {
-    return getCause().getMessage() + System.lineSeparator() + "  " + getContext();
+    return Objects.requireNonNull(getCause()).getMessage()
+        + System.lineSeparator()
+        + "  "
+        + getContext();
   }
 
   /** Creates a StepFailedException based on a StepExecutionResult. */

@@ -1,0 +1,52 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is dual-licensed under either the MIT license found in the
+ * LICENSE-MIT file in the root directory of this source tree or the Apache
+ * License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+ * of this source tree. You may select, at your option, one of the
+ * above-listed licenses.
+ */
+
+// Minimal subset of buck2_cli_proto/daemon.proto for event log decoding.
+// The event log file is a stream of length-delimited CommandProgress messages
+// (first message is an Invocation, rest are CommandProgressForWrite which is
+// wire-compatible with CommandProgress).
+
+syntax = "proto3";
+
+package buck.daemon;
+
+import "data.proto";
+
+message CommandResult {
+  int32 status = 1;
+  repeated string errors = 2;
+}
+
+message PartialResult {
+  oneof partial_result {
+    StdoutBytes stdout = 1;
+    StderrBytes stderr = 2;
+  }
+}
+
+message StdoutBytes {
+  bytes data = 1;
+}
+
+message StderrBytes {
+  bytes data = 1;
+}
+
+message CommandProgress {
+  oneof progress {
+    buck.data.BuckEvent event = 1;
+    CommandResult result = 2;
+    PartialResult partial_result = 3;
+  }
+}
+
+message MultiCommandProgress {
+  repeated CommandProgress messages = 1;
+}

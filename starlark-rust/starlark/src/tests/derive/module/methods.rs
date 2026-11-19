@@ -17,6 +17,7 @@
 
 use allocative::Allocative;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
 
@@ -25,20 +26,18 @@ use crate::any::ProvidesStaticType;
 use crate::assert::Assert;
 use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
-use crate::environment::MethodsStatic;
-use crate::values::AllocFrozenValue;
-use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
+use crate::eval::Arguments;
+use crate::eval::Evaluator;
 use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::ValueLike;
 
 #[derive(
     Debug,
     derive_more::Display,
     ProvidesStaticType,
     NoSerialize,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[display("{:?}", self)]
 struct Applaud {
@@ -51,25 +50,42 @@ fn methods(builder: &mut MethodsBuilder) {
         let applauld = receiver.downcast_ref::<Applaud>().unwrap();
         Ok(applauld.value + this)
     }
+
+    #[starlark(attribute)]
+    fn callable<'v>(this: Value<'v>) -> anyhow::Result<Value<'v>> {
+        Ok(this)
+    }
+
+    #[starlark(attribute)]
+    fn value(this: Value) -> anyhow::Result<i32> {
+        Ok(this.downcast_ref::<Applaud>().unwrap().value)
+    }
 }
+
+starlark::methods_static!(APPLAUD_METHODS = methods);
 
 #[starlark_value(type = "applaud")]
 impl<'v> StarlarkValue<'v> for Applaud {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(methods)
+        Some(APPLAUD_METHODS.methods())
     }
-}
 
-impl AllocFrozenValue for Applaud {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        heap.alloc_simple(self)
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> crate::Result<Value<'v>> {
+        Ok(eval.heap().alloc(args.len()?).to_value())
     }
 }
 
 #[test]
 fn test_receiver_can_be_named_anything() {
     let mut a = Assert::new();
-    a.globals_add(|g| g.set("x", g.alloc(Applaud { value: 10 })));
+    a.globals_add(|g| g.set("x", Applaud { value: 10 }));
     a.eq("13", "x.test_method(this=3)");
+    a.eq("10", "x.value");
+    a.eq("2", "x.callable(1, named=2)");
+    a.fail("x.value(1)", "Operation `call()` not supported");
 }

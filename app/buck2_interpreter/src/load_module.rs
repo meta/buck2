@@ -13,6 +13,8 @@ use buck2_core::bzl::ImportPath;
 use buck2_core::package::PackageLabel;
 use buck2_util::late_binding::LateBinding;
 use dice::DiceComputations;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use starlark::environment::Globals;
 
 use crate::file_loader::LoadedModule;
@@ -23,11 +25,13 @@ use crate::prelude_path::PreludePath;
 
 #[async_trait]
 pub trait InterpreterCalculationImpl: Send + Sync + 'static {
-    async fn get_loaded_module(
+    fn get_loaded_module<'a, 'd>(
         &self,
-        ctx: &mut DiceComputations<'_>,
+        ctx: &'a mut DiceComputations<'d>,
         path: StarlarkModulePath<'_>,
-    ) -> buck2_error::Result<LoadedModule>;
+    ) -> BoxFuture<'a, buck2_error::Result<&'d LoadedModule>>
+    where
+        'd: 'a;
 
     async fn get_module_deps(
         &self,
@@ -53,45 +57,55 @@ pub trait InterpreterCalculationImpl: Send + Sync + 'static {
 pub static INTERPRETER_CALCULATION_IMPL: LateBinding<&'static dyn InterpreterCalculationImpl> =
     LateBinding::new("INTERPRETER_CALCULATION_IMPL");
 
-#[async_trait]
-pub trait InterpreterCalculation {
+pub trait InterpreterCalculation<'d> {
     /// Returns the LoadedModule for a given starlark file. This is cached on the dice graph.
-    async fn get_loaded_module(
-        &mut self,
+    fn get_loaded_module<'a>(
+        &'a mut self,
         path: StarlarkModulePath<'_>,
-    ) -> buck2_error::Result<LoadedModule>;
+    ) -> BoxFuture<'a, buck2_error::Result<&'d LoadedModule>>
+    where
+        'd: 'a;
 
-    async fn get_loaded_module_from_import_path(
-        &mut self,
-        path: &ImportPath,
-    ) -> buck2_error::Result<LoadedModule> {
-        self.get_loaded_module(StarlarkModulePath::LoadFile(path))
-            .await
+    fn get_loaded_module_from_import_path<'a>(
+        &'a mut self,
+        path: &'a ImportPath,
+    ) -> BoxFuture<'a, buck2_error::Result<&'d LoadedModule>>
+    where
+        'd: 'a,
+    {
+        let module_path = match path.path().path().extension() {
+            Some("json") => StarlarkModulePath::JsonFile(path),
+            Some("toml") => StarlarkModulePath::TomlFile(path),
+            _ => StarlarkModulePath::LoadFile(path),
+        };
+        self.get_loaded_module(module_path)
     }
 
-    async fn get_loaded_module_imports(
-        &mut self,
-        path: &ImportPath,
-    ) -> buck2_error::Result<Vec<ImportPath>> {
+    fn get_loaded_module_imports<'a>(
+        &'a mut self,
+        path: &'a ImportPath,
+    ) -> BoxFuture<'a, buck2_error::Result<Vec<ImportPath>>>
+    where
+        'd: 'a,
+    {
         //TODO(benfoxman): Don't need to get the whole module, just parse the imports.
-        Ok(self
-            .get_loaded_module_from_import_path(path)
-            .await?
-            .imports()
-            .cloned()
-            .collect())
+        self.get_loaded_module_from_import_path(path)
+            .map(|r| Ok(r?.imports().cloned().collect()))
+            .boxed()
     }
 }
 
-#[async_trait]
-impl InterpreterCalculation for DiceComputations<'_> {
-    async fn get_loaded_module(
-        &mut self,
+impl<'d> InterpreterCalculation<'d> for DiceComputations<'d> {
+    fn get_loaded_module<'a>(
+        &'a mut self,
         path: StarlarkModulePath<'_>,
-    ) -> buck2_error::Result<LoadedModule> {
-        INTERPRETER_CALCULATION_IMPL
-            .get()?
-            .get_loaded_module(self, path)
-            .await
+    ) -> BoxFuture<'a, buck2_error::Result<&'d LoadedModule>>
+    where
+        'd: 'a,
+    {
+        match INTERPRETER_CALCULATION_IMPL.get() {
+            Ok(i) => i.get_loaded_module(self, path),
+            Err(e) => futures::future::ready(Err(e)).boxed(),
+        }
     }
 }

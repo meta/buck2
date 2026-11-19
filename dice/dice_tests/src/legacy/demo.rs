@@ -20,14 +20,20 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_trait::async_trait;
 use derive_more::Display;
+use dice::BranchId;
 use dice::DetectCycles;
 use dice::Dice;
 use dice::DiceComputations;
+use dice::DiceKeyDyn;
 use dice::DiceTransactionUpdater;
+use dice::EqualityBehavior;
 use dice::InjectedKey;
 use dice::Key;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use dupe::ResultDupedExt;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use tempfile::NamedTempFile;
 
 #[derive(Debug, Clone, Dupe, PartialEq, Allocative)]
@@ -36,15 +42,20 @@ enum Encoding {
     Ascii,
 }
 
-#[derive(Clone, Dupe, Debug, Display, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Dupe, Debug, Display, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("{:?}", self)]
+#[pagable_typetag(DiceKeyDyn)]
 struct EncodingConfig();
 
 impl InjectedKey for EncodingConfig {
     type Value = Encoding;
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
     }
 }
 
@@ -56,6 +67,7 @@ impl Encodings<'_, '_> {
             .compute(&EncodingConfig())
             .await
             .map_err(|e| Arc::new(anyhow::anyhow!(e)))
+            .duped()
     }
 }
 
@@ -81,13 +93,17 @@ impl SetEncodings for DiceTransactionUpdater {
 
 struct Filesystem<'c, 'd>(&'c mut DiceComputations<'d>);
 
-#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("File({})", _0.display())]
-struct File(PathBuf);
+#[pagable_typetag(DiceKeyDyn)]
+struct File(#[pagable(flatten_serde)] PathBuf);
 
 #[async_trait]
 impl Key for File {
     type Value = Result<Arc<String>, Arc<anyhow::Error>>;
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -103,11 +119,11 @@ impl Key for File {
         }))
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
             (Ok(x), Ok(y)) => x == y,
             _ => false,
-        }
+        })
     }
 }
 
@@ -117,6 +133,7 @@ impl Filesystem<'_, '_> {
             .compute(&File(file.to_path_buf()))
             .await
             .map_err(|e| Arc::new(anyhow::anyhow!(e)))?
+            .dupe()
     }
 }
 
@@ -146,18 +163,20 @@ async fn demo() -> anyhow::Result<()> {
     let f = PathBuf::from(temp.path());
 
     let dice = Dice::builder().build(DetectCycles::Enabled);
+    let root = dice.new_root().await;
 
-    let mut ctx = dice.updater();
+    let mut ctx = dice.updater(root);
     ctx.set_encodings(Encoding::Utf8)?;
     ctx.commit().await;
 
     let set = |x: &str| fs::write(&f, x).unwrap();
 
-    async fn get(x: &str, dice: &Arc<Dice>, f: &Path) {
+    async fn get(x: &str, dice: &Arc<Dice>, root: BranchId, f: &Path) {
         let contents = dice
-            .updater()
+            .updater(root)
             .commit()
             .await
+            .ctx()
             .filesystem()
             .read_file(f)
             .await
@@ -167,22 +186,22 @@ async fn demo() -> anyhow::Result<()> {
 
     set(":-)");
 
-    get(":-)", &dice, &f).await;
+    get(":-)", &dice, root, &f).await;
 
     // doesn't change because I didn't dirty it
     set("hello :-)");
 
-    get(":-)", &dice, &f).await;
+    get(":-)", &dice, root, &f).await;
 
-    let mut ctx = dice.updater();
+    let mut ctx = dice.updater(root);
     ctx.filesystem_changed(&f)?;
     ctx.commit().await;
-    get("hello :-)", &dice, &f).await;
+    get("hello :-)", &dice, root, &f).await;
 
-    let mut ctx = dice.updater();
+    let mut ctx = dice.updater(root);
     ctx.set_encodings(Encoding::Ascii)?;
     ctx.commit().await;
-    get("hello smile", &dice, &f).await;
+    get("hello smile", &dice, root, &f).await;
 
     Ok(())
 }

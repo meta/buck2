@@ -29,9 +29,19 @@ where
     H: DirectoryDigest,
 {
     Immutable(
-        sorted_vector_map::map::Iter<'a, FileNameBuf, DirectoryEntry<ImmutableDirectory<L, H>, L>>,
+        crate::directory::sorted_slice_map::Iter<
+            'a,
+            FileNameBuf,
+            DirectoryEntry<ImmutableDirectory<L, H>, L>,
+        >,
     ),
-    Shared(sorted_vector_map::map::Iter<'a, FileNameBuf, DirectoryEntry<SharedDirectory<L, H>, L>>),
+    Shared(
+        crate::directory::sorted_slice_map::Iter<
+            'a,
+            FileNameBuf,
+            DirectoryEntry<SharedDirectory<L, H>, L>,
+        >,
+    ),
 }
 
 impl<'a, L, H> Iterator for ImmutableOrExclusiveDirectoryEntries<'a, L, H>

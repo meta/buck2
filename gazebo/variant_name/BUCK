@@ -1,0 +1,11 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "variant_name",
+    srcs = glob(["src/**/*.rs"]),
+    deps = [
+        "//buck2/gazebo/variant_name_derive:variant_name_derive",
+    ],
+)

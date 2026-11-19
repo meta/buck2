@@ -6,14 +6,18 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//cxx:attrs.bzl", "cxx_common")
 load("@prelude//cxx:cxx_context.bzl", "get_cxx_toolchain_info")
 load("@prelude//cxx:cxx_library_utility.bzl", "cxx_attr_deps")
 load("@prelude//cxx:headers.bzl", "cxx_get_regular_cxx_headers_layout")
 load("@prelude//cxx:preprocessor.bzl", "cxx_inherited_preprocessor_infos", "cxx_merge_cpreprocessors", "cxx_private_preprocessor_info")
-load("@prelude//linking:link_groups.bzl", "LinkGroupLibInfo")
+load("@prelude//decls:common.bzl", "buck")
+load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
+load("@prelude//linking:link_groups.bzl", "EMPTY_LINK_GROUP_LIB_INFO")
 load("@prelude//linking:link_info.bzl", "LibOutputStyle", "LinkInfo", "LinkInfos", "ObjectsLinkable", "create_merged_link_info")
 load("@prelude//linking:linkable_graph.bzl", "create_linkable_graph")
-load("@prelude//linking:shared_libraries.bzl", "SharedLibraryInfo")
+load("@prelude//linking:shared_libraries.bzl", "EMPTY_SHARED_LIBRARY_INFO")
 
 def windows_resource_impl(ctx: AnalysisContext) -> list[Provider]:
     non_exported_deps = cxx_attr_deps(ctx)
@@ -44,6 +48,7 @@ def windows_resource_impl(ctx: AnalysisContext) -> list[Provider]:
         rc_output = ctx.actions.declare_output(
             "__objects__",
             "{}.res".format(src.short_path),
+            has_content_based_path = False,
         )
         rc_cmd = cmd_args(
             toolchain.rc_compiler_info.compiler,
@@ -62,6 +67,7 @@ def windows_resource_impl(ctx: AnalysisContext) -> list[Provider]:
         cvtres_output = ctx.actions.declare_output(
             "__objects__",
             "{}.obj".format(src.short_path),
+            has_content_based_path = False,
         )
         cvtres_cmd = cmd_args(
             toolchain.cvtres_compiler_info.compiler,
@@ -79,17 +85,19 @@ def windows_resource_impl(ctx: AnalysisContext) -> list[Provider]:
 
     link = LinkInfo(
         name = ctx.attrs.name,
-        linkables = [ObjectsLinkable(
-            objects = objects,
-            linker_type = toolchain.linker_info.type,
-            link_whole = True,
-        )],
+        linkables = [
+            ObjectsLinkable(
+                objects = objects,
+                linker_type = toolchain.linker_info.type,
+                link_whole = True,
+            )
+        ],
     )
 
     providers = [
         DefaultInfo(default_output = None),
-        SharedLibraryInfo(set = None),
-        LinkGroupLibInfo(libs = {}),
+        EMPTY_SHARED_LIBRARY_INFO,
+        EMPTY_LINK_GROUP_LIB_INFO,
         create_linkable_graph(ctx),
         create_merged_link_info(
             ctx,
@@ -99,3 +107,56 @@ def windows_resource_impl(ctx: AnalysisContext) -> list[Provider]:
     ]
 
     return providers
+
+windows_resource = prelude_rule(
+    name = "windows_resource",
+    impl = windows_resource_impl,
+    docs = """
+        A `windows_resource()` rule specifies a set of Window's Resource File (.rc) that
+        are compiled into object files.
+
+        The files are compiled into .res files using rc.exe and then compiled into object files
+        using cvtres.exe.
+        They are not part of cxx_library because Microsoft's linker ignores the resources
+        unless they are specified as an object file, meaning including them in a possibly static
+        library is unintuitive.
+    """,
+    examples = """
+        ```
+        # A rule that includes a single .rc file and compiles it into an object file.
+        windows_resource(
+          name = "resources",
+          srcs = [
+            "resources.rc",
+          ],
+        )
+
+        # A rule that links against the above windows_resource rule.
+        cxx_binary(
+          name = "app",
+          srcs = [
+            "main.cpp",
+          ],
+          deps = [
+            ":resources"
+          ],
+        )
+        ```
+    """,
+    further = None,
+    attrs = (
+        cxx_common.srcs_arg()
+        | cxx_common.headers_arg()
+        | cxx_common.header_namespace_arg()
+        | cxx_common.raw_headers_arg()
+        | cxx_common.include_directories_arg()
+        | {
+            "deps": attrs.list(attrs.dep(), default = []),
+        }
+        | buck.labels_arg()
+        | buck.contacts_arg()
+        | {
+            "_cxx_toolchain": toolchains_common.cxx(),
+        }
+    ),
+)

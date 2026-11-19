@@ -4,9 +4,13 @@ title: Configuration modifiers
 ---
 
 Modifiers (also referred to as configuration modifiers) are a feature that lets
-users add [constraints](../../rule_authors/configurations) to individual
-directories, target definitions and individual `buck2` invocations. They are the
-recommended to customize build configuration.
+users add [constraints](../rule_authors/configurations.md) to individual
+directories, target definitions and individual `buck2` invocations.
+
+They are the recommended to customize build configurations when building
+targets directly. If you need to customize parts of your build graph
+(e.g. always build some specific dependencies in release mode),
+[configuration transitions](transitions.md) are more appropriate.
 
 ## (Open-Source Only) Getting started with modifiers
 
@@ -44,5 +48,5 @@ information.
 ## More information
 
 Official documentation on modifiers is sparse at the moment, so you might be
-interested in reading [the original RFC](../rfcs/cfg-modifiers/modifiers.pdf)
+interested in reading [the original RFC](../rfcs/implemented/modifiers.md)
 for more details.

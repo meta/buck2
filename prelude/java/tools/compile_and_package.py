@@ -91,6 +91,13 @@ def _parse_args():
         help="path to file with stored bootclasspath for java compilation",
     )
     parser.add_argument(
+        "--javac_jvm_args_file",
+        type=pathlib.Path,
+        required=False,
+        metavar="javac_jvm_args_file",
+        help="path to file with JVM args (-J prefixed) to pass directly to javac on the command line (not via @argfile)",
+    )
+    parser.add_argument(
         "--resources_dir",
         type=pathlib.Path,
         required=False,
@@ -180,11 +187,21 @@ def _run_javac(
     javac_bootclasspath_file: pathlib.Path,
     generated_sources_dir: pathlib.Path,
     temp_build_dir: pathlib.Path,
+    javac_jvm_args_file: pathlib.Path = None,
 ) -> pathlib.Path:
     # make sure output folder exists
     javac_output.mkdir(parents=True, exist_ok=True)
 
     javac_cmd = [javac_tool]
+
+    # JVM args must be passed directly on the command line (not via @argfile)
+    # because javac does not support -J flags inside @argfiles.
+    if javac_jvm_args_file:
+        with open(javac_jvm_args_file) as f:
+            for line in f:
+                arg = line.strip()
+                if arg:
+                    javac_cmd.append(arg)
 
     args_file = javac_args_file
     if zipped_sources_file:
@@ -224,7 +241,12 @@ def _run_javac(
 
         p = subprocess.run(javac_cmd, stderr=subprocess.PIPE, text=True)
         if p.returncode != 0:
-            print(utils.pretty_exception_j(p.stderr), file=sys.stderr)
+            print(
+                f"javac command failed with exit code {p.returncode}. javac_tool={javac_tool}",
+                file=sys.stderr,
+            )
+            if p.stderr:
+                print(utils.pretty_exception_j(p.stderr), file=sys.stderr)
             sys.exit(p.returncode)
 
         return javac_output
@@ -293,6 +315,7 @@ def main():
     javac_classpath = args.javac_classpath_file
     javac_processor_classpath = args.javac_processors_classpath_file
     javac_bootclasspath_file = args.javac_bootclasspath_file
+    javac_jvm_args_file = args.javac_jvm_args_file
     resources_dir = args.resources_dir
     generated_sources_dir = args.generated_sources_dir
     manifest = args.manifest
@@ -356,6 +379,7 @@ def main():
                 javac_bootclasspath_file,
                 generated_sources_dir,
                 temp_build_dir,
+                javac_jvm_args_file,
             )
             if multi_release_args_file:
                 # add javac_output as classpath for the multi-release build

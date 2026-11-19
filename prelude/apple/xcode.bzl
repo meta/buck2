@@ -22,11 +22,8 @@ load("@prelude//ide_integrations/xcode:data.bzl", "XcodeDataInfoKeys")
 load("@prelude//utils:expect.bzl", "expect")
 
 def apple_populate_xcode_attributes(
-        ctx,
-        srcs: list[CxxSrcWithFlags],
-        argsfiles: dict[str, CompileArgsfile],
-        product_name: str,
-        contains_swift_sources: bool = False) -> dict[str, typing.Any]:
+    ctx, srcs: list[CxxSrcWithFlags], argsfiles: dict[str, CompileArgsfile], product_name: str, contains_swift_sources: bool = False
+) -> dict[str, typing.Any]:
     data = cxx_populate_xcode_attributes(ctx = ctx, srcs = srcs, argsfiles = argsfiles, product_name = product_name)
 
     data[XcodeDataInfoKeys.CONTAINS_SWIFT_SOURCES] = contains_swift_sources

@@ -26,12 +26,12 @@ use crate as starlark;
 use crate::environment::MethodsBuilder;
 use crate::values::Heap;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
 use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
+use crate::values::dict::DictType;
 use crate::values::list::AllocList;
-use crate::values::list::ListRef;
-use crate::values::list::UnpackList;
+use crate::values::list::ListType;
 use crate::values::none::NoneType;
 use crate::values::typing::StarlarkIter;
 
@@ -107,9 +107,9 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     /// ```
     fn items<'v>(
         this: DictRef<'v>,
-        heap: &'v Heap,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, UnpackList<(Value<'v>, Value<'v>)>>> {
-        Ok(heap.alloc_typed_unchecked(AllocList(this.iter())).cast())
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, ListType<(Value<'v>, Value<'v>)>>> {
+        Ok(heap.alloc(AllocList(this.iter())))
     }
 
     /// [dict.keys](
@@ -128,9 +128,9 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn keys<'v>(
         this: DictRef<'v>,
-        heap: &'v Heap,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, &'v ListRef<'v>>> {
-        Ok(ValueOfUnchecked::new(heap.alloc(AllocList(this.keys()))))
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, ListType<Value<'v>>>> {
+        Ok(heap.alloc(AllocList(this.keys())))
     }
 
     /// [dict.pop](
@@ -169,7 +169,7 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn pop<'v>(
         this: Value<'v>,
         #[starlark(require = pos)] key: Value<'v>,
-        #[starlark(require = pos)] default: Option<Value<'v>>,
+        default: Option<Value<'v>>,
     ) -> starlark::Result<Value<'v>> {
         let mut me = DictMut::from_value(this)?;
         match me.aref.remove_hashed(key.get_hashed()?) {
@@ -308,18 +308,21 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn update<'v>(
         this: Value<'v>,
         #[starlark(require = pos)] pairs: Option<
-            ValueOfUnchecked<'v, Either<DictRef<'v>, StarlarkIter<(Value<'v>, Value<'v>)>>>,
+            ValueOf<
+                'v,
+                Either<DictType<Value<'v>, Value<'v>>, StarlarkIter<(Value<'v>, Value<'v>)>>,
+            >,
         >,
         #[starlark(kwargs)] kwargs: DictRef<'v>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> starlark::Result<NoneType> {
-        let pairs = if pairs.map(|x| x.get().ptr_eq(this)) == Some(true) {
+        let pairs = if pairs.map(|x| x.to_value().ptr_eq(this)) == Some(true) {
             // someone has done `x.update(x)` - that isn't illegal, but we will have issues
             // with trying to iterate over x while holding x for mutation, and it doesn't do
             // anything useful, so just change pairs back to None
             None
         } else {
-            pairs.map(|x| x.get())
+            pairs.map(|x| x.to_value())
         };
 
         let mut this = DictMut::from_value(this)?;
@@ -368,9 +371,9 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn values<'v>(
         this: DictRef<'v>,
-        heap: &'v Heap,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, &'v ListRef<'v>>> {
-        Ok(ValueOfUnchecked::new(heap.alloc_list_iter(this.values())))
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, ListType<Value<'v>>>> {
+        Ok(heap.alloc_list_iter(this.values().map(ValueOf::from)))
     }
 }
 
@@ -379,10 +382,29 @@ mod tests {
     use crate::assert;
     use crate::assert::Assert;
 
+    /// `D.update(pairs)` with `D` itself among the pairs: iterating the receiver while
+    /// `update` holds it mutably borrowed is a Starlark error, not a panic.
+    #[test]
+    fn test_update_with_self_among_pairs() {
+        assert::fail("d = {'a': 1, 'b': 2}\nd.update([d])", "mutates an iterable");
+        assert::fail(
+            "d = {'a': 1}\nd.update([('k', 'v'), d])",
+            "mutates an iterable",
+        );
+    }
+
     #[test]
     fn test_error_codes() {
         assert::fail(r#"x = {"one": 1}; x.pop("four")"#, "not found");
         assert::fail("x = {}; x.popitem()", "empty");
+    }
+
+    #[test]
+    fn test_dict_pop_default_named() {
+        // Bazel compatibility: dict.pop() accepts `default` as a named kwarg
+        assert::is_true(r#"{"a": 1}.pop("b", default = None) == None"#);
+        assert::is_true(r#"{"a": 1}.pop("a", default = 99) == 1"#);
+        assert::is_true(r#"{"a": 1}.pop("b", default = 42) == 42"#);
     }
 
     #[test]

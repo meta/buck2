@@ -10,8 +10,8 @@ load("@prelude//cfg/modifier:cfg_constructor.bzl", "cfg_constructor_post_constra
 load("@prelude//cfg/modifier:common.bzl", "MODIFIER_METADATA_KEY")
 
 SHIM_ALIASES = {
-    "fedora": "shim//os/linux/distro/constraints:fedora",
-    "ubuntu": "shim//os/linux/distro/constraints:ubuntu",
+    "fedora": "shim//os/linux/distro/constraints:distro[fedora]",
+    "ubuntu": "shim//os/linux/distro/constraints:distro[ubuntu]",
 }
 
 def set_cfg_constructor(aliases = dict()):

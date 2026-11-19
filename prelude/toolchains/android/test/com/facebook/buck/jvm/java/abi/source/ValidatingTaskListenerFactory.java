@@ -27,6 +27,7 @@ class ValidatingTaskListenerFactory implements CompilerTreeApiTest.TaskListenerF
   private final String ruleName;
   private final Set<String> targetsAvailableForSoruceOnly = new HashSet<>();
   private boolean requiredForSourceAbi = false;
+  private boolean inheritedMemberTypesOnly = false;
 
   ValidatingTaskListenerFactory(String ruleName) {
     this.ruleName = ruleName;
@@ -34,6 +35,10 @@ class ValidatingTaskListenerFactory implements CompilerTreeApiTest.TaskListenerF
 
   public void setRuleIsRequiredForSourceAbi(boolean value) {
     this.requiredForSourceAbi = value;
+  }
+
+  public void setInheritedMemberTypesOnly(boolean value) {
+    this.inheritedMemberTypesOnly = value;
   }
 
   public void addTargetAvailableForSourceOnlyAbi(String target) {
@@ -77,6 +82,7 @@ class ValidatingTaskListenerFactory implements CompilerTreeApiTest.TaskListenerF
           }
         },
         () -> false,
-        Diagnostic.Kind.ERROR);
+        Diagnostic.Kind.ERROR,
+        inheritedMemberTypesOnly);
   }
 }

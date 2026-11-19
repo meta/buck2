@@ -14,10 +14,11 @@ use std::fmt::Formatter;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
 use strong_hash::StrongHash;
 
 #[derive(
-    Debug, Copy, Clone, Dupe, Eq, PartialEq, Hash, Ord, PartialOrd, Allocative, StrongHash
+    Debug, Copy, Clone, Dupe, Eq, PartialEq, Hash, Ord, PartialOrd, Allocative, StrongHash, Pagable
 )]
 pub enum BuiltinPlatform {
     /// The unbound platform is used when we don't yet have a platform bound. This is to support initialization

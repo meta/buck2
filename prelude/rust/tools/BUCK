@@ -23,79 +23,128 @@ get_rustc_host_tuple(
     visibility = ["PUBLIC"],
 )
 
-prelude.python_bootstrap_binary(
-    name = "deferred_link_action",
-    main = "deferred_link_action.py",
+# Twin of `fbsource//third-party/rust-toolchain/constraints:dual-arch-qualification`
+# for `select()`s in rule attr defaults (defaults are `within_view`-exempt, but
+# the `fbsource` cell does not exist in OSS). Platforms set both in lockstep.
+prelude.constraint(
+    name = "dual-arch-qualification",
+    default = "disabled",
+    values = [
+        "disabled",
+        "enabled",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+prelude.alias(
+    name = "dual-arch-stage2-toolchain",
+    actual = "fbsource//third-party/rust-toolchain:dual-arch-stage2-toolchain",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "extract_link_action",
+    has_content_based_path = True,
     main = "extract_link_action.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
-    name = "rustc_action",
-    main = "rustc_action.py",
+    name = "windows_export_def",
+    has_content_based_path = True,
+    main = "windows_export_def.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
+    name = "rustc_action",
+    has_content_based_path = True,
+    main = "rustc_action.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_test(
+    name = "test_rustc_action",
+    srcs = [
+        "rustc_action.py",
+        "rustc_action_test.py",
+    ],
+    base_module = "",
+)
+
+prelude.python_bootstrap_binary(
     name = "rustdoc_test_with_resources",
+    has_content_based_path = True,
     main = "rustdoc_test_with_resources.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "failure_filter_action",
+    has_content_based_path = True,
     main = "failure_filter_action.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "transitive_dependency_symlinks",
+    has_content_based_path = True,
     main = "transitive_dependency_symlinks.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "buildscript_run",
+    has_content_based_path = True,
     main = "buildscript_run.py",
     visibility = ["PUBLIC"],
 )
 
-constraint_setting(
-    name = "buildscript_for_platform",
+prelude.python_bootstrap_binary(
+    name = "from_any_dir",
+    has_content_based_path = True,
+    main = "from_any_dir.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "rustdoc_coverage",
+    has_content_based_path = True,
     main = "rustdoc_coverage.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "redirect_stdout",
+    has_content_based_path = True,
     main = "redirect_stdout.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
     name = "symlink_only_dir_entry",
+    has_content_based_path = True,
     main = "symlink_only_dir_entry.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.python_bootstrap_binary(
+    name = "shared_libraries_symlink_tree",
+    has_content_based_path = True,
+    main = "shared_libraries_symlink_tree.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
     name = "cd_run",
+    has_content_based_path = True,
     main = "cd_run.py",
     visibility = ["PUBLIC"],
 )
 
 prelude.export_file(
     name = "linkable_symbol.rs",
+    has_content_based_path = True,
     visibility = ["PUBLIC"],
 )
 
@@ -111,5 +160,62 @@ rust_internal_tools_toolchain(
 
 prelude.export_file(
     name = "attrs.bzl",
+    has_content_based_path = True,
     visibility = ["PUBLIC"],
+)
+
+# Type checking target for Python tool scripts
+prelude.python_library(
+    name = "scripts-typing",
+    srcs = [
+        "buildscript_run.py",
+        "cd_run.py",
+        "extract_link_action.py",
+        "failure_filter_action.py",
+        "redirect_stdout.py",
+        "rustc_action.py",
+        "rustdoc_coverage.py",
+        "rustdoc_test_with_resources.py",
+        "shared_libraries_symlink_tree.py",
+        "symlink_only_dir_entry.py",
+        "transitive_dependency_symlinks.py",
+    ],
+    typing = True,
+)
+
+prelude.python_test(
+    name = "test_failure_filter",
+    srcs = [
+        "failure_filter_action.py",
+        "rustc_action.py",
+        "tests/test_failure_filter.py",
+    ],
+    base_module = "",
+)
+
+prelude.python_test(
+    name = "test_rustc_action_env",
+    srcs = [
+        "rustc_action.py",
+        "tests/test_rustc_action_env.py",
+    ],
+    base_module = "",
+)
+
+prelude.python_test(
+    name = "test_buildscript_run",
+    srcs = [
+        "buildscript_run.py",
+        "tests/test_buildscript_run.py",
+    ],
+    base_module = "",
+)
+
+prelude.python_test(
+    name = "test_shared_libraries_symlink_tree",
+    srcs = [
+        "shared_libraries_symlink_tree.py",
+        "tests/test_shared_libraries_symlink_tree.py",
+    ],
+    base_module = "",
 )

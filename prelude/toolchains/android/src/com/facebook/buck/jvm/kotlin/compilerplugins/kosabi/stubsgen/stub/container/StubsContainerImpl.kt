@@ -38,7 +38,7 @@ class StubsContainerImpl : StubsContainer {
       |    - name: ${stub.fqn}
       |    - type: ${stub.type.name}
     """
-            .trimMargin()
+            .trimMargin(),
     )
     stubs[stub.fqn] = stub
   }

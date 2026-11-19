@@ -6,13 +6,15 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-FooInfo = provider(fields = {
-    "foo": str,
-})
+FooInfo = provider(
+    fields = {
+        "foo": str,
+    }
+)
 
 def _provides_foo(ctx):
     return [
-        DefaultInfo(),
+        DefaultInfo(sub_targets = {"child_{}".format(i): [DefaultInfo(), FooInfo(foo = "child_{}".format(i))] for i in range(130)}),
         FooInfo(foo = ctx.attrs.name + "_foo"),
     ]
 

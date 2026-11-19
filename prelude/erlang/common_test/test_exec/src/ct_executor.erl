@@ -7,16 +7,19 @@
 
 %% @format
 -module(ct_executor).
--compile(warn_missing_spec_all).
 -moduledoc """
 Simple trampoline for ct_run.
 Notably allows us to call post/pre method on the node if needed, e.g for coverage.
 """.
+-compile(warn_missing_spec_all).
+
+-export([run/1]).
+
+% For testing
+-export([ct_run_exit_code/1, preload_app_file_atoms/1, split_args/1]).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("common/include/buck_ct_records.hrl").
-
--export([run/1]).
 
 %% `ct_run_arg()` represents an option accepted by ct:run_test/1, such as
 %% `multiply_timetraps` or `ct_hooks`.
@@ -65,16 +68,23 @@ Notably allows us to call post/pre method on the node if needed, e.g for coverag
     {output_dir, file:filename()}
     | {server_port, inet:port_number()}
     | {suite, module()}
-    | {providers, [{Name :: atom(), Args :: term()}]}.
+    | {providers, [{Name :: atom(), Args :: term()}]}
+    | {common_app_env, #{binary() => binary()}}.
 
-% For testing
--export([split_args/1]).
+-type ct_run_result() ::
+    {
+        Ok :: integer(),
+        Failed :: integer(),
+        {UserSkipped :: integer(), AutoSkipped :: integer()}
+    }
+    | (TestRunnerPid :: pid())
+    | {error, Reason :: term()}.
 
 -define(raw_file_access, prim_file).
 
 -spec run([string()]) -> no_return().
 run(Args) when is_list(Args) ->
-    {ok, CWDDir} = file:get_cwd(),
+    {ok, CWDDir} = prim_file:get_cwd(),
     os:putenv("HOME", CWDDir),
     ExitCode =
         try
@@ -96,20 +106,11 @@ run(Args) when is_list(Args) ->
                 [ServerPort | _] = [ServerPort || {server_port, ServerPort} <- CtExecutorArgs],
                 ct_executor_watchdog:start_link_client(ServerPort),
 
-                % We need to load the 'common' application to be able to configure
-                % it via the `common_app_env` arguments
-                application:load(common),
-                % We consult all the .app files to load the atoms.
-                % This solution is less than optimal and should be addressed
-                % T120903856
-                PotentialDotApp = [
-                    filename:join(Dep, filename:basename(filename:dirname(Dep)) ++ ".app")
-                 || Dep <- code:get_path()
-                ],
-                [file:consult(DotApp) || DotApp <- PotentialDotApp, filelib:is_regular(DotApp, ?raw_file_access)],
+                ok = init_common_app_env(proplists:get_value(common_app_env, CtExecutorArgs, #{})),
+                ok = preload_application_atoms(),
                 [Suite | _] = [Suite || {suite, Suite} <- CtExecutorArgs],
 
-                {ok, RawTarget} = application:get_env(common, raw_target),
+                {ok, RawTarget} = common_util:get_env(raw_target),
 
                 ProviderInitState = #init_provider_state{output_dir = OutputDir, suite = Suite, raw_target = RawTarget},
                 Providers0 = [
@@ -128,7 +129,7 @@ run(Args) when is_list(Args) ->
                 ?LOG_DEBUG("ct_run finished with result ~tp ~n", [Result]),
                 Providers2 = [buck_ct_provider:do_post_running(Provider) || Provider <- Providers1],
                 [buck_ct_provider:do_terminate(Provider) || Provider <- Providers2],
-                0
+                ct_run_exit_code(Result)
             catch
                 Class:Reason:Stack ->
                     ?LOG_ERROR("ct executor failed due to ~ts\n", [
@@ -147,18 +148,23 @@ run(Args) when is_list(Args) ->
         end,
     erlang:halt(ExitCode).
 
+-spec ct_run_exit_code(ct_run_result()) -> 0 | 2.
+ct_run_exit_code({error, Reason}) ->
+    ?LOG_ERROR("ct_run failed with reason ~tp", [Reason]),
+    2;
+ct_run_exit_code(TestRunnerPid) when is_pid(TestRunnerPid) ->
+    ?LOG_ERROR("ct_run returned a test runner pid, but release_shell is unsupported: ~tp", [TestRunnerPid]),
+    2;
+ct_run_exit_code(_Result) ->
+    0.
+
 -spec parse_arguments([string()]) -> {[ct_exec_arg()], [ct_run_arg()]}.
 parse_arguments(Args) ->
     % The logger is not set up yet.
     % This will be sent to the program executing it (ct_runner),
     % that will log it in its own log.
     debug_print("CT executor called with ~tp~n", [Args]),
-    ParsedArgs = lists:map(
-        fun(StrArgs) ->
-            buck_ct_parser:parse_str(StrArgs)
-        end,
-        Args
-    ),
+    ParsedArgs = [buck_ct_parser:parse_str(Elem) || Elem <:- Args],
     debug_print("Parsed arguments ~tp~n", [ParsedArgs]),
     % We split the arguments between those that go to ct_run and those that are for
     % ct_executor
@@ -186,9 +192,67 @@ parse_ct_run_args([{Key, _Value} = Arg | Args]) when is_atom(Key) ->
 parse_ct_exec_args([]) ->
     [];
 parse_ct_exec_args([{Key, _Value} = Arg | Args]) when
-    Key =:= output_dir; Key =:= server_port; Key =:= suite; Key =:= providers
+    Key =:= output_dir; Key =:= server_port; Key =:= suite; Key =:= providers; Key =:= common_app_env
 ->
     [Arg | parse_ct_exec_args(Args)].
+
+-spec init_common_app_env(#{binary() => binary()}) -> ok.
+init_common_app_env(CommonAppEnv) ->
+    ok = load_common_app(),
+    maps:foreach(fun init_common_app_env_var/2, CommonAppEnv).
+
+-spec load_common_app() -> ok.
+load_common_app() ->
+    case application:load(common) of
+        ok -> ok;
+        {error, {already_loaded, common}} -> ok;
+        Error -> error({load_common_app, Error})
+    end.
+
+-spec init_common_app_env_var(binary(), binary()) -> ok.
+init_common_app_env_var(Key, Value) ->
+    KeyAtom = binary_to_atom(Key, utf8),
+    case common_util:get_env(KeyAtom) of
+        undefined ->
+            ValueTerm = buck_ct_parser:parse_str(Value),
+            common_util:set_env(KeyAtom, ValueTerm);
+        _ ->
+            ok
+    end.
+
+-spec preload_application_atoms() -> ok.
+preload_application_atoms() ->
+    PotentialDotApp = [
+        filename:join(Dep, filename:basename(filename:dirname(Dep)) ++ ".app")
+     || Dep <- code:get_path()
+    ],
+    lists:foreach(fun preload_app_file_atoms/1, PotentialDotApp),
+    ok.
+
+-doc """
+Loads atoms referenced by an application resource file into the atom table.
+""".
+-spec preload_app_file_atoms(file:filename_all()) -> ok.
+preload_app_file_atoms(DotApp) ->
+    case filelib:is_regular(DotApp, ?raw_file_access) of
+        true ->
+            case file:read_file(DotApp, [raw]) of
+                {ok, DotAppContents} ->
+                    % Some tests call *_to_existing_atom for atoms that only appear in dependency .app files.
+                    % Tokenizing preserves that side effect without constructing the full terms.
+                    case unicode:characters_to_list(DotAppContents) of
+                        DotAppString when is_list(DotAppString) ->
+                            _ = erl_scan:string(DotAppString),
+                            ok;
+                        _ ->
+                            ok
+                    end;
+                {error, _} ->
+                    ok
+            end;
+        false ->
+            ok
+    end.
 
 -spec debug_print(string(), [term()]) -> ok.
 debug_print(Fmt, Args) ->

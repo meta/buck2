@@ -42,9 +42,23 @@ stub_toolchain = rule(
 # Rule with no attrs that produces an output. Useful if you want to be able to
 # build literally anything
 def _trivial_build(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("foo.txt", "abcd"))]
+    return [DefaultInfo(default_output = ctx.actions.write("foo.txt", "abcd", has_content_based_path = False), )]
 
 trivial_build = rule(
     impl = _trivial_build,
+    attrs = {},
+)
+
+# Rule with no attrs that executes a run action which fails
+def _impl(ctx):
+    out = ctx.actions.declare_output("out.txt", has_content_based_path = False)
+    ctx.actions.run(
+        cmd_args("false", hidden = out.as_output()),
+        category = "run",
+    )
+    return [DefaultInfo(default_output = out)]
+
+fail_build = rule(
+    impl = _impl,
     attrs = {},
 )

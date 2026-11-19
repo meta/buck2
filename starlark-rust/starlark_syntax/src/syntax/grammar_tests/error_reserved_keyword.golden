@@ -1,0 +1,60 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+class Foo:
+  pass
+
+Error:
+error: Parse error: cannot use reserved keyword `class`
+ --> error_reserved_keyword:1:1
+  |
+1 | class Foo:
+  | ^^^^^
+
+
+Program:
+import os
+
+Error:
+error: Parse error: cannot use reserved keyword `import`
+ --> error_reserved_keyword:1:1
+  |
+1 | import os
+  | ^^^^^^
+
+
+Program:
+raise ValueError
+
+Error:
+error: Parse error: cannot use reserved keyword `raise`
+ --> error_reserved_keyword:1:1
+  |
+1 | raise ValueError
+  | ^^^^^
+
+
+Program:
+load = 1
+
+Error:
+error: Parse error: unexpected symbol '=', expected symbol '('
+ --> error_reserved_keyword:1:6
+  |
+1 | load = 1
+  |      ^
+
+
+Program:
+f(load())
+
+Error:
+error: Parse error: unexpected keyword 'load', expected expression
+ --> error_reserved_keyword:1:3
+  |
+1 | f(load())
+  |   ^^^^

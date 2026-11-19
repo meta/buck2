@@ -29,9 +29,12 @@ pub mod cmp_impls;
 pub mod file_name;
 pub mod fmt;
 pub mod forward_rel_path;
+pub mod intern_forward_rel_path;
 pub mod into_filename_buf_iterator;
 pub mod path_util;
+pub mod relative_path;
 
 pub use into_filename_buf_iterator::IntoFileNameBufIterator;
-pub use relative_path::RelativePath;
-pub use relative_path::RelativePathBuf;
+
+pub use self::relative_path::RelativePath;
+pub use self::relative_path::RelativePathBuf;

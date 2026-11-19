@@ -8,6 +8,5 @@
  * above-listed licenses.
  */
 
-pub mod artifact_dyn;
 pub mod fs;
 pub mod group;

@@ -13,6 +13,7 @@ package com.facebook.buck.android.resources.filter;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.io.filesystem.CopySourceMode;
 import com.facebook.buck.io.filesystem.impl.ProjectFilesystemUtils;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileVisitResult;
@@ -33,6 +34,7 @@ import java.util.function.Predicate;
  *   <li>Empty directories will not be created.
  * </ul>
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FilteredDirectoryCopier {
 
   private FilteredDirectoryCopier() {}
@@ -45,6 +47,29 @@ public class FilteredDirectoryCopier {
       throws IOException {
     for (Map.Entry<Path, Path> e : sourcesToDestinations.entrySet()) {
       copyDir(projectRoot, ignoreFilter, e.getKey(), e.getValue(), pred);
+    }
+  }
+
+  public static void copyDirsParallel(
+      AbsPath projectRoot,
+      DirectoryStream.Filter<? super Path> ignoreFilter,
+      Map<Path, Path> sourcesToDestinations,
+      Predicate<Path> pred)
+      throws IOException {
+    sourcesToDestinations.entrySet().parallelStream()
+        .forEach(e -> copyDirExcWrapper(projectRoot, ignoreFilter, e.getKey(), e.getValue(), pred));
+  }
+
+  private static void copyDirExcWrapper(
+      AbsPath projectRoot,
+      DirectoryStream.Filter<? super Path> ignoreFilter,
+      Path srcDir,
+      Path destDir,
+      Predicate<Path> pred) {
+    try {
+      copyDir(projectRoot, ignoreFilter, srcDir, destDir, pred);
+    } catch (IOException e) {
+      throw new RuntimeException(e);
     }
   }
 

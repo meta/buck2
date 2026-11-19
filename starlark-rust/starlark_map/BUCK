@@ -5,24 +5,50 @@ oncall("build_infra")
 rust_library(
     name = "starlark_map",
     srcs = glob(["src/**/*.rs"]),
-    metadata = {
-        "buck.cfg_modifiers": [
-            # @oss-disable[end= ]: "ovr_config//rust:panic_unwind",
-        ],
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    # Only the impls the published crate needs, not everything
+                    # buck2 enables on these crates.
+                    "allocative": {"features": ["hashbrown"]},
+                    "pagable": {"features": [], "optional": True},
+                    "strong_hash": {"features": []},
+                },
+            },
+            "features": {
+                "default": [],
+                "pagable_dep": ["dep:pagable"],
+            },
+            "package": {
+                "authors": ["Facebook"],
+                "description": "Map implementation with starlark-rust specific optimizations",
+                "documentation": "https://docs.rs/starlark_map",
+                "license": "Apache-2.0",
+                "repository": "https://github.com/facebook/starlark-rust",
+                "version": "0.14.2",
+            },
+        },
     },
-    rustc_flags = [
-        "--cfg=rust_nightly",
+    # Controls whether to depend on the pagable crate.
+    # This is independent from the "pagable" constraint on the starlark crate,
+    # which controls pagable serialization/deserialization support for starlark values.
+    features = ["pagable_dep"],
+    modifiers = [
+        # @oss-disable[end= ]: "ovr_config//rust:panic[unwind]",
     ],
     test_deps = [
         "fbsource//third-party/rust:serde_json",
+        "//buck2/gazebo/dupe:dupe",
     ],
+    unittests_miri = True,
     deps = [
         "fbsource//third-party/rust:equivalent",
-        "fbsource//third-party/rust:fxhash",
         "fbsource//third-party/rust:hashbrown",
         "fbsource//third-party/rust:serde",
         "//buck2/allocative/allocative:allocative",
-        "//buck2/gazebo/dupe:dupe",
         "//buck2/gazebo/strong_hash:strong_hash",
+        "//buck2/pagable:pagable",
+        "//buck2/shed/mini_map:mini_map",
     ],
 )

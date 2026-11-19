@@ -6,9 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-FooInfo = provider(fields = [
-    "foo",
-])
+FooInfo = provider(
+    fields = [
+        "foo",
+    ]
+)
 
 def _impl(ctx):
     return [DefaultInfo(), FooInfo(foo = ctx.attrs.name + "_foo")]
@@ -17,7 +19,7 @@ def _binary_impl(ctx):
     return [DefaultInfo(), RunInfo(args = []), FooInfo(foo = ctx.attrs.name + "_foo")]
 
 def _buildable_impl(ctx):
-    out = ctx.actions.write(ctx.attrs.out, ctx.attrs.content)
+    out = ctx.actions.write(ctx.attrs.out, ctx.attrs.content, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 _foo_library = rule(

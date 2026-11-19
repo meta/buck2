@@ -17,6 +17,7 @@ use buck2_client_ctx::path_arg::PathArg;
 use buck2_common::argv::Argv;
 use buck2_common::argv::SanitizedArgv;
 use buck2_common::invocation_roots::find_invocation_roots;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::working_dir::AbsWorkingDir;
 
@@ -61,14 +62,23 @@ pub struct RootCommand {
 }
 
 impl RootCommand {
+    /// Whether this prints the daemon directory, which depends on the daemon routing.
+    pub fn prints_daemon_dir(&self) -> bool {
+        matches!(self.kind, RootKind::Daemon)
+    }
+
     pub fn exec(
         self,
         _matches: BuckArgMatches<'_>,
         ctx: ClientCommandContext<'_>,
     ) -> buck2_error::Result<()> {
-        let root = if matches!(self.kind, RootKind::Daemon) {
-            ctx.paths()?.daemon_dir()?.path
-        } else {
+        if matches!(self.kind, RootKind::Daemon) {
+            let daemon_dir =
+                ctx.with_runtime(|ctx| async move { ctx.resolve_tenant_daemon_dir().await })?;
+            buck2_client_ctx::println!("{}", daemon_dir.path.to_string_lossy())?;
+            return Ok(());
+        }
+        let root = {
             let working_dir_data;
             let imm_ctx_data;
             let (roots, imm_ctx) = match self.dir.clone() {
@@ -77,7 +87,7 @@ impl RootCommand {
                     // Note: While `canonicalize` is usually wrong, in this case it's necessary
                     // because our definition of where the project root is doesn't make sense for
                     // non-normalized paths
-                    let base_dir = fs_util::canonicalize(&base_dir)?;
+                    let base_dir = fs_util::canonicalize(&base_dir).categorize_internal()?;
                     working_dir_data = AbsWorkingDir::unchecked_new(base_dir);
                     let roots = find_invocation_roots(&working_dir_data)?;
                     imm_ctx_data = ImmediateConfigContext::new(&working_dir_data);

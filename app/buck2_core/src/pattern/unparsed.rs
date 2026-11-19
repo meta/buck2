@@ -11,12 +11,14 @@
 use std::marker::PhantomData;
 
 use allocative::Allocative;
+use pagable::Pagable;
 
 use crate::fs::project_rel_path::ProjectRelativePath;
 use crate::fs::project_rel_path::ProjectRelativePathBuf;
 use crate::pattern::pattern_type::PatternType;
 
-#[derive(Allocative, Debug, Clone, PartialEq, Eq)]
+#[derive(Allocative, Debug, Clone, PartialEq, Eq, Pagable)]
+#[pagable(bound = "")]
 pub struct UnparsedPatterns<T: PatternType> {
     /// Patterns, e.g. `[":foo", "//bar/..."]`.
     patterns: Vec<String>,
@@ -43,7 +45,8 @@ impl<T: PatternType> UnparsedPatterns<T> {
     }
 }
 
-#[derive(Allocative, Debug, Clone, PartialEq, Eq)]
+#[derive(Allocative, Debug, Clone, PartialEq, Eq, Pagable)]
+#[pagable(bound = "")]
 pub enum UnparsedPatternPredicate<T: PatternType> {
     Any,
     AnyOf(UnparsedPatterns<T>),

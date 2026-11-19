@@ -6,14 +6,13 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
 
+from __future__ import annotations
 
 import dataclasses
 import json
 import pathlib
 from collections.abc import Iterable, Mapping
-from typing import Optional
 
 import inputs
 import outputs
@@ -85,7 +84,7 @@ def detect_conflict(
     build_map: Mapping[str, outputs.SourceInfo],
     target: inputs.Target,
     merge_candidate: Mapping[str, str],
-) -> Optional[ConflictInfo]:
+) -> ConflictInfo | None:
     for artifact_path, source_path in merge_candidate.items():
         existing_source_info = build_map.get(artifact_path, None)
         if (

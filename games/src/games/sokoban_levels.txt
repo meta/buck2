@@ -1,0 +1,88 @@
+; Sokoban levels
+; # = wall, . = target, $ = box, @ = player
+; + = player on target, * = box on target
+; Levels separated by blank lines
+
+; Level 1: 3 boxes, intro (4 pushes)
+  ###
+  # #
+###.###
+#.$ $.#
+###$###
+  #@#
+  ###
+
+; Level 2: 3 boxes, open room (5 pushes)
+######
+#    #
+# $$ #
+#.@$.#
+#  . #
+######
+
+; Level 3: 3 boxes, column pushes (5 pushes)
+ #####
+##   #
+# $  #
+# $. #
+# $. #
+# .@ #
+######
+
+; Level 4: 4 boxes, backtracking (7 pushes)
+########
+# .  . #
+#  ##  #
+# $  $ #
+#  ##  #
+# $  $ #
+#  .@. #
+########
+
+; Level 5: 5 boxes, complex layout (13 pushes)
+ ########
+## .    #
+#   ##$ #
+# $ . $ #
+# ##.#  #
+#  $ .  #
+##   @###
+ ######
+
+; Level 6: 2 boxes, generated (14 pushes)
+########
+###@   #
+###  ..#
+#  $ ###
+#  $ ###
+#  #####
+#  #####
+########
+
+; Level 7: 2 boxes, generated (16 pushes)
+########
+###@ ###
+###    #
+#  $ #.#
+#  $ #.#
+###    #
+#####  #
+########
+
+; Level 8: 3 boxes, generated (18 pushes)
+########
+#.  $+ #
+#$  $  #
+#  ##. #
+#  #####
+########
+
+; Level 9: 3 boxes, generated (20 pushes)
+########
+#+ ##  #
+#      #
+# $#####
+#. #####
+# $$  ##
+#  .  ##
+########

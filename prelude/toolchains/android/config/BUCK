@@ -20,8 +20,6 @@ config_backed_java_toolchain(
 config_backed_kotlin_toolchain(
     name = "kotlin_bootstrap",
     is_bootstrap_toolchain = True,
-    # This causes us to always use the classic protocol instead of kotlincd as the bootstrap toolchain needs to build kotlincd itself.
-    kotlinc = "prelude//toolchains/android/third-party:kotlin-compiler-binary",
     visibility = [
         "PUBLIC",
     ],

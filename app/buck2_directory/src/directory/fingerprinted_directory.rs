@@ -14,6 +14,7 @@ use buck2_core::directory_digest::DirectoryDigest;
 
 use crate::directory::directory::Directory;
 use crate::directory::directory_ref::FingerprintedDirectoryRef;
+use crate::directory::exhaustiveness::ExhaustivenessHash;
 
 pub trait FingerprintedDirectory<L, H>: Directory<L, H> {
     type FingerprintedDirectoryRef<'a>: FingerprintedDirectoryRef<'a, Leaf = L, DirectoryDigest = H>
@@ -28,6 +29,11 @@ pub trait FingerprintedDirectory<L, H>: Directory<L, H> {
     fn fingerprint(&self) -> &H
     where
         H: DirectoryDigest;
+
+    /// The second half of this directory's identity; see [`ExhaustivenessHash`]. Two
+    /// fingerprinted directories are the same directory iff both their fingerprints and their
+    /// exhaustiveness hashes agree.
+    fn exhaustiveness_hash(&self) -> ExhaustivenessHash;
 
     fn size(&self) -> u64;
 }

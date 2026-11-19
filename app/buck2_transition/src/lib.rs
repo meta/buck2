@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
 #![feature(try_blocks)]
 
 pub(crate) mod transition;

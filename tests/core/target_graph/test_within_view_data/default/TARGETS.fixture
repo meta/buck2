@@ -1,0 +1,6 @@
+test_within_view_defaults_rule(
+    name = "a",
+    within_view = [
+        "//c/...",
+    ],
+)

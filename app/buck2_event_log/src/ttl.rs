@@ -10,6 +10,7 @@
 
 use buck2_common::manifold::Ttl;
 use buck2_core::buck2_env;
+use buck2_events::metadata::is_devserver_placeholder_unixname;
 use buck2_events::metadata::username;
 use buck2_events::schedule_type::SandcastleScheduleType;
 
@@ -49,7 +50,7 @@ fn manifold_event_log_ttl_impl(
 
     // 2. return if this is a user
     if let Some(username) = username {
-        if !robots.contains(&(username.as_str())) {
+        if !robots.contains(&(username.as_str())) && !is_devserver_placeholder_unixname(&username) {
             return Ok::<Ttl, buck2_error::Error>(Ttl::from_days(USER_TTL_DAYS));
         }
     }
@@ -87,6 +88,21 @@ mod tests {
             manifold_event_log_ttl_impl(
                 &["twsvcscm"],
                 Some("twsvcscm".to_owned()),
+                SandcastleScheduleType::testing_empty()
+            )?
+            .as_secs(),
+            60 * 24 * 60 * 60,
+        );
+        Ok(())
+    }
+
+    #[cfg(fbcode_build)]
+    #[test]
+    fn test_devserver_placeholder_is_not_a_user() -> buck2_error::Result<()> {
+        assert_eq!(
+            manifold_event_log_ttl_impl(
+                &["twsvcscm"],
+                Some("devenvuser2556".to_owned()),
                 SandcastleScheduleType::testing_empty()
             )?
             .as_secs(),

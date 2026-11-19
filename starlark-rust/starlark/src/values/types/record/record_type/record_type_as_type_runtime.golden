@@ -24,4 +24,3 @@ error: Value `record[RecFailRt2](a=1, b=2)` of type `record` does not match the 
   |
 7 | noop(f_fail_rt)(RecFailRt2(a = 1, b = 2))
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |

@@ -12,23 +12,27 @@ def _error_handler_impl(ctx: ActionErrorCtx) -> list[ActionSubError]:
     categories = []
 
     if indentation_error.match(ctx.stderr):
-        categories.append(ctx.new_sub_error(
-            category = "indentation",
-            message = "Indentation error!",
-        ))
+        categories.append(
+            ctx.new_sub_error(
+                category = "indentation",
+                message = "Indentation error!",
+            )
+        )
 
     if syntax_error.match(ctx.stderr):
-        categories.append(ctx.new_sub_error(
-            category = "syntax",
-            message = "Syntax error!",
-            file = "not_really_the_right_file",
-            lnum = 1,
-        ))
+        categories.append(
+            ctx.new_sub_error(
+                category = "syntax",
+                message = "Syntax error!",
+                file = "not_really_the_right_file",
+                lnum = 1,
+            )
+        )
 
     return categories
 
 def _make_failing_action(ctx, src, name):
-    out = ctx.actions.declare_output(src.short_path)
+    out = ctx.actions.declare_output(src.short_path, has_content_based_path = False)
     ctx.actions.run(
         [
             "fbpython",
@@ -49,7 +53,7 @@ def _fail_many(ctx):
     return [DefaultInfo(default_outputs = [_make_failing_action(ctx, src, ctx.attrs.name + str(i)) for (i, src) in enumerate(ctx.attrs.srcs)])]
 
 def _make_failing_action_no_source(ctx, error_handler):
-    out = ctx.actions.declare_output(ctx.attrs.name)
+    out = ctx.actions.declare_output(ctx.attrs.name, has_content_based_path = False)
 
     # error handler is invoked but won't catch anything
     ctx.actions.run(
@@ -80,19 +84,23 @@ def _error_handler_produced_multiple_categories(ctx):
     def error_handler(ctx: ActionErrorCtx) -> list[ActionSubError]:
         categories = []
 
-        categories.append(ctx.new_sub_error(
-            category = "category1",
-            message = "Message for category1",
-        ))
+        categories.append(
+            ctx.new_sub_error(
+                category = "category1",
+                message = "Message for category1",
+            )
+        )
 
-        categories.append(ctx.new_sub_error(
-            category = "category2",
-            message = "Message for category2",
-        ))
+        categories.append(
+            ctx.new_sub_error(
+                category = "category2",
+                message = "Message for category2",
+            )
+        )
 
         return categories
 
-    out = ctx.actions.declare_output(ctx.attrs.name)
+    out = ctx.actions.declare_output(ctx.attrs.name, has_content_based_path = False)
 
     # error handler is invoked but won't catch anything
     ctx.actions.run(
@@ -111,17 +119,21 @@ def _fail_error_handler_with_output(ctx):
         file_str = ctx.output_artifacts[out].read_string()
 
         if "Compilation Error" in file_str:
-            categories.append(ctx.new_sub_error(
-                category = "compilation",
-            ))
+            categories.append(
+                ctx.new_sub_error(
+                    category = "compilation",
+                )
+            )
 
         file_json = ctx.output_artifacts[out].read_json()
 
         if "ErrorCode123" in file_json["message"]:
-            categories.append(ctx.new_sub_error(
-                category = "ErrorCode123",
-                message = "Try doing xyz",
-            ))
+            categories.append(
+                ctx.new_sub_error(
+                    category = "ErrorCode123",
+                    message = "Try doing xyz",
+                )
+            )
 
         return categories
 
@@ -162,24 +174,20 @@ fail_many_with_error_handler = rule(
 
 fail_one_with_error_handler_no_op = rule(
     impl = _fail_one_no_op,
-    attrs = {
-    },
+    attrs = {},
 )
 
 error_handler_failed = rule(
     impl = _error_handler_failed,
-    attrs = {
-    },
+    attrs = {},
 )
 
 error_handler_wrong_return_type = rule(
     impl = _error_handler_wrong_return_type,
-    attrs = {
-    },
+    attrs = {},
 )
 
 error_handler_produced_multiple_categories = rule(
     impl = _error_handler_produced_multiple_categories,
-    attrs = {
-    },
+    attrs = {},
 )

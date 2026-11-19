@@ -88,7 +88,7 @@ functionalities).
 
 A common workflow would be to run analysis on a target, and use some interesting
 bits found in the analysis result to construct an augmented
-[`cmd_args`](../../../api/build#cmd_args) to run, and then ensure the action's
+[`cmd_args`](../../../api/build/cmd_args) to run, and then ensure the action's
 output (see below for ensuring). Also see
 [Running actions](../../how_tos/basic_how_tos#running-actions).
 
@@ -100,7 +100,7 @@ two APIs for ensuring: `ctx.output.ensure()` and `ctx.output.ensure_multiple()`
 (see [`bxl.OutputStream`](../../../api/bxl/OutputStream)). As the naming
 indicates, the former is for ensuring a single artifact, and the latter is for
 ensuring multiple artifact-like inputs. Artifact-like inputs include
-[`cmd_args`](../../../api/build#cmd_args) (can be found when inspecting
+[`cmd_args`](../../../api/build/cmd_args) (can be found when inspecting
 providers), [`bxl.BuildResult`](../../../api/bxl/BuildResult) (produced when
 building something in BXL), or [`artifact`](../../../api/build/Artifact) (can be
 found when inspecting providers, or creating your own actions).

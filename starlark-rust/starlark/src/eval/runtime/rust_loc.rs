@@ -15,23 +15,34 @@
  * limitations under the License.
  */
 
-/// Initialize `$loc` to `FrozenRef<FrameSpan>` with rust file and line number.
+/// Initialize to `&'static FrameSpan<'static>` with rust file and line number; `FrameSpan::at`
+/// brings it to the brand of the heap in use.
 macro_rules! rust_loc {
     () => {{
+        use std::sync::LazyLock;
+
         use crate::codemap::CodeMap;
         use crate::codemap::NativeCodeMap;
         use crate::eval::runtime::frame_span::FrameSpan;
-        use crate::eval::runtime::frozen_file_span::FrozenFileSpan;
-        use crate::values::FrozenRef;
+        use crate::eval::runtime::heap_file_span::HeapFileSpan;
 
         static NATIVE_CODEMAP: NativeCodeMap = NativeCodeMap::new(file!(), line!(), column!());
-        static CODEMAP: CodeMap = NATIVE_CODEMAP.to_codemap();
-        static FROZEN_FILE_SPAN: FrameSpan = FrameSpan::new(FrozenFileSpan::new_unchecked(
-            FrozenRef::new(&CODEMAP),
-            NativeCodeMap::FULL_SPAN,
-        ));
-        static LOC: FrozenRef<'static, FrameSpan> = FrozenRef::new(&FROZEN_FILE_SPAN);
-        LOC
+        pagable::static_value!(
+            NATIVE_CODEMAP_STATIC: NativeCodeMap = &NATIVE_CODEMAP,
+            starlark_syntax::codemap::NativeCodeMapStaticEntry
+        );
+        // @no_impl: StaticValueRegistered for StarlarkAny<CodeMap> is already
+        // implemented by the static_starlark_any! invocation in heap_file_span.rs.
+        crate::static_starlark_any!(
+            @no_impl CODEMAP: CodeMap = NativeCodeMap::to_codemap(NATIVE_CODEMAP_STATIC)
+        );
+        static FRAME_SPAN: LazyLock<FrameSpan<'static>> = LazyLock::new(|| {
+            FrameSpan::new(HeapFileSpan::new_unchecked(
+                CODEMAP.at(),
+                NativeCodeMap::FULL_SPAN,
+            ))
+        });
+        &*FRAME_SPAN
     }};
 }
 
@@ -52,7 +63,7 @@ mod tests {
     #[starlark_module]
     fn rust_loc_globals(globals: &mut GlobalsBuilder) {
         fn invoke<'v>(f: Value<'v>, eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
-            f.invoke_with_loc(Some(rust_loc!()), &Arguments::default(), eval)
+            f.invoke_with_loc(Some(rust_loc!().at()), &Arguments::default(), eval)
                 .into_anyhow_result()
         }
     }

@@ -11,7 +11,7 @@ platform(
     name = "windows_debug",
     constraint_values = [
         "config//os/constraints:windows",
-        "root//buck2_utils/configuration:debug",
+        "root//buck2_utils/configuration:configuration[debug]",
     ],
 )
 
@@ -19,7 +19,7 @@ platform(
     name = "windows_release",
     constraint_values = [
         "config//os/constraints:windows",
-        "root//buck2_utils/configuration:release",
+        "root//buck2_utils/configuration:configuration[release]",
     ],
 )
 
@@ -27,7 +27,7 @@ platform(
     name = "linux_debug",
     constraint_values = [
         "config//os/constraints:linux",
-        "root//buck2_utils/configuration:debug",
+        "root//buck2_utils/configuration:configuration[debug]",
     ],
 )
 
@@ -35,6 +35,6 @@ platform(
     name = "linux_release",
     constraint_values = [
         "config//os/constraints:linux",
-        "root//buck2_utils/configuration:release",
+        "root//buck2_utils/configuration:configuration[release]",
     ],
 )

@@ -11,11 +11,13 @@
 package com.facebook.buck.jvm.cd;
 
 import com.facebook.buck.jvm.java.CompileToJarStepFactory;
+import com.facebook.infer.annotation.Nullsafe;
 
 /**
  * Factory that creates {@link CompileStepsBuilder } builders instances that returns steps that is
  * ready to be executed in the current process.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DefaultCompileStepsBuilderFactory<T extends CompileToJarStepFactory.ExtraParams>
     implements CompileStepsBuilderFactory {
 

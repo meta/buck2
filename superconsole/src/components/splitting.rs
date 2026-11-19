@@ -71,29 +71,42 @@ impl InternalSplitKind {
         mode: DrawMode,
     ) -> Result<Vec<Lines>, C::Error> {
         match self {
-            InternalSplitKind::SizedNormalized(sizes) => children
-                .into_iter()
-                .zip(sizes.iter())
-                .map(|(child, size)| -> Result<_, C::Error> {
-                    // allocate alloted size
-                    let child_dimension = dimensions.multiply(*size, direction);
-                    let mut output = child.draw(child_dimension, mode)?;
+            InternalSplitKind::SizedNormalized(sizes) => {
+                let mut outputs = children
+                    .into_iter()
+                    .zip(sizes.iter())
+                    .map(|(child, size)| -> Result<_, C::Error> {
+                        // allocate alloted size
+                        let child_dimension = dimensions.multiply(*size, direction);
+                        let mut output = child.draw(child_dimension, mode)?;
 
-                    // bound non-splitting direction, pad splitting direction
-                    match direction {
-                        Direction::Horizontal => {
-                            output.truncate_lines_bottom(child_dimension.height);
-                            output.set_lines_to_exact_width(child_dimension.width);
+                        // bound non-splitting direction, pad splitting direction
+                        match direction {
+                            Direction::Horizontal => {
+                                output.truncate_lines_bottom(child_dimension.height);
+                                output.set_lines_to_exact_width(child_dimension.width);
+                            }
+                            Direction::Vertical => {
+                                output.truncate_lines(child_dimension.width);
+                                output.set_lines_to_exact_length(child_dimension.height);
+                            }
                         }
-                        Direction::Vertical => {
-                            output.truncate_lines(child_dimension.width);
-                            output.set_lines_to_exact_length(child_dimension.height);
-                        }
+
+                        Ok(output)
+                    })
+                    .collect::<Result<Vec<Lines>, C::Error>>()?;
+                if direction == Direction::Horizontal {
+                    // Joining pads every block to the tallest one and justifies each block to its
+                    // own widest line, so a block with no lines would take no width at all.
+                    let rows = outputs.iter().map(|o| o.len()).max().unwrap_or(0);
+                    for (output, size) in outputs.iter_mut().zip(sizes.iter()) {
+                        output.set_lines_to_exact_length(rows);
+                        output
+                            .set_lines_to_exact_width(dimensions.multiply(*size, direction).width);
                     }
-
-                    Ok(output)
-                })
-                .collect(),
+                }
+                Ok(outputs)
+            }
             InternalSplitKind::Adaptive => {
                 let mut available = dimensions;
                 children
@@ -165,6 +178,7 @@ impl<C: Component> Component for Split<C> {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
     use std::iter;
 
     use derive_more::AsRef;
@@ -172,10 +186,54 @@ mod tests {
     use super::Split;
     use super::SplitKind;
     use crate::Component;
+    use crate::Dimensions;
     use crate::Direction;
     use crate::DrawMode;
     use crate::Line;
     use crate::Lines;
+    use crate::components::Blank;
+    use crate::components::echo::Echo;
+
+    type Dyn = Box<dyn Component<Error = Infallible>>;
+
+    fn echo_rows(rows: &[&str]) -> Dyn {
+        Box::new(Echo(Lines(
+            rows.iter().map(|r| Line::unstyled(r).unwrap()).collect(),
+        )))
+    }
+
+    fn rows(lines: &Lines) -> Vec<String> {
+        lines.iter().map(|l| l.to_unstyled()).collect()
+    }
+
+    /// A child that draws nothing still takes up its share of a horizontal split.
+    #[test]
+    fn test_horizontal_split_with_empty_child() {
+        let split = Split::<Dyn>::new(
+            vec![Box::new(Blank), echo_rows(&["xx"])],
+            Direction::Horizontal,
+            SplitKind::Equal,
+        );
+        let out = split
+            .draw(Dimensions::new(10, 1), DrawMode::Normal)
+            .unwrap();
+        assert_eq!(rows(&out), vec!["     xx   ".to_owned()]);
+        assert_eq!(out.max_line_length(), 10);
+
+        let split = Split::<Dyn>::new(
+            vec![
+                echo_rows(&["aaaaaa"]),
+                Box::new(Blank),
+                echo_rows(&["cccccc"]),
+            ],
+            Direction::Horizontal,
+            SplitKind::Sized(vec![1.0, 1.0, 1.0]),
+        );
+        let out = split
+            .draw(Dimensions::new(12, 1), DrawMode::Normal)
+            .unwrap();
+        assert_eq!(rows(&out), vec!["aaaa    cccc".to_owned()]);
+    }
 
     #[derive(AsRef, Debug)]
     #[allow(dead_code)]

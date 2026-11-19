@@ -18,12 +18,20 @@ import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrarAdapter
 @OptIn(org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi::class)
 @SuppressWarnings("PackageLocationMismatch")
 class K2JvmAbiComponentRegistrar : CompilerPluginRegistrar() {
+  override val pluginId: String = "com.facebook.kotlin.k2.jvm.abi.gen"
+
   override fun ExtensionStorage.registerExtensions(configuration: CompilerConfiguration) {
     val outputPath = configuration.get(K2JvmAbiConfigurationKeys.OUTPUT_PATH)
 
     if (outputPath != null) {
       // Register K2 FIR extension for ABI generation
-      FirAnalysisHandlerExtension.registerExtension(K2JvmAbiFirAnalysisHandlerExtension(outputPath))
+      FirAnalysisHandlerExtension.registerExtension(
+          K2JvmAbiFirAnalysisHandlerExtension(
+              outputPath,
+              preserveDeclarationOrder =
+                  configuration.get(K2JvmAbiConfigurationKeys.PRESERVE_DECLARATION_ORDER, true),
+          ),
+      )
       FirExtensionRegistrarAdapter.registerExtension(AbiGenFirExtensionRegistrar())
     }
   }

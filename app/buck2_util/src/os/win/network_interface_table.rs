@@ -11,11 +11,11 @@
 use std::io::Error;
 use std::slice::from_raw_parts;
 
-use winapi::shared::netioapi::FreeMibTable;
-use winapi::shared::netioapi::GetIfTable2;
-use winapi::shared::netioapi::MIB_IF_ROW2;
-use winapi::shared::netioapi::MIB_IF_TABLE2;
-use winapi::shared::winerror::NO_ERROR;
+use windows_sys::Win32::Foundation::NO_ERROR;
+use windows_sys::Win32::NetworkManagement::IpHelper::FreeMibTable;
+use windows_sys::Win32::NetworkManagement::IpHelper::GetIfTable2;
+use windows_sys::Win32::NetworkManagement::IpHelper::MIB_IF_ROW2;
+use windows_sys::Win32::NetworkManagement::IpHelper::MIB_IF_TABLE2;
 
 use crate::os::win::network_interface::NetworkInterface;
 
@@ -25,7 +25,7 @@ struct TableGuard {
 
 impl Drop for TableGuard {
     fn drop(&mut self) {
-        unsafe { FreeMibTable(self.table as *mut _) }
+        unsafe { FreeMibTable(self.table as *const _) }
     }
 }
 
@@ -72,9 +72,11 @@ impl Iterator for NetworkInterfaceTable<'_> {
     }
 }
 
-#[cfg(test)]
+// Miri does not implement `GetIfTable2`.
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
+
     #[test]
     fn test_network_interface_table_creation() {
         // This test checks if the NetworkInterfaceTable can be created without crashing.

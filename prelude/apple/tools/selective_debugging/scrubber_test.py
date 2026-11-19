@@ -228,6 +228,28 @@ class Test(unittest.TestCase):
             False,
             should_scrub_with_focused_targets_output_paths(
                 focused_targets_output_paths,
+                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/some/path/__foo__/__swift_incremental__/objects/Foo.swift.o",
+            ),
+        )
+        self.assertEqual(
+            True,
+            should_scrub_with_focused_targets_output_paths(
+                focused_targets_output_paths,
+                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/some/path/__baz__/__swift_incremental__/objects/Baz.swift.o",
+            ),
+        )
+        # Directories in the buck-out prefix are not target output directories
+        self.assertEqual(
+            True,
+            should_scrub_with_focused_targets_output_paths(
+                {""},
+                "buck-out/__v2__/gen/fbsource/56628b5feecfab0a/fbobjc/some/path/__baz__/lib.a",
+            ),
+        )
+        self.assertEqual(
+            False,
+            should_scrub_with_focused_targets_output_paths(
+                focused_targets_output_paths,
                 "xplat/some/path/foo/lib/prebuilt_lib.a(baz.m.o)",
             ),
         )

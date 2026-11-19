@@ -20,7 +20,6 @@ use std::mem;
 use std::mem::MaybeUninit;
 use std::ptr;
 use std::ptr::NonNull;
-use std::slice;
 
 use static_assertions::assert_eq_size;
 
@@ -108,15 +107,6 @@ impl ChunkChain {
         }
     }
 
-    pub(crate) fn data_bytes(&self) -> &[MaybeUninit<u8>] {
-        unsafe {
-            slice::from_raw_parts(
-                self.begin().cast().as_ptr(),
-                self.current_chunk_available_len().bytes() as usize,
-            )
-        }
-    }
-
     /// Split current chunk in the chain at the given offset.
     pub(crate) fn split_at(mut self, offset: AlignedSize) -> (ChunkChain, ChunkPart) {
         let chunk = mem::take(&mut self.chunk);
@@ -135,7 +125,10 @@ impl ChunkChain {
                     // because real allocator never finishes with an empty last chunk part.
                     // For that reason we don't care about somewhat unoptimal code below:
                     // we could extend the `after` chunk with the `before` chunk.
-                    assert!(cfg!(test) && SPLIT_AT_ZERO_TEST.get());
+                    #[allow(clippy::assertions_on_constants)]
+                    {
+                        assert!(cfg!(test) && SPLIT_AT_ZERO_TEST.get());
+                    }
 
                     unsafe {
                         // We are abandoning `before` chunk,

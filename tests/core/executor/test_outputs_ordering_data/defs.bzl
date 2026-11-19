@@ -7,8 +7,8 @@
 # above-listed licenses.
 
 def _impl(ctx):
-    a = ctx.actions.declare_output("a", dir = True)
-    z = ctx.actions.declare_output("z", dir = True)
+    a = ctx.actions.declare_output("a", dir = True, has_content_based_path = False)
+    z = ctx.actions.declare_output("z", dir = True, has_content_based_path = False)
     cmd = ["sh", "-c", 'mkdir -p "$1" "$2" && touch "$1"/foo', "--", z.as_output(), a.as_output()]
     ctx.actions.run(
         cmd,
@@ -17,6 +17,9 @@ def _impl(ctx):
     )
     return [DefaultInfo(a, other_outputs = [z])]
 
-my_rule = rule(impl = _impl, attrs = {
-    "cache_buster": attrs.string(default = read_config("test", "cache_buster", "")),
-})
+my_rule = rule(
+    impl = _impl,
+    attrs = {
+        "cache_buster": attrs.string(default = read_config("test", "cache_buster", "")),
+    },
+)

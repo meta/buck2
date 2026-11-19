@@ -11,8 +11,7 @@ def _fail_no_stacktrace_impl(_ctx):
 
 fail_no_stacktrace_test = bxl_main(
     impl = _fail_no_stacktrace_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )
 
 def _fail_with_stacktrace_impl(_ctx):
@@ -20,6 +19,5 @@ def _fail_with_stacktrace_impl(_ctx):
 
 fail_with_stacktrace_test = bxl_main(
     impl = _fail_with_stacktrace_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )

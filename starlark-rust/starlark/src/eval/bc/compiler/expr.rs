@@ -25,7 +25,6 @@ use crate::collections::Hashed;
 use crate::collections::SmallMap;
 use crate::eval::bc::compiler::if_compiler::write_if_else;
 use crate::eval::bc::instr_impl::*;
-use crate::eval::bc::slow_arg::BcInstrSlowArg;
 use crate::eval::bc::stack_ptr::BcSlot;
 use crate::eval::bc::stack_ptr::BcSlotIn;
 use crate::eval::bc::stack_ptr::BcSlotInRange;
@@ -39,15 +38,14 @@ use crate::eval::compiler::expr::ExprLogicalBinOp;
 use crate::eval::compiler::expr::MaybeNot;
 use crate::eval::compiler::span::IrSpanned;
 use crate::eval::runtime::frame_span::FrameSpan;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValue;
-use crate::values::ValueLike;
-use crate::values::layout::value_not_special::FrozenValueNotSpecial;
+use crate::values::StringValue;
+use crate::values::Value;
+use crate::values::layout::value_not_special::ValueNotSpecial;
 
 /// Try extract consecutive definitely initialized locals from expressions.
-fn try_slot_range<'a>(
-    exprs: impl IntoIterator<Item = &'a IrSpanned<ExprCompiled>>,
-    bc: &BcWriter,
+fn try_slot_range<'a, 'f: 'a>(
+    exprs: impl IntoIterator<Item = &'a IrSpanned<'f, ExprCompiled<'f>>>,
+    bc: &BcWriter<'f>,
 ) -> Option<BcSlotInRange> {
     let mut range = BcSlotInRange::default();
     for expr in exprs {
@@ -61,10 +59,10 @@ fn try_slot_range<'a>(
 }
 
 /// Compile several expressions into consecutive registers.
-pub(crate) fn write_exprs<'a>(
-    exprs: impl IntoIterator<Item = &'a IrSpanned<ExprCompiled>>,
-    bc: &mut BcWriter,
-    k: impl FnOnce(BcSlotInRange, &mut BcWriter),
+pub(crate) fn write_exprs<'a, 'f: 'a>(
+    exprs: impl IntoIterator<Item = &'a IrSpanned<'f, ExprCompiled<'f>>>,
+    bc: &mut BcWriter<'f>,
+    k: impl FnOnce(BcSlotInRange, &mut BcWriter<'f>),
 ) {
     let exprs: Vec<_> = exprs.into_iter().collect();
 
@@ -75,10 +73,10 @@ pub(crate) fn write_exprs<'a>(
     }
 }
 
-pub(crate) fn write_expr_opt(
-    expr: &Option<IrSpanned<ExprCompiled>>,
-    bc: &mut BcWriter,
-    k: impl FnOnce(Option<BcSlotIn>, &mut BcWriter),
+pub(crate) fn write_expr_opt<'f>(
+    expr: &Option<IrSpanned<'f, ExprCompiled<'f>>>,
+    bc: &mut BcWriter<'f>,
+    k: impl FnOnce(Option<BcSlotIn>, &mut BcWriter<'f>),
 ) {
     if let Some(expr) = expr {
         expr.write_bc_cb(bc, |slot, bc| k(Some(slot), bc))
@@ -87,16 +85,16 @@ pub(crate) fn write_expr_opt(
     }
 }
 
-pub(crate) fn write_n_exprs<const N: usize>(
-    exprs: [&IrSpanned<ExprCompiled>; N],
-    bc: &mut BcWriter,
-    k: impl FnOnce([BcSlotIn; N], &mut BcWriter),
+pub(crate) fn write_n_exprs<'f, const N: usize>(
+    exprs: [&IrSpanned<'f, ExprCompiled<'f>>; N],
+    bc: &mut BcWriter<'f>,
+    k: impl FnOnce([BcSlotIn; N], &mut BcWriter<'f>),
 ) {
-    fn help<const N: usize>(
+    fn help<'f, const N: usize>(
         mut filled: [BcSlotIn; N],
-        rem_exprs: &[&IrSpanned<ExprCompiled>],
-        bc: &mut BcWriter,
-        k: impl FnOnce([BcSlotIn; N], &mut BcWriter),
+        rem_exprs: &[&IrSpanned<'f, ExprCompiled<'f>>],
+        bc: &mut BcWriter<'f>,
+        k: impl FnOnce([BcSlotIn; N], &mut BcWriter<'f>),
     ) {
         match rem_exprs.split_first() {
             Some((first, rem)) => first.write_bc_cb(bc, |first, bc| {
@@ -110,7 +108,7 @@ pub(crate) fn write_n_exprs<const N: usize>(
     help([BcSlot(98765).to_in(); N], &exprs, bc, k)
 }
 
-impl ExprCompiled {
+impl<'f> ExprCompiled<'f> {
     /// Mark variables which are definitely assigned after execution of this expression.
     ///
     /// For example, when this expression if executed:
@@ -121,7 +119,7 @@ impl ExprCompiled {
     ///
     /// `c` is definitely assigned (because if it is not, then execution fails),
     /// but we don't know about `t` or `f` because one of them was not executed.
-    pub(crate) fn mark_definitely_assigned_after(&self, bc: &mut BcWriter) {
+    pub(crate) fn mark_definitely_assigned_after(&self, bc: &mut BcWriter<'f>) {
         match self {
             ExprCompiled::Value(_) => {}
             ExprCompiled::Local(local) => bc.mark_definitely_assigned(*local),
@@ -190,10 +188,13 @@ impl ExprCompiled {
     }
 }
 
-impl IrSpanned<ExprCompiled> {
+impl<'f> IrSpanned<'f, ExprCompiled<'f>> {
     fn try_dict_of_consts(
-        xs: &[(IrSpanned<ExprCompiled>, IrSpanned<ExprCompiled>)],
-    ) -> Option<SmallMap<FrozenValue, FrozenValue>> {
+        xs: &[(
+            IrSpanned<'f, ExprCompiled<'f>>,
+            IrSpanned<'f, ExprCompiled<'f>>,
+        )],
+    ) -> Option<SmallMap<Value<'f>, Value<'f>>> {
         let mut res = SmallMap::new();
         for (k, v) in xs {
             let k = k.as_value()?.get_hashed().ok()?;
@@ -210,8 +211,11 @@ impl IrSpanned<ExprCompiled> {
     }
 
     fn try_dict_const_keys(
-        xs: &[(IrSpanned<ExprCompiled>, IrSpanned<ExprCompiled>)],
-    ) -> Option<Box<[Hashed<FrozenValue>]>> {
+        xs: &[(
+            IrSpanned<'f, ExprCompiled<'f>>,
+            IrSpanned<'f, ExprCompiled<'f>>,
+        )],
+    ) -> Option<Box<[Hashed<Value<'f>>]>> {
         let mut keys = Vec::new();
         let mut keys_unique = HashSet::new();
         for (k, _) in xs {
@@ -227,10 +231,13 @@ impl IrSpanned<ExprCompiled> {
     }
 
     fn write_dict(
-        span: FrameSpan,
-        xs: &[(IrSpanned<ExprCompiled>, IrSpanned<ExprCompiled>)],
+        span: FrameSpan<'f>,
+        xs: &[(
+            IrSpanned<'f, ExprCompiled<'f>>,
+            IrSpanned<'f, ExprCompiled<'f>>,
+        )],
         target: BcSlotOut,
-        bc: &mut BcWriter,
+        bc: &mut BcWriter<'f>,
     ) {
         if xs.is_empty() {
             bc.write_instr::<InstrDictNew>(span, target);
@@ -250,15 +257,10 @@ impl IrSpanned<ExprCompiled> {
                             );
                         });
                     } else {
-                        let key_spans = xs.map(|(k, _v)| k.span);
                         write_exprs(xs.iter().flat_map(|(k, v)| [k, v]), bc, |kvs, bc| {
-                            bc.write_instr_explicit::<InstrDictNPop>(
-                                BcInstrSlowArg {
-                                    span,
-                                    spans: key_spans,
-                                },
-                                (kvs, target),
-                            );
+                            let spans_offset =
+                                bc.add_dictnpop_spans(xs.iter().map(|(k, _)| k.span));
+                            bc.write_instr::<InstrDictNPop>(span, (kvs, target, spans_offset));
                         });
                     }
                 }
@@ -266,40 +268,40 @@ impl IrSpanned<ExprCompiled> {
         }
     }
 
-    fn write_not(expr: &IrSpanned<ExprCompiled>, target: BcSlotOut, bc: &mut BcWriter) {
+    fn write_not(expr: &IrSpanned<'f, ExprCompiled<'f>>, target: BcSlotOut, bc: &mut BcWriter<'f>) {
         expr.write_bc_cb(bc, |slot, bc| {
             bc.write_instr::<InstrNot>(expr.span, (slot, target));
         });
     }
 
     fn write_equals_const(
-        span: FrameSpan,
-        a: &IrSpanned<ExprCompiled>,
-        b: FrozenValue,
+        span: FrameSpan<'f>,
+        a: &IrSpanned<'f, ExprCompiled<'f>>,
+        b: Value<'f>,
         target: BcSlotOut,
-        bc: &mut BcWriter,
+        bc: &mut BcWriter<'f>,
     ) {
         a.write_bc_cb(bc, |a, bc| {
-            if let Some(b) = b.to_value().unpack_int_value() {
+            if let Some(b) = b.unpack_int_value() {
                 bc.write_instr::<InstrEqInt>(span, (a, b, target));
             } else if b.eq_is_ptr_eq() {
                 bc.write_instr::<InstrEqPtr>(span, (a, b, target));
-            } else if let Some(b) = FrozenStringValue::new(b) {
+            } else if let Some(b) = StringValue::new(b) {
                 bc.write_instr::<InstrEqStr>(span, (a, b, target));
-            } else if let Some(b) = FrozenValueNotSpecial::new(b) {
+            } else if let Some(b) = ValueNotSpecial::new(b) {
                 bc.write_instr::<InstrEqConst>(span, (a, b, target));
             } else {
-                unreachable!("FrozenValue must be either i32, str or not-special");
+                unreachable!("an IR constant must be either i32, str or not-special");
             }
         });
     }
 
     fn write_equals(
-        span: FrameSpan,
-        a: &IrSpanned<ExprCompiled>,
-        b: &IrSpanned<ExprCompiled>,
+        span: FrameSpan<'f>,
+        a: &IrSpanned<'f, ExprCompiled<'f>>,
+        b: &IrSpanned<'f, ExprCompiled<'f>>,
         target: BcSlotOut,
-        bc: &mut BcWriter,
+        bc: &mut BcWriter<'f>,
     ) {
         if let Some(a) = a.as_value() {
             Self::write_equals_const(span, b, a, target, bc);
@@ -312,7 +314,7 @@ impl IrSpanned<ExprCompiled> {
         }
     }
 
-    pub(crate) fn write_bc(&self, target: BcSlotOut, bc: &mut BcWriter) {
+    pub(crate) fn write_bc(&self, target: BcSlotOut, bc: &mut BcWriter<'f>) {
         let span = self.span;
         match &self.node {
             ExprCompiled::Value(v) => {
@@ -464,8 +466,8 @@ impl IrSpanned<ExprCompiled> {
     /// and then consume the slot with the callback.
     pub(crate) fn write_bc_cb<R>(
         &self,
-        bc: &mut BcWriter,
-        k: impl FnOnce(BcSlotIn, &mut BcWriter) -> R,
+        bc: &mut BcWriter<'f>,
+        k: impl FnOnce(BcSlotIn, &mut BcWriter<'f>) -> R,
     ) -> R {
         if let Some(local) = self.as_local_non_captured() {
             // Local is known to be definitely assigned, so there's no need
@@ -481,7 +483,7 @@ impl IrSpanned<ExprCompiled> {
         })
     }
 
-    pub(crate) fn write_bc_for_effect(&self, bc: &mut BcWriter) {
+    pub(crate) fn write_bc_for_effect(&self, bc: &mut BcWriter<'f>) {
         self.write_bc_cb(bc, |slot, _bc| {
             let _ = slot;
         });

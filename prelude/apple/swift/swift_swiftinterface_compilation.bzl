@@ -6,6 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//apple:apple_toolchain_types.bzl", "AppleToolsInfo")
 load("@prelude//apple:apple_utility.bzl", "expand_relative_prefixed_sdk_path")
 load("@prelude//apple/swift:swift_pcm_compilation.bzl", "get_compiled_pcm_deps_tset")
 load("@prelude//apple/swift:swift_types.bzl", "SWIFTMODULE_EXTENSION")
@@ -17,24 +18,44 @@ load(
 )
 load(
     ":swift_incremental_support.bzl",
-    "get_uses_experimental_content_based_path_hashing",
+    "get_uses_content_based_paths",
 )
 load(":swift_module_map.bzl", "write_swift_module_map_with_deps")
 load(":swift_sdk_flags.bzl", "get_sdk_flags")
 load(":swift_sdk_pcm_compilation.bzl", "get_swift_sdk_pcm_anon_targets")
 load(":swift_toolchain.bzl", "get_swift_toolchain_info", "get_swift_toolchain_info_dep")
-load(":swift_toolchain_types.bzl", "SdkUncompiledModuleInfo", "SwiftCompiledModuleInfo", "SwiftCompiledModuleTset", "SwiftToolchainInfo", "WrappedSdkCompiledModuleInfo")
+load(
+    ":swift_toolchain_types.bzl",
+    "SdkUncompiledModuleInfo",
+    "SwiftCompiledModuleInfo",
+    "SwiftCompiledModuleTset",
+    "SwiftToolchainInfo",
+    "WrappedSdkCompiledModuleInfo",
+)
 
-def get_swift_interface_anon_targets(
-        ctx: AnalysisContext,
-        uncompiled_sdk_deps: list[Dependency]):
+def get_swift_interface_anon_targets(ctx: AnalysisContext, uncompiled_sdk_deps: list[Dependency]):
     return [
         (
             _swift_interface_compilation,
             {
+                # There's an "implicit" arg being passed - the execution platform
+                # of the rule that's requesting the anon-targets. In this case,
+                # callers of `get_swift_interface_anon_targets()` will call
+                # `ctx.actions.anon_targets()`, so the exec platform will get
+                # inherited.
+                #
+                # This has an important implication - the exact same SDK target
+                # might get duplicated if it's requested `apple_library()`
+                # targets which have different execution platforms, even if
+                # everything else is the same - including the same toolchain.
+                #
+                # Because Swift compilation aggregates SDK modules from deps
+                # and SDK modules from the target itself, a duplication of the
+                # same compiled SDK module can occur in the module map.
                 "dep": d,
+                "has_content_based_path": True,
                 "name": d.label,
-                "uses_experimental_content_based_path_hashing": True,
+                "_apple_tools": ctx.attrs._apple_tools,
                 "_swift_toolchain": get_swift_toolchain_info_dep(ctx),
             },
         )
@@ -43,17 +64,18 @@ def get_swift_interface_anon_targets(
     ]
 
 def compile_swiftinterface_common(
-        ctx,
-        deps,
-        is_framework,
-        uncompiled_module_info_name,
-        partial_cmd,
-        sdk_deps_providers,
-        expanded_swiftinterface_cmd,
-        category,
-        additional_compiled_pcm,
-        additional_compiled_swiftmodules = None):
-    uses_experimental_content_based_path_hashing = get_uses_experimental_content_based_path_hashing(ctx)
+    ctx,
+    deps,
+    is_framework,
+    uncompiled_module_info_name,
+    partial_cmd,
+    sdk_deps_providers,
+    expanded_swiftinterface_cmd,
+    category,
+    additional_compiled_pcm,
+    additional_compiled_swiftmodules = None,
+):
+    uses_content_based_paths = get_uses_content_based_paths(ctx)
     swift_toolchain = get_swift_toolchain_info(ctx)
     cmd = cmd_args(swift_toolchain.compiler)
     cmd.add(partial_cmd)
@@ -82,13 +104,13 @@ def compile_swiftinterface_common(
         children = [pcm_deps_tset, clang_deps_tset, swift_deps_tset],
     )
 
-    swift_module_map_artifact = write_swift_module_map_with_deps(ctx, uncompiled_module_info_name, all_deps_tset)
+    _, swift_module_map_args = write_swift_module_map_with_deps(ctx, uncompiled_module_info_name, all_deps_tset)
     cmd.add([
         "-explicit-swift-module-map-file",
-        swift_module_map_artifact,
+        swift_module_map_args,
     ])
 
-    swiftmodule_output = ctx.actions.declare_output(uncompiled_module_info_name + SWIFTMODULE_EXTENSION, uses_experimental_content_based_path_hashing = uses_experimental_content_based_path_hashing)
+    swiftmodule_output = ctx.actions.declare_output(uncompiled_module_info_name + SWIFTMODULE_EXTENSION, has_content_based_path = uses_content_based_paths)
     cmd.add([
         "-o",
         swiftmodule_output.as_output(),
@@ -161,7 +183,8 @@ _swift_interface_compilation = rule(
     impl = _swift_interface_compilation_impl,
     attrs = {
         "dep": attrs.dep(),
-        "uses_experimental_content_based_path_hashing": attrs.bool(),
+        "has_content_based_path": attrs.bool(),
+        "_apple_tools": attrs.dep(providers = [AppleToolsInfo]),
         "_swift_toolchain": attrs.dep(),
     },
 )

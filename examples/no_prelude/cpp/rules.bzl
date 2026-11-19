@@ -13,7 +13,7 @@ CxxLibraryInfo = provider(fields = ["headers", "objects", "include_folders"])
 def _cpp_binary_impl(ctx: AnalysisContext) -> list[Provider]:
     sources = ctx.attrs.srcs
     extension = ".exe" if host_info().os.is_windows else ""
-    out = ctx.actions.declare_output("main" + extension)
+    out = ctx.actions.declare_output("main" + extension, has_content_based_path = False)
 
     cmd = cmd_args(
         [ctx.attrs.toolchain[CxxCompilerInfo].compiler_path, "-o", out.as_output()] + sources,
@@ -41,7 +41,7 @@ def _cpp_library_impl(ctx: AnalysisContext) -> list[Provider]:
     sources = ctx.attrs.srcs
     headers = ctx.attrs.headers
     extension = ".dll" if host_info().os.is_windows else ".so"
-    out = ctx.actions.declare_output("lib" + extension)
+    out = ctx.actions.declare_output("lib" + extension, has_content_based_path = False)
 
     cmd = cmd_args(
         [ctx.attrs.toolchain[CxxCompilerInfo].compiler_path, "-shared", "-undefined", "dynamic_lookup", "-o", out.as_output()] + sources,

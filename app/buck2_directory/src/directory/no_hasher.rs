@@ -8,19 +8,20 @@
  * above-listed licenses.
  */
 
+use std::convert::Infallible;
 use std::fmt;
+use std::fmt::Display;
 
 use allocative::Allocative;
-use derive_more::Display;
 use dupe::Dupe;
 
 #[allow(unused)]
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash, Allocative)]
-pub struct NoHash(!);
+pub struct NoHash(Infallible);
 
 impl Display for NoHash {
     fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0
+        match self.0 {}
     }
 }
 

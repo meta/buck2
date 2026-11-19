@@ -47,6 +47,10 @@ fn test_strong_hash_derive() {
         }
     }
 
+    // This `Hasher` impl only provides `write` and `finish` (not the full
+    // set of `write_*` methods). That is fine for blake3 since it is a
+    // streaming hash. See the comment on `StarlarkHasherSmallPromote` in
+    // `buck2_build_api/.../provider/callable.rs` for the full story.
     impl Hasher for Blake3StrongHasher {
         fn write(&mut self, bytes: &[u8]) {
             self.0.update(bytes);

@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
 #![cfg(test)]
 #![allow(clippy::bool_assert_comparison)]
 
@@ -22,7 +21,7 @@ mod nodes;
 
 #[test]
 fn init_late_bindings_for_test() {
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init() {
         buck2_action_impl::init_late_bindings();
         buck2_analysis::init_late_bindings();

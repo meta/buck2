@@ -17,12 +17,40 @@ python_binary(
 )
 
 python_binary(
-    name = "signing_context",
-    main = "signing_context_main.py",
+    name = "provisioning_manifest",
+    main = "provisioning_manifest_main.py",
     visibility = ["PUBLIC"],
     deps = [
         ":lib",
     ],
+)
+
+python_binary(
+    name = "resolve_signing_context",
+    main = "resolve_signing_context_main.py",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":lib",
+    ],
+)
+
+python_binary(
+    name = "signing_info",
+    main = "signing_info_main.py",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":lib",
+    ],
+)
+
+python_library(
+    name = "scripts-typing",
+    srcs = [
+        "resolve_signing_context_main.py",
+        "signing_info_main.py",
+    ],
+    typing = True,
+    deps = [":lib"],
 )
 
 python_library(

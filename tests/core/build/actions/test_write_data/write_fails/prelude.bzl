@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _fails_on_invalid_contents(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.write(out, {})
 
 fails_on_invalid_contents = rule(

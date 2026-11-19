@@ -15,7 +15,8 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use buck2_common::starlark_profiler::StarlarkProfileDataAndStatsDyn;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+use buck2_error::internal_error;
 use starlark::eval::ProfileData;
 
 use crate::dice::starlark_provider::StarlarkEvalKind;
@@ -52,7 +53,7 @@ impl StarlarkProfileDataAndStats {
         let mut iter = datas.iter().copied();
         let first = iter
             .next()
-            .buck_error_context("empty collection of profile data")?;
+            .internal_error("empty collection of profile data")?;
         let mut total_retained_bytes = first.total_retained_bytes;
         let mut initialized_at = first.initialized_at;
         let mut finalized_at = first.finalized_at;
@@ -80,9 +81,8 @@ impl StarlarkProfileDataAndStats {
     pub fn downcast(
         profile_data: &dyn StarlarkProfileDataAndStatsDyn,
     ) -> buck2_error::Result<&Self> {
-        profile_data
-            .as_any()
-            .downcast_ref::<Self>()
-            .internal_error("There's only one implementation of StarlarkProfileDataAndStatsDyn")
+        profile_data.as_any().downcast_ref::<Self>().ok_or_else(|| {
+            internal_error!("There's only one implementation of StarlarkProfileDataAndStatsDyn")
+        })
     }
 }

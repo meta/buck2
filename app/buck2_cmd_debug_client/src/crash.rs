@@ -25,6 +25,7 @@ use buck2_client_ctx::streaming::StreamingCommand;
 enum CrashType {
     Panic,
     Abort,
+    Oom,
 }
 
 impl CrashType {
@@ -32,6 +33,7 @@ impl CrashType {
         let crash_type = match self {
             CrashType::Panic => buck2_cli_proto::unstable_crash_request::CrashType::Panic,
             CrashType::Abort => buck2_cli_proto::unstable_crash_request::CrashType::Abort,
+            CrashType::Oom => buck2_cli_proto::unstable_crash_request::CrashType::Oom,
         };
         crash_type as i32
     }
@@ -41,6 +43,9 @@ impl CrashType {
 pub struct CrashCommand {
     #[arg(value_enum)]
     crash_type: CrashType,
+    /// Number of bytes to allocate to trigger OOM killing (only used with `oom` crash type).
+    #[arg(long)]
+    bytes: Option<u64>,
     /// Event-log options.
     #[clap(flatten)]
     pub event_log_opts: CommonEventLogOptions,
@@ -62,6 +67,7 @@ impl StreamingCommand for CrashCommand {
             .unstable_crash(
                 UnstableCrashRequest {
                     crash_type: self.crash_type.to_proto(),
+                    bytes: self.bytes.unwrap_or(0),
                 },
                 events_ctx,
             )

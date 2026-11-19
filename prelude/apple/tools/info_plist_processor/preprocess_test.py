@@ -89,3 +89,26 @@ class TestPreprocess(unittest.TestCase):
         output_file = io.StringIO("")
         preprocess(input_file, output_file, substitutions_file, "my_product_name")
         self.assertEqual(output_file.getvalue(), expected)
+
+    def test_self_reference_after_text_is_recursive(self):
+        input_file = io.StringIO(r"<string>com.foo.$(SUFFIX)</string>")
+        substitutions_file = io.StringIO(r'{"SUFFIX": "app.$(SUFFIX)"}')
+        output_file = io.StringIO("")
+        with self.assertRaises(RuntimeError) as context:
+            preprocess(input_file, output_file, substitutions_file, "my_product_name")
+        self.assertIn("Recursive", str(context.exception))
+
+    def test_acyclic_chain_is_expanded(self):
+        input_file = io.StringIO(r"<string>$(BUNDLE_ID) $(BUNDLE_PREFIX)</string>")
+        expected = r"<string>com.foo.app com.foo</string>"
+        substitutions_file = io.StringIO(
+            r"""
+{
+    "BUNDLE_ID": "$(BUNDLE_PREFIX).app",
+    "BUNDLE_PREFIX": "com.foo"
+}
+"""
+        )
+        output_file = io.StringIO("")
+        preprocess(input_file, output_file, substitutions_file, "my_product_name")
+        self.assertEqual(output_file.getvalue(), expected)

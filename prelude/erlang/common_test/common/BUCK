@@ -13,6 +13,8 @@ erlang_application(
     applications = [
         "kernel",
         "stdlib",
+        "crypto",
+        "common_test",
     ],
     erl_opts = [
         "+debug_info",
@@ -22,4 +24,14 @@ erlang_application(
     shell_libs = [],
     use_global_parse_transforms = False,
     visibility = ["PUBLIC"],
+)
+
+erlang_tests(
+    contacts = ["build_infra"],
+    labels = ["unit"],
+    suites = ["test/ct_stdout_SUITE.erl"],
+    deps = [
+        "stdlib",
+        ":common",
+    ],
 )

@@ -14,7 +14,7 @@
 //! take a necessary dependency on these definitions to provide IDE functionality to
 //! buck-based projects. For additional details, see rust-analyzer's [documentation].
 //!
-//! [documentation]: https://rust-analyzer.github.io/manual.html#non-cargo-based-projects
+//! [documentation]: https://rust-analyzer.github.io/book/non_cargo_based_projects.html
 
 use std::path::PathBuf;
 
@@ -93,6 +93,9 @@ pub(crate) struct Crate {
     /// proc-macro (.so, .dylib, or .dll. depends on the platform.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) proc_macro_dylib_path: Option<PathBuf>,
+    /// Working directory used when expanding proc macros invoked from this crate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) proc_macro_cwd: Option<PathBuf>,
 }
 
 /// Build system-specific additions the `rust-project.json`.
@@ -106,7 +109,7 @@ pub(crate) struct Crate {
 ///
 /// ```json
 /// "target_spec": {
-///     "manifest_file": "/Users/dbarsky/fbsource/fbcode/buck2/integrations/rust-project/TARGETS",
+///     "manifest_file": "/Users/dbarsky/fbsource/fbcode/buck2/integrations/rust-project/BUCK",
 ///     "target_label": "fbcode//buck2/integrations/rust-project:rust-project",
 ///     "target_kind": "bin",
 ///     "runnables": {
@@ -140,6 +143,14 @@ pub(crate) struct Build {
     pub(crate) target_kind: TargetKind,
 }
 
+/// The target kind.
+///
+/// rust-analyzer defines a small set of target kinds for rust-project.json:
+/// <https://github.com/rust-lang/rust-analyzer/blob/11d62122ded8349b2790977fd2cc55013cea68f1/crates/project-model/src/project_json.rs#L451>
+///
+/// The set of target kinds for cargo is a little bigger:
+/// <https://github.com/rust-lang/rust-analyzer/blob/11d62122ded8349b2790977fd2cc55013cea68f1/crates/project-model/src/cargo_workspace.rs#L262>
+/// <https://github.com/rust-lang/rust-analyzer/blob/1e6cef94dfbc359e7b1e7d392de387c2c539b965/crates/project-model/src/cargo_workspace.rs#L212>
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum TargetKind {
@@ -147,10 +158,7 @@ pub(crate) enum TargetKind {
     Bin,
     /// Any kind of Cargo lib crate-type (dylib, rlib, proc-macro, ...).
     Lib,
-    Example,
     Test,
-    Bench,
-    BuildScript,
     Other,
 }
 

@@ -1,0 +1,32 @@
+load(":defs.bzl", "test_rule")
+
+constraint_setting(name = "choice")
+constraint_value(name = "one", constraint_setting = ":choice")
+config_setting(name = "is_one", constraint_values = [":one"])
+platform(name = "chosen", constraint_values = [":one"])
+platform(name = "other")
+
+test_rule(name = "defaults")
+
+test_rule(
+    name = "plain",
+    text = "hello",
+    strings = ["first", "last"],
+)
+
+test_rule(
+    name = "selected",
+    text = "hello" + select({
+        ":is_one": "world",
+        "DEFAULT": "other",
+    }),
+    strings = ["prefix"] + select({
+        ":is_one": ["selected"],
+        "DEFAULT": ["unselected"],
+    }),
+)
+
+test_rule(
+    name = "mixed",
+    mixed = ["prefix", 17, ["nested"]],
+)

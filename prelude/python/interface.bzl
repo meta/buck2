@@ -10,23 +10,18 @@ PythonLibraryManifestsInterface = record(
     # Returns the source manifests for this Python library.
     # [_arglike] of source manifests
     src_manifests = field(typing.Callable),
-
     # Returns the files referenced by source manifests for this Python library.
     # [_arglike] of source artifacts
     src_artifacts = field(typing.Callable),
-
-    # Returns the bytecode manifests for this Python library, given a PycInvalidationMode.
-    # PycInvalidationMode -> [_arglike] of bytecode manifests (compiled with that mode)
+    # Returns the bytecode manifests for this Python library.
+    # [_arglike] of bytecode manifests
     bytecode_manifests = field(typing.Callable),
-
     # Returns the files referenced by bytecode manifests for this Python library.
-    # PycInvalidationMode -> [_arglike] of bytecode artifacts
+    # [_arglike] of bytecode artifacts
     bytecode_artifacts = field(typing.Callable),
-
     # Returns the resources manifests for this Python library.
     # [_arglike] of resource manifests
     resource_manifests = field(typing.Callable),
-
     # Returns the files referenced by resource manifests for this Python library.
     # [_arglike] of resource artifacts
     resource_artifacts = field(typing.Callable),

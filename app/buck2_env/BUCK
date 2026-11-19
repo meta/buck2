@@ -11,12 +11,10 @@ rust_library(
         "fbsource//third-party/rust:assert_matches",
     ],
     deps = [
-        "fbsource//third-party/rust:arc-swap",
         "fbsource//third-party/rust:linkme",
-        "fbsource//third-party/rust:once_cell",
         "fbsource//third-party/rust:tracing",
         "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
     ],
 )

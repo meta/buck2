@@ -15,6 +15,7 @@ import com.facebook.buck.util.relativepathmap.RelativePathMapUtils;
 import com.facebook.buck.util.zip.collect.OnDuplicateEntry;
 import com.facebook.buck.util.zip.collect.ZipEntrySourceCollectionBuilder;
 import com.facebook.buck.util.zip.collect.ZipEntrySourceCollectionWriter;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,10 +23,13 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
+import org.jetbrains.annotations.Nullable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AarBuilderExecutableMain {
   private static final AbsPath CURRENT_DIRECTORY =
       AbsPath.of(Paths.get(".").normalize().toAbsolutePath());
@@ -49,6 +53,7 @@ public class AarBuilderExecutableMain {
   private Path nativeLibsAssetsFile;
 
   @Option(name = "--proguard_config_file", required = false)
+  @Nullable
   private Path proguardConfigFile;
 
   public static void main(String[] args) throws IOException {
@@ -59,7 +64,7 @@ public class AarBuilderExecutableMain {
       main.run();
       System.exit(0);
     } catch (CmdLineException e) {
-      System.err.println(e.getMessage());
+      System.err.println(e.toString());
       parser.printUsage(System.err);
       System.exit(1);
     }
@@ -75,7 +80,7 @@ public class AarBuilderExecutableMain {
       RelativePathMapUtils.addPathToRelativePathMap(
           CURRENT_DIRECTORY,
           entriesMap,
-          zipEntryAbsPath.getPath().getParent(),
+          Objects.requireNonNull(zipEntryAbsPath.getPath().getParent()),
           zipEntryAbsPath,
           zipEntryAbsPath.getFileName());
     }
@@ -118,7 +123,9 @@ public class AarBuilderExecutableMain {
     }
 
     for (Map.Entry<Path, AbsPath> pathEntry : nativeLibsAssetsEntriesMap.entrySet()) {
-      if (pathEntry.getKey().getFileName().toString().equals("metadata.txt")) {
+      if (Objects.requireNonNull(pathEntry.getKey().getFileName())
+          .toString()
+          .equals("metadata.txt")) {
         continue;
       }
 

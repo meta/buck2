@@ -8,7 +8,11 @@
 [buck2_resource_control]
     status = required
     enable_suspension = true
-    memory_high_action_cgroup_pool = 200000000
+    # Soft limit (throttle, not OOM-kill) combined with swap disabled so that reclaim stalls
+    # instead of paging out. This is what produces sustained memory pressure once two actions
+    # (~150 MB each) contend for the ~191 MiB budget, driving exactly one suspension.
+    memory_high_actions = 200000000
+    memory_swap_max_actions = 0
 
 [build]
     threads = 5

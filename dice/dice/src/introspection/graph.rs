@@ -13,10 +13,8 @@ use std::fmt::Display;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::hash::Hasher;
-use std::iter;
 
 use cmp_any::PartialEqAny;
-use derivative::Derivative;
 use dupe::Dupe;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -28,46 +26,29 @@ use serde::de::Visitor;
 
 use crate::HashMap;
 use crate::HashSet;
-use crate::impls::core::graph::introspection::VersionedGraphIntrospectable;
-use crate::impls::core::versions::introspection::VersionIntrospectable;
-use crate::impls::key::DiceKey;
+use crate::core::graph::introspection::VersionedGraphIntrospectable;
+use crate::core::versions::introspection::VersionIntrospectable;
+use crate::introspection::DiceTaskState;
 use crate::introspection::serialize_dense_graph;
-use crate::legacy::dice_futures::dice_task::DiceTaskStateForDebugging;
+use crate::key::DiceKey;
 
-#[derive(Derivative)]
-#[derivative(Debug)]
-pub enum GraphIntrospectable {
-    Modern {
-        #[derivative(Debug = "ignore")]
-        introspection: ModernIntrospectable,
-    },
-}
-
-impl GraphIntrospectable {
-    pub(crate) fn introspectables(&self) -> impl Iterator<Item = &dyn EngineForIntrospection> {
-        match self {
-            GraphIntrospectable::Modern { introspection } => iter::once(introspection as _),
-        }
-    }
-}
-
-pub struct ModernIntrospectable {
+pub struct GraphIntrospectable {
     pub(crate) graph: VersionedGraphIntrospectable,
     pub(crate) version_data: VersionIntrospectable,
     pub(crate) key_map: HashMap<DiceKey, AnyKey>,
 }
 
-impl EngineForIntrospection for ModernIntrospectable {
-    fn keys<'a>(&'a self) -> Box<dyn Iterator<Item = AnyKey> + 'a> {
+impl GraphIntrospectable {
+    pub fn keys<'a>(&'a self) -> Box<dyn Iterator<Item = AnyKey> + 'a> {
+        let keys: HashSet<DiceKey> = self.graph.nodes.keys().map(|(_, key)| *key).collect();
         Box::new(
-            self.graph
-                .keys()
-                .map(|k| self.key_map.get(k).expect("key should be present").clone()),
+            keys.into_iter()
+                .map(|k| self.key_map.get(&k).expect("key should be present").clone()),
         )
     }
 
-    fn edges<'a>(&'a self) -> Box<dyn Iterator<Item = (AnyKey, Vec<AnyKey>)> + 'a> {
-        Box::new(self.graph.edges().map(|(k, deps)| {
+    pub fn edges<'a>(&'a self) -> Box<dyn Iterator<Item = (AnyKey, Vec<AnyKey>)> + 'a> {
+        Box::new(self.graph.edges.iter().map(|(k, deps)| {
             (
                 self.key_map.get(k).expect("key should be present").clone(),
                 deps.iter()
@@ -77,31 +58,29 @@ impl EngineForIntrospection for ModernIntrospectable {
         }))
     }
 
-    fn keys_currently_running(&self) -> Vec<(AnyKey, VersionNumber, DiceTaskStateForDebugging)> {
+    pub fn keys_currently_running(&self) -> Vec<(AnyKey, VersionNumber, DiceTaskState)> {
         self.version_data.keys_currently_running(&self.key_map)
     }
 
-    fn versions_currently_running(&self) -> Vec<VersionNumber> {
+    pub fn versions_currently_running(&self) -> Vec<VersionNumber> {
         self.version_data.versions_currently_running()
     }
 
-    fn nodes<'a>(
-        &'a self,
-        _keys: &'a mut HashMap<AnyKey, KeyID>,
-    ) -> Box<dyn Iterator<Item = SerializedGraphNodesForKey> + 'a> {
-        Box::new(self.graph.nodes().map(|(key, node)| {
-            let any_k = self.key_map.get(&key).expect("key should be present");
-            SerializedGraphNodesForKey {
+    pub fn nodes<'a>(&'a self) -> Box<dyn Iterator<Item = SerializedGraphNodeForKey> + 'a> {
+        Box::new(self.graph.nodes.iter().map(|((branch, key), node)| {
+            let any_k = self.key_map.get(key).expect("key should be present");
+            SerializedGraphNodeForKey {
                 id: KeyID(node.node_id.0),
+                branch: branch.as_u32(),
                 key: any_k.to_string(),
                 type_name: any_k.type_name().to_owned(),
-                nodes: Some(node.clone()),
+                node: node.clone(),
             }
         }))
     }
 
-    fn len_for_introspection(&self) -> usize {
-        self.graph.len_for_introspection()
+    pub fn len_for_introspection(&self) -> usize {
+        self.graph.nodes.len()
     }
 }
 
@@ -117,10 +96,6 @@ impl Serialize for GraphIntrospectable {
 #[derive(PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Dupe, Copy)]
 #[serde(transparent)]
 pub struct KeyID(pub usize);
-
-#[derive(PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Dupe, Copy)]
-#[serde(transparent)]
-pub struct NodeID(pub usize);
 
 #[derive(
     PartialEq,
@@ -202,39 +177,25 @@ pub enum HistoryState {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SerializedGraphNode {
-    pub node_id: NodeID,
+    pub node_id: KeyID,
     pub kind: GraphNodeKind,
     pub history: CellHistory,
-    /// Deps and Rdeps are behind read locks, and if dumping after a panic
-    /// it's theoretically possible for those locks to be poisoned.
-    /// Therefore, they're optional.
-    pub deps: Option<HashSet<KeyID>>,
-    pub rdeps: Option<Vec<NodeID>>,
+    pub deps: HashSet<KeyID>,
+    pub rdeps: Vec<KeyID>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct SerializedGraphNodesForKey {
+pub struct SerializedGraphNodeForKey {
     pub id: KeyID,
+    /// The branch the node describes. A key has one node per live branch it is known on, all
+    /// with the same `id`.
+    pub branch: u32,
     pub key: String,
     pub type_name: String,
-    pub nodes: Option<SerializedGraphNode>,
+    pub node: SerializedGraphNode,
 }
 
-pub(crate) trait EngineForIntrospection {
-    #[allow(dead_code)]
-    fn keys<'a>(&'a self) -> Box<dyn Iterator<Item = AnyKey> + 'a>;
-    fn edges<'a>(&'a self) -> Box<dyn Iterator<Item = (AnyKey, Vec<AnyKey>)> + 'a>;
-    fn keys_currently_running(&self) -> Vec<(AnyKey, VersionNumber, DiceTaskStateForDebugging)>;
-    #[allow(dead_code)]
-    fn versions_currently_running(&self) -> Vec<VersionNumber>;
-    fn nodes<'a>(
-        &'a self,
-        keys: &'a mut HashMap<AnyKey, KeyID>,
-    ) -> Box<dyn Iterator<Item = SerializedGraphNodesForKey> + 'a>;
-    fn len_for_introspection(&self) -> usize;
-}
-
-pub(crate) trait KeyForIntrospection: Display + Send + 'static {
+pub trait KeyForIntrospection: Display + Send + 'static {
     fn get_key_equality(&self) -> PartialEqAny<'_>;
 
     fn hash(&self, state: &mut dyn Hasher);
@@ -263,7 +224,7 @@ where
     }
 }
 
-pub(crate) struct AnyKey {
+pub struct AnyKey {
     pub inner: Box<dyn KeyForIntrospection>,
 }
 

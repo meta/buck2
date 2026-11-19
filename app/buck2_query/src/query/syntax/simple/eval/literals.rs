@@ -10,9 +10,9 @@
 
 //! Implementation of the cli and query_* attr query language.
 
+use buck2_hash::BuckMutInsertionSet;
 use buck2_query_parser::parse_expr;
 use buck2_query_parser::placeholder::QUERY_PERCENT_S_PLACEHOLDER;
-use starlark_map::small_set::SmallSet;
 
 use crate::query::syntax::simple::eval::values::QueryResultExt;
 use crate::query::syntax::simple::functions::QueryFunctions;
@@ -27,7 +27,7 @@ pub fn extract_target_literals<F: QueryFunctions>(
 ) -> buck2_error::Result<Vec<String>> {
     let parsed = parse_expr(query)?;
     struct LiteralExtractor {
-        literals: SmallSet<String>,
+        literals: BuckMutInsertionSet<String>,
     }
     impl<'q> QueryLiteralVisitor<'q> for LiteralExtractor {
         fn target_pattern(&mut self, pattern: &'q str) -> buck2_error::Result<()> {
@@ -38,7 +38,7 @@ pub fn extract_target_literals<F: QueryFunctions>(
         }
     }
     let mut visitor = LiteralExtractor {
-        literals: SmallSet::new(),
+        literals: BuckMutInsertionSet::new(),
     };
     functions
         .visit_literals(&mut visitor, &parsed)

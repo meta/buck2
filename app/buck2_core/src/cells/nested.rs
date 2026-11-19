@@ -9,17 +9,18 @@
  */
 
 use allocative::Allocative;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use pagable::Pagable;
 
 use crate::cells::cell_root_path::CellRootPath;
 use crate::cells::name::CellName;
 use crate::cells::paths::CellRelativePath;
 use crate::cells::paths::CellRelativePathBuf;
-use crate::cells::unchecked_cell_rel_path::UncheckedCellRelativePath;
 
 /// Paths to cells which reside inside current cell.
 ///
 /// Target labels cannot cross cell boundaries. This utility helps to identify such targets.
-#[derive(Eq, PartialEq, Debug, Allocative, Clone)]
+#[derive(Eq, PartialEq, Debug, Allocative, Clone, Pagable)]
 pub struct NestedCells {
     paths: Vec<(CellRelativePathBuf, CellName)>,
 }
@@ -54,10 +55,7 @@ impl NestedCells {
     ) -> NestedCells {
         Self::from_cell_paths_relative_to_this_cell(all_cells.iter().filter_map(
             |(cell_name, cell_root_path)| {
-                let Some(path_relative_to_this_cell) = cell_root_path.strip_prefix_opt(this_cell)
-                else {
-                    return None;
-                };
+                let path_relative_to_this_cell = cell_root_path.strip_prefix_opt(this_cell)?;
 
                 Some((
                     CellRelativePath::new(path_relative_to_this_cell),
@@ -67,16 +65,27 @@ impl NestedCells {
         ))
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+
+    /// The cells rooted directly under `dir`, by name. Directory listings leave nested cell
+    /// roots out, so a caller walking a directory uses this to descend into them.
+    pub fn cells_rooted_under<'a>(
+        &'a self,
+        dir: &'a CellRelativePath,
+    ) -> impl Iterator<Item = CellName> + 'a {
+        self.paths
+            .iter()
+            .filter_map(move |(root, name)| (root.parent() == Some(dir)).then_some(*name))
+    }
+
     pub fn matches<'a, 'b>(
         &'a self,
-        path: &'b UncheckedCellRelativePath,
-    ) -> Option<(
-        &'a CellRelativePath,
-        CellName,
-        &'b UncheckedCellRelativePath,
-    )> {
+        path: &'b CellRelativePath,
+    ) -> Option<(&'a CellRelativePath, CellName, &'b ForwardRelativePath)> {
         for (cell_path, cell_name) in &self.paths {
-            if let Some(rem) = path.remove_prefix(cell_path) {
+            if let Some(rem) = path.strip_prefix_opt(cell_path) {
                 return Some((cell_path, *cell_name, rem));
             }
         }
@@ -121,11 +130,11 @@ mod tests {
             NestedCells {
                 paths: vec![
                     (
-                        CellRelativePathBuf::try_from("cell_a".to_owned()).unwrap(),
+                        CellRelativePathBuf::testing_new("cell_a"),
                         CellName::testing_new("a")
                     ),
                     (
-                        CellRelativePathBuf::try_from("cell_x/cell_y".to_owned()).unwrap(),
+                        CellRelativePathBuf::testing_new("cell_x/cell_y"),
                         CellName::testing_new("xy")
                     )
                 ]

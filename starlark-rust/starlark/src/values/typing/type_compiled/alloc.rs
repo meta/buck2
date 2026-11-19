@@ -45,16 +45,35 @@ use crate::values::typing::type_compiled::type_matcher_factory::TypeMatcherFacto
 
 /// Allocate runtime type matcher, either in starlark heap or in malloc.
 pub trait TypeMatcherAlloc: Sized {
+    /// Allocation result.
     type Result;
 
+    // When the `pagable` feature is enabled, we explicitly require `TypeMatcherRegistered`,
+    // although it is reuqired by TypeMatcher.
+    // It can produce better error messages. Generic matchers that not impls TypeMatcherRegistered
+    // will have concrete type in the error messages.
+    /// Allocate a type matcher.
+    #[cfg(feature = "pagable")]
+    fn alloc<
+        T: TypeMatcher + crate::values::typing::type_compiled::matcher::TypeMatcherRegistered,
+    >(
+        self,
+        matcher: T,
+    ) -> Self::Result;
+
+    /// Allocate a type matcher.
+    #[cfg(not(feature = "pagable"))]
     fn alloc<T: TypeMatcher>(self, matcher: T) -> Self::Result;
 
+    /// Allocate a matcher for a custom type.
     fn custom(self, custom: &TyCustom) -> Self::Result;
 
+    /// Allocate from a [`TypeMatcherFactory`].
     fn from_type_matcher_factory(self, factory: &TypeMatcherFactory) -> Self::Result;
 
     // Now the utilities.
 
+    /// Panics; this type cannot appear in type expressions.
     fn unreachable_cannot_appear_in_type_expr(self) -> ! {
         // TODO(nga): replace panic with error.
         unreachable!("type cannot appear in type expressions")
@@ -90,6 +109,7 @@ pub trait TypeMatcherAlloc: Sized {
         self.alloc(IsStr)
     }
 
+    /// Match a union type.
     fn ty(self, ty: &Ty) -> Self::Result {
         match ty.iter_union() {
             [] => self.never(),
@@ -107,7 +127,12 @@ pub trait TypeMatcherAlloc: Sized {
     }
 
     /// `A | B`.
-    fn any_of_two_matcher(self, m0: impl TypeMatcher, m1: impl TypeMatcher) -> Self::Result {
+    #[allow(private_bounds)] // `IsAnyOfTwo` is pub(crate), leaks into bound.
+    fn any_of_two_matcher<M0, M1>(self, m0: M0, m1: M1) -> Self::Result
+    where
+        M0: TypeMatcher,
+        M1: TypeMatcher,
+    {
         if m0.is_wildcard() {
             self.alloc(m1)
         } else if m1.is_wildcard() {
@@ -134,6 +159,7 @@ pub trait TypeMatcherAlloc: Sized {
         }
     }
 
+    /// Match a single basic type.
     fn ty_basic(self, ty: &TyBasic) -> Self::Result {
         match ty {
             TyBasic::Any => self.any(),
@@ -149,6 +175,7 @@ pub trait TypeMatcherAlloc: Sized {
         }
     }
 
+    /// `callable`.
     fn callable(self) -> Self::Result {
         self.alloc(IsCallable)
     }
@@ -180,7 +207,11 @@ pub trait TypeMatcherAlloc: Sized {
     }
 
     /// `list[Item]`.
-    fn list_of_matcher(self, item: impl TypeMatcher) -> Self::Result {
+    #[allow(private_bounds)] // `IsListOf` is pub(crate), leaks into bound.
+    fn list_of_matcher<I>(self, item: I) -> Self::Result
+    where
+        I: TypeMatcher,
+    {
         if item.is_wildcard() {
             self.list()
         } else {
@@ -224,7 +255,12 @@ pub trait TypeMatcherAlloc: Sized {
     }
 
     /// `dict[Key, Value]`.
-    fn dict_of_matcher(self, k: impl TypeMatcher, v: impl TypeMatcher) -> Self::Result {
+    #[allow(private_bounds)] // `IsDictOf`, `IsAny` are pub(crate), leak into bounds.
+    fn dict_of_matcher<K, V>(self, k: K, v: V) -> Self::Result
+    where
+        K: TypeMatcher,
+        V: TypeMatcher,
+    {
         match (k.is_wildcard(), v.is_wildcard()) {
             (true, true) => self.dict(),
             (true, false) => self.alloc(IsDictOf(IsAny, v)),
@@ -262,7 +298,11 @@ pub trait TypeMatcherAlloc: Sized {
     }
 
     /// `set[Item]`.
-    fn set_of_matcher(self, item: impl TypeMatcher) -> Self::Result {
+    #[allow(private_bounds)] // `IsSetOf` is pub(crate), leaks into bound.
+    fn set_of_matcher<I>(self, item: I) -> Self::Result
+    where
+        I: TypeMatcher,
+    {
         if item.is_wildcard() {
             self.set()
         } else {
@@ -288,6 +328,7 @@ pub trait TypeMatcherAlloc: Sized {
         }
     }
 
+    /// `set[Item]`.
     fn set_of(self, item: &Ty) -> Self::Result {
         if item.is_any() {
             self.set()

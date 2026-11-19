@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 mod builder;
 mod critical_path_accessor;
 mod graph;
@@ -21,8 +19,10 @@ mod test_utils;
 
 pub use builder::GraphBuilder;
 pub use builder::PushError;
+pub use graph::AddEdgesError;
 pub use graph::Graph;
 pub use graph::GraphVertex;
+pub use graph::TopoSortError;
 pub use potential::compute_critical_path_potentials;
 pub use types::CriticalPathIndex;
 pub use types::CriticalPathVertexData;

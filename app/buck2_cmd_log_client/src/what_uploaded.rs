@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::io::Write;
@@ -24,6 +23,7 @@ use buck2_data::ReUploadMetrics;
 use buck2_event_log::stream_value::StreamValue;
 use buck2_event_observer::display;
 use buck2_event_observer::display::TargetDisplayOptions;
+use buck2_hash::BuckMutMap;
 use tokio_stream::StreamExt;
 
 use crate::LogCommandOutputFormat;
@@ -35,13 +35,7 @@ use crate::transform_format;
 pub struct WhatUploadedCommand {
     #[clap(flatten)]
     event_log: EventLogOptions,
-    #[clap(
-        long = "format",
-        help = "Which output format to use for this command",
-        default_value = "tabulated",
-        ignore_case = true,
-        value_enum
-    )]
+    #[clap(flatten)]
     output: LogCommandOutputFormat,
     #[clap(
         long = "aggregate-by-ext",
@@ -85,7 +79,7 @@ impl Display for ExtensionRecord {
 }
 
 fn get_action_record(
-    state: &HashMap<u64, buck2_data::ActionExecutionStart>,
+    state: &BuckMutMap<u64, buck2_data::ActionExecutionStart>,
     upload: &ReUploadEvent,
 ) -> ActionRecord {
     let digests_uploaded = upload.inner.digests_uploaded.unwrap_or_default();
@@ -113,7 +107,8 @@ fn print_uploads(
     record: &ActionRecord,
 ) -> Result<(), ClientIoError> {
     match output {
-        LogCommandOutputFormatWithWriter::Tabulated(w) => Ok(writeln!(w, "{record}")?),
+        LogCommandOutputFormatWithWriter::Readable(w)
+        | LogCommandOutputFormatWithWriter::Tabulated(w) => Ok(writeln!(w, "{record}")?),
         LogCommandOutputFormatWithWriter::Csv(writer) => Ok(writer.serialize(record)?),
         LogCommandOutputFormatWithWriter::Json(w) => {
             serde_json::to_writer(w.by_ref(), &record)?;
@@ -125,7 +120,7 @@ fn print_uploads(
 
 fn print_extension_stats(
     output: &mut LogCommandOutputFormatWithWriter,
-    stats_by_extension: &HashMap<String, ReUploadMetrics>,
+    stats_by_extension: &BuckMutMap<String, ReUploadMetrics>,
 ) -> Result<(), ClientIoError> {
     let mut records: Vec<ExtensionRecord> = stats_by_extension
         .iter()
@@ -135,10 +130,11 @@ fn print_extension_stats(
             digests_uploaded: m.digests_uploaded,
         })
         .collect();
-    records.sort_by(|a, b| a.bytes_uploaded.cmp(&b.bytes_uploaded));
+    records.sort_by_key(|a| a.bytes_uploaded);
     for record in records {
         match output {
-            LogCommandOutputFormatWithWriter::Tabulated(w) => {
+            LogCommandOutputFormatWithWriter::Readable(w)
+            | LogCommandOutputFormatWithWriter::Tabulated(w) => {
                 writeln!(w, "{record}")?;
             }
             LogCommandOutputFormatWithWriter::Csv(writer) => writer.serialize(record)?,
@@ -183,47 +179,44 @@ impl BuckSubcommand for WhatUploadedCommand {
 
             let mut total_digests_uploaded = 0;
             let mut total_bytes_uploaded = 0;
-            let mut state = HashMap::new();
-            let mut stats_by_extension: HashMap<String, ReUploadMetrics> = HashMap::new();
+            let mut state = BuckMutMap::default();
+            let mut stats_by_extension: BuckMutMap<String, ReUploadMetrics> = BuckMutMap::default();
             while let Some(event) = events.try_next().await? {
                 match event {
                     // Insert parent span information so we can refer back to it later.
-                    StreamValue::Event(event) => match event.data {
-                        Some(buck2_data::buck_event::Data::SpanStart(start)) => match start.data {
-                            Some(buck2_data::span_start_event::Data::ActionExecution(action)) => {
-                                state.insert(event.span_id, action);
-                            }
-                            _ => {}
-                        },
+                    StreamValue::Event(event) => {
+                        if let Some(buck2_data::buck_event::Data::SpanStart(start)) = &event.data
+                            && let Some(buck2_data::span_start_event::Data::ActionExecution(
+                                action,
+                            )) = &start.data
+                        {
+                            state.insert(event.span_id, action.clone());
+                        }
 
-                        Some(buck2_data::buck_event::Data::SpanEnd(end)) => {
-                            match end.data.as_ref() {
-                                Some(buck2_data::span_end_event::Data::ReUpload(u)) => {
-                                    let upload = ReUploadEvent {
-                                        parent_span_id: event.parent_id,
-                                        inner: u,
-                                    };
-                                    if aggregate_by_extension {
-                                        for (extension, metrics) in &upload.inner.stats_by_extension
-                                        {
-                                            let entry = stats_by_extension
-                                                .entry(extension.to_owned())
-                                                .or_default();
-                                            entry.bytes_uploaded += metrics.bytes_uploaded;
-                                            entry.digests_uploaded += metrics.digests_uploaded;
-                                        }
-                                    } else {
-                                        let record = get_action_record(&state, &upload);
-                                        total_digests_uploaded += record.digests_uploaded;
-                                        total_bytes_uploaded += record.bytes_uploaded;
-                                        print_uploads(&mut output, &record)?;
-                                    }
+                        if let Some(buck2_data::buck_event::Data::SpanEnd(end)) = &event.data
+                            && let Some(buck2_data::span_end_event::Data::ReUpload(u)) =
+                                end.data.as_ref()
+                        {
+                            let upload = ReUploadEvent {
+                                parent_span_id: event.parent_id,
+                                inner: u,
+                            };
+                            if aggregate_by_extension {
+                                for (extension, metrics) in &upload.inner.stats_by_extension {
+                                    let entry = stats_by_extension
+                                        .entry(extension.to_owned())
+                                        .or_default();
+                                    entry.bytes_uploaded += metrics.bytes_uploaded;
+                                    entry.digests_uploaded += metrics.digests_uploaded;
                                 }
-                                _ => {}
+                            } else {
+                                let record = get_action_record(&state, &upload);
+                                total_digests_uploaded += record.digests_uploaded;
+                                total_bytes_uploaded += record.bytes_uploaded;
+                                print_uploads(&mut output, &record)?;
                             }
                         }
-                        _ => {}
-                    },
+                    }
                     StreamValue::Result(..) | StreamValue::PartialResult(..) => {}
                 }
             }

@@ -25,7 +25,8 @@ pub(crate) fn roots() -> Vec<&'static (dyn Allocative + Sync + 'static)> {
     ROOTS.lock().unwrap().clone()
 }
 
-#[cfg(test)]
+// `#[root]` registers from a global constructor, which does not run under Miri.
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate as allocative;
     use crate::Allocative;

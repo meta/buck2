@@ -10,15 +10,16 @@
 
 package com.facebook.buck.android.resources;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import java.io.PrintStream;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.IntStream;
-import javax.annotation.Nullable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * ResourcesXml handles Android's compiled xml format. It consists of: ResChunk_header u16
@@ -45,8 +46,9 @@ import javax.annotation.Nullable;
  * <p>XML_START_ELEMENT is then followed by attrCount attributes of the form: StringRef namespace
  * StringRef name StringRef rawValue Res_value typedValue
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ResourcesXml extends ResChunk {
-  private static final boolean DEBUG = true;
+  private static final boolean DEBUG = false;
 
   public static final int HEADER_SIZE = 8;
 
@@ -204,17 +206,20 @@ public class ResourcesXml extends ResChunk {
 
       @Override
       public int compareTo(AttrRef other) {
-        return resId - other.resId;
+        return Integer.compare(resId, other.resId);
       }
     }
 
+    AttrRef[] refs = new AttrRef[attrCount];
+    for (int i = 0; i < attrCount; i++) {
+      refs[i] = new AttrRef(attrStart + ATTRIBUTE_SIZE * i);
+    }
+    Arrays.sort(refs);
     byte[] newData = new byte[ATTRIBUTE_SIZE * attrCount];
     ByteBuffer newBuf = wrap(newData);
-    int finalAttrStart = attrStart;
-    IntStream.range(0, attrCount)
-        .mapToObj(i -> new AttrRef(finalAttrStart + ATTRIBUTE_SIZE * i))
-        .sorted()
-        .forEachOrdered(ref -> newBuf.put(slice(nodeBuf, ref.offset, ATTRIBUTE_SIZE)));
+    for (AttrRef ref : refs) {
+      newBuf.put(slice(nodeBuf, ref.offset, ATTRIBUTE_SIZE));
+    }
     slice(nodeBuf, attrStart).put(newData);
   }
 

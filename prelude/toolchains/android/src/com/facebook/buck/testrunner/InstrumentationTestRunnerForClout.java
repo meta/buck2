@@ -10,13 +10,18 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.buck.testrunner.reportlayer.PerfettoReportLayer;
 import com.facebook.buck.testrunner.reportlayer.TombstonesReportLayer;
 import com.facebook.buck.testrunner.reportlayer.VideoRecordingReportLayer;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner {
 
   private static final String ANDROID_HOME = "ANDROID_HOME";
@@ -28,24 +33,26 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
       String targetPackageName,
       String testRunner,
       File outputDirectory,
-      String instrumentationApkPath,
-      String apkUnderTestPath,
-      String exopackageLocalPath,
-      String apkUnderTestExopackageLocalPath,
+      @Nullable String instrumentationApkPath,
+      @Nullable String apkUnderTestPath,
+      @Nullable String exopackageLocalPath,
+      @Nullable String apkUnderTestExopackageLocalPath,
+      @Nullable String exopackageSecondaryDexLocalPath,
       boolean attemptUninstallApkUnderTest,
       boolean attemptUninstallInstrumentationApk,
       boolean debug,
       boolean codeCoverage,
-      String codeCoverageOutputFile,
+      @Nullable String codeCoverageOutputFile,
       boolean isSelfInstrumenting,
       Map<String, String> extraInstrumentationArguments,
-      String extraInstrumentationTestListener,
+      @Nullable String extraInstrumentationTestListener,
       Map<String, String> extraFilesToPull,
       Map<String, String> extraDirsToPull,
       boolean clearPackageData,
       boolean disableAnimations,
-      String preTestSetupScript,
-      List<String> extraApksToInstall) {
+      @Nullable String preTestSetupScript,
+      List<String> extraApksToInstall,
+      @Nullable Integer userId) {
     super(
         deviceArgs,
         packageName,
@@ -56,6 +63,7 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
         apkUnderTestPath,
         exopackageLocalPath,
         apkUnderTestExopackageLocalPath,
+        exopackageSecondaryDexLocalPath,
         attemptUninstallApkUnderTest,
         attemptUninstallInstrumentationApk,
         debug,
@@ -69,10 +77,10 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
         clearPackageData,
         disableAnimations,
         preTestSetupScript,
-        extraApksToInstall);
+        extraApksToInstall,
+        userId);
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
   public static InstrumentationTestRunnerForClout fromArgs(String... args) throws IOException {
     ArgsParser argsParser = new ArgsParser();
     argsParser.fromArgs(args);
@@ -80,14 +88,15 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
     InstrumentationTestRunnerForClout runner =
         new InstrumentationTestRunnerForClout(
             deviceArgs,
-            argsParser.packageName,
-            argsParser.targetPackageName,
-            argsParser.testRunner,
-            argsParser.outputDirectory,
+            Objects.requireNonNull(argsParser.packageName),
+            Objects.requireNonNull(argsParser.targetPackageName),
+            Objects.requireNonNull(argsParser.testRunner),
+            Objects.requireNonNull(argsParser.outputDirectory),
             argsParser.instrumentationApkPath,
             argsParser.apkUnderTestPath,
             argsParser.exopackageLocalPath,
             argsParser.apkUnderTestExopackageLocalPath,
+            argsParser.exopackageSecondaryDexLocalPath,
             argsParser.attemptUninstallApkUnderTest,
             argsParser.attemptUninstallInstrumentationApk,
             argsParser.debug,
@@ -101,16 +110,19 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
             argsParser.clearPackageData,
             argsParser.disableAnimations,
             argsParser.preTestSetupScript,
-            argsParser.extraApksToInstall);
+            argsParser.extraApksToInstall,
+            argsParser.userId);
     if (argsParser.recordVideo) {
       runner.addReportLayer(new VideoRecordingReportLayer(runner));
     }
     runner.addReportLayer(new TombstonesReportLayer(runner, argsParser.collectTombstones));
+    if (argsParser.collectPerfetto) {
+      runner.addReportLayer(new PerfettoReportLayer(runner));
+    }
     return runner;
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
-  private String getAndroidHome() {
+  private @Nullable String getAndroidHome() {
     if (System.getenv().containsKey(ANDROID_HOME)) {
       return System.getenv(ANDROID_HOME);
     } else {
@@ -131,7 +143,7 @@ public class InstrumentationTestRunnerForClout extends InstrumentationTestRunner
   }
 
   @Override
-  protected void installPackage(String path) throws Throwable {
+  protected void installPackage(String path, String packageName) throws Throwable {
     RunShellCommand.run(getAdbPath(), "install " + path);
   }
 }

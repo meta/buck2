@@ -23,22 +23,15 @@ use crate as starlark;
 use crate::assert::Assert;
 use crate::environment::GlobalsBuilder;
 use crate::eval::compiler::def::Def;
-use crate::eval::compiler::def::FrozenDef;
 use crate::eval::compiler::def_inline::InlineDefBody;
 use crate::values::Value;
-use crate::values::ValueLike;
 
 #[starlark_module]
 fn globals(builder: &mut GlobalsBuilder) {
     fn returns_type_is<'v>(value: Value<'v>) -> anyhow::Result<bool> {
-        Ok(if let Some(def) = value.downcast_ref::<FrozenDef>() {
+        Ok(if let Some(def) = value.downcast_ref::<Def>() {
             matches!(
-                def.def_info.inline_def_body,
-                Some(InlineDefBody::ReturnTypeIs(..))
-            )
-        } else if let Some(def) = value.downcast_ref::<Def>() {
-            matches!(
-                def.def_info.inline_def_body,
+                def.def_info.value.inline_def_body,
                 Some(InlineDefBody::ReturnTypeIs(..))
             )
         } else {
@@ -85,5 +78,32 @@ def something_else(x, y):
 assert_false(returns_type_is(is_not_list))
 assert_false(returns_type_is(something_else))
     ",
+    );
+}
+
+/// `def f(*, x): return type(x) == "y"` is not inlined for a positional call: the call binds
+/// its arguments and reports the missing named-only parameter, before and after freeze.
+#[test]
+fn test_kwonly_type_is_not_inlined_for_positional_call() {
+    let mut a = Assert::new();
+    a.module(
+        "lib.star",
+        "def is_int(*, x):\n    return type(x) == 'int'\ndef is_list(x):\n    return type(x) == 'list'\n",
+    );
+    a.fail(
+        "load('lib.star', 'is_int')\nis_int(1)",
+        "Missing named-only parameter `x`",
+    );
+    a.eq("load('lib.star', 'is_int')\nis_int(x = 1)", "True");
+    a.eq("load('lib.star', 'is_list')\nis_list([])", "True");
+    let mut a = Assert::new();
+    a.disable_static_typechecking();
+    a.module(
+        "lib.star",
+        "def is_int(*, x):\n    return type(x) == 'int'\ndef g():\n    return is_int(1)\n",
+    );
+    a.fail(
+        "load('lib.star', 'g')\ng()",
+        "Missing named-only parameter `x`",
     );
 }

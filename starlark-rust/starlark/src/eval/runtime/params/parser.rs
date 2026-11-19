@@ -86,21 +86,23 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::assert::Assert;
+    use crate::docs::DocItem;
+    use crate::docs::DocMember;
     use crate::docs::DocParam;
     use crate::docs::DocParams;
     use crate::docs::DocString;
     use crate::docs::DocStringKind;
     use crate::eval::ParametersSpecParam;
-    use crate::eval::compiler::def::FrozenDef;
+    use crate::eval::compiler::def::Def;
     use crate::eval::runtime::params::display::PARAM_FMT_OPTIONAL;
     use crate::eval::runtime::params::spec::ParametersSpec;
     use crate::typing::Ty;
-    use crate::values::FrozenValue;
+    use crate::values::Value;
 
     #[test]
     fn test_documentation() -> anyhow::Result<()> {
         // Make sure that documentation for some odder parameter specs works properly.
-        let p = ParametersSpec::<FrozenValue>::new_parts(
+        let p = ParametersSpec::<Value>::new_parts(
             "f",
             [],
             [],
@@ -158,7 +160,14 @@ mod tests {
                 .pass_module(&format!("def f({sig}): pass"))
                 .get("f")
                 .unwrap();
-            assert_eq!(sig, &f.value().parameters_spec().unwrap().parameters_str());
+            assert_eq!(
+                sig,
+                &f.as_ref()
+                    .value()
+                    .parameters_spec()
+                    .unwrap()
+                    .parameters_str()
+            );
         }
 
         test("");
@@ -175,12 +184,57 @@ mod tests {
         test("a, **kwargs");
     }
 
+    /// A `def` whose star parameters are not named `args` and `kwargs` keeps their names in
+    /// `parameters_str` and in its documentation, where the docstring entries are attached by
+    /// name.
+    #[test]
+    fn test_star_parameter_names_are_kept() {
+        let a = Assert::new();
+        let m = a.pass_module(
+            r#"
+def f(a, *xs, b, **kws):
+    """
+    Summary.
+
+    Args:
+        a: The docs for a
+        *xs: The docs for xs
+        b: The docs for b
+        **kws: The docs for kws
+    """
+    pass
+"#,
+        );
+        let f = m.get("f").unwrap();
+        assert_eq!(
+            "a, *xs, b, **kws",
+            f.as_ref()
+                .value()
+                .parameters_spec()
+                .unwrap()
+                .parameters_str()
+        );
+
+        let DocItem::Member(DocMember::Function(docs)) = f.as_ref().value().documentation() else {
+            panic!("expected a function");
+        };
+        assert!(docs.params.pos_or_named[0].docs.is_some());
+        assert!(docs.params.named_only[0].docs.is_some());
+        let args = docs.params.args.unwrap();
+        assert_eq!("xs", args.name);
+        assert!(args.docs.is_some());
+        let kwargs = docs.params.kwargs.unwrap();
+        assert_eq!("kws", kwargs.name);
+        assert!(kwargs.docs.is_some());
+    }
+
     #[test]
     fn test_can_fill_with_args() {
         fn test(sig: &str, pos: usize, names: &[&str], expected: bool) {
             let a = Assert::new();
             let module = a.pass_module(&format!("def f({sig}): pass"));
-            let f = module.get("f").unwrap().downcast::<FrozenDef>().unwrap();
+            let f = module.get("f").unwrap();
+            let f = f.as_ref().value().downcast_ref::<Def>().unwrap();
             let parameters_spec = &f.parameters;
             assert_eq!(expected, parameters_spec.can_fill_with_args(pos, names));
         }

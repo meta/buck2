@@ -10,8 +10,10 @@
 
 package com.facebook.buck.jvm.java.classes;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface ClasspathTraverser {
 
   void traverse(ClasspathTraversal traversal) throws IOException;

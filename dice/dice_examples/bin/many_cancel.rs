@@ -61,13 +61,15 @@ use dice::DetectCycles;
 use dice::Dice;
 use dice::DiceComputations;
 use dice::DiceData;
-use dice::GlobalStats;
+use dice::DiceKeyDyn;
+use dice::EqualityBehavior;
 use dice::InjectedKey;
 use dice::Key;
 use dice::UserComputationData;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
-use futures::FutureExt;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use tokio::sync::Semaphore;
 
 struct Latches {
@@ -118,13 +120,18 @@ impl Latches {
     }
 }
 
-#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("TopKey({})", _0)]
+#[pagable_typetag(DiceKeyDyn)]
 pub struct TopKey(u32);
 
 #[async_trait]
 impl Key for TopKey {
     type Value = u32;
+
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
     async fn compute(
         &self,
@@ -136,40 +143,42 @@ impl Key for TopKey {
         if self.0 == config.chain_count {
             latches.dense_latch_release();
             ctx.compute2(
-                |ctx| async move { drop(ctx.compute(&DenseKey(config.dense_count)).await) }.boxed(),
-                |ctx| async move { drop(ctx.compute(&BottomKey(self.0)).await) }.boxed(),
+                async |ctx| drop(ctx.compute(&DenseKey(config.dense_count)).await),
+                async |ctx| drop(ctx.compute(&BottomKey(self.0)).await),
             )
             .await;
         } else {
             latches.chain_latch_release(self.0 as usize + 1);
             ctx.compute2(
-                |ctx| {
-                    async move {
-                        // This allows time to drop the graph of things below this before we re-request them.
-                        std::thread::sleep(Duration::from_millis(config.wait_millis));
-                        drop(ctx.compute(&TopKey(self.0 + 1)).await)
-                    }
-                    .boxed()
+                async |ctx| {
+                    // This allows time to drop the graph of things below this before we re-request them.
+                    std::thread::sleep(Duration::from_millis(config.wait_millis));
+                    drop(ctx.compute(&TopKey(self.0 + 1)).await)
                 },
-                |ctx| async move { drop(ctx.compute(&BottomKey(self.0)).await) }.boxed(),
+                async |ctx| drop(ctx.compute(&BottomKey(self.0)).await),
             )
             .await;
         }
         self.0
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|_x, _y| false)
     }
 }
 
-#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("BottomKey({})", _0)]
+#[pagable_typetag(DiceKeyDyn)]
 pub struct BottomKey(u32);
 
 #[async_trait]
 impl Key for BottomKey {
     type Value = u32;
+
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
     async fn compute(
         &self,
@@ -189,18 +198,23 @@ impl Key for BottomKey {
         self.0
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|_x, _y| false)
     }
 }
 
-#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("DenseKey({})", _0)]
+#[pagable_typetag(DiceKeyDyn)]
 pub struct DenseKey(u32);
 
 #[async_trait]
 impl Key for DenseKey {
     type Value = u32;
+
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
     async fn compute(
         &self,
@@ -215,8 +229,8 @@ impl Key for DenseKey {
             drop(ctx.compute(&BottomKey(config.chain_count)).await)
         } else {
             drop(
-                ctx.compute_join(0..self.0, |ctx, v| {
-                    async move { drop(ctx.compute(&DenseKey(v)).await) }.boxed()
+                ctx.compute_join(0..self.0, async |ctx, v| {
+                    drop(ctx.compute(&DenseKey(v)).await)
                 })
                 .await,
             );
@@ -224,32 +238,42 @@ impl Key for DenseKey {
         self.0
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|_x, _y| false)
     }
 }
 
-#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("Leaf")]
+#[pagable_typetag(DiceKeyDyn)]
 pub struct Leaf;
 
 impl InjectedKey for Leaf {
     type Value = u32;
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|_x, _y| false)
     }
 }
 
-#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("ConfigKey")]
+#[pagable_typetag(DiceKeyDyn)]
 pub struct ConfigKey;
 
 impl InjectedKey for ConfigKey {
     type Value = Config;
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|_x, _y| false)
     }
 }
 
@@ -271,7 +295,7 @@ pub struct Config {
 async fn main() {
     let config = Config::parse();
 
-    eprintln!("Using config {:?}", &config);
+    eprintln!("Using config {:?}", config);
 
     let builder = Dice::builder();
     let dice = if config.detect_cycles {
@@ -279,11 +303,12 @@ async fn main() {
     } else {
         builder.build(DetectCycles::Disabled)
     };
+    let root = dice.new_root().await;
 
     let start = Instant::now();
 
     {
-        let mut ctx = dice.updater();
+        let mut ctx = dice.updater(root);
         ctx.changed_to(vec![(ConfigKey, config)]).unwrap();
         ctx.commit().await;
     }
@@ -295,14 +320,17 @@ async fn main() {
         let latches = Latches::new(config.chain_count);
         latches.release_all();
         dice_data.set(latches);
-        let mut ctx = dice.updater_with_data(UserComputationData {
-            data: dice_data,
-            ..Default::default()
-        });
+        let mut ctx = dice.updater_with_data(
+            root,
+            UserComputationData {
+                data: dice_data,
+                ..Default::default()
+            },
+        );
 
         ctx.changed_to(vec![(Leaf, 0)]).unwrap();
 
-        let mut ctx = ctx.commit().await;
+        let ctx = ctx.commit().await;
         drop(ctx.compute(&TopKey(0)).await);
     }
 
@@ -316,16 +344,17 @@ async fn main() {
     {
         let mut dice_data = DiceData::new();
         dice_data.set(latches);
-        let mut ctx = dice.updater_with_data(UserComputationData {
-            data: dice_data,
-            ..Default::default()
-        });
+        let mut ctx = dice.updater_with_data(
+            root,
+            UserComputationData {
+                data: dice_data,
+                ..Default::default()
+            },
+        );
         ctx.changed_to(vec![(Leaf, 1)]).unwrap();
-        let mut ctx = ctx.commit().await;
+        let ctx = ctx.commit().await;
         drop(ctx.compute(&TopKey(0)).await);
     }
 
     eprintln!("recompute took {}s", first_done.elapsed().as_secs_f32());
-
-    eprintln!("cancellation count {}", GlobalStats::get().cancellations);
 }

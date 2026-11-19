@@ -1,0 +1,10 @@
+load("//defs.bzl", "cached_binary", "uncached_binary")
+
+cached_binary(
+    name = "cached_target",
+    srcs = ["input.txt"],
+)
+
+uncached_binary(
+    name = "uncached_target",
+)

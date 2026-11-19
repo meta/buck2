@@ -39,7 +39,7 @@ def apple_xcframework_impl(ctx: AnalysisContext) -> list[Provider]:
     apple_tools = ctx.attrs._apple_tools[AppleToolsInfo]
     framework_name = _get_framework_name(ctx)
 
-    xcframework_dir = ctx.actions.declare_output(framework_name + ".xcframework", dir = True)
+    xcframework_dir = ctx.actions.declare_output(framework_name + ".xcframework", dir = True, has_content_based_path = False)
     xcframework_command = cmd_args([
         apple_tools.xcframework_maker,
         "--output-path",
@@ -75,7 +75,13 @@ def _strip_os_sdk_and_runtime_constraints(platform: PlatformInfo, refs: struct) 
     return {
         constraint_setting_label: constraint_setting_value
         for (constraint_setting_label, constraint_setting_value) in platform.configuration.constraints.items()
-        if constraint_setting_label not in [refs.os[ConstraintSettingInfo].label, refs.sdk[ConstraintSettingInfo].label, refs.universal[ConstraintSettingInfo].label, refs.runtime[ConstraintSettingInfo].label]
+        if constraint_setting_label
+        not in [
+            refs.os[ConstraintSettingInfo].label,
+            refs.sdk[ConstraintSettingInfo].label,
+            refs.universal[ConstraintSettingInfo].label,
+            refs.runtime[ConstraintSettingInfo].label,
+        ]
     }
 
 # provides a map of os-platform to cpu architectures
@@ -96,10 +102,7 @@ def _normalize_platforms(platforms: list[str]) -> dict[str, list[str]]:
 
     return result
 
-def _apple_xcframework_framework_attrib_split_transition_impl(
-        platform: PlatformInfo,
-        refs: struct,
-        attrs: struct) -> dict[str, PlatformInfo]:
+def _apple_xcframework_framework_attrib_split_transition_impl(platform: PlatformInfo, refs: struct, attrs: struct) -> dict[str, PlatformInfo]:
     result = {}
 
     new_platforms = _normalize_platforms(attrs.platforms).items()
@@ -158,10 +161,12 @@ def _apple_xcframework_framework_attrib_split_transition_impl(
         if len(canonical_platform_suffix) > 0:
             canonical_platform_name += "-" + canonical_platform_suffix
 
-        result.update({canonical_platform_name: PlatformInfo(
-            label = canonical_platform_name + "_transition",
-            configuration = new_cfg,
-        )})
+        result.update({
+            canonical_platform_name: PlatformInfo(
+                label = canonical_platform_name + "_transition",
+                configuration = new_cfg,
+            )
+        })
 
     return result
 

@@ -22,20 +22,18 @@ class JarsActionMetadataTest {
 
   @Test
   fun `when constructor called then filters only jar files`() {
-    val previousDigest =
-        mutableMapOf(
-            Paths.get("lib1.jar") to "digest1",
-            Paths.get("lib2.class") to "digest2",
-            Paths.get("lib3.txt") to "digest3",
-            Paths.get("lib4.jar") to "digest4",
-        )
-    val currentDigest =
-        mutableMapOf(
-            Paths.get("lib1.jar") to "digest1",
-            Paths.get("lib2.class") to "digest2",
-            Paths.get("lib3.txt") to "digest3",
-            Paths.get("lib5.jar") to "digest5",
-        )
+    val previousDigest = mutableMapOf(
+        Paths.get("lib1.jar") to "digest1",
+        Paths.get("lib2.class") to "digest2",
+        Paths.get("lib3.txt") to "digest3",
+        Paths.get("lib4.jar") to "digest4",
+    )
+    val currentDigest = mutableMapOf(
+        Paths.get("lib1.jar") to "digest1",
+        Paths.get("lib2.class") to "digest2",
+        Paths.get("lib3.txt") to "digest3",
+        Paths.get("lib5.jar") to "digest5",
+    )
 
     val actionMetadata = ActionMetadata(Paths.get("metadata.json"), previousDigest, currentDigest)
     val jarsActionMetadata = JarsActionMetadata(actionMetadata)
@@ -112,18 +110,16 @@ class JarsActionMetadataTest {
 
   @Test
   fun `when checking different jar files with different changes then hasChanged returns correct results`() {
-    val previousDigest =
-        mutableMapOf(
-            Paths.get("lib1.jar") to "digest1",
-            Paths.get("lib2.jar") to "digest2",
-            Paths.get("lib3.jar") to "digest3",
-        )
-    val currentDigest =
-        mutableMapOf(
-            Paths.get("lib1.jar") to "digest1",
-            Paths.get("lib2.jar") to "digest2_changed",
-            Paths.get("lib4.jar") to "digest4",
-        )
+    val previousDigest = mutableMapOf(
+        Paths.get("lib1.jar") to "digest1",
+        Paths.get("lib2.jar") to "digest2",
+        Paths.get("lib3.jar") to "digest3",
+    )
+    val currentDigest = mutableMapOf(
+        Paths.get("lib1.jar") to "digest1",
+        Paths.get("lib2.jar") to "digest2_changed",
+        Paths.get("lib4.jar") to "digest4",
+    )
 
     val actionMetadata = ActionMetadata(Paths.get("metadata.json"), previousDigest, currentDigest)
     val jarsActionMetadata = JarsActionMetadata(actionMetadata)
@@ -136,16 +132,14 @@ class JarsActionMetadataTest {
 
   @Test
   fun `when jar file in subdirectory then filters correctly`() {
-    val previousDigest =
-        mutableMapOf(
-            Paths.get("path/to/lib1.jar") to "digest1",
-            Paths.get("path/to/lib2.class") to "digest2",
-        )
-    val currentDigest =
-        mutableMapOf(
-            Paths.get("path/to/lib1.jar") to "digest1",
-            Paths.get("path/to/lib2.class") to "digest2",
-        )
+    val previousDigest = mutableMapOf(
+        Paths.get("path/to/lib1.jar") to "digest1",
+        Paths.get("path/to/lib2.class") to "digest2",
+    )
+    val currentDigest = mutableMapOf(
+        Paths.get("path/to/lib1.jar") to "digest1",
+        Paths.get("path/to/lib2.class") to "digest2",
+    )
 
     val actionMetadata = ActionMetadata(Paths.get("metadata.json"), previousDigest, currentDigest)
     val jarsActionMetadata = JarsActionMetadata(actionMetadata)
@@ -170,18 +164,16 @@ class JarsActionMetadataTest {
 
   @Test
   fun `when only non-jar files then filters return empty maps`() {
-    val previousDigest =
-        mutableMapOf(
-            Paths.get("lib1.class") to "digest1",
-            Paths.get("lib2.txt") to "digest2",
-            Paths.get("lib3.bin") to "digest3",
-        )
-    val currentDigest =
-        mutableMapOf(
-            Paths.get("lib1.class") to "digest1",
-            Paths.get("lib2.txt") to "digest2",
-            Paths.get("lib3.bin") to "digest3",
-        )
+    val previousDigest = mutableMapOf(
+        Paths.get("lib1.class") to "digest1",
+        Paths.get("lib2.txt") to "digest2",
+        Paths.get("lib3.bin") to "digest3",
+    )
+    val currentDigest = mutableMapOf(
+        Paths.get("lib1.class") to "digest1",
+        Paths.get("lib2.txt") to "digest2",
+        Paths.get("lib3.bin") to "digest3",
+    )
 
     val actionMetadata = ActionMetadata(Paths.get("metadata.json"), previousDigest, currentDigest)
     val jarsActionMetadata = JarsActionMetadata(actionMetadata)
@@ -213,14 +205,14 @@ class JarsActionMetadataTest {
   }
 
   @Test
-  fun `when jar file with uppercase extension then filters correctly`() {
+  fun `when jar file with uppercase extension then it is not treated as a jar`() {
     val previousDigest = mutableMapOf(Paths.get("lib1.JAR") to "digest1")
     val currentDigest = mutableMapOf(Paths.get("lib1.JAR") to "digest1")
 
     val actionMetadata = ActionMetadata(Paths.get("metadata.json"), previousDigest, currentDigest)
     val jarsActionMetadata = JarsActionMetadata(actionMetadata)
 
-    assertEquals(1, jarsActionMetadata.previousJarsDigest.size)
-    assertEquals(1, jarsActionMetadata.currentJarsDigest.size)
+    assertEquals(0, jarsActionMetadata.previousJarsDigest.size)
+    assertEquals(0, jarsActionMetadata.currentJarsDigest.size)
   }
 }

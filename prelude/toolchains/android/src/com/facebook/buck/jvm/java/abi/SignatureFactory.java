@@ -11,10 +11,10 @@
 package com.facebook.buck.jvm.java.abi;
 
 import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import javax.annotation.Nullable;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementVisitor;
 import javax.lang.model.element.ExecutableElement;
@@ -34,10 +34,12 @@ import javax.lang.model.type.TypeVisitor;
 import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.SimpleElementVisitor8;
 import javax.lang.model.util.SimpleTypeVisitor8;
+import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.signature.SignatureVisitor;
 import org.objectweb.asm.signature.SignatureWriter;
 
 /** Computes type signatures for {@link Element}s that require them. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class SignatureFactory {
   private final DescriptorFactory descriptorFactory;
 

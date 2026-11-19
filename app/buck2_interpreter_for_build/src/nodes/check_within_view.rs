@@ -12,9 +12,10 @@ use buck2_core::package::PackageLabel;
 use buck2_core::package::source_path::SourcePathRef;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::target::label::label::TargetLabel;
+use buck2_hash::BuckFixedSortedSet;
+use buck2_node::attrs::arena::CoercedAttrRef;
 use buck2_node::attrs::attr_type::AttrType;
 use buck2_node::attrs::attr_type::configuration_dep::ConfigurationDepKind;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::traversal::CoercedAttrTraversal;
 use buck2_node::visibility::VisibilityPattern;
 use buck2_node::visibility::VisibilityPatternList;
@@ -31,6 +32,9 @@ fn indented_within_view(spec: &WithinViewSpecification) -> String {
             }
             s
         }
+        VisibilityPatternList::Intersection(_) => {
+            unreachable!("WithinViewSpecification cannot contain Intersection")
+        }
     }
 }
 
@@ -44,16 +48,27 @@ enum CheckWithinViewError {
     )]
     #[buck2(tag = Visibility)]
     DepNotWithinView(TargetLabel, WithinViewSpecification),
+    #[error(
+        "Target's effective `within_view` does not allow dependency `{0}` (within_view = {1}). Capped to {2} by `enforce_within_view_intersection()` in an ancestor PACKAGE"
+    )]
+    #[buck2(tag = Visibility)]
+    DepNotWithinViewCap(TargetLabel, WithinViewSpecification, VisibilityPatternList),
 }
 
-/// Check that dependencies in attribute do not violate `within_view`.
+/// Check that dependencies in attribute do not violate `within_view`, i.e. that
+/// every dep matches both the target's own `within_view` and the cap propagated
+/// from `enforce_within_view_intersection()` in ancestor `PACKAGE` files.
 pub(crate) fn check_within_view(
-    attr: &CoercedAttr,
+    attr: CoercedAttrRef<'_>,
     pkg: PackageLabel,
     attr_type: &AttrType,
     within_view: &WithinViewSpecification,
+    within_view_cap: &VisibilityPatternList,
+    default_deps: Option<&BuckFixedSortedSet<TargetLabel>>,
 ) -> buck2_error::Result<()> {
-    if within_view == &WithinViewSpecification::PUBLIC {
+    if within_view == &WithinViewSpecification::PUBLIC
+        && within_view_cap == &VisibilityPatternList::Public
+    {
         // Shortcut.
         return Ok(());
     }
@@ -61,24 +76,41 @@ pub(crate) fn check_within_view(
     struct WithinViewCheckTraversal<'x> {
         pkg: PackageLabel,
         within_view: &'x WithinViewSpecification,
+        within_view_cap: &'x VisibilityPatternList,
+        default_deps: &'x BuckFixedSortedSet<TargetLabel>,
     }
 
     impl<'x> WithinViewCheckTraversal<'x> {
-        fn check_dep_within_view(&self, dep: &TargetLabel) -> buck2_error::Result<()> {
-            if self.pkg == dep.pkg() || self.within_view.0.matches_target(dep) {
-                Ok(())
-            } else {
+        fn check_dep_within_view(&self, dep: TargetLabel) -> buck2_error::Result<()> {
+            if self.pkg == dep.pkg()
+                || self.default_deps.contains(&dep)
+                || (self.within_view.0.matches_target(&dep)?
+                    && self.within_view_cap.matches_target(&dep)?)
+            {
+                return Ok(());
+            }
+            // Inside an opted-in subtree the cap is named even when the target's
+            // own list is what refuses the dep: widening that list alone would
+            // still be refused by the cap, so a cap-blind message misleads.
+            if matches!(self.within_view_cap, VisibilityPatternList::Public) {
                 Err(
                     CheckWithinViewError::DepNotWithinView(dep.dupe(), self.within_view.dupe())
                         .into(),
                 )
+            } else {
+                Err(CheckWithinViewError::DepNotWithinViewCap(
+                    dep.dupe(),
+                    self.within_view.dupe(),
+                    self.within_view_cap.dupe(),
+                )
+                .into())
             }
         }
     }
 
     impl<'a, 'x> CoercedAttrTraversal<'a> for WithinViewCheckTraversal<'x> {
         fn dep(&mut self, dep: &ProvidersLabel) -> buck2_error::Result<()> {
-            self.check_dep_within_view(dep.target())
+            self.check_dep_within_view(dep.target().dupe())
         }
 
         fn configuration_dep(
@@ -90,8 +122,9 @@ pub(crate) fn check_within_view(
                 // Skip some configuration deps
                 ConfigurationDepKind::CompatibilityAttribute => (),
                 ConfigurationDepKind::SelectKey => (),
+                ConfigurationDepKind::DefaultTargetPlatform => (),
                 ConfigurationDepKind::ConfiguredDepPlatform | ConfigurationDepKind::Transition => {
-                    self.check_dep_within_view(dep.target())?
+                    self.check_dep_within_view(dep.target().dupe())?
                 }
             }
             Ok(())
@@ -104,7 +137,12 @@ pub(crate) fn check_within_view(
 
     attr.traverse(
         attr_type,
-        pkg.dupe(),
-        &mut WithinViewCheckTraversal { pkg, within_view },
+        Some(pkg),
+        &mut WithinViewCheckTraversal {
+            pkg,
+            within_view,
+            within_view_cap,
+            default_deps: default_deps.unwrap_or(&BuckFixedSortedSet::new()),
+        },
     )
 }

@@ -22,7 +22,10 @@ use crate::values::FreezeError;
 trait Bound<'x> {}
 
 #[derive(Freeze)]
-#[freeze(validator = check_type, bounds = "<V as Freeze>::Frozen: Bound<'freeze>")]
+#[freeze(
+    validator = check_type,
+    bounds = "for<'fv> <V as Freeze<'v>>::Frozen<'fv>: Bound<'fv>"
+)]
 struct Test<V> {
     field: V,
 }
@@ -39,6 +42,6 @@ fn assert_impl() {
     #[derive(Freeze)]
     struct Impl {}
     impl<'x> Bound<'x> for Impl {}
-    fn check(_: impl Freeze) {}
+    fn check<'v>(_: impl Freeze<'v>) {}
     check(Test { field: Impl {} });
 }

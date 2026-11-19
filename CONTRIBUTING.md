@@ -24,7 +24,21 @@ We actively welcome your pull requests.
 3. If you've changed APIs, update the documentation.
 4. Ensure the test suite passes.
 5. Make sure your code passes any lints.
-6. If you haven't already, complete the Contributor License Agreement ("CLA").
+6. Format your code with `python3 fmt.py` (see below).
+7. If you haven't already, complete the Contributor License Agreement ("CLA").
+
+## Formatting
+
+Run `python3 fmt.py` before you push. It formats Rust and Starlark exactly as
+Meta's internal formatter does, so a pull request that passes the "Format"
+check needs no Rust or Starlark reformatting when it is imported;
+`python3 fmt.py --check` shows what would change without touching anything.
+
+Rust is formatted by the nightly `rustfmt` pinned in `.rustfmt-version`, not
+by the toolchain in `rust-toolchain.toml`, so plain `cargo fmt` can disagree
+with the check; `fmt.py` installs the pinned `rustfmt` through `rustup` on
+first use. Starlark (`.bzl`, `.bxl`, `BUCK`, `PACKAGE`, ...) is formatted by
+[`tools/starlark_fmt`](./tools/starlark_fmt/README.md), built from this tree.
 
 ## Contributor License Agreement ("CLA")
 
@@ -44,7 +58,7 @@ outlined on that page and do not file a public issue.
 
 ## Coding Style, Compiling, and Hacking Pro-tips
 
-See [HACKING.md](./HACKING.md) for the nitty gritty on how to contribute.
+See [here](./docs/developers/basics.md) for the nitty gritty on how to contribute.
 
 ## License
 

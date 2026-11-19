@@ -1,0 +1,38 @@
+load("//groups:rules.bzl", "tool")
+load(":rules.bzl", "arg_provider", "creator")
+
+tool(
+    name = "remote_tool",
+    target_compatible_with = ["//config:remote"],
+)
+
+tool(
+    name = "local_tool",
+    target_compatible_with = ["//config:local"],
+)
+
+tool(name = "any_tool")
+
+# Both resolve to `linux_local` with different exec deps, and pass the same arg.
+creator(
+    name = "shared_a",
+    cmd = "$(exe :any_tool)",
+)
+
+creator(
+    name = "shared_b",
+    cmd = "$(exe :any_tool)",
+    extra = [":local_tool"],
+)
+
+# Configured on `linux_remote`; `:remote_arg_on_local` runs on `linux_local`.
+arg_provider(
+    name = "remote_arg",
+    cmd = "$(exe :remote_tool)",
+)
+
+creator(
+    name = "remote_arg_on_local",
+    extra = [":local_tool"],
+    provider = ":remote_arg",
+)

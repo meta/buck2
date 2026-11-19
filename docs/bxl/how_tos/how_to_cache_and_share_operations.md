@@ -71,7 +71,7 @@ def _bxl_main_impl(bxl_ctx: bxl.Context):
     ...
 ```
 
-Now you have a anon target and the the output of this anon target will be cached
+Now you have an anon target and the output of this anon target will be cached
 using a cache key composed of its attributes, target platform, and any bxl
 script modifiers.
 

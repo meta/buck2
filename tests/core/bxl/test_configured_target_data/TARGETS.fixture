@@ -18,3 +18,20 @@ constraint_value(
 )
 
 dummy(name = "dummy")
+
+dummy(
+    name = "dep1",
+)
+
+dummy(
+    name = "dep2",
+)
+
+dummy(
+    name = "with_deps",
+    deps = [
+        ":dep1",
+        ":dep2",
+    ],
+    srcs = ["file1.txt", "file2.txt"],
+)

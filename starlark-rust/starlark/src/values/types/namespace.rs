@@ -21,5 +21,4 @@ pub(crate) mod globals;
 mod typing;
 pub(crate) mod value;
 
-pub use value::FrozenNamespace;
 pub use value::Namespace;

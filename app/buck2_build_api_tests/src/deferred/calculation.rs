@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -37,18 +36,19 @@ use buck2_core::fs::project::ProjectRootTemp;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::digest_config::SetDigestConfig;
+use buck2_hash::BuckMutInsertionSet;
+use buck2_hash::BuckMutMap;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use dice::DiceComputations;
 use dice::UserComputationData;
 use dice::testing::DiceBuilder;
 use dupe::Dupe;
-use indexmap::IndexSet;
 use indoc::indoc;
 
 use crate::interpreter::rule_defs::provider::testing::FrozenProviderCollectionValueExt;
 
 #[derive(Debug, Allocative)]
-struct FakeDeferred(usize, IndexSet<DeferredInput>, Arc<AtomicBool>);
+struct FakeDeferred(usize, BuckMutInsertionSet<DeferredInput>, Arc<AtomicBool>);
 
 impl provider::Provider for FakeDeferred {
     fn provide<'a>(&'a self, _demand: &mut provider::Demand<'a>) {}
@@ -96,8 +96,16 @@ async fn lookup_deferred_from_analysis() -> buck2_error::Result<()> {
 
     let executed0 = Arc::new(AtomicBool::new(false));
     let executed1 = Arc::new(AtomicBool::new(false));
-    let data0 = deferred.defer(FakeDeferred(1, IndexSet::new(), executed0.dupe()));
-    let data1 = deferred.defer(FakeDeferred(5, IndexSet::new(), executed1.dupe()));
+    let data0 = deferred.defer(FakeDeferred(
+        1,
+        BuckMutInsertionSet::default(),
+        executed0.dupe(),
+    ));
+    let data1 = deferred.defer(FakeDeferred(
+        5,
+        BuckMutInsertionSet::default(),
+        executed1.dupe(),
+    ));
     let (deferred_result, analysis_values) = deferred.take_result()?;
 
     let fs = ProjectRootTemp::new()?;
@@ -113,7 +121,7 @@ async fn lookup_deferred_from_analysis() -> buck2_error::Result<()> {
                 deferred_result,
                 analysis_values,
                 None,
-                HashMap::new(),
+                BuckMutMap::default(),
                 0,
                 0,
             ))),
@@ -124,7 +132,7 @@ async fn lookup_deferred_from_analysis() -> buck2_error::Result<()> {
                 ConfiguredTargetNode::testing_new(
                     target.dupe(),
                     "foo_lib",
-                    ExecutionPlatformResolution::new(None, Vec::new()),
+                    ExecutionPlatformResolution::new_for_testing(None, Vec::new()),
                     vec![],
                     vec![],
                 ),
@@ -137,20 +145,20 @@ async fn lookup_deferred_from_analysis() -> buck2_error::Result<()> {
     let mut dice = dice.build(dice_data)?.commit().await;
     let deferred_result = dice.compute_deferred_data(&data0).await?;
     assert_eq!(deferred_result.0, 1);
-    assert_eq!(executed0.load(Ordering::SeqCst), true);
+    assert!(executed0.load(Ordering::SeqCst));
     // we should cache deferred execution
     executed0.store(false, Ordering::SeqCst);
     let deferred_result = dice.compute_deferred_data(&data0).await?;
     assert_eq!(deferred_result.0, 1);
-    assert_eq!(executed0.load(Ordering::SeqCst), false);
+    assert!(!executed0.load(Ordering::SeqCst));
 
     let deferred_result = dice.compute_deferred_data(&data1).await?;
     assert_eq!(deferred_result.0, 5);
-    assert_eq!(executed1.load(Ordering::SeqCst), true);
+    assert!(executed1.load(Ordering::SeqCst));
     // we should cache deferred execution
     executed1.store(false, Ordering::SeqCst);
     assert_eq!(deferred_result.0, 5);
-    assert_eq!(executed1.load(Ordering::SeqCst), false);
+    assert!(!executed1.load(Ordering::SeqCst));
 
     Ok(())
 }
@@ -158,7 +166,7 @@ async fn lookup_deferred_from_analysis() -> buck2_error::Result<()> {
 #[tokio::test]
 async fn lookup_deferred_that_has_deferreds() -> buck2_error::Result<()> {
     #[derive(Debug, Allocative)]
-    struct TestDeferringDeferred(usize, IndexSet<DeferredInput>, Arc<AtomicBool>);
+    struct TestDeferringDeferred(usize, BuckMutInsertionSet<DeferredInput>, Arc<AtomicBool>);
 
     impl provider::Provider for TestDeferringDeferred {
         fn provide<'a>(&'a self, _demand: &mut provider::Demand<'a>) {}
@@ -200,7 +208,11 @@ async fn lookup_deferred_that_has_deferreds() -> buck2_error::Result<()> {
     ));
 
     let executed = Arc::new(AtomicBool::new(false));
-    let data = deferred.defer(TestDeferringDeferred(8, IndexSet::new(), executed.dupe()));
+    let data = deferred.defer(TestDeferringDeferred(
+        8,
+        BuckMutInsertionSet::default(),
+        executed.dupe(),
+    ));
     let (deferred_result, analysis_values) = deferred.take_result()?;
 
     let fs = ProjectRootTemp::new()?;
@@ -216,7 +228,7 @@ async fn lookup_deferred_that_has_deferreds() -> buck2_error::Result<()> {
                 deferred_result,
                 analysis_values,
                 None,
-                HashMap::new(),
+                BuckMutMap::default(),
                 0,
                 0,
             ))),
@@ -227,7 +239,7 @@ async fn lookup_deferred_that_has_deferreds() -> buck2_error::Result<()> {
                 ConfiguredTargetNode::testing_new(
                     target.dupe(),
                     "foo_lib",
-                    ExecutionPlatformResolution::new(None, Vec::new()),
+                    ExecutionPlatformResolution::new_for_testing(None, Vec::new()),
                     vec![],
                     vec![],
                 ),
@@ -240,12 +252,12 @@ async fn lookup_deferred_that_has_deferreds() -> buck2_error::Result<()> {
     let mut dice = dice.build(dice_data)?.commit().await;
     let deferred_result = dice.compute_deferred_data(&data).await?;
     assert_eq!(deferred_result.0, 8);
-    assert_eq!(executed.load(Ordering::SeqCst), true);
+    assert!(executed.load(Ordering::SeqCst));
     // we should cache deferred execution
     executed.store(false, Ordering::SeqCst);
     let deferred_result = dice.compute_deferred_data(&data).await?;
     assert_eq!(deferred_result.0, 8);
-    assert_eq!(executed.load(Ordering::SeqCst), false);
+    assert!(!executed.load(Ordering::SeqCst));
 
     Ok(())
 }

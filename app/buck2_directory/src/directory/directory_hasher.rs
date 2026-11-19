@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::convert::Infallible;
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -39,7 +40,7 @@ pub trait DirectoryDigester<L, H> {
 
 #[allow(unused)]
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Display)]
-pub struct NoDigest(!);
+pub struct NoDigest(Infallible);
 
 impl Dupe for NoDigest {}
 

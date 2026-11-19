@@ -1,0 +1,2 @@
+# This file intentionally skips calling package().
+# Targets directly in this package (:bottom) should use the same visibility defined in ../PACKAGE

@@ -10,13 +10,12 @@
 
 use allocative::Allocative;
 use dupe::Dupe;
-use gazebo::variants::UnpackVariants;
 
 /// Storage type for a cached entry.
 ///
 /// For an Injected entry, we must store all values that are still reachable because we
 /// cannot recompute them.
-#[derive(UnpackVariants, Debug, Clone, Copy, Dupe, Allocative)]
+#[derive(Debug, Clone, Copy, Dupe, Allocative)]
 pub enum StorageType {
     Normal,
     Injected,

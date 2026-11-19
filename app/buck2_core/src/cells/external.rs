@@ -16,10 +16,11 @@ use allocative::Allocative;
 use buck2_error::buck2_error;
 use derive_more::Display;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::cells::name::CellName;
 
-#[derive(Debug, Clone, Dupe, Allocative, PartialEq, Eq)]
+#[derive(Debug, Clone, Dupe, Allocative, PartialEq, Eq, Pagable)]
 pub enum ExternalCellOrigin {
     Bundled(CellName),
     Git(GitCellSetup),
@@ -33,7 +34,8 @@ pub enum ExternalCellOrigin {
     allocative::Allocative,
     PartialEq,
     Eq,
-    Hash
+    Hash,
+    Pagable
 )]
 #[display("git({}, {})", git_origin, commit)]
 pub struct GitCellSetup {
@@ -52,7 +54,7 @@ impl fmt::Display for ExternalCellOrigin {
     }
 }
 
-#[derive(Debug, Display, Eq, PartialEq, Clone, Dupe, Hash, Allocative)]
+#[derive(Debug, Display, Eq, PartialEq, Clone, Dupe, Hash, Allocative, Pagable)]
 pub enum GitObjectFormat {
     #[display("sha1")]
     Sha1,

@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _copy_impl(ctx):
-    out = ctx.actions.declare_output("action_output")
+    out = ctx.actions.declare_output("action_output", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(
             ["cp", ctx.attrs.src, out.as_output()],
@@ -27,18 +27,19 @@ copy = rule(
 )
 
 def _download(ctx: AnalysisContext):
-    url = "https://interncache-all.fbcdn.net/manifold/buck_build_test/tree/buck2_test/http_archive/test.tgz"
-    sha1 = "1a45666759704bf08fc670aa96118a0415c470fc"
-
-    download = ctx.actions.declare_output("download")
-    ctx.actions.download_file(download, url, sha1 = sha1)
+    download = ctx.actions.declare_output("download", has_content_based_path = False)
+    ctx.actions.download_file(download, ctx.attrs.url, sha1 = ctx.attrs.sha1)
 
     return [
         DefaultInfo(default_output = download),
     ]
 
+# `url` and `sha1` come from `test.url` / `test.sha1` in the config; they are optional only so
+# that the package loads for the tests that do not build `:download`.
 download = rule(
     impl = _download,
     attrs = {
+        "sha1": attrs.option(attrs.string(), default = None),
+        "url": attrs.option(attrs.string(), default = None),
     },
 )

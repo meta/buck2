@@ -12,13 +12,13 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::SystemTime;
 
+use buck2_client_ctx::argfiles::StdinArgfile;
 use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::restarter::Restarter;
-use buck2_client_ctx::stdin::Stdin;
 use buck2_client_ctx::tokio_runtime_setup::client_tokio_runtime;
 use buck2_core::logging::LogConfigurationReloadHandle;
 use buck2_fs::working_dir::AbsWorkingDir;
 use buck2_wrapper_common::invocation_id::TraceId;
+use superconsole::Stdin;
 use tokio::runtime::Runtime;
 
 /// State passed down from `main` to this crate.
@@ -36,8 +36,7 @@ pub struct SharedProcessContext {
     pub stdin: Stdin,
     pub working_dir: AbsWorkingDir,
     pub args: Vec<String>,
-    pub restarter: Restarter,
-    pub force_want_restart: bool,
+    pub stdin_argfile: StdinArgfile,
 }
 
 pub struct ClientRuntime(pub OnceLock<Runtime>);

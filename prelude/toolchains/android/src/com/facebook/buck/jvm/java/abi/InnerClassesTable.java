@@ -13,13 +13,14 @@ package com.facebook.buck.jvm.java.abi;
 import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
 import com.facebook.buck.jvm.java.lang.model.AnnotationValueScanner8;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.Lists;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
-import javax.annotation.Nullable;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
@@ -33,6 +34,7 @@ import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementScanner8;
+import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.InnerClassNode;
@@ -41,6 +43,7 @@ import org.objectweb.asm.tree.InnerClassNode;
  * Aids in constructing a table of {@link InnerClassNode}s when generating bytecode for a {@link
  * TypeElement}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InnerClassesTable {
   private final DescriptorFactory descriptorFactory;
   private final AccessFlags accessFlagsUtils;
@@ -122,7 +125,7 @@ public class InnerClassesTable {
         TypeElement element = (TypeElement) t.asElement();
         if (element.getNestingKind() == NestingKind.MEMBER) {
           referencesToInners.add(element);
-          element.getEnclosingElement().asType().accept(this, null);
+          Objects.requireNonNull(element.getEnclosingElement()).asType().accept(this, null);
         }
 
         try {
@@ -185,7 +188,7 @@ public class InnerClassesTable {
       TypeElement walker = (TypeElement) topElement;
       while (walker.getNestingKind() == NestingKind.MEMBER) {
         enclosingClasses.add(walker);
-        walker = (TypeElement) walker.getEnclosingElement();
+        walker = (TypeElement) Objects.requireNonNull(walker.getEnclosingElement());
       }
     }
 
@@ -221,7 +224,8 @@ public class InnerClassesTable {
       if (reported.add(element)) {
         visitor.visitInnerClass(
             descriptorFactory.getInternalName(element),
-            descriptorFactory.getInternalName((TypeElement) element.getEnclosingElement()),
+            descriptorFactory.getInternalName(
+                (TypeElement) Objects.requireNonNull(element.getEnclosingElement())),
             element.getSimpleName().toString(),
             accessFlagsUtils.getAccessFlags(element) & ~Opcodes.ACC_SUPER);
       }
@@ -231,7 +235,8 @@ public class InnerClassesTable {
       if (reported.add(element)) {
         visitor.visitInnerClass(
             descriptorFactory.getInternalName(element),
-            descriptorFactory.getInternalName((TypeElement) element.getEnclosingElement()),
+            descriptorFactory.getInternalName(
+                (TypeElement) Objects.requireNonNull(element.getEnclosingElement())),
             element.getSimpleName().toString(),
             accessFlagsUtils.getAccessFlags(element) & ~Opcodes.ACC_SUPER);
       }
@@ -244,7 +249,8 @@ public class InnerClassesTable {
             element ->
                 visitor.visitInnerClass(
                     descriptorFactory.getInternalName(element),
-                    descriptorFactory.getInternalName((TypeElement) element.getEnclosingElement()),
+                    descriptorFactory.getInternalName(
+                        (TypeElement) Objects.requireNonNull(element.getEnclosingElement())),
                     element.getSimpleName().toString(),
                     accessFlagsUtils.getAccessFlags(element) & ~Opcodes.ACC_SUPER));
   }

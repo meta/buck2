@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 load("@prelude//apple:apple_target_sdk_version.bzl", "get_target_sdk_version_map")
-load("@prelude//transitions:utils.bzl", "filtered_platform_constraints", "get_constraint_value")
+load("@prelude//transitions:utils.bzl", "transition_utils")
 load("@prelude//utils:expect.bzl", "expect")
 
 """
@@ -30,21 +30,24 @@ def _macos_transition_impl(platform: PlatformInfo, refs: struct) -> PlatformInfo
         # Don't apply the transition more than once
         return platform
 
-    updated_constraints = filtered_platform_constraints(platform, [constraint_os.label, constraint_sdk.label])
+    updated_constraints = transition_utils.filtered_platform_constraints(platform, [constraint_os.label, constraint_sdk.label])
 
     # Update OS constraint
     updated_constraints[constraint_os.label] = refs.os_macos[ConstraintValueInfo]
 
     # Update SDK constraint
-    old_sdk = get_constraint_value(platform, constraint_sdk)
+    old_sdk = transition_utils.get_constraint_value(platform, constraint_sdk)
     maccatalyst_sdk = refs.sdk_maccatalyst[ConstraintValueInfo]
 
     if old_sdk != None:
-        expect(old_sdk.label == maccatalyst_sdk.label, "If present, SDK transitioned non-identically to macOS should be `macCatalyst`, got {}".format(old_sdk.label))
+        expect(
+            old_sdk.label == maccatalyst_sdk.label,
+            "If present, SDK transitioned non-identically to macOS should be `macCatalyst`, got {}".format(old_sdk.label),
+        )
     updated_constraints[constraint_sdk.label] = refs.sdk_macos[ConstraintValueInfo]
 
     constraint_target_sdk_version = refs.target_sdk_version[ConstraintSettingInfo]
-    old_target_sdk_version = get_constraint_value(platform, constraint_target_sdk_version)
+    old_target_sdk_version = transition_utils.get_constraint_value(platform, constraint_target_sdk_version)
     if old_target_sdk_version != None:
         # Get last part of constraint as macCatalyst version
         maccatalyst_version = str(old_target_sdk_version.label).split("-")[-1]

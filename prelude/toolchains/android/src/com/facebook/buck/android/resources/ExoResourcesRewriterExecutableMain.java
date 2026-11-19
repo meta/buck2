@@ -10,19 +10,19 @@
 
 package com.facebook.buck.android.resources;
 
-import com.facebook.buck.android.zipalign.ZipAlign;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.hash.Hashing;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 /** Main entry point for executing {@link ExoResourcesRewriter} calls. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ExoResourcesRewriterExecutableMain {
   @Option(name = "--original-r-dot-txt", required = true)
   private String originalRDotTxt;
@@ -42,9 +42,6 @@ public class ExoResourcesRewriterExecutableMain {
   @Option(name = "--exo-resources-hash", required = true)
   private String exoResourcesHash;
 
-  @Option(name = "--zipalign-tool", required = true)
-  private String zipalignTool;
-
   public static void main(String[] args) throws IOException {
     ExoResourcesRewriterExecutableMain main = new ExoResourcesRewriterExecutableMain();
     CmdLineParser parser = new CmdLineParser(main);
@@ -53,7 +50,7 @@ public class ExoResourcesRewriterExecutableMain {
       main.run();
       System.exit(0);
     } catch (CmdLineException e) {
-      System.err.println(e.getMessage());
+      System.err.println(e.toString());
       parser.printUsage(System.err);
       System.exit(1);
     }
@@ -61,23 +58,14 @@ public class ExoResourcesRewriterExecutableMain {
 
   private void run() throws IOException {
     AbsPath root = AbsPath.of(Paths.get(".").normalize().toAbsolutePath());
-    Path unalignedExoResources = Files.createTempFile("unalignedExoResources", "apk");
 
     ExoResourcesRewriter.rewrite(
         root,
         RelPath.get(originalPrimaryApkResources),
         RelPath.get(originalRDotTxt),
         RelPath.get(newPrimaryApkResources),
-        unalignedExoResources,
+        Paths.get(exoResources),
         RelPath.get(newRDotTxt));
-
-    try {
-      ZipAlign zipAlign =
-          new ZipAlign(zipalignTool, unalignedExoResources.toString(), exoResources.toString());
-      zipAlign.run();
-    } catch (InterruptedException e) {
-      throw new RuntimeException(e);
-    }
 
     Files.writeString(
         Paths.get(exoResourcesHash),

@@ -21,9 +21,9 @@ import {
     LanguageClient,
     LanguageClientOptions,
     ServerOptions,
-} from 'vscode-languageclient';
+} from 'vscode-languageclient/node';
 
-let client: LanguageClient;
+let client: LanguageClient | undefined;
 
 interface AdditionalClientSettings {
     enable_goto_definition: boolean;
@@ -46,6 +46,7 @@ function additionalClientSettings(): AdditionalClientSettings {
 
 const STARLARK_FILE_CONTENTS_METHOD = 'starlark/fileContents';
 const STARLARK_URI_SCHEME = 'starlark';
+const RESTART_LANGUAGE_SERVER_COMMAND = 'starlark.restartLanguageServer';
 
 class StarlarkFileContentsParams {
   constructor(public uri: String) {}
@@ -53,6 +54,42 @@ class StarlarkFileContentsParams {
 
 class StarlarkFileContentsResponse {
   constructor(public contents?: string | null) {}
+}
+
+function createLanguageClient(): LanguageClient {
+    const path: string = requireSetting("starlark.lspPath");
+    const args: [string] = requireSetting("starlark.lspArguments");
+
+    // Spawn the server
+    const serverOptions: ServerOptions = { command: path, args: args };
+
+    // Options to control the language client
+    const clientOptions: LanguageClientOptions = {
+        // Register the server for Starlark documents
+        documentSelector: [{ scheme: 'file', language: 'starlark' }],
+        initializationOptions: additionalClientSettings(),
+    };
+
+    return new LanguageClient(
+        'Starlark',
+        'Starlark language server',
+        serverOptions,
+        clientOptions
+    );
+}
+
+async function restartLanguageServer(showSuccessMessage: boolean): Promise<void> {
+    if (client !== undefined) {
+        await client.stop();
+        client = undefined;
+    }
+
+    client = createLanguageClient();
+    client.start();
+
+    if (showSuccessMessage) {
+        vscode.window.showInformationMessage('Starlark language server restarted.');
+    }
 }
 
 /// Ask the server for the contents of a starlark: file
@@ -83,39 +120,34 @@ class StarlarkFileHandler implements vscode.TextDocumentContentProvider {
 export function activate(context: ExtensionContext) {
     // Make sure that any starlark: URIs that come back from the LSP
     // are handled, and requested from the LSP.
-    vscode.workspace.registerTextDocumentContentProvider(
+    context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(
         STARLARK_URI_SCHEME,
         new StarlarkFileHandler(),
-    );
+    ));
 
-    const path: string = requireSetting("starlark.lspPath");
-    const args: [string] = requireSetting("starlark.lspArguments");
+    context.subscriptions.push(vscode.commands.registerCommand(
+        RESTART_LANGUAGE_SERVER_COMMAND,
+        async () => {
+            try {
+                await restartLanguageServer(true);
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                vscode.window.showErrorMessage(`Failed to restart Starlark language server: ${msg}`);
+            }
+        },
+    ));
 
-    // Otherwise to spawn the server
-    let serverOptions: ServerOptions = { command: path, args: args };
-
-    // Options to control the language client
-    let clientOptions: LanguageClientOptions = {
-        // Register the server for Starlark documents
-        documentSelector: [{ scheme: 'file', language: 'starlark' }],
-        initializationOptions: additionalClientSettings(),
-    };
-
-    // Create the language client and start the client.
-    client = new LanguageClient(
-        'Starlark',
-        'Starlark language server',
-        serverOptions,
-        clientOptions
-    );
-
-    // Start the client. This will also launch the server
-    client.start();
+    void restartLanguageServer(false).catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        vscode.window.showErrorMessage(`Failed to start Starlark language server: ${msg}`);
+    });
 }
 
 export function deactivate(): Thenable<void> | undefined {
-    if (!client) {
+    if (client === undefined) {
         return undefined;
     }
-    return client.stop();
+    const previousClient = client;
+    client = undefined;
+    return previousClient.stop();
 }

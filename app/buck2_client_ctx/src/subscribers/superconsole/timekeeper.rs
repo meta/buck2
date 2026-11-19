@@ -14,9 +14,24 @@ use buck2_event_observer::span_tracker::EventTimestamp;
 
 use crate::ticker::Tick;
 
+/// What the replay speed keys (`k`/`j`) do, as shown in the interactive console help.
+pub struct SpeedKeyDescriptions {
+    pub increase: &'static str,
+    pub decrease: &'static str,
+}
+
 #[async_trait::async_trait]
 pub trait Clock: Send + Sync {
     fn event_timestamp_for_tick(&mut self, tick: Tick) -> EventTimestamp;
+
+    /// What the replay speed keys do for this command. Override alongside `scale_speed`
+    /// when repurposing the keys, so the interactive console help stays accurate.
+    fn speed_key_descriptions(&self) -> SpeedKeyDescriptions {
+        SpeedKeyDescriptions {
+            increase: "increase replay speed",
+            decrease: "decrease replay speed",
+        }
+    }
 
     async fn scale_speed(&mut self, _factor: f64) -> Option<String> {
         Some("Can't scale speed outside of `log replay`".to_owned())
@@ -63,6 +78,10 @@ impl Timekeeper {
 
     pub(crate) fn duration_since_command_start(&self) -> Duration {
         duration_between_timestamps(self.start_time.0, self.event_timestamp_for_last_tick.0)
+    }
+
+    pub(crate) fn speed_key_descriptions(&self) -> SpeedKeyDescriptions {
+        self.clock.speed_key_descriptions()
     }
 
     pub(crate) async fn scale_speed(&mut self, factor: f64) -> Option<String> {

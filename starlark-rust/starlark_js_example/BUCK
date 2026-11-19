@@ -9,6 +9,25 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
+    autocargo = {
+        "cargo_target_config": {"crate_type": ["cdylib", "rlib"]},
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    # The `pagable` feature of starlark needs nightly; only
+                    # buck2 enables it.
+                    "starlark": {"features": []},
+                },
+            },
+            "package": {
+                "description": "Example of running starlark-rust interpreter in browser",
+                "license": "Apache-2.0",
+                "publish": False,
+                "repository": "https://github.com/facebook/starlark-rust",
+                "version": "0.0.0",
+            },
+        },
+    },
     deps = [
         "//buck2/starlark-rust/starlark:starlark",
     ],

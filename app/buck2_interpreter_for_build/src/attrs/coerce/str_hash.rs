@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use twox_hash::xxh3;
+use twox_hash::XxHash3_64;
 
 /// Unspecified fast hash for short strings.
 pub(crate) fn str_hash(s: &str) -> u64 {
-    xxh3::hash64(s.as_bytes())
+    XxHash3_64::oneshot(s.as_bytes())
 }

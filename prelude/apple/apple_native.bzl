@@ -11,51 +11,51 @@ load(
     "@prelude//platforms/apple:constants.bzl",
     "apple_sdks",
 )
-load("@prelude//platforms/apple:platforms.bzl", "config_backed_apple_target_platform", "get_default_target_platform_for_platform", "set_apple_platforms")
+load("@prelude//platforms/apple:platforms.bzl", "config_backed_apple_target_platform", "get_default_target_platform_for_platform")
 load("@prelude//platforms/apple:platforms_map.bzl", "APPLE_SDK_DEFAULT_PLATFORM_MAP")
 load("@prelude//utils:buckconfig.bzl", "read")
 
 def _apple_library(**kwargs):
-    kwargs = _update_platforms(**kwargs)
+    kwargs = update_apple_platforms(**kwargs)
     native.apple_library(**kwargs)
 
 def _apple_asset_catalog(**kwargs):
-    kwargs = _update_platforms(**kwargs)
+    kwargs = update_apple_platforms(**kwargs)
     native.apple_asset_catalog(**kwargs)
 
 def _apple_binary(**kwargs):
-    kwargs = _update_platforms(**kwargs)
+    kwargs = update_apple_platforms(**kwargs)
     native.apple_binary(**kwargs)
 
 def _apple_bundle(**kwargs):
-    kwargs = _update_platforms(**kwargs)
+    kwargs = update_apple_platforms(**kwargs)
     native.apple_bundle(**kwargs)
 
 def _apple_watchos_bundle(**kwargs):
-    kwargs = _update_platforms(**kwargs)
+    kwargs = update_apple_platforms(**kwargs)
     native.apple_watchos_bundle(**kwargs)
 
 def _apple_package(**kwargs):
-    kwargs = _update_platforms(**kwargs)
+    kwargs = update_apple_platforms(**kwargs)
     native.apple_package(**kwargs)
 
 def _apple_resource(**kwargs):
-    kwargs = _update_platforms(**kwargs)
+    kwargs = update_apple_platforms(**kwargs)
     native.apple_resource(**kwargs)
 
 def _apple_test(**kwargs):
-    kwargs = _update_platforms(**kwargs)
+    kwargs = update_apple_platforms(**kwargs)
     native.apple_test(**kwargs)
 
 def _apple_xcuitest(**kwargs):
-    kwargs = _update_platforms(**kwargs)
+    kwargs = update_apple_platforms(**kwargs)
     native.apple_xcuitest(**kwargs)
 
 def _apple_xcframework(**kwargs):
-    kwargs = _update_platforms(**kwargs)
+    kwargs = update_apple_platforms(**kwargs)
     native.apple_xcframework(**kwargs)
 
-def _update_platforms(**kwargs):
+def update_apple_platforms(**kwargs):
     sdk = kwargs.pop("sdk", apple_sdks.IOS)
     platform = _get_default_platform(sdk)
 
@@ -75,8 +75,6 @@ def _update_platforms(**kwargs):
 
     if default_target_platform != None:
         kwargs["default_target_platform"] = default_target_platform
-
-    kwargs = set_apple_platforms(platform, base_config_backed_target_platform, kwargs, supported_build_modes)
 
     return kwargs
 

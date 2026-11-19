@@ -1,0 +1,14 @@
+constraint_setting(
+    name = "s",
+)
+
+constraint_value(
+    name = "v",
+    constraint_setting = ":s",
+)
+
+config_setting(
+    name = "x",
+    constraint_values = [":v"],
+    visibility = ["PUBLIC"],
+)

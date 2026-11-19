@@ -1,0 +1,76 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Open Trailcam, the web viewer for an event log, on a local port.
+
+Serves the viewer from the buck2 binary itself, together with the log and what can be read from it
+about the invocation. On a dev host it listens on a Secure Web Apps port on every interface, so the
+page opens from a laptop with the VPNless WWW extension and no tunnel. Press Ctrl-C to stop.
+
+Usage: buck2 log trailcam [OPTIONS] [PATH]
+
+Arguments:
+  [PATH]
+          A path to an event-log file to read from
+
+Options:
+      --port <PORT>
+          Port to listen on. Defaults to the first free Secure Web Apps port (44100-44109); 0 lets
+          the OS pick
+
+      --recent <NUMBER>
+          Open the event-log file from a recent command
+
+      --trace-id <ID>
+          Show log by trace id
+
+      --allow-remote
+          This option does nothing
+
+      --no-remote
+          Do not allow downloading the log from manifold if it's not found locally
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Universal Options:
+      --isolation-dir <ISOLATION_DIR>
+          The name of the directory that Buck2 creates within buck-out for writing outputs and
+          daemon information. If one is not provided, Buck2 creates a directory with the default
+          name.
+
+          Instances of Buck2 share a daemon if and only if their isolation directory is identical.
+          The isolation directory also influences the output paths provided by Buck2, and as a
+          result using a non-default isolation dir will cause cache misses (and slower builds).
+
+          [env: BUCK_ISOLATION_DIR=]
+          [default: v2]
+
+  -v, --verbose <VERBOSITY>
+          How verbose buck should be while logging.
+
+          Values: 0 = Quiet, errors only; 1 = Show status. Default; 2 = more info about errors; 3 =
+          more info about everything; 4 = more info about everything + stderr;
+
+          It can be combined with specific log items (stderr, full_failed_command, commands,
+          actions, status, stats, success) to fine-tune the verbosity of the log. Example usage
+          "-v=1,stderr"
+
+          [env: BUCK_VERBOSE=]
+          [default: 1]
+
+      --oncall <ONCALL>
+          The oncall executing this command
+
+      --client-metadata <CLIENT_METADATA>
+          Metadata key-value pairs to inject into Buck2's logging. Client metadata must be of the
+          form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
+          datasets
+
+      --setting <SECTION.KEY=VALUE>
+          Override a Buck setting using `section.key=value`
+
+      --agent-context <AGENT_CONTEXT>
+          Agent context key=value pairs for telemetry. Used by AI agents to pass structured
+          metadata. Schema is defined via buckconfig. Examples: --agent-context
+          intent=fix,attempt=2,prior_error=missing_target --agent-context intent=build
+          --agent-context attempt=1 --agent-context "reason=fix the build, then test"

@@ -1,0 +1,11 @@
+load(":b.bzl", "nothing_b")
+
+nothing_b()
+
+stub(
+    name = "def",
+)
+
+stub(
+    name = "ghi",
+)

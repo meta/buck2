@@ -25,6 +25,8 @@ use std::cell::Cell;
 use allocative::Allocative;
 use derive_more::Display;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkPagable;
+use starlark_derive::StarlarkRepresentations;
 use starlark_derive::Trace;
 use starlark_derive::starlark_value;
 
@@ -33,10 +35,10 @@ use crate::any::ProvidesStaticType;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
-use crate::values::FrozenValue;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::ValueLike;
+use crate::values::ValueTyped;
 
 #[derive(Debug, Trace, ProvidesStaticType, Display, NoSerialize, Allocative)]
 #[display("{:?}", self)] // This type should never be user visible
@@ -44,17 +46,36 @@ use crate::values::ValueLike;
 #[allocative(skip)]
 pub(crate) struct ValueCaptured<'v>(Cell<Option<Value<'v>>>);
 
-#[derive(Debug, ProvidesStaticType, Display, NoSerialize, Allocative)]
+#[derive(
+    Debug,
+    ProvidesStaticType,
+    Display,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
 #[display("{:?}", self)] // Type is not user visible
 #[repr(transparent)]
-pub(crate) struct FrozenValueCaptured(Option<FrozenValue>);
+pub(crate) struct FrozenValueCaptured<'v>(Option<Value<'v>>);
+
+/// A captured variable in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum ValueCapturedView<'v> {
+    Unfrozen(ValueTyped<'v, ValueCaptured<'v>>),
+    Frozen(ValueTyped<'v, FrozenValueCaptured<'v>>),
+}
 
 #[starlark_value(type = "value_captured")]
-impl<'v> StarlarkValue<'v> for ValueCaptured<'v> {}
+impl<'v> StarlarkType<'v> for ValueCapturedView<'v> {}
 
-#[starlark_value(type = "value_captured")]
-impl<'v> StarlarkValue<'v> for FrozenValueCaptured {
-    type Canonical = ValueCaptured<'v>;
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for ValueCaptured<'v> {
+    type Type = ValueCapturedView<'v>;
+}
+
+#[starlark_value(frozen_vtable)]
+impl<'v> StarlarkValue<'v> for FrozenValueCaptured<'v> {
+    type Type = ValueCapturedView<'v>;
 }
 
 impl<'v> ValueCaptured<'v> {
@@ -73,24 +94,22 @@ impl<'v> ValueCaptured<'v> {
     }
 }
 
-impl<'v> Freeze for ValueCaptured<'v> {
-    type Frozen = FrozenValueCaptured;
+impl<'v> Freeze<'v> for ValueCaptured<'v> {
+    type Frozen<'fv> = FrozenValueCaptured<'fv>;
 
-    fn freeze(self, freezer: &Freezer) -> FreezeResult<FrozenValueCaptured> {
-        Ok(FrozenValueCaptured(self.0.get().freeze(freezer)?))
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<FrozenValueCaptured<'fv>> {
+        Ok(FrozenValueCaptured(
+            self.0.get().map(|v| freezer.freeze(v)).transpose()?,
+        ))
     }
 }
 
 pub(crate) fn value_captured_get<'v>(value_captured: Value<'v>) -> Option<Value<'v>> {
-    if let Some(value_captured) = value_captured.unpack_frozen() {
-        value_captured
-            .downcast_ref::<FrozenValueCaptured>()
-            .expect("not a ValueCaptured")
-            .0
-            .map(|v| v.to_value())
+    if let Some(value_captured) = value_captured.downcast_ref::<FrozenValueCaptured<'v>>() {
+        value_captured.0
     } else {
         value_captured
-            .downcast_ref::<ValueCaptured>()
+            .downcast_ref::<ValueCaptured<'v>>()
             .expect("not a ValueCaptured")
             .0
             .get()

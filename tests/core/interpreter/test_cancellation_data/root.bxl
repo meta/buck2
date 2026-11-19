@@ -13,6 +13,5 @@ def _impl(_ctx):
 
 loop_test = bxl_main(
     impl = _impl,
-    cli_args = {
-    },
+    cli_args = {},
 )

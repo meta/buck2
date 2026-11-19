@@ -37,8 +37,11 @@ def _library_impl(ctx):
         MyArtifact(test_data = test_data),
     ]
 
-my_android_binary = rule(impl = _binary_impl, attrs = {
-    "native_deps": attrs.list(attrs.split_transition_dep(cfg = cpu_split_transition)),
-})
+my_android_binary = rule(
+    impl = _binary_impl,
+    attrs = {
+        "native_deps": attrs.list(attrs.split_transition_dep(cfg = cpu_split_transition)),
+    },
+)
 
 my_cxx_library = rule(impl = _library_impl, attrs = {})

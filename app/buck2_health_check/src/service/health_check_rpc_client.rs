@@ -17,9 +17,11 @@ use buck2_common::client_utils::get_channel_tcp;
 use buck2_common::client_utils::retrying;
 use buck2_core::async_once_cell::AsyncOnceCell;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_fs::async_fs_util;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPathBuf;
@@ -68,7 +70,7 @@ impl HealthCheckRpcClient {
         };
         match self.connection.get_or_init(init_fut).await {
             Ok(v) => Ok(v),
-            Err(e) => Err(e.dupe().into()),
+            Err(e) => Err(e.dupe()),
         }
     }
 
@@ -89,7 +91,9 @@ impl HealthCheckRpcClient {
 
         let tcp_port = retrying(initial_delay, max_delay, timeout, || async {
             // Wait for the health check server to write the TCP port to the file.
-            async_fs_util::read_to_string(&file_path).await
+            async_fs_util::read_to_string(&file_path)
+                .await
+                .categorize_internal()
         })
         .await
         .buck_error_context("Failed to find TCP socket from health check server")?;
@@ -120,14 +124,16 @@ impl HealthCheckRpcClient {
         let exe = AbsPathBuf::new(
             std::env::current_exe().buck_error_context("Cannot get Buck2 executable")?,
         )?;
-        let exe = fs_util::canonicalize(&exe).buck_error_context(
-            "Failed to canonicalize path to Buck2 executable. Try running `buck2 kill`.",
-        )?;
+        let exe = fs_util::canonicalize(&exe)
+            .categorize_internal()
+            .buck_error_context(
+                "Failed to canonicalize path to Buck2 executable. Try running `buck2 kill`.",
+            )?;
 
         let exe = exe.as_abs_path();
         let exe_dir = exe
             .parent()
-            .buck_error_context("Buck2 executable directory has no parent")?;
+            .internal_error("Buck2 executable directory has no parent")?;
 
         let ext = if cfg!(windows) { ".exe" } else { "" };
         let cli_name = format!("{CLI_NAME}{ext}");
@@ -143,7 +149,7 @@ impl HealthCheckRpcClient {
             let state_info_file = dir.join(ForwardRelativePath::unchecked_new(CLI_INFO_FILE));
             if fs_util::try_exists(&state_info_file)? {
                 // Clean up any state info file from previous build.
-                fs_util::remove_file(&state_info_file)?;
+                fs_util::remove_file(&state_info_file).categorize_internal()?;
             }
             Ok(state_info_file)
         }
@@ -216,7 +222,9 @@ mod tests {
         let (dir, file) = temp_state_info(&temp_dir_guard).await?;
 
         // Write some content representing a previous health check server state.
-        async_fs_util::write(&file, "TestContent").await?;
+        async_fs_util::write(&file, "TestContent")
+            .await
+            .uncategorized()?;
 
         let client = HealthCheckRpcClient::new(dir.clone());
         client.get_state_info_file_path().await.unwrap();

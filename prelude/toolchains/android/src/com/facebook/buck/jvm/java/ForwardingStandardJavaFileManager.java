@@ -10,12 +10,15 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.IOException;
 import javax.tools.ForwardingJavaFileManager;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ForwardingStandardJavaFileManager
     extends ForwardingJavaFileManager<StandardJavaFileManager> implements StandardJavaFileManager {
 
@@ -50,6 +53,7 @@ public class ForwardingStandardJavaFileManager
   }
 
   @Override
+  @Nullable
   public Iterable<? extends File> getLocation(Location location) {
     return fileManager.getLocation(location);
   }

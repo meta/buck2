@@ -13,7 +13,6 @@ creating build targets. Such functions are called _macros_.
 - [How to define a macro](#defining)
 - [Compound build targets: macros that expand to multiple targets](#compound-targets)
 - [How to view expanded macros](#viewing)
-- [Use naming conventions to distinguish macros](#naming)
 
 ## How to define a macro {#defining}
 

@@ -19,7 +19,11 @@ use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::PagableDeserialize;
+use pagable::PagableSerialize;
 use starlark::codemap::FileSpan;
+use starlark::values::Trace;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -51,13 +55,13 @@ pub enum PromiseArtifactResolveError {
     )]
     OwnerIsNotAnonTarget(PromiseArtifactId, BaseDeferredKey),
     #[error(
-        "Artifact promise resolved to artifact that uses content based paths. Call `actions.assert_has_content_based_path` on the promised artifact to assert that."
+        "Artifact promise resolved to artifact that uses content based paths. Call `actions.assert_has_content_based_path` on the promised artifact to assert that.\n  Promise ID: {0}\n  Artifact: {1}"
     )]
-    UsesContentBasedPath,
+    UsesContentBasedPath(PromiseArtifactId, String),
     #[error(
-        "Artifact promise resolved to artifact that does not use content based paths. Remove the `actions.assert_has_content_based_path` on the promised artifact."
+        "Artifact promise resolved to artifact that does not use content based paths. Remove the `actions.assert_has_content_based_path` on the promised artifact.\n  Promise ID: {0}\n  Artifact: {1}"
     )]
-    DoesNotUseContentBasedPath,
+    DoesNotUseContentBasedPath(PromiseArtifactId, String),
 }
 
 fn maybe_declared_at(location: &Option<FileSpan>) -> String {
@@ -71,10 +75,47 @@ fn maybe_declared_at(location: &Option<FileSpan>) -> String {
 /// that declares the promise is running, the promise may not yet be resolved. In that case, operations that require
 /// the underlying artifact will fail. Once that analysis is complete, all promises will be resolved and this will
 /// have a reference to the fully resolved artifact.
-#[derive(Clone, Debug, Dupe, Allocative)]
+#[derive(Clone, Debug, Dupe, Allocative, Pagable, Trace)]
 pub struct PromiseArtifact {
-    artifact: Arc<OnceLock<Artifact>>,
+    artifact: Arc<PromiseArtifactLock>,
     pub id: PromiseArtifactId,
+}
+
+#[derive(Debug, Allocative)]
+pub struct PromiseArtifactLock(OnceLock<Artifact>);
+
+impl From<Artifact> for PromiseArtifactLock {
+    fn from(artifact: Artifact) -> Self {
+        Self(artifact.into())
+    }
+}
+
+impl PromiseArtifactLock {
+    pub fn new() -> Self {
+        Self(OnceLock::new())
+    }
+}
+
+impl PagableSerialize for PromiseArtifactLock {
+    fn pagable_serialize(
+        &self,
+        serializer: &mut dyn pagable::PagableSerializer,
+    ) -> pagable::Result<()> {
+        // Currently page-out only runs when DICE is idle, at which point all promises should be resolved.
+        self.0
+            .get()
+            .ok_or_else(|| pagable::Error::msg("Promise artifact not yet resolved"))?
+            .pagable_serialize(serializer)
+    }
+}
+
+impl<'de> PagableDeserialize<'de> for PromiseArtifactLock {
+    fn pagable_deserialize<D: pagable::PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        let artifact = Artifact::pagable_deserialize(deserializer)?;
+        Ok(Self(artifact.into()))
+    }
 }
 
 #[derive(
@@ -85,7 +126,10 @@ pub struct PromiseArtifact {
     Hash,
     Eq,
     PartialEq,
-    strong_hash::StrongHash
+    PartialOrd,
+    Ord,
+    strong_hash::StrongHash,
+    Pagable
 )]
 pub struct PromiseArtifactId {
     owner: BaseDeferredKey,
@@ -104,17 +148,17 @@ impl PromiseArtifactId {
 
 impl Display for PromiseArtifactId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}#{}", &self.owner, self.id)
+        write!(f, "{}#{}", self.owner, self.id)
     }
 }
 
 impl PromiseArtifact {
-    pub fn new(artifact: Arc<OnceLock<Artifact>>, id: PromiseArtifactId) -> Self {
+    pub fn new(artifact: Arc<PromiseArtifactLock>, id: PromiseArtifactId) -> Self {
         Self { artifact, id }
     }
 
     pub fn get_err(&self) -> buck2_error::Result<&Artifact> {
-        match self.artifact.get() {
+        match self.artifact.0.get() {
             Some(v) => Ok(v),
             None => Err(PromiseArtifactResolveError::PromiseNotYetResolved.into()),
         }
@@ -125,7 +169,7 @@ impl PromiseArtifact {
     }
 
     pub fn get(&self) -> Option<&Artifact> {
-        self.artifact.get()
+        self.artifact.0.get()
     }
 
     pub fn resolve(
@@ -139,11 +183,19 @@ impl PromiseArtifact {
             return Err(PromiseArtifactResolveError::SourceArtifact.into());
         }
 
-        let artifact_has_content_based_path = bound.has_content_based_path();
+        let artifact_has_content_based_path = bound.path_resolution_requires_artifact_value();
         if artifact_has_content_based_path && !promise_has_content_based_path {
-            return Err(PromiseArtifactResolveError::UsesContentBasedPath.into());
+            return Err(PromiseArtifactResolveError::UsesContentBasedPath(
+                self.id.clone(),
+                format!("{}", bound),
+            )
+            .into());
         } else if !artifact_has_content_based_path && promise_has_content_based_path {
-            return Err(PromiseArtifactResolveError::DoesNotUseContentBasedPath.into());
+            return Err(PromiseArtifactResolveError::DoesNotUseContentBasedPath(
+                self.id.clone(),
+                format!("{}", bound),
+            )
+            .into());
         }
 
         if let Some(expected_short_path) = expected_short_path {
@@ -160,7 +212,7 @@ impl PromiseArtifact {
                 }
             })?;
         }
-        match self.artifact.set(bound) {
+        match self.artifact.0.set(bound) {
             Ok(_) => Ok(()),
             Err(_) => Err(PromiseArtifactResolveError::AlreadyResolved.into()),
         }
@@ -177,13 +229,13 @@ impl PromiseArtifact {
 
 impl Display for PromiseArtifact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(artifact) = self.artifact.get() {
+        if let Some(artifact) = self.artifact.0.get() {
             write!(f, "PromiseArtifact(Resolved({artifact}))")
         } else {
             write!(
                 f,
                 "PromiseArtifact(Unresolved({}, {}))",
-                &self.id.owner, self.id.id
+                self.id.owner, self.id.id
             )
         }
     }
@@ -206,7 +258,16 @@ impl Eq for PromiseArtifact {}
 // When passing promise artifacts into anon targets, we will coerce them into this type.
 // During resolve, we look up the analysis of the target that produced the promise artifact,
 // assert short paths, and produce a new `StarlarkPromiseArtifact` with the `OnceLock` resolved.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Allocative, strong_hash::StrongHash)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Allocative,
+    strong_hash::StrongHash,
+    Pagable
+)]
 pub struct PromiseArtifactAttr {
     pub id: PromiseArtifactId,
     pub short_path: Option<ForwardRelativePathBuf>,

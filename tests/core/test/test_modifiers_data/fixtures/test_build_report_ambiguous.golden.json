@@ -5,7 +5,7 @@
   "results": {
     "root//subdir:subdir?root//:macos": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},

@@ -15,27 +15,29 @@
  * limitations under the License.
  */
 
+use starlark_derive::StarlarkPagable;
+
+use crate as starlark;
 use crate::eval::bc::addr::BcAddr;
 use crate::eval::runtime::frame_span::FrameSpan;
-use crate::values::FrozenRef;
-use crate::values::FrozenStringValue;
+use crate::values::StringValue;
 
 /// Slow instruction arg: stored in the end of bytecode,
 /// expensive to access. Used to implement errors.
-#[derive(Default, Debug)]
-pub(crate) struct BcInstrSlowArg {
+#[derive(Default, Debug, StarlarkPagable)]
+pub(crate) struct BcInstrSlowArg<'v> {
     /// Instruction code span.
-    pub(crate) span: FrameSpan,
-    /// Spans when an instruction needs multiple spans.
-    pub(crate) spans: Vec<FrameSpan>,
+    pub(crate) span: FrameSpan<'v>,
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct BcInstrEndArg {
+#[derive(Debug, StarlarkPagable)]
+pub(crate) struct BcInstrEndArg<'v> {
     /// Offset of end instruction.
     pub(crate) end_addr: BcAddr,
     /// Spans of all instructions.
-    pub(crate) slow_args: Vec<(BcAddr, BcInstrSlowArg)>,
+    pub(crate) slow_args: Vec<(BcAddr, BcInstrSlowArg<'v>)>,
+    /// Dictionary key spans, indexed by the offset stored in `InstrDictNPop`.
+    pub(crate) dictnpop_spans: Box<[FrameSpan<'v>]>,
     /// Frame local names.
-    pub(crate) local_names: FrozenRef<'static, [FrozenStringValue]>,
+    pub(crate) local_names: Box<[StringValue<'v>]>,
 }

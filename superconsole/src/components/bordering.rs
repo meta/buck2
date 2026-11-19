@@ -92,8 +92,12 @@ fn construct_vertical_padding(padding: Span, width: usize) -> Vec<Line> {
         .map(|mut span| {
             // iterator is a single character here, so fill to width.
             // it's possible that a word could be more than a single column, so the number of repetitions must reflect that.
-            span.content = Cow::Owned(span.content.repeat(width / span.len()));
-            Line::from_iter([span])
+            let grapheme_width = span.len();
+            let copies = width.checked_div(grapheme_width).unwrap_or(0);
+            span.content = Cow::Owned(span.content.repeat(copies));
+            let mut line = Line::from_iter([span]);
+            line.pad_right(width - grapheme_width * copies);
+            line
         })
         .collect()
 }
@@ -112,9 +116,15 @@ impl<C: Component> Component for Bordered<C> {
             Some(word) => word.len(),
             None => 0,
         };
+        // A top or bottom border takes one row per grapheme, whatever its width.
+        let opt_rows = |opt_word: &Option<Span>| match opt_word {
+            Some(word) => word.iter().count(),
+            None => 0,
+        };
         let new_dims = Dimensions {
             width: width.saturating_sub(opt_len(&self.border.left) + opt_len(&self.border.right)),
-            height: height.saturating_sub(opt_len(&self.border.top) + opt_len(&self.border.bottom)),
+            height: height
+                .saturating_sub(opt_rows(&self.border.top) + opt_rows(&self.border.bottom)),
         };
 
         // The [`Aligned`] box ensures that the child is justified and bounded.
@@ -151,6 +161,65 @@ mod tests {
     #[derive(AsRef, Debug)]
     #[allow(dead_code)]
     struct Msg(Lines);
+
+    fn rows(lines: &Lines) -> Vec<String> {
+        lines.iter().map(|l| l.to_unstyled()).collect()
+    }
+
+    fn echo_rows(rows: &[&str]) -> Echo {
+        Echo(Lines(
+            rows.iter().map(|r| Line::unstyled(r).unwrap()).collect(),
+        ))
+    }
+
+    fn top_only(top: &str) -> BorderedSpec {
+        BorderedSpec {
+            left: None,
+            right: None,
+            top: Some(Span::new_unstyled(top).unwrap()),
+            bottom: None,
+        }
+    }
+
+    /// A border grapheme of width zero is repeated zero times instead of dividing by zero.
+    #[test]
+    fn test_zero_width_border() {
+        let span = Span::new_unstyled("\u{200b}").unwrap();
+        assert_eq!(span.len(), 0);
+        let bordered = Bordered::new(echo_rows(&["abc"]), top_only("\u{200b}"));
+        let out = bordered
+            .draw(Dimensions::new(6, 4), DrawMode::Normal)
+            .unwrap();
+        let r = rows(&out);
+        assert_eq!(r.len(), 2, "{r:?}");
+        assert_eq!(r[1].trim_end(), "abc");
+    }
+
+    /// A border grapheme wider than one column reserves one row per grapheme and is padded to
+    /// the full width when the width is not a multiple of its own.
+    #[test]
+    fn test_wide_border_grapheme() {
+        let bordered = Bordered::new(echo_rows(&["abc", "def", "ghi"]), top_only("\u{1f9b6}"));
+        let out = bordered
+            .draw(Dimensions::new(7, 4), DrawMode::Normal)
+            .unwrap();
+        assert_eq!(
+            rows(&out),
+            vec![
+                "\u{1f9b6} ".to_owned(),
+                "abc".to_owned(),
+                "def".to_owned(),
+                "ghi".to_owned()
+            ]
+        );
+
+        let bordered = Bordered::new(echo_rows(&["abcdefg"]), top_only("\u{1f9b6}"));
+        let out = bordered
+            .draw(Dimensions::new(7, 4), DrawMode::Normal)
+            .unwrap();
+        let widths: Vec<usize> = out.iter().map(|l| l.len()).collect();
+        assert_eq!(widths, vec![7, 7]);
+    }
 
     #[test]
     fn test_basic() -> anyhow::Result<()> {

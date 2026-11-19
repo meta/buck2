@@ -6,6 +6,9 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//decls:common.bzl", "buck")
+load("@prelude//julia:julia_toolchain.bzl", "julia_toolchain")
 load(
     "@prelude//linking:shared_libraries.bzl",
     "create_shlib_symlink_tree",
@@ -47,11 +50,14 @@ def build_jll_shlibs_mapping(ctx: AnalysisContext, json_info_file: Artifact):
     )
 
     # build a tree for the c/c++ shlibs
-    shlibs = traverse_shared_library_info(merge_shared_libraries(
-        ctx.actions,
-        None,
-        filter(None, [d.shared_library_info for d in deps]),
-    ), transformation_provider = None)
+    shlibs = traverse_shared_library_info(
+        merge_shared_libraries(
+            ctx.actions,
+            None,
+            filter(None, [d.shared_library_info for d in deps]),
+        ),
+        transformation_provider = None,
+    )
 
     shared_libs_symlink_tree = create_shlib_symlink_tree(
         actions = ctx.actions,
@@ -93,11 +99,8 @@ def build_load_path_symtree(ctx: AnalysisContext):
     src_labels = flatten([t.src_labels for t in traversed])
     srcs = flatten([t.srcs for t in traversed])
 
-    dict_from_tree = {
-        k: p
-        for k, p in zip(src_labels, srcs)
-    }
-    symlink_dir = ctx.actions.symlinked_dir("_modules_", dict_from_tree)
+    dict_from_tree = {k: p for k, p in zip(src_labels, srcs)}
+    symlink_dir = ctx.actions.symlinked_dir("_modules_", dict_from_tree, has_content_based_path = False)
 
     return symlink_dir
 
@@ -115,7 +118,7 @@ def build_julia_command(ctx):
 
     # build symdir for sources
     srcs_by_path = {f.short_path: f for f in ctx.attrs.srcs}
-    srcs = ctx.actions.symlinked_dir("srcs_tree", srcs_by_path)
+    srcs = ctx.actions.symlinked_dir("srcs_tree", srcs_by_path, has_content_based_path = False)
     if ctx.attrs.main not in srcs_by_path:
         fail("main should be in srcs!")
 
@@ -127,7 +130,7 @@ def build_julia_command(ctx):
 
     # prepare a json file to hold all the data the python preprocessor needs to
     # execute the julia interpreter.
-    json_info_file = ctx.actions.declare_output("artifacts/Overrides.json")
+    json_info_file = ctx.actions.declare_output("artifacts/Overrides.json", has_content_based_path = False)
 
     json_info_dict = {
         "env": julia_toolchain.env,
@@ -149,3 +152,18 @@ def build_julia_command(ctx):
 def julia_binary_impl(ctx: AnalysisContext) -> list[Provider]:
     cmd, json_info_file = build_julia_command(ctx)
     return [DefaultInfo(default_output = json_info_file, other_outputs = [cmd]), RunInfo(cmd)]
+
+julia_binary = prelude_rule(
+    name = "julia_binary",
+    impl = julia_binary_impl,
+    attrs = {
+        "deps": attrs.list(attrs.dep(), default = []),
+        "julia_args": attrs.list(attrs.string(), default = []),
+        "julia_flags": attrs.list(attrs.string(), default = []),
+        "main": attrs.string(),
+        "srcs": attrs.list(attrs.source(), default = []),
+        "_julia_toolchain": julia_toolchain(),
+    }
+    | buck.labels_arg()
+    | buck.contacts_arg(),
+)

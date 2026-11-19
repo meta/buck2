@@ -29,10 +29,8 @@ use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::ValueLike;
-use crate::values::float::StarlarkFloat;
 use crate::values::float::float;
-use crate::values::string::dot_format::format_one;
+use crate::values::types::int::int_or_big::StarlarkInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
 use crate::values::types::num::value::NumRef;
 use crate::values::types::tuple::value::Tuple;
@@ -234,12 +232,10 @@ pub(crate) fn percent(format: &str, value: Value) -> crate::Result<String> {
                     Some(NumRef::Int(StarlarkIntRef::Big(v))) => {
                         write!(res, "{}", v.get()).unwrap()
                     }
-                    Some(NumRef::Float(v)) => {
-                        match NumRef::Float(StarlarkFloat(v.0.trunc())).as_int() {
-                            Some(v) => write!(res, "{v}").unwrap(),
-                            None => ValueError::unsupported_type(value, "format(%d)")?,
-                        }
-                    }
+                    Some(NumRef::Float(v)) => match StarlarkInt::from_f64_exact(v.0.trunc()) {
+                        Ok(v) => write!(res, "{v}").unwrap(),
+                        Err(_) => ValueError::unsupported_type(value, "format(%d)")?,
+                    },
                     None => ValueError::unsupported_type(value, "format(%d)")?,
                 }
             }
@@ -325,23 +321,23 @@ pub(crate) fn percent(format: &str, value: Value) -> crate::Result<String> {
                 }
             }
             Some(PercentSFormat::Exp) => {
-                let v = NumRef::unpack_param(next_value()?)?.as_float();
+                let v = NumRef::unpack_param(next_value()?)?.as_finite_float()?;
                 float::write_scientific(&mut res, v, 'e', false).unwrap()
             }
             Some(PercentSFormat::ExpUpper) => {
-                let v = NumRef::unpack_param(next_value()?)?.as_float();
+                let v = NumRef::unpack_param(next_value()?)?.as_finite_float()?;
                 float::write_scientific(&mut res, v, 'E', false).unwrap()
             }
             Some(PercentSFormat::Float) => {
-                let v = NumRef::unpack_param(next_value()?)?.as_float();
+                let v = NumRef::unpack_param(next_value()?)?.as_finite_float()?;
                 float::write_decimal(&mut res, v).unwrap()
             }
             Some(PercentSFormat::FloatCompact) => {
-                let v = NumRef::unpack_param(next_value()?)?.as_float();
+                let v = NumRef::unpack_param(next_value()?)?.as_finite_float()?;
                 float::write_compact(&mut res, v, 'e').unwrap()
             }
             Some(PercentSFormat::FloatCompactUpper) => {
-                let v = NumRef::unpack_param(next_value()?)?.as_float();
+                let v = NumRef::unpack_param(next_value()?)?.as_finite_float()?;
                 float::write_compact(&mut res, v, 'E').unwrap()
             }
         }
@@ -388,7 +384,7 @@ pub(crate) fn percent_s_one<'v>(
     before: &str,
     arg: Value<'v>,
     after: &str,
-    heap: &'v Heap,
+    heap: Heap<'v>,
 ) -> crate::Result<StringValue<'v>> {
     Ok(match StringValue::new(arg) {
         Some(arg) => heap.alloc_str_concat3(before, &arg, after),
@@ -409,7 +405,17 @@ pub(crate) fn percent_s_one<'v>(
                 },
                 None => arg,
             };
-            format_one(before, one, after, heap)
+            match StringValue::new(one) {
+                Some(one) => heap.alloc_str_concat3(before, &one, after),
+                None => {
+                    // General `%s` renders a non-string operand with `repr`.
+                    let mut result = String::with_capacity(before.len() + after.len() + 10);
+                    result.push_str(before);
+                    one.collect_repr(&mut result);
+                    result.push_str(after);
+                    heap.alloc_str(&result)
+                }
+            }
         }
     })
 }
@@ -543,5 +549,22 @@ mod tests {
 
         assert::eq("'%x' % (-2147483647,)", "'-7fffffff'");
         assert::eq("'%x' % (-2147483648,)", "'-80000000'");
+    }
+
+    /// `%d` formats any finite float as the integer it truncates to.
+    #[test]
+    fn test_percent_d_float_beyond_i32() {
+        assert::eq("'%d' % 2147483647.0", "'2147483647'");
+        assert::eq("'%d' % -2147483648.0", "'-2147483648'");
+        assert::eq("'%d' % 2147483648.0", "'2147483648'");
+        assert::eq("'%d' % -2147483649.0", "'-2147483649'");
+        assert::eq("'%d' % 3e9", "'3000000000'");
+        assert::eq(
+            "'%d' % 1.23e45",
+            "'1229999999999999973814869011019624571608236032'",
+        );
+        assert::eq("'%d' % -2.5", "'-2'");
+        assert::fail("'%d' % float('nan')", "format(%d)");
+        assert::fail("'%d' % float('inf')", "format(%d)");
     }
 }

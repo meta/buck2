@@ -27,6 +27,12 @@ use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::query_args::CommonAttributeArgs;
 use buck2_client_ctx::streaming::StreamingCommand;
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum TargetHashFunction {
+    Fast,
+    Strong,
+}
+
 /// Resolve target patterns to configured targets.
 #[derive(Debug, clap::Parser)]
 #[clap(name = "ctargets")]
@@ -48,6 +54,30 @@ pub struct ConfiguredTargetsCommand {
     /// On errors, put buck.error in the output stream and continue
     #[clap(long)]
     keep_going: bool,
+
+    /// Print a stable configured-target hash that omits configuration information.
+    #[clap(long)]
+    show_target_hash: bool,
+
+    /// Include all transitive dependencies in each target hash.
+    #[clap(long, requires = "show_target_hash")]
+    target_hash_recursive: bool,
+
+    /// Change hashes for these targets and targets that directly depend on them.
+    /// With --target-hash-recursive, this also affects transitive dependents.
+    /// Takes space-separated unconfigured target labels and can be repeated.
+    #[clap(long, requires = "show_target_hash", num_args = 1.., value_name = "TARGET")]
+    require_hash_change_deps: Vec<String>,
+
+    /// Select the target hash function.
+    #[clap(
+        long,
+        ignore_case = true,
+        default_value = "fast",
+        requires = "show_target_hash",
+        value_enum
+    )]
+    target_hash_function: TargetHashFunction,
 
     #[clap(flatten)]
     attributes: CommonAttributeArgs,
@@ -101,6 +131,13 @@ impl StreamingCommand for ConfiguredTargetsCommand {
                     output_format: output_format as i32,
                     output_attributes: self.attributes.get()?,
                     keep_going: self.keep_going,
+                    show_target_hash: self.show_target_hash,
+                    target_hash_recursive: self.target_hash_recursive,
+                    require_hash_change_deps: self.require_hash_change_deps,
+                    target_hash_use_strong_hash: matches!(
+                        self.target_hash_function,
+                        TargetHashFunction::Strong
+                    ),
                 },
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),

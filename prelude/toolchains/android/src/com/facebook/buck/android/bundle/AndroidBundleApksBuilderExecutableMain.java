@@ -18,14 +18,17 @@ import com.facebook.buck.android.apk.ApkSignerUtils;
 import com.facebook.buck.android.apk.KeystoreProperties;
 import com.facebook.buck.android.zipalign.ZipAlign;
 import com.facebook.buck.util.zip.ZipScrubber;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.jetbrains.annotations.Nullable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AndroidBundleApksBuilderExecutableMain {
 
   @Option(name = "--output-apk", required = true)
@@ -44,13 +47,21 @@ public class AndroidBundleApksBuilderExecutableMain {
   private String zipalignTool;
 
   @Option(name = "--keystore", depends = "--keystore-properties")
-  private Path keystorePath;
+  @Nullable
+  private Path keystorePath = null;
 
   @Option(name = "--keystore-properties", depends = "--keystore")
-  private Path keystorePropertiesPath;
+  @Nullable
+  private Path keystorePropertiesPath = null;
 
   private void run() throws Exception {
-    Path apksDirectory = Files.createTempDirectory("derived.apks");
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    Path scratchDir = Path.of(scratchPath);
+    Path apksDirectory = Files.createTempDirectory(scratchDir, "derived.apks");
     BuildApksCommand.Builder buildApksCommandBuilder =
         BuildApksCommand.builder()
             .setApkBuildMode(BuildApksCommand.ApkBuildMode.UNIVERSAL)
@@ -91,11 +102,11 @@ public class AndroidBundleApksBuilderExecutableMain {
       main.run();
       System.exit(0);
     } catch (CmdLineException e) {
-      System.err.println(e.getMessage());
+      System.err.println(e.toString());
       parser.printUsage(System.err);
       System.exit(1);
     } catch (Exception e) {
-      System.err.println(e.getMessage());
+      System.err.println(e.toString());
       System.exit(1);
     }
   }

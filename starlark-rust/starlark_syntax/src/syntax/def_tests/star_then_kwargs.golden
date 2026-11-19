@@ -12,4 +12,3 @@ Error: error: `*` must be followed by named parameter
   |
 1 | def test(x, *, **kwargs): pass
   |                ^^^^^^^^
-  |

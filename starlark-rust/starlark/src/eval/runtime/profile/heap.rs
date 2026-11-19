@@ -202,7 +202,7 @@ impl HeapProfile {
 
     #[cold]
     #[inline(never)]
-    pub(crate) fn record_call_enter<'v>(&self, function: Value<'v>, heap: &'v Heap) {
+    pub(crate) fn record_call_enter<'v>(&self, function: Value<'v>, heap: Heap<'v>) {
         if self.enabled {
             heap.record_call_enter(function);
         }
@@ -210,7 +210,7 @@ impl HeapProfile {
 
     #[cold]
     #[inline(never)]
-    pub(crate) fn record_call_exit<'v>(&self, heap: &'v Heap) {
+    pub(crate) fn record_call_exit<'v>(&self, heap: Heap<'v>) {
         if self.enabled {
             heap.record_call_exit();
         }
@@ -219,7 +219,7 @@ impl HeapProfile {
     // We could expose profile on the Heap, but it's an implementation detail that it works here.
     pub(crate) fn r#gen(
         &self,
-        heap: &Heap,
+        heap: Heap<'_>,
         format: HeapProfileFormat,
     ) -> crate::Result<ProfileData> {
         if !self.enabled {
@@ -228,7 +228,7 @@ impl HeapProfile {
         Ok(Self::gen_enabled(heap, format))
     }
 
-    pub(crate) fn gen_enabled(heap: &Heap, format: HeapProfileFormat) -> ProfileData {
+    pub(crate) fn gen_enabled(heap: Heap<'_>, format: HeapProfileFormat) -> ProfileData {
         match format {
             HeapProfileFormat::FlameGraphAndSummary => {
                 Self::write_flame_and_summarized_heap_profile(heap)
@@ -238,21 +238,21 @@ impl HeapProfile {
         }
     }
 
-    fn write_flame_heap_profile(heap: &Heap) -> ProfileData {
+    fn write_flame_heap_profile(heap: Heap<'_>) -> ProfileData {
         let stacks = AggregateHeapProfileInfo::collect(heap, None);
         ProfileData {
             profile: ProfileDataImpl::HeapFlameAllocated(Box::new(stacks)),
         }
     }
 
-    fn write_summarized_heap_profile(heap: &Heap) -> ProfileData {
+    fn write_summarized_heap_profile(heap: Heap<'_>) -> ProfileData {
         let stacks = AggregateHeapProfileInfo::collect(heap, None);
         ProfileData {
             profile: ProfileDataImpl::HeapSummaryAllocated(Box::new(stacks)),
         }
     }
 
-    fn write_flame_and_summarized_heap_profile(heap: &Heap) -> ProfileData {
+    fn write_flame_and_summarized_heap_profile(heap: Heap<'_>) -> ProfileData {
         let stacks = AggregateHeapProfileInfo::collect(heap, None);
         ProfileData {
             profile: ProfileDataImpl::HeapAllocated(Box::new(stacks)),
@@ -269,6 +269,7 @@ mod tests {
     use crate::eval::runtime::profile::mode::ProfileMode;
     use crate::syntax::AstModule;
     use crate::syntax::Dialect;
+    use crate::values::Heap;
     use crate::values::Value;
 
     #[test]
@@ -286,39 +287,41 @@ f
             &Dialect::AllOptionsInternal,
         )?;
         let globals = Globals::standard();
-        let module = Module::new();
-        let module2 = Module::new();
-        let module3 = Module::new();
+        Heap::temp(|heap| {
+            let module = Module::with_heap(heap);
+            let module2 = Module::with_heap(heap);
+            let module3 = Module::with_heap(heap);
 
-        let mut eval = Evaluator::new(&module);
-        eval.enable_profile(&ProfileMode::HeapSummaryAllocated)
-            .unwrap();
-        let f = eval.eval_module(ast, &globals)?;
+            let mut eval = Evaluator::new(&module);
+            eval.enable_profile(&ProfileMode::HeapSummaryAllocated)
+                .unwrap();
+            let f = eval.eval_module(ast, &globals)?;
 
-        // first check module profiling works
-        HeapProfile::write_summarized_heap_profile(module.heap());
-        HeapProfile::write_flame_heap_profile(module.heap());
+            // first check module profiling works
+            HeapProfile::write_summarized_heap_profile(module.heap());
+            HeapProfile::write_flame_heap_profile(module.heap());
 
-        // second check function profiling works
-        let mut eval = Evaluator::new(&module2);
-        eval.enable_profile(&ProfileMode::HeapSummaryAllocated)
-            .unwrap();
-        eval.eval_function(f, &[Value::testing_new_int(100)], &[])?;
+            // second check function profiling works
+            let mut eval = Evaluator::new(&module2);
+            eval.enable_profile(&ProfileMode::HeapSummaryAllocated)
+                .unwrap();
+            eval.eval_function(f, &[Value::testing_new_int(100)], &[])?;
 
-        HeapProfile::write_summarized_heap_profile(module2.heap());
-        HeapProfile::write_flame_heap_profile(module2.heap());
+            HeapProfile::write_summarized_heap_profile(module2.heap());
+            HeapProfile::write_flame_heap_profile(module2.heap());
 
-        // finally, check a user can add values into the heap before/after
-        let mut eval = Evaluator::new(&module3);
-        module3.heap().alloc("Thing that goes before");
-        eval.enable_profile(&ProfileMode::HeapSummaryAllocated)
-            .unwrap();
-        eval.eval_function(f, &[Value::testing_new_int(100)], &[])?;
+            // finally, check a user can add values into the heap before/after
+            let mut eval = Evaluator::new(&module3);
+            module3.heap().alloc("Thing that goes before");
+            eval.enable_profile(&ProfileMode::HeapSummaryAllocated)
+                .unwrap();
+            eval.eval_function(f, &[Value::testing_new_int(100)], &[])?;
 
-        module3.heap().alloc("Thing that goes after");
-        HeapProfile::write_summarized_heap_profile(module3.heap());
-        HeapProfile::write_flame_heap_profile(module3.heap());
+            module3.heap().alloc("Thing that goes after");
+            HeapProfile::write_summarized_heap_profile(module3.heap());
+            HeapProfile::write_flame_heap_profile(module3.heap());
 
-        Ok(())
+            Ok(())
+        })
     }
 }

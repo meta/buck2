@@ -1,9 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
-# This source code is licensed under both the MIT license found in the
-# LICENSE-MIT file in the root directory of this source tree and the Apache
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
 # License, Version 2.0 found in the LICENSE-APACHE file in the root directory
-# of this source tree.
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
 
 buildscript.run = false
 
@@ -12,7 +13,10 @@ buildscript.run = false
 ['cfg(target_arch = "x86_64")']
 cfgs = ["blake3_sse2_ffi", "blake3_sse41_ffi", "blake3_avx2_ffi", "blake3_avx512_ffi"]
 
-# , any(target_env = "fbcode", target_env = "gnu")
+# NOTE: extra vector instructions must NOT be enabled on this library. blake3_dispatch.c does the
+# runtime CPUID check and blake3_portable.c is the baseline fallback, so both of them execute on
+# machines with no fancy instructions at all. Telling the compiler the target supports AVX-512 lets
+# it auto-vectorize those two TUs with AVX-512 so they crash at runtime on incompatible systems.
 [['cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "macos")))'.cxx_library]]
 name = "simd_x86_unix"
 srcs = [
@@ -22,17 +26,22 @@ srcs = [
     "c/blake3_sse2_x86-64_unix.S",
     "c/blake3_sse41_x86-64_unix.S",
     "c/blake3_avx2_x86-64_unix.S",
-    "c/blake3_avx512_x86-64_unix.S"
 ]
+headers = ["c/*.h"]
+
+# Only the AVX-512 assembly gets the AVX-512 flags. This is a .S file, so
+# there is no compiler codegen to poison -- the flags only affect what the
+# assembler is willing to accept.
+[['cfg(all(target_arch = "x86_64", any(target_os = "linux", target_os = "macos")))'.cxx_library]]
+name = "simd_x86_unix_avx512"
+srcs = ["c/blake3_avx512_x86-64_unix.S"]
 # Older versions of Clang require these flags, even for assembly. See
 # https://github.com/BLAKE3-team/BLAKE3/issues/79.
 compiler_flags = ["-mavx512f", "-mavx512vl"]
 headers = ["c/*.h"]
-compatible_with = [
-    "prelude//os/constraints:linux",
-    "prelude//os/constraints:macos",
-]
 
+# Same split as the unix libraries above -- see the note there for why the
+# AVX-512 flags cannot be applied to the dispatch/portable TUs.
 [['cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "gnu"))'.cxx_library]]
 name = "simd_x86_windows_gnu"
 srcs = [
@@ -42,13 +51,16 @@ srcs = [
     "c/blake3_sse2_x86-64_windows_gnu.S",
     "c/blake3_sse41_x86-64_windows_gnu.S",
     "c/blake3_avx2_x86-64_windows_gnu.S",
-    "c/blake3_avx512_x86-64_windows_gnu.S"
 ]
+headers = ["c/*.h"]
+
+[['cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "gnu"))'.cxx_library]]
+name = "simd_x86_windows_gnu_avx512"
+srcs = ["c/blake3_avx512_x86-64_windows_gnu.S"]
 # Older versions of Clang require these flags, even for assembly. See
 # https://github.com/BLAKE3-team/BLAKE3/issues/79.
 compiler_flags = ["-mavx512f", "-mavx512vl"]
 headers = ["c/*.h"]
-compatible_with = ["prelude//os/constraints:windows"]
 
 [['cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "msvc"))'.cxx_library]]
 name = "simd_x86_windows_msvc"
@@ -59,10 +71,9 @@ srcs = [
     "c/blake3_sse2_x86-64_windows_msvc.asm",
     "c/blake3_sse41_x86-64_windows_msvc.asm",
     "c/blake3_avx2_x86-64_windows_msvc.asm",
-    "c/blake3_avx512_x86-64_windows_msvc.asm"
+    "c/blake3_avx512_x86-64_windows_msvc.asm",
 ]
 headers = ["c/*.h"]
-compatible_with = ["prelude//os/constraints:windows"]
 
 ## ARM and AArch64 fixups
 

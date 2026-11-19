@@ -1,0 +1,6 @@
+# Consumer inside `root//inherit_test/...` (the parent's intersection). Should
+# succeed: the no-vis child must NOT have replaced the intersection with empty.
+stub(
+    name = "c",
+    deps = ["root//inherit_test/no_vis_child/target:t"],
+)

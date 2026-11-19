@@ -8,16 +8,18 @@
  * above-listed licenses.
  */
 
-use allocative::Allocative;
-use sorted_vector_map::SortedVectorMap;
+use std::borrow::Cow;
 
-use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
+use allocative::Allocative;
+use buck2_hash::BuckFixedSortedMap;
+
+use crate::interpreter::rule_defs::cmd_args::CommandLineSink;
 
 /// A command line's expansion, suitable to actually run it.
 pub struct ExpandedCommandLine {
     pub exe: Vec<String>,
     pub args: Vec<String>,
-    pub env: SortedVectorMap<String, String>,
+    pub env: BuckFixedSortedMap<String, String>,
 }
 
 /// The digest of an ExpandedCommandLine.
@@ -30,6 +32,12 @@ pub struct ExpandedCommandLineDigest(
 impl ExpandedCommandLineDigest {
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
+    }
+
+    /// Reconstruct a digest from the 32 bytes returned by [`Self::as_bytes`]. Used to rehydrate
+    /// persisted dep-file cache entries.
+    pub fn from_bytes(bytes: [u8; blake3::OUT_LEN]) -> Self {
+        ExpandedCommandLineDigest(blake3::Hash::from_bytes(bytes))
     }
 }
 
@@ -49,6 +57,12 @@ impl ExpandedCommandLineFingerprinter {
         }
     }
 
+    pub fn push_bytes(&mut self, bytes: &[u8]) {
+        self.count += 1;
+        self.digest.update(bytes);
+        self.digest.update(bytes.len().to_le_bytes().as_slice());
+    }
+
     pub fn push_count(&mut self) {
         self.digest.update(self.count.to_le_bytes().as_slice());
         self.count = 0;
@@ -63,19 +77,15 @@ impl ExpandedCommandLineFingerprinter {
     }
 }
 
-impl CommandLineBuilder for ExpandedCommandLineFingerprinter {
-    fn push_arg(&mut self, s: String) {
-        self.count += 1;
-
-        let bytes = s.as_bytes();
-        self.digest.update(bytes);
-        self.digest.update(bytes.len().to_le_bytes().as_slice());
+impl CommandLineSink for ExpandedCommandLineFingerprinter {
+    fn push_arg(&mut self, s: Cow<'_, str>) {
+        self.push_bytes(s.as_bytes());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use sorted_vector_map::sorted_vector_map;
+    use buck2_hash::BuckFixedSortedMap;
 
     use super::*;
 
@@ -83,18 +93,18 @@ mod tests {
         pub fn fingerprint(&self) -> ExpandedCommandLineDigest {
             let mut fingerprinter = ExpandedCommandLineFingerprinter::new();
             for e in self.exe.iter() {
-                fingerprinter.push_arg(e.to_owned());
+                fingerprinter.push_arg(Cow::Borrowed(e));
             }
             fingerprinter.push_count();
 
             for e in self.args.iter() {
-                fingerprinter.push_arg(e.to_owned());
+                fingerprinter.push_arg(Cow::Borrowed(e));
             }
             fingerprinter.push_count();
 
             for (k, v) in self.env.iter() {
-                fingerprinter.push_arg(k.to_owned());
-                fingerprinter.push_arg(v.to_owned());
+                fingerprinter.push_arg(Cow::Borrowed(k));
+                fingerprinter.push_arg(Cow::Borrowed(v));
             }
 
             fingerprinter.push_count();
@@ -139,19 +149,19 @@ mod tests {
         let cmd1 = ExpandedCommandLine {
             exe: Default::default(),
             args: Default::default(),
-            env: sorted_vector_map! { "FOO".to_owned() => "BAR".to_owned() },
+            env: BuckFixedSortedMap::from_iter([("FOO".to_owned(), "BAR".to_owned())]),
         };
 
         let cmd2 = ExpandedCommandLine {
             exe: Default::default(),
             args: Default::default(),
-            env: sorted_vector_map! { "FOO2".to_owned()=> "BAR".to_owned() },
+            env: BuckFixedSortedMap::from_iter([("FOO2".to_owned(), "BAR".to_owned())]),
         };
 
         let cmd3 = ExpandedCommandLine {
             exe: Default::default(),
             args: Default::default(),
-            env: sorted_vector_map! { "FOO".to_owned()=> "BAR2".to_owned() },
+            env: BuckFixedSortedMap::from_iter([("FOO".to_owned(), "BAR2".to_owned())]),
         };
 
         assert_ne!(cmd1.fingerprint(), cmd2.fingerprint());
@@ -161,8 +171,11 @@ mod tests {
 
     #[test]
     fn test_hash_stability() {
-        fn env() -> SortedVectorMap<String, String> {
-            sorted_vector_map! { "FOO1".to_owned() => "BAR1".to_owned(), "FOO2".to_owned() => "BAR2".to_owned() }
+        fn env() -> BuckFixedSortedMap<String, String> {
+            BuckFixedSortedMap::from_iter([
+                ("FOO1".to_owned(), "BAR1".to_owned()),
+                ("FOO2".to_owned(), "BAR2".to_owned()),
+            ])
         }
 
         let mut cmd = ExpandedCommandLine {

@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-use buck2_core::soft_error;
-
 #[derive(Debug, clap::Parser, serde::Serialize, serde::Deserialize)]
 pub struct CommonAttributeArgs {
     /// Output all attributes, equivalent of --output-attribute ''.
@@ -54,6 +52,7 @@ pub struct CommonAttributeArgs {
      )]
     output_attribute: Vec<String>,
 
+    // FIXME(ndmitchell): Deprecated since 2022-09 with nothing driving the removal; delete it.
     /// Deprecated: Use `--output-attribute` instead.
     ///
     /// List of space-separated attributes to output, --output-attributes attr1 attr2.
@@ -69,8 +68,6 @@ pub struct CommonAttributeArgs {
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum ArgErrors {
-    #[error("`--output-attributes` is deprecated, use `--output-attribute` instead")]
-    OutputAttributesDeprecated,
     #[error(
         "Passed both `--output-attribute` and `--output-attributes`, use only `--output-attribute`"
     )]
@@ -79,14 +76,6 @@ enum ArgErrors {
 
 impl CommonAttributeArgs {
     pub fn get(&self) -> buck2_error::Result<Vec<String>> {
-        if !self.output_attributes.is_empty() {
-            soft_error!(
-                "output_attributes",
-                ArgErrors::OutputAttributesDeprecated.into(),
-                deprecation: true,
-            )?;
-        }
-
         if self.output_attributes.is_empty() {
             Ok(self.output_attribute.clone())
         } else if self.output_attribute.is_empty() {

@@ -7,9 +7,11 @@
 # above-listed licenses.
 
 # Provider which exposes a field from `apple_binary` to `apple_bundle` as it might be used during code signing.
-AppleEntitlementsInfo = provider(fields = {
-    "entitlements_file": provider_field(Artifact | None, default = None),
-})
+AppleEntitlementsInfo = provider(
+    fields = {
+        "entitlements_file": provider_field(Artifact | None, default = None),
+    }
+)
 
 CodeSignType = enum(
     "skip",

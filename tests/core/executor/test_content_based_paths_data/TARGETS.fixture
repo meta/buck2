@@ -1,24 +1,38 @@
 load(
     ":defs.bzl",
+    "anon_non_cbp_wrapper",
     "argsfile_with_incorrectly_declared_output",
+    "assembled_dir_rule",
     "cas_artifact_with_content_based_path",
     "copied_dir",
     "copy",
     "download_with_content_based_path",
     "dynamic_new_with_content_based_path",
     "dynamic_with_content_based_path",
+    "failing_run_with_content_based_path",
     "failing_validation_with_content_based_path",
-    "ignores_content_based_artifact",
+    "ignore_artifacts_content_based_artifact",
+    "ignore_artifacts_nested_under_hidden",
+    "ignore_artifacts_rejects_hidden_content_based_artifact",
+    "ignore_artifacts_skips_failing_static_path_dep",
     "incremental_action",
+    "non_content_based_exec_dep",
     "not_eligible_for_dedupe",
+    "pass_cbp_promise_to_anon_target",
     "resolve_promise_artifact",
+    "run_with_anon_non_cbp_dep",
     "run_with_content_based_path",
+    "run_with_symlink_to_non_cbp_input",
+    "rust_pattern_consumer",
+    "rust_pattern_producer",
+    "salt_hidden_dependency",
     "sets_inconsistent_params",
     "slow_running_local_action_with_content_based_path",
     "symlink",
     "symlink_and_copy",
     "symlinked_dir",
     "use_projection_with_content_based_path",
+    "uses_exec_dep",
     "uses_relative_to",
     "write_json_with_content_based_path",
     "write_macro_with_content_based_path",
@@ -55,13 +69,6 @@ run_with_content_based_path(
 )
 
 run_with_content_based_path(
-    name = "run_remote_with_dep_on_run_local",
-    data = "hello world",
-    prefer_local = False,
-    depends_on = [":run_local_with_content_based_path"],
-)
-
-run_with_content_based_path(
     name = "run_local_with_dep_on_run_remote",
     data = "hello world",
     prefer_local = True,
@@ -82,6 +89,10 @@ symlink_and_copy(
     name = "symlink_and_copy_with_content_based_path",
 )
 
+run_with_symlink_to_non_cbp_input(
+    name = "run_with_symlink_to_non_cbp_input",
+)
+
 copied_dir(
     name = "copied_dir_with_content_based_path",
     to_copy = ":write_with_content_based_path",
@@ -90,6 +101,11 @@ copied_dir(
 symlinked_dir(
     name = "symlinked_dir_with_content_based_path",
     to_symlink = ":write_with_content_based_path",
+)
+
+assembled_dir_rule(
+    name = "assembled_dir_with_content_based_path",
+    dep = ":write_with_content_based_path",
 )
 
 cas_artifact_with_content_based_path(
@@ -123,10 +139,6 @@ dynamic_new_with_content_based_path(
 
 use_projection_with_content_based_path(
     name = "use_projection_with_content_based_path",
-)
-
-ignores_content_based_artifact(
-    name = "ignores_content_based_artifact",
 )
 
 slow_running_local_action_with_content_based_path(
@@ -171,10 +183,27 @@ resolve_promise_artifact(
     assert_promised_artifact_has_content_based_path = read_config("test", "assert_promised_artifact_has_content_based_path", "false") == "true",
 )
 
+pass_cbp_promise_to_anon_target(
+    name = "pass_cbp_promise_to_anon_target",
+)
+
+anon_non_cbp_wrapper(
+    name = "anon_non_cbp_wrapper",
+)
+
+run_with_anon_non_cbp_dep(
+    name = "run_with_anon_non_cbp_dep",
+    dep = ":anon_non_cbp_wrapper",
+)
+
 not_eligible_for_dedupe(
     name = "not_eligible_for_dedupe",
     expect_eligible_for_dedupe = read_config("test", "expect_eligible_for_dedupe", "false") == "true",
     run_action_output_has_content_based_path = read_config("test", "run_action_output_has_content_based_path", "true") == "true",
+)
+
+failing_run_with_content_based_path(
+    name = "failing_run_with_content_based_path",
 )
 
 platform(
@@ -196,4 +225,77 @@ constraint_setting(
 constraint_value(
     name = "cat",
     constraint_setting = ":animal",
+)
+
+non_content_based_exec_dep(
+    name = "non_content_based_exec_dep",
+)
+
+uses_exec_dep(
+    name = "uses_exec_dep",
+    exec_dep = ":non_content_based_exec_dep",
+)
+
+# Regression fixture for a writer-vs-writer race on shared content-based
+# paths. A single rust_pattern_producer target is depended on by N
+# consumers, each bound to a DIFFERENT platform. Every consumer re-analyzes
+# the producer under its own configuration, but the producer's content
+# doesn't depend on configuration, so every analysis's write_json resolves
+# to the SAME __rust_pattern_shared_producer__/<content_hash>/artifacts.json
+# on-disk path. Building all consumers concurrently runs N independent
+# cleanup_path -> write_file cycles on that shared path; before the fix
+# they race and one writer's remove returns ENOENT.
+_N = 200
+
+[constraint_setting(name = "cfg_setting_{}".format(i)) for i in range(_N)]
+
+[
+    constraint_value(
+        name = "cfg_value_{}".format(i),
+        constraint_setting = ":cfg_setting_{}".format(i),
+    )
+    for i in range(_N)
+]
+
+[
+    platform(
+        name = "cbp_race_platform_{}".format(i),
+        constraint_values = [":cfg_value_{}".format(i)],
+    )
+    for i in range(_N)
+]
+
+rust_pattern_producer(
+    name = "rust_pattern_shared_producer",
+)
+
+[
+    rust_pattern_consumer(
+        name = "rust_pattern_consumer_{}".format(i),
+        producer = ":rust_pattern_shared_producer",
+        default_target_platform = ":cbp_race_platform_{}".format(i),
+    )
+    for i in range(_N)
+]
+
+ignore_artifacts_content_based_artifact(
+    name = "ignore_artifacts_content_based_artifact",
+    data = read_config("test", "stamp_data", "hello world"),
+)
+
+ignore_artifacts_skips_failing_static_path_dep(
+    name = "ignore_artifacts_skips_failing_static_path_dep",
+)
+
+ignore_artifacts_rejects_hidden_content_based_artifact(
+    name = "ignore_artifacts_rejects_hidden_content_based_artifact",
+)
+
+ignore_artifacts_nested_under_hidden(
+    name = "ignore_artifacts_nested_under_hidden",
+)
+
+salt_hidden_dependency(
+    name = "salt_hidden_dependency",
+    data = read_config("test", "stamp_data", "hello world"),
 )

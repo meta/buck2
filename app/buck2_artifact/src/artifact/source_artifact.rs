@@ -16,6 +16,7 @@ use buck2_core::package::source_path::SourcePath;
 use buck2_core::package::source_path::SourcePathRef;
 use derive_more::Display;
 use dupe::Dupe;
+use pagable::Pagable;
 
 /// An artifact in the source tree
 #[derive(
@@ -29,7 +30,8 @@ use dupe::Dupe;
     PartialOrd,
     Ord,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 pub struct SourceArtifact(Arc<SourceArtifactData>);
 
@@ -42,7 +44,8 @@ pub struct SourceArtifact(Arc<SourceArtifactData>);
     PartialOrd,
     Ord,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 struct SourceArtifactData(SourcePath);
 

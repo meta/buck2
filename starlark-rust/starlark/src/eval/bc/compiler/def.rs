@@ -17,58 +17,39 @@
 
 //! Compile def.
 
-use starlark_syntax::slice_vec_ext::SliceExt;
-
 use crate::eval::bc::instr_impl::InstrDef;
 use crate::eval::bc::instr_impl::InstrDefData;
 use crate::eval::bc::stack_ptr::BcSlotOut;
 use crate::eval::bc::writer::BcWriter;
 use crate::eval::compiler::def::DefCompiled;
-use crate::eval::compiler::def::ParametersCompiled;
 use crate::eval::runtime::frame_span::FrameSpan;
 
-impl DefCompiled {
-    pub(crate) fn mark_definitely_assigned_after(&self, bc: &mut BcWriter) {
+impl<'f> DefCompiled<'f> {
+    pub(crate) fn mark_definitely_assigned_after(&self, bc: &mut BcWriter<'f>) {
         // TODO(nga): argument default values and types can be used
         //   to mark variables definitely assigned.
         let _ = bc;
     }
 
-    pub(crate) fn write_bc(&self, span: FrameSpan, target: BcSlotOut, bc: &mut BcWriter) {
+    pub(crate) fn write_bc(&self, span: FrameSpan<'f>, target: BcSlotOut, bc: &mut BcWriter<'f>) {
         let DefCompiled {
-            function_name,
             params,
             return_type,
             info,
         } = self;
-        let function_name = function_name.clone();
-
-        let ParametersCompiled {
-            params: param_list,
-            indices,
-        } = params;
 
         let how_many_slots_we_need = params.count_exprs();
 
         bc.alloc_slots(how_many_slots_we_need, |slots, bc| {
             let mut slots_i = slots.iter();
             let mut value_count = 0;
-            let params = param_list.map(|p| {
-                p.map(|p| {
-                    p.map_expr(|e| {
-                        e.write_bc(slots_i.next().unwrap().to_out(), bc);
-                        value_count += 1;
-                        value_count - 1
-                    })
-                })
+            let params = params.map_exprs(|e| {
+                e.write_bc(slots_i.next().unwrap().to_out(), bc);
+                value_count += 1;
+                value_count - 1
             });
 
-            let params = ParametersCompiled {
-                params,
-                indices: *indices,
-            };
             let instr_def_data = InstrDefData {
-                function_name,
                 params,
                 return_type: *return_type,
                 info: *info,

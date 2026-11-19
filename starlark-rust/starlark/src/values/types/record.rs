@@ -48,4 +48,8 @@ pub(crate) mod matcher;
 pub(crate) mod record_type;
 pub(crate) mod ty_record_type;
 
+pub use crate::values::record::field::Field;
 pub use crate::values::record::instance::Record;
+pub use crate::values::record::matcher::RecordTypeMatcher;
+pub use crate::values::record::record_type::FrozenRecordType;
+pub use crate::values::record::record_type::RecordType;

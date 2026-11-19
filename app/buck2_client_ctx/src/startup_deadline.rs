@@ -15,6 +15,7 @@ use std::time::Instant;
 
 use buck2_common::client_utils::retrying;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 
 /// Utility to time out properly with context during buck2 client startup.
 ///
@@ -45,7 +46,7 @@ impl StartupDeadline {
         Ok(StartupDeadline {
             deadline: Instant::now()
                 .checked_add(duration)
-                .buck_error_context("overflow")?,
+                .internal_error("overflow")?,
         })
     }
 
@@ -60,16 +61,22 @@ impl StartupDeadline {
         let new_deadline = self
             .deadline
             .checked_sub(Duration::from_millis(100))
-            .buck_error_context("deadline underflow")?;
+            .internal_error("deadline underflow")?;
         Ok(StartupDeadline {
             deadline: new_deadline,
         })
     }
 
     /// How much time is left for the current operation.
+    ///
+    /// A deadline exactly equal to the current time counts as expired. Coarse monotonic
+    /// clock granularity (notably on Windows) otherwise makes a zero timeout nondeterministic:
+    /// whether the outermost or an inner operation reports the timeout would depend on
+    /// whether the clock ticked between constructing the deadline and checking it.
     pub(crate) fn rem_duration(&self, op: &str) -> buck2_error::Result<Duration> {
         self.deadline
             .checked_duration_since(Instant::now())
+            .filter(|rem| !rem.is_zero())
             .ok_or(StartupDeadlineError::TimeoutBefore { op: op.to_owned() }.into())
     }
 
@@ -97,7 +104,7 @@ impl StartupDeadline {
         }
     }
 
-    pub(crate) async fn run<R, Fut>(&self, op: &str, f: Fut) -> buck2_error::Result<R>
+    pub async fn run<R, Fut>(&self, op: &str, f: Fut) -> buck2_error::Result<R>
     where
         Fut: Future<Output = buck2_error::Result<R>>,
     {
@@ -108,7 +115,7 @@ impl StartupDeadline {
     pub(crate) fn min(&self, other: Duration) -> buck2_error::Result<StartupDeadline> {
         let other = Instant::now()
             .checked_add(other)
-            .buck_error_context("overflow")?;
+            .internal_error("overflow")?;
         Ok(StartupDeadline {
             deadline: cmp::min(self.deadline, other),
         })
@@ -120,7 +127,7 @@ impl StartupDeadline {
         let duration = self.deadline.duration_since(now) / 2;
         let deadline = now
             .checked_add(duration)
-            .buck_error_context("duration overflow")?;
+            .internal_error("duration overflow")?;
         Ok(StartupDeadline { deadline })
     }
 

@@ -18,9 +18,8 @@
 use std::fmt::Write;
 
 use crate::environment::FrozenModule;
-use crate::eval::compiler::def::FrozenDef;
-use crate::values::FrozenHeapRef;
-use crate::values::FrozenValueTyped;
+use crate::eval::compiler::def::Def;
+use crate::values::OwnedFrozenRef;
 
 impl FrozenModule {
     /// Print a lot of module internals for debugging.
@@ -29,28 +28,28 @@ impl FrozenModule {
 
         writeln!(w, "Eval duration: {:.3}s", self.eval_duration.as_secs_f64()).unwrap();
         writeln!(w, "Heap stats:").unwrap();
-        w.push_str(&self.frozen_heap().dump_debug());
+        w.push_str(&dump_heap_debug(self.frozen_heap()));
 
-        for (name, value) in self.all_items() {
-            // TODO(nga): this prints public, private and imported symbols.
-            //   We only care about public and private symbols, but no imported.
-            writeln!(w).unwrap();
-            writeln!(w, "{name} = {value}").unwrap();
-            if let Some(def) = FrozenValueTyped::<FrozenDef>::new(value) {
-                def.dump_debug()
-                    .lines()
-                    .for_each(|line| writeln!(w, "  {line}").unwrap());
+        self.with_data(|data| {
+            for (name, value) in data.all_items() {
+                // TODO(nga): this prints public, private and imported symbols.
+                //   We only care about public and private symbols, but no imported.
+                writeln!(w).unwrap();
+                writeln!(w, "{name} = {value}").unwrap();
+                if let Some(def) = value.downcast_ref::<Def>() {
+                    def.dump_debug()
+                        .lines()
+                        .for_each(|line| writeln!(w, "  {line}").unwrap());
+                }
             }
-        }
+        });
         w
     }
 }
 
-impl FrozenHeapRef {
-    fn dump_debug(&self) -> String {
-        let mut w = String::new();
-        writeln!(w, "Allocated bytes: {}", self.allocated_bytes()).unwrap();
-        writeln!(w, "Available bytes: {}", self.available_bytes()).unwrap();
-        w
-    }
+fn dump_heap_debug(heap: OwnedFrozenRef<'_, ()>) -> String {
+    let mut w = String::new();
+    writeln!(w, "Allocated bytes: {}", heap.allocated_bytes()).unwrap();
+    writeln!(w, "Available bytes: {}", heap.available_bytes()).unwrap();
+    w
 }

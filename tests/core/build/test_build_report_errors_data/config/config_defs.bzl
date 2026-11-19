@@ -23,9 +23,12 @@ def _constraint_value(ctx):
         DefaultInfo(),
         constraint_value,
         # Provide `ConfigurationInfo` from `constraint_value` so it could be used as select key.
-        ConfigurationInfo(constraints = {
-            constraint_value.setting.label: constraint_value,
-        }, values = {}),
+        ConfigurationInfo(
+            constraints = {
+                constraint_value.setting.label: constraint_value,
+            },
+            values = {},
+        ),
     ]
 
 constraint_value = rule(

@@ -7,11 +7,15 @@ source_listing()
 erlang_application(
     name = "test_cli_lib",
     srcs = glob(["src/*.erl"]),
-    applications = ["//erlang/common_test/test_binary:test_binary"],
+    applications = [
+        "//erlang/common_test/test_binary:test_binary",
+        "//erlang/shell:buck2_shell_utils",
+    ],
     erl_opts = [
         "+debug_info",
         "+warnings_as_errors",
     ],
+    labels = ["test_application"],
     resources = [],
     visibility = ["PUBLIC"],
 )

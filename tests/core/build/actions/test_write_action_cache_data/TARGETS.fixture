@@ -1,0 +1,13 @@
+load(":defs.bzl", "execution_platforms", "write", "write_tset")
+
+write(name = "write", content = read_config("test", "content"))
+
+# The same content written by a second action, so that a test can record it through one and
+# look it up through the other.
+write(name = "write_again", content = read_config("test", "content"))
+
+write_tset(name = "write_tset", content = read_config("test", "content"))
+
+write_tset(name = "write_tset_again", content = read_config("test", "content"))
+
+execution_platforms(name = "execution_platforms")

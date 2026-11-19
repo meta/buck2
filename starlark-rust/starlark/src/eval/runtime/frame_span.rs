@@ -18,48 +18,76 @@
 use std::fmt;
 use std::fmt::Display;
 
+use allocative::Allocative;
 use dupe::Dupe;
 
-use crate::eval::runtime::frozen_file_span::FrozenFileSpan;
+use crate as starlark;
+use crate::any::ProvidesStaticType;
+use crate::eval::runtime::heap_file_span::HeapFileSpan;
 use crate::eval::runtime::inlined_frame::InlinedFrames;
+use crate::register_starlark_any_complex;
+use crate::values::HeapEdge;
 
-/// Span of the call frame (including inlined call frames).
-#[derive(Debug, Clone, Copy, Dupe, PartialEq, Eq, Default)]
-pub(crate) struct FrameSpan {
-    pub(crate) span: FrozenFileSpan,
+/// Span of the call frame (including inlined call frames), at the brand of the frozen heap that
+/// holds the file and the inlined frames.
+///
+/// The bytecode's call instructions carry their span as a `StarlarkAnyComplex<FrameSpan>`
+/// allocation, so that the call stack can hold it by reference.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Dupe,
+    PartialEq,
+    Eq,
+    Default,
+    Allocative,
+    ProvidesStaticType,
+    starlark_derive::StarlarkPagable
+)]
+pub(crate) struct FrameSpan<'f> {
+    pub(crate) span: HeapFileSpan<'f>,
     /// Parent frames.
-    pub(crate) inlined_frames: InlinedFrames,
+    pub(crate) inlined_frames: InlinedFrames<'f>,
 }
 
-impl FrameSpan {
-    pub(crate) const fn new(span: FrozenFileSpan) -> FrameSpan {
+register_starlark_any_complex!(frozen FrameSpan<'_>);
+
+impl<'f> FrameSpan<'f> {
+    pub(crate) const fn new(span: HeapFileSpan<'f>) -> FrameSpan<'f> {
         FrameSpan {
             span,
             inlined_frames: InlinedFrames { frames: None },
         }
     }
 
-    pub(crate) fn end_span(&self) -> FrameSpan {
+    pub(crate) fn end_span(&self) -> FrameSpan<'f> {
         FrameSpan {
             span: self.span.end_span(),
             inlined_frames: self.inlined_frames,
         }
     }
-}
 
-impl Display for FrameSpan {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(nga): either display inlined frames or remove this.
-        Display::fmt(&self.span, f)
-    }
-}
-
-impl FrameSpan {
-    pub(crate) fn merge(&self, other: &FrameSpan) -> FrameSpan {
+    pub(crate) fn merge(&self, other: &FrameSpan<'f>) -> FrameSpan<'f> {
         // TODO(nga): merge inlined frames.
         FrameSpan {
             span: self.span.merge(&other.span),
             inlined_frames: self.inlined_frames,
         }
+    }
+}
+
+impl FrameSpan<'static> {
+    /// The span, for use with any heap: a static span (see `rust_loc!`) is immortal, see
+    /// [`HeapEdge::immortal`].
+    pub(crate) fn at<'v>(&'static self) -> &'v FrameSpan<'v> {
+        HeapEdge::immortal().rebrand_ref(self)
+    }
+}
+
+impl<'f> Display for FrameSpan<'f> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // TODO(nga): either display inlined frames or remove this.
+        Display::fmt(&self.span, f)
     }
 }

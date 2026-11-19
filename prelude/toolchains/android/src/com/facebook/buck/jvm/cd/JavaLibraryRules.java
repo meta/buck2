@@ -15,10 +15,12 @@ import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.java.CompilerOutputPaths;
 import com.facebook.buck.jvm.java.CompilerParameters;
 import com.facebook.buck.jvm.java.DefaultSourceOnlyAbiRuleInfoFactory;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 
 /** Common utilities. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaLibraryRules {
 
   /** Utility class: do not instantiate. */

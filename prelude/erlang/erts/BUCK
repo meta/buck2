@@ -1,0 +1,11 @@
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("build_infra")
+
+source_listing()
+
+export_file(
+    name = "extract_from_otp.erl",
+    src = "extract_from_otp.erl",
+    visibility = ["PUBLIC"],
+)

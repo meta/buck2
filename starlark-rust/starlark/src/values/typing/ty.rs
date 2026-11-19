@@ -18,6 +18,7 @@
 use allocative::Allocative;
 use starlark_derive::NoSerialize;
 use starlark_derive::ProvidesStaticType;
+use starlark_derive::StarlarkPagablePanic;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
@@ -32,7 +33,8 @@ use crate::values::StarlarkValue;
     derive_more::Display,
     Allocative,
     ProvidesStaticType,
-    NoSerialize
+    NoSerialize,
+    StarlarkPagablePanic
 )]
 #[display("type")]
 pub enum AbstractType {}

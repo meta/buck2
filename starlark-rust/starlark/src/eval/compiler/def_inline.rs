@@ -19,6 +19,10 @@
 
 pub(crate) mod local_as_value;
 
+use starlark_derive::StarlarkPagable;
+use starlark_syntax::slice_vec_ext::SliceExt;
+
+use crate as starlark;
 use crate::eval::compiler::args::ArgsCompiledValue;
 use crate::eval::compiler::call::CallCompiled;
 use crate::eval::compiler::def::ParametersCompiled;
@@ -33,24 +37,24 @@ use crate::eval::compiler::stmt::StmtCompiled;
 use crate::eval::compiler::stmt::StmtsCompiled;
 use crate::eval::runtime::frame_span::FrameSpan;
 use crate::eval::runtime::slots::LocalSlotId;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValue;
-use crate::values::FrozenValueTyped;
+use crate::values::StringValue;
+use crate::values::Value;
+use crate::values::ValueTyped;
 
 /// Function body suitable for inlining.
-#[derive(Debug)]
-pub(crate) enum InlineDefBody {
+#[derive(Debug, StarlarkPagable)]
+pub(crate) enum InlineDefBody<'f> {
     /// Function body is `return type(x) == "y"`
-    ReturnTypeIs(FrozenStringValue),
+    ReturnTypeIs(StringValue<'f>),
     /// Any expression which can be safely inlined.
     ///
     /// See the function where this enum variant is computed for the definition
     /// of safe to inline expression.
-    ReturnSafeToInlineExpr(IrSpanned<ExprCompiled>),
+    ReturnSafeToInlineExpr(IrSpanned<'f, ExprCompiled<'f>>),
 }
 
 /// If a statement is `return type(x) == "y"` where `x` is a first slot.
-fn is_return_type_is(stmt: &StmtsCompiled) -> Option<FrozenStringValue> {
+fn is_return_type_is<'f>(stmt: &StmtsCompiled<'f>) -> Option<StringValue<'f>> {
     let (x, t) = stmt.first()?.as_return()?.as_type_is()?;
     match &x.node {
         // Slot 0 is a slot for the first function parameter.
@@ -157,16 +161,16 @@ impl IsSafeToInlineExpr {
 }
 
 /// Function body is a `return` safe to inline expression (as defined above).
-fn is_return_safe_to_inline_expr(
-    stmts: &StmtsCompiled,
+fn is_return_safe_to_inline_expr<'f>(
+    stmts: &StmtsCompiled<'f>,
     param_count: u32,
-) -> Option<IrSpanned<ExprCompiled>> {
+) -> Option<IrSpanned<'f, ExprCompiled<'f>>> {
     match stmts.first() {
         None => {
             // Empty function is equivalent to `return None`.
             Some(IrSpanned {
                 span: FrameSpan::default(),
-                node: ExprCompiled::Value(FrozenValue::new_none()),
+                node: ExprCompiled::Value(Value::new_none()),
             })
         }
         Some(stmt) => match &stmt.node {
@@ -180,11 +184,11 @@ fn is_return_safe_to_inline_expr(
     }
 }
 
-pub(crate) fn inline_def_body(
-    params: &ParametersCompiled<IrSpanned<ExprCompiled>>,
-    body: &StmtsCompiled,
-) -> Option<InlineDefBody> {
-    if params.params.len() == 1 && params.params[0].accepts_positional() {
+pub(crate) fn inline_def_body<'f>(
+    params: &ParametersCompiled<'f, IrSpanned<'f, ExprCompiled<'f>>>,
+    body: &StmtsCompiled<'f>,
+) -> Option<InlineDefBody<'f>> {
+    if params.params.len() == 1 && params.indices.num_positional == 1 {
         if let Some(t) = is_return_type_is(body) {
             return Some(InlineDefBody::ReturnTypeIs(t));
         }
@@ -203,32 +207,35 @@ pub(crate) fn inline_def_body(
 pub(crate) struct CannotInline;
 
 /// Utility to inline function body at call site.
-pub(crate) struct InlineDefCallSite<'s, 'v, 'a, 'e, 'x> {
-    pub(crate) ctx: &'s mut OptCtx<'v, 'a, 'e, 'x>,
-    // Values in the slots are either real frozen values
+pub(crate) struct InlineDefCallSite<'s, 'v, 'a, 'e, 'x, 'fm> {
+    pub(crate) ctx: &'s mut OptCtx<'v, 'a, 'e, 'x, 'fm>,
+    // Values in the slots are either real constants
     // or `LocalAsValue` which are the parameters to be substituted with caller locals.
-    pub(crate) slots: &'s [FrozenValue],
+    pub(crate) slots: &'s [Value<'fm>],
 }
 
-impl InlineDefCallSite<'_, '_, '_, '_, '_> {
+impl<'fm> InlineDefCallSite<'_, '_, '_, '_, '_, 'fm> {
     fn inline_opt(
         &mut self,
-        expr: Option<&IrSpanned<ExprCompiled>>,
-    ) -> Result<Option<IrSpanned<ExprCompiled>>, CannotInline> {
+        expr: Option<&IrSpanned<'fm, ExprCompiled<'fm>>>,
+    ) -> Result<Option<IrSpanned<'fm, ExprCompiled<'fm>>>, CannotInline> {
         match expr {
             None => Ok(None),
             Some(expr) => Ok(Some(self.inline(expr)?)),
         }
     }
 
-    fn inline_args(&mut self, args: &ArgsCompiledValue) -> Result<ArgsCompiledValue, CannotInline> {
+    fn inline_args(
+        &mut self,
+        args: &ArgsCompiledValue<'fm>,
+    ) -> Result<ArgsCompiledValue<'fm>, CannotInline> {
         args.map_exprs(|expr| self.inline(expr))
     }
 
     fn inline_call(
         &mut self,
-        call: &IrSpanned<CallCompiled>,
-    ) -> Result<IrSpanned<ExprCompiled>, CannotInline> {
+        call: &IrSpanned<'fm, CallCompiled<'fm>>,
+    ) -> Result<IrSpanned<'fm, ExprCompiled<'fm>>, CannotInline> {
         let span = call.span;
         let CallCompiled { fun, args } = &call.node;
         let fun = self.inline(fun)?;
@@ -241,8 +248,8 @@ impl InlineDefCallSite<'_, '_, '_, '_, '_> {
 
     pub(crate) fn inline(
         &mut self,
-        expr: &IrSpanned<ExprCompiled>,
-    ) -> Result<IrSpanned<ExprCompiled>, CannotInline> {
+        expr: &IrSpanned<'fm, ExprCompiled<'fm>>,
+    ) -> Result<IrSpanned<'fm, ExprCompiled<'fm>>, CannotInline> {
         let span = expr.span;
         Ok(match &expr.node {
             e @ ExprCompiled::Value(..) => IrSpanned {
@@ -251,7 +258,7 @@ impl InlineDefCallSite<'_, '_, '_, '_, '_> {
             },
             ExprCompiled::Local(local) => {
                 let value = self.slots[local.0 as usize];
-                let expr = if let Some(local) = FrozenValueTyped::<LocalAsValue>::new(value) {
+                let expr = if let Some(local) = ValueTyped::<LocalAsValue>::new(value) {
                     ExprCompiled::Local(local.local)
                 } else {
                     ExprCompiled::Value(value)
@@ -272,30 +279,21 @@ impl InlineDefCallSite<'_, '_, '_, '_, '_> {
                 ExprCompiled::logical_bin_op(*op, l, r)
             }
             ExprCompiled::List(xs) => {
-                let xs = xs
-                    .iter()
-                    .map(|x| self.inline(x))
-                    .collect::<Result<Vec<_>, CannotInline>>()?;
+                let xs = xs.try_map(|x| self.inline(x))?;
                 IrSpanned {
                     span,
                     node: ExprCompiled::List(xs),
                 }
             }
             ExprCompiled::Tuple(xs) => {
-                let xs = xs
-                    .iter()
-                    .map(|x| self.inline(x))
-                    .collect::<Result<Vec<_>, CannotInline>>()?;
+                let xs = xs.try_map(|x| self.inline(x))?;
                 IrSpanned {
                     span,
                     node: ExprCompiled::tuple(xs, self.ctx.frozen_heap()),
                 }
             }
             ExprCompiled::Dict(xs) => {
-                let xs = xs
-                    .iter()
-                    .map(|(x, y)| Ok((self.inline(x)?, self.inline(y)?)))
-                    .collect::<Result<Vec<_>, CannotInline>>()?;
+                let xs = xs.try_map(|(x, y)| Ok((self.inline(x)?, self.inline(y)?)))?;
                 IrSpanned {
                     span,
                     node: ExprCompiled::Dict(xs),

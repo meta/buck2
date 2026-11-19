@@ -67,9 +67,23 @@ impl Error {
         Self(WithDiagnostic::new_empty(ErrorKind::Value(e.into())))
     }
 
+    /// Create a new runtime type error with no diagnostic.
+    #[cold]
+    pub fn new_runtime_type(kind: RuntimeTypeErrorKind, e: impl Into<anyhow::Error>) -> Self {
+        Self(WithDiagnostic::new_empty(ErrorKind::RuntimeType(
+            kind,
+            e.into(),
+        )))
+    }
+
     /// The kind of this error
     pub fn kind(&self) -> &ErrorKind {
         self.0.inner()
+    }
+
+    /// The underlying error, without the kind or the diagnostic.
+    pub fn inner(&self) -> &anyhow::Error {
+        self.kind().inner()
     }
 
     /// Convert the error into the underlying kind
@@ -133,6 +147,16 @@ impl Error {
         self.0.set_call_stack(call_stack);
     }
 
+    /// Wrap this error with additional context (anyhow-style).
+    /// Preserves the existing `Diagnostic` (span and call stack).
+    pub fn with_context(self, context: String) -> Self {
+        let (kind, diagnostic) = self.0.into_parts();
+        Self(WithDiagnostic::new_from_parts(
+            kind.with_context(context),
+            diagnostic,
+        ))
+    }
+
     /// Print an error to the stderr stream. If the error has diagnostic information it will use
     /// color-codes when printing.
     ///
@@ -155,6 +179,15 @@ impl Error {
             self
         } else {
             Error(self.0.map(ErrorKind::into_internal_error))
+        }
+    }
+
+    /// Change error kind to deferred read error.
+    pub fn into_deferred_read_error(self) -> Error {
+        if let ErrorKind::DeferredRead(_) = self.kind() {
+            self
+        } else {
+            Error(self.0.map(ErrorKind::into_deferred_read_error))
         }
     }
 }
@@ -181,6 +214,27 @@ impl fmt::Debug for Error {
     }
 }
 
+/// Stable classification of runtime type errors.
+///
+/// These categories are used by Buck2 telemetry. Variants should only be added or renamed with
+/// consideration for existing telemetry queries.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, strum::AsRefStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
+pub enum RuntimeTypeErrorKind {
+    /// The arguments supplied to a function do not match its signature.
+    FunctionCall,
+    /// A native function parameter could not be unpacked to its declared type.
+    Parameter,
+    /// A Starlark value could not be unpacked to the requested type.
+    ValueUnpack,
+    /// An operation is not supported for the supplied operand types.
+    Operation,
+    /// A value does not expose the requested attribute.
+    Attribute,
+    /// A value does not match a function argument or return type annotation.
+    Annotation,
+}
+
 /// The different kinds of errors that can be produced by starlark
 #[non_exhaustive]
 pub enum ErrorKind {
@@ -194,6 +248,8 @@ pub enum ErrorKind {
     Value(anyhow::Error),
     /// Errors relating to the way a function is called (wrong number of args, etc.)
     Function(anyhow::Error),
+    /// A runtime type error, with a stable category for telemetry.
+    RuntimeType(RuntimeTypeErrorKind, anyhow::Error),
     /// Out of scope variables and similar
     Scope(anyhow::Error),
     /// Syntax error.
@@ -202,6 +258,9 @@ pub enum ErrorKind {
     Freeze(anyhow::Error),
     /// Indicates a logic bug in starlark
     Internal(anyhow::Error),
+    /// A field of a value restored from storage could not be read back.
+    /// Not caused by the Starlark code being evaluated.
+    DeferredRead(anyhow::Error),
     /// Error from user provided native function
     /// (but not from native functions provided by starlark crate).
     /// When a native function declares `anyhow::Result<_>`
@@ -214,6 +273,24 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
+    /// The underlying error, whatever the kind.
+    pub fn inner(&self) -> &anyhow::Error {
+        match self {
+            Self::Fail(e)
+            | Self::StackOverflow(e)
+            | Self::Value(e)
+            | Self::Function(e)
+            | Self::Scope(e)
+            | Self::Parser(e)
+            | Self::Freeze(e)
+            | Self::Internal(e)
+            | Self::RuntimeType(_, e)
+            | Self::DeferredRead(e)
+            | Self::Native(e)
+            | Self::Other(e) => e,
+        }
+    }
+
     /// The source of the error, akin to `[std::error::Error::source]`
     pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
@@ -221,12 +298,33 @@ impl ErrorKind {
             Self::StackOverflow(_) => None,
             Self::Value(_) => None,
             Self::Function(_) => None,
+            Self::RuntimeType(_, _) => None,
             Self::Scope(_) => None,
             Self::Freeze(_) => None,
             Self::Parser(_) => None,
             Self::Internal(_) => None,
+            Self::DeferredRead(e) => e.source(),
             Self::Native(e) => e.source(),
             Self::Other(e) => e.source(),
+        }
+    }
+
+    /// Add an `anyhow`-style context layer to the underlying error, preserving
+    /// the variant.
+    pub fn with_context(self, context: String) -> Self {
+        match self {
+            Self::Fail(e) => Self::Fail(e.context(context)),
+            Self::StackOverflow(e) => Self::StackOverflow(e.context(context)),
+            Self::Value(e) => Self::Value(e.context(context)),
+            Self::Function(e) => Self::Function(e.context(context)),
+            Self::RuntimeType(kind, e) => Self::RuntimeType(kind, e.context(context)),
+            Self::Scope(e) => Self::Scope(e.context(context)),
+            Self::Freeze(e) => Self::Freeze(e.context(context)),
+            Self::Parser(e) => Self::Parser(e.context(context)),
+            Self::Internal(e) => Self::Internal(e.context(context)),
+            Self::DeferredRead(e) => Self::DeferredRead(e.context(context)),
+            Self::Native(e) => Self::Native(e.context(context)),
+            Self::Other(e) => Self::Other(e.context(context)),
         }
     }
 
@@ -237,12 +335,32 @@ impl ErrorKind {
             | ErrorKind::Fail(e)
             | ErrorKind::Value(e)
             | ErrorKind::Function(e)
+            | ErrorKind::RuntimeType(_, e)
             | ErrorKind::Scope(e)
             | ErrorKind::Freeze(e)
             | ErrorKind::Parser(e)
             | ErrorKind::StackOverflow(e)
+            | ErrorKind::DeferredRead(e)
             | ErrorKind::Native(e)
             | ErrorKind::Other(e) => ErrorKind::Internal(e),
+        }
+    }
+
+    /// Change type to `DeferredRead`.
+    pub(crate) fn into_deferred_read_error(self) -> ErrorKind {
+        match self {
+            ErrorKind::Internal(e)
+            | ErrorKind::Fail(e)
+            | ErrorKind::Value(e)
+            | ErrorKind::Function(e)
+            | ErrorKind::Scope(e)
+            | ErrorKind::Freeze(e)
+            | ErrorKind::Parser(e)
+            | ErrorKind::StackOverflow(e)
+            | ErrorKind::RuntimeType(_, e)
+            | ErrorKind::DeferredRead(e)
+            | ErrorKind::Native(e)
+            | ErrorKind::Other(e) => ErrorKind::DeferredRead(e),
         }
     }
 }
@@ -254,10 +372,12 @@ impl fmt::Debug for ErrorKind {
             Self::Value(e) => fmt::Debug::fmt(e, f),
             Self::StackOverflow(e) => fmt::Debug::fmt(e, f),
             Self::Function(e) => fmt::Debug::fmt(e, f),
+            Self::RuntimeType(_, e) => fmt::Debug::fmt(e, f),
             Self::Scope(e) => fmt::Debug::fmt(e, f),
             Self::Freeze(e) => fmt::Debug::fmt(e, f),
             Self::Parser(e) => fmt::Debug::fmt(e, f),
             Self::Internal(e) => write!(f, "Internal error: {e}"),
+            Self::DeferredRead(e) => fmt::Debug::fmt(e, f),
             Self::Native(e) => fmt::Debug::fmt(e, f),
             Self::Other(e) => fmt::Debug::fmt(e, f),
         }
@@ -271,10 +391,12 @@ impl fmt::Display for ErrorKind {
             Self::StackOverflow(e) => fmt::Display::fmt(e, f),
             Self::Value(e) => fmt::Display::fmt(e, f),
             Self::Function(e) => fmt::Display::fmt(e, f),
+            Self::RuntimeType(_, e) => fmt::Display::fmt(e, f),
             Self::Scope(e) => fmt::Display::fmt(e, f),
             Self::Freeze(e) => fmt::Display::fmt(e, f),
             Self::Parser(e) => fmt::Display::fmt(e, f),
             Self::Internal(e) => write!(f, "Internal error: {e}"),
+            Self::DeferredRead(e) => fmt::Display::fmt(e, f),
             Self::Native(e) => fmt::Display::fmt(e, f),
             Self::Other(e) => fmt::Display::fmt(e, f),
         }

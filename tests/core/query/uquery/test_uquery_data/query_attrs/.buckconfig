@@ -1,0 +1,17 @@
+[buildfile]
+name=TARGETS.fixture
+
+[cells]
+root = .
+nano_prelude = nano_prelude
+fbcode = fbcode
+fbsource = fbsource
+buck = buck
+toolchains = toolchains
+config = config
+
+[cell_aliases]
+prelude = nano_prelude
+
+[external_cells]
+nano_prelude = bundled

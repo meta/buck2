@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.resources;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import java.io.PrintStream;
@@ -28,6 +29,7 @@ import java.util.Objects;
  * <p>In practice, this is then followed by a ResTableType for each configuration that has resources
  * of this type. For convenience, those are considered to be part of the ResTableTypeSpec.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ResTableTypeSpec extends ResChunk {
   private static final int HEADER_SIZE = 16;
 

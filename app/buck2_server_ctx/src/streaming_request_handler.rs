@@ -15,6 +15,7 @@ use std::task::Poll;
 
 use buck2_cli_proto::StreamingRequest;
 use futures::Stream;
+use futures::channel::mpsc::UnboundedSender;
 use pin_project::pin_project;
 use tonic::Status;
 
@@ -35,13 +36,18 @@ enum StreamingRequestError {
 pub struct StreamingRequestHandler<T: TryFrom<StreamingRequest, Error = buck2_error::Error>> {
     #[pin]
     client_stream: tonic::Streaming<StreamingRequest>,
+    activity_sender: UnboundedSender<()>,
     _phantom: PhantomData<T>,
 }
 
 impl<T: TryFrom<StreamingRequest, Error = buck2_error::Error>> StreamingRequestHandler<T> {
-    pub fn new(client_stream: tonic::Streaming<StreamingRequest>) -> Self {
+    pub fn new(
+        client_stream: tonic::Streaming<StreamingRequest>,
+        activity_sender: UnboundedSender<()>,
+    ) -> Self {
         Self {
             client_stream,
+            activity_sender,
             _phantom: PhantomData,
         }
     }
@@ -55,18 +61,30 @@ impl<T: TryFrom<StreamingRequest, Error = buck2_error::Error>> StreamingRequestH
             Ok(Some(m)) => m,
             Ok(None) => return Err(StreamingRequestError::UnexpectedEof.into()),
         };
-        request.try_into()
+        let request = request.try_into()?;
+        self.note_activity();
+        Ok(request)
     }
 
-    fn map_poll(v: Option<Result<StreamingRequest, Status>>) -> Option<buck2_error::Result<T>> {
+    fn map_poll(
+        v: Option<Result<StreamingRequest, Status>>,
+        activity_sender: &UnboundedSender<()>,
+    ) -> Option<buck2_error::Result<T>> {
         match v {
             None => None,
             Some(Err(e)) => Some(Err(StreamingRequestError::GrpcStatus(e).into())),
             Some(Ok(v)) => match v.try_into() {
-                Ok(v) => Some(Ok(v)),
+                Ok(v) => {
+                    let _ignored = activity_sender.unbounded_send(());
+                    Some(Ok(v))
+                }
                 Err(e) => Some(Err(e)),
             },
         }
+    }
+
+    fn note_activity(&self) {
+        let _ignored = self.activity_sender.unbounded_send(());
     }
 }
 
@@ -80,7 +98,7 @@ impl<T: TryFrom<StreamingRequest, Error = buck2_error::Error>> Stream
         let inner: Pin<&mut _> = this.client_stream;
 
         match inner.poll_next(cx) {
-            Poll::Ready(v) => Poll::Ready(Self::map_poll(v)),
+            Poll::Ready(v) => Poll::Ready(Self::map_poll(v, this.activity_sender)),
             Poll::Pending => Poll::Pending,
         }
     }

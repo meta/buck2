@@ -21,6 +21,7 @@ import static java.util.stream.Collectors.partitioningBy;
 import static java.util.stream.Collectors.toList;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -28,6 +29,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 import java.util.jar.JarEntry;
@@ -53,6 +55,7 @@ import java.util.stream.Stream;
  * <p>Duplicate entries: If a class or resource exists in multiple input JARs, the last occurrence
  * will be retained in the final output JAR.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ConcatenateJars {
 
   public static final Predicate<? super CustomZipEntry> DONT_EXCLUDE = (name) -> false;
@@ -191,9 +194,11 @@ public class ConcatenateJars {
     final Map<Boolean, List<RelocatedJar>> overridePartition =
         relocatedJars.stream().collect(partitioningBy(this::isOverride));
     final Stream<EntryAccounting> entries =
-        overridePartition.get(Boolean.FALSE).stream().flatMap(RelocatedJar::entries);
+        Objects.requireNonNull(overridePartition.get(Boolean.FALSE)).stream()
+            .flatMap(RelocatedJar::entries);
     final Stream<EntryAccounting> overrideEntries =
-        overridePartition.get(Boolean.TRUE).stream().flatMap(RelocatedJar::entries);
+        Objects.requireNonNull(overridePartition.get(Boolean.TRUE)).stream()
+            .flatMap(RelocatedJar::entries);
 
     if (sortEntries) {
       // backward compatibility with JarBuilder ordering, which select the first occurrency
@@ -281,7 +286,7 @@ public class ConcatenateJars {
         if (discardDirectories && file.getName().endsWith("/")) {
           continue;
         }
-        final JarEntry entry = jar.getJarEntry(file.getName());
+        final JarEntry entry = Objects.requireNonNull(jar.getJarEntry(file.getName()));
         // add entry again to recompute the new offset
         entries.add(new EntryAccounting(new JarEntry(entry), relocatedOffset + file.getOffset()));
       }

@@ -11,13 +11,19 @@
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::target_aliases::TargetAliasResolver;
+use buck2_hash::BuckMutInsertionSet;
 use derive_more::Display;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
-use indexmap::IndexSet;
+use dupe::ResultDupedErrExt;
 use itertools::Itertools;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
 use crate::dice::cells::HasCellResolver;
 use crate::legacy_configs::configs::LegacyBuckConfig;
@@ -36,7 +42,7 @@ enum AliasResolutionError {
     AliasCycle(Vec<String>, String),
 }
 
-#[derive(Dupe, Clone, Allocative)]
+#[derive(Debug, Dupe, Clone, Allocative, Pagable)]
 pub struct BuckConfigTargetAliasResolver {
     config: LegacyBuckConfig,
 }
@@ -88,7 +94,7 @@ impl BuckConfigTargetAliasResolver {
         let mut alias = alias;
 
         let section = self.config.get_section("alias");
-        let mut stack = IndexSet::<&str>::new();
+        let mut stack = BuckMutInsertionSet::<&str>::default();
         loop {
             if stack.contains(alias) {
                 return Err(AliasResolutionError::AliasCycle(
@@ -128,12 +134,14 @@ impl BuckConfigTargetAliasResolver {
 }
 
 #[async_trait]
-pub trait HasTargetAliasResolver {
-    async fn target_alias_resolver(&mut self)
-    -> buck2_error::Result<BuckConfigTargetAliasResolver>;
+pub trait HasTargetAliasResolver<'d> {
+    async fn target_alias_resolver(
+        &mut self,
+    ) -> buck2_error::Result<&'d BuckConfigTargetAliasResolver>;
 }
 
-#[derive(Debug, Display, Hash, PartialEq, Eq, Clone, Allocative)]
+#[derive(Debug, Display, Hash, PartialEq, Eq, Clone, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
 struct TargetAliasResolverKey();
 
 #[async_trait]
@@ -150,20 +158,27 @@ impl Key for TargetAliasResolverKey {
         Ok(BuckConfigTargetAliasResolver::new(legacy_configs.dupe()))
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
             (Ok(x), Ok(y)) => x == y,
             _ => false,
-        }
+        })
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
     }
 }
 
 #[async_trait]
-impl HasTargetAliasResolver for DiceComputations<'_> {
+impl<'d> HasTargetAliasResolver<'d> for DiceComputations<'d> {
     async fn target_alias_resolver(
         &mut self,
-    ) -> buck2_error::Result<BuckConfigTargetAliasResolver> {
-        Ok(self.compute(&TargetAliasResolverKey()).await??)
+    ) -> buck2_error::Result<&'d BuckConfigTargetAliasResolver> {
+        self.compute(&TargetAliasResolverKey())
+            .await?
+            .as_ref()
+            .duped_err()
     }
 }
 

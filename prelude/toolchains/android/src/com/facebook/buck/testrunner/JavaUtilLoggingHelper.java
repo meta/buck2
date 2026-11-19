@@ -10,6 +10,7 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.util.logging.Formatter;
@@ -18,25 +19,27 @@ import java.util.logging.Level;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
 import java.util.logging.StreamHandler;
+import org.jspecify.annotations.Nullable;
 
 /** Helper class for Java Util Logging functionality used in test runners. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaUtilLoggingHelper {
 
   /** Container class for log handlers. */
   public static class LogHandlers {
-    private final Handler stdOutHandler;
-    private final Handler stdErrHandler;
+    private final @Nullable Handler stdOutHandler;
+    private final @Nullable Handler stdErrHandler;
 
-    public LogHandlers(Handler stdOutHandler, Handler stdErrHandler) {
+    public LogHandlers(@Nullable Handler stdOutHandler, @Nullable Handler stdErrHandler) {
       this.stdOutHandler = stdOutHandler;
       this.stdErrHandler = stdErrHandler;
     }
 
-    public Handler getStdOutHandler() {
+    public @Nullable Handler getStdOutHandler() {
       return stdOutHandler;
     }
 
-    public Handler getStdErrHandler() {
+    public @Nullable Handler getStdErrHandler() {
       return stdErrHandler;
     }
   }
@@ -81,8 +84,8 @@ public class JavaUtilLoggingHelper {
    * @param level The log level
    * @return The created handler
    */
-  public static Handler addStreamHandler(
-      Logger rootLogger, OutputStream stream, Formatter formatter, Level level) {
+  public static @Nullable Handler addStreamHandler(
+      @Nullable Logger rootLogger, OutputStream stream, Formatter formatter, Level level) {
     Handler result;
     if (rootLogger != null) {
       result = new StreamHandler(stream, formatter);
@@ -100,7 +103,8 @@ public class JavaUtilLoggingHelper {
    * @param rootLogger The logger to remove the handler from
    * @param handler The handler to flush and remove
    */
-  public static void flushAndRemoveLogHandler(Logger rootLogger, Handler handler) {
+  public static void flushAndRemoveLogHandler(
+      @Nullable Logger rootLogger, @Nullable Handler handler) {
     if (handler != null) {
       handler.flush();
     }

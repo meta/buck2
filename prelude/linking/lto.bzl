@@ -61,10 +61,10 @@ def get_split_debug_lto_info(actions: AnalysisActions, cxx_toolchain: CxxToolcha
         # for dSYM generation.
         if linker_info.lto_mode == LtoMode("thin"):
             # For thin LTO the path is a folder that will contain the various object files.
-            lto_object_path_artifact = actions.declare_output("lto_object_files", dir = True)
+            lto_object_path_artifact = actions.declare_output("lto_object_files", dir = True, has_content_based_path = False)
         else:
             # For monolithic LTO the path is a single object file.
-            lto_object_path_artifact = actions.declare_output("lto_object_file.o", dir = False)
+            lto_object_path_artifact = actions.declare_output("lto_object_file.o", dir = False, has_content_based_path = False)
 
         linker_args = cmd_args([
             # Use -Xlinker in case the path has a ,
@@ -80,7 +80,7 @@ def get_split_debug_lto_info(actions: AnalysisActions, cxx_toolchain: CxxToolcha
         )
 
     if linker_info.type == LinkerType("gnu"):
-        dwo_dir = actions.declare_output(name + ".dwo.d", dir = True)
+        dwo_dir = actions.declare_output(name + ".dwo.d", dir = True, has_content_based_path = False)
 
         linker_flags = cmd_args([
             "-Xlinker",

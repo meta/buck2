@@ -1,15 +1,13 @@
-load(":defs.bzl", "execution_platforms", "target_platform")
-
 execution_platforms(
     name = "platforms",
 )
 
-target_platform(
+platform(
     name = "platform1",
     visibility = ["PUBLIC"],
 )
 
-target_platform(
+platform(
     name = "platform2",
     visibility = ["PUBLIC"],
 )

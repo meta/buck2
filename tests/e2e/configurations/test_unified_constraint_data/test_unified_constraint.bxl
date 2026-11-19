@@ -1,0 +1,183 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+load(":defs.bzl", "BuildModeInfo", "TransitionBuildModeInfo")
+
+def _assert_eq(a, b):
+    if a != b:
+        fail("Expected {} == {}".format(a, b))
+
+def _assert_not_eq(a, b):
+    if a == b:
+        fail("Expected {} != {}".format(a, b))
+
+def _main(ctx: bxl.Context):
+    contrait_setting_node = ctx.configured_targets("root//:os")
+
+    _assert_eq(contrait_setting_node.rule_kind, "configuration")
+
+    analysis_res = ctx.analysis(contrait_setting_node)
+    default = analysis_res.providers()[DefaultInfo]
+    sub_target_keys = set(default.sub_targets.keys())
+    _assert_eq(sub_target_keys, set(["linux", "macos", "windows", "default", "penguin", "apple"]))
+
+    # Verify that :os[default] returns the same providers as :os[linux] (the actual default)
+    os_linux = default.sub_targets["linux"]
+    os_default = default.sub_targets["default"]
+    _assert_eq(os_linux[ConstraintValueInfo], os_default[ConstraintValueInfo])
+    _assert_eq(os_linux[ConfigurationInfo], os_default[ConfigurationInfo])
+
+    # Verify that user-defined aliases resolve to the same providers as their target value.
+    os_penguin = default.sub_targets["penguin"]
+    _assert_eq(os_linux[ConstraintValueInfo], os_penguin[ConstraintValueInfo])
+    _assert_eq(os_linux[ConfigurationInfo], os_penguin[ConfigurationInfo])
+    os_macos = default.sub_targets["macos"]
+    os_apple = default.sub_targets["apple"]
+    _assert_eq(os_macos[ConstraintValueInfo], os_apple[ConstraintValueInfo])
+    _assert_eq(os_macos[ConfigurationInfo], os_apple[ConfigurationInfo])
+
+    # A value named "default" is allowed when it is also the constraint's default value.
+    profile_analysis = ctx.analysis(ctx.configured_targets("root//:profile"))
+    profile_default_info = profile_analysis.providers()[DefaultInfo]
+    _assert_eq(
+        set(profile_default_info.sub_targets.keys()),
+        set(["default", "fast", "small"]),
+    )
+    # The "default" value is a real, distinct constraint value -- not silently aliased to another value.
+    _assert_not_eq(
+        profile_default_info.sub_targets["default"][ConstraintValueInfo],
+        profile_default_info.sub_targets["fast"][ConstraintValueInfo],
+    )
+    _assert_not_eq(
+        profile_default_info.sub_targets["default"][ConstraintValueInfo],
+        profile_default_info.sub_targets["small"][ConstraintValueInfo],
+    )
+
+    cnode = ctx.configured_targets("//:foo_target")
+    os = cnode.get_attr("os")
+    _assert_eq(os, "linux")
+    cpu = cnode.get_attr("cpu")
+    _assert_eq(cpu, "x86_64")
+
+    override_modifier_cnode = ctx.configured_targets("//:foo_target", modifiers = ["root//:cpu[arm64]"])
+    os = override_modifier_cnode.get_attr("os")
+    _assert_eq(os, "linux")
+    cpu = override_modifier_cnode.get_attr("cpu")
+    _assert_eq(cpu, "arm64")
+
+    _assert_eq(override_modifier_cnode.get_attr("sanitizer_name"), None)
+
+main = bxl_main(
+    impl = _main,
+    cli_args = {},
+)
+
+def _test_cfg_transition(ctx: bxl.Context, target_name: str):
+    cnode = ctx.configured_targets(target_name)
+    analysis_res = ctx.analysis(cnode)
+    build_mode_info = analysis_res.providers()[TransitionBuildModeInfo]
+    _assert_eq(build_mode_info.dep, "dev")
+    _assert_eq(build_mode_info.mode, "dev")
+    _assert_eq(build_mode_info.opt_dep, "opt")
+
+    # target with no transition
+    cnode = ctx.configured_targets("//:bar_with_build_mode")
+    analysis_res = ctx.analysis(cnode)
+    build_mode_info = analysis_res.providers()[BuildModeInfo]
+    _assert_eq(build_mode_info.mode, "dev")
+
+def _test_cfg_transition_impl(ctx: bxl.Context):
+    _test_cfg_transition(ctx, "//:force_opt_dep")
+
+test_cfg_transition = bxl_main(
+    impl = _test_cfg_transition_impl,
+    cli_args = {},
+)
+
+def _test_cfg_transition_v2_impl(ctx: bxl.Context):
+    _test_cfg_transition(ctx, "//:force_opt_dep_v2")
+
+test_cfg_transition_v2 = bxl_main(
+    impl = _test_cfg_transition_v2_impl,
+    cli_args = {},
+)
+
+def _constraint_v2(ctx: bxl.Context):
+    # Setup: Get OS constraint setting and Linux constraint value
+    os_contrait_setting_node = ctx.configured_targets("root//:os")
+    os_setting_label = os_contrait_setting_node.label.raw_target()
+    analysis_res = ctx.analysis(os_contrait_setting_node)
+    os_constraint_setting_info = analysis_res.providers()[ConstraintSettingInfo]
+
+    default = analysis_res.providers()[DefaultInfo]
+    os_linux = default.sub_targets["linux"]
+
+    linux_constraint_value_info = os_linux[ConstraintValueInfo]
+
+    # Test 1: Get constraint value from ConfigurationInfo.constraints_v2()
+    configuration_info = os_linux[ConfigurationInfo]
+    _assert_eq(configuration_info.get(os_constraint_setting_info), linux_constraint_value_info)
+
+    # Test 2: Create new ConfigurationInfo object and verify get() works
+    cfg_info = ConfigurationInfo(
+        constraints = {
+            os_setting_label: linux_constraint_value_info,
+        },
+        values = {},
+    )
+    _assert_eq(cfg_info.get(os_constraint_setting_info), linux_constraint_value_info)
+
+    # Test 3: Insert new constraint value and verify it returns previous value
+    os_macos = default.sub_targets["macos"]
+    macos_constraint_value_info = os_macos[ConstraintValueInfo]
+
+    prev = cfg_info.insert(macos_constraint_value_info)
+    _assert_eq(prev, linux_constraint_value_info)
+
+    # Setup: Get CPU constraint setting with a default value
+    cpu_constraint_setting_node = ctx.configured_targets("root//:cpu")
+    analysis_res = ctx.analysis(cpu_constraint_setting_node)
+    cpu_constraint_setting_info = analysis_res.providers()[ConstraintSettingInfo]
+
+    default = analysis_res.providers()[DefaultInfo]
+    cpu_x86_64 = default.sub_targets["x86_64"]
+    cpu_arm64 = default.sub_targets["arm64"]
+    x86_64_constraint_value_info = cpu_x86_64[ConstraintValueInfo]
+    arm64_constraint_value_info = cpu_arm64[ConstraintValueInfo]
+
+    # Get default constraint value by looking it up in sub_targets
+    default_sub_target_name = cpu_constraint_setting_info.default.sub_target[0]
+    cpu_default = default.sub_targets[default_sub_target_name]
+    cpu_default_constraint_value_info = cpu_default[ConstraintValueInfo]
+
+    # Test 4: Get() returns default constraint value when key is not set
+    _assert_eq(cfg_info.get(cpu_constraint_setting_info), cpu_default_constraint_value_info)
+
+    # Test 5: Insert overrides default, and get() returns the inserted value
+    cfg_info.insert(arm64_constraint_value_info)
+    _assert_eq(cfg_info.get(cpu_constraint_setting_info), arm64_constraint_value_info)
+    cfg_info.insert(x86_64_constraint_value_info)
+    _assert_eq(cfg_info.get(cpu_constraint_setting_info), x86_64_constraint_value_info)
+
+    # Test 6: Pop removes the constraint value and returns it
+    removed = cfg_info.pop(cpu_constraint_setting_info)
+    _assert_eq(removed, x86_64_constraint_value_info)
+
+    # Test 7: After pop, get() returns default constraint value again
+    _assert_eq(cfg_info.get(cpu_constraint_setting_info), cpu_default_constraint_value_info)
+
+    # Test 8: Test copy()
+    copied_cfg_info = cfg_info.copy()
+    _assert_eq(copied_cfg_info.get(cpu_constraint_setting_info), cfg_info.get(cpu_constraint_setting_info))
+    copied_cfg_info.insert(arm64_constraint_value_info)
+    _assert_not_eq(copied_cfg_info.get(cpu_constraint_setting_info), cfg_info.get(cpu_constraint_setting_info))
+
+constraint_v2 = bxl_main(
+    impl = _constraint_v2,
+    cli_args = {},
+)

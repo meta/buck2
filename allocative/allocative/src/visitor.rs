@@ -221,11 +221,18 @@ impl<'a> Visitor<'a> {
         entries: impl IntoIterator<Item = (&'x K, &'x V)>,
     ) {
         self.visit_field_with(DATA_NAME, mem::size_of::<*const ()>(), move |visitor| {
-            for (k, v) in entries {
-                visitor.visit_field(KEY_NAME, k);
-                visitor.visit_field(VALUE_NAME, v);
-            }
+            visitor.visit_map_entries(entries);
         })
+    }
+
+    pub fn visit_map_entries<'b, 'x, K: Allocative + 'x, V: Allocative + 'x>(
+        &'b mut self,
+        entries: impl IntoIterator<Item = (&'x K, &'x V)>,
+    ) {
+        for (k, v) in entries {
+            self.visit_field(KEY_NAME, k);
+            self.visit_field(VALUE_NAME, v);
+        }
     }
 
     pub fn visit_generic_set_fields<'b, 'x, K: Allocative + 'x>(
@@ -235,10 +242,19 @@ impl<'a> Visitor<'a> {
         'a: 'b,
     {
         self.visit_field_with(DATA_NAME, mem::size_of::<*const ()>(), |visitor| {
-            for k in entries {
-                visitor.visit_field(KEY_NAME, k);
-            }
+            visitor.visit_set_entries(entries);
         })
+    }
+
+    pub fn visit_set_entries<'b, 'x, K: Allocative + 'x>(
+        &'b mut self,
+        entries: impl IntoIterator<Item = &'x K>,
+    ) where
+        'a: 'b,
+    {
+        for k in entries {
+            self.visit_field(KEY_NAME, k);
+        }
     }
 
     fn exit_impl(&mut self) {

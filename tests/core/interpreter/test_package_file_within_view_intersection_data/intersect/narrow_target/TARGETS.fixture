@@ -1,0 +1,8 @@
+# Declares a `within_view` NARROWER than the cap. The target's own list is
+# what refuses a dep that is inside the cap but outside that list; inside an
+# opted-in subtree the error names the cap as well.
+stub(
+    name = "c",
+    within_view = ["root//intersect/sub_b/..."],
+    deps = ["root//intersect/lib:t"],
+)

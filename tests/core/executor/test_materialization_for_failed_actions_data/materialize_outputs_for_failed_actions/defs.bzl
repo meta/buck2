@@ -20,6 +20,7 @@ def _action_fail(ctx):
             "  f.write('txt')",
             "sys.exit(1)",
         ],
+        has_content_based_path = False,
     )
 
     ctx.actions.run(

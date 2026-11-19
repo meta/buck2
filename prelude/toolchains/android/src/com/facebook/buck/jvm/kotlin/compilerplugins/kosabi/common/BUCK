@@ -12,6 +12,7 @@ kotlin_bootstrap_library(
         "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/common:common",
     ],
     visibility = [
+        "fbsource//fbandroid/java/com/facebook/tools/koast/codemods/kosabiaddmissingimports/...",
         "fbsource//fbandroid/javatests/...",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/...",
     ],

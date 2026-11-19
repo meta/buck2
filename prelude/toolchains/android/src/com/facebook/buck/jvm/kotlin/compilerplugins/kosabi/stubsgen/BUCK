@@ -1,4 +1,5 @@
 load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_java_binary", "buck_kotlin_library")
+load("@prelude//toolchains/android/tools:kotlin_utils.bzl", "kotlin_version_at_least")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("android_devxx")
@@ -11,6 +12,10 @@ buck_kotlin_library(
         ["**/*.kt"],
         exclude = [
             "plugin/**",
+            # The standalone CLI lives in its own library (`:stubsgen-cli-lib`) so that
+            # kotlin-compiler-embeddable stays a runtime dep of the binary rather than a
+            # provided_dep of this widely-consumed common library.
+            "cli/**",
         ],
     ),
     labels = ["codegen_rule"],
@@ -31,43 +36,18 @@ buck_kotlin_library(
 )
 
 buck_kotlin_library(
-    name = "stubsgen-plugin",
-    srcs = glob(
-        [
-            "plugin/stubsgen/*.kt",
-            "plugin/model/*.kt",
-        ],
-    ),
-    labels = ["codegen_rule"],
-    provided_deps = [
-        "prelude//toolchains/android/third-party:kotlin-compiler",
-    ],
-    resources = glob(["plugin/stubsgen/resources/**"]),
-    resources_root = "plugin/stubsgen/resources",
-    tests = [
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/integrationtest:integration-test",
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/stubsgen:stubsgen",
-    ],
-    visibility = [
-        "PUBLIC",
-    ],
-    exported_deps = [":kosabi-common"],
-)
-
-buck_kotlin_library(
     name = "stubsgen-k2-plugin",
     srcs = glob(
         [
-            "plugin/stubsgen_k2/*.kt",
-            "plugin/model/*.kt",
+            "plugin/*.kt",
         ],
     ),
     labels = ["codegen_rule"],
     provided_deps = [
         "prelude//toolchains/android/third-party:kotlin-compiler-embeddable",
     ],
-    resources = glob(["plugin/stubsgen_k2/resources/**"]),
-    resources_root = "plugin/stubsgen_k2/resources",
+    resources = glob(["plugin/resources/**"]),
+    resources_root = "plugin/resources",
     tests = [
         "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/integrationtest:integration-test",
         "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/stubsgen:stubsgen",
@@ -77,41 +57,10 @@ buck_kotlin_library(
     ],
     deps = [
         "fbsource//fbandroid/java/com/facebook/kotlin/compilercompat:compilercompat",
-        "fbsource//fbandroid/java/com/facebook/kotlin/compilercompat:compilercompat_with_ka",
     ],
     exported_deps = [
         ":kosabi-common",
     ],
-)
-
-buck_kotlin_library(
-    name = "sourcemodifier-plugin",
-    srcs = glob(
-        [
-            "plugin/source_modifier/**/*.kt",
-            "plugin/model/*.kt",
-        ],
-    ),
-    labels = ["codegen_rule"],
-    provided_deps = [
-        "prelude//toolchains/android/third-party:kotlin-compiler",
-    ],
-    resources = glob(["plugin/source_modifier/resources/**"]),
-    resources_root = "plugin/source_modifier/resources",
-    tests = [
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/integrationtest:integration-test",
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/stubsgen:stubsgen",
-    ],
-    visibility = [
-        "PUBLIC",
-    ],
-    exported_deps = [":kosabi-common"],
-)
-
-buck_java_binary(
-    name = "stubsgen",
-    visibility = ["PUBLIC"],
-    deps = [":stubsgen-plugin"],
 )
 
 buck_java_binary(
@@ -120,8 +69,30 @@ buck_java_binary(
     deps = [":stubsgen-k2-plugin"],
 )
 
-buck_java_binary(
-    name = "kosabi-sourcemodifier",
+# Standalone Kosabi stub generator that runs OUTSIDE kotlinc using a minimal, parse-only
+# PSI environment (see cli/StubsGenParseOnlyEnvironment.kt). It reuses StubsGenApiImpl
+# verbatim; the only extra runtime dependency is kotlin-compiler-embeddable, which provides
+# both the Kotlin PSI and the shaded IntelliJ `com.intellij.core.*` environment.
+buck_kotlin_library(
+    name = "stubsgen-cli-lib",
+    srcs = glob(["cli/**/*.kt"]),
+    # `CompilerConfiguration()` is an `@Internals` opt-in from Kotlin 2.4.
+    extra_kotlinc_arguments = ["-opt-in=org.jetbrains.kotlin.config.CompilerConfiguration.Internals"] if kotlin_version_at_least(2, 4) else [],
+    labels = ["codegen_rule"],
     visibility = ["PUBLIC"],
-    deps = [":sourcemodifier-plugin"],
+    deps = [
+        ":kosabi-common",
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/common:common",
+        "prelude//toolchains/android/third-party:kotlin-compiler-embeddable",
+        # Required at runtime: the shaded IntelliJ MockApplication in kotlin-compiler-embeddable
+        # spins up a coroutine scope during CoreApplicationEnvironment construction.
+        "prelude//toolchains/android/third-party:kotlinx-coroutines-core-jvm",
+    ],
+)
+
+buck_java_binary(
+    name = "stubsgen-cli",
+    main_class = "com.facebook.kotlin.compilerplugins.kosabi.stubsgen.cli.MainKt",
+    visibility = ["PUBLIC"],
+    deps = [":stubsgen-cli-lib"],
 )

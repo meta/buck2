@@ -34,17 +34,16 @@ use crate::eval::compiler::stmt::StmtCompiled;
 use crate::eval::compiler::stmt::StmtsCompiled;
 use crate::eval::runtime::frame_span::FrameSpan;
 use crate::values::FrozenHeap;
-use crate::values::FrozenRef;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValue;
+use crate::values::StringValue;
+use crate::values::Value;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 
-pub(crate) fn write_for(
-    over: &IrSpanned<ExprCompiled>,
-    var: &IrSpanned<AssignCompiledValue>,
-    span: FrameSpan,
-    bc: &mut BcWriter,
-    body: impl FnOnce(&mut BcWriter),
+pub(crate) fn write_for<'f>(
+    over: &IrSpanned<'f, ExprCompiled<'f>>,
+    var: &IrSpanned<'f, AssignCompiledValue<'f>>,
+    span: FrameSpan<'f>,
+    bc: &mut BcWriter<'f>,
+    body: impl FnOnce(&mut BcWriter<'f>),
 ) {
     let definitely_assigned = bc.save_definitely_assigned();
 
@@ -73,17 +72,17 @@ pub(crate) fn write_for(
     bc.restore_definitely_assigned(definitely_assigned);
 }
 
-impl StmtsCompiled {
-    pub(crate) fn write_bc(&self, compiler: &StmtCompileContext, bc: &mut BcWriter) {
+impl<'f> StmtsCompiled<'f> {
+    pub(crate) fn write_bc(&self, compiler: &StmtCompileContext, bc: &mut BcWriter<'f>) {
         for stmt in self.stmts() {
             stmt.write_bc(compiler, bc);
         }
     }
 }
 
-impl StmtCompiled {
+impl<'f> StmtCompiled<'f> {
     /// Mark local variables are definitely assigned after this statement executed.
-    pub(crate) fn mark_definitely_assigned_after(&self, bc: &mut BcWriter) {
+    pub(crate) fn mark_definitely_assigned_after(&self, bc: &mut BcWriter<'f>) {
         match self {
             StmtCompiled::PossibleGc => {}
             StmtCompiled::Return(e) => {
@@ -125,7 +124,7 @@ impl StmtCompiled {
     }
 
     /// If statement is `return x`, return `x`.
-    pub(crate) fn as_return(&self) -> Option<&IrSpanned<ExprCompiled>> {
+    pub(crate) fn as_return(&self) -> Option<&IrSpanned<'f, ExprCompiled<'f>>> {
         match self {
             StmtCompiled::Return(e) => Some(e),
             _ => None,
@@ -133,8 +132,8 @@ impl StmtCompiled {
     }
 }
 
-impl IrSpanned<StmtCompiled> {
-    fn write_bc(&self, compiler: &StmtCompileContext, bc: &mut BcWriter) {
+impl<'f> IrSpanned<'f, StmtCompiled<'f>> {
+    fn write_bc(&self, compiler: &StmtCompileContext, bc: &mut BcWriter<'f>) {
         bc.mark_before_stmt(self.span);
         self.write_bc_inner(compiler, bc);
         self.mark_definitely_assigned_after(bc);
@@ -142,10 +141,10 @@ impl IrSpanned<StmtCompiled> {
 
     fn write_if_then(
         compiler: &StmtCompileContext,
-        bc: &mut BcWriter,
-        c: &IrSpanned<ExprCompiled>,
+        bc: &mut BcWriter<'f>,
+        c: &IrSpanned<'f, ExprCompiled<'f>>,
         maybe_not: MaybeNot,
-        t: &dyn Fn(&StmtCompileContext, &mut BcWriter),
+        t: &dyn Fn(&StmtCompileContext, &mut BcWriter<'f>),
     ) {
         write_if_then(
             c,
@@ -158,11 +157,11 @@ impl IrSpanned<StmtCompiled> {
     }
 
     fn write_if_else(
-        c: &IrSpanned<ExprCompiled>,
-        t: &StmtsCompiled,
-        f: &StmtsCompiled,
+        c: &IrSpanned<'f, ExprCompiled<'f>>,
+        t: &StmtsCompiled<'f>,
+        f: &StmtsCompiled<'f>,
         compiler: &StmtCompileContext,
-        bc: &mut BcWriter,
+        bc: &mut BcWriter<'f>,
     ) {
         assert!(!t.is_empty() || !f.is_empty());
         if f.is_empty() {
@@ -184,10 +183,10 @@ impl IrSpanned<StmtCompiled> {
     }
 
     fn write_return(
-        span: FrameSpan,
-        expr: &IrSpanned<ExprCompiled>,
+        span: FrameSpan<'f>,
+        expr: &IrSpanned<'f, ExprCompiled<'f>>,
         compiler: &StmtCompileContext,
-        bc: &mut BcWriter,
+        bc: &mut BcWriter<'f>,
     ) {
         bc.write_iter_stop(span);
         if compiler.has_return_type {
@@ -203,7 +202,7 @@ impl IrSpanned<StmtCompiled> {
         }
     }
 
-    fn write_bc_inner(&self, compiler: &StmtCompileContext, bc: &mut BcWriter) {
+    fn write_bc_inner(&self, compiler: &StmtCompileContext, bc: &mut BcWriter<'f>) {
         let span = self.span;
         match &self.node {
             StmtCompiled::PossibleGc => bc.write_instr::<InstrPossibleGc>(span, ()),
@@ -212,10 +211,10 @@ impl IrSpanned<StmtCompiled> {
                 expr.write_bc_for_effect(bc);
             }
             StmtCompiled::Assign(lhs, ty, rhs) => {
-                fn check_type(
-                    ty: &Option<IrSpanned<TypeCompiled<FrozenValue>>>,
+                fn check_type<'f>(
+                    ty: &Option<IrSpanned<'f, TypeCompiled<'f>>>,
                     slot_expr: BcSlotIn,
-                    bc: &mut BcWriter,
+                    bc: &mut BcWriter<'f>,
                 ) {
                     if let Some(ty) = ty {
                         bc.write_instr::<InstrCheckType>(ty.span, (slot_expr, ty.node))
@@ -254,14 +253,14 @@ impl IrSpanned<StmtCompiled> {
     }
 }
 
-impl StmtsCompiled {
+impl<'f> StmtsCompiled<'f> {
     pub(crate) fn as_bc(
         &self,
         compiler: &StmtCompileContext,
-        local_names: FrozenRef<'static, [FrozenStringValue]>,
+        local_names: &[StringValue<'f>],
         param_count: u32,
-        heap: &FrozenHeap,
-    ) -> Bc {
+        heap: FrozenHeap<'f>,
+    ) -> Bc<'f> {
         let mut bc = BcWriter::new(local_names, param_count, heap);
         self.write_bc(compiler, &mut bc);
 
@@ -271,11 +270,11 @@ impl StmtsCompiled {
             let span = self.last().map(|s| s.span.end_span()).unwrap_or_default();
             if compiler.has_return_type {
                 bc.alloc_slot(|slot, bc| {
-                    bc.write_const(span, FrozenValue::new_none(), slot.to_out());
+                    bc.write_const(span, Value::new_none(), slot.to_out());
                     bc.write_instr::<InstrReturnCheckType>(span, slot.to_in());
                 });
             } else {
-                bc.write_instr::<InstrReturnConst>(span, FrozenValue::new_none());
+                bc.write_instr::<InstrReturnConst>(span, Value::new_none());
             }
         }
 

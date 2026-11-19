@@ -8,37 +8,59 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
+use std::future::Future;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::sync::OnceLock;
+use std::sync::Weak;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 
 use allocative::Allocative;
 use buck2_build_api::spawner::BuckSpawner;
+use buck2_cli_proto::ClientContext;
 use buck2_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
+use buck2_common::cancellation::CancellationScope;
 use buck2_common::cas_digest::DigestAlgorithm;
 use buck2_common::cas_digest::DigestAlgorithmFamily;
+use buck2_common::daemon_routing::DaemonRouting;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::ignores::ignore_set::IgnoreSet;
+use buck2_common::ignores::ignore_set::compute_ignore_set;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::init::SystemWarningConfig;
 use buck2_common::init::Timeout;
 use buck2_common::invocation_paths::InvocationPaths;
+use buck2_common::invocation_paths::LeasedTenantPaths;
+use buck2_common::invocation_paths::TenantPaths;
 use buck2_common::io::IoProvider;
+use buck2_common::io::trace::TracingIoProvider;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
+use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+use buck2_common::legacy_configs::parse_buckconfig_metadata;
 use buck2_common::sqlite::sqlite_db::SqliteDb;
 use buck2_common::sqlite::sqlite_db::SqliteIdentity;
+use buck2_common::tenant::TenantKey;
+use buck2_common::tenant::TenantSpec;
 use buck2_core::buck2_env;
 use buck2_core::cells::name::CellName;
+use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::facebook_only;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::is_open_source;
 use buck2_core::rollout_percentage::RolloutPercentage;
+use buck2_core::soft_error_or_panic;
 use buck2_core::tag_result;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
 use buck2_events::EventSinkWithStats;
@@ -47,25 +69,48 @@ use buck2_events::dispatch::EventDispatcher;
 use buck2_events::sink::remote;
 use buck2_events::sink::tee::TeeSink;
 use buck2_events::source::ChannelEventSource;
+use buck2_execute::blob_store::BlobStore;
+use buck2_execute::dep_file_state::DepFileStore;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::execute::blocking::BuckBlockingExecutor;
-use buck2_execute::execute::blocking::DirectIoExecutor;
-use buck2_execute::materialize::materializer::MaterializationMethod;
+use buck2_execute::execute::blocking::BlockingExecutorFactory;
+use buck2_execute::execute::blocking::IoRequest;
+use buck2_execute::execute::blocking::with_lifetime_guard;
+use buck2_execute::materialize::materializer::FinalArtifactMaterialization;
 use buck2_execute::materialize::materializer::Materializer;
+use buck2_execute::re::client::init_induced_cache_misses;
+use buck2_execute::re::invocation_re_settings::invocation_re_use_case;
 use buck2_execute::re::manager::ReConnectionManager;
+use buck2_execute::re::ttl_refresh::PassPresenceChecker;
+use buck2_execute::re::ttl_refresh::PresenceChecker;
+use buck2_execute::re::ttl_refresh::ReChecker;
+use buck2_execute::re::ttl_refresh::StandaloneTtlRefreshCounters;
+use buck2_execute::re::ttl_refresh::TtlRefresher;
 use buck2_execute_impl::executors::local::ForkserverAccess;
 use buck2_execute_impl::materializers::deferred::AccessTimesUpdates;
 use buck2_execute_impl::materializers::deferred::DeferredMaterializer;
 use buck2_execute_impl::materializers::deferred::DeferredMaterializerConfigs;
 use buck2_execute_impl::materializers::deferred::TtlRefreshConfiguration;
 use buck2_execute_impl::materializers::deferred::clean_stale::CleanStaleConfig;
+use buck2_execute_impl::materializers::v2::core as disk_state;
+use buck2_execute_impl::materializers::v2::core::DiskStateMaterializer;
 use buck2_execute_impl::re::paranoid_download::ParanoidDownloader;
+use buck2_execute_impl::sqlite::dep_file_state_db::PersistedDepFileStore;
 use buck2_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
 use buck2_execute_impl::sqlite::materializer_db::MaterializerState;
 use buck2_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDb;
+use buck2_file_watcher::dep_files::DepFileCache;
+use buck2_file_watcher::dep_files::create_dep_file_cache;
 use buck2_file_watcher::file_watcher::FileWatcher;
+use buck2_file_watcher::ignores::FileWatcherIgnores;
 use buck2_fs::cwd::WorkingDirectory;
+use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use buck2_fs::paths::file_name::FileName;
+use buck2_fs::paths::file_name::FileNameBuf;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_hash::BuckMutMap;
 use buck2_http::HttpClient;
 use buck2_http::HttpClientBuilder;
 use buck2_re_configuration::RemoteExecutionStaticMetadata;
@@ -75,26 +120,45 @@ use buck2_resource_control::memory_tracker;
 use buck2_resource_control::memory_tracker::MemoryTrackerHandle;
 use buck2_server_ctx::concurrency::ConcurrencyHandler;
 use buck2_server_ctx::ctx::LockedPreviousCommandData;
+use buck2_settings::DaemonBuckSettings;
+use buck2_settings::PackageVisibilityDefaultIntersection;
+use buck2_util::future::join_all;
 use buck2_wrapper_common::invocation_id::TraceId;
+use dice::Dice;
+use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use fbinit::FacebookInit;
-use gazebo::prelude::*;
-use gazebo::variants::VariantName;
+use futures::StreamExt;
+use futures::future::BoxFuture;
+use futures::future::FutureExt;
+use futures::future::Shared;
+use host_sharing::NamedSemaphores;
 use remote::ScribeConfig;
 use tokio::runtime::Handle;
 use tokio::sync::Mutex;
+use tokio::sync::OnceCell;
+use tokio::sync::Semaphore;
+use tracing::Instrument;
 
 use crate::active_commands::ActiveCommandDropGuard;
 use crate::ctx::BaseServerCommandContext;
 use crate::daemon::check_working_dir;
+use crate::daemon::dice::TenantDiceProvider;
 use crate::daemon::disk_state::DiskStateOptions;
 use crate::daemon::disk_state::delete_unknown_disk_state;
+use crate::daemon::disk_state::maybe_initialize_dep_file_sqlite_db;
 use crate::daemon::disk_state::maybe_initialize_incremental_sqlite_db;
 use crate::daemon::disk_state::maybe_initialize_materializer_sqlite_db;
 use crate::daemon::forkserver::maybe_launch_forkserver;
 use crate::daemon::io_provider::create_io_provider;
 use crate::daemon::panic::DaemonStatePanicDiceDump;
 use crate::daemon::server::BuckdServerInitPreferences;
+use crate::daemon::server::TenantDiceInputs;
+use crate::daemon::server::TenantStateInitPreferences;
+use crate::daemon::tenting_provider::create_tenting_acl_provider;
+use crate::paging::EvictionGate;
+use crate::paging::PageOutThresholds;
+use crate::snapshot::DepFileDbSizeSampler;
 
 /// For a buckd process there is a single DaemonState created at startup and never destroyed.
 #[derive(Allocative)]
@@ -102,38 +166,123 @@ pub struct DaemonState {
     #[allocative(skip)]
     fb: fbinit::FacebookInit,
 
-    pub paths: InvocationPaths,
-
     /// This holds the main data shared across different commands.
     pub(crate) data: Arc<DaemonStateData>,
 
-    /// Our working directory, if we did set one.
-    working_directory: Option<WorkingDirectory>,
+    /// Our working directory.
+    working_directory: WorkingDirectory,
 }
 
-/// DaemonStateData is the main shared data across all commands. It's lazily initialized on
-/// the first command that requires it.
 #[derive(Allocative)]
-pub struct DaemonStateData {
-    /// The Dice computation graph. Generally, we shouldn't add things to the DaemonStateData
-    /// (or DaemonState) itself and instead they should be represented on the computation graph.
-    ///
-    /// The DICE graph is held by the concurrency handler to manage locking for concurrent commands
+pub(crate) struct PersistedDepFileCache {
+    #[allocative(skip)]
+    pub(crate) store: Arc<dyn DepFileStore>,
+
+    #[allocative(skip)]
+    pub(crate) db_size: Arc<DepFileDbSizeSampler>,
+}
+
+/// State scoped to one logical tenant.
+///
+/// A tenant owns the DICE command state for one `(project root, isolation)` pair and refers to the
+/// repository services used by that state. Keeping the two levels explicit allows repository state
+/// to be shared independently of tenant-specific DICE state.
+#[derive(Allocative)]
+pub struct TenantState {
+    pub repo: Arc<RepoState>,
+
+    /// Which generation of which tenant this is. Reported in command telemetry.
+    pub(crate) generation: Arc<TenantGeneration>,
+
+    pub(crate) cancellation: Arc<CancellationScope>,
+
+    /// The DICE graph and the command concurrency state for this tenant.
     pub(crate) dice_manager: Arc<ConcurrencyHandler>,
 
+    #[allocative(skip)]
+    pub(crate) eviction_gate: Arc<EvictionGate>,
+    #[allocative(skip)]
+    disk_ownership: Arc<Semaphore>,
+}
+
+/// Identity of one tenant generation.
+///
+/// A generation is created when a tenant joins the daemon and retired when it is evicted; a tenant
+/// that returns after eviction gets a new generation. Telemetry keyed by this identity partitions
+/// commands by build state the way `daemon_uuid` did while a daemon served exactly one tenant.
+#[derive(Allocative)]
+pub(crate) struct TenantGeneration {
+    key: TenantKey,
+    number: u64,
+    /// `initial` for the tenant the daemon started with, `joined` for a tenant added to a running
+    /// daemon, or `recreated:<what evicted the previous generation>`.
+    started_reason: String,
+    #[allocative(skip)]
+    created: Instant,
+    #[allocative(skip)]
+    started_reported: AtomicBool,
+}
+
+impl TenantGeneration {
+    const INITIAL_NUMBER: u64 = 1;
+
+    fn new(key: TenantKey, number: u64, started_reason: String) -> Self {
+        Self {
+            key,
+            number,
+            started_reason,
+            created: Instant::now(),
+            started_reported: AtomicBool::new(false),
+        }
+    }
+
+    fn initial(key: TenantKey) -> Self {
+        Self::new(key, Self::INITIAL_NUMBER, "initial".to_owned())
+    }
+
+    pub(crate) fn key(&self) -> &TenantKey {
+        &self.key
+    }
+
+    pub(crate) fn number(&self) -> u64 {
+        self.number
+    }
+
+    pub(crate) fn created(&self) -> Instant {
+        self.created
+    }
+
+    /// The reason this generation exists, returned to the first caller only. Mirrors
+    /// `daemon_was_started`, which only the command that started a daemon reports.
+    pub(crate) fn take_started_reason(&self) -> Option<&str> {
+        (!self.started_reported.swap(true, Ordering::AcqRel))
+            .then_some(self.started_reason.as_str())
+    }
+}
+
+/// Services and caches associated with a repository-backed tenant.
+///
+/// These are nested under [`TenantState`] even while each tenant constructs a distinct instance.
+/// That ownership boundary leaves room for selected repository services to be shared later.
+#[derive(Allocative)]
+pub struct RepoState {
+    /// Stable paths used by tenant services, with the generation's ownership of the directories
+    /// they name. Every clone holds that ownership, so the generation's eviction completes only
+    /// once the last holder is dropped: nothing may keep an `Arc<TenantState>` beyond the
+    /// commands it serves, or `kill` waits for the eviction deadline instead. Invocation cwd is
+    /// not stored here.
+    pub paths: LeasedTenantPaths,
+
     /// Synced every time we run a command.
-    pub(crate) file_watcher: Arc<dyn FileWatcher>,
+    /// None under `--no-buckd`: the daemon serves exactly one command, so there is nothing to
+    /// invalidate between commands.
+    pub(crate) file_watcher: Option<Arc<dyn FileWatcher>>,
 
     /// Settled every time we run a command.
     pub io: Arc<dyn IoProvider>,
 
-    /// The RE connection, managed such that all build commands that are concurrently active uses
-    /// the same connection. Once there are no active build commands, the connection will be
-    /// terminated
-    pub re_client_manager: Arc<ReConnectionManager>,
-
-    /// Executor responsible for coordinating and rate limiting I/O.
-    pub blocking_executor: Arc<dyn BlockingExecutor>,
+    /// Built from every cell's `project.ignore` when the daemon started, and not again.
+    pub(crate) ignore_set: Arc<IgnoreSet>,
 
     /// Most materializations go through the materializer, providing a single point
     /// where the most expensive network and fs IO operations are performed. It
@@ -141,11 +290,6 @@ pub struct DaemonStateData {
     /// live for the entire lifetime of the daemon, in order to allow deferred
     /// materializations to work properly between distinct build commands.
     pub(crate) materializer: Arc<dyn Materializer>,
-
-    pub(crate) forkserver: ForkserverAccess,
-
-    #[allocative(skip)]
-    pub scribe_sink: Option<Arc<dyn EventSinkWithStats>>,
 
     /// Whether to consult the offline-cache buck-out dir for network action
     /// outputs prior to running them. If no cached output exists, the action
@@ -157,10 +301,12 @@ pub struct DaemonStateData {
     /// it needs to be downloaded again).
     pub use_network_action_output_cache: bool,
 
+    /// Whether a command selecting this repo should ask the client to restart the daemon after an
+    /// error.
+    pub restart_daemon_on_error: bool,
+
     /// What buck2 state to store on disk, ex. materializer state on sqlite
     pub disk_state_options: DiskStateOptions,
-
-    pub start_time: Instant,
 
     #[allocative(skip)]
     pub create_unhashed_outputs_lock: Arc<Mutex<()>>,
@@ -168,31 +314,8 @@ pub struct DaemonStateData {
     /// A unique identifier for the materializer state.
     pub materializer_state_identity: Option<SqliteIdentity>,
 
-    /// Whether to enable the restarter. This controls whether the client will attempt to restart
-    /// the daemon when we hit an error.
-    pub enable_restarter: bool,
-
-    /// Http client used for materializer and RunAction implementations.
-    pub http_client: HttpClient,
-
-    /// If enabled, paranoid RE downloads.
-    pub paranoid: Option<ParanoidDownloader>,
-
-    /// Spawner
-    pub spawner: Arc<BuckSpawner>,
-
-    /// Tags to be logged per command.
-    pub tags: Vec<String>,
-
-    /// Config used to display system warnings
-    pub system_warning_config: SystemWarningConfig,
-
-    #[allocative(skip)]
-    pub cgroup_tree: Option<BuckCgroupTree>,
-
-    /// Tracks memory usage. Used to make scheduling decisions.
-    #[allocative(skip)]
-    pub memory_tracker: Option<MemoryTrackerHandle>,
+    /// Which materializer `materializer` is, `deferred` or `v2`; reported in command metadata.
+    pub materializer_implementation: &'static str,
 
     /// Tracks data about previous command (e.g. configs)
     pub previous_command_data: Arc<LockedPreviousCommandData>,
@@ -201,13 +324,748 @@ pub struct DaemonStateData {
     #[allocative(skip)]
     pub incremental_db_state: Arc<IncrementalDbState>,
 
-    /// A unique identifier for this instance of the daemon
-    pub daemon_id: DaemonId,
+    /// Persisted local dep-file cache and its size sampler for this repo, if enabled.
+    pub(crate) persisted_dep_file_cache: Option<PersistedDepFileCache>,
+
+    /// Live local dep-file cache for this repo.
+    pub dep_file_cache: Arc<dyn DepFileCache>,
+
+    /// If enabled, paranoid RE downloads.
+    pub paranoid: Option<ParanoidDownloader>,
+
+    /// The RE connection for this repo, managed such that all concurrently active build commands
+    /// use the same connection. Once there are no active build commands, the connection is
+    /// terminated.
+    pub re_client_manager: Arc<ReConnectionManager>,
+    /// The use case this repo's own RE traffic runs under, such as the daemon's TTL refresh
+    /// when it asks the CAS through this repo's connection.
+    pub(crate) re_use_case: RemoteExecutorUseCase,
+
+    /// Executor for blocking I/O against this repo's project root.
+    pub blocking_executor: Arc<dyn BlockingExecutor>,
+
+    pub buckconfig_metadata: BuckFixedSortedMap<String, String>,
+
+    /// Tags to be logged per command.
+    pub tags: Vec<String>,
+
+    /// Config used to display system warnings
+    pub system_warning_config: SystemWarningConfig,
+
+    /// Whether to verify on each command that the Eden daemon backing this repo's `io` has not
+    /// restarted underneath us. A restart invalidates cached state and file handles, so affected
+    /// commands fail fast instead of hanging (`buck2.detect_eden_restart`).
+    ///
+    /// Repo-scoped because the identity baseline it checks against is captured per `io`, from the
+    /// Eden socket named by this repo's checkout. Repos on one machine normally share an Eden
+    /// daemon, so the answer is usually the same for all of them, but nothing requires that.
+    pub detect_eden_restart: bool,
+
+    /// Whether a finishing command schedules a background sweep of the local-action
+    /// scratch dirs (`buck-out/<iso>/tmp*`) once the daemon is idle
+    /// (`buck2.clean_scratch_on_idle`). The sweep runs through this repo's `materializer`.
+    pub(crate) clean_scratch_on_idle: bool,
+
+    /// Whether a write action's content stays off its output path until something needs the
+    /// file (`buck2.defer_write_actions`): the deferred core's doing, at `declare_write`; the
+    /// write action's under the disk-state core, which keeps the content in the BlobStore's
+    /// memory. Read once, with the core's configuration, so that every command of this repo
+    /// answers the same.
+    pub(crate) materializer_defers_writes: bool,
+
+    /// How often this repo's `materializer` refreshes TTLs (`buck2.ttl_refresh_frequency_seconds`).
+    /// The daemon-wide walk over the digest interner runs at the first repo's.
+    pub(crate) ttl_refresh_frequency: Duration,
+
+    /// Resource-pressure thresholds for automatic idle page-out, selected for this tenant's
+    /// isolation. `None` disables automatic idle page-out for this tenant.
+    pub(crate) page_out_on_idle: Option<PageOutThresholds>,
 }
 
-impl DaemonStateData {
-    pub fn dice_dump(&self, path: &Path, format: DiceDumpFormat) -> buck2_error::Result<()> {
-        crate::daemon::dice_dump::dice_dump(self.dice_manager.unsafe_dice(), path, format)
+struct TenantStateInit<'a> {
+    fb: FacebookInit,
+    paths: TenantPaths,
+    init_ctx: &'a TenantStateInitPreferences,
+    legacy_cells: &'a BuckConfigBasedCells,
+    root_config: &'a LegacyBuckConfig,
+    final_artifact_materialization: FinalArtifactMaterialization,
+    runtime: &'a Handle,
+    shared: DaemonSharedServices<'a>,
+    disk_ownership: Arc<Semaphore>,
+    cancellation: Arc<CancellationScope>,
+    generation: Arc<TenantGeneration>,
+    dice_provider: &'a TenantDiceProvider,
+    /// A shared daemon's stash, outside every tenant tree.
+    shared_stash: Option<&'a SharedStash>,
+}
+
+/// Where a shared daemon keeps the BlobStore's stash and what it does the stash's IO on. The
+/// store keeps the executor it is given for the daemon's lifetime, and a tenant's executor holds
+/// that tenant's disk lease, which its eviction waits for, so the stash gets one of the daemon's
+/// own.
+struct SharedStash {
+    path: AbsNormPathBuf,
+    blocking: Arc<dyn BlockingExecutor>,
+}
+
+struct TenantInitializationGate {
+    path: String,
+}
+
+impl IoRequest for TenantInitializationGate {
+    fn execute(self: Box<Self>, _project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+        std::fs::write(format!("{}.started", self.path), [])?;
+        let released = format!("{}.release", self.path);
+        while !Path::new(&released).try_exists()? {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
+    }
+}
+
+struct DaemonSharedServices<'a> {
+    blocking_executor_factory: &'a BlockingExecutorFactory,
+    scribe_sink: Option<&'a Arc<dyn EventSinkWithStats>>,
+    memory_tracker: Option<&'a MemoryTrackerHandle>,
+    daemon_id: &'a DaemonId,
+}
+
+#[derive(Allocative)]
+struct TenantStateFactory {
+    dice_provider: TenantDiceProvider,
+    /// Where a shared daemon keeps the BlobStore's stash: under its namespace in the state
+    /// directory of the checkout that started it, like its forkserver state, so that cleaning
+    /// or evicting a tenant, the first included, leaves the content other tenants are served
+    /// from in place. `None` for an unshared daemon, whose stash is in its tenant's buck-out.
+    #[allocative(skip)]
+    shared_stash: Option<SharedStash>,
+    #[allocative(skip)]
+    fb: FacebookInit,
+    init_ctx: TenantStateInitPreferences,
+    #[allocative(skip)]
+    final_artifact_materialization: FinalArtifactMaterialization,
+    #[allocative(skip)]
+    runtime: Handle,
+}
+
+struct TenantStateOwnership {
+    disk_ownership: Arc<Semaphore>,
+    cancellation: Arc<CancellationScope>,
+    generation: Arc<TenantGeneration>,
+    reject_materializer_state: Option<SqliteIdentity>,
+}
+
+impl TenantStateFactory {
+    async fn create(
+        &self,
+        paths: TenantPaths,
+        shared: DaemonSharedServices<'_>,
+        ownership: TenantStateOwnership,
+    ) -> buck2_error::Result<Arc<TenantState>> {
+        let fs = paths.project_root().clone();
+        let legacy_cells = BuckConfigBasedCells::parse_with_config_args(&fs, &[]).await?;
+        let cells = &legacy_cells.cell_resolver;
+        let root_config = &legacy_cells
+            .parse_single_cell(cells.root_cell(), &fs)
+            .await?;
+
+        self.create_with_loaded_config(paths, &legacy_cells, root_config, shared, ownership)
+            .await
+    }
+
+    async fn create_with_loaded_config(
+        &self,
+        paths: TenantPaths,
+        legacy_cells: &BuckConfigBasedCells,
+        root_config: &LegacyBuckConfig,
+        shared: DaemonSharedServices<'_>,
+        ownership: TenantStateOwnership,
+    ) -> buck2_error::Result<Arc<TenantState>> {
+        let TenantStateOwnership {
+            disk_ownership,
+            cancellation,
+            generation,
+            reject_materializer_state,
+        } = ownership;
+        let mut init_ctx = self.init_ctx.clone();
+        if reject_materializer_state.is_some() {
+            init_ctx.reject_materializer_state = reject_materializer_state;
+        }
+        TenantState::create(TenantStateInit {
+            fb: self.fb,
+            paths,
+            init_ctx: &init_ctx,
+            legacy_cells,
+            root_config,
+            final_artifact_materialization: self.final_artifact_materialization,
+            runtime: &self.runtime,
+            shared,
+            disk_ownership,
+            cancellation,
+            generation,
+            dice_provider: &self.dice_provider,
+            shared_stash: self.shared_stash.as_ref(),
+        })
+        .await
+    }
+}
+
+impl TenantState {
+    async fn create(init: TenantStateInit<'_>) -> buck2_error::Result<Arc<Self>> {
+        let TenantStateInit {
+            fb,
+            paths,
+            init_ctx,
+            legacy_cells,
+            root_config,
+            final_artifact_materialization,
+            runtime,
+            shared,
+            disk_ownership,
+            cancellation,
+            generation,
+            dice_provider,
+            shared_stash,
+        } = init;
+        let paths = LeasedTenantPaths::acquire(
+            paths,
+            disk_ownership.dupe(),
+            &cancellation,
+            Duration::from_secs(10),
+        )
+        .await?;
+        let buck_out_path = paths.buck_out_path();
+        tokio::fs::create_dir_all(&buck_out_path)
+            .await
+            .tag(ErrorTag::InvalidBuckOut)
+            .buck_error_context("Error creating buck_out_path")?;
+
+        if !cancellation.observer().is_alive_sync() {
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Tenant generation was evicted during initialization"
+            ));
+        }
+
+        let fs = paths.project_root().clone();
+        let cells = &legacy_cells.cell_resolver;
+
+        let default_digest_algorithm =
+            buck2_env!("BUCK_DEFAULT_DIGEST_ALGORITHM", type=DigestAlgorithmFamily)?;
+
+        let default_digest_algorithm = default_digest_algorithm.unwrap_or_else(|| {
+            if is_open_source() {
+                DigestAlgorithmFamily::Sha256
+            } else {
+                DigestAlgorithmFamily::Sha1
+            }
+        });
+
+        let digest_algorithms = init_ctx
+            .daemon_startup_config
+            .startup_options
+            .digest_algorithms
+            .as_ref()
+            .map(|algos| {
+                algos
+                    .split(',')
+                    .map(DigestAlgorithmFamily::from_str)
+                    .collect::<Result<_, _>>()
+            })
+            .transpose()
+            .buck_error_context("Invalid digest_algorithms")?
+            .unwrap_or_else(|| vec![default_digest_algorithm])
+            .into_iter()
+            .map(convert_algorithm_kind)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let preferred_source_algorithm = init_ctx
+            .daemon_startup_config
+            .startup_options
+            .source_digest_algorithm
+            .as_deref()
+            .map(|a| convert_algorithm_kind(a.parse()?))
+            .transpose()
+            .buck_error_context("Invalid source_digest_algorithm")?;
+
+        let digest_config = DigestConfig::leak_new(digest_algorithms, preferred_source_algorithm)
+            .buck_error_context("Error initializing DigestConfig")?;
+        init_induced_cache_misses(digest_config.cas_digest_config())?;
+
+        // TODO(rafaelc): merge configs from all cells once they are consistent
+        let static_metadata = Arc::new(RemoteExecutionStaticMetadata::from_legacy_config(
+            root_config,
+        )?);
+
+        let mut cell_configs: BuckMutMap<CellName, _> = BuckMutMap::default();
+        for (cell, _) in cells.cells() {
+            let config = legacy_cells.parse_single_cell(cell, &fs).await?;
+            cell_configs.insert(cell, config);
+        }
+        let ignore_set = Arc::new(compute_ignore_set(cells.dupe(), &cell_configs)?);
+        let file_watcher_ignores = FileWatcherIgnores::new(ignore_set.dupe());
+
+        let disk_state_options = DiskStateOptions::new(root_config)?;
+        let blocking_executor = with_lifetime_guard(
+            shared.blocking_executor_factory.for_project(fs.dupe()),
+            paths.lease(),
+            Some(cancellation.observer()),
+        );
+
+        if let Some(gate) = buck2_env!(
+            "BUCK2_TEST_BLOCK_TENANT_INITIALIZATION",
+            applicability = testing
+        )? {
+            let (isolation, gate) = gate.split_once(',').ok_or_else(|| {
+                buck2_error!(
+                    ErrorTag::Input,
+                    "Expected isolation,path for the tenant initialization gate"
+                )
+            })?;
+            if paths.isolation().as_str() == isolation {
+                blocking_executor
+                    .execute_io(
+                        Box::new(TenantInitializationGate {
+                            path: gate.to_owned(),
+                        }),
+                        CancellationContext::never_cancelled(),
+                    )
+                    .await?;
+            }
+        }
+
+        if !cancellation.observer().is_alive_sync() {
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Tenant generation was evicted during initialization"
+            ));
+        }
+        let cache_dir_path = paths.cache_dir_path();
+        let valid_cache_dirs = paths.valid_cache_dirs();
+
+        let disk_state_core =
+            disk_state::selected_by(&init_ctx.daemon_startup_config.startup_options);
+        let deferred_materializer_configs = {
+            let defer_write_actions = root_config
+                .parse::<RolloutPercentage>(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "defer_write_actions",
+                })?
+                .unwrap_or_else(RolloutPercentage::never)
+                .roll();
+
+            // RE will refresh any TTL < 1 hour, so we check twice an hour and refresh any TTL
+            // < 1 hour.
+            let ttl_refresh_frequency = root_config
+                .parse(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "ttl_refresh_frequency_seconds",
+                })?
+                .unwrap_or(1800);
+
+            let ttl_refresh_min_ttl = root_config
+                .parse(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "ttl_refresh_min_ttl_seconds",
+                })?
+                .unwrap_or(3600);
+
+            let ttl_refresh_enabled = root_config
+                .parse::<RolloutPercentage>(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "ttl_refresh_enabled",
+                })?
+                .unwrap_or_else(RolloutPercentage::never)
+                .roll();
+
+            let update_access_times =
+                AccessTimesUpdates::try_new_from_config_value(root_config.get(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "update_access_times",
+                }))?;
+
+            let verbose_materializer_log = root_config
+                .parse(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "verbose_materializer_event_log",
+                })?
+                .unwrap_or(false);
+
+            let strict_leases = root_config
+                .parse(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "materializer_strict_leases",
+                })?
+                .unwrap_or(false);
+
+            let mut clean_stale_config = CleanStaleConfig::from_buck_config(root_config)?;
+            // The disk-state core's TTLs are refreshed by the daemon-wide walk whatever the knob
+            // says of the deferred core's own refresher.
+            clean_stale_config
+                .suppress_unmaterialize_without_ttl_refresh(ttl_refresh_enabled || disk_state_core);
+            let readonly_outputs = root_config
+                .parse::<RolloutPercentage>(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "readonly_outputs",
+                })?
+                .unwrap_or_else(RolloutPercentage::never)
+                .roll();
+
+            DeferredMaterializerConfigs {
+                materialize_final_artifacts: matches!(
+                    final_artifact_materialization,
+                    FinalArtifactMaterialization::Enabled
+                ),
+                defer_write_actions,
+                ttl_refresh: TtlRefreshConfiguration {
+                    frequency: Duration::from_secs(ttl_refresh_frequency),
+                    min_ttl: jiff::SignedDuration::from_secs(ttl_refresh_min_ttl),
+                    enabled: ttl_refresh_enabled,
+                },
+                update_access_times,
+                verbose_materializer_log,
+                clean_stale_config,
+                readonly_outputs,
+                strict_leases,
+            }
+        };
+        let materializer_defers_writes = deferred_materializer_configs.defer_write_actions;
+        let ttl_refresh_frequency = deferred_materializer_configs.ttl_refresh.frequency;
+
+        let use_eden_thrift_read = root_config
+            .parse(BuckconfigKeyRef {
+                section: "buck2",
+                property: "use_eden_thrift_read",
+            })?
+            .unwrap_or(cfg!(any(target_os = "macos", target_os = "windows")));
+
+        tracing::info!("Creating materializer...");
+        let (io, _, (materializer_db, materializer_state), incremental_db_state, dep_file_db) =
+            futures::future::try_join5(
+                create_io_provider(
+                    fb,
+                    fs.dupe(),
+                    root_config,
+                    digest_config.cas_digest_config(),
+                    init_ctx.enable_trace_io,
+                    use_eden_thrift_read,
+                ),
+                (blocking_executor.dupe() as Arc<dyn BlockingExecutor>).execute_io_inline(|| {
+                    // Using `execute_io_inline` is just out of convenience.
+                    // It doesn't really matter what's used here since there's no IO-heavy
+                    // operations on daemon startup.
+                    delete_unknown_disk_state(&cache_dir_path, &valid_cache_dirs)
+                }),
+                maybe_initialize_materializer_sqlite_db(
+                    &disk_state_options,
+                    &paths,
+                    blocking_executor.dupe() as Arc<dyn BlockingExecutor>,
+                    root_config,
+                    &deferred_materializer_configs,
+                    digest_config,
+                    init_ctx,
+                    shared.daemon_id,
+                ),
+                maybe_initialize_incremental_sqlite_db(
+                    &paths,
+                    blocking_executor.dupe() as Arc<dyn BlockingExecutor>,
+                    root_config,
+                    shared.daemon_id,
+                    digest_config,
+                ),
+                maybe_initialize_dep_file_sqlite_db(
+                    &disk_state_options,
+                    &paths,
+                    blocking_executor.dupe() as Arc<dyn BlockingExecutor>,
+                    root_config,
+                    shared.daemon_id,
+                ),
+            )
+            .await?;
+
+        // The cache is opt-in and best-effort, so a store that cannot be built leaves the
+        // repo running without persistence rather than failing startup.
+        let persisted_dep_file_cache = dep_file_db.and_then(|dep_file_db| {
+            match PersistedDepFileStore::try_new(dep_file_db, digest_config) {
+                Ok(store) => {
+                    let store = Arc::new(store) as Arc<dyn DepFileStore>;
+                    Some(PersistedDepFileCache {
+                        db_size: DepFileDbSizeSampler::start(store.dupe(), runtime),
+                        store,
+                    })
+                }
+                Err(e) => {
+                    soft_error_or_panic!(
+                        "dep_file_store_init",
+                        buck2_error::buck2_error!(
+                            buck2_error::ErrorTag::Tier0,
+                            "Failed to start the persisted dep-file cache; continuing without \
+                             it. {}",
+                            e
+                        )
+                    );
+                    None
+                }
+            }
+        });
+        let incremental_db_state = Arc::new(incremental_db_state);
+        let materializer_state_identity = materializer_db.as_ref().map(|d| d.identity().clone());
+
+        let re_client_manager = Arc::new(ReConnectionManager::new(
+            fb,
+            false,
+            10,
+            static_metadata.dupe(),
+            Some(paths.re_logs_dir()),
+            paths.buck_out_path(),
+            init_ctx.daemon_startup_config.startup_options.paranoid,
+        ));
+        // Used only to dispatch events to scribe that are not associated with a specific command
+        // (ex. materializer clean up events).
+        let daemon_dispatcher = if let Some(sink) = shared.scribe_sink {
+            EventDispatcher::new(
+                TraceId::null(),
+                shared.daemon_id.dupe(),
+                sink.dupe().to_event_sync(),
+            )
+        } else {
+            EventDispatcher::null()
+        };
+        let tenant_stash = io
+            .project_root()
+            .resolve(paths.buck_out_dir())
+            .join(ForwardRelativePath::unchecked_new("stash"));
+        let (stash, stash_io) = match shared_stash {
+            Some(shared) => {
+                // Nothing refers to what an unshared daemon left in this tenant's buck-out.
+                buck2_execute::blob_store::discard_stash(&tenant_stash, blocking_executor.dupe());
+                (shared.path.clone(), shared.blocking.dupe())
+            }
+            None => (tenant_stash, blocking_executor.dupe()),
+        };
+        if disk_state_core {
+            // The daemon has one stash, started empty; every tenant after the first finds it
+            // attached.
+            BlobStore::global().attach_stash(stash, digest_config.cas_digest_config(), stash_io);
+        } else {
+            // Nothing refers to what a previous daemon left, whichever core it ran.
+            buck2_execute::blob_store::discard_stash(&stash, stash_io);
+        }
+        let materializer = RepoState::create_materializer(
+            disk_state_core,
+            io.project_root().dupe(),
+            digest_config,
+            paths.buck_out_dir(),
+            re_client_manager.dupe(),
+            blocking_executor.dupe(),
+            deferred_materializer_configs,
+            materializer_db,
+            materializer_state,
+            daemon_dispatcher,
+        )?;
+        tracing::info!("Creating tenting ACL provider...");
+        let tenting_acl_provider = create_tenting_acl_provider(fb, paths.project_root());
+
+        tracing::info!("Constructing DICE...");
+        let (dice_manager, _root, eviction_gate) = init_ctx
+            .construct_dice(TenantDiceInputs {
+                io: io.dupe(),
+                digest_config,
+                ignore_set: ignore_set.dupe(),
+                root_config,
+                tenting_acl_provider,
+                dice_state_path: paths.dice_state_path().as_ref(),
+                provider: dice_provider,
+                lifetime_guard: blocking_executor.lifetime_guard(),
+                memory_pressure: shared
+                    .memory_tracker
+                    .map(|tracker| tracker.memory_pressure()),
+            })
+            .await?;
+
+        let dep_file_cache = create_dep_file_cache();
+
+        let file_watcher = if init_ctx.in_process
+            && root_config
+                .get(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "file_watcher",
+                })
+                .is_none()
+        {
+            None
+        } else {
+            tracing::info!("Creating file watcher...");
+            Some(
+                <dyn FileWatcher>::new(
+                    fb,
+                    paths.project_root(),
+                    root_config,
+                    file_watcher_ignores,
+                    dep_file_cache.dupe(),
+                )
+                .with_buck_error_context(|| {
+                    format!(
+                        "Error creating a FileWatcher for project root `{}`",
+                        paths.project_root()
+                    )
+                })?,
+            )
+        };
+
+        // TODO(bobyf): Eagerly sync the file watcher here once the DICE commit panic is fixed.
+
+        let use_network_action_output_cache = root_config
+            .parse(BuckconfigKeyRef {
+                section: "buck2",
+                property: "use_network_action_output_cache",
+            })?
+            .unwrap_or(false);
+
+        let detect_eden_restart = root_config
+            .parse(BuckconfigKeyRef {
+                section: "buck2",
+                property: "detect_eden_restart",
+            })?
+            .unwrap_or(false);
+
+        let paranoid = if init_ctx.daemon_startup_config.startup_options.paranoid {
+            Some(ParanoidDownloader::new(
+                fs.clone(),
+                blocking_executor.dupe(),
+                re_client_manager.dupe(),
+                paths.paranoid_cache_dir(),
+            ))
+        } else {
+            None
+        };
+
+        let remote_dep_files_enabled = root_config
+            .parse(BuckconfigKeyRef {
+                section: "build",
+                property: "remote_dep_file_cache_enabled",
+            })?
+            .unwrap_or(false);
+
+        let action_freezing_enabled = init_ctx
+            .daemon_startup_config
+            .startup_options
+            .resource_control
+            .enable_suspension;
+
+        let evicts_on_memory_pressure = init_ctx
+            .daemon_startup_config
+            .startup_options
+            .hydration
+            .as_ref()
+            .is_some_and(|hydration| hydration.eviction_policy.evicts_on_memory_pressure());
+        // Under `on_memory_pressure` only the memory tracker evicts, so without one an idle
+        // page-out would write rows for values that never leave memory.
+        let evictions_impossible = evicts_on_memory_pressure && shared.memory_tracker.is_none();
+        let page_out_on_idle = init_ctx
+            .daemon_startup_config
+            .idle_page_out_config_for_isolation_dir(paths.isolation())
+            .filter(|_| !evictions_impossible)
+            .map(|hydration| PageOutThresholds {
+                min_free_disk_gb: hydration.page_out_min_free_disk_gb,
+            });
+        if evictions_impossible {
+            tracing::info!(
+                "Idle page-out disabled: `hydration.eviction_policy` is `on_memory_pressure` \
+                 and this daemon has no memory tracker to see pressure with"
+            );
+        }
+
+        let tags = vec![
+            format!(
+                "dice-sharing:{}",
+                init_ctx.daemon_startup_config.startup_options.share_dice
+            ),
+            // TODO(scottcao): Delete this tag since now hash all commands is always enabled.
+            "hash-all-commands:true".to_owned(),
+            format!(
+                "sqlite-materializer-state:{}",
+                disk_state_options.sqlite_materializer_state
+            ),
+            format!("paranoid:{}", paranoid.is_some()),
+            format!("remote-dep-files:{}", remote_dep_files_enabled),
+            #[cfg(fbcode_build)]
+            format!(
+                "respect-file-symlinks:{}",
+                static_metadata.respect_file_symlinks
+            ),
+            "disable-eager-write-dispatch-v2:true".to_owned(),
+            format!("use-eden-thrift-read:{}", use_eden_thrift_read),
+            format!("memory_tracker-enabled:{}", shared.memory_tracker.is_some()),
+            format!("action-freezing-enabled:{}", action_freezing_enabled),
+            format!("has-cgroup:{}", shared.memory_tracker.is_some()),
+        ];
+
+        let repo = Arc::new(RepoState {
+            paths,
+            file_watcher,
+            io,
+            ignore_set,
+            materializer,
+            use_network_action_output_cache,
+            restart_daemon_on_error: root_config
+                .parse::<RolloutPercentage>(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "restarter",
+                })?
+                .unwrap_or_else(RolloutPercentage::never)
+                .roll(),
+            disk_state_options,
+            create_unhashed_outputs_lock: Arc::new(Mutex::new(())),
+            materializer_state_identity,
+            materializer_implementation: if disk_state_core { "v2" } else { "deferred" },
+            previous_command_data: LockedPreviousCommandData::new(),
+            incremental_db_state,
+            persisted_dep_file_cache,
+            dep_file_cache,
+            paranoid,
+            re_client_manager,
+            re_use_case: invocation_re_use_case(root_config)?,
+            blocking_executor,
+            buckconfig_metadata: parse_buckconfig_metadata(root_config),
+            tags,
+            system_warning_config: SystemWarningConfig::from_config(root_config)?,
+            detect_eden_restart,
+            materializer_defers_writes,
+            ttl_refresh_frequency,
+            clean_scratch_on_idle: root_config
+                .parse::<RolloutPercentage>(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "clean_scratch_on_idle",
+                })?
+                .unwrap_or_else(RolloutPercentage::never)
+                .roll(),
+            page_out_on_idle,
+        });
+
+        #[cfg(fbcode_build)]
+        {
+            let root_path = std::path::PathBuf::from(repo.paths.project_root().root().as_os_str());
+            if !buck2_env!("BUCK2_DISABLE_EDEN_HEALTH_CHECK", bool)?
+                && detect_eden::is_eden(root_path).unwrap_or(false)
+            {
+                tracing::trace!("EdenFS root detected; starting health check job");
+                crate::daemon::server::eden_health::edenfs_health_check(
+                    fb,
+                    repo.paths.project_root().dupe(),
+                )
+                .await;
+            }
+        }
+
+        Ok(Arc::new(Self {
+            repo,
+            generation,
+            dice_manager,
+            eviction_gate,
+            disk_ownership,
+            cancellation,
+        }))
     }
 
     pub async fn spawn_dice_dump(
@@ -220,6 +1078,1310 @@ impl DaemonStateData {
     }
 }
 
+impl RepoState {
+    fn create_materializer(
+        disk_state_core: bool,
+        fs: ProjectRoot,
+        digest_config: DigestConfig,
+        buck_out_path: ProjectRelativePathBuf,
+        re_client_manager: Arc<ReConnectionManager>,
+        blocking_executor: Arc<dyn BlockingExecutor>,
+        deferred_materializer_configs: DeferredMaterializerConfigs,
+        materializer_db: Option<MaterializerStateSqliteDb>,
+        materializer_state: Option<MaterializerState>,
+        daemon_dispatcher: EventDispatcher,
+    ) -> buck2_error::Result<Arc<dyn Materializer>> {
+        if disk_state_core {
+            Ok(Arc::new(DiskStateMaterializer::new(
+                fs,
+                digest_config,
+                buck_out_path,
+                re_client_manager,
+                blocking_executor,
+                deferred_materializer_configs,
+                materializer_db,
+                materializer_state,
+                daemon_dispatcher,
+            )?))
+        } else {
+            Ok(Arc::new(DeferredMaterializer::new(
+                fs,
+                digest_config,
+                buck_out_path,
+                re_client_manager,
+                blocking_executor,
+                deferred_materializer_configs,
+                materializer_db,
+                materializer_state,
+                daemon_dispatcher,
+            )?))
+        }
+    }
+}
+
+/// Tenant states known to this daemon.
+///
+/// Clients without an explicit identity may select the sole initialized tenant. Daemon status
+/// keeps the initial tenant's metadata without retaining its disk services.
+#[derive(Allocative)]
+struct TenantStateRegistry {
+    /// Prefer the initial tenant for snapshots while it remains alive.
+    #[allocative(skip)]
+    initial_state: Weak<TenantState>,
+    initial_metadata: TenantStatusMetadata,
+    #[allocative(skip)]
+    disk_owners: StdMutex<BuckMutMap<TenantKey, Weak<Semaphore>>>,
+    #[allocative(skip)]
+    dice_engines: StdMutex<Vec<Weak<Dice>>>,
+    tenants: StdMutex<BuckMutMap<TenantKey, Arc<TenantStateSlot<TenantState>>>>,
+    #[allocative(skip)]
+    next_generation: AtomicU64,
+    #[allocative(skip)]
+    draining: AtomicBool,
+    #[allocative(skip)]
+    evictions: StdMutex<BuckMutMap<(TenantKey, u64), TenantEviction>>,
+    /// What last evicted each tenant key, reported by the next generation of that tenant.
+    #[allocative(skip)]
+    eviction_reasons: StdMutex<BuckMutMap<TenantKey, String>>,
+    /// Under daemon sharing a command must name a registered tenant generation.
+    unidaemon: bool,
+}
+
+/// A tenant generation in the registry whose state has not been initialized by the caller yet.
+pub(crate) struct TenantReservation {
+    paths: TenantPaths,
+    entry: Arc<TenantStateSlot<TenantState>>,
+}
+
+impl TenantReservation {
+    pub(crate) fn generation(&self) -> u64 {
+        self.entry.generation
+    }
+
+    /// Attaches a registrant to the generation for as long as the registration runs.
+    pub(crate) fn registrant(&self) -> Registrant {
+        Registrant::attach(&self.entry)
+    }
+}
+
+/// A client registering a generation. Clients of one tenant may register concurrently and share
+/// a generation, and a generation whose registration completed serves clients that are not
+/// registering it, so a registration that does not complete may only evict a generation that
+/// no registrant and no tenant state holds.
+pub(crate) struct Registrant<T: Allocative = TenantState> {
+    entry: Arc<TenantStateSlot<T>>,
+}
+
+impl<T: Allocative> Registrant<T> {
+    fn attach(entry: &Arc<TenantStateSlot<T>>) -> Self {
+        entry.registrants.fetch_add(1, Ordering::AcqRel);
+        Self {
+            entry: entry.clone(),
+        }
+    }
+
+    /// Detaches from the generation. Returns whether it was the last registrant of a generation
+    /// whose state never initialized, which nothing else will evict.
+    pub(crate) fn leave(self) -> bool {
+        let remaining = self.entry.registrants.fetch_sub(1, Ordering::AcqRel) - 1;
+        remaining == 0 && self.entry.state.get().is_none()
+    }
+}
+
+struct TenantStateSlot<T: Allocative> {
+    spec: TenantSpec,
+    generation: u64,
+    identity: Arc<TenantGeneration>,
+    state: OnceCell<Arc<T>>,
+    disk_ownership: Arc<Semaphore>,
+    cancellation: Arc<CancellationScope>,
+    registrants: AtomicUsize,
+}
+
+impl<T: Allocative> Allocative for TenantStateSlot<T> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(allocative::Key::new("spec"), &self.spec);
+        visitor.visit_field(allocative::Key::new("generation"), &self.generation);
+        if let Some(state) = self.state.get() {
+            visitor.visit_field(allocative::Key::new("state"), state);
+        }
+        visitor.exit();
+    }
+}
+
+impl<T: Allocative> TenantStateSlot<T> {
+    fn new(
+        spec: TenantSpec,
+        identity: Arc<TenantGeneration>,
+        disk_ownership: Arc<Semaphore>,
+        cancellation: Arc<CancellationScope>,
+    ) -> Self {
+        Self {
+            spec,
+            generation: identity.number(),
+            identity,
+            state: OnceCell::new(),
+            disk_ownership,
+            cancellation,
+            registrants: AtomicUsize::new(0),
+        }
+    }
+
+    async fn get_or_try_init<F, Fut>(&self, init: F) -> buck2_error::Result<Arc<T>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = buck2_error::Result<Arc<T>>>,
+    {
+        let _initialization = self.cancellation.register()?;
+        self.state.get_or_try_init(init).await.map(Arc::clone)
+    }
+
+    fn is_initialized(&self) -> bool {
+        self.state.get().is_some()
+    }
+}
+
+impl TenantStateRegistry {
+    /// An initialized tenant the daemon serves, if it has one: the initial tenant while it is
+    /// registered, else any other.
+    ///
+    /// The initial tenant is matched by address, not by upgrading the weak reference: an
+    /// upgrade could be the last strong reference to an evicted tenant, whose state must not
+    /// drop under the registry lock.
+    fn live_tenant(&self) -> Option<Arc<TenantState>> {
+        let tenants = self
+            .tenants
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let initial = Weak::as_ptr(&self.initial_state);
+        tenants
+            .values()
+            .filter_map(|slot| slot.state.get())
+            .find(|state| std::ptr::eq(Arc::as_ptr(state), initial))
+            .or_else(|| tenants.values().find_map(|slot| slot.state.get()))
+            .cloned()
+    }
+
+    async fn new(initial_tenant: Arc<TenantState>, unidaemon: bool) -> buck2_error::Result<Self> {
+        let spec = TenantSpec::from_tenant_paths(&initial_tenant.repo.paths);
+        let disk_ownership = initial_tenant.disk_ownership.clone();
+        let entry = Arc::new(TenantStateSlot::new(
+            spec.clone(),
+            initial_tenant.generation.dupe(),
+            disk_ownership.clone(),
+            initial_tenant.cancellation.clone(),
+        ));
+        entry
+            .state
+            .set(initial_tenant.clone())
+            .map_err(|_| buck2_error!(ErrorTag::Tier0, "Initial tenant slot should be empty"))?;
+        Ok(Self {
+            initial_state: Arc::downgrade(&initial_tenant),
+            initial_metadata: TenantStatusMetadata::new(&initial_tenant.repo),
+            tenants: StdMutex::new(BuckMutMap::from_iter([(spec.key().clone(), entry)])),
+            disk_owners: StdMutex::new(BuckMutMap::from_iter([(
+                spec.key().clone(),
+                Arc::downgrade(&disk_ownership),
+            )])),
+            dice_engines: StdMutex::new(vec![Arc::downgrade(
+                initial_tenant.dice_manager.unsafe_dice(),
+            )]),
+            next_generation: AtomicU64::new(TenantGeneration::INITIAL_NUMBER + 1),
+            draining: AtomicBool::new(false),
+            evictions: StdMutex::new(BuckMutMap::default()),
+            eviction_reasons: StdMutex::new(BuckMutMap::default()),
+            unidaemon,
+        })
+    }
+
+    async fn get_or_create<F, Fut>(
+        &self,
+        spec: TenantSpec,
+        allow_registration: bool,
+        expected_generation: Option<u64>,
+        create: F,
+    ) -> buck2_error::Result<Arc<TenantState>>
+    where
+        F: FnOnce(Arc<Semaphore>, Arc<CancellationScope>, Arc<TenantGeneration>) -> Fut
+            + Send
+            + 'static,
+        Fut: Future<Output = buck2_error::Result<Arc<TenantState>>> + Send + 'static,
+    {
+        let entry = self.reserve(&spec, allow_registration, expected_generation)?;
+        self.initialize(entry, create).await
+    }
+
+    /// The completion of every eviction of an earlier generation of the tenant that is still
+    /// running.
+    fn pending_evictions(
+        &self,
+        key: &TenantKey,
+        before_generation: u64,
+    ) -> Vec<Shared<BoxFuture<'static, ()>>> {
+        self.evictions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .filter(|((evicted, generation), eviction)| {
+                evicted == key
+                    && *generation < before_generation
+                    && eviction.completed.clone().now_or_never().is_none()
+            })
+            .map(|(_, eviction)| eviction.completed.clone())
+            .collect()
+    }
+
+    /// The registry's entry for the tenant, created with a new generation if it has none. The
+    /// entry's state is initialized by [`Self::initialize`].
+    fn reserve(
+        &self,
+        spec: &TenantSpec,
+        allow_registration: bool,
+        expected_generation: Option<u64>,
+    ) -> buck2_error::Result<Arc<TenantStateSlot<TenantState>>> {
+        let key = spec.key().clone();
+        let requested_spec = spec.clone();
+        let entry = {
+            let mut tenants = self
+                .tenants
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if self.draining.load(Ordering::Acquire) {
+                return Err(buck2_error!(
+                    ErrorTag::Input,
+                    "The daemon is shutting down after its final tenant was evicted"
+                ));
+            }
+            if self.unidaemon && !allow_registration {
+                let current = tenants
+                    .get(&key)
+                    .ok_or_else(|| buck2_error!(ErrorTag::Input, "Tenant requires registration"))?;
+                if expected_generation != Some(current.generation) {
+                    return Err(buck2_error!(
+                        ErrorTag::Input,
+                        "Command addressed an evicted tenant generation"
+                    ));
+                }
+            }
+            tenants
+                .entry(key.clone())
+                .or_insert_with(|| {
+                    let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+                    // Consumed here: the reason names the eviction this generation replaces,
+                    // and a later generation joining a vacated slot is a plain join.
+                    let started_reason = match self
+                        .eviction_reasons
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(&key)
+                    {
+                        Some(evicted_by) => format!("recreated:{evicted_by}"),
+                        None => "joined".to_owned(),
+                    };
+                    let mut owners = self
+                        .disk_owners
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    owners.retain(|_, gate| gate.strong_count() != 0);
+                    let disk_ownership =
+                        owners.get(&key).and_then(Weak::upgrade).unwrap_or_else(|| {
+                            let gate = Arc::new(Semaphore::new(1));
+                            owners.insert(key.clone(), Arc::downgrade(&gate));
+                            gate
+                        });
+                    Arc::new(TenantStateSlot::new(
+                        spec.clone(),
+                        Arc::new(TenantGeneration::new(
+                            key.clone(),
+                            generation,
+                            started_reason,
+                        )),
+                        disk_ownership,
+                        Arc::new(CancellationScope::new()),
+                    ))
+                })
+                .clone()
+        };
+        if entry.spec != requested_spec {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Tenant key `{:?}` was requested with conflicting specifications",
+                key
+            ));
+        }
+        Ok(entry)
+    }
+
+    /// Waits for the entry's tenant state, initializing it if no one has.
+    async fn initialize<F, Fut>(
+        &self,
+        entry: Arc<TenantStateSlot<TenantState>>,
+        create: F,
+    ) -> buck2_error::Result<Arc<TenantState>>
+    where
+        F: FnOnce(Arc<Semaphore>, Arc<CancellationScope>, Arc<TenantGeneration>) -> Fut
+            + Send
+            + 'static,
+        Fut: Future<Output = buck2_error::Result<Arc<TenantState>>> + Send + 'static,
+    {
+        let key = entry.spec.key().clone();
+        let state = entry
+            .get_or_try_init(|| async {
+                let disk_ownership = entry.disk_ownership.clone();
+                let cancellation = entry.cancellation.clone();
+                let identity = entry.identity.dupe();
+                let (initialize, _) =
+                    entry
+                        .cancellation
+                        .spawn(&Handle::current(), move |context| {
+                            context
+                                .critical_section(move || {
+                                    create(disk_ownership, cancellation, identity)
+                                })
+                                .boxed()
+                        });
+                let state = initialize.await.map_err(|error| {
+                    buck2_error!(
+                        ErrorTag::Input,
+                        "Tenant generation was evicted during initialization: {error}"
+                    )
+                })??;
+                let actual_key = TenantKey::from_tenant_paths(&state.repo.paths);
+                if actual_key != key {
+                    return Err(buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "Constructed tenant key `{:?}` did not match requested key `{:?}`",
+                        actual_key,
+                        key
+                    ));
+                }
+                let mut engines = self
+                    .dice_engines
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                engines.retain(|engine| engine.strong_count() != 0);
+                engines.push(Arc::downgrade(state.dice_manager.unsafe_dice()));
+                Ok(state)
+            })
+            .await?;
+        let tenants = self
+            .tenants
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !tenants
+            .get(&key)
+            .is_some_and(|registered| Arc::ptr_eq(registered, &entry))
+        {
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Tenant generation was evicted during initialization"
+            ));
+        }
+        Ok(state)
+    }
+
+    fn status_tenant(&self) -> Option<Arc<TenantState>> {
+        self.initial_state.upgrade().or_else(|| {
+            self.tenants
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .values()
+                .find_map(|entry| entry.state.get().cloned())
+        })
+    }
+
+    fn legacy_tenant(&self) -> Option<Arc<TenantState>> {
+        let tenants = self
+            .tenants
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let initialized_tenant_count = Self::count_initialized(&tenants);
+        (initialized_tenant_count == 1)
+            .then(|| {
+                tenants
+                    .values()
+                    .find_map(|entry| entry.state.get().map(Arc::clone))
+            })
+            .flatten()
+    }
+
+    fn count_initialized(
+        tenants: &BuckMutMap<TenantKey, Arc<TenantStateSlot<TenantState>>>,
+    ) -> usize {
+        tenants
+            .values()
+            .filter(|entry| entry.is_initialized())
+            .count()
+    }
+
+    fn initialized_count(&self) -> usize {
+        Self::count_initialized(
+            &self
+                .tenants
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+    }
+
+    fn evict_generation(
+        &self,
+        key: &TenantKey,
+        expected: Option<u64>,
+        reason: &str,
+    ) -> Option<TenantEviction> {
+        self.evict_generation_impl(
+            key,
+            expected,
+            GenerationEviction::Retire {
+                recovery_allowed: false,
+            },
+            reason,
+        )
+    }
+
+    fn evict_generation_impl(
+        &self,
+        key: &TenantKey,
+        expected: Option<u64>,
+        intent: GenerationEviction,
+        reason: &str,
+    ) -> Option<TenantEviction> {
+        let (recovery_allowed, drains) = match intent {
+            GenerationEviction::Retire { recovery_allowed } => (recovery_allowed, true),
+            GenerationEviction::Replace => (false, false),
+        };
+        let started = Instant::now();
+        let mut tenants = self
+            .tenants
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut evictions = self
+            .evictions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(expected) = expected {
+            if let Some(eviction) = evictions.get(&(key.clone(), expected)) {
+                if !recovery_allowed {
+                    eviction.recovery_allowed.store(false, Ordering::Release);
+                }
+                return Some(eviction.clone());
+            }
+            if !tenants
+                .get(key)
+                .is_some_and(|entry| entry.generation == expected)
+            {
+                return None;
+            }
+        }
+        let entry = tenants.remove(key)?;
+        self.record_eviction_reason(key, reason);
+        entry.cancellation.cancel();
+        if let Some(state) = entry.state.get() {
+            state.dice_manager.retire();
+        }
+        // A generation that never finished initializing has no tenant to give back: the client
+        // that registered it gets the failure and decides whether to try again.
+        let recovery_allowed = recovery_allowed && entry.state.get().is_some();
+        let final_tenant = drains && tenants.is_empty();
+        if final_tenant {
+            self.draining.store(true, Ordering::Release);
+        }
+        let watchdog = Arc::new(super::proxies::TenantEvictionWatchdog::default());
+        let eviction = TenantEviction {
+            generation: entry.generation,
+            final_tenant,
+            completed: Self::finish_eviction(vec![entry], Some(watchdog.clone()), !final_tenant),
+            started,
+            watchdog,
+            recovery_allowed: Arc::new(AtomicBool::new(recovery_allowed)),
+        };
+        evictions.retain(|_, previous| previous.completed.clone().now_or_never().is_none());
+        evictions.insert((key.clone(), eviction.generation), eviction.clone());
+        Some(eviction)
+    }
+
+    /// Must be called with the `tenants` lock held so a replacement cannot register in between.
+    fn record_eviction_reason(&self, key: &TenantKey, reason: &str) {
+        self.eviction_reasons
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(key.clone(), reason.to_owned());
+    }
+
+    fn evict_project(
+        &self,
+        project_root: &AbsNormPath,
+        isolation: Option<&FileName>,
+        reason: &str,
+    ) -> ProjectTenantEviction {
+        let started = Instant::now();
+        let mut tenants = self
+            .tenants
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut evictions = self
+            .evictions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut generations = Vec::new();
+        let mut evicted = Vec::new();
+        tenants.retain(|key, entry| {
+            let matches = key.project_root() == project_root
+                && isolation.is_none_or(|isolation| key.isolation() == isolation);
+            if matches {
+                self.record_eviction_reason(key, reason);
+                entry.cancellation.cancel();
+                evicted.push(entry.clone());
+                if let Some(state) = entry.state.get() {
+                    state.dice_manager.retire();
+                }
+                generations.push(entry.generation);
+            }
+            !matches
+        });
+        generations.sort_unstable();
+        let final_tenant = !generations.is_empty() && tenants.is_empty();
+        if final_tenant {
+            self.draining.store(true, Ordering::Release);
+        }
+        // The evictions are recorded per generation like any other, so that a registration of
+        // one of these tenants waits for them and a fenced request for a generation joins them.
+        // No request of its own bounds a project eviction; a fenced request for one of its
+        // generations arms the shared watchdog with its budget, which then bounds the whole
+        // eviction.
+        let watchdog = Arc::new(super::proxies::TenantEvictionWatchdog::default());
+        let keys: Vec<_> = evicted
+            .iter()
+            .map(|entry| (entry.spec.key().clone(), entry.generation))
+            .collect();
+        let completed = Self::finish_eviction(evicted, Some(watchdog.clone()), !final_tenant);
+        evictions.retain(|_, previous| previous.completed.clone().now_or_never().is_none());
+        for (key, generation) in keys {
+            evictions.insert(
+                (key, generation),
+                TenantEviction {
+                    generation,
+                    final_tenant,
+                    completed: completed.clone(),
+                    started,
+                    watchdog: watchdog.clone(),
+                    recovery_allowed: Arc::new(AtomicBool::new(false)),
+                },
+            );
+        }
+        ProjectTenantEviction {
+            generations,
+            final_tenant,
+            completed,
+        }
+    }
+
+    fn evict_all(&self, reason: &str) -> Vec<TenantEviction> {
+        let started = Instant::now();
+        let mut tenants = self
+            .tenants
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut evictions = self
+            .evictions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        self.draining.store(true, Ordering::Release);
+        for (key, entry) in tenants.drain() {
+            self.record_eviction_reason(&key, reason);
+            entry.cancellation.cancel();
+            if let Some(state) = entry.state.get() {
+                state.dice_manager.retire();
+            }
+            let watchdog = Arc::new(super::proxies::TenantEvictionWatchdog::default());
+            evictions.insert(
+                (key, entry.generation),
+                TenantEviction {
+                    generation: entry.generation,
+                    // The whole-daemon shutdown waits for every generation before exiting.
+                    final_tenant: false,
+                    completed: Self::finish_eviction(vec![entry], Some(watchdog.clone()), false),
+                    started,
+                    watchdog,
+                    recovery_allowed: Arc::new(AtomicBool::new(false)),
+                },
+            );
+        }
+        evictions
+            .values()
+            .map(|eviction| {
+                eviction.recovery_allowed.store(false, Ordering::Release);
+                eviction.clone()
+            })
+            .collect()
+    }
+
+    /// Cancels the generations and waits for their work to stop. With `retire_proxies`, their
+    /// proxies are then told to exit; an eviction the daemon exits with leaves its proxies to exit
+    /// when they see the daemon gone, so that a client waiting for a proxy waits for the daemon too.
+    fn finish_eviction(
+        entries: Vec<Arc<TenantStateSlot<TenantState>>>,
+        watchdog: Option<Arc<super::proxies::TenantEvictionWatchdog>>,
+        retire_proxies: bool,
+    ) -> Shared<BoxFuture<'static, ()>> {
+        let scopes = entries
+            .iter()
+            .map(|entry| entry.cancellation.clone())
+            .collect::<Vec<_>>();
+        let gate = buck2_env!(
+            "BUCK2_TEST_UNIDAEMON_EVICTION_GATE",
+            applicability = testing
+        )
+        .ok()
+        .flatten()
+        .and_then(|gate| gate.split_once(','))
+        .filter(|(isolation, _)| {
+            entries
+                .iter()
+                .any(|entry| entry.spec.key().isolation().as_str() == *isolation)
+        })
+        .map(|(_, path)| path.to_owned());
+        let cleanup = tokio::spawn(async move {
+            if let Some(gate) = gate {
+                tokio::fs::write(format!("{gate}.started"), b"evicting")
+                    .await
+                    .expect("publish eviction test marker");
+                while !std::path::Path::new(&format!("{gate}.release")).exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+            let proxies: Vec<_> = entries
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.spec.key().project_root().to_string(),
+                        entry.spec.key().isolation().to_string(),
+                        entry.generation,
+                    )
+                })
+                .collect();
+            drop(entries);
+            futures::stream::iter(scopes)
+                .map(|scope| async move { scope.wait().await })
+                .buffer_unordered(16)
+                .collect::<Vec<_>>()
+                .await;
+            if let (true, Some(retire)) = (retire_proxies, super::proxies::RETIRE_PROXY.get()) {
+                if let Err(error) = tokio::task::spawn_blocking(move || {
+                    for (project_root, isolation, generation) in &proxies {
+                        retire(project_root, isolation, *generation);
+                    }
+                })
+                .await
+                {
+                    tracing::warn!("Proxy retirement did not finish: {error:#}");
+                }
+            }
+            if let Some(watchdog) = watchdog {
+                watchdog.complete();
+            }
+        });
+        cleanup
+            .map(|result| {
+                // The task does not finish when the runtime shuts down with the daemon, or when
+                // it panicked; a waiter outside the runtime must not turn either into an abort.
+                if let Err(error) = result {
+                    tracing::warn!("Tenant cancellation cleanup did not finish: {error:#}");
+                }
+            })
+            .boxed()
+            .shared()
+    }
+
+    fn list(&self) -> Vec<TenantStateInfo> {
+        let tenants = self
+            .tenants
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut result: Vec<_> = tenants
+            .values()
+            .map(|entry| TenantStateInfo {
+                key: entry.spec.key().clone(),
+                generation: entry.generation,
+                initialized: entry.is_initialized(),
+                pending_registrations: entry.registrants.load(Ordering::Acquire),
+            })
+            .collect();
+        result.sort_by(|a, b| {
+            a.key
+                .project_root()
+                .as_os_str()
+                .cmp(b.key.project_root().as_os_str())
+                .then_with(|| a.key.isolation().as_str().cmp(b.key.isolation().as_str()))
+        });
+        result
+    }
+}
+
+#[derive(Allocative)]
+pub(crate) struct TenantStatusMetadata {
+    pub paths: TenantPaths,
+    pub io_provider: String,
+    pub trace_io_enabled: bool,
+    pub materializer_state_identity: Option<SqliteIdentity>,
+}
+
+impl TenantStatusMetadata {
+    fn new(repo: &RepoState) -> Self {
+        Self {
+            // Status outlives evicted generations and must not delay their replacement.
+            paths: repo.paths.without_lease(),
+            io_provider: repo.io.name().to_owned(),
+            trace_io_enabled: TracingIoProvider::from_io(&*repo.io).is_some(),
+            materializer_state_identity: repo.materializer_state_identity.clone(),
+        }
+    }
+}
+
+pub struct TenantStateInfo {
+    pub key: TenantKey,
+    pub generation: u64,
+    pub initialized: bool,
+    /// Registrations of the generation that have not completed.
+    pub pending_registrations: usize,
+}
+
+/// Whether the daemon may drain when the evicted generation was its last tenant.
+#[derive(Clone, Copy)]
+enum GenerationEviction {
+    /// The tenant is leaving the daemon.
+    Retire { recovery_allowed: bool },
+    /// The same tenant registers again as soon as the eviction completes.
+    Replace,
+}
+
+#[derive(Clone)]
+pub struct TenantEviction {
+    pub generation: u64,
+    pub final_tenant: bool,
+    pub(crate) completed: Shared<BoxFuture<'static, ()>>,
+    pub(crate) started: Instant,
+    pub(crate) watchdog: Arc<super::proxies::TenantEvictionWatchdog>,
+    pub(crate) recovery_allowed: Arc<AtomicBool>,
+}
+
+pub struct ProjectTenantEviction {
+    pub generations: Vec<u64>,
+    pub final_tenant: bool,
+    pub(crate) completed: Shared<BoxFuture<'static, ()>>,
+}
+
+/// The command that evicted a tenant, as reported by the tenant's next generation.
+fn eviction_reason(client_context: &ClientContext) -> &str {
+    if client_context.command_name.is_empty() {
+        "unknown"
+    } else {
+        &client_context.command_name
+    }
+}
+
+fn tenant_paths_from_client_context(
+    client_context: &ClientContext,
+) -> buck2_error::Result<Option<TenantPaths>> {
+    let Some(identity) = &client_context.tenant_identity else {
+        return Ok(None);
+    };
+
+    let project_root = AbsNormPathBuf::try_from(identity.project_root.clone())
+        .buck_error_context("Invalid tenant project root in client context")?;
+    let isolation = FileNameBuf::try_from(identity.isolation.clone())
+        .buck_error_context("Invalid tenant isolation in client context")?;
+    Ok(Some(TenantPaths::new(
+        ProjectRoot::new_unchecked(project_root),
+        isolation,
+    )))
+}
+
+/// Asks the CAS through whichever tenant the daemon serves at the time of the pass. The walk
+/// over the digest interner is the daemon's, not a tenant's: a shared daemon outlives the
+/// tenant it started with, and that tenant's RE connection and log directory go with it when
+/// it is cleaned.
+struct LiveTenantPresenceChecker {
+    data: Arc<OnceLock<Weak<DaemonStateData>>>,
+}
+
+impl PresenceChecker for LiveTenantPresenceChecker {
+    fn begin_pass(&self) -> Box<dyn PassPresenceChecker> {
+        let tenant = self
+            .data
+            .get()
+            .and_then(Weak::upgrade)
+            .and_then(|data| data.tenants.live_tenant());
+        match tenant {
+            Some(tenant) => ReChecker::new(
+                tenant.repo.re_client_manager.dupe(),
+                tenant.repo.re_use_case,
+            )
+            .begin_pass(),
+            None => Box::new(NoTenantPresenceChecker),
+        }
+    }
+}
+
+/// A pass between tenants: the daemon is starting or draining, and the walk tries again next
+/// time.
+struct NoTenantPresenceChecker;
+
+#[async_trait::async_trait]
+impl PassPresenceChecker for NoTenantPresenceChecker {
+    async fn check(
+        &self,
+        _digests: Vec<TrackedFileDigest>,
+    ) -> buck2_error::Result<Vec<buck2_execute::re::presence::Presence>> {
+        Err(buck2_error!(
+            ErrorTag::Tier0,
+            "The daemon serves no tenant to ask the CAS through"
+        ))
+    }
+}
+
+/// DaemonStateData is the main shared data across all commands and repos. It's lazily initialized
+/// on the first command that requires it.
+#[derive(Allocative)]
+pub struct DaemonStateData {
+    tenants: TenantStateRegistry,
+    tenant_state_factory: TenantStateFactory,
+
+    /// Daemon-wide scheduling resources for repo-scoped blocking executors.
+    pub blocking_executor_factory: Arc<BlockingExecutorFactory>,
+
+    pub(crate) forkserver: ForkserverAccess,
+
+    #[allocative(skip)]
+    pub scribe_sink: Option<Arc<dyn EventSinkWithStats>>,
+
+    pub start_time: Instant,
+
+    /// Http client used for materializer and RunAction implementations.
+    pub http_client: HttpClient,
+
+    /// Spawner
+    pub spawner: Arc<BuckSpawner>,
+
+    /// Tracks memory usage. Used to make scheduling decisions.
+    #[allocative(skip)]
+    pub memory_tracker: Option<MemoryTrackerHandle>,
+
+    /// A unique identifier for this instance of the daemon
+    pub daemon_id: DaemonId,
+
+    /// The CI job identity this daemon serves, exported to actions so that clients they run
+    /// find this daemon.
+    pub user_version: Option<String>,
+
+    /// Cgroup path of the process that launched this daemon before Buck moved the daemon into its
+    /// managed cgroup.
+    pub daemon_originating_cgroup: Option<String>,
+
+    /// Semaphores for running actions locally. These need to be shared across commands.
+    #[allocative(skip)]
+    pub named_semaphores_for_run_actions: Arc<NamedSemaphores>,
+
+    /// Effective `package_visibility.default_intersection`, fixed for the daemon's
+    /// lifetime (sourced from the daemon's Buck Settings).
+    pub(crate) package_visibility_default_intersection: PackageVisibilityDefaultIntersection,
+
+    /// Counters of the TTL refresher that walks the file digest interner. The refresher itself
+    /// is a task on the daemon's runtime and lives as long as it does.
+    pub(crate) standalone_ttl_refresh: Arc<StandaloneTtlRefreshCounters>,
+}
+
+// SAFETY: `_assert_send_sync` requires every field to be `Send + Sync`. Spelled out
+// so that auto-trait proofs for command futures stop here; see `dice::DiceComputations`.
+unsafe impl Send for DaemonStateData {}
+unsafe impl Sync for DaemonStateData {}
+
+fn _assert_send_sync(
+    DaemonStateData {
+        tenants,
+        tenant_state_factory,
+        blocking_executor_factory,
+        forkserver,
+        scribe_sink,
+        start_time,
+        http_client,
+        spawner,
+        memory_tracker,
+        daemon_id,
+        user_version,
+        daemon_originating_cgroup,
+        named_semaphores_for_run_actions,
+        package_visibility_default_intersection,
+        standalone_ttl_refresh,
+    }: &DaemonStateData,
+) {
+    fn assert<T: Send + Sync>(_: &T) {}
+    assert(tenants);
+    assert(tenant_state_factory);
+    assert(blocking_executor_factory);
+    assert(forkserver);
+    assert(scribe_sink);
+    assert(start_time);
+    assert(http_client);
+    assert(spawner);
+    assert(memory_tracker);
+    assert(daemon_id);
+    assert(user_version);
+    assert(daemon_originating_cgroup);
+    assert(named_semaphores_for_run_actions);
+    assert(package_visibility_default_intersection);
+    assert(standalone_ttl_refresh);
+}
+
+impl DaemonStateData {
+    pub(crate) fn daemon_buck_settings(&self) -> &DaemonBuckSettings {
+        self.tenant_state_factory
+            .init_ctx
+            .daemon_startup_config
+            .daemon_buck_settings()
+    }
+
+    /// How clients select this daemon, fixed at startup.
+    pub(crate) fn routing(&self) -> &DaemonRouting {
+        &self
+            .tenant_state_factory
+            .init_ctx
+            .daemon_startup_config
+            .startup_options
+            .routing
+    }
+
+    /// The metadata of an initialized tenant generation.
+    pub(crate) fn proxy_metadata(
+        &self,
+        context: &ClientContext,
+        generation: u64,
+    ) -> buck2_error::Result<TenantStatusMetadata> {
+        let paths = tenant_paths_from_client_context(context)?
+            .internal_error("Tenant metadata requires an identity")?;
+        let key = TenantKey::from_tenant_paths(&paths);
+        let tenants = self
+            .tenants
+            .tenants
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let slot = tenants
+            .get(&key)
+            .filter(|slot| slot.generation == generation)
+            .internal_error("Tenant generation changed")?;
+        let state = slot
+            .state
+            .get()
+            .internal_error("Tenant is not initialized")?;
+        Ok(TenantStatusMetadata::new(&state.repo))
+    }
+
+    fn repo_shared_services(&self) -> DaemonSharedServices<'_> {
+        DaemonSharedServices {
+            blocking_executor_factory: &self.blocking_executor_factory,
+            scribe_sink: self.scribe_sink.as_ref(),
+            memory_tracker: self.memory_tracker.as_ref(),
+            daemon_id: &self.daemon_id,
+        }
+    }
+
+    /// Select or initialize the tenant addressed by a client command.
+    pub async fn tenant_for_client_context(
+        self: &Arc<Self>,
+        client_context: &ClientContext,
+    ) -> buck2_error::Result<Arc<TenantState>> {
+        self.tenant_for_client_context_impl(client_context, false, None)
+            .await
+    }
+
+    async fn tenant_for_client_context_impl(
+        self: &Arc<Self>,
+        client_context: &ClientContext,
+        register: bool,
+        reject_materializer_state: Option<SqliteIdentity>,
+    ) -> buck2_error::Result<Arc<TenantState>> {
+        let Some(paths) = tenant_paths_from_client_context(client_context)? else {
+            return self.tenant_for_legacy_client();
+        };
+        let spec = TenantSpec::from_tenant_paths(&paths);
+        let data = self.dupe();
+
+        self.tenants
+            .get_or_create(
+                spec,
+                register,
+                client_context.tenant_generation,
+                move |disk_ownership, cancellation, generation| async move {
+                    data.tenant_state_factory
+                        .create(
+                            paths,
+                            data.repo_shared_services(),
+                            TenantStateOwnership {
+                                disk_ownership,
+                                cancellation,
+                                generation,
+                                reject_materializer_state,
+                            },
+                        )
+                        .await
+                },
+            )
+            .await
+    }
+
+    /// The paths of the tenant a client command addresses, without setting that tenant up.
+    pub(crate) fn tenant_paths_for_client_context(
+        &self,
+        client_context: &ClientContext,
+    ) -> buck2_error::Result<TenantPaths> {
+        match tenant_paths_from_client_context(client_context)? {
+            Some(paths) => Ok(paths),
+            None => Ok(self.tenant_for_legacy_client()?.repo.paths.without_lease()),
+        }
+    }
+
+    /// Select a tenant for an RPC added before requests carried a client context.
+    pub async fn tenant_for_optional_client_context(
+        self: &Arc<Self>,
+        client_context: Option<&ClientContext>,
+    ) -> buck2_error::Result<Arc<TenantState>> {
+        match client_context {
+            Some(client_context) => self.tenant_for_client_context(client_context).await,
+            None => self.tenant_for_legacy_client(),
+        }
+    }
+
+    pub async fn register_tenant_for_client_context(
+        self: &Arc<Self>,
+        client_context: &ClientContext,
+    ) -> buck2_error::Result<u64> {
+        self.register_tenant_with_rejected_materializer(client_context, None)
+            .await
+    }
+
+    pub(crate) async fn register_tenant_with_rejected_materializer(
+        self: &Arc<Self>,
+        client_context: &ClientContext,
+        reject_materializer_state: Option<SqliteIdentity>,
+    ) -> buck2_error::Result<u64> {
+        let reservation = self.reserve_tenant_for_client_context(client_context)?;
+        self.register_reserved_tenant(reservation, reject_materializer_state)
+            .await
+    }
+
+    /// Gives the tenant addressed by a registering client its generation without initializing
+    /// it, so that the generation can be published before the initialization that a kill of it
+    /// has to wait for.
+    pub(crate) fn reserve_tenant_for_client_context(
+        &self,
+        client_context: &ClientContext,
+    ) -> buck2_error::Result<TenantReservation> {
+        let paths = tenant_paths_from_client_context(client_context)?
+            .internal_error("Tenant registration requires an identity")?;
+        let spec = TenantSpec::from_tenant_paths(&paths);
+        let entry = self.tenants.reserve(&spec, true, None)?;
+        Ok(TenantReservation { paths, entry })
+    }
+
+    /// Waits until earlier generations of a reserved tenant have finished being evicted, which
+    /// includes their proxies having exited and released the tenant's directory.
+    pub(crate) async fn wait_for_earlier_evictions(&self, reservation: &TenantReservation) {
+        let pending = self
+            .tenants
+            .pending_evictions(reservation.entry.spec.key(), reservation.generation());
+        join_all(pending).await;
+    }
+
+    /// Initializes a reserved tenant and returns its generation.
+    pub(crate) async fn register_reserved_tenant(
+        self: &Arc<Self>,
+        reservation: TenantReservation,
+        reject_materializer_state: Option<SqliteIdentity>,
+    ) -> buck2_error::Result<u64> {
+        let TenantReservation { paths, entry } = reservation;
+        let data = self.dupe();
+        let state = self
+            .tenants
+            .initialize(
+                entry,
+                move |disk_ownership, cancellation, generation| async move {
+                    data.tenant_state_factory
+                        .create(
+                            paths,
+                            data.repo_shared_services(),
+                            TenantStateOwnership {
+                                disk_ownership,
+                                cancellation,
+                                generation,
+                                reject_materializer_state,
+                            },
+                        )
+                        .await
+                },
+            )
+            .await?;
+        let key = TenantKey::from_tenant_paths(&state.repo.paths);
+        let tenants = self
+            .tenants
+            .tenants
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let slot = tenants.get(&key).ok_or_else(|| {
+            buck2_error!(ErrorTag::Input, "Tenant was evicted during registration")
+        })?;
+        if !slot
+            .state
+            .get()
+            .is_some_and(|registered| Arc::ptr_eq(registered, &state))
+        {
+            return Err(buck2_error!(
+                ErrorTag::Input,
+                "Tenant generation changed during registration"
+            ));
+        }
+        Ok(slot.generation)
+    }
+
+    pub(crate) fn evict_all_tenants(&self, reason: &str) -> Vec<TenantEviction> {
+        self.tenants.evict_all(reason)
+    }
+
+    /// Tenants whose state is ready to serve commands.
+    pub fn initialized_tenant_count(&self) -> usize {
+        self.tenants.initialized_count()
+    }
+
+    fn tenant_for_legacy_client(&self) -> buck2_error::Result<Arc<TenantState>> {
+        self.tenants.legacy_tenant().ok_or_else(|| {
+            buck2_error!(
+                ErrorTag::Input,
+                "Client did not provide a tenant identity after the daemon began serving multiple tenants"
+            )
+        })
+    }
+
+    /// A live tenant for daemon snapshots that do not carry a tenant identity.
+    pub fn status_tenant(&self) -> Option<Arc<TenantState>> {
+        self.tenants.status_tenant()
+    }
+
+    pub(crate) fn initial_tenant_metadata(&self) -> &TenantStatusMetadata {
+        &self.tenants.initial_metadata
+    }
+
+    pub(crate) async fn wait_for_dice_idle(&self) {
+        let engines = self
+            .tenants
+            .dice_engines
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect::<Vec<_>>();
+        futures::stream::iter(engines)
+            .map(|dice| async move { dice.wait_for_idle().await })
+            .buffer_unordered(16)
+            .collect::<Vec<_>>()
+            .await;
+    }
+
+    pub fn evict_tenant_generation(
+        &self,
+        client_context: &ClientContext,
+        generation: Option<u64>,
+    ) -> buck2_error::Result<Option<TenantEviction>> {
+        let paths = tenant_paths_from_client_context(client_context)?
+            .internal_error("Tenant eviction requires an identity")?;
+        Ok(self.tenants.evict_generation(
+            &TenantKey::from_tenant_paths(&paths),
+            generation,
+            eviction_reason(client_context),
+        ))
+    }
+
+    pub fn evict_tenant_after_proxy_loss(
+        &self,
+        context: &ClientContext,
+        generation: u64,
+        recovery_allowed: bool,
+    ) -> buck2_error::Result<Option<TenantEviction>> {
+        let paths = tenant_paths_from_client_context(context)?
+            .internal_error("Proxy eviction requires an identity")?;
+        Ok(self.tenants.evict_generation_impl(
+            &TenantKey::from_tenant_paths(&paths),
+            Some(generation),
+            GenerationEviction::Retire { recovery_allowed },
+            "proxy-loss",
+        ))
+    }
+
+    /// Evicts a tenant generation that the caller registers again as soon as the eviction
+    /// completes, so the daemon keeps serving even when the generation was its last tenant.
+    pub fn evict_tenant_generation_for_replacement(
+        &self,
+        client_context: &ClientContext,
+        generation: u64,
+    ) -> buck2_error::Result<Option<TenantEviction>> {
+        let paths = tenant_paths_from_client_context(client_context)?
+            .internal_error("Tenant replacement requires an identity")?;
+        Ok(self.tenants.evict_generation_impl(
+            &TenantKey::from_tenant_paths(&paths),
+            Some(generation),
+            GenerationEviction::Replace,
+            eviction_reason(client_context),
+        ))
+    }
+
+    pub fn tenant_generation_for_client_context(
+        &self,
+        context: &ClientContext,
+    ) -> buck2_error::Result<Option<u64>> {
+        let paths = tenant_paths_from_client_context(context)?
+            .internal_error("Tenant lookup requires an identity")?;
+        Ok(self
+            .tenants
+            .tenants
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&TenantKey::from_tenant_paths(&paths))
+            .map(|entry| entry.generation))
+    }
+
+    pub fn evict_project_tenants_for_client_context(
+        &self,
+        client_context: &ClientContext,
+        isolation: Option<FileNameBuf>,
+    ) -> buck2_error::Result<ProjectTenantEviction> {
+        let paths = tenant_paths_from_client_context(client_context)?.ok_or_else(|| {
+            buck2_error!(
+                ErrorTag::Input,
+                "Repository tenant eviction requires an explicit tenant identity"
+            )
+        })?;
+        Ok(self.tenants.evict_project(
+            paths.project_root().root(),
+            isolation.as_deref(),
+            eviction_reason(client_context),
+        ))
+    }
+
+    pub fn tenants(&self) -> Vec<TenantStateInfo> {
+        self.tenants.list()
+    }
+
+    pub fn dice_dump(&self, path: &Path, format: DiceDumpFormat) -> buck2_error::Result<()> {
+        crate::daemon::dice_dump::dice_dump(
+            self.status_tenant()
+                .internal_error("No live tenant is available for DICE dump")?
+                .dice_manager
+                .unsafe_dice(),
+            path,
+            format,
+        )
+    }
+}
+
 impl DaemonStatePanicDiceDump for DaemonStateData {
     fn dice_dump(&self, path: &Path, format: DiceDumpFormat) -> buck2_error::Result<()> {
         self.dice_dump(path, format)
@@ -227,25 +2389,26 @@ impl DaemonStatePanicDiceDump for DaemonStateData {
 }
 
 impl DaemonState {
-    #[tracing::instrument(name = "daemon_listener", skip_all)]
     pub(crate) async fn new(
         fb: fbinit::FacebookInit,
         paths: InvocationPaths,
         init_ctx: BuckdServerInitPreferences,
         rt: &Handle,
-        materializations: MaterializationMethod,
-        working_directory: Option<WorkingDirectory>,
+        final_artifact_materialization: FinalArtifactMaterialization,
+        working_directory: WorkingDirectory,
         cgroup_tree: Option<BuckCgroupTree>,
         daemon_id: DaemonId,
+        user_version: Option<String>,
     ) -> Result<Self, buck2_error::Error> {
         let data = Self::init_data(
             fb,
-            paths.clone(),
+            paths,
             init_ctx,
             rt,
-            materializations,
+            final_artifact_materialization,
             cgroup_tree,
             daemon_id,
+            user_version,
         )
         .await
         .map_err(|e| {
@@ -259,7 +2422,6 @@ impl DaemonState {
 
         let state = DaemonState {
             fb,
-            paths,
             data,
             working_directory,
         };
@@ -273,9 +2435,10 @@ impl DaemonState {
         paths: InvocationPaths,
         init_ctx: BuckdServerInitPreferences,
         rt: &Handle,
-        materializations: MaterializationMethod,
+        final_artifact_materialization: FinalArtifactMaterialization,
         cgroup_tree: Option<BuckCgroupTree>,
         daemon_id: DaemonId,
+        user_version: Option<String>,
     ) -> buck2_error::Result<Arc<DaemonStateData>> {
         if buck2_env!(
             "BUCK2_TEST_INIT_DAEMON_ERROR",
@@ -290,7 +2453,11 @@ impl DaemonState {
         }
 
         let daemon_state_data_rt = rt.clone();
-        rt.spawn(async move {
+        // Owned, because tenant construction happens in the spawned initialization future.
+        let tenant_state_rt = rt.clone();
+        let init_fut = async move {
+            let invocation_paths = paths;
+            let paths = invocation_paths.tenant_paths();
             let fs = paths.project_root().clone();
 
             tracing::info!("Reading config...");
@@ -327,6 +2494,7 @@ impl DaemonState {
                 section: "buck2",
                 property: "event_log_message_batch_size",
             })?;
+            tracing::info!("Initializing scribe sink...");
             let scribe_sink = Self::init_scribe_sink(
                 fb,
                 ScribeConfig {
@@ -339,403 +2507,127 @@ impl DaemonState {
             )
             .buck_error_context("failed to init scribe sink")?;
 
-            let default_digest_algorithm =
-                buck2_env!("BUCK_DEFAULT_DIGEST_ALGORITHM", type=DigestAlgorithmFamily)?;
-
-            let default_digest_algorithm = default_digest_algorithm.unwrap_or_else(|| {
-                if buck2_core::is_open_source() {
-                    DigestAlgorithmFamily::Sha256
-                } else {
-                    DigestAlgorithmFamily::Sha1
-                }
-            });
-
-            let digest_algorithms = init_ctx
-                .daemon_startup_config
-                .digest_algorithms
-                .as_ref()
-                .map(|algos| {
-                    algos
-                        .split(',')
-                        .map(DigestAlgorithmFamily::from_str)
-                        .collect::<Result<_, _>>()
-                })
-                .transpose()
-                .buck_error_context("Invalid digest_algorithms")?
-                .unwrap_or_else(|| vec![default_digest_algorithm])
-                .into_try_map(convert_algorithm_kind)?;
-
-            let preferred_source_algorithm = init_ctx
-                .daemon_startup_config
-                .source_digest_algorithm
-                .as_deref()
-                .map(|a| convert_algorithm_kind(a.parse()?))
-                .transpose()
-                .buck_error_context("Invalid source_digest_algorithm")?;
-
-            let digest_config =
-                DigestConfig::leak_new(digest_algorithms, preferred_source_algorithm)
-                    .buck_error_context("Error initializing DigestConfig")?;
-
-            // TODO(rafaelc): merge configs from all cells once they are consistent
-            let static_metadata = Arc::new(RemoteExecutionStaticMetadata::from_legacy_config(
-                root_config,
-            )?);
-
-            let mut ignore_specs: HashMap<CellName, IgnoreSet> = HashMap::new();
-            for (cell, _) in cells.cells() {
-                let config = legacy_cells.parse_single_cell(cell, &fs).await?;
-                ignore_specs.insert(
-                    cell,
-                    IgnoreSet::from_ignore_spec(
-                        config
-                            .get(BuckconfigKeyRef {
-                                section: "project",
-                                property: "ignore",
-                            })
-                            .unwrap_or(""),
-                        cells.is_root_cell(cell),
-                    )?,
-                );
-            }
-
-            let disk_state_options = DiskStateOptions::new(root_config, materializations.dupe())?;
-
-            let blocking_executor: Arc<dyn BlockingExecutor> =
-                if cfg!(any(target_os = "macos", target_os = "windows")) {
-                    Arc::new(DirectIoExecutor::new(fs.dupe())?)
-                } else {
-                    Arc::new(BuckBlockingExecutor::default_concurrency(fs.dupe())?)
-                };
-
-            let cache_dir_path = paths.cache_dir_path();
-            let valid_cache_dirs = paths.valid_cache_dirs();
-
-            let deferred_materializer_configs = {
-                let defer_write_actions = root_config
-                    .parse::<RolloutPercentage>(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "defer_write_actions",
-                    })?
-                    .unwrap_or_else(RolloutPercentage::never)
-                    .roll();
-
-                // RE will refresh any TTL < 1 hour, so we check twice an hour and refresh any TTL
-                // < 1 hour.
-                let ttl_refresh_frequency = root_config
-                    .parse(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "ttl_refresh_frequency_seconds",
-                    })?
-                    .unwrap_or(1800);
-
-                let ttl_refresh_min_ttl = root_config
-                    .parse(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "ttl_refresh_min_ttl_seconds",
-                    })?
-                    .unwrap_or(3600);
-
-                let ttl_refresh_enabled = root_config
-                    .parse::<RolloutPercentage>(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "ttl_refresh_enabled",
-                    })?
-                    .unwrap_or_else(RolloutPercentage::never)
-                    .roll();
-
-                let update_access_times = AccessTimesUpdates::try_new_from_config_value(
-                    root_config.get(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "update_access_times",
-                    }),
-                )?;
-
-                let verbose_materializer_log = root_config
-                    .parse(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "verbose_materializer_event_log",
-                    })?
-                    .unwrap_or(false);
-
-                let clean_stale_config = CleanStaleConfig::from_buck_config(root_config)?;
-
-                let disable_eager_write_dispatch = root_config
-                    .parse::<RolloutPercentage>(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "disable_eager_write_dispatch",
-                    })?
-                    .unwrap_or_else(RolloutPercentage::never)
-                    .roll();
-
-                DeferredMaterializerConfigs {
-                    materialize_final_artifacts: matches!(
-                        materializations,
-                        MaterializationMethod::Deferred
-                    ),
-                    defer_write_actions,
-                    ttl_refresh: TtlRefreshConfiguration {
-                        frequency: std::time::Duration::from_secs(ttl_refresh_frequency),
-                        min_ttl: chrono::Duration::seconds(ttl_refresh_min_ttl),
-                        enabled: ttl_refresh_enabled,
-                    },
-                    update_access_times,
-                    verbose_materializer_log,
-                    clean_stale_config,
-                    disable_eager_write_dispatch,
-                }
-            };
-            let disable_eager_write_dispatch =
-                deferred_materializer_configs.disable_eager_write_dispatch;
-
-            let use_eden_thrift_read = root_config
-                .parse(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "use_eden_thrift_read",
-                })?
-                .unwrap_or(cfg!(any(target_os = "macos", target_os = "windows")));
-
-            let (io, _, (materializer_db, materializer_state), incremental_db_state) =
-                futures::future::try_join4(
-                    create_io_provider(
-                        fb,
-                        fs.dupe(),
-                        root_config,
-                        digest_config.cas_digest_config(),
-                        init_ctx.enable_trace_io,
-                        use_eden_thrift_read,
-                    ),
-                    (blocking_executor.dupe() as Arc<dyn BlockingExecutor>).execute_io_inline(
-                        || {
-                            // Using `execute_io_inline` is just out of convenience.
-                            // It doesn't really matter what's used here since there's no IO-heavy
-                            // operations on daemon startup
-                            delete_unknown_disk_state(&cache_dir_path, &valid_cache_dirs)
-                        },
-                    ),
-                    maybe_initialize_materializer_sqlite_db(
-                        &disk_state_options,
-                        paths.clone(),
-                        blocking_executor.dupe() as Arc<dyn BlockingExecutor>,
-                        root_config,
-                        &deferred_materializer_configs,
-                        digest_config,
-                        &init_ctx,
-                        &daemon_id,
-                    ),
-                    maybe_initialize_incremental_sqlite_db(
-                        paths.clone(),
-                        blocking_executor.dupe() as Arc<dyn BlockingExecutor>,
-                        root_config,
-                        &daemon_id,
-                    ),
-                )
-                .await?;
+            let blocking_executor_factory = Arc::new(BlockingExecutorFactory::create()?);
 
             let http_client = http_client_from_startup_config(&init_ctx.daemon_startup_config)
                 .await
                 .buck_error_context("Error creating HTTP client")?
                 .build();
 
-            let incremental_db_state = Arc::new(incremental_db_state);
-
-            let materializer_state_identity =
-                materializer_db.as_ref().map(|d| d.identity().clone());
-
-            let re_client_manager = Arc::new(ReConnectionManager::new(
-                fb,
-                false,
-                10,
-                static_metadata.dupe(),
-                Some(paths.re_logs_dir()),
-                paths.buck_out_path(),
-                init_ctx.daemon_startup_config.paranoid,
-            ));
-            // Used only to dispatch events to scribe that are not associated with a specific command (ex. materializer clean up events)
-            let daemon_dispatcher = if let Some(sink) = scribe_sink.dupe() {
-                EventDispatcher::new(TraceId::null(), daemon_id.dupe(), sink.to_event_sync())
-            } else {
-                // If needed this could log to a sink that redirects to a daemon event log (maybe `~/.buck/buckd/repo-path/event-log`)
-                // but for now seems fine to drop events if scribe isn't enabled.
-                EventDispatcher::null()
-            };
-            let materializer = Self::create_materializer(
-                io.project_root().dupe(),
-                digest_config,
-                paths.buck_out_dir(),
-                re_client_manager.dupe(),
-                blocking_executor.dupe(),
-                materializations,
-                deferred_materializer_configs,
-                materializer_db,
-                materializer_state,
-                http_client.dupe(),
-                daemon_dispatcher.dupe(),
-            )?;
-
+            tracing::info!("Creating memory tracker...");
             let memory_tracker = memory_tracker::create_memory_tracker(
-                cgroup_tree.as_ref(),
-                &init_ctx.daemon_startup_config.resource_control,
+                cgroup_tree,
+                &init_ctx
+                    .daemon_startup_config
+                    .startup_options
+                    .resource_control,
                 &daemon_id,
             )
             .await?;
 
-            // Create this after the materializer because it'll want to write to buck-out, and an Eden
-            // materializer would create buck-out now.
+            // The forkserver creates its state directory recursively, so it does not depend on
+            // the materializer creating buck-out first. One daemon-global forkserver serves every
+            // repo; requests carry an absolute cwd.
+            tracing::info!("Launching forkserver...");
             let forkserver = maybe_launch_forkserver(
                 root_config,
-                &paths.forkserver_state_dir(),
-                cgroup_tree.as_ref(),
+                &invocation_paths,
+                memory_tracker.as_ref().map(|m| &m.cgroup_tree),
+                &invocation_paths.isolation,
             )
             .await?;
 
-            let dice = init_ctx
-                .construct_dice(io.dupe(), digest_config, root_config)
+            let (init_ctx, daemon_originating_cgroup) = init_ctx.split();
+            let unidaemon = init_ctx
+                .daemon_startup_config
+                .startup_options
+                .routing
+                .is_shared();
+            let shared_stash = unidaemon
+                .then(|| -> buck2_error::Result<_> {
+                    Ok(SharedStash {
+                        path: invocation_paths.stash_dir()?,
+                        blocking: blocking_executor_factory
+                            .for_project(invocation_paths.project_root().clone()),
+                    })
+                })
+                .transpose()?;
+            let tenant_state_factory = TenantStateFactory {
+                shared_stash,
+                dice_provider: TenantDiceProvider::new(
+                    init_ctx.daemon_startup_config.startup_options.share_dice,
+                    invocation_paths
+                        .shared_dice_state_path(&daemon_id.to_string())?
+                        .to_path_buf(),
+                ),
+                fb,
+                init_ctx,
+                final_artifact_materialization,
+                runtime: tenant_state_rt,
+            };
+            let generation = Arc::new(TenantGeneration::initial(TenantKey::from_tenant_paths(
+                &paths,
+            )));
+            let tenant = tenant_state_factory
+                .create_with_loaded_config(
+                    paths,
+                    &legacy_cells,
+                    root_config,
+                    DaemonSharedServices {
+                        blocking_executor_factory: &blocking_executor_factory,
+                        scribe_sink: scribe_sink.as_ref(),
+                        memory_tracker: memory_tracker.as_ref(),
+                        daemon_id: &daemon_id,
+                    },
+                    TenantStateOwnership {
+                        disk_ownership: Arc::new(Semaphore::new(1)),
+                        cancellation: Arc::new(CancellationScope::new()),
+                        generation,
+                        reject_materializer_state: None,
+                    },
+                )
                 .await?;
 
-            let file_watcher = <dyn FileWatcher>::new(
-                fb,
-                paths.project_root(),
-                root_config,
-                cells.dupe(),
-                ignore_specs,
-            )
-            .with_buck_error_context(|| {
-                format!(
-                    "Error creating a FileWatcher for project root `{}`",
-                    paths.project_root()
-                )
-            })?;
+            // One walk over the process-wide digest interner, at the first tenant's cadence
+            // and through the RE connection of whichever tenant is live when a pass runs: the
+            // BlobStore's, which refreshes CAS TTLs and drops what nothing holds.
+            let daemon_state_data = Arc::new(OnceLock::new());
+            let standalone_ttl_refresh = BlobStore::global().start_refresh(
+                TtlRefresher::new(Arc::new(LiveTenantPresenceChecker {
+                    data: daemon_state_data.dupe(),
+                })),
+                tenant.repo.ttl_refresh_frequency,
+            );
 
-            let use_network_action_output_cache = root_config
-                .parse(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "use_network_action_output_cache",
-                })?
-                .unwrap_or(false);
-
-            let create_unhashed_outputs_lock = Arc::new(Mutex::new(()));
-
-            let enable_restarter = root_config
-                .parse::<RolloutPercentage>(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "restarter",
-                })?
-                .unwrap_or_else(RolloutPercentage::never)
-                .roll();
-
-            let paranoid = if init_ctx.daemon_startup_config.paranoid {
-                Some(ParanoidDownloader::new(
-                    fs.clone(),
-                    blocking_executor.dupe(),
-                    re_client_manager.dupe(),
-                    paths.paranoid_cache_dir(),
-                ))
-            } else {
-                None
-            };
-
-            let remote_dep_files_enabled = root_config
-                .parse(BuckconfigKeyRef {
-                    section: "build",
-                    property: "remote_dep_file_cache_enabled",
-                })?
-                .unwrap_or(false);
-
-            let action_freezing_enabled = init_ctx
+            let package_visibility_default_intersection = tenant_state_factory
+                .init_ctx
                 .daemon_startup_config
-                .resource_control
-                .enable_suspension;
-
-            let tags = vec![
-                format!("dice-detect-cycles:{}", dice.detect_cycles().variant_name()),
-                // TODO(scottcao): Delete this tag since now hash all commands is always enabled.
-                "hash-all-commands:true".to_owned(),
-                format!(
-                    "sqlite-materializer-state:{}",
-                    disk_state_options.sqlite_materializer_state
-                ),
-                format!("paranoid:{}", paranoid.is_some()),
-                format!("remote-dep-files:{}", remote_dep_files_enabled),
-                #[cfg(fbcode_build)]
-                format!(
-                    "respect-file-symlinks:{}",
-                    static_metadata.respect_file_symlinks
-                ),
-                format!(
-                    "disable-eager-write-dispatch-v2:{}",
-                    disable_eager_write_dispatch,
-                ),
-                format!("use-eden-thrift-read:{}", use_eden_thrift_read),
-                format!("memory_tracker-enabled:{}", memory_tracker.is_some()),
-                format!("action-freezing-enabled:{}", action_freezing_enabled),
-                format!("has-cgroup:{}", cgroup_tree.is_some()),
-            ];
-            let system_warning_config = SystemWarningConfig::from_config(root_config)?;
-
-            // Kick off an initial sync eagerly. This gets Watchamn to start watching the path we care
-            // about (potentially kicking off an initial crawl).
-            // disable the eager spawn for watchman until we fix dice commit to avoid a panic TODO(bobyf)
-            // tokio::task::spawn(watchman_query.sync());
-            Ok(Arc::new(DaemonStateData {
-                dice_manager: ConcurrencyHandler::new(dice),
-                file_watcher,
-                io,
-                re_client_manager,
-                blocking_executor,
-                materializer,
+                .daemon_buck_settings()
+                .package_visibility
+                .default_intersection();
+            let tenants = TenantStateRegistry::new(tenant, unidaemon).await?;
+            let data = Arc::new(DaemonStateData {
+                tenants,
+                tenant_state_factory,
+                blocking_executor_factory,
                 forkserver,
                 scribe_sink,
-                use_network_action_output_cache,
-                disk_state_options,
                 start_time: std::time::Instant::now(),
-                create_unhashed_outputs_lock,
-                materializer_state_identity,
-                enable_restarter,
                 http_client,
-                paranoid,
                 spawner: Arc::new(BuckSpawner::new(daemon_state_data_rt)),
-                tags,
-                system_warning_config,
-                cgroup_tree,
                 memory_tracker,
-                previous_command_data: LockedPreviousCommandData::new(),
-                incremental_db_state,
                 daemon_id: daemon_id.dupe(),
-            }))
-        })
-        .await?
-    }
-
-    fn create_materializer(
-        fs: ProjectRoot,
-        digest_config: DigestConfig,
-        buck_out_path: ProjectRelativePathBuf,
-        re_client_manager: Arc<ReConnectionManager>,
-        blocking_executor: Arc<dyn BlockingExecutor>,
-        materializations: MaterializationMethod,
-        deferred_materializer_configs: DeferredMaterializerConfigs,
-        materializer_db: Option<MaterializerStateSqliteDb>,
-        materializer_state: Option<MaterializerState>,
-        http_client: HttpClient,
-        daemon_dispatcher: EventDispatcher,
-    ) -> buck2_error::Result<Arc<dyn Materializer>> {
-        match materializations {
-            MaterializationMethod::Deferred | MaterializationMethod::DeferredSkipFinalArtifacts => {
-                Ok(Arc::new(DeferredMaterializer::new(
-                    fs,
-                    digest_config,
-                    buck_out_path,
-                    re_client_manager,
-                    blocking_executor,
-                    deferred_materializer_configs,
-                    materializer_db,
-                    materializer_state,
-                    http_client,
-                    daemon_dispatcher,
-                )?))
-            }
-        }
+                user_version,
+                daemon_originating_cgroup,
+                named_semaphores_for_run_actions: Arc::new(NamedSemaphores::new()),
+                package_visibility_default_intersection,
+                standalone_ttl_refresh,
+            });
+            let _ignored = daemon_state_data.set(Arc::downgrade(&data));
+            Ok(data)
+        };
+        let daemon_listener_span = tracing::Span::current();
+        rt.spawn(init_fut.instrument(daemon_listener_span)).await?
     }
 
     fn init_scribe_sink(
@@ -774,19 +2666,20 @@ impl DaemonState {
     /// This initializes (if necessary) the shared daemon state and syncs the watchman query (to flush any recent filesystem events).
     pub async fn prepare_command(
         &self,
+        tenant: Arc<TenantState>,
         dispatcher: EventDispatcher,
         drop_guard: ActiveCommandDropGuard,
     ) -> buck2_error::Result<BaseServerCommandContext> {
         let data = self.data();
+        let repo = &tenant.repo;
 
         dispatcher.instant_event(buck2_data::RestartConfiguration {
-            enable_restarter: data.enable_restarter,
+            enable_restarter: repo.restart_daemon_on_error,
         });
 
         tag_result!(
             "eden_not_connected",
-            check_working_dir::check_working_dir().map_err(|e| e.into()),
-            quiet: true,
+            check_working_dir::check_working_dir(),
             daemon_in_memory_state_is_corrupted: true,
             task: false
         )?;
@@ -794,27 +2687,39 @@ impl DaemonState {
         self.validate_cwd()
             .buck_error_context("Error validating working directory")?;
 
-        self.validate_buck_out_mount()
+        self.validate_buck_out_mount(&repo.paths)
             .buck_error_context("Error validating buck-out mount")?;
 
         dispatcher.instant_event(buck2_data::TagEvent {
-            tags: data.tags.clone(),
+            tags: repo.tags.clone(),
         });
 
         // Sync any FS changes and invalidate DICE state if necessary.  Get the Eden
-        // version of the underlying system in parallel if available.
-        let (_, eden_version) =
-            futures::future::try_join(data.io.settle(), data.io.eden_version()).await?;
+        // version of the underlying system in parallel if available, and fail fast if the
+        // Eden daemon restarted underneath us (which leaves cached state and file handles
+        // stale and would otherwise surface as a silent hang).
+        let verify_eden_identity = async {
+            if repo.detect_eden_restart {
+                repo.io.verify_eden_identity().await
+            } else {
+                Ok(())
+            }
+        };
+        let (_, eden_version, ()) = futures::future::try_join3(
+            repo.io.settle(),
+            repo.io.eden_version(),
+            verify_eden_identity,
+        )
+        .await?;
 
         dispatcher.instant_event(buck2_data::IoProviderInfo { eden_version });
 
         Ok(BaseServerCommandContext {
             _fb: self.fb,
-            project_root: self.paths.project_root().clone(),
             events: dispatcher,
-            daemon: data.dupe(), // FIXME: Remove the duplicative fields.
+            tenant,
+            daemon: data.dupe(),
             _drop_guard: drop_guard,
-            spawner: data.spawner.dupe(),
         })
     }
 
@@ -823,44 +2728,42 @@ impl DaemonState {
     }
 
     pub fn validate_cwd(&self) -> buck2_error::Result<()> {
-        if let Some(working_directory) = &self.working_directory {
-            let res = working_directory.is_stale().and_then(|stale| {
-                if stale {
-                    Err(buck2_error!(
-                        buck2_error::ErrorTag::Environment,
-                        "Buck appears to be running in a stale working directory. \
-                         This will likely lead to failed or slow builds. \
-                         To remediate, restart Buck2."
-                    ))
-                } else {
-                    Ok(())
-                }
-            });
+        let res = self.working_directory.is_stale().and_then(|stale| {
+            if stale {
+                Err(buck2_error!(
+                    buck2_error::ErrorTag::DaemonStaleWorkingDir,
+                    "Buck appears to be running in a stale working directory. \
+                     This will likely lead to failed or slow builds. \
+                     To remediate, restart Buck2."
+                ))
+            } else {
+                Ok(())
+            }
+        });
 
-            tag_result!(
-                "stale_cwd",
-                res.map_err(|e| e.into()),
-                quiet: true,
-                daemon_in_memory_state_is_corrupted: true,
-                task: false
-            )?;
-        }
+        tag_result!(
+            "stale_cwd",
+            res,
+            daemon_in_memory_state_is_corrupted: true,
+            task: false
+        )?;
 
         Ok(())
     }
 
-    pub fn validate_buck_out_mount(&self) -> buck2_error::Result<()> {
+    pub fn validate_buck_out_mount(&self, paths: &TenantPaths) -> buck2_error::Result<()> {
         #[cfg(fbcode_build)]
         {
-            use buck2_core::soft_error;
+            use buck2_core::warn_user;
+            use buck2_fs::error::IoResultExt;
             use buck2_fs::fs_util;
 
-            let project_root = self.paths.project_root().root();
+            let project_root = paths.project_root().root();
             if !detect_eden::is_eden(project_root.to_path_buf())? {
                 return Ok(());
             }
 
-            let buck_out_root = project_root.join(InvocationPaths::buck_out_dir_prefix());
+            let buck_out_root = project_root.join(TenantPaths::buck_out_dir_prefix());
 
             if let Some(buck_out_root_meta) = fs_util::symlink_metadata_if_exists(buck_out_root)? {
                 // If buck-out is a symlink, we'll be happy with that.
@@ -875,7 +2778,9 @@ impl DaemonState {
                 {
                     use std::os::unix::fs::MetadataExt;
 
-                    let project_device = fs_util::symlink_metadata(project_root)?.dev();
+                    let project_device = fs_util::symlink_metadata(project_root)
+                        .categorize_internal()?
+                        .dev();
                     let buck_out_device = buck_out_root_meta.dev();
 
                     if project_device != buck_out_device {
@@ -884,7 +2789,7 @@ impl DaemonState {
                 }
             }
 
-            soft_error!(
+            warn_user!(
                 "eden_buck_out",
                 buck2_error::buck2_error!(
                     buck2_error::ErrorTag::Environment,
@@ -892,9 +2797,11 @@ impl DaemonState {
                      This will likely lead to failed or slow builds. \
                      To remediate, run `eden redirect fixup`."
                 )
-                .into(),
-                quiet:false
-            )?;
+            );
+        }
+        #[cfg(not(fbcode_build))]
+        {
+            let _paths = paths;
         }
 
         Ok(())
@@ -909,8 +2816,7 @@ fn convert_algorithm_kind(kind: DigestAlgorithmFamily) -> buck2_error::Result<Di
         DigestAlgorithmFamily::Blake3Keyed => {
             #[cfg(fbcode_build)]
             {
-                let key = blake3_constants::BLAKE3_HASH_KEY;
-                DigestAlgorithm::Blake3Keyed { key }
+                DigestAlgorithm::Blake3Keyed
             }
 
             #[cfg(not(fbcode_build))]
@@ -936,16 +2842,21 @@ const DEFAULT_READ_TIMEOUT_MS: u64 = 10000;
 async fn http_client_from_startup_config(
     config: &DaemonStartupConfig,
 ) -> buck2_error::Result<HttpClientBuilder> {
+    let http = &config.startup_options.http;
     let mut builder = if is_open_source() {
         HttpClientBuilder::oss().await?
     } else {
         HttpClientBuilder::internal().await?
     };
-    builder.with_max_redirects(config.http.max_redirects.unwrap_or(DEFAULT_MAX_REDIRECTS));
-    builder.with_http2(config.http.http2);
-    builder.with_max_concurrent_requests(config.http.max_concurrent_requests);
+    #[cfg(fbcode_build)]
+    builder
+        .with_internal_proxy_from_env(&http.proxy_env_allowlist)
+        .await?;
+    builder.with_max_redirects(http.max_redirects.unwrap_or(DEFAULT_MAX_REDIRECTS));
+    builder.with_http2(http.http2);
+    builder.with_max_concurrent_requests(http.max_concurrent_requests);
 
-    match config.http.connect_timeout() {
+    match http.connect_timeout() {
         Timeout::Value(d) => {
             builder.with_connect_timeout(Some(d));
         }
@@ -954,7 +2865,7 @@ async fn http_client_from_startup_config(
         }
         _ => {}
     }
-    match config.http.read_timeout() {
+    match http.read_timeout() {
         Timeout::Value(d) => {
             builder.with_read_timeout(Some(d));
         }
@@ -963,11 +2874,11 @@ async fn http_client_from_startup_config(
         }
         _ => {}
     }
-    match config.http.write_timeout() {
+    match http.write_timeout() {
         Timeout::Value(d) => {
             builder.with_write_timeout(Some(d));
         }
-        _ => {}
+        Timeout::Default | Timeout::NoTimeout => {}
     }
 
     Ok(builder)
@@ -975,11 +2886,161 @@ async fn http_client_from_startup_config(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
 
+    use buck2_cli_proto::TenantIdentity;
     use buck2_common::legacy_configs::configs::testing::parse;
+    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use buck2_fs::paths::file_name::FileNameBuf;
+    use buck2_settings::DaemonBuckSettings;
     use indoc::indoc;
 
     use super::*;
+
+    fn tenant_spec() -> TenantSpec {
+        let project_root = if cfg!(windows) {
+            "C:\\project"
+        } else {
+            "/project"
+        };
+        TenantSpec::from_tenant_paths(&TenantPaths::new(
+            ProjectRoot::new_unchecked(
+                AbsNormPathBuf::try_from(project_root.to_owned())
+                    .expect("test project root should be absolute and normalized"),
+            ),
+            FileNameBuf::try_from("v2".to_owned()).expect("test isolation should be a file name"),
+        ))
+    }
+
+    fn test_slot() -> TenantStateSlot<usize> {
+        let spec = tenant_spec();
+        let generation = Arc::new(TenantGeneration::initial(spec.key().clone()));
+        TenantStateSlot::new(
+            spec,
+            generation,
+            Arc::new(Semaphore::new(1)),
+            Arc::new(CancellationScope::new()),
+        )
+    }
+
+    #[tokio::test]
+    async fn tenant_entry_initializes_once() -> buck2_error::Result<()> {
+        let entry = test_slot();
+        let init_count = AtomicUsize::new(0);
+        let first = entry.get_or_try_init(|| async {
+            init_count.fetch_add(1, Ordering::Relaxed);
+            tokio::task::yield_now().await;
+            Ok(Arc::new(1))
+        });
+        let second = entry.get_or_try_init(|| async {
+            init_count.fetch_add(1, Ordering::Relaxed);
+            Ok(Arc::new(2))
+        });
+
+        let (first, second) = tokio::join!(first, second);
+        let first = first?;
+        let second = second?;
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(init_count.load(Ordering::Relaxed), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn last_registrant_of_an_uninitialized_generation_evicts_it() -> buck2_error::Result<()> {
+        let entry = Arc::new(test_slot());
+        let first = Registrant::attach(&entry);
+        let second = Registrant::attach(&entry);
+        assert!(!first.leave(), "another client is still registering");
+        assert!(second.leave(), "the last registrant leaves nothing behind");
+
+        let registrant = Registrant::attach(&entry);
+        entry.get_or_try_init(|| async { Ok(Arc::new(1)) }).await?;
+        assert!(
+            !registrant.leave(),
+            "an initialized generation serves clients that are not registering it"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tenant_entry_retries_failed_initialization() -> buck2_error::Result<()> {
+        let entry = test_slot();
+        let first = entry
+            .get_or_try_init(|| async {
+                Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "injected initialization failure"
+                ))
+            })
+            .await;
+        assert!(first.is_err());
+        assert!(!entry.is_initialized());
+
+        let state = entry.get_or_try_init(|| async { Ok(Arc::new(1)) }).await?;
+        assert_eq!(*state, 1);
+        assert!(entry.is_initialized());
+        Ok(())
+    }
+
+    #[test]
+    fn tenant_paths_from_client_identity() -> buck2_error::Result<()> {
+        let project_root = if cfg!(windows) {
+            "C:\\project"
+        } else {
+            "/project"
+        };
+        let client_context = ClientContext {
+            tenant_identity: Some(TenantIdentity {
+                project_root: project_root.to_owned(),
+                isolation: "v2".to_owned(),
+            }),
+            ..Default::default()
+        };
+
+        let paths = tenant_paths_from_client_context(&client_context)?
+            .expect("the client supplied a tenant identity");
+        assert_eq!(paths.project_root().to_string(), project_root);
+        assert_eq!(paths.isolation().as_str(), "v2");
+        Ok(())
+    }
+
+    #[test]
+    fn missing_client_identity_uses_compatibility_fallback() -> buck2_error::Result<()> {
+        assert!(tenant_paths_from_client_context(&ClientContext::default())?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_client_project_root_is_rejected() {
+        let client_context = ClientContext {
+            tenant_identity: Some(TenantIdentity {
+                project_root: "relative".to_owned(),
+                isolation: "v2".to_owned(),
+            }),
+            ..Default::default()
+        };
+
+        assert!(tenant_paths_from_client_context(&client_context).is_err());
+    }
+
+    #[test]
+    fn invalid_client_isolation_is_rejected() {
+        let project_root = if cfg!(windows) {
+            "C:\\project"
+        } else {
+            "/project"
+        };
+        let client_context = ClientContext {
+            tenant_identity: Some(TenantIdentity {
+                project_root: project_root.to_owned(),
+                isolation: "nested/isolation".to_owned(),
+            }),
+            ..Default::default()
+        };
+
+        assert!(tenant_paths_from_client_context(&client_context).is_err());
+    }
 
     #[tokio::test]
     async fn test_from_startup_config_defaults_internal() -> buck2_error::Result<()> {
@@ -1021,7 +3082,8 @@ mod tests {
             )],
             "config",
         )?;
-        let startup_config = DaemonStartupConfig::new(&config)?;
+        let startup_config =
+            DaemonStartupConfig::new(&config, &DaemonBuckSettings::default(), false)?;
         let builder = http_client_from_startup_config(&startup_config).await?;
         assert_eq!(5, builder.max_redirects().unwrap());
         assert_eq!(Some(Duration::from_millis(10)), builder.connect_timeout());
@@ -1049,7 +3111,8 @@ mod tests {
             )],
             "config",
         )?;
-        let startup_config = DaemonStartupConfig::new(&config)?;
+        let startup_config =
+            DaemonStartupConfig::new(&config, &DaemonBuckSettings::default(), false)?;
         let builder = http_client_from_startup_config(&startup_config).await?;
         assert_eq!(None, builder.connect_timeout());
         assert_eq!(

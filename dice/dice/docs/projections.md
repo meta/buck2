@@ -94,8 +94,9 @@ use SyncProjectionTrait;
 
 async fn main() {
     let dice = Dice::builder().build();
+    let root = dice.new_root().await;
 
-    let ctx = dice.updater().commit();
+    let ctx = dice.updater(root).commit();
 
     ctx.direct_projection("a").await;
     let opaque = ctx.opaque_indirection("b").await;

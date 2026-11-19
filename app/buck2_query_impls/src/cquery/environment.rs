@@ -15,7 +15,7 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_node::configured_universe::CqueryUniverse;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_node::nodes::configured_node_ref::ConfiguredTargetNodeRefNode;
@@ -29,18 +29,19 @@ use buck2_query::query::graph::successors::AsyncChildVisitor;
 use buck2_query::query::syntax::simple::eval::error::QueryError;
 use buck2_query::query::syntax::simple::eval::file_set::FileSet;
 use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use buck2_query::query::syntax::simple::eval::values::QueryValueDepth;
 use buck2_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
 use buck2_query::query::syntax::simple::functions::HasModuleDescription;
 use buck2_query::query::syntax::simple::functions::docs::QueryEnvironmentDescription;
 use buck2_query::query::traversal::async_depth_first_postorder_traversal;
 use buck2_query::query::traversal::async_depth_limited_traversal;
 use dice::DiceComputations;
-use tracing::warn;
 
 use crate::uquery::environment::QueryLiterals;
 use crate::uquery::environment::UqueryDelegate;
 use crate::uquery::environment::allbuildfiles;
 use crate::uquery::environment::rbuildfiles;
+use crate::uquery::environment::validate_owner_paths;
 
 /// CqueryDelegate resolves information needed by the QueryEnvironment.
 #[async_trait]
@@ -162,6 +163,7 @@ impl QueryEnvironment for CqueryEnvironment<'_> {
             root.iter_names(),
             traversal_delegate,
             visit,
+            self.allow_partial_graph(),
         )
         .await
     }
@@ -179,6 +181,7 @@ impl QueryEnvironment for CqueryEnvironment<'_> {
             delegate,
             visit,
             depth,
+            self.allow_partial_graph(),
         )
         .await
     }
@@ -199,13 +202,11 @@ impl QueryEnvironment for CqueryEnvironment<'_> {
     }
 
     async fn owner(&self, paths: &FileSet) -> buck2_error::Result<TargetSet<Self::Target>> {
+        validate_owner_paths(&mut self.delegate.ctx(), paths).await?;
         let mut result = TargetSet::new();
 
         for path in paths.iter() {
             let owners = self.owner_correct(path)?;
-            if owners.is_empty() {
-                warn!("No owner was found for {}", path);
-            }
             result.extend(owners);
         }
         Ok(result)
@@ -221,10 +222,10 @@ impl QueryEnvironment for CqueryEnvironment<'_> {
     async fn deps(
         &self,
         targets: &TargetSet<Self::Target>,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
     ) -> buck2_error::Result<TargetSet<Self::Target>> {
-        if depth.is_none() && filter.is_none() {
+        if depth.is_unbounded() && filter.is_none() {
             // TODO(nga): fast lookup with depth too.
 
             let mut deps = TargetSet::new();

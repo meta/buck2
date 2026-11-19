@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
+from __future__ import annotations
 
 import argparse
 import cProfile
@@ -14,29 +14,25 @@ import json
 import logging
 import os
 import pstats
-import shlex
-import sys
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
-from apple.tools.code_signing.apple_platform import ApplePlatform
 from apple.tools.code_signing.codesign_bundle import (
-    AdhocSigningContext,
     codesign_bundle,
     CodesignConfiguration,
     CodesignedPath,
-    signing_context_with_profile_selection,
     write_empty_codesign_manifest,
 )
-from apple.tools.code_signing.list_codesign_identities import (
-    AdHocListCodesignIdentities,
-    ListCodesignIdentities,
+from apple.tools.code_signing.signing_context_types import (
+    AdhocSigningContext,
+    selection_profile_context_from_signing_context,
+    SigningContextWithProfileSelection,
 )
-
 from apple.tools.re_compatibility_utils.writable import make_dir_recursively_writable
 
 from .action_metadata import action_metadata_if_present
-
 from .assemble_bundle import assemble_bundle
 from .assemble_bundle_types import BundleSpecItem, IncrementalContext
 from .incremental_state import (
@@ -46,9 +42,14 @@ from .incremental_state import (
     parse_incremental_state,
 )
 from .incremental_utils import codesigned_on_copy_item
+from .logging_utils import configure_logging
 from .signing_context import (
-    add_args_for_signing_context,
-    signing_context_and_selected_identity_from_args,
+    add_args_for_bundling_execution,
+    add_args_for_signing_context_path,
+)
+from .signing_context_data import (
+    load_signing_context_data_from_file,
+    SigningContextData,
 )
 from .swift_support import run_swift_stdlib_tool, SwiftSupportArguments
 
@@ -110,6 +111,11 @@ def _args_parser() -> argparse.ArgumentParser:
         """,
     )
     parser.add_argument(
+        "--fast-adhoc-signing-probe-enabled",
+        action="store_true",
+        help="Allow fast-adhoc signing to consult the bundled signature probe tool when it is available.",
+    )
+    parser.add_argument(
         "--incremental-state",
         metavar="<IncrementalState.json>",
         type=Path,
@@ -168,6 +174,13 @@ def _args_parser() -> argparse.ArgumentParser:
         help="Required if swift support was requested. Bundle relative destination path to plugins directory.",
     )
     parser.add_argument(
+        "--resources-destination",
+        metavar="<Resources>",
+        type=Path,
+        required=False,
+        help="Required if swift support was requested. Bundle relative destination path to resources directory.",
+    )
+    parser.add_argument(
         "--appclips-destination",
         metavar="<AppClips>",
         type=Path,
@@ -198,8 +211,26 @@ def _args_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Create symlinks for versioned macOS bundle",
     )
+    parser.add_argument(
+        "--include-build-info-file",
+        action="store_true",
+        help="Include the build info file in the assembled bundle.",
+    )
+    parser.add_argument(
+        "--build-info-hot-code-reload",
+        choices=["true", "false"],
+        help="Record in the build info file whether this is a hot code reload build.",
+    )
+    parser.add_argument(
+        "--bundle-telemetry-logger",
+        metavar="<path/to/logger>",
+        type=Path,
+        required=False,
+        help="Path to bundle telemetry logger tool. If provided, will be invoked after bundle assembly completes.",
+    )
 
-    add_args_for_signing_context(parser)
+    add_args_for_bundling_execution(parser)
+    add_args_for_signing_context_path(parser)
 
     return parser
 
@@ -275,7 +306,21 @@ def _get_codesigned_paths_from_spec(
     return codesigned_paths
 
 
-def _main() -> None:
+def _load_signing_context(
+    args: argparse.Namespace,
+    temp_dir: Path,
+) -> tuple[AdhocSigningContext | SigningContextWithProfileSelection | None, str | None]:
+    if not args.codesign:
+        return None, None
+
+    signing_context_data = load_signing_context_data_from_file(
+        args.signing_context_path
+    )
+    _materialize_selected_profile(signing_context_data, temp_dir)
+    return signing_context_data.signing_context, signing_context_data.selected_identity
+
+
+def _main(spec_temp_dir: str) -> None:
     args_parser = _args_parser()
     args = args_parser.parse_args()
 
@@ -294,14 +339,7 @@ def _main() -> None:
     ):
         args.codesign_args.remove("--digest-algorithm=sha1")
 
-    if args.log_file:
-        with open(args.log_file, "w") as _:
-            # We need to open the log file for two reasons:
-            # - Ensure it exists after action runs, as it's an output and thus required
-            # - It gets erased, so that we get new logs when doing incremental bundling
-            pass
-
-    _setup_logging(
+    configure_logging(
         stderr_level=getattr(logging, args.log_level_stderr.upper()),
         file_level=getattr(logging, args.log_level_file.upper()),
         log_path=args.log_file,
@@ -312,8 +350,9 @@ def _main() -> None:
     if profiling_enabled:
         pr.enable()
 
-    signing_context, selected_identity_argument = (
-        signing_context_and_selected_identity_from_args(args)
+    signing_context, selected_identity_argument = _load_signing_context(
+        args,
+        Path(spec_temp_dir),
     )
 
     with args.spec.open(mode="rb") as spec_file:
@@ -328,6 +367,14 @@ def _main() -> None:
         codesign_arguments=args.codesign_args,
         versioned_if_macos=args.versioned_if_macos,
     )
+
+    if args.include_build_info_file:
+        _amend_spec_with_build_uuid(
+            spec=spec,
+            resources_destination=args.resources_destination,
+            tmp_dir=Path(spec_temp_dir),
+            hot_code_reload=args.build_info_hot_code_reload,
+        )
 
     incremental_state = assemble_bundle(
         spec=spec,
@@ -349,6 +396,9 @@ def _main() -> None:
         )
     else:
         swift_stdlib_paths = []
+
+    prepared_entitlements_path: Optional[Path] = None
+    telemetry_tmp_dir: Optional[tempfile.TemporaryDirectory[str]] = None
 
     if args.codesign:
         # Vendored frameworks/bundles could already be pre-signed, in which case,
@@ -378,6 +428,12 @@ def _main() -> None:
             for path in swift_stdlib_paths
         ]
 
+        if args.bundle_telemetry_logger:
+            telemetry_tmp_dir = tempfile.TemporaryDirectory()
+            prepared_entitlements_path = (
+                Path(telemetry_tmp_dir.name) / "prepared_entitlements.plist"
+            )
+
         codesign_bundle(
             bundle_path=bundle_path,
             signing_context=signing_context,
@@ -385,7 +441,12 @@ def _main() -> None:
             codesign_on_copy_paths=codesign_on_copy_paths,
             codesign_tool=args.codesign_tool,
             codesign_configuration=args.codesign_configuration,
+            fast_adhoc_signing_probe_enabled=args.fast_adhoc_signing_probe_enabled,
             codesign_manifest_path=args.codesign_manifest,
+            entitlements_suffixed_key_map=args.entitlements_suffixed_key_map,
+            entitlements_removed_keys=args.entitlements_removed_keys,
+            entitlements_removed_values_map=args.entitlements_removed_values_map,
+            prepared_entitlements_output_path=prepared_entitlements_path,
         )
     elif args.codesign_manifest:
         # Always write the codesign manifest file, even when unsigned
@@ -418,6 +479,85 @@ def _main() -> None:
             sortby = pstats.SortKey.CUMULATIVE
             ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
             ps.print_stats()
+
+    if args.bundle_telemetry_logger:
+        selected_profile_path = _get_selected_profile_path(signing_context)
+        info_plist_in_bundle = (
+            (args.output / args.info_plist_destination)
+            if args.info_plist_destination
+            else None
+        )
+        _run_bundle_telemetry_logger(
+            logger_path=args.bundle_telemetry_logger,
+            bundle_path=args.output,
+            info_plist=info_plist_in_bundle,
+            entitlements=prepared_entitlements_path,
+            selected_provisioning_profile=selected_profile_path,
+        )
+
+    if telemetry_tmp_dir is not None:
+        telemetry_tmp_dir.cleanup()
+
+
+def _materialize_selected_profile(
+    signing_context_data: SigningContextData,
+    output_dir: Path,
+) -> None:
+    profile_context = selection_profile_context_from_signing_context(
+        signing_context_data.signing_context
+    )
+    if profile_context is None:
+        return
+    if signing_context_data.provisioning_profile_data is None:
+        raise ValueError("Signing context is missing profile data")
+
+    profile = profile_context.selected_profile_info.profile
+    materialized_path = output_dir / profile.file_path.name
+    materialized_path.write_bytes(signing_context_data.provisioning_profile_data)
+    profile.file_path = materialized_path
+
+
+def _get_selected_profile_path(
+    signing_context: Optional[object],
+) -> Optional[Path]:
+    if signing_context is None:
+        return None
+
+    signing_context_with_profile: Optional[SigningContextWithProfileSelection] = None
+    if isinstance(signing_context, SigningContextWithProfileSelection):
+        signing_context_with_profile = signing_context
+    if isinstance(signing_context, AdhocSigningContext):
+        signing_context_with_profile = signing_context.profile_selection_context
+
+    return (
+        signing_context_with_profile.selected_profile_info.profile.file_path
+        if signing_context_with_profile
+        else None
+    )
+
+
+def _run_bundle_telemetry_logger(
+    logger_path: Path,
+    bundle_path: Path,
+    info_plist: Optional[Path],
+    entitlements: Optional[Path],
+    selected_provisioning_profile: Optional[Path],
+) -> None:
+    cmd: List[str] = [str(logger_path), "--bundle", str(bundle_path)]
+    if info_plist:
+        cmd.extend(["--info-plist", str(info_plist)])
+    if entitlements:
+        cmd.extend(["--entitlements", str(entitlements)])
+    if selected_provisioning_profile:
+        cmd.extend(["--provisioning-profile", str(selected_provisioning_profile)])
+    try:
+        subprocess.run(cmd, check=False)
+    except Exception:
+        # Telemetry is best-effort, never fail the build
+        logging.getLogger(__name__).debug(
+            "Failed to run bundle telemetry logger",
+            exc_info=True,
+        )
 
 
 def _incremental_context(
@@ -559,6 +699,44 @@ def _write_incremental_state(
         raise
 
 
+def _amend_spec_with_build_uuid(
+    spec: List[BundleSpecItem],
+    resources_destination: Optional[Path],
+    tmp_dir: Path,
+    hot_code_reload: Optional[str] = None,
+) -> None:
+    build_id = os.environ.get("BUCK_BUILD_ID")
+    if not build_id:
+        return
+
+    if resources_destination is None:
+        raise RuntimeError(
+            "`--resources-destination` is required when `--include-build-info-file` is set."
+        )
+
+    # There caveats when the build info would be updated - specifically, it would
+    # be updated whenever the action runs. When the action runs is more tricky
+    # to precisely specify but practically speaking, if the bundling action does
+    # not run due to behing a cache hit, the build uuid would be from the last
+    # build that produced the cache value.
+    #
+    # For example, if you did the following:
+    #  - `buck build //my:app` (build uuid X)
+    #  - `buck build //my:app` (build uuid Y)
+    #
+    # Build Y runs no actions at all (nothing invalidated because synthesized
+    # files are not inputs to the action), so `BuildInfo.json` would contain
+    # uuid X.
+    build_info = {"build_uuid": build_id}
+    if hot_code_reload is not None:
+        build_info["hot_code_reload"] = hot_code_reload == "true"
+    src = tmp_dir / "BuildInfo.json"
+    src.write_text(json.dumps(build_info, indent=2))
+    dst = str(resources_destination / "BuildInfo.json")
+
+    spec.append(BundleSpecItem(src=str(src), dst=dst))
+
+
 def _deduplicate_spec(spec: List[BundleSpecItem]) -> List[BundleSpecItem]:
     # It's possible to have the same spec multiple times as different
     # apple_resource() targets can refer to the _same_ resource file.
@@ -575,51 +753,6 @@ def _deduplicate_spec(spec: List[BundleSpecItem]) -> List[BundleSpecItem]:
     return deduplicated_spec
 
 
-def _setup_logging(
-    stderr_level: int, file_level: int, log_path: Optional[Path]
-) -> None:
-    stderr_handler = logging.StreamHandler()
-    stderr_handler.setLevel(stderr_level)
-    log_format = (
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"
-    )
-    stderr_handler.setFormatter(
-        ColoredLogFormatter(log_format)
-        if sys.stderr.isatty()
-        else logging.Formatter(log_format)
-    )
-
-    handlers: List[logging.Handler] = [stderr_handler]
-
-    if log_path:
-        file_handler = logging.FileHandler(log_path, encoding="utf-8")
-        file_handler.setFormatter(logging.Formatter(log_format))
-        file_handler.setLevel(file_level)
-        handlers.append(file_handler)
-
-    logging.basicConfig(level=logging.DEBUG, handlers=handlers)
-
-
-class ColoredLogFormatter(logging.Formatter):
-    _colors: Dict[int, str] = {
-        logging.DEBUG: "\x1b[m",
-        logging.INFO: "\x1b[37m",
-        logging.WARNING: "\x1b[33m",
-        logging.ERROR: "\x1b[31m",
-        logging.CRITICAL: "\x1b[1;31m",
-    }
-    _reset_color = "\x1b[0m"
-
-    def __init__(self, text_format: str) -> None:
-        self.text_format = text_format
-
-    def format(self, record: logging.LogRecord) -> str:
-        colored_format = (
-            self._colors[record.levelno] + self.text_format + self._reset_color
-        )
-        formatter = logging.Formatter(colored_format)
-        return formatter.format(record)
-
-
 if __name__ == "__main__":
-    _main()
+    with tempfile.TemporaryDirectory() as spec_temp_dir:
+        _main(spec_temp_dir)

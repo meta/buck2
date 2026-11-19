@@ -84,7 +84,7 @@ pub struct BxlCommandOptions {
     /// If this flag is specified, user events are additionally written to user event log.
     /// Log format is JSONL, uncompressed if no known extensions are detected, or you can explicitly specify
     /// the compression via the file extension (ex: `.json-lines.gz` would be gzip compressed, `.json-lines.zst`
-    /// would be zstd compressed). Resulting log is is compatible with `buck2 log show-user`.
+    /// would be zstd compressed). Resulting log is compatible with `buck2 log show-user`.
     #[clap(value_name = "PATH", long = "user-event-log")]
     pub user_event_log: Option<PathArg>,
 
@@ -131,7 +131,9 @@ impl StreamingCommand for BxlCommand {
         let console = self.common_ops.console_opts.final_console();
 
         if success {
-            console.print_success("BXL SUCCEEDED")?;
+            if ctx.verbosity.print_success_message() {
+                console.print_success("BXL SUCCEEDED")?;
+            }
         } else {
             console.print_error("BXL FAILED")?;
         }

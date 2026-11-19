@@ -78,9 +78,7 @@ assert output.stdout.strip() == stdout
 assert output.returncode == ret
 """,
         select({
-            # FIXME(JakobDegen): The trampoline we output uses line separators appropriate for the
-            # exec platform, not the target platform
-            "DEFAULT": '"", 1',
+            "DEFAULT": '"foo", 0',
             "ovr_config//os:windows": '"foo", 0',
         }),
     ),

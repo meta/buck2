@@ -1,0 +1,61 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+(1 + 2
+
+Error:
+error: Parse error: unexpected new line, expected symbol ')'
+ --> error_unmatched_parens:1:7
+  |
+1 | (1 + 2
+  |       ^
+
+
+Program:
+f(x, y
+
+Error:
+error: Parse error: unexpected new line, expected symbol ')'
+ --> error_unmatched_parens:1:7
+  |
+1 | f(x, y
+  |       ^
+
+
+Program:
+[1, 2, 3
+
+Error:
+error: Parse error: unexpected new line, expected symbol ']'
+ --> error_unmatched_parens:1:9
+  |
+1 | [1, 2, 3
+  |         ^
+
+
+Program:
+{1: 2
+
+Error:
+error: Parse error: unexpected new line, expected symbol '}'
+ --> error_unmatched_parens:1:6
+  |
+1 | {1: 2
+  |      ^
+
+
+Program:
+x = (1 +
+  2 +
+  3
+
+Error:
+error: Parse error: unexpected new line, expected symbol ')'
+ --> error_unmatched_parens:3:4
+  |
+3 |   3
+  |    ^

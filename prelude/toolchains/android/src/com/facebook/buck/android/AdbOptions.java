@@ -10,39 +10,72 @@
 
 package com.facebook.buck.android;
 
+import com.facebook.infer.annotation.Nullsafe;
+import org.jspecify.annotations.Nullable;
+
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AdbOptions {
 
   public static final String MULTI_INSTALL_MODE_SHORT_ARG = "-x";
 
-  private String adbExecutablePath;
+  private @Nullable String adbExecutablePath;
   private int adbThreadCount;
   private int adbServerPort;
   private boolean multiInstallMode;
   private boolean stagedInstallMode;
-  private int adbTimeout;
   private boolean ignoreMissingDevice;
   private boolean apexMode;
+  private String restartMode;
+  private boolean waitForDeviceReady;
+  private final boolean forceQueryable;
 
   public AdbOptions(
-      String adbExecutablePath,
+      @Nullable String adbExecutablePath,
       int adbThreadCount,
       int adbServerPort,
       boolean multiInstallMode,
       boolean stagedInstallMode,
-      int adbTimeout,
       boolean ignoreMissingDevice,
-      boolean apexMode) {
+      boolean apexMode,
+      String restartMode,
+      boolean waitForDeviceReady) {
+    this(
+        adbExecutablePath,
+        adbThreadCount,
+        adbServerPort,
+        multiInstallMode,
+        stagedInstallMode,
+        ignoreMissingDevice,
+        apexMode,
+        restartMode,
+        waitForDeviceReady,
+        false);
+  }
+
+  public AdbOptions(
+      @Nullable String adbExecutablePath,
+      int adbThreadCount,
+      int adbServerPort,
+      boolean multiInstallMode,
+      boolean stagedInstallMode,
+      boolean ignoreMissingDevice,
+      boolean apexMode,
+      String restartMode,
+      boolean waitForDeviceReady,
+      boolean forceQueryable) {
+    this.forceQueryable = forceQueryable;
     this.adbExecutablePath = adbExecutablePath;
     this.adbThreadCount = adbThreadCount;
     this.adbServerPort = adbServerPort;
     this.multiInstallMode = multiInstallMode;
     this.stagedInstallMode = stagedInstallMode;
-    this.adbTimeout = adbTimeout;
     this.ignoreMissingDevice = ignoreMissingDevice;
     this.apexMode = apexMode;
+    this.restartMode = restartMode;
+    this.waitForDeviceReady = waitForDeviceReady;
   }
 
-  public String getAdbExecutablePath() {
+  public @Nullable String getAdbExecutablePath() {
     return adbExecutablePath;
   }
 
@@ -66,12 +99,20 @@ public class AdbOptions {
     return apexMode;
   }
 
-  public int getAdbTimeout() {
-    return adbTimeout;
-  }
-
   public boolean getIgnoreMissingDevice() {
     return ignoreMissingDevice;
+  }
+
+  public String getRestartMode() {
+    return restartMode;
+  }
+
+  public boolean getWaitForDeviceReady() {
+    return waitForDeviceReady;
+  }
+
+  public boolean isForceQueryable() {
+    return forceQueryable;
   }
 
   @Override
@@ -87,12 +128,16 @@ public class AdbOptions {
         + multiInstallMode
         + ", stagedInstallMode="
         + stagedInstallMode
-        + ", adbTimeout="
-        + adbTimeout
         + ", ignoreMissingDevice="
         + ignoreMissingDevice
         + ", apexMode="
         + apexMode
+        + ", restartMode="
+        + restartMode
+        + ", waitForDeviceReady="
+        + waitForDeviceReady
+        + ", forceQueryable="
+        + forceQueryable
         + '}';
   }
 }

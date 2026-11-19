@@ -1,0 +1,21 @@
+load("@prelude//utils:source_listing.bzl", "source_listing")
+load(":defs.bzl", "android_installer_args", "installer_with_args")
+
+oncall("android_devxx")
+
+source_listing()
+
+# The installer that Android toolchains run, with the install-only buckconfig keys as flags.
+# Toolchains hold this target as a label, not a dependency, so building or querying Android
+# targets does not load this package, and changing one of these keys does not reload them.
+# `buck2 install` loads it when it runs the installer.
+installer_with_args(
+    name = "android_installer_with_buckconfig",
+    args = android_installer_args(
+        adb = read_root_config("android", "adb"),
+        adb_restart_on_failure = read_root_config("adb", "adb_restart_on_failure"),
+        staged_install_mode = read_root_config("adb", "staged_install_mode"),
+    ),
+    installer = "prelude//toolchains/android/src/com/facebook/buck/installer/android:android_installer",
+    visibility = ["PUBLIC"],
+)

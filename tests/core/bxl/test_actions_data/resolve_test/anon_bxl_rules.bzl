@@ -15,13 +15,16 @@ def assert_eq(a, b):
 def _mirror_impl(ctx: AnalysisContext) -> list[Provider]:
     return [DefaultInfo(), MirrorInfo(info = ctx.attrs)]
 
-mirror = rule(impl = _mirror_impl, attrs = {
-    "dep": attrs.dep(),
-    "false": attrs.bool(),
-    "int": attrs.int(),
-    "list_string": attrs.list(attrs.string()),
-    "string": attrs.string(),
-    "true": attrs.bool(),
-})
+mirror = rule(
+    impl = _mirror_impl,
+    attrs = {
+        "dep": attrs.dep(),
+        "false": attrs.bool(),
+        "int": attrs.int(),
+        "list_string": attrs.list(attrs.string()),
+        "string": attrs.string(),
+        "true": attrs.bool(),
+    },
+)
 
 ValidateInfo = provider(fields = ["string"])

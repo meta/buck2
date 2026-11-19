@@ -14,9 +14,11 @@ import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.java.ActionMetadata;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.RebuildReason;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class IncrementalCompilationValidator {
 
   public IncrementalCompilationValidator() {}

@@ -93,14 +93,14 @@ pub trait SuperConsoleTestingExt {
 
 impl SuperConsoleTestingExt for SuperConsole {
     fn test_output(&self) -> &TestOutput {
-        self.output
+        self.output()
             .as_any()
             .downcast_ref()
             .expect("Downcast failed")
     }
 
     fn test_output_mut(&mut self) -> &mut TestOutput {
-        self.output
+        self.output_mut()
             .as_any_mut()
             .downcast_mut()
             .expect("Downcast failed")

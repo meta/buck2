@@ -13,7 +13,7 @@ package com.facebook.buck.jvm.java.abi.source;
 import com.facebook.buck.jvm.java.abi.source.api.SourceCodeWillNotCompileException;
 import com.facebook.buck.jvm.java.abi.source.api.StopCompilation;
 import com.facebook.buck.jvm.java.plugin.adapter.BuckJavacTask;
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
@@ -32,6 +32,7 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.JavaFileObject;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link JavacTask} that implements only the frontend portions of the task,
@@ -42,6 +43,7 @@ import javax.tools.JavaFileObject;
  * about references to symbols defined in those dependencies. See the documentation of {@link
  * com.facebook.buck.jvm.java.abi.source} for details.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FrontendOnlyJavacTask extends BuckJavacTask {
   private final JavacTask javacTask;
 
@@ -64,6 +66,7 @@ public class FrontendOnlyJavacTask extends BuckJavacTask {
 
   @Override
   public Iterable<? extends CompilationUnitTree> parse() throws IOException {
+    prepare();
     if (parsedCompilationUnits == null) {
       parsedCompilationUnits = javacTask.parse();
     }
@@ -154,6 +157,7 @@ public class FrontendOnlyJavacTask extends BuckJavacTask {
 
   @Override
   public Boolean call() {
+    prepare();
     try {
       stopCompilationAfterEnter = true;
       return javacTask.call();

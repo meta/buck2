@@ -22,4 +22,3 @@ error: Expected type `RecFailCt1` but got `RecFailCt2`
   |
 8 |     f_fail_ct(RecFailCt2(a = 1, b = 2))
   |               ^^^^^^^^^^^^^^^^^^^^^^^^
-  |

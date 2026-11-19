@@ -18,12 +18,12 @@ use buck2_common::dice::cells::HasCellResolver;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::ctx::ServerCommandDiceContext;
 use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use dice::DiceComputations;
 use futures::FutureExt;
-use indexmap::IndexMap;
 
 use crate::ServerAuditSubcommand;
 
@@ -36,12 +36,18 @@ impl ServerAuditSubcommand for AuditCellCommand {
         _client_ctx: ClientContext,
     ) -> buck2_error::Result<()> {
         Ok(server_ctx
-            .with_dice_ctx(|server_ctx, mut ctx| async move {
+            .with_dice_ctx(|server_ctx, ctx| async move {
                 let fs = server_ctx.project_root();
                 let cwd = server_ctx.working_dir();
 
-                let mappings =
-                    audit_cell(&mut ctx, &self.aliases_to_resolve, self.aliases, cwd, fs).await?;
+                let mappings = audit_cell(
+                    &mut ctx.ctx(),
+                    &self.aliases_to_resolve,
+                    self.aliases,
+                    cwd,
+                    fs,
+                )
+                .await?;
 
                 let mut stdout = stdout.as_writer();
                 if self.paths_only {
@@ -73,10 +79,10 @@ pub(crate) async fn audit_cell(
     aliases: bool,
     cwd: &ProjectRelativePath,
     fs: &ProjectRoot,
-) -> buck2_error::Result<IndexMap<String, AbsNormPathBuf>> {
+) -> buck2_error::Result<BuckMutInsertionMap<String, AbsNormPathBuf>> {
     let cells = ctx.get_cell_resolver().await?;
     let this_resolver = ctx.get_cell_alias_resolver_for_dir(cwd).await?;
-    let mappings: IndexMap<_, _> = {
+    let mappings: BuckMutInsertionMap<_, _> = {
         if aliases_to_resolve.is_empty() {
             if aliases {
                 this_resolver

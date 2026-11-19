@@ -23,4 +23,3 @@ error: Value `record[WrongRec](x=1)` of type `record` does not match the type an
   |
 6 | noop(foo)(WrongRec(x = 1))
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |

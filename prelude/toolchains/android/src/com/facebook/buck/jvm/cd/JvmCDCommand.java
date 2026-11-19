@@ -10,9 +10,11 @@
 
 package com.facebook.buck.jvm.cd;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 
 /** A single compilation action created from command line or worker args */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface JvmCDCommand {
   String WORKING_DIRECTORY_ENV_VAR = "BUCK_SCRATCH_PATH";
 

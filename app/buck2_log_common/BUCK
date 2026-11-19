@@ -1,0 +1,36 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "buck2_log_common",
+    srcs = glob([
+        "src/**/*.rs",
+    ]),
+    test_deps = [
+        "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",
+    ],
+    deps = [
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:const_format",
+        "fbsource//third-party/rust:derive_more",
+        "fbsource//third-party/rust:flate2",
+        "fbsource//third-party/rust:form_urlencoded",
+        "fbsource//third-party/rust:futures",
+        "fbsource//third-party/rust:jiff",
+        "fbsource//third-party/rust:serde",
+        "fbsource//third-party/rust:serde_json",
+        "fbsource//third-party/rust:tempfile",
+        "fbsource//third-party/rust:tokio-stream",
+        "//buck2/app/buck2_client_ctx:buck2_client_ctx",
+        "//buck2/app/buck2_common:buck2_common",
+        "//buck2/app/buck2_data:buck2_data",
+        "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_event_log:buck2_event_log",
+        "//buck2/app/buck2_event_observer:buck2_event_observer",
+        "//buck2/app/buck2_events:buck2_events",
+        "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
+        "//buck2/gazebo/dupe:dupe",
+    ],
+)

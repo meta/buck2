@@ -18,11 +18,13 @@ use std::task::Poll;
 
 use tokio::io;
 use tokio::sync::oneshot;
-use winapi::um::handleapi;
-use winapi::um::threadpoollegacyapiset::UnregisterWaitEx;
-use winapi::um::winbase;
-use winapi::um::winnt;
-use winapi::um::winnt::HANDLE;
+use windows_sys::Win32::Foundation::HANDLE;
+use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+use windows_sys::Win32::System::Threading::INFINITE;
+use windows_sys::Win32::System::Threading::RegisterWaitForSingleObject;
+use windows_sys::Win32::System::Threading::UnregisterWaitEx;
+use windows_sys::Win32::System::Threading::WT_EXECUTEINWAITTHREAD;
+use windows_sys::Win32::System::Threading::WT_EXECUTEONLYONCE;
 
 pub(crate) struct ChildProcess {
     inner: Child,
@@ -72,15 +74,15 @@ impl Future for ChildProcess {
             }
             let (tx, rx) = oneshot::channel();
             let ptr = Box::into_raw(Box::new(Some(tx)));
-            let mut wait_object = handleapi::INVALID_HANDLE_VALUE;
+            let mut wait_object = INVALID_HANDLE_VALUE;
             let rc = unsafe {
-                winbase::RegisterWaitForSingleObject(
+                RegisterWaitForSingleObject(
                     &mut wait_object,
-                    inner.inner.as_raw_handle(),
+                    inner.inner.as_raw_handle() as HANDLE,
                     Some(callback),
-                    ptr as *mut _,
-                    winbase::INFINITE,
-                    winnt::WT_EXECUTEINWAITTHREAD | winnt::WT_EXECUTEONLYONCE,
+                    ptr as *const _,
+                    INFINITE,
+                    WT_EXECUTEINWAITTHREAD | WT_EXECUTEONLYONCE,
                 )
             };
             if rc == 0 {
@@ -111,7 +113,7 @@ unsafe impl Send for Waiting {}
 impl Drop for Waiting {
     fn drop(&mut self) {
         unsafe {
-            let rc = UnregisterWaitEx(self.wait_object, handleapi::INVALID_HANDLE_VALUE);
+            let rc = UnregisterWaitEx(self.wait_object, INVALID_HANDLE_VALUE);
             if rc == 0 {
                 panic!("failed to unregister: {}", io::Error::last_os_error());
             }
@@ -120,7 +122,7 @@ impl Drop for Waiting {
     }
 }
 
-unsafe extern "system" fn callback(ptr: *mut std::ffi::c_void, _timer_fired: winnt::BOOLEAN) {
+unsafe extern "system" fn callback(ptr: *mut std::ffi::c_void, _timer_fired: bool) {
     let complete = unsafe { &mut *(ptr as *mut Option<oneshot::Sender<()>>) };
     complete.take().unwrap().send(()).unwrap();
 }

@@ -40,28 +40,35 @@ fn derive(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = &input.ident;
     let body = derive_body(&input)?;
 
-    let impl_generics = if input.generics.params.is_empty() {
-        quote! {}
-    } else {
-        let params = input
-            .generics()
-            .assert_only_type_params()?
-            .into_iter()
-            .map(|t| {
+    // The brand of the spans: the type's lifetime parameter if it has one, else any.
+    let lifetime = input
+        .generics()
+        .assert_at_most_one_lifetime_param()?
+        .map(|lt| lt.lifetime.clone())
+        .unwrap_or_else(|| syn::parse_quote!('__f));
+
+    let type_params = input
+        .generics
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            syn::GenericParam::Lifetime(_) => None,
+            syn::GenericParam::Type(t) => {
                 let t = &t.ident;
-                quote! {
-                    #t: crate::eval::runtime::visit_span::VisitSpanMut
-                }
-            })
-            .collect::<Vec<_>>();
-        quote! {
-            < #(#params,)* >
-        }
-    };
+                Some(Ok(quote! {
+                    #t: crate::eval::runtime::visit_span::VisitSpanMut<#lifetime>
+                }))
+            }
+            syn::GenericParam::Const(c) => Some(Err(syn::Error::new_spanned(
+                c,
+                "const parameters are not supported",
+            ))),
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
 
     Ok(quote! {
-        impl #impl_generics crate::eval::runtime::visit_span::VisitSpanMut for #name #type_generics #where_clause {
-            fn visit_spans(&mut self, visitor: &mut impl FnMut(&mut crate::eval::runtime::frame_span::FrameSpan)) {
+        impl<#lifetime, #(#type_params,)*> crate::eval::runtime::visit_span::VisitSpanMut<#lifetime> for #name #type_generics #where_clause {
+            fn visit_spans(&mut self, visitor: &mut impl FnMut(&mut crate::eval::runtime::frame_span::FrameSpan<#lifetime>)) {
                 #body
             }
         }

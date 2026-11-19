@@ -5,7 +5,7 @@
   "results": {
     "root//:ok?root//:arm+root//:linux": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},
@@ -21,7 +21,7 @@
     },
     "root//:ok?root//:linux+root//:arm": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},

@@ -11,7 +11,7 @@ prefer_local = read_root_config("test", "prefer_local", "false").lower() == "tru
 def _merge_outputs_impl(ctx) -> list[Provider]:
     outputs = []
     for i in range(1, ctx.attrs.num_actions):
-        output = ctx.actions.declare_output("output{}.txt".format(i))
+        output = ctx.actions.declare_output("output{}.txt".format(i), has_content_based_path = False)
         outputs.append(output)
 
         sh_cmd = 'head -c 10 /dev/urandom > "$1"'
@@ -20,7 +20,7 @@ def _merge_outputs_impl(ctx) -> list[Provider]:
 
         ctx.actions.run(["sh", "-c", sh_cmd, "--", output.as_output()], category = "my_action{}".format(i), prefer_local = prefer_local)
 
-    merged = ctx.actions.declare_output("output.txt")
+    merged = ctx.actions.declare_output("output.txt", has_content_based_path = False)
     cmd = cmd_args("cat", outputs, ">", merged.as_output(), delimiter = " ")
     ctx.actions.run(["sh", "-c", cmd], category = "merge", prefer_local = prefer_local)
 
@@ -83,12 +83,10 @@ import time
 
 PAGE = os.sysconf("SC_PAGE_SIZE")
 
-
 def touch_every_page(buf: bytearray):
     # make sure we touch every page
     for i in range(0, len(buf), PAGE):
         buf[i] = 1
-
 
 def main():
     if len(sys.argv) < 4:
@@ -110,14 +108,13 @@ def main():
     with open(file_path, "w") as f:
         f.write("done")
 
-
 main()
 """
 
 def _allocate_memory_impl(ctx) -> list[Provider]:
     outputs = []
     for i in range(0, ctx.attrs.num_actions):
-        output = ctx.actions.declare_output("output{}.txt".format(i))
+        output = ctx.actions.declare_output("output{}.txt".format(i), has_content_based_path = False)
         each_action_memory_mb = ctx.attrs.each_action_memory_mb
 
         cmd = cmd_args(["fbpython", "-c", SCRIPT, each_action_memory_mb, str(ctx.attrs.sleep), output.as_output()])
@@ -125,7 +122,7 @@ def _allocate_memory_impl(ctx) -> list[Provider]:
 
         outputs.append(output)
 
-    merged = ctx.actions.declare_output("output.txt")
+    merged = ctx.actions.declare_output("output.txt", has_content_based_path = False)
     cmd = cmd_args("cat", outputs, ">", merged.as_output(), delimiter = " ")
     ctx.actions.run(["sh", "-c", cmd], category = "merge", prefer_local = prefer_local)
 
@@ -145,19 +142,21 @@ allocate_memory = rule(
 _use_some_memory = read_root_config("use_some_memory", "path")
 
 def _freeze_unfreeze_impl(ctx) -> list[Provider]:
-    output0 = ctx.actions.declare_output("output0.txt")
-    cmd0 = cmd_args([_use_some_memory, "--allocate-count", "100", "--each-tick-allocate-memory", "2", "--tick-duration", "0.1", "--output", output0.as_output()])
+    output0 = ctx.actions.declare_output("output0.txt", has_content_based_path = False)
+    cmd0 = cmd_args(
+        [_use_some_memory, "--allocate-count", "100", "--each-tick-allocate-memory", "2", "--tick-duration", "0.1", "--output", output0.as_output()]
+    )
 
     # this action will be frozen
     ctx.actions.run(cmd0, category = "freeze_unfreeze", identifier = "action_to_be_frozen", prefer_local = prefer_local)
 
-    output1 = ctx.actions.declare_output("output1.txt")
+    output1 = ctx.actions.declare_output("output1.txt", has_content_based_path = False)
 
     # this action will not be frozen
     cmd1 = cmd_args([_use_some_memory, "--allocate-count", "40", "--each-tick-allocate-memory", "1", "--tick-duration", "0.1", "--output", output1.as_output()])
     ctx.actions.run(cmd1, category = "freeze_unfreeze", identifier = "small_action", prefer_local = prefer_local)
 
-    final_output = ctx.actions.declare_output("final_output.txt")
+    final_output = ctx.actions.declare_output("final_output.txt", has_content_based_path = False)
 
     combine_output_script = """
     (cat "$1"; echo "========================"; cat "$2") > "$3"

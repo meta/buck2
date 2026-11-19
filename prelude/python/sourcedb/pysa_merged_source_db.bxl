@@ -1,0 +1,137 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+load("@prelude//python:python.bzl", "PythonLibraryManifestsTSet")
+load("@prelude//python:source_db.bzl", "PythonSourceDBInfo")
+load("@prelude//python:toolchain.bzl", "PythonToolchainInfo")
+load("@prelude//python:typing.bzl", "get_default_sys_platform")
+# @oss-disable[end= ]: load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
+load("@prelude//python:typing.bzl", "DEFAULT_PY_VERSION") # @oss-enable
+load("@prelude//python/sourcedb:filter.bxl", "BUCK_PYTHON_RULE_KINDS")
+load("@prelude//utils:utils.bzl", "flatten")
+
+def _is_python_target(rule_type: str) -> bool:
+    for kind in BUCK_PYTHON_RULE_KINDS:
+        if rule_type.endswith(kind):
+            return True
+    return False
+
+def _is_binary_or_test(rule_type: str) -> bool:
+    return rule_type.endswith("python_binary") or rule_type.endswith("python_test")
+
+def _get_manifests_from_analysis(analysis_result: bxl.AnalysisResult) -> [PythonLibraryManifestsTSet, None]:
+    sub_targets = analysis_result.providers()[DefaultInfo].sub_targets
+    sdb = sub_targets.get("source-db-no-deps")
+    if sdb == None:
+        return None
+    info = sdb.get(PythonSourceDBInfo)
+    if info == None:
+        return None
+    return info.manifests
+
+def _ensure_manifest_artifacts(ctx: bxl.Context, manifest_info) -> None:
+    for artifact, _dest in manifest_info.artifacts:
+        ctx.output.ensure(artifact)
+
+def _run(ctx: bxl.Context) -> None:
+    # Resolve target patterns to Python targets
+    all_targets = ctx.unconfigured_targets(flatten(ctx.cli_args.target))
+    python_targets = [t for t in all_targets if _is_python_target(t.rule_type)]
+
+    if len(python_targets) == 0:
+        fail("No Python targets found matching the given patterns")
+
+    # python_binary and python_test targets create an implicit <name>-library
+    # target that holds the actual sources. Resolve to those instead.
+    library_labels = []
+    for target in python_targets:
+        if _is_binary_or_test(target.rule_type):
+            library_labels.append(str(target.label) + "-library")
+        else:
+            library_labels.append(str(target.label))
+    library_targets = ctx.unconfigured_targets(library_labels)
+
+    configured_targets = ctx.configured_targets(library_targets, modifiers = ctx.modifiers)
+    analysis_results = ctx.analysis(configured_targets)
+
+    # Collect manifests tsets and track which targets are roots
+    root_labels = {}
+    all_tsets = []
+    first_configured = None
+    for configured_target in configured_targets:
+        label = configured_target.label.with_sub_target()
+        result = analysis_results[label]
+        manifests = _get_manifests_from_analysis(result)
+        if manifests != None:
+            all_tsets.append(manifests)
+            root_labels[str(configured_target.label)] = True
+            if first_configured == None:
+                first_configured = configured_target
+
+    if len(all_tsets) == 0:
+        fail("No PythonSourceDBInfo manifests found for the given targets")
+
+    # Get typeshed from the first target's Python toolchain
+    first_attrs = first_configured.resolved_attrs_eager(ctx)
+    typeshed = first_attrs._python_toolchain[PythonToolchainInfo].typeshed_stubs
+
+    # Create a combined tset from all root targets' manifests
+    actions = ctx.bxl_actions().actions
+    combined = actions.tset(PythonLibraryManifestsTSet, children = all_tsets)
+
+    # Traverse the combined tset to separate sources from dependencies
+    source_manifests = []
+    dep_manifests = []
+    for manifest in combined.traverse():
+        if manifest.src_types == None:
+            continue
+        if str(manifest.label.configured_target()) in root_labels:
+            source_manifests.append(manifest.src_types)
+        else:
+            dep_manifests.append(manifest.src_types)
+
+    # Ensure all manifest files and their referenced source artifacts
+    source_paths = []
+    for manifest_info in source_manifests:
+        ensured = ctx.output.ensure(manifest_info.manifest)
+        source_paths.append(ensured.rel_path())
+        _ensure_manifest_artifacts(ctx, manifest_info)
+
+    dep_paths = []
+    for manifest_info in dep_manifests:
+        ensured = ctx.output.ensure(manifest_info.manifest)
+        dep_paths.append(ensured.rel_path())
+        _ensure_manifest_artifacts(ctx, manifest_info)
+
+    # Ensure typeshed artifacts
+    typeshed_path = None
+    if typeshed != None:
+        typeshed_ensured = ctx.output.ensure(typeshed.manifest)
+        typeshed_path = typeshed_ensured.rel_path()
+        _ensure_manifest_artifacts(ctx, typeshed)
+
+    ctx.output.print_json({
+        "dependencies": dep_paths,
+        "py_version": DEFAULT_PY_VERSION,
+        "sources": source_paths,
+        "system_platform": get_default_sys_platform(),
+        "typeshed": typeshed_path,
+    })
+
+run = bxl_main(
+    doc = """Produce a merged type check config for multiple Python Buck targets.
+
+    Usage: buck2 bxl prelude//python/sourcedb/pysa_merged_source_db.bxl:run -- --target fbcode//foo/...
+    """,
+    impl = _run,
+    cli_args = {
+        "target": cli_args.list(
+            cli_args.target_expr(doc = "Target pattern to include in the merged config"),
+        ),
+    },
+)

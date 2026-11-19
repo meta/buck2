@@ -47,8 +47,11 @@ def my_subtract(a, b):
         ("==".to_owned(), "equals".to_owned()),
         ("-".to_owned(), "my_subtract".to_owned()),
     ]));
-    let module = Module::new();
-    let mut eval = Evaluator::new(&module);
-    let v = eval.eval_module(ast, &Globals::standard()).unwrap();
-    assert_eq!(v.unpack_str().unwrap(), "((15 - 9) == True)");
+    Module::with_temp_heap(|module| {
+        let mut eval = Evaluator::new(&module);
+        let v = eval.eval_module(ast, &Globals::standard()).unwrap();
+        assert_eq!(v.unpack_str().unwrap(), "((15 - 9) == True)");
+        crate::Result::Ok(())
+    })
+    .unwrap();
 }

@@ -35,3 +35,73 @@ configured_targets_with_modifiers = bxl_main(
     impl = _configured_targets_with_modifiers_impl,
     cli_args = {},
 )
+
+def _strip_cfg_impl(ctx: bxl.Context):
+    node = ctx.configured_targets("root//:with_deps")
+    attrs = node.attrs_lazy()
+
+    # Test strip_cfg on a string attribute (name)
+    name_attr = attrs.get("name")
+    if name_attr:
+        stripped_name = name_attr.strip_cfg()
+
+        # Verify that strip_cfg returns a StarlarkCoercedAttr
+        # The value should be "with_deps" when converted to string
+        stripped_value = stripped_name.value()
+        _assert_eq(stripped_value, "with_deps")
+
+    # Test strip_cfg on a deps attribute (list of labels)
+    deps_attr = attrs.get("deps")
+    if deps_attr:
+        stripped_deps = deps_attr.strip_cfg()
+
+        # Verify that the stripped config returns a coerced attr
+        # For deps, this should be a list of unconfigured labels
+        stripped_deps_value = stripped_deps.value()
+
+        # Verify it's a list and has the expected targets
+        _assert_eq(len(stripped_deps_value), 2)
+        ctx.output.print("Successfully stripped config from deps attribute")
+
+    # Test strip_cfg on a list attribute (srcs)
+    srcs_attr = attrs.get("srcs")
+    if srcs_attr:
+        stripped_srcs = srcs_attr.strip_cfg()
+
+        # Verify that the stripped config returns a coerced attr
+        stripped_srcs_value = stripped_srcs.value()
+
+        # Verify it's a list and has the expected sources
+        _assert_eq(len(stripped_srcs_value), 2)
+        ctx.output.print("Successfully stripped config from srcs attribute")
+
+strip_cfg = bxl_main(
+    impl = _strip_cfg_impl,
+    cli_args = {},
+)
+
+def _lazy_attrs_special_lookup_impl(ctx):
+    node = ctx.configured_targets("root//:with_deps")
+    attrs = node.attrs_lazy()
+    _assert_eq(attrs.get("name").value(), "with_deps")
+    _assert_eq(len(attrs.get("srcs").value()), 2)
+    _assert_eq(len(attrs.get("buck.deps").value()), 2)
+    _assert_eq(attrs.get("not_an_attribute"), None)
+
+    eager = node.attrs_eager()
+    for name in dir(eager):
+        _assert_eq(attrs.get(name).value(), getattr(eager, name).value())
+
+    _assert_eq(attrs.get("buck.exec_group_platforms"), None)
+    forward = ctx.configured_targets("//transition:rainbow")
+    _assert_eq(forward.rule_type, "forward")
+    forward_eager = forward.attrs_eager()
+    for name in dir(forward_eager):
+        _assert_eq(forward.attrs_lazy().get(name).value(), getattr(forward_eager, name).value())
+    _assert_eq(forward.attrs_lazy().get("not_an_attribute"), None)
+    ctx.output.print("lazy special attributes match eager values")
+
+lazy_attrs_special_lookup = bxl_main(
+    impl = _lazy_attrs_special_lookup_impl,
+    cli_args = {},
+)

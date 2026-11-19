@@ -6,6 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//erlang:erlang_erts.bzl", "erlang_erts")
 load("@prelude//erlang:erlang_info.bzl", "ErlangOTPBinariesInfo")
 load("@prelude//erlang:erlang_toolchain.bzl", "erlang_toolchain")
 
@@ -22,18 +23,24 @@ def _system_erlang_binary_impl(_ctx):
 system_erlang_binary = rule(
     impl = _system_erlang_binary_impl,
     attrs = {},
+    is_toolchain_rule = True,
 )
 
-def system_erlang_toolchain(
-        name,
-        visibility):
+def system_erlang_toolchain(name, visibility):
     system_erlang_binary(
         name = "{}-binaries".format(name),
         visibility = visibility,
     )
 
+    erlang_erts(
+        name = "{}-erts".format(name),
+        otp_binaries = ":{}-binaries".format(name),
+        visibility = visibility,
+    )
+
     erlang_toolchain(
         name = name,
+        erts_toolchain_info = ":{}-erts".format(name),
         otp_binaries = ":{}-binaries".format(name),
         parse_transforms = [],
         parse_transforms_filters = {},

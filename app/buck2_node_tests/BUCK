@@ -11,7 +11,6 @@ rust_unittest(
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_fs:buck2_fs",
         "//buck2/app/buck2_node:buck2_node",
-        "//buck2/app/buck2_util:buck2_util",
         "//buck2/gazebo/dupe:dupe",
     ],
 )

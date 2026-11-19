@@ -13,6 +13,7 @@ package com.facebook.buck.android.aapt;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.util.ThrowingPrintWriter;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -30,6 +31,7 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 /** Main entry point for executing {@link MiniAapt} calls. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class MiniAaptExecutableMain {
 
   @Option(name = "--resource-paths", required = true)
@@ -49,7 +51,7 @@ public class MiniAaptExecutableMain {
       main.run();
       System.exit(0);
     } catch (CmdLineException e) {
-      System.err.println(e.getMessage());
+      System.err.println(e.toString());
       parser.printUsage(System.err);
       System.exit(1);
     }

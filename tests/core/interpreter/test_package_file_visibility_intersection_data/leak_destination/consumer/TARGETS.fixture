@@ -1,0 +1,11 @@
+# Consumer at `root//leak_destination/consumer:c` -- in the
+# `root//leak_destination/...` patch the leaky_target's `visibility =`
+# list explicitly grants. WITHOUT the intersection, this dep would
+# succeed (target's visibility allows it). WITH the intersection (set by
+# `intersect/PACKAGE`), the consumer must ALSO be in `root//intersect/`
+# -- which it is not -- so the intersection blocks the dep. This is the test
+# that proves the intersection actively narrows a non-PUBLIC visibility list.
+stub(
+    name = "c",
+    deps = ["root//intersect/leaky_target:t"],
+)

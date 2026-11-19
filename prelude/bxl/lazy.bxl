@@ -43,10 +43,7 @@ def catch_resolve_lazy_dict(bxl_ctx: bxl.Context, lazy_dict: dict[typing.Any, bx
     values = bxl_ctx.lazy.join_all(lazies).resolve()
     return dict(zip(keys, values))
 
-def batch_apply_lazy(
-        bxl_ctx: bxl.Context,
-        lazy_func: typing.Callable[[typing.Any], bxl.Lazy],
-        args: list[typing.Any]) -> list[typing.Any]:
+def batch_apply_lazy(bxl_ctx: bxl.Context, lazy_func: typing.Callable[[typing.Any], bxl.Lazy], args: list[typing.Any]) -> list[typing.Any]:
     """
     Applies a lazy function to a list of arguments, resolves them in parallel, and returns raw results.
     It will cause bxl fail immediately if any operation fails (no error catching).
@@ -76,10 +73,7 @@ def batch_apply_lazy(
     lazies = [lazy_func(arg) for arg in args]
     return bxl_ctx.lazy.join_all(lazies).resolve()
 
-def batch_apply_lazy_catch_each(
-        bxl_ctx: bxl.Context,
-        lazy_func: typing.Callable[[typing.Any], bxl.Lazy],
-        args: list[typing.Any]) -> list[bxl.Result]:
+def batch_apply_lazy_catch_each(bxl_ctx: bxl.Context, lazy_func: typing.Callable[[typing.Any], bxl.Lazy], args: list[typing.Any]) -> list[bxl.Result]:
     """
     Applies a lazy function to a list of arguments, resolves them in parallel, and returns individual `Result`
     objects for each operation. Errors are isolated per item.
@@ -118,10 +112,7 @@ def batch_apply_lazy_catch_each(
     lazies = [lazy_func(arg).catch() for arg in args]  # Catch per item
     return bxl_ctx.lazy.join_all(lazies).resolve()
 
-def batch_apply_lazy_catch_all(
-        bxl_ctx: bxl.Context,
-        lazy_func: typing.Callable[[typing.Any], bxl.Lazy],
-        args: list[typing.Any]) -> bxl.Result:
+def batch_apply_lazy_catch_all(bxl_ctx: bxl.Context, lazy_func: typing.Callable[[typing.Any], bxl.Lazy], args: list[typing.Any]) -> bxl.Result:
     """
     Applies a lazy function to a list of arguments, joins them into a single batch operation, and resolves
     with a global error catch. Returns either all successes or the first error encountered.
@@ -185,8 +176,7 @@ def partition_results(results: list[bxl.Result]) -> (list[typing.Any], list[bxl.
             errs.append(res.unwrap_err())
     return oks, errs
 
-def partition_results_dict(
-        results_dict: dict[typing.Any, bxl.Result]) -> (dict[typing.Any, typing.Any], dict[typing.Any, bxl.Error]):
+def partition_results_dict(results_dict: dict[typing.Any, bxl.Result]) -> (dict[typing.Any, typing.Any], dict[typing.Any, bxl.Error]):
     """
     Splits a dictionary of `bxl.Result` into two dictionaries:
     - Successful key-value pairs (unwrapped values)

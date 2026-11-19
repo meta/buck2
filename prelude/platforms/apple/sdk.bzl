@@ -15,6 +15,8 @@ _APPLE_SDKS = [
     "visionsimulator",
     "watchos",
     "watchsimulator",
+    "appletvos",
+    "appletvsimulator",
     # Marker entry used to help toolchain selectors define a set of
     # tools outside the apple_toolchain definition.
     "toolchain-tool",

@@ -1,0 +1,6 @@
+# Lives under `within_view_preserve/...`, so any sibling under the
+# subtree may depend on it (within_view permits it).
+stub(
+    name = "ok",
+    visibility = ["PUBLIC"],
+)

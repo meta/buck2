@@ -47,17 +47,8 @@ The arguments are:
 
 - `dynamic` - a list of artifacts whose values will be available in the
   function. These will be built before the function is run.
-- `inputs` - a container of artifacts (`cmd_args`, list of artifacts, and so
-  on).
-  - These inputs must include all the inputs that are referenced by the body of
-    the function argument, apart from those listed in `dynamic` and `outputs`:
-    extra inputs may be passed that are not used.
-  - The inputs are used for `buck2 aquery` functionality, but do not cause
-    speculative building. In fact, these inputs may form a cycle with other
-    `dynamic_output` actions if they were all required.
-  - In the future, it may be possible to not pass all the inputs if the repo is
-    set to permissive mode, allowing a more powerful form of dynamic
-    dependencies.
+- `inputs` - this parameter is accepted but **ignored**. It exists for
+  historical reasons and has no effect. You can omit it or pass an empty list.
 - `outputs` - a list of unbound artifacts (created with `declare_artifact`)
   which will be bound by the function.
 - The function argument is given 3 arguments:

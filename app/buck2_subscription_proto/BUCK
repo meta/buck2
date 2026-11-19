@@ -1,10 +1,10 @@
-load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library_prost_0134")
+load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 load("@fbcode//grpc_fb/codegen:buck_macros.bzl", "grpc_library")
 load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
 
 oncall("build_infra")
 
-rust_protobuf_library_prost_0134(
+rust_protobuf_library(
     name = "buck2_subscription_proto",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",

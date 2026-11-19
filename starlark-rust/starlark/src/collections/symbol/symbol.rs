@@ -17,30 +17,37 @@
 
 use std::fmt;
 use std::fmt::Debug;
-use std::intrinsics::copy_nonoverlapping;
 use std::mem;
+use std::ptr::copy_nonoverlapping;
 use std::slice;
 use std::str;
 
 use allocative::Allocative;
+use pagable::PagableDeserialize;
+use pagable::PagableSerialize;
+use starlark_derive::ProvidesStaticType;
+use starlark_derive::StarlarkPagableViaPagable;
 use starlark_derive::Trace;
 use starlark_map::Hashed;
 use starlark_map::StarlarkHashValue;
 
 use crate as starlark;
-use crate::coerce::Coerce;
 use crate::collections::aligned_padded_str::AlignedPaddedStr;
 
 /// A pre-hashed string used for efficient dictionary lookup.
-#[derive(Clone, Trace, Allocative)]
+#[derive(
+    Clone,
+    Trace,
+    Allocative,
+    ProvidesStaticType,
+    StarlarkPagableViaPagable
+)]
 pub(crate) struct Symbol {
     hash: u64,
     len: u32,
     payload: Box<[usize]>,
     small_hash: StarlarkHashValue,
 }
-
-unsafe impl Coerce<Symbol> for Symbol {}
 
 impl Debug for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -115,5 +122,23 @@ impl Symbol {
 
     pub(crate) fn small_hash(&self) -> StarlarkHashValue {
         self.small_hash
+    }
+}
+
+impl PagableSerialize for Symbol {
+    fn pagable_serialize(
+        &self,
+        serializer: &mut dyn pagable::PagableSerializer,
+    ) -> pagable::Result<()> {
+        self.as_str().to_owned().pagable_serialize(serializer)
+    }
+}
+
+impl<'de> PagableDeserialize<'de> for Symbol {
+    fn pagable_deserialize<D: pagable::PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        let s = String::pagable_deserialize(deserializer)?;
+        Ok(Symbol::new(&s))
     }
 }

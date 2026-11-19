@@ -10,9 +10,8 @@
 
 use std::cmp::Ordering;
 
+use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr_type::dict::DictAttrType;
-use buck2_node::attrs::attr_type::dict::DictLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use starlark::values::UnpackValue;
@@ -24,12 +23,12 @@ use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
 impl AttrTypeCoerce for DictAttrType {
-    fn coerce_item(
+    fn coerce_item<'v>(
         &self,
         configurable: AttrIsConfigurable,
-        ctx: &dyn AttrCoercionContext,
-        value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+        ctx: &dyn AttrCoercionContext<'v>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<AttrToken> {
         let dict = DictRef::unpack_value_err(value)?;
         let mut res = Vec::with_capacity(dict.len());
         if self.sorted {
@@ -52,7 +51,7 @@ impl AttrTypeCoerce for DictAttrType {
                 ));
             }
         }
-        Ok(CoercedAttr::Dict(DictLiteral(ctx.intern_dict(res))))
+        ctx.attr_arena().encode_dict(&res)
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {

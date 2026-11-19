@@ -14,7 +14,7 @@ use std::marker::PhantomData;
 
 use async_trait::async_trait;
 use buck2_query_derive::query_module;
-use gazebo::variants::VariantName;
+use variant_name::VariantName;
 
 use crate::query::environment::QueryEnvironment;
 use crate::query::environment::QueryTarget;
@@ -24,6 +24,7 @@ use crate::query::syntax::simple::eval::evaluator::QueryEvaluator;
 use crate::query::syntax::simple::eval::set::TargetSet;
 use crate::query::syntax::simple::eval::values::QueryEvaluationValue;
 use crate::query::syntax::simple::eval::values::QueryValue;
+use crate::query::syntax::simple::eval::values::QueryValueDepth;
 use crate::query::syntax::simple::functions::AugmentedQueryFunctions;
 use crate::query::syntax::simple::functions::QueryFunctions;
 use crate::query::syntax::simple::functions::helpers::CapturedExpr;
@@ -125,7 +126,7 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
                 }
 
                 Some(Filter::<'a, Env> {
-                    inner_env: &env,
+                    inner_env: env,
                     functions,
                     expr,
                 })
@@ -139,10 +140,10 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
         env: &Env,
         functions: &dyn QueryFunctions<Env = Env>,
         targets: &TargetSet<Env::Target>,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr<'_>>,
     ) -> buck2_error::Result<TargetSet<Env::Target>> {
-        let filter = self.make_filter(&env, functions, captured_expr);
+        let filter = self.make_filter(env, functions, captured_expr);
         let filter_ref = filter
             .as_ref()
             .map(|v| v as &dyn TraversalFilter<Env::Target>);
@@ -156,10 +157,10 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
         functions: &dyn QueryFunctions<Env = Env>,
         universe: &TargetSet<Env::Target>,
         from: &TargetSet<Env::Target>,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr<'_>>,
     ) -> buck2_error::Result<TargetSet<Env::Target>> {
-        let filter = self.make_filter(&env, functions, captured_expr);
+        let filter = self.make_filter(env, functions, captured_expr);
         let filter_ref = filter
             .as_ref()
             .map(|v| v as &dyn TraversalFilter<Env::Target>);
@@ -175,7 +176,7 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
         to: &TargetSet<Env::Target>,
         captured_expr: Option<&CapturedExpr<'_>>,
     ) -> buck2_error::Result<TargetSet<Env::Target>> {
-        let filter = self.make_filter(&env, functions, captured_expr);
+        let filter = self.make_filter(env, functions, captured_expr);
         let filter_ref = filter
             .as_ref()
             .map(|v| v as &dyn TraversalFilter<Env::Target>);
@@ -191,7 +192,7 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
         to: &TargetSet<Env::Target>,
         captured_expr: Option<&CapturedExpr<'_>>,
     ) -> buck2_error::Result<TargetSet<Env::Target>> {
-        let filter = self.make_filter(&env, functions, captured_expr);
+        let filter = self.make_filter(env, functions, captured_expr);
         let filter_ref = filter
             .as_ref()
             .map(|v| v as &dyn TraversalFilter<Env::Target>);

@@ -11,16 +11,17 @@
 use std::hash::Hash;
 
 use allocative::Allocative;
+use buck2_hash::BuckMutInsertionSet;
 use dupe::Clone_;
 use dupe::Dupe;
+use pagable::Pagable;
 use starlark_map::Equivalent;
 use starlark_map::Hashed;
-use starlark_map::ordered_set::OrderedSet;
 use starlark_map::small_set;
 
 use crate::query::graph::node::LabeledNode;
 
-#[derive(Debug, Clone, Dupe, Allocative)]
+#[derive(Debug, Clone, Dupe, Allocative, Pagable)]
 pub struct LabelIndexed<T: LabeledNode>(pub T);
 
 impl<T: LabeledNode> PartialEq for LabelIndexed<T> {
@@ -68,26 +69,44 @@ impl<'a, T: LabeledNode> Hash for LabelIndexer<'a, T> {
 
 /// This is a Set that contains `LabeledNode`s, but for all trait operation like `Eq`, `Ord` all
 /// operate only on the `NodeRef` of the `LabeledNode`.
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Allocative)]
+#[derive(Debug, Clone, Allocative, Pagable)]
 pub struct LabelIndexedSet<T: LabeledNode> {
-    nodes: OrderedSet<LabelIndexed<T>>,
+    nodes: BuckMutInsertionSet<LabelIndexed<T>>,
+}
+
+impl<T: LabeledNode> PartialEq for LabelIndexedSet<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.nodes == other.nodes
+    }
+}
+
+impl<T: LabeledNode> Eq for LabelIndexedSet<T> {}
+
+impl<T: LabeledNode> Hash for LabelIndexedSet<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.nodes.hash(state)
+    }
 }
 
 impl<T: LabeledNode> LabelIndexedSet<T> {
     pub fn new() -> Self {
         Self {
-            nodes: OrderedSet::new(),
+            nodes: BuckMutInsertionSet::new(),
         }
     }
 
     pub fn with_capacity(n: usize) -> Self {
         Self {
-            nodes: OrderedSet::with_capacity(n),
+            nodes: BuckMutInsertionSet::with_capacity(n),
         }
     }
 
     pub fn len(&self) -> usize {
         self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
     }
 
     pub fn get(&self, value: &T::Key) -> Option<&T> {
@@ -127,10 +146,6 @@ impl<T: LabeledNode> LabelIndexedSet<T> {
 
     pub fn get_index(&self, index: usize) -> Option<&T> {
         self.nodes.get_index(index).map(|e| &e.0)
-    }
-
-    pub fn get_index_of(&self, value: &T::Key) -> Option<usize> {
-        self.nodes.get_index_of(&LabelIndexer(Hashed::new(value)))
     }
 
     pub fn last(&self) -> Option<&T> {

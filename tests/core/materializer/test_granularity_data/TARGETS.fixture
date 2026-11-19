@@ -1,0 +1,15 @@
+load(":defs.bzl", "gen", "list_dir")
+
+# Each target below belongs to exactly one test, which rewrites its `variant`
+# from the `_1` layout to the `_2` layout between two builds. The variant names
+# are unique per target so that a test can rewrite its own target only.
+
+gen(name = "dir_to_files", variant = "dir_to_files_1")
+
+gen(name = "files_to_dir", variant = "files_to_dir_1")
+
+gen(name = "shrinking_dir", variant = "shrinking_dir_1")
+
+gen(name = "listed_dir", variant = "listed_dir_1")
+
+list_dir(name = "listed_dir_listing", dep = ":listed_dir")

@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_core::soft_error;
+use buck2_core::soft_error_or_panic;
 use buck2_error::conversion::from_any_with_tag;
 use dupe::Dupe;
 
@@ -28,18 +28,22 @@ impl ChannelEventSink {
 
 impl EventSink for ChannelEventSink {
     fn send(&self, event: Event) {
-        let should_panic = match &event {
+        let is_control_event = match &event {
             // Sometimes daemon tries to send events after the clients disconnects
             Event::Buck(..) => false,
             Event::PartialResult(..) => true,
             Event::CommandResult(..) => true,
         };
         if let Err(e) = self.0.send(event) {
-            if should_panic {
-                // TODO iguridi: this panic was here before. We probably should just ignore these errors
-                // but first, let's check how often this happens.
-                let _res = soft_error!("event_sink_send_panic", from_any_with_tag(e.clone(), buck2_error::ErrorTag::Tier0), quiet: true);
-                panic!("failed to send control event to ChannelEventSink: {e}");
+            if is_control_event {
+                // The receiver stops after a command's first result, so this is a second result or
+                // a late partial result. Panicking here would take down the daemon and every command
+                // running in it, for an event nobody is listening to.
+                // TODO iguridi: ignore these errors once this shows how often they happen.
+                soft_error_or_panic!(
+                    "event_sink_send_panic",
+                    from_any_with_tag(e, buck2_error::ErrorTag::Tier0)
+                );
             }
         }
     }
@@ -91,5 +95,13 @@ mod tests {
                 data: Some(Command(CommandStart { .. }))
             })
         ));
+    }
+
+    #[test]
+    fn sending_control_event_after_receiver_dropped_does_not_panic() {
+        let (send, recv) = crossbeam_channel::unbounded();
+        drop(recv);
+        let sink = ChannelEventSink::new(send);
+        sink.send(Event::CommandResult(Box::default()));
     }
 }

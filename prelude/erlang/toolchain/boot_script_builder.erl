@@ -57,7 +57,64 @@ do(SpecFile, OutDir) ->
 
     RelName = binary_to_list(RelNameBin),
     RelVersion = binary_to_list(RelVersionBin),
+    build_no_dot_erlang_boot(Apps, [LibDirWildcard], RelName, RelVersion, OTPAppMapping),
     build_start_boot(Apps, [LibDirWildcard], RelName, RelVersion, OTPAppMapping).
+
+build_no_dot_erlang_boot(
+    Apps,
+    PathOption,
+    RelName,
+    RelVersion,
+    OTPAppMapping
+) ->
+    {OTPApps, _Others} = lists:partition(
+        fun(#{<<"resolved">> := Resolved}) -> not Resolved end,
+        Apps
+    ),
+
+    % Extract kernel version from OTPApps
+    Kernel =
+        case
+            lists:search(
+                fun(#{<<"name">> := Name}) -> Name =:= <<"kernel">> end,
+                OTPApps
+            )
+        of
+            {value, _} ->
+                #{<<"kernel">> := #{version := KernelVersion}} = OTPAppMapping,
+                {kernel, binary_to_list(KernelVersion)};
+            false ->
+                error({abort, "kernel version not found in OTPApps"})
+        end,
+
+    % Extract stdlib version from OTPApps
+    StdLib =
+        case
+            lists:search(
+                fun(#{<<"name">> := Name}) -> Name =:= <<"stdlib">> end,
+                OTPApps
+            )
+        of
+            {value, _} ->
+                #{<<"stdlib">> := #{version := StdLibVersion}} = OTPAppMapping,
+                {stdlib, binary_to_list(StdLibVersion)};
+            false ->
+                error({abort, "stdlib version not found in OTPApps"})
+        end,
+
+    RelFileContent = {
+        release,
+        {RelName, RelVersion},
+        {erts, erlang:system_info(version)},
+        [Kernel, StdLib]
+    },
+
+    make_boot_script(RelName, RelFileContent, [
+        no_warn_sasl,
+        no_dot_erlang,
+        {script_name, "no_dot_erlang"},
+        {path, PathOption}
+    ]).
 
 build_start_boot(
     Apps,

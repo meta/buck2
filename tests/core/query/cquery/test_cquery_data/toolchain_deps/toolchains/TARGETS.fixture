@@ -23,18 +23,22 @@ stub(
 
 stub(
     name = "python_release",
-    deps = [select({
-        "//config:linux": ":compile_python_release_linux",
-        "//config:windows": ":compile_python_release_windows",
-    })],
+    deps = [
+        select({
+            "//config:linux": ":compile_python_release_linux",
+            "//config:windows": ":compile_python_release_windows",
+        })
+    ],
 )
 
 stub(
     name = "python_debug",
-    deps = [select({
-        "//config:linux": ":compile_python_debug_linux",
-        "//config:windows": ":compile_python_debug_windows",
-    })],
+    deps = [
+        select({
+            "//config:linux": ":compile_python_debug_linux",
+            "//config:windows": ":compile_python_debug_windows",
+        })
+    ],
 )
 
 toolchain(

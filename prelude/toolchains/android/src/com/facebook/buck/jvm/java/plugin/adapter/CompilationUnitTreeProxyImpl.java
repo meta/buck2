@@ -11,8 +11,10 @@
 package com.facebook.buck.jvm.java.plugin.adapter;
 
 import com.facebook.buck.jvm.java.plugin.api.CompilationUnitTreeProxy;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.CompilationUnitTree;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CompilationUnitTreeProxyImpl implements CompilationUnitTreeProxy {
   private final CompilationUnitTree compilationUnitTree;
 

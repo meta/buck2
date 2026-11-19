@@ -143,9 +143,11 @@ class DefaultCodesignCommandFactory(ICodesignCommandFactory):
 
 class DryRunCodesignCommandFactory(ICodesignCommandFactory):
     codesign_tool: Path
+    subject_common_name: str
 
-    def __init__(self, codesign_tool: Path) -> None:
+    def __init__(self, codesign_tool: Path, subject_common_name: str) -> None:
         self.codesign_tool = codesign_tool
+        self.subject_common_name = subject_common_name
 
     def codesign_command(
         self,
@@ -155,7 +157,13 @@ class DryRunCodesignCommandFactory(ICodesignCommandFactory):
         codesign_args: List[str],
         extra_file_paths: Optional[List[Path]],
     ) -> List[Union[str, Path]]:
-        args = [path, "--identity", identity_fingerprint]
+        args = [
+            path,
+            "--identity",
+            identity_fingerprint,
+            "--subject-common-name",
+            self.subject_common_name,
+        ]
         if entitlements:
             args += ["--entitlements", entitlements] if entitlements else []
         if extra_file_paths:

@@ -12,10 +12,9 @@ use std::fmt::Display;
 
 use allocative::Allocative;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
-use gazebo::variants::UnpackVariants;
 
 use crate::build::ConfiguredBuildTargetResult;
-#[derive(Clone, Debug, UnpackVariants, Allocative)]
+#[derive(Clone, Debug, Allocative)]
 pub enum BxlBuildResult {
     None,
     Built {
@@ -32,6 +31,13 @@ impl BxlBuildResult {
         match result {
             Some(result) => Self::Built { label, result },
             None => Self::None,
+        }
+    }
+
+    pub fn built(&self) -> Option<&ConfiguredBuildTargetResult> {
+        match self {
+            Self::None => None,
+            Self::Built { result, .. } => Some(result),
         }
     }
 }

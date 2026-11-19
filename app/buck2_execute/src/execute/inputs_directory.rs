@@ -44,6 +44,8 @@ pub fn inputs_directory(
             }
             CommandExecutionInput::ScratchPath(path) => {
                 let path = fs.buck_out_path_resolver().resolve_scratch(path)?;
+                // Exhaustively empty is the scratch contract: `prep_scratch_path` wipes the
+                // dir before every local run, and RE sandboxes start it fresh.
                 builder.insert(
                     path.into(),
                     DirectoryEntry::Dir(digest_config.empty_directory()),

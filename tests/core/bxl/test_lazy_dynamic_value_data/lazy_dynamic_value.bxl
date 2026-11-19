@@ -1,0 +1,121 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+load(":rules.bzl", "DynamicValueInfo", "MetadataInfo", "anon_metadata")
+
+def _assert_eq(expected, actual):
+    if expected != actual:
+        fail("Expected `{}`, got `{}`".format(expected, actual))
+
+def _dynamic_value(ctx: bxl.Context, name: str) -> DynamicValue:
+    target = ctx.configured_targets("root//:" + name)
+    return ctx.analysis(target).providers()[DynamicValueInfo].value
+
+def _resolve(ctx: bxl.Context):
+    resolved = ctx.lazy.resolve_dynamic_value(_dynamic_value(ctx, "ok")).resolve()
+    _assert_eq("ResolvedDynamicValue", type(resolved))
+    metadata = resolved.providers[MetadataInfo]
+    _assert_eq("ok", metadata.name)
+    _assert_eq(42, metadata.count)
+
+    result = ctx.lazy.resolve_dynamic_value(_dynamic_value(ctx, "ok")).catch().resolve()
+    _assert_eq(True, result.is_ok())
+    _assert_eq("ok", result.unwrap().providers[MetadataInfo].name)
+
+resolve = bxl_main(
+    impl = _resolve,
+    cli_args = {},
+)
+
+def _resolve_without_catch(ctx: bxl.Context):
+    ctx.lazy.resolve_dynamic_value(_dynamic_value(ctx, ctx.cli_args.target)).resolve()
+
+resolve_without_catch = bxl_main(
+    impl = _resolve_without_catch,
+    cli_args = {
+        "target": cli_args.string(),
+    },
+)
+
+def _check_action_error(error: bxl.ActionError, expected_target: TargetLabel):
+    _assert_eq("bxl.ActionError", type(error))
+    _assert_eq(True, isinstance(error, bxl.ActionError))
+    _assert_eq("TargetLabel", type(error.target))
+    _assert_eq(expected_target, error.target)
+    _assert_eq("root", error.target.cell)
+    _assert_eq("", error.target.package)
+    _assert_eq("artifact_fails", error.target.name)
+    _assert_eq("upstream stdout", error.stdout)
+    _assert_eq("upstream stderr", error.stderr)
+
+def _catch(ctx: bxl.Context):
+    result = ctx.lazy.resolve_dynamic_value(_dynamic_value(ctx, ctx.cli_args.target)).catch().resolve()
+    _assert_eq(False, result.is_ok())
+    error = result.unwrap_err()
+    if ctx.cli_args.target == "callback_fails":
+        _assert_eq(None, error.action_error)
+        _assert_eq(True, "producer callback failed" in error.root_message)
+        _assert_eq(False, "Error running dynamic analysis" in error.root_message)
+    elif ctx.cli_args.target == "artifact_fails":
+        _check_action_error(error.action_error, ctx.configured_targets("root//:artifact_fails").label.raw_target())
+    ctx.output.print(error.message)
+
+catch = bxl_main(
+    impl = _catch,
+    cli_args = {
+        "target": cli_args.string(),
+    },
+)
+
+def _mixed_batch(ctx: bxl.Context):
+    names = ["ok", "callback_fails", "ok2", "artifact_fails"]
+    lazies = [ctx.lazy.resolve_dynamic_value(_dynamic_value(ctx, name)).catch() for name in names]
+    results = ctx.lazy.join_all(lazies).resolve()
+    _assert_eq(len(names), len(results))
+    summary = {}
+    for name, result in zip(names, results):
+        if result.is_ok():
+            summary[name] = {"ok": result.unwrap().providers[MetadataInfo].name}
+        else:
+            summary[name] = {"error": result.unwrap_err().message}
+    ctx.output.print_json(summary)
+
+mixed_batch = bxl_main(
+    impl = _mixed_batch,
+    cli_args = {},
+)
+
+def _anon_target_dynamic_value(ctx: bxl.Context):
+    actions = ctx.bxl_actions().actions
+    promise = actions.anon_target(anon_metadata, attrs = {"metadata_name": "anon"}).promise
+    value = ctx.resolve(actions, promise)[DynamicValueInfo].value
+    resolved = ctx.lazy.resolve_dynamic_value(value).resolve()
+    _assert_eq("anon", resolved.providers[MetadataInfo].name)
+
+anon_target_dynamic_value = bxl_main(
+    impl = _anon_target_dynamic_value,
+    cli_args = {},
+)
+
+def _produce_in_bxl_impl(bxl_ctx: bxl.Context) -> list[Provider]:
+    _ignore = (bxl_ctx,)  # buildifier: disable=unused-variable
+    return []
+
+_produce_in_bxl = bxl.dynamic_actions(
+    impl = _produce_in_bxl_impl,
+    attrs = {},
+)
+
+def _bxl_dynamic_value(ctx: bxl.Context):
+    value = ctx.bxl_actions().actions.dynamic_output_new(_produce_in_bxl())
+    ctx.lazy.resolve_dynamic_value(value)
+
+bxl_dynamic_value = bxl_main(
+    impl = _bxl_dynamic_value,
+    cli_args = {},
+)

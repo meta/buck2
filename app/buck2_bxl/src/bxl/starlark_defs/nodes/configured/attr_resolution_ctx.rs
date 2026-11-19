@@ -9,7 +9,6 @@
  */
 
 use std::cell::RefMut;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -21,12 +20,13 @@ use buck2_analysis::analysis::env::resolve_query;
 use buck2_analysis::analysis::env::resolve_unkeyed_placeholder;
 use buck2_analysis::attrs::resolve::ctx::AnalysisQueryResult;
 use buck2_analysis::attrs::resolve::ctx::AttrResolutionContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+use buck2_build_api::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+use buck2_hash::BuckMutMap;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use futures::FutureExt;
 use starlark::environment::Module;
@@ -38,8 +38,8 @@ use crate::bxl::starlark_defs::context::BxlContext;
 #[derive(Allocative)]
 pub(crate) struct LazyAttrResolutionCache {
     pub(super) dep_analysis_results:
-        Option<HashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>>,
-    pub(super) query_results: Option<HashMap<String, Arc<AnalysisQueryResult>>>,
+        Option<BuckMutMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>>,
+    pub(super) query_results: Option<BuckMutMap<String, Arc<AnalysisQueryResult>>>,
 }
 
 // Contains a `module` that things must live on, and various `FrozenProviderCollectionValue`s
@@ -47,6 +47,7 @@ pub(crate) struct LazyAttrResolutionCache {
 pub(crate) struct LazyAttrResolutionContext<'v, 'a, 'e, 'c> {
     pub(crate) eval: &'c mut Evaluator<'v, 'a, 'e>,
     pub(super) configured_node: &'v ConfiguredTargetNode,
+    pub(super) execution_platform_resolution: &'v ExecutionPlatformResolution,
     pub(super) ctx: &'v BxlContext<'v>,
     pub(crate) cache: RefMut<'c, LazyAttrResolutionCache>,
 }
@@ -68,7 +69,8 @@ impl LazyAttrResolutionCache {
         ctx: &'v BxlContext<'v>,
         configured_node: &'v ConfiguredTargetNode,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<&HashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>> {
+    ) -> buck2_error::Result<&BuckMutMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>>
+    {
         get_or_try_init(&mut self.dep_analysis_results, || {
             get_deps_from_analysis_results(ctx.via_dice(eval, |ctx| {
                 ctx.via(|dice_ctx| {
@@ -83,7 +85,7 @@ impl LazyAttrResolutionCache {
         ctx: &'v BxlContext<'v>,
         configured_node: &'v ConfiguredTargetNode,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<&HashMap<String, Arc<AnalysisQueryResult>>> {
+    ) -> buck2_error::Result<&BuckMutMap<String, Arc<AnalysisQueryResult>>> {
         get_or_try_init(&mut self.query_results, || {
             ctx.via_dice(eval, |ctx| {
                 ctx.via(|dice_ctx| {
@@ -95,14 +97,14 @@ impl LazyAttrResolutionCache {
 }
 
 impl<'v, 'a, 'e, 'c> AttrResolutionContext<'v> for LazyAttrResolutionContext<'v, 'a, 'e, 'c> {
-    fn starlark_module(&self) -> &'v Module {
+    fn starlark_module(&self) -> &Module<'v> {
         self.eval.module()
     }
 
     fn get_dep(
         &mut self,
         target: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<FrozenValueTyped<'v, FrozenProviderCollection>> {
+    ) -> buck2_error::Result<FrozenValueTyped<'v, ProviderCollection<'v>>> {
         let module = self.eval.module();
         match self
             .cache
@@ -120,13 +122,13 @@ impl<'v, 'a, 'e, 'c> AttrResolutionContext<'v> for LazyAttrResolutionContext<'v,
     fn resolve_unkeyed_placeholder(
         &mut self,
         name: &str,
-    ) -> buck2_error::Result<Option<FrozenCommandLineArg>> {
+    ) -> buck2_error::Result<Option<CommandLineArg<'v>>> {
         let module = self.eval.module();
         match self
             .cache
             .dep_analysis_results(self.ctx, self.configured_node, self.eval)
         {
-            Ok(deps) => Ok(resolve_unkeyed_placeholder(deps, name, module)),
+            Ok(deps) => resolve_unkeyed_placeholder(deps, name, module),
             Err(e) => Err(buck2_error::buck2_error!(
                 buck2_error::ErrorTag::Bxl,
                 "Error resolving unkeyed placeholder: `{}`",
@@ -146,12 +148,11 @@ impl<'v, 'a, 'e, 'c> AttrResolutionContext<'v> for LazyAttrResolutionContext<'v,
                 buck2_error::ErrorTag::Bxl,
                 "Error resolving query: `{}`",
                 e
-            ))
-            .map_err(buck2_error::Error::from),
+            )),
         }
     }
 
     fn execution_platform_resolution(&self) -> &ExecutionPlatformResolution {
-        self.configured_node.execution_platform_resolution()
+        self.execution_platform_resolution
     }
 }

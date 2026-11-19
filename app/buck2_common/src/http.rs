@@ -10,12 +10,11 @@
 
 use buck2_http::HttpClient;
 use dice::UserComputationData;
-use dupe::Dupe;
 
 /// Dice implementations so we can pass along the HttpClient to various subsystems
 /// that need to use it (Materializer, RunActions, etc).
 pub trait HasHttpClient {
-    fn get_http_client(&self) -> HttpClient;
+    fn get_http_client(&self) -> &HttpClient;
 }
 
 pub trait SetHttpClient {
@@ -23,11 +22,10 @@ pub trait SetHttpClient {
 }
 
 impl HasHttpClient for UserComputationData {
-    fn get_http_client(&self) -> HttpClient {
+    fn get_http_client(&self) -> &HttpClient {
         self.data
             .get::<HttpClient>()
             .expect("HttpClient should be set")
-            .dupe()
     }
 }
 

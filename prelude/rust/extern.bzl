@@ -6,15 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load(":context.bzl", "CrateName")
-
-def crate_name_as_cmd_arg(crate: CrateName) -> cmd_args | str | ResolvedStringWithMacros:
-    if crate.dynamic:
-        # TODO: consider using `cmd_args(crate.dynamic, quote = "json")` so it
-        # doesn't fall apart on paths containing ')'
-        return cmd_args(crate.dynamic, format = "$(cat {})")
-    else:
-        return crate.simple
+load(
+    ":crate_name.bzl",
+    "CrateName",
+    "crate_name_as_cmd_arg",
+)
 
 # Create `--extern` flag. For crates with a name computed during analysis:
 #
@@ -29,6 +25,12 @@ def extern_arg(flags: list[str], crate: CrateName, lib: Artifact) -> cmd_args:
         flags = ""
     else:
         flags = ",".join(flags) + ":"
+
+    if type(crate.simple) == "string" and crate.dynamic == None:
+        return cmd_args(
+            lib,
+            format = "--extern={}{}={{}}".format(flags, crate.simple),
+        )
 
     return cmd_args(
         "--extern=",
@@ -47,7 +49,10 @@ def extern_arg(flags: list[str], crate: CrateName, lib: Artifact) -> cmd_args:
 #
 #     --crate-map=$(cat path/to/REALNAME)=//path/to:target
 #
-def crate_map_arg(crate: CrateName, label: Label) -> cmd_args:
+def crate_map_arg(crate: CrateName, label: Label) -> cmd_args | str:
+    if type(crate.simple) == "string" and crate.dynamic == None:
+        return "--crate-map={}={}".format(crate.simple, str(label.raw_target()))
+
     return cmd_args(
         "--crate-map=",
         crate_name_as_cmd_arg(crate),

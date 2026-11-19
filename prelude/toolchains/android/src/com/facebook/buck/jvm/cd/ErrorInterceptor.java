@@ -10,16 +10,20 @@
 
 package com.facebook.buck.jvm.cd;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.PrintStream;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A PrintStream implementation that intercepts stderr output and applies syntax highlighting to
  * compiler messages based on the file type
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ErrorInterceptor extends PrintStream {
 
   private static final String RED = "\033[91m";
@@ -189,14 +193,16 @@ public class ErrorInterceptor extends PrintStream {
     KOTLIN(KOTLIN_FILE_PATTERN, KOTLIN_KEYWORDS),
     UNKNOWN(null, new String[0]);
 
-    private final Pattern filePattern;
+    @Nullable private final Pattern filePattern;
     private final String[] keywords;
 
-    FileType(Pattern filePattern, String[] keywords) {
+    FileType(@Nullable Pattern filePattern, String[] keywords) {
       this.filePattern = filePattern;
       this.keywords = keywords;
     }
 
+    /** Null for {@link #UNKNOWN}, which by definition matches no file. */
+    @Nullable
     public Pattern getFilePattern() {
       return filePattern;
     }
@@ -211,11 +217,12 @@ public class ErrorInterceptor extends PrintStream {
   }
 
   @Override
-  public void print(String message) {
+  public void print(@Nullable String message) {
     super.print(prettyPrint(message));
   }
 
-  public static String prettyPrint(String exception) {
+  @Nullable
+  public static String prettyPrint(@Nullable String exception) {
     if (exception == null || exception.isEmpty()) {
       return exception;
     }
@@ -277,8 +284,8 @@ public class ErrorInterceptor extends PrintStream {
 
   private static FileType determineFileType(String exception) {
     for (FileType type : FileType.values()) {
-      if (type == FileType.UNKNOWN) continue;
-      if (type.getFilePattern().matcher(exception).find()) {
+      Pattern filePattern = type.getFilePattern();
+      if (filePattern != null && filePattern.matcher(exception).find()) {
         return type;
       }
     }
@@ -292,9 +299,7 @@ public class ErrorInterceptor extends PrintStream {
         colorizePattern(
             ERROR_PATTERN, exception, match -> highlightError(match, FileType.JAVA.getKeywords()));
     exception = colorizePattern(WARNING_PATTERN, exception, ErrorInterceptor::highlightWarning);
-    exception =
-        colorizePattern(
-            FileType.JAVA.getFilePattern(), exception, ErrorInterceptor::highlightJavaFile);
+    exception = colorizePattern(JAVA_FILE_PATTERN, exception, ErrorInterceptor::highlightJavaFile);
     return exception;
   }
 
@@ -306,8 +311,7 @@ public class ErrorInterceptor extends PrintStream {
             match -> highlightError(match, FileType.KOTLIN.getKeywords()));
     exception = colorizePattern(WARNING_PATTERN, exception, ErrorInterceptor::highlightWarning);
     exception =
-        colorizePattern(
-            FileType.KOTLIN.getFilePattern(), exception, ErrorInterceptor::highlightKotlinFile);
+        colorizePattern(KOTLIN_FILE_PATTERN, exception, ErrorInterceptor::highlightKotlinFile);
     return exception;
   }
 
@@ -338,7 +342,7 @@ public class ErrorInterceptor extends PrintStream {
         + BOLD
         + match.group(1)
         + RESET
-        + highlightCode(match.group(2), keywords)
+        + highlightCode(Objects.requireNonNull(match.group(2)), keywords)
         + RED
         + match.group(3)
         + RESET
@@ -350,8 +354,8 @@ public class ErrorInterceptor extends PrintStream {
   }
 
   private static String highlightJavaFile(Matcher match) {
-    String file = match.group(1);
-    int line = Integer.parseInt(match.group(2));
+    String file = Objects.requireNonNull(match.group(1));
+    int line = Integer.parseInt(Objects.requireNonNull(match.group(2)));
 
     return GREEN
         + createHyperlink(file, line, file)
@@ -364,8 +368,8 @@ public class ErrorInterceptor extends PrintStream {
   }
 
   private static String highlightKotlinFile(Matcher match) {
-    String file = match.group(1);
-    int line = Integer.parseInt(match.group(2));
+    String file = Objects.requireNonNull(match.group(1));
+    int line = Integer.parseInt(Objects.requireNonNull(match.group(2)));
 
     return GREEN
         + createHyperlink(file, line, file)

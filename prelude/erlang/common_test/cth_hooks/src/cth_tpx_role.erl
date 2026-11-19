@@ -63,17 +63,17 @@ priorities:
 """.
 -compile(warn_missing_spec_all).
 
+-export([
+    role_priority/1,
+    is_responsible/2
+]).
+
 -export_type([
     role/0,
     responsibility/0
 ]).
 
 -type role() :: top | bot.
-
--export([
-    role_priority/1,
-    is_responsible/2
-]).
 
 -doc """
 Default hook priority for the role

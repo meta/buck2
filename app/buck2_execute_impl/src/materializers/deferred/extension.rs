@@ -15,28 +15,33 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Instant;
 
-use async_trait::async_trait;
+use allocative::Allocative;
+use allocative::FlameGraphBuilder;
+use allocative::Visitor;
+use allocative::ident_key;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
+use buck2_events::dispatch::EventDispatcher;
 use buck2_events::dispatch::get_dispatcher;
-use buck2_execute::materialize::materializer::DeferredMaterializerEntry;
-use buck2_execute::materialize::materializer::DeferredMaterializerExtensions;
-use buck2_execute::materialize::materializer::DeferredMaterializerIterItem;
-use buck2_execute::materialize::materializer::DeferredMaterializerSubscription;
+use buck2_events::dispatch::get_dispatcher_opt;
+use buck2_execute::materialize::materializer::CleanStaleArtifactsArgs;
+use buck2_execute::materialize::materializer::CleanStaleArtifactsPolicy;
+use buck2_execute::materialize::materializer::MaterializerEntry;
+use buck2_execute::materialize::materializer::MaterializerIterItem;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
-use chrono::DateTime;
-use chrono::Duration;
-use chrono::TimeZone;
-use chrono::Utc;
 use derivative::Derivative;
 use dupe::Dupe;
+use futures::future::BoxFuture;
+use futures::future::FutureExt;
 use futures::stream::BoxStream;
 use futures::stream::StreamExt;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::Sender;
-use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::materializers::deferred::ArtifactMaterializationMethod;
@@ -44,16 +49,34 @@ use crate::materializers::deferred::ArtifactMaterializationStage;
 use crate::materializers::deferred::DeferredMaterializerAccessor;
 use crate::materializers::deferred::DeferredMaterializerCommandProcessor;
 use crate::materializers::deferred::MaterializerCommand;
-use crate::materializers::deferred::Processing;
 use crate::materializers::deferred::ProcessingFuture;
+use crate::materializers::deferred::artifact_tree::ArtifactTree;
+use crate::materializers::deferred::artifact_tree::artifact_metadata_size;
+use crate::materializers::deferred::clean_stale::CleanScratchExtensionCommand;
 use crate::materializers::deferred::clean_stale::CleanStaleArtifactsCommand;
 use crate::materializers::deferred::clean_stale::CleanStaleArtifactsExtensionCommand;
+use crate::materializers::deferred::clean_stale::CleanStaleArtifactsExtensionCommandKind;
+use crate::materializers::deferred::command_processor::task_stopped;
 use crate::materializers::deferred::io_handler::IoHandler;
 use crate::materializers::deferred::io_handler::create_ttl_refresh;
-use crate::materializers::deferred::subscriptions::MaterializerSubscriptionOperation;
 
 pub(super) trait ExtensionCommand<T>: Debug + Sync + Send + 'static {
     fn execute(self: Box<Self>, processor: &mut DeferredMaterializerCommandProcessor<T>);
+}
+
+struct AllocativeProfileRoot<'a> {
+    artifact_tree: &'a ArtifactTree,
+}
+
+impl Allocative for AllocativeProfileRoot<'_> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(
+            ident_key!(artifact_tree),
+            &self.artifact_tree.allocative_dfs(),
+        );
+        visitor.exit();
+    }
 }
 
 #[derive(Debug)]
@@ -64,10 +87,7 @@ struct PathData {
 
 #[derive(Debug)]
 enum PathStage {
-    Materialized {
-        ts: DateTime<Utc>,
-        size: Option<u64>,
-    },
+    Materialized { ts: Timestamp, size: Option<u64> },
     Declared(Arc<ArtifactMaterializationMethod>),
 }
 
@@ -107,7 +127,7 @@ impl Display for PathData {
     }
 }
 
-impl DeferredMaterializerEntry for PathData {}
+impl MaterializerEntry for PathData {}
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -115,13 +135,13 @@ struct Iterate {
     /// This is for debug commands so we use an unbounded channel to avoid locking up the
     /// materializer command thread.
     #[derivative(Debug = "ignore")]
-    sender: UnboundedSender<DeferredMaterializerIterItem>,
+    sender: UnboundedSender<MaterializerIterItem>,
 }
 
 impl<T: IoHandler> ExtensionCommand<T> for Iterate {
     fn execute(self: Box<Self>, processor: &mut DeferredMaterializerCommandProcessor<T>) {
         // Ensure up to date access times
-        processor.flush_access_times(0);
+        processor.flush_access_times();
         for (path, data) in processor.tree.iter_with_paths() {
             let stage = match &data.stage {
                 ArtifactMaterializationStage::Declared { method, .. } => {
@@ -133,27 +153,21 @@ impl<T: IoHandler> ExtensionCommand<T> for Iterate {
                     ..
                 } => {
                     // drop nano-seconds
-                    let ts = Utc
-                        .timestamp_opt(last_access_time.timestamp(), 0)
-                        .single()
-                        .unwrap();
+                    let ts = Timestamp::from_second(last_access_time.as_second())
+                        .expect("whole seconds of a valid timestamp are in range");
                     PathStage::Materialized {
                         ts,
-                        size: Some(metadata.size()),
+                        size: Some(artifact_metadata_size(metadata)),
                     }
                 }
             };
 
-            let processing = match &data.processing {
-                Processing::Done(..) => PathProcessing::Done,
-                Processing::Active {
-                    future: ProcessingFuture::Materializing(..),
-                    ..
-                } => PathProcessing::Materializing,
-                Processing::Active {
-                    future: ProcessingFuture::Cleaning(..),
-                    ..
-                } => PathProcessing::Cleaning,
+            let processing = match data.processing.active_ref() {
+                None => PathProcessing::Done,
+                Some(active) => match &active.future {
+                    ProcessingFuture::Materializing(..) => PathProcessing::Materializing,
+                    ProcessingFuture::Cleaning(..) => PathProcessing::Cleaning,
+                },
             };
 
             let path_data = PathData { stage, processing };
@@ -165,7 +179,7 @@ impl<T: IoHandler> ExtensionCommand<T> for Iterate {
                 None => Vec::new(),
             };
 
-            match self.sender.send(DeferredMaterializerIterItem {
+            match self.sender.send(MaterializerIterItem {
                 artifact_path: path,
                 artifact_display: Box::new(path_data) as _,
                 deps,
@@ -179,19 +193,18 @@ impl<T: IoHandler> ExtensionCommand<T> for Iterate {
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct ListSubscriptions {
+struct AllocativeProfile {
     #[derivative(Debug = "ignore")]
-    sender: UnboundedSender<ProjectRelativePathBuf>,
+    sender: Sender<allocative::FlameGraphOutput>,
 }
 
-impl<T> ExtensionCommand<T> for ListSubscriptions {
+impl<T> ExtensionCommand<T> for AllocativeProfile {
     fn execute(self: Box<Self>, processor: &mut DeferredMaterializerCommandProcessor<T>) {
-        for path in processor.subscriptions.list_subscribed_paths() {
-            match self.sender.send(path.to_owned()) {
-                Ok(..) => {}
-                Err(..) => break, // No use sending more if the client disconnected.
-            }
-        }
+        let mut graph = FlameGraphBuilder::default();
+        graph.visit_root(&AllocativeProfileRoot {
+            artifact_tree: &processor.tree,
+        });
+        let _ignored = self.sender.send(graph.finish());
     }
 }
 
@@ -219,7 +232,8 @@ impl<T: IoHandler> ExtensionCommand<T> for Fsck {
             // actual things are in flight.
 
             let path = ProjectRelativePathBuf::from(path);
-            let res = fs_util::symlink_metadata(processor.io.fs().resolve(&path));
+            let res =
+                fs_util::symlink_metadata(processor.io.fs().resolve(&path)).categorize_internal();
             match res {
                 Ok(..) => {}
                 Err(e) => {
@@ -233,19 +247,26 @@ impl<T: IoHandler> ExtensionCommand<T> for Fsck {
 #[derive(Derivative)]
 #[derivative(Debug)]
 struct RefreshTtls {
-    sender: Sender<Option<JoinHandle<buck2_error::Result<()>>>>,
+    #[derivative(Debug = "ignore")]
+    sender: Sender<Option<BoxFuture<'static, buck2_error::Result<()>>>>,
     min_ttl: i64,
 }
 
 impl<T: IoHandler> ExtensionCommand<T> for RefreshTtls {
     fn execute(self: Box<Self>, processor: &mut DeferredMaterializerCommandProcessor<T>) {
+        let dispatcher = get_dispatcher_opt().unwrap_or_else(EventDispatcher::error_on_event);
         let task = create_ttl_refresh(
             &processor.tree,
             processor.io.re_client_manager(),
-            Duration::seconds(self.min_ttl),
+            SignedDuration::from_secs(self.min_ttl),
             processor.io.digest_config(),
         )
-        .map(|f| processor.spawn(f));
+        .map(|f| {
+            processor
+                .spawn(&dispatcher, move |_| f.boxed())
+                .map(|result| result.unwrap_or_else(|error| Err(task_stopped(error))))
+                .boxed()
+        });
         let _ignored = self.sender.send(task);
     }
 }
@@ -343,128 +364,148 @@ impl<T: IoHandler> ExtensionCommand<T> for FlushAccessTimes {
     fn execute(self: Box<Self>, processor: &mut DeferredMaterializerCommandProcessor<T>) {
         let mut out = String::new();
 
-        writeln!(&mut out, "{}", processor.flush_access_times(0)).unwrap();
+        writeln!(&mut out, "{}", processor.flush_access_times()).unwrap();
         let _ignored = self.sender.send(out);
     }
 }
 
-#[async_trait]
-impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccessor<T> {
-    fn iterate(&self) -> buck2_error::Result<BoxStream<'static, DeferredMaterializerIterItem>> {
+impl<T: IoHandler> DeferredMaterializerAccessor<T> {
+    pub(super) fn iterate_impl(
+        &self,
+    ) -> buck2_error::Result<BoxStream<'static, MaterializerIterItem>> {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.command_sender.send(MaterializerCommand::Extension(
-            Box::new(Iterate { sender }) as _
+            Box::new(Iterate { sender }) as _,
+            get_dispatcher_opt(),
         ))?;
         Ok(UnboundedReceiverStream::new(receiver).boxed())
     }
 
-    fn list_subscriptions(
+    pub(super) async fn allocative_impl(
         &self,
-    ) -> buck2_error::Result<BoxStream<'static, ProjectRelativePathBuf>> {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        self.command_sender
-            .send(MaterializerCommand::Extension(
-                Box::new(ListSubscriptions { sender }) as _,
-            ))?;
-        Ok(UnboundedReceiverStream::new(receiver).boxed())
+    ) -> buck2_error::Result<allocative::FlameGraphOutput> {
+        let (sender, receiver) = oneshot::channel();
+        self.command_sender.send(MaterializerCommand::Extension(
+            Box::new(AllocativeProfile { sender }) as _,
+            get_dispatcher_opt(),
+        ))?;
+        receiver
+            .await
+            .buck_error_context("No response from materializer")
     }
 
-    fn fsck(
+    pub(super) fn fsck_impl(
         &self,
     ) -> buck2_error::Result<BoxStream<'static, (ProjectRelativePathBuf, buck2_error::Error)>> {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.command_sender.send(MaterializerCommand::Extension(
-            Box::new(Fsck { sender }) as _
+            Box::new(Fsck { sender }) as _,
+            get_dispatcher_opt(),
         ))?;
         Ok(UnboundedReceiverStream::new(receiver).boxed())
     }
 
-    async fn refresh_ttls(&self, min_ttl: i64) -> buck2_error::Result<()> {
+    pub(super) async fn refresh_ttls_impl(&self, min_ttl: i64) -> buck2_error::Result<()> {
         let (sender, receiver) = oneshot::channel();
-        self.command_sender
-            .send(MaterializerCommand::Extension(
-                Box::new(RefreshTtls { sender, min_ttl }) as _,
-            ))?;
-        match receiver
+        self.command_sender.send(MaterializerCommand::Extension(
+            Box::new(RefreshTtls { sender, min_ttl }) as _,
+            get_dispatcher_opt(),
+        ))?;
+        if let Some(task) = receiver
             .await
             .buck_error_context("No response from materializer")?
         {
-            Some(task) => task
-                .await
-                .buck_error_context("Refresh task aborted")?
-                .buck_error_context("Refresh failed")?,
-            None => {}
-        };
+            task.await.buck_error_context("Refresh failed")?;
+        }
         Ok(())
     }
 
-    async fn get_ttl_refresh_log(&self) -> buck2_error::Result<String> {
+    pub(super) async fn get_ttl_refresh_log_impl(&self) -> buck2_error::Result<String> {
         let (sender, receiver) = oneshot::channel();
-        self.command_sender
-            .send(MaterializerCommand::Extension(
-                Box::new(GetTtlRefreshLog { sender }) as _,
-            ))?;
+        self.command_sender.send(MaterializerCommand::Extension(
+            Box::new(GetTtlRefreshLog { sender }) as _,
+            get_dispatcher_opt(),
+        ))?;
         receiver
             .await
             .buck_error_context("No response from materializer")
     }
 
-    async fn clean_stale_artifacts(
+    pub(super) async fn clean_stale_artifacts_impl(
         &self,
-        keep_since_time: DateTime<Utc>,
-        dry_run: bool,
-        tracked_only: bool,
+        args: CleanStaleArtifactsArgs,
     ) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse> {
         let dispatcher = get_dispatcher();
+        let kind = match args.policy {
+            CleanStaleArtifactsPolicy::Configured => {
+                CleanStaleArtifactsExtensionCommandKind::Configured {
+                    dispatcher,
+                    dry_run: args.dry_run,
+                    tracked_only: args.tracked_only,
+                    origin: args.origin,
+                }
+            }
+            CleanStaleArtifactsPolicy::Explicit {
+                keep_since_time,
+                adaptive_low_disk_threshold,
+                adaptive_min_ttl,
+                adaptive_unmaterialize_active,
+            } => CleanStaleArtifactsExtensionCommandKind::Explicit(
+                CleanStaleArtifactsCommand::explicit(
+                    keep_since_time,
+                    args.dry_run,
+                    args.tracked_only,
+                    adaptive_low_disk_threshold,
+                    adaptive_min_ttl,
+                    adaptive_unmaterialize_active,
+                    args.origin,
+                    dispatcher,
+                    // Resolved to the processor's buck-out volume at execution.
+                    None,
+                ),
+            ),
+        };
         let (sender, recv) = oneshot::channel();
-        self.command_sender
-            .send(MaterializerCommand::Extension(Box::new(
-                CleanStaleArtifactsExtensionCommand {
-                    cmd: CleanStaleArtifactsCommand {
-                        keep_since_time,
-                        dry_run,
-                        tracked_only,
-                        dispatcher,
-                    },
-                    sender,
-                },
-            )))?;
+        self.command_sender.send(MaterializerCommand::Extension(
+            Box::new(CleanStaleArtifactsExtensionCommand { kind, sender }),
+            get_dispatcher_opt(),
+        ))?;
+        recv.await?
+            .await
+            .map(|res| res.into())
+            .map_err(|failure| failure.into_error())
+    }
+
+    pub(super) async fn clean_scratch_impl(
+        &self,
+    ) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse> {
+        let (sender, recv) = oneshot::channel();
+        self.command_sender.send(MaterializerCommand::Extension(
+            Box::new(CleanScratchExtensionCommand { sender }),
+            get_dispatcher_opt(),
+        ))?;
         recv.await?.await.map(|res| res.into())
     }
 
-    async fn test_iter(&self, count: usize) -> buck2_error::Result<String> {
+    pub(super) async fn test_iter_impl(&self, count: usize) -> buck2_error::Result<String> {
         let (sender, receiver) = oneshot::channel();
-        self.command_sender
-            .send(MaterializerCommand::Extension(
-                Box::new(TestIter { sender, count }) as _,
-            ))?;
-        receiver
-            .await
-            .buck_error_context("No response from materializer")
-    }
-
-    async fn flush_all_access_times(&self) -> buck2_error::Result<String> {
-        let (sender, receiver) = oneshot::channel();
-        self.command_sender
-            .send(MaterializerCommand::Extension(
-                Box::new(FlushAccessTimes { sender }) as _,
-            ))?;
-        receiver
-            .await
-            .buck_error_context("No response from materializer")
-    }
-
-    async fn create_subscription(
-        &self,
-    ) -> buck2_error::Result<Box<dyn DeferredMaterializerSubscription>> {
-        let (sender, receiver) = oneshot::channel();
-        self.command_sender.send(MaterializerCommand::Subscription(
-            MaterializerSubscriptionOperation::Create { sender },
+        self.command_sender.send(MaterializerCommand::Extension(
+            Box::new(TestIter { sender, count }) as _,
+            get_dispatcher_opt(),
         ))?;
-        Ok(Box::new(
-            receiver
-                .await
-                .buck_error_context("No response from materializer")?,
-        ) as _)
+        receiver
+            .await
+            .buck_error_context("No response from materializer")
+    }
+
+    pub(super) async fn flush_all_access_times_impl(&self) -> buck2_error::Result<String> {
+        let (sender, receiver) = oneshot::channel();
+        self.command_sender.send(MaterializerCommand::Extension(
+            Box::new(FlushAccessTimes { sender }) as _,
+            get_dispatcher_opt(),
+        ))?;
+        receiver
+            .await
+            .buck_error_context("No response from materializer")
     }
 }

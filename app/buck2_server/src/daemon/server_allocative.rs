@@ -12,13 +12,18 @@ use std::sync::Arc;
 
 use allocative::FlameGraph;
 use allocative::FlameGraphBuilder;
+use allocative::FlameGraphOutput;
+use allocative::Key;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_events::dispatch::EventDispatcher;
+use buck2_fs::async_fs_util::spawn_blocking;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_util::process_stats::process_stats;
 
 use crate::daemon::server::BuckdServerData;
+use crate::daemon::state::RepoState;
 use crate::jemalloc_stats::get_allocator_stats;
 
 /// In `FlameGraph` nodes do not have names, only child keys.
@@ -75,12 +80,43 @@ fn wrap_flamegraph_with_system_stats(fg: &FlameGraph) -> FlameGraph {
     fg.into_flamegraph()
 }
 
+fn add_deferred_materializer_profile(
+    mut flamegraph: FlameGraph,
+    deferred_materializer: &FlameGraph,
+) -> FlameGraph {
+    flamegraph.add_child(
+        Key::new("deferred_materializer"),
+        deferred_materializer.clone(),
+    );
+    flamegraph
+}
+
+fn combined_warnings(
+    allocative: &FlameGraphOutput,
+    deferred_materializer: &FlameGraphOutput,
+) -> String {
+    let mut warnings = allocative.warnings();
+    let deferred_materializer_warnings = deferred_materializer.warnings();
+    if !deferred_materializer_warnings.is_empty() {
+        if !warnings.is_empty() {
+            warnings.push('\n');
+        }
+        warnings.push_str(&deferred_materializer_warnings);
+    }
+    warnings
+}
+
 pub(crate) async fn spawn_allocative(
     buckd_server_data: Arc<BuckdServerData>,
+    repo: Arc<RepoState>,
     path: AbsPathBuf,
     dispatcher: EventDispatcher,
 ) -> buck2_error::Result<()> {
-    tokio::task::spawn_blocking(move || {
+    let materializer = repo.materializer.clone();
+    dispatcher.console_message("Visiting deferred materializer...".to_owned());
+    let deferred_materializer_profile = materializer.allocative().await?;
+
+    spawn_blocking(move || {
         let mut graph = FlameGraphBuilder::default();
         dispatcher.console_message(
             "Starting allocative profiling. It may take a while to finish...".to_owned(),
@@ -91,23 +127,50 @@ pub(crate) async fn spawn_allocative(
         dispatcher.console_message("Visiting buckd...".to_owned());
         graph.visit_root(&buckd_server_data);
         let fg = graph.finish();
-        fs_util::create_dir_if_not_exists(&path)?;
+        let flamegraph = add_deferred_materializer_profile(
+            fg.flamegraph().clone(),
+            deferred_materializer_profile.flamegraph(),
+        );
+        let warnings = combined_warnings(&fg, &deferred_materializer_profile);
+        // input path from --output-path
+        fs_util::create_dir_if_not_exists(&path).categorize_input()?;
         dispatcher.console_message(format!("Writing allocative to `{}`...", path.display()));
-        let final_fg = wrap_flamegraph_with_system_stats(fg.flamegraph());
-        fs_util::write(path.join("flamegraph.src"), final_fg.write())?;
+        let final_fg = wrap_flamegraph_with_system_stats(&flamegraph);
+        fs_util::write(path.join("flamegraph.src"), final_fg.write()).categorize_internal()?;
         let mut fg_svg = Vec::new();
         let mut options = inferno::flamegraph::Options::default();
         options.title = "Flame Graph - Allocative".to_owned();
         inferno::flamegraph::from_reader(&mut options, final_fg.write().as_bytes(), &mut fg_svg)
             .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
 
-        fs_util::write(path.join("flame.src"), final_fg.write().as_bytes())?;
-        fs_util::write(path.join("flame.svg"), &fg_svg)?;
-        fs_util::write(path.join("flame_warnings.txt"), fg.warnings())?;
+        fs_util::write(path.join("flame.src"), final_fg.write().as_bytes())
+            .categorize_internal()?;
+        fs_util::write(path.join("flame.svg"), &fg_svg).categorize_internal()?;
+        fs_util::write(path.join("flame_warnings.txt"), warnings).categorize_internal()?;
 
         dispatcher.console_message(format!("Allocative profile written to {}", path.display()));
 
         buck2_error::Ok(())
     })
     .await?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adds_deferred_materializer_profile() {
+        let base = FlameGraph::default();
+        let mut deferred_materializer = FlameGraph::default();
+        deferred_materializer.add_self(5);
+
+        let merged = add_deferred_materializer_profile(base, &deferred_materializer);
+
+        assert!(
+            merged.write().contains("deferred_materializer 5"),
+            "merged flamegraph: {}",
+            merged.write()
+        );
+    }
 }

@@ -1,0 +1,7 @@
+# Same narrowed `within_view` as `narrow_target`, with a dep that is inside
+# both the target's own list and the cap: allowed.
+stub(
+    name = "c",
+    within_view = ["root//intersect/sub_b/..."],
+    deps = ["root//intersect/sub_b/lib:t"],
+)

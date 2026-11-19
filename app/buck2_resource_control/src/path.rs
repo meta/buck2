@@ -33,12 +33,12 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 pub struct CgroupPath(AbsNormPath);
 
 impl CgroupPath {
-    pub fn new<'a>(path: &'a AbsNormPath) -> &'a Self {
+    pub fn new(path: &AbsNormPath) -> &Self {
         Self::from_abs_path(path)
     }
 
     #[ref_cast::ref_cast_custom]
-    fn from_abs_path<'a>(path: &'a AbsNormPath) -> &'a Self;
+    fn from_abs_path(path: &AbsNormPath) -> &Self;
 
     pub fn to_buf(&self) -> CgroupPathBuf {
         CgroupPathBuf(self.0.to_buf())
@@ -75,6 +75,11 @@ pub struct CgroupPathBuf(AbsNormPathBuf);
 impl CgroupPathBuf {
     pub fn new(path: AbsNormPathBuf) -> Self {
         Self(path)
+    }
+
+    pub fn new_in_cgroup_fs(path: &AbsNormPath) -> Self {
+        // Can't use .join() since the second part is absolute too
+        Self(AbsNormPathBuf::from(format!("/sys/fs/cgroup{path}")).unwrap())
     }
 }
 

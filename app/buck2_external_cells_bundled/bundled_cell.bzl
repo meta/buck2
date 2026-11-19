@@ -17,7 +17,7 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
         data_rel_path = "includes/" + path + "/__data"
 
         # In the future, this can be extended to additionally compress the data
-        exec_bit = ctx.actions.declare_output("processed/" + path + "/__exec_bit.txt")
+        exec_bit = ctx.actions.declare_output("processed/" + path + "/__exec_bit.txt", has_content_based_path = False)
         ctx.actions.run(
             cmd_args(
                 ctx.attrs._processor[RunInfo],
@@ -31,17 +31,17 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
         files[data_rel_path] = art
 
         parts.append("crate::BundledFile {")
-        parts.append("  path: \"" + path + "\",")
-        parts.append("  contents: include_bytes!(\"" + data_rel_path + "\"),")
-        parts.append("  is_executable: include!(\"" + exec_bit_rel_path + "\"),")
+        parts.append('  path: "' + path + '",')
+        parts.append('  contents: include_bytes!("' + data_rel_path + '"),')
+        parts.append('  is_executable: include!("' + exec_bit_rel_path + '"),')
         parts.append("},")
 
     parts.append("];")
 
-    contents = ctx.actions.write("contents.rs", cmd_args(parts, delimiter = "\n"), with_inputs = True)
+    contents = ctx.actions.write("contents.rs", cmd_args(parts, delimiter = "\n"), with_inputs = True, has_content_based_path = False)
     files["contents.rs"] = contents
 
-    out = ctx.actions.symlinked_dir("out", files)
+    out = ctx.actions.symlinked_dir("out", files, has_content_based_path = False)
 
     return [DefaultInfo(default_output = out)]
 
@@ -58,7 +58,4 @@ _bundled_cell = rule(
 )
 
 def bundled_cell(**kwargs):
-    _bundled_cell(
-        _processor = ":processor",
-        **kwargs
-    )
+    _bundled_cell(_processor = ":processor", **kwargs)

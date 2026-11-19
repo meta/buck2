@@ -8,8 +8,10 @@
  * above-listed licenses.
  */
 
+use std::cell::LazyCell;
 use std::cell::OnceCell;
 use std::cell::RefCell;
+use std::sync::LazyLock;
 use std::sync::OnceLock;
 
 use crate::Allocative;
@@ -43,6 +45,26 @@ impl<T: Allocative> Allocative for OnceLock<T> {
             visitor.visit_field::<T>(DATA_NAME, v);
         }
         visitor.exit();
+    }
+}
+
+impl<T: Allocative> Allocative for LazyCell<T> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(v) = LazyCell::get(self) {
+            visitor.visit_field::<T>(DATA_NAME, v);
+        }
+        visitor.exit()
+    }
+}
+
+impl<T: Allocative> Allocative for LazyLock<T> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(v) = LazyLock::get(self) {
+            visitor.visit_field::<T>(DATA_NAME, v);
+        }
+        visitor.exit()
     }
 }
 

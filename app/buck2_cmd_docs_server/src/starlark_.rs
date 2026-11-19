@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 use buck2_cli_proto::new_generic::DocsOutputFormat;
@@ -22,6 +21,7 @@ use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use buck2_core::cells::name::CellName;
+use buck2_hash::BuckMutSet;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::parse_import::ParseImportOptions;
 use buck2_interpreter::parse_import::RelativeImports;
@@ -29,7 +29,6 @@ use buck2_interpreter::parse_import::parse_import_with_config;
 use buck2_interpreter::paths::module::StarlarkModulePath;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use dice::DiceTransaction;
-use futures::FutureExt;
 use starlark::docs::multipage::DocModuleInfo;
 
 use crate::builtins::write_docs_to_subdir;
@@ -77,12 +76,12 @@ fn parse_starlark_paths(
     cell_resolver: &CellAliasResolver,
     current_dir: &CellPath,
     symbol_patterns: &[String],
-) -> buck2_error::Result<HashSet<StarlarkFilePath>> {
+) -> buck2_error::Result<BuckMutSet<StarlarkFilePath>> {
     let parse_options = ParseImportOptions {
         allow_missing_at_symbol: true,
         relative_import_option: RelativeImports::Allow {
             current_dir_with_allowed_relative: &CellPathWithAllowedRelativeDir::new(
-                current_dir.clone(),
+                *current_dir,
                 None,
             ),
         },
@@ -106,13 +105,14 @@ fn parse_starlark_paths(
 
 pub(crate) async fn docs_starlark(
     server_ctx: &dyn ServerCommandContextTrait,
-    mut dice_ctx: DiceTransaction,
+    dice_ctx: DiceTransaction,
     request: &DocsStarlarkRequest,
 ) -> buck2_error::Result<DocsResponse> {
-    let cell_resolver = dice_ctx.get_cell_resolver().await?;
+    let cell_resolver = dice_ctx.ctx().get_cell_resolver().await?;
     let cwd = server_ctx.working_dir();
     let current_cell_path = cell_resolver.get_cell_path(cwd);
     let cell_alias_resolver = dice_ctx
+        .ctx()
         .get_cell_alias_resolver(current_cell_path.cell())
         .await?;
 
@@ -123,21 +123,19 @@ pub(crate) async fn docs_starlark(
     )?;
 
     let docs: Vec<_> = dice_ctx
-        .try_compute_join(lookups, |ctx, path| {
-            async move {
-                let doc = ctx
-                    .get_loaded_module(path.to_starlark_module_path())
-                    .await?
-                    .env()
-                    .documentation();
-                buck2_error::Ok((path, doc))
-            }
-            .boxed()
+        .ctx()
+        .try_compute_join(lookups, async |ctx, path| {
+            let doc = ctx
+                .get_loaded_module(path.to_starlark_module_path())
+                .await?
+                .env()
+                .documentation();
+            buck2_error::Ok((path, doc))
         })
         .await?;
 
-    let json_output = match &request.format {
-        DocsOutputFormat::Json => Some(json::to_json(docs)?),
+    let response = match &request.format {
+        DocsOutputFormat::Json => DocsResponse::Json(json::to_json(docs)?),
         DocsOutputFormat::Markdown(output_dir) => {
             let mut render_signature_at_bottom = false;
             let module_infos = docs
@@ -145,7 +143,7 @@ pub(crate) async fn docs_starlark(
                 .map(|(path, doc)| {
                     let path = PathBuf::from(path.cell().as_str())
                         .join(path.path().path().as_forward_relative_path().as_path());
-                    let path = path.to_str().map(|s| s.to_owned()).unwrap_or("".to_owned());
+                    let path = path.to_str().map_or("".to_owned(), |s| s.to_owned());
                     if path.contains("rules.bzl") {
                         render_signature_at_bottom = true;
                     }
@@ -164,9 +162,9 @@ pub(crate) async fn docs_starlark(
                 None,
                 render_signature_at_bottom,
             )?;
-            None
+            DocsResponse::NoOutput
         }
     };
 
-    Ok(DocsResponse { json_output })
+    Ok(response)
 }

@@ -28,13 +28,13 @@ pub struct StarlarkIterator<'v> {
     /// Current index.
     index: usize,
     /// Heap to allocate values on.
-    heap: &'v Heap,
+    heap: Heap<'v>,
 }
 
 impl<'v> StarlarkIterator<'v> {
     /// Construct iterator from the given value.
     #[inline]
-    pub(crate) fn new(value: Value<'v>, heap: &'v Heap) -> StarlarkIterator<'v> {
+    pub(crate) fn new(value: Value<'v>, heap: Heap<'v>) -> StarlarkIterator<'v> {
         StarlarkIterator {
             value,
             index: 0,
@@ -44,7 +44,7 @@ impl<'v> StarlarkIterator<'v> {
 
     /// Iterator yielding no values.
     #[inline]
-    pub fn empty(heap: &'v Heap) -> StarlarkIterator<'v> {
+    pub fn empty(heap: Heap<'v>) -> StarlarkIterator<'v> {
         Self::new(Value::new_empty_tuple(), heap)
     }
 }

@@ -113,8 +113,7 @@ fn print_divergence_msg(
         format!("{:-^44}", "Tiny Output Digest(s)"),
         format!(
             "first: {} \t second: {}",
-            ad1.map(|data| data.output_tiny_digests.as_ref())
-                .unwrap_or("<none>"),
+            ad1.map_or("<none>", |data| data.output_tiny_digests.as_ref()),
             ad2.output_tiny_digests
         ),
     ];

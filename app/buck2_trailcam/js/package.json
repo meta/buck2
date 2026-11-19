@@ -1,0 +1,49 @@
+{
+  "name": "buck2-trailcam",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "description": "Buck2 build invocation viewer: event log decoding and the React UI, independent of any particular host or backend.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tanstack/react-table": "8.21.3",
+    "@tanstack/react-virtual": "3.14.10",
+    "anser": "^2.1.1",
+    "dexie": "^4.4.2",
+    "fzstd": "^0.1.1",
+    "lucide-react": "0.525.0",
+    "protobufjs": "^8.0.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-is": "^19.0.0",
+    "recharts": "3.8.1",
+    "tailwind-merge": "3.5.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "22.20.2",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.0.2",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "8.2.2",
+    "vitest": "^4.1.3"
+  },
+  "resolutions": {
+    "@reduxjs/toolkit": "2.12.0",
+    "@reduxjs/toolkit/immer": "11.1.17",
+    "enhanced-resolve": "5.25.1",
+    "obug": "2.1.4",
+    "recharts/immer": "10.2.0",
+    "reselect": "5.1.1",
+    "rolldown": "1.2.6",
+    "std-env": "4.2.0",
+    "vite": "8.2.2"
+  }
+}

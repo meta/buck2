@@ -13,13 +13,13 @@ package com.facebook.buck.jvm.kotlin.ksp
 import com.facebook.buck.core.build.execution.context.IsolatedExecutionContext
 import com.facebook.buck.core.filesystems.AbsPath
 import com.facebook.buck.core.filesystems.RelPath
+import com.facebook.buck.core.util.log.Logger
 import com.facebook.buck.io.file.GlobPatternMatcher
 import com.facebook.buck.jvm.cd.command.kotlin.LanguageVersion
 import com.facebook.buck.jvm.core.BuildTargetValue
 import com.facebook.buck.jvm.java.CompilerOutputPaths
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext
-import com.facebook.buck.jvm.kotlin.ksp.incremental.Ksp2Mode
 import com.facebook.buck.jvm.kotlin.util.getExpandedSourcePaths
 import com.facebook.buck.step.StepExecutionResult
 import com.facebook.buck.step.StepExecutionResults
@@ -40,6 +40,8 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.util.Optional
 import java.util.ServiceLoader
+import java.util.concurrent.TimeUnit
+import kotlin.time.measureTimedValue
 
 class Ksp2Step(
     private val invokingRule: BuildTargetValue,
@@ -60,16 +62,62 @@ class Ksp2Step(
     private val jvmTarget: Optional<String>,
     private val languageVersion: LanguageVersion,
     private val jvmDefaultMode: String,
+    private val javaBinary: Optional<String>,
     private val kotlinCDAnalytics: KotlinCDAnalytics,
-    private val ksp2Mode: Ksp2Mode,
+    private val kspCachesOutput: RelPath,
+    private val friendPaths: Collection<AbsPath> = emptyList(),
 ) : IsolatedStep {
+
+  private val noOpDetector = Ksp2NoOpDetector()
+
+  /** What the processor's [KspInertShortcut] did in this step, for telemetry; null without one. */
+  private var inertShortcutResult: String? = null
 
   @Throws(IOException::class, InterruptedException::class)
   override fun executeIsolatedStep(context: IsolatedExecutionContext): StepExecutionResult {
     CapturingPrintStream().use { stderr ->
       try {
-        val exitCode: KotlinSymbolProcessing.ExitCode = executeKsp2(stderr, context)
-        kotlinCDAnalytics.log(KotlinCDLoggingContext(languageVersion, ksp2Mode))
+        noOpDetector.stepStarted()
+        val (timed, cpu) =
+            Ksp2CpuMeter.measure { measureTimedValue { executeKsp2(stderr, context) } }
+        val (exitCode, elapsed) = timed
+        noOpDetector.stepFinished()
+        val durationMs = elapsed.inWholeMilliseconds
+        // Same shape KotlincStep already emits, so the two steps are greppable together.
+        LOG.info(
+            "KOTLINCD_STEP_DURATION|%s|%s|%d|%d",
+            invokingRule.fullyQualifiedName,
+            this::class.java.simpleName,
+            durationMs,
+            sourceFilePaths.size,
+        )
+        kotlinCDAnalytics.log(
+            KotlinCDLoggingContext(languageVersion, durationMs).apply {
+              addExtras(
+                  this@Ksp2Step::class.java.simpleName,
+                  "Ksp2 step duration: $durationMs ms",
+              )
+              addExtras(CPU_EXTRAS_KEY, cpu.toExtrasValue())
+              val counts = noOpDetector.countsByProcessor
+              if (
+                  shouldRecordProcessorCounts(
+                      exitCode == KotlinSymbolProcessing.ExitCode.OK,
+                      counts.isNotEmpty(),
+                  )
+              ) {
+                addExtras(
+                    PROCESSOR_OUTPUT_EXTRAS_KEY,
+                    counts.entries.joinToString(",") { "${it.key}=${it.value}" },
+                )
+                addExtras(
+                    PROCESSOR_TIME_EXTRAS_KEY,
+                    formatProcessorTimes(noOpDetector.timesByProcessor),
+                )
+                formatPhases(noOpDetector.phasesMs)?.let { addExtras(PHASE_EXTRAS_KEY, it) }
+              }
+              inertShortcutResult?.let { addExtras(INERT_SHORTCUT_EXTRAS_KEY, it) }
+            },
+        )
         return when (exitCode) {
           KotlinSymbolProcessing.ExitCode.OK -> StepExecutionResults.SUCCESS
           KotlinSymbolProcessing.ExitCode.PROCESSING_ERROR ->
@@ -82,14 +130,14 @@ class Ksp2Step(
         return StepExecutionResult(
             StepExecutionResults.ERROR_EXIT_CODE,
             Optional.of(
-                "${stderr.getContentsAsString(StandardCharsets.UTF_8)}\n${e.stackTraceToString()}For URLClassLoader LinkError similar to P1626402598, try adding affected class to FilteringClassLoader's allowlist. See D63143327"
+                "${stderr.getContentsAsString(StandardCharsets.UTF_8)}\n${e.stackTraceToString()}For URLClassLoader LinkError similar to P1626402598, try adding affected class to FilteringClassLoader's allowlist. See D63143327",
             ),
         )
       } catch (e: Throwable) {
         return StepExecutionResult(
             StepExecutionResults.ERROR_EXIT_CODE,
             Optional.of(
-                "${stderr.getContentsAsString(StandardCharsets.UTF_8)}\n${e.stackTraceToString()}"
+                "${stderr.getContentsAsString(StandardCharsets.UTF_8)}\n${e.stackTraceToString()}",
             ),
         )
       }
@@ -103,15 +151,14 @@ class Ksp2Step(
     val logger = BuckKsp2Logger(stdErr)
 
     // Load processors
-    val processorClassloader: ClassLoader =
-        URLClassLoader(
-            kspProcessorsClasspathList.map { File(it).toURI().toURL() }.toTypedArray(),
-            filteringClassLoader,
-        )
+    val processorClassloader: ClassLoader = URLClassLoader(
+        kspProcessorsClasspathList.map { File(it).toURI().toURL() }.toTypedArray(),
+        filteringClassLoader,
+    )
     val processorProviders =
         ServiceLoader.load(
                 processorClassloader.loadClass(
-                    "com.google.devtools.ksp.processing.SymbolProcessorProvider"
+                    "com.google.devtools.ksp.processing.SymbolProcessorProvider",
                 ),
                 processorClassloader,
             )
@@ -119,21 +166,95 @@ class Ksp2Step(
 
     // Build processor options
     val apOptions = getApOptions()
+    val (kspLibraries, kspFriends) =
+        librariesAndFriends(allClasspaths.map { it.toFile() }, friendPaths.map { it.toFile() })
 
     // Expand source paths
-    val sourceFilePathsExpanded =
-        getExpandedSourcePathsOrThrow(
-            ruleCellRoot = context.ruleCellRoot,
-            kotlinSourceFilePaths = sourceFilePaths,
-            ignoredPathMatcher =
-                if (invokingRule.isSourceOnlyAbi)
-                    GlobPatternMatcher.of("**/kosabi_stub.android.**.kt")
-                else null,
-            workingDirectory = Optional.of(outputPaths.workingDirectory.getPath()),
-            invokingRule = invokingRule,
-            logger = logger,
-        )
+    val sourceFilePathsExpanded = getExpandedSourcePathsOrThrow(
+        ruleCellRoot = context.ruleCellRoot,
+        kotlinSourceFilePaths = sourceFilePaths,
+        ignoredPathMatcher =
+            if (invokingRule.isSourceOnlyAbi) GlobPatternMatcher.of("**/kosabi_stub.android.**.kt")
+            else null,
+        workingDirectory = Optional.of(outputPaths.workingDirectory.getPath()),
+        invokingRule = invokingRule,
+        logger = logger,
+    )
     val sourceFilePathsResolved = sourceFilePathsExpanded.map { rootPath.resolve(it).toFile() }
+
+    val outputDirs =
+        KspInertShortcut.OutputDirs(
+            rootPath.resolve(kspClassesOutput).toFile(),
+            rootPath.resolve(kspKotlinOutput).toFile(),
+            rootPath.resolve(kspJavaOutput).toFile(),
+        )
+    val reportFile = apOptions[FILE_ACCESS_HISTORY_REPORT_OPTION]?.let { File(it) }
+    val askStart = System.nanoTime()
+    val lookup =
+        KspInertShortcut.lookup(
+            processorClassloader,
+            processorProviders.map { it::class.java.name },
+            sourceFilePathsResolved,
+            apOptions,
+        )
+    val askMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - askStart)
+    if (lookup is KspInertShortcut.Lookup.Failed) {
+      inertShortcutResult = "error: ${lookup.error.toString().take(200)}; ask $askMs ms"
+      logger.info(
+          "KOTLINCD_KSP_INERT_SHORTCUT|error|${invokingRule.fullyQualifiedName}|${lookup.error}",
+      )
+    }
+    val shortcut = (lookup as? KspInertShortcut.Lookup.Found)?.shortcut
+    val answer = (lookup as? KspInertShortcut.Lookup.Found)?.answer
+    // The resource's mode, lowered by the answer's.
+    val shortcutMode = (lookup as? KspInertShortcut.Lookup.Found)?.mode
+    if (shortcut != null && answer != null) {
+      val outcome =
+          answer.declined?.let { "declined: ${it.take(200)}" } ?: shortcutMode!!.name.lowercase()
+      inertShortcutResult = "$outcome; ask $askMs ms"
+      if (answer.declined == null && shortcutMode == KspInertShortcut.Mode.SKIP) {
+        val written =
+            KspInertShortcut.guarded(
+                { error ->
+                  // `write` is all or nothing: KSP2 runs on the directories as they were.
+                  inertShortcutResult = "skip-error: ${error.toString().take(200)}; ask $askMs ms"
+                  logger.info(
+                      "KOTLINCD_KSP_INERT_SHORTCUT|skip-error|${invokingRule.fullyQualifiedName}|$error",
+                  )
+                  false
+                },
+            ) {
+              shortcut.write(answer, outputDirs, reportFile)
+              true
+            }
+        if (written) {
+          logger.info("KOTLINCD_KSP_INERT_SHORTCUT|skip|${invokingRule.fullyQualifiedName}")
+          return KotlinSymbolProcessing.ExitCode.OK
+        }
+      }
+    }
+    // Only a comparison (verify or shadow, with an answer) reads the report before KSP2 runs; a
+    // failed read is recorded and skips the comparison, never the step.
+    var compare =
+        shortcut != null &&
+            answer != null &&
+            answer.declined == null &&
+            shortcutMode != KspInertShortcut.Mode.SKIP
+    val reportBefore =
+        if (!compare) {
+          null
+        } else {
+          KspInertShortcut.guarded(
+              { error ->
+                compare = false
+                inertShortcutResult =
+                    "${shortcutMode!!.name.lowercase()}-error: report ${error.toString().take(200)}; ask $askMs ms"
+                null
+              },
+          ) {
+            reportFile?.takeIf { it.exists() }?.readText(StandardCharsets.UTF_8)
+          }
+        }
 
     // Build KSP config
     val kspConfig =
@@ -153,22 +274,12 @@ class Ksp2Step(
               javaSourceRoots = sourceFilePathsResolved
               languageVersion = this@Ksp2Step.languageVersion.value
               apiVersion = this@Ksp2Step.languageVersion.value
-              libraries = allClasspaths.map { it.toFile() }
+              libraries = kspLibraries
+              friends = kspFriends
               jvmDefaultMode = this@Ksp2Step.jvmDefaultMode
+              resolveJdkHome(this@Ksp2Step.javaBinary)?.let { jdkHome = it }
 
-              when (ksp2Mode) {
-                is Ksp2Mode.NonIncremental -> {
-                  cachesDir = rootPath.resolve(ksp2Mode.kspCachesOutput).toFile()
-                }
-                is Ksp2Mode.Incremental -> {
-                  incremental = true
-                  cachesDir = ksp2Mode.cachesDir.toFile()
-                  incrementalLog = ksp2Mode.incrementalLog
-                  modifiedSources = ksp2Mode.modifiedSources.map { it.toFile() }
-                  removedSources = ksp2Mode.removedSources.map { it.toFile() }
-                  changedClasses = ksp2Mode.changedClasses
-                }
-              }
+              cachesDir = rootPath.resolve(kspCachesOutput).toFile()
             }
             .build()
 
@@ -192,18 +303,57 @@ class Ksp2Step(
               |  languageVersion = ${kspConfig.languageVersion}
               |  apiVersion = ${kspConfig.apiVersion}
               |  libraries = ${kspConfig.libraries}
+              |  friends = ${kspConfig.friends}
               |  jvmDefaultMode = ${kspConfig.jvmDefaultMode}
-              |  incremental = ${kspConfig.incremental}
-              |  incrementalLog = ${kspConfig.incrementalLog}
-              |  modifiedSources = ${kspConfig.modifiedSources.joinToString()}
-              |  removedSources = ${kspConfig.removedSources.joinToString()}
-              |  changedClasses = ${kspConfig.changedClasses.joinToString()}
+              |  jdkHome = ${kspConfig.jdkHome}
               |]"""
-            .trimMargin()
+            .trimMargin(),
     )
     // Run!
-    val kotlinSymbolProcessing = KotlinSymbolProcessing(kspConfig, processorProviders, logger)
-    return kotlinSymbolProcessing.execute()
+    val kotlinSymbolProcessing =
+        KotlinSymbolProcessing(kspConfig, noOpDetector.wrap(processorProviders), logger)
+    val exitCode = kotlinSymbolProcessing.execute()
+    if (shortcut == null || shortcutMode == KspInertShortcut.Mode.SKIP) {
+      return exitCode
+    }
+    if (!compare || answer == null) {
+      return exitCode
+    }
+    val mode = shortcutMode!!.name.lowercase()
+    if (exitCode != KotlinSymbolProcessing.ExitCode.OK) {
+      inertShortcutResult = "$mode-not-compared: KSP exit $exitCode; ask $askMs ms"
+      return exitCode
+    }
+    val compareStart = System.nanoTime()
+    val comparison =
+        KspInertShortcut.guarded(
+            { error ->
+              // Only `verify` may fail the step, and only on a real mismatch.
+              inertShortcutResult = "$mode-error: ${error.toString().take(200)}; ask $askMs ms"
+              logger.info(
+                  "KOTLINCD_KSP_INERT_SHORTCUT|compare-error|${invokingRule.fullyQualifiedName}|$error",
+              )
+              null
+            },
+        ) {
+          shortcut.compare(answer, outputDirs, reportFile, reportBefore)
+        } ?: return exitCode
+    val compareMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - compareStart)
+    val timing = "ask $askMs ms; compare $compareMs ms"
+    if (comparison.mismatch == null) {
+      inertShortcutResult = "$mode-ok; dep file ${comparison.depFile}; $timing"
+      return exitCode
+    }
+    val mismatchLine =
+        "${KspInertShortcut.MISMATCH}|${invokingRule.fullyQualifiedName}|${comparison.mismatch}"
+    inertShortcutResult = "$mode-mismatch: ${comparison.mismatch.take(300)}; $timing"
+    if (shortcutMode == KspInertShortcut.Mode.VERIFY) {
+      stdErr.println(mismatchLine)
+      return KotlinSymbolProcessing.ExitCode.PROCESSING_ERROR
+    }
+    // Shadow: KSP2's own outputs stand; the mismatch is only recorded.
+    logger.info(mismatchLine)
+    return exitCode
   }
 
   private fun getApOptions(): MutableMap<String, String> {
@@ -216,7 +366,7 @@ class Ksp2Step(
     apOptions["cp"] = allClasspath.replace(',', '-')
 
     if (shouldTrackClassUsage) {
-      apOptions["fileAccessHistoryReportFile"] = rootPath.resolve(kspDepFilePath).toString()
+      apOptions[FILE_ACCESS_HISTORY_REPORT_OPTION] = rootPath.resolve(kspDepFilePath).toString()
     }
 
     if (invokingRule.isSourceOnlyAbi) {
@@ -257,18 +407,128 @@ class Ksp2Step(
       } catch (exception: IOException) {
         logger.exception(exception)
         throw RuntimeException(
-            "Unable to expand sources for ${invokingRule.fullyQualifiedName} into $workingDirectory"
+            "Unable to expand sources for ${invokingRule.fullyQualifiedName} into $workingDirectory",
         )
       }
 
   companion object {
-    private val filteringClassLoader =
-        FilteringClassLoader(
-            this::class.java.classLoader,
-            ClassLoader.getPlatformClassLoader(),
-            "com.google.devtools.ksp.",
-            "kotlin.",
-            "ksp.",
+    /**
+     * The KSP2 libraries and friends: the friend jars are passed as friends and left out of the
+     * libraries, because a jar that is also a library hides the friend module's `internal`
+     * declarations from KSP2.
+     */
+    @JvmStatic
+    fun librariesAndFriends(
+        classpath: List<File>,
+        friendPaths: List<File>,
+    ): Pair<List<File>, List<File>> {
+      if (friendPaths.isEmpty()) {
+        return classpath to emptyList()
+      }
+      val friends = friendPaths.toSet()
+      return classpath.filterNot { it in friends } to friendPaths
+    }
+
+    private val LOG: Logger = Logger.get(Ksp2Step::class.java)
+
+    private const val PROCESSOR_OUTPUT_EXTRAS_KEY = "ksp2_processor_generated_files"
+
+    private const val CPU_EXTRAS_KEY = "ksp2_cpu"
+
+    private const val PROCESSOR_TIME_EXTRAS_KEY = "ksp2_processor_time_ms"
+
+    private const val PHASE_EXTRAS_KEY = "ksp2_phase_ms"
+
+    /**
+     * `provider=create;process;finish;rounds` per provider, joined by `,`: the values use `;` so
+     * that the pairs split like the generated-file counts.
+     */
+    @JvmStatic
+    fun formatProcessorTimes(times: Map<String, Ksp2NoOpDetector.ProcessorTime>): String =
+        times.entries.joinToString(",") { (name, time) ->
+          "$name=${time.createMs};${time.processMs};${time.finishMs};${time.rounds}"
+        }
+
+    /** `setup=…,processors=…,other=…`, or null when the step's phases were not measured. */
+    @JvmStatic
+    fun formatPhases(phases: Map<String, Long>): String? =
+        phases.takeIf { it.isNotEmpty() }?.entries?.joinToString(",") { "${it.key}=${it.value}" }
+
+    private const val INERT_SHORTCUT_EXTRAS_KEY = "ksp2_inert_shortcut"
+
+    private const val FILE_ACCESS_HISTORY_REPORT_OPTION = "fileAccessHistoryReportFile"
+
+    /**
+     * Telemetry records only successful runs that produced counts: an aborted run leaves never-ran
+     * processors reading zero.
+     */
+    fun shouldRecordProcessorCounts(
+        succeeded: Boolean,
+        hasCounts: Boolean,
+    ): Boolean = succeeded && hasCounts
+
+    private val jdkHomeCache = java.util.concurrent.ConcurrentHashMap<String, File>()
+    private val JAVA_HOME_REGEX = Regex("""java\.home\s*=\s*(.+)""")
+
+    /**
+     * Resolves the JDK home directory from the declared java binary input.
+     *
+     * KSP2 needs jdkHome to resolve JDK types (java.lang.AutoCloseable, etc.) for JVM targets.
+     * Android targets use android.jar instead and do not need jdkHome — returns null when
+     * javaBinary is absent so callers can skip setting jdkHome (KSP2 defaults to
+     * System.getProperty("java.home")).
+     *
+     * Similar to compile_kotlin.py's _get_jdk_home() which uses jdk_locator, this invokes the java
+     * binary with -XshowSettings:properties to discover java.home at action time. The java binary
+     * is a declared Buck2 input (from java_toolchain.java), making this hermetic.
+     *
+     * Result is cached per java binary path (subprocess runs at most once per distinct binary).
+     */
+    private fun resolveJdkHome(javaBinary: Optional<String>): File? {
+      val binary = javaBinary.filter { it.isNotEmpty() }.orElse(null) ?: return null
+      return jdkHomeCache.computeIfAbsent(binary) { resolveJdkHomeUncached(it) }
+    }
+
+    private fun resolveJdkHomeUncached(binary: String): File {
+      val process =
+          ProcessBuilder(binary, "-XshowSettings:properties", "-version")
+              .redirectErrorStream(true)
+              .start()
+      // Drain the pipe in a background thread to avoid deadlock: the process can
+      // write more than the OS pipe buffer (~64KB), blocking if no one reads.
+      // Meanwhile waitFor() provides the timeout guarantee.
+      val outputFuture =
+          java.util.concurrent.CompletableFuture.supplyAsync {
+            process.inputStream.bufferedReader().readText()
+          }
+      val completed = process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)
+      if (!completed) {
+        process.destroyForcibly()
+        throw RuntimeException("Timed out resolving JDK home from java binary: $binary")
+      }
+      val exitCode = process.exitValue()
+      val output = outputFuture.get()
+      if (exitCode != 0) {
+        throw RuntimeException(
+            "java binary exited with code $exitCode: $binary\n" + "Output: ${output.take(500)}",
         )
+      }
+      val match = JAVA_HOME_REGEX.find(output)
+      val path =
+          match?.groupValues?.get(1)?.trim()
+              ?: throw RuntimeException(
+                  "Could not parse java.home from java binary output: $binary\n" +
+                      "Output (first 500 chars): ${output.take(500)}",
+              )
+      return File(path)
+    }
+
+    private val filteringClassLoader = FilteringClassLoader(
+        this::class.java.classLoader,
+        ClassLoader.getPlatformClassLoader(),
+        "com.google.devtools.ksp.",
+        "kotlin.",
+        "ksp.",
+    )
   }
 }

@@ -8,9 +8,16 @@
 
 # This is copy-paste from `prelude/configurations/util.bzl`
 
+def _configuration_info(constraints, values, root_values = None):
+    return ConfigurationInfo(
+        constraints = constraints,
+        values = values,
+        root_values = root_values or {},
+    )
+
 def _configuration_info_union(infos):
     if len(infos) == 0:
-        return ConfigurationInfo(
+        return _configuration_info(
             constraints = {},
             values = {},
         )
@@ -18,16 +25,18 @@ def _configuration_info_union(infos):
         return infos[0]
     constraints = {k: v for info in infos for (k, v) in info.constraints.items()}
     values = {k: v for info in infos for (k, v) in info.values.items()}
-    return ConfigurationInfo(
+    root_values = {k: v for info in infos for (k, v) in info.root_values.items()}
+    return _configuration_info(
         constraints = constraints,
         values = values,
+        root_values = root_values,
     )
 
 def _constraint_values_to_configuration(values):
-    return ConfigurationInfo(constraints = {
-        info[ConstraintValueInfo].setting.label: info[ConstraintValueInfo]
-        for info in values
-    }, values = {})
+    return _configuration_info(
+        constraints = {info[ConstraintValueInfo].setting.label: info[ConstraintValueInfo] for info in values},
+        values = {},
+    )
 
 # This is copy-paste from `prelude/configurations/rules.bzl`
 
@@ -49,9 +58,12 @@ def _constraint_value_impl(ctx):
         DefaultInfo(),
         constraint_value,
         # Provide `ConfigurationInfo` from `constraint_value` so it could be used as select key.
-        ConfigurationInfo(constraints = {
-            constraint_value.setting.label: constraint_value,
-        }, values = {}),
+        _configuration_info(
+            constraints = {
+                constraint_value.setting.label: constraint_value,
+            },
+            values = {},
+        ),
     ]
 
 constraint_value = rule(
@@ -63,10 +75,7 @@ constraint_value = rule(
 )
 
 def _platform_impl(ctx):
-    subinfos = (
-        [dep[PlatformInfo].configuration for dep in ctx.attrs.deps] +
-        [_constraint_values_to_configuration(ctx.attrs.constraint_values)]
-    )
+    subinfos = [dep[PlatformInfo].configuration for dep in ctx.attrs.deps] + [_constraint_values_to_configuration(ctx.attrs.constraint_values)]
     return [
         DefaultInfo(),
         PlatformInfo(
@@ -86,7 +95,13 @@ platform = rule(
 
 def _config_setting_impl(ctx):
     subinfos = [_constraint_values_to_configuration(ctx.attrs.constraint_values)]
-    subinfos.append(ConfigurationInfo(constraints = {}, values = ctx.attrs.values))
+    subinfos.append(
+        _configuration_info(
+            constraints = {},
+            values = ctx.attrs.values,
+            root_values = ctx.attrs.root_values,
+        )
+    )
     return [DefaultInfo(), _configuration_info_union(subinfos)]
 
 config_setting = rule(
@@ -94,6 +109,7 @@ config_setting = rule(
     is_configuration_rule = True,
     attrs = {
         "constraint_values": attrs.list(attrs.dep(providers = [ConstraintValueInfo]), default = []),
+        "root_values": attrs.dict(attrs.string(), attrs.string(), default = {}),
         "values": attrs.dict(attrs.string(), attrs.string(), default = {}),
     },
 )
@@ -105,8 +121,19 @@ def _execution_platform(ctx):
             label = ctx.label.raw_target(),
             configuration = ctx.attrs.platform[PlatformInfo].configuration,
             executor_config = CommandExecutorConfig(
-                local_enabled = True,
-                remote_enabled = False,
+                local_enabled = ctx.attrs.local_enabled,
+                remote_enabled = ctx.attrs.remote_enabled,
+                remote_execution_properties = {
+                    "platform": "linux-remote-execution",
+                },
+                remote_execution_max_input_files_mebibytes = 1,
+                use_limited_hybrid = True,
+                allow_limited_hybrid_fallbacks = False,
+                allow_hybrid_fallbacks_on_failure = False,
+                remote_execution_use_case = "buck2-testing",
+                remote_cache_enabled = ctx.attrs.remote_cache_enabled,
+                allow_cache_uploads = ctx.attrs.allow_cache_uploads,
+                max_cache_upload_mebibytes = 1,
             ),
         ),
     ]
@@ -114,6 +141,10 @@ def _execution_platform(ctx):
 execution_platform = rule(
     impl = _execution_platform,
     attrs = {
+        "allow_cache_uploads": attrs.bool(default = False),
+        "local_enabled": attrs.bool(default = True),
         "platform": attrs.dep(providers = [PlatformInfo]),
+        "remote_cache_enabled": attrs.option(attrs.bool(), default = None),
+        "remote_enabled": attrs.bool(default = False),
     },
 )

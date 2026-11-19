@@ -19,33 +19,42 @@ use either::Either;
 
 use crate as starlark;
 use crate::const_frozen_string;
+use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
+use crate::values::dict::AllocDict;
+use crate::values::dict::DictRef;
+use crate::values::dict::DictType;
+use crate::values::int::IntView;
+use crate::values::list::AllocList;
+use crate::values::list::ListRef;
+use crate::values::list::ListType;
+use crate::values::set::SetRef;
+use crate::values::set::SetType;
+use crate::values::string::StarlarkStr;
+use crate::values::tuple::AllocTuple;
+use crate::values::tuple::TupleRef;
+use crate::values::tuple::TupleType;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::typing::StarlarkNever;
 
-#[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
+#[derive(UnpackValue, Eq, PartialEq, Debug)]
 enum EmptyEnum {}
 
-#[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
-enum JustInt {
-    Int(i32),
+#[derive(UnpackValue, Debug)]
+enum JustInt<'v> {
+    Int(IntView<'v>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
-enum IntOrStr {
-    Int(i32),
-    Str(String),
+#[derive(UnpackValue, Debug)]
+enum IntOrStr<'v> {
+    Int(IntView<'v>),
+    Str(ValueOf<'v, StarlarkStr>),
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
-enum WithLifetime<'v> {
-    Int(i32),
-    Str(&'v str),
-}
-
-#[derive(StarlarkTypeRepr, UnpackValue, Eq, PartialEq, Debug)]
-struct TransparentIntOrStr(IntOrStr);
+#[derive(UnpackValue, Debug)]
+struct TransparentIntOrStr<'v>(IntOrStr<'v>);
 
 #[test]
 fn test_starlark_type_repr() {
@@ -54,16 +63,11 @@ fn test_starlark_type_repr() {
         EmptyEnum::starlark_type_repr()
     );
 
-    assert_eq!(i32::starlark_type_repr(), JustInt::starlark_type_repr());
+    assert_eq!(IntView::starlark_type_repr(), JustInt::starlark_type_repr());
 
     assert_eq!(
-        Either::<i32, String>::starlark_type_repr(),
+        Either::<IntView, StarlarkStr>::starlark_type_repr(),
         IntOrStr::starlark_type_repr()
-    );
-
-    assert_eq!(
-        Either::<i32, String>::starlark_type_repr(),
-        WithLifetime::starlark_type_repr()
     );
 
     assert_eq!(
@@ -72,34 +76,85 @@ fn test_starlark_type_repr() {
     );
 }
 
+fn show(v: IntOrStr) -> String {
+    match v {
+        IntOrStr::Int(i) => format!("int {}", i.to_value().unpack_i32().unwrap()),
+        IntOrStr::Str(s) => format!("str {}", s.get().as_str()),
+    }
+}
+
 #[test]
 fn test_unpack_value() {
-    assert_eq!(
-        Some(JustInt::Int(17)),
-        JustInt::unpack_value(Value::testing_new_int(17)).unwrap(),
-    );
+    let JustInt::Int(i) = JustInt::unpack_value(Value::testing_new_int(17))
+        .unwrap()
+        .unwrap();
+    assert_eq!(Some(17), i.to_value().unpack_i32());
+    assert!(JustInt::unpack_value(Value::new_none()).unwrap().is_none());
 
     assert_eq!(
-        Some(IntOrStr::Int(19)),
-        IntOrStr::unpack_value(Value::testing_new_int(19)).unwrap(),
+        "int 19",
+        show(
+            IntOrStr::unpack_value(Value::testing_new_int(19))
+                .unwrap()
+                .unwrap()
+        ),
     );
     assert_eq!(
-        Some(IntOrStr::Str("abc".to_owned())),
-        IntOrStr::unpack_value(const_frozen_string!("abc").to_value()).unwrap(),
+        "str abc",
+        show(
+            IntOrStr::unpack_value(const_frozen_string!("abc").at().to_value())
+                .unwrap()
+                .unwrap()
+        ),
+    );
+    assert!(IntOrStr::unpack_value(Value::new_none()).unwrap().is_none());
+
+    let TransparentIntOrStr(inner) = TransparentIntOrStr::unpack_value(Value::testing_new_int(19))
+        .unwrap()
+        .unwrap();
+    assert_eq!("int 19", show(inner));
+}
+
+#[derive(UnpackValue)]
+enum References<'v> {
+    Str(&'v str),
+    List(&'v ListRef<'v>),
+    Tuple(&'v TupleRef<'v>),
+    Dict(DictRef<'v>),
+    Set(SetRef<'v>),
+}
+
+#[test]
+fn test_reference_payloads() {
+    assert_eq!(
+        Either::<
+            Either<Either<StarlarkStr, ListType<Value>>, TupleType<Value>>,
+            Either<DictType<Value, Value>, SetType<Value>>,
+        >::starlark_type_repr(),
+        References::starlark_type_repr()
     );
 
-    assert_eq!(
-        Some(WithLifetime::Int(23)),
-        WithLifetime::unpack_value(Value::testing_new_int(23)).unwrap(),
-    );
-
-    assert_eq!(
-        Some(WithLifetime::Str("def")),
-        WithLifetime::unpack_value(const_frozen_string!("def").to_value()).unwrap(),
-    );
-
-    assert_eq!(
-        Some(TransparentIntOrStr(IntOrStr::Int(19))),
-        TransparentIntOrStr::unpack_value(Value::testing_new_int(19)).unwrap(),
-    )
+    Heap::temp(|heap| {
+        let show = |v: Value| match References::unpack_value_opt(v) {
+            Some(References::Str(s)) => format!("str {s}"),
+            Some(References::List(l)) => format!("list {}", l.len()),
+            Some(References::Tuple(t)) => format!("tuple {}", t.len()),
+            Some(References::Dict(d)) => format!("dict {}", d.len()),
+            Some(References::Set(_)) => "set".to_owned(),
+            None => "other".to_owned(),
+        };
+        assert_eq!("str abc", show(heap.alloc("abc").to_value()));
+        assert_eq!("list 2", show(heap.alloc(AllocList([1, 2])).to_value()));
+        assert_eq!(
+            "tuple 3",
+            show(heap.alloc(AllocTuple([1, 2, 3])).to_value())
+        );
+        assert_eq!("dict 1", show(heap.alloc(AllocDict([(1, 2)])).to_value()));
+        assert_eq!("other", show(Value::testing_new_int(1)));
+    });
+    let set = crate::assert::pass("set([1, 2])");
+    assert!(matches!(
+        References::unpack_value_opt(set.as_ref().value()),
+        Some(References::Set(s)) if s.iter().count() == 2
+    ));
 }

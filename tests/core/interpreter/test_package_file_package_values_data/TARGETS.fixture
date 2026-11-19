@@ -7,6 +7,13 @@ read_package_value("aaa.bbb") == "ccc" or fail()
 # buildifier: disable=no-effect
 read() == "zzz" or fail()
 
+# Verify select package values are readable as native selects
+# buildifier: disable=no-effect
+select_test(read_package_value("sel.ector"), lambda x: x in ("val_a", "default_val")) or fail()
+
+# buildifier: disable=no-effect
+select_test(read_package_value("sel.concat"), lambda x: x in ("x", "y")) or fail()
+
 print("TEST PASSED")  # buildifier: disable=print
 
 test_target(name = "test_target")

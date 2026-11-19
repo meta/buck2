@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 import java.net.URI;
 import java.nio.file.Path;
@@ -22,6 +23,7 @@ import javax.tools.JavaFileObject;
  * Tracks which classes are actually read by the compiler by providing a special {@link
  * JavaFileManager}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ClassUsageTracker implements FileManagerListener {
 
   private final ClassUsageURIParser parser = new ClassUsageURIParser();

@@ -15,13 +15,16 @@ import com.android.ide.common.resources.MergedResourceWriter;
 import com.android.ide.common.resources.MergingException;
 import com.android.ide.common.resources.NoOpResourcePreprocessor;
 import com.android.ide.common.resources.ResourceMerger;
+import com.android.ide.common.resources.ResourcePathEncoding;
 import com.android.ide.common.resources.ResourceSet;
 import com.android.utils.ILogger;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import java.nio.file.Path;
+import java.util.Objects;
 
 /** Merges multiple directories containing Android resource sources into one directory. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class MergeAndroidResourceSourcesUtils {
 
   public static void mergeResPaths(
@@ -32,7 +35,7 @@ class MergeAndroidResourceSourcesUtils {
       ResourceSet set =
           new ResourceSet(
               resPath.toString(),
-              ResourceNamespace.RES_AUTO,
+              Objects.requireNonNull(ResourceNamespace.RES_AUTO),
               /* libraryName */ null,
               /* validateEnabled */ true,
               /* aaptEnv */ null);
@@ -46,10 +49,10 @@ class MergeAndroidResourceSourcesUtils {
             outFolderPath.toFile(),
             null /*publicFile*/,
             null /*blameLogFolder*/,
-            NoOpResourcePreprocessor.INSTANCE,
+            Objects.requireNonNull(NoOpResourcePreprocessor.INSTANCE),
             tmpFolderPath.toFile(),
-            ImmutableMap.of() /* moduleSourceSet */,
-            "unused_package_name");
+            "unused_package_name",
+            new ResourcePathEncoding.AbsoluteNotRelocatable("Android Gradle Plugin only feature"));
     merger.mergeData(writer, /* cleanUp */ false);
   }
 }

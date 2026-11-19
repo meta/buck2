@@ -11,7 +11,7 @@ _bin_path = read_config("three_billion_instructions", "path")
 _cache_buster = read_config("test", "cache_buster", default = "")
 
 def _impl(ctx):
-    tbi_bin = ctx.actions.declare_output("tbi.bin")
+    tbi_bin = ctx.actions.declare_output("tbi.bin", has_content_based_path = False)
     ctx.actions.run(
         # Copy the helper binary into buck-out so the action below can
         # run remotely
@@ -24,7 +24,7 @@ def _impl(ctx):
         allow_cache_upload = False,
         category = "copy",
     )
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(
             "bash",

@@ -55,16 +55,6 @@ def buck_command(args: argparse.Namespace) -> str:
         return "./buck2.py"
 
 
-def copy_starlark_docs() -> None:
-    base_path = Path("docs") / "developers" / "starlark"
-    setup_gen_dir(base_path)
-    # Copy the starlark docs over. docusaurus does not handle upward path traversal very well.
-    for x in Path("starlark-rust/docs").glob("*.md"):
-        name = Path(x).stem
-        prefix = "---\nid: " + name + "\n---\n"
-        write_file(base_path / (name + ".generated.md"), prefix + read_file(x))
-
-
 def generate_prelude_rules_docs(buck: str) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         base_dir = Path("docs") / "prelude" / "rules"
@@ -165,7 +155,8 @@ def parse_subcommands(output: str) -> List[str]:
         if seen_subcommands and x.startswith("  ") and len(x) > 2 and x[2].isalpha():
             sub = x.strip().split()[0]
             if sub != "help":
-                res.append(sub)
+                if sub != "cleanall":  # FIXME(scottcao): Not fully implemented yet
+                    res.append(sub)
     return res
 
 
@@ -286,7 +277,6 @@ def main() -> None:
         os.remove(x)
 
     buck = buck_command(args)
-    copy_starlark_docs()
     generate_prelude_rules_docs(buck)
     generate_api_docs(buck)
     generate_bxl_utils_api_docs(buck)

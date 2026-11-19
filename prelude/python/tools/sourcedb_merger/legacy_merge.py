@@ -7,14 +7,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
-
 
 import argparse
 import pathlib
 import sys
-
-from typing import Sequence
+from collections.abc import Sequence
 
 import inputs
 import legacy_outputs

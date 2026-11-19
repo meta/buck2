@@ -22,6 +22,9 @@ use std::fmt::Display;
 
 use logos::Logos;
 use num_bigint::BigInt;
+use num_bigint::BigUint;
+use num_bigint::ParseBigIntError;
+use num_bigint::Sign;
 use num_traits::Num;
 use thiserror::Error;
 
@@ -57,6 +60,8 @@ pub enum LexemeError {
     CommentSpanComputedIncorrectly,
     #[error("Cannot parse `{0}` as an integer in base {1}")]
     CannotParse(String, u32),
+    #[error("Parse error: f-string expression is missing closing `}}`")]
+    UnfinishedFStringExpression,
 }
 
 impl From<LexemeError> for crate::error::Error {
@@ -72,6 +77,22 @@ fn map_lexeme_t<T1, T2>(lexeme: LexemeT<T1>, f: impl FnOnce(T1) -> T2) -> Lexeme
     lexeme.map(|(l, t, r)| (l, f(t), r))
 }
 
+/// State for tracking f-string parsing.
+#[derive(Debug, Clone)]
+struct FStringState {
+    /// The quote style used for this f-string.
+    quote: FStringQuote,
+    /// Whether this is a raw f-string (fr"..." or rf"...").
+    raw: bool,
+    /// Depth of nested braces within the current expression (0 means we're in string mode).
+    /// When > 0, we're lexing an expression and need to track nested `{}`.
+    brace_depth: usize,
+    /// Depth of nested parentheses within the current expression.
+    paren_depth: usize,
+    /// Depth of nested square brackets within the current expression.
+    bracket_depth: usize,
+}
+
 pub struct Lexer<'a> {
     // Information for spans
     codemap: CodeMap,
@@ -82,6 +103,8 @@ pub struct Lexer<'a> {
     parens: isize, // Number of parens we have seen
     lexer: logos::Lexer<'a, Token>,
     done: bool,
+    /// Stack of f-string states (for nested f-strings).
+    fstring_stack: Vec<FStringState>,
 }
 
 impl<'a> Lexer<'a> {
@@ -95,6 +118,7 @@ impl<'a> Lexer<'a> {
             lexer,
             parens: 0,
             done: false,
+            fstring_stack: Vec::new(),
         };
         if let Err(e) = lexer2.calculate_indent() {
             lexer2.buffer.push_back(Err(e));
@@ -344,7 +368,11 @@ impl<'a> Lexer<'a> {
             match it.next_char() {
                 None => {
                     return self.err_span(
-                        LexemeError::UnfinishedStringLiteral,
+                        if self.in_fstring_expr_mode() {
+                            LexemeError::UnfinishedFStringExpression
+                        } else {
+                            LexemeError::UnfinishedStringLiteral
+                        },
                         string_start,
                         string_end + it.pos(),
                     );
@@ -429,6 +457,205 @@ impl<'a> Lexer<'a> {
         )
     }
 
+    /// Like `escape`, but appends bytes to `res: &mut Vec<u8>`.
+    /// Non-ASCII chars are encoded as UTF-8. `\uXXXX` / `\UHHHHHHHH` also encode as UTF-8 bytes.
+    fn escape_bytes(it: &mut CursorChars, res: &mut Vec<u8>) -> Result<(), ()> {
+        match it.next() {
+            Some('n') => res.push(b'\n'),
+            Some('r') => res.push(b'\r'),
+            Some('t') => res.push(b'\t'),
+            Some('a') => res.push(b'\x07'),
+            Some('b') => res.push(b'\x08'),
+            Some('f') => res.push(b'\x0C'),
+            Some('v') => res.push(b'\x0B'),
+            Some('\n') => {}
+            Some('\r') => {
+                if it.next() != Some('\n') {
+                    return Err(());
+                }
+            }
+            Some('x') => {
+                let c = Self::escape_char(it, 2, 2, 16)?;
+                // \xHH: store the low byte directly (Latin-1 / bytes-literal semantics).
+                res.push(c as u32 as u8);
+            }
+            Some('u') => {
+                let c = Self::escape_char(it, 4, 4, 16)?;
+                let mut buf = [0u8; 4];
+                res.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            }
+            Some('U') => {
+                let c = Self::escape_char(it, 8, 8, 16)?;
+                let mut buf = [0u8; 4];
+                res.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            }
+            Some(c) => match c {
+                '0'..='7' => {
+                    it.unnext(c);
+                    let c = Self::escape_char(it, 1, 3, 8)?;
+                    if c as u32 > 255 {
+                        return Err(());
+                    }
+                    res.push(c as u32 as u8);
+                }
+                '"' | '\'' | '\\' => res.push(c as u8),
+                _ => {
+                    res.push(b'\\');
+                    let mut buf = [0u8; 4];
+                    res.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                }
+            },
+            None => return Err(()),
+        }
+        Ok(())
+    }
+
+    /// Parse a bytes literal. Return the bytes content and the offset where it starts.
+    fn bytes_string(
+        &mut self,
+        triple: bool,
+        raw: bool,
+        mut stop: impl FnMut(char) -> bool,
+    ) -> LexemeT<(Vec<u8>, usize)> {
+        let string_start = self.lexer.span().start;
+        let mut string_end = self.lexer.span().end;
+
+        let mut it = CursorBytes::new(self.lexer.remainder());
+        let it2;
+
+        if triple {
+            it.next();
+            it.next();
+        }
+        let contents_start = it.pos();
+
+        // Fast path: accumulate bytes as-is until we hit something special
+        let mut res: Vec<u8>;
+        loop {
+            match it.next_char() {
+                None => {
+                    return self.err_span(
+                        LexemeError::UnfinishedStringLiteral,
+                        string_start,
+                        string_end + it.pos(),
+                    );
+                }
+                Some(c) => {
+                    if stop(c) {
+                        let contents_end = it.pos() - if triple { 3 } else { 1 };
+                        let contents =
+                            &self.lexer.remainder().as_bytes()[contents_start..contents_end];
+                        self.lexer.bump(it.pos());
+                        return Ok((
+                            string_start,
+                            (contents.to_vec(), contents_start),
+                            string_end + it.pos(),
+                        ));
+                    } else if c == '\\' || c == '\r' || (c == '\n' && !triple) {
+                        res = Vec::with_capacity(it.pos() + 10);
+                        res.extend_from_slice(
+                            &self.lexer.remainder().as_bytes()[contents_start..it.pos() - 1],
+                        );
+                        it2 = CursorChars::new_offset(self.lexer.remainder(), it.pos() - 1);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut it = it2;
+        while let Some(c) = it.next() {
+            if stop(c) {
+                self.lexer.bump(it.pos());
+                if triple {
+                    // Remove the two extra quote chars already pushed
+                    let len = res.len();
+                    res.truncate(len.saturating_sub(2));
+                }
+                return Ok((string_start, (res, contents_start), string_end + it.pos()));
+            }
+            match c {
+                '\n' if !triple => {
+                    string_end -= 1;
+                    break;
+                }
+                '\r' => {}
+                '\\' => {
+                    if raw {
+                        match it.next() {
+                            Some(c) => {
+                                if c != '\'' && c != '"' {
+                                    res.push(b'\\');
+                                }
+                                let mut buf = [0u8; 4];
+                                res.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                            }
+                            _ => break,
+                        }
+                    } else {
+                        let pos = it.pos();
+                        if Self::escape_bytes(&mut it, &mut res).is_err() {
+                            let bad = self.lexer.remainder()[pos..it.pos()].to_owned();
+                            return self.err_span(
+                                if bad.is_empty() {
+                                    LexemeError::EmptyEscapeSequence
+                                } else {
+                                    LexemeError::InvalidEscapeSequence(bad)
+                                },
+                                string_end + pos - 1,
+                                string_end + it.pos(),
+                            );
+                        }
+                    }
+                }
+                c => {
+                    let mut buf = [0u8; 4];
+                    res.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                }
+            }
+        }
+
+        self.err_span(
+            LexemeError::UnfinishedStringLiteral,
+            string_start,
+            string_end + it.pos(),
+        )
+    }
+
+    fn parse_double_quoted_bytes_string(&mut self, raw: bool) -> Option<LexemeT<(Vec<u8>, usize)>> {
+        if self.lexer.remainder().starts_with("\"\"") {
+            let mut qs = 0;
+            Some(self.bytes_string(true, raw, |c| {
+                if c == '\"' {
+                    qs += 1;
+                    qs == 3
+                } else {
+                    qs = 0;
+                    false
+                }
+            }))
+        } else {
+            Some(self.bytes_string(false, raw, |c| c == '\"'))
+        }
+    }
+
+    fn parse_single_quoted_bytes_string(&mut self, raw: bool) -> Option<LexemeT<(Vec<u8>, usize)>> {
+        if self.lexer.remainder().starts_with("''") {
+            let mut qs = 0;
+            Some(self.bytes_string(true, raw, |c| {
+                if c == '\'' {
+                    qs += 1;
+                    qs == 3
+                } else {
+                    qs = 0;
+                    false
+                }
+            }))
+        } else {
+            Some(self.bytes_string(false, raw, |c| c == '\''))
+        }
+    }
+
     fn int(&self, s: &str, radix: u32) -> Lexeme {
         let span = self.lexer.span();
         match TokenInt::from_str_radix(s, radix) {
@@ -441,12 +668,29 @@ impl<'a> Lexer<'a> {
         loop {
             // Note that this function doesn't always return - a few branches use `continue`
             // to always go round the loop again.
+
+            // If we're in f-string string mode, use specialized lexing
+            if self.in_fstring_string_mode() {
+                return self.lex_fstring_content();
+            }
+
             return match self.buffer.pop_front() {
                 Some(x) => Some(x),
                 _ => {
                     if self.done {
                         None
                     } else {
+                        // Check for f-string conversion specifier (!) before regular lexing
+                        if self.at_fstring_expr_top_level() {
+                            let remainder = self.lexer.remainder();
+                            if remainder.starts_with('!') && !remainder.starts_with("!=") {
+                                // Emit FStringBang token, let grammar handle the conversion
+                                let start = self.lexer.span().end;
+                                self.lexer.bump(1); // consume "!"
+                                return Some(Ok((start, Token::FStringBang, start + 1)));
+                            }
+                        }
+
                         match self.lexer.next() {
                             None => {
                                 self.done = true;
@@ -468,7 +712,7 @@ impl<'a> Lexer<'a> {
                                     continue;
                                 }
                                 Token::Newline => {
-                                    if self.parens == 0 {
+                                    if self.parens == 0 && !self.in_fstring_expr_mode() {
                                         let span = self.lexer.span();
                                         if let Err(e) = self.calculate_indent() {
                                             return Some(Err(e));
@@ -520,42 +764,110 @@ impl<'a> Lexer<'a> {
                                 Token::RawFStringDoubleQuote => {
                                     let span_len = self.lexer.span().len();
                                     let raw = span_len == 3;
-                                    self.parse_double_quoted_string(raw).map(|lex| {
-                                        map_lexeme_t(lex, |(content, content_start_offset)| {
-                                            Token::FString(TokenFString {
-                                                content,
-                                                content_start_offset: content_start_offset
-                                                    + span_len,
-                                            })
-                                        })
-                                    })
+                                    let is_triple = self.lexer.remainder().starts_with("\"\"");
+                                    if is_triple {
+                                        self.lexer.bump(2); // consume the extra quotes
+                                    }
+                                    let quote = if is_triple {
+                                        FStringQuote::TripleDouble
+                                    } else {
+                                        FStringQuote::Double
+                                    };
+                                    Some(self.start_fstring(quote, raw))
                                 }
                                 Token::RawFStringSingleQuote => {
                                     let span_len = self.lexer.span().len();
                                     let raw = span_len == 3;
-                                    self.parse_single_quoted_string(raw).map(|lex| {
-                                        map_lexeme_t(lex, |(content, content_start_offset)| {
-                                            Token::FString(TokenFString {
-                                                content,
-                                                content_start_offset: content_start_offset
-                                                    + span_len,
-                                            })
-                                        })
-                                    })
+                                    let is_triple = self.lexer.remainder().starts_with("''");
+                                    if is_triple {
+                                        self.lexer.bump(2); // consume the extra quotes
+                                    }
+                                    let quote = if is_triple {
+                                        FStringQuote::TripleSingle
+                                    } else {
+                                        FStringQuote::Single
+                                    };
+                                    Some(self.start_fstring(quote, raw))
                                 }
-                                Token::FString(_) => {
-                                    unreachable!("The lexer does not produce FString")
+                                Token::FStringStart(_)
+                                | Token::FStringText(_)
+                                | Token::FStringExprStart
+                                | Token::FStringExprEnd
+                                | Token::FStringBang
+                                | Token::FStringEnd => {
+                                    unreachable!("The lexer does not produce these tokens directly")
                                 }
-                                Token::OpeningCurly
-                                | Token::OpeningRound
-                                | Token::OpeningSquare => {
+                                Token::OpeningCurly => {
                                     self.parens += 1;
+                                    // Track nested braces in f-string expressions
+                                    if self.in_fstring_expr_mode() {
+                                        if let Some(state) = self.fstring_stack.last_mut() {
+                                            state.brace_depth += 1;
+                                        }
+                                    }
                                     self.wrap(token)
                                 }
-                                Token::ClosingCurly
-                                | Token::ClosingRound
-                                | Token::ClosingSquare => {
+                                Token::RawByteDoubleQuote => {
+                                    // span len: b" = 2, br" = 3, rb" = 3
+                                    let raw = self.lexer.span().len() >= 3;
+                                    self.parse_double_quoted_bytes_string(raw).map(|lex| {
+                                        map_lexeme_t(lex, |(b, _offset)| Token::Bytes(b))
+                                    })
+                                }
+                                Token::RawByteSingleQuote => {
+                                    // span len: b' = 2, br' = 3, rb' = 3
+                                    let raw = self.lexer.span().len() >= 3;
+                                    self.parse_single_quoted_bytes_string(raw).map(|lex| {
+                                        map_lexeme_t(lex, |(b, _offset)| Token::Bytes(b))
+                                    })
+                                }
+                                Token::Bytes(_) => {
+                                    unreachable!("The lexer does not produce Bytes directly")
+                                }
+                                Token::OpeningRound => {
+                                    self.parens += 1;
+                                    self.track_fstring_paren(true);
+                                    self.wrap(token)
+                                }
+                                Token::OpeningSquare => {
+                                    self.parens += 1;
+                                    self.track_fstring_bracket(true);
+                                    self.wrap(token)
+                                }
+                                Token::ClosingCurly => {
+                                    // Check if this closes an f-string expression
+                                    if self.at_fstring_expr_top_level() {
+                                        if let Some(state) = self.fstring_stack.last_mut() {
+                                            state.brace_depth = 0;
+                                        }
+                                        let span = self.lexer.span();
+                                        return Some(Ok((
+                                            span.start,
+                                            Token::FStringExprEnd,
+                                            span.end,
+                                        )));
+                                    }
+                                    // Nested brace or not in f-string
+                                    if let Some(state) = self.fstring_stack.last_mut() {
+                                        if state.brace_depth > 0 {
+                                            state.brace_depth = state.brace_depth.saturating_sub(1);
+                                        }
+                                    }
                                     self.parens -= 1;
+                                    self.wrap(token)
+                                }
+                                Token::BangEqual => {
+                                    // In f-string expression mode, `!=` is just a comparison operator
+                                    self.wrap(token)
+                                }
+                                Token::ClosingRound => {
+                                    self.parens -= 1;
+                                    self.track_fstring_paren(false);
+                                    self.wrap(token)
+                                }
+                                Token::ClosingSquare => {
+                                    self.parens -= 1;
+                                    self.track_fstring_bracket(false);
                                     self.wrap(token)
                                 }
                                 _ => self.wrap(token),
@@ -601,6 +913,243 @@ impl<'a> Lexer<'a> {
             Some(self.string(false, raw, |c| c == '\''))
         }
     }
+
+    /// Check if we're currently inside an f-string and in string mode (not expression mode).
+    fn in_fstring_string_mode(&self) -> bool {
+        self.fstring_stack
+            .last()
+            .is_some_and(|s| s.brace_depth == 0)
+    }
+
+    /// Check if we're currently inside an f-string expression.
+    fn in_fstring_expr_mode(&self) -> bool {
+        self.fstring_stack.last().is_some_and(|s| s.brace_depth > 0)
+    }
+
+    /// Lex f-string content (text between `{}` or from start to first `{` or end).
+    /// Returns the next token when in f-string string mode.
+    fn lex_fstring_content(&mut self) -> Option<Lexeme> {
+        let state = self.fstring_stack.last()?;
+        let quote_char = state.quote.quote_char();
+        let is_triple = state.quote.is_triple();
+        let raw = state.raw;
+
+        let start = self.lexer.span().end;
+        let mut it = CursorChars::new_offset(self.lexer.remainder(), 0);
+        let mut text = String::new();
+        let mut quote_count = 0;
+
+        loop {
+            match it.next() {
+                None => {
+                    // Unterminated f-string
+                    return Some(self.err_span(
+                        LexemeError::UnfinishedStringLiteral,
+                        start,
+                        start + it.pos(),
+                    ));
+                }
+                Some('{') => {
+                    // Check for escaped brace `{{`
+                    match it.next() {
+                        Some('{') => {
+                            text.push('{');
+                            quote_count = 0;
+                        }
+                        next_char => {
+                            // Put back whatever we consumed (if anything)
+                            if let Some(c) = next_char {
+                                it.unnext(c);
+                            }
+                            // Position is right after `{`, back up to before it
+                            let brace_pos = it.pos() - 1;
+                            self.lexer.bump(brace_pos);
+                            return Some(self.emit_fstring_expr_start(start, text, brace_pos));
+                        }
+                    }
+                }
+                Some('}') => {
+                    // Check for escaped brace `}}`
+                    match it.next() {
+                        Some('}') => {
+                            text.push('}');
+                            quote_count = 0;
+                        }
+                        next_char => {
+                            // Put back whatever we consumed (if anything)
+                            if let Some(c) = next_char {
+                                it.unnext(c);
+                            }
+                            // Standalone `}` outside expression - error
+                            let brace_pos = it.pos() - 1;
+                            return Some(self.err_span(
+                                LexemeError::InvalidInput("}".to_owned()),
+                                start + brace_pos,
+                                start + brace_pos + 1,
+                            ));
+                        }
+                    }
+                }
+                Some(c) if c == quote_char => {
+                    quote_count += 1;
+                    if is_triple {
+                        if quote_count == 3 {
+                            // End of triple-quoted f-string
+                            // Remove the last 2 quotes from text (we added them)
+                            text.pop();
+                            text.pop();
+                            self.lexer.bump(it.pos());
+                            let end = start + it.pos();
+                            return Some(self.emit_fstring_end(start, text, end, 3));
+                        } else {
+                            text.push(c);
+                        }
+                    } else {
+                        // End of single-quoted f-string
+                        self.lexer.bump(it.pos());
+                        let end = start + it.pos();
+                        return Some(self.emit_fstring_end(start, text, end, 1));
+                    }
+                }
+                Some('\\') if !raw => {
+                    quote_count = 0;
+                    // Handle escape sequences
+                    if Self::escape(&mut it, &mut text).is_err() {
+                        return Some(self.err_span(
+                            LexemeError::InvalidEscapeSequence("\\".to_owned()),
+                            start + it.pos() - 1,
+                            start + it.pos(),
+                        ));
+                    }
+                }
+                Some('\\') if raw => {
+                    quote_count = 0;
+                    // In raw mode, backslash is literal except before quotes
+                    match it.next() {
+                        Some(c) if c == quote_char => {
+                            text.push(c);
+                        }
+                        Some(c) => {
+                            text.push('\\');
+                            text.push(c);
+                        }
+                        None => {
+                            text.push('\\');
+                        }
+                    }
+                }
+                Some('\n') if !is_triple => {
+                    // Newline in non-triple string - error
+                    return Some(self.err_span(
+                        if self.in_fstring_expr_mode() {
+                            LexemeError::UnfinishedFStringExpression
+                        } else {
+                            LexemeError::UnfinishedStringLiteral
+                        },
+                        start,
+                        start + it.pos(),
+                    ));
+                }
+                Some('\r') => {
+                    // Ignore carriage return
+                    quote_count = 0;
+                }
+                Some(c) => {
+                    quote_count = 0;
+                    text.push(c);
+                }
+            }
+        }
+    }
+
+    /// Track nested delimiters in f-string expression mode.
+    fn track_fstring_delimiter(&mut self, depth_fn: impl FnOnce(&mut FStringState)) {
+        if let Some(state) = self.fstring_stack.last_mut() {
+            if state.brace_depth > 0 {
+                depth_fn(state);
+            }
+        }
+    }
+
+    /// Emit the end of an f-string, optionally with preceding text.
+    /// `quote_len` is the number of quote characters (1 for single, 3 for triple).
+    fn emit_fstring_end(
+        &mut self,
+        start: usize,
+        text: String,
+        end: usize,
+        quote_len: usize,
+    ) -> Lexeme {
+        self.fstring_stack.pop();
+        let quote_start = end - quote_len;
+        if !text.is_empty() {
+            self.buffer
+                .push_back(Ok((quote_start, Token::FStringEnd, end)));
+            Ok((start, Token::FStringText(text), quote_start))
+        } else {
+            Ok((quote_start, Token::FStringEnd, end))
+        }
+    }
+
+    /// Emit the start of an f-string expression, optionally with preceding text.
+    fn emit_fstring_expr_start(&mut self, start: usize, text: String, brace_pos: usize) -> Lexeme {
+        // Enter expression mode
+        if let Some(state) = self.fstring_stack.last_mut() {
+            state.brace_depth = 1;
+        }
+        self.lexer.bump(1); // consume the `{`
+
+        let brace_start = start + brace_pos;
+        if !text.is_empty() {
+            self.buffer
+                .push_back(Ok((brace_start, Token::FStringExprStart, brace_start + 1)));
+            Ok((start, Token::FStringText(text), brace_start))
+        } else {
+            Ok((brace_start, Token::FStringExprStart, brace_start + 1))
+        }
+    }
+
+    /// Track parentheses in f-string expression mode.
+    fn track_fstring_paren(&mut self, is_open: bool) {
+        self.track_fstring_delimiter(|state| {
+            if is_open {
+                state.paren_depth += 1;
+            } else {
+                state.paren_depth = state.paren_depth.saturating_sub(1);
+            }
+        });
+    }
+
+    /// Track square brackets in f-string expression mode.
+    fn track_fstring_bracket(&mut self, is_open: bool) {
+        self.track_fstring_delimiter(|state| {
+            if is_open {
+                state.bracket_depth += 1;
+            } else {
+                state.bracket_depth = state.bracket_depth.saturating_sub(1);
+            }
+        });
+    }
+
+    /// Start an f-string. Returns the FStringStart token.
+    fn start_fstring(&mut self, quote: FStringQuote, raw: bool) -> Lexeme {
+        let span = self.lexer.span();
+        self.fstring_stack.push(FStringState {
+            quote,
+            raw,
+            brace_depth: 0,
+            paren_depth: 0,
+            bracket_depth: 0,
+        });
+        Ok((span.start, Token::FStringStart(quote), span.end))
+    }
+
+    /// Check if we're at the top level of an f-string expression (can accept conversion specifier).
+    fn at_fstring_expr_top_level(&self) -> bool {
+        self.fstring_stack
+            .last()
+            .is_some_and(|s| s.brace_depth == 1 && s.paren_depth == 0 && s.bracket_depth == 0)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, derive_more::Display)]
@@ -614,8 +1163,11 @@ impl TokenInt {
     pub fn from_str_radix(s: &str, base: u32) -> crate::Result<TokenInt> {
         if let Ok(i) = i32::from_str_radix(s, base) {
             Ok(TokenInt::I32(i))
+        } else if s.contains('_') {
+            // `BigInt::from_str_radix` skips `_`, which is not part of Starlark integer syntax.
+            Err(LexemeError::CannotParse(s.to_owned(), base).into())
         } else {
-            match BigInt::from_str_radix(s, base) {
+            match big_int_from_str_radix(s, base) {
                 Ok(i) => Ok(TokenInt::BigInt(i)),
                 Err(_) => Err(LexemeError::CannotParse(s.to_owned(), base).into()),
             }
@@ -623,12 +1175,105 @@ impl TokenInt {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct TokenFString {
-    /// The content of this TokenFString
-    pub content: String,
-    /// Relative to the token, where does the actual string content start?
-    pub content_start_offset: usize,
+/// Number of digits up to which `big_int_from_str_radix` leaves parsing to `num-bigint`.
+///
+/// Splitting first computes a power of the base, so below about 12000 digits it is no faster.
+const BIG_INT_SPLIT_DIGITS: usize = 8192;
+
+/// `BigInt::from_str_radix`, in subquadratic time.
+///
+/// For a base that is not a power of two, `num-bigint` multiplies the whole number parsed so far
+/// by the base once per word of digits, which is quadratic in the length: a few million decimal
+/// digits take seconds. Longer strings of plain digits are split instead, each part parsed on its
+/// own, and the parts joined with one multiplication by a power of the base, which `num-bigint`
+/// does in subquadratic time.
+fn big_int_from_str_radix(s: &str, base: u32) -> Result<BigInt, ParseBigIntError> {
+    let (sign, digits) = match s.as_bytes().first() {
+        Some(b'-') => (Sign::Minus, &s[1..]),
+        Some(b'+') => (Sign::Plus, &s[1..]),
+        _ => (Sign::Plus, s),
+    };
+    if base.is_power_of_two()
+        || digits.len() <= BIG_INT_SPLIT_DIGITS
+        || !digits.bytes().all(|b| char::from(b).is_digit(base))
+    {
+        // Linear already, short, or not plain digits: `num-bigint` gives the result or the error.
+        return BigInt::from_str_radix(s, base);
+    }
+    // `pows[k]` is `base` to the power `BIG_INT_SPLIT_DIGITS << k`.
+    let mut pows = vec![BigUint::from(base).pow(BIG_INT_SPLIT_DIGITS as u32)];
+    while BIG_INT_SPLIT_DIGITS << pows.len() < digits.len() {
+        let last = &pows[pows.len() - 1];
+        pows.push(last * last);
+    }
+    let magnitude = big_uint_from_digits(digits, base, &pows)?;
+    Ok(BigInt::from_biguint(sign, magnitude))
+}
+
+/// Parse `digits`, which are all valid in `base` and at most
+/// `BIG_INT_SPLIT_DIGITS << pows.len()` long.
+fn big_uint_from_digits(
+    digits: &str,
+    base: u32,
+    pows: &[BigUint],
+) -> Result<BigUint, ParseBigIntError> {
+    // Split off the largest `BIG_INT_SPLIT_DIGITS << k` low digits that leave some high digits.
+    // The high part is then no longer than the low part, so both fit in `pows[..k]`.
+    match (0..pows.len())
+        .rev()
+        .find(|&k| BIG_INT_SPLIT_DIGITS << k < digits.len())
+    {
+        None => BigUint::from_str_radix(digits, base),
+        Some(k) => {
+            let (high, low) = digits.split_at(digits.len() - (BIG_INT_SPLIT_DIGITS << k));
+            let high = big_uint_from_digits(high, base, &pows[..k])?;
+            let low = big_uint_from_digits(low, base, &pows[..k])?;
+            Ok(high * &pows[k] + low)
+        }
+    }
+}
+
+/// Quote style for f-strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FStringQuote {
+    /// Single quote: `f'...'`
+    Single,
+    /// Double quote: `f"..."`
+    Double,
+    /// Triple single quote: `f'''...'''`
+    TripleSingle,
+    /// Triple double quote: `f"""..."""`
+    TripleDouble,
+}
+
+impl FStringQuote {
+    /// Returns the quote character for this f-string style.
+    fn quote_char(self) -> char {
+        match self {
+            FStringQuote::Single | FStringQuote::TripleSingle => '\'',
+            FStringQuote::Double | FStringQuote::TripleDouble => '"',
+        }
+    }
+
+    /// Returns whether this is a triple-quoted f-string.
+    fn is_triple(self) -> bool {
+        matches!(
+            self,
+            FStringQuote::TripleSingle | FStringQuote::TripleDouble
+        )
+    }
+}
+
+/// Conversion specifier for f-string expressions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FStringConv {
+    /// No conversion (default): `{expr}`
+    #[default]
+    None,
+    /// String conversion: `{expr!s}`
+    Str,
+    /// Repr conversion: `{expr!r}`
+    Repr,
 }
 
 /// All token that can be generated by the lexer
@@ -639,7 +1284,7 @@ pub struct TokenFString {
 pub enum Token {
     /// Comment as token.
     /// Span includes the leading `#`, but the content does not.
-    #[regex(r#"#[^\r\n]*"#, |lex| lex.slice()[1..].to_owned())]
+    #[regex(r#"#[^\r\n]*"#, |lex| lex.slice()[1..].to_owned(), allow_greedy = true)]
     Comment(String),
 
     #[regex("\t+")] // Tabs (might be an error)
@@ -668,6 +1313,19 @@ pub enum Token {
     #[token("f\"")]
     #[token("fr\"")]
     RawFStringDoubleQuote,
+
+    /// The start of a single-quoted bytes literal.
+    #[token("b'")]
+    #[token("br'")]
+    #[token("rb'")]
+    RawByteSingleQuote,
+    /// The start of a double-quoted bytes literal.
+    #[token("b\"")]
+    #[token("br\"")]
+    #[token("rb\"")]
+    RawByteDoubleQuote,
+
+    Bytes(Vec<u8>), // A bytes literal
 
     #[regex(
         "as|\
@@ -714,8 +1372,20 @@ pub enum Token {
     Float(f64), // A float literal (3.14, .3, 1e6, 0.)
 
     String(String), // A string literal
-    /// The raw text of a f-string
-    FString(TokenFString),
+
+    // F-string tokens for proper expression parsing
+    /// Start of an f-string (the `f"` or `f'` prefix). Contains info about quote style.
+    FStringStart(FStringQuote),
+    /// A text chunk within an f-string (between `{}`).
+    FStringText(String),
+    /// The `{` that starts an expression within an f-string.
+    FStringExprStart,
+    /// The `}` that ends an expression within an f-string.
+    FStringExprEnd,
+    /// The `!` before a conversion specifier in an f-string expression.
+    FStringBang,
+    /// End of an f-string (the closing quote).
+    FStringEnd,
 
     // Keywords
     #[token("and")]
@@ -843,7 +1513,6 @@ impl Token {
     /// Used for testing
     #[cfg(test)]
     pub fn unlex(&self) -> String {
-        use std::io::Write;
         match self {
             Token::Indent => "\t".to_owned(),
             Token::Newline => "\n".to_owned(),
@@ -853,12 +1522,6 @@ impl Token {
                 // instead use the JSON standard for string escapes.
                 // Reuse the StarlarkValue implementation since it's close to hand.
                 serde_json::to_string(x).unwrap()
-            }
-            Token::FString(x) => {
-                let mut buff = Vec::new();
-                write!(&mut buff, "f").unwrap();
-                serde_json::to_writer(&mut buff, &x.content).unwrap();
-                String::from_utf8(buff).unwrap()
             }
             _ => {
                 let s = self.to_string();
@@ -953,7 +1616,15 @@ impl Display for Token {
             Token::RawDoubleQuote => write!(f, "starting \""),
             Token::RawFStringDoubleQuote => write!(f, "starting f'"),
             Token::RawFStringSingleQuote => write!(f, "starting f\""),
-            Token::FString(s) => write!(f, "f-string {:?}", &s.content),
+            Token::FStringStart(_) => write!(f, "f-string start"),
+            Token::FStringText(s) => write!(f, "f-string text {:?}", s),
+            Token::FStringExprStart => write!(f, "f-string expression start '{{'"),
+            Token::FStringExprEnd => write!(f, "f-string expression end '}}'"),
+            Token::FStringBang => write!(f, "f-string bang '!'"),
+            Token::FStringEnd => write!(f, "f-string end"),
+            Token::RawByteDoubleQuote => write!(f, "starting b\""),
+            Token::RawByteSingleQuote => write!(f, "starting b'"),
+            Token::Bytes(b) => write!(f, "bytes literal ({} bytes)", b.len()),
             Token::Comment(c) => write!(f, "comment '{c}'"),
             Token::Tabs => Ok(()),
         }
@@ -978,7 +1649,59 @@ pub fn lex_exactly_one_identifier(s: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use num_bigint::BigInt;
+    use num_traits::Num;
+
+    use crate::codemap::CodeMap;
+    use crate::dialect::Dialect;
+    use crate::lexer::BIG_INT_SPLIT_DIGITS;
+    use crate::lexer::Lexer;
+    use crate::lexer::TokenInt;
     use crate::lexer::lex_exactly_one_identifier;
+
+    #[test]
+    fn test_token_int_from_str_radix_long() {
+        // Lengths on either side of where the digits are split, in bases that get split.
+        let n = BIG_INT_SPLIT_DIGITS;
+        let mut seed = 1u64;
+        for base in [10, 3, 36] {
+            for len in [n, n + 1, 2 * n, 2 * n + 1, 3 * n + 5] {
+                let digits: String = (0..len)
+                    .map(|i| {
+                        seed = seed
+                            .wrapping_mul(6364136223846793005)
+                            .wrapping_add(1442695040888963407);
+                        let d = if i == 0 {
+                            1
+                        } else {
+                            (seed >> 33) % u64::from(base)
+                        };
+                        char::from_digit(d as u32, base).unwrap()
+                    })
+                    .collect();
+                for s in [digits.clone(), format!("-{digits}"), format!("+{digits}")] {
+                    assert_eq!(
+                        TokenInt::BigInt(BigInt::from_str_radix(&s, base).unwrap()),
+                        TokenInt::from_str_radix(&s, base).unwrap(),
+                        "base {base}, {len} digits",
+                    );
+                }
+            }
+        }
+
+        // A long string that is not all digits is still rejected.
+        let digits = "7".repeat(2 * n + 1);
+        for s in [
+            format!("{digits}a"),
+            format!("{digits}+{digits}"),
+            format!("{digits}-{digits}"),
+            format!("{digits}_7"),
+            format!("--{digits}"),
+            format!(" {digits}"),
+        ] {
+            assert!(TokenInt::from_str_radix(&s, 10).is_err());
+        }
+    }
 
     #[test]
     fn test_is_valid_identifier() {
@@ -987,5 +1710,17 @@ mod tests {
         assert_eq!(lex_exactly_one_identifier("foo bar"), None);
         assert_eq!(lex_exactly_one_identifier("not"), None);
         assert_eq!(lex_exactly_one_identifier("123"), None);
+    }
+
+    #[test]
+    fn test_bytes_literal_octal_overflow_is_error() {
+        // \400 = 256 in octal, which exceeds 255 and should be a lex error.
+        let result: Vec<_> =
+            Lexer::new(r#"b"\400""#, &Dialect::Standard, CodeMap::default()).collect();
+        assert!(
+            result.iter().any(|r| r.is_err()),
+            "expected a lex error for b\"\\400\" but got: {:?}",
+            result
+        );
     }
 }

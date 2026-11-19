@@ -20,7 +20,7 @@ run_python = rule(
 )
 
 def _build_fail(ctx):
-    out = ctx.actions.declare_output("out.txt")
+    out = ctx.actions.declare_output("out.txt", has_content_based_path = False)
     ctx.actions.run(
         cmd_args("exit", "1", hidden = out.as_output()),
         category = "run",

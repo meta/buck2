@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _hang(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         ["fbpython", "-c", 'import os, time; open(os.environ["TOUCH"], "w"); time.sleep(100)'],
         env = {"OUT": out.as_output(), "TOUCH": ctx.attrs.touch},
@@ -19,13 +19,13 @@ def _hang(ctx):
 hang = rule(attrs = {"touch": attrs.string()}, impl = _hang)
 
 def _pass(ctx):
-    out = ctx.actions.write("out", "")
+    out = ctx.actions.write("out", "", has_content_based_path = False)
     return [DefaultInfo(out)]
 
 pass_ = rule(attrs = {}, impl = _pass)
 
 def _kill(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         ["fbpython", "-c", 'import os, signal; os.kill(int(os.environ["PID"]), signal.SIGKILL)'],
         env = {"OUT": out.as_output(), "PID": ctx.attrs.pid},
@@ -36,7 +36,7 @@ def _kill(ctx):
 kill = rule(attrs = {"pid": attrs.string()}, impl = _kill)
 
 def _fail(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(
             "sh",
@@ -51,7 +51,7 @@ def _fail(ctx):
 fail = rule(attrs = {}, impl = _fail)
 
 def _one(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("out", "one"))]
+    return [DefaultInfo(default_output = ctx.actions.write("out", "one", has_content_based_path = False))]
 
 one = rule(
     impl = _one,
@@ -59,7 +59,7 @@ one = rule(
 )
 
 def _two(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("out", "two"))]
+    return [DefaultInfo(default_output = ctx.actions.write("out", "two", has_content_based_path = False))]
 
 two = rule(
     impl = _two,
@@ -68,7 +68,7 @@ two = rule(
 
 def _sleep(ctx):
     # sleep for 5 seconds to ensure all hg commands are finished
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(["fbpython", "-c", "import sys, time; time.sleep(5); open(sys.argv[1], 'w').write('something')"], out.as_output()),
         category = "sleep",
@@ -81,7 +81,7 @@ sleep = rule(
 )
 
 def _run(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(["fbpython", "-c", "import sys; open(sys.argv[1], 'w').write('something')"], out.as_output()),
         category = "sleep",

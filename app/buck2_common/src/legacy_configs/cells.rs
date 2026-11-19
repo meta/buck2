@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -26,11 +25,12 @@ use buck2_core::cells::name::CellName;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_error::BuckErrorContext;
-use buck2_fs::paths::RelativePath;
 use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_hash::BuckMutSet;
 use dice::DiceComputations;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::dice::cells::HasCellResolver;
 use crate::dice::data::HasIoProvider;
@@ -57,7 +57,7 @@ use crate::legacy_configs::path::ProjectConfigSource;
 
 /// Buckconfigs can partially be loaded from within dice. However, some parts of what makes up the
 /// buckconfig comes from outside the buildgraph, and this type represents those parts.
-#[derive(Clone, PartialEq, Eq, Allocative)]
+#[derive(Clone, PartialEq, Eq, Allocative, Pagable)]
 pub struct ExternalBuckconfigData {
     // The result of parsing the buckconfigs coming from either global (e.g. /etc/buckconfig.d) or
     // user (e.g. ~/.buckconfig.d or $home_dir/.buckconfig.local) files/dirs outside of the repo
@@ -68,10 +68,36 @@ pub struct ExternalBuckconfigData {
     args: Vec<ResolvedLegacyConfigArg>,
 }
 
-#[derive(PartialEq, Eq, Allocative, Clone)]
+#[derive(PartialEq, Eq, Allocative, Clone, Pagable)]
 pub struct ExternalPathBuckconfigData {
     pub(crate) parse_state: LegacyConfigParser,
     pub(crate) origin_path: ConfigPath,
+}
+
+/// A human-readable description of how two `ExternalBuckconfigData` values differ.
+///
+/// This explains a change; it does not decide one. Callers must decide whether the values differ
+/// with `==` (which is what DICE uses), because a diff can be empty for values that are not equal.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ExternalBuckconfigDataDiff {
+    /// Command-line config args (`--config`, `--config-file`) only in the new value.
+    pub added_args: Vec<String>,
+    /// Command-line config args only in the old value.
+    pub removed_args: Vec<String>,
+    /// Config files outside the repo (e.g. `/etc/buckconfig.d`, `~/.buckconfig.d`) that were added,
+    /// removed, or whose contents changed.
+    pub changed_external_files: Vec<String>,
+}
+
+impl ExternalBuckconfigDataDiff {
+    /// True when the values contain the same entries and differ only in their order or in how
+    /// many times an entry repeats. Such values are still unequal to DICE, because later entries
+    /// override earlier ones.
+    pub fn is_empty(&self) -> bool {
+        self.added_args.is_empty()
+            && self.removed_args.is_empty()
+            && self.changed_external_files.is_empty()
+    }
 }
 
 impl ExternalBuckconfigData {
@@ -79,6 +105,46 @@ impl ExternalBuckconfigData {
         Self {
             external_path_configs: Vec::new(),
             args: Vec::new(),
+        }
+    }
+
+    /// Describes what changes from `self` to `new`. Arg and file lists are short (tens of entries),
+    /// so the quadratic membership checks are cheap enough to run once per command.
+    pub fn diff(&self, new: &Self) -> ExternalBuckconfigDataDiff {
+        let added_args = new
+            .args
+            .iter()
+            .filter(|arg| !self.args.contains(arg))
+            .map(|arg| arg.to_string())
+            .collect();
+        let removed_args = self
+            .args
+            .iter()
+            .filter(|arg| !new.args.contains(arg))
+            .map(|arg| arg.to_string())
+            .collect();
+
+        // A file whose contents changed is in both "only old" and "only new"; report it once.
+        let mut changed_external_files: Vec<String> = Vec::new();
+        let only_old = self
+            .external_path_configs
+            .iter()
+            .filter(|config| !new.external_path_configs.contains(config));
+        let only_new = new
+            .external_path_configs
+            .iter()
+            .filter(|config| !self.external_path_configs.contains(config));
+        for config in only_old.chain(only_new) {
+            let path = config.origin_path.to_string();
+            if !changed_external_files.contains(&path) {
+                changed_external_files.push(path);
+            }
+        }
+
+        ExternalBuckconfigDataDiff {
+            added_args,
+            removed_args,
+            changed_external_files,
         }
     }
 
@@ -121,7 +187,7 @@ impl ExternalBuckconfigData {
         };
         let mut local_config_components = Vec::new();
         if let Ok(legacy_cells) =
-            BuckConfigBasedCells::parse_with_config_args(&project_root, &[]).await
+            BuckConfigBasedCells::parse_with_config_args(project_root, &[]).await
         {
             let path = ForwardRelativePath::new(DOT_BUCKCONFIG_LOCAL).expect(
                 "Internal error: .buckconfig.local should always be a valid forward relative path",
@@ -180,19 +246,15 @@ impl ExternalBuckconfigData {
     }
 }
 
-/// Used for creating a CellResolver in a buckv1-compatible way based on values
-/// in .buckconfig in each cell.
+/// The cells of the project and the root cell's config, as read from `.buckconfig`s.
 ///
-/// We'll traverse the structure of the `[cells]` sections starting from
-/// the root .buckconfig. All aliases found in the root config will also be
-/// available in all other cells (v1 provides that same behavior).
-///
-/// We don't (currently) enforce that all aliases appear in the root config, but
-/// unlike v1, our cells implementation works just fine if that isn't the case.
+/// Cells are defined by the `[cells]` section of the root cell's config alone; the same section
+/// in any other cell's config is ignored. Cell aliases come from `[cell_aliases]`, where the root
+/// cell's aliases apply in every cell and each cell may add its own.
 pub struct BuckConfigBasedCells {
     pub cell_resolver: CellResolver,
     pub root_config: LegacyBuckConfig,
-    pub config_paths: HashSet<ConfigPath>,
+    pub config_paths: BuckMutSet<ConfigPath>,
     pub external_data: ExternalBuckconfigData,
 }
 
@@ -288,7 +350,7 @@ impl BuckConfigBasedCells {
         // Tracing file ops to record config file accesses on command invocation.
         struct TracingFileOps<'a> {
             inner: &'a mut dyn ConfigParserFileOps,
-            trace: HashSet<ConfigPath>,
+            trace: BuckMutSet<ConfigPath>,
         }
 
         #[async_trait::async_trait]
@@ -320,7 +382,7 @@ impl BuckConfigBasedCells {
         };
 
         // NOTE: This will _not_ perform IO unless it needs to.
-        let processed_config_args = resolve_config_args(&config_args, &mut file_ops).await?;
+        let processed_config_args = resolve_config_args(config_args, &mut file_ops).await?;
 
         let external_paths = get_external_buckconfig_paths(&mut file_ops).await?;
         let started_parse = LegacyBuckConfig::start_parse_for_external_files(
@@ -350,24 +412,16 @@ impl BuckConfigBasedCells {
         // that we'll ever remove `repositories` since that's probably unnecessary breakage in OSS.
         //
         // Note that `cells` is buck2-only
-        let repositories = root_config
+        let cells = root_config
             .get_section("cells")
             .or_else(|| root_config.get_section("repositories"));
-        if let Some(repositories) = repositories {
-            for (alias, alias_path) in repositories.iter() {
-                let alias_path = CellRootPathBuf::new(
-                    root_path.as_project_relative_path()
-                        .join_normalized(RelativePath::new(alias_path.as_str()))
-                        .with_buck_error_context(|| {
-                            format!(
-                                "expected alias path to be a relative path, but found `{}` for `{}`",
-                                alias_path.as_str(),
-                                alias,
-                            )
-                        })?
-                );
-                let name = CellName::unchecked_new(alias)?;
-                cell_definitions.push((name, alias_path));
+        if let Some(cells) = cells {
+            for (name, path) in cells.iter() {
+                let path = path.as_str();
+                let cell_path = parse_cell_path(path).with_buck_error_context(|| {
+                    format!("Invalid path `{path}` for cell `{name}`")
+                })?;
+                cell_definitions.push((CellName::unchecked_new(name)?, cell_path));
             }
         }
 
@@ -439,7 +493,7 @@ impl BuckConfigBasedCells {
 
         let mut file_ops = DiceConfigFileOps::new(ctx, project_fs, &resolver);
 
-        Self::parse_single_cell_with_file_ops_inner(&external_data, &mut file_ops, cell_path).await
+        Self::parse_single_cell_with_file_ops_inner(external_data, &mut file_ops, cell_path).await
     }
 
     pub async fn parse_single_cell(
@@ -469,7 +523,7 @@ impl BuckConfigBasedCells {
         .await
     }
 
-    async fn parse_single_cell_with_file_ops_inner(
+    pub(crate) async fn parse_single_cell_with_file_ops_inner(
         external_data: &ExternalBuckconfigData,
         file_ops: &mut dyn ConfigParserFileOps,
         cell_path: &CellRootPath,
@@ -538,6 +592,21 @@ impl BuckConfigBasedCells {
             Err(ExternalCellOriginParseError::Unknown(value.to_owned()).into())
         }
     }
+}
+
+/// Parses the value of a `[cells]` entry: a normalized path relative to the project root, where
+/// `.` denotes the project root itself. A trailing `/` is tolerated because it is a common
+/// spelling (`root = ./`).
+fn parse_cell_path(path: &str) -> buck2_error::Result<CellRootPathBuf> {
+    // A bare `/` is an absolute path, not a trailing slash
+    let path = path
+        .strip_suffix('/')
+        .filter(|p| !p.is_empty())
+        .unwrap_or(path);
+    let path = if path == "." { "" } else { path };
+    Ok(CellRootPathBuf::new(
+        ProjectRelativePath::new(path)?.to_owned(),
+    ))
 }
 
 async fn get_external_buckconfig_paths(
@@ -644,16 +713,22 @@ mod tests {
     use buck2_core::cells::external::ExternalCellOrigin;
     use buck2_core::cells::external::GitCellSetup;
     use buck2_core::cells::name::CellName;
+    use buck2_core::fs::project_rel_path::ProjectRelativePath;
     use dice::DiceComputations;
     use indoc::indoc;
 
     use crate::external_cells::EXTERNAL_CELLS_IMPL;
     use crate::external_cells::ExternalCellsImpl;
     use crate::file_ops::delegate::FileOpsDelegate;
+    use crate::legacy_configs::args::ConfigOverrideExt;
     use crate::legacy_configs::cells::BuckConfigBasedCells;
+    use crate::legacy_configs::cells::ExternalBuckconfigData;
+    use crate::legacy_configs::cells::ExternalPathBuckconfigData;
     use crate::legacy_configs::configs::testing::TestConfigParserFileOps;
     use crate::legacy_configs::configs::tests::assert_config_value;
+    use crate::legacy_configs::file_ops::ConfigPath;
     use crate::legacy_configs::key::BuckconfigKeyRef;
+    use crate::legacy_configs::parser::LegacyConfigParser;
 
     #[tokio::test]
     async fn test_cells() -> buck2_error::Result<()> {
@@ -720,6 +795,97 @@ mod tests {
             .await?;
 
         assert_eq!("other", tp_resolver.resolve("other_alias")?.as_str());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_absolute_cell_path() -> buck2_error::Result<()> {
+        let mut file_ops = TestConfigParserFileOps::new(&[(
+            ".buckconfig",
+            indoc!(
+                r#"
+                    [cells]
+                        root = .
+                        other = /abs/other
+                "#
+            ),
+        )])?;
+
+        // Cell paths are relative to the project root, so an absolute one is rejected.
+        let Err(err) = BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[]).await
+        else {
+            panic!("absolute alias path must be rejected");
+        };
+        assert!(
+            format!("{err:#}").contains("Invalid path `/abs/other` for cell `other`"),
+            "{err:#}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_cell_path_with_trailing_slash() -> buck2_error::Result<()> {
+        let mut file_ops = TestConfigParserFileOps::new(&[(
+            ".buckconfig",
+            indoc!(
+                r#"
+                    [cells]
+                        root = ./
+                        other = sub/other/
+                "#
+            ),
+        )])?;
+
+        let cells = BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[]).await?;
+        assert_eq!(
+            "sub/other",
+            cells
+                .cell_resolver
+                .get(CellName::testing_new("other"))?
+                .path()
+                .as_str()
+        );
+
+        // A bare `/` is an absolute path, not a path with a trailing slash.
+        let mut file_ops = TestConfigParserFileOps::new(&[(
+            ".buckconfig",
+            indoc!(
+                r#"
+                    [cells]
+                        root = .
+                        other = /
+                "#
+            ),
+        )])?;
+        let Err(err) = BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[]).await
+        else {
+            panic!("a bare `/` alias path must be rejected");
+        };
+        assert!(
+            format!("{err:#}").contains("Invalid path `/` for cell `other`"),
+            "{err:#}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unnormalized_cell_path() -> buck2_error::Result<()> {
+        for path in ["./sub/other", "sub/../other", "../other"] {
+            let config = format!("[cells]\n    root = .\n    other = {path}\n");
+            let mut file_ops = TestConfigParserFileOps::new(&[(".buckconfig", config.as_str())])?;
+            let Err(err) =
+                BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[]).await
+            else {
+                panic!("unnormalized cell path `{path}` must be rejected");
+            };
+            assert!(
+                format!("{err:#}").contains(&format!("Invalid path `{path}` for cell `other`")),
+                "{err:#}"
+            );
+        }
 
         Ok(())
     }
@@ -1343,6 +1509,49 @@ mod tests {
 
         let e = format!("{e:?}");
         assert!(e.contains("not a valid SHA1 digest"), "error: {e}");
+
+        Ok(())
+    }
+
+    /// Parses `contents` as an external config file. The origin is project-relative so the test
+    /// runs on every platform; `diff` only uses it for display.
+    async fn external_file(
+        path: &str,
+        contents: &str,
+    ) -> buck2_error::Result<ExternalPathBuckconfigData> {
+        let origin_path = ConfigPath::Project(ProjectRelativePath::new(path)?.to_owned());
+        let mut file_ops = TestConfigParserFileOps::new(&[(path, contents)])?;
+        let mut parse_state = LegacyConfigParser::new();
+        parse_state
+            .parse_file(&origin_path, None, true, &mut file_ops)
+            .await?;
+        Ok(ExternalPathBuckconfigData {
+            parse_state,
+            origin_path,
+        })
+    }
+
+    #[tokio::test]
+    async fn test_external_data_diff_reports_changed_files() -> buck2_error::Result<()> {
+        let data = |external_path_configs| ExternalBuckconfigData {
+            external_path_configs,
+            args: Vec::new(),
+        };
+        let old = data(vec![
+            external_file("etc/a", "[foo]\nbar = 1").await?,
+            external_file("etc/b", "[foo]\nbaz = 1").await?,
+        ]);
+        let new = data(vec![
+            external_file("etc/a", "[foo]\nbar = 2").await?,
+            external_file("etc/c", "[foo]\nqux = 1").await?,
+        ]);
+
+        // `etc/a` changed contents, `etc/b` was removed, and `etc/c` was added.
+        let diff = old.diff(&new);
+        assert_eq!(diff.changed_external_files, vec!["etc/a", "etc/b", "etc/c"]);
+        assert!(diff.added_args.is_empty());
+        assert!(diff.removed_args.is_empty());
+        assert!(old.diff(&old).is_empty());
 
         Ok(())
     }

@@ -147,7 +147,7 @@ fn gen_for_docstring(span: Span, docs: Option<&DocString>) -> TokenStream {
 
 fn gen_for_method(parsed: &Parsed, method: &Method) -> syn::Result<MethodCodegen> {
     let func_ty = Ident::new(
-        &format!("__{}QueryFunction", &method.name),
+        &format!("__{}QueryFunction", method.name),
         method.name.span(),
     );
 
@@ -170,13 +170,14 @@ fn gen_for_method(parsed: &Parsed, method: &Method) -> syn::Result<MethodCodegen
     let mut describe_args = Vec::new();
     let mut pass_args = Vec::new();
     let mut arg_type_match = Vec::new();
+    let mut arg_name_match = Vec::new();
     for (i, arg) in value_args.iter().enumerate() {
         let arg_type = &arg.ty;
         let as_arg_type = quote! {<#arg_type as QueryFunctionArg<'_, #env_ident>>};
         let arg_name = arg.name.to_string();
         arg_type_match.push(quote_spanned!(arg.span => #i => Ok(#as_arg_type::ARG_TYPE)));
-        pass_args
-            .push(quote_spanned!(arg.span => eval_arg(self.name(), evaluator, args, #i).await?));
+        arg_name_match.push(quote_spanned!(arg.span => #i => Ok(#arg_name)));
+        pass_args.push(quote_spanned!(arg.span => eval_arg(self, evaluator, args, #i).await?));
         describe_args.push(quote_spanned!(arg.span => ArgDescription {
             name: #arg_name.to_owned(),
             repr_format: #as_arg_type::describe_format(),
@@ -268,6 +269,13 @@ fn gen_for_method(parsed: &Parsed, method: &Method) -> syn::Result<MethodCodegen
                         evaluator: &QueryEvaluator<#env_ident>,
                         args: &[SpannedExpr<'_>],
                     ) -> Result<QueryValue<#env_target>, QueryError> {
+                        if args.len() > #max_args {
+                            return Err(QueryError::TooManyArgs {
+                                function: self.name().to_owned(),
+                                max: #max_args,
+                                actual: args.len(),
+                            });
+                        }
                         self.0.#func_ident(
                             #pass_ctx
                             #(#pass_args,)*
@@ -277,6 +285,17 @@ fn gen_for_method(parsed: &Parsed, method: &Method) -> syn::Result<MethodCodegen
                     fn arg_type(&self, idx: usize) -> Result<QueryArgType, QueryError> {
                         match idx {
                             #(#arg_type_match,)*
+                            v => Err(QueryError::TooManyArgs {
+                                function: self.name().to_owned(),
+                                max: #max_args,
+                                actual: idx + 1,
+                            })
+                        }
+                    }
+
+                    fn arg_name(&self, idx: usize) -> Result<&'static str, QueryError> {
+                        match idx {
+                            #(#arg_name_match,)*
                             v => Err(QueryError::TooManyArgs {
                                 function: self.name().to_owned(),
                                 max: #max_args,
@@ -337,7 +356,7 @@ pub(crate) fn codegen(parsed: Parsed) -> syn::Result<TokenStream> {
 
             use ::buck2_query::__derive_refs::ref_cast::RefCast;
             use ::buck2_query::__derive_refs::buck2_query_parser::{BinaryOp, SpannedExpr};
-            use ::buck2_query::__derive_refs::indexmap::indexmap;
+            use ::buck2_query::__derive_refs::buck2_hash::buck_mut_insertion_map;
             use ::buck2_query::__derive_refs::async_trait::async_trait;
 
             use super::*;
@@ -375,7 +394,7 @@ pub(crate) fn codegen(parsed: Parsed) -> syn::Result<TokenStream> {
             impl #impl_generics HasModuleDescription for #self_ty #where_clause {
                 fn describe() -> ModuleDescription {
                     ModuleDescription {
-                        functions: indexmap! {
+                        functions: buck_mut_insertion_map! {
                                 #(#method_describe,)*
                         },
                         #module_docs,

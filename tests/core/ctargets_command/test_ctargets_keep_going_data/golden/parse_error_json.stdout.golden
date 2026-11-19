@@ -3,7 +3,7 @@
 [
   {
     "buck.package":"root//b",
-    "buck.error":"Error evaluating build file: `root//b:TARGETS.fixture`\n\nCaused by:\n    Traceback (most recent call last):\n      * b/TARGETS.fixture:2, in <module>\n          fail(\"test_parse_error\")\n    error: fail: test_parse_error\n     --> b/TARGETS.fixture:2:1\n      |\n    2 | fail(\"test_parse_error\")\n      | ^^^^^^^^^^^^^^^^^^^^^^^^\n      |\n    "
+    "buck.error":"Error evaluating build file: `root//b:TARGETS.fixture`\n\nCaused by:\n    Traceback (most recent call last):\n      * b/TARGETS.fixture:2, in <module>\n          fail(\"test_parse_error\")\n    error: fail: test_parse_error\n     --> b/TARGETS.fixture:2:1\n      |\n    2 | fail(\"test_parse_error\")\n      | ^^^^^^^^^^^^^^^^^^^^^^^^\n    "
   },
   {
     "buck.target":"root//a:target1",

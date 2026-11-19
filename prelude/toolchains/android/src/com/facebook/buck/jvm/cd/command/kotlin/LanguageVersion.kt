@@ -12,7 +12,6 @@ package com.facebook.buck.jvm.cd.command.kotlin
 
 enum class KotlinSupportedLanguageVersion(val value: String) {
   v1_6("1.6"),
-  DEFAULT_K1("1.9"),
   V2_0("2.0"),
   V2_1("2.1"),
 }
@@ -45,7 +44,16 @@ class LanguageVersion(private val internalValue: String) {
     get() = LANGUAGE_VERSION_ARG + value
 
   fun isGreaterOrEqual(version: KotlinSupportedLanguageVersion): Boolean {
-    return internalValue >= version.value
+    // Compare numerically per version component so that e.g. "2.10" >= "2.2" holds.
+    // A plain string comparison is lexicographic and breaks once a minor reaches 2 digits.
+    val current = internalValue.split(".")
+    val target = version.value.split(".")
+    for (i in 0 until maxOf(current.size, target.size)) {
+      val c = current.getOrNull(i)?.toIntOrNull() ?: 0
+      val t = target.getOrNull(i)?.toIntOrNull() ?: 0
+      if (c != t) return c > t
+    }
+    return true
   }
 
   // Kotlinc 1.6+ can properly recognize `-language-version` flag
@@ -56,8 +64,6 @@ class LanguageVersion(private val internalValue: String) {
   companion object {
     private val LANGUAGE_VERSION_PARAM_SUPPORTED_FROM = KotlinSupportedLanguageVersion.v1_6
     private const val LANGUAGE_VERSION_ARG: String = "-language-version="
-    @JvmStatic
-    val K1: LanguageVersion = LanguageVersion(KotlinSupportedLanguageVersion.DEFAULT_K1.value)
     @JvmStatic val K2: LanguageVersion = LanguageVersion(KotlinSupportedLanguageVersion.V2_0.value)
   }
 }

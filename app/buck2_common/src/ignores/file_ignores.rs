@@ -8,10 +8,13 @@
  * above-listed licenses.
  */
 
+use std::sync::Arc;
+
 use allocative::Allocative;
+use buck2_core::cells::CellResolver;
 use buck2_core::cells::name::CellName;
-use buck2_core::cells::nested::NestedCells;
-use buck2_core::cells::unchecked_cell_rel_path::UncheckedCellRelativePath;
+use buck2_core::cells::paths::CellRelativePath;
+use pagable::Pagable;
 
 use crate::ignores::ignore_set::IgnoreSet;
 
@@ -47,6 +50,23 @@ pub enum FileIgnoreResult {
     Ignored(FileIgnoreReason),
 }
 
+impl FileIgnoreReason {
+    /// The error for having tried to read the ignored path.
+    pub fn into_read_error(self) -> buck2_error::Error {
+        match self {
+            FileIgnoreReason::IgnoredByPattern { path, pattern } => FileOpsError::ReadIgnoredDir(
+                path,
+                format!("file is matched by pattern `{pattern}`"),
+            )
+            .into(),
+            FileIgnoreReason::IgnoredByCell { path, cell_name } => {
+                FileOpsError::ReadIgnoredDir(path, format!("file is part of cell `{cell_name}`"))
+                    .into()
+            }
+        }
+    }
+}
+
 impl FileIgnoreResult {
     /// Converts the FileIgnoreResult to a Result<()> where any ignored case is converted to an Err
     /// with appropriate message. This should be used when it would be an error to interact with an
@@ -54,62 +74,55 @@ impl FileIgnoreResult {
     pub fn into_result(self) -> buck2_error::Result<()> {
         match self {
             FileIgnoreResult::Ok => Ok(()),
-            FileIgnoreResult::Ignored(FileIgnoreReason::IgnoredByPattern { path, pattern }) => {
-                Err(FileOpsError::ReadIgnoredDir(
-                    path,
-                    format!("file is matched by pattern `{pattern}`"),
-                )
-                .into())
-            }
-            FileIgnoreResult::Ignored(FileIgnoreReason::IgnoredByCell { path, cell_name }) => Err(
-                FileOpsError::ReadIgnoredDir(path, format!("file is part of cell `{cell_name}`"))
-                    .into(),
-            ),
+            FileIgnoreResult::Ignored(reason) => Err(reason.into_read_error()),
         }
     }
 
     /// Returns true if the file is ignored, false otherwise.
     pub fn is_ignored(&self) -> bool {
-        match self {
-            FileIgnoreResult::Ok => false,
-            _ => true,
-        }
+        !matches!(self, FileIgnoreResult::Ok)
     }
 }
 
-/// Ignores files based on configured ignore patterns and cell paths.
-#[derive(PartialEq, Eq, Allocative, Debug)]
+/// Ignores files based on configured ignore patterns and nested cell roots,
+/// viewed from a particular cell.
+#[derive(PartialEq, Eq, Allocative, Debug, Pagable)]
 pub struct CellFileIgnores {
-    ignores: IgnoreSet,
-    cell_ignores: NestedCells,
+    cells: CellResolver,
+    cell: CellName,
+    ignores: Arc<IgnoreSet>,
 }
 
 impl CellFileIgnores {
-    /// Creates a new FileIgnores intended for use by the interpreter.
-    ///
-    /// This will ignore files/dirs in the ignore spec and those in other cells.
-    pub fn new_for_interpreter(
-        ignore_spec: &str,
-        nested_cells: NestedCells,
-        root_cell: bool,
-    ) -> buck2_error::Result<CellFileIgnores> {
-        Ok(CellFileIgnores {
-            ignores: IgnoreSet::from_ignore_spec(ignore_spec, root_cell)?,
-            cell_ignores: nested_cells,
-        })
+    pub fn new(cells: CellResolver, cell: CellName, ignores: Arc<IgnoreSet>) -> Self {
+        // Verify the cell is present in the resolver up front so that `check`
+        // does not have to handle a fallible lookup.
+        assert!(
+            cells.get(cell).is_ok(),
+            "cell `{cell}` missing from CellResolver"
+        );
+        CellFileIgnores {
+            cells,
+            cell,
+            ignores,
+        }
     }
 
-    pub(crate) fn check(&self, path: &UncheckedCellRelativePath) -> FileIgnoreResult {
-        let candidate = globset::Candidate::new(path.as_str());
+    pub(crate) fn check(&self, path: &CellRelativePath) -> FileIgnoreResult {
+        let instance = self
+            .cells
+            .get(self.cell)
+            .expect("cell exists in resolver, validated in new()");
 
-        if let Some(pattern) = self.ignores.matches_candidate(&candidate) {
+        let project_path = instance.path().join(path);
+        if let Some(pattern) = self.ignores.matches_candidate(&project_path) {
             return FileIgnoreResult::Ignored(FileIgnoreReason::IgnoredByPattern {
                 path: path.as_str().to_owned(),
                 pattern: pattern.to_owned(),
             });
         }
 
-        if let Some((_, cell_name, _)) = self.cell_ignores.matches(path) {
+        if let Some((_, cell_name, _)) = instance.nested_cells().matches(path) {
             return FileIgnoreResult::Ignored(FileIgnoreReason::IgnoredByCell {
                 path: path.as_str().to_owned(),
                 cell_name,
@@ -122,91 +135,85 @@ impl CellFileIgnores {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::cells::cell_root_path::CellRootPath;
+    use std::sync::Arc;
+
+    use buck2_core::cells::CellResolver;
+    use buck2_core::cells::cell_root_path::CellRootPathBuf;
     use buck2_core::cells::name::CellName;
-    use buck2_core::cells::nested::NestedCells;
-    use buck2_core::cells::unchecked_cell_rel_path::UncheckedCellRelativePath;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    use buck2_core::cells::paths::CellRelativePath;
+    use dupe::Dupe;
 
     use crate::ignores::file_ignores::CellFileIgnores;
+    use crate::ignores::ignore_set::IgnoreSet;
 
     #[test]
     fn file_ignores() -> buck2_error::Result<()> {
-        let cells = &[
+        // The test cell is intentionally not at the project root. A separate
+        // cell at the actual project root is included so the CellResolver
+        // accepts the setup.
+        let test_cell = CellName::testing_new("test_root");
+        let cells = CellResolver::testing_with_names_and_paths(&[
             (
                 CellName::testing_new("root"),
-                CellRootPath::new(ProjectRelativePath::unchecked_new("root")),
+                CellRootPathBuf::testing_new(""),
             ),
+            (test_cell, CellRootPathBuf::testing_new("root")),
             (
                 CellName::testing_new("other"),
-                CellRootPath::new(ProjectRelativePath::unchecked_new("root/other_cell")),
+                CellRootPathBuf::testing_new("root/other_cell"),
             ),
             (
                 CellName::testing_new("third"),
-                CellRootPath::new(ProjectRelativePath::unchecked_new("third")),
+                CellRootPathBuf::testing_new("third"),
             ),
-        ];
-        let nested_cells = NestedCells::from_cell_roots(cells, CellRootPath::testing_new("root"));
-        let ignores = CellFileIgnores::new_for_interpreter(
+        ]);
+
+        let ignore_set = Arc::new(IgnoreSet::testing_new_single_cell(
+            cells.dupe(),
+            test_cell,
             "**/*.java , some/dir/**, one/*, \n    recursive, trailing_slash/",
-            nested_cells,
-            true,
-        )?;
+        )?);
+        let ignores = CellFileIgnores::new(cells, test_cell, ignore_set);
 
-        assert_eq!(
-            true,
+        assert!(
             ignores
-                .check(UncheckedCellRelativePath::unchecked_new(
-                    "some/long/path/Class.java"
-                ))
+                .check(CellRelativePath::unchecked_new("some/long/path/Class.java"))
                 .is_ignored()
         );
 
-        assert_eq!(
-            true,
+        assert!(
             ignores
-                .check(UncheckedCellRelativePath::unchecked_new("other_cell"))
+                .check(CellRelativePath::unchecked_new("other_cell"))
                 .is_ignored()
         );
 
-        assert_eq!(
-            true,
+        assert!(
             ignores
-                .check(UncheckedCellRelativePath::unchecked_new(
-                    "other_cell/some/lib"
-                ))
+                .check(CellRelativePath::unchecked_new("other_cell/some/lib"))
                 .is_ignored()
         );
 
-        assert_eq!(
-            false,
-            ignores
-                .check(UncheckedCellRelativePath::unchecked_new("third"))
+        assert!(
+            !ignores
+                .check(CellRelativePath::unchecked_new("third"))
                 .is_ignored()
         );
 
-        assert_eq!(
-            false,
-            ignores
-                .check(UncheckedCellRelativePath::unchecked_new("one/two/three"))
+        assert!(
+            !ignores
+                .check(CellRelativePath::unchecked_new("one/two/three"))
                 .is_ignored()
         );
 
-        assert_eq!(
-            true,
+        assert!(
             ignores
-                .check(UncheckedCellRelativePath::unchecked_new(
-                    "recursive/two/three"
-                ))
+                .check(CellRelativePath::unchecked_new("recursive/two/three"))
                 .is_ignored()
         );
 
-        assert_eq!(
-            true,
+        assert!(
             ignores
-                .check(UncheckedCellRelativePath::unchecked_new(
-                    "trailing_slash/BUCK"
-                ))
+                .check(CellRelativePath::unchecked_new("trailing_slash/BUCK"))
                 .is_ignored()
         );
 

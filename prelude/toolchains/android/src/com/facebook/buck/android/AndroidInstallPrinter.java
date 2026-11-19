@@ -10,7 +10,10 @@
 
 package com.facebook.buck.android;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** Interface for logging android installs in the AdbHelper */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface AndroidInstallPrinter {
   void printMessage(String message);
 

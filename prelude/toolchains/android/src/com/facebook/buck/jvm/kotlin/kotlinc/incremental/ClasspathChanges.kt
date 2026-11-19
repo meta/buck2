@@ -20,6 +20,10 @@ sealed interface ClasspathChanges {
 
   val classpathSnapshotFiles: List<File>
 
+  /**
+   * Classpath has changes (additions, modifications, or removals). The Kotlin incremental compiler
+   * computes affected sources.
+   */
   data class ToBeComputedByIncrementalCompiler(override val classpathSnapshotFiles: List<File>) :
       ClasspathChanges
 

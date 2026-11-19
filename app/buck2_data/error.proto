@@ -17,22 +17,6 @@ syntax = "proto3";
 // elsewhere.
 package buck.data.error;
 
-// TODO(ctolliday) remove this
-enum ErrorTier {
-  // Same as above
-  UNUSED_DEFAULT_CATEGORY = 0;
-  // Unexpected errors in buck2 or core dependencies.
-  // It should be possible to eliminate these, in theory.
-  TIER0_TIER = 1;
-  // Errors that may be triggered by issues with the host,
-  // resource limits, non-explicit dependencies or potentially
-  // ambiguous input errors.
-  // These can be tracked but not eliminated.
-  ENVIRONMENT_TIER = 3;
-  // Expected errors in inputs explicitly tracked by buck.
-  INPUT_TIER = 2;
-}
-
 // Error types are - by design - restricted to being set exactly once at the
 // error definition site. While they are useful, that means that they are enough
 // on their own to represent all the error metadata we want. Until we figure out
@@ -41,7 +25,8 @@ enum ErrorTier {
 //
 // Feel free to continue using error types if you like.
 enum ErrorTag {
-  reserved 2001, 11, 19;
+  reserved 2001, 11, 19, 6001, 2600;
+  reserved "MATERIALIZATION_CANCELLED";
 
   // Same as above
   UNUSED_DEFAULT_TAG = 0;
@@ -59,6 +44,7 @@ enum ErrorTag {
   STARLARK_SCOPE = 106;
   STARLARK_PARSER = 107;
   STARLARK_NATIVE_INPUT = 108;
+  STARLARK_RUNTIME_TYPE_ERROR = 109;
 
   WATCHMAN_TIMEOUT = 2;
   WATCHMAN_REQUEST_ERROR = 201;
@@ -103,8 +89,15 @@ enum ErrorTag {
   DAEMON_STATE_INIT_FAILED = 503;
   DAEMON_STATUS = 504;
   DAEMON_REDIRECT = 505;
+  // The buck2 daemon's executable has been deleted from disk.
+  BUCKD_EXE_DELETED = 506;
   DAEMON_STARTUP_FAILED = 507;
+  EXIT_STATUS = 517;
+  EXIT_STATUS_UNKNOWN = 519;
   DAEMON_LAUNCH_FAILED = 508;
+  // The client gave up waiting for the daemon launcher process to complete
+  // and killed it.
+  DAEMON_LAUNCH_TIMEOUT = 522;
   DAEMON_NESTED_CONSTRAINTS_MISMATCH = 509;
   DAEMON_CONSTRAINTS_WRONG_AFTER_START = 510;
   DAEMON_DIR_CLEANUP_FAILED = 511;
@@ -113,6 +106,13 @@ enum ErrorTag {
   BUCKD_INFO_MISSING = 514;
   BUCKD_INFO_PARSE_ERROR = 515;
   DAEMON_DISCONNECT = 516;
+  // Could not determine the BuckVersion
+  BUCK_VERSION_ERROR = 518;
+  // The daemon request stream ended without returning a CommandResult.
+  MISSING_COMMAND_RESULT = 520;
+  // The daemon's working directory was replaced underneath it, so the daemon
+  // needs restarting
+  DAEMON_STALE_WORKING_DIR = 521;
   // Too large gRPC message.
   GRPC_RESPONSE_MESSAGE_TOO_LARGE = 6;
   // `visibility`, `within_view`.
@@ -129,8 +129,12 @@ enum ErrorTag {
   SERVER_SIGABRT = 402;
   // Server received SIGBUS
   SERVER_SIGBUS = 403;
+  // Server received SIGBUS for an address in its own executable's loaded
+  // segments
+  SERVER_SIGBUS_EXECUTABLE = 405;
   // Server disconnect with no error but memory pressure was detected.
   SERVER_MEMORY_PRESSURE = 401;
+  DAEMON_OOM_KILLED = 404;
   // Jemalloc assertion failure.
   SERVER_JEMALLOC_ASSERT = 15;
   // Server transport errors. Eg. Channel not open
@@ -142,17 +146,25 @@ enum ErrorTag {
   // The daemon reported that it was shutting down during the execution of this
   // command
   INTERRUPTED_BY_DAEMON_SHUTDOWN = 23;
+  // The daemon reached its inactivity timeout during the execution of this
+  // command
+  DAEMON_INACTIVITY_TIMEOUT = 523;
   // The daemon couldn't be killed
   DAEMON_WONT_DIE_FROM_KILL = 24;
   // A process couldn't be killed
   FAILED_TO_KILL = 8027;
 
-  // No valid internal or VPNless certs could be found
-  NO_VALID_CERTS = 25;
   // Build failed during materialization
   MATERIALIZATION_ERROR = 26;
+  // A path was missing while copying a file into buck-out during
+  // materialization.
+  MATERIALIZE_COPY_MISSING_FILE = 2601;
   // Could not find buck project root
   NO_BUCK_ROOT = 27;
+  // Project root directory no longer exists on disk
+  MISSING_PROJECT_ROOT = 2700;
+  // The invoking user's home directory no longer exists on disk
+  MISSING_HOME_DIR = 2702;
 
   // Functionality not implemented in Buck2
   UNIMPLEMENTED = 29;
@@ -161,10 +173,22 @@ enum ErrorTag {
   // Artifact is missing a filename
   ARTIFACT_MISSING_FILENAME = 31;
 
+  // Path not found for path found in input or source
+  MISSING_INPUT_PATH = 32;
+  // Path not found for buck or system path not provided by user
+  MISSING_INTERNAL_PATH = 33;
+  // NotADirectory for path found in input or source
+  INPUT_PATH_NOT_A_DIRECTORY = 34;
+
   ACTION_MISMATCHED_OUTPUTS = 601;
   ACTION_MISSING_OUTPUTS = 602;
   ACTION_WRONG_OUTPUT_TYPE = 603;
   ACTION_COMMAND_FAILURE = 604;
+  ACTION_COMMAND_INFRA_FAILURE = 605;
+  ACTION_OOM = 606;
+  // dotslash itself failed while running a tool the action invokes, e.g. its
+  // artifact could not be fetched; the tool never ran.
+  DOTSLASH_ERROR = 607;
 
   // Errors during buck2 install.
   INSTALL = 200;
@@ -190,6 +214,7 @@ enum ErrorTag {
   // The nature of the failure, designed after (but not identical to) Rust's
   // `io::ErrorKind`
   IO_NOT_FOUND = 1020;
+  IO_NOT_A_DIRECTORY = 1031;
   IO_PERMISSION_DENIED = 1021;
   IO_BROKEN_PIPE = 1022;
   IO_STORAGE_FULL = 1023;
@@ -197,10 +222,17 @@ enum ErrorTag {
   IO_CONNECTION_ABORTED = 1025;
   IO_NOT_CONNECTED = 1026;
   IO_TIMEOUT = 1027;
-  IO_WINDOWS_SHARING_VIOLATION = 1028;
   IO_READ_ONLY_FILESYSTEM = 1029;
   IO_INPUT_OUTPUT_ERROR = 1030;
+  IO_BAD_ADDRESS = 1033;
+  IO_STALE_NFS_HANDLE = 1034;
   IO_BLOCKING_EXECUTOR = 8033;
+
+  IO_WINDOWS_SHARING_VIOLATION = 1028;
+  IO_WINDOWS_VIRTUALIZATION_UNAVAILABLE = 1501;
+  IO_WINDOWS_INTERNAL_ERROR = 1502;
+  IO_WINDOWS_PRIVILEGE_NOT_HELD = 1503;
+  IO_WINDOWS_NO_SYSTEM_RESOURCES = 1504;
 
   //
   // Eden IO Section
@@ -231,12 +263,22 @@ enum ErrorTag {
   IO_EDEN_VERSION_ERROR = 1165;
   IO_EDEN_THRIFT_ERROR = 1166;
   IO_EDEN_DATA_CORRUPTION = 1167;
+  IO_EDEN_DAEMON_RESTARTED = 1168;
 
   IO_EDEN_NETWORK_UNCATEGORIZED = 1170;
   IO_EDEN_NETWORK_TLS = 1171;
   IO_EDEN_NETWORK_CURL_TIMEDOUT = 11728;
 
+  // Sapling Section
+  // Indicates that the error came from invoking a Sapling command. On its own
+  // it means the failure was not one we categorize.
   SAPLING = 12000;
+  // The Sapling binary could not be started, e.g. it is not on the PATH
+  SAPLING_NOT_FOUND = 12001;
+  // Sapling could not reach the source control server
+  SAPLING_NETWORK = 12002;
+  // Buck2 could not read or parse the output of a Sapling command
+  SAPLING_INVALID_OUTPUT = 12003;
 
   // Client IO
   // Broken pipe specifically from client stdio streams
@@ -271,20 +313,26 @@ enum ErrorTag {
   RE_CAS_ARTIFACT_INVALID_EXPIRATION = 1324;
   RE_CAS_ARTIFACT_EXPIRED = 1325;
   RE_INVALID_GET_CAS_RESPONSE = 1326;
+  DECLARED_ARTIFACT_NOT_FOUND = 1327;
 
   // TCodeReasonGroup values: https://fburl.com/code/pvsy2jgv
   RE_CONNECTION = 1340;
   RE_USER_QUOTA = 1341;
+  RE_USER_BAD_CERTS = 1342;
+  RE_ACTION_LOST_WORKERS = 1343;
 
   // Dice Errors
   // Value: https://fburl.com/code/5dxzaw41
   DICE_DUPLICATED_CHANGE = 1400;
   DICE_CHANGED_TO_INVALID = 1401;
   DICE_INJECTED_KEY_GOT_INVALIDATION = 1402;
-  DICE_CANCELLED = 1403;
-  DICE_UNEXPECTED_CYCLE_GUARD_TYPE = 1404;
+  reserved 1403, 1404;
   DICE_DUPLICATE_ACTIVATION_DATA = 1405;
   DICE_REJECTED = 1406;
+  DICE_CYCLE = 1407;
+
+  // A field of a value paged back in from storage could not be read.
+  DEFERRED_FIELD_READ = 1500;
 
   // Error during attribute configuration during target configuration.
   CONFIGURE_ATTR = 3001;
@@ -308,15 +356,34 @@ enum ErrorTag {
   TEST_STATUS = 5003;
   TEST_STATUS_INVALID = 5004;
   LOCAL_RESOURCE_SETUP = 5005;
+  TEST_FAILED = 5006;
+  TEST_LISTING_FAILED = 5007;
+  TEST_FATAL = 5008;
+  TEST_INFRA_FAILURE = 5009;
+  TEST_STATUS_UNKNOWN = 5010;
+  TEST_TIMEOUT = 5011;
 
   // Error from TestExecutor
   TPX = 5500;
   TestExecutor = 5501;
 
+  TEST_RUNNER_INTERNAL = 5502;
+  TEST_RUNNER_UNKNOWN_EXIT_CODE = 5504;
+
+  // Test executor process was killed by a signal, e.g. SIGSEGV or an OOM kill
+  // (a real crash, as opposed to an orderly non-zero exit).
+  TEST_EXECUTOR_SIGNALED = 5505;
+  // Test executor process exited with a non-zero status without being signaled.
+  TEST_EXECUTOR_NON_ZERO_EXIT = 5506;
+  // Test executor process exited without reporting end-of-tests.
+  TEST_EXECUTOR_NO_END_OF_TESTS = 5507;
+
   // Errors while cleaning stale artifacts
   CLEAN_STALE = 280;
   // Clean stale command was interrupted
   CLEAN_INTERRUPT = 28;
+  // Errors while removing buck-out in `buck2 clean`
+  CLEAN_BUCK_OUT = 281;
 
   INVALID_ERROR_REPORT = 6002;
   INVALID_EVENT = 6003;
@@ -325,11 +392,15 @@ enum ErrorTag {
   INVALID_DURATION = 6006;
   INVALID_USERNAME = 6007;
   INVALID_ABS_PATH = 6008;
+  // Malformed buck-out path string
   INVALID_BUCK_OUT_PATH = 6009;
+  // Issue with buck-out dir on disk (ex. broken symlink, not a dir)
+  INVALID_BUCK_OUT = 6010;
 
   // Build errors.
   BUILD_DEADLINE_EXPIRED = 7001;
   BUILD_SKETCH_ERROR = 7002;
+  CRITICAL_PATH_ERROR = 7003;
 
   SUPER_CONSOLE = 8000;
   SUPER_CONSOLE_INVALID_WHITESPACE = 8001;
@@ -343,6 +414,10 @@ enum ErrorTag {
   EVENT_LOG_NOT_OPEN = 8037;
   EVENT_LOG_EOF = 8039;
   EVENT_LOG_INDEX_OUT_OF_BOUNDS = 8040;
+  // The event log to be read does not exist on disk
+  EVENT_LOG_NOT_FOUND = 8041;
+  // Downloading an event log that is not available locally
+  EVENT_LOG_DOWNLOAD = 8042;
 
   CACHE_UPLOAD_FAILED = 906;
   SYMLINK_PARENT_MISSING = 909;
@@ -350,9 +425,12 @@ enum ErrorTag {
   DISPATCHER_UNAVAILABLE = 912;
   CSV_PARSE = 917;
   CAS_BLOB_COUNT_MISMATCH = 918;
+  reserved 919;
 
   CLEAN_OUTPUTS = 8017;
   COPY_OUTPUTS = 8029;
+  // Creating the unhashed (`buck-out/v2/gen`) symlink for a build output
+  UNHASHED_OUTPUT_SYMLINK = 8043;
   LOG_FILTER = 8030;
 
   WINDOWS_UNSUPPORTED = 8007;
@@ -360,9 +438,25 @@ enum ErrorTag {
   MALLCTL = 8038;
   CPU_STATS = 8026;
 
+  // Cert related tags
+  CERTS = 22000;
+  // No valid internal or VPNless certs could be found
+  NO_VALID_CERTS = 25;
+  CERT_EXPIRED = 22001;
+
+  // Causes external to buck2, not specific to any one subsystem. Pair these
+  // with a tag identifying the subsystem that hit them.
+  // A TLS handshake failed. Not necessarily a cert problem, see CERTS for those
+  TLS = 23000;
+  // A source control repository is missing or is not a usable checkout
+  MISSING_REPO = 23001;
+  // The directory buck2 was invoked from no longer exists
+  MISSING_WORKING_DIR = 23002;
+  // A policy, e.g. workspace isolation, refused to run a command
+  BLOCKED_BY_POLICY = 23003;
+
   // Misc phases/subsystem tags
   BXL = 11000;
-  CERTS = 22000;
   LOG_CMD = 13000;
   OFFLINE_ARCHIVE = 14000;
   PROFILE = 15000;
@@ -372,6 +466,18 @@ enum ErrorTag {
   STARLARK_SERVER = 19000;
   INTERPRETER = 20000;
   KILL_ALL = 21000;
+  BUILD_REPORT = 11100;
+  // Reading a buckconfig file from disk
+  BUCKCONFIG_READ = 23004;
+  // Reading the result file produced by a validation
+  VALIDATION_RESULT_READ = 24000;
+
+  // `buck2 subscribe`
+  // A `SubscriptionRequest` read from the client's stdin had no request set
+  SUBSCRIPTION_EMPTY_REQUEST = 25000;
+
+  // The agent must reconsider or acknowledge advice before the command runs.
+  AGENT_ADVICE_BLOCKED = 26000;
 
   // Misc error conversions
   CLAP = 9001;
@@ -398,14 +504,21 @@ enum ErrorTag {
   STRING_CONVERSION = 9016;
   CSTRING_NUL = 9023;
 
+  THRIFT = 10000;
+  THRIFT_TIMEOUT = 10001;
+  THRIFT_LOADSHEDDING = 10002;
+
+  // errno.h values 9100 + errno
+  // codes from: https://en.wikipedia.org/wiki/Errno.h
+  // (underscore in names is to not break C codegen)
+  E_PERM = 9101;
+  E_AGAIN = 9111;
+
   // From `buck2 debug crash`
   CRASH_REQUESTED = 8022;
 
   // From ExitResult::bail
   BAIL = 8023;
-
-  // None turned into an error. This carries no useful information whatsoever.
-  UNEXPECTED_NONE = 6001;
 
   // Only used by tests, should not occur outside test execution.
   TEST_ONLY = 8031;

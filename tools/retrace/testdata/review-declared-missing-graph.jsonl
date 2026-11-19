@@ -1,0 +1,3 @@
+{"graph":{"enc":2,"run":"trace-run","coverage":{"nodes":200,"edges":100,"dangling_deps":7,"dangling_tsets":3}}}
+{"t":"a","d":[]}
+{"t":"b","d":[]}

@@ -21,6 +21,7 @@ pub mod any_complex;
 pub mod array;
 pub mod bigint;
 pub mod bool;
+pub mod bytes;
 pub mod dict;
 pub(crate) mod ellipsis;
 pub mod enumeration;

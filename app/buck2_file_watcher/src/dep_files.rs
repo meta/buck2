@@ -8,19 +8,62 @@
  * above-listed licenses.
  */
 
+use std::any::Any;
+use std::sync::Arc;
+
+use allocative::Allocative;
 use buck2_util::late_binding::LateBinding;
+use dice::UserComputationData;
 
-pub static FLUSH_DEP_FILES: LateBinding<fn()> = LateBinding::new("FLUSH_DEP_FILES");
-pub static FLUSH_NON_LOCAL_DEP_FILES: LateBinding<fn()> =
-    LateBinding::new("FLUSH_NON_LOCAL_DEP_FILES");
+/// Live dep-file state owned by one repository.
+pub trait DepFileCache: Allocative + Send + Sync + 'static {
+    /// Exposes the concrete cache implementation to the action layer.
+    fn as_any(&self) -> &dyn Any;
 
-/// Forget about all dep files. This isn't really meant to be commonly used, but if an invalid dep
-/// file was produced and the user wants unblocking, this will provide it.
-pub fn flush_dep_files() {
-    (FLUSH_DEP_FILES.get().unwrap())();
+    /// Removes all cached dep-file state.
+    fn clear(&self);
+
+    /// Removes remotely produced state while retaining locally produced state.
+    fn clear_non_local(&self);
 }
 
-/// Forget about all dep files that were not produced locally.
-pub fn flush_non_local_dep_files() {
-    (FLUSH_NON_LOCAL_DEP_FILES.get().unwrap())();
+/// Factory supplied by the action implementation to preserve crate layering.
+pub static CREATE_DEP_FILE_CACHE: LateBinding<fn() -> Arc<dyn DepFileCache>> =
+    LateBinding::new("CREATE_DEP_FILE_CACHE");
+
+/// Creates an empty live dep-file cache for one repository.
+pub fn create_dep_file_cache() -> Arc<dyn DepFileCache> {
+    (CREATE_DEP_FILE_CACHE
+        .get()
+        .expect("DepFileCache should be set"))()
+}
+
+struct DepFileCacheHolder(Arc<dyn DepFileCache>);
+
+/// Installs the current repository's live dep-file cache in command data.
+pub trait SetDepFileCache {
+    /// Sets the cache used by this command.
+    fn set_dep_file_cache(&mut self, cache: Arc<dyn DepFileCache>);
+}
+
+/// Reads the current repository's live dep-file cache from command data.
+pub trait HasDepFileCache {
+    /// Returns the cache used by this command.
+    fn get_dep_file_cache(&self) -> &dyn DepFileCache;
+}
+
+impl SetDepFileCache for UserComputationData {
+    fn set_dep_file_cache(&mut self, cache: Arc<dyn DepFileCache>) {
+        self.data.set(DepFileCacheHolder(cache));
+    }
+}
+
+impl HasDepFileCache for UserComputationData {
+    fn get_dep_file_cache(&self) -> &dyn DepFileCache {
+        self.data
+            .get::<DepFileCacheHolder>()
+            .expect("DepFileCache should be set")
+            .0
+            .as_ref()
+    }
 }

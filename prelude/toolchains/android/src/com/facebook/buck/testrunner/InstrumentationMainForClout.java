@@ -10,6 +10,9 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
+
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstrumentationMainForClout {
 
   private InstrumentationMainForClout() {
@@ -17,19 +20,12 @@ public class InstrumentationMainForClout {
   }
 
   public static void main(String[] args) {
-    try {
-      InstrumentationTestRunnerForClout.fromArgs(args).run();
-    } catch (Throwable e) {
-      e.printStackTrace();
-    } finally {
-      // Explicitly exit to force the test runner to complete even if tests have sloppily left
-      // behind non-daemon threads that would have otherwise forced the process to wait and
-      // eventually timeout.
-      //
-      // Separately, we're using a successful exit code regardless of test outcome since the runner
-      // is designed to execute all tests and produce a report of success or failure.  We've done
-      // that successfully if we've gotten here.
-      System.exit(0);
-    }
+    int exitCode =
+        InstrumentationMain.runForExitCode(
+            () -> InstrumentationTestRunnerForClout.fromArgs(args).run());
+    // Explicitly exit to force the test runner to complete even if tests have sloppily left
+    // behind non-daemon threads that would have otherwise forced the process to wait and
+    // eventually timeout.
+    System.exit(exitCode);
   }
 }

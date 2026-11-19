@@ -63,11 +63,15 @@ def apple_resource_impl(ctx: AnalysisContext) -> list[Provider]:
     )
     xcode_data_default_info, xcode_data_info = generate_xcode_data(ctx, "apple_resource", None, _xcode_populate_attributes)
 
-    return [DefaultInfo(
-        sub_targets = {
-            "headers": [
-                DefaultInfo(default_outputs = []),
-            ],
-            XCODE_DATA_SUB_TARGET: xcode_data_default_info,
-        },
-    ), graph, xcode_data_info]
+    return [
+        DefaultInfo(
+            sub_targets = {
+                "headers": [
+                    DefaultInfo(default_outputs = []),
+                ],
+                XCODE_DATA_SUB_TARGET: xcode_data_default_info,
+            },
+        ),
+        graph,
+        xcode_data_info,
+    ]

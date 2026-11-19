@@ -9,13 +9,14 @@
  */
 
 use allocative::Allocative;
+use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use relative_path::Component;
-use relative_path::RelativePath;
-use relative_path::RelativePathBuf;
+use buck2_fs::paths::relative_path::Component;
+use buck2_fs::paths::relative_path::RelativePath;
+use pagable::Pagable;
 
 use crate::cells::cell_path::CellPath;
-use crate::cells::paths::CellRelativePathBuf;
+use crate::cells::paths::CellRelativePath;
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(input)]
@@ -28,9 +29,15 @@ enum RelativeImportParseError {
     CurrentDirRelativeImport(String),
     #[error("Invalid path `{0}` for file relative import path. Should be a forward relative path.")]
     InvalidCurrentPathWhenFileRelativeImport(String),
+    #[error(
+        "Relative import path `{0}` must not contain empty path components (a leading, trailing or doubled `/`)"
+    )]
+    EmptyComponentRelativeImport(String),
 }
 
-#[derive(Debug, Hash, Eq, PartialEq, PartialOrd, Ord, Allocative, Clone)]
+#[derive(
+    Debug, Hash, Eq, PartialEq, PartialOrd, Ord, Allocative, Clone, Pagable
+)]
 pub struct CellPathWithAllowedRelativeDir {
     current_dir: CellPath,
     allowed_relative_dir: Option<CellPath>,
@@ -38,9 +45,9 @@ pub struct CellPathWithAllowedRelativeDir {
 
 impl CellPathWithAllowedRelativeDir {
     pub fn new(current_dir: CellPath, allowed_relative_dir: Option<CellPath>) -> Self {
-        if let Some(ref allowed_relative_dir_value) = allowed_relative_dir {
+        if let Some(allowed_relative_dir_value) = allowed_relative_dir {
             assert!(
-                current_dir.starts_with(allowed_relative_dir_value.as_ref()),
+                current_dir.starts_with(allowed_relative_dir_value),
                 "current_dir: `{current_dir}` must be a subpath of allowed_relative_dir: `{allowed_relative_dir_value}`",
             );
         }
@@ -66,14 +73,27 @@ impl CellPathWithAllowedRelativeDir {
             return Ok(self.current_dir.join(rel_path));
         };
 
-        let mut resolved_path = RelativePathBuf::from_path(self.current_dir.path().to_string())?;
-        let mut num_allowed_parents =
-            RelativePath::from_path(&self.current_dir.path().to_string())?
-                .components()
-                .count()
-                - RelativePath::from_path(&allowed_relative_dir.path().to_string())?
-                    .components()
-                    .count();
+        // `components()` skips empty components, so check them here: the branch above rejects
+        // them, and a load path must not depend on the directory it appears in.
+        let raw = path.as_str();
+        if raw.starts_with('/') || raw.ends_with('/') || raw.contains("//") {
+            return Err(
+                RelativeImportParseError::EmptyComponentRelativeImport(raw.to_owned()).into(),
+            );
+        }
+
+        let mut resolved_path = self
+            .current_dir
+            .path()
+            .as_forward_relative_path()
+            .to_owned();
+        let mut num_allowed_parents = self
+            .current_dir
+            .path()
+            .strip_prefix(allowed_relative_dir.path())
+            .expect("Checked at construction time")
+            .iter()
+            .count();
         let mut components = path.components();
         while let Some(c) = components.next() {
             match c {
@@ -94,7 +114,7 @@ impl CellPathWithAllowedRelativeDir {
                     resolved_path.pop();
                 }
                 Component::Normal(file_name) => {
-                    resolved_path.push(file_name);
+                    resolved_path.push(FileName::new(file_name)?);
                     let remaining = components.as_relative_path();
                     let Ok(remaining) = <&ForwardRelativePath>::try_from(remaining) else {
                         return Err(RelativeImportParseError::NonLeadingParentDirRelativeImport(
@@ -102,17 +122,14 @@ impl CellPathWithAllowedRelativeDir {
                         )
                         .into());
                     };
-                    if !remaining.is_empty() {
-                        // If we join an empty ForwardRelativePath, it will add an unwanted trailing slash
-                        resolved_path = resolved_path.join(remaining);
-                    }
+                    resolved_path.extend(remaining);
                     break;
                 }
             }
         }
         Ok(CellPath::new(
             self.current_dir.cell(),
-            CellRelativePathBuf::try_from(resolved_path)?,
+            CellRelativePath::new(&resolved_path),
         ))
     }
 
@@ -132,7 +149,7 @@ impl CellPathWithAllowedRelativeDir {
 #[cfg(test)]
 mod tests {
     use buck2_fs::paths::file_name::FileName;
-    use relative_path::RelativePath;
+    use buck2_fs::paths::relative_path::RelativePath;
 
     use crate::cells::cell_path::CellPath;
     use crate::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
@@ -141,10 +158,8 @@ mod tests {
     use crate::cells::paths::CellRelativePath;
 
     fn path(cell: &str, dir: &str, filename: &str) -> CellPath {
-        CellPath::new(
-            CellName::testing_new(cell),
-            CellRelativePath::unchecked_new(dir).join(FileName::unchecked_new(filename)),
-        )
+        let path = CellRelativePath::unchecked_new(dir).join(FileName::unchecked_new(filename));
+        CellPath::new(CellName::testing_new(cell), &path)
     }
 
     #[test]
@@ -157,7 +172,7 @@ mod tests {
         assert_eq!(
             path("cell1", "package", "sibling.bzl"),
             cell_path_with_allowed_relative_dir
-                .join_normalized(RelativePath::from_path(import)?)?
+                .join_normalized(RelativePath::unchecked_new(import))?
         );
         Ok(())
     }
@@ -172,7 +187,7 @@ mod tests {
         assert_eq!(
             path("cell1", "root", "foo.bzl"),
             cell_path_with_allowed_relative_dir
-                .join_normalized(RelativePath::from_path(import)?)?
+                .join_normalized(RelativePath::unchecked_new(import))?
         );
         Ok(())
     }
@@ -187,7 +202,7 @@ mod tests {
         assert_eq!(
             path("cell1", "package/foo/bar", "zoo.bzl"),
             cell_path_with_allowed_relative_dir
-                .join_normalized(RelativePath::from_path(import)?)?
+                .join_normalized(RelativePath::unchecked_new(import))?
         );
         Ok(())
     }
@@ -203,7 +218,7 @@ mod tests {
             format!(
                 "{:#}",
                 cell_path_with_allowed_relative_dir
-                    .join_normalized(RelativePath::from_path(import)?)
+                    .join_normalized(RelativePath::unchecked_new(import))
                     .unwrap_err()
             ),
             RelativeImportParseError::InvalidRelativeImport(import.to_owned()).to_string()
@@ -222,7 +237,7 @@ mod tests {
             format!(
                 "{:#}",
                 cell_path_with_allowed_relative_dir
-                    .join_normalized(RelativePath::from_path(import)?)
+                    .join_normalized(RelativePath::unchecked_new(import))
                     .unwrap_err()
             ),
             RelativeImportParseError::NonLeadingParentDirRelativeImport(import.to_owned())

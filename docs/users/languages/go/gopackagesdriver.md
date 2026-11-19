@@ -84,7 +84,7 @@ If it's not working correctly, you can make a PR to adjust its behavior.
 The following tools are known to work well with `GOPACKAGESDRIVER`:
 [gopls](https://github.com/golang/tools/tree/master/gopls),
 [golangci-lint](https://github.com/golangci/golangci-lint),
-[scip-go](https://github.com/sourcegraph/scip-go),
+[scip-go](https://github.com/scip-code/scip-go),
 [callgraph](https://stackoverflow.com/questions/31362332/creating-call-graph/31369718#31369718).
 
 ## What tools are not supported?

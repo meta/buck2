@@ -156,7 +156,10 @@ impl LivelinessObserver for LivelinessObserverForGuard {
 
 impl LivelinessObserverSync for LivelinessObserverForGuard {
     fn is_alive_sync(&self) -> bool {
-        self.try_read().is_err()
+        match self.try_read() {
+            Err(_) => true,
+            Ok(state) => matches!(*state, LivelinessObserverState::ForeverAlive),
+        }
     }
 }
 
@@ -288,6 +291,14 @@ mod tests {
 
         restored.forget();
         assert!(manager.is_alive().await);
+    }
+
+    #[tokio::test]
+    async fn test_forget_keeps_sync_observer_alive() {
+        let (manager, guard) = LivelinessGuard::create_sync();
+        guard.forget();
+        assert!(manager.is_alive().await);
+        assert!(manager.is_alive_sync());
     }
 
     #[tokio::test]

@@ -1,0 +1,3 @@
+load(":rules.bzl", "same_name")
+
+same_name(name = "t")

@@ -13,9 +13,11 @@ package com.facebook.buck.jvm.kotlin;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.ClasspathChanges;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.util.stream.Collectors;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ClasspathChangesFactory {
 
   private static final Logger LOG = Logger.get(KotlinSourceChangesFactory.class);
@@ -25,10 +27,12 @@ public class ClasspathChangesFactory {
   public static ClasspathChanges create(
       SnapshotsActionMetadata actionMetadata, ImmutableList<AbsPath> classpathSnapshots) {
     if (actionMetadata.hasClasspathChanged()) {
-      LOG.info("Classpath changes: Detected changes on the classpath");
-      return new ClasspathChanges.ToBeComputedByIncrementalCompiler(
+      ImmutableList<java.io.File> snapshotFiles =
           ImmutableList.copyOf(
-              classpathSnapshots.stream().map(AbsPath::toFile).collect(Collectors.toList())));
+              classpathSnapshots.stream().map(AbsPath::toFile).collect(Collectors.toList()));
+
+      LOG.info("Classpath changes: Detected changes on the classpath");
+      return new ClasspathChanges.ToBeComputedByIncrementalCompiler(snapshotFiles);
     }
 
     LOG.info("Classpath changes: No changes on the classpath");

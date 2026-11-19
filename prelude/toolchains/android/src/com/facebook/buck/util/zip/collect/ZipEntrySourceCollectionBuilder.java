@@ -13,6 +13,7 @@ package com.facebook.buck.util.zip.collect;
 import com.facebook.buck.io.pathformat.PathFormatter;
 import com.facebook.buck.util.PatternsMatcher;
 import com.facebook.buck.util.zip.Zip;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -31,6 +32,7 @@ import java.util.regex.Pattern;
  * A builder for {@link ZipEntrySourceCollection} that allows to build a collection using provided
  * source files as well as source zip files.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ZipEntrySourceCollectionBuilder {
   private final PatternsMatcher excludedEntriesMatcher;
   private final OnDuplicateEntry onDuplicateEntryAction;

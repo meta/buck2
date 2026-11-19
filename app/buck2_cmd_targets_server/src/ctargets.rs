@@ -14,10 +14,12 @@ use async_trait::async_trait;
 use buck2_build_api::configure_targets::load_compatible_patterns_with_modifiers;
 use buck2_cli_proto::ConfiguredTargetsRequest;
 use buck2_cli_proto::ConfiguredTargetsResponse;
+use buck2_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
 use buck2_common::pattern::parse_from_cli::parse_patterns_with_modifiers_from_cli_args;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_node::load_patterns::MissingTargetBehavior;
+use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
 use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
@@ -25,7 +27,10 @@ use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use buck2_server_ctx::template::ServerCommandTemplate;
 use buck2_server_ctx::template::run_server_command;
 use dice::DiceTransaction;
+use dupe::Dupe;
 
+use crate::configured_target_hash::ConfiguredTargetHashOptions;
+use crate::configured_target_hash::ConfiguredTargetHashes;
 use crate::targets::fmt::ConfiguredOutputHandler;
 use crate::targets::fmt::create_configured_formatter;
 
@@ -57,12 +62,12 @@ impl ServerCommandTemplate for ConfiguredTargetsServerCommand {
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        mut ctx: DiceTransaction,
+        ctx: DiceTransaction,
     ) -> buck2_error::Result<ConfiguredTargetsResponse> {
         // TODO(nga): this should accept `ConfiguredTargetPatternExtra`. And handle the universe.
         let parsed_patterns_with_modifiers =
             parse_patterns_with_modifiers_from_cli_args::<TargetPatternExtra>(
-                &mut ctx,
+                &mut ctx.ctx(),
                 &self.req.target_patterns,
                 server_ctx.working_dir(),
             )
@@ -76,7 +81,7 @@ impl ServerCommandTemplate for ConfiguredTargetsServerCommand {
                 .as_ref()
                 .internal_error("target_cfg must be set")?,
             server_ctx,
-            &mut ctx,
+            &mut ctx.ctx(),
         )
         .await?;
 
@@ -84,14 +89,49 @@ impl ServerCommandTemplate for ConfiguredTargetsServerCommand {
 
         let keep_going = self.req.keep_going;
 
-        let result = load_compatible_patterns_with_modifiers(
-            &mut ctx,
+        let mut result = load_compatible_patterns_with_modifiers(
+            &mut ctx.ctx(),
             parsed_patterns_with_modifiers,
             &global_cfg_options,
             skip_missing_targets,
             keep_going,
         )
         .await?;
+
+        result.compatible_targets = result
+            .compatible_targets
+            .iter()
+            .map(|node| node.unwrap_forward().dupe())
+            .collect();
+
+        let hashes = if self.req.show_target_hash {
+            let require_hash_change_deps = parse_patterns_from_cli_args::<TargetPatternExtra>(
+                &mut ctx.ctx(),
+                &self.req.require_hash_change_deps,
+                server_ctx.working_dir(),
+            )
+            .await?
+            .into_iter()
+            .zip(&self.req.require_hash_change_deps)
+            .map(|(pattern, original)| pattern.as_target_label(original))
+            .collect::<buck2_error::Result<_>>()?;
+
+            Some(ConfiguredTargetHashes::compute(
+                &result.compatible_targets,
+                &ConfiguredTargetHashOptions {
+                    recursive: self.req.target_hash_recursive,
+                    use_fast_hash: !self.req.target_hash_use_strong_hash,
+                    require_hash_change_deps,
+                },
+            )?)
+        } else {
+            None
+        };
+
+        let target_hash_for_node = |node: &ConfiguredTargetNode| match &hashes {
+            Some(hashes) => hashes.get(node.label()).map(Some),
+            None => Ok(None),
+        };
 
         let mut serialized_targets_output = String::new();
         let mut stderr_output = String::new();
@@ -136,15 +176,19 @@ impl ServerCommandTemplate for ConfiguredTargetsServerCommand {
                 }
 
                 // Format compatible targets
+                if formatter.reads_bodies() {
+                    ConfiguredTargetNode::prefetch_bodies(&result.compatible_targets)?;
+                }
                 for node in &result.compatible_targets {
-                    let nodes = std::iter::once(node).chain(node.forward_target());
-                    for node in nodes {
-                        if needs_separator {
-                            formatter.separator(&mut serialized_targets_output);
-                        }
-                        needs_separator = true;
-                        formatter.target(node, &mut serialized_targets_output)?;
+                    if needs_separator {
+                        formatter.separator(&mut serialized_targets_output);
                     }
+                    needs_separator = true;
+                    formatter.target(
+                        node,
+                        target_hash_for_node(node)?,
+                        &mut serialized_targets_output,
+                    )?;
                 }
 
                 formatter.end(&mut serialized_targets_output);
@@ -152,6 +196,7 @@ impl ServerCommandTemplate for ConfiguredTargetsServerCommand {
             ConfiguredOutputHandler::JsonReport(json_report_formatter) => {
                 json_report_formatter.format_report(
                     &result,
+                    target_hash_for_node,
                     &mut serialized_targets_output,
                     &mut stderr_output,
                 )?;

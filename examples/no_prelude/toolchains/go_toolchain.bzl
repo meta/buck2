@@ -14,7 +14,7 @@ GoCompilerInfo = provider(
 def _go_toolchain_impl(ctx):
     download = _download_toolchain(ctx)
 
-    compiler_dst = ctx.actions.declare_output("compiler.exe" if host_info().os.is_windows else "compiler")
+    compiler_dst = ctx.actions.declare_output("compiler.exe" if host_info().os.is_windows else "compiler", has_content_based_path = False)
 
     cmd = cmd_args()
     if host_info().os.is_windows:
@@ -44,10 +44,10 @@ def _download_toolchain(ctx: AnalysisContext):
     sha256 = ctx.attrs.sha256
 
     # Download archive.
-    archive = ctx.actions.declare_output("archive." + archive_extension)
+    archive = ctx.actions.declare_output("archive." + archive_extension, has_content_based_path = False)
     ctx.actions.download_file(archive.as_output(), url, sha256 = sha256)
 
-    output = ctx.actions.declare_output(ctx.label.name)
+    output = ctx.actions.declare_output(ctx.label.name, has_content_based_path = False)
 
     # Unpack archive to output directory.
     compress_flag = "-z"
@@ -73,6 +73,7 @@ def _download_toolchain(ctx: AnalysisContext):
         script_content,
         is_executable = True,
         allow_args = True,
+        has_content_based_path = False,
     )
 
     cmd = cmd_args(

@@ -10,7 +10,7 @@
 		"url": "https://github.com/Microsoft/vscode-extension-samples"
 	},
 	"engines": {
-		"vscode": "^1.43.0"
+		"vscode": "^1.82.0"
 	},
 	"dependencies": {
 		"cd": "^0.3.3",
@@ -18,7 +18,12 @@
 		"vscode-languageclient": "^9.0.1"
 	},
 	"devDependencies": {
-		"@types/vscode": "1.43.0",
+		"@types/vscode": "1.82.0",
 		"@vscode/test-electron": "^1.3.0"
+	},
+	"overrides": {
+		"@tootallnate/once": ">=3.0.1",
+		"minimatch": ">=3.1.3",
+		"brace-expansion": ">=5.0.12"
 	}
 }

@@ -22,11 +22,11 @@ interface KotlinCDLogger {
       val implementations = ServiceLoader.load(KotlinCDLogger::class.java)
       implementations.firstOrNull()
           ?: error(
-              "The classpath contains no implementation for ${KotlinCDLogger::class.qualifiedName}"
+              "The classpath contains no implementation for ${KotlinCDLogger::class.qualifiedName}",
           )
       return implementations.singleOrNull()
           ?: error(
-              "The classpath contains more than one implementation for ${KotlinCDLogger::class.qualifiedName}"
+              "The classpath contains more than one implementation for ${KotlinCDLogger::class.qualifiedName}",
           )
     }
   }

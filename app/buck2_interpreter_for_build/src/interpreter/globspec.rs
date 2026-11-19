@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
 use std::fmt;
 use std::fmt::Debug;
 
@@ -17,6 +16,7 @@ use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_hash::BuckMutSet;
 use derivative::Derivative;
 
 #[derive(Debug, buck2_error::Error)]
@@ -78,8 +78,9 @@ impl GlobPattern {
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub(crate) struct GlobSpec {
-    common_prefix: String,
-    exact_matches: HashSet<String>,
+    /// Byte prefixes that cover every file the patterns can match; empty means no narrowing.
+    narrowing_prefixes: Vec<String>,
+    exact_matches: BuckMutSet<String>,
     patterns: Vec<GlobPattern>,
     excludes: Vec<GlobPattern>,
 }
@@ -90,10 +91,11 @@ fn longest_common_glob_prefix<P: AsRef<str>>(patterns: &[P]) -> &str {
         return "";
     }
     let first: &str = patterns[0].as_ref();
-    // Globs have some special characters, ensure they're not present.
+    // Globs have some special characters, ensure they're not present. `len` counts chars.
     let mut len = first
-        .find(|c: char| "*[]?".contains(c))
-        .unwrap_or(first.len());
+        .chars()
+        .position(|c| "*[]?".contains(c))
+        .unwrap_or_else(|| first.chars().count());
     for pattern in patterns {
         if len == 0 {
             break;
@@ -115,6 +117,39 @@ fn longest_common_glob_prefix<P: AsRef<str>>(patterns: &[P]) -> &str {
     }
 }
 
+/// Every ASCII-case variant of the common prefix, since `matches` compares ASCII letters
+/// case-insensitively but `files_with_prefix` compares bytes. The prefix is cut after
+/// `MAX_CASED_LETTERS` letters to bound the number of variants; a shorter prefix only narrows less.
+fn narrowing_prefixes(common_prefix: &str) -> Vec<String> {
+    const MAX_CASED_LETTERS: usize = 4;
+    let mut variants = vec![String::new()];
+    let mut letters = 0;
+    for c in common_prefix.chars() {
+        if c.is_ascii_alphabetic() {
+            if letters == MAX_CASED_LETTERS {
+                break;
+            }
+            letters += 1;
+            variants = variants
+                .into_iter()
+                .flat_map(|variant| {
+                    let mut lower = variant.clone();
+                    lower.push(c.to_ascii_lowercase());
+                    let mut upper = variant;
+                    upper.push(c.to_ascii_uppercase());
+                    [lower, upper]
+                })
+                .collect();
+        } else {
+            for variant in &mut variants {
+                variant.push(c);
+            }
+        }
+    }
+    variants.retain(|variant| !variant.is_empty());
+    variants
+}
+
 impl GlobSpec {
     const BINARY_SEARCH_CUTOFF: usize = 100;
     pub(crate) fn new<P: AsRef<str>, Q: AsRef<str>>(
@@ -123,7 +158,7 @@ impl GlobSpec {
     ) -> buck2_error::Result<Self> {
         let mut glob_patterns = Vec::new();
         let mut glob_excludes = Vec::new();
-        let mut exact_matches = HashSet::new();
+        let mut exact_matches = BuckMutSet::default();
         for pattern in patterns {
             let pattern = pattern.as_ref();
             if pattern.contains('*') {
@@ -147,7 +182,7 @@ impl GlobSpec {
             glob_excludes.push(GlobPattern::new(pattern)?);
         }
         Ok(Self {
-            common_prefix: longest_common_glob_prefix(patterns).to_owned(),
+            narrowing_prefixes: narrowing_prefixes(longest_common_glob_prefix(patterns)),
             exact_matches,
             patterns: glob_patterns,
             excludes: glob_excludes,
@@ -177,11 +212,19 @@ impl GlobSpec {
         &'a self,
         spec: &'a PackageFileListing,
     ) -> Box<dyn Iterator<Item = &'a PackageRelativePath> + 'a> {
-        if spec.files().len() >= Self::BINARY_SEARCH_CUTOFF && !self.common_prefix.is_empty() {
+        if spec.files().len() >= Self::BINARY_SEARCH_CUTOFF && !self.narrowing_prefixes.is_empty() {
+            let mut candidates: Vec<_> = self
+                .narrowing_prefixes
+                .iter()
+                .flat_map(|prefix| spec.files_with_prefix(prefix))
+                .collect();
+            // The variants are distinct byte prefixes of one length, so their ranges are
+            // disjoint; sorting restores the listing order.
+            candidates.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
             return Box::new(
-                spec.files_with_prefix(&self.common_prefix)
-                    .filter(move |v| self.matches(v.as_str()))
-                    .map(|p| &**p),
+                candidates
+                    .into_iter()
+                    .filter(move |v| self.matches(v.as_str())),
             );
         }
         Box::new(spec.files().filter(move |v| self.matches(v.as_str())))
@@ -190,8 +233,6 @@ impl GlobSpec {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::package::package_relative_path::PackageRelativePathBuf;
-
     use super::*;
 
     #[test]
@@ -255,7 +296,10 @@ mod tests {
             "excluded/some.java",
         ]);
 
-        let matches: Vec<_> = spec.resolve_glob(&package_listing).collect();
+        let matches: Vec<_> = spec
+            .resolve_glob(&package_listing)
+            .map(|p| p.as_str())
+            .collect();
 
         assert_eq!(
             vec![
@@ -272,11 +316,11 @@ mod tests {
 
     #[test]
     fn test_resolve_glob_dot() {
-        fn glob(pattern: &str, listing: &PackageFileListing) -> Vec<PackageRelativePathBuf> {
+        fn glob(pattern: &str, listing: &PackageFileListing) -> Vec<String> {
             GlobSpec::new(&[pattern], &[""; 0])
                 .unwrap()
                 .resolve_glob(listing)
-                .map(PackageRelativePath::to_owned)
+                .map(|p| p.as_str().to_owned())
                 .collect()
         }
 
@@ -363,6 +407,84 @@ mod tests {
     fn test_trailing_slash_in_pattern() {
         assert!(GlobSpec::new(&["a/"], &[""; 0]).is_err());
         assert!(GlobSpec::new(&["a/*/"], &[""; 0]).is_err());
+    }
+
+    fn resolve_for_test(patterns: &[&str], files: &[&str]) -> Vec<String> {
+        let spec = GlobSpec::new(patterns, &[""; 0]).unwrap();
+        let listing = PackageFileListing::testing_new(files);
+        spec.resolve_glob(&listing)
+            .map(|p| p.as_str().to_owned())
+            .collect()
+    }
+
+    /// `file` plus enough unrelated files to reach `BINARY_SEARCH_CUTOFF`.
+    fn large_listing(file: &str) -> Vec<String> {
+        let mut files: Vec<String> = (0..GlobSpec::BINARY_SEARCH_CUTOFF - 1)
+            .map(|i| format!("z{i:03}"))
+            .collect();
+        files.push(file.to_owned());
+        files
+    }
+
+    #[test]
+    fn test_resolve_glob_non_ascii_prefix() {
+        assert_eq!("\u{e9}", longest_common_glob_prefix(&["\u{e9}*"]));
+        assert_eq!(
+            "donn\u{e9}es/",
+            longest_common_glob_prefix(&["donn\u{e9}es/*.h", "donn\u{e9}es/*.c"])
+        );
+
+        // The result does not depend on the size of the package.
+        assert_eq!(vec!["\u{e9}"], resolve_for_test(&["\u{e9}*"], &["\u{e9}"]));
+        let files = large_listing("\u{e9}");
+        let files: Vec<&str> = files.iter().map(String::as_str).collect();
+        assert_eq!(vec!["\u{e9}"], resolve_for_test(&["\u{e9}*"], &files));
+
+        let files = large_listing("donn\u{e9}es/a.txt");
+        let files: Vec<&str> = files.iter().map(String::as_str).collect();
+        assert_eq!(
+            vec!["donn\u{e9}es/a.txt"],
+            resolve_for_test(&["donn\u{e9}es/*"], &files)
+        );
+    }
+
+    #[test]
+    fn test_resolve_glob_large_listing_letter_case() {
+        // Patterns match case-insensitively whatever the size of the package.
+        assert_eq!(vec!["a"], resolve_for_test(&["A*"], &["a"]));
+        let files = large_listing("a");
+        let files: Vec<&str> = files.iter().map(String::as_str).collect();
+        assert_eq!(vec!["a"], resolve_for_test(&["A*"], &files));
+
+        assert_eq!(
+            vec!["SRC/foo"],
+            resolve_for_test(&["src/**/*"], &["SRC/foo"])
+        );
+        let files = large_listing("SRC/foo");
+        let files: Vec<&str> = files.iter().map(String::as_str).collect();
+        assert_eq!(vec!["SRC/foo"], resolve_for_test(&["src/**/*"], &files));
+
+        // Results keep the listing order across the narrowed ranges.
+        let mut files = large_listing("abc/1");
+        files.push("ABC/2".to_owned());
+        files.push("aBc/3".to_owned());
+        let files: Vec<&str> = files.iter().map(String::as_str).collect();
+        assert_eq!(
+            vec!["ABC/2", "aBc/3", "abc/1"],
+            resolve_for_test(&["abc/*"], &files)
+        );
+    }
+
+    #[test]
+    fn test_narrowing_prefixes() {
+        assert_eq!(Vec::<String>::new(), narrowing_prefixes(""));
+        assert_eq!(vec!["1/"], narrowing_prefixes("1/"));
+        assert_eq!(vec!["s/", "S/"], narrowing_prefixes("s/"));
+        assert_eq!(vec!["sr", "sR", "Sr", "SR"], narrowing_prefixes("sr"));
+        // Cut after four letters: 16 variants of `abcd`, and `e/` is dropped.
+        let prefixes = narrowing_prefixes("abcde/");
+        assert_eq!(16, prefixes.len());
+        assert!(prefixes.iter().all(|p| p.eq_ignore_ascii_case("abcd")));
     }
 
     #[test]

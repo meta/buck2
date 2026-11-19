@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_directory::directory::directory::Directory;
@@ -19,58 +17,17 @@ use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::walk::unordered_entry_walk;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest::CasDigestToReExt;
-use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::execute::blocking::BlockingExecutor;
 use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
-use buck2_execute::execute::clean_output_paths::cleanup_path;
 use buck2_execute::materialize::materializer::CasDownloadInfo;
-use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::re::manager::ReConnectionManager;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
-use gazebo::prelude::*;
 use remote_execution::NamedDigest;
 use remote_execution::NamedDigestWithPermissions;
 
 use crate::materializers::io::MaterializeTreeStructure;
-
-pub async fn write_to_disk<'a>(
-    fs: &ProjectRoot,
-    io_executor: &dyn BlockingExecutor,
-    digest_config: DigestConfig,
-    generate: Box<dyn FnOnce() -> buck2_error::Result<Vec<WriteRequest>> + Send + 'a>,
-) -> buck2_error::Result<Vec<ArtifactValue>> {
-    io_executor
-        .execute_io_inline({
-            move || {
-                let requests = generate()?;
-                let mut values = Vec::with_capacity(requests.len());
-
-                for WriteRequest {
-                    path,
-                    content,
-                    is_executable,
-                } in requests
-                {
-                    let digest = TrackedFileDigest::from_content(
-                        &content,
-                        digest_config.cas_digest_config(),
-                    );
-                    cleanup_path(fs, &path)?;
-                    fs.write_file(&path, &content, is_executable)?;
-
-                    values.push(ArtifactValue::file(FileMetadata {
-                        digest,
-                        is_executable,
-                    }));
-                }
-
-                Ok(values)
-            }
-        })
-        .await
-}
 
 pub async fn cas_download(
     fs: &ProjectRoot,
@@ -82,7 +39,10 @@ pub async fn cas_download(
 ) -> buck2_error::Result<()> {
     io.execute_io(
         Box::new(CleanOutputPaths {
-            paths: artifacts.map(|(p, _)| p.to_owned()),
+            paths: artifacts
+                .iter()
+                .map(|(p, _)| p.to_owned())
+                .collect::<Vec<_>>(),
         }),
         cancellations,
     )
@@ -123,7 +83,7 @@ pub async fn cas_download(
     let re_conn = re.get_re_connection();
     let re_client = re_conn.get_client().with_use_case(info.re_use_case);
     cancellations
-        .critical_section(|| re_client.materialize_files(files))
+        .critical_section(|| re_client.materialize_files(files, info))
         .await?;
     Ok(())
 }

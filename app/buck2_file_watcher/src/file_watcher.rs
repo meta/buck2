@@ -8,38 +8,80 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::ignores::ignore_set::IgnoreSet;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
+use buck2_core::buck2_env;
 use buck2_core::fs::project::ProjectRoot;
 #[cfg(fbcode_build)]
 use buck2_core::soft_error;
 use buck2_error::BuckErrorContext;
+use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
 use dice::DiceTransactionUpdater;
+use dupe::Dupe;
 
+use crate::dep_files::DepFileCache;
 #[cfg(fbcode_build)]
 use crate::edenfs::interface::EdenFsFileWatcher;
-#[cfg(fbcode_build)]
-use crate::edenfs::interface::EdenFsWatcherError;
 use crate::fs_hash_crawler::FsHashCrawler;
+use crate::ignores::FileWatcherIgnores;
 use crate::mergebase::Mergebase;
 use crate::notify::NotifyFileWatcher;
 use crate::watchman::interface::WatchmanFileWatcher;
 
 #[async_trait]
 pub trait FileWatcher: Allocative + Send + Sync + 'static {
+    /// Records what changed since the previous sync on `dice`.
     async fn sync(
         &self,
         dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(DiceTransactionUpdater, Mergebase)>;
+    ) -> buck2_error::Result<(DiceTransactionUpdater, Mergebase, SyncOutcome)>;
+}
+
+/// Whether a sync accounted for everything that changed since the previous one.
+#[derive(Copy, Clone, Dupe, Debug, PartialEq, Eq)]
+pub enum SyncOutcome {
+    /// Every change since the previous sync was recorded on the updater.
+    Incremental,
+    /// The watcher lost track of what changed, so nothing computed before the sync may be
+    /// reused.
+    FreshInstance,
+}
+
+impl SyncOutcome {
+    /// The outcome `stats` report.
+    pub fn reported_by(stats: &buck2_data::FileWatcherStats) -> Self {
+        if stats.fresh_instance {
+            Self::FreshInstance
+        } else {
+            Self::Incremental
+        }
+    }
+}
+
+/// Parse the `dice_clear_on_mergebase_change` config, honoring both the buckconfig
+/// and the `BUCK2_TEST_SKIP_DICE_CLEAR_ON_MERGEBASE_CHANGE` env var override.
+pub(crate) fn dice_clear_on_mergebase_change(
+    root_config: &LegacyBuckConfig,
+) -> buck2_error::Result<bool> {
+    let config_value = root_config
+        .parse::<bool>(BuckconfigKeyRef {
+            section: "buck2",
+            property: "dice_clear_on_mergebase_change",
+        })
+        .buck_error_context("Failed to parse dice_clear_on_mergebase_change config")?
+        .unwrap_or(true);
+    let env_skip = buck2_env!(
+        "BUCK2_TEST_SKIP_DICE_CLEAR_ON_MERGEBASE_CHANGE",
+        bool,
+        applicability = testing
+    )
+    .buck_error_context("Failed to parse BUCK2_TEST_SKIP_DICE_CLEAR_ON_MERGEBASE_CHANGE env")?;
+    Ok(config_value && !env_skip)
 }
 
 impl dyn FileWatcher {
@@ -49,9 +91,18 @@ impl dyn FileWatcher {
         fb: fbinit::FacebookInit,
         project_root: &ProjectRoot,
         root_config: &LegacyBuckConfig,
-        cells: CellResolver,
-        ignore_specs: HashMap<CellName, IgnoreSet>,
+        ignores: FileWatcherIgnores,
+        dep_file_cache: Arc<dyn DepFileCache>,
     ) -> buck2_error::Result<Arc<dyn FileWatcher>> {
+        if !project_root.root().as_path().exists() {
+            return Err(buck2_error!(
+                ErrorTag::MissingProjectRoot,
+                "Project root `{}` does not exist. \
+                 The directory may have been removed.",
+                project_root.root()
+            ));
+        }
+
         #[cfg(fbcode_build)]
         let default = if detect_eden::is_eden(project_root.root().to_path_buf())? {
             "edenfs"
@@ -77,16 +128,16 @@ impl dyn FileWatcher {
                 fb,
                 project_root,
                 root_config,
-                cells.clone(),
-                ignore_specs.clone(),
+                ignores.clone(),
+                dep_file_cache.clone(),
             ) {
                 Ok(edenfs) => return Ok(Arc::new(edenfs)),
-                Err(EdenFsWatcherError::EdenConnectionError(e)) => {
-                    soft_error!("edenfs_watcher_creation_failure", e)?;
+                Err(e) if e.has_tag(ErrorTag::IoNotConnected) => {
+                    soft_error!("edenfs_watcher_creation_failure", e);
                     // fallback to watchman if failed to create edenfs watcher
                     "watchman"
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e),
             }
             #[cfg(not(fbcode_build))]
             default
@@ -96,15 +147,15 @@ impl dyn FileWatcher {
 
         match watcher_conf {
             "watchman" => Ok(Arc::new(
-                WatchmanFileWatcher::new(project_root.root(), root_config, cells, ignore_specs)
+                WatchmanFileWatcher::new(project_root.root(), root_config, ignores, dep_file_cache)
                     .buck_error_context("Creating watchman file watcher")?,
             )),
             "notify" => Ok(Arc::new(
-                NotifyFileWatcher::new(project_root, cells, ignore_specs)
+                NotifyFileWatcher::new(project_root, ignores)
                     .buck_error_context("Creating notify file watcher")?,
             )),
             "fs_hash_crawler" => Ok(Arc::new(
-                FsHashCrawler::new(project_root, cells, ignore_specs)
+                FsHashCrawler::new(project_root, ignores)
                     .buck_error_context("Creating fs_crawler file watcher")?,
             )),
             other => Err(buck2_error!(

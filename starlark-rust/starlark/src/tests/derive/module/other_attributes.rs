@@ -49,3 +49,14 @@ fn test_other_attributes_in_atributes(methods: &mut MethodsBuilder) {
         Ok(NoneType)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn statics_are_populated() {
+        let _ = &TEST_OTHER_ATTRIBUTES_IN_METHODS_STATICS;
+        let _ = &TEST_OTHER_ATTRIBUTES_IN_ATRIBUTES_STATICS;
+    }
+}

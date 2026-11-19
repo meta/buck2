@@ -70,7 +70,7 @@ def get_target_sdk_version_map() -> dict[str, str]:
 
 def get_platform_version_for_sdk_version(sdk_name: str, sdk_version: str) -> str:
     if sdk_name == "maccatalyst":
-        sdk_major, _ = sdk_version.split(".", 2)
+        sdk_major = sdk_version.split(".")[0]
 
         # Version numbers are aligned from 26 and up
         if int(sdk_major) >= 26:

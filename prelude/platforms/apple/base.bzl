@@ -6,15 +6,15 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//:is_buck2.bzl", "is_buck2") # @oss-enable
 load(
     "@prelude//platforms/apple:build_mode.bzl",
     "APPLE_BUILD_MODES",
-      "CONSTRAINT_PACKAGE", # @oss-enable
+    "CONSTRAINT_PACKAGE", # @oss-enable
     "get_build_mode",
 )
 load(
     "@prelude//platforms/apple:constants.bzl",
+    "appletv_platforms",
     "ios_platforms",
     "mac_catalyst_platforms",
     "mac_platforms",
@@ -27,7 +27,10 @@ def get_build_mode_constraints_map(use_whatsapp_build_modes):
     # @oss-disable[end= ]: return _get_build_mode_constraints_map(use_whatsapp_build_modes)
 
 _MOBILE_PLATFORMS = [
+    appletv_platforms.APPLETVOS_ARM64,
+    appletv_platforms.APPLETVSIMULATOR_ARM64,
     ios_platforms.IPHONEOS_ARM64,
+    ios_platforms.IPHONEOS_ARM64E,
     ios_platforms.IPHONESIMULATOR_ARM64,
     ios_platforms.IPHONESIMULATOR_X86_64,
     watch_platforms.WATCHOS_ARM64,
@@ -45,7 +48,9 @@ _MAC_PLATFORMS = [
 ]
 
 # TODO: Drop the platform_rule when we're not longer attempting to support buck1.
-def apple_generated_platforms(name, constraint_values, deps, platform_rule, platform = None, supported_build_modes = APPLE_BUILD_MODES, use_whatsapp_build_modes = False):
+def apple_generated_platforms(
+    name, constraint_values, deps, platform_rule, platform = None, supported_build_modes = APPLE_BUILD_MODES, use_whatsapp_build_modes = False
+):
     # By convention, the cxx.default_platform is typically the same as the platform being defined.
     # This is not the case for all watch platforms, so provide an override.
     platform = platform if platform else name

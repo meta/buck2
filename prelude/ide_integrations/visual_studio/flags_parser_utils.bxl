@@ -42,7 +42,7 @@ def parse_include_dirs_from_flags(flags):
         elif flag.startswith("/I") or flag.startswith("-I"):
             include_path = flag[2:]
         elif flag.startswith("/isystem") or flag.startswith("-isystem"):
-            include_path = flag[len("-isystem"):]
+            include_path = flag[len("-isystem") :]
 
         if include_path:
             include_dirs.append("$(RepoRoot)\\" + include_path)
@@ -107,13 +107,13 @@ def get_linker_settings_from_flags(flags, buck_root):
         if not flag.startswith("/"):
             additional_dependencies.append(flag)
         elif flag.startswith("/LIBPATH:"):
-            additional_library_directories.append(flag[len("/LIBPATH:"):])
+            additional_library_directories.append(flag[len("/LIBPATH:") :])
         elif flag.startswith("/NODEFAULTLIB:"):
-            no_default_libs.append(flag[len("/NODEFAULTLIB:"):])
+            no_default_libs.append(flag[len("/NODEFAULTLIB:") :])
         elif flag in LINKER_FLAGS_MAP:
             linker_settings.update(LINKER_FLAGS_MAP[flag])
         elif flag.startswith("/TLBID:"):
-            linker_settings["TypeLibraryResourceID"] = flag[len("/TLBID:"):]
+            linker_settings["TypeLibraryResourceID"] = flag[len("/TLBID:") :]
         elif flag.startswith("/PDBALTPATH"):
             pass
         elif flag.startswith("/PDBSOURCEPATH"):
@@ -123,7 +123,7 @@ def get_linker_settings_from_flags(flags, buck_root):
             if "ForceSymbolReferences" not in linker_settings:
                 linker_settings["ForceSymbolReferences"] = []
             linker_settings["ForceSymbolReferences"].append(
-                flag[len("/INCLUDE:"):],
+                flag[len("/INCLUDE:") :],
             )
         else:
             additional_options.append(original_flag)

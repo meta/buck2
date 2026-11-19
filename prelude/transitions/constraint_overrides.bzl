@@ -7,7 +7,6 @@
 # above-listed licenses.
 
 load("@prelude//cfg/modifier:name.bzl", "cfg_name")
-
 # NOTE: At the moment, target platforms and constraint values can't be propagated via build rule
 #       attributes all the way to configuration transitions. The reason is that the transition
 #       function is invoked before the rule, so any PlatformInfo and ConstraintValueInfo providers
@@ -15,7 +14,7 @@ load("@prelude//cfg/modifier:name.bzl", "cfg_name")
 #
 #       Because of this, the list of possible target platforms and constraint values is encoded
 #       here in the form of config settings with lists of comma-separated elements. Specifically,
-#       the configuration transition relies on the following config settings:
+#       the configuration transition relies on the following config settings:
 #
 #           * buck2.platforms
 #           * buck2.constraints
@@ -26,19 +25,12 @@ load("@prelude//cfg/modifier:name.bzl", "cfg_name")
 #       applying the configuration transition. The use of read_config avoids hard-coding these
 #       repo-specific configuration rules into the prelude.
 load("@prelude//python:transitions.bzl", "python_transitions")
+load("@prelude//transitions:constraint_override_registry.bzl", "ConstraintOverrideRegistryInfo", "constraint_override_refs")
 
 _config = struct(
-    platforms = read_root_config("buck2", "platforms", ""),
-    constraints = read_root_config("buck2", "constraints", ""),
     passthrough_constraints = read_root_config("buck2", "passthrough_constraints", ""),
     split = lambda values: [value.strip() for value in values.split(",") if value.strip()],
 )
-
-def _platforms() -> list[str]:
-    return _config.split(_config.platforms)
-
-def _constraints() -> list[str]:
-    return _config.split(_config.constraints)
 
 def _passthrough_constraints() -> list[str]:
     return _config.split(_config.passthrough_constraints)
@@ -71,9 +63,7 @@ def _check(target: str) -> str:
     package, name = path.split(":")
     return "{cell}//{package}:{name}".format(cell = cell, package = package, name = name)
 
-def _resolve(
-        refs: struct,
-        attrs: struct) -> dict[str, PlatformInfo | list[ConstraintValueInfo] | None]:
+def _resolve(refs: struct, attrs: struct) -> dict[str, PlatformInfo | list[ConstraintValueInfo] | None]:
     """
     Validates and prepares arguments for business logic in constraint_overrides.apply, which
     implements the transition function.
@@ -95,43 +85,39 @@ def _resolve(
     """
     args = {}
 
-    # Resolve target platform override.
+    # Resolve target platform override.
     override = None
     if hasattr(attrs, "platform_override") and attrs.platform_override != None:
         override = _check(attrs.platform_override)
     args["platform"] = None
     if override:
         if not hasattr(refs, override):
-            fail("Target platform override not supported: {override}".format(
-                override = override,
-            ))
+            fail(
+                "Target platform override not supported: {override}".format(
+                    override = override,
+                )
+            )
         ref = getattr(refs, override)
         args["platform"] = ref[PlatformInfo]
 
-    # Resolve constraint value overrides.
+    # Resolve constraint value overrides.
     overrides = []
     if hasattr(attrs, "constraint_overrides") and attrs.constraint_overrides != None:
-        overrides = [
-            _check(override)
-            for override in attrs.constraint_overrides
-            if override != None
-        ]
+        overrides = [_check(override) for override in attrs.constraint_overrides if override != None]
     args["constraints"] = []
     for override in overrides:
         if not hasattr(refs, override):
-            fail("Constraint value override not supported: {override}".format(
-                override = override,
-            ))
+            fail(
+                "Constraint value override not supported: {override}".format(
+                    override = override,
+                )
+            )
         ref = getattr(refs, override)
         args["constraints"].append(ref[ConstraintValueInfo])
 
     return args
 
-def _apply(
-        old_platform: PlatformInfo,
-        *,
-        platform: PlatformInfo | None = None,
-        constraints: list[ConstraintValueInfo] = []) -> PlatformInfo:
+def _apply(old_platform: PlatformInfo, *, platform: PlatformInfo | None = None, constraints: list[ConstraintValueInfo] = []) -> PlatformInfo:
     """
     Applies the business logic to implement the constraint_overrides configuration transition.
 
@@ -162,25 +148,15 @@ def _apply(
         Outgoing target platform.
     """
 
-    # Store passthrough constraint values.
-    old_constraints = {
-        str(setting): constraint
-        for setting, constraint in old_platform.configuration.constraints.items()
-    }
-    old_constraints = [
-        old_constraints[setting]
-        for setting in _passthrough_constraints()
-        if setting in old_constraints
-    ]
+    # Store passthrough constraint values.
+    old_constraints = {str(setting): constraint for setting, constraint in old_platform.configuration.constraints.items()}
+    old_constraints = [old_constraints[setting] for setting in _passthrough_constraints() if setting in old_constraints]
 
-    # Switch target platform.
+    # Switch target platform.
     platform = platform or old_platform
 
-    # Add passthrough constraint values and apply constraint value overrides.
-    new_constraints = {
-        label: constraint
-        for label, constraint in platform.configuration.constraints.items()
-    }
+    # Add passthrough constraint values and apply constraint value overrides.
+    new_constraints = {label: constraint for label, constraint in platform.configuration.constraints.items()}
     for constraint in old_constraints:
         new_constraints[constraint.setting.label] = constraint
     for constraint in constraints:
@@ -202,17 +178,26 @@ def _apply(
     return new_platform
 
 def _impl(platform: PlatformInfo, refs: struct, attrs: struct) -> PlatformInfo:
-    return _apply(platform, **_resolve(refs, attrs))
+    if hasattr(refs, "_constraint_override_registry"):
+        refs = refs._constraint_override_registry[ConstraintOverrideRegistryInfo].refs
+    args = _resolve(refs, attrs)
+    if args["platform"] == None and not args["constraints"]:
+        return platform
+    return _apply(platform, **args)
 
 # Chain the override impl with python specific transitions.
 # We do this here because the constraint_override transition relies on autogenerated refs
 # Its easier to add the opt-by-default specific ones here than vice-versa
 def _python_impl(platform: PlatformInfo, refs: struct, attrs: struct) -> PlatformInfo:
     # @oss-disable[end= ]: platform = python_transitions.transition_opt_by_default_impl(platform, refs, attrs)
+    # @oss-disable[end= ]: platform = python_transitions.transition_omnibus_large_code_model_impl(platform, refs, attrs)
     return _impl(platform, refs, attrs)
 
-_refs = {override: override for override in _platforms() + _constraints()}
-_python_refs = {k: v for k, v in _refs.items()}
+_refs = constraint_override_refs()
+# Registry dependencies enforce visibility, unlike direct transition refs.
+_registry = read_root_config("buck2", "constraint_override_registry", "")
+_transition_refs = {"_constraint_override_registry": _registry} if _registry else _refs
+_python_refs = {k: v for k, v in _transition_refs.items()}
 # @oss-disable[end= ]: _python_refs.update(python_transitions.refs())
 
 _attributes = {
@@ -225,7 +210,7 @@ _python_attributes = {k: v for k, v in _attributes.items()}
 
 _transition = transition(
     impl = _impl,
-    refs = _refs,
+    refs = _transition_refs,
     attrs = _attributes.keys(),
 )
 

@@ -14,7 +14,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
-import static org.junit.Assume.assumeThat;
 
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
@@ -70,7 +69,7 @@ public class ClassLoaderCacheTest {
           ImmutableList.of(fooDir.toURI().toURL(), barDir.toURI().toURL());
       cl = clc.getClassLoaderForClassPath(dummyParent, dummyClassPath);
 
-      assumeThat(cl.getResource("baz"), Matchers.equalTo(bazFile.toURI().toURL()));
+      assertThat(cl.getResource("baz"), Matchers.equalTo(bazFile.toURI().toURL()));
     }
 
     // When the class loader is closed, resources are no longer accessible
@@ -86,7 +85,7 @@ public class ClassLoaderCacheTest {
           ImmutableList.of(fooDir.toURI().toURL(), barDir.toURI().toURL());
       cl = (URLClassLoader) clc.getClassLoaderForClassPath(dummyParent, dummyClassPath);
 
-      assumeThat(cl.getResource("baz"), Matchers.equalTo(bazFile.toURI().toURL()));
+      assertThat(cl.getResource("baz"), Matchers.equalTo(bazFile.toURI().toURL()));
       cl.close();
 
       // Because the class loader isn't closed, we can still get at the resource

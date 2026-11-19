@@ -20,6 +20,7 @@
 // We use CST as acronym for compiler-specific AST.
 
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 use dupe::OptionDupedExt;
 use starlark_syntax::syntax::ast::AstAssignIdentP;
@@ -43,11 +44,13 @@ use crate::eval::compiler::scope::ScopeId;
 use crate::typing::Ty;
 use crate::typing::error::InternalError;
 use crate::typing::interface::Interface;
+use crate::values::Value;
 
-/// Compiler-specific AST payload.
+/// Compiler-specific AST payload, at the brand `'f` of the frozen heap the compiler allocates on:
+/// the resolved globals are values there.
 #[derive(Debug, Clone)]
-pub(crate) struct CstPayload;
-impl AstPayload for CstPayload {
+pub(crate) struct CstPayload<'f>(PhantomData<Value<'f>>);
+impl<'f> AstPayload for CstPayload<'f> {
     type LoadPayload = Interface;
     /// Information about how identifier binding is resolved.
     ///
@@ -56,7 +59,7 @@ impl AstPayload for CstPayload {
     /// during analysis.
     ///
     /// When compilation starts, all payloads are `Some`.
-    type IdentPayload = Option<ResolvedIdent>;
+    type IdentPayload = Option<ResolvedIdent<'f>>;
     /// Binding for an identifier in assignment position.
     ///
     /// This is `None` when CST is created.
@@ -82,7 +85,7 @@ struct CompilerAstMap<'a, 'f> {
     loads: &'a HashMap<String, Interface>,
 }
 
-impl AstPayloadFunction<AstNoPayload, CstPayload> for CompilerAstMap<'_, '_> {
+impl<'f> AstPayloadFunction<AstNoPayload, CstPayload<'f>> for CompilerAstMap<'_, 'f> {
     fn map_load(&mut self, import_path: &str, (): ()) -> Interface {
         self.loads
             .get(import_path)
@@ -90,7 +93,7 @@ impl AstPayloadFunction<AstNoPayload, CstPayload> for CompilerAstMap<'_, '_> {
             .unwrap_or_else(Interface::empty)
     }
 
-    fn map_ident(&mut self, (): ()) -> Option<ResolvedIdent> {
+    fn map_ident(&mut self, (): ()) -> Option<ResolvedIdent<'f>> {
         None
     }
 
@@ -107,20 +110,20 @@ impl AstPayloadFunction<AstNoPayload, CstPayload> for CompilerAstMap<'_, '_> {
     }
 }
 
-pub(crate) trait CstStmtFromAst {
+pub(crate) trait CstStmtFromAst<'f> {
     fn from_ast(
         stmt: AstStmt,
-        scope_data: &mut ModuleScopeData,
+        scope_data: &mut ModuleScopeData<'f>,
         loads: &HashMap<String, Interface>,
-    ) -> CstStmt;
+    ) -> CstStmt<'f>;
 }
 
-impl CstStmtFromAst for CstStmt {
+impl<'f> CstStmtFromAst<'f> for CstStmt<'f> {
     fn from_ast(
         stmt: AstStmt,
-        scope_data: &mut ModuleScopeData,
+        scope_data: &mut ModuleScopeData<'f>,
         loads: &HashMap<String, Interface>,
-    ) -> CstStmt {
+    ) -> CstStmt<'f> {
         stmt.into_map_payload(&mut CompilerAstMap { scope_data, loads })
     }
 }
@@ -129,7 +132,7 @@ pub(crate) trait CstAssignIdentExt {
     fn resolved_binding_id(&self, codemap: &CodeMap) -> Result<BindingId, InternalError>;
 }
 
-impl CstAssignIdentExt for CstAssignIdent {
+impl CstAssignIdentExt for CstAssignIdent<'_> {
     fn resolved_binding_id(&self, codemap: &CodeMap) -> Result<BindingId, InternalError> {
         match self.payload {
             Some(binding_id) => Ok(binding_id),
@@ -142,10 +145,10 @@ impl CstAssignIdentExt for CstAssignIdent {
     }
 }
 
-pub(crate) type CstExpr = AstExprP<CstPayload>;
-pub(crate) type CstTypeExpr = AstTypeExprP<CstPayload>;
-pub(crate) type CstAssignTarget = AstAssignTargetP<CstPayload>;
-pub(crate) type CstAssignIdent = AstAssignIdentP<CstPayload>;
-pub(crate) type CstIdent = AstIdentP<CstPayload>;
-pub(crate) type CstParameter = AstParameterP<CstPayload>;
-pub(crate) type CstStmt = AstStmtP<CstPayload>;
+pub(crate) type CstExpr<'f> = AstExprP<CstPayload<'f>>;
+pub(crate) type CstTypeExpr<'f> = AstTypeExprP<CstPayload<'f>>;
+pub(crate) type CstAssignTarget<'f> = AstAssignTargetP<CstPayload<'f>>;
+pub(crate) type CstAssignIdent<'f> = AstAssignIdentP<CstPayload<'f>>;
+pub(crate) type CstIdent<'f> = AstIdentP<CstPayload<'f>>;
+pub(crate) type CstParameter<'f> = AstParameterP<CstPayload<'f>>;
+pub(crate) type CstStmt<'f> = AstStmtP<CstPayload<'f>>;

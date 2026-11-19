@@ -13,7 +13,6 @@ use buck2_core::buck2_env_name;
 use buck2_error::conversion::clap::buck_error_clap_parser;
 use clap::ArgGroup;
 use clap::builder::FalseyValueParser;
-use tracing::warn;
 
 use crate::common::PrintOutputsFormat;
 
@@ -27,12 +26,20 @@ pub struct BuildReportOption {
 
     /// Include artifact hash information in the output.
     include_artifact_hash_information: bool,
+
+    /// Exclude error diagnostics from action errors in the build report.
+    exclude_action_error_diagnostics: bool,
+
+    /// Truncate error content in the build report to reduce size.
+    truncate_error_content: bool,
 }
 
 fn parse_build_report_option(s: &str) -> buck2_error::Result<BuildReportOption> {
     let mut fill_out_failures = false;
     let mut include_package_project_relative_paths = false;
     let mut include_artifact_hash_information = false;
+    let mut exclude_action_error_diagnostics = false;
+    let mut truncate_error_content = false;
 
     if s.to_lowercase() == "fill-out-failures" {
         fill_out_failures = true;
@@ -40,16 +47,20 @@ fn parse_build_report_option(s: &str) -> buck2_error::Result<BuildReportOption> 
         include_package_project_relative_paths = true;
     } else if s.to_lowercase() == "include-artifact-hash-information" {
         include_artifact_hash_information = true;
-    } else {
-        warn!(
-            "Incorrect syntax for build report option. Got: `{}` but expected one of `fill-out-failures, package-project-relative-paths`",
-            s.to_owned()
-        )
+    } else if s.to_lowercase() == "exclude-action-error-diagnostics" {
+        exclude_action_error_diagnostics = true;
+    } else if s.to_lowercase() == "truncate-error-content" {
+        truncate_error_content = true;
     }
+    // Unknown options are ignored: tooling passes options without being able to tell which buck2
+    // it is talking to, and checking the version first is inconvenient.
+    // FIXME(JakobDegen): Find a way to support that without silently accepting typos.
     Ok(BuildReportOption {
         fill_out_failures,
         include_package_project_relative_paths,
         include_artifact_hash_information,
+        exclude_action_error_diagnostics,
+        truncate_error_content,
     })
 }
 
@@ -78,6 +89,12 @@ pub struct CommonBuildOptions {
     ///
     /// `package-project-relative-paths`:
     /// emit the project-relative path of packages for the targets that were built.
+    ///
+    /// `exclude-action-error-diagnostics`:
+    /// exclude error_diagnostics field from action errors in the build report.
+    ///
+    /// `truncate-error-content`:
+    /// truncate error content in the build report to reduce size.
     #[clap(
         long = "build-report-options",
         requires = "build_report",
@@ -88,8 +105,10 @@ pub struct CommonBuildOptions {
 
     /// Stream intermediary build reports to a file in json lines format.
     ///
-    /// Each output materialization will trigger a new build report which
-    /// will be written to the file as a single line json.
+    /// A line is written each time a requested output is materialized, and
+    /// each time a requested target or one of its configurations finishes
+    /// building. Each line carries one target. Entries that have not finished
+    /// building read `IN_PROGRESS` instead of `SUCCESS`.
     #[clap(long = "streaming-build-report", value_name = "PATH")]
     streaming_build_report: Option<String>,
 
@@ -136,6 +155,13 @@ pub struct CommonBuildOptions {
     /// this command will be eagerly loaded.
     #[clap(long)]
     eager_dep_files: bool,
+
+    /// Record, in the event log, each executed action's direct dependencies, for analysis after
+    /// the build. Equivalent to `-c buck2.log_action_graph=true`, except that changing a config
+    /// value makes the daemon recheck its whole build graph on the next command, and this flag
+    /// does not.
+    #[clap(long, hide = true)]
+    log_action_graph: bool,
 
     /// Uploads every action to the RE service, regardless of whether the action needs to execute on RE.
     ///
@@ -213,6 +239,14 @@ impl CommonBuildOptions {
             .build_report_options
             .iter()
             .any(|option| option.include_artifact_hash_information);
+        let unstable_exclude_action_error_diagnostics = self
+            .build_report_options
+            .iter()
+            .any(|option| option.exclude_action_error_diagnostics);
+        let unstable_truncate_error_content = self
+            .build_report_options
+            .iter()
+            .any(|option| option.truncate_error_content);
         let concurrency = self
             .num_threads
             .map(|num| buck2_cli_proto::Concurrency { concurrency: num });
@@ -240,6 +274,7 @@ impl CommonBuildOptions {
             unstable_print_build_report,
             unstable_build_report_filename,
             eager_dep_files: self.eager_dep_files,
+            log_action_graph: self.log_action_graph,
             upload_all_actions: self.upload_all_actions,
             skip_cache_read: self.no_remote_cache,
             skip_cache_write: self.no_remote_cache && !self.write_to_cache_anyway,
@@ -254,6 +289,8 @@ impl CommonBuildOptions {
             unstable_include_package_project_relative_paths,
             unstable_include_artifact_hash_information,
             unstable_streaming_build_report_filename,
+            unstable_exclude_action_error_diagnostics,
+            unstable_truncate_error_content,
         }
     }
 }
@@ -313,5 +350,24 @@ impl CommonOutputOptions {
 
     pub fn is_full(&self) -> bool {
         self.show_full_output || self.show_full_simple_output || self.show_full_json_output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[test]
+    fn test_log_action_graph_is_opt_in() {
+        let default = CommonBuildOptions::try_parse_from(["build"]).unwrap();
+        assert!(!default.to_proto().log_action_graph);
+
+        let enabled = CommonBuildOptions::try_parse_from(["build", "--log-action-graph"]).unwrap();
+        assert!(
+            enabled.to_proto().log_action_graph,
+            "the option works when typed"
+        );
     }
 }

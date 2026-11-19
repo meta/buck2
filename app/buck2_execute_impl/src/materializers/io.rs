@@ -8,21 +8,22 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_directory::directory::directory::Directory;
 use buck2_directory::directory::entry::DirectoryEntry;
+use buck2_error::ErrorTag;
 use buck2_execute::directory::ActionDirectory;
 use buck2_execute::directory::ActionDirectoryEntry;
 use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::directory::ActionDirectoryRef;
 use buck2_execute::directory::ActionSharedDirectory;
 use buck2_execute::execute::blocking::IoRequest;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use buck2_hash::BuckMutMap;
 
 pub struct MaterializeTreeStructure {
     pub path: ProjectRelativePathBuf,
@@ -121,7 +122,7 @@ where
 /// `file_dest`. It's then removed from `srcs`.
 fn _materialize_files_from_map<P, D>(
     entry: DirectoryEntry<&D, &ActionDirectoryMember>,
-    srcs: &mut HashMap<AbsNormPathBuf, AbsNormPathBuf>,
+    srcs: &mut BuckMutMap<AbsNormPathBuf, AbsNormPathBuf>,
     dest: P,
 ) -> buck2_error::Result<()>
 where
@@ -163,22 +164,41 @@ where
         }
         DirectoryEntry::Leaf(ActionDirectoryMember::File(_)) => {
             if let Some(src) = file_src(dest) {
-                fs_util::copy(src, &dest)?;
+                if fs_util::symlink_metadata_if_exists(&dest)?.is_some() {
+                    fs_util::remove_file(&dest).categorize_internal()?;
+                }
+                fs_util::copy(src, &dest)
+                    .categorize_tagged(ErrorTag::MaterializeCopyMissingFile)?;
                 if let Some(executable_bit_override) = executable_bit_override {
-                    fs_util::set_executable(&dest, executable_bit_override)?;
+                    fs_util::set_executable(&dest, executable_bit_override)
+                        .categorize_internal()?;
                 }
             }
             Ok(())
         }
         DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(s)) => {
-            if materialize_dirs_and_syms && fs_util::symlink_metadata(&dest).is_err() {
-                fs_util::symlink(s.target().as_str(), dest)?;
+            if materialize_dirs_and_syms
+                && fs_util::symlink_metadata(&dest)
+                    .categorize_internal()
+                    .is_err()
+            {
+                // A relative path normalizes `.` away, so a link to its own directory has an
+                // empty target, which the filesystem refuses.
+                let target = match s.target().as_str() {
+                    "" => ".",
+                    target => target,
+                };
+                fs_util::symlink(target, dest).categorize_internal()?;
             }
             Ok(())
         }
         DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(s)) => {
-            if materialize_dirs_and_syms && fs_util::symlink_metadata(&dest).is_err() {
-                fs_util::symlink(s.target(), dest)?;
+            if materialize_dirs_and_syms
+                && fs_util::symlink_metadata(&dest)
+                    .categorize_internal()
+                    .is_err()
+            {
+                fs_util::symlink(s.target(), dest).categorize_internal()?;
             }
             Ok(())
         }

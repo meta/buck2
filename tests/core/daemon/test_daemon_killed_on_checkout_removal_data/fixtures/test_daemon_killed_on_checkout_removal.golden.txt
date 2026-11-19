@@ -1,0 +1,4 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Project root <SCRATCH_PATH> is no longer accessible: No such file or directory (os error 2)
+server forced shutdown: Project root <SCRATCH_PATH> is no longer accessible: No such file or directory (os error 2)

@@ -7,8 +7,8 @@
 # above-listed licenses.
 
 def _duplicate_output_impl(ctx):
-    out = ctx.actions.declare_output("bar.txt")
-    data = ctx.actions.write("foo.txt", "42")
+    out = ctx.actions.declare_output("bar.txt", has_content_based_path = False)
+    data = ctx.actions.write("foo.txt", "42", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(["cp", data, out.as_output()]),
         category = "copy",
@@ -21,8 +21,8 @@ duplicate_output = rule(
 )
 
 def _fail_duplicate(ctx):
-    out = ctx.actions.declare_output("bar.txt")
-    data = ctx.actions.write("foo.txt", "42")
+    out = ctx.actions.declare_output("bar.txt", has_content_based_path = False)
+    data = ctx.actions.write("foo.txt", "42", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(["wrong_cp", data, out.as_output()]),
         category = "copy",

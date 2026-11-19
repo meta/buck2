@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::cell::OnceCell;
 use std::fs::File;
 use std::io;
 use std::io::BufRead;
@@ -21,6 +22,7 @@ use buck2_common::argv::ExpandedArgv;
 use buck2_common::argv::ExpandedArgvBuilder;
 use buck2_core::is_open_source;
 use buck2_error::BuckErrorContext;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPath;
@@ -49,6 +51,8 @@ enum ArgExpansionError {
     },
     #[error("Python mode file `{path}` output is not UTF-8")]
     PythonOutputNotUtf8 { path: String },
+    #[error("Flag file `{path}` includes itself")]
+    CyclicInclusion { path: String },
     #[error("No flag file path after @ symbol in argfile argument")]
     MissingFlagFilePathInArgfile,
     #[error("Python argfile at `{path}` exited with non-zero status, stderr: {err:?}")]
@@ -79,6 +83,34 @@ pub fn log_relative_path_from_cell_root(requested_path: &str) -> buck2_error::Re
     Ok(())
 }
 
+/// The arguments read from the `@-` argfile.
+///
+/// Stdin can be read only once, so the lines are kept: a command that is restarted in this
+/// process expands its arguments again, and gets the ones it read the first time.
+#[derive(Default)]
+pub struct StdinArgfile(OnceCell<Vec<String>>);
+
+impl StdinArgfile {
+    fn lines(&self) -> buck2_error::Result<&[String]> {
+        if let Some(lines) = self.0.get() {
+            return Ok(lines);
+        }
+        let lines = io::stdin()
+            .lock()
+            .lines()
+            .filter_map(|line| match line {
+                Ok(x) if x.is_empty() => None,
+                Ok(x) => Some(Ok(x)),
+                Err(err) => Some(Err(ArgExpansionError::StdinReadError {
+                    source: err.into(),
+                }
+                .into())),
+            })
+            .collect::<buck2_error::Result<Vec<String>>>()?;
+        Ok(self.0.get_or_init(|| lines))
+    }
+}
+
 // Expands any argfiles passed as command line parameters. There are
 // two ways to do: `@argfile` or `--flagfile PATH`.
 //
@@ -96,9 +128,10 @@ pub fn expand_argv(
     args: Vec<String>,
     context: &mut ImmediateConfigContext,
     cwd: &AbsWorkingDir,
+    stdin: &StdinArgfile,
 ) -> buck2_error::Result<ExpandedArgv> {
     let mut expanded_args = ExpandedArgvBuilder::new();
-    expand_argfiles_with_context(&mut expanded_args, args, context, cwd)?;
+    expand_argfiles_with_context(&mut expanded_args, args, context, cwd, stdin)?;
 
     // Override arg0 in `buck2 help`.
     if let Some(arg0) = arg0_override {
@@ -113,6 +146,7 @@ fn expand_argfiles_with_context(
     args: Vec<String>,
     context: &mut ImmediateConfigContext,
     cwd: &AbsWorkingDir,
+    stdin: &StdinArgfile,
 ) -> buck2_error::Result<()> {
     let mut arg_iterator = args.into_iter();
 
@@ -132,16 +166,14 @@ fn expand_argfiles_with_context(
                         return Err(ArgExpansionError::MissingFlagFilePath.into());
                     }
                 };
-                // TODO: We want to detect cyclic inclusion
-                resolve_and_expand_argfile(expanded_args, &flagfile, context, cwd)?;
+                resolve_and_expand_argfile(expanded_args, &flagfile, context, cwd, stdin)?;
             }
             next_arg if next_arg.starts_with('@') => {
                 let flagfile = next_arg.strip_prefix('@').unwrap();
                 if flagfile.is_empty() {
                     return Err(ArgExpansionError::MissingFlagFilePathInArgfile.into());
                 }
-                // TODO: We want to detect cyclic inclusion
-                resolve_and_expand_argfile(expanded_args, flagfile, context, cwd)?;
+                resolve_and_expand_argfile(expanded_args, flagfile, context, cwd, stdin)?;
             }
             comment if comment.starts_with("--#") => {}
             _ => expanded_args.push(next_arg),
@@ -158,12 +190,19 @@ fn resolve_and_expand_argfile(
     path: &str,
     context: &mut ImmediateConfigContext,
     cwd: &AbsWorkingDir,
+    stdin: &StdinArgfile,
 ) -> buck2_error::Result<()> {
     let flagfile = resolve_flagfile(path, context, cwd)
         .with_buck_error_context(|| format!("Error resolving flagfile `{path}`"))?;
-    let flagfile_lines = expand_argfile_contents(context, &flagfile)?;
+    if expanded.is_expanding(&flagfile) {
+        return Err(ArgExpansionError::CyclicInclusion {
+            path: flagfile.to_string(),
+        }
+        .into());
+    }
+    let flagfile_lines = expand_argfile_contents(context, &flagfile, stdin)?;
     expanded.argfile_scope(flagfile, |expanded| {
-        expand_argfiles_with_context(expanded, flagfile_lines, context, cwd)
+        expand_argfiles_with_context(expanded, flagfile_lines, context, cwd, stdin)
     })
 }
 
@@ -172,7 +211,7 @@ fn argfile_abs_path(
     path: &ArgFilePath,
 ) -> buck2_error::Result<AbsNormPathBuf> {
     match path {
-        ArgFilePath::Project(path) => context.resolve_project_path(path.as_ref()),
+        ArgFilePath::Project(path) => context.resolve_project_path(*path),
         ArgFilePath::External(path) => Ok(path.clone()),
     }
 }
@@ -180,6 +219,7 @@ fn argfile_abs_path(
 fn expand_argfile_contents(
     context: &ImmediateConfigContext,
     flagfile: &ArgFileKind,
+    stdin: &StdinArgfile,
 ) -> buck2_error::Result<Vec<String>> {
     match flagfile {
         ArgFileKind::Path(path) => {
@@ -234,18 +274,7 @@ fn expand_argfile_contents(
                 .into())
             }
         }
-        ArgFileKind::Stdin => io::stdin()
-            .lock()
-            .lines()
-            .filter_map(|line| match line {
-                Ok(x) if x.is_empty() => None,
-                Ok(x) => Some(Ok(x)),
-                Err(err) => Some(Err(ArgExpansionError::StdinReadError {
-                    source: err.into(),
-                }
-                .into())),
-            })
-            .collect(),
+        ArgFileKind::Stdin => Ok(stdin.lines()?.to_vec()),
     }
 }
 
@@ -271,7 +300,7 @@ fn resolve_flagfile(
             .into_abs_path_buf(),
         None => {
             let p = Path::new(path_part);
-            match AbsPath::new(path) {
+            match AbsPath::new(path_part) {
                 Ok(abs_path) => {
                     // FIXME(JakobDegen): Checks for normalization for historical reasons, not sure
                     // why we'd want that
@@ -307,8 +336,8 @@ fn resolve_flagfile(
     };
 
     // FIXME(JakobDegen): Don't canonicalize
-
-    let canonicalized_path = fs_util::canonicalize(resolved_path)?;
+    // input path from --flagfile/@argfile (errors on path missing)
+    let canonicalized_path = fs_util::canonicalize(resolved_path).categorize_input()?;
     context.push_trace(&canonicalized_path);
     context.resolve_argfile_kind(canonicalized_path, flag)
 }
@@ -317,6 +346,7 @@ fn resolve_flagfile(
 mod tests {
     use buck2_common::argv::ExpandedArgSource;
     use buck2_common::argv::FlagfileArgSource;
+    use buck2_fs::fs_util::uncategorized as fs_util;
     use buck2_fs::paths::abs_path::AbsPath;
     use buck2_fs::paths::abs_path::AbsPathBuf;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -391,7 +421,7 @@ mod tests {
         fs_util::write(&mode_file, "a\n\nb\n")?;
         let kind =
             context.resolve_argfile_kind(AbsNormPathBuf::new(mode_file.into_path_buf())?, None)?;
-        let lines = expand_argfile_contents(&context, &kind)?;
+        let lines = expand_argfile_contents(&context, &kind, &StdinArgfile::default())?;
         assert_eq!(vec!["a".to_owned(), "b".to_owned()], lines);
         Ok(())
     }
@@ -426,6 +456,7 @@ mod tests {
             vec!["@mode/mrustc".to_owned()],
             &mut context,
             &cwd,
+            &StdinArgfile::default(),
         )
         .unwrap();
         assert_eq!(*expanded.build().args().collect::<Vec<_>>(), expected);
@@ -456,6 +487,7 @@ mod tests {
             vec!["@bar/arg1.txt".to_owned()],
             &mut context,
             &cwd,
+            &StdinArgfile::default(),
         )
         .unwrap();
         let args = args.build();
@@ -492,6 +524,7 @@ mod tests {
             ],
             &mut context,
             &cwd,
+            &StdinArgfile::default(),
         )
         .unwrap();
         let args = args.build();
@@ -502,7 +535,7 @@ mod tests {
                     "{}{}",
                     v.kind,
                     if let Some(v) = &v.parent {
-                        display_flagfile(&v)
+                        display_flagfile(v)
                     } else {
                         "".to_owned()
                     }
@@ -519,10 +552,111 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "--inline1 inline".to_owned(),
-                format!("--magic @root//foo/bar/arg2.txt@root//foo/bar/arg1.txt"),
-                format!("--other-arg @root//foo/bar/arg1.txt"),
+                "--magic @root//foo/bar/arg2.txt@root//foo/bar/arg1.txt".to_owned(),
+                "--other-arg @root//foo/bar/arg1.txt".to_owned(),
                 "--inline2 inline".to_owned()
             ]
         )
+    }
+
+    /// `path#flavor` resolves for a relative and for an absolute Python argfile.
+    #[test]
+    fn test_absolute_python_argfile_with_flavor() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = AbsPathBuf::new(tempdir.path().canonicalize().unwrap()).unwrap();
+        fs_util::write(root.join("m.py"), "print('--x')").unwrap();
+        let cwd = AbsWorkingDir::unchecked_new(AbsNormPathBuf::new(root.to_path_buf()).unwrap());
+
+        let mut context = ImmediateConfigContext::new(&cwd);
+        let kind = resolve_flagfile("m.py#o", &mut context, &cwd).unwrap();
+        assert!(
+            matches!(&kind, ArgFileKind::PythonExecutable(_, Some(f)) if f == "o"),
+            "{kind:?}"
+        );
+
+        let abs = format!("{}#o", root.join("m.py").as_path().display());
+        let mut context = ImmediateConfigContext::new(&cwd);
+        let kind = resolve_flagfile(&abs, &mut context, &cwd).unwrap();
+        assert!(
+            matches!(&kind, ArgFileKind::PythonExecutable(_, Some(f)) if f == "o"),
+            "{kind:?}"
+        );
+    }
+
+    /// A command that is restarted expands its arguments again, after stdin has been read.
+    #[test]
+    fn test_stdin_argfile_expands_to_the_lines_already_read() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = AbsPathBuf::new(tempdir.path().canonicalize().unwrap()).unwrap();
+        fs_util::write(root.join("a.txt"), "--a").unwrap();
+        let cwd = AbsWorkingDir::unchecked_new(AbsNormPathBuf::new(root.to_path_buf()).unwrap());
+        let stdin = StdinArgfile(OnceCell::from(vec![
+            "--stdin".to_owned(),
+            "@a.txt".to_owned(),
+        ]));
+
+        for _attempt in 0..2 {
+            let mut context = ImmediateConfigContext::new(&cwd);
+            let argv = expand_argv(
+                None,
+                vec!["build".to_owned(), "@-".to_owned()],
+                &mut context,
+                &cwd,
+                &stdin,
+            )
+            .unwrap();
+            assert_eq!(
+                argv.args().collect::<Vec<_>>(),
+                vec!["build", "--stdin", "--a"]
+            );
+        }
+    }
+
+    /// An argfile that includes itself, directly or through another argfile, is an error.
+    #[test]
+    fn test_cyclic_argfile_is_rejected() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = AbsPathBuf::new(tempdir.path().canonicalize().unwrap()).unwrap();
+        fs_util::write(root.join("self.txt"), "@self.txt").unwrap();
+        fs_util::write(root.join("a.txt"), "--a\n@b.txt").unwrap();
+        fs_util::write(root.join("b.txt"), "@a.txt").unwrap();
+        let cwd = AbsWorkingDir::unchecked_new(AbsNormPathBuf::new(root.to_path_buf()).unwrap());
+
+        let mut context = ImmediateConfigContext::new(&cwd);
+        let err = expand_argv(
+            None,
+            vec!["@self.txt".to_owned()],
+            &mut context,
+            &cwd,
+            &StdinArgfile::default(),
+        )
+        .err()
+        .unwrap();
+        assert!(format!("{err:#}").contains("includes itself"), "{err:#}");
+
+        let mut context = ImmediateConfigContext::new(&cwd);
+        let err = expand_argv(
+            None,
+            vec!["@a.txt".to_owned()],
+            &mut context,
+            &cwd,
+            &StdinArgfile::default(),
+        )
+        .err()
+        .unwrap();
+        assert!(format!("{err:#}").contains("includes itself"), "{err:#}");
+
+        // The same file twice in a row is not a cycle.
+        fs_util::write(root.join("c.txt"), "--c").unwrap();
+        let mut context = ImmediateConfigContext::new(&cwd);
+        let argv = expand_argv(
+            None,
+            vec!["@c.txt".to_owned(), "@c.txt".to_owned()],
+            &mut context,
+            &cwd,
+            &StdinArgfile::default(),
+        )
+        .unwrap();
+        assert_eq!(argv.args().collect::<Vec<_>>(), vec!["--c", "--c"]);
     }
 }

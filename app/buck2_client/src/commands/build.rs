@@ -16,6 +16,7 @@ use buck2_cli_proto::BuildRequest;
 use buck2_cli_proto::BuildTarget;
 use buck2_cli_proto::TargetCfg;
 use buck2_cli_proto::build_request::BuildProviders;
+use buck2_cli_proto::build_request::Materializations;
 use buck2_cli_proto::build_request::ResponseOptions;
 use buck2_cli_proto::build_request::build_providers;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
@@ -48,6 +49,11 @@ use crate::commands::build::out::copy_to_out;
 use crate::print::PrintOutputs;
 
 mod out;
+
+/// Tags recording `agent_materialization.enabled` for a build it decides: `enabled` builds skip
+/// final-output materialization, `disabled` builds materialize as usual.
+const AGENT_MATERIALIZATION_ENABLED_TAG: &str = "agent_materialization.enabled";
+const AGENT_MATERIALIZATION_DISABLED_TAG: &str = "agent_materialization.disabled";
 
 #[derive(Debug, clap::Parser)]
 #[clap(name = "build", about = "Build the specified targets")]
@@ -132,6 +138,11 @@ pub struct BuildCommand {
 
     #[clap(flatten)]
     build_opts: CommonBuildOptions,
+
+    /// Emit streaming build report snapshots only when a requested target finishes,
+    /// except for the error that stops a fail-fast build.
+    #[clap(long, requires = "streaming_build_report")]
+    streaming_build_report_final_only: bool,
 
     #[clap(flatten)]
     target_cfg: TargetCfgWithUniverseOptions,
@@ -241,8 +252,42 @@ impl StreamingCommand for BuildCommand {
         ctx: &mut ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
-        let show_default_other_outputs = false;
         let context = ctx.client_context(matches, &self)?;
+        let return_outputs = self.show_output.format().is_some() || self.output_path.is_some();
+        // The builds that `agent_materialization.enabled` decides: direct agent calls that neither
+        // choose materializations nor ask for outputs.
+        let agent_materialization_eligible = self.materializations.is_none()
+            && !return_outputs
+            && ctx.agent_context().is_direct_call();
+        let skip_materialization_for_agent = agent_materialization_eligible
+            && ctx
+                .buck_settings()?
+                .invocation
+                .agent_materialization
+                .enabled();
+        if agent_materialization_eligible {
+            // Recorded in both arms of the setting's A/B test, so builds that skipped final-output
+            // materialization can be compared with builds that would have. Recorded before the
+            // build so that failed builds are counted too.
+            let tag = if skip_materialization_for_agent {
+                AGENT_MATERIALIZATION_ENABLED_TAG
+            } else {
+                AGENT_MATERIALIZATION_DISABLED_TAG
+            };
+            events_ctx
+                .instant_event(
+                    ctx.trace_id.dupe(),
+                    buck2_data::TagEvent {
+                        tags: vec![tag.to_owned()],
+                    },
+                )
+                .await?;
+        }
+        let materializations = if skip_materialization_for_agent {
+            Materializations::Skip
+        } else {
+            self.materializations.to_proto()
+        };
 
         let result = buckd
             .with_flushing()
@@ -257,15 +302,16 @@ impl StreamingCommand for BuildCommand {
                         test_info: self.test_info() as i32,
                     }),
                     response_options: Some(ResponseOptions {
-                        return_outputs: self.show_output.format().is_some()
-                            || self.output_path.is_some(),
-                        return_default_other_outputs: show_default_other_outputs,
+                        return_outputs,
+                        return_run_args: false,
                     }),
                     build_opts: Some(self.build_opts.to_proto()),
-                    final_artifact_materializations: self.materializations.to_proto() as i32,
+                    final_artifact_materializations: materializations as i32,
                     final_artifact_uploads: self.upload_final_artifacts.to_proto() as i32,
                     target_universe: self.target_cfg.target_universe,
                     timeout: self.timeout_options.overall_timeout()?,
+                    run_args_missing_separator: false,
+                    streaming_build_report_final_only: self.streaming_build_report_final_only,
                 },
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),
@@ -279,6 +325,7 @@ impl StreamingCommand for BuildCommand {
         };
 
         let console = self.common_opts.console_opts.final_console();
+        print_buck_ui(&console, ctx, events_ctx.used_superconsole)?;
 
         if success {
             if self.patterns.is_empty() {
@@ -288,6 +335,15 @@ impl StreamingCommand for BuildCommand {
             }
         } else {
             print_build_failed(&console)?;
+        }
+
+        if success && skip_materialization_for_agent {
+            console.print_stderr(
+                "Final-output materialization was automatically disabled for this agent build.\n\
+                 For build validation only, no further action is needed.\n\
+                 If you need to inspect, copy, or directly execute the output files locally, \
+                 rebuild with --out <path>, --show-output, or --show-full-output.",
+            )?;
         }
 
         if buck2_env!("BUCK2_TEST_BUILD_ERROR", bool, applicability = testing)? {
@@ -311,6 +367,15 @@ impl StreamingCommand for BuildCommand {
             writeln!(&mut stdout)?;
         }
 
+        if let Some(format) = self.show_output.format() {
+            print_outputs(
+                &mut stdout,
+                &response.build_targets,
+                self.show_output.is_full().then_some(response.project_root),
+                format,
+            )?;
+        }
+
         let res = if success {
             if let Some(stdout) = &self.output_path {
                 copy_to_out(
@@ -321,16 +386,6 @@ impl StreamingCommand for BuildCommand {
                 )
                 .await
                 .buck_error_context("Error requesting specific output path for --out")?;
-            }
-
-            if let Some(format) = self.show_output.format() {
-                print_outputs(
-                    &mut stdout,
-                    response.build_targets,
-                    self.show_output.is_full().then_some(response.project_root),
-                    format,
-                    show_default_other_outputs,
-                )?;
             }
 
             ExitResult::success()
@@ -370,35 +425,58 @@ pub(crate) fn print_build_succeeded(
     Ok(())
 }
 
+/// Re-prints the Buck UI URL at command end, but only when a superconsole was
+/// actually constructed for the command (`used_superconsole`). Superconsole's
+/// live area showed the URL during the command but clears on exit, so without
+/// the re-print the URL would be gone from scrollback. Simple-console runs
+/// already printed it at command start (simpleconsole.rs) and that line stays
+/// in scrollback, so re-printing would be a duplicate. The flag comes from
+/// `get_console_with_root` via `EventsCtx::used_superconsole`, so it correctly
+/// reports `false` for the `ConsoleType::Auto`-falls-back-to-simple case.
+pub(crate) fn print_buck_ui(
+    console: &FinalConsole,
+    ctx: &ClientCommandContext<'_>,
+    used_superconsole: bool,
+) -> buck2_error::Result<()> {
+    if used_superconsole {
+        if cfg!(fbcode_build) {
+            console.print_stderr(&format!(
+                "Buck UI: https://www.internalfb.com/buck2/{}",
+                ctx.trace_id
+            ))?;
+        } else {
+            console.print_stderr(&format!("Build ID: {}", ctx.trace_id))?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn print_build_failed(console: &FinalConsole) -> buck2_error::Result<()> {
     console.print_error("BUILD FAILED")
 }
 
 pub(crate) fn print_outputs(
     out: impl Write,
-    targets: Vec<BuildTarget>,
+    targets: &[BuildTarget],
     root_path: Option<String>,
     format: PrintOutputsFormat,
-    show_all_outputs: bool,
 ) -> Result<(), ClientIoError> {
     let root_path = root_path.map(PathBuf::from);
     let mut print = PrintOutputs::new(out, root_path, format)?;
 
     for build_target in targets {
         // just print the default info for build command
-        let outputs = build_target.outputs.into_iter().filter(|output| {
+        let outputs = build_target.outputs.iter().filter(|output| {
             output
                 .providers
                 .as_ref()
-                .is_none_or(|p| show_all_outputs || (p.default_info && !p.other))
+                .is_none_or(|p| p.default_info && !p.other)
         });
 
         // only print the unconfigured target for now until we migrate everything to support
         // also printing configurations
-        if outputs.clone().count() > 1 && !show_all_outputs {
-            // We only print the default outputs when we don't `show_all_outputs`,
-            // which shouldn't have more than one output.
-            // (although we currently don't yet restrict this, but we should).
+        if outputs.clone().count() > 1 {
+            // FIXME(JakobDegen): Why exactly do we not show the path?
             print.output(&build_target.target, None)?;
             continue;
         }

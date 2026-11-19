@@ -10,14 +10,16 @@
 
 package com.facebook.buck.jvm.java.lang.model;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.AbstractAnnotationValueVisitor8;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AnnotationValueScanner8<R, P> extends AbstractAnnotationValueVisitor8<R, P> {
   @Nullable private final R defaultValue;
 

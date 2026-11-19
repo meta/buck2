@@ -1,0 +1,30 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error evaluating expression:
+    root//select_arm:c
+    ^----------------^
+
+
+Caused by:
+    0: Error evaluating build file: `root//select_arm:TARGETS.fixture`
+    1: error: checking `within_view` for attribute `deps` of `root//select_arm:c`
+         --> select_arm/TARGETS.fixture:5:1
+          |
+        5 | / stub(
+        6 | |     name = "c",
+        7 | |     within_view = ["PUBLIC"],
+        8 | |     deps = select({
+        9 | |         "DEFAULT": [],
+       10 | |         "root//config:x": ["root//outside:t"],
+       11 | |     }),
+       12 | | )
+          | |_^
+       Traceback (most recent call last):
+         * select_arm/TARGETS.fixture:5, in <module>
+             stub(
+       
+    2: Target's effective `within_view` does not allow dependency `root//outside:t` (within_view = ["PUBLIC"]). Capped to ["root//select_arm/..."] by `enforce_within_view_intersection()` in an ancestor PACKAGE

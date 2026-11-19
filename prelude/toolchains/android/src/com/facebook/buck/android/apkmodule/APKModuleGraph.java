@@ -20,6 +20,7 @@ import com.facebook.buck.jvm.java.classes.ClasspathTraverser;
 import com.facebook.buck.jvm.java.classes.DefaultClasspathTraverser;
 import com.facebook.buck.jvm.java.classes.FileLike;
 import com.facebook.buck.util.MoreSuppliers;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -45,12 +46,14 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Utility class for grouping sets of targets and their dependencies into APK Modules containing
@@ -60,6 +63,7 @@ import java.util.function.Supplier;
  * minimal cover contains more than one APKModule, the target will belong to a new shared APKModule
  * that is a dependency of all APKModules in the minimal cover.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class APKModuleGraph<BuildTargetType extends Comparable<BuildTargetType>> {
 
   private final TargetGraphInterface<BuildTargetType> targetGraph;
@@ -344,7 +348,9 @@ public class APKModuleGraph<BuildTargetType extends Comparable<BuildTargetType>>
           getDetectedDepAndDeclaredDepGraph();
       for (String source : detectedDepAndDeclaredDepGraph.getNodes()) {
         for (String sink : detectedDepAndDeclaredDepGraph.getOutgoingNodesFor(source)) {
-          apkModuleGraph.addEdge(nameToAPKModules.get(source), nameToAPKModules.get(sink));
+          apkModuleGraph.addEdge(
+              Objects.requireNonNull(nameToAPKModules.get(source)),
+              Objects.requireNonNull(nameToAPKModules.get(sink)));
         }
       }
     }
@@ -523,7 +529,7 @@ public class APKModuleGraph<BuildTargetType extends Comparable<BuildTargetType>>
     moduleGraphQueue.addAll(detectedModuleGraph.getNodesWithNoIncomingEdges());
     addedModules.addAll(detectedModuleGraph.getNodesWithNoIncomingEdges());
     while (!moduleGraphQueue.isEmpty()) {
-      final String currentModule = moduleGraphQueue.poll();
+      final String currentModule = Objects.requireNonNull(moduleGraphQueue.poll());
       final Set<String> outgoingModuleGraphNodes =
           detectedModuleGraph.getOutgoingNodesFor(currentModule);
       final Set<String> outgoingDeclaredDepNodes = declaredDeps.getOutgoingNodesFor(currentModule);
@@ -621,7 +627,7 @@ public class APKModuleGraph<BuildTargetType extends Comparable<BuildTargetType>>
           if (!builder.containsKey(key)) {
             builder.put(key, new ImmutableSet.Builder<>());
           }
-          builder.get(key).add(entry.getKey());
+          Objects.requireNonNull(builder.get(key)).add(entry.getKey());
           break;
         }
       }
@@ -647,7 +653,7 @@ public class APKModuleGraph<BuildTargetType extends Comparable<BuildTargetType>>
         apkModuleGraph.addNode(shared);
         apkModuleGraph.addEdge(shared, getRootAPKModule());
         for (String seedName : entry.getKey()) {
-          apkModuleGraph.addEdge(seedModules.get(seedName), shared);
+          apkModuleGraph.addEdge(Objects.requireNonNull(seedModules.get(seedName)), shared);
         }
       }
     }
@@ -660,6 +666,7 @@ public class APKModuleGraph<BuildTargetType extends Comparable<BuildTargetType>>
     return getSeedModule(depTarget) != null;
   }
 
+  @Nullable
   private String getSeedModule(final BuildTargetType seedTarget) {
     return getSeedTargetMap().get().get(seedTarget);
   }

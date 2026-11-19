@@ -20,9 +20,9 @@ use derive_more::Display;
 use serde::Serialize;
 use starlark_derive::NoSerialize;
 use starlark_derive::ProvidesStaticType;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
-use starlark_map::small_map::SmallMap;
 
 use crate as starlark;
 use crate::assert::Assert;
@@ -32,7 +32,6 @@ use crate::docs::DocParam;
 use crate::environment::GlobalsBuilder;
 use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
-use crate::environment::MethodsStatic;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::eval::runtime::params::display::PARAM_FMT_OPTIONAL;
@@ -40,18 +39,23 @@ use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
-use crate::values::list::UnpackList;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
+use crate::values::dict::DictType;
+use crate::values::list::AllocList;
+use crate::values::list::ListType;
 use crate::values::none::NoneType;
-use crate::values::starlark_value_as_type::StarlarkValueAsType;
-use crate::values::tuple::UnpackTuple;
+use crate::values::string::StarlarkStr;
+use crate::values::tuple::TupleType;
+use crate::values::types::int::view::IntView;
 
 #[derive(
     Debug,
     derive_more::Display,
     Allocative,
     NoSerialize,
-    ProvidesStaticType
+    ProvidesStaticType,
+    StarlarkPagable
 )]
 #[display("input")]
 struct InputTypeRepr;
@@ -60,7 +64,8 @@ struct InputTypeRepr;
     derive_more::Display,
     Allocative,
     NoSerialize,
-    ProvidesStaticType
+    ProvidesStaticType,
+    StarlarkPagable
 )]
 #[display("output")]
 struct OutputTypeRepr;
@@ -72,53 +77,57 @@ impl<'v> StarlarkValue<'v> for InputTypeRepr {}
 impl<'v> StarlarkValue<'v> for OutputTypeRepr {}
 
 #[starlark_module]
-#[allow(unused_variables)] // Since this is for a test
+#[starlark_types(InputTypeRepr as Input, OutputTypeRepr as Output)]
 fn globals(builder: &mut GlobalsBuilder) {
-    const Input: StarlarkValueAsType<InputTypeRepr> = StarlarkValueAsType::new();
-    const Output: StarlarkValueAsType<OutputTypeRepr> = StarlarkValueAsType::new();
-
-    fn simple(
+    #[allow(unused_variables)]
+    fn simple<'v>(
         arg_int: i32,
         arg_bool: bool,
-        arg_vec: UnpackList<&str>,
-        arg_dict: SmallMap<String, (bool, i32)>,
+        arg_vec: ValueOf<'v, ListType<StarlarkStr>>,
+        arg_dict: ValueOf<'v, DictType<StarlarkStr, (bool, IntView<'v>)>>,
     ) -> anyhow::Result<NoneType> {
         unimplemented!()
     }
 
+    #[allow(unused_variables)]
     fn default_arg<'v>(
         arg1: Option<Value<'v>>,
         #[starlark(default = NoneType)] arg2: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> anyhow::Result<AllocList<Vec<String>>> {
         unimplemented!()
     }
 
+    #[allow(unused_variables)]
     fn args_kwargs<'v>(
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         #[starlark(kwargs)] kwargs: Value<'v>,
     ) -> anyhow::Result<NoneType> {
         unimplemented!()
     }
 
+    #[allow(unused_variables)]
     fn custom_types<'v>(
         arg1: StringValue<'v>,
-        arg2: ValueOfUnchecked<'v, InputTypeRepr>,
-        heap: &'v Heap,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, OutputTypeRepr>> {
+        arg2: ValueTyped<'v, InputTypeRepr>,
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueTyped<'v, OutputTypeRepr>> {
         unimplemented!()
     }
 
+    #[allow(unused_variables)]
     fn pos_named(arg1: i32, #[starlark(require = named)] arg2: i32) -> anyhow::Result<i32> {
         unimplemented!()
     }
 
+    #[allow(unused_variables)]
     fn with_arguments(args: &Arguments) -> anyhow::Result<i32> {
         unimplemented!()
     }
 }
 
 /// Test that a Rust starlark_module produces the right documentation.
+
 #[test]
 fn test_rustdoc() {
     let got = GlobalsBuilder::new().with(globals).build();
@@ -155,15 +164,23 @@ def with_arguments(*args, **kwargs) -> int: pass
     }
 }
 
-#[derive(ProvidesStaticType, Debug, Display, Allocative, Serialize)]
+#[derive(
+    ProvidesStaticType,
+    Debug,
+    Display,
+    Allocative,
+    Serialize,
+    StarlarkPagable
+)]
 #[display("obj")]
 struct Obj;
+
+starlark::methods_static!(OBJ_METHODS = object);
 
 #[starlark_value(type = "obj")]
 impl<'v> StarlarkValue<'v> for Obj {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(object)
+        Some(OBJ_METHODS.methods())
     }
 }
 
@@ -177,7 +194,7 @@ fn object(builder: &mut MethodsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1<'v>(this: Value<'v>, foo: String) -> anyhow::Result<String> {
+    fn func1<'v>(this: Value<'v>, foo: &str) -> anyhow::Result<String> {
         let _ignore = (this, foo);
         Ok("func1".to_owned())
     }
@@ -185,20 +202,21 @@ fn object(builder: &mut MethodsBuilder) {
 
 #[test]
 fn inner_object_functions_have_docs() {
-    let heap = Heap::new();
-    let obj = heap.alloc_simple(Obj);
-    let item = obj
-        .get_attr("func1", &heap)
-        .unwrap()
-        .unwrap()
-        .documentation();
+    Heap::temp(|heap| {
+        let obj = heap.alloc_simple(Obj);
+        let item = obj
+            .get_attr("func1", heap)
+            .unwrap()
+            .unwrap()
+            .documentation();
 
-    match item {
-        DocItem::Member(DocMember::Function(item)) => {
-            assert_eq!(item.docs.unwrap().summary, "Docs for func1");
+        match item {
+            DocItem::Member(DocMember::Function(item)) => {
+                assert_eq!(item.docs.unwrap().summary, "Docs for func1");
+            }
+            _ => panic!("Expected function: {item:#?}"),
         }
-        _ => panic!("Expected function: {item:#?}"),
-    }
+    });
 }
 
 #[starlark_module]
@@ -212,7 +230,7 @@ fn module(builder: &mut GlobalsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1(foo: String) -> anyhow::Result<String> {
+    fn func1(foo: &str) -> anyhow::Result<String> {
         let _ignore = foo;
         Ok("func1".to_owned())
     }
@@ -223,8 +241,9 @@ fn inner_module_functions_have_docs() {
     let item = GlobalsBuilder::new()
         .with(module)
         .build()
-        .get("func1")
+        .get_ref("func1")
         .unwrap()
+        .value()
         .documentation();
 
     match item {

@@ -8,8 +8,7 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-
+use buck2_hash::BuckMutMap;
 use buck2_node::attrs::configured_attr::ConfiguredAttr;
 use buck2_node::attrs::display::AttrDisplayWithContextExt;
 use buck2_node::attrs::inspect_options::AttrInspectOptions;
@@ -51,6 +50,8 @@ pub(crate) fn gen_fbs(
     actions: Vec<(String, ActionEntryData)>,
     changed_files: Vec<ChangedFilesEntryData>,
 ) -> buck2_error::Result<FlatBufferBuilder<'static>> {
+    ConfiguredTargetNode::prefetch_bodies(&data)?;
+
     // associate actions and changed files with targets when possible
     let (target_data, other_actions_data, other_changed_files) = {
         // These are in case we need to debug orphan actions or changed files
@@ -66,7 +67,7 @@ pub(crate) fn gen_fbs(
             })
             .collect();
 
-        let mut node_map: HashMap<String, &mut TargetData> = HashMap::new();
+        let mut node_map: BuckMutMap<String, &mut TargetData> = BuckMutMap::default();
         for node in data.iter_mut() {
             let key = node.node.label().to_string();
             node_map.insert(key, node);
@@ -154,21 +155,23 @@ fn target_to_fbs<'a>(
     let name = builder.create_shared_string(&node.name());
     let target_label = get_target_label(builder, node);
 
-    let oncall = node.oncall().map(|v| builder.create_shared_string(v));
+    let body = node.body()?;
+    let oncall = body.oncall().map(|v| builder.create_shared_string(v));
     let type_ = builder.create_shared_string(node.rule_type().name());
-    let package = builder.create_shared_string(&node.buildfile_path().to_string());
+    let package = builder.create_shared_string(&body.buildfile_path().to_string());
     let target_configuration =
         builder.create_shared_string(&node.target_configuration().to_string());
-    let execution_platform = builder.create_shared_string(&node.execution_platform()?.id());
+    let execution_platform = builder.create_shared_string(&body.execution_platform()?.id());
     let deps = {
         let res = &node
             .deps()
+            .iter()
             .map(|d| get_target_label(builder, d))
             .collect::<Vec<WIPOffset<fbs::ConfiguredTargetLabel>>>();
         builder.create_vector(res)
     };
 
-    let code_pointer = node
+    let code_pointer = body
         .root_location()
         .map(|l| fbs::CodePointerArgs {
             file_path: Some(builder.create_shared_string(&l.file)),
@@ -177,7 +180,7 @@ fn target_to_fbs<'a>(
         .as_ref()
         .map(|r| fbs::CodePointer::create(builder, r));
 
-    let srcs = node
+    let srcs = body
         .get("srcs", AttrInspectOptions::DefinedOnly)
         .map(|v| match categorize(v.value) {
             AttrField::StringList(v) => v.len(),
@@ -214,15 +217,15 @@ fn action_to_fbs<'a>(
     let category = action
         .category
         .as_ref()
-        .map(|c| builder.create_shared_string(&c));
+        .map(|c| builder.create_shared_string(c));
     let identifier = action
         .identifier
         .as_ref()
-        .map(|c| builder.create_shared_string(&c));
+        .map(|c| builder.create_shared_string(c));
     let execution_kind = action
         .execution_kind
         .as_ref()
-        .map(|c| builder.create_shared_string(&c));
+        .map(|c| builder.create_shared_string(c));
     let repros = {
         let list = action
             .repros
@@ -333,13 +336,12 @@ mod tests {
     use buck2_core::package::package_relative_path::PackageRelativePath;
     use buck2_core::target::label::label::TargetLabel;
     use buck2_interpreter_for_build::call_stack::StarlarkCallStackWrapper;
+    use buck2_node::attrs::arena::OwnedCoercedAttr;
     use buck2_node::attrs::attr::Attribute;
     use buck2_node::attrs::attr_type::AttrType;
-    use buck2_node::attrs::attr_type::list::ListLiteral;
-    use buck2_node::attrs::coerced_attr::CoercedAttr;
     use buck2_node::attrs::coerced_path::CoercedPath;
     use buck2_node::call_stack::StarlarkCallStack;
-    use buck2_util::arc_str::ArcSlice;
+    use buck2_util::arc_str::PackedStr;
     use dupe::Dupe;
     use starlark::codemap::FileSpan;
     use starlark::errors::Frame;
@@ -352,15 +354,19 @@ mod tests {
     fn test_srcs_count() {
         let data = gen_data(vec![(
             "srcs",
-            Attribute::new(None, "", AttrType::list(AttrType::source(false))),
-            CoercedAttr::List(ListLiteral(ArcSlice::new([
-                CoercedAttr::SourceFile(CoercedPath::File(
-                    PackageRelativePath::new("foo/bar").unwrap().to_arc(),
-                )),
-                CoercedAttr::SourceFile(CoercedPath::File(
-                    PackageRelativePath::new("foo/bar2").unwrap().to_arc(),
-                )),
-            ]))),
+            Attribute::new_const(None, "", AttrType::list(AttrType::source(false))),
+            OwnedCoercedAttr::new_with(|b| {
+                let srcs = ["foo/bar", "foo/bar2"]
+                    .iter()
+                    .map(|p| {
+                        b.encode_source_file(&CoercedPath::File(PackedStr::new(
+                            PackageRelativePath::new(p).unwrap(),
+                        )))
+                    })
+                    .collect::<buck2_error::Result<Vec<_>>>()?;
+                b.encode_list(&srcs)
+            })
+            .unwrap(),
         )]);
 
         let fbs = gen_fbs(data, vec![], vec![]).unwrap();
@@ -387,7 +393,7 @@ mod tests {
             Some("cell/pkg/BUCK")
         );
         assert_eq!(target.code_pointer().unwrap().line(), 0);
-        assert_eq!(target.deps().unwrap().is_empty(), true);
+        assert!(target.deps().unwrap().is_empty());
 
         let target2 = build.targets().unwrap().get(1);
         assert_eq!(
@@ -400,7 +406,7 @@ mod tests {
         attrs: Vec<(
             &str,
             buck2_node::attrs::attr::Attribute,
-            buck2_node::attrs::coerced_attr::CoercedAttr,
+            buck2_node::attrs::arena::OwnedCoercedAttr,
         )>,
     ) -> Vec<ConfiguredTargetNode> {
         // Setup data
@@ -414,7 +420,7 @@ mod tests {
                 ConfigurationData::testing_new(),
                 CommandExecutorConfig::testing_local(),
             );
-            ExecutionPlatformResolution::new(Some(platform), Vec::new())
+            ExecutionPlatformResolution::new_for_testing(Some(platform), Vec::new())
         };
 
         let target = ConfiguredTargetNode::testing_new(

@@ -12,4 +12,3 @@ Error: error: duplicated parameter name
   |
 1 | def test(x, y, x): pass
   |                ^
-  |

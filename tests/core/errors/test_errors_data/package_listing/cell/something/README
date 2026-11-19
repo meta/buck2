@@ -1,1 +1,0 @@
-directory is used for package listing errors tests. Mocking a real scenario where user isn't in the right directory and didn't specify the cell, intentionally empty as having content wouldn't make a difference

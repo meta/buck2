@@ -1,0 +1,29 @@
+load("//:defs.bzl", "covers_only", "two_outputs")
+
+covers_only(
+    name = "covered",
+    covers = [
+        "a.txt",
+        "sub/b.txt",
+    ],
+)
+
+covers_only(
+    name = "no_file",
+    covers = glob(["*.nope"]),
+)
+
+two_outputs(name = "generated")
+
+covers_only(
+    name = "output_of_a_target",
+    covers = [":generated[a]"],
+)
+
+covers_only(
+    name = "source_of_a_target",
+    covers = [
+        "a.txt",
+        "//lean_covers_other:a_txt",
+    ],
+)

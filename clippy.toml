@@ -1,0 +1,43 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+# Bans on panicking datetime APIs: buck2 must not panic on out-of-range time values, no
+# matter how absurd — TTLs reported by RE, timestamps from configs, and durations from rule
+# code have all historically reached such calls with out-of-range values.
+#
+# buck2 uses jiff, with durations represented as `jiff::SignedDuration`. The chrono entries
+# are kept (`allow-invalid`, since chrono is no longer a dependency) so that a reintroduction
+# of the crate does not also reintroduce its panicking constructors.
+#
+# NOTE: clippy cannot flag the overloaded `+`/`-` operators on datetime types, and those
+# panic on overflow too. Datetime arithmetic must use the `checked_*` methods or the helpers
+# in `buck2_execute::re::ttl`.
+disallowed-methods = [
+    { path = "jiff::ToSpan::seconds", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::ToSpan::minutes", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::ToSpan::hours", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::ToSpan::days", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::ToSpan::weeks", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::ToSpan::months", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::ToSpan::years", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::Span::seconds", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::Span::minutes", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::Span::hours", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::Span::days", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::Span::weeks", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::Span::months", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "jiff::Span::years", reason = "panics on out-of-range values; use `jiff::SignedDuration`" },
+    { path = "chrono::TimeDelta::seconds", reason = "panics on out-of-range values; buck2 uses jiff, not chrono", allow-invalid = true },
+    { path = "chrono::TimeDelta::minutes", reason = "panics on out-of-range values; buck2 uses jiff, not chrono", allow-invalid = true },
+    { path = "chrono::TimeDelta::hours", reason = "panics on out-of-range values; buck2 uses jiff, not chrono", allow-invalid = true },
+    { path = "chrono::TimeDelta::days", reason = "panics on out-of-range values; buck2 uses jiff, not chrono", allow-invalid = true },
+    { path = "chrono::TimeDelta::weeks", reason = "panics on out-of-range values; buck2 uses jiff, not chrono", allow-invalid = true },
+    { path = "chrono::TimeZone::timestamp", reason = "panics on out-of-range values; buck2 uses jiff, not chrono", allow-invalid = true },
+    { path = "std::time::Duration::mul_f64", reason = "panics on negative/NaN/overflowing values; use `Duration::try_from_secs_f64`" },
+    { path = "std::time::Duration::div_f64", reason = "panics on negative/NaN/overflowing values; use `Duration::try_from_secs_f64`" },
+]

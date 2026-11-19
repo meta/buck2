@@ -69,14 +69,6 @@ impl MiniperfCounter {
         let ratio = self.time_enabled as f64 / self.time_running as f64;
         (self.count as f64 * ratio) as u64
     }
-
-    pub fn to_proto(&self) -> buck2_data::CpuCounter {
-        buck2_data::CpuCounter {
-            count: self.count,
-            time_enabled: self.time_enabled,
-            time_running: self.time_running,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -122,22 +114,10 @@ mod tests {
         };
 
         assert_eq!(
-            bincode::serialized_size(&output).unwrap() as usize,
+            bincode::serde::encode_to_vec(&output, bincode::config::legacy())
+                .unwrap()
+                .len(),
             MiniperfOutput::EXPECTED_SIZE
         );
-    }
-
-    #[test]
-    fn test_to_proto() {
-        let output = MiniperfCounter {
-            count: 123,
-            time_enabled: 100,
-            time_running: 50,
-        }
-        .to_proto();
-
-        assert_eq!(output.count, 123);
-        assert_eq!(output.time_enabled, 100);
-        assert_eq!(output.time_running, 50);
     }
 }

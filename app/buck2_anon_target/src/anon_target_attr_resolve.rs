@@ -8,9 +8,7 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use buck2_analysis::analysis::env::RuleAnalysisAttrResolutionContext;
 use buck2_analysis::attrs::resolve::attr_type::arg::ConfiguredStringWithMacrosExt;
@@ -28,17 +26,18 @@ use buck2_build_api::keep_going::KeepGoing;
 use buck2_core::package::PackageLabel;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutMap;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_node::attrs::attr_type::dep::DepAttrType;
 use buck2_node::attrs::attr_type::query::ResolvedQueryLiterals;
 use buck2_node::attrs::configured_traversal::ConfiguredAttrTraversal;
 use dice::DiceComputations;
 use dupe::Dupe;
-use futures::FutureExt;
 use starlark::values::Value;
-use starlark::values::dict::Dict;
+use starlark::values::dict::AllocDict;
+use starlark::values::list::AllocList;
 use starlark::values::tuple::AllocTuple;
-use starlark_map::small_map::SmallMap;
 
 use crate::anon_target_attr::AnonTargetAttr;
 use crate::anon_targets::AnonTargetKey;
@@ -47,22 +46,22 @@ use crate::anon_targets::get_artifact_from_anon_target_analysis;
 
 // No macros in anon targets, so query results are empty. Execution platform resolution should
 // always be inherited from the anon target.
-pub(crate) struct AnonTargetAttrResolutionContext<'v> {
-    pub(crate) promised_artifacts_map: HashMap<&'v PromiseArtifactAttr, Artifact>,
-    pub(crate) rule_analysis_attr_resolution_ctx: RuleAnalysisAttrResolutionContext<'v>,
+pub(crate) struct AnonTargetAttrResolutionContext<'a, 'v> {
+    pub(crate) promised_artifacts_map: BuckMutMap<&'a PromiseArtifactAttr, Artifact>,
+    pub(crate) rule_analysis_attr_resolution_ctx: RuleAnalysisAttrResolutionContext<'a, 'v>,
 }
 
 pub(crate) trait AnonTargetAttrResolution {
-    fn resolve<'v>(
+    fn resolve<'a, 'v>(
         &self,
         pkg: PackageLabel,
-        ctx: &AnonTargetAttrResolutionContext<'v>,
+        ctx: &AnonTargetAttrResolutionContext<'a, 'v>,
     ) -> buck2_error::Result<Vec<Value<'v>>>;
 
-    fn resolve_single<'v>(
+    fn resolve_single<'a, 'v>(
         &self,
         pkg: PackageLabel,
-        ctx: &AnonTargetAttrResolutionContext<'v>,
+        ctx: &AnonTargetAttrResolutionContext<'a, 'v>,
     ) -> buck2_error::Result<Value<'v>>;
 }
 
@@ -73,58 +72,60 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
     /// an inappropriate number of elements is returned. e.g. `attrs.list()` might
     /// accept and merge multiple returned values from `attrs.source()`, but
     /// `attrs.optional()` might only accept a single value, and fail otherwise.
-    fn resolve<'v>(
+    fn resolve<'a, 'v>(
         &self,
         pkg: PackageLabel,
-        ctx: &AnonTargetAttrResolutionContext<'v>,
+        ctx: &AnonTargetAttrResolutionContext<'a, 'v>,
     ) -> buck2_error::Result<Vec<Value<'v>>> {
         Ok(vec![self.resolve_single(pkg, ctx)?])
     }
 
     /// Resolving a single value is common, so `resolve_single` will validate
     /// this function's output, and return a single value or an error.
-    fn resolve_single<'v>(
+    fn resolve_single<'a, 'v>(
         &self,
         pkg: PackageLabel,
-        anon_resolution_ctx: &AnonTargetAttrResolutionContext<'v>,
+        anon_resolution_ctx: &AnonTargetAttrResolutionContext<'a, 'v>,
     ) -> buck2_error::Result<Value<'v>> {
         let mut ctx = &anon_resolution_ctx.rule_analysis_attr_resolution_ctx;
         match self {
             AnonTargetAttr::Bool(v) => Ok(Value::new_bool(v.0)),
-            AnonTargetAttr::Int(v) => Ok(ctx.heap().alloc(*v)),
+            AnonTargetAttr::Int(v) => Ok(ctx.heap().alloc(*v).to_value()),
             AnonTargetAttr::String(v) | AnonTargetAttr::EnumVariant(v) => {
-                Ok(ctx.heap().alloc(v.as_str()))
+                Ok(ctx.heap().alloc(v.as_str()).to_value())
             }
             AnonTargetAttr::List(list) => {
                 let mut values = Vec::with_capacity(list.len());
                 for v in list.iter() {
                     values.append(&mut v.resolve(pkg, anon_resolution_ctx)?);
                 }
-                Ok(ctx.heap().alloc(values))
+                Ok(ctx.heap().alloc(AllocList(values)).to_value())
             }
             AnonTargetAttr::Tuple(list) => {
                 let mut values = Vec::with_capacity(list.len());
                 for v in list.iter() {
                     values.append(&mut v.resolve(pkg, anon_resolution_ctx)?);
                 }
-                Ok(ctx.heap().alloc(AllocTuple(values)))
+                Ok(ctx.heap().alloc(AllocTuple(values)).to_value())
             }
             AnonTargetAttr::Dict(dict) => {
-                let mut res = SmallMap::with_capacity(dict.len());
+                let mut res = BuckMutInsertionMap::with_capacity(dict.len());
                 for (k, v) in dict.iter() {
                     res.insert_hashed(
                         k.resolve_single(pkg, anon_resolution_ctx)?.get_hashed()?,
                         v.resolve_single(pkg, anon_resolution_ctx)?,
                     );
                 }
-                Ok(ctx.heap().alloc(Dict::new(res)))
+                Ok(ctx.heap().alloc(AllocDict(res)).to_value())
             }
             AnonTargetAttr::None => Ok(Value::new_none()),
             AnonTargetAttr::OneOf(box l, _) => l.resolve_single(pkg, anon_resolution_ctx),
             AnonTargetAttr::Dep(d) => Ok(DepAttrType::resolve_single(&mut ctx, d)?),
-            AnonTargetAttr::Artifact(d) => Ok(ctx.heap().alloc(StarlarkArtifact::new(d.dupe()))),
+            AnonTargetAttr::Artifact(d) => {
+                Ok(ctx.heap().alloc(StarlarkArtifact::new(d.dupe())).to_value())
+            }
             AnonTargetAttr::Arg(a) => Ok(a.resolve(&mut ctx, pkg)?),
-            AnonTargetAttr::PromiseArtifact(promise_artifact_attr) => {
+            AnonTargetAttr::PromiseArtifact(box promise_artifact_attr) => {
                 let promise_id = promise_artifact_attr.id.dupe();
                 // We validated that the analysis contains the promise artifact id earlier
                 let artifact = anon_resolution_ctx
@@ -133,11 +134,20 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
                     .unwrap();
 
                 let promise_has_content_based_path = promise_artifact_attr.has_content_based_path;
-                let artifact_has_content_based_path = artifact.has_content_based_path();
+                let artifact_has_content_based_path =
+                    artifact.path_resolution_requires_artifact_value();
                 if artifact_has_content_based_path && !promise_has_content_based_path {
-                    return Err(PromiseArtifactResolveError::UsesContentBasedPath.into());
+                    return Err(PromiseArtifactResolveError::UsesContentBasedPath(
+                        promise_id.clone(),
+                        format!("{}", artifact),
+                    )
+                    .into());
                 } else if !artifact_has_content_based_path && promise_has_content_based_path {
-                    return Err(PromiseArtifactResolveError::DoesNotUseContentBasedPath.into());
+                    return Err(PromiseArtifactResolveError::DoesNotUseContentBasedPath(
+                        promise_id.clone(),
+                        format!("{}", artifact),
+                    )
+                    .into());
                 }
 
                 // Assert the short path, since we have the real artifact now
@@ -156,10 +166,8 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
                     })?;
                 }
 
-                let fulfilled = OnceLock::new();
-                fulfilled.set(artifact.dupe()).unwrap();
-
-                let fulfilled_promise_inner = PromiseArtifact::new(Arc::new(fulfilled), promise_id);
+                let fulfilled_promise_inner =
+                    PromiseArtifact::new(Arc::new(artifact.dupe().into()), promise_id);
 
                 let fulfilled_promise_artifact = StarlarkPromiseArtifact::new(
                     None,
@@ -167,14 +175,14 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
                     promise_artifact_attr.short_path.clone(),
                     promise_artifact_attr.has_content_based_path,
                 );
-
                 // To resolve the promise artifact attr, we end up creating a new `StarlarkPromiseArtifact` with the `OnceLock` set
                 // with the artifact that was found from the upstream analysis.
-                Ok(ctx.heap().alloc(fulfilled_promise_artifact))
+                Ok(ctx.heap().alloc(fulfilled_promise_artifact).to_value())
             }
-            AnonTargetAttr::Label(label) => {
-                Ok(ctx.heap().alloc(StarlarkProvidersLabel::new(label.dupe())))
-            }
+            AnonTargetAttr::Label(label) => Ok(ctx
+                .heap()
+                .alloc(StarlarkProvidersLabel::new(label.dupe()))
+                .to_value()),
         }
     }
 }
@@ -241,27 +249,21 @@ impl AnonTargetDependents {
         dice: &mut DiceComputations<'_>,
     ) -> buck2_error::Result<AnonTargetDependentAnalysisResults<'v>> {
         let dep_analysis_results =
-            KeepGoing::try_compute_join_all(dice, self.deps.iter(), |ctx, dep| {
-                async move {
-                    ctx.get_analysis_result(dep)
-                        .await
-                        .and_then(|v| v.require_compatible())
-                        .map(|r| (dep, r))
-                }
-                .boxed()
+            KeepGoing::try_compute_join_all(dice, self.deps.iter(), async |ctx, dep| {
+                ctx.get_analysis_result(dep)
+                    .await
+                    .require_compatible()
+                    .map(|r| (dep, r.dupe()))
             })
             .await?;
-        let promised_artifacts: HashMap<_, _> = {
+        let promised_artifacts: BuckMutMap<_, _> = {
             KeepGoing::try_compute_join_all(
                 dice,
                 self.promise_artifacts.iter(),
-                |ctx, promise_artifact_attr| {
-                    async move {
-                        get_artifact_from_anon_target_analysis(&promise_artifact_attr.id, ctx)
-                            .await
-                            .map(|artifact| (promise_artifact_attr, artifact))
-                    }
-                    .boxed()
+                async |ctx, promise_artifact_attr| {
+                    get_artifact_from_anon_target_analysis(&promise_artifact_attr.id, ctx)
+                        .await
+                        .map(|artifact| (promise_artifact_attr, artifact.dupe()))
                 },
             )
         }

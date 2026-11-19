@@ -12,12 +12,16 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use allocative::Allocative;
-use buck2_util::hash::BuckHasher;
+use buck2_error::BuckErrorSerde;
+use buck2_hash::BuckHasher;
 use derive_more::Display;
 use dupe::Dupe;
 use equivalent::Equivalent;
+use pagable::Pagable;
+use serde::Deserialize;
+use serde::Serialize;
 use static_interner::Intern;
-use static_interner::Interner;
+use static_interner::interner;
 use strong_hash::StrongHash;
 
 #[derive(Debug, buck2_error::Error)]
@@ -27,7 +31,9 @@ enum CellNameError {
     Empty,
 }
 
-#[derive(Clone, Debug, Display, Eq, PartialEq, Ord, PartialOrd, Allocative)]
+#[derive(
+    Clone, Debug, Display, Eq, PartialEq, Ord, PartialOrd, Allocative, Pagable
+)]
 struct CellNameData(Box<str>);
 
 #[allow(clippy::derived_hash_with_manual_eq)]
@@ -58,7 +64,7 @@ impl<'a> From<CellNameDataRef<'a>> for CellNameData {
     }
 }
 
-static INTERNER: Interner<CellNameData, BuckHasher> = Interner::new();
+interner!(INTERNER, BuckHasher, CellNameData);
 
 /// A 'CellName' is a canonicalized, human-readable name that corresponds to a
 /// 'CellInstance'. There should be a one to one mapping between a 'CellName'
@@ -69,7 +75,8 @@ static INTERNER: Interner<CellNameData, BuckHasher> = Interner::new();
 /// contain any special characters like `/`), so `foo/bar//some:target` has an
 /// invalid cell name of `foo/bar`.
 #[derive(
-    Clone, Dupe, Copy, Debug, Display, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash
+    Clone, Dupe, Copy, Debug, Display, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative,
+    StrongHash, Pagable
 )]
 pub struct CellName(Intern<CellNameData>);
 
@@ -92,5 +99,24 @@ impl CellName {
 
     pub fn as_str(&self) -> &'static str {
         &self.0.deref_static().0
+    }
+}
+
+impl Serialize for CellName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.as_str().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for CellName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let v = String::deserialize(deserializer)?;
+        CellName::unchecked_new(&v).serde_err()
     }
 }

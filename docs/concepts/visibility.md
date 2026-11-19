@@ -108,3 +108,12 @@ java_library(
   within_view = ['//foo:bar','//hello:world']
 )
 ```
+
+## Auditing visibility
+
+Use [`buck2 audit visibility`](../../users/commands/audit#buck2-audit-visibility) to verify that no `visibility` constraints
+are violated in the transitive dependency graph of the given targets.
+
+```sh
+buck2 audit visibility //myproject/...
+```

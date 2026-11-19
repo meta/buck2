@@ -1,0 +1,100 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+def :
+  pass
+
+Error:
+error: Parse error: unexpected symbol ':', expected identifier
+ --> error_bad_def:1:5
+  |
+1 | def :
+  |     ^
+
+
+Program:
+def pass():
+  pass
+
+Error:
+error: Parse error: unexpected keyword 'pass', expected identifier
+ --> error_bad_def:1:5
+  |
+1 | def pass():
+  |     ^^^^
+
+
+Program:
+def load():
+  pass
+
+Error:
+error: Parse error: unexpected keyword 'load', expected identifier
+ --> error_bad_def:1:5
+  |
+1 | def load():
+  |     ^^^^
+
+
+Program:
+def f(load):
+  pass
+
+Error:
+error: Parse error: unexpected keyword 'load', expected identifier
+ --> error_bad_def:1:7
+  |
+1 | def f(load):
+  |       ^^^^
+
+
+Program:
+def f :
+  pass
+
+Error:
+error: Parse error: unexpected symbol ':', expected symbol '('
+ --> error_bad_def:1:7
+  |
+1 | def f :
+  |       ^
+
+
+Program:
+def foo(x y):
+  pass
+
+Error:
+error: Parse error: unexpected identifier 'y', expected symbol ')'
+ --> error_bad_def:1:11
+  |
+1 | def foo(x y):
+  |           ^
+
+
+Program:
+def f(a, *-b, c):
+  pass
+
+Error:
+error: Parse error: unexpected symbol '-', expected symbol ')'
+ --> error_bad_def:1:11
+  |
+1 | def f(a, *-b, c):
+  |           ^
+
+
+Program:
+def foo(**x, y):
+  pass
+
+Error:
+error: Parameter after kwargs
+ --> error_bad_def:1:14
+  |
+1 | def foo(**x, y):
+  |              ^

@@ -30,13 +30,13 @@ AppleSelectiveDebuggableMetadata = record(
 
 # Represents Apple debug info from both executables and bundles.
 AppleDebuggableInfo = provider(
-    # @unsorted-dict-items
     fields = {
-        "dsyms": provider_field(list[Artifact]),
+        "binaries": provider_field(list[Artifact], default = []),
         # Tset containing ArtifactInfos with either
         # a. the owning library target to artifacts, or
         # b. the owning bundle target to filtered artifacts
         "debug_info_tset": provider_field(ArtifactTSet),
+        "dsyms": provider_field(list[Artifact]),
         # In the case of b above, contains the map of library target to artifacts, else None
         "filtered_map": provider_field([dict[Label, list[Artifact]], None], default = None),
         "selective_metadata": provider_field(list[AppleSelectiveDebuggableMetadata], default = []),
@@ -54,7 +54,10 @@ AggregatedAppleDebugInfo = record(
     sub_targets = field(dict[str, list[DefaultInfo]]),
 )
 
-def get_aggregated_debug_info(ctx: AnalysisContext, debug_infos: list[AppleDebuggableInfo]) -> AggregatedAppleDebugInfo:
+# `select_debug_info` is `AppleSelectiveDebuggingInfo.select_debug_info`, when set.
+def get_aggregated_debug_info(
+    ctx: AnalysisContext, debug_infos: list[AppleDebuggableInfo], select_debug_info: typing.Callable | None = None
+) -> AggregatedAppleDebugInfo:
     all_debug_info_tsets = []
     full_debug_info_tsets = []
     debug_info_map = {}
@@ -77,16 +80,31 @@ def get_aggregated_debug_info(ctx: AnalysisContext, debug_infos: list[AppleDebug
         children = all_debug_info_tsets,
     )
     sub_targets = {}
-    sub_targets[DEBUGINFO_SUBTARGET] = [
-        DefaultInfo(default_output = ctx.actions.write(
-            "debuginfo.artifacts",
-            project_artifacts(
-                actions = ctx.actions,
-                tsets = debug_info_tset,
+    if select_debug_info:
+        selected_debug_info = select_debug_info(ctx, debug_info_tset, "debuginfo.selected")
+        sub_targets[DEBUGINFO_SUBTARGET] = [
+            DefaultInfo(
+                default_output = selected_debug_info.paths,
+                # Materializing the paths file brings the selected artifacts, since
+                # it lives in the directory, but an action that depends on
+                # `[debuginfo]` needs the directory itself as an input.
+                other_outputs = [selected_debug_info.artifacts],
             ),
-            with_inputs = True,
-        )),
-    ]
+        ]
+    else:
+        sub_targets[DEBUGINFO_SUBTARGET] = [
+            DefaultInfo(
+                default_output = ctx.actions.write(
+                    "debuginfo.artifacts",
+                    project_artifacts(
+                        actions = ctx.actions,
+                        tsets = debug_info_tset,
+                    ),
+                    with_inputs = True,
+                    has_content_based_path = False,
+                )
+            ),
+        ]
 
     full_debug_info_tset = make_artifact_tset(
         actions = ctx.actions,
@@ -98,7 +116,7 @@ def get_aggregated_debug_info(ctx: AnalysisContext, debug_infos: list[AppleDebug
 
     sub_targets[DEBUGINFO_DB_SUBTARGET] = [
         DefaultInfo(
-            default_output = ctx.actions.write_json(DEBUGINFO_DB_SUBTARGET, debug_info_map),
+            default_output = ctx.actions.write_json(DEBUGINFO_DB_SUBTARGET, debug_info_map, has_content_based_path = False),
         ),
     ]
     return AggregatedAppleDebugInfo(

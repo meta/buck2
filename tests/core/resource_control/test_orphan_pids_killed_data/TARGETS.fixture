@@ -1,0 +1,9 @@
+load(":defs.bzl", "spawn_orphan", "spawn_same_pg_timeout")
+
+spawn_orphan(
+    name = "spawn_orphan",
+)
+
+spawn_same_pg_timeout(
+    name = "spawn_same_pg_timeout",
+)

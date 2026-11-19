@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//decls:core_rules.bzl", "TargetCpuType")
+load("@prelude//decls:common.bzl", "TargetCpuType")
 load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup")
 
 _cpu = enum(*TargetCpuType)

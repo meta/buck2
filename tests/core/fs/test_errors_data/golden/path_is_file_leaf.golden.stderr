@@ -1,0 +1,12 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Command failed: 
+Error evaluating expression:
+    //data.file:target
+    ^----------------^
+
+
+Caused by:
+    package `root//data.file:` does not exist
+             ^-------------^
+       path `root//data.file` is a file, not a directory

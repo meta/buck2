@@ -7,6 +7,7 @@
 # above-listed licenses.
 
 def buck_genrule(visibility = ["PUBLIC"], **kwargs):
+    kwargs.pop("bypass_restricted_cmd", None)
     # @lint-ignore BUCKLINT: avoid "native is forbidden in fbcode"
     native.genrule(visibility = visibility, **kwargs)
 

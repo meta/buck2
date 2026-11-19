@@ -16,6 +16,8 @@ use std::sync::atomic::Ordering;
 use allocative::Allocative;
 use futures::FutureExt;
 
+use crate::re::presence::PresenceStats;
+
 #[derive(Default)]
 pub struct RemoteExecutionClientOpStats {
     pub started: u32,
@@ -51,6 +53,8 @@ pub struct RemoteExecutionClientStats {
     pub materializes: RemoteExecutionClientOpStats,
     pub write_action_results: RemoteExecutionClientOpStats,
     pub get_digest_expirations: RemoteExecutionClientOpStats,
+
+    pub presence: PresenceStats,
 
     // Local cache hits and misses stats
     pub local_cache: LocalCacheRemoteExecutionClientStats,
@@ -184,5 +188,45 @@ impl From<&'_ LocalCacheStats> for LocalCacheRemoteExecutionClientStats {
                 .cache_lookup_latency_microseconds
                 .load(Ordering::Relaxed),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::future;
+
+    use super::*;
+
+    /// What `re_state.rs` shows as "in progress".
+    fn in_progress(stats: &RemoteExecutionClientOpStats) -> u32 {
+        stats
+            .started
+            .saturating_sub(stats.finished_successfully)
+            .saturating_sub(stats.finished_with_error)
+    }
+
+    /// An operation whose future is dropped before it completes (the losing side of a hybrid
+    /// execution, Ctrl-C, DICE cancellation) is counted as started but never as finished, so
+    /// the session stats show it as in progress for the rest of the daemon's life.
+    #[tokio::test]
+    async fn test_dropped_op_stays_in_progress() {
+        let stats = OpStats::default();
+        stats
+            .op(future::ready(Ok::<_, buck2_error::Error>(())))
+            .await
+            .unwrap();
+        stats
+            .op(future::ready(Err::<(), _>(buck2_error::internal_error!(
+                "boom"
+            ))))
+            .await
+            .unwrap_err();
+        drop(stats.op(future::pending::<buck2_error::Result<()>>()));
+
+        let exported = RemoteExecutionClientOpStats::from(&stats);
+        assert_eq!(exported.started, 3);
+        assert_eq!(exported.finished_successfully, 1);
+        assert_eq!(exported.finished_with_error, 1);
+        assert_eq!(in_progress(&exported), 1);
     }
 }

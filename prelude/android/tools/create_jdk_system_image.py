@@ -30,9 +30,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-
 from pathlib import Path
-
 from typing import List
 
 
@@ -103,7 +101,9 @@ class JdkImageTransformDelegate:
         )
 
         module_info_class = self.work_dir / "module-info.class"
-        assert module_info_class.exists(), f"Expected compiled module descriptor file to be created at {module_info_class}"
+        assert module_info_class.exists(), (
+            f"Expected compiled module descriptor file to be created at {module_info_class}"
+        )
 
         return module_info_class
 

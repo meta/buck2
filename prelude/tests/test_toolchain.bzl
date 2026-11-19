@@ -8,10 +8,12 @@
 
 load("@prelude//:asserts.bzl", "asserts")
 
-TestToolchainInfo = provider(fields = {
-    # Used to populate sanitizer field in test infra.
-    "sanitizer": str | None,
-})
+TestToolchainInfo = provider(
+    fields = {
+        # Used to populate sanitizer field in test infra.
+        "sanitizer": str | None,
+    }
+)
 
 def _impl(_ctx: AnalysisContext) -> list[Provider]:
     return [DefaultInfo(), TestToolchainInfo(sanitizer = None)]
@@ -22,8 +24,7 @@ noop_test_toolchain = rule(
     is_toolchain_rule = True,
 )
 
-def test_toolchain_labels(
-        test_toolchain: Dependency) -> list[str]:
+def test_toolchain_labels(test_toolchain: Dependency) -> list[str]:
     asserts.true(TestToolchainInfo in test_toolchain, "Expected a TestToolchainInfo provider")
     test_toolchain = test_toolchain[TestToolchainInfo]
     return [test_toolchain.sanitizer] if test_toolchain.sanitizer else []

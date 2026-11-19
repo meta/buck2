@@ -10,9 +10,7 @@ load(
     "@shim//:shims.bzl",
     _proto_srcs = "proto_srcs",
     _rust_protobuf_library = "rust_protobuf_library",
-    _rust_protobuf_library_prost_0134 = "rust_protobuf_library_prost_0134",
 )
 
 rust_protobuf_library = _rust_protobuf_library
-rust_protobuf_library_prost_0134 = _rust_protobuf_library_prost_0134
 proto_srcs = _proto_srcs

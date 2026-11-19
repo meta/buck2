@@ -8,6 +8,4 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 tonic::include_proto!("worker");

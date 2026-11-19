@@ -20,15 +20,16 @@ use triomphe::HeaderWithLength;
 use triomphe::ThinArc;
 
 use crate::Allocative;
-use crate::Key;
 use crate::Visitor;
 use crate::impls::common::PTR_NAME;
+use crate::key;
+use crate::key::Key;
 
 impl<H: Allocative, T: Allocative + ?Sized> Allocative for HeaderSlice<H, T> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self(self);
-        visitor.visit_field(Key::new("header"), &self.header);
-        visitor.visit_field(Key::new("slice"), &self.slice);
+        visitor.visit_field(key!("header"), &self.header);
+        visitor.visit_field(key!("slice"), &self.slice);
         visitor.exit();
     }
 }
@@ -36,8 +37,8 @@ impl<H: Allocative, T: Allocative + ?Sized> Allocative for HeaderSlice<H, T> {
 impl<H: Allocative> Allocative for HeaderWithLength<H> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self(self);
-        visitor.visit_field(Key::new("header"), &self.header);
-        visitor.visit_field(Key::new("len"), &self.length);
+        visitor.visit_field(key!("header"), &self.header);
+        visitor.visit_field(key!("len"), &self.length);
         visitor.exit();
     }
 }
@@ -67,10 +68,8 @@ impl<H: Allocative, T: Allocative> Allocative for ThinArc<H, T> {
                 {
                     let mut visitor =
                         visitor.enter(Key::for_type_name::<ThinArcInnerRepr<H>>(), size);
-                    visitor.visit_field::<HeaderSlice<HeaderWithLength<H>, [T]>>(
-                        Key::new("data"),
-                        self,
-                    );
+                    visitor
+                        .visit_field::<HeaderSlice<HeaderWithLength<H>, [T]>>(key!("data"), self);
                 }
                 visitor.exit();
             }
@@ -100,7 +99,7 @@ impl<T: Allocative + ?Sized> Allocative for Arc<T> {
                     .size();
                 {
                     let mut visitor = visitor.enter(Key::for_type_name::<ArcInnerRepr>(), size);
-                    visitor.visit_field::<T>(Key::new("data"), self);
+                    visitor.visit_field::<T>(key!("data"), self);
                     visitor.exit();
                 }
                 visitor.exit();

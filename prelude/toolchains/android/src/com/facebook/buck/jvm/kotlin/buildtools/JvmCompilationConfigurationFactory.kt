@@ -21,13 +21,15 @@ import org.jetbrains.kotlin.buildtools.api.ExperimentalBuildToolsApi
 import org.jetbrains.kotlin.buildtools.api.jvm.ClasspathSnapshotBasedIncrementalCompilationApproachParameters
 import org.jetbrains.kotlin.buildtools.api.jvm.JvmCompilationConfiguration
 
+// Legacy BTA API is DEPRECATION_ERROR from Kotlin 2.4; KotlinToolchains replaces it.
+@Suppress("DEPRECATION_ERROR")
 @OptIn(ExperimentalBuildToolsApi::class)
 internal class JvmCompilationConfigurationFactory(
     private val compilationService: CompilationService,
     private val kotlinCDLoggingContext: KotlinCDLoggingContext,
 ) {
 
-  fun create(mode: KotlincMode): JvmCompilationConfiguration =
+  fun create(mode: KotlincMode, forceRebuild: Boolean = false): JvmCompilationConfiguration =
       when (mode) {
         is NonIncremental -> {
           compilationService.makeJvmCompilationConfiguration()
@@ -49,11 +51,12 @@ internal class JvmCompilationConfigurationFactory(
                       setBuildDir(mode.buildDir.toFile())
                       usePreciseCompilationResultsBackup(true)
                       keepIncrementalCompilationCachesInMemory(true)
+                      if (forceRebuild) forceNonIncrementalMode(true)
 
                       val rebuildReason = mode.rebuildReason
                       if (rebuildReason != null) {
                         LOG.info(
-                            "Non-incremental compilation will be performed: ${rebuildReason.message}"
+                            "Non-incremental compilation will be performed: ${rebuildReason.message}",
                         )
                         kotlinCDLoggingContext.addExtras(
                             JvmCompilationConfigurationFactory::class.java.simpleName,
@@ -65,7 +68,7 @@ internal class JvmCompilationConfigurationFactory(
                       when (mode.classpathChanges) {
                         is ClasspathChanges.Unknown -> {
                           LOG.info(
-                              "Non-incremental compilation will be performed: classpath changes not available"
+                              "Non-incremental compilation will be performed: classpath changes not available",
                           )
                           kotlinCDLoggingContext.addExtras(
                               JvmCompilationConfigurationFactory::class.java.simpleName,
@@ -76,7 +79,10 @@ internal class JvmCompilationConfigurationFactory(
                         is ClasspathChanges.NoChanges -> {
                           assureNoClasspathSnapshotsChanges(true)
                         }
-                        else -> {}
+                        is ClasspathChanges.ToBeComputedByIncrementalCompiler -> {
+                          // The Kotlin incremental compiler handles classpath changes
+                          // (additions, modifications, and removals).
+                        }
                       }
                     },
             )

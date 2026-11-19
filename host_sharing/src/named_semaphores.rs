@@ -24,22 +24,16 @@ impl NamedSemaphores {
     }
 
     pub fn get(&self, name: &str) -> SharedSemaphore {
+        // Fast path avoids allocating a `String` key on the hot path.
         if let Some(bucket_semaphore) = self.buckets.get(name) {
-            bucket_semaphore.clone()
-        } else {
-            // Fairness on this semaphore doesn't control the order in which waiters are woken up, but
-            // simply whether we delay wakeups to wait for waiters that want > 1 permit. Since we only
-            // ever request a single permit here, the fairness doesn't matter.
-            //
-            // Since a fair semaphore will only ever wake a single waiter, that code path is a bit
-            // faster and doesn't require any additional looping. Therefore despite the fact that a
-            // fair and unfair semaphore would have the same end result, we use a fair semaphore
-            // here as a small performance optimization.
-            let bucket_semaphore = SharedSemaphore::new(true, SINGLE_WORKER);
-            self.buckets
-                .insert(name.to_owned(), bucket_semaphore.clone());
-            bucket_semaphore
+            return bucket_semaphore.clone();
         }
+        // Fair semaphore: slightly faster wakeups for single-permit requests.
+        self.buckets
+            .entry(name.to_owned())
+            .or_insert_with(|| SharedSemaphore::new(true, SINGLE_WORKER))
+            .value()
+            .clone()
     }
 }
 

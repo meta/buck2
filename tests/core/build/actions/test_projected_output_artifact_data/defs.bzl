@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _write_rel_action(ctx: AnalysisContext) -> list[Provider]:
-    a = ctx.actions.declare_output("uuuuuu")
+    a = ctx.actions.declare_output("uuuuuu", has_content_based_path = False)
     b = a.project("rel")
     ctx.actions.write(b.as_output(), "ccoonntteenntt")
     return [DefaultInfo(default_output = a)]
@@ -18,9 +18,13 @@ write_rel_action = rule(
 )
 
 def _run_rel_action(ctx: AnalysisContext) -> list[Provider]:
-    a = ctx.actions.declare_output("uuuuuu")
+    a = ctx.actions.declare_output("uuuuuu", has_content_based_path = False)
     b = a.project("rel")
-    ctx.actions.run(cmd_args("fbpython", "-c", """
+    ctx.actions.run(
+        cmd_args(
+            "fbpython",
+            "-c",
+            """
 import sys
 import os
 
@@ -31,7 +35,11 @@ os.mkdir(os.path.dirname(f))
 
 with open(f, "w") as f:
     f.write("hello")
-""", b.as_output()), category = "ignore")
+""",
+            b.as_output(),
+        ),
+        category = "ignore",
+    )
     return [DefaultInfo(default_output = a)]
 
 run_rel_action = rule(

@@ -39,10 +39,10 @@ impl ServerAuditSubcommand for AuditPreludeCommand {
         _client_ctx: ClientContext,
     ) -> buck2_error::Result<()> {
         Ok(server_ctx
-            .with_dice_ctx(|_server_ctx, mut ctx| async move {
+            .with_dice_ctx(|_server_ctx, ctx| async move {
                 let mut stdout = stdout.as_writer();
                 // Print out all the Prelude-like stuff that is loaded into each module
-                let cell_resolver = ctx.get_cell_resolver().await?;
+                let cell_resolver = ctx.ctx().get_cell_resolver().await?;
                 let Some(prelude_path) = prelude_path(&cell_resolver)? else {
                     return Err(AuditPreludeError::NoPrelude.into());
                 };
@@ -51,14 +51,15 @@ impl ServerAuditSubcommand for AuditPreludeCommand {
                     "{}",
                     INTERPRETER_CALCULATION_IMPL
                         .get()?
-                        .global_env(&mut ctx)
+                        .global_env(&mut ctx.ctx())
                         .await?
                         .describe()
                 )?;
                 writeln!(
                     stdout,
                     "{}",
-                    ctx.get_loaded_module_from_import_path(prelude_path.import_path())
+                    ctx.ctx()
+                        .get_loaded_module_from_import_path(prelude_path.import_path())
                         .await?
                         .env()
                         .describe()

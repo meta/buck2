@@ -3,7 +3,7 @@ load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
 oncall("build_infra")
 
 buck2_e2e_test(
-    name = "test_buck_config_logging.py",
-    srcs = ["test_buck_config_logging.py"],
+    name = "test_buck_config_logging",
+    srcs = ["test_buck_config_logging.rs"],
     data_dir = "test_buck_config_log_data",
 )

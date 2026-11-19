@@ -37,11 +37,7 @@ UnixEnvInfo = provider(
     ),
 )
 
-def create_unix_env_info(
-        actions: AnalysisActions,
-        env: UnixEnv | None = None,
-        children: list[UnixEnvInfo] = [],
-        deps: list[Dependency] = []) -> UnixEnvInfo:
+def create_unix_env_info(actions: AnalysisActions, env: UnixEnv | None = None, children: list[UnixEnvInfo] = [], deps: list[Dependency] = []) -> UnixEnvInfo:
     all_children = []
     for child in children:
         all_children.append(child._tset)
@@ -54,8 +50,5 @@ def create_unix_env_info(
         kwargs["value"] = env
     kwargs["children"] = all_children
     return UnixEnvInfo(
-        _tset = actions.tset(
-            UnixEnvTSet,
-            **kwargs
-        ),
+        _tset = actions.tset(UnixEnvTSet, **kwargs),
     )

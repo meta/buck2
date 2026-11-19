@@ -1,0 +1,29 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+load("@fbcode_macros//build_defs:go_binary.bzl", "go_binary")
+
+oncall("golang")
+
+# ASAN is officially supported on Linux only
+
+go_binary(
+    name = "main",
+    srcs = ["main.go"],
+    target_compatible_with = [
+        "ovr_config//os:linux",
+    ],
+)
+
+py_assertion(
+    name = "check_output",
+    script = """
+import subprocess
+import sys
+result = subprocess.run([sys.argv[1]], capture_output=True, text=True)
+assert result.returncode == 1, f"Got status code {result.returncode}"
+assert "SUMMARY: AddressSanitizer: heap-use-after-free fbcode/buck2/tests/prelude/go/asan/main.go:29 in main.main" in result.stderr, result.stderr
+""",
+    script_args = ["$(exe_target :main)"],
+    target_compatible_with = [
+        "ovr_config//os:linux",
+    ],
+)

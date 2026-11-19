@@ -1,0 +1,34 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+{
+  "anon//:_anon_leaf (anon: <HASH>) (<unspecified>)": {
+    "buck.deps": [],
+    "buck.execution_configuration": "<unspecified>",
+    "buck.hash": "<HASH>",
+    "buck.key": "anon//:_anon_leaf (anon: <HASH>) (<unspecified>)",
+    "buck.name": "anon//:_anon_leaf",
+    "buck.package": "anon//",
+    "buck.promise_artifact_deps": [],
+    "buck.requested_by": [
+      "anon//:_anon_mid (anon: <HASH>) (<unspecified>)"
+    ],
+    "buck.type": "root//prelude.bzl:_anon_leaf",
+    "buck.variant": "bzl",
+    "suffix": "from-mid"
+  },
+  "anon//:_anon_mid (anon: <HASH>) (<unspecified>)": {
+    "buck.deps": [],
+    "buck.execution_configuration": "<unspecified>",
+    "buck.hash": "<HASH>",
+    "buck.key": "anon//:_anon_mid (anon: <HASH>) (<unspecified>)",
+    "buck.name": "anon//:_anon_mid",
+    "buck.package": "anon//",
+    "buck.promise_artifact_deps": [],
+    "buck.requested_by": [
+      "root//:with_anon (<unspecified>)"
+    ],
+    "buck.type": "root//prelude.bzl:_anon_mid",
+    "buck.variant": "bzl",
+    "level": 1
+  }
+}

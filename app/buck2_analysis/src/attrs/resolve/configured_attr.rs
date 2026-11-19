@@ -16,6 +16,8 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::Starla
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::package::source_path::SourcePath;
+use buck2_error::internal_error;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_interpreter::types::opaque_metadata::OpaqueMetadata;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
@@ -26,18 +28,17 @@ use buck2_node::attrs::attr_type::source::SourceAttrType;
 use buck2_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
 use buck2_node::attrs::attr_type::transition_dep::TransitionDepAttrType;
 use buck2_node::attrs::configured_attr::ConfiguredAttr;
+use buck2_node::visibility::VisibilityPattern;
 use buck2_node::visibility::VisibilityPatternList;
 use buck2_node::visibility::VisibilitySpecification;
 use buck2_node::visibility::WithinViewSpecification;
-use buck2_util::arc_str::ArcS;
+use buck2_util::arc_str::PackedStr;
 use dupe::Dupe;
-use gazebo::prelude::SliceExt;
 use starlark::values::Heap;
 use starlark::values::Value;
-use starlark::values::dict::Dict;
+use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::tuple::AllocTuple;
-use starlark_map::small_map::SmallMap;
 
 use crate::attrs::resolve::attr_type::arg::ConfiguredStringWithMacrosExt;
 use crate::attrs::resolve::attr_type::configuration_dep::ConfigurationDepAttrTypeExt;
@@ -53,7 +54,7 @@ use crate::attrs::resolve::ctx::AttrResolutionContext;
 #[buck2(tag = Tier0)]
 enum ConfiguredAttrError {
     #[error("Source path `{0}` cannot be used in attributes referenced in transition")]
-    SourceFileToStarlarkValue(ArcS<PackageRelativePath>),
+    SourceFileToStarlarkValue(PackedStr<PackageRelativePath>),
 }
 
 pub trait ConfiguredAttrExt {
@@ -72,7 +73,7 @@ pub trait ConfiguredAttrExt {
     fn to_value<'v>(
         &self,
         pkg: PackageLabelOption,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> buck2_error::Result<Value<'v>>;
 }
 
@@ -106,33 +107,33 @@ impl ConfiguredAttrExt for ConfiguredAttr {
     ) -> buck2_error::Result<Value<'v>> {
         match self {
             ConfiguredAttr::Bool(v) => Ok(Value::new_bool(v.0)),
-            ConfiguredAttr::Int(v) => Ok(ctx.heap().alloc(*v)),
+            ConfiguredAttr::Int(v) => Ok(ctx.heap().alloc(*v).to_value()),
             ConfiguredAttr::String(v) | ConfiguredAttr::EnumVariant(v) => {
-                Ok(ctx.heap().alloc(v.as_str()))
+                Ok(ctx.heap().alloc(v.as_str()).to_value())
             }
             ConfiguredAttr::List(list) => {
                 let mut values = Vec::with_capacity(list.len());
                 for v in list.iter() {
                     values.append(&mut v.resolve(pkg, ctx)?);
                 }
-                Ok(ctx.heap().alloc(values))
+                Ok(ctx.heap().alloc(AllocList(values)).to_value())
             }
             ConfiguredAttr::Tuple(list) => {
                 let mut values = Vec::with_capacity(list.len());
                 for v in list.iter() {
                     values.push(v.resolve_single(pkg, ctx)?);
                 }
-                Ok(ctx.heap().alloc(AllocTuple(values)))
+                Ok(ctx.heap().alloc(AllocTuple(values)).to_value())
             }
             ConfiguredAttr::Dict(dict) => {
-                let mut res = SmallMap::with_capacity(dict.len());
+                let mut res = BuckMutInsertionMap::with_capacity(dict.len());
                 for (k, v) in dict.iter() {
                     res.insert_hashed(
                         k.resolve_single(pkg, ctx)?.get_hashed()?,
                         v.resolve_single(pkg, ctx)?,
                     );
                 }
-                Ok(ctx.heap().alloc(Dict::new(res)))
+                Ok(ctx.heap().alloc(AllocDict(res)).to_value())
             }
             ConfiguredAttr::None => Ok(Value::new_none()),
             ConfiguredAttr::OneOf(box l, _) => l.resolve_single(pkg, ctx),
@@ -151,14 +152,15 @@ impl ConfiguredAttrExt for ConfiguredAttr {
                 SplitTransitionDepAttrType::resolve_single(ctx, d.as_ref())
             }
             ConfiguredAttr::ConfigurationDep(d) => ConfigurationDepAttrType::resolve_single(ctx, d),
-            ConfiguredAttr::PluginDep(d, _) => {
-                Ok(ctx.heap().alloc(StarlarkTargetLabel::new(d.dupe())))
-            }
+            ConfiguredAttr::PluginDep(d, _) => Ok(ctx
+                .heap()
+                .alloc(StarlarkTargetLabel::new(d.dupe()))
+                .to_value()),
             ConfiguredAttr::Dep(d) => DepAttrType::resolve_single(ctx, d),
             ConfiguredAttr::SourceLabel(s) => SourceAttrType::resolve_single_label(ctx, s),
             ConfiguredAttr::Label(label) => {
                 let label = StarlarkConfiguredProvidersLabel::new(label.dupe());
-                Ok(ctx.heap().alloc(label))
+                Ok(ctx.heap().alloc(label).to_value())
             }
             ConfiguredAttr::Arg(arg) => arg.resolve(ctx, pkg),
             ConfiguredAttr::Query(query) => query.resolve(ctx),
@@ -166,8 +168,8 @@ impl ConfiguredAttrExt for ConfiguredAttr {
                 ctx,
                 SourcePath::new(pkg, s.path().dupe()),
             )),
-            ConfiguredAttr::Metadata(..) => Ok(ctx.heap().alloc(OpaqueMetadata)),
-            ConfiguredAttr::TargetModifiers(..) => Ok(ctx.heap().alloc(OpaqueMetadata)),
+            ConfiguredAttr::Metadata(..) => Ok(ctx.heap().alloc(OpaqueMetadata).to_value()),
+            ConfiguredAttr::TargetModifiers(..) => Ok(ctx.heap().alloc(OpaqueMetadata).to_value()),
         }
     }
 
@@ -175,7 +177,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
     fn to_value<'v>(
         &self,
         pkg: PackageLabelOption,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> buck2_error::Result<Value<'v>> {
         configured_attr_to_value(self, pkg, heap)
     }
@@ -184,75 +186,103 @@ impl ConfiguredAttrExt for ConfiguredAttr {
 fn configured_attr_to_value<'v>(
     this: &ConfiguredAttr,
     pkg: PackageLabelOption,
-    heap: &'v Heap,
+    heap: Heap<'v>,
 ) -> buck2_error::Result<Value<'v>> {
     Ok(match this {
-        ConfiguredAttr::Bool(v) => heap.alloc(v.0),
-        ConfiguredAttr::Int(v) => heap.alloc(*v),
-        ConfiguredAttr::String(s) | ConfiguredAttr::EnumVariant(s) => heap.alloc(s.as_str()),
-        ConfiguredAttr::List(list) => {
-            heap.alloc(list.try_map(|v| configured_attr_to_value(&v, pkg, heap))?)
+        ConfiguredAttr::Bool(v) => heap.alloc(v.0).to_value(),
+        ConfiguredAttr::Int(v) => heap.alloc(*v).to_value(),
+        ConfiguredAttr::String(s) | ConfiguredAttr::EnumVariant(s) => {
+            heap.alloc(s.as_str()).to_value()
         }
-        ConfiguredAttr::Tuple(v) => heap.alloc(AllocTuple(
-            v.try_map(|v| configured_attr_to_value(&v, pkg, heap))?,
-        )),
+        ConfiguredAttr::List(list) => heap
+            .alloc(AllocList(
+                list.iter()
+                    .map(|v| configured_attr_to_value(v, pkg, heap))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))
+            .to_value(),
+        ConfiguredAttr::Tuple(v) => heap
+            .alloc(AllocTuple(
+                v.iter()
+                    .map(|v| configured_attr_to_value(v, pkg, heap))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))
+            .to_value(),
         ConfiguredAttr::Dict(map) => {
-            let mut res = SmallMap::with_capacity(map.len());
+            let mut res = BuckMutInsertionMap::with_capacity(map.len());
 
             for (k, v) in map.iter() {
                 res.insert_hashed(
-                    configured_attr_to_value(&k, pkg, heap)?.get_hashed()?,
-                    configured_attr_to_value(&v, pkg, heap)?,
+                    configured_attr_to_value(k, pkg, heap)?.get_hashed()?,
+                    configured_attr_to_value(v, pkg, heap)?,
                 );
             }
 
-            heap.alloc(Dict::new(res))
+            heap.alloc(AllocDict(res)).to_value()
         }
         ConfiguredAttr::None => Value::new_none(),
-        ConfiguredAttr::OneOf(box l, _) => configured_attr_to_value(&l, pkg, heap)?,
+        ConfiguredAttr::OneOf(box l, _) => configured_attr_to_value(l, pkg, heap)?,
         ConfiguredAttr::Visibility(VisibilitySpecification(specs))
         | ConfiguredAttr::WithinView(WithinViewSpecification(specs)) => match specs {
-            VisibilityPatternList::Public => heap.alloc(AllocList(["PUBLIC"])),
-            VisibilityPatternList::List(specs) => {
-                heap.alloc(AllocList(specs.iter().map(|s| s.to_string())))
+            VisibilityPatternList::Public => heap.alloc(AllocList(["PUBLIC"])).to_value(),
+            VisibilityPatternList::List(specs) => heap
+                .alloc(AllocList(specs.iter().map(|s| match s {
+                    VisibilityPattern::Parsed(p) => heap.alloc(p.to_string()).to_value(),
+                    VisibilityPattern::TargetNameGlob(record) => record.alloc_starlark_value(heap),
+                })))
+                .to_value(),
+            VisibilityPatternList::Intersection(_) => {
+                return Err(internal_error!(
+                    "Intersection visibility cannot be serialized as attribute"
+                ));
             }
         },
-        ConfiguredAttr::ExplicitConfiguredDep(d) => heap.alloc(
-            StarlarkConfiguredProvidersLabel::new(d.as_ref().label.dupe()),
-        ),
-        ConfiguredAttr::TransitionDep(t) => {
-            heap.alloc(StarlarkConfiguredProvidersLabel::new(t.dep.dupe()))
-        }
+        ConfiguredAttr::ExplicitConfiguredDep(d) => heap
+            .alloc(StarlarkConfiguredProvidersLabel::new(
+                d.as_ref().label.dupe(),
+            ))
+            .to_value(),
+        ConfiguredAttr::TransitionDep(t) => heap
+            .alloc(StarlarkConfiguredProvidersLabel::new(t.dep.dupe()))
+            .to_value(),
         ConfiguredAttr::SplitTransitionDep(t) => {
-            let mut map = SmallMap::with_capacity(t.deps.len());
+            let mut map = BuckMutInsertionMap::with_capacity(t.deps.len());
 
             for (trans, p) in t.deps.iter() {
                 map.insert_hashed(
-                    heap.alloc(trans).get_hashed()?,
-                    heap.alloc(StarlarkConfiguredProvidersLabel::new(p.dupe())),
+                    heap.alloc(trans).to_value().get_hashed()?,
+                    heap.alloc(StarlarkConfiguredProvidersLabel::new(p.dupe()))
+                        .to_value(),
                 );
             }
 
-            heap.alloc(Dict::new(map))
+            heap.alloc(AllocDict(map)).to_value()
         }
         ConfiguredAttr::ConfigurationDep(c) => {
             // TODO(T198210718)
             heap.alloc(StarlarkTargetLabel::new(c.target().dupe()))
+                .to_value()
         }
-        ConfiguredAttr::PluginDep(d, _) => heap.alloc(StarlarkTargetLabel::new(d.dupe())),
-        ConfiguredAttr::Dep(d) => heap.alloc(StarlarkConfiguredProvidersLabel::new(d.label.dupe())),
-        ConfiguredAttr::SourceLabel(s) => {
-            heap.alloc(StarlarkConfiguredProvidersLabel::new(s.dupe()))
+        ConfiguredAttr::PluginDep(d, _) => {
+            heap.alloc(StarlarkTargetLabel::new(d.dupe())).to_value()
         }
-        ConfiguredAttr::Label(l) => heap.alloc(StarlarkConfiguredProvidersLabel::new(l.dupe())),
-        ConfiguredAttr::Arg(arg) => heap.alloc(arg.to_string()),
-        ConfiguredAttr::Query(query) => heap.alloc(&query.query.query),
+        ConfiguredAttr::Dep(d) => heap
+            .alloc(StarlarkConfiguredProvidersLabel::new(d.label.dupe()))
+            .to_value(),
+        ConfiguredAttr::SourceLabel(s) => heap
+            .alloc(StarlarkConfiguredProvidersLabel::new(s.dupe()))
+            .to_value(),
+        ConfiguredAttr::Label(l) => heap
+            .alloc(StarlarkConfiguredProvidersLabel::new(l.dupe()))
+            .to_value(),
+        ConfiguredAttr::Arg(arg) => heap.alloc(arg.to_string()).to_value(),
+        ConfiguredAttr::Query(query) => heap.alloc(&query.query.query).to_value(),
         ConfiguredAttr::SourceFile(f) => match pkg {
-            PackageLabelOption::PackageLabel(pkg) => {
-                heap.alloc(StarlarkArtifact::new(Artifact::from(SourceArtifact::new(
+            PackageLabelOption::PackageLabel(pkg) => heap
+                .alloc(StarlarkArtifact::new(Artifact::from(SourceArtifact::new(
                     SourcePath::new(pkg.to_owned(), f.path().dupe()),
                 ))))
-            }
+                .to_value(),
             // We don't store package label in transition key for better caching of transition between packages.
             // (This is not inherent requirement,
             // but it was easier to implement this ways,
@@ -263,8 +293,8 @@ fn configured_attr_to_value<'v>(
                 return Err(ConfiguredAttrError::SourceFileToStarlarkValue(f.path().dupe()).into());
             }
         },
-        ConfiguredAttr::Metadata(data) => heap.alloc(data.to_value()),
-        ConfiguredAttr::TargetModifiers(data) => heap.alloc(data.to_value()),
+        ConfiguredAttr::Metadata(data) => heap.alloc(data.to_value()).to_value(),
+        ConfiguredAttr::TargetModifiers(data) => data.alloc_starlark(heap),
     })
 }
 

@@ -6,10 +6,15 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+_ALLOW_DEP_FILE_CACHE_UPLOAD = read_config("test", "allow_dep_file_cache_upload") in ["true", "True"]
+_ALLOW_CACHE_UPLOAD = read_config("test", "allow_cache_upload") in ["true", "True"]
+
 def _tag_files(tag, files):
     return [tag.tag_artifacts(f) for f in files]
 
-def _get_tagged_artifacts(ctx, dep_file: Artifact, used_files: list[Artifact], unused_files: list[Artifact]) -> (ArtifactTag, list[typing.Any], list[typing.Any], typing.Any):
+def _get_tagged_artifacts(
+    ctx, dep_file: Artifact, used_files: list[Artifact], unused_files: list[Artifact]
+) -> (ArtifactTag, list[typing.Any], list[typing.Any], typing.Any):
     tag = ctx.actions.artifact_tag()
     tagged_used_files = _tag_files(tag, used_files)
     tagged_unused_files = _tag_files(tag, unused_files)
@@ -17,8 +22,8 @@ def _get_tagged_artifacts(ctx, dep_file: Artifact, used_files: list[Artifact], u
     return (tag, tagged_used_files, tagged_unused_files, tagged_dep_file)
 
 def _with_two_dep_files_impl(ctx):
-    allow_dep_file_cache_upload = read_config("test", "allow_dep_file_cache_upload") in ["true", "True"]
-    allow_cache_upload = read_config("test", "allow_cache_upload") in ["true", "True"]
+    allow_dep_file_cache_upload = _ALLOW_DEP_FILE_CACHE_UPLOAD
+    allow_cache_upload = _ALLOW_CACHE_UPLOAD
 
     out = ctx.actions.declare_output(ctx.attrs.out_name, has_content_based_path = True)
 

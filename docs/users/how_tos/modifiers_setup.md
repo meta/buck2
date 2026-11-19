@@ -38,7 +38,7 @@ It supports a few configuration points:
 - `extra_data` is used for logging/validation by Meta's internal modifier
   implementation.
 
-As you can see, `aliases` is the the only value that one would commonly want to
+As you can see, `aliases` is the only value that one would commonly want to
 configure, and it might make sense to call `set_cfg_constructor` with different
 `aliases` values in different `PACKAGE` files, if some aliases only make sense
 in specific projects (e.g. because they have custom configuration constraints).

@@ -21,6 +21,7 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/io/filesystem:filesystem",
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:environment",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
     ],
 )
 
@@ -29,5 +30,8 @@ buck_java_library(
     srcs = ["SerializationUtil.java"],
     visibility = [
         "prelude//toolchains/android/src/com/facebook/buck/jvm/cd/serialization/...",
+    ],
+    deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
     ],
 )

@@ -28,20 +28,19 @@ use starlark::collections::StarlarkHasher;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::Freeze;
 use starlark::values::Heap;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
-use starlark::values::Value;
-use starlark::values::ValueError;
-use starlark::values::ValueLike;
-use starlark::values::list::UnpackList;
+use starlark::values::ValueOf;
+use starlark::values::list::ListType;
 use starlark::values::starlark_value;
-use starlark::values::starlark_value_as_type::StarlarkValueAsType;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::string::AllocStrIntern;
+use starlark::values::string::StarlarkStr;
 
 use crate::types::cell_path::StarlarkCellPath;
 use crate::types::configuration::StarlarkConfiguration;
@@ -58,12 +57,16 @@ use crate::types::package_path::StarlarkPackagePath;
     PartialEq,
     Eq,
     From,
+    Freeze,
     ProvidesStaticType,
     Serialize,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[serde(transparent)]
 pub struct StarlarkTargetLabel {
+    #[freeze(identity)]
+    #[starlark_pagable(pagable)]
     label: TargetLabel,
 }
 
@@ -79,32 +82,24 @@ impl StarlarkTargetLabel {
     }
 }
 
+starlark::methods_static!(TARGET_LABEL_METHODS = label_methods);
+
 #[starlark_value(type = "TargetLabel")]
 impl<'v> StarlarkValue<'v> for StarlarkTargetLabel {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(label_methods)
+        Some(TARGET_LABEL_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.hash(hasher);
-        Ok(())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.label == other.label)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.label == other.label
     }
 
-    fn compare(&self, other: Value<'v>) -> starlark::Result<std::cmp::Ordering> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.label.cmp(&other.label))
-        } else {
-            ValueError::unsupported_with(self, "compare", other)
-        }
+    fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.label.cmp(&other.label)
     }
 }
 
@@ -113,9 +108,11 @@ fn label_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn package<'v>(
         this: &StarlarkTargetLabel,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.label.pkg().cell_relative_path().as_str()))
+        Ok(heap.alloc(AllocStrIntern(
+            this.label.pkg().cell_relative_path().as_str(),
+        )))
     }
 
     #[starlark(attribute)]
@@ -129,14 +126,26 @@ fn label_methods(builder: &mut MethodsBuilder) {
     }
 
     #[starlark(attribute)]
-    fn path<'v>(this: &StarlarkTargetLabel) -> starlark::Result<StarlarkCellPath> {
-        Ok(StarlarkCellPath(this.label.pkg().to_cell_path()))
+    fn path<'v>(
+        this: &StarlarkTargetLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCellPath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCellPath(this.label.pkg().to_cell_path()),
+        ))
     }
 
     /// Returns the PackagePath for this target label.
     #[starlark(attribute)]
-    fn package_path<'v>(this: &StarlarkTargetLabel) -> starlark::Result<StarlarkPackagePath> {
-        Ok(StarlarkPackagePath::new(this.label.pkg().dupe()))
+    fn package_path<'v>(
+        this: &StarlarkTargetLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkPackagePath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkPackagePath::new(this.label.pkg().dupe()),
+        ))
     }
 
     /// Converts a `TargetLabel` into its corresponding `ProvidersLabel` given the subtarget names,
@@ -155,15 +164,16 @@ fn label_methods(builder: &mut MethodsBuilder) {
     fn with_sub_target<'v>(
         this: &StarlarkTargetLabel,
         // TODO(nga): must be either positional or named.
-        #[starlark(default = SubtargetNameArg::List(UnpackList { items: Vec::new() }))]
+        #[starlark(default = SubtargetNameArg::List(ValueOf::empty_list()))]
         subtarget_name: SubtargetNameArg<'v>,
-    ) -> starlark::Result<StarlarkProvidersLabel> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkProvidersLabel>> {
         let providers_name = value_to_providers_name(subtarget_name)?;
 
-        Ok(StarlarkProvidersLabel::new(ProvidersLabel::new(
-            this.label().dupe(),
-            providers_name,
-        )))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkProvidersLabel::new(ProvidersLabel::new(this.label().dupe(), providers_name)),
+        ))
     }
 }
 
@@ -178,10 +188,12 @@ fn label_methods(builder: &mut MethodsBuilder) {
     From,
     ProvidesStaticType,
     Serialize,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[serde(transparent)]
 pub struct StarlarkConfiguredTargetLabel {
+    #[starlark_pagable(pagable)]
     label: ConfiguredTargetLabel,
 }
 
@@ -197,32 +209,24 @@ impl StarlarkConfiguredTargetLabel {
     }
 }
 
+starlark::methods_static!(CONFIGURED_TARGET_LABEL_METHODS = configured_label_methods);
+
 #[starlark_value(type = "ConfiguredTargetLabel")]
 impl<'v> StarlarkValue<'v> for StarlarkConfiguredTargetLabel {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(configured_label_methods)
+        Some(CONFIGURED_TARGET_LABEL_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.hash(hasher);
-        Ok(())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.label == other.label)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.label == other.label
     }
 
-    fn compare(&self, other: Value<'v>) -> starlark::Result<std::cmp::Ordering> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.label.cmp(&other.label))
-        } else {
-            ValueError::unsupported_with(self, "compare", other)
-        }
+    fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.label.cmp(&other.label)
     }
 }
 
@@ -231,9 +235,11 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn package<'v>(
         this: &StarlarkConfiguredTargetLabel,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(heap.alloc_str_intern(this.label.pkg().cell_relative_path().as_str()))
+        Ok(heap.alloc(AllocStrIntern(
+            this.label.pkg().cell_relative_path().as_str(),
+        )))
     }
 
     #[starlark(attribute)]
@@ -247,26 +253,46 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     }
 
     #[starlark(attribute)]
-    fn path<'v>(this: &StarlarkConfiguredTargetLabel) -> starlark::Result<StarlarkCellPath> {
-        Ok(StarlarkCellPath(this.label.pkg().to_cell_path()))
+    fn path<'v>(
+        this: &StarlarkConfiguredTargetLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCellPath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCellPath(this.label.pkg().to_cell_path()),
+        ))
     }
 
     /// Returns the PackagePath for this configured target label.
     #[starlark(attribute)]
     fn package_path<'v>(
         this: &StarlarkConfiguredTargetLabel,
-    ) -> starlark::Result<StarlarkPackagePath> {
-        Ok(StarlarkPackagePath::new(this.label.pkg().dupe()))
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkPackagePath>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkPackagePath::new(this.label.pkg().dupe()),
+        ))
     }
 
-    fn config<'v>(this: &StarlarkConfiguredTargetLabel) -> starlark::Result<StarlarkConfiguration> {
-        Ok(StarlarkConfiguration((this.label.cfg()).dupe()))
+    fn config<'v>(
+        this: &StarlarkConfiguredTargetLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguration>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkConfiguration((this.label.cfg()).dupe()),
+        ))
     }
 
     /// Returns the unconfigured underlying target label.
-    fn raw_target(this: &StarlarkConfiguredTargetLabel) -> starlark::Result<StarlarkTargetLabel> {
-        Ok(StarlarkTargetLabel::new(
-            (*this.label.unconfigured()).dupe(),
+    fn raw_target<'v>(
+        this: &StarlarkConfiguredTargetLabel,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkTargetLabel>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkTargetLabel::new((*this.label.unconfigured()).dupe()),
         ))
     }
 
@@ -286,35 +312,40 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     fn with_sub_target<'v>(
         this: &'v StarlarkConfiguredTargetLabel,
         // TODO(nga): must be either positional or named.
-        #[starlark(default = SubtargetNameArg::List(UnpackList { items: Vec::new() }))]
+        #[starlark(default = SubtargetNameArg::List(ValueOf::empty_list()))]
         subtarget_name: SubtargetNameArg<'v>,
-    ) -> starlark::Result<StarlarkConfiguredProvidersLabel> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredProvidersLabel>> {
         let providers_name = value_to_providers_name(subtarget_name)?;
 
-        Ok(StarlarkConfiguredProvidersLabel::new(
-            ConfiguredProvidersLabel::new(this.label().dupe(), providers_name),
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkConfiguredProvidersLabel::new(ConfiguredProvidersLabel::new(
+                this.label().dupe(),
+                providers_name,
+            )),
         ))
     }
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 enum SubtargetNameArg<'v> {
-    List(UnpackList<String>),
-    Str(&'v str),
+    List(ValueOf<'v, ListType<StarlarkStr>>),
+    Str(ValueOf<'v, StarlarkStr>),
 }
 
 fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Result<ProvidersName> {
     let subtarget = match subtarget_name {
         SubtargetNameArg::List(list) => list
-            .items
-            .into_iter()
+            .try_items::<&str>()
             .map(|name| {
-                ProviderName::new(name).buck_error_context("for parameter `subtarget_name`")
+                ProviderName::new(name?.to_owned())
+                    .buck_error_context("for parameter `subtarget_name`")
             })
             .collect::<buck2_error::Result<Vec<_>>>()?,
         SubtargetNameArg::Str(str) => {
             vec![
-                ProviderName::new(str.to_owned())
+                ProviderName::new(str.as_str().to_owned())
                     .buck_error_context("for parameter `subtarget_name`")?,
             ]
         }
@@ -329,10 +360,10 @@ fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Res
     })
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub enum LabelArg<'v> {
-    Target(&'v StarlarkTargetLabel),
-    Providers(&'v StarlarkProvidersLabel),
+    Target(ValueOf<'v, StarlarkTargetLabel>),
+    Providers(ValueOf<'v, StarlarkProvidersLabel>),
 }
 
 impl<'v> LabelArg<'v> {
@@ -348,8 +379,8 @@ impl<'v> LabelArg<'v> {
 }
 
 #[starlark_module]
-pub fn register_target_label(globals: &mut GlobalsBuilder) {
-    const TargetLabel: StarlarkValueAsType<StarlarkTargetLabel> = StarlarkValueAsType::new();
-    const ConfiguredTargetLabel: StarlarkValueAsType<StarlarkConfiguredTargetLabel> =
-        StarlarkValueAsType::new();
-}
+#[starlark_types(
+    StarlarkTargetLabel as TargetLabel,
+    StarlarkConfiguredTargetLabel as ConfiguredTargetLabel
+)]
+pub fn register_target_label(globals: &mut GlobalsBuilder) {}

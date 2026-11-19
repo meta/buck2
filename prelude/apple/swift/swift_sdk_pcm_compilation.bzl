@@ -13,13 +13,16 @@ load(
     ":swift_debug_info_utils.bzl",
     "extract_and_merge_clang_debug_infos",
 )
-load(
-    ":swift_incremental_support.bzl",
-    "get_uses_experimental_content_based_path_hashing",
-)
 load(":swift_sdk_flags.bzl", "get_sdk_flags")
 load(":swift_toolchain.bzl", "get_swift_toolchain_info_dep")
-load(":swift_toolchain_types.bzl", "SdkUncompiledModuleInfo", "SwiftCompiledModuleInfo", "SwiftCompiledModuleTset", "SwiftToolchainInfo", "WrappedSdkCompiledModuleInfo")
+load(
+    ":swift_toolchain_types.bzl",
+    "SdkUncompiledModuleInfo",
+    "SwiftCompiledModuleInfo",
+    "SwiftCompiledModuleTset",
+    "SwiftToolchainInfo",
+    "WrappedSdkCompiledModuleInfo",
+)
 
 def get_shared_pcm_compilation_args(module_name: str) -> cmd_args:
     cmd = cmd_args()
@@ -33,13 +36,6 @@ def get_shared_pcm_compilation_args(module_name: str) -> cmd_args:
         "-fno-implicit-modules",
         "-Xcc",
         "-fno-implicit-module-maps",
-        # Embed all input files into the PCM so we don't need to include module map files when
-        # building remotely.
-        # https://github.com/apple/llvm-project/commit/fb1e7f7d1aca7bcfc341e9214bda8b554f5ae9b6
-        "-Xcc",
-        "-Xclang",
-        "-Xcc",
-        "-fmodules-embed-all-files",
         # Set the base directory of the pcm file to the working directory, which ensures
         # all paths serialized in the PCM are relative.
         "-Xcc",
@@ -83,29 +79,28 @@ def _add_sdk_module_search_path(cmd, uncompiled_sdk_module_info, swift_toolchain
     else:
         module_root_path = _remove_path_components_from_right(modulemap_path, 1)
         expanded_path = expand_relative_prefixed_sdk_path(swift_toolchain_info, module_root_path)
-    cmd.add([
+    cmd.add(
         "-Xcc",
         ("-F" if uncompiled_sdk_module_info.is_framework else "-I"),
         "-Xcc",
-        cmd_args(expanded_path),
-    ])
+        expanded_path,
+    )
 
-def get_swift_sdk_pcm_anon_targets(
-        ctx: AnalysisContext,
-        enable_cxx_interop: bool,
-        uncompiled_sdk_deps: list[Dependency],
-        swift_cxx_args: list[str]):
+def get_swift_sdk_pcm_anon_targets(ctx: AnalysisContext, enable_cxx_interop: bool, uncompiled_sdk_deps: list[Dependency], swift_cxx_args: list[str]):
     # We include the Swift deps here too as we need
     # to include their transitive clang deps.
     return [
-        (_swift_sdk_pcm_compilation, {
-            "dep": module_dep,
-            "enable_cxx_interop": enable_cxx_interop,
-            "name": module_dep.label,
-            "swift_cxx_args": swift_cxx_args,
-            "uses_experimental_content_based_path_hashing": True,
-            "_swift_toolchain": get_swift_toolchain_info_dep(ctx),
-        })
+        (
+            _swift_sdk_pcm_compilation,
+            {
+                "dep": module_dep,
+                "enable_cxx_interop": enable_cxx_interop,
+                "has_content_based_path": False,
+                "name": module_dep.label,
+                "swift_cxx_args": swift_cxx_args,
+                "_swift_toolchain": get_swift_toolchain_info_dep(ctx),
+            },
+        )
         for module_dep in uncompiled_sdk_deps
     ]
 
@@ -113,7 +108,7 @@ def _swift_sdk_pcm_compilation_impl(ctx: AnalysisContext) -> [Promise, list[Prov
     def k(sdk_pcm_deps_providers) -> list[Provider]:
         uncompiled_sdk_module_info = ctx.attrs.dep[SdkUncompiledModuleInfo]
         sdk_deps_tset = get_compiled_sdk_clang_deps_tset(ctx, sdk_pcm_deps_providers)
-        uses_experimental_content_based_path_hashing = get_uses_experimental_content_based_path_hashing(ctx)
+        uses_content_based_paths = False
 
         # We pass in Swift and Clang SDK module deps to get the transitive
         # Clang dependencies compiled with the correct Swift cxx args. For
@@ -190,7 +185,7 @@ def _swift_sdk_pcm_compilation_impl(ctx: AnalysisContext) -> [Promise, list[Prov
         _add_sdk_module_search_path(argsfile_cmd, uncompiled_sdk_module_info, swift_toolchain)
 
         shell_quoted_args = cmd_args(argsfile_cmd, quote = "shell")
-        argsfile, _ = ctx.actions.write("sdk_pcm_compile_argsfile", shell_quoted_args, allow_args = True, uses_experimental_content_based_path_hashing = uses_experimental_content_based_path_hashing)
+        argsfile, _ = ctx.actions.write("sdk_pcm_compile_argsfile", shell_quoted_args, allow_args = True, has_content_based_path = uses_content_based_paths)
         cmd.add(cmd_args(argsfile, format = "@{}", delimiter = ""))
         cmd.add(cmd_args(hidden = [argsfile_cmd]))
 
@@ -198,7 +193,7 @@ def _swift_sdk_pcm_compilation_impl(ctx: AnalysisContext) -> [Promise, list[Prov
             swift_toolchain,
             uncompiled_sdk_module_info.input_relative_path,
         )
-        pcm_output = ctx.actions.declare_output(module_name + ".pcm", uses_experimental_content_based_path_hashing = uses_experimental_content_based_path_hashing)
+        pcm_output = ctx.actions.declare_output(module_name + ".pcm", has_content_based_path = uses_content_based_paths)
         cmd.add([
             "-o",
             pcm_output.as_output(),
@@ -214,56 +209,20 @@ def _swift_sdk_pcm_compilation_impl(ctx: AnalysisContext) -> [Promise, list[Prov
             error_handler = apple_build_error_handler,
         )
 
-        # Construct the args needed to be passed to the clang importer
-        clang_deps_args = cmd_args()
-        clang_deps_args.add("-Xcc")
-        clang_deps_args.add(
-            cmd_args(
-                [
-                    "-fmodule-file=",
-                    module_name,
-                    "=",
-                    pcm_output,
-                ],
-                delimiter = "",
-            ),
-        )
-        clang_deps_args.add("-Xcc")
-        clang_deps_args.add(
-            cmd_args(
-                [
-                    "-fmodule-map-file=",
-                    expanded_modulemap_path_cmd,
-                ],
-                delimiter = "",
-            ),
-        )
-
-        # Module map files can live in the SDK or the toolchain resource dir.
-        # We need to pass through both to ensure the debuginfo target
-        # materializes them.
-        modulemap_artifacts = []
-        if swift_toolchain.sdk_path:
-            modulemap_artifacts.append(swift_toolchain.sdk_path)
-        if swift_toolchain.resource_dir:
-            modulemap_artifacts.append(swift_toolchain.resource_dir)
-
         compiled_sdk = SwiftCompiledModuleInfo(
-            clang_module_file_args = clang_deps_args,
+            clang_modulemap_path = expanded_modulemap_path_cmd,
             is_framework = uncompiled_sdk_module_info.is_framework,
             is_sdk_module = True,
             is_swiftmodule = False,
             module_name = module_name,
             output_artifact = pcm_output,
-            clang_modulemap_args = expanded_modulemap_path_cmd,
-            clang_modulemap_artifacts = modulemap_artifacts,
         )
 
         return [
             DefaultInfo(),
             WrappedSdkCompiledModuleInfo(
                 clang_deps = ctx.actions.tset(SwiftCompiledModuleTset, value = compiled_sdk, children = [sdk_deps_tset]),
-                clang_debug_info = extract_and_merge_clang_debug_infos(ctx, sdk_pcm_deps_providers, [pcm_output] + modulemap_artifacts),
+                clang_debug_info = extract_and_merge_clang_debug_infos(ctx, sdk_pcm_deps_providers, [pcm_output]),
             ),
         ]
 
@@ -283,8 +242,8 @@ _swift_sdk_pcm_compilation = rule(
     attrs = {
         "dep": attrs.dep(),
         "enable_cxx_interop": attrs.bool(),
+        "has_content_based_path": attrs.bool(),
         "swift_cxx_args": attrs.list(attrs.string(), default = []),
-        "uses_experimental_content_based_path_hashing": attrs.bool(),
         "_swift_toolchain": attrs.dep(),
     },
 )

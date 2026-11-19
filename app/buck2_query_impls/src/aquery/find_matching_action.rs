@@ -22,6 +22,7 @@ use dice::DiceComputations;
 use dupe::Dupe;
 use dupe::IterDupedExt;
 use either::Either;
+use futures::FutureExt;
 use tracing::debug;
 
 use crate::aquery::evaluator::get_dice_aquery_delegate;
@@ -63,61 +64,73 @@ async fn find_matching_action(
     analysis: &AnalysisResult,
     short_path: ForwardRelativePathBuf,
 ) -> buck2_error::Result<Option<ActionQueryNode>> {
-    ctx.with_linear_recompute(|ctx| async move {
-        let dice_aquery_delegate =
-            get_dice_aquery_delegate(&ctx, working_dir, global_cfg_options.dupe()).await?;
+    ctx.with_linear_recompute(|ctx| {
+        async move {
+            let dice_aquery_delegate =
+                get_dice_aquery_delegate(ctx, working_dir, global_cfg_options.dupe()).await?;
 
-        // Try to find exact path match first. If there are no exact matches, try to find an action
-        // that starts with the relevant part of the output path (this case is for targets that declare
-        // directories as outputs).
-        //
-        // FIXME(@wendyy): If we've iterated over all build artifacts and still haven't found an exact
-        // action key match, then return a possible action key with the shortest path. This can happen
-        // if a target declared an output directory instead of an artifact. As a best effort, we keep
-        // track of the possible build artifact with the shortest path to try find the action that produced
-        // the top-most directory. To fix this properly, we would need to let the action key or build
-        // artifact itself know if the output was a directory, which is nontrivial.
+            // Try to find exact path match first. If there are no exact matches, try to find an action
+            // that starts with the relevant part of the output path (this case is for targets that declare
+            // directories as outputs).
+            //
+            // FIXME(@wendyy): If we've iterated over all build artifacts and still haven't found an exact
+            // action key match, then return a possible action key with the shortest path. This can happen
+            // if a target declared an output directory instead of an artifact. As a best effort, we keep
+            // track of the possible build artifact with the shortest path to try find the action that produced
+            // the top-most directory. To fix this properly, we would need to let the action key or build
+            // artifact itself know if the output was a directory, which is nontrivial.
 
-        // TODO(cjhopman): We should probably just support iterating over declared artifacts rather than
-        // this more complex approach.
-        let mut maybe_match: Option<BuildArtifact> = None;
+            // TODO(cjhopman): We should probably just support iterating over declared artifacts rather than
+            // this more complex approach.
+            let mut maybe_match: Option<BuildArtifact> = None;
+            let analysis_values = analysis.analysis_values()?;
+            let action_outputs = analysis_values
+                .iter_actions()
+                .flat_map(|action| match action {
+                    Ok(action) => Either::Left(
+                        match action.action().outputs() {
+                            Cow::Borrowed(outputs) => Either::Left(outputs.iter().duped()),
+                            Cow::Owned(outputs) => Either::Right(outputs.into_iter()),
+                        }
+                        .map(Ok),
+                    ),
+                    Err(error) => Either::Right(std::iter::once(Err(error))),
+                });
 
-        for build_artifact in analysis
-            .analysis_values()
-            .iter_dynamic_lambda_outputs()
-            .chain(analysis.analysis_values().iter_actions().flat_map(
-                |v| match v.action().outputs() {
-                    Cow::Borrowed(v) => Either::Left(v.iter().duped()),
-                    Cow::Owned(v) => Either::Right(v.into_iter()),
-                },
-            ))
-        {
-            match check_output_path(&build_artifact, &short_path)? {
-                Some(action_key_match) => match action_key_match {
-                    ActionKeyMatch::Exact(key) => {
-                        return Ok(Some(dice_aquery_delegate.get_action_node(key).await?));
-                    }
-                    ActionKeyMatch::OutputsOf(artifact) => match &maybe_match {
-                        Some(maybe) => {
-                            if artifact.get_path().path().as_str().len()
-                                < maybe.get_path().path().as_str().len()
-                            {
-                                maybe_match = Some(artifact.dupe());
+            for build_artifact in analysis_values
+                .iter_dynamic_lambda_outputs()?
+                .map(Ok)
+                .chain(action_outputs)
+            {
+                let build_artifact = build_artifact?;
+                if let Some(action_key_match) = check_output_path(&build_artifact, &short_path)? {
+                    match action_key_match {
+                        ActionKeyMatch::Exact(key) => {
+                            return Ok(Some(dice_aquery_delegate.get_action_node(key).await?));
+                        }
+                        ActionKeyMatch::OutputsOf(artifact) => {
+                            if let Some(maybe) = &maybe_match {
+                                if artifact.get_path().path().as_str().len()
+                                    < maybe.get_path().path().as_str().len()
+                                {
+                                    maybe_match = Some(artifact.dupe());
+                                }
+                            } else {
+                                maybe_match = Some(artifact.dupe())
                             }
                         }
-                        None => maybe_match = Some(artifact.dupe()),
-                    },
-                },
-                None => (),
+                    }
+                }
+            }
+
+            match maybe_match {
+                Some(maybe) => Ok(Some(
+                    dice_aquery_delegate.get_action_node(maybe.key()).await?,
+                )),
+                None => Ok(None),
             }
         }
-
-        match maybe_match {
-            Some(maybe) => Ok(Some(
-                dice_aquery_delegate.get_action_node(maybe.key()).await?,
-            )),
-            None => Ok(None),
-        }
+        .boxed()
     })
     .await
 }

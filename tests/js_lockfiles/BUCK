@@ -1,0 +1,15 @@
+load("@fbcode_macros//build_defs:python_unittest.bzl", "python_unittest")
+load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_access_utils")
+
+oncall("build_infra")
+
+python_unittest(
+    name = "test_yarn_lockfiles",
+    srcs = ["test_yarn_lockfiles.py"],
+    network_access = network_access_utils.none(),
+    resources = {
+        "//buck2/app/buck2_explain/js:yarn.lock": "explain_js.yarn.lock",
+        "//buck2/app/buck2_explain/output_format_js:yarn.lock": "explain_output_format_js.yarn.lock",
+        "//buck2/website:yarn.lock": "website.yarn.lock",
+    },
+)

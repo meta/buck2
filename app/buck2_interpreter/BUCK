@@ -5,6 +5,19 @@ oncall("build_infra")
 rust_library(
     name = "buck2_interpreter",
     srcs = glob(["src/**/*.rs"]),
+    # Autocargo does not propagate Starlark's constraint-selected pagable
+    # feature, so enable it explicitly on the generated Cargo dependency edge.
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    "starlark": {
+                        "features": ["pagable"],
+                    },
+                },
+            },
+        },
+    },
     crate_root = "src/lib.rs",
     test_deps = [
         "fbsource//third-party/rust:tempfile",
@@ -15,6 +28,7 @@ rust_library(
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:either",
         "fbsource//third-party/rust:fancy-regex",
+        "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:itertools",
         "fbsource//third-party/rust:plist",
         "fbsource//third-party/rust:ref-cast",
@@ -28,12 +42,14 @@ rust_library(
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_events:buck2_events",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
+        "//buck2/app/buck2_settings:buck2_settings",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/dice/dice:dice",
         "//buck2/dice/dice_futures:dice_futures",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
+        "//buck2/gazebo/strong_hash:strong_hash",
+        "//buck2/pagable:pagable",
         "//buck2/starlark-rust/starlark:starlark",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
     ],
 )

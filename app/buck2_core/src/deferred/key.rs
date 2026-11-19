@@ -11,9 +11,10 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
+use buck2_util::size_assert;
 use dupe::Dupe;
+use pagable::Pagable;
 use smallvec::SmallVec;
-use static_assertions::assert_eq_size;
 
 use crate::configuration::data::ConfigurationData;
 use crate::deferred::base_deferred_key::BaseDeferredKey;
@@ -34,7 +35,8 @@ use crate::target::configured_target_label::ConfiguredTargetLabel;
     derive_more::Display,
     Debug,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 
 pub enum DeferredHolderKey {
@@ -42,7 +44,7 @@ pub enum DeferredHolderKey {
     DynamicLambda(Arc<DynamicLambdaResultsKey>),
 }
 
-assert_eq_size!(DeferredHolderKey, [usize; 3]);
+size_assert::words_of_type!(DeferredHolderKey, 3);
 
 impl DeferredHolderKey {
     pub fn for_analysis(target: ConfiguredTargetLabel) -> Self {

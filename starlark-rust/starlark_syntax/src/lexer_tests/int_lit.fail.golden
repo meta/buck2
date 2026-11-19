@@ -13,4 +13,3 @@ error: Parse error: integer cannot have leading 0, got `01`
   |
 1 | x = 01
   |     ^^
-  |

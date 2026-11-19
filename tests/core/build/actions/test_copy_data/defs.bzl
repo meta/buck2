@@ -12,12 +12,12 @@ def _impl(ctx):
     elif ctx.attrs.src != None:
         src = ctx.attrs.src
     elif ctx.attrs.write_executable_bit != None:
-        src = ctx.actions.write("empty.txt", "", is_executable = bool(ctx.attrs.write_executable_bit))
+        src = ctx.actions.write("empty.txt", "", is_executable = bool(ctx.attrs.write_executable_bit), has_content_based_path = False)
     else:
         fail("Must specify either src or write_executable_bit")
 
-    copied = ctx.actions.copy_file(ctx.label.name, src, executable_bit_override = ctx.attrs.executable_bit_override)
-    perms = ctx.actions.declare_output("{}_perms.txt".format(ctx.label.name))
+    copied = ctx.actions.copy_file(ctx.label.name, src, executable_bit_override = ctx.attrs.executable_bit_override, has_content_based_path = False)
+    perms = ctx.actions.declare_output("{}_perms.txt".format(ctx.label.name), has_content_based_path = False)
     script = cmd_args(
         "ls -lR",
         copied,

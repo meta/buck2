@@ -46,6 +46,13 @@ impl<F: Future> UnsafeSendFuture<F> {
     /// `Value`s on a given heap, along with the heap, to a different thread, together, that is safe.
     /// It's only not safe when some `Value` end up on one heap, and some on another.
     /// Rust can't express that natively, so we use this function to explain it to Rust.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the future encapsulates all Starlark values it references,
+    /// meaning it owns the entire Starlark heap that contains those values. If the future
+    /// references Starlark values from multiple heaps, or references values it doesn't own,
+    /// this is undefined behavior.
     pub unsafe fn new_encapsulates_starlark(fut: F) -> Self {
         Self(fut)
     }

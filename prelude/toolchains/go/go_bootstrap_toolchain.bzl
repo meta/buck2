@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//go_bootstrap:go_bootstrap.bzl", "GoBootstrapDistrInfo", "GoBootstrapToolchainInfo")
+load("@prelude//go_bootstrap:toolchain.bzl", "GoBootstrapDistrInfo", "GoBootstrapToolchainInfo")
 
 def _go_bootstrap_toolchain_impl(ctx):
     go_bootstrap_distr = ctx.attrs.go_bootstrap_distr[GoBootstrapDistrInfo]
@@ -28,7 +28,7 @@ go_bootstrap_toolchain = rule(
         "env_go_arch": attrs.string(),
         "env_go_os": attrs.string(),
         "go_bootstrap_distr": attrs.exec_dep(providers = [GoBootstrapDistrInfo]),
-        "go_wrapper": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:go_wrapper_py"),
+        "go_wrapper": attrs.exec_dep(providers = [RunInfo], default = "prelude//go_bootstrap/tools:go_wrapper_py"),
     },
 )
 

@@ -8,14 +8,15 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use buck2_error::BuckErrorContext;
+use buck2_core::soft_error_or_panic;
+use buck2_error::internal_error;
 use buck2_events::BuckEvent;
 use buck2_events::span::SpanId;
+use buck2_hash::BuckMutMap;
+use buck2_util::exact_size_iter::IterExactSize;
 use derivative::Derivative;
-use derive_more::From;
 use dupe::Dupe;
 use linked_hash_map::LinkedHashMap;
 
@@ -115,10 +116,11 @@ impl<'a, T: SpanTrackable> SpanHandle<'a, T> {
                 .tracker
                 .all
                 .get(c.0)
-                .with_buck_error_context(|| {
-                    format!(
+                .ok_or_else(|| {
+                    internal_error!(
                         "Invariant violation: span `{:?}` references non-existent child `{}`",
-                        self.span.info.event, c.0
+                        self.span.info.event,
+                        c.0
                     )
                 })
                 .unwrap();
@@ -141,7 +143,7 @@ impl<'a, T: SpanTrackable> SpanHandle<'a, T> {
 pub struct Roots<T: SpanTrackable> {
     roots: LinkedHashMap<<T as SpanTrackable>::Id, RootData>,
     boring_roots: LinkedHashMap<<T as SpanTrackable>::Id, RootData>,
-    dice_counts: HashMap<&'static str, u64>,
+    dice_counts: BuckMutMap<&'static str, u64>,
 }
 
 #[derive(Clone)]
@@ -200,7 +202,14 @@ impl<T: SpanTrackable> Roots<T> {
                     *c -= 1;
                 }
                 v => {
-                    tracing::error!("Decrementing {} but it is was {:?}", dice_key_type, v);
+                    soft_error_or_panic!(
+                        "span_tracker_dice_count_underflow",
+                        buck2_error::internal_error!(
+                            "Decrementing {} but it was {:?}",
+                            dice_key_type,
+                            v
+                        )
+                    );
                 }
             }
         }
@@ -235,42 +244,16 @@ impl<T: SpanTrackable> Roots<T> {
 
         // Chain does not implement ExactSizeIterator because it may overflow. We assume that our
         // roots don't overflow.
-        ExactSizeIteratorWrapper {
-            inner: self.roots.keys().chain(self.boring_roots.keys()),
-            size,
-        }
+        self.roots
+            .keys()
+            .chain(self.boring_roots.keys())
+            .with_exact_size(size)
     }
 
-    pub fn dice_counts(&self) -> &HashMap<&'static str, u64> {
+    pub fn dice_counts(&self) -> &BuckMutMap<&'static str, u64> {
         &self.dice_counts
     }
 }
-
-struct ExactSizeIteratorWrapper<T> {
-    inner: T,
-    size: usize,
-}
-
-impl<T> Iterator for ExactSizeIteratorWrapper<T>
-where
-    T: Iterator,
-{
-    type Item = <T as Iterator>::Item;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let val = self.inner.next();
-        if val.is_some() {
-            self.size -= 1;
-        }
-        val
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.size, Some(self.size))
-    }
-}
-
-impl<T> ExactSizeIterator for ExactSizeIteratorWrapper<T> where T: Iterator {}
 
 /// SpanTracker tracks ongoing spans received via handle() (those are typically produced by
 /// the Buck daemon). Internally, we keep track of:
@@ -287,7 +270,7 @@ impl<T> ExactSizeIterator for ExactSizeIteratorWrapper<T> where T: Iterator {}
 #[derive(Clone)]
 pub struct SpanTracker<T: SpanTrackable> {
     roots: Roots<T>,
-    all: HashMap<<T as SpanTrackable>::Id, Span<T>>,
+    all: BuckMutMap<<T as SpanTrackable>::Id, Span<T>>,
     roots_completed: usize,
 }
 
@@ -445,6 +428,7 @@ impl SpanTrackable for BuckEvent {
         use buck2_data::span_start_event::Data;
 
         match self.span_start_event().and_then(|span| span.data.as_ref()) {
+            Some(Data::DynamicLambda(..)) => true,
             Some(Data::ExecutorStage(data)) => {
                 use buck2_data::executor_stage_start::Stage;
 
@@ -452,23 +436,19 @@ impl SpanTrackable for BuckEvent {
                     Some(Stage::Local(stage)) => {
                         use buck2_data::local_stage::Stage;
 
-                        match stage.stage.as_ref() {
-                            Some(Stage::Queued(..) | Stage::AcquireLocalResource(..)) => true,
-                            _ => false,
-                        }
+                        matches!(
+                            stage.stage.as_ref(),
+                            Some(Stage::Queued(..) | Stage::AcquireLocalResource(..))
+                        )
                     }
                     Some(Stage::Re(stage)) => {
                         use buck2_data::re_stage::Stage;
 
-                        match stage.stage.as_ref() {
-                            Some(Stage::Queue(..)) => true,
-                            _ => false,
-                        }
+                        matches!(stage.stage.as_ref(), Some(Stage::Queue(..)))
                     }
                     _ => false,
                 }
             }
-            Some(Data::BxlDiceInvocation(..)) => true,
             _ => false,
         }
     }
@@ -535,7 +515,7 @@ pub fn is_span_shown(event: &BuckEvent) -> bool {
             | Data::Load(..)
             | Data::LoadPackage(..)
             | Data::TestDiscovery(..)
-            | Data::TestStart(..)
+            | Data::TestRun(..)
             | Data::FileWatcher(..)
             | Data::SharedTask(..)
             | Data::CreateOutputSymlinks(..)
@@ -556,6 +536,7 @@ pub fn is_span_shown(event: &BuckEvent) -> bool {
             | Data::BxlExecution(..)
             | Data::BxlDiceInvocation(..)
             | Data::ReUpload(..)
+            | Data::ReSubmit(..)
             | Data::ConnectToInstaller(..)
             | Data::LocalResources(..)
             | Data::ReleaseLocalResources(..)

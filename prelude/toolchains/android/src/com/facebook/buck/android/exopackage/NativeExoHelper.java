@@ -12,6 +12,7 @@ package com.facebook.buck.android.exopackage;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
@@ -30,6 +31,7 @@ import java.util.Objects;
 import java.util.function.Supplier;
 
 /** Installs native code for exo. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class NativeExoHelper implements ExoHelper {
   @VisibleForTesting public static final Path NATIVE_LIBS_DIR = Paths.get("native-libs");
   private final Supplier<List<String>> abiSupplier;
@@ -143,7 +145,7 @@ public class NativeExoHelper implements ExoHelper {
             relativePath.getName(0).toString().equals("libs")
                 || relativePath.getName(0).toString().equals("assetLibs"));
       }
-      String libAbi = relativePath.getParent().getFileName().toString();
+      String libAbi = Objects.requireNonNull(relativePath.getParent()).getFileName().toString();
       String libName = relativePath.getFileName().toString();
       if (libAbi.equals(abi) && !ignoreLibraries.contains(libName)) {
         filteredLibraries.put(entry);

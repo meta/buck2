@@ -10,7 +10,6 @@
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     use buck2_artifact::actions::key::ActionIndex;
@@ -24,9 +23,9 @@ mod tests {
     use buck2_build_api::artifact_groups::ArtifactGroup;
     use buck2_build_api::artifact_groups::deferred::TransitiveSetKey;
     use buck2_build_api::build::detailed_aggregated_metrics::testing::traverse_partial_action_graph;
-    use buck2_build_api::deferred::calculation::DeferredHolder;
+    use buck2_build_api::deferred::calculation::OwnedDeferredHolder;
     use buck2_build_api::dynamic::calculation::DynamicLambdaResult;
-    use buck2_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSet;
+    use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
     use buck2_core::category::Category;
     use buck2_core::configuration::data::ConfigurationData;
     use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
@@ -39,10 +38,13 @@ mod tests {
     use buck2_core::package::source_path::SourcePath;
     use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use buck2_hash::BuckFixedSortedMap;
+    use buck2_hash::buck_mut_insertion_set;
+    use buck2_node::rule_type::RuleType;
     use dupe::Dupe;
     use dupe::IterDupedExt;
-    use indexmap::indexset;
-    use starlark::values::OwnedFrozenValueTyped;
+    use starlark::values::OwnedFrozen;
+    use starlark::values::ValueTyped;
 
     use crate::actions::testings::SimpleAction;
 
@@ -56,7 +58,10 @@ mod tests {
         holder_key: DeferredHolderKey,
         action_count: u32,
         actions: Vec<(ActionKey, ActionState)>,
-        tsets: Vec<(TransitiveSetKey, OwnedFrozenValueTyped<FrozenTransitiveSet>)>,
+        tsets: Vec<(
+            TransitiveSetKey,
+            OwnedFrozen<ValueTyped<'static, TransitiveSet<'static>>>,
+        )>,
         dynamics: Vec<()>,
     }
 
@@ -79,12 +84,15 @@ mod tests {
             }
         }
 
-        fn add_to_state(self, state: &mut fxhash::FxHashMap<DeferredHolderKey, DeferredHolder>) {
+        fn add_to_state(
+            self,
+            state: &mut buck2_hash::BuckMutMap<DeferredHolderKey, OwnedDeferredHolder>,
+        ) {
             let (key, holder) = self.build();
             state.insert(key, holder);
         }
 
-        fn build(self) -> (DeferredHolderKey, DeferredHolder) {
+        fn build(self) -> (DeferredHolderKey, OwnedDeferredHolder) {
             let Self {
                 holder_key,
                 actions,
@@ -105,17 +113,25 @@ mod tests {
                 RecordedAnalysisValues::testing_new(holder_key.dupe(), tsets, recorded_actions);
             let holder = match &holder_key {
                 DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(..)) => {
-                    DeferredHolder::Analysis(AnalysisResult::new(
-                        analysis_values,
-                        None,
-                        HashMap::new(),
-                        0,
-                        0,
-                        None,
-                    ))
+                    OwnedDeferredHolder::Analysis(
+                        AnalysisResult::new(
+                            analysis_values,
+                            None,
+                            BuckFixedSortedMap::default(),
+                            0,
+                            0,
+                            None,
+                            Vec::new(),
+                            RuleType::Forward,
+                        )
+                        .expect("test analysis should have valid providers"),
+                    )
                 }
                 DeferredHolderKey::DynamicLambda(..) => {
-                    DeferredHolder::DynamicLambda(Arc::new(DynamicLambdaResult { analysis_values }))
+                    OwnedDeferredHolder::DynamicLambda(Arc::new(DynamicLambdaResult {
+                        analysis_values,
+                        rule_type: None,
+                    }))
                 }
                 _ => unimplemented!(),
             };
@@ -133,7 +149,10 @@ mod tests {
         }
 
         fn bind_dynamic(&mut self, output_slot: ArtifactGroup, bind_to: &ActionKey) {
-            let key = output_slot.unpack_artifact().unwrap().action_key().unwrap();
+            let ArtifactGroup::Artifact(artifact) = output_slot else {
+                panic!("expected an artifact")
+            };
+            let key = artifact.action_key().unwrap();
             match &mut self.actions[key.action_index().0 as usize].1 {
                 ActionState::Action(..) | ActionState::BoundDynamic(..) => panic!(),
                 x => *x = ActionState::BoundDynamic(bind_to.dupe()),
@@ -167,7 +186,7 @@ mod tests {
                 key.dupe(),
                 Box::new(SimpleAction::new(
                     inputs.into_iter().duped().collect(),
-                    indexset! {output.dupe()},
+                    buck_mut_insertion_set! {output.dupe()},
                     Vec::new(),
                     Category::new("category".to_owned()).unwrap(),
                     Some(format!("id-{idx}")),
@@ -187,7 +206,7 @@ mod tests {
                     BuckOutPathKind::default(),
                 ),
                 key.dupe(),
-                buck2_execute::execute::request::OutputType::File,
+                buck2_artifact::artifact::output_type::OutputType::File,
             )
             .unwrap()
         }
@@ -215,14 +234,14 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_set_eq(actions: fxhash::FxHashSet<ActionKey>, expected: Vec<ActionKey>) {
-        let expected_set: fxhash::FxHashSet<_> = expected.into_iter().collect();
+    fn assert_set_eq(actions: buck2_hash::BuckMutSet<ActionKey>, expected: Vec<ActionKey>) {
+        let expected_set: buck2_hash::BuckMutSet<_> = expected.into_iter().collect();
         assert_eq!(actions, expected_set)
     }
 
     #[test]
     fn test_empty_graph() -> buck2_error::Result<()> {
-        let state = fxhash::FxHashMap::default();
+        let state = buck2_hash::BuckMutMap::default();
         let (complete, actions) = traverse_partial_action_graph(Vec::new(), &state)?;
         assert!(complete);
         assert!(actions.is_empty());
@@ -231,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_single_action() -> buck2_error::Result<()> {
-        let mut state = fxhash::FxHashMap::default();
+        let mut state = buck2_hash::BuckMutMap::default();
 
         let mut builder = Builder::for_analysis(create_target("root//:lib").dupe());
         let (output, action_key) =
@@ -247,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_diamond() -> buck2_error::Result<()> {
-        let mut state = fxhash::FxHashMap::default();
+        let mut state = buck2_hash::BuckMutMap::default();
 
         let mut builder1 = Builder::for_analysis(create_target("root//:lib").dupe());
         let mut builder2 = Builder::for_analysis(create_target("root//:bin"));
@@ -282,7 +301,7 @@ mod tests {
         // cycles can't actually occur in the action graph, but there may be bugs or races in our
         // state tracking that leads to us traversing an invalid graph. This test just ensures that
         // we still terminate if we encounter a cycle.
-        let mut state = fxhash::FxHashMap::default();
+        let mut state = buck2_hash::BuckMutMap::default();
 
         let mut builder1 = Builder::for_analysis(create_target("root//:lib").dupe());
 
@@ -306,7 +325,7 @@ mod tests {
     #[should_panic(expected = "assertion `left == right` failed")] // We don't currently actually have the ability to traverse this edge.
     fn test_dynamic_input() {
         fn go() -> buck2_error::Result<()> {
-            let mut state = fxhash::FxHashMap::default();
+            let mut state = buck2_hash::BuckMutMap::default();
 
             let mut builder1 = Builder::for_analysis(create_target("root//:lib").dupe());
 
@@ -335,7 +354,7 @@ mod tests {
     /// Checks that we can traverse a graph where some parts are missing.
     #[test]
     fn test_dynamic_node_analysis_missing() -> buck2_error::Result<()> {
-        let mut state = fxhash::FxHashMap::default();
+        let mut state = buck2_hash::BuckMutMap::default();
 
         let mut builder1 = Builder::for_analysis(create_target("root//:lib").dupe());
 
@@ -362,7 +381,7 @@ mod tests {
     /*
     #[test]
     fn test_tset() -> buck2_error::Result<()> {
-        let mut state = fxhash::FxHashMap::default();
+        let mut state = buck2_hash::BuckMutMap::default();
 
         let mut builder1 = Builder::for_analysis(create_target("root//:lib").dupe());
 

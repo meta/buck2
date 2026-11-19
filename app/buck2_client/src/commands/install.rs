@@ -26,6 +26,8 @@ use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::streaming::StreamingCommand;
 
+use crate::commands::build::print_buck_ui;
+
 #[derive(Debug, clap::Parser)]
 #[clap(name = "install", about = "Build and install an application")]
 pub struct InstallCommand {
@@ -147,7 +149,7 @@ impl StreamingCommand for InstallCommand {
     ) -> ExitResult {
         let context = ctx.client_context(matches, &self)?;
 
-        let mut extra_run_args: Vec<String> = self.extra_run_args.clone();
+        let mut extra_run_args: Vec<String> = vec![];
         if self.android_install_opts.run {
             extra_run_args.push("-r".to_owned());
         }
@@ -182,6 +184,11 @@ impl StreamingCommand for InstallCommand {
             extra_run_args.push("-k".to_owned());
         }
 
+        // Add the additional run args passed to buck.
+        // They are added last to allow for `buck install -- --some-installer-arg -- --arbitrary-app-arg1 --another-app-arg`
+        // as otherwise we'll add the above installer options *after* the installer extra args `--` separator.
+        extra_run_args.extend(self.extra_run_args.clone());
+
         let response = buckd
             .with_flushing()
             .install(
@@ -199,12 +206,13 @@ impl StreamingCommand for InstallCommand {
             )
             .await?;
         let console = self.common_opts.console_opts.final_console();
+        print_buck_ui(&console, ctx, events_ctx.used_superconsole)?;
 
         match response {
             CommandOutcome::Success(_) => {
                 if self.patterns.is_empty() {
                     console.print_warning("NO BUILD TARGET PATTERNS SPECIFIED")?;
-                } else {
+                } else if ctx.verbosity.print_success_message() {
                     console.print_success("INSTALL SUCCEEDED")?;
                 }
                 ExitResult::success()

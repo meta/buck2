@@ -191,6 +191,41 @@ def test():
 }
 
 #[test]
+fn test_select_funcs_on_select_fail() {
+    let _guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
+    let mut tester = Tester::new().unwrap();
+    tester
+        .run_starlark_test(indoc!(
+            r#"
+def _assert_eq(expected, actual):
+    if type(expected) == type(select({"DEFAULT": []})):
+        result = __internal__.select_equal(expected, actual)
+    else:
+        result = expected == actual
+
+    if not result:
+        fail("expected %s but got %s" % (expected, actual))
+
+def test():
+    # The function is not applied to `select_fail()` or `select_incompatible()` values, whether
+    # they appear inside a `select({...})`, as a `+` operand, or as the whole value.
+    fail_value = select_fail("x")
+    incompatible_value = select_incompatible("x")
+    _assert_eq(True, select_map(fail_value, lambda v: "mapped") == fail_value)
+    _assert_eq(True, select_map(incompatible_value, lambda v: "mapped") == incompatible_value)
+    _assert_eq(
+        select({"config/a:a": "mapped"}) + select_fail("x"),
+        select_map(select({"config/a:a": 1}) + select_fail("x"), lambda v: "mapped"),
+    )
+    _assert_eq(False, select_test(fail_value, lambda v: True))
+    _assert_eq(False, select_test(incompatible_value, lambda v: True))
+    _assert_eq(False, select_test(select({"config/a:a": 1}) + select_fail("x"), lambda v: v != 1))
+"#
+        ))
+        .unwrap();
+}
+
+#[test]
 fn test_failing_select_funcs() {
     let mut tester = Tester::new().unwrap();
     assert!(

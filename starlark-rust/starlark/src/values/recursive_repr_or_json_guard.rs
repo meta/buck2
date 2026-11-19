@@ -55,8 +55,24 @@ impl Drop for JsonStackGuard {
 /// Returned when `repr` is called recursively and a cycle is detected.
 pub(crate) struct ReprCycle;
 
-/// Returned when `to_json` is called recursively and a cycle is detected.
-pub(crate) struct JsonCycle;
+/// Why a value cannot be serialized to JSON.
+pub(crate) enum JsonStackError {
+    /// The value contains itself.
+    Cycle,
+    /// Serializing the value would run out of native stack.
+    TooDeep,
+}
+
+/// Stack we refuse to serialize into, leaving it free for the rest of the program.
+///
+/// Serializing goes through `erased_serde` into monomorphised `serde_json` frames, which cost
+/// 10-30 KiB of native stack per level of nesting, so a value only a couple of hundred deep can
+/// exhaust the stack. Without this check that aborts the process; with it we stop while there is
+/// still stack left and return an error.
+///
+/// The reserve has to cover several levels of nesting, since it is only checked between them, plus
+/// whatever the caller does with the error afterwards.
+const JSON_STACK_RESERVE: usize = 256 * 1024;
 
 thread_local! {
     static REPR_STACK: Cell<SmallSet<RawPointer>> = const { Cell::new(SmallSet::new()) };
@@ -70,26 +86,32 @@ thread_local! {
 pub(crate) fn repr_stack_push(value: Value) -> Result<ReprStackGuard, ReprCycle> {
     REPR_STACK.with(|repr_stack| {
         let mut stack = Cell::take(repr_stack);
-        if unlikely(!stack.insert(value.ptr_value())) {
-            repr_stack.set(stack);
+        let res = if unlikely(!stack.insert(value.ptr_value())) {
             Err(ReprCycle)
         } else {
-            repr_stack.set(stack);
             Ok(ReprStackGuard)
-        }
+        };
+        repr_stack.set(stack);
+        res
     })
 }
 
-/// Push a value to the stack, return error if it is already on the stack.
-pub(crate) fn json_stack_push(value: Value) -> Result<JsonStackGuard, JsonCycle> {
+/// Push a value to the stack, return error if it is already on the stack, or if serializing it
+/// would run out of native stack.
+pub(crate) fn json_stack_push(value: Value) -> Result<JsonStackGuard, JsonStackError> {
+    // `remaining_stack` returns `None` when the platform cannot tell us, in which case there is
+    // nothing to check against and we carry on.
+    if unlikely(stacker::remaining_stack().is_some_and(|left| left < JSON_STACK_RESERVE)) {
+        return Err(JsonStackError::TooDeep);
+    }
     JSON_STACK.with(|json_stack| {
         let mut stack = Cell::take(json_stack);
-        if unlikely(!stack.insert(value.ptr_value())) {
-            json_stack.set(stack);
-            Err(JsonCycle)
+        let res = if unlikely(!stack.insert(value.ptr_value())) {
+            Err(JsonStackError::Cycle)
         } else {
-            json_stack.set(stack);
             Ok(JsonStackGuard)
-        }
+        };
+        json_stack.set(stack);
+        res
     })
 }

@@ -19,6 +19,7 @@ import com.facebook.buck.android.apk.sdk.ApkJarBuilder;
 import com.facebook.buck.android.apk.sdk.DuplicateFileException;
 import com.facebook.buck.android.apk.sdk.IArchiveBuilder;
 import com.facebook.buck.android.apk.sdk.SealedApkException;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import java.io.File;
@@ -29,11 +30,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Enumeration;
+import java.util.Objects;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import javax.annotation.Nullable;
+import org.jetbrains.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AndroidBundleUtils {
 
   public interface DuplicateFileListener {
@@ -365,13 +368,14 @@ public class AndroidBundleUtils {
    */
   private static boolean checkFolderForPackaging(String folderName) {
     return !folderName.equalsIgnoreCase("nonJvmMain")
-        && // nonJvmMain is only useful when build multiplatform and we are building an APK here
-        !folderName.equalsIgnoreCase("commonMain")
-        && // commonMain folder is part of multiple AndroidX libraries, exclude it to avoid
+        // nonJvmMain is only useful when build multiplatform and we are building an APK here
+        // commonMain folder is part of multiple AndroidX libraries, exclude it to avoid
         // duplicate file error
-        !folderName.equalsIgnoreCase("nativeMain")
-        && // nativeMain holds platform-specific code for native environments like iOS and macOS,
-        !folderName.startsWith("_");
+        && !folderName.equalsIgnoreCase("commonMain")
+        // nativeMain holds platform-specific code for native environments like iOS and macOS,
+        // exclude it to avoid duplicate file error
+        // see https://kotlinlang.org/docs/multiplatform-discover-project.html
+        && !folderName.equalsIgnoreCase("nativeMain");
   }
 
   /**
@@ -442,7 +446,7 @@ public class AndroidBundleUtils {
     File tempFile = tempFilePath.toFile();
     tempFile.deleteOnExit();
     try (InputStream in = zipFile.getInputStream(ze)) {
-      Files.copy(in, tempFilePath, REPLACE_EXISTING);
+      Files.copy(Objects.requireNonNull(in), tempFilePath, REPLACE_EXISTING);
     }
     return tempFile;
   }

@@ -1,7 +1,0 @@
-name: run_test_py
-runs:
-  using: composite
-  steps:
-  - name: Run test.py
-    run: python3 test.py --ci --git --buck2=$RUNNER_TEMP/artifacts/buck2
-    shell: bash

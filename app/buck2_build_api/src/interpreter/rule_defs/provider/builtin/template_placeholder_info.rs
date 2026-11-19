@@ -12,53 +12,24 @@ use std::fmt::Debug;
 
 use allocative::Allocative;
 use buck2_build_api_derive::internal_provider;
+use buck2_hash::BuckMutInsertionMap;
 use either::Either;
 use starlark::any::ProvidesStaticType;
-use starlark::coerce::Coerce;
-use starlark::collections::SmallMap;
 use starlark::environment::GlobalsBuilder;
 use starlark::values::Freeze;
-use starlark::values::FrozenRef;
-use starlark::values::FrozenValue;
+use starlark::values::Heap;
+use starlark::values::StarlarkPagable;
+use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueLifetimeless;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::ValueOfUncheckedGeneric;
-use starlark::values::dict::AllocDict;
-use starlark::values::dict::DictRef;
+use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
-use starlark::values::dict::FrozenDictRef;
+use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
-use crate::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
+use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
 
-#[derive(Debug, buck2_error::Error)]
-#[buck2(tag = Input)]
-enum TemplatePlaceholderInfoError {
-    #[error(
-        "Expected TemplatePlaceholderInfo.{field_key} to be a dict of String->arg-like Value, got `{value_repr}`."
-    )]
-    VariablesNotADict {
-        field_key: String,
-        value_repr: String,
-    },
-    #[error(
-        "Expected TemplatePlaceholderInfo.{field_key} to be a dict of String->Value, where each Value is ArgLike or is itself a dict of String->ArgLike but {key} isn't either of those."
-    )]
-    ValueNotValidKeyedPlaceholder { field_key: String, key: String },
-    #[error(
-        "Expected TemplatePlaceholderInfo.{field_key}[{key}] to be a dict of String->Arglike but {inner_key} isn't an ArgLike Value."
-    )]
-    InnerValueNotCommandLineLike {
-        field_key: String,
-        key: String,
-        inner_key: String,
-    },
-}
 /// A provider that is used for expansions in string attribute templates
 ///
 /// String attribute templates allow two types of user-defined placeholders, "unkeyed placeholders"
@@ -82,137 +53,90 @@ enum TemplatePlaceholderInfoError {
 ///  - keyed_variables: A mapping of names to arg-like values or dictionary of string to
 ///        arg-like values. These are used for "keyed placeholder" expansion.
 #[internal_provider(template_placeholder_info_creator)]
-#[derive(Clone, Debug, Trace, Coerce, Freeze, ProvidesStaticType, Allocative)]
+#[derive(
+    Clone,
+    Debug,
+    Trace,
+    Freeze,
+    ProvidesStaticType,
+    Allocative,
+    StarlarkPagable
+)]
 #[repr(C)]
-pub struct TemplatePlaceholderInfoGen<V: ValueLifetimeless> {
-    // `Value` in both fields is command line arg.
-    // TODO(nga): specify type more precisely.
-    unkeyed_variables: ValueOfUncheckedGeneric<V, DictType<String, FrozenValue>>,
-    keyed_variables: ValueOfUncheckedGeneric<
-        V,
-        DictType<String, Either<FrozenValue, DictType<String, FrozenValue>>>,
+pub struct TemplatePlaceholderInfo<'v> {
+    unkeyed_variables: ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
+    keyed_variables: ValueOf<
+        'v,
+        DictType<
+            StarlarkStr,
+            Either<ValueAsCommandLineLike<'v>, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
+        >,
     >,
 }
 
-impl FrozenTemplatePlaceholderInfo {
-    pub fn unkeyed_variables(&self) -> SmallMap<FrozenRef<'static, str>, FrozenCommandLineArg> {
-        FrozenDictRef::from_frozen_value(self.unkeyed_variables.get())
-            .expect("should be a dict-like object")
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.downcast_frozen_str().expect("should have string keys"),
-                    FrozenCommandLineArg::new(v).unwrap(),
-                )
-            })
-            .collect()
+fn collect_variables<'v>(
+    variables: ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
+) -> buck2_error::Result<BuckMutInsertionMap<StringValue<'v>, CommandLineArg<'v>>> {
+    variables
+        .iter()
+        .map(|entry| {
+            let (k, v) = entry?;
+            Ok((k, v))
+        })
+        .collect()
+}
+
+impl<'v> TemplatePlaceholderInfo<'v> {
+    pub fn unkeyed_variables(
+        &self,
+    ) -> buck2_error::Result<BuckMutInsertionMap<StringValue<'v>, CommandLineArg<'v>>> {
+        collect_variables(self.unkeyed_variables)
     }
 
     pub fn keyed_variables(
         &self,
-    ) -> SmallMap<
-        FrozenRef<'static, str>,
-        Either<FrozenCommandLineArg, SmallMap<FrozenRef<'static, str>, FrozenCommandLineArg>>,
+    ) -> buck2_error::Result<
+        BuckMutInsertionMap<
+            StringValue<'v>,
+            Either<CommandLineArg<'v>, BuckMutInsertionMap<StringValue<'v>, CommandLineArg<'v>>>,
+        >,
     > {
-        FrozenDictRef::from_frozen_value(self.keyed_variables.get())
-            .expect("should be a dict-like object")
+        self.keyed_variables
             .iter()
-            .map(|(k, v)| {
-                (k.downcast_frozen_str().expect("should have string keys"), {
-                    if let Some(dict) = FrozenDictRef::from_frozen_value(v) {
-                        Either::Right(
-                            dict.iter()
-                                .map(|(k, v)| {
-                                    (
-                                        k.downcast_frozen_str().expect("should have string keys"),
-                                        FrozenCommandLineArg::new(v).unwrap(),
-                                    )
-                                })
-                                .collect(),
-                        )
-                    } else if let Ok(cmd) = FrozenCommandLineArg::new(v) {
-                        Either::Left(cmd)
-                    } else {
-                        unreachable!("should be dict or command line")
-                    }
-                })
+            .map(|entry| {
+                let (k, v) = entry?;
+                let v = match v.split()? {
+                    Either::Left(arg) => Either::Left(arg),
+                    Either::Right(dict) => Either::Right(collect_variables(dict)?),
+                };
+                Ok((k, v))
             })
             .collect()
-    }
-
-    pub fn _lookup_provider_raw(providers: &FrozenProviderCollectionValue) -> Option<&FrozenValue> {
-        let provider_id = TemplatePlaceholderInfoCallable::provider_id();
-        providers
-            .provider_collection()
-            .get_provider_raw(provider_id)
-    }
-}
-
-fn verify_variables_type(field_key: &str, variables: Value) -> buck2_error::Result<()> {
-    match DictRef::from_value(variables) {
-        None => Err(TemplatePlaceholderInfoError::VariablesNotADict {
-            field_key: field_key.to_owned(),
-            value_repr: variables.to_repr(),
-        }
-        .into()),
-        Some(dict) => {
-            for (key, value) in dict.iter() {
-                if ValueAsCommandLineLike::unpack_value(value)?.is_some() {
-                    continue;
-                }
-
-                if let Some(dict) = DictRef::from_value(value) {
-                    for (inner_key, value) in dict.iter() {
-                        if ValueAsCommandLineLike::unpack_value(value)?.is_none() {
-                            return Err(
-                                TemplatePlaceholderInfoError::InnerValueNotCommandLineLike {
-                                    field_key: field_key.to_owned(),
-                                    key: key.to_string(),
-                                    inner_key: inner_key.to_string(),
-                                }
-                                .into(),
-                            );
-                        }
-                    }
-                    continue;
-                }
-
-                return Err(
-                    TemplatePlaceholderInfoError::ValueNotValidKeyedPlaceholder {
-                        field_key: field_key.to_owned(),
-                        key: key.to_string(),
-                    }
-                    .into(),
-                );
-            }
-
-            Ok(())
-        }
-    }
-}
-
-impl<'v> TemplatePlaceholderInfo<'v> {
-    fn new(unkeyed_variables: Value<'v>, keyed_variables: Value<'v>) -> buck2_error::Result<Self> {
-        verify_variables_type("unkeyed_variables", unkeyed_variables)?;
-        verify_variables_type("keyed_variables", keyed_variables)?;
-        Ok(Self {
-            unkeyed_variables: ValueOfUnchecked::new(unkeyed_variables),
-            keyed_variables: ValueOfUnchecked::new(keyed_variables),
-        })
     }
 }
 
 #[starlark_module]
 fn template_placeholder_info_creator(builder: &mut GlobalsBuilder) {
-    #[starlark(as_type = FrozenTemplatePlaceholderInfo)]
+    #[starlark(as_type = TemplatePlaceholderInfo<'static>)]
     fn TemplatePlaceholderInfo<'v>(
-        // TODO(nga): specify parameter types.
-        #[starlark(default = AllocDict::EMPTY)] unkeyed_variables: Value<'v>,
-        #[starlark(default = AllocDict::EMPTY)] keyed_variables: Value<'v>,
-    ) -> starlark::Result<TemplatePlaceholderInfo<'v>> {
-        Ok(TemplatePlaceholderInfo::new(
+        #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
+        unkeyed_variables: ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
+        #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
+        keyed_variables: ValueOf<
+            'v,
+            DictType<
+                StarlarkStr,
+                Either<
+                    ValueAsCommandLineLike<'v>,
+                    DictType<StarlarkStr, ValueAsCommandLineLike<'v>>,
+                >,
+            >,
+        >,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, TemplatePlaceholderInfo<'v>>> {
+        Ok(heap.alloc(TemplatePlaceholderInfo {
             unkeyed_variables,
             keyed_variables,
-        )?)
+        }))
     }
 }

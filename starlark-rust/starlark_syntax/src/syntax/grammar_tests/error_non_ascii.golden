@@ -1,0 +1,26 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+("☃", 1 +, 1)
+
+Error:
+error: Parse error: unexpected symbol ',', expected expression
+ --> error_non_ascii:1:10
+  |
+1 | ("☃", 1 +, 1)
+  |          ^
+
+
+Program:
+["☃"] += 1
+
+Error:
+error: left-hand-side of modifying assignment cannot be a list or tuple
+ --> error_non_ascii:1:1
+  |
+1 | ["☃"] += 1
+  | ^^^^^

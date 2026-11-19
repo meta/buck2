@@ -1,4 +1,4 @@
-load(":defs.bzl", "action_fail", "bad_url", "missing_outputs", "run_action", "slow")
+load(":defs.bzl", "action_fail", "bad_url", "declared_cas_artifact", "missing_outputs", "run_action", "slow")
 
 action_fail(
     name = "action_fail",
@@ -19,6 +19,19 @@ run_action(
 run_action(
     name = "local_run_action",
     local_only = True,
+)
+
+declared_cas_artifact(
+    name = "declared_file",
+    digest = "da39a3ee5e6b4b0d3255bfef95601890afd80709:0",
+    use_case = "buck2-testing",
+)
+
+declared_cas_artifact(
+    name = "declared_tree",
+    digest = "0424991a08d1a857d9a4ea858b2f0c9d17f41abbc927d18a8147f0d9e708a77b:77",
+    is_tree = True,
+    use_case = "apple_build_infra_tools",
 )
 
 slow(

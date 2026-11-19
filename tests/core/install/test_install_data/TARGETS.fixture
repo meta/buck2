@@ -1,0 +1,105 @@
+prebuilt_binary(
+    name = "installer_bin_target",
+    exe = "installer_bin",
+)
+
+prebuilt_binary(
+    name = "forwarded_params_installer_bin_target",
+    exe = "forwarded_params_installer_bin",
+)
+
+prebuilt_binary(
+    name = "installer_sends_file_ready_error",
+    exe = "installer_bin",
+    extra_args = ["--with-file-ready-error"],
+)
+
+prebuilt_binary(
+    name = "installer_sends_wrong_install_id",
+    exe = "installer_bin",
+    extra_args = ["--with-wrong-install-id"],
+)
+
+installer(
+    name = "installer_single_artifact",
+    files = {
+        "artifact_a": "artifact_a.txt",
+    },
+    installer = ":installer_bin_target",
+)
+
+installer(
+    name = "installer_test",
+    files = {
+        "artifact_a": "artifact_a.txt",
+        "artifact_b": "artifact_b.txt",
+        "etc_hosts": "etc_hosts",
+    },
+    installer = ":installer_bin_target",
+)
+
+installer(
+    name = "installer_server_sends_error",
+    files = {"artifact_a": "artifact_a.txt"},
+    installer = ":installer_sends_file_ready_error",
+)
+
+installer(
+    name = "installer_server_sends_wrong_install_info_response",
+    files = {"artifact_a": "artifact_a.txt"},
+    installer = ":installer_sends_wrong_install_id",
+)
+
+installer(
+    name = "installer_server_requires_forwarded_params",
+    files = {"artifact_a": "artifact_a.txt"},
+    installer = ":forwarded_params_installer_bin_target",
+)
+
+prebuilt_binary(
+    name = "extra_args_validator_bin_target",
+    exe = "extra_args_validator_bin",
+)
+
+installer(
+    name = "installer_validates_extra_args_order",
+    files = {"artifact_a": "artifact_a.txt"},
+    installer = ":extra_args_validator_bin_target",
+)
+
+prebuilt_binary(
+    name = "early_exit_installer_bin_target",
+    exe = "early_exit_installer_bin",
+)
+
+installer(
+    name = "installer_early_exit",
+    files = {"artifact_a": "artifact_a.txt"},
+    installer = ":early_exit_installer_bin_target",
+)
+
+fail_build(
+    name = "bad_installer_bin",
+)
+
+installer(
+    name = "bad_installer_target",
+    files = {
+        "artifact_a": "artifact_a.txt",
+        "artifact_b": "artifact_b.txt",
+    },
+    installer = ":bad_installer_bin",
+)
+
+fail_build(
+    name = "bad_artifact",
+)
+
+installer(
+    name = "bad_artifacts",
+    files = {
+        "artifact_a": "artifact_a.txt",
+        "bad_genrule": ":bad_artifact",
+    },
+    installer = ":installer_bin_target",
+)

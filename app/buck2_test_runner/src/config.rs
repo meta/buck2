@@ -54,10 +54,7 @@ impl FromStr for EnvValue {
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         match input.split_once('=') {
             Some((key, value)) => Ok(EnvValue::new(key, value)),
-            None => Err(
-                buck2_error::Error::from(EnvValueParseError::IncorrectSyntax(input.to_owned()))
-                    .into(),
-            ),
+            None => Err(EnvValueParseError::IncorrectSyntax(input.to_owned()).into()),
         }
     }
 }

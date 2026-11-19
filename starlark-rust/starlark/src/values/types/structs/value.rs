@@ -33,8 +33,6 @@ use starlark_map::small_map::SmallMap;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::coerce::Coerce;
-use crate::coerce::coerce;
 use crate::docs::DocItem;
 use crate::docs::DocMember;
 use crate::docs::DocProperty;
@@ -42,36 +40,51 @@ use crate::starlark_complex_value;
 use crate::typing::Ty;
 use crate::typing::TyStruct;
 use crate::util::arc_str::ArcStr;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValue;
 use crate::values::Heap;
+use crate::values::StarlarkPagable;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
-use crate::values::StringValueLike;
 use crate::values::Value;
-use crate::values::ValueError;
-use crate::values::ValueLike;
 use crate::values::comparison::compare_small_map;
 use crate::values::comparison::equals_small_map;
+use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::structs::unordered_hasher::UnorderedHasher;
 
-impl<'v, V: ValueLike<'v>> StructGen<'v, V> {
+impl<'v> Struct<'v> {
     /// The result of calling `type()` on a struct.
     pub(crate) const TYPE: &'static str = "struct";
 
     /// Create a new [`Struct`].
-    pub(crate) fn new(fields: SmallMap<V::String, V>) -> Self {
+    pub(crate) fn new(fields: SmallMap<StringValue<'v>, Value<'v>>) -> Self {
         Self { fields }
     }
 
-    /// Iterate over the elements in the struct.
-    pub(crate) fn iter<'a>(&'a self) -> impl ExactSizeIterator<Item = (StringValue<'v>, V)> + 'a
+    #[inline]
+    pub(crate) fn is_instance(value: Value<'v>) -> bool {
+        value.starlark_type_id() == StarlarkTypeId::of::<Struct>()
+    }
+
+    /// The fields, in the order they were given to `struct()`.
+    pub fn iter<'a>(&'a self) -> impl ExactSizeIterator<Item = (StringValue<'v>, Value<'v>)> + 'a
     where
         'v: 'a,
     {
-        self.fields
-            .iter()
-            .map(|(name, value)| (name.to_string_value(), *value))
+        self.fields.iter().map(|(name, value)| (*name, *value))
+    }
+
+    /// The field named `name`, if there is one.
+    pub fn get(&self, name: &str) -> Option<Value<'v>> {
+        self.fields.get_hashed(Hashed::new(name)).copied()
+    }
+
+    /// The number of fields.
+    pub fn len(&self) -> usize {
+        self.fields.len()
+    }
+
+    /// Whether the struct has no fields.
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
     }
 
     fn self_ty(&self) -> Ty {
@@ -86,27 +99,30 @@ impl<'v, V: ValueLike<'v>> StructGen<'v, V> {
     }
 }
 
-impl StructGen<'static, FrozenValue> {
-    pub(crate) fn iter_frozen(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (FrozenStringValue, FrozenValue)> + '_ {
-        self.fields.iter().map(|(name, value)| (*name, *value))
-    }
-}
-
-starlark_complex_value!(pub(crate) Struct<'v>);
-
-/// The result of calling `struct()`.
-#[derive(Clone, Default, Debug, Trace, Freeze, ProvidesStaticType, Allocative)]
+/// The `struct` type: the result of calling `struct()`.
+///
+/// A struct is built with [`AllocStruct`](crate::values::structs::AllocStruct), as
+/// `heap.alloc(AllocStruct([("a", 1), ("b", 2)]))`. A value known to be a struct is a
+/// [`ValueOf<Struct>`](crate::values::ValueOf), which derefs to the `Struct`; its fields are read
+/// with [`get`](Self::get) and [`iter`](Self::iter).
+#[derive(
+    Clone,
+    Default,
+    Debug,
+    Trace,
+    Freeze,
+    ProvidesStaticType,
+    Allocative,
+    StarlarkPagable
+)]
 #[repr(C)]
-pub(crate) struct StructGen<'v, V: ValueLike<'v>> {
-    /// The fields in a struct.
-    pub(crate) fields: SmallMap<V::String, V>,
+pub struct Struct<'v> {
+    fields: SmallMap<StringValue<'v>, Value<'v>>,
 }
 
-unsafe impl<'v> Coerce<StructGen<'v, Value<'v>>> for StructGen<'static, FrozenValue> {}
+starlark_complex_value!(pub Struct);
 
-impl<'v, V: ValueLike<'v>> Display for StructGen<'v, V> {
+impl<'v> Display for Struct<'v> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt_keyed_container(
             f,
@@ -119,41 +135,30 @@ impl<'v, V: ValueLike<'v>> Display for StructGen<'v, V> {
 }
 
 #[starlark_value(type = Struct::TYPE)]
-impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for StructGen<'v, V>
-where
-    Self: ProvidesStaticType<'v>,
-{
+impl<'v> StarlarkValue<'v> for Struct<'v> {
     fn collect_repr_cycle(&self, collector: &mut String) {
         collector.push_str("struct(...)");
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        match Struct::from_value(other) {
-            None => Ok(false),
-            Some(other) => {
-                equals_small_map(coerce(&self.fields), &other.fields, |x, y| x.equals(*y))
-            }
-        }
+    fn equals(&self, other: &Self) -> crate::Result<bool> {
+        equals_small_map(&self.fields, &other.fields, |x, y| x.equals(*y))
     }
 
-    fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
-        match Struct::from_value(other) {
-            None => ValueError::unsupported_with(self, "cmp()", other),
-            Some(other) => compare_small_map(
-                coerce(&self.fields),
-                &other.fields,
-                |k| k.as_str(),
-                |x, y| x.compare(*y),
-            ),
-        }
+    fn compare(&self, other: &Self) -> crate::Result<Ordering> {
+        compare_small_map(
+            &self.fields,
+            &other.fields,
+            |k| k.as_str(),
+            |x, y| x.compare(*y),
+        )
     }
 
-    fn get_attr(&self, attribute: &str, heap: &'v Heap) -> Option<Value<'v>> {
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         self.get_attr_hashed(Hashed::new(attribute), heap)
     }
 
-    fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: &'v Heap) -> Option<Value<'v>> {
-        coerce(&self.fields).get_hashed(attribute).copied()
+    fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
+        self.fields.get_hashed(attribute).copied()
     }
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
@@ -197,7 +202,7 @@ where
     }
 }
 
-impl<'v, V: ValueLike<'v>> Serialize for StructGen<'v, V> {
+impl<'v> Serialize for Struct<'v> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,

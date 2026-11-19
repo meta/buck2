@@ -10,12 +10,12 @@
 
 use std::collections::BinaryHeap;
 
-use buck2_error::BuckErrorContext;
 use crossbeam::thread;
 
 use crate::critical_path_accessor::CriticalPathAccessor;
 use crate::graph::Graph;
 use crate::graph::PathCost;
+use crate::graph::TopoSortError;
 use crate::types::CriticalPathIndex;
 use crate::types::CriticalPathVertexData;
 use crate::types::OptionalCriticalPathIndex;
@@ -31,12 +31,15 @@ use crate::types::VertexId;
 pub fn compute_critical_path_potentials(
     deps: &Graph,
     weights: &VertexData<u64>,
-) -> buck2_error::Result<(
-    CriticalPathVertexData<VertexId>,
-    PathCost,
-    CriticalPathVertexData<PathCost>,
-    CriticalPathAccessor,
-)> {
+) -> Result<
+    (
+        CriticalPathVertexData<VertexId>,
+        PathCost,
+        CriticalPathVertexData<PathCost>,
+        CriticalPathAccessor,
+    ),
+    TopoSortError,
+> {
     let mut rdeps = None;
     let mut topo_order = None;
 
@@ -48,8 +51,7 @@ pub fn compute_critical_path_potentials(
             topo_order = Some(deps.topo_sort());
         });
     })
-    .ok()
-    .buck_error_context("Threads panicked")?;
+    .expect("Threads panicked");
 
     let rdeps = rdeps.unwrap();
     let topo_order = topo_order.unwrap()?;
@@ -69,8 +71,7 @@ pub fn compute_critical_path_potentials(
             predecessors = Some(pred);
         });
     })
-    .ok()
-    .buck_error_context("Threads panicked")?;
+    .expect("Threads panicked");
 
     let cost_to_sink = cost_to_sink.unwrap();
     let cost_from_source = cost_from_source.unwrap();
@@ -124,15 +125,18 @@ pub fn compute_critical_path_potentials(
     }
 
     impl GraphVisitor<'_> {
-        fn visit(&mut self, vertex_idx: VertexId) {
-            if self.mark[vertex_idx].is_some() {
-                return;
-            }
+        /// Iterative, with an explicit stack: a chain of vertices can be far deeper than the
+        /// thread's stack allows.
+        fn visit(&mut self, start: VertexId) {
+            let mut stack = vec![start];
+            while let Some(vertex_idx) = stack.pop() {
+                if self.mark[vertex_idx].is_some() {
+                    continue;
+                }
 
-            self.mark[vertex_idx] = self.cp_idx.into();
+                self.mark[vertex_idx] = self.cp_idx.into();
 
-            for edge in self.graph.iter_edges(vertex_idx) {
-                self.visit(edge);
+                stack.extend(self.graph.iter_edges(vertex_idx));
             }
         }
     }
@@ -160,8 +164,7 @@ pub fn compute_critical_path_potentials(
             }
         });
     })
-    .ok()
-    .buck_error_context("Threads panicked")?;
+    .expect("Threads panicked");
 
     // Compute the cost of the longest path through each vertex. We do this here instead of inline
     // later to avoid jumping around 3 arrays later (whereas here we can do so linearly).
@@ -295,6 +298,7 @@ mod tests {
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
+    use crate::builder::GraphBuilder;
     use crate::test_utils::TestDag;
     use crate::test_utils::make_dag;
     use crate::test_utils::seeded_rng;
@@ -377,6 +381,64 @@ mod tests {
 
     pub fn test_dag(nodes: usize) -> TestDag {
         make_dag(nodes, &mut seeded_rng())
+    }
+
+    const DEEP_SIDE_CHAIN_HELPER_ENV: &str = "BUCK2_CRITICAL_PATH_DEEP_SIDE_CHAIN_HELPER";
+
+    /// A chain of a million zero-cost vertices hangs off the second vertex of the critical path.
+    /// Does the work only in the subprocess spawned by `deep_side_chain_overflows_the_stack`.
+    #[test]
+    fn deep_side_chain_helper() {
+        if std::env::var_os(DEEP_SIDE_CHAIN_HELPER_ENV).is_none() {
+            return;
+        }
+        const N: u32 = 1_000_000;
+        let mut builder = GraphBuilder::new();
+        builder.push(0u32, std::iter::empty(), ()).unwrap();
+        for i in 1..N {
+            builder.push(i, std::iter::once(i - 1), ()).unwrap();
+        }
+        let p0 = N;
+        let p1 = N + 1;
+        builder.push(p0, std::iter::empty(), ()).unwrap();
+        builder.push(p1, vec![N - 1, p0], ()).unwrap();
+        let (graph, keys, _data) = builder.finish();
+        let mut weights = graph.allocate_vertex_data(0u64);
+        weights[keys.get(&p0).unwrap()] = 1;
+
+        let (critical_path, cost, _replacement, _) =
+            compute_critical_path_potentials(&graph, &weights).unwrap();
+        assert_eq!(2, critical_path.len());
+        assert_eq!(PathCost { runtime: 1, len: 2 }, cost);
+    }
+
+    /// The walk over the chain must not use one stack frame per vertex.
+    #[cfg(unix)]
+    #[test]
+    fn deep_side_chain_does_not_overflow_the_stack() {
+        // ast-grep-ignore: rust/buck2-no-command-new
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "potential::tests::deep_side_chain_helper",
+                "--nocapture",
+            ])
+            .env(DEEP_SIDE_CHAIN_HELPER_ENV, "1")
+            .output()
+            .unwrap();
+        // The test harness may run the helper in a child of its own and report the child's fate
+        // in its own output, so look at everything.
+        let report = format!(
+            "{:?}\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "{report}");
+        assert!(
+            !report.contains("overflowed its stack") && !report.contains("signal 6"),
+            "{report}"
+        );
     }
 
     #[test]

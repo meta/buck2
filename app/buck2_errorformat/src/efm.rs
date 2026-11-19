@@ -90,10 +90,7 @@ impl FormatSpecifier {
     }
 
     pub(crate) fn is_end_multi_line(&self) -> bool {
-        match self.specifier {
-            'Z' => true,
-            _ => false,
-        }
+        matches!(self.specifier, 'Z')
     }
 
     // These prefixes are useful if the file name is given once and multiple messages

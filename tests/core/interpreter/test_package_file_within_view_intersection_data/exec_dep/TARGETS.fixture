@@ -1,0 +1,7 @@
+# An `exec_dep`-typed attribute is a dependency for `within_view`, so the cap
+# refuses it like a plain dep.
+stub(
+    name = "c",
+    within_view = ["PUBLIC"],
+    exec_deps = ["root//outside:t"],
+)

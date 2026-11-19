@@ -54,7 +54,7 @@ def _rust_rule_impl(ctx):
         "indirect": map(get_data, indirect),
         "indirect_doc": map(get_data, indirect_doc),
     }
-    out_art = ctx.actions.write_json("out.json", out)
+    out_art = ctx.actions.write_json("out.json", out, has_content_based_path = False)
     return (out_art, dedupe(sorted(direct + indirect)))
 
 def _rust_library_impl(ctx):
@@ -96,11 +96,7 @@ rust_binary = rule(
 )
 
 def rust_proc_macro(name, **kwargs):
-    rust_library(
-        name = name + "_REAL",
-        proc_macro = True,
-        **kwargs
-    )
+    rust_library(name = name + "_REAL", proc_macro = True, **kwargs)
 
     _rust_proc_macro_alias(
         name = name,

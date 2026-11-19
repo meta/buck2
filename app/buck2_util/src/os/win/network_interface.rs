@@ -8,8 +8,10 @@
  * above-listed licenses.
  */
 
-use winapi::shared::ipifcons;
-use winapi::shared::netioapi::MIB_IF_ROW2;
+use windows_sys::Win32::NetworkManagement::IpHelper::IF_TYPE_ETHERNET_CSMACD;
+use windows_sys::Win32::NetworkManagement::IpHelper::IF_TYPE_IEEE80211;
+use windows_sys::Win32::NetworkManagement::IpHelper::MIB_IF_ROW2;
+use windows_sys::Win32::NetworkManagement::Ndis::MediaConnectStateConnected;
 
 #[derive(Copy, Clone, Debug)]
 pub enum NetworkKind {
@@ -40,10 +42,9 @@ impl NetworkInterface {
     }
 
     pub fn hardware_interface(&self) -> bool {
-        self.mib_entry
-            .InterfaceAndOperStatusFlags
-            .HardwareInterface()
-            == winapi::shared::ntdef::TRUE
+        // Bit 0 of InterfaceAndOperStatusFlags is HardwareInterface.
+        // windows-sys doesn't generate bitfield accessors, so we read it directly.
+        self.mib_entry.InterfaceAndOperStatusFlags._bitfield & 1 != 0
     }
 
     pub fn bytes_sent(&self) -> u64 {
@@ -56,8 +57,8 @@ impl NetworkInterface {
 
     pub fn network_kind(&self) -> NetworkKind {
         match self.mib_entry.Type {
-            ipifcons::IF_TYPE_ETHERNET_CSMACD => NetworkKind::Ethernet,
-            ipifcons::IF_TYPE_IEEE80211 => NetworkKind::WiFi,
+            IF_TYPE_ETHERNET_CSMACD => NetworkKind::Ethernet,
+            IF_TYPE_IEEE80211 => NetworkKind::WiFi,
             _ => NetworkKind::Unknown,
         }
     }
@@ -74,6 +75,6 @@ impl NetworkInterface {
     }
 
     pub fn is_connected(&self) -> bool {
-        self.mib_entry.MediaConnectState == winapi::shared::ifdef::MediaConnectStateConnected
+        self.mib_entry.MediaConnectState == MediaConnectStateConnected
     }
 }

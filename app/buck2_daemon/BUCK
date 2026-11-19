@@ -2,28 +2,33 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("build_infra")
 
+# Opt-in allocation-site fragmentation profiler (facebook/mem_frag), enabled
+# with `-c buck2_dev.memfrag=true`. The dump watcher must be started post-fork from
+# the daemon, so this crate gets the dep + cfg too.
+_memfrag = read_config("buck2_dev", "memfrag", "") == "true"
+
 rust_library(
     name = "buck2_daemon",
     srcs = glob(["src/**/*.rs"]),
-    os_deps = [
-        (
-            "linux",
-            [
-                "fbsource//third-party/rust:nix",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "fbsource//third-party/rust:nix",
-            ],
-        ),
-    ],
+    autocargo = {
+        "cargo_toml_config": {
+            "extra_check_cfgs": ["cfg(buck2_memfrag)"],
+        },
+    },
+    rustc_flags = ["--cfg=buck2_memfrag"] if _memfrag else [],
     test_deps = [
+        "//buck2/app/buck2_action_impl:buck2_action_impl",
         "//buck2/app/buck2_certs:buck2_certs",
         "//common/rust/shed/fbinit:fbinit",
     ],
-    deps = [
+    deps = (
+        [
+            "//buck2/facebook/mem_frag:mem_frag",
+        ]
+        if _memfrag
+        else []
+    )
+    + [
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:libc",
@@ -32,7 +37,6 @@ rust_library(
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tokio-stream",
         "fbsource//third-party/rust:tracing",
-        "//buck2/allocative/allocative:allocative",
         "//buck2/app/buck2_cli_proto:buck2_cli_proto",
         "//buck2/app/buck2_client_ctx:buck2_client_ctx",
         "//buck2/app/buck2_common:buck2_common",
@@ -43,9 +47,25 @@ rust_library(
         "//buck2/app/buck2_fs:buck2_fs",
         "//buck2/app/buck2_resource_control:buck2_resource_control",
         "//buck2/app/buck2_server:buck2_server",
+        "//buck2/app/buck2_settings:buck2_settings",
         "//buck2/app/buck2_util:buck2_util",
+        "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",
         "//buck2/dice/dice:dice",
         "//buck2/gazebo/dupe:dupe",
         # @oss-disable[end= ]: "//common/rust/gflags:gflags",
-    ],
+    ]
+    + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:nix",
+            # @oss-disable[end= ]: "//bpfjailer/client:bpfjailer_client_rs",
+            # @oss-disable[end= ]: "//bpfjailer/client:bpfjailer_handler_polyglot-rs_bindings",
+            "//buck2/app/buck2_tenant_proxy:buck2_tenant_proxy",
+            # @oss-disable[end= ]: "//buck2/facebook/mem_frag:mem_frag",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:nix",
+            # @oss-disable[end= ]: "//buck2/facebook/mem_frag:mem_frag",
+        ],
+    }),
 )

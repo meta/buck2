@@ -6,9 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-def _assert_true(
-        condition,
-        msg = "Expected condition to be true, but was false."):
+def _assert_true(condition, msg = "Expected condition to be true, but was false."):
     if not condition:
         fail(msg)
 
@@ -63,13 +61,15 @@ _basic_f = bxl.dynamic_actions(
 
 def _dynamic(ctx):
     bxl_actions = ctx.bxl_actions().actions
-    input = bxl_actions.write("input", "foo")
-    output = bxl_actions.declare_output("output")
+    input = bxl_actions.write("input", "foo", has_content_based_path = False)
+    output = bxl_actions.declare_output("output", has_content_based_path = False)
 
-    bxl_actions.dynamic_output_new(_basic_f(
-        src = input,
-        out = output.as_output(),
-    ))
+    bxl_actions.dynamic_output_new(
+        _basic_f(
+            src = input,
+            out = output.as_output(),
+        )
+    )
 
     ctx.lazy.build_artifact(output).resolve()
 
@@ -80,8 +80,8 @@ dynamic = bxl_main(
 
 def _bxl_action_output(ctx):
     bxl_actions = ctx.bxl_actions().actions
-    output = bxl_actions.declare_output("output")
-    bxl_actions.write("input", output.as_output())
+    output = bxl_actions.declare_output("output", has_content_based_path = False)
+    bxl_actions.write("input", output.as_output(), has_content_based_path = False)
     ctx.lazy.build_artifact(output).resolve()
 
 bxl_action_output = bxl_main(

@@ -11,17 +11,20 @@
 package com.facebook.buck.testrunner.reportlayer;
 
 import com.facebook.buck.testrunner.InstrumentationTestRunner;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.FileWriter;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Scanner;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** report layer to extract logs to separate tra by regex matching */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class LogExtractorReportLayer extends ReportLayer {
 
   public static final String ARG = "--log-extractor";
@@ -72,14 +75,14 @@ public class LogExtractorReportLayer extends ReportLayer {
   public void report() {
     try {
       Path logcatMainBufferTraPath = this.runner.createPathForLogcatBuffer("main");
-      String logcatMainBufferFile = logcatMainBufferTraPath.toString();
+      String logcatMainBufferFile = Objects.requireNonNull(logcatMainBufferTraPath).toString();
       for (ExtractorConfig extractorConfig : extractors) {
         Path traPath =
             this.runner.createTRAPlainTextLog(
                 extractorConfig.traName, extractorConfig.traDescription);
         Pattern pattern = Pattern.compile(extractorConfig.regex);
 
-        FileWriter writer = new FileWriter(traPath.toFile());
+        FileWriter writer = new FileWriter(Objects.requireNonNull(traPath).toFile());
         Scanner scanner = new Scanner(new File(logcatMainBufferFile));
         while (scanner.hasNextLine()) {
           String line = scanner.nextLine();

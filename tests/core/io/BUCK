@@ -3,9 +3,27 @@ load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_core_tests")
 oncall("build_infra")
 
 buck2_core_tests(
-    extra_attrs = {
-        "deps": [
-            "//buck2/tests/core/common:io",
-        ],
+    target_extra_attrs = {
+        "test_edenfs": {
+            "deps": [
+                "fbsource//third-party/rust:regex",
+                "//buck2/tests/core/common:io",
+            ],
+        },
+        "test_edenfs_aba": {
+            "deps": ["//buck2/tests/core/common:io"],
+        },
+        "test_fs_hash_crawler": {
+            "deps": ["//buck2/tests/core/common:io"],
+        },
+        "test_notify": {
+            "deps": ["//buck2/tests/core/common:io"],
+        },
+        "test_watchman": {
+            "deps": ["//buck2/tests/core/common:io"],
+        },
+        "test_watchman_aba": {
+            "deps": ["//buck2/tests/core/common:io"],
+        },
     },
 )

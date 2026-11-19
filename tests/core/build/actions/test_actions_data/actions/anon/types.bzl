@@ -9,9 +9,12 @@
 def _anon_impl(_ctx: AnalysisContext) -> list[Provider]:
     return [DefaultInfo()]
 
-_anon = rule(impl = _anon_impl, attrs = {
-    "foo": attrs.string(),
-})
+_anon = rule(
+    impl = _anon_impl,
+    attrs = {
+        "foo": attrs.string(),
+    },
+)
 
 def _anon_target(ctx: AnalysisContext) -> AnonTarget:
     return ctx.actions.anon_target(

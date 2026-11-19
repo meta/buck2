@@ -12,6 +12,11 @@ pub enum LastCommandExecutionKind {
     Local,
     LocalWorker,
     Remote,
+    /// Submitted for remote execution, but the service served its own action cache instead.
+    RemoteServedFromCache,
+    /// Executed remotely as an execution shared with another build: the service deduplicated it
+    /// against an identical execution already in flight.
+    RemoteDeduplicated,
     Cached,
     RemoteDepFileCached,
     NoCommand,
@@ -38,23 +43,19 @@ pub fn get_last_command_execution_kind(
             Some(Command::WorkerCommand(_)) | Some(Command::WorkerInitCommand(_)) => {
                 LastCommandExecutionKind::LocalWorker
             }
-            Some(Command::RemoteCommand(buck2_data::RemoteCommand {
-                cache_hit: true,
-                cache_hit_type,
-                ..
-            })) => {
-                match buck2_data::CacheHitType::try_from(*cache_hit_type).unwrap() {
-                    // ActionCache is 0, so this should be backwards compatible
-                    buck2_data::CacheHitType::ActionCache => LastCommandExecutionKind::Cached,
-                    buck2_data::CacheHitType::RemoteDepFileCache => {
-                        LastCommandExecutionKind::RemoteDepFileCached
-                    }
-                    buck2_data::CacheHitType::Executed => LastCommandExecutionKind::Remote,
+            Some(Command::RemoteCommand(remote)) => match remote.cache_hit_type() {
+                buck2_data::RemoteCommandOrigin::ActionCache => LastCommandExecutionKind::Cached,
+                buck2_data::RemoteCommandOrigin::RemoteDepFileCache => {
+                    LastCommandExecutionKind::RemoteDepFileCached
                 }
-            }
-            Some(Command::RemoteCommand(buck2_data::RemoteCommand {
-                cache_hit: false, ..
-            })) => LastCommandExecutionKind::Remote,
+                buck2_data::RemoteCommandOrigin::Executed => LastCommandExecutionKind::Remote,
+                buck2_data::RemoteCommandOrigin::ReServedFromCache => {
+                    LastCommandExecutionKind::RemoteServedFromCache
+                }
+                buck2_data::RemoteCommandOrigin::ReDeduplicated => {
+                    LastCommandExecutionKind::RemoteDeduplicated
+                }
+            },
             None => LastCommandExecutionKind::NoCommand,
         }
     } else {
@@ -74,8 +75,7 @@ pub fn get_last_command_execution_time(action: &buck2_data::ActionExecutionEnd) 
         .and_then(|c| c.details.as_ref())
         .and_then(|c| c.metadata.as_ref())
         .and_then(|c| c.execution_time.as_ref())
-        .map(|c| c.seconds as u64 * 1000 + c.nanos as u64 / 1000000)
-        .unwrap_or(0);
+        .map_or(0, |c| c.seconds as u64 * 1000 + c.nanos as u64 / 1000000);
 
     ExecTime {
         exec_time_ms,

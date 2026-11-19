@@ -20,14 +20,29 @@ use std::cell::RefMut;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
+use starlark_derive::StarlarkPagable;
+use starlark_derive::StarlarkPagableViaPagable;
+use starlark_syntax::slice_vec_ext::VecExt;
 
-use crate::values::Freeze;
+use crate as starlark;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
-use crate::values::FrozenValue;
+use crate::values::ProvidesStaticType;
 use crate::values::Value;
 
-#[derive(Clone, Copy, Dupe, Debug, PartialEq, Eq, Allocative, Hash)]
+#[derive(
+    Clone,
+    Copy,
+    Dupe,
+    Debug,
+    PartialEq,
+    Eq,
+    Allocative,
+    Hash,
+    Pagable,
+    StarlarkPagableViaPagable
+)]
 pub(crate) struct ModuleSlotId(pub(crate) u32);
 
 impl ModuleSlotId {
@@ -40,9 +55,10 @@ impl ModuleSlotId {
 #[derive(Debug)]
 pub(crate) struct MutableSlots<'v>(RefCell<Vec<Option<Value<'v>>>>);
 
-// Indexed slots of a module. May contain unassigned values as `None`.
-#[derive(Debug, Allocative)]
-pub(crate) struct FrozenSlots(Vec<Option<FrozenValue>>);
+// Indexed slots of a frozen module, at the brand of the heap that holds them. May contain
+// unassigned values as `None`.
+#[derive(Debug, Allocative, ProvidesStaticType, StarlarkPagable)]
+pub(crate) struct FrozenSlots<'v>(Vec<Option<Value<'v>>>);
 
 impl<'v> MutableSlots<'v> {
     pub fn new() -> Self {
@@ -59,6 +75,10 @@ impl<'v> MutableSlots<'v> {
 
     pub fn set_slot(&self, slot: ModuleSlotId, value: Value<'v>) {
         self.0.borrow_mut()[slot.0 as usize] = Some(value);
+    }
+
+    pub fn unset_slot(&self, slot: ModuleSlotId) {
+        self.0.borrow_mut()[slot.0 as usize] = None;
     }
 
     pub fn ensure_slot(&self, slot: ModuleSlotId) {
@@ -87,14 +107,17 @@ impl<'v> MutableSlots<'v> {
             .collect()
     }
 
-    pub(crate) fn freeze(self, freezer: &Freezer) -> FreezeResult<FrozenSlots> {
-        let slots = self.0.into_inner().freeze(freezer)?;
+    pub(crate) fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<FrozenSlots<'fv>> {
+        let slots = self
+            .0
+            .into_inner()
+            .into_try_map(|slot| slot.map(|v| freezer.freeze(v)).transpose())?;
         Ok(FrozenSlots(slots))
     }
 }
 
-impl FrozenSlots {
-    pub fn get_slot(&self, slot: ModuleSlotId) -> Option<FrozenValue> {
+impl<'v> FrozenSlots<'v> {
+    pub fn get_slot(&self, slot: ModuleSlotId) -> Option<Value<'v>> {
         self.0[slot.0 as usize]
     }
 }

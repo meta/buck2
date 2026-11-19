@@ -12,4 +12,3 @@ Error: error: / positional-only-arguments is not allowed in this dialect
   |
 1 | lambda /, x: 17
   |        ^
-  |

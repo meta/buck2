@@ -39,4 +39,5 @@ pub mod configured_or_unconfigured;
 pub mod configured_target_label;
 pub mod label;
 pub mod name;
+pub mod name_glob;
 pub mod target_configured_target_label;

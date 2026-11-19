@@ -16,7 +16,7 @@ use buck2_cli_proto::ProfileRequest;
 use buck2_cli_proto::ProfileResponse;
 use buck2_cli_proto::profile_request::ProfileOpts;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::buck2_error;
 use buck2_error::internal_error;
 use buck2_fs::paths::abs_path::AbsPath;
@@ -66,7 +66,7 @@ impl ServerCommandTemplate for BxlProfileServerCommand {
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
-        mut ctx: DiceTransaction,
+        ctx: DiceTransaction,
     ) -> buck2_error::Result<Self::Response> {
         let ProfileOpts::BxlProfile(opts) = self
             .req
@@ -84,8 +84,8 @@ impl ServerCommandTemplate for BxlProfileServerCommand {
 
         let cwd = server_ctx.working_dir();
 
-        let cell_resolver = ctx.get_cell_resolver().await?;
-        let cell_alias_resolver = ctx.get_cell_alias_resolver_for_dir(cwd).await?;
+        let cell_resolver = ctx.ctx().get_cell_resolver().await?;
+        let cell_alias_resolver = ctx.ctx().get_cell_alias_resolver_for_dir(cwd).await?;
         let bxl_label =
             parse_bxl_label_from_cli(cwd, &opts.bxl_label, &cell_resolver, &cell_alias_resolver)?;
 
@@ -94,13 +94,13 @@ impl ServerCommandTemplate for BxlProfileServerCommand {
                 .as_ref()
                 .internal_error("target_cfg must be set")?,
             server_ctx,
-            &mut ctx,
+            &mut ctx.ctx(),
         )
         .await?;
 
         let BxlResolvedCliArgs::Resolved(bxl_args) = get_bxl_cli_args(
             cwd,
-            &mut ctx,
+            &ctx,
             &bxl_label,
             &opts.bxl_args,
             &cell_resolver,
@@ -123,6 +123,7 @@ impl ServerCommandTemplate for BxlProfileServerCommand {
         );
 
         if let StarlarkProfileMode::None = ctx
+            .ctx()
             .get_starlark_profiler_mode(&bxl_key.as_starlark_eval_kind())
             .await?
         {
@@ -134,7 +135,7 @@ impl ServerCommandTemplate for BxlProfileServerCommand {
             .with_structured_cancellation(|observer| {
                 async move {
                     buck2_error::Ok(
-                        eval(&mut ctx, bxl_key, observer)
+                        eval(&mut ctx.ctx(), bxl_key, observer)
                             .await
                             .map_err(|e| e.error)?
                             .1

@@ -1,9 +1,8 @@
 load("@prelude//:prelude.bzl", "http_archive")
 
-# This URL is just the `./expected` directory that's next to this file,
-# packaged up zip.
+# The test harness serves a ZIP of the expected files on a local HTTP server.
 http_archive(
     name = "test_zip",
-    urls = ["https://interncache-all.fbcdn.net/manifold/buck_build_test/tree/buck2_test/http_archive/test_zip.zip"],
-    sha1 = "095f3ebdcbecf6a2395f49fd367dfae1a91ec54b",
+    urls = [read_config("test", "url")],
+    sha1 = read_config("test", "sha1"),
 )

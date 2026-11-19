@@ -11,14 +11,12 @@ def _impl(_ctx):
 
 lib_rule = rule(
     impl = _impl,
-    attrs = {
-    },
+    attrs = {},
 )
 
 test_rule = rule(
     impl = _impl,
-    attrs = {
-    },
+    attrs = {},
 )
 
 def _config_setting_impl(ctx):
@@ -26,8 +24,7 @@ def _config_setting_impl(ctx):
 
 config_setting = rule(
     impl = _config_setting_impl,
-    attrs = {
-    },
+    attrs = {},
 )
 
 def _configuration_impl(ctx):

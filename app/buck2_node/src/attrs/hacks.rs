@@ -14,13 +14,13 @@
 
 use buck2_core::package::PackageLabel;
 
-use crate::attrs::coerced_attr::CoercedAttr;
+use crate::attrs::arena::CoercedAttrRef;
 use crate::attrs::configured_attr::ConfiguredAttr;
 use crate::attrs::fmt_context::AttrFmtContext;
 use crate::attrs::json::ToJsonWithContext;
 
 pub fn value_to_json(
-    value: &CoercedAttr,
+    value: CoercedAttrRef<'_>,
     pkg: PackageLabel,
 ) -> buck2_error::Result<serde_json::Value> {
     value.to_json(&AttrFmtContext {
@@ -37,14 +37,4 @@ pub fn configured_value_to_json(
         package: Some(pkg),
         options: Default::default(),
     })
-}
-
-pub fn value_to_string(value: &CoercedAttr, pkg: PackageLabel) -> buck2_error::Result<String> {
-    match value_to_json(value, pkg)?.as_str() {
-        Some(s) => Ok(s.to_owned()),
-        None => Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "Expected a string, did not get one",
-        )),
-    }
 }

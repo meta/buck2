@@ -1,0 +1,5 @@
+package(
+    within_view = ["root//select_arm/..."],
+)
+
+enforce_within_view_intersection()

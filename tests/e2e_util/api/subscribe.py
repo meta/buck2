@@ -6,34 +6,35 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-unsafe
 
 import contextlib
 import json
-from asyncio import subprocess, wait_for
-from typing import Any
+from asyncio import StreamWriter, subprocess, wait_for
+from typing import Any, Self
 
 from buck2.tests.e2e_util.api.process import Process
 
 
 class SubscribeClient(contextlib.AbstractAsyncContextManager):
-    def __init__(self, start: Process, process: subprocess.Process):
+    def __init__(self, start: Process, process: subprocess.Process) -> None:
         self._start = start
         self._process = process
 
     @classmethod
-    async def create(cls, start: Process):
+    async def create(cls, start: Process) -> Self:
         process = await start.start()
         return cls(start, process)
 
     @property
-    def stdin(self):
+    def stdin(self) -> StreamWriter:
+        assert self._process.stdin is not None
         return self._process.stdin
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        assert self._process.stdin is not None
         self._process.stdin.close()
         await wait_for(
             self._start._get_result_or_raise_exception(self._process), timeout=120

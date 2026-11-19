@@ -1,6 +1,6 @@
 # @noautodeps
 load("@prelude//utils:source_listing.bzl", "source_listing")
-load(":defs.bzl", "apple_oso_scrubber_target")
+load(":defs.bzl", "apple_oso_scrubber_target", "bundle_telemetry_logger_target", "swiftmodule_change_analysis_target")
 
 oncall("build_infra")
 
@@ -11,19 +11,29 @@ apple_tools(
     adhoc_codesign_tool = None, # @oss-enable
     # @oss-disable[end= ]: adhoc_codesign_tool = "prelude//apple/tools/meta_only/codesign_rust:adhoc-signer",
     assemble_bundle = "prelude//apple/tools/bundling:assemble_bundle",
+    bundle_telemetry_logger = bundle_telemetry_logger_target(),
     codesign_manifest_tree_postprocessor = "prelude//apple/tools/codesign_manifest_tree_postprocessor:codesign_manifest_tree_postprocessor",
+    dedupe_swift_module_map = ":dedupe_swift_module_map",
     dry_codesign_tool = ":dry_codesign_tool",
     framework_sanitizer = ":framework_sanitizer",
     info_plist_processor = "prelude//apple/tools/info_plist_processor:tool",
     ipa_package_maker = ":ipa_package_maker",
     make_modulemap = ":make_modulemap",
+    make_swift_dynamic_thunk = None, # @oss-enable
+    # @oss-disable[end= ]: make_swift_dynamic_thunk = "prelude//apple/tools/meta_only/swift_dynamic_thunk:tool",
+    make_swift_dynamic_thunk_command_database = None, # @oss-enable
+    # @oss-disable[end= ]: make_swift_dynamic_thunk_command_database = "prelude//apple/tools/meta_only/swift_dynamic_thunk:command_database",
     make_vfsoverlay = ":make_vfsoverlay",
+    provisioning_manifest = "prelude//apple/tools/bundling:provisioning_manifest",
+    resolve_signing_context = "prelude//apple/tools/bundling:resolve_signing_context",
+    selective_debugging_dsym_allowlist_tool = "prelude//apple/tools/selective_debugging:dsym_allowlist_tool",
     selective_debugging_scrubber = apple_oso_scrubber_target(),
-    signing_context = "prelude//apple/tools/bundling:signing_context",
     signing_context_tree_postprocessor = "prelude//apple/tools/signing_context_tree_postprocessor:signing_context_tree_postprocessor",
+    signing_info = "prelude//apple/tools/bundling:signing_info",
     split_arch_combine_dsym_bundles_tool = ":split_arch_combine_dsym_bundles_tool",
     spm_packager = ":spm_packager",
     static_archive_linker = ":static_archive_linker",
+    swiftmodule_change_analysis = swiftmodule_change_analysis_target(),
     visibility = ["PUBLIC"],
     xcframework_maker = ":xcframework_maker",
 )
@@ -56,9 +66,21 @@ python_binary(
 )
 
 python_bootstrap_binary(
+    name = "dedupe_swift_module_map",
+    main = "dedupe_swift_module_map.py",
+    visibility = ["PUBLIC"],
+)
+
+python_bootstrap_binary(
     name = "make_modulemap",
     main = "make_modulemap.py",
     visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "make_modulemap_lib",
+    srcs = ["make_modulemap.py"],
+    visibility = ["prelude//apple/tools/..."],
 )
 
 python_bootstrap_binary(
@@ -114,4 +136,35 @@ python_binary(
 export_file(
     name = "empty.c",
     visibility = ["PUBLIC"],
+)
+
+# Type checking target for Python tool scripts
+python_library(
+    name = "scripts-typing",
+    srcs = [
+        "dedupe_swift_module_map.py",
+        "dry_codesign_tool.py",
+        "framework_sanitizer.py",
+        "ipa_package_maker.py",
+        "make_modulemap.py",
+        "make_swift_comp_db.py",
+        "make_swift_interface.py",
+        "make_vfsoverlay.py",
+        "plistlib_utils.py",
+        "split_arch_combine_dsym_bundles_tool.py",
+        "spm_packager.py",
+        "static_archive_linker.py",
+        "swift_exec.py",
+        "xcframework_maker.py",
+    ],
+    typing = True,
+)
+
+python_test(
+    name = "make_swift_interface_test",
+    srcs = [
+        "make_swift_interface.py",
+        "make_swift_interface_test.py",
+    ],
+    base_module = "",
 )

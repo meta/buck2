@@ -48,5 +48,22 @@ function __buck2_add_target_completions
     buck2 complete --target="$cur" 2>/dev/null
 end
 
+function __buck2_needs_flagfile
+    set -l cur (commandline --current-token)
+    string match --quiet -- '@*' $cur && return 0
+
+    set -l tokens (commandline --current-process --tokenize --cut-at-cursor)
+    set -l n (count $tokens)
+    test $n -ge 1; and contains -- $tokens[$n] --flagfile --config-file; and return 0
+    test $n -ge 2; and contains -- $tokens[(math $n - 1)] --flagfile --config-file; and return 0
+    return 1
+end
+
+function __buck2_add_flagfile_completions
+    set -l cur (commandline --current-token)
+    buck2 complete --flagfile="$cur" 2>/dev/null
+end
+
+complete -c buck2 -n '__buck2_needs_flagfile' -f -a '(__buck2_add_flagfile_completions)'
 complete -c buck2 -n '__buck2_takes_target' -f -a '(__buck2_add_target_completions)'
 complete -c buck -w buck2

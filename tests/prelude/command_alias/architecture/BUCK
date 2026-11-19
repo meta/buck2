@@ -1,0 +1,100 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+load("@prelude//os_lookup:defs.bzl", "os_lookup")
+load(":defs.bzl", "arm_alias", "direct_alias", "fat_alias", "mac_linux_alias", "tool", "x86_alias")
+
+oncall("build_infra")
+
+ERROR_CASE = read_config("command_alias_architecture", "error", "")
+
+os_lookup(name = "os_x86", cpu = "x86_64", os = "linux", script = "sh")
+os_lookup(name = "os_arm", cpu = "arm64", os = "linux", script = "sh")
+os_lookup(name = "os_fat", os = "fat_linux", script = "sh")
+os_lookup(name = "os_mac_linux", cpu = None if ERROR_CASE == "unknown_cpu" else "x86_64", os = "fat_mac_linux", script = "sh")
+tool(name = "x86", arch = "x86_64", script = "tool.sh")
+tool(name = "arm", arch = "arm64", script = "tool.sh")
+tool(name = "mac_x86", arch = "mac-x86_64", script = "tool.sh")
+
+PLATFORM_EXE = {"linux": {"arm64": ":arm", "x86_64": ":x86"}}
+x86_alias(name = "thin_x86", platform_exe = PLATFORM_EXE)
+arm_alias(name = "thin_arm", platform_exe = PLATFORM_EXE)
+fat_alias(
+    name = "fat",
+    args = ["fixed arg", "$(location :resource)"],
+    env = {"ALIAS_ENV": "env value", "ALIAS_RESOURCE": "$(location :resource)"},
+    executable_name = "custom-alias",
+    platform_exe = PLATFORM_EXE,
+    resources = ["resource.txt"],
+    run_using_single_arg = True,
+)
+prelude = native
+prelude.export_file(name = "resource", src = "resource.txt")
+
+fat_alias(
+    name = "check_error",
+    exe = ":x86",
+    platform_exe = {
+        "fallback_fat": {},
+        "flat_fat": {"linux": ":x86"},
+        "missing_arm64": {"linux": {"x86_64": ":x86"}},
+        "missing_x86_64": {"linux": {"arm64": ":arm"}},
+    }.get(ERROR_CASE, PLATFORM_EXE),
+)
+
+x86_alias(name = "flat_missing_os", args = ["echo", "args-only"], platform_exe = {"macos": ":arm"})
+x86_alias(
+    name = "check_os_fallback",
+    exe = None if ERROR_CASE == "missing_os" else ":x86",
+    platform_exe = {
+        "empty_unselected": {"linux": ":x86", "macos": {}},
+        "missing_target_arch": {"linux": {"arm64": ":arm"}},
+    }.get(ERROR_CASE, {"macos": PLATFORM_EXE["linux"]}),
+)
+mac_linux_alias(
+    name = "mac_linux",
+    platform_exe = {"linux": PLATFORM_EXE["linux"], "macos": {"arm64": ":arm", "x86_64": ":mac_x86"}},
+)
+direct_alias(name = "direct", arch = "invalid" if ERROR_CASE == "direct_invalid_arch" else "x86_64", exe = ":x86")
+
+py_assertion(
+    name = "check_runtime",
+    script = r"""
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+x86, arm, fat, flat, fallback, mac_linux = [str(Path(p).resolve()) for p in sys.argv[1:]]
+for path, expected in [(x86, "x86_64"), (arm, "arm64"), (flat, "args-only"), (fallback, "x86_64")]:
+    assert subprocess.check_output([path], text=True).splitlines() == [expected]
+assert Path(fat).name == "custom-alias"
+with tempfile.TemporaryDirectory() as temp:
+    uname = Path(temp) / "uname"
+    uname.write_text('#!/bin/sh\nif [ "$1" = "-m" ]; then echo "$MOCK_ARCH"; else echo "$MOCK_OS"; fi\n')
+    uname.chmod(0o755)
+    env = dict(os.environ, PATH=temp + os.pathsep + os.environ["PATH"], MOCK_OS="Linux")
+    for arch, expected in [("x86_64", "x86_64"), ("aarch64", "arm64"), ("arm64", "arm64")]:
+        env["MOCK_ARCH"] = arch
+        output = subprocess.check_output([fat, "user arg"], env=env, cwd=temp, text=True).splitlines()
+        assert output[:4] == [expected, "env value", "resource payload", "fixed arg"], output
+        assert Path(output[4]).read_text().strip() == "resource payload"
+        assert output[5:] == ["user arg"], output
+    for arch, os_name, message in [("riscv64", "Linux", "Unsupported architecture"), ("x86_64", "Darwin", "Unsupported operating system")]:
+        env.update(MOCK_ARCH=arch, MOCK_OS=os_name)
+        result = subprocess.run([fat], env=env, capture_output=True, text=True)
+        assert result.returncode != 0 and message in result.stderr, result
+    for os_name, expected in [("Linux", "x86_64"), ("Darwin", "mac-x86_64")]:
+        env.update(MOCK_ARCH="arm64", MOCK_OS=os_name)
+        output = subprocess.check_output([mac_linux], env=env, cwd=temp, text=True).splitlines()
+        assert output == [expected], output
+""",
+    script_args = [
+        "$(exe_target :thin_x86)",
+        "$(exe_target :thin_arm)",
+        "$(exe_target :fat)",
+        "$(exe_target :flat_missing_os)",
+        "$(exe_target :check_os_fallback)",
+        "$(exe_target :mac_linux)",
+    ],
+    target_compatible_with = ["ovr_config//os/constraints:os[linux]"],
+)

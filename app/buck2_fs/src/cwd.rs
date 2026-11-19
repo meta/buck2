@@ -13,7 +13,9 @@ use std::sync::OnceLock;
 
 use allocative::Allocative;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 
+use crate::IoResultExt;
 use crate::fs_util;
 use crate::paths::abs_norm_path::AbsNormPath;
 use crate::paths::abs_norm_path::AbsNormPathBuf;
@@ -105,7 +107,7 @@ impl WorkingDirectoryImpl for PortableWorkingDirectoryImpl {
     }
 
     fn chdir(&self, path: &AbsNormPath) -> buck2_error::Result<()> {
-        fs_util::set_current_dir(path)?;
+        fs_util::set_current_dir(path).categorize_internal()?;
         Ok(())
     }
 
@@ -134,7 +136,7 @@ static CWD: OnceLock<AbsPathBuf> = OnceLock::new();
 fn cwd_will_not_change(cwd: &AbsNormPath) -> buck2_error::Result<()> {
     CWD.set(cwd.as_abs_path().to_owned())
         .ok()
-        .buck_error_context("cwd_will_not_change was called twice")?;
+        .internal_error("cwd_will_not_change was called twice")?;
     Ok(())
 }
 

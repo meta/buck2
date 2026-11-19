@@ -18,10 +18,7 @@ CxxTransitiveDiagnosticsInfo = provider(
     },
 )
 
-def cxx_transitive_diagnostics_combine(
-        ctx: AnalysisContext,
-        diagnostics: list[Artifact],
-        deps: list[Dependency]) -> CxxTransitiveDiagnosticsInfo:
+def cxx_transitive_diagnostics_combine(ctx: AnalysisContext, diagnostics: list[Artifact], deps: list[Dependency]) -> CxxTransitiveDiagnosticsInfo:
     children = []
     for dep in deps:
         dep_diagnostics_info = dep.get(CxxTransitiveDiagnosticsInfo)

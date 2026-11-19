@@ -10,10 +10,10 @@
 
 package com.facebook.buck.jvm.java.plugin.adapter;
 
-/**
- * Analogue to javac 8's {@link com.sun.source.util.Plugin} class for use within Buck, even on older
- * versions of javac.
- */
+import com.facebook.infer.annotation.Nullsafe;
+
+/** Analogue to javac's {@link com.sun.source.util.Plugin} class for use within Buck. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface BuckJavacPlugin {
   String getName();
 

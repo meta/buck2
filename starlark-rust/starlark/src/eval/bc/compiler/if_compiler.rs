@@ -24,27 +24,32 @@ use crate::eval::compiler::expr::MaybeNot;
 use crate::eval::compiler::span::IrSpanned;
 
 /// Common code for compiling if statements and if expressions.
-pub(crate) fn write_if_else(
-    c: &IrSpanned<ExprCompiled>,
-    t: impl FnOnce(&mut BcWriter),
-    f: impl FnOnce(&mut BcWriter),
-    bc: &mut BcWriter,
+pub(crate) fn write_if_else<'f>(
+    c: &IrSpanned<'f, ExprCompiled<'f>>,
+    t: impl FnOnce(&mut BcWriter<'f>),
+    f: impl FnOnce(&mut BcWriter<'f>),
+    bc: &mut BcWriter<'f>,
 ) {
     write_if_else_impl(c, MaybeNot::Id, t, Some(f), bc);
 }
 
 /// Common code for compiling if statements and if conditions in comprehensions.
-pub(crate) fn write_if_then(
-    c: &IrSpanned<ExprCompiled>,
+pub(crate) fn write_if_then<'f>(
+    c: &IrSpanned<'f, ExprCompiled<'f>>,
     maybe_not: MaybeNot,
-    t: impl FnOnce(&mut BcWriter),
-    bc: &mut BcWriter,
+    t: impl FnOnce(&mut BcWriter<'f>),
+    bc: &mut BcWriter<'f>,
 ) {
     // Deal with some typechecker issue.
-    fn wr<T, F>(c: &IrSpanned<ExprCompiled>, maybe_not: MaybeNot, t: T, _f: F, bc: &mut BcWriter)
-    where
-        T: FnOnce(&mut BcWriter),
-        F: FnOnce(&mut BcWriter),
+    fn wr<'f, T, F>(
+        c: &IrSpanned<'f, ExprCompiled<'f>>,
+        maybe_not: MaybeNot,
+        t: T,
+        _f: F,
+        bc: &mut BcWriter<'f>,
+    ) where
+        T: FnOnce(&mut BcWriter<'f>),
+        F: FnOnce(&mut BcWriter<'f>),
     {
         write_if_else_impl::<T, F>(c, maybe_not, t, None, bc);
     }
@@ -53,15 +58,15 @@ pub(crate) fn write_if_then(
 }
 
 /// Common code for writing if-then or if-then-else expression or statement.
-fn write_if_else_impl<T, F>(
-    cond: &IrSpanned<ExprCompiled>,
+fn write_if_else_impl<'f, T, F>(
+    cond: &IrSpanned<'f, ExprCompiled<'f>>,
     maybe_not: MaybeNot,
     t: T,
     f: Option<F>,
-    bc: &mut BcWriter,
+    bc: &mut BcWriter<'f>,
 ) where
-    T: FnOnce(&mut BcWriter),
-    F: FnOnce(&mut BcWriter),
+    T: FnOnce(&mut BcWriter<'f>),
+    F: FnOnce(&mut BcWriter<'f>),
 {
     let mut then_addrs = Vec::new();
     let mut else_addrs = Vec::new();
@@ -93,14 +98,14 @@ fn write_if_else_impl<T, F>(
 /// The condition is: `maybe_not(x bin_op y)`.
 ///
 /// See `write_cond` for semantics of `t`, `f` parameters.
-fn write_cond_bin_op(
-    x: &IrSpanned<ExprCompiled>,
-    y: &IrSpanned<ExprCompiled>,
+fn write_cond_bin_op<'f>(
+    x: &IrSpanned<'f, ExprCompiled<'f>>,
+    y: &IrSpanned<'f, ExprCompiled<'f>>,
     bin_op: ExprLogicalBinOp,
     maybe_not: MaybeNot,
     t: &mut Vec<PatchAddr>,
     f: &mut Vec<PatchAddr>,
-    bc: &mut BcWriter,
+    bc: &mut BcWriter<'f>,
 ) {
     if (bin_op == ExprLogicalBinOp::And) == (maybe_not == MaybeNot::Id) {
         // This branch handles either of expressions:
@@ -143,12 +148,12 @@ fn write_cond_bin_op(
 ///
 /// This function will populate `t` and `f` with addresses of instructions
 /// which jump to then or else block respectively. Caller needs to patch these.
-fn write_cond(
-    cond: &IrSpanned<ExprCompiled>,
+fn write_cond<'f>(
+    cond: &IrSpanned<'f, ExprCompiled<'f>>,
     maybe_not: MaybeNot,
     t: &mut Vec<PatchAddr>,
     f: &mut Vec<PatchAddr>,
-    bc: &mut BcWriter,
+    bc: &mut BcWriter<'f>,
 ) {
     match &cond.node {
         ExprCompiled::Builtin1(Builtin1::Not, cond) => {

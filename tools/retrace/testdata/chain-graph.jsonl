@@ -1,0 +1,12 @@
+{"graph":{"dir":"/repo","pid":1,"makelevel":0,"goals":["fbcode//buck2/cli:buck2"],"kind":"full","enc":2,"run":"aaaa-bbbb","coverage":{"nodes":11,"edges":12,"dangling_deps":0,"dangling_tsets":0}}}
+{"t":"fbcode//buck2/app/buck2_core:buck2_core (rustc metadata)","d":[]}
+{"t":"fbcode//buck2/app/buck2_build_api:buck2_build_api (rustc link deps/libbuck2_build_api.rlib)","d":["fbcode//buck2/app/buck2_core:buck2_core (rustc metadata)"]}
+{"t":"fbcode//buck2/app/buck2_server_commands:buck2_server_commands (rustc metadata)","d":["fbcode//buck2/app/buck2_build_api:buck2_build_api (rustc link deps/libbuck2_build_api.rlib)"]}
+{"t":"fbcode//buck2/app/buck2_execute_impl:buck2_execute_impl (rustc link)","d":["fbcode//buck2/app/buck2_server_commands:buck2_server_commands (rustc metadata)"]}
+{"t":"fbcode//buck2/app/buck2_action_impl:buck2_action_impl (cxx_compile action_impl/re.cpp)","d":["fbcode//buck2/app/buck2_execute_impl:buck2_execute_impl (rustc link)"]}
+{"t":"fbcode//buck2/app/buck2_client:buck2_client (rustc metadata)","d":["fbcode//buck2/app/buck2_action_impl:buck2_action_impl (cxx_compile action_impl/re.cpp)"]}
+{"t":"fbcode//buck2/app/buck2_daemon:buck2_daemon (rustc link)","d":["fbcode//buck2/app/buck2_client:buck2_client (rustc metadata)"]}
+{"t":"fbcode//buck2/cli:buck2 (rustc link bin/buck2)","d":["fbcode//buck2/app/buck2_daemon:buck2_daemon (rustc link)"]}
+{"t":"fbcode//buck2/app/buck2_query_impl:buck2_query_impl (rustc metadata)","d":["fbcode//buck2/app/buck2_core:buck2_core (rustc metadata)"]}
+{"t":"fbcode//buck2/app/buck2_events:buck2_events (rustc metadata)","d":["fbcode//buck2/app/buck2_core:buck2_core (rustc metadata)"]}
+{"t":"fbcode//buck2/cli:buck2 (symlink tree)","d":["fbcode//buck2/cli:buck2 (rustc link bin/buck2)","fbcode//buck2/app/buck2_query_impl:buck2_query_impl (rustc metadata)","fbcode//buck2/app/buck2_events:buck2_events (rustc metadata)"]}

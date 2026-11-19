@@ -9,5 +9,6 @@
  */
 
 pub mod base_deferred_key;
+pub mod dyn_eval_kind_key;
 pub mod dynamic;
 pub mod key;

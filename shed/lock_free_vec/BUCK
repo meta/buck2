@@ -6,6 +6,7 @@ rust_library(
     name = "lock_free_vec",
     srcs = glob(["src/**/*.rs"]),
     crate_root = "src/lib.rs",
+    unittests_miri = True,
     deps = [
         "//buck2/allocative/allocative:allocative",
     ],

@@ -10,15 +10,16 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.element.Element;
+import org.jspecify.annotations.Nullable;
 
 /** Interface for {@link Element}s that are implemented by something other than javac itself. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface ArtificialElement extends Element {
   @Override
-  @Nullable
-  ArtificialElement getEnclosingElement();
+  @Nullable ArtificialElement getEnclosingElement();
 
   @Override
   List<? extends Element> getEnclosedElements();

@@ -34,7 +34,18 @@ pub trait ConfigurationCalculationDyn: Send + Sync + 'static {
 /// This is subtle, non-obvious and possibly unintuitive, so we introduce a newtype here just to make it clearer in the places we are
 /// using or passing around a CellName for this purpose.
 #[derive(
-    Clone, Dupe, Copy, Debug, Display, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative
+    Clone,
+    Dupe,
+    Copy,
+    Debug,
+    Display,
+    Hash,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Allocative,
+    pagable::Pagable
 )]
 pub struct CellNameForConfigurationResolution(pub CellName);
 

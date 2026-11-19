@@ -110,7 +110,6 @@ def f(y): pass
 def g():
     # Extra parameter.
     f(1, 2)
-
     # Not enough parameters.
     f()
 "#,

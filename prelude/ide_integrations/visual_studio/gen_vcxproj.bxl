@@ -16,22 +16,27 @@ load("get_vs_settings.bxl", "get_vs_settings")
 load("utils.bxl", "get_mode_config_path", "get_project_file_path", "get_root_path_relative_to", "get_vs_configuration", "h", "log_debug", "merge")
 
 def _gen_project_configurations(project_configurations):
-    return h("ItemGroup", [
-        h(
-            "ProjectConfiguration",
-            [
-                h("Configuration", config["Configuration"], indent_level = 3),
-                h("Platform", config["Platform"], indent_level = 3),
-            ],
-            {
-                "Include": config["Configuration"] + "|" + config["Platform"],
-            },
-            indent_level = 2,
-        )
-        for config in project_configurations
-    ], {
-        "Label": "ProjectConfigurations",
-    }, indent_level = 1)
+    return h(
+        "ItemGroup",
+        [
+            h(
+                "ProjectConfiguration",
+                [
+                    h("Configuration", config["Configuration"], indent_level = 3),
+                    h("Platform", config["Platform"], indent_level = 3),
+                ],
+                {
+                    "Include": config["Configuration"] + "|" + config["Platform"],
+                },
+                indent_level = 2,
+            )
+            for config in project_configurations
+        ],
+        {
+            "Label": "ProjectConfigurations",
+        },
+        indent_level = 1,
+    )
 
 def _gen_configuration_type(project_configurations):
     return h(
@@ -43,34 +48,53 @@ def _gen_configuration_type(project_configurations):
     )
 
 def _gen_headers(headers):
-    return h("ItemGroup", [
-        h("ClInclude", None, {
-            "Include": cmd_args("$(RepoRoot)\\", header, delimiter = ""),
-        }, indent_level = 2)
-        for header in headers
-    ], indent_level = 1)
+    return h(
+        "ItemGroup",
+        [
+            h(
+                "ClInclude",
+                None,
+                {
+                    "Include": cmd_args("$(RepoRoot)\\", header, delimiter = ""),
+                },
+                indent_level = 2,
+            )
+            for header in headers
+        ],
+        indent_level = 1,
+    )
 
 def _gen_sources(sources):
     source_entries = [
-        h("ClCompile", [h("BuckObjSubTarget", object, indent_level = 3)], {
-            "Include": cmd_args("$(RepoRoot)\\", source, delimiter = ""),
-        }, indent_level = 2)
+        h(
+            "ClCompile",
+            [h("BuckObjSubTarget", object, indent_level = 3)],
+            {
+                "Include": cmd_args("$(RepoRoot)\\", source, delimiter = ""),
+            },
+            indent_level = 2,
+        )
         for source, object in sources.items()
     ]
     return h("ItemGroup", source_entries, indent_level = 1)
 
 def _gen_import_mode_configs(vs_settings: dict, target):
     imports = []
-    for (mode_file, _) in vs_settings[BY_MODES].items():
-        import_config = '        <Import Condition="\'$(Configuration)\'==\'{}\'" Project="{}mode_configs\\{}" />\n'.format(
+    for mode_file, _ in vs_settings[BY_MODES].items():
+        import_config = "        <Import Condition=\"'$(Configuration)'=='{}'\" Project=\"{}mode_configs\\{}\" />\n".format(
             get_vs_configuration(mode_file),
             get_root_path_relative_to(target.label),
             get_mode_config_path(mode_file),
         )
         imports.append(import_config)
-    return h("ImportGroup", imports, {
-        "Label": "PropertySheets",
-    }, indent_level = 1)
+    return h(
+        "ImportGroup",
+        imports,
+        {
+            "Label": "PropertySheets",
+        },
+        indent_level = 1,
+    )
 
 def gen_vcxproj(target: bxl.ConfiguredTargetNode, vs_settings: dict, cli_args, buck_root):
     log_debug("# Generating vcxproj for {}", target.label.raw_target(), log_level = cli_args.log_level)
@@ -93,10 +117,7 @@ def gen_vcxproj(target: bxl.ConfiguredTargetNode, vs_settings: dict, cli_args, b
         "",
         h(
             "PropertyGroup",
-            [
-                h(key, value, indent_level = 2)
-                for (key, value) in vs_settings["Globals"].items()
-            ],
+            [h(key, value, indent_level = 2) for (key, value) in vs_settings["Globals"].items()],
             {
                 "Label": "Globals",
             },
@@ -134,7 +155,7 @@ def gen_vcxproj(target: bxl.ConfiguredTargetNode, vs_settings: dict, cli_args, b
                 ),
             ],
             {
-                "Condition": "\'@(ClCompile)\' != \'\'",
+                "Condition": "'@(ClCompile)' != ''",
                 "DependsOnTargets": "SelectClCompile",
                 "Name": "ClCompile",
             },
@@ -152,8 +173,8 @@ def _main(bxl_ctx):
     target_node = bxl_ctx.configured_targets(target_label, modifiers = bxl_ctx.modifiers)
     actions = bxl_ctx.bxl_actions().actions
     attrs = get_attrs(target_node, bxl_ctx)
-    attrs_outfile = actions.write_json(get_project_file_path(target_node.label, ".json"), attrs)
-    vcxproj_artifact = actions.declare_output(get_project_file_path(target_node.label, ".vcxproj"))
+    attrs_outfile = actions.write_json(get_project_file_path(target_node.label, ".json"), attrs, has_content_based_path = False)
+    vcxproj_artifact = actions.declare_output(get_project_file_path(target_node.label, ".vcxproj"), has_content_based_path = False)
 
     dynamic = [attrs_outfile]
 
@@ -169,7 +190,17 @@ def _main(bxl_ctx):
         toolchain_settings_file_out = materialize_compiler_settings_file(cxx_toolchain_target_node, actions, cxx_toolchain_info, bxl_ctx)
         dynamic.append(toolchain_settings_file_out)
 
-    def f(ctx, artifacts, outputs, attrs_outfile = attrs_outfile, cxx = toolchain_settings_file_out, vcxproj_artifact = vcxproj_artifact, target = target_node, cli_args = bxl_ctx.cli_args, buck_root = bxl_ctx.root()):
+    def f(
+        ctx,
+        artifacts,
+        outputs,
+        attrs_outfile = attrs_outfile,
+        cxx = toolchain_settings_file_out,
+        vcxproj_artifact = vcxproj_artifact,
+        target = target_node,
+        cli_args = bxl_ctx.cli_args,
+        buck_root = bxl_ctx.root(),
+    ):
         attrs_input = artifacts[attrs_outfile].read_json()
 
         vs_settings = get_vs_settings(target, cxx_toolchain_target, attrs_input, {}, cli_args, buck_root, ctx)

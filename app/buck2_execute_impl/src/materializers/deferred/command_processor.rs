@@ -8,24 +8,28 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
 
+use buck2_common::cancellation::CancellationScope;
+use buck2_common::liveliness_observer::LivelinessObserverSync;
 use buck2_core::buck2_env;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::soft_error;
+use buck2_core::soft_error_or_panic;
+use buck2_data::clean_stale_result::Origin;
+use buck2_data::clean_stale_result::Trigger;
 use buck2_data::error::ErrorTag;
-use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::dispatch::get_dispatcher_opt;
+use buck2_events::dispatch::maybe_proxy_current_span;
 use buck2_events::dispatch::with_dispatcher_async;
+use buck2_events::dispatch::with_dispatcher_opt;
 use buck2_events::span::SpanId;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::directory::ActionDirectoryEntry;
@@ -33,37 +37,36 @@ use buck2_execute::directory::ActionSharedDirectory;
 use buck2_execute::materialize::materializer::ArtifactNotMaterializedReason;
 use buck2_execute::materialize::materializer::DeclareArtifactPayload;
 use buck2_execute::materialize::materializer::MaterializationError;
-use buck2_fs::fs_util::disk_space_stats;
-use buck2_fs::paths::abs_path::AbsPath;
+use buck2_execute::materialize::materializer::MaterializationPurpose;
+use buck2_fs::paths::abs_path::AbsPathBuf;
+use buck2_hash::BuckMutSet;
 use buck2_util::threads::check_stack_overflow;
-use buck2_wrapper_common::invocation_id::TraceId;
-use chrono::DateTime;
-use chrono::Utc;
 use dice_futures::cancellation::CancellationContext;
+use dice_futures::spawn::WeakFutureError;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use futures::Future;
 use futures::future;
 use futures::future::BoxFuture;
-use futures::future::Either;
 use futures::future::FutureExt;
 use futures::future::TryFutureExt;
+use futures::stream;
 use futures::stream::BoxStream;
-use futures::stream::FuturesOrdered;
 use futures::stream::Stream;
 use futures::stream::StreamExt;
-use gazebo::prelude::*;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use pin_project::pin_project;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
-use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio::time::Interval;
 use tracing::instrument;
 
 use crate::materializers::deferred::AccessTimesUpdates;
+use crate::materializers::deferred::BackgroundCleanupGate;
 use crate::materializers::deferred::DeferredMaterializerStats;
 use crate::materializers::deferred::MaterializeEntryError;
 use crate::materializers::deferred::MaterializerReceiver;
@@ -71,26 +74,30 @@ use crate::materializers::deferred::MaterializerSender;
 use crate::materializers::deferred::SharedMaterializingError;
 use crate::materializers::deferred::TtlRefreshConfiguration;
 use crate::materializers::deferred::TtlRefreshHistoryEntry;
+use crate::materializers::deferred::artifact_tree::ArtifactClassification;
 use crate::materializers::deferred::artifact_tree::ArtifactMaterializationData;
 use crate::materializers::deferred::artifact_tree::ArtifactMaterializationMethod;
 use crate::materializers::deferred::artifact_tree::ArtifactMaterializationStage;
 use crate::materializers::deferred::artifact_tree::ArtifactMetadata;
+use crate::materializers::deferred::artifact_tree::ArtifactRematerializationMethod;
 use crate::materializers::deferred::artifact_tree::ArtifactTree;
 use crate::materializers::deferred::artifact_tree::CleaningFuture;
 use crate::materializers::deferred::artifact_tree::MaterializingFuture;
 use crate::materializers::deferred::artifact_tree::Processing;
 use crate::materializers::deferred::artifact_tree::ProcessingFuture;
 use crate::materializers::deferred::artifact_tree::Version;
+use crate::materializers::deferred::artifact_tree::artifact_metadata_matches_entry;
+use crate::materializers::deferred::artifact_tree::artifact_metadata_size;
+use crate::materializers::deferred::clean_stale::CleanFailure;
 use crate::materializers::deferred::clean_stale::CleanResult;
 use crate::materializers::deferred::clean_stale::CleanStaleArtifactsCommand;
 use crate::materializers::deferred::clean_stale::CleanStaleConfig;
-use crate::materializers::deferred::directory_metadata::DirectoryMetadata;
+use crate::materializers::deferred::clean_stale::FinishUnmaterializationUpload;
+use crate::materializers::deferred::clean_stale::disk_space_probe_path;
 use crate::materializers::deferred::extension::ExtensionCommand;
 use crate::materializers::deferred::io_handler::IoHandler;
 use crate::materializers::deferred::join_all_existing_futs;
 use crate::materializers::deferred::materialize_stack::MaterializeStack;
-use crate::materializers::deferred::subscriptions::MaterializerSubscriptionOperation;
-use crate::materializers::deferred::subscriptions::MaterializerSubscriptions;
 use crate::sqlite::materializer_db::MaterializerStateSqliteDb;
 
 pub(super) struct DeferredMaterializerCommandProcessor<T: 'static> {
@@ -99,6 +106,7 @@ pub(super) struct DeferredMaterializerCommandProcessor<T: 'static> {
     /// The runtime the deferred materializer will spawn futures on. This is normally the runtime
     /// used by the rest of Buck.
     rt: Handle,
+    pub(super) cancellation: Arc<CancellationScope>,
     pub(super) defer_write_actions: bool,
     /// Keep track of artifact versions to avoid callbacks clobbering state if the state has moved
     /// forward.
@@ -107,20 +115,28 @@ pub(super) struct DeferredMaterializerCommandProcessor<T: 'static> {
     pub(super) command_sender: Arc<MaterializerSender<T>>,
     /// The actual materializer state.
     pub(super) tree: ArtifactTree,
-    /// Active subscriptions
-    pub(super) subscriptions: MaterializerSubscriptions,
     /// History of refreshes. This *does* grow without bound, but considering the data is pretty
     /// small and we create it infrequently, that's fine.
     pub(super) ttl_refresh_history: Vec<TtlRefreshHistoryEntry>,
     /// The current ttl_refresh instance, if any exists.
-    ttl_refresh_instance: Option<oneshot::Receiver<(DateTime<Utc>, buck2_error::Result<()>)>>,
+    ttl_refresh_instance: Option<oneshot::Receiver<(Timestamp, buck2_error::Result<()>)>>,
     pub(super) cancellations: &'static CancellationContext,
-    stats: Arc<DeferredMaterializerStats>,
-    access_times_buffer: Option<HashSet<ProjectRelativePathBuf>>,
+    pub(super) stats: Arc<DeferredMaterializerStats>,
+    access_times_buffer: Option<BuckMutSet<ProjectRelativePathBuf>>,
     verbose_materializer_log: bool,
     daemon_dispatcher: EventDispatcher,
-    disable_eager_write_dispatch: bool,
+    /// Buck-out path used for clean-stale `disk_space_stats` lookups.
+    pub(super) buck_out_abs_path: Option<Arc<AbsPathBuf>>,
+    pub(super) clean_stale_config: CleanStaleConfig,
+    /// Minimum remaining CAS TTL required before local contents may be discarded.
+    /// `None` when periodic TTL refresh cannot preserve a remotely-backed artifact.
+    pub(super) rematerialization_ttl: Option<SignedDuration>,
+    background_cleanup_gate: Arc<BackgroundCleanupGate>,
 }
+
+/// What was materialized at exactly each of the paths an invalidation was asked for, for the
+/// holder that is about to write there to tell what it may keep (`fill`).
+pub(crate) type Displaced = Vec<(ProjectRelativePathBuf, ArtifactMetadata)>;
 
 /// Message taken by the `DeferredMaterializer`'s command loop.
 pub(super) enum MaterializerCommand<T: 'static> {
@@ -134,13 +150,18 @@ pub(super) enum MaterializerCommand<T: 'static> {
     ),
 
     /// Declares that a set of artifacts already exist
-    DeclareExisting(Vec<DeclareArtifactPayload>, Option<SpanId>, Option<TraceId>),
+    DeclareExisting(
+        Vec<DeclareArtifactPayload>,
+        Option<SpanId>,
+        Option<EventDispatcher>,
+    ),
 
     /// Declares an artifact: its path, value, and how to materialize it.
     Declare(
         DeclareArtifactPayload,
         Box<ArtifactMaterializationMethod>, // Boxed to avoid growing all variants
         EventDispatcher,
+        Option<SpanId>,
     ),
 
     MatchArtifacts(
@@ -148,15 +169,20 @@ pub(super) enum MaterializerCommand<T: 'static> {
         oneshot::Sender<bool>,
     ),
 
-    HasArtifact(ProjectRelativePathBuf, oneshot::Sender<bool>),
+    HasArtifact(
+        ProjectRelativePathBuf,
+        oneshot::Sender<bool>,
+        Option<EventDispatcher>,
+    ),
 
     /// Declares that given paths are no longer eligible to be materialized by this materializer.
     /// This typically should reflect a change made to the underlying filesystem, either because
     /// the file was created, or because it was removed..
     InvalidateFilePaths(
         Vec<ProjectRelativePathBuf>,
-        oneshot::Sender<CleaningFuture>,
+        oneshot::Sender<(Displaced, CleaningFuture)>,
         EventDispatcher,
+        Option<SpanId>,
     ),
 
     /// Takes a list of artifact paths, and materializes all artifacts in the
@@ -166,21 +192,22 @@ pub(super) enum MaterializerCommand<T: 'static> {
     /// concludes (whether successfully or not).
     Ensure(
         Vec<ProjectRelativePathBuf>,
+        MaterializationPurpose,
         EventDispatcher,
+        Option<SpanId>,
         oneshot::Sender<BoxStream<'static, Result<(), MaterializationError>>>,
     ),
 
-    Subscription(MaterializerSubscriptionOperation<T>),
-
-    Extension(Box<dyn ExtensionCommand<T>>),
+    Extension(Box<dyn ExtensionCommand<T>>, Option<EventDispatcher>),
 
     /// Terminate command processor loop, used by tests
     #[allow(dead_code)]
     Abort,
 
-    GetArtifactEntriesForMaterializedPaths(
-        Vec<ProjectRelativePathBuf>,
-        oneshot::Sender<
+    GetArtifactEntriesForMaterializedPaths {
+        paths: Vec<ProjectRelativePathBuf>,
+        fetch_root_artifact_entries_for_subpaths: bool,
+        sender: oneshot::Sender<
             Vec<
                 Option<(
                     ProjectRelativePathBuf,
@@ -188,7 +215,24 @@ pub(super) enum MaterializerCommand<T: 'static> {
                 )>,
             >,
         >,
-    ),
+    },
+}
+
+impl<T> MaterializerCommand<T> {
+    fn dispatcher(&self) -> Option<EventDispatcher> {
+        match self {
+            Self::DeclareExisting(_, _, dispatcher)
+            | Self::HasArtifact(_, _, dispatcher)
+            | Self::Extension(_, dispatcher) => dispatcher.clone(),
+            Self::Declare(_, _, dispatcher, _)
+            | Self::InvalidateFilePaths(_, _, dispatcher, _)
+            | Self::Ensure(_, _, dispatcher, _, _) => Some(dispatcher.dupe()),
+            Self::GetMaterializedFilePaths(..)
+            | Self::MatchArtifacts(..)
+            | Self::Abort
+            | Self::GetArtifactEntriesForMaterializedPaths { .. } => None,
+        }
+    }
 }
 
 impl<T> std::fmt::Debug for MaterializerCommand<T> {
@@ -197,38 +241,44 @@ impl<T> std::fmt::Debug for MaterializerCommand<T> {
             MaterializerCommand::GetMaterializedFilePaths(paths, _) => {
                 write!(f, "GetMaterializedFilePaths({paths:?}, _)",)
             }
-            MaterializerCommand::DeclareExisting(paths, current_span, trace_id) => {
+            MaterializerCommand::DeclareExisting(paths, current_span, dispatcher) => {
                 write!(
                     f,
-                    "DeclareExisting({paths:?}, {current_span:?}, {trace_id:?})"
+                    "DeclareExisting({paths:?}, {current_span:?}, {:?})",
+                    dispatcher.as_ref().map(EventDispatcher::trace_id)
                 )
             }
             MaterializerCommand::Declare(
-                DeclareArtifactPayload {
-                    path,
-                    artifact,
-                    persist_full_directory_structure: _,
-                },
+                DeclareArtifactPayload { path, artifact },
                 method,
                 _dispatcher,
+                _parent_id,
             ) => {
                 write!(f, "Declare({path:?}, {artifact:?}, {method:?})",)
             }
             MaterializerCommand::MatchArtifacts(paths, _) => {
                 write!(f, "MatchArtifacts({paths:?})")
             }
-            MaterializerCommand::HasArtifact(path, _) => {
+            MaterializerCommand::HasArtifact(path, ..) => {
                 write!(f, "HasArtifact({path:?})")
             }
             MaterializerCommand::InvalidateFilePaths(paths, ..) => {
                 write!(f, "InvalidateFilePaths({paths:?})")
             }
-            MaterializerCommand::Ensure(paths, _, _) => write!(f, "Ensure({paths:?}, _)",),
-            MaterializerCommand::Subscription(op) => write!(f, "Subscription({op:?})",),
-            MaterializerCommand::Extension(ext) => write!(f, "Extension({ext:?})"),
+            MaterializerCommand::Ensure(paths, purpose, _, _, _) => {
+                write!(f, "Ensure({paths:?}, {purpose:?}, _)",)
+            }
+            MaterializerCommand::Extension(ext, _) => write!(f, "Extension({ext:?})"),
             MaterializerCommand::Abort => write!(f, "Abort"),
-            MaterializerCommand::GetArtifactEntriesForMaterializedPaths(paths, _) => {
-                write!(f, "GetArtifactEntriesForMaterializedPaths({paths:?}, _)",)
+            MaterializerCommand::GetArtifactEntriesForMaterializedPaths {
+                paths,
+                fetch_root_artifact_entries_for_subpaths,
+                sender: _,
+            } => {
+                write!(
+                    f,
+                    "GetArtifactEntriesForMaterializedPaths({paths:?}, {fetch_root_artifact_entries_for_subpaths}, _)",
+                )
             }
         }
     }
@@ -244,16 +294,33 @@ pub(super) enum LowPriorityMaterializerCommand {
     /// happen under normal conditions - we can react accordingly.
     MaterializationFinished {
         path: ProjectRelativePathBuf,
-        timestamp: DateTime<Utc>,
+        timestamp: Timestamp,
         version: Version,
         result: Result<(), SharedMaterializingError>,
+        dispatcher: Option<EventDispatcher>,
     },
 
     CleanupFinished {
         path: ProjectRelativePathBuf,
         version: Version,
         result: Result<(), SharedMaterializingError>,
+        dispatcher: Option<EventDispatcher>,
     },
+
+    FinishUnmaterializationUpload {
+        command: FinishUnmaterializationUpload,
+        dispatcher: Option<EventDispatcher>,
+    },
+}
+
+impl LowPriorityMaterializerCommand {
+    fn dispatcher(&self) -> Option<EventDispatcher> {
+        match self {
+            Self::MaterializationFinished { dispatcher, .. }
+            | Self::CleanupFinished { dispatcher, .. }
+            | Self::FinishUnmaterializationUpload { dispatcher, .. } => dispatcher.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -287,7 +354,8 @@ struct CommandStream<T: 'static> {
     refresh_ttl_ticker: Option<Interval>,
     io_buffer_ticker: Interval,
     clean_stale_ticker: Option<Interval>,
-    clean_stale_fut: Option<BoxFuture<'static, buck2_error::Result<CleanResult>>>,
+    clean_stale_fut: Option<BoxFuture<'static, Result<CleanResult, CleanFailure>>>,
+    cancellation: Arc<dyn LivelinessObserverSync>,
 }
 
 enum Op<T: 'static> {
@@ -298,11 +366,35 @@ enum Op<T: 'static> {
     CleanStaleRequest,
 }
 
+/// What the disk-materialization path should actually materialize for an artifact.
+enum EntryDetails {
+    /// Materialize a declared entry to disk via its method.
+    Entry {
+        entry: ActionDirectoryEntry<ActionSharedDirectory>,
+        method: Arc<ArtifactMaterializationMethod>,
+    },
+    /// Nothing to materialize for the entry itself (e.g. only its deps need materializing).
+    DepsOnly,
+}
+
+impl EntryDetails {
+    fn kind(&self) -> &'static str {
+        match self {
+            EntryDetails::Entry { .. } => "entry",
+            EntryDetails::DepsOnly => "deps_only",
+        }
+    }
+}
+
 impl<T: 'static> Stream for CommandStream<T> {
     type Item = Op<T>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
+
+        if !this.cancellation.is_alive_sync() {
+            return Poll::Ready(None);
+        }
 
         if let Poll::Ready(Some(e)) = this.high_priority.poll_recv(cx) {
             if let MaterializerCommand::Abort = e {
@@ -351,24 +443,27 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         tree: ArtifactTree,
         cancellations: &'static CancellationContext,
         stats: Arc<DeferredMaterializerStats>,
-        access_times_buffer: Option<HashSet<ProjectRelativePathBuf>>,
+        access_times_buffer: Option<BuckMutSet<ProjectRelativePathBuf>>,
         verbose_materializer_log: bool,
         daemon_dispatcher: EventDispatcher,
-        disable_eager_write_dispatch: bool,
+        clean_stale_config: CleanStaleConfig,
+        rematerialization_ttl: Option<SignedDuration>,
+        background_cleanup_gate: Arc<BackgroundCleanupGate>,
+        cancellation: Arc<CancellationScope>,
     ) -> Self {
-        let subscriptions = MaterializerSubscriptions::new();
         let ttl_refresh_history = Vec::new();
         let ttl_refresh_instance = None;
         let version_tracker = VersionTracker::new();
+        let buck_out_abs_path = disk_space_probe_path(io.fs(), io.buck_out_path());
         Self {
             io,
             sqlite_db,
             rt,
+            cancellation,
             defer_write_actions,
             version_tracker,
             command_sender,
             tree,
-            subscriptions,
             ttl_refresh_history,
             ttl_refresh_instance,
             cancellations,
@@ -376,56 +471,64 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             access_times_buffer,
             verbose_materializer_log,
             daemon_dispatcher,
-            disable_eager_write_dispatch,
+            buck_out_abs_path,
+            clean_stale_config,
+            rematerialization_ttl,
+            background_cleanup_gate,
         }
     }
 
-    fn spawn_from_rt<F>(rt: &Handle, f: F) -> JoinHandle<F::Output>
+    pub(super) fn next_version(&mut self) -> Version {
+        self.version_tracker.next()
+    }
+
+    fn spawn_from_rt<F, R>(
+        rt: &Handle,
+        dispatcher: &EventDispatcher,
+        cancellation: &CancellationScope,
+        f: F,
+    ) -> BoxFuture<'static, Result<R, WeakFutureError>>
     where
-        F: std::future::Future + Send + 'static,
-        F::Output: Send + 'static,
+        F: for<'a> FnOnce(&'a CancellationContext) -> BoxFuture<'a, R> + Send + 'static,
+        R: Send + 'static,
     {
-        // FIXME(JakobDegen): Ideally there wouldn't be a `None` case, but I don't know this code
-        // well enough to be confident in removing it
-        match get_dispatcher_opt() {
-            Some(dispatcher) => rt.spawn(with_dispatcher_async(dispatcher, f)),
-            None => rt.spawn(f),
-        }
+        let dispatcher = dispatcher.dupe();
+        cancellation
+            .spawn(rt, move |context| {
+                with_dispatcher_async(dispatcher, f(context)).boxed()
+            })
+            .0
     }
 
-    fn get_artifact_ttl(
-        decreased_ttl_hours_disk_threshold: Option<f64>,
-        decreased_ttl_hours: Option<std::time::Duration>,
-        default_ttl: std::time::Duration,
-    ) -> std::time::Duration {
-        let (threshold, lower_ttl) = match (decreased_ttl_hours_disk_threshold, decreased_ttl_hours)
-        {
-            (Some(t), Some(l)) => (t, l),
-            _ => return default_ttl,
-        };
-
-        let root_path_str = "/";
-
-        let disk_stats = match AbsPath::new(root_path_str).and_then(disk_space_stats) {
-            Ok(stats) => stats,
-            Err(e) => {
-                let _unused = soft_error!("disk_space_stats", e);
-                return default_ttl;
-            }
-        };
-        if (disk_stats.free_space as f64 / disk_stats.total_space as f64 * 100.0) <= threshold {
-            lower_ttl
-        } else {
-            default_ttl
-        }
+    pub(super) fn configured_clean_stale_command(
+        &self,
+        dispatcher: EventDispatcher,
+        dry_run: bool,
+        tracked_only: bool,
+        trigger: Trigger,
+        origin: Origin,
+    ) -> CleanStaleArtifactsCommand {
+        CleanStaleArtifactsCommand::configured(
+            &self.clean_stale_config,
+            self.buck_out_abs_path.dupe(),
+            dispatcher,
+            dry_run,
+            tracked_only,
+            trigger,
+            origin,
+        )
     }
 
-    pub(super) fn spawn<F>(&self, f: F) -> JoinHandle<F::Output>
+    pub(super) fn spawn<F, R>(
+        &self,
+        dispatcher: &EventDispatcher,
+        f: F,
+    ) -> BoxFuture<'static, Result<R, WeakFutureError>>
     where
-        F: std::future::Future + Send + 'static,
-        F::Output: Send + 'static,
+        F: for<'a> FnOnce(&'a CancellationContext) -> BoxFuture<'a, R> + Send + 'static,
+        R: Send + 'static,
     {
-        Self::spawn_from_rt(&self.rt, f)
+        Self::spawn_from_rt(&self.rt, dispatcher, &self.cancellation, f)
     }
 
     /// Loop that runs for as long as the materializer is alive.
@@ -435,9 +538,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         mut self,
         commands: MaterializerReceiver<T>,
         ttl_refresh: TtlRefreshConfiguration,
-        access_time_update_max_buffer_size: usize,
         access_time_updates: AccessTimesUpdates,
-        clean_stale_config: Option<CleanStaleConfig>,
     ) {
         let MaterializerReceiver {
             high_priority,
@@ -454,10 +555,10 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             None
         };
 
-        let clean_stale_ticker = clean_stale_config.as_ref().map(|clean_stale_config| {
+        let clean_stale_ticker = self.clean_stale_config.schedule.as_ref().map(|schedule| {
             tokio::time::interval_at(
-                tokio::time::Instant::now() + clean_stale_config.start_offset,
-                clean_stale_config.clean_period,
+                tokio::time::Instant::now() + schedule.start_offset,
+                schedule.clean_period,
             )
         });
 
@@ -470,6 +571,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             io_buffer_ticker,
             clean_stale_ticker,
             clean_stale_fut: None,
+            cancellation: self.cancellation.observer(),
         };
 
         while let Some(op) = stream.next().await {
@@ -477,7 +579,6 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 Op::Command(command) => {
                     self.process_one_command(command);
                     counters.ack_received();
-                    self.flush_access_times(access_time_update_max_buffer_size);
                 }
                 Op::LowPriorityCommand(command) => {
                     self.process_one_low_priority_command(command);
@@ -501,10 +602,14 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                                 // `try_recv`.
                                 let (tx, rx) = oneshot::channel();
 
-                                self.spawn(async {
-                                    let res = fut.await;
-                                    let _ignored = tx.send((Utc::now(), res));
-                                });
+                                let _refresh =
+                                    self.spawn(&EventDispatcher::error_on_event(), move |_| {
+                                        async move {
+                                            let res = fut.await;
+                                            let _ignored = tx.send((Timestamp::now(), res));
+                                        }
+                                        .boxed()
+                                    });
 
                                 rx
                             });
@@ -514,7 +619,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                                 self.ttl_refresh_instance = Some(ttl_refresh);
                             }
                             None => self.ttl_refresh_history.push(TtlRefreshHistoryEntry {
-                                at: Utc::now(),
+                                at: Timestamp::now(),
                                 outcome: None,
                             }),
                         }
@@ -523,70 +628,63 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 Op::Tick => {
                     if matches!(access_time_updates, AccessTimesUpdates::Full) {
                         // Force a periodic flush.
-                        self.flush_access_times(0);
+                        self.flush_access_times();
                     };
                 }
                 Op::CleanStaleRequest => {
-                    if let Some(config) = clean_stale_config.as_ref() {
-                        let dispatcher = self.daemon_dispatcher.dupe();
-
-                        let artifact_ttl = Self::get_artifact_ttl(
-                            config.decreased_ttl_hours_disk_threshold,
-                            config.decreased_ttl_hours,
-                            config.artifact_ttl,
-                        );
-
-                        let daemon_id = dispatcher.daemon_id().dupe();
-                        let cmd = CleanStaleArtifactsCommand {
-                            keep_since_time: chrono::Utc::now() - artifact_ttl,
-                            dry_run: config.dry_run,
-                            tracked_only: false,
-                            dispatcher,
-                        };
-                        stream.clean_stale_fut =
-                            Some(cmd.create_clean_fut(&mut self, None, daemon_id));
-                    } else {
-                        // This should never happen
-                        soft_error!(
-                            "clean_stale_no_config",
-                            buck2_error!(buck2_error::ErrorTag::Tier0, "clean scheduled without being configured").into(),
-                            quiet: true
-                        )
-                            .unwrap();
-                    }
+                    let Some(clean_guard) = self.background_cleanup_gate.try_start_cleanup() else {
+                        continue;
+                    };
+                    let dispatcher = self.daemon_dispatcher.dupe();
+                    let daemon_id = dispatcher.daemon_id().dupe();
+                    let cmd = self.configured_clean_stale_command(
+                        dispatcher,
+                        false,
+                        false,
+                        Trigger::Scheduled,
+                        Origin::DaemonSchedule,
+                    );
+                    let clean = cmd.create_clean_fut(&mut self, None, daemon_id);
+                    stream.clean_stale_fut = Some(
+                        async move {
+                            let _clean_guard = clean_guard;
+                            clean.await
+                        }
+                        .boxed(),
+                    );
                 }
             }
         }
     }
 
     fn process_one_command(&mut self, command: MaterializerCommand<T>) {
-        match command {
+        let dispatcher = command.dispatcher();
+        with_dispatcher_opt(dispatcher, || match command {
             // Entry point for `get_materialized_file_paths` calls
             MaterializerCommand::GetMaterializedFilePaths(paths, result_sender) => {
-                let result =
-                    paths.into_map(|p| self.tree.file_contents_path(p, self.io.digest_config()));
+                let result = paths
+                    .into_iter()
+                    .map(|p| self.tree.file_contents_path(p, self.io.digest_config()))
+                    .collect::<Vec<_>>();
                 result_sender.send(result).ok();
             }
-            MaterializerCommand::DeclareExisting(artifacts, ..) => {
-                for DeclareArtifactPayload {
-                    path,
-                    artifact,
-                    persist_full_directory_structure,
-                } in artifacts
-                {
-                    self.declare_existing(&path, artifact, persist_full_directory_structure);
-                }
+            MaterializerCommand::DeclareExisting(artifacts, parent_id, _) => {
+                maybe_proxy_current_span(parent_id, || {
+                    for DeclareArtifactPayload { path, artifact } in artifacts {
+                        self.declare_existing(&path, artifact);
+                    }
+                })
             }
             // Entry point for `declare_{copy|cas}` calls
             MaterializerCommand::Declare(
                 DeclareArtifactPayload {
                     path,
                     artifact: value,
-                    persist_full_directory_structure,
                 },
                 method,
                 event_dispatcher,
-            ) => {
+                parent_id,
+            ) => maybe_proxy_current_span(parent_id, || {
                 self.maybe_log_command(&event_dispatcher, || {
                     buck2_data::materializer_command::Data::Declare(
                         buck2_data::materializer_command::Declare {
@@ -595,22 +693,23 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     )
                 });
 
-                self.declare(&path, value, persist_full_directory_structure, method);
-
-                if self.subscriptions.should_materialize_eagerly(&path) {
-                    self.materialize_artifact(&path, event_dispatcher);
-                }
-            }
+                self.declare(&path, value, method, &event_dispatcher);
+            }),
             MaterializerCommand::MatchArtifacts(paths, sender) => {
                 let all_matches = paths
                     .into_iter()
                     .all(|(path, value)| self.match_artifact(path, value));
                 sender.send(all_matches).ok();
             }
-            MaterializerCommand::HasArtifact(path, sender) => {
+            MaterializerCommand::HasArtifact(path, sender, _) => {
                 sender.send(self.has_artifact(path)).ok();
             }
-            MaterializerCommand::InvalidateFilePaths(paths, sender, event_dispatcher) => {
+            MaterializerCommand::InvalidateFilePaths(
+                paths,
+                sender,
+                event_dispatcher,
+                parent_id,
+            ) => maybe_proxy_current_span(parent_id, || {
                 tracing::trace!(
                     paths = ?paths,
                     "invalidate paths",
@@ -623,25 +722,45 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     )
                 });
 
-                let existing_futs = self
-                    .tree
-                    .invalidate_paths_and_collect_futures(paths, self.sqlite_db.as_mut());
+                let displaced: Displaced = paths
+                    .iter()
+                    .filter_map(|path| {
+                        let (root, data) =
+                            Self::find_artifact_containing_path(&mut self.tree, path)?;
+                        match &data.stage {
+                            ArtifactMaterializationStage::Materialized { metadata, .. }
+                                if root == path =>
+                            {
+                                Some((path.clone(), metadata.dupe()))
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect();
+                let existing_futs = self.tree.invalidate_paths_and_collect_futures(
+                    paths,
+                    self.sqlite_db.as_mut(),
+                    &self.stats,
+                );
 
                 // TODO: This probably shouldn't return a CleanFuture
                 sender
-                    .send(
-                        async move {
-                            join_all_existing_futs(existing_futs?)
-                                .await
-                                .map_err(buck2_error::Error::from)
-                        }
-                        .boxed()
-                        .shared(),
-                    )
+                    .send((
+                        displaced,
+                        async move { join_all_existing_futs(existing_futs?).await }
+                            .boxed()
+                            .shared(),
+                    ))
                     .ok();
-            }
+            }),
             // Entry point for `ensure_materialized` calls
-            MaterializerCommand::Ensure(paths, event_dispatcher, fut_sender) => {
+            MaterializerCommand::Ensure(
+                paths,
+                purpose,
+                event_dispatcher,
+                parent_id,
+                fut_sender,
+            ) => maybe_proxy_current_span(parent_id, || {
                 self.maybe_log_command(&event_dispatcher, || {
                     buck2_data::materializer_command::Data::Ensure(
                         buck2_data::materializer_command::Ensure {
@@ -650,29 +769,41 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     )
                 });
 
+                if let MaterializationPurpose::FinalOutput { .. } = purpose {
+                    self.promote_final_output_closure(&paths);
+                }
+
                 fut_sender
                     .send(self.materialize_many_artifacts(paths, event_dispatcher))
                     .ok();
-            }
-            MaterializerCommand::Subscription(sub) => sub.execute(self),
-            MaterializerCommand::Extension(ext) => ext.execute(self),
+            }),
+            MaterializerCommand::Extension(ext, _) => ext.execute(self),
             MaterializerCommand::Abort => unreachable!(),
-            MaterializerCommand::GetArtifactEntriesForMaterializedPaths(paths, sender) => {
+            MaterializerCommand::GetArtifactEntriesForMaterializedPaths {
+                paths,
+                fetch_root_artifact_entries_for_subpaths,
+                sender,
+            } => {
                 sender
-                    .send(self.get_artifact_entries_for_materialized_paths(paths))
+                    .send(self.get_artifact_entries_for_materialized_paths(
+                        paths,
+                        fetch_root_artifact_entries_for_subpaths,
+                    ))
                     .ok();
             }
-        }
+        })
     }
 
     fn process_one_low_priority_command(&mut self, command: LowPriorityMaterializerCommand) {
-        match command {
+        let dispatcher = command.dispatcher();
+        with_dispatcher_opt(dispatcher, || match command {
             // Materialization of artifact succeeded
             LowPriorityMaterializerCommand::MaterializationFinished {
                 path,
                 timestamp,
                 version,
                 result,
+                dispatcher: _,
             } => {
                 self.materialization_finished(path, timestamp, version, result);
             }
@@ -680,10 +811,15 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 path,
                 version,
                 result,
+                dispatcher: _,
             } => {
                 self.tree.cleanup_finished(path, version, result);
             }
-        }
+            LowPriorityMaterializerCommand::FinishUnmaterializationUpload {
+                command,
+                dispatcher: _,
+            } => command.execute(self),
+        })
     }
 
     /// Poll the current TTL refresh and remove it if it's done. Add the outcome to
@@ -706,7 +842,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 Err(TryRecvError::Closed) => {
                     // Shouldnt really happen unless Tokio is shutting down, but be safe.
                     self.ttl_refresh_history.push(TtlRefreshHistoryEntry {
-                        at: Utc::now(),
+                        at: Timestamp::now(),
                         outcome: Some(Err(buck2_error!(buck2_error::ErrorTag::Tier0, "Shutdown"))),
                     });
                     None
@@ -716,25 +852,13 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         };
     }
 
-    pub(super) fn is_path_materialized(&self, path: &ProjectRelativePath) -> bool {
-        match self.tree.prefix_get(&mut path.iter()) {
-            None => false,
-            Some(data) => {
-                matches!(
-                    data.stage,
-                    ArtifactMaterializationStage::Materialized { .. }
-                )
-            }
-        }
-    }
-
-    pub(super) fn flush_access_times(&mut self, max_buffer_size: usize) -> String {
+    pub(super) fn flush_access_times(&mut self) -> String {
         if let Some(access_times_buffer) = self.access_times_buffer.as_mut() {
-            let size = access_times_buffer.len();
-            if size < max_buffer_size {
-                return "Access times buffer is not full yet".to_owned();
+            if access_times_buffer.is_empty() {
+                return "Access times buffer is empty".to_owned();
             }
 
+            let size = access_times_buffer.len();
             let buffer = std::mem::take(access_times_buffer);
             let now = Instant::now();
             tracing::debug!("Flushing access times buffer");
@@ -743,12 +867,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     .materializer_state_table()
                     .update_access_times(buffer.iter().collect::<Vec<_>>())
                 {
-                    soft_error!(
-                        "materializer_materialize_error",
-                        e,
-                        quiet: true
-                    )
-                    .unwrap();
+                    soft_error_or_panic!("materializer_materialize_error", e);
                     return "Found error while updating access times in sqlite db".to_owned();
                 }
             }
@@ -761,42 +880,117 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         "Access time updates are disabled. Consider removing `update_access_times = false` from your .buckconfig".to_owned()
     }
 
+    /// One result per path, in order. A path with nothing to wait for (already materialized,
+    /// or never declared) yields `Ok(())` immediately.
     fn materialize_many_artifacts(
         &mut self,
         paths: Vec<ProjectRelativePathBuf>,
         event_dispatcher: EventDispatcher,
     ) -> BoxStream<'static, Result<(), MaterializationError>> {
-        let tasks = paths.into_iter().filter_map(|path| {
-            self.materialize_artifact(path.as_ref(), event_dispatcher.dupe())
-                .map(move |fut| {
-                    fut.map_err(move |e| match e {
-                        SharedMaterializingError::Error(source) => MaterializationError::Error {
-                            path,
-                            source: source.into(),
-                        },
+        // Jobs start eagerly and are only awaited in order, keeping order and per-path errors.
+        let tasks: Vec<_> = paths
+            .into_iter()
+            .map(
+                |path| match self.materialize_artifact(path.as_ref(), event_dispatcher.dupe()) {
+                    Some(fut) => future::Either::Left(fut.map_err(move |e| match e {
+                        SharedMaterializingError::Error(source) => {
+                            MaterializationError::Error { path, source }
+                        }
                         SharedMaterializingError::NotFound(source) => {
                             MaterializationError::NotFound { source }
                         }
-                    })
-                })
-        });
+                    })),
+                    None => future::Either::Right(future::ready(Ok(()))),
+                },
+            )
+            .collect();
 
-        tasks.collect::<FuturesOrdered<_>>().boxed()
+        stream::iter(tasks).then(|task| task).boxed()
     }
 
-    fn declare_existing(
-        &mut self,
-        path: &ProjectRelativePath,
-        value: ArtifactValue,
-        persist_full_directory_structure: bool,
-    ) {
-        let metadata = ArtifactMetadata::new(value.entry(), !persist_full_directory_structure);
+    fn promote_final_output_closure(&mut self, paths: &[ProjectRelativePathBuf]) {
+        let mut pending = paths.to_vec();
+        let mut visited: BuckMutSet<ProjectRelativePathBuf> = BuckMutSet::default();
+        let mut materialized_roots = Vec::new();
+
+        // Traverse all artifacts and deps transitively
+        while let Some(path) = pending.pop() {
+            let Some((root, data)) = Self::find_artifact_containing_path(&mut self.tree, &path)
+            else {
+                continue;
+            };
+            let root = root.to_owned();
+            if !visited.insert(root.clone()) {
+                continue;
+            }
+
+            let deps = data.deps.dupe();
+            let promotion = if data.classification == ArtifactClassification::FinalOutput {
+                None
+            } else {
+                data.classification = ArtifactClassification::FinalOutput;
+                Some((
+                    matches!(
+                        data.stage,
+                        ArtifactMaterializationStage::Materialized { .. }
+                    ),
+                    data.logical_size_bytes,
+                ))
+            };
+
+            if let Some(deps) = deps.as_ref() {
+                pending.extend(self.tree.find_artifacts(deps));
+            }
+
+            if let Some((true, logical_size_bytes)) = promotion {
+                self.stats.promote_materialized(logical_size_bytes);
+                materialized_roots.push(root);
+            }
+        }
+
+        if let Some(sqlite_db) = self.sqlite_db.as_mut()
+            && let Err(error) = sqlite_db
+                .materializer_state_table()
+                .update_classifications(&materialized_roots, ArtifactClassification::FinalOutput)
+        {
+            soft_error_or_panic!("materializer_update_classification_error", error);
+        }
+    }
+
+    fn declare_existing(&mut self, path: &ProjectRelativePath, value: ArtifactValue) {
+        let metadata = value.entry().dupe();
+        let logical_size_bytes = artifact_metadata_size(&metadata);
+        let classification = {
+            let mut path_iter = path.iter();
+            match self.tree.prefix_get(&mut path_iter) {
+                Some(data)
+                    if path_iter.next().is_none()
+                        && matches!(
+                            &data.stage,
+                            ArtifactMaterializationStage::Materialized {
+                                metadata: previous_metadata,
+                                ..
+                            } if artifact_metadata_matches_entry(previous_metadata, &metadata)
+                        ) =>
+                {
+                    data.classification
+                }
+                _ => ArtifactClassification::IntermediateOnly,
+            }
+        };
+        if let Err(error) = self.tree.invalidate_paths_and_collect_futures(
+            vec![path.to_owned()],
+            self.sqlite_db.as_mut(),
+            &self.stats,
+        ) {
+            soft_error_or_panic!("materializer_declare_existing_invalidation_error", error);
+        }
         on_materialization(
             self.sqlite_db.as_mut(),
-            &self.subscriptions,
             path,
             &metadata,
-            Utc::now(),
+            Timestamp::now(),
+            classification,
             "materializer_declare_existing_error",
         );
 
@@ -804,22 +998,27 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             path.iter().map(|f| f.to_owned()),
             Box::new(ArtifactMaterializationData {
                 deps: value.deps().duped(),
+                classification,
+                logical_size_bytes,
                 stage: ArtifactMaterializationStage::Materialized {
                     metadata,
-                    last_access_time: Utc::now(),
+                    last_access_time: Timestamp::now(),
+                    rematerialization_method: None,
                     active: true,
                 },
                 processing: Processing::Done(self.version_tracker.next()),
             }),
         );
+        self.stats
+            .add_materialized(classification, logical_size_bytes);
     }
 
     fn declare(
         &mut self,
         path: &ProjectRelativePath,
         value: ArtifactValue,
-        persist_full_directory_structure: bool,
         method: Box<ArtifactMaterializationMethod>,
+        event_dispatcher: &EventDispatcher,
     ) {
         self.stats.declares.fetch_add(1, Ordering::Relaxed);
 
@@ -830,6 +1029,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 ArtifactMaterializationStage::Materialized {
                     metadata,
                     last_access_time,
+                    rematerialization_method,
                     ..
                 } => {
                     // NOTE: This is for testing performance when hitting mismatches with disk
@@ -842,7 +1042,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     .unwrap();
 
                     if path_iter.next().is_none()
-                        && metadata.matches_entry(value.entry())
+                        && artifact_metadata_matches_entry(metadata, value.entry())
                         && !force_mismatch
                     {
                         // In this case, the entry declared matches the already materialized
@@ -856,6 +1056,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                         data.stage = ArtifactMaterializationStage::Materialized {
                             metadata: metadata.dupe(),
                             last_access_time: *last_access_time,
+                            rematerialization_method: rematerialization_method.dupe(),
                             active: true,
                         };
                         data.deps = deps;
@@ -895,54 +1096,36 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         // Always invalidate materializer state before actual deleting from filesystem
         // so there will never be a moment where artifact is deleted but materializer
         // thinks it still exists.
-        let existing_futs = self
-            .tree
-            .invalidate_paths_and_collect_futures(vec![path.to_owned()], self.sqlite_db.as_mut());
+        let existing_futs = self.tree.invalidate_paths_and_collect_futures(
+            vec![path.to_owned()],
+            self.sqlite_db.as_mut(),
+            &self.stats,
+        );
 
         let existing_futs = ExistingFutures(existing_futs);
 
         let method = Arc::from(method);
 
-        // Dispatch Write actions eagerly if possible. We can do this if no cleanup is required. We
-        // also check that there are no deps, though for writes there should never be deps.
-        // NOTE: This is causing perf issues because the writes are still dispatched eagerly and that
-        // is flooding our IO executor queue and blocking materializations.
-        // This is a temporary workaround. The proper fix should be to dispatch writes at a lower priority.
-        let can_use_write_fast_path = !cfg!(target_os = "macos")
-            && existing_futs.is_empty()
-            && value.deps().is_none()
-            && !self.disable_eager_write_dispatch;
-
-        let future = match &*method {
-            ArtifactMaterializationMethod::Write(write) if can_use_write_fast_path => {
-                let materialize = self.io.write(
-                    path.to_owned(),
-                    write.dupe(),
-                    version,
-                    self.command_sender.dupe(),
-                    self.cancellations,
-                );
-                ProcessingFuture::Materializing(materialize.shared())
-            }
-            _ => ProcessingFuture::Cleaning(clean_path(
-                &self.io,
-                path.to_owned(),
-                version,
-                self.command_sender.dupe(),
-                existing_futs,
-                &self.rt,
-                self.cancellations,
-            )),
-        };
+        let future = ProcessingFuture::Cleaning(clean_path(
+            &self.io,
+            path.to_owned(),
+            version,
+            self.command_sender.dupe(),
+            existing_futs,
+            &self.rt,
+            &self.cancellation,
+            event_dispatcher,
+        ));
 
         let data = Box::new(ArtifactMaterializationData {
             deps: value.deps().duped(),
+            classification: ArtifactClassification::IntermediateOnly,
+            logical_size_bytes: artifact_metadata_size(value.entry()),
             stage: ArtifactMaterializationStage::Declared {
                 entry: value.entry().dupe(),
                 method,
-                persist_full_directory_structure,
             },
-            processing: Processing::Active { future, version },
+            processing: Processing::active(future, version),
         });
         self.tree.insert(path.iter().map(|f| f.to_owned()), data);
     }
@@ -967,7 +1150,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
 
         let is_match = match &data.stage {
             ArtifactMaterializationStage::Materialized { metadata, .. } => {
-                let is_match = metadata.matches_entry(value.entry());
+                let is_match = artifact_metadata_matches_entry(metadata, value.entry());
                 tracing::trace!("materialized: found {}, is_match: {}", metadata, is_match);
                 is_match
             }
@@ -987,6 +1170,23 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         // that hasn't had its deps populated yet (since the materializer state does not know about
         // deps).
         if is_match {
+            if let ArtifactMaterializationStage::Materialized {
+                last_access_time,
+                active,
+                ..
+            } = &mut data.stage
+            {
+                *active = true;
+                *last_access_time = Timestamp::now();
+                if let Some(sqlite_db) = &mut self.sqlite_db {
+                    if let Err(e) = sqlite_db
+                        .materializer_state_table()
+                        .update_access_times(vec![&path])
+                    {
+                        soft_error_or_panic!("match_artifact_update_time", e);
+                    }
+                }
+            }
             if let Some(deps) = value.deps() {
                 data.deps = Some(deps.dupe())
             }
@@ -1010,16 +1210,17 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 metadata: _,
                 last_access_time,
                 active,
+                ..
             } => {
                 // Treat this case much like a `declare_existing`
                 *active = true;
-                *last_access_time = Utc::now();
+                *last_access_time = Timestamp::now();
                 if let Some(sqlite_db) = &mut self.sqlite_db {
                     if let Err(e) = sqlite_db
                         .materializer_state_table()
                         .update_access_times(vec![&path])
                     {
-                        soft_error!("has_artifact_update_time", e, quiet: true).unwrap();
+                        soft_error_or_panic!("has_artifact_update_time", e);
                     }
                 }
             }
@@ -1053,7 +1254,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             Ok(res) => res,
             Err(e) => Some(
                 future::err(SharedMaterializingError::Error(
-                    e.context(format!("materializing {stack}")).into(),
+                    e.context(format!("materializing {stack}")),
                 ))
                 .boxed()
                 .shared(),
@@ -1064,6 +1265,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
     fn get_artifact_entries_for_materialized_paths(
         &mut self,
         paths: Vec<ProjectRelativePathBuf>,
+        fetch_root_artifact_entries_for_subpaths: bool,
     ) -> Vec<
         Option<(
             ProjectRelativePathBuf,
@@ -1073,32 +1275,22 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         paths
             .into_iter()
             .map(|p| {
-                let Some((root_path, data)) =
-                    Self::find_artifact_containing_path(&mut self.tree, &p)
-                else {
-                    return None;
-                };
-                if root_path != p {
-                    // Artifact is declared above our path or not materialized
-                    return None;
-                }
-                let entry = match &data.stage {
+                let (root_path, data) = Self::find_artifact_containing_path(&mut self.tree, &p)?;
+
+                let base_entry = match &data.stage {
                     ArtifactMaterializationStage::Materialized { metadata, .. } => {
-                        match &metadata.0 {
-                            DirectoryEntry::Dir(dir) => match dir {
-                                DirectoryMetadata::Compact { .. } => None,
-                                DirectoryMetadata::Full(shared_directory) => {
-                                    Some(ActionDirectoryEntry::Dir(shared_directory.dupe()))
-                                }
-                            },
-                            DirectoryEntry::Leaf(leaf) => {
-                                Some(ActionDirectoryEntry::Leaf(leaf.dupe()))
-                            }
-                        }
+                        Some(metadata.dupe())
                     }
                     ArtifactMaterializationStage::Declared { entry, .. } => Some(entry.dupe()),
-                };
-                entry.map(|e| (p, e))
+                }?;
+
+                if root_path == p || fetch_root_artifact_entries_for_subpaths {
+                    // Path exactly matches artifact root, or we are fetching base entries for projected paths
+                    Some((p, base_entry))
+                } else {
+                    // Not at root and not fetching projected entries
+                    None
+                }
             })
             .collect()
     }
@@ -1133,49 +1325,37 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             Some(x) => x,
         };
 
-        let cleaning_fut = match &data.processing {
-            Processing::Active {
-                future: ProcessingFuture::Cleaning(f),
-                ..
-            } => Some(f.clone()),
-            Processing::Active {
-                future: ProcessingFuture::Materializing(f),
-                ..
-            } => {
-                tracing::debug!("join existing future");
-                return Ok(Some(f.clone()));
-            }
-            Processing::Done(..) => None,
+        let cleaning_fut = match data.processing.active_ref() {
+            Some(active) => match &active.future {
+                ProcessingFuture::Cleaning(f) => Some(f.clone()),
+                ProcessingFuture::Materializing(f) => {
+                    tracing::debug!("join existing future");
+                    return Ok(Some(f.clone()));
+                }
+            },
+            None => None,
         };
 
         let deps = data.deps.dupe();
         let check_deps = deps.is_some();
-        let entry_and_method = match &mut data.stage {
-            ArtifactMaterializationStage::Declared {
-                entry,
-                method,
-                persist_full_directory_structure: _,
-            } => Some((entry.dupe(), method.dupe())),
+        let entry_details = match &mut data.stage {
+            ArtifactMaterializationStage::Declared { entry, method } => EntryDetails::Entry {
+                entry: entry.dupe(),
+                method: method.dupe(),
+            },
             ArtifactMaterializationStage::Materialized {
                 last_access_time, ..
             } => match check_deps {
-                true => None,
+                true => EntryDetails::DepsOnly,
                 false => {
                     if let Some(ref mut buffer) = self.access_times_buffer.as_mut() {
                         // TODO (torozco): Why is it legal for something to be Materialized + Cleaning?
-                        let timestamp = Utc::now();
+                        let timestamp = Timestamp::now();
                         *last_access_time = timestamp;
 
-                        // NOTE (T142264535): We mostly expect that artifacts are always declared
-                        // before they are materialized, but there's one case where that doesn't
-                        // happen. In particular, when incremental actions execute, they will trigger
-                        // materialization of outputs from a previous run. The artifact isn't really
-                        // "active" (it's not an output that we'll use), but we do warn here (when we
-                        // probably shouldn't).
-                        //
-                        // if !active {
-                        //     tracing::warn!(path = %path, "Expected artifact to be marked active by declare")
-                        // }
+                        // NOTE (T142264535): Artifacts are normally declared before they are
+                        // materialized, but incremental actions materialize outputs of a previous
+                        // run without declaring them, so `active` is not checked here.
                         if buffer.insert(path.to_buf()) {
                             tracing::debug!(
                                 "nothing to materialize, adding to access times buffer"
@@ -1190,16 +1370,21 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
 
         let version = self.version_tracker.next();
 
+        let method = match &entry_details {
+            EntryDetails::Entry { method, .. } => Some(method.as_ref()),
+            EntryDetails::DepsOnly => None,
+        };
+
+        // `method` is grepped for by tests/core/trace_io/test_trace_io.py (it asserts on the
+        // Debug method name, e.g. `LocalCopy`). Keep logging it so refactors don't break those tests.
         tracing::debug!(
-            has_entry_and_method = entry_and_method.is_some(),
-            method = ?entry_and_method.as_ref().map(|(_, m)| m),
+            entry_details = entry_details.kind(),
+            method = ?method,
             has_deps = deps.is_some(),
             version = %version,
             cleaning = cleaning_fut.is_some(),
             "materialize artifact"
         );
-
-        let method = entry_and_method.as_ref().map(|(_, m)| m.as_ref());
         // Those are special because if the artifact copies from other artifacts, we must materialize them first
         let materialize_copy_source_tasks =
             self.materialize_copy_source_tasks(&stack, &event_dispatcher, path, method);
@@ -1209,55 +1394,63 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         let materialize_symlink_destination_tasks =
             self.materialize_symlink_destination_tasks(&stack, &event_dispatcher, path, deps);
 
-        let materialize_entry = if let Some((entry, method)) = entry_and_method {
-            let io = self.io.dupe();
-            let path_buf = path.to_buf();
-            let cancellations = CancellationContext::never_cancelled(); // spawned
-            Either::Left(async move {
-                io.materialize_entry(path_buf, method, entry, event_dispatcher, cancellations)
-                    .await
-            })
-        } else {
-            Either::Right(future::ready(Ok(())))
-        };
-
+        let spawn_dispatcher = event_dispatcher.dupe();
         // Create a task to await deps and materialize ourselves
         let path_buf = path.to_buf();
+        let entry_path = path.to_buf();
+        let io = self.io.dupe();
         let command_sender = self.command_sender.dupe();
         let task = self
-            .spawn(async move {
-                let timestamp = Utc::now();
-                // Materialize the deps and this entry. Regardless of whether this succeeds or fails we
-                // need to notify the materializer, so don't check the result.
-                let res = Self::perform_materialization(
-                    cleaning_fut,
-                    materialize_copy_source_tasks,
-                    materialize_symlink_destination_tasks,
-                    materialize_entry,
-                )
-                .await;
+            .spawn(&spawn_dispatcher, move |cancellations| {
+                async move {
+                    let materialize_entry: BoxFuture<'_, Result<(), MaterializeEntryError>> =
+                        match entry_details {
+                            EntryDetails::Entry { entry, method } => async move {
+                                io.materialize_entry(
+                                    entry_path,
+                                    method,
+                                    entry,
+                                    event_dispatcher,
+                                    cancellations,
+                                )
+                                .await
+                            }
+                            .boxed(),
+                            EntryDetails::DepsOnly => future::ready(Ok(())).boxed(),
+                        };
+                    let timestamp = Timestamp::now();
+                    // Materialize the deps and this entry. Regardless of whether this succeeds or fails we
+                    // need to notify the materializer, so don't check the result.
+                    let res = Self::perform_materialization(
+                        cleaning_fut,
+                        materialize_copy_source_tasks,
+                        materialize_symlink_destination_tasks,
+                        materialize_entry,
+                    )
+                    .await;
 
-                // Materialization finished, notify the command thread
-                let _ignored = command_sender.send_low_priority(
-                    LowPriorityMaterializerCommand::MaterializationFinished {
-                        path: path_buf,
-                        timestamp,
-                        version,
-                        result: res.dupe(),
-                    },
-                );
+                    // Materialization finished, notify the command thread
+                    let _ignored = command_sender.send_low_priority(
+                        LowPriorityMaterializerCommand::MaterializationFinished {
+                            path: path_buf,
+                            timestamp,
+                            version,
+                            result: res.dupe(),
+                            dispatcher: get_dispatcher_opt(),
+                        },
+                    );
 
-                res
+                    res
+                }
+                .boxed()
             })
-            .map(|r| r.unwrap_or_else(|e| Err(SharedMaterializingError::Error(e.into()))))
+            .map(|r| r.unwrap_or_else(|e| Err(SharedMaterializingError::Error(task_stopped(e)))))
             .boxed()
             .shared();
 
         let data = self.tree.prefix_get_mut(&mut path.iter()).unwrap();
-        data.processing = Processing::Active {
-            future: ProcessingFuture::Materializing(task.clone()),
-            version,
-        };
+        data.processing =
+            Processing::active(ProcessingFuture::Materializing(task.clone()), version);
 
         Ok(Some(task))
     }
@@ -1274,7 +1467,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             cleaning_fut
                 .await
                 .with_buck_error_context(|| "Error cleaning output path")
-                .map_err(|e| SharedMaterializingError::Error(e.into()))?;
+                .map_err(SharedMaterializingError::Error)?;
         };
 
         // In case this is a local copy, we first need to materialize the
@@ -1313,7 +1506,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 .into_iter()
                 .filter_map(|p| {
                     self.materialize_artifact_recurse(
-                        MaterializeStack::Child(&stack, path),
+                        MaterializeStack::Child(stack, path),
                         p.as_ref(),
                         event_dispatcher.dupe(),
                     )
@@ -1336,7 +1529,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 .iter()
                 .filter_map(|a| {
                     self.materialize_artifact_recurse(
-                        MaterializeStack::Child(&stack, path),
+                        MaterializeStack::Child(stack, path),
                         a.src.as_ref(),
                         event_dispatcher.dupe(),
                     )
@@ -1350,7 +1543,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
     fn materialization_finished(
         &mut self,
         artifact_path: ProjectRelativePathBuf,
-        timestamp: DateTime<Utc>,
+        timestamp: Timestamp,
         version: Version,
         result: Result<(), SharedMaterializingError>,
     ) {
@@ -1379,6 +1572,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                             // so we need to delete anything at artifact_path before we ever retry materializing it.
                             // TODO(scottcao): Once command processor accepts an ArtifactTree instead of initializing one,
                             // add a test case to ensure this behavior.
+                            let dispatcher = get_dispatcher_opt()
+                                .unwrap_or_else(EventDispatcher::error_on_event);
                             let future = ProcessingFuture::Cleaning(clean_path(
                                 &self.io,
                                 artifact_path.clone(),
@@ -1386,9 +1581,10 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                                 self.command_sender.dupe(),
                                 ExistingFutures::empty(),
                                 &self.rt,
-                                self.cancellations,
+                                &self.cancellation,
+                                &dispatcher,
                             ));
-                            info.processing = Processing::Active { future, version };
+                            info.processing = Processing::active(future, version);
                         }
                     }
                 } else {
@@ -1401,27 +1597,26 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                             tracing::debug!("artifact is already materialized");
                             None
                         }
-                        ArtifactMaterializationStage::Declared {
-                            entry,
-                            method: _method,
-                            persist_full_directory_structure,
-                        } => {
-                            let metadata =
-                                ArtifactMetadata::new(entry, !persist_full_directory_structure);
+                        ArtifactMaterializationStage::Declared { entry, method } => {
+                            let metadata = entry.dupe();
                             // NOTE: We only insert this artifact if there isn't an in-progress cleanup
                             // future on this path.
                             on_materialization(
                                 self.sqlite_db.as_mut(),
-                                &self.subscriptions,
                                 &artifact_path,
                                 &metadata,
                                 timestamp,
+                                info.classification,
                                 "materializer_finished_error",
                             );
 
                             Some(ArtifactMaterializationStage::Materialized {
                                 metadata,
                                 last_access_time: timestamp,
+                                rematerialization_method:
+                                    ArtifactRematerializationMethod::from_materialization_method(
+                                        method,
+                                    ),
                                 active: true,
                             })
                         }
@@ -1429,6 +1624,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
 
                     if let Some(new_stage) = new_stage {
                         info.stage = new_stage;
+                        self.stats
+                            .add_materialized(info.classification, info.logical_size_bytes);
                     }
 
                     info.processing = Processing::Done(version);
@@ -1452,25 +1649,24 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
     }
 }
 
-/// Run callbacks for an artifact being materialized at `path`.
+/// Record an artifact materialized at `path` in the materializer state database.
 fn on_materialization(
     sqlite_db: Option<&mut MaterializerStateSqliteDb>,
-    subscriptions: &MaterializerSubscriptions,
     path: &ProjectRelativePath,
     metadata: &ArtifactMetadata,
-    timestamp: DateTime<Utc>,
+    timestamp: Timestamp,
+    classification: ArtifactClassification,
     error_name: &'static str,
 ) {
     if let Some(sqlite_db) = sqlite_db {
-        if let Err(e) = sqlite_db
-            .materializer_state_table()
-            .insert(path, metadata, timestamp)
+        if let Err(e) =
+            sqlite_db
+                .materializer_state_table()
+                .insert(path, metadata, timestamp, classification)
         {
-            soft_error!(error_name, e, quiet: true).unwrap();
+            soft_error_or_panic!(error_name, e);
         }
     }
-
-    subscriptions.on_materialization_finished(path);
 }
 
 /// Spawns a future to clean output paths while waiting for any
@@ -1482,27 +1678,33 @@ fn clean_path<T: IoHandler>(
     command_sender: Arc<MaterializerSender<T>>,
     existing_futs: ExistingFutures,
     rt: &Handle,
-    cancellations: &'static CancellationContext,
+    cancellation: &CancellationScope,
+    dispatcher: &EventDispatcher,
 ) -> CleaningFuture {
     if existing_futs.is_empty() {
-        return io
-            .clean_path(path, version, command_sender, cancellations)
-            .shared();
-    }
-
-    DeferredMaterializerCommandProcessor::<T>::spawn_from_rt(rt, {
         let io = io.dupe();
-        let cancellations = CancellationContext::never_cancelled();
-        async move {
-            join_all_existing_futs(existing_futs.into_result()?).await?;
-            io.clean_path(path, version, command_sender, cancellations)
-                .await
+        return DeferredMaterializerCommandProcessor::<T>::spawn_from_rt(
+            rt,
+            dispatcher,
+            cancellation,
+            move |cancellations| io.clean_path(path, version, command_sender, cancellations),
+        )
+        .map(|result| result.unwrap_or_else(|error| Err(task_stopped(error))))
+        .boxed()
+        .shared();
+    }
+    DeferredMaterializerCommandProcessor::<T>::spawn_from_rt(rt, dispatcher, cancellation, {
+        let io = io.dupe();
+        move |cancellations| {
+            async move {
+                join_all_existing_futs(existing_futs.into_result()?).await?;
+                io.clean_path(path, version, command_sender, cancellations)
+                    .await
+            }
+            .boxed()
         }
     })
-    .map(|r| match r {
-        Ok(r) => r,
-        Err(e) => Err(e.into()), // Turn the JoinError into a buck2_error::Error.
-    })
+    .map(|r| r.unwrap_or_else(|e| Err(task_stopped(e))))
     .boxed()
     .shared()
 }
@@ -1524,14 +1726,50 @@ impl ExistingFutures {
     }
 }
 
+/// The error for a materializer task that did not finish. A join error is a panic or abort, as a
+/// tokio join error was before tasks were tracked; cancellation only happens when the tenant is
+/// evicted or the materializer is dropped at shutdown.
+pub(super) fn task_stopped(error: WeakFutureError) -> buck2_error::Error {
+    match error {
+        WeakFutureError::JoinError => {
+            buck2_error!(ErrorTag::Tokio, "Materializer task panicked or was aborted")
+        }
+        WeakFutureError::Cancelled => buck2_error!(
+            ErrorTag::InterruptedByDaemonShutdown,
+            "Materializer task was cancelled"
+        ),
+    }
+}
+
 /// Exposing methods for testing purposes only.
 #[cfg(test)]
 #[doc(hidden)]
 pub(super) trait TestingDeferredMaterializerCommandProcessor<T> {
     fn testing_has_artifact(&mut self, path: ProjectRelativePathBuf) -> bool;
+    fn testing_is_path_materialized(&self, path: &ProjectRelativePath) -> bool;
     fn testing_declare_existing(&mut self, path: &ProjectRelativePath, value: ArtifactValue);
 
     fn testing_process_one_low_priority_command(&mut self, command: LowPriorityMaterializerCommand);
+
+    fn testing_get_artifact_entries_for_materialized_paths(
+        &mut self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> Vec<
+        Option<(
+            ProjectRelativePathBuf,
+            ActionDirectoryEntry<ActionSharedDirectory>,
+        )>,
+    >;
+
+    fn testing_get_root_artifact_entries_for_subpaths(
+        &mut self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> Vec<
+        Option<(
+            ProjectRelativePathBuf,
+            ActionDirectoryEntry<ActionSharedDirectory>,
+        )>,
+    >;
 
     fn testing_declare(&mut self, path: &ProjectRelativePath, value: ArtifactValue);
 
@@ -1540,7 +1778,7 @@ pub(super) trait TestingDeferredMaterializerCommandProcessor<T> {
     fn testing_materialization_finished(
         &mut self,
         artifact_path: ProjectRelativePathBuf,
-        timestamp: DateTime<Utc>,
+        timestamp: Timestamp,
         result: Result<(), SharedMaterializingError>,
     );
 }
@@ -1554,8 +1792,20 @@ impl<T: IoHandler> TestingDeferredMaterializerCommandProcessor<T>
         self.has_artifact(path)
     }
 
+    fn testing_is_path_materialized(&self, path: &ProjectRelativePath) -> bool {
+        match self.tree.prefix_get(&mut path.iter()) {
+            None => false,
+            Some(data) => {
+                matches!(
+                    data.stage,
+                    ArtifactMaterializationStage::Materialized { .. }
+                )
+            }
+        }
+    }
+
     fn testing_declare_existing(&mut self, path: &ProjectRelativePath, value: ArtifactValue) {
-        self.declare_existing(path, value, false)
+        self.declare_existing(path, value)
     }
 
     fn testing_process_one_low_priority_command(
@@ -1565,12 +1815,37 @@ impl<T: IoHandler> TestingDeferredMaterializerCommandProcessor<T>
         self.process_one_low_priority_command(command)
     }
 
+    fn testing_get_artifact_entries_for_materialized_paths(
+        &mut self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> Vec<
+        Option<(
+            ProjectRelativePathBuf,
+            ActionDirectoryEntry<ActionSharedDirectory>,
+        )>,
+    > {
+        self.get_artifact_entries_for_materialized_paths(paths, false)
+    }
+
+    fn testing_get_root_artifact_entries_for_subpaths(
+        &mut self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> Vec<
+        Option<(
+            ProjectRelativePathBuf,
+            ActionDirectoryEntry<ActionSharedDirectory>,
+        )>,
+    > {
+        self.get_artifact_entries_for_materialized_paths(paths, true)
+    }
+
     fn testing_declare(&mut self, path: &ProjectRelativePath, value: ArtifactValue) {
+        let dispatcher = self.daemon_dispatcher.dupe();
         self.declare(
             path,
             value,
-            false,
             Box::new(ArtifactMaterializationMethod::Test),
+            &dispatcher,
         )
     }
 
@@ -1581,7 +1856,7 @@ impl<T: IoHandler> TestingDeferredMaterializerCommandProcessor<T>
     fn testing_materialization_finished(
         &mut self,
         artifact_path: ProjectRelativePathBuf,
-        timestamp: DateTime<Utc>,
+        timestamp: Timestamp,
         result: Result<(), SharedMaterializingError>,
     ) {
         self.materialization_finished(

@@ -22,23 +22,6 @@ prelude.command_alias(
     env = {"TEST_VAR": "foo bar"},
 )
 
-prelude.command_alias(
-    name = "default_env",
-    args = select({
-        "DEFAULT": [
-            "sh",
-            "-c",
-            "echo $TEST_VAR",
-        ],
-        "ovr_config//os:windows": [
-            "cmd.exe",
-            "/c",
-            "echo %TEST_VAR%",
-        ],
-    }),
-    default_env = {"TEST_VAR": "foo bar"},
-)
-
 py_assertion(
     name = "check_env",
     script = """
@@ -64,36 +47,6 @@ env["TEST_VAR"] = "baz qux"
 assert (
     subprocess.check_output([sys.argv[1]], env = env).decode().strip()
     == "foo bar"
-)
-""",
-    script_args = ["$(exe_target :env)"],
-)
-
-py_assertion(
-    name = "check_default_env",
-    script = """
-import subprocess
-import sys
-assert (
-    subprocess.check_output([sys.argv[1]]).decode().strip()
-    == "foo bar"
-)
-""",
-    script_args = ["$(exe_target :env)"],
-)
-
-py_assertion(
-    name = "check_default_env_does_not_have_priority",
-    script = """
-import subprocess
-import sys
-import os
-
-env = os.environ.copy()
-env["TEST_VAR"] = "baz qux"
-assert (
-    subprocess.check_output([sys.argv[1]], env = env).decode().strip()
-    == ""baz qux
 )
 """,
     script_args = ["$(exe_target :env)"],

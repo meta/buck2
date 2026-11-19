@@ -1,0 +1,11 @@
+load("@fbcode//buck2/cfg/experimental:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+
+# These targets use the prelude rules directly, so they don't pick up the
+# sanitizer runtime that the fbcode macros add to their deps. Without it, the
+# cgo C objects the fbcode C++ toolchain instruments have no runtime to link
+# against. `//buck2/tests/prelude/go/asan` covers sanitized cgo via the macros.
+set_cfg_modifiers(
+    cfg_modifiers = [
+        "ovr_config//build_mode:sanitizer_type[no-san]",
+    ],
+)

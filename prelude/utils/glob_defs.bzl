@@ -57,9 +57,7 @@ def _merge_maps(*file_maps):
         for key in file_map:
             if key in result and result[key] != file_map[key]:
                 fail(
-                    "Conflicting files in file search paths. " +
-                    "\"%s\" maps to both \"%s\" and \"%s\"." %
-                    (key, result[key], file_map[key]),
+                    "Conflicting files in file search paths. " + '"%s" maps to both "%s" and "%s".' % (key, result[key], file_map[key]),
                 )
 
             result[key] = file_map[key]
@@ -74,7 +72,7 @@ def _single_subdir_glob(dirpath, glob_pattern, exclude = None, prefix = None, st
     files = glob_func([paths.join(dirpath, glob_pattern)], exclude = exclude)
     for f in files:
         if dirpath:
-            key = f[len(dirpath) + 1:]
+            key = f[len(dirpath) + 1 :]
         else:
             key = f
         if prefix:

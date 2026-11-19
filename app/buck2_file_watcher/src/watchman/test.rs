@@ -13,13 +13,14 @@ use std::fs::File;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::time::Instant;
 
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::buck2_error;
 use buck2_util::process::async_background_command;
-use gazebo::prelude::*;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Child;
 use watchman_client::expr::Expr;
@@ -51,7 +52,12 @@ impl SyncableQueryProcessor for TestQueryProcessor {
         _watchman_version: Option<String>,
     ) -> buck2_error::Result<(Self::Output, Self::Payload)> {
         Ok((
-            Out::Files(events.into_map(|e| e.path.display().to_string())),
+            Out::Files(
+                events
+                    .into_iter()
+                    .map(|e| e.path.display().to_string())
+                    .collect::<Vec<_>>(),
+            ),
             payload,
         ))
     }
@@ -62,9 +68,15 @@ impl SyncableQueryProcessor for TestQueryProcessor {
         events: Vec<WatchmanEvent>,
         _mergebase: &Option<String>,
         _watchman_version: Option<String>,
+        _events_since_mergebase: bool,
     ) -> buck2_error::Result<(Self::Output, Self::Payload)> {
         Ok((
-            Out::FreshInstance(events.into_map(|e| e.path.display().to_string())),
+            Out::FreshInstance(
+                events
+                    .into_iter()
+                    .map(|e| e.path.display().to_string())
+                    .collect::<Vec<_>>(),
+            ),
             payload,
         ))
     }
@@ -98,7 +110,7 @@ impl WatchmanInstance {
         let child = self
             .child
             .as_mut()
-            .buck_error_context("Watchman was already shutdown")?;
+            .internal_error("Watchman was already shutdown")?;
 
         child
             .kill()
@@ -139,7 +151,59 @@ impl Drop for WatchmanInstance {
     }
 }
 
+/// Sandcastle Mac VMs boot with fseventsd disabled and ship a sudo-whitelisted script that
+/// starts it. Watchman cannot watch any subdirectory of a root without it.
+async fn ensure_fseventsd_running() -> buck2_error::Result<()> {
+    const KICKSTART: &str = "/usr/local/bin/kickstart-fseventsd";
+
+    async fn fseventsd_running() -> buck2_error::Result<bool> {
+        Ok(async_background_command("/usr/bin/pgrep")
+            .args(["-qx", "fseventsd"])
+            .status()
+            .await?
+            .success())
+    }
+
+    if fseventsd_running().await? {
+        return Ok(());
+    }
+    if !tokio::fs::try_exists(KICKSTART).await? {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "fseventsd is not running and `{KICKSTART}` is missing"
+        ));
+    }
+    let status = async_background_command("/usr/bin/sudo")
+        .arg("-n")
+        .arg(KICKSTART)
+        .status()
+        .await?;
+    if !status.success() {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "`{KICKSTART}` failed with {status}"
+        ));
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if fseventsd_running().await? {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(buck2_error!(
+        buck2_error::ErrorTag::Tier0,
+        "fseventsd did not start within 30s"
+    ))
+}
+
 async fn spawn_watchman(watchman_dir: &Path) -> buck2_error::Result<WatchmanInstance> {
+    if cfg!(target_os = "macos") {
+        ensure_fseventsd_running()
+            .await
+            .buck_error_context("Starting fseventsd")?;
+    }
+
     // This config might make Watchman a bit more efficient on Mac and make tests less flaky there
     let watchman_config = watchman_dir.join("config");
     let watchman_config_text = r#"{"prefer_split_fsevents_watcher": true}"#;
@@ -206,6 +270,7 @@ async fn test_syncable_query() -> buck2_error::Result<()> {
         Box::new(TestQueryProcessor),
         None,
         true,
+        true,
     )?;
 
     // Startup
@@ -232,5 +297,143 @@ async fn test_syncable_query() -> buck2_error::Result<()> {
     // Clean up
     watchman_instance.shutdown().await?;
 
+    Ok(())
+}
+
+/// A processor that records which callback ran and the file names it got.
+struct MergebaseRecorder;
+
+#[derive(PartialEq, Eq, Debug)]
+enum MbOut {
+    FreshInstance(Vec<String>),
+    Files(Vec<String>),
+}
+
+#[async_trait]
+impl SyncableQueryProcessor for MergebaseRecorder {
+    type Output = MbOut;
+    type Payload = ();
+
+    async fn process_events(
+        &mut self,
+        payload: Self::Payload,
+        events: Vec<WatchmanEvent>,
+        _mergebase: &Option<String>,
+        _watchman_version: Option<String>,
+    ) -> buck2_error::Result<(Self::Output, Self::Payload)> {
+        let mut names: Vec<String> = events
+            .into_iter()
+            .map(|e| e.path.display().to_string())
+            .filter(|p| !p.starts_with(".git"))
+            .collect();
+        names.sort();
+        Ok((MbOut::Files(names), payload))
+    }
+
+    async fn on_fresh_instance(
+        &mut self,
+        payload: Self::Payload,
+        events: Vec<WatchmanEvent>,
+        _mergebase: &Option<String>,
+        _watchman_version: Option<String>,
+        _events_since_mergebase: bool,
+    ) -> buck2_error::Result<(Self::Output, Self::Payload)> {
+        Ok((
+            MbOut::FreshInstance(
+                events
+                    .into_iter()
+                    .map(|e| e.path.display().to_string())
+                    .collect(),
+            ),
+            payload,
+        ))
+    }
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .expect("running git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// A repo where `main` moves from A to B (`up.txt` 0 -> 1) while `feature` sits on A with
+/// `loc.txt` changed; checking out `main` from `feature` moves the mergebase and changes both
+/// files on disk.
+fn git_repo_with_mergebase_move(root: &Path) {
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "user.email", "t@t"]);
+    git(root, &["config", "user.name", "t"]);
+    fs::write(root.join("up.txt"), "0\n").unwrap();
+    fs::write(root.join("loc.txt"), "0\n").unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "A"]);
+    git(root, &["checkout", "-q", "-b", "feature"]);
+    fs::write(root.join("loc.txt"), "L\n").unwrap();
+    git(root, &["commit", "-qam", "L"]);
+    git(root, &["checkout", "-q", "main"]);
+    fs::write(root.join("up.txt"), "1\n").unwrap();
+    git(root, &["commit", "-qam", "B"]);
+    git(root, &["checkout", "-q", "feature"]);
+}
+
+/// With `buck2.dice_clear_on_mergebase_change = false`, a checkout that moves the mergebase is
+/// handled as an incremental batch that lists every file changed since the last sync.
+#[tokio::test]
+async fn test_syncable_query_mergebase_move_without_dice_clear() -> buck2_error::Result<()> {
+    if !cfg!(fbcode_build) {
+        return Ok(());
+    }
+
+    let tempdir = tempfile::tempdir()?;
+    let root = tempdir.path().join("root");
+    let watchman_dir = tempdir.path().join("watchman");
+    fs::create_dir(&watchman_dir)?;
+    fs::create_dir(&root)?;
+    git_repo_with_mergebase_move(&root);
+
+    let mut watchman_instance = spawn_watchman(&watchman_dir).await?;
+    let connector = Connector::default().unix_domain_socket(&watchman_instance.sock);
+
+    let watchman_query = SyncableQuery::new(
+        connector,
+        &root,
+        Expr::Any(vec![
+            Expr::FileType(FileType::Regular),
+            Expr::FileType(FileType::Directory),
+            Expr::FileType(FileType::Symlink),
+        ]),
+        Box::new(MergebaseRecorder),
+        Some("main".to_owned()),
+        true,
+        false,
+    )?;
+
+    assert_eq!(
+        watchman_query.sync(()).await?.0,
+        MbOut::FreshInstance(vec![])
+    );
+    assert_eq!(watchman_query.sync(()).await?.0, MbOut::Files(vec![]));
+
+    // Moves the mergebase from A to B: up.txt 0 -> 1 and loc.txt L -> 0 on disk.
+    git(&root, &["checkout", "-q", "main"]);
+    assert_eq!(
+        watchman_query.sync(()).await?.0,
+        MbOut::Files(vec!["loc.txt".to_owned(), "up.txt".to_owned()])
+    );
+    // A later edit is still reported incrementally.
+    fs::write(root.join("up.txt"), "2\n")?;
+    assert_eq!(
+        watchman_query.sync(()).await?.0,
+        MbOut::Files(vec!["up.txt".to_owned()])
+    );
+
+    watchman_instance.shutdown().await?;
     Ok(())
 }

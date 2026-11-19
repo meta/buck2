@@ -29,7 +29,7 @@ use crate::eval::compiler::scope::payload::CstExpr;
 /// switch to tuple where it makes no difference. A tuple of constants
 /// will go on the FrozenHeap, while a list of constants will be continually
 /// reallocated.
-pub(crate) fn list_to_tuple(x: &CstExpr) -> Cow<'_, CstExpr> {
+pub(crate) fn list_to_tuple<'a, 'f>(x: &'a CstExpr<'f>) -> Cow<'a, CstExpr<'f>> {
     match x {
         Spanned {
             node: ExprP::List(x),

@@ -15,7 +15,7 @@ def _assert_eq(a, b):
         fail("Expected {} == {}".format(a, b))
 
 def _anon_impl(ctx: AnalysisContext) -> list[Provider]:
-    output = ctx.actions.write("hello.txt", "hello")
+    output = ctx.actions.write("hello.txt", "hello", has_content_based_path = False)
     return [DefaultInfo(default_outputs = [output])]
 
 _anon = rule(impl = _anon_impl, attrs = {"dep": attrs.dep()})
@@ -31,10 +31,13 @@ def _subtarget_impl(ctx: AnalysisContext) -> Promise:
     _assert_eq(base_child.label, child.label)
     return ctx.actions.anon_targets([(_anon, {"dep": child}), (_anon, {"dep": base_child})]).promise.map(f)
 
-_subtarget = rule(impl = _subtarget_impl, attrs = {
-    "base": attrs.dep(),
-    "child": attrs.dep(),
-})
+_subtarget = rule(
+    impl = _subtarget_impl,
+    attrs = {
+        "base": attrs.dep(),
+        "child": attrs.dep(),
+    },
+)
 
 def _base_impl(_ctx: AnalysisContext) -> list[Provider]:
     return [DefaultInfo(sub_targets = {"child": [DefaultInfo(), SubtargetInfo(information = "hello")]})]

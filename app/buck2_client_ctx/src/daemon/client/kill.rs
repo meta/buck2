@@ -20,6 +20,7 @@ use buck2_wrapper_common::pid::Pid;
 use sysinfo::ProcessRefreshKind;
 use sysinfo::ProcessesToUpdate;
 use sysinfo::System;
+use sysinfo::UpdateKind;
 use tonic::Request;
 use tonic::codegen::InterceptedService;
 use tonic::transport::Channel;
@@ -27,8 +28,13 @@ use tonic::transport::Channel;
 use crate::daemon::client::BuckdLifecycleLock;
 use crate::daemon::client::connect::BuckAddAuthTokenInterceptor;
 use crate::daemon::client::connect::BuckdProcessInfo;
-use crate::daemon::client::connect::buckd_startup_timeout;
+use crate::daemon::client::connect::buckd_connect_timeout;
 use crate::startup_deadline::StartupDeadline;
+
+mod unidaemon;
+pub use unidaemon::TenantShutdownCommand;
+pub use unidaemon::kill_unidaemon_tenant;
+pub(crate) use unidaemon::stop_unidaemon;
 
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(4);
 /// Kill request does not wait for the process to exit.
@@ -38,9 +44,16 @@ const FORCE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 pub async fn kill_command_impl(
     lifecycle_lock: &BuckdLifecycleLock,
     reason: &str,
+    quiet: bool,
 ) -> buck2_error::Result<()> {
-    let process = match BuckdProcessInfo::load(lifecycle_lock.daemon_dir()) {
-        Ok(p) => p,
+    let process = match BuckdProcessInfo::load_if_exists(lifecycle_lock.daemon_dir()) {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            if !quiet {
+                crate::eprintln!("no buckd server running")?;
+            }
+            return Ok(());
+        }
         Err(e) => {
             tracing::debug!("No BuckdProcessInfo: {:#}", e);
             crate::eprintln!("no buckd server running")?;
@@ -48,8 +61,9 @@ pub async fn kill_command_impl(
         }
     };
 
-    let buckd = tokio::time::timeout(buckd_startup_timeout()?, async {
-        process.create_channel().await?.upgrade().await
+    let buckd = tokio::time::timeout(buckd_connect_timeout()?, async {
+        let channel = process.create_channel().await.map_err(|e| (e, false))?;
+        channel.upgrade().await.map_err(|e| (e, true))
     })
     .await;
 
@@ -58,11 +72,10 @@ pub async fn kill_command_impl(
             crate::eprintln!("killing buckd server")?;
             Some(buckd.kill(reason).await?)
         }
-        Ok(Err(e)) => {
+        Ok(Err((e, connected))) => {
             // No time out: we just errored out. This is likely indicative that there is no
             // buckd (i.e. our connection got rejected), so let's check for this and then
             // provide some information.
-            let e: buck2_error::Error = e.into();
 
             // TODO(minglunli): Look into checking for explicit 'Connection Refused' or something more
             // concretely pointing to `no server running` instead of all transport errors
@@ -70,15 +83,28 @@ pub async fn kill_command_impl(
                 // OK, looks like the server
                 tracing::debug!("Connect failed with a Tonic error: {:#}", e);
                 crate::eprintln!("no buckd server running")?;
+                None
             } else {
                 crate::eprintln!(
                     "unexpected error connecting to Buck2: {:#} \
                             (no buckd server running?)",
                     e
                 )?;
+                // A daemon that accepted the connection but cannot be talked to still holds its
+                // tenant's disk lock, so stop it for `clean` to proceed; but only the daemon
+                // that wrote this record, never whatever now has its pid or its port.
+                if connected && process.recorded_daemon_is_running() {
+                    match process.hard_kill().await {
+                        Ok(()) => Some(process.pid()?),
+                        Err(error) => {
+                            tracing::warn!("Could not stop the unreachable daemon: {error:#}");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
             }
-
-            None
         }
         Err(e) => {
             tracing::debug!("Connect timed out: {:#}", e);
@@ -108,6 +134,17 @@ pub(crate) async fn kill(
     info: &DaemonProcessInfo,
     reason: &str,
 ) -> buck2_error::Result<()> {
+    kill_with_timeout(client, info, reason, GRACEFUL_SHUTDOWN_TIMEOUT).await
+}
+
+/// Asks the daemon to shut down, giving it `graceful` to exit on its own before it is killed. The
+/// request carries `graceful` too, so a tenant proxy knows how long its eviction may take.
+pub(crate) async fn kill_with_timeout(
+    client: &mut DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
+    info: &DaemonProcessInfo,
+    reason: &str,
+    graceful: Duration,
+) -> buck2_error::Result<()> {
     let pid = Pid::from_i64(info.pid)?;
     let callers = get_callers_for_kill();
 
@@ -115,20 +152,22 @@ pub(crate) async fn kill(
 
     let request_fut = client.kill(Request::new(KillRequest {
         reason: reason.to_owned(),
-        timeout: Some(GRACEFUL_SHUTDOWN_TIMEOUT.try_into()?),
+        timeout: Some(graceful.try_into()?),
         callers,
     }));
-    let time_to_kill = GRACEFUL_SHUTDOWN_TIMEOUT + FORCE_SHUTDOWN_TIMEOUT;
+    let time_to_kill = graceful + FORCE_SHUTDOWN_TIMEOUT;
     let time_req_sent = Instant::now();
-    // First we send a Kill request
-    match tokio::time::timeout(KILL_REQUEST_TIMEOUT, request_fut).await {
+    // First we send a Kill request. A tenant proxy answers once its daemon has accepted the
+    // eviction, or once its accept window within `graceful` has passed and it has forced the
+    // daemon, so the answer may take up to `graceful`.
+    match tokio::time::timeout(KILL_REQUEST_TIMEOUT.max(graceful), request_fut).await {
         Ok(inner_result) => {
             match inner_result {
                 Ok(_) => loop {
                     if !kill::process_exists(pid)? {
                         return Ok(());
                     }
-                    if Instant::now() - time_req_sent > GRACEFUL_SHUTDOWN_TIMEOUT {
+                    if Instant::now() - time_req_sent > graceful {
                         crate::eprintln!(
                             "Timed out waiting for graceful shutdown of buck2 daemon pid {}",
                             pid
@@ -218,23 +257,31 @@ async fn hard_kill_impl(
 }
 
 fn get_callers_for_kill() -> Vec<String> {
+    let refresh_kind = ProcessRefreshKind::nothing().with_cmd(UpdateKind::OnlyIfNotSet);
+
     /// Add a process to our parts and return its parent PID.
     fn push_process(
         pid: sysinfo::Pid,
         creation_time: Duration,
         system: &mut System,
         process_tree: &mut Vec<String>,
+        refresh_kind: ProcessRefreshKind,
     ) -> Option<(sysinfo::Pid, Duration)> {
         // Specifics about this process need to be refreshed by this time.
         let proc = system.process(pid)?;
         let title = shlex::try_join(proc.cmd().iter().filter_map(|s| s.to_str()))
             .expect("Null byte unexpected");
+        let title = if title.is_empty() {
+            proc.name().to_str().unwrap_or("<unknown>").to_owned()
+        } else {
+            title
+        };
         process_tree.push(title);
         let parent_pid = proc.parent()?;
         system.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[parent_pid]),
             true,
-            ProcessRefreshKind::nothing(),
+            refresh_kind,
         );
         let parent_proc = system.process(parent_pid)?;
         let parent_creation_time = kill::process_creation_time(parent_proc)?;
@@ -245,20 +292,22 @@ fn get_callers_for_kill() -> Vec<String> {
         }
     }
 
-    let mut system = System::new();
+    let mut system = System::new().expect("should be supported on this platform");
     let mut process_tree = Vec::new();
 
     let pid = sysinfo::Pid::from_u32(std::process::id());
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing(),
-    );
+    system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, refresh_kind);
     let mut curr = system
         .process(pid)
         .and_then(|proc| Some((pid, kill::process_creation_time(proc)?)));
     while let Some((pid, creation_time)) = curr {
-        curr = push_process(pid, creation_time, &mut system, &mut process_tree);
+        curr = push_process(
+            pid,
+            creation_time,
+            &mut system,
+            &mut process_tree,
+            refresh_kind,
+        );
     }
 
     process_tree.into_iter().rev().collect()

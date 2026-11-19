@@ -64,8 +64,11 @@ pub struct TypePathP<'a, P: AstPayload> {
 pub enum TypeExprUnpackP<'a, P: AstPayload> {
     Ellipsis,
     Path(TypePathP<'a, P>),
-    /// `list[str]`.
-    Index(&'a AstIdentP<P>, Box<Spanned<TypeExprUnpackP<'a, P>>>),
+    /// `list[str]` or `ns.Generic[str]`.
+    Index(
+        Spanned<TypePathP<'a, P>>,
+        Box<Spanned<TypeExprUnpackP<'a, P>>>,
+    ),
     /// `dict[str, int]` or `typing.Callable[[int], str]`.
     Index2(
         Spanned<TypePathP<'a, P>>,
@@ -189,16 +192,12 @@ impl<'a, P: AstPayload> TypeExprUnpackP<'a, P> {
             ExprP::Call(..) => err("call"),
             ExprP::Index(a_i) => {
                 let (a, i) = &**a_i;
-                match &a.node {
-                    ExprP::Identifier(ident) => {
-                        let i = TypeExprUnpackP::unpack(i, codemap)?;
-                        Ok(Spanned {
-                            span,
-                            node: TypeExprUnpackP::Index(ident, Box::new(i)),
-                        })
-                    }
-                    _ => err("array indirection where array is not an identifier"),
-                }
+                let path = Self::unpack_path(a, codemap)?;
+                let i = TypeExprUnpackP::unpack(i, codemap)?;
+                Ok(Spanned {
+                    span,
+                    node: TypeExprUnpackP::Index(path, Box::new(i)),
+                })
             }
             ExprP::Index2(a_i0_i1) => {
                 let (a, i0, i1) = &**a_i0_i1;
@@ -265,6 +264,7 @@ impl<'a, P: AstPayload> TypeExprUnpackP<'a, P> {
             ExprP::ListComprehension(..) => err("list comprehension"),
             ExprP::DictComprehension(..) => err("dict comprehension"),
             ExprP::FString(..) => err("f-string"),
+            ExprP::Literal(AstLiteral::Bytes(_)) => err("bytes literal"),
         }
     }
 }

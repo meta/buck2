@@ -157,7 +157,10 @@ mod tests {
         let poll2 = spawn_dropcancel(|_| task2.boxed(), sp.as_ref(), &ctx2);
         let joins = vec![poll1, poll2];
 
-        assert_eq!(futures::future::join_all(joins).await, ["Hello!", "World!"]);
+        assert_eq!(
+            buck2_util::future::join_all(joins).await,
+            ["Hello!", "World!"]
+        );
 
         // Check that the events are received successfully from the correct event sources.
         let event = next_event(&mut events1).await;

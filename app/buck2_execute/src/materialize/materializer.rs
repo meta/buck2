@@ -8,40 +8,46 @@
  * above-listed licenses.
  */
 
+use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_common::file_ops::metadata::FileDigest;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
+use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_data::clean_stale_result::Origin;
 use buck2_directory::directory::directory_iterator::DirectoryIterator;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::walk::ordered_entry_walk;
+use buck2_error::ErrorTag;
 use buck2_events::dispatch::EventDispatcher;
-use chrono::DateTime;
-use chrono::Duration;
-use chrono::Utc;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use derive_more::Display;
 use dice::UserComputationData;
+use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::stream::BoxStream;
 use futures::stream::TryStreamExt;
+use jiff::SignedDuration;
+use jiff::Timestamp;
+use remote_execution::TCode;
 
 use crate::artifact_value::ArtifactValue;
 use crate::directory::ActionDirectoryEntry;
 use crate::directory::ActionDirectoryMember;
 use crate::directory::ActionImmutableDirectory;
 use crate::directory::ActionSharedDirectory;
-use crate::execute::action_digest::TrackedActionDigest;
-use crate::materialize::http::Checksum;
+use crate::execute::action_digest::ActionDigest;
+use crate::re::error::RemoteExecutionError;
 
 pub struct WriteRequest {
     pub path: ProjectRelativePathBuf,
     pub content: Vec<u8>,
     pub is_executable: bool,
+    pub path_kind: BuckOutPathKind,
 }
 
 #[cold]
@@ -129,8 +135,188 @@ pub enum MaterializationError {
 pub struct DeclareArtifactPayload {
     pub path: ProjectRelativePathBuf,
     pub artifact: ArtifactValue,
-    /// Whether materializer state should store full information about directory artifact.
-    pub persist_full_directory_structure: bool,
+}
+
+/// Why a materialization is requested. Final outputs are accounted separately by clean-stale
+/// (they stay on disk longer). A final output that is not `required` may be skipped altogether
+/// when the daemon runs with `materializations = deferred_skip_final_artifacts`; a skipped
+/// artifact reports success without being put on disk.
+#[derive(Clone, Copy, Debug, Dupe, Eq, PartialEq)]
+pub enum MaterializationPurpose {
+    FinalOutput { required: bool },
+    IntermediateOnly,
+}
+
+pub struct MaterializerBackgroundCleanupGuard {
+    _guard: Box<dyn Send + Sync>,
+}
+
+impl MaterializerBackgroundCleanupGuard {
+    pub fn new(guard: impl Send + Sync + 'static) -> Self {
+        Self {
+            _guard: Box::new(guard),
+        }
+    }
+}
+
+/// What a consumer asks the materializer to put on disk.
+pub struct MaterializeRequest {
+    /// Each value is materialized at its path. The exhaustiveness markings inside a value are
+    /// honored; the paths themselves say nothing about their parents, which are left alone.
+    pub artifacts: Vec<(ProjectRelativePathBuf, ArtifactValue)>,
+    /// Paths the caller is about to produce content at: its outputs and scratch paths. They stop
+    /// being tracked, and the response's `outputs` lease holds them for writing. It is granted
+    /// together with the read lease over `artifacts`, which is what lets one unit of work hold
+    /// everything it needs without ever waiting while holding (problem-path-locking.md).
+    pub outputs: Vec<ProjectRelativePathBuf>,
+    pub purpose: MaterializationPurpose,
+    /// Attributed with any CAS traffic this request causes.
+    pub re_use_case: RemoteExecutorUseCase,
+}
+
+#[must_use = "check the per-artifact results and hold the lease while reading the paths"]
+pub struct MaterializeResponse {
+    /// One per requested artifact, in request order.
+    pub results: Vec<Result<(), MaterializationError>>,
+    pub lease: ReadLease,
+    /// The write lease over the request's `outputs`; `None` when it had none.
+    pub outputs: Option<WriteLease>,
+}
+
+impl MaterializeResponse {
+    /// For requests without outputs: the read lease once every artifact materialized, else the
+    /// first error. Callers that can make progress with some of the artifacts missing look at
+    /// `results` instead.
+    pub fn ensure_results_ok(self) -> Result<ReadLease, MaterializationError> {
+        debug_assert!(
+            self.outputs.is_none(),
+            "a request with outputs takes its leases through `into_leases`"
+        );
+        Ok(self.into_leases()?.0)
+    }
+
+    /// Both leases once every artifact materialized, else the first error.
+    pub fn into_leases(self) -> Result<(ReadLease, Option<WriteLease>), MaterializationError> {
+        for result in self.results {
+            result?;
+        }
+        Ok((self.lease, self.outputs))
+    }
+}
+
+/// Released on drop; carries whatever an implementation needs to release.
+struct Lease {
+    guard: Option<Box<dyn Any + Send + Sync>>,
+}
+
+/// Held by the caller of [`Materializer::materialize`] for as long as it reads the paths that
+/// request put on disk. Holding it tells the materializer those paths are in use, and an
+/// implementation may hold off conflicting writes until it is dropped. The deferred
+/// materializer does not, so today the guard only fixes the scope callers hold it over.
+#[must_use = "hold the lease while reading the materialized paths"]
+pub struct ReadLease {
+    _lease: Lease,
+}
+
+impl ReadLease {
+    /// A lease no implementation acts on.
+    pub fn noop() -> Self {
+        Self {
+            _lease: Lease { guard: None },
+        }
+    }
+
+    /// A lease released by dropping `guard`.
+    pub fn new(guard: impl Any + Send + Sync) -> Self {
+        Self {
+            _lease: Lease {
+                guard: Some(Box::new(guard)),
+            },
+        }
+    }
+
+    /// One lease over everything `leases` hold.
+    pub fn join(leases: Vec<ReadLease>) -> Self {
+        Self::new(leases)
+    }
+}
+
+impl fmt::Debug for ReadLease {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ReadLease")
+    }
+}
+
+/// Held by a caller that produces content at paths it asked for through
+/// [`Materializer::prepare_outputs`], [`Materializer::hold_or_take`] or the outputs of a
+/// [`Materializer::materialize`] request, up to and including the report or publish that makes
+/// that content tracked; both take the lease, so that content can only ever be reported by
+/// whoever holds its paths. Holding it tells the materializer nothing else may touch those
+/// paths; the deferred materializer does not enforce that, so there the guard only fixes the
+/// scope. Dropping it releases the paths, whatever was reported under them: content the holder
+/// put there and did not report is untracked, and whoever next takes the paths clears it.
+#[must_use = "hold the lease while producing the outputs"]
+pub struct WriteLease {
+    lease: Lease,
+}
+
+impl WriteLease {
+    /// A lease no implementation acts on.
+    pub fn noop() -> Self {
+        Self {
+            lease: Lease { guard: None },
+        }
+    }
+
+    /// A lease released by dropping `guard`, which the implementation gets back from
+    /// [`WriteLease::guard`] when the lease is passed to it.
+    pub fn new(guard: impl Any + Send + Sync) -> Self {
+        Self {
+            lease: Lease {
+                guard: Some(Box::new(guard)),
+            },
+        }
+    }
+
+    /// What the lease was created with; `None` for a no-op lease.
+    pub fn guard(&self) -> Option<&(dyn Any + Send + Sync)> {
+        self.lease.guard.as_deref()
+    }
+
+    /// The lease as the holder's readers hold it once everything under it is reported: the roots
+    /// stay held, for reading, until the returned lease is dropped.
+    pub fn into_read_lease(self) -> ReadLease {
+        ReadLease { _lease: self.lease }
+    }
+}
+
+impl fmt::Debug for WriteLease {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("WriteLease")
+    }
+}
+
+/// What `Materializer::hold_or_take` answers.
+#[must_use = "hold the lease while reading the path, or make the content and report it"]
+pub enum HeldContent {
+    /// The path holds the content; the lease holds it for reading.
+    Found(ReadLease),
+    /// The path does not hold the content, and the lease holds it for writing: the caller puts
+    /// the content there, the whole of the path, and reports it with `declare_existing`.
+    Missing(WriteLease),
+}
+
+/// The paths a materializer tracks, as the BlobStore takes content out of them
+/// (`BlobStore::find`).
+#[async_trait]
+pub trait TrackedPaths: Send + Sync {
+    /// A tracked path holding a file of `digest`, held for reading until the lease drops;
+    /// `None` when no such path can be held without waiting, or the materializer does not know
+    /// its paths by digest (the deferred core).
+    async fn hold_file(
+        &self,
+        digest: &FileDigest,
+    ) -> buck2_error::Result<Option<(AbsNormPathBuf, ReadLease)>>;
 }
 
 /// A trait providing methods to asynchronously materialize artifacts.
@@ -159,15 +345,44 @@ pub struct DeclareArtifactPayload {
 /// 4. Declare may delete any existing paths that conflict with the path that was
 ///    declared.
 #[async_trait]
-pub trait Materializer: Allocative + Send + Sync + 'static {
-    /// The name of this materializer, for logging.
-    fn name(&self) -> &str;
+pub trait Materializer: TrackedPaths + Allocative + Send + Sync + 'static {
+    /// Whether this materializer tracks disk state only, so that a producer that can make its
+    /// content puts it on disk itself, under `hold_or_take`, and reports it, as a local run does
+    /// (`materialize::produce`). The deferred core is declared to instead (`declare_write`,
+    /// `declare_copy`).
+    fn is_disk_state(&self) -> bool;
 
-    /// Declare that a set of artifacts exist on disk already.
+    /// Holds `path` for reading when it holds `value`'s content already, else for writing, for
+    /// the caller to put the content there and report it with `declare_existing`: how a producer
+    /// that can make its content asks a disk-state materializer (`is_disk_state`), so that
+    /// content a previous build left on disk is found rather than made again. Found content is
+    /// backed by the materializer's own means before it is handed out.
+    async fn hold_or_take(
+        &self,
+        path: ProjectRelativePathBuf,
+        value: ArtifactValue,
+    ) -> buck2_error::Result<HeldContent>;
+
+    /// Prevent background cleanup until the returned guard is dropped.
+    async fn prevent_background_cleanup(&self) -> MaterializerBackgroundCleanupGuard {
+        MaterializerBackgroundCleanupGuard::new(())
+    }
+
+    /// Reports content the caller put on disk at the paths of `artifacts`, which it holds
+    /// `lease` for. From then on the content is the artifact at each path.
     async fn declare_existing(
         &self,
+        lease: &WriteLease,
         artifacts: Vec<DeclareArtifactPayload>,
     ) -> buck2_error::Result<()>;
+
+    /// Puts the requested artifacts on disk at their paths and reports one result per artifact.
+    /// This is how consumers (local actions reading their inputs, final materialization) ask for
+    /// content; the `declare_*` methods remain for producers.
+    async fn materialize(
+        &self,
+        request: MaterializeRequest,
+    ) -> buck2_error::Result<MaterializeResponse>;
 
     async fn declare_copy_impl(
         &self,
@@ -182,18 +397,66 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
         artifacts: Vec<DeclareArtifactPayload>,
     ) -> buck2_error::Result<()>;
 
-    async fn declare_http(
-        &self,
-        path: ProjectRelativePathBuf,
-        info: HttpDownloadInfo,
-    ) -> buck2_error::Result<()>;
-
     /// Write contents to paths. The output is ordered in the same order as the input. Implicitly
-    /// cleans up paths that the WriteRequest declares.
+    /// cleans up paths that the WriteRequest declares. The deferred core's: a disk-state
+    /// materializer refuses it, since its producers make their content under `hold_or_take`.
     async fn declare_write<'a>(
         &self,
         generate: Box<dyn FnOnce() -> buck2_error::Result<Vec<WriteRequest>> + Send + 'a>,
     ) -> buck2_error::Result<Vec<ArtifactValue>>;
+
+    /// Stops tracking `paths` and returns the write lease the caller holds while it produces
+    /// content there, up to and including the report or publish that makes that content
+    /// tracked. Nothing on disk is touched: deleting what is there is the caller's job, done
+    /// under the lease, since only the caller knows whether it wants a clean slate or a
+    /// workspace kept across runs. A caller that also reads inputs asks for both in one
+    /// [`Materializer::materialize`] request instead.
+    async fn prepare_outputs(
+        &self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> buck2_error::Result<WriteLease>;
+
+    /// Makes every file under `paths` one the caller may write in place, for an incremental
+    /// action's previous outputs: an inode of its own, where a materializer keeps buck-out
+    /// content linked elsewhere (the disk-state core's BlobStore), and its owner's write
+    /// permission, where a materializer keeps tracked files read-only. One that does neither
+    /// does nothing. Called under the write lease the caller holds over `paths`.
+    async fn make_outputs_writable(
+        &self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> buck2_error::Result<()>;
+
+    /// Puts `value`'s content at `path`, which the caller holds `lease` for in write mode, unless
+    /// the path held exactly that content when the lease took it: an incremental action's
+    /// previous output, which its run writes in place. Whatever else is at the path goes first.
+    /// The content is not tracked: it is the caller's, as its own writes are, until the caller
+    /// reports the path. `from` names a path that held the content when the caller last saw it;
+    /// a materializer that copies by declaration (the deferred core) copies from there, one that
+    /// finds content by digest (the disk-state core) needs no hint. Once it writes, the fill runs
+    /// to its end whatever `cancellations` asks, so that the path is never left half-written.
+    async fn fill(
+        &self,
+        lease: &WriteLease,
+        path: ProjectRelativePathBuf,
+        value: ArtifactValue,
+        from: Option<ProjectRelativePathBuf>,
+        re_use_case: RemoteExecutorUseCase,
+        cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()>;
+
+    /// Makes the untracked content an action produced at `src`, which it holds `lease` for, the
+    /// artifact at `dest`, described by `value`. The content moves: `src` is the caller's to
+    /// produce and not to keep. Returns once `dest` is on disk, with a lease over it for the
+    /// readers that follow. The deferred core's: a disk-state materializer refuses it, since its
+    /// consumers find content by digest and a local output stays where its run wrote it,
+    /// reported through [`Materializer::declare_existing`].
+    async fn publish(
+        &self,
+        lease: &WriteLease,
+        src: ProjectRelativePathBuf,
+        dest: ProjectRelativePathBuf,
+        value: ArtifactValue,
+    ) -> buck2_error::Result<ReadLease>;
 
     /// Ask the materializer if the artifacts at the set of paths match what is on disk or
     /// declared. Returns Ok(Ok) if they do and Ok(Err) if they don't. It's a result not a boolean
@@ -215,16 +478,6 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     /// This method does not guarantee that the artifact was materialized.
     async fn has_artifact_at(&self, path: ProjectRelativePathBuf) -> buck2_error::Result<bool>;
 
-    /// Declare an artifact at `path` exists. This will overwrite any pre-existing materialization
-    /// methods for this file and indicate that no materialization is necessary.
-    async fn invalidate(&self, path: ProjectRelativePathBuf) -> buck2_error::Result<()> {
-        self.invalidate_many(vec![path]).await
-    }
-
-    /// Declare an artifact at `path` exists. This will overwrite any pre-existing materialization
-    /// methods for this file and indicate that no materialization is necessary.
-    async fn invalidate_many(&self, paths: Vec<ProjectRelativePathBuf>) -> buck2_error::Result<()>;
-
     /// Materialize artifacts paths. Returns a Stream with each element corresponding to one of the
     /// input paths, in the order that they were passed. This method provides access to
     /// individual results, but code that doesn't care about why an individual materialization
@@ -243,6 +496,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     async fn ensure_materialized(
         &self,
         artifact_paths: Vec<ProjectRelativePathBuf>,
+        _purpose: MaterializationPurpose,
     ) -> buck2_error::Result<()> {
         Ok(self
             .materialize_many(artifact_paths)
@@ -251,59 +505,68 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
             .await?)
     }
 
-    /// Similar to `ensure_materialized`, but it relaxes its most important
-    /// invariant: there's no guarantee that the artifact will be materialized
-    /// after calling this method. It's meant for final artifacts that are NOT
-    /// required by further build steps and therefore can be skipped in some
-    /// cases.
-    ///
-    /// The materializer returns `Ok(true)` if the materialization succeeded,
-    /// `Ok(false)` if it was skipped, and [`Err`] if it was tried but failed.
-    ///
-    /// Calling this on an artifact that was never declared is undefined
-    /// behavior.
-    async fn try_materialize_final_artifact(
-        &self,
-        artifact_path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<bool>;
-
-    /// Given a `file_path` whose contents we are interested in, *tries* to
-    /// find a materialized path with the same contents. It returns [`None`] if
-    /// the path leads to a file that needs to be fetched from the CAS.
-    ///
-    /// If none of the declared artifacts contains `file_path`, the
-    /// materializer can't tell whether that's because it was materialized by
-    /// an external source, or because it doesn't exist. Since this usually
-    /// means the path is a source file (not an output), for simplicity the
-    /// materializer returns `Some(file_path)`, not [`None`].
+    /// For each file an upload is about to read, given as the path it is wanted at and the
+    /// digest it is wanted with: a path holding that content, or why there is none yet.
+    /// `RequiresMaterialization` asks the caller to materialize the file at the path first, which
+    /// is also the answer for a path that holds other content than asked for;
+    /// `RequiresCasDownload` says the content is the CAS's and was never put on disk. A path the
+    /// materializer knows nothing about is returned as is, since that is usually a source file.
     ///
     /// TODO(rafaelc): analyze if we can get rid of this method without making
     /// Buck2 significantly slower, after we stop deferring local copies of
     /// artifacts that are already on disk.
     async fn get_materialized_file_paths(
         &self,
-        file_paths: Vec<ProjectRelativePathBuf>,
+        files: Vec<(ProjectRelativePathBuf, FileDigest)>,
     ) -> buck2_error::Result<Vec<Result<ProjectRelativePathBuf, ArtifactNotMaterializedReason>>>;
 
-    fn as_deferred_materializer_extension(&self) -> Option<&dyn DeferredMaterializerExtensions> {
-        None
-    }
+    fn iterate(&self) -> buck2_error::Result<BoxStream<'static, MaterializerIterItem>>;
 
-    /// Currently no-op for all materializers except deferred materializer
-    fn log_materializer_state(&self, _events: &EventDispatcher) {}
+    async fn allocative(&self) -> buck2_error::Result<allocative::FlameGraphOutput>;
 
-    /// Inject stats into a snapshot. This is also used only for the deferred materializer at this
-    /// time.
-    fn add_snapshot_stats(&self, _snapshot: &mut buck2_data::Snapshot) {}
+    /// Obtain a list of files that don't match their in-memory representation. This may not catch
+    /// all discrepancies.
+    fn fsck(
+        &self,
+    ) -> buck2_error::Result<BoxStream<'static, (ProjectRelativePathBuf, buck2_error::Error)>>;
 
-    /// Given a list of `paths`, returns a list of corresponding artifact entries only if all the following conditions are met:
-    ///   - There is an artifact at the given path (either declared or materialized).
-    ///   - The materializer state contains sufficient information about the artifact.
-    ///   - The path refers to the root of the artifact (not a subpath).
-    /// If any of these conditions are not satisfied for a given path, `None` is returned for that path.
+    async fn refresh_ttls(&self, min_ttl: i64) -> buck2_error::Result<()>;
+
+    async fn get_ttl_refresh_log(&self) -> buck2_error::Result<String>;
+
+    async fn clean_stale_artifacts(
+        &self,
+        args: CleanStaleArtifactsArgs,
+    ) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse>;
+
+    /// Delete all local-action scratch (`buck-out/<iso>/tmp*`). Only sound while no
+    /// command is running actions: scratch liveness is command-scoped. Aborts as soon
+    /// as any other materializer command arrives.
+    async fn clean_scratch(&self) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse>;
+
+    async fn test_iter(&self, count: usize) -> buck2_error::Result<String>;
+
+    async fn flush_all_access_times(&self) -> buck2_error::Result<String>;
+
+    fn log_materializer_state(&self, events: &EventDispatcher);
+
+    /// Inject stats into a snapshot.
+    fn add_snapshot_stats(&self, snapshot: &mut buck2_data::Snapshot);
+
+    /// Returns artifact entries for the given `paths`.
+    ///
+    /// If `fetch_root_artifact_entries_for_subpaths` is false, only returns entries
+    /// for paths that exactly match a known artifact root.
+    ///
+    /// If true, also matches paths that are subpaths of a known artifact root,
+    /// returning the root artifact's entry (not the subpath's). The subpath need
+    /// not actually exist within the artifact's directory structure.
+    ///
+    /// Returns `None` for any path that doesn't match a known artifact.
     async fn get_artifact_entries_for_materialized_paths(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
+        fetch_root_artifact_entries_for_subpaths: bool,
     ) -> buck2_error::Result<
         Vec<
             Option<(
@@ -377,24 +640,23 @@ impl dyn Materializer {
     /// path. This function runs a check on all declared artifacts and returns `Err` if they
     /// are external symlinks with an existing value on `remaining_path` and `Ok` otherwise.
     fn check_declared_external_symlink(&self, value: &ArtifactValue) -> buck2_error::Result<()> {
-        match value.entry() {
-            DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(external_symlink)) => {
-                if !external_symlink.remaining_path().is_empty() {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
-                        "Internal error: external symlink should not be declared on materializer with non-empty remaining path: '{}'",
-                        external_symlink.dupe().to_path_buf().display()
-                    ));
-                }
+        if let DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(external_symlink)) =
+            value.entry()
+        {
+            if !external_symlink.remaining_path().is_empty() {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Tier0,
+                    "Internal error: external symlink should not be declared on materializer with non-empty remaining path: '{}'",
+                    external_symlink.dupe().to_path_buf().display()
+                ));
             }
-            _ => {}
         }
         Ok(())
     }
 }
 
 /// Information to perform the copy of an artifact from `src` to `dest`.
-#[derive(Debug)]
+#[derive(Debug, Allocative)]
 pub struct CopiedArtifact {
     /// Source path of the copied artifact.
     pub src: ProjectRelativePathBuf,
@@ -422,19 +684,35 @@ impl CopiedArtifact {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Allocative)]
 pub enum CasDownloadInfoOrigin {
     /// Declared by an action that executed on RE.
     Execution(ActionExecutionOrigin),
 
     /// Simply declared by an action.
     Declared,
+
+    /// Declared by an action after buck2 itself confirmed the blob is present in the CAS. A
+    /// later miss is therefore a CAS failure rather than a wrong user-supplied digest.
+    Probed,
+
+    /// A value the disk-state materializer was handed to put on disk, whose digests' invariant
+    /// puts the content in the CAS or in the store; how it got there is not carried along. A miss
+    /// is therefore a CAS failure, as for a probed blob.
+    Tracked,
+
+    /// Uploaded directly by the client.
+    Uploaded,
+
+    /// Produced as a test artifact managed by the test client.
+    TestArtifact,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Allocative)]
 pub struct ActionExecutionOrigin {
-    /// Digest of the action that led us to discover this CAS object.
-    action_digest: TrackedActionDigest,
+    /// Digest of the action that led us to discover this CAS object. Reported, not tracked: what
+    /// says whether this origin still guarantees the download is the action's own TTL below.
+    action_digest: ActionDigest,
 
     /// When did we learn of the connection between this digest and the download it allows. This
     /// typically represents how much time has passed since we executed the action or hit in the
@@ -446,17 +724,17 @@ pub struct ActionExecutionOrigin {
     /// the system went to sleep (on MacOS, it will not increase during that time!).
     ///
     /// See: <https://github.com/rust-lang/rust/issues/79462>
-    action_instant: DateTime<Utc>,
+    action_instant: Timestamp,
 
     /// The TTL we retrieved from RE for this action.
-    ttl: Duration,
+    ttl: SignedDuration,
 }
 
 impl ActionExecutionOrigin {
-    fn action_age(&self) -> Duration {
+    fn action_age(&self) -> SignedDuration {
         // NOTE: This might return a negative duration if our time skewed a lot, but that's
         // actually totally fine, since we only care to know if this is < TTL.
-        Utc::now() - self.action_instant
+        Timestamp::now().duration_since(self.action_instant)
     }
 }
 
@@ -468,12 +746,24 @@ impl fmt::Display for CasDownloadInfoOrigin {
                     f,
                     "{} retrieved {:.3} seconds ago with ttl = {:.3} seconds",
                     execution.action_digest,
-                    execution.action_age().num_seconds(),
-                    execution.ttl.num_seconds()
+                    execution.action_age().as_secs(),
+                    execution.ttl.as_secs()
                 )?;
             }
             Self::Declared => {
                 write!(f, "declared")?;
+            }
+            Self::Probed => {
+                write!(f, "probed")?;
+            }
+            Self::Tracked => {
+                write!(f, "tracked")?;
+            }
+            Self::Uploaded => {
+                write!(f, "uploaded by client")?;
+            }
+            Self::TestArtifact => {
+                write!(f, "test artifact")?;
             }
         }
 
@@ -491,8 +781,8 @@ impl CasDownloadInfoOrigin {
     pub fn guaranteed_by_action_cache(&self) -> bool {
         match self {
             Self::Execution(execution) => execution.action_age() < execution.ttl,
-            Self::Declared => {
-                // If the output was just declared, then there are no action cache guarantees.
+            Self::Declared | Self::Probed | Self::Tracked | Self::Uploaded | Self::TestArtifact => {
+                // These origins do not carry an action cache result.
                 false
             }
         }
@@ -517,7 +807,7 @@ impl fmt::Display for CasDownloadInfoOriginNotFound<'_> {
 }
 
 /// Information about a CAS download we might require when an artifact is not materialized.
-#[derive(Debug, Display)]
+#[derive(Debug, Display, Allocative)]
 #[display("{}, re_use_case = {}", self.origin, self.re_use_case)]
 pub struct CasDownloadInfo {
     pub origin: CasDownloadInfoOrigin,
@@ -527,10 +817,10 @@ pub struct CasDownloadInfo {
 
 impl CasDownloadInfo {
     pub fn new_execution(
-        action_digest: TrackedActionDigest,
+        action_digest: ActionDigest,
         re_use_case: RemoteExecutorUseCase,
-        action_instant: DateTime<Utc>,
-        ttl: Duration,
+        action_instant: Timestamp,
+        ttl: SignedDuration,
     ) -> Self {
         Self {
             origin: CasDownloadInfoOrigin::Execution(ActionExecutionOrigin {
@@ -549,37 +839,72 @@ impl CasDownloadInfo {
         }
     }
 
-    pub fn action_age(&self) -> Option<Duration> {
+    pub fn new_probed(re_use_case: RemoteExecutorUseCase) -> Self {
+        Self {
+            origin: CasDownloadInfoOrigin::Probed,
+            re_use_case,
+        }
+    }
+
+    pub fn new_tracked(re_use_case: RemoteExecutorUseCase) -> Self {
+        Self {
+            origin: CasDownloadInfoOrigin::Tracked,
+            re_use_case,
+        }
+    }
+
+    pub fn new_uploaded(re_use_case: RemoteExecutorUseCase) -> Self {
+        Self {
+            origin: CasDownloadInfoOrigin::Uploaded,
+            re_use_case,
+        }
+    }
+
+    pub fn new_test_artifact(re_use_case: RemoteExecutorUseCase) -> Self {
+        Self {
+            origin: CasDownloadInfoOrigin::TestArtifact,
+            re_use_case,
+        }
+    }
+
+    pub(crate) fn classify_result<T>(
+        &self,
+        result: buck2_error::Result<T>,
+    ) -> buck2_error::Result<T> {
+        result.map_err(|error| {
+            if matches!(self.origin, CasDownloadInfoOrigin::Declared)
+                && error
+                    .find_typed_context::<RemoteExecutionError>()
+                    .is_some_and(|error| error.code == TCode::NOT_FOUND)
+            {
+                error.tag([ErrorTag::DeclaredArtifactNotFound])
+            } else {
+                error
+            }
+        })
+    }
+
+    pub fn action_age(&self) -> Option<SignedDuration> {
         match &self.origin {
             CasDownloadInfoOrigin::Execution(execution) => Some(execution.action_age()),
-            CasDownloadInfoOrigin::Declared => None,
+            CasDownloadInfoOrigin::Declared
+            | CasDownloadInfoOrigin::Probed
+            | CasDownloadInfoOrigin::Tracked
+            | CasDownloadInfoOrigin::Uploaded
+            | CasDownloadInfoOrigin::TestArtifact => None,
         }
     }
 
-    pub fn action_digest(&self) -> Option<&TrackedActionDigest> {
+    pub fn action_digest(&self) -> Option<&ActionDigest> {
         match &self.origin {
             CasDownloadInfoOrigin::Execution(execution) => Some(&execution.action_digest),
-            CasDownloadInfoOrigin::Declared => None,
+            CasDownloadInfoOrigin::Declared
+            | CasDownloadInfoOrigin::Probed
+            | CasDownloadInfoOrigin::Tracked
+            | CasDownloadInfoOrigin::Uploaded
+            | CasDownloadInfoOrigin::TestArtifact => None,
         }
     }
-}
-
-/// Information about a CAS download we might require when an artifact is not materialized.
-#[derive(Debug, Display)]
-#[display("{} declared by {}", self.url, self.owner)]
-pub struct HttpDownloadInfo {
-    /// URL to download the file from.
-    pub url: Arc<str>,
-
-    /// Size, whether the file is executable. Also contains a digest, which is a bit of a shame
-    /// since it's duplicative of checksum.
-    pub metadata: FileMetadata,
-
-    /// Checksum for the file, to valiate before downloading.
-    pub checksum: Checksum,
-
-    /// Target that declared the action.
-    pub owner: BaseDeferredKey,
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -623,7 +948,9 @@ pub trait SetMaterializer {
 }
 
 pub trait HasMaterializer {
-    fn get_materializer(&self) -> Arc<dyn Materializer>;
+    fn get_materializer(&self) -> &dyn Materializer;
+
+    fn get_materializer_handle(&self) -> Arc<dyn Materializer>;
 }
 
 impl SetMaterializer for UserComputationData {
@@ -633,7 +960,14 @@ impl SetMaterializer for UserComputationData {
 }
 
 impl HasMaterializer for UserComputationData {
-    fn get_materializer(&self) -> Arc<dyn Materializer> {
+    fn get_materializer(&self) -> &dyn Materializer {
+        &**self
+            .data
+            .get::<Arc<dyn Materializer>>()
+            .expect("Materializer should be set")
+    }
+
+    fn get_materializer_handle(&self) -> Arc<dyn Materializer> {
         self.data
             .get::<Arc<dyn Materializer>>()
             .expect("Materializer should be set")
@@ -642,90 +976,57 @@ impl HasMaterializer for UserComputationData {
 }
 
 #[derive(Clone, Copy, Debug, Dupe)]
-pub enum MaterializationMethod {
-    /// Materialize only when needed
-    Deferred,
-    /// Materialize only when needed, do not materialize final artifacts
-    DeferredSkipFinalArtifacts,
+pub enum FinalArtifactMaterialization {
+    Enabled,
+    Skipped,
 }
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
-pub enum MaterializationMethodError {
+pub enum FinalArtifactMaterializationError {
     #[error(
         "Invalid value for buckconfig `[buck2] materializations`. Got `{0}`. Expected one of `all`, `deferred`, or `deferred_skip_final_artifacts`."
     )]
     InvalidValueForConfig(String),
 }
 
-impl MaterializationMethod {
+impl FinalArtifactMaterialization {
     pub fn try_new_from_config_value(config_value: Option<&str>) -> buck2_error::Result<Self> {
         match config_value {
-            None | Some("") | Some("deferred") => Ok(MaterializationMethod::Deferred),
-            Some("deferred_skip_final_artifacts") => {
-                Ok(MaterializationMethod::DeferredSkipFinalArtifacts)
+            None | Some("") | Some("deferred") | Some("all") => Ok(Self::Enabled),
+            Some("deferred_skip_final_artifacts") => Ok(Self::Skipped),
+            Some(v) => {
+                Err(FinalArtifactMaterializationError::InvalidValueForConfig(v.to_owned()).into())
             }
-            Some(v) => Err(MaterializationMethodError::InvalidValueForConfig(v.to_owned()).into()),
         }
     }
 }
 
 /// This trait provides a level of indirection since the concrete implementation of
-/// `DeferredMaterializerEntry` lives in a crate that depends on this one.
-pub trait DeferredMaterializerEntry: Send + Sync + std::fmt::Display {}
+/// `MaterializerEntry` lives in a crate that depends on this one.
+pub trait MaterializerEntry: Send + Sync + std::fmt::Display {}
 
-pub struct DeferredMaterializerIterItem {
+pub struct MaterializerIterItem {
     pub artifact_path: ProjectRelativePathBuf,
-    pub artifact_display: Box<dyn DeferredMaterializerEntry>,
+    pub artifact_display: Box<dyn MaterializerEntry>,
     pub deps: Vec<(ProjectRelativePathBuf, &'static str)>,
 }
 
-/// Obtain notifications for entries as they are materialized, and request eager materialization of
-/// those paths.
-#[async_trait]
-pub trait DeferredMaterializerSubscription: Send + Sync {
-    /// Get notifications for specific paths. This also implicitly requests their eager
-    /// materialization.
-    fn subscribe_to_paths(&mut self, paths: Vec<ProjectRelativePathBuf>);
-
-    /// Stop getting notifications for specific paths. In-flight notifications may still be
-    /// received.
-    fn unsubscribe_from_paths(&mut self, paths: Vec<ProjectRelativePathBuf>);
-
-    /// Await the next materialization on this subscription.
-    async fn next_materialization(&mut self) -> Option<ProjectRelativePathBuf>;
+#[derive(Debug, Clone)]
+pub struct CleanStaleArtifactsArgs {
+    pub policy: CleanStaleArtifactsPolicy,
+    pub dry_run: bool,
+    pub tracked_only: bool,
+    pub origin: Origin,
 }
 
-/// Extensions to the Materializer trait that are only available in the Deferred materializer.
-#[async_trait]
-pub trait DeferredMaterializerExtensions: Send + Sync {
-    fn iterate(&self) -> buck2_error::Result<BoxStream<'static, DeferredMaterializerIterItem>>;
-
-    fn list_subscriptions(&self)
-    -> buck2_error::Result<BoxStream<'static, ProjectRelativePathBuf>>;
-
-    /// Obtain a list of files that don't match their in-memory representation. This may not catch
-    /// all discrepancies.
-    fn fsck(
-        &self,
-    ) -> buck2_error::Result<BoxStream<'static, (ProjectRelativePathBuf, buck2_error::Error)>>;
-
-    async fn refresh_ttls(&self, min_ttl: i64) -> buck2_error::Result<()>;
-
-    async fn get_ttl_refresh_log(&self) -> buck2_error::Result<String>;
-
-    async fn clean_stale_artifacts(
-        &self,
-        keep_since_time: DateTime<Utc>,
-        dry_run: bool,
-        tracked_only: bool,
-    ) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse>;
-
-    async fn test_iter(&self, count: usize) -> buck2_error::Result<String>;
-    async fn flush_all_access_times(&self) -> buck2_error::Result<String>;
-
-    /// Create a new DeferredMaterializerSubscription.
-    async fn create_subscription(
-        &self,
-    ) -> buck2_error::Result<Box<dyn DeferredMaterializerSubscription>>;
+#[derive(Debug, Clone)]
+pub enum CleanStaleArtifactsPolicy {
+    Configured,
+    Explicit {
+        keep_since_time: Timestamp,
+        adaptive_low_disk_threshold: Option<f64>,
+        adaptive_min_ttl: Option<std::time::Duration>,
+        adaptive_unmaterialize_active: bool,
+    },
 }

@@ -100,14 +100,16 @@ impl ProfileData {
     }
 
     /// Generate a string with flamegraph profile data, depending on profile type.
-    pub fn gen_flame_data(&self) -> crate::Result<String> {
+    pub fn gen_flame_data(&self) -> crate::Result<Option<String>> {
         match &self.profile {
-            ProfileDataImpl::TimeFlameProfile(profile) => Ok(profile.write()),
+            ProfileDataImpl::TimeFlameProfile(profile) => Ok(Some(profile.write())),
             ProfileDataImpl::HeapRetained(profile)
             | ProfileDataImpl::HeapAllocated(profile)
             | ProfileDataImpl::HeapFlameRetained(profile)
-            | ProfileDataImpl::HeapFlameAllocated(profile) => Ok(profile.gen_flame_graph_data()),
-            _ => Ok("".to_owned()),
+            | ProfileDataImpl::HeapFlameAllocated(profile) => {
+                Ok(Some(profile.gen_flame_graph_data()))
+            }
+            _ => Ok(None),
         }
     }
 

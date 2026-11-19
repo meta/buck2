@@ -1,0 +1,507 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+def _assert_eq(a, b, msg = None):
+    if a != b:
+        if msg:
+            fail("{}: Expected {} to be equal to {}".format(msg, a, b))
+        else:
+            fail("Expected {} to be equal to {}".format(a, b))
+
+def _test_dependency_in_universe(universe, dep_target: str, expected_labels = None):
+    dep = list(universe.lookup(dep_target))[0]
+
+    if expected_labels:
+        dep_labels = dep.get_attr("labels")
+        _assert_eq(dep_labels, expected_labels, "Labels for {} in universe".format(dep_target))
+
+    return dep
+
+def _test_binary_target(ctx: bxl.Context):
+    """Test the basic //:binary target without modifiers."""
+    ctx.output.stream("=== Testing //:binary (no modifiers) ===")
+
+    node = ctx.configured_targets("//:binary")
+
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_linux_x86_64")
+
+    labels = node.get_attr("labels")
+    _assert_eq(labels, ["build_mode:debug", "compiler:none", "os:none", "cpu:none"])
+
+    universe = ctx.target_universe(node)
+
+    # Check gcc_tool (via toolchain) - uses exec platform + exec modifiers: only execution_modifier compiler[gcc] is applied
+    _test_dependency_in_universe(
+        universe,
+        "root//:gcc_tool",
+        expected_labels = ["build_mode:none", "compiler:gcc", "os:linux", "cpu:x86_64"],
+    )
+
+    # Check clang_toolchain (toolchain_dep) - uses target config
+    _test_dependency_in_universe(
+        universe,
+        "root//:clang_toolchain",
+        expected_labels = ["build_mode:debug", "compiler:none", "os:none", "cpu:none"],
+    )
+
+    # Check clang_tool (via toolchain) - uses exec platform + exec modifiers
+    _test_dependency_in_universe(
+        universe,
+        "root//:clang_tool",
+        expected_labels = ["build_mode:none", "compiler:clang", "os:linux", "cpu:x86_64"],
+    )
+
+def _test_binary_with_modifier(ctx: bxl.Context):
+    """Test //:binary with modifiers applied via ctx.configured_targets()."""
+    ctx.output.stream("\n=== Testing //:binary with modifiers ===")
+
+    # Test with build_mode[release], os[macos], cpu[arm64] modifiers
+    node = ctx.configured_targets("//:binary", modifiers = ["root//cfg:build_mode[release]", "root//cfg:os[macos]", "root//cfg:cpu[arm64]"])
+    labels_clang = node.get_attr("labels")
+    _assert_eq(labels_clang, ["build_mode:release", "compiler:none", "os:macos", "cpu:arm64"])
+
+    # Check execution platform - should still use exec_linux_x86_64 (no exec modifier yet)
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_linux_x86_64")
+
+    universe = ctx.target_universe(node)
+
+    _test_dependency_in_universe(
+        universe,
+        "root//:gcc_tool",
+        expected_labels = ["build_mode:none", "compiler:gcc", "os:linux", "cpu:x86_64"],
+    )
+
+    _test_dependency_in_universe(
+        universe,
+        "root//:clang_toolchain",
+        expected_labels = ["build_mode:release", "compiler:none", "os:macos", "cpu:arm64"],  # Toolchain uses target configuration
+    )
+
+    _test_dependency_in_universe(
+        universe,
+        "root//:clang_tool",
+        expected_labels = ["build_mode:none", "compiler:clang", "os:linux", "cpu:x86_64"],
+    )
+
+def _test_binary_with_macos_execution(ctx: bxl.Context):
+    ctx.output.stream("\n=== Testing //:binary_with_macos_execution ===")
+
+    node = ctx.configured_targets("//:binary_with_macos_execution")
+
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_macos_x86_64")
+
+    labels = node.get_attr("labels")
+    _assert_eq(labels, ["build_mode:debug", "compiler:none", "os:none", "cpu:none"], "Target's lables os field stays none")
+
+    universe = ctx.target_universe(node)
+
+    # gcc_tool uses exec platform (macos x86_64) + exec modifiers
+    _test_dependency_in_universe(
+        universe,
+        "root//:gcc_tool",
+        expected_labels = ["build_mode:none", "compiler:gcc", "os:macos", "cpu:x86_64"],
+    )
+
+    _test_dependency_in_universe(
+        universe,
+        "root//:clang_toolchain",
+        expected_labels = ["build_mode:debug", "compiler:none", "os:none", "cpu:none"],  # Toolchain uses target configuration
+    )
+
+    # clang_tool uses exec platform (macos x86_64) + exec modifiers
+    _test_dependency_in_universe(
+        universe,
+        "root//:clang_tool",
+        expected_labels = ["build_mode:none", "compiler:clang", "os:macos", "cpu:x86_64"],
+    )
+
+def _test_binary_with_package_modifier(ctx: bxl.Context):
+    """Test //:binary with modifiers applied via ctx.configured_targets()."""
+    ctx.output.stream("\n=== Testing //:binary with package level modifiers ===")
+
+    # Test with build_mode[release], os[macos], cpu[arm64] modifiers
+    node = ctx.configured_targets("//foo:binary_with_package_modifier")
+    labels_clang = node.get_attr("labels")
+    _assert_eq(labels_clang, ["build_mode:release", "compiler:none", "os:macos", "cpu:arm64"])
+
+    # Check execution platform - should still use exec_linux_x86_64 (no exec modifier yet)
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_linux_x86_64")
+
+    universe = ctx.target_universe(node)
+
+    # gcc_tool uses exec platform + exec modifiers
+    _test_dependency_in_universe(
+        universe,
+        "root//:gcc_tool",
+        expected_labels = ["build_mode:none", "compiler:gcc", "os:linux", "cpu:x86_64"],
+    )
+
+    _test_dependency_in_universe(
+        universe,
+        "root//:clang_toolchain",
+        expected_labels = ["build_mode:release", "compiler:none", "os:macos", "cpu:arm64"],  # Toolchain uses target configuration
+    )
+
+    # clang_tool uses exec platform + exec modifiers
+    _test_dependency_in_universe(
+        universe,
+        "root//:clang_tool",
+        expected_labels = ["build_mode:none", "compiler:clang", "os:linux", "cpu:x86_64"],
+    )
+
+def _test_bianry_with_tool_target_compatible_with_gcc(ctx: bxl.Context):
+    ctx.output.stream("\n=== Testing //:binary_with_tool_target_compatible_with_gcc ===")
+
+    res = ctx.lazy.configured_target_node("//:binary_with_tool_target_compatible_with_gcc").catch().resolve()
+    node = res.unwrap()
+
+    _assert_eq(res.is_ok(), True, "Tool target should be compatible with exec platform after exec modifiers")
+
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_linux_x86_64")
+
+    universe = ctx.target_universe(node)
+    _test_dependency_in_universe(
+        universe,
+        "root//:gcc_tool_target_compatible_with_gcc",
+        expected_labels = ["build_mode:none", "compiler:gcc", "os:linux", "cpu:x86_64"],
+    )
+
+def _test_binary_with_tool_containing_os_modifier(ctx: bxl.Context):
+    ctx.output.stream("\n=== Testing //:binary_with_tool_containing_os_modifier ===")
+
+    node = ctx.configured_targets("//:binary_with_tool_containing_os_modifier")
+    labels_clang = node.get_attr("labels")
+    _assert_eq(labels_clang, ["build_mode:debug", "compiler:none", "os:none", "cpu:none"])
+
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_linux_x86_64")
+
+    # macos modifier will not be applied to the exec dep tool target
+    universe = ctx.target_universe(node)
+    _test_dependency_in_universe(
+        universe,
+        "root//:macos_clang_tool",
+        expected_labels = ["build_mode:none", "compiler:clang", "os:linux", "cpu:x86_64"],
+    )
+
+def _test_toolchain_with_multiple_exec_deps(ctx: bxl.Context):
+    """
+    Test that different exec deps on the same toolchain can have different
+    configurations due to different modifiers on the exec deps themselves.
+
+    - gcc_tool has modifier: compiler[gcc], build_mode[release]
+    - clang_tool has modifier: compiler[clang]
+
+    Both are exec deps on the same toolchain, but should have different
+    compiler configurations after exec modifiers are applied.
+    """
+    ctx.output.stream("\n=== Testing //:binary_with_multi_tool_toolchain (multiple exec deps with different modifiers) ===")
+
+    node = ctx.configured_targets("//:binary_with_multi_tool_toolchain")
+
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_linux_x86_64")
+
+    universe = ctx.target_universe(node)
+
+    # Check the toolchain itself uses target configuration
+    _test_dependency_in_universe(
+        universe,
+        "root//:multi_tool_toolchain",
+        expected_labels = ["build_mode:debug", "compiler:none", "os:none", "cpu:none"],
+    )
+
+    # gcc_tool (via toolchain's tool attr) - exec modifiers applied
+    # build_mode:none because build_mode is not an execution_modifier
+    _test_dependency_in_universe(
+        universe,
+        "root//:gcc_tool",
+        expected_labels = ["build_mode:none", "compiler:gcc", "os:linux", "cpu:x86_64"],
+    )
+
+    # clang_tool (via toolchain's additional_tools attr) - exec modifiers applied
+    # This verifies that different exec deps on the same toolchain get different configurations
+    _test_dependency_in_universe(
+        universe,
+        "root//:clang_tool",
+        expected_labels = ["build_mode:none", "compiler:clang", "os:linux", "cpu:x86_64"],
+    )
+
+# ============================================================================
+# Tests for CONDITIONAL modifiers based on exec platform constraints
+# ============================================================================
+
+def _test_tool_with_os_conditional_modifier_linux(ctx: bxl.Context):
+    """
+    Test tool with conditional modifier based on OS, when exec platform is linux.
+
+    The tool has a conditional modifier:
+    - os[linux] -> compiler:gcc
+    - os[macos] -> compiler:clang
+
+    When exec platform is linux_x86_64, the tool should get compiler:gcc.
+    """
+    ctx.output.stream("\n=== Testing //:binary_with_os_conditional_tool (linux exec) ===")
+
+    node = ctx.configured_targets("//:binary_with_os_conditional_tool")
+
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_linux_x86_64")
+
+    universe = ctx.target_universe(node)
+
+    # Conditional modifier matches os[linux] -> compiler[gcc]
+    _test_dependency_in_universe(
+        universe,
+        "root//:tool_with_os_conditional_compiler",
+        expected_labels = ["build_mode:none", "compiler:gcc", "os:linux", "cpu:x86_64"],
+    )
+
+def _test_tool_with_os_conditional_modifier_macos(ctx: bxl.Context):
+    """
+    Test tool with conditional modifier based on OS, when exec platform is macos.
+
+    The tool has a conditional modifier:
+    - os[linux] -> compiler:gcc
+    - os[macos] -> compiler:clang
+
+    When exec platform is macos_x86_64, the tool should get compiler:clang.
+    """
+    ctx.output.stream("\n=== Testing //:binary_with_os_conditional_tool_macos_exec (macos exec) ===")
+
+    node = ctx.configured_targets("//:binary_with_os_conditional_tool_macos_exec")
+
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_macos_x86_64")
+
+    universe = ctx.target_universe(node)
+
+    # Conditional modifier matches os[macos] -> compiler[clang]
+    _test_dependency_in_universe(
+        universe,
+        "root//:tool_with_os_conditional_compiler",
+        expected_labels = ["build_mode:none", "compiler:clang", "os:macos", "cpu:x86_64"],
+    )
+
+def _test_tool_with_cpu_conditional_modifier_arm64(ctx: bxl.Context):
+    """
+    Test tool with conditional modifier based on CPU, when exec platform is arm64.
+
+    The tool has a conditional modifier:
+    - cpu[x86_64] -> compiler:gcc
+    - cpu[arm64] -> compiler:clang
+
+    When exec platform is linux_arm64, the tool should get compiler:clang.
+    """
+    ctx.output.stream("\n=== Testing //:binary_with_cpu_conditional_tool_arm64 (arm64 exec) ===")
+
+    node = ctx.configured_targets("//:binary_with_cpu_conditional_tool_arm64")
+
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_linux_arm64")
+
+    universe = ctx.target_universe(node)
+
+    # Conditional modifier matches cpu[arm64] -> compiler[clang]
+    _test_dependency_in_universe(
+        universe,
+        "root//:tool_with_cpu_conditional_compiler",
+        expected_labels = ["build_mode:none", "compiler:clang", "os:linux", "cpu:arm64"],
+    )
+
+# ============================================================================
+# Tests for buckconfig_backed_modifiers exclusion from exec deps
+# ============================================================================
+
+def _test_buckconfig_backed_modifiers_not_applied_to_exec_deps(ctx: bxl.Context):
+    """
+    Test that buckconfig_backed_modifiers are NOT applied to exec deps.
+
+    The PACKAGE sets buckconfig_backed_modifiers with
+    buckconfig_backed:enabled as a post_platform_modifiers.
+
+    Expected behavior:
+    - The binary target SHOULD get buckconfig_backed:enabled from buckconfig-backed modifiers
+    - The tool (exec_dep) should NOT get buckconfig_backed:enabled - should have buckconfig_backed:none
+    """
+    ctx.output.stream("\n=== Testing buckconfig_backed_modifiers NOT applied to exec deps ===")
+
+    node = ctx.configured_targets("//buckconfig_backed:binary_with_buckconfig_modifier")
+
+    exec_platform = getattr(node.attrs_eager(), "buck.execution_platform").value()
+    _assert_eq(exec_platform, "root//cfg:exec_linux_x86_64")
+
+    labels = node.get_attr("labels")
+    _assert_eq(
+        labels,
+        ["build_mode:debug", "compiler:clang", "os:none", "cpu:none"],
+        "Binary should have buckconfig_backed:enabled from buckconfig-backed modifiers",
+    )
+
+    # The binary SHOULD have buckconfig_backed:enabled from buckconfig-backed modifiers
+    _assert_eq(
+        node.get_attr("buckconfig_backed_label"),
+        "buckconfig_backed:enabled",
+    )
+
+    universe = ctx.target_universe(node)
+
+    exec_dep_node = _test_dependency_in_universe(
+        universe,
+        "root//buckconfig_backed:simple_tool",
+        expected_labels = ["build_mode:none", "compiler:none", "os:linux", "cpu:x86_64"],
+    )
+
+    # The tool (exec_dep) should NOT have buckconfig_backed:enabled
+    # It should have buckconfig_backed:none because buckconfig-backed modifiers are excluded for exec deps
+    _assert_eq(
+        exec_dep_node.get_attr("buckconfig_backed_label"),
+        "buckconfig_backed:none",
+    )
+
+# ============================================================================
+# Tests for exec marker preservation across transitions
+# ============================================================================
+
+def _test_exec_marker_preserved_across_single_transition(ctx: bxl.Context):
+    """Marker-dependent transitions stay idempotent for exec and target deps."""
+    ctx.output.stream("\n=== Testing exec marker preserved across single transition ===")
+
+    for target, expected_marker, expected_compiler in [
+        ("//:binary_with_single_transition_exec_dep", "is_exec:true", "compiler:clang"),
+        ("//:binary_with_single_transition_target_dep", "is_exec:false", "compiler:gcc"),
+    ]:
+        node = ctx.configured_targets(target, modifiers = ["root//cfg:compiler[gcc]"])
+        universe = ctx.target_universe(node)
+        tools = list(universe.lookup("root//:tool_with_single_transition"))
+        _assert_eq(len(tools), 1)
+        _assert_eq(tools[0].get_attr("is_exec"), expected_marker)
+        deps = list(universe.lookup("root//:inner_dep_for_transition"))
+        _assert_eq(len(deps), 1, "Should find exactly one inner_dep_for_transition")
+        _assert_eq(deps[0].get_attr("is_exec"), expected_marker)
+        _assert_eq(
+            deps[0].get_attr("labels"),
+            ["build_mode:none", expected_compiler, "os:none", "cpu:none"],
+        )
+
+def _test_exec_marker_preserved_across_split_transition(ctx: bxl.Context):
+    """
+    Test that the exec platform marker (is_exec_platform[true]) is preserved
+    across a split transition on an exec dep.
+
+    inner_dep_for_transition goes through a split transition producing two configs.
+    Both split outputs should have the marker.
+    """
+    ctx.output.stream("\n=== Testing exec marker preserved across split transition ===")
+
+    node = ctx.configured_targets("//:binary_with_split_transition_exec_dep")
+    universe = ctx.target_universe(node)
+
+    # The inner dep went through a split transition. All split outputs should
+    # have the exec marker preserved.
+    deps = list(universe.lookup("root//:inner_dep_for_transition"))
+    _assert_eq(len(deps), 2, "Should find exactly two split transition deps")
+
+    for dep in deps:
+        is_exec = dep.get_attr("is_exec")
+        _assert_eq(
+            is_exec,
+            "is_exec:true",
+            "Exec marker should be preserved across split transition",
+        )
+
+def _test_target_constraint_does_not_become_internal_marker(ctx: bxl.Context):
+    node = ctx.configured_targets("//:binary_with_marker_constraint_target_dep")
+    universe = ctx.target_universe(node)
+    tools = list(universe.lookup("root//:tool_with_split_transition"))
+    _assert_eq(len(tools), 1)
+    _assert_eq(tools[0].get_attr("is_exec"), "is_exec:true")
+    deps = list(universe.lookup("root//:inner_dep_for_transition"))
+    _assert_eq(len(deps), 2)
+    for dep in deps:
+        _assert_eq(dep.get_attr("is_exec"), "is_exec:false")
+
+def _test_modifiers(ctx: bxl.Context):
+    ctx.output.stream("Testing exec modifiers and toolchain dependencies...\n")
+
+    _test_binary_target(ctx)
+    _test_binary_with_modifier(ctx)
+    _test_binary_with_macos_execution(ctx)
+    _test_binary_with_package_modifier(ctx)
+    _test_bianry_with_tool_target_compatible_with_gcc(ctx)
+    _test_binary_with_tool_containing_os_modifier(ctx)
+    _test_toolchain_with_multiple_exec_deps(ctx)
+
+    # Conditional modifier tests
+    _test_tool_with_os_conditional_modifier_linux(ctx)
+    _test_tool_with_os_conditional_modifier_macos(ctx)
+    _test_tool_with_cpu_conditional_modifier_arm64(ctx)
+
+    # Buckconfig-backed modifiers test
+    _test_buckconfig_backed_modifiers_not_applied_to_exec_deps(ctx)
+
+def _preserved_marker(ctx: bxl.Context):
+    _test_exec_marker_preserved_across_single_transition(ctx)
+    _test_exec_marker_preserved_across_split_transition(ctx)
+    _test_target_constraint_does_not_become_internal_marker(ctx)
+
+def _test_legacy_marker(ctx: bxl.Context, expected_tool_marker: str):
+    node = ctx.configured_targets("//:binary_with_split_transition_exec_dep")
+    universe = ctx.target_universe(node)
+    tools = list(universe.lookup("root//:tool_with_split_transition"))
+    _assert_eq(len(tools), 1)
+    _assert_eq(tools[0].get_attr("is_exec"), expected_tool_marker)
+    deps = list(universe.lookup("root//:inner_dep_for_transition"))
+    _assert_eq(len(deps), 2)
+    for dep in deps:
+        _assert_eq(dep.get_attr("is_exec"), "is_exec:false")
+
+def _legacy_marker(ctx: bxl.Context):
+    _test_legacy_marker(ctx, "is_exec:true")
+
+def _legacy_constructor_marker(ctx: bxl.Context):
+    _test_legacy_marker(ctx, "is_exec:false")
+
+def _main(ctx: bxl.Context):
+    _test_modifiers(ctx)
+    _preserved_marker(ctx)
+
+def _legacy(ctx: bxl.Context):
+    _test_modifiers(ctx)
+    _legacy_marker(ctx)
+    _test_target_constraint_does_not_become_internal_marker(ctx)
+
+main = bxl_main(
+    impl = _main,
+    cli_args = {},
+)
+
+legacy = bxl_main(
+    impl = _legacy,
+    cli_args = {},
+)
+
+legacy_marker = bxl_main(
+    impl = _legacy_marker,
+    cli_args = {},
+)
+
+legacy_constructor_marker = bxl_main(
+    impl = _legacy_constructor_marker,
+    cli_args = {},
+)
+
+preserved_marker = bxl_main(
+    impl = _preserved_marker,
+    cli_args = {},
+)

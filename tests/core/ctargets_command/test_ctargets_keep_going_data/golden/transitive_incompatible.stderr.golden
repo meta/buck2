@@ -3,8 +3,6 @@
 [<TIMESTAMP>] Starting new buck2 daemon...
 [<TIMESTAMP>] Connected to new buck2 daemon.
 [<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
-[<TIMESTAMP>] Soft Error: dep_only_incompatible_version_two: root//c:depends_on_incompatible (root//:linux_platform#<HASH>) does not pass compatibility check (will be error in future) because its transitive dep root//c:macos_only_target
-[<TIMESTAMP>]     is incompatible with root//:linux_platform#<HASH> (root//:macos unsatisfied), check the target's compatibility attributes
 [<TIMESTAMP>] ERROR:Upgraded warning to failure via $BUCK2_HARD_ERROR: root//c:depends_on_incompatible (root//:linux_platform#<HASH>) does not pass compatibility check (will be error in future) because its transitive dep root//c:macos_only_target
 [<TIMESTAMP>]     is incompatible with root//:linux_platform#<HASH> (root//:macos unsatisfied), check the target's compatibility attributes
 [<TIMESTAMP>]

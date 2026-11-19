@@ -10,7 +10,10 @@
 
 package com.facebook.buck.jvm.cd;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** Factory that creates {@link CompileStepsBuilder} instances */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface CompileStepsBuilderFactory {
 
   /** Creates an appropriate {@link LibraryStepsBuilder} instance */

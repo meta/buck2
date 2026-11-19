@@ -1,0 +1,12 @@
+load(":defs.bzl", "cxx_binary", "cxx_custom", "cxx_library", "cxx_test", "plain", "rust_binary", "rust_custom", "rust_library", "rust_test")
+
+rust_binary(name = "rust")
+rust_binary(name = "fails", fail_build = True)
+rust_library(name = "rust_library")
+cxx_library(name = "cpp")
+cxx_binary(name = "cpp_binary")
+rust_test(name = "rust_test")
+cxx_test(name = "cpp_test")
+rust_custom(name = "rust_custom")
+cxx_custom(name = "cpp_custom")
+plain(name = "plain")

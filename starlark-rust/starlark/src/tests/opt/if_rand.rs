@@ -19,10 +19,11 @@
 
 use std::cell::Cell;
 use std::fmt;
+use std::fmt::Display;
 
 use derive_more::Display;
 use dupe::Dupe;
-use rand::Rng;
+use rand::RngExt as _;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use starlark_derive::starlark_module;
@@ -146,7 +147,6 @@ impl Display for TestExpr {
 /// * Return the result which is expected to be `bool`.
 /// * Count side effects.
 fn eval_program(program: &str) -> (bool, CountCalls) {
-    let module = Module::new();
     let ast = AstModule::parse("t.star", program.to_owned(), &Dialect::AllOptionsInternal).unwrap();
 
     let mut globals = GlobalsBuilder::standard();
@@ -154,12 +154,13 @@ fn eval_program(program: &str) -> (bool, CountCalls) {
     let globals = globals.build();
 
     let counts = CountCalls::default();
-    let r = {
+    let r = Module::with_temp_heap(|module| {
         let mut eval = Evaluator::new(&module);
         eval.extra = Some(&counts);
         let r = eval.eval_module(ast, &globals).unwrap();
-        r.unpack_bool().unwrap()
-    };
+        crate::Result::Ok(r.unpack_bool().unwrap())
+    })
+    .unwrap();
     (r, counts)
 }
 
@@ -317,7 +318,7 @@ fn max_depth_for_iter(i: usize) -> usize {
 
 fn random_expr(rng: &mut SmallRng, max_depth: usize) -> TestExpr {
     fn random_simple_expr(rng: &mut SmallRng) -> TestExpr {
-        match rng.gen_range(0..4) {
+        match rng.random_range(0..4) {
             0 => TestExpr::Const(true),
             1 => TestExpr::Const(false),
             2 => TestExpr::Count(true),
@@ -329,7 +330,7 @@ fn random_expr(rng: &mut SmallRng, max_depth: usize) -> TestExpr {
     if max_depth == 0 {
         random_simple_expr(rng)
     } else {
-        match rng.gen_range(0..4) {
+        match rng.random_range(0..4) {
             0 => random_simple_expr(rng),
             1 => TestExpr::Not(Box::new(random_expr(rng, max_depth - 1))),
             2 => TestExpr::BinOp(

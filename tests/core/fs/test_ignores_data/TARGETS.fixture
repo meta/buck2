@@ -1,0 +1,5 @@
+load(":defs.bzl", "cp", "files")
+
+cp(name = "keep", src = "shown/x.gen/keep")
+
+files(name = "globbed", srcs = glob(["shown/**/*"]))

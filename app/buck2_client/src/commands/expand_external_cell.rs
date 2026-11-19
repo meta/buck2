@@ -43,10 +43,6 @@ pub struct ExpandExternalCellsCommand {
     cells: Vec<String>,
 }
 
-const REMINDER_TEXT: &str = "Reminder: For edits to the expanded cell to take effect on \
-your build, you must additionally remove the entry from the `external_cells` section of your \
-buckconfig\n";
-
 #[async_trait::async_trait(?Send)]
 impl StreamingCommand for ExpandExternalCellsCommand {
     const COMMAND_NAME: &'static str = "expand-external-cell";
@@ -83,11 +79,17 @@ impl StreamingCommand for ExpandExternalCellsCommand {
 
         let mut lines: Vec<String> = resp
             .paths
-            .into_iter()
+            .iter()
             .map(|(cell, path)| format!("Expanded external cell {cell} to {path}."))
             .collect();
         lines.push(String::new());
-        lines.push(REMINDER_TEXT.to_owned());
+        lines.push(
+            "Reminder: For edits to the expanded cells to take effect on \
+your build, disable the external cells in buckconfig:\n[external_cells]"
+                .to_owned(),
+        );
+        lines.extend(resp.paths.keys().map(|cell| format!("{cell} = disabled")));
+        lines.push(String::new());
 
         ExitResult::success().with_stdout(lines.join("\n").into_bytes())
     }

@@ -16,11 +16,15 @@ use buck2_core::execution_types::executor_config::CacheUploadBehavior;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
 use buck2_core::execution_types::executor_config::CommandGenerationOptions;
 use buck2_core::execution_types::executor_config::Executor;
+use buck2_core::execution_types::executor_config::ExecutorNetworkAccess;
 use buck2_core::execution_types::executor_config::HybridExecutionLevel;
 use buck2_core::execution_types::executor_config::ImagePackageIdentifier;
 use buck2_core::execution_types::executor_config::LocalExecutorOptions;
 use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
 use buck2_core::execution_types::executor_config::PathSeparatorKind;
+use buck2_core::execution_types::executor_config::ReGang;
+use buck2_core::execution_types::executor_config::ReGangLocality;
+use buck2_core::execution_types::executor_config::ReGangWorker;
 use buck2_core::execution_types::executor_config::RePlatformFields;
 use buck2_core::execution_types::executor_config::RemoteEnabledExecutor;
 use buck2_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
@@ -30,21 +34,27 @@ use buck2_core::execution_types::executor_config::RemoteExecutorCustomImage;
 use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
 use buck2_core::execution_types::executor_config::RemoteExecutorOptions;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
+use buck2_core::execution_types::executor_config::parse_network_access;
 use buck2_error::BuckErrorContext;
+use buck2_hash::BuckFixedSortedMap;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
-use starlark::collections::SmallMap;
 use starlark::environment::GlobalsBuilder;
+use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
-use starlark::values::ValueLike;
+use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
+use starlark::values::dict::DictType;
 use starlark::values::list::ListRef;
-use starlark::values::list::UnpackList;
+use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -61,16 +71,80 @@ enum CommandExecutorConfigErrors {
     ReCafFbpkgsNotAList(String, String),
     #[error("expected an dict, got `{0}` (type `{1}`)")]
     ReCafFbpkgNotADict(String, String),
+    #[error(
+        "`remote_execution_caf_fbpkgs` entry `{name}:{uuid}` is not pinned: `uuid` must be a 32-hex fbpkg UUID or a version number. \
+        Remote execution rejects mutable tags such as `stable` or `latest`, because a tag can move to another build while the action digest stays the same. \
+        Pin the version, or resolve the tag at build time with `snapshotted_fbpkg_target()`."
+    )]
+    ReCafFbpkgNotPinned { name: String, uuid: String },
+    #[error("`remote_execution_gang` and `remote_execution_gang_workers` are mutually exclusive")]
+    GangAndGangWorkersExclusive,
+    #[error(
+        "expected a dict for `capabilities` in `remote_execution_gang`, got `{0}` (type `{1}`)"
+    )]
+    ReGangCapabilitiesNotADict(String, String),
+    #[error("expected an integer for `num_of_workers` in `remote_execution_gang`, got `{0}`")]
+    ReGangNumOfWorkersNotAnInt(String),
+    #[error("expected an integer for `num_sub_groups` in `remote_execution_gang`, got `{0}`")]
+    ReGangNumSubGroupsNotAnInt(String),
+    #[error("expected an integer for `resource_units` in `remote_execution_gang`, got `{0}`")]
+    ReGangResourceUnitsNotAnInt(String),
+    #[error(
+        "expected a positive integer for `queue_timeout_s` in `remote_execution_policy`, got `{0}`"
+    )]
+    ReQueueTimeoutNotPositive(String),
 }
 
-#[derive(Debug, Display, NoSerialize, ProvidesStaticType, Allocative)]
+#[derive(
+    Debug,
+    Display,
+    Freeze,
+    NoSerialize,
+    ProvidesStaticType,
+    Allocative,
+    StarlarkPagable
+)]
 #[display("{:?}", _0)]
-pub struct StarlarkCommandExecutorConfig(pub Arc<CommandExecutorConfig>);
+pub struct StarlarkCommandExecutorConfig(
+    #[freeze(identity)]
+    #[starlark_pagable(pagable)]
+    pub Arc<CommandExecutorConfig>,
+);
 
 starlark_simple_value!(StarlarkCommandExecutorConfig);
 
 #[starlark_value(type = "CommandExecutorConfig")]
 impl<'v> StarlarkValue<'v> for StarlarkCommandExecutorConfig {}
+
+fn parse_remote_execution_properties(
+    value: Value,
+) -> buck2_error::Result<Option<RePlatformFields>> {
+    if value.is_none() {
+        return Ok(None);
+    }
+
+    let properties = DictRef::from_value(value.to_value()).ok_or_else(|| {
+        buck2_error::Error::from(CommandExecutorConfigErrors::RePropertiesNotADict(
+            value.to_repr(),
+            value.get_type().to_owned(),
+        ))
+    })?;
+
+    Ok(Some(RePlatformFields {
+        properties: Arc::new(
+            properties
+                .iter()
+                .map(|(name, value)| {
+                    let values = ListRef::from_value(value).map_or_else(
+                        || vec![value.to_str()],
+                        |values| values.iter().map(Value::to_str).collect(),
+                    );
+                    (name.to_str(), values)
+                })
+                .collect(),
+        ),
+    }))
+}
 
 #[starlark_module]
 pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
@@ -80,7 +154,8 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
     /// If both remote_enabled and local_enabled are `True`, we will use the hybrid executor
     /// * `remote_enabled`: Whether to use remote execution for this execution platform
     /// * `remote_cache_enabled`: Whether to query RE caches
-    /// * `remote_execution_properties`: Properties for remote execution for this platform
+    /// * `remote_execution_properties`: Properties for remote execution for this platform. Each
+    /// value may be a single value or a list of alternative values.
     /// * `remote_execution_action_key`: A component to inject into the action key
     /// This should typically used to inject variability into the action key so that
     /// it's different across e.g. build modes (RE uses the action key for things like expected memory utilization)
@@ -98,10 +173,28 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
     /// * `max_cache_upload_mebibytes`: Maximum size to upload in cache uploads
     /// * `experimental_low_pass_filter`: Whether to use the experimental low pass filter
     /// * `remote_output_paths`: How to express output paths to RE
+    /// * `network_access`: Network access policy for commands using this executor. Supports `all`, `none`, `loopback`, `strict`, and `private`.
     /// * `remote_execution_resource_units`: The resources (eg. GPUs) to use for remote execution
     /// * `remote_execution_dependencies`: Dependencies for remote execution for this platform
+    /// * `remote_execution_gang_workers`: Gang workers for gang scheduling in remote execution (enumerated gang spec)
     /// * `remote_execution_custom_image`: Custom Tupperware image for remote execution for this platform
     /// * `meta_internal_extra_params`: Json dict of extra params to pass to RE related to Meta internal infra.
+    ///   Supports the following keys:
+    ///   - `remote_execution_policy`: Policy settings for remote execution. A dict with optional keys
+    ///     `priority`, `region_preference`, `setup_preference_key` and `queue_timeout_s` (seconds the
+    ///     action may wait in the RE queue; RE caps it at the platform's queue timeout)
+    ///   - `remote_execution_caf_fbpkgs`: CAF fbpkgs configuration
+    ///   - `remote_execution_gang`: Constrained gang for gang scheduling in remote execution. A dict with keys:
+    ///     - `capabilities`: A dict of capability key-value pairs (required)
+    ///     - `num_of_workers`: Number of workers in the gang (required, integer)
+    ///     - `locality`: Optional locality constraint ("region", "datacenter", or "network_domain")
+    ///     Note: mutually exclusive with `remote_execution_gang_workers`
+    ///   - `cancel_on_client_disconnect`: Directs RE to stop a started execution when buck2
+    ///     closes the execution stream (e.g. the command is cancelled or the process exits).
+    ///     Defaults to `False`, which lets RE run it to completion and write the result to cache.
+    /// * `priority`: The priority for remote execution requests. The exact interpretation is up
+    ///   to the RE server. See the Bazel Remote Execution API for recommended interpretation:
+    ///   https://github.com/bazelbuild/remote-apis/blob/main/build/bazel/remote/execution/v2/remote_execution.proto#L1499
     #[starlark(as_type = StarlarkCommandExecutorConfig)]
     fn CommandExecutorConfig<'v>(
         #[starlark(require = named)] local_enabled: bool,
@@ -109,12 +202,16 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
         #[starlark(default = NoneOr::None, require = named)] remote_cache_enabled: NoneOr<bool>,
         #[starlark(default = false, require = named)] remote_dep_file_cache_enabled: bool,
         #[starlark(default = NoneType, require = named)] remote_execution_properties: Value<'v>,
-        #[starlark(default = NoneType, require = named)] remote_execution_action_key: Value<'v>,
+        #[starlark(default = NoneOr::None, require = named)] remote_execution_action_key: NoneOr<
+            &'v str,
+        >,
         #[starlark(default = NoneOr::None, require = named)]
         remote_execution_max_input_files_mebibytes: NoneOr<i32>,
         #[starlark(default = NoneOr::None, require = named)]
         remote_execution_queue_time_threshold_s: NoneOr<u64>,
-        #[starlark(default = NoneType, require = named)] remote_execution_use_case: Value<'v>,
+        #[starlark(default = NoneOr::None, require = named)] remote_execution_use_case: NoneOr<
+            &'v str,
+        >,
         #[starlark(default = false, require = named)] use_limited_hybrid: bool,
         #[starlark(default = false, require = named)] allow_limited_hybrid_fallbacks: bool,
         #[starlark(default = false, require = named)] allow_hybrid_fallbacks_on_failure: bool,
@@ -127,15 +224,28 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
         >,
         #[starlark(default = false, require = named)] experimental_low_pass_filter: bool,
         #[starlark(default = NoneOr::None, require = named)] remote_output_paths: NoneOr<&str>,
+        #[starlark(default = NoneOr::None, require = named)] network_access: NoneOr<&str>,
         #[starlark(default = NoneOr::None, require = named)]
         remote_execution_resource_units: NoneOr<i64>,
-        #[starlark(default=UnpackList::default(), require = named)]
-        remote_execution_dependencies: UnpackList<SmallMap<&'v str, &'v str>>,
-        #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
+        #[starlark(default = ValueOf::empty_list(), require = named)]
+        remote_execution_dependencies: ValueOf<
+            'v,
+            ListType<DictType<StarlarkStr, StarlarkStr>>,
+        >,
+        #[starlark(default = ValueOf::empty_list(), require = named)]
+        remote_execution_gang_workers: ValueOf<
+            'v,
+            ListType<DictType<StarlarkStr, StarlarkStr>>,
+        >,
+        #[starlark(default = NoneOr::None, require = named)] remote_execution_dynamic_image: NoneOr<
+            DictRef<'v>,
+        >,
         #[starlark(default = NoneOr::None, require = named)] meta_internal_extra_params: NoneOr<
             DictRef<'v>,
         >,
-    ) -> starlark::Result<StarlarkCommandExecutorConfig> {
+        #[starlark(default = NoneOr::None, require = named)] priority: NoneOr<i32>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCommandExecutorConfig>> {
         let command_executor_config = {
             let remote_execution_max_input_files_mebibytes: Option<i32> =
                 remote_execution_max_input_files_mebibytes.into_option();
@@ -147,57 +257,49 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
 
             let max_cache_upload_mebibytes = max_cache_upload_mebibytes.into_option();
 
-            let re_properties = if remote_execution_properties.is_none() {
-                None
-            } else {
-                let re_properties = DictRef::from_value(remote_execution_properties.to_value())
-                    .ok_or_else(|| {
-                        buck2_error::Error::from(CommandExecutorConfigErrors::RePropertiesNotADict(
-                            remote_execution_properties.to_value().to_repr(),
-                            remote_execution_properties.to_value().get_type().to_owned(),
-                        ))
-                    })?;
-
-                Some(RePlatformFields {
-                    properties: Arc::new(
-                        re_properties
-                            .iter()
-                            .map(|(k, v)| (k.to_str(), v.to_str()))
-                            .collect(),
-                    ),
-                })
-            };
+            let re_properties =
+                parse_remote_execution_properties(remote_execution_properties.to_value())?;
 
             let re_dependencies = remote_execution_dependencies
-                .into_iter()
-                .map(RemoteExecutorDependency::parse)
+                .iter()
+                .map(|d| {
+                    RemoteExecutorDependency::parse(
+                        d?.try_items::<&str, &str>()
+                            .collect::<starlark::Result<_>>()?,
+                    )
+                })
                 .collect::<buck2_error::Result<Vec<RemoteExecutorDependency>>>()?;
 
-            let re_dynamic_image = parse_custom_re_image(
-                "remote_execution_custom_image",
-                remote_execution_dynamic_image,
-            )?;
+            let re_gang_workers = remote_execution_gang_workers
+                .iter()
+                .map(|w| {
+                    ReGangWorker::parse(
+                        w?.try_items::<&str, &str>()
+                            .collect::<starlark::Result<_>>()?,
+                    )
+                })
+                .collect::<buck2_error::Result<Vec<ReGangWorker>>>()?;
+
+            let re_dynamic_image =
+                parse_custom_re_image(remote_execution_dynamic_image.into_option())?;
 
             let extra_params =
                 parse_meta_internal_extra_params(meta_internal_extra_params.into_option())?;
 
-            let re_use_case = if remote_execution_use_case.is_none() {
-                None
-            } else {
-                let re_use_case = remote_execution_use_case
-                    .unpack_str()
-                    .buck_error_context("remote_execution_use_case is not a string")?;
-                Some(RemoteExecutorUseCase::new(re_use_case.to_owned()))
-            };
+            if extra_params.gang.is_some() && !re_gang_workers.is_empty() {
+                return Err(buck2_error::Error::from(
+                    CommandExecutorConfigErrors::GangAndGangWorkersExclusive,
+                )
+                .into());
+            }
 
-            let re_action_key = if remote_execution_action_key.is_none() {
-                None
-            } else {
-                let re_action_key = remote_execution_action_key
-                    .unpack_str()
-                    .buck_error_context("remote_execution_action_key is not a string")?;
-                Some(re_action_key.to_owned())
-            };
+            let priority = priority.into_option();
+
+            let re_use_case = remote_execution_use_case
+                .into_option()
+                .map(|use_case| RemoteExecutorUseCase::new(use_case.to_owned()));
+
+            let re_action_key = remote_execution_action_key.into_option().map(str::to_owned);
 
             let local_options = if local_enabled {
                 Some(LocalExecutorOptions {
@@ -278,21 +380,23 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
 
                     Executor::RemoteEnabled(RemoteEnabledExecutorOptions {
                         executor,
-                        re_properties: re_properties.buck_error_context(
+                        re_properties: re_properties.ok_or(buck2_error::Error::from(
                             CommandExecutorConfigErrors::MissingField(
                                 "remote_execution_properties",
                             ),
-                        )?,
-                        re_use_case: re_use_case.buck_error_context(
+                        ))?,
+                        re_use_case: re_use_case.ok_or(buck2_error::Error::from(
                             CommandExecutorConfigErrors::MissingField("re_use_case"),
-                        )?,
+                        ))?,
                         re_action_key,
                         cache_upload_behavior,
                         remote_cache_enabled,
                         remote_dep_file_cache_enabled,
                         dependencies: re_dependencies,
+                        gang_workers: re_gang_workers,
                         custom_image: re_dynamic_image,
                         meta_internal_extra_params: extra_params,
+                        priority,
                     })
                 }
                 (Some(local), None, true) => {
@@ -308,8 +412,10 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                         remote_cache_enabled: true,
                         remote_dep_file_cache_enabled,
                         dependencies: re_dependencies,
+                        gang_workers: re_gang_workers,
                         custom_image: re_dynamic_image,
                         meta_internal_extra_params: extra_params,
+                        priority,
                     })
                 }
                 // If remote cache is disabled, also disable the remote dep file cache as well
@@ -321,10 +427,15 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                 .into_option()
                 .map(|s| s.parse())
                 .transpose()
-                .buck_error_context(CommandExecutorConfigErrors::InvalidField(
-                    "remote_output_paths",
-                ))?
+                .buck_error_context("Invalid remote_output_paths")?
                 .unwrap_or_default();
+
+            let network_access = network_access
+                .into_option()
+                .map(parse_network_access)
+                .transpose()
+                .buck_error_context("Invalid network_access")?
+                .map(ExecutorNetworkAccess::from);
 
             CommandExecutorConfig {
                 executor,
@@ -336,33 +447,24 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                     },
                     output_paths_behavior,
                     use_bazel_protocol_remote_persistent_workers,
+                    network_access,
                 },
             }
         };
 
-        Ok(StarlarkCommandExecutorConfig(Arc::new(
-            command_executor_config,
-        )))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkCommandExecutorConfig(Arc::new(command_executor_config)),
+        ))
     }
 }
 
 pub fn parse_custom_re_image(
-    field_name: &'static str,
-    value: Value,
+    image: Option<DictRef<'_>>,
 ) -> buck2_error::Result<Option<Box<RemoteExecutorCustomImage>>> {
-    if value.is_none() {
+    let Some(dict) = image else {
         return Ok(None);
-    }
-
-    fn dict_ref<'v>(
-        field_name: &'static str,
-        value: Value<'v>,
-    ) -> buck2_error::Result<DictRef<'v>> {
-        match DictRef::from_value(value) {
-            Some(dict_ref) => Ok(dict_ref),
-            None => Err(CommandExecutorConfigErrors::InvalidField(field_name).into()),
-        }
-    }
+    };
 
     fn list_ref<'v>(
         field_name: &'static str,
@@ -391,7 +493,6 @@ pub fn parse_custom_re_image(
         Ok(value.to_str())
     }
 
-    let dict = dict_ref(field_name, value)?;
     let identifier_value = get_value(&dict, "identifier")?;
     let identifier = if let Some(identifier_dict) = DictRef::from_value(identifier_value) {
         ImagePackageIdentifier {
@@ -429,86 +530,344 @@ pub fn parse_custom_re_image(
 fn parse_remote_execution_policy(
     policy: Option<Value>,
 ) -> buck2_error::Result<RemoteExecutionPolicy> {
-    if policy.is_none() {
-        Ok(RemoteExecutionPolicy::default())
-    } else {
-        let re_policy_dict = DictRef::from_value(policy.unwrap().to_value()).ok_or_else(|| {
-            buck2_error::Error::from(CommandExecutorConfigErrors::RePolicyNotADict(
-                policy.unwrap().to_value().to_repr(),
-                policy.unwrap().to_value().get_type().to_owned(),
-            ))
-        })?;
+    match policy {
+        None => Ok(RemoteExecutionPolicy::default()),
+        Some(policy) => {
+            let re_policy_dict = DictRef::from_value(policy.to_value()).ok_or_else(|| {
+                buck2_error::Error::from(CommandExecutorConfigErrors::RePolicyNotADict(
+                    policy.to_value().to_repr(),
+                    policy.to_value().get_type().to_owned(),
+                ))
+            })?;
 
-        Ok(RemoteExecutionPolicy {
-            setup_preference_key: re_policy_dict
-                .get_str("setup_preference_key")
-                .and_then(|v| v.unpack_str())
-                .map(|s| s.to_owned()),
-            region_preference: re_policy_dict
-                .get_str("region_preference")
-                .and_then(|v| v.unpack_str())
-                .map(|s| s.to_owned()),
-            priority: re_policy_dict
-                .get_str("priority")
-                .and_then(|v| v.unpack_i32())
-                .map(|i| i.to_owned()),
-        })
+            let queue_timeout_s = match re_policy_dict.get_str("queue_timeout_s") {
+                None => None,
+                Some(v) => match v.unpack_i32() {
+                    Some(seconds) if seconds > 0 => Some(seconds),
+                    _ => {
+                        return Err(CommandExecutorConfigErrors::ReQueueTimeoutNotPositive(
+                            v.to_repr(),
+                        )
+                        .into());
+                    }
+                },
+            };
+
+            Ok(RemoteExecutionPolicy {
+                setup_preference_key: re_policy_dict
+                    .get_str("setup_preference_key")
+                    .and_then(|v| v.unpack_str())
+                    .map(|s| s.to_owned()),
+                region_preference: re_policy_dict
+                    .get_str("region_preference")
+                    .and_then(|v| v.unpack_str())
+                    .map(|s| s.to_owned()),
+                priority: re_policy_dict
+                    .get_str("priority")
+                    .and_then(|v| v.unpack_i32())
+                    .map(|i| i.to_owned()),
+                queue_timeout_s,
+            })
+        }
     }
+}
+
+/// The RE worker's `CafArtifactIdentifier::is_valid_uuid` rule
+/// (`remote_execution/rust/image_manager/src/lib.rs`), so this rejects what the
+/// worker would reject, at analysis time instead of on every execution. Unlike
+/// the worker, an empty value is rejected too: it names no package version.
+fn is_pinned_fbpkg_version(uuid: &str) -> bool {
+    !uuid.is_empty()
+        && (uuid.chars().all(|c| c.is_ascii_digit())
+            || (uuid.len() == 32 && uuid.chars().all(|c| c.is_ascii_hexdigit())))
 }
 
 fn parse_remote_execution_caf_fbpkgs(
     caf_fbpkgs: Option<Value>,
 ) -> buck2_error::Result<Vec<RemoteExecutorCafFbpkg>> {
-    if caf_fbpkgs.is_none() {
-        Ok(vec![])
-    } else {
-        let re_caf_fbpkgs_list =
-            ListRef::from_value(caf_fbpkgs.unwrap().to_value()).ok_or_else(|| {
-                buck2_error::Error::from(CommandExecutorConfigErrors::ReCafFbpkgsNotAList(
-                    caf_fbpkgs.unwrap().to_value().to_repr(),
-                    caf_fbpkgs.unwrap().to_value().get_type().to_owned(),
-                ))
-            })?;
+    match caf_fbpkgs {
+        None => Ok(vec![]),
+        Some(caf_fbpkgs) => {
+            let re_caf_fbpkgs_list =
+                ListRef::from_value(caf_fbpkgs.to_value()).ok_or_else(|| {
+                    buck2_error::Error::from(CommandExecutorConfigErrors::ReCafFbpkgsNotAList(
+                        caf_fbpkgs.to_value().to_repr(),
+                        caf_fbpkgs.to_value().get_type().to_owned(),
+                    ))
+                })?;
 
-        Ok(re_caf_fbpkgs_list
-            .iter()
-            .map(|caf_fbpkg| match DictRef::from_value(caf_fbpkg) {
-                Some(dict_ref) => Ok(RemoteExecutorCafFbpkg {
-                    name: dict_ref
-                        .get_str("name")
-                        .ok_or(CommandExecutorConfigErrors::MissingField("name"))?
-                        .to_str(),
-                    uuid: dict_ref
-                        .get_str("uuid")
-                        .ok_or(CommandExecutorConfigErrors::MissingField("uuid"))?
-                        .to_str(),
-                    tag: dict_ref.get_str("tag").map(|v| v.to_str()),
-                    permissions: dict_ref.get_str("permissions").map(|v| v.to_str()),
-                }),
-                None => Err(buck2_error::Error::from(
-                    CommandExecutorConfigErrors::ReCafFbpkgNotADict(
-                        caf_fbpkg.to_repr(),
-                        caf_fbpkg.get_type().to_owned(),
-                    ),
-                )),
-            })
-            .collect::<buck2_error::Result<Vec<RemoteExecutorCafFbpkg>>>()?)
+            Ok(re_caf_fbpkgs_list
+                .iter()
+                .map(|caf_fbpkg| match DictRef::from_value(caf_fbpkg) {
+                    Some(dict_ref) => {
+                        let name = dict_ref
+                            .get_str("name")
+                            .ok_or(CommandExecutorConfigErrors::MissingField("name"))?
+                            .to_str();
+                        let uuid = dict_ref
+                            .get_str("uuid")
+                            .ok_or(CommandExecutorConfigErrors::MissingField("uuid"))?
+                            .to_str();
+                        if !is_pinned_fbpkg_version(&uuid) {
+                            return Err(buck2_error::Error::from(
+                                CommandExecutorConfigErrors::ReCafFbpkgNotPinned { name, uuid },
+                            ));
+                        }
+                        Ok(RemoteExecutorCafFbpkg {
+                            name,
+                            uuid,
+                            tag: dict_ref.get_str("tag").map(|v| v.to_str()),
+                            permissions: dict_ref.get_str("permissions").map(|v| v.to_str()),
+                        })
+                    }
+                    None => Err(buck2_error::Error::from(
+                        CommandExecutorConfigErrors::ReCafFbpkgNotADict(
+                            caf_fbpkg.to_repr(),
+                            caf_fbpkg.get_type().to_owned(),
+                        ),
+                    )),
+                })
+                .collect::<buck2_error::Result<Vec<RemoteExecutorCafFbpkg>>>()?)
+        }
     }
 }
 
 pub fn parse_meta_internal_extra_params<'v>(
     params: Option<DictRef<'v>>,
-) -> buck2_error::Result<MetaInternalExtraParams> {
-    if let Some(params) = params {
-        Ok(MetaInternalExtraParams {
-            remote_execution_policy: parse_remote_execution_policy(
-                params.get_str("remote_execution_policy"),
-            )?,
-            remote_execution_caf_fbpkgs: parse_remote_execution_caf_fbpkgs(
-                params.get_str("remote_execution_caf_fbpkgs"),
-            )?,
-        })
+) -> buck2_error::Result<Arc<MetaInternalExtraParams>> {
+    let Some(params) = params else {
+        return Ok(MetaInternalExtraParams::default_arc());
+    };
+
+    let gang = params
+        .get_str("remote_execution_gang")
+        .and_then(DictRef::from_value)
+        .map(|dict| parse_remote_execution_gang(Some(dict)))
+        .transpose()?
+        .flatten();
+
+    let allow_unsandboxed_action_cache_uploads = params
+        .get_str("allow_unsandboxed_action_cache_uploads")
+        .and_then(|v| v.unpack_bool())
+        .unwrap_or(false);
+
+    let cancel_on_client_disconnect = params
+        .get_str("cancel_on_client_disconnect")
+        .and_then(|v| v.unpack_bool())
+        .unwrap_or(false);
+
+    let result = MetaInternalExtraParams {
+        remote_execution_policy: parse_remote_execution_policy(
+            params.get_str("remote_execution_policy"),
+        )?,
+        remote_execution_caf_fbpkgs: parse_remote_execution_caf_fbpkgs(
+            params.get_str("remote_execution_caf_fbpkgs"),
+        )?,
+        gang,
+        allow_unsandboxed_action_cache_uploads,
+        cancel_on_client_disconnect,
+    };
+
+    if result == MetaInternalExtraParams::default() {
+        Ok(MetaInternalExtraParams::default_arc())
     } else {
-        Ok(MetaInternalExtraParams::default())
+        Ok(Arc::new(result))
+    }
+}
+fn parse_remote_execution_gang<'v>(
+    gang: Option<DictRef<'v>>,
+) -> buck2_error::Result<Option<ReGang>> {
+    let Some(gang) = gang else {
+        return Ok(None);
+    };
+
+    // Parse capabilities as a nested dict
+    let capabilities_value = gang
+        .get_str("capabilities")
+        .ok_or(CommandExecutorConfigErrors::MissingField("capabilities"))?;
+    let capabilities_dict = DictRef::from_value(capabilities_value).ok_or_else(|| {
+        buck2_error::Error::from(CommandExecutorConfigErrors::ReGangCapabilitiesNotADict(
+            capabilities_value.to_repr(),
+            capabilities_value.get_type().to_owned(),
+        ))
+    })?;
+
+    let capabilities: BuckFixedSortedMap<String, String> = capabilities_dict
+        .iter()
+        .map(|(k, v)| (k.to_str(), v.to_str()))
+        .collect();
+
+    if capabilities.is_empty() {
+        return Err(CommandExecutorConfigErrors::MissingField("capabilities").into());
+    }
+
+    let num_of_workers_value = gang
+        .get_str("num_of_workers")
+        .ok_or(CommandExecutorConfigErrors::MissingField("num_of_workers"))?;
+    let num_of_workers: i32 = num_of_workers_value.unpack_i32().ok_or_else(|| {
+        buck2_error::Error::from(CommandExecutorConfigErrors::ReGangNumOfWorkersNotAnInt(
+            num_of_workers_value.to_repr(),
+        ))
+    })?;
+
+    let locality = gang
+        .get_str("locality")
+        .and_then(|v| v.unpack_str())
+        .map(ReGangLocality::parse)
+        .transpose()?;
+
+    let num_sub_groups = gang
+        .get_str("num_sub_groups")
+        .map(|v| {
+            v.unpack_i32().ok_or_else(|| {
+                buck2_error::Error::from(CommandExecutorConfigErrors::ReGangNumSubGroupsNotAnInt(
+                    v.to_repr(),
+                ))
+            })
+        })
+        .transpose()?;
+
+    let resource_units = gang
+        .get_str("resource_units")
+        .map(|v| {
+            v.unpack_i32().ok_or_else(|| {
+                buck2_error::Error::from(CommandExecutorConfigErrors::ReGangResourceUnitsNotAnInt(
+                    v.to_repr(),
+                ))
+            })
+        })
+        .transpose()?;
+
+    Ok(Some(ReGang::parse(
+        capabilities,
+        num_of_workers,
+        locality,
+        num_sub_groups,
+        resource_units,
+    )?))
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
+    use buck2_interpreter::factory::BuckStarlarkModule;
+    use buck2_interpreter::factory::StarlarkEvaluatorProvider;
+    use dice_futures::cancellation::CancellationContext;
+    use starlark::values::Heap;
+    use starlark::values::dict::AllocDict;
+    use starlark::values::list::AllocList;
+
+    use crate::interpreter::rule_defs::command_executor_config::parse_meta_internal_extra_params;
+    use crate::interpreter::rule_defs::command_executor_config::parse_remote_execution_properties;
+
+    #[test]
+    fn test_parse_remote_execution_properties_with_multiple_values() -> buck2_error::Result<()> {
+        BuckStarlarkModule::with_profiling(|module| {
+            let architectures = module
+                .heap()
+                .alloc(AllocList(["x86_64", "aarch64"]))
+                .to_value();
+            let platform = module.heap().alloc("linux-remote-execution").to_value();
+            let properties = module
+                .heap()
+                .alloc(AllocDict([("arch", architectures), ("platform", platform)]))
+                .to_value();
+
+            let properties = parse_remote_execution_properties(properties)
+                .expect("Properties should parse")
+                .expect("Properties should be present");
+
+            assert_eq!(
+                properties.properties.get("arch"),
+                Some(&vec!["x86_64".to_owned(), "aarch64".to_owned()]),
+            );
+            assert_eq!(
+                properties.properties.get("platform"),
+                Some(&vec!["linux-remote-execution".to_owned()]),
+            );
+
+            let provider =
+                StarlarkEvaluatorProvider::passthrough(StarlarkEvalKind::Unknown("test".into()));
+            let (finished_eval, ()) = provider.with_evaluator(
+                &module,
+                CancellationContext::testing().into(),
+                |_eval, _| Ok(()),
+            )?;
+            let (profiling, _) = finished_eval.finish()?;
+            Ok((profiling, ()))
+        })
+    }
+
+    #[test]
+    fn test_parse_meta_internal_extra_params_cancel_on_client_disconnect() -> buck2_error::Result<()>
+    {
+        Heap::temp(|heap| {
+            let params = heap.alloc(AllocDict([("cancel_on_client_disconnect", true)]));
+            let params = parse_meta_internal_extra_params(Some(params.dict()))?;
+            assert!(params.cancel_on_client_disconnect);
+
+            let params = heap.alloc(AllocDict([(
+                "allow_unsandboxed_action_cache_uploads",
+                true,
+            )]));
+            let params = parse_meta_internal_extra_params(Some(params.dict()))?;
+            assert!(!params.cancel_on_client_disconnect, "defaults to false");
+            Ok(())
+        })
+    }
+
+    fn parse_caf_fbpkg_uuid(uuid: &str) -> buck2_error::Result<Vec<String>> {
+        Heap::temp(|heap| {
+            let fbpkg = heap.alloc(AllocDict([
+                ("name", heap.alloc("xlformers_msl_rl_conda")),
+                ("uuid", heap.alloc(uuid)),
+            ]));
+            let params = heap.alloc(AllocDict([(
+                "remote_execution_caf_fbpkgs",
+                heap.alloc(AllocList([fbpkg])),
+            )]));
+            let params = parse_meta_internal_extra_params(Some(params.dict()))?;
+            Ok(params
+                .remote_execution_caf_fbpkgs
+                .iter()
+                .map(|p| p.uuid.clone())
+                .collect())
+        })
+    }
+
+    #[test]
+    fn test_parse_caf_fbpkgs_accepts_pinned_versions() -> buck2_error::Result<()> {
+        for uuid in [
+            "d8ee9327481e40459344de7e2abafa17",
+            "D8EE9327481E40459344DE7E2ABAFA17",
+            "650",
+        ] {
+            assert_eq!(
+                parse_caf_fbpkg_uuid(uuid)?,
+                vec![uuid.to_owned()],
+                "A UUID or version number is pinned and must be passed through unchanged",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_caf_fbpkgs_rejects_tags() {
+        for uuid in [
+            "conveyor-stable",
+            "stable",
+            "latest",
+            "d8ee9327481e40459344de7e2abafa1",
+            "d8ee9327481e40459344de7e2abafa17x",
+            "",
+        ] {
+            let err = parse_caf_fbpkg_uuid(uuid).expect_err("a tag must not reach RE as a UUID");
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains(&format!("`xlformers_msl_rl_conda:{uuid}` is not pinned"))
+                    && msg.contains("snapshotted_fbpkg_target()"),
+                "Error should name the entry and the fix; got: {msg}",
+            );
+        }
     }
 }

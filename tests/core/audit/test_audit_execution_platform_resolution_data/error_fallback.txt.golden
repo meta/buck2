@@ -1,0 +1,13 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Checking each target against execution platforms defined by root//execution_platforms:execution_platforms_error_fallback
+root//:no_compatible_platform (root//:p#<HASH>):
+  Failed to configure: Error looking up configured node root//:no_compatible_platform (root//:p#<HASH>): No compatible execution platform; 4 candidates were skipped. Run `buck2 audit execution-platform-resolution` on the target, with `--reuse-current-config` and a `--target-universe` matching the failing command, to see why each was skipped
+    Skipped root//execution_platforms:haiku
+      exec_compatible_with requires `root//config:plan9` but it was not satisfied
+    Skipped root//execution_platforms:hurd
+      exec_compatible_with requires `root//config:plan9` but it was not satisfied
+    Skipped root//execution_platforms:minix
+      exec_compatible_with requires `root//config:plan9` but it was not satisfied
+    Skipped root//execution_platforms:sunos
+      exec_compatible_with requires `root//config:plan9` but it was not satisfied

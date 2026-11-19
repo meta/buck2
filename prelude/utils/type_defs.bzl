@@ -151,6 +151,20 @@ def is_function(args):
     """
     return type(args) == _FUNCTION_TYPE
 
+_RECORD = record()
+_RECORD_TYPE = type(_RECORD())
+
+def is_record(obj):
+    """Checks if provided instance is a record value.
+
+    Args:
+      arg: An instance to check. type: Any
+
+    Returns:
+      True for record values, False otherwise. rtype: bool
+    """
+    return type(obj) == _RECORD_TYPE
+
 type_utils = struct(
     is_bool = is_bool,
     is_number = is_number,
@@ -164,4 +178,5 @@ type_utils = struct(
     is_select = is_select,
     is_struct = is_struct,
     is_function = is_function,
+    is_record = is_record,
 )

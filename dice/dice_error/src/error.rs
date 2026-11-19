@@ -8,14 +8,15 @@
  * above-listed licenses.
  */
 
+use std::error::Error as StdError;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use dupe::Dupe;
 use thiserror::Error;
 
+use crate::cycles::CycleError;
 use crate::cycles::RequestedKey;
-use crate::result::CancellationReason;
 
 #[derive(Clone, Dupe, Debug, Error, Allocative)]
 #[error(transparent)]
@@ -30,16 +31,22 @@ impl DiceError {
         DiceError(Arc::new(DiceErrorImpl::DuplicateChange(key)))
     }
 
-    pub fn cancelled(reason: CancellationReason) -> Self {
-        DiceError(Arc::new(DiceErrorImpl::Cancelled(reason)))
-    }
-
     pub fn duplicate_activation_data() -> Self {
         DiceError(Arc::new(DiceErrorImpl::DuplicateActivationData))
     }
 
     pub fn injected_key_invalidated(key: Arc<dyn RequestedKey>) -> Self {
         DiceError(Arc::new(DiceErrorImpl::InjectedKeyGotInvalidation(key)))
+    }
+
+    pub fn page_in_failed(key: String, source: Box<dyn StdError + Send + Sync>) -> Self {
+        DiceError(Arc::new(DiceErrorImpl::PageInFailed { key, source }))
+    }
+}
+
+impl From<CycleError> for DiceError {
+    fn from(cycle: CycleError) -> Self {
+        DiceError(Arc::new(DiceErrorImpl::Cycle(cycle)))
     }
 }
 
@@ -51,21 +58,19 @@ pub enum DiceErrorImpl {
     ChangedToInvalid(Arc<dyn RequestedKey>),
     #[error("Key `{0}` is an InjectedKey and received an invalidation")]
     InjectedKeyGotInvalidation(Arc<dyn RequestedKey>),
-    /// NOTE: This isn't an error users normally see, since if the user is waiting on a result, the
-    /// future doesn't get cancelled.
-    #[error("The evaluation of this key was cancelled: {0}")]
-    Cancelled(CancellationReason),
-    #[error(
-        "Requested cycle_guard of type {}, but current guard has type {}",
-        expected_type_name,
-        actual_type_name
-    )]
-    UnexpectedCycleGuardType {
-        expected_type_name: String,
-        actual_type_name: String,
+    #[error("Failed to page in the value for key `{key}`")]
+    PageInFailed {
+        key: String,
+        #[source]
+        #[allocative(skip)]
+        source: Box<dyn StdError + Send + Sync>,
     },
     #[error("Activation data was already provided for this key")]
     DuplicateActivationData,
+    /// The requested key is in a dependency cycle with the requesting one, so neither can be
+    /// computed.
+    #[error("{0}")]
+    Cycle(CycleError),
 }
 
 pub type DiceResult<T> = Result<T, DiceError>;

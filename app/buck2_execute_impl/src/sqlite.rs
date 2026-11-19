@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+pub mod dep_file_state_db;
 pub mod incremental_state_db;
 pub mod materializer_db;
 pub(crate) mod tables;

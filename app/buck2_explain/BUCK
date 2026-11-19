@@ -27,6 +27,7 @@ rust_library(
         "//buck2/app/buck2_core:buck2_core",
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_node:buck2_node",
         "//buck2/app/buck2_query:buck2_query",
     ],

@@ -21,17 +21,20 @@ use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::paths::CellRelativePathBuf;
+use buck2_core::pattern::parse_package::maybe_parse_cell_path;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
-use dupe::Dupe;
+use dupe::ResultDupedErrExt;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
-use crate::package_imports::PackageImplicitImports;
-
-#[derive(PartialEq, Allocative)]
+#[derive(PartialEq, Allocative, Pagable)]
 pub struct ImplicitImportPaths {
     pub root_import: Option<ImportPath>,
-    pub package_imports: PackageImplicitImports,
 }
 
 impl ImplicitImportPaths {
@@ -49,29 +52,20 @@ impl ImplicitImportPaths {
                 property: "includes",
             })?
             .map(|i| {
-                let (cell_alias, path): (&str, &str) = i.split_once("//").unwrap_or(("", &*i));
-                let path = CellRelativePathBuf::try_from(path.to_owned())?;
-                let path = CellPath::new(cell_alias_resolver.resolve(cell_alias)?, path.to_buf());
+                let path = match maybe_parse_cell_path(&i, cell_alias_resolver)? {
+                    Some(cell_path) => cell_path,
+                    None => {
+                        let path = CellRelativePathBuf::try_from(i.to_string())?;
+                        CellPath::new(cell_alias_resolver.resolve_self(), &path)
+                    }
+                };
 
                 // root imports are only going to be used by a top-level module in the cell they
                 // are defined, so we can set the build_file_cell early.
                 ImportPath::new_with_build_file_cells(path, cell_name)
             })
             .map_or(Ok(None), |e: buck2_error::Result<ImportPath>| e.map(Some))?;
-        let package_imports = PackageImplicitImports::new(
-            cell_name,
-            cell_alias_resolver.dupe(),
-            config
-                .get(BuckconfigKeyRef {
-                    section: "buildfile",
-                    property: "package_includes",
-                })?
-                .as_deref(),
-        )?;
-        Ok(ImplicitImportPaths {
-            root_import,
-            package_imports,
-        })
+        Ok(ImplicitImportPaths { root_import })
     }
 
     pub fn root_import(&self) -> Option<&ImportPath> {
@@ -80,21 +74,31 @@ impl ImplicitImportPaths {
 }
 
 #[async_trait]
-pub trait HasImportPaths {
+pub trait HasImportPaths<'d> {
     async fn import_paths_for_cell(
         &mut self,
         cell_name: BuildFileCell,
-    ) -> buck2_error::Result<Arc<ImplicitImportPaths>>;
+    ) -> buck2_error::Result<&'d Arc<ImplicitImportPaths>>;
 }
 
 #[async_trait]
-impl HasImportPaths for DiceComputations<'_> {
+impl<'d> HasImportPaths<'d> for DiceComputations<'d> {
     async fn import_paths_for_cell(
         &mut self,
         cell_name: BuildFileCell,
-    ) -> buck2_error::Result<Arc<ImplicitImportPaths>> {
-        #[derive(Debug, Eq, PartialEq, Hash, Clone, derive_more::Display, Allocative)]
+    ) -> buck2_error::Result<&'d Arc<ImplicitImportPaths>> {
+        #[derive(
+            Debug,
+            Eq,
+            PartialEq,
+            Hash,
+            Clone,
+            derive_more::Display,
+            Allocative,
+            Pagable
+        )]
         #[display("{}", cell_name)]
+        #[pagable_typetag(dice::DiceKeyDyn)]
         struct ImportPathsKey {
             cell_name: BuildFileCell,
         }
@@ -115,18 +119,24 @@ impl HasImportPaths for DiceComputations<'_> {
                 Ok(Arc::new(ImplicitImportPaths::parse(
                     config.view(ctx),
                     self.cell_name,
-                    &cell_alias_resolver,
+                    cell_alias_resolver,
                 )?))
             }
 
-            fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-                match (x, y) {
+            fn equality_behavior() -> EqualityBehavior<Self::Value> {
+                EqualityBehavior::Compare(|x, y| match (x, y) {
                     (Ok(x), Ok(y)) => x == y,
                     _ => false,
-                }
+                })
+            }
+            fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+                OkPagableValueSerialize::<Self::Value>::new()
             }
         }
 
-        self.compute(&ImportPathsKey { cell_name }).await?
+        self.compute(&ImportPathsKey { cell_name })
+            .await?
+            .as_ref()
+            .duped_err()
     }
 }

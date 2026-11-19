@@ -66,6 +66,23 @@ pub fn render_rich_message_lines(
     body: &str,
     footer: Option<&str>,
 ) -> buck2_error::Result<Vec<Line>> {
+    render_rich_message_lines_impl(header, body, footer, true)
+}
+
+pub fn render_rich_message_lines_compact(
+    header: &str,
+    body: &str,
+    footer: Option<&str>,
+) -> buck2_error::Result<Vec<Line>> {
+    render_rich_message_lines_impl(header, body, footer, false)
+}
+
+fn render_rich_message_lines_impl(
+    header: &str,
+    body: &str,
+    footer: Option<&str>,
+    section_padding: bool,
+) -> buck2_error::Result<Vec<Line>> {
     const MIN_BOX_WIDTH: usize = 50;
     const MAX_BOX_WIDTH: usize = 120; // Maximum width to prevent overly wide boxes
     const SIDE_PADDING: usize = 2; // Space for single space padding on each side (║ ... ║)
@@ -95,9 +112,10 @@ pub fn render_rich_message_lines(
         lines.push(warning_styled(&header_padded)?);
     }
 
-    // Empty line above body
-    let empty_line = format!("║ {} ║", " ".repeat(content_width));
-    lines.push(warning_styled(&empty_line)?);
+    if section_padding {
+        let empty_line = format!("║ {} ║", " ".repeat(content_width));
+        lines.push(warning_styled(&empty_line)?);
+    }
 
     // Body with side borders (multiple lines if needed)
     for body_line in &body_lines {
@@ -105,8 +123,10 @@ pub fn render_rich_message_lines(
         lines.push(warning_styled(&body_padded)?);
     }
 
-    // Empty line below body
-    lines.push(warning_styled(&empty_line)?);
+    if section_padding {
+        let empty_line = format!("║ {} ║", " ".repeat(content_width));
+        lines.push(warning_styled(&empty_line)?);
+    }
 
     // Footer if present (multiple lines if needed)
     if let Some(footer_lines) = footer_lines {

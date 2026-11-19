@@ -11,7 +11,6 @@ rust_library(
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:indent_write",
-        "fbsource//third-party/rust:once_cell",
         "fbsource//third-party/rust:regex",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:serde_json",
@@ -24,6 +23,7 @@ rust_library(
         "//buck2/app/buck2_events:buck2_events",
         # @oss-disable[end= ]: "//buck2/app/buck2_explain:buck2_explain",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_interpreter:buck2_interpreter",
         "//buck2/app/buck2_node:buck2_node",
         "//buck2/app/buck2_profile:buck2_profile",
@@ -32,7 +32,5 @@ rust_library(
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/dice/dice:dice",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
     ],
 )

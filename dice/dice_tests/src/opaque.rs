@@ -16,10 +16,14 @@ use dice::DetectCycles;
 use dice::Dice;
 use dice::DiceComputations;
 use dice::DiceData;
+use dice::DiceKeyDyn;
+use dice::EqualityBehavior;
 use dice::Key;
 use dice::UserComputationData;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use parking_lot::Mutex;
 
 #[derive(Debug, PartialEq)]
@@ -38,8 +42,10 @@ enum KeyType {
     Eq,
     PartialEq,
     Hash,
-    Allocative
+    Allocative,
+    Pagable
 )]
+#[pagable_typetag(DiceKeyDyn)]
 struct IsOpaque;
 /// Key which computes the opaque value, but does not read it.
 #[derive(
@@ -51,8 +57,10 @@ struct IsOpaque;
     Eq,
     PartialEq,
     Hash,
-    Allocative
+    Allocative,
+    Pagable
 )]
+#[pagable_typetag(DiceKeyDyn)]
 struct DoesNotReadOpaque;
 
 /// Record computations, for test.
@@ -62,6 +70,9 @@ struct ComputationsTracker {
 
 #[async_trait]
 impl Key for IsOpaque {
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
     type Value = Arc<String>;
 
     async fn compute(
@@ -81,8 +92,8 @@ impl Key for IsOpaque {
         Arc::new(format!("{number}"))
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
     }
 }
 
@@ -90,6 +101,9 @@ impl Key for IsOpaque {
 impl Key for DoesNotReadOpaque {
     type Value = Arc<String>;
 
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -108,8 +122,8 @@ impl Key for DoesNotReadOpaque {
         Arc::new("Aaa".to_owned())
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
     }
 }
 
@@ -124,20 +138,24 @@ async fn key_does_not_read_opaque() -> anyhow::Result<()> {
         builder.set(tracker.dupe());
         builder.build(DetectCycles::Enabled)
     };
+    let root = dice.new_root().await;
 
     // Part 1: compute key which requests on opaque key, but does not use it.
 
     let mut dice_data = DiceData::new();
     dice_data.set(17);
-    let mut ctx = dice.updater_with_data(UserComputationData {
-        data: dice_data,
-        ..Default::default()
-    });
+    let mut ctx = dice.updater_with_data(
+        root,
+        UserComputationData {
+            data: dice_data,
+            ..Default::default()
+        },
+    );
 
     // Both keys are computed.
     assert_eq!(
         "Aaa",
-        &*ctx
+        &**ctx
             .existing_state()
             .await
             .compute(&DoesNotReadOpaque)
@@ -151,12 +169,12 @@ async fn key_does_not_read_opaque() -> anyhow::Result<()> {
     // Part 2: invalidate opaque key, and "compute" the key again.
 
     ctx.changed([IsOpaque])?;
-    let mut ctx = ctx.commit().await;
+    let ctx = ctx.commit().await;
 
     tracker.lock().computations.clear();
 
     // No keys are recomputed, because `Aaa` does not depend on `KeyWhichIsOpaque`.
-    assert_eq!("Aaa", &*ctx.compute(&DoesNotReadOpaque).await?);
+    assert_eq!("Aaa", &**ctx.compute(&DoesNotReadOpaque).await?);
     assert_eq!(Vec::<KeyType>::new(), tracker.lock().computations);
 
     Ok(())

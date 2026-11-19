@@ -1,0 +1,48 @@
+load(":rules.bzl", "memory_retaining_rule", "peak_only_rule")
+load(":rules_for_load_test.bzl", "simple_load_rule")
+load(":rules_with_anon.bzl", "rule_with_anon")
+load(":rules_with_globals.bzl", "rule_with_globals")
+
+# Shared dependency that both top-level targets depend on
+memory_retaining_rule(
+    name = "shared_dep",
+    memory_size = 5000000,
+)
+
+# First top-level target
+memory_retaining_rule(
+    name = "target1",
+    memory_size = 1000000,
+    deps = [":shared_dep"],
+)
+
+# Second top-level target
+memory_retaining_rule(
+    name = "target2",
+    memory_size = 1500000,
+    deps = [":shared_dep"],
+)
+
+# Target that uses a rule with bzl globals
+rule_with_globals(
+    name = "target_with_globals",
+)
+
+# Target that uses anon targets
+rule_with_anon(
+    name = "target_with_anon",
+    anon_memory_size = 500000,
+    memory_size = 100000,
+)
+
+# Allocate some temp and retained memory
+peak_only_rule(
+    name = "target_peak_only",
+    temp_memory_size = 4000000,
+    retained_memory_size = 1000000,
+)
+
+# Target whose .bzl file allocates ~1M at load time
+simple_load_rule(
+    name = "target_with_load_memory",
+)

@@ -1,0 +1,23 @@
+config_setting(
+    name = "folly-f14-fallback-disabled",
+    constraint_values = ["//xplat/folly/buck_config/constraints:f14-fallback[disabled]"],
+    visibility = ["PUBLIC"],
+)
+
+config_setting(
+    name = "folly-gflags-enabled",
+    constraint_values = ["//xplat/folly/buck_config/constraints:gflags[enabled]"],
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "singleton-schedule-at-exit-disabled",
+    actual = "//xplat/folly/buck_config/constraints:singleton[schedule-at-exit-disabled]",
+    visibility = ["PUBLIC"],
+)
+
+config_setting(
+    name = "folly-singleton-schedule-at-exit-disabled",
+    constraint_values = ["//xplat/folly/buck_config/constraints:singleton[schedule-at-exit-disabled]"],
+    visibility = ["PUBLIC"],
+)

@@ -1146,6 +1146,107 @@ public class CrashAnalyzerTest {
   }
 
   @Test
+  public void testDoesNotFalsePositiveOnMqdSigsegvWarning() {
+    // Regression: the benign MessageExecutionMonitor warning (added by D109574690) mentions the
+    // word "SIGSEGV" and fires hundreds of times per run, but is NOT a native crash. It must not be
+    // detected as one (previously the bare "SIGSEGV" alternative matched it and marked runs Fatal).
+    String logcatOutput =
+        "I/ActivityManager(1234): Start proc com.facebook.example\n"
+            + "W/MessageExecutionMonitor(4618): Skipping getStackTrace: target thread state"
+            + " RUNNABLE, MQD callback delayed by 0 ms; risk of ART nterp stack-walk SIGSEGV /"
+            + " suspension timeout\n"
+            + "I/TestRunner(9012): Test passed successfully\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertFalse(
+        "Benign MessageExecutionMonitor SIGSEGV warning must not be detected as a native crash",
+        errorOutput.contains("SIGSEGV signal detected"));
+    assertTrue(
+        "Should report no crashes for the benign warning",
+        errorOutput.contains("No crashes detected"));
+  }
+
+  @Test
+  public void testDoesNotFalsePositiveOnAbortHookModuleLoad() {
+    // Regression: WhatsApp logs "Loading module: abort_hook" at every app start. It is not a
+    // SIGABRT and must not be detected as one (previously the bare "Abort" alternative matched it).
+    String logcatOutput =
+        "10-14 01:35:04.592  5977  5977 I WhatsApp: LL_I D [2:main]SafeModuleLoader.java:122"
+            + " Loading module: abort_hook\n"
+            + "I/TestRunner(9012): Test passed successfully\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertFalse(
+        "abort_hook module load must not be detected as a SIGABRT",
+        errorOutput.contains("SIGABRT signal detected"));
+    assertTrue(
+        "Should report no crashes for the module load",
+        errorOutput.contains("No crashes detected"));
+  }
+
+  @Test
+  public void testDoesNotFalsePositiveOnSignal60() {
+    String logcatOutput = "I/Example(1234): received signal 60 from peer\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    assertFalse(
+        "signal 60 must not be detected as a SIGABRT",
+        errContent.toString().contains("SIGABRT signal detected"));
+  }
+
+  @Test
+  public void testDoesNotFalsePositiveOnQplIllegalStateWarning() {
+    // Regression: QPLProvider logs a caught IllegalStateException ("No QPL instance provided") at
+    // error level under its own tag on many runs. It is not an uncaught crash and must not be
+    // detected as one (previously the bare java.lang.IllegalStateException match flagged it).
+    String logcatOutput =
+        "07-15 15:16:17.261 20137 20205 I ActivityManager: Start proc com.oculus.assistant\n"
+            + "07-15 15:16:17.261 20137 20205 E QPLProvider: java.lang.IllegalStateException: No"
+            + " QPL instance provided\n"
+            + "07-15 15:16:17.261 20137 20205 E QPLProvider: \tat"
+            + " com.facebook.quicklog.QuickPerformanceLoggerProvider.getQPLInstance(Unknown"
+            + " Source:8)\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertFalse(
+        "Caught QPLProvider IllegalStateException must not be detected as a crash",
+        errorOutput.contains("Illegal state exception detected"));
+    assertTrue(
+        "Should report no crashes for the benign QPL warning",
+        errorOutput.contains("No crashes detected"));
+  }
+
+  @Test
+  public void testDoesNotFalsePositiveOnCoverageClassNotFound() {
+    // Regression: CoverageInit logs a caught ClassNotFoundException at debug level under its own
+    // tag
+    // on instrumented runs. It is not an uncaught crash and must not be detected as one (previously
+    // the bare java.lang.ClassNotFoundException match flagged it).
+    String logcatOutput =
+        "07-15 15:16:15.868 19867 19867 D CoverageInit: java.lang.ClassNotFoundException:"
+            + " com.facebook.coverage.e2e.CoverageSetup\n"
+            + "07-15 15:16:15.868 19867 19867 D CoverageInit: \tat"
+            + " java.lang.Class.classForName(Native Method)\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertFalse(
+        "Caught CoverageInit ClassNotFoundException must not be detected as a crash",
+        errorOutput.contains("Class not found exception detected"));
+    assertTrue(
+        "Should report no crashes for the benign Coverage debug log",
+        errorOutput.contains("No crashes detected"));
+  }
+
+  @Test
   public void testSIGSEGVWithNullPointerDereference() {
     String logcatOutput =
         "F/libc(12345): Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0 in tid"

@@ -13,7 +13,6 @@ error: Parse error: invalid string escape sequence `xT`
   |
 1 | test 'more \xTZ
   |            ^^^
-  |
 
 
 Program:
@@ -25,7 +24,6 @@ error: Parse error: invalid string escape sequence `UFFFFFFFF`
   |
 1 | test + 'more \UFFFFFFFF overflows'
   |              ^^^^^^^^^^
-  |
 
 
 Program:
@@ -37,7 +35,6 @@ error: Parse error: invalid string escape sequence `x0y`
   |
 1 | test 'more \x0yabc'
   |            ^^^^
-  |
 
 
 Program:
@@ -49,4 +46,3 @@ error: Parse error: invalid string escape sequence `x0`
   |
 1 | test 'more \x0
   |            ^^^
-  |

@@ -25,39 +25,83 @@ use std::marker::PhantomData;
 
 use allocative::Allocative;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkPagablePanic;
 use starlark_derive::starlark_value;
+use starlark_map::small_map::SmallMap;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::docs::DocItem;
 use crate::docs::DocMember;
 use crate::docs::DocProperty;
+use crate::docs::DocString;
+use crate::docs::DocStringKind;
 use crate::docs::DocType;
 use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
+use crate::values::AllocStaticSimple;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
 use crate::values::Heap;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
+use crate::values::StaticValueRegistered;
 use crate::values::Value;
-use crate::values::layout::avalue::AValueBasic;
-use crate::values::layout::avalue::AValueImpl;
-use crate::values::layout::avalue::alloc_static;
-use crate::values::layout::heap::repr::AValueRepr;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
+use crate::values::predicate::StarlarkPredicate;
+use crate::values::predicate::predicate_ty;
+use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::typing::TypeType;
 use crate::values::typing::ty::AbstractType;
 
-#[derive(Debug, NoSerialize, Allocative, ProvidesStaticType)]
+/// Marker trait indicating that `StarlarkValueAsType<T>` has been registered
+/// as a static value for pagable.
+///
+/// # Safety
+///
+/// This trait should only be implemented by the `#[starlark_module]` proc macro
+/// when it generates the static registration for a `StarlarkValueAsType` constant.
+/// Manual implementations may lead to missing registrations or duplicate impl trait.
+pub unsafe trait AsTypeStaticRegistered {}
+
+/// When pagable is disabled, this blanket impl ensures that
+/// `StarlarkValueAsType::new()` and `new_no_docs()` work without requiring
+/// explicit `AsTypeStaticRegistered` impls from downstream consumers.
+#[cfg(not(feature = "pagable"))]
+unsafe impl<T> AsTypeStaticRegistered for T {}
+
+#[derive(
+    Debug,
+    NoSerialize,
+    Allocative,
+    ProvidesStaticType,
+// Instances are allocated via `AllocStaticSimple` and pagable round-trip is
+// handled by the static-value registry, so a real `StarlarkPagable` impl is
+// not needed.
+    StarlarkPagablePanic
+)]
 struct StarlarkValueAsTypeStarlarkValue(fn() -> Ty, fn() -> DocItem);
+
+// SAFETY: This type is only used in static contexts via StarlarkValueAsType::new()
+// which creates a static value that is properly registered for pagable serialization.
+unsafe impl StaticValueRegistered for StarlarkValueAsTypeStarlarkValue {}
 
 #[starlark_value(type = "type")]
 impl<'v> StarlarkValue<'v> for StarlarkValueAsTypeStarlarkValue {
-    type Canonical = AbstractType;
+    fn get_type_starlark_repr() -> Ty {
+        <AbstractType as StarlarkType>::get_type_starlark_repr()
+    }
 
     fn eval_type(&self) -> Option<Ty> {
         Some((self.0)())
+    }
+
+    fn at(&self, _index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        let base_ty = (self.0)();
+        Err(crate::Error::new_other(anyhow::anyhow!(
+            "Type `{}` does not support type parameters",
+            base_ty,
+        )))
     }
 
     fn documentation(&self) -> DocItem {
@@ -80,60 +124,72 @@ impl Display for StarlarkValueAsTypeStarlarkValue {
 /// use starlark::any::ProvidesStaticType;
 /// use starlark::environment::GlobalsBuilder;
 /// use starlark::values::NoSerialize;
+/// use starlark::values::StarlarkPagable;
 /// use starlark::values::StarlarkValue;
 /// use starlark::values::starlark_value;
 /// use starlark::values::starlark_value_as_type::StarlarkValueAsType;
+/// use starlark_derive::starlark_module;
+///
 /// #[derive(
 ///     Debug,
 ///     derive_more::Display,
 ///     Allocative,
 ///     ProvidesStaticType,
-///     NoSerialize
+///     NoSerialize,
+///     StarlarkPagable
 /// )]
-/// struct Temperature;
+/// struct StarlarkTemperature;
 ///
 /// #[starlark_value(type = "temperature")]
-/// impl<'v> StarlarkValue<'v> for Temperature {}
+/// impl<'v> StarlarkValue<'v> for StarlarkTemperature {}
 ///
-/// fn my_type_globals(globals: &mut GlobalsBuilder) {
-///     // This can now be used like:
-///     // ```
-///     // def f(x: Temperature): pass
-///     // ```
-///     const Temperature: StarlarkValueAsType<Temperature> = StarlarkValueAsType::new();
-/// }
+/// // Use with #[starlark_module]:
+/// // #[starlark_module]
+/// // #[starlark_types(StarlarkTemperature as Temperature)]
+/// // fn my_type_globals(globals: &mut GlobalsBuilder) {}
+///
+/// // Or standalone:
+/// // starlark::declare_starlark_value_as_type!(TEMPERATURE, StarlarkTemperature);
 /// ```
-pub struct StarlarkValueAsType<T: StarlarkTypeRepr>(
-    &'static AValueRepr<AValueImpl<'static, AValueBasic<StarlarkValueAsTypeStarlarkValue>>>,
+pub struct StarlarkValueAsType<T>(
+    &'static AllocStaticSimple<StarlarkValueAsTypeStarlarkValue>,
     PhantomData<fn(&T)>,
 );
 
-impl<T: StarlarkTypeRepr> Debug for StarlarkValueAsType<T> {
+// Manual Clone/Copy implementations
+impl<T> Clone for StarlarkValueAsType<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for StarlarkValueAsType<T> {}
+
+impl<T> Debug for StarlarkValueAsType<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_tuple("StarlarkValueAsType")
-            .field(&T::starlark_type_repr())
+            .field(&self.ty())
             .finish()
     }
 }
 
-impl<T: StarlarkTypeRepr> Display for StarlarkValueAsType<T> {
+impl<T> Display for StarlarkValueAsType<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(&T::starlark_type_repr(), f)
+        Display::fmt(&self.ty(), f)
     }
 }
 
-impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
-    /// Constructor.
-    ///
-    /// Use [`new_no_docs`](Self::new_no_docs) if `T` is not a `StarlarkValue`.
+impl<T> StarlarkValueAsType<T> {
+    /// The type object of `T`'s type, documented from `T`: a representation of the type, or
+    /// the type itself when it has one representation.
     pub const fn new() -> Self
     where
-        T: StarlarkValue<'static>,
+        T: StarlarkValue<'static> + AsTypeStaticRegistered,
     {
         StarlarkValueAsType(
             &const {
-                alloc_static(StarlarkValueAsTypeStarlarkValue(
-                    T::starlark_type_repr,
+                AllocStaticSimple::alloc(StarlarkValueAsTypeStarlarkValue(
+                    T::get_type_starlark_repr,
                     || DocItem::Type(DocType::from_starlark_value::<T>()),
                 ))
             },
@@ -142,10 +198,14 @@ impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
     }
 
     /// Constructor.
-    pub const fn new_no_docs() -> Self {
+    /// The type object of the type expression `T`, undocumented.
+    pub const fn new_no_docs() -> Self
+    where
+        T: StarlarkTypeExpr<'static> + AsTypeStaticRegistered,
+    {
         StarlarkValueAsType(
             &const {
-                alloc_static(StarlarkValueAsTypeStarlarkValue(
+                AllocStaticSimple::alloc(StarlarkValueAsTypeStarlarkValue(
                     T::starlark_type_repr,
                     || {
                         DocItem::Member(DocMember::Property(DocProperty {
@@ -158,26 +218,112 @@ impl<T: StarlarkTypeRepr> StarlarkValueAsType<T> {
             PhantomData,
         )
     }
-}
 
-impl<T: StarlarkTypeRepr> StarlarkTypeRepr for StarlarkValueAsType<T> {
-    type Canonical = <TypeType as StarlarkTypeRepr>::Canonical;
+    /// The type object of the predicate type `T`, documented by what its declaration says.
+    pub const fn new_predicate() -> Self
+    where
+        T: StarlarkPredicate + AsTypeStaticRegistered,
+    {
+        StarlarkValueAsType(
+            &const {
+                AllocStaticSimple::alloc(StarlarkValueAsTypeStarlarkValue(
+                    predicate_ty::<T>,
+                    || {
+                        DocItem::Type(DocType {
+                            docs: DocString::from_docstring(
+                                DocStringKind::Rust,
+                                T::PREDICATE.docs(),
+                            ),
+                            members: SmallMap::new(),
+                            ty: predicate_ty::<T>(),
+                            constructor: None,
+                        })
+                    },
+                ))
+            },
+            PhantomData,
+        )
+    }
 
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
+    /// The value for this type.
+    ///
+    /// A static is immortal, which is what the `'static` brand means.
+    pub fn to_value(&self) -> Value<'static> {
+        self.0.unpack().to_value()
+    }
+
+    /// The type this is the type object of.
+    pub fn ty(&self) -> Ty {
+        (self.0.unpack().as_ref().0)()
     }
 }
 
-impl<'v, T: StarlarkTypeRepr> AllocValue<'v> for StarlarkValueAsType<T> {
-    fn alloc_value(self, _heap: &'v Heap) -> Value<'v> {
-        FrozenValue::new_repr(self.0).to_value()
+impl<'v, T> AllocValue<'v> for StarlarkValueAsType<T> {
+    type Type = TypeType;
+
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        // A `StarlarkValueAsType` is a type object.
+        ValueOf::new_unchecked(self.0.at().to_value())
     }
 }
 
-impl<T: StarlarkTypeRepr> AllocFrozenValue for StarlarkValueAsType<T> {
-    fn alloc_frozen_value(self, _heap: &FrozenHeap) -> FrozenValue {
-        FrozenValue::new_repr(self.0)
+impl<'fv, T> AllocFrozenValue<'fv> for StarlarkValueAsType<T> {
+    type Type = TypeType;
+
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        // A `StarlarkValueAsType` is a type object.
+        ValueOf::new_unchecked(self.0.at().to_value())
     }
+}
+
+/// Declare a static `StarlarkValueAsType<T>` with automatic pagable serialization registration.
+///
+/// This macro creates a module-level static and registers it via `inventory::submit!`
+/// using `file!()` and `line!()` for deterministic ID generation.
+///
+/// # Usage
+///
+/// Standalone (outside `#[starlark_module]`):
+/// ```ignore
+/// declare_starlark_value_as_type!(pub MY_TEMPERATURE, StarlarkTemperature);
+/// declare_starlark_value_as_type!(pub MY_PROVIDER, AbstractProvider, no_docs);
+/// ```
+///
+/// The `#[starlark_module]` proc macro can also generate calls to this macro
+/// via the `#[starlark_types]` attribute.
+#[macro_export]
+macro_rules! declare_starlark_value_as_type {
+    ($vis:vis $name:ident, $T:ty) => {
+        $crate::declare_starlark_value_as_type!($vis $name, $T, new);
+    };
+    ($vis:vis $name:ident, $T:ty, no_docs) => {
+        $crate::declare_starlark_value_as_type!($vis $name, $T, new_no_docs);
+    };
+    ($vis:vis $name:ident, $T:ty, skip_type_registration) => {
+        $crate::declare_starlark_value_as_type!(@skip_type_registration $vis $name, $T, new);
+    };
+    ($vis:vis $name:ident, $T:ty, skip_type_registration_no_docs) => {
+        $crate::declare_starlark_value_as_type!(@skip_type_registration $vis $name, $T, new_no_docs);
+    };
+    ($vis:vis $name:ident, $T:ty, $constructor:ident) => {
+        // Register the AsTypeStaticRegistered marker trait for T
+        // (cfg-gated via __register_starlark_value_as_type, no-op when pagable is disabled).
+        $crate::__register_starlark_value_as_type!(impl_trait = $T);
+
+        $crate::declare_starlark_value_as_type!(@skip_type_registration $vis $name, $T, $constructor);
+    };
+    (@skip_type_registration $vis:vis $name:ident, $T:ty, $constructor:ident) => {
+        $vis static $name: $crate::__derive_refs::StarlarkValueAsType<$T> =
+            $crate::__derive_refs::StarlarkValueAsType::$constructor();
+
+        $crate::__derive_refs::inventory::submit! {
+            $crate::__derive_refs::StaticValueEntry::new(
+                file!(),
+                line!(),
+                || $name.to_value()
+            )
+        }
+    };
 }
 
 #[cfg(test)]
@@ -185,17 +331,14 @@ mod tests {
     use allocative::Allocative;
     use starlark_derive::NoSerialize;
     use starlark_derive::ProvidesStaticType;
+    use starlark_derive::StarlarkPagable;
     use starlark_derive::starlark_module;
     use starlark_derive::starlark_value;
 
     use crate as starlark;
     use crate::assert::Assert;
     use crate::environment::GlobalsBuilder;
-    use crate::values::AllocValue;
-    use crate::values::Heap;
     use crate::values::StarlarkValue;
-    use crate::values::Value;
-    use crate::values::types::starlark_value_as_type::StarlarkValueAsType;
     use crate::values::types::starlark_value_as_type::tests;
 
     #[derive(
@@ -203,25 +346,19 @@ mod tests {
         Debug,
         NoSerialize,
         Allocative,
-        ProvidesStaticType
+        ProvidesStaticType,
+        StarlarkPagable
     )]
-    struct CompilerArgs(String);
+    struct StarlarkCompilerArgs(#[starlark_pagable(pagable)] String);
 
     #[starlark_value(type = "compiler_args")]
-    impl<'v> StarlarkValue<'v> for CompilerArgs {}
-
-    impl<'v> AllocValue<'v> for CompilerArgs {
-        fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-            heap.alloc_simple(self)
-        }
-    }
+    impl<'v> StarlarkValue<'v> for StarlarkCompilerArgs {}
 
     #[starlark_module]
+    #[starlark_types(StarlarkCompilerArgs as CompilerArgs)]
     fn compiler_args_globals(globals: &mut GlobalsBuilder) {
-        const CompilerArgs: StarlarkValueAsType<CompilerArgs> = StarlarkValueAsType::new();
-
-        fn compiler_args(x: String) -> anyhow::Result<CompilerArgs> {
-            Ok(tests::CompilerArgs(x))
+        fn compiler_args(x: &str) -> anyhow::Result<StarlarkCompilerArgs> {
+            Ok(tests::StarlarkCompilerArgs(x.to_owned()))
         }
     }
 
@@ -264,6 +401,38 @@ def h(x: CompilerArgs): pass
 noop(h)(1)
             "#,
             r#"Value `1` of type `int` does not match the type annotation"#,
+        );
+    }
+
+    #[test]
+    fn test_unsupported_param_on_custom_type() {
+        let mut a = Assert::new();
+        a.globals_add(compiler_args_globals);
+        a.fail(
+            r#"
+def f(x: CompilerArgs[int]): pass
+"#,
+            "does not support type parameters",
+        );
+    }
+
+    #[test]
+    fn test_supported_param_list() {
+        let a = Assert::new();
+        a.pass(
+            r#"
+def f(x: list[str]): pass
+"#,
+        );
+    }
+
+    #[test]
+    fn test_supported_param_dict() {
+        let a = Assert::new();
+        a.pass(
+            r#"
+def f(x: dict[str, int]): pass
+"#,
         );
     }
 }

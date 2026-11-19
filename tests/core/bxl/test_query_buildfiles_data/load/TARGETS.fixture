@@ -1,0 +1,8 @@
+load(":a.bzl", "nothing_a")
+load(":a.json", "value")
+
+nothing_a(value)
+
+stub(
+    name = "abc",
+)

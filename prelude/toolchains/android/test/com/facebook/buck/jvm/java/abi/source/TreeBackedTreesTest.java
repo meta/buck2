@@ -10,14 +10,21 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 
 import com.google.common.base.Joiner;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
 import com.sun.source.tree.Tree;
 import com.sun.source.tree.VariableTree;
 import com.sun.source.util.TreePath;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.element.VariableElement;
@@ -113,5 +120,81 @@ public class TreeBackedTreesTest extends CompilerTreeApiParameterizedTest {
 
     assertNull(trees.getTree(stringElement));
     assertNull(trees.getPath(stringElement));
+  }
+
+  @Test
+  public void testGetPathForAnnotationOnClass() throws IOException {
+    compile("@Deprecated class Foo { }");
+
+    assertAnnotationPathMatchesJavac(elements.getTypeElement("Foo"));
+  }
+
+  @Test
+  public void testGetPathForAnnotationOnNestedClass() throws IOException {
+    compile("class Foo { @Deprecated class Inner { } }");
+
+    assertAnnotationPathMatchesJavac(elements.getTypeElement("Foo.Inner"));
+  }
+
+  @Test
+  public void testGetPathForAnnotationOnMethod() throws IOException {
+    compile("class Foo { @Deprecated void method() { } }");
+
+    assertAnnotationPathMatchesJavac(findMethod("method", elements.getTypeElement("Foo")));
+  }
+
+  @Test
+  public void testGetPathForAnnotationOnParameter() throws IOException {
+    compile("class Foo { void method(@Deprecated int value) { } }");
+
+    assertAnnotationPathMatchesJavac(
+        findParameter("value", findMethod("method", elements.getTypeElement("Foo"))));
+  }
+
+  @Test
+  public void testGetPathForAnnotationOnField() throws IOException {
+    compile("class Foo { @Deprecated int field; }");
+
+    assertAnnotationPathMatchesJavac(findField("field", elements.getTypeElement("Foo")));
+  }
+
+  @Test
+  public void testGetPathForAnnotationOnTypeParameter() throws IOException {
+    compile(
+        Joiner.on('\n')
+            .join(
+                "import java.lang.annotation.*;",
+                "class Foo<@Anno T> { }",
+                "@Target(ElementType.TYPE_PARAMETER)",
+                "@interface Anno { }"));
+
+    assertAnnotationPathMatchesJavac(elements.getTypeElement("Foo").getTypeParameters().get(0));
+  }
+
+  @Test
+  public void testGetPathForAnnotationOnPackage() throws IOException {
+    compile(
+        ImmutableMap.of(
+            "p/package-info.java", "@Deprecated package p;",
+            "p/Foo.java", "package p; class Foo { }"));
+
+    assertAnnotationPathMatchesJavac(elements.getPackageElement("p"));
+  }
+
+  private void assertAnnotationPathMatchesJavac(Element element) {
+    assertNoErrors();
+    AnnotationMirror annotation = Iterables.getOnlyElement(element.getAnnotationMirrors());
+    TreePath path = trees.getPath(element, annotation);
+    TreePath javacPath = trees.getPath(path.getCompilationUnit(), path.getLeaf());
+
+    assertEquals(pathKinds(javacPath), pathKinds(path));
+  }
+
+  private static List<Tree.Kind> pathKinds(TreePath path) {
+    List<Tree.Kind> kinds = new ArrayList<>();
+    for (Tree tree : path) {
+      kinds.add(tree.getKind());
+    }
+    return kinds;
   }
 }

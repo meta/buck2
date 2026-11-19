@@ -23,6 +23,7 @@ app_info.json format:
      <<"sources">>                := [<path to .erl source file>],
      <<"applications">>           := [<entry to applications field>],
      <<"included_applications">>  := I[<entry to included_applications field>],
+     <<"app_src_vsn">>            := <placeholder string used in the .app.src vsn field>,
      <<"template">>               => <path to an .app.src file>,
      <<"version">>                => <version string>,
      <<"env">>                    => [application env variable],
@@ -30,13 +31,26 @@ app_info.json format:
  }
 """.
 
+-export([main/1]).
+
 -type application_resource() :: {application, atom(), proplists:proplist()}.
 -type mod() :: {atom(), [term()]} | undefined.
 -type filename() :: binary().
+-type metadata() :: #{atom() => atom() | [atom()]}.
+-type app_info() :: #{
+    name := binary(),
+    sources := [filename()],
+    vsn := binary() | undefined,
+    app_src_vsn := binary(),
+    template := application_resource(),
+    applications := [atom()],
+    included_applications := [atom()],
+    mod := mod(),
+    env := [{atom(), term()}] | undefined,
+    metadata := metadata()
+}.
 
--export([main/1]).
-
--spec main([string()]) -> ok.
+-spec main(Args) -> ok when Args :: [string()].
 main([AppInfoFile, Output]) ->
     try
         do(dependency_utils:chars_to_binary(AppInfoFile), dependency_utils:chars_to_binary(Output))
@@ -52,37 +66,16 @@ main(_) ->
 usage() ->
     io:format("app_src_builder.escript app_info.json~n").
 
--spec do(filename(), filename()) -> ok.
+-spec do(AppInfoFile, Output) -> ok when
+    AppInfoFile :: filename(),
+    Output :: filename().
 do(AppInfoFile, Output) ->
-    #{
-        name := Name,
-        sources := Srcs,
-        template := Template,
-        vsn := Version,
-        applications := Applications,
-        included_applications := IncludedApplications,
-        mod := Mod,
-        env := Env,
-        metadata := Metadata
-    } = do_parse_app_info_file(AppInfoFile),
-    VerifiedTerms = check_and_normalize_template(
-        Name,
-        Version,
-        Template,
-        Applications,
-        IncludedApplications,
-        Mod,
-        Env,
-        Metadata
-    ),
+    AppInfo = do_parse_app_info_file(AppInfoFile),
+    #{name := Name, sources := Srcs} = AppInfo,
+    VerifiedTerms = check_and_normalize_template(AppInfo),
     render_app_file(Name, VerifiedTerms, Output, Srcs).
 
--spec do_parse_app_info_file(filename()) ->
-    #{
-        name := string(),
-        vsn := string(),
-        sources := [filename()]
-    }.
+-spec do_parse_app_info_file(AppInfoFile) -> app_info() when AppInfoFile :: filename().
 do_parse_app_info_file(AppInfoFile) ->
     case prim_file:read_file(AppInfoFile) of
         {ok, Content} ->
@@ -101,9 +94,10 @@ do_parse_app_info_file(AppInfoFile) ->
                         name => Name,
                         sources => Sources,
                         vsn => maps:get(<<"version">>, Terms, undefined),
+                        app_src_vsn => maps:get(<<"app_src_vsn">>, Terms),
                         template => Template,
                         applications =>
-                            normalize_application([binary_to_atom(App) || App <- Applications]),
+                            normalize_application(Name, [binary_to_atom(App) || App <- Applications]),
                         included_applications =>
                             [binary_to_atom(App) || App <- IncludedApplications],
                         mod => Mod,
@@ -117,7 +111,8 @@ do_parse_app_info_file(AppInfoFile) ->
             open_file_error(AppInfoFile, Error)
     end.
 
--spec get_template(filename() | undefined) -> application_resource().
+-spec get_template(TemplateFile) -> application_resource() when
+    TemplateFile :: filename() | undefined.
 get_template(undefined) ->
     {application, '_', []};
 get_template(TemplateFile) ->
@@ -127,7 +122,9 @@ get_template(TemplateFile) ->
         Error -> open_file_error(TemplateFile, Error)
     end.
 
--spec get_mod(binary(), [binary() | [binary()]] | undefined) -> mod().
+-spec get_mod(AppName, RawMod) -> mod() when
+    AppName :: binary(),
+    RawMod :: [binary() | [binary()]] | undefined.
 get_mod(_, undefined) ->
     undefined;
 get_mod(AppName, [ModuleName, StringArgs]) ->
@@ -137,58 +134,61 @@ get_mod(AppName, [ModuleName, StringArgs]) ->
         "mod field"
     ).
 
--spec parse_term(binary(), iolist(), string()) -> term().
-parse_term(AppName, RawString, ErrorDescription) ->
+-spec parse_term(AppName, RawString, Description) -> term() when
+    AppName :: binary(),
+    RawString :: iolist(),
+    Description :: iolist().
+parse_term(AppName, RawString, Description) ->
     String = unicode:characters_to_list([RawString | "."]),
     try
         {ok, Tokens, _EndLine} = erl_scan:string(String),
         {ok, Term} = erl_parse:parse_term(Tokens),
         Term
     catch
-        _:_ -> parse_error(AppName, String, ErrorDescription)
+        _:_ -> parse_error(AppName, String, Description)
     end.
 
--spec get_env(binary(), map() | undefined) -> [tuple()] | undefined.
-get_env(_Name, undefined) ->
+-spec get_env(AppName, RawEnv) -> [{atom(), term()}] | undefined when
+    AppName :: binary(),
+    RawEnv :: #{binary() => binary()} | undefined.
+get_env(_AppName, undefined) ->
     undefined;
-get_env(Name, Env) ->
+get_env(AppName, RawEnv) ->
     [
-        {binary_to_atom(K), parse_term(Name, V, io_lib:format("env value for ~ts", [K]))}
-     || K := V <- maps:iterator(Env, ordered)
+        {binary_to_atom(K), parse_term(AppName, V, io_lib:format("env value for ~ts", [K]))}
+     || K := V <- maps:iterator(RawEnv, ordered)
     ].
 
--spec get_metadata(binary(), map() | undefined) -> map().
-get_metadata(_Name, undefined) -> #{};
-get_metadata(Name, Metadata) -> #{binary_to_atom(K) => normalize_metadata_value(Name, K, V) || K := V <- Metadata}.
+-spec get_metadata(AppName, RawMetadata) -> metadata() when
+    AppName :: binary(),
+    RawMetadata :: #{binary() => binary() | [binary()]} | undefined.
+get_metadata(_AppName, undefined) ->
+    #{};
+get_metadata(AppName, RawMetadata) ->
+    #{binary_to_atom(K) => normalize_metadata_value(AppName, K, V) || K := V <- RawMetadata}.
 
--spec normalize_metadata_value(binary(), binary(), binary() | [binary()]) -> atom() | [atom()].
+-spec normalize_metadata_value(AppName, Key, Value) -> atom() | [atom()] when
+    AppName :: binary(),
+    Key :: binary(),
+    Value :: binary() | [binary()].
 normalize_metadata_value(AppName, Key, Value) when is_binary(Value) ->
     parse_term(AppName, Value, io_lib:format("metadata value for ~ts", [Key]));
 normalize_metadata_value(AppName, Key, Values) when is_list(Values) ->
     Value = ["[", lists:join(",", Values), "]"],
     parse_term(AppName, Value, io_lib:format("metadata value for ~ts", [Key])).
 
--spec check_and_normalize_template(
-    binary(),
-    binary() | undefined,
-    term(),
-    [atom()],
-    [atom()],
-    mod(),
-    [tuple()],
-    map()
-) ->
-    application_resource().
-check_and_normalize_template(
-    AppName,
-    TargetVersion,
-    Terms,
-    Applications,
-    IncludedApplications,
-    Mod,
-    Env,
-    Metadata
-) ->
+-spec check_and_normalize_template(AppInfo) -> application_resource() when AppInfo :: app_info().
+check_and_normalize_template(#{
+    name := AppName,
+    vsn := TargetVersion,
+    app_src_vsn := AppSrcVsn,
+    template := Terms,
+    applications := Applications,
+    included_applications := IncludedApplications,
+    mod := Mod,
+    env := Env,
+    metadata := Metadata
+}) ->
     App = binary_to_atom(AppName),
     Props =
         case Terms of
@@ -209,13 +209,15 @@ check_and_normalize_template(
                 )
         end,
     VerifiedProps = verify_app_props(
-        AppName, TargetVersion, Applications, IncludedApplications, Props
+        AppName, TargetVersion, AppSrcVsn, Applications, IncludedApplications, Props
     ),
     Props0 = add_optional_fields(VerifiedProps, [{mod, Mod}, {env, Env}]),
     Props1 = add_metadata(Props0, Metadata),
     {application, App, Props1}.
 
--spec add_optional_fields(proplists:proplist(), mod() | [tuple()]) -> proplists:proplist().
+-spec add_optional_fields(Props, Fields) -> proplists:proplist() when
+    Props :: proplists:proplist(),
+    Fields :: [{atom(), term() | undefined}].
 add_optional_fields(Props, []) ->
     Props;
 add_optional_fields(Props, [{_, undefined} | Fields]) ->
@@ -237,17 +239,27 @@ add_optional_fields(Props, [{K, V0} | Fields]) ->
 add_optional_fields(Props, [Field | Fields]) ->
     add_optional_fields([Field | Props], Fields).
 
--spec verify_app_props(binary(), binary(), [atom()], [atom()], proplists:proplist()) -> ok.
-verify_app_props(AppName, Version, Applications, IncludedApplications, Props0) ->
+-spec verify_app_props(AppName, Version, AppSrcVsn, Applications, IncludedApplications, Props) ->
+    proplists:proplist()
+when
+    AppName :: binary(),
+    Version :: binary() | undefined,
+    AppSrcVsn :: binary(),
+    Applications :: [atom()],
+    IncludedApplications :: [atom()],
+    Props :: proplists:proplist().
+verify_app_props(AppName, Version, AppSrcVsn, Applications, IncludedApplications, Props0) ->
     Props1 = verify_applications(AppName, Props0),
     %% ensure defaults
-    ensure_fields(AppName, Version, Applications, IncludedApplications, Props1).
+    ensure_fields(AppName, Version, AppSrcVsn, Applications, IncludedApplications, Props1).
 
--spec verify_applications(binary(), proplists:proplist()) -> ok.
+-spec verify_applications(AppName, Props) -> proplists:proplist() when
+    AppName :: binary(),
+    Props :: proplists:proplist().
 verify_applications(AppName, AppDetail) ->
     case proplists:get_value(applications, AppDetail) of
         AppList when is_list(AppList) ->
-            FinalApps = normalize_application(AppList),
+            FinalApps = normalize_application(AppName, AppList),
             lists:keystore(applications, 1, AppDetail, {applications, FinalApps});
         undefined ->
             AppDetail;
@@ -255,7 +267,15 @@ verify_applications(AppName, AppDetail) ->
             applications_type_error(AppName, BadApplicationsValue)
     end.
 
--spec normalize_application(list(atom())) -> list(atom()).
+-spec normalize_application(binary(), [atom()]) -> [atom()].
+normalize_application(<<"kernel">>, AppList) ->
+    AppList;
+normalize_application(<<"stdlib">>, AppList) ->
+    AppList;
+normalize_application(_AppName, AppList) ->
+    normalize_application(AppList).
+
+-spec normalize_application(Applications) -> [atom()] when Applications :: [atom()].
 normalize_application(Applications) ->
     NormalizedApplications0 =
         case lists:member(stdlib, Applications) of
@@ -273,9 +293,16 @@ normalize_application(Applications) ->
         end,
     NormalizedApplications.
 
--spec ensure_fields(binary(), binary(), [atom()], [atom()], proplists:proplist()) ->
-    proplists:proplist().
-ensure_fields(AppName, Version, Applications, IncludedApplications, Props) ->
+-spec ensure_fields(AppName, Version, AppSrcVsn, Applications, IncludedApplications, Props) ->
+    proplists:proplist()
+when
+    AppName :: binary(),
+    Version :: binary() | undefined,
+    AppSrcVsn :: binary(),
+    Applications :: [atom()],
+    IncludedApplications :: [atom()],
+    Props :: proplists:proplist().
+ensure_fields(AppName, Version, AppSrcVsn, Applications, IncludedApplications, Props) ->
     %% default means to add the value if not existing
     %% match meand to overwrite if not existing and check otherwise for
     Defaults = [
@@ -298,11 +325,14 @@ ensure_fields(AppName, Version, Applications, IncludedApplications, Props) ->
                         [Default | Acc];
                     {Key, Value} ->
                         Acc;
-                    %% When 'git' is specified as the version in the .app.src file, it means that
-                    %% the version will be calculated dynamically based on the VCS version.
+                    %% When the configured placeholder is specified as the version in the .app.src file,
+                    %% it means that the version will be calculated dynamically based on the VCS version.
                     %% We consider the version from the Buck target to be authoritative.
-                    {vsn, Vsn} when Vsn =:= git orelse Vsn =:= "git" ->
-                        [Default | lists:keydelete(vsn, 1, Acc)];
+                    {vsn, Vsn} ->
+                        case is_app_src_vsn(Vsn, AppSrcVsn) of
+                            true -> [Default | lists:keydelete(vsn, 1, Acc)];
+                            false -> value_match_error(AppName, {vsn, Vsn}, Default)
+                        end;
                     Wrong ->
                         value_match_error(AppName, Wrong, Default)
                 end
@@ -311,8 +341,21 @@ ensure_fields(AppName, Version, Applications, IncludedApplications, Props) ->
         Defaults
     ).
 
--spec render_app_file(string(), application_resource(), filename(), [filename()]) ->
-    ok.
+-spec is_app_src_vsn(Vsn, AppSrcVsn) -> boolean() when
+    Vsn :: term(),
+    AppSrcVsn :: binary().
+is_app_src_vsn(Vsn, AppSrcVsn) when is_atom(Vsn) ->
+    atom_to_binary(Vsn) =:= AppSrcVsn;
+is_app_src_vsn(Vsn, AppSrcVsn) when is_list(Vsn) ->
+    Vsn =:= binary_to_list(AppSrcVsn);
+is_app_src_vsn(_, _) ->
+    false.
+
+-spec render_app_file(AppName, Terms, Output, Srcs) -> ok when
+    AppName :: binary(),
+    Terms :: application_resource(),
+    Output :: filename(),
+    Srcs :: [filename()].
 render_app_file(AppName, Terms, Output, Srcs) ->
     App = binary_to_atom(AppName),
     Modules = generate_modules(Srcs),
@@ -325,7 +368,7 @@ render_app_file(AppName, Terms, Output, Srcs) ->
     ToWrite = io_lib:format("~kp.\n", [Spec]),
     ok = prim_file:write_file(Output, ToWrite).
 
--spec generate_modules([filename()]) -> [atom()].
+-spec generate_modules(Sources) -> [atom()] when Sources :: [filename()].
 generate_modules(Sources) ->
     Modules = lists:foldl(
         fun(Source, Acc) ->
@@ -345,28 +388,35 @@ generate_modules(Sources) ->
     ),
     lists:usort(Modules).
 
--spec unknown_extension_error(File :: filename()) -> no_return().
+-spec unknown_extension_error(File) -> no_return() when File :: filename().
 unknown_extension_error(File) ->
     Msg = io_lib:format("unsupported extension for source ~ts", [File]),
     erlang:error(
         {abort, Msg}
     ).
 
--spec open_file_error(File :: filename(), Error :: term()) -> no_return().
+-spec open_file_error(File, Error) -> no_return() when
+    File :: filename(),
+    Error :: term().
 open_file_error(File, Error) ->
     Msg = io_lib:format("cannot open file ~ts: ~tp", [File, Error]),
     erlang:error(
         {abort, Msg}
     ).
 
--spec file_corrupt_error(File :: filename(), Contents :: term()) -> no_return().
+-spec file_corrupt_error(File, Contents) -> no_return() when
+    File :: filename(),
+    Contents :: term().
 file_corrupt_error(File, Contents) ->
     Msg = io_lib:format("corrupt information in ~ts: ~tp", [File, Contents]),
     erlang:error(
         {abort, Msg}
     ).
 
--spec value_match_error(binary(), {atom(), term()}, {atom(), term()}) -> no_return().
+-spec value_match_error(AppName, Wrong, Default) -> no_return() when
+    AppName :: binary(),
+    Wrong :: {atom(), term()},
+    Default :: {atom(), term()}.
 value_match_error(AppName, Wrong = {_, Value1}, Default = {_, Value2}) when
     is_list(Value1) andalso is_list(Value2)
 ->
@@ -402,7 +452,9 @@ value_match_error_scalar(AppName, {FieldName, Value1}, {FieldName, Value2}) ->
         {abort, Msg}
     ).
 
--spec applications_type_error(string(), term()) -> no_return().
+-spec applications_type_error(AppName, Applications) -> no_return() when
+    AppName :: binary(),
+    Applications :: term().
 applications_type_error(AppName, Applications) ->
     Msg = io_lib:format(
         "error when building ~ts.app for application ~ts: require a list for applications value but got ~tw instead",
@@ -414,7 +466,10 @@ applications_type_error(AppName, Applications) ->
         {abort, Msg}
     ).
 
--spec parse_error(string(), string(), string()) -> no_return().
+-spec parse_error(AppName, String, Description) -> no_return() when
+    AppName :: binary(),
+    String :: string(),
+    Description :: iolist().
 parse_error(AppName, String, Description) ->
     Msg = io_lib:format(
         "error when building ~ts.app for application ~ts: could not parse value for ~ts: `~tp`",
@@ -457,9 +512,12 @@ construct_diff_spec([CommonItem | _] = LCS, AppSrcValue, [AddItem | TargetValue]
 ->
     construct_diff_spec(LCS, AppSrcValue, TargetValue, [{add, AddItem} | Acc]).
 
--define(LPAD, "          "). % 10 spaces
--define(MPAD, "                            "). % 28 spaces
--define(RPAD, "                                             "). % 45 spaces
+% 10 spaces
+-define(LPAD, "          ").
+% 28 spaces
+-define(MPAD, "                            ").
+% 45 spaces
+-define(RPAD, "                                             ").
 
 construct_diff(Spec) ->
     Header = [
@@ -502,12 +560,12 @@ format_item(Item) ->
 
 %% longest common subsequence from http://rosettacode.org/wiki/Longest_common_subsequence#Erlang
 lcs_length([] = S, T, Cache) ->
-    {0, maps:put({S, T}, 0, Cache)};
+    {0, Cache#{{S, T} => 0}};
 lcs_length(S, [] = T, Cache) ->
-    {0, maps:put({S, T}, 0, Cache)};
+    {0, Cache#{{S, T} => 0}};
 lcs_length([H | ST] = S, [H | TT] = T, Cache) ->
     {L, C} = lcs_length(ST, TT, Cache),
-    {L + 1, maps:put({S, T}, L + 1, C)};
+    {L + 1, C#{{S, T} => L + 1}};
 lcs_length([_SH | ST] = S, [_TH | TT] = T, Cache) ->
     case maps:is_key({S, T}, Cache) of
         true ->
@@ -516,7 +574,7 @@ lcs_length([_SH | ST] = S, [_TH | TT] = T, Cache) ->
             {L1, C1} = lcs_length(S, TT, Cache),
             {L2, C2} = lcs_length(ST, T, C1),
             L = max(L1, L2),
-            {L, maps:put({S, T}, L, C2)}
+            {L, C2#{{S, T} => L}}
     end.
 
 lcs(S, T) ->
@@ -537,12 +595,16 @@ lcs([_SH | ST] = S, [_TH | TT] = T, Cache, Acc) ->
             lcs(ST, T, Cache, Acc)
     end.
 
--spec add_metadata(proplists:proplist(), map()) -> proplists:proplist().
+-spec add_metadata(Props, Metadata) -> proplists:proplist() when
+    Props :: proplists:proplist(),
+    Metadata :: metadata().
 add_metadata(Props, Metadata) ->
     ok = verify_metadata(Props, Metadata),
     Props ++ maps:to_list(maps:iterator(Metadata, ordered)).
 
--spec verify_metadata(proplists:proplist(), map()) -> ok.
+-spec verify_metadata(Props, Metadata) -> ok when
+    Props :: proplists:proplist(),
+    Metadata :: metadata().
 verify_metadata([], _) ->
     ok;
 verify_metadata([{K, V0} | T], Metadata) ->

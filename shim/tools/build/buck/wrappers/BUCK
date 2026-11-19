@@ -1,0 +1,23 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under both the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree and the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree.
+
+# Stub `clang_tidy_wrapper` to satisfy the default in
+# `prelude/cxx/tools/defs.bzl::cxx_internal_tools`, which points at
+# `fbcode//tools/build/buck/wrappers:clang_tidy_wrapper`. In the OSS
+# `fbcode = gh_facebook_buck2_shims_meta` alias, that resolves here.
+# clang-tidy isn't actually wired up for the OSS bootstrap; this just
+# provides a RunInfo target so cxx_toolchain analysis succeeds.
+
+oncall("open_source")
+
+prelude = native
+
+prelude.python_bootstrap_binary(
+    name = "clang_tidy_wrapper",
+    main = "clang_tidy_wrapper.py",
+    visibility = ["PUBLIC"],
+)

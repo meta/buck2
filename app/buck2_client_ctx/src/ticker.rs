@@ -22,6 +22,7 @@ use tokio::time::MissedTickBehavior;
 /// slower than requested).
 pub(crate) struct Ticker {
     interval: Interval,
+    current_tps: u32,
 }
 
 impl Ticker {
@@ -29,7 +30,21 @@ impl Ticker {
         let interval_duration = Duration::from_secs_f64(1.0 / (ticks_per_second as f64));
         let mut interval = time::interval(interval_duration);
         interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        Self { interval }
+        Self {
+            interval,
+            current_tps: ticks_per_second,
+        }
+    }
+
+    /// Change the tick rate. Takes effect on the next tick.
+    pub(crate) fn set_ticks_per_second(&mut self, tps: u32) {
+        if tps != self.current_tps && tps > 0 {
+            self.current_tps = tps;
+            let interval_duration = Duration::from_secs_f64(1.0 / (tps as f64));
+            let mut interval = time::interval(interval_duration);
+            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            self.interval = interval;
+        }
     }
 
     pub(crate) async fn tick(&mut self) -> Tick {

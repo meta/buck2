@@ -33,21 +33,30 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
         prefer_local = False,
     )
 
-    return [DefaultInfo(
-        default_output = output,
-        sub_targets = sub_targets,
-    )]
+    return [
+        DefaultInfo(
+            default_output = output,
+            sub_targets = sub_targets,
+        )
+    ]
 
 registration_spec = RuleRegistrationSpec(
     name = "extract_archive",
     impl = _impl,
-    attrs = remote_common.unarchive_args() | {
-        "directory_name": attrs.option(attrs.string(), default = None, doc = """
+    attrs = remote_common.unarchive_args()
+    | {
+        "directory_name": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
             Name of the result directory, if omitted, `name` attribute will be used instead.
             Deprecated in favour of `out`.
-        """),
-        "src": attrs.source(doc = """
+        """,
+        ),
+        "src": attrs.source(
+            doc = """
             .tar.gz or zip archive with the contents of the result directory
-        """),
+        """
+        ),
     },
 )

@@ -15,9 +15,6 @@
 load("@prelude//:rules.bzl", _categorized_rules = "categorized_rules")
 
 load_symbols({
-    group_name: namespace(**{
-        rule_name: namespace(**{rule_name: rule_obj})
-        for rule_name, rule_obj in group_rules.items()
-    })
+    group_name: namespace(**{rule_name: namespace(**{rule_name: rule_obj}) for rule_name, rule_obj in group_rules.items()})
     for group_name, group_rules in _categorized_rules.items()
 })

@@ -1,0 +1,28 @@
+load("@fbcode//python/fixit2:rules.bzl", "fixit_rule_test")
+load("@fbcode_macros//build_defs:python_library.bzl", "python_library")
+
+oncall("build_infra")
+
+python_library(
+    name = "lint_rules",
+    srcs = [
+        "no_inplace_true_in_build_isolated.py",
+        "no_redundant_inplace_false.py",
+        "no_unittest_skip.py",
+    ],
+    typing = True,
+    deps = [
+        "fbsource//third-party/pypi/fixit:fixit",
+        "fbsource//third-party/pypi/libcst:libcst",
+    ],
+)
+
+fixit_rule_test(
+    name = "rules",
+    srcs = [
+        "no_inplace_true_in_build_isolated.py",
+        "no_redundant_inplace_false.py",
+        "no_unittest_skip.py",
+    ],
+    typing = True,
+)

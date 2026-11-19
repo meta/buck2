@@ -32,18 +32,18 @@ data `X` needs to be copied, but `Z` can be dropped.
 
 Following are the required steps for using a garbage collector:
 
-1. To copy `Y`, allocate a value in the new heap `A` with a sentinel value in it
-   (that that sentinel is called a `Blackhole`). Then, turn `Y` into a
-   `Forward(A)` pointer, so that if anyone else in this cycle tries to collect
-   `Y` they immediately "forward" to the new value and the data from `Y` is
-   grabbed so its pointers can be traversed. That results in the following:
+1. To copy `Y`, allocate a reservation in the new heap at `A`. Then, turn `Y`
+   into a `Forward(A)` pointer, so that if anyone else in this cycle tries to
+   collect `Y` they immediately "forward" to the new value and the data from
+   `Y` is grabbed so its pointers can be traversed. That results in the
+   following:
 
    ```bash
    X := Data("world")
    Y := Forward(A)
    Z := Data("universe")
 
-   A := Blackhole
+   A := Reservation
    ```
 
    With `Data("hello", X, Y)` as the current item being processed.
@@ -59,12 +59,12 @@ Following are the required steps for using a garbage collector:
    Y := Forward(A)
    Z := Data("universe")
 
-   A := Blackhole
+   A := Reservation
    B := Data("world")
    ```
 
 3. Replace all the pointers with the forwarded value, and write it back over the
-   `Blackhole` in `A`. This gives the following:
+   reservation in `A`. This gives the following:
 
    ```bash
    X := Forward(B)

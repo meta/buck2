@@ -58,6 +58,16 @@ __buck2_add_target_completions()
     compadd -S '' -J targets -o nosort -- "${completions[@]}"
 }
 
+__buck2_add_flagfile_completions()
+{
+    local completions=()
+    while read -r; do
+        completions+="$REPLY"
+    done < <("${_BUCK_COMPLETE_BIN[@]}" complete --flagfile="$1" 2>/dev/null)
+
+    compadd -S '' -J flagfiles -o nosort -- "${completions[@]}"
+}
+
 __buck2_completions_queued()
 {
     if [[ ${compstate[nmatches]} -eq 0 ]]; then
@@ -81,6 +91,14 @@ __buck2_fix()
     local cur="${words[CURRENT]}"
     local prev="${words[CURRENT-1]}"
     local pprev="${words[CURRENT-2]}"
+
+    # Flagfile / mode-file completion: an `@file` argument or the value of
+    # `--flagfile`/`--config-file`.
+    if [[ $cur == @* || $prev == --flagfile || $prev == --config-file ]]; then
+        __buck2_add_flagfile_completions "$cur"
+        compstate[insert]="automenu-unambiguous"
+        return
+    fi
 
     # Zsh treats `:` as a separate word, so we have to do some work to
     # recover a partial target name

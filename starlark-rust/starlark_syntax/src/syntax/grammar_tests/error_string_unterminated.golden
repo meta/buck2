@@ -1,0 +1,26 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+x = "hello
+
+Error:
+error: Parse error: unfinished string literal
+ --> error_string_unterminated:1:5
+  |
+1 | x = "hello
+  |     ^^^^^^
+
+
+Program:
+x = 'hello
+
+Error:
+error: Parse error: unfinished string literal
+ --> error_string_unterminated:1:5
+  |
+1 | x = 'hello
+  |     ^^^^^^

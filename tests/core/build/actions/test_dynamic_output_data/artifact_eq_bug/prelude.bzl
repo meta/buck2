@@ -9,7 +9,7 @@
 
 def _impl(ctx: AnalysisContext) -> list[Provider]:
     # To trigger the bug we need to specify both `prefix` and `filename` arguments.
-    dir = ctx.actions.declare_output("one", "two")
+    dir = ctx.actions.declare_output("one", "two", has_content_based_path = False)
 
     def _dyn(ctx, artifacts, outputs, dir = dir):
         # The bug is here: artifacts are not equal, and map lookup fails.

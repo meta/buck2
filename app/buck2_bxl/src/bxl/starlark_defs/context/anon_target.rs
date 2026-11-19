@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use buck2_analysis::analysis::calculation::get_loaded_module;
+use buck2_analysis::analysis::env::get_rule_callable;
 use buck2_analysis::analysis::env::get_rule_impl;
 use buck2_analysis::analysis::env::promise_artifact_mappings;
 use buck2_analysis::analysis::env::transitive_validations;
@@ -26,23 +27,29 @@ use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderColle
 use buck2_build_api::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 use buck2_common::events::HasEvents;
 use buck2_common::scope::scope_and_collect_with_dice;
+use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::buck2_error;
 use buck2_execute::digest_config::HasDigestConfig;
+use buck2_hash::BuckFixedInsertionMap;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::factory::BuckStarlarkModule;
 use buck2_interpreter::factory::StarlarkEvaluatorProvider;
 use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
 use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
 use buck2_interpreter_for_build::attrs::StarlarkAttribute;
 use buck2_interpreter_for_build::rule::StarlarkRuleCallable;
+use buck2_interpreter_for_build::rule::StarlarkRuleCallableView;
+use buck2_interpreter_for_build::rule::frozen_rule_attribute_spec;
+use buck2_node::attrs::spec::AttributeSpec;
 use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
+use buck2_node::rule_type::RuleType;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationObserver;
 use dupe::Dupe;
 use itertools::Itertools;
-use starlark::collections::SmallMap;
 use starlark::environment::FrozenModule;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
@@ -50,21 +57,17 @@ use starlark::starlark_module;
 use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::util::ArcStr;
-use starlark::values::FrozenValue;
-use starlark::values::StringValue;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::Value;
-use starlark::values::ValueOfUncheckedGeneric;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::ValueTypedComplex;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::dict::DictType;
 use starlark::values::list::ListType;
-use starlark::values::list::UnpackList;
-use starlark::values::structs::StructRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::string::StarlarkStr;
+use starlark::values::structs::Struct;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark::values::typing::StarlarkCallableParamSpec;
-use starlark_map::ordered_map::OrderedMap;
 
 use crate::bxl::eval::LIMITED_EXECUTOR;
 use crate::bxl::key::BxlKey;
@@ -75,6 +78,9 @@ use crate::bxl::starlark_defs::eval_extra::BxlEvalExtra;
 
 struct BxlAnonCallbackParamSpec;
 
+pagable::static_str!(BXL_ANON_BXL_CTX = "bxl_ctx");
+pagable::static_str!(BXL_ANON_ATTRS = "attrs");
+
 impl StarlarkCallableParamSpec for BxlAnonCallbackParamSpec {
     fn params() -> ParamSpec {
         ParamSpec::new_parts(
@@ -83,14 +89,14 @@ impl StarlarkCallableParamSpec for BxlAnonCallbackParamSpec {
             None,
             [
                 (
-                    ArcStr::new_static("bxl_ctx"),
+                    ArcStr::new_static(BXL_ANON_BXL_CTX),
                     ParamIsRequired::Yes,
                     BxlContext::starlark_type_repr(),
                 ),
                 (
-                    ArcStr::new_static("attrs"),
+                    ArcStr::new_static(BXL_ANON_ATTRS),
                     ParamIsRequired::Yes,
-                    StructRef::starlark_type_repr(),
+                    Struct::starlark_type_repr(),
                 ),
             ],
             None,
@@ -108,23 +114,26 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
             BxlAnonCallbackParamSpec,
             ListType<AbstractProvider>,
         >,
-        #[starlark(require = named)] attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        #[starlark(require = named)] attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
         #[starlark(require = named, default = "")] doc: &str,
-        #[starlark(require = named, default = SmallMap::default())]
-        artifact_promise_mappings: SmallMap<
-            StringValue<'v>,
-            StarlarkCallable<'v, (FrozenValue,), UnpackList<FrozenValue>>,
+        #[starlark(require = named, default = ValueOf::empty_dict())]
+        artifact_promise_mappings: ValueOf<
+            'v,
+            DictType<
+                StarlarkStr,
+                StarlarkCallable<'v, (Value<'static>,), ListType<Value<'static>>>,
+            >,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkRuleCallable<'v>> {
-        StarlarkRuleCallable::new_bxl_anon(
-            StarlarkCallable::unchecked_new(r#impl.0),
+    ) -> starlark::Result<ValueOf<'v, StarlarkRuleCallableView<'v>>> {
+        let rule = StarlarkRuleCallable::new_bxl_anon(
+            r#impl.to_unchecked().with_signature(),
             attrs,
             doc,
             artifact_promise_mappings,
             eval,
-        )
-        .map_err(Into::into)
+        )?;
+        Ok(eval.heap().alloc(rule))
     }
 }
 
@@ -158,22 +167,25 @@ impl AnonImpl {
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
         bxl_ctx: ValueTyped<'v, BxlContext<'v>>,
-        attrs: ValueOfUncheckedGeneric<Value<'v>, StructRef<'static>>,
+        attrs: ValueOf<'v, Struct<'v>>,
     ) -> buck2_error::Result<Value<'v>> {
         let anon_impl = get_rule_impl(eval, &self.module, &self.name)?;
-        eval.eval_function(
-            anon_impl.to_value(),
-            &[bxl_ctx.to_value(), attrs.get()],
-            &[],
-        )
-        .map_err(|e| e.into())
+        eval.eval_function(anon_impl, &[bxl_ctx.to_value(), attrs.to_value()], &[])
+            .map_err(|e| e.into())
     }
 
     fn promise_artifact_mappings<'v>(
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<SmallMap<String, Value<'v>>> {
+    ) -> buck2_error::Result<BuckMutInsertionMap<String, Value<'v>>> {
         promise_artifact_mappings(eval, &self.module, &self.name)
+    }
+
+    fn attribute_spec<'v>(
+        &self,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> buck2_error::Result<&'v AttributeSpec> {
+        frozen_rule_attribute_spec(get_rule_callable(eval, &self.module, &self.name)?)
     }
 }
 
@@ -240,7 +252,7 @@ async fn eval_bxl_for_anon_target_inner(
     };
     let bxl_key = BxlKey::new(
         bxl_spec,
-        Arc::new(OrderedMap::new()),
+        Arc::new(BuckFixedInsertionMap::new()),
         false,
         global_cfg_options,
     );
@@ -257,8 +269,7 @@ async fn eval_bxl_for_anon_target_inner(
     let eval_kind = anon_target.dupe().eval_kind();
     let provider = StarlarkEvaluatorProvider::new(dice, eval_kind).await?;
 
-    BuckStarlarkModule::with_profiling(|env_provider| {
-        let env = env_provider.make();
+    BuckStarlarkModule::with_profiling(|env| {
         let bxl_dice = BxlDiceComputations::new(dice, liveness.dupe());
         let bxl_ctx_core_data = Arc::new(bxl_ctx_core_data);
         let mut extra = BxlEvalExtra::new_anon(bxl_dice, bxl_ctx_core_data.dupe());
@@ -274,8 +285,13 @@ async fn eval_bxl_for_anon_target_inner(
                 execution_platform.clone(),
             )?;
 
-            let attributes =
-                anon_target.resolve_attrs(&env, dependents_analyses, execution_platform.clone())?;
+            let attrs_spec = anon_impl.attribute_spec(eval)?;
+            let attributes = anon_target.resolve_attrs(
+                &env,
+                attrs_spec,
+                dependents_analyses,
+                execution_platform.clone(),
+            )?;
 
             let bxl_anon_ctx = BxlContext::new_anon(
                 env.heap(),
@@ -284,7 +300,7 @@ async fn eval_bxl_for_anon_target_inner(
                 analysis_registry,
                 attributes,
             )?;
-            let bxl_ctx = ValueTyped::<BxlContext>::new_err(env.heap().alloc(bxl_anon_ctx))?;
+            let bxl_ctx = env.heap().alloc(bxl_anon_ctx).get();
 
             let list_res = tokio::task::block_in_place(|| -> buck2_error::Result<Value<'_>> {
                 anon_impl.invoke(eval, bxl_ctx, attributes)
@@ -295,13 +311,13 @@ async fn eval_bxl_for_anon_target_inner(
 
         let action_factory = bxl_ctx.state;
 
-        tokio::task::block_in_place(|| {
+        let requested_anon_targets = tokio::task::block_in_place(|| {
             reentrant_eval
                 .with_evaluator(|eval| run_anon_target_promises(action_factory, &bxl_ctx, eval))
         })?;
 
         let res_typed = ProviderCollection::try_from_value(list_res)?;
-        let res = env.heap().alloc(res_typed);
+        let res = env.heap().alloc(res_typed).to_value();
 
         let fulfilled_artifact_mappings = reentrant_eval.with_evaluator(|eval| {
             let promise_artifact_mappings = anon_impl.promise_artifact_mappings(eval)?;
@@ -311,8 +327,7 @@ async fn eval_bxl_for_anon_target_inner(
                 .get_fulfilled_promise_artifacts(promise_artifact_mappings, res, eval)
         })?;
 
-        let res =
-            ValueTypedComplex::new(res).internal_error("Just allocated the provider collection")?;
+        let res = ValueTyped::new(res).internal_error("Just allocated the provider collection")?;
 
         let analysis_registry = bxl_ctx.take_state_anon()?;
         analysis_registry
@@ -331,7 +346,7 @@ async fn eval_bxl_for_anon_target_inner(
         let validations = transitive_validations(
             validations_from_deps,
             recorded_values.provider_collection()?,
-        );
+        )?;
 
         Ok((
             token,
@@ -342,7 +357,9 @@ async fn eval_bxl_for_anon_target_inner(
                 num_declared_actions,
                 num_declared_artifacts,
                 validations,
-            ),
+                requested_anon_targets,
+                RuleType::Starlark(anon_target.rule_type().dupe()),
+            )?,
         ))
     })
 }
@@ -370,11 +387,12 @@ impl<'me, 'v, 'a, 'e> RunAnonPromisesAccessor<'v, 'a, 'e>
     }
 }
 
+/// Returns the anon target keys requested by the resolved promises.
 pub(crate) fn run_anon_target_promises<'v, 'a, 'e>(
     actions: ValueTyped<'v, AnalysisActions<'v>>,
     ctx: &BxlContext<'v>,
     eval: &mut Evaluator<'v, 'a, 'e>,
-) -> buck2_error::Result<()> {
+) -> buck2_error::Result<Vec<BaseDeferredKey>> {
     let mut accessor = BxlAnonPromisesAccessor(eval, ctx);
     // TODO(cjhopman): The approach here is pretty against the general model that we want. Ideally
     // we'd like to split this into two steps:
@@ -387,7 +405,9 @@ pub(crate) fn run_anon_target_promises<'v, 'a, 'e>(
     // with disadvantages, basically that it does not respect the "safety" of the standard
     // `via_dice` thing. Concretely, that means it doesn't respect cancellations and fails to report
     // a proper span for dice access.
-    tokio::runtime::Handle::current().block_on(actions.run_promises(&mut accessor))
+    tokio::runtime::Handle::current()
+        .block_on(actions.run_promises(&mut accessor))
+        .map(|run| run.requested_anon_targets)
 }
 
 pub(crate) fn init_eval_bxl_for_anon_target() {

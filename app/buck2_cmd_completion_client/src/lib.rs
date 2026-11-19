@@ -9,7 +9,6 @@
  */
 
 #![allow(clippy::result_large_err)]
-#![feature(used_with_arg)]
 
 pub mod complete;
 pub mod completion;

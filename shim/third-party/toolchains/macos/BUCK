@@ -1,0 +1,79 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under both the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree and the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree.
+
+oncall("open_source")
+
+FRAMEWORKS = [
+    "AVFoundation",
+    "Accelerate",
+    "AppKit",
+    "AudioToolbox",
+    "Cocoa",
+    "Carbon",
+    "CoreAudio",
+    "CoreFoundation",
+    "CoreGraphics",
+    "CoreImage",
+    "CoreHaptics",
+    "CoreML",
+    "CoreMedia",
+    "CoreServices",
+    "CoreText",
+    "CoreVideo",
+    "ForceFeedback",
+    "Foundation",
+    "GLUT",
+    "GSS",
+    "GameController",
+    "IOKit",
+    "IOSurface",
+    "ImageIO",
+    "Metal",
+    "MetalKit",
+    "OpenGL",
+    "QuartzCore",
+    "Security",
+    "System",
+    "SystemConfiguration",
+    "VideoToolbox",
+]
+
+[
+    prebuilt_cxx_library(
+        name = framework,
+        exported_linker_flags = select({
+            "DEFAULT": [],
+            "ovr_config//os:macos": ["-framework", framework],
+        }),
+        header_only = True,
+        target_compatible_with = ["config//os:macos"],
+        visibility = ["PUBLIC"],
+    )
+    for framework in FRAMEWORKS
+]
+
+prebuilt_cxx_library(
+    name = "cups",
+    exported_linker_flags = select({
+        "DEFAULT": [],
+        "ovr_config//os:macos": ["-lcups"],
+    }),
+    header_only = True,
+    target_compatible_with = ["config//os:macos"],
+    visibility = ["PUBLIC"],
+)
+
+prebuilt_cxx_library(
+    name = "iconv",
+    exported_linker_flags = select({
+        "DEFAULT": [],
+        "ovr_config//os:macos": ["-liconv"],
+    }),
+    header_only = True,
+    target_compatible_with = ["config//os:macos"],
+    visibility = ["PUBLIC"],
+)

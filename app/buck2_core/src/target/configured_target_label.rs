@@ -17,6 +17,7 @@ use std::str;
 use allocative::Allocative;
 use buck2_data::ToProtoMessage;
 use dupe::Dupe;
+use pagable::Pagable;
 use serde::Serialize;
 use serde::Serializer;
 use strong_hash::StrongHash;
@@ -31,7 +32,7 @@ use crate::target::name::TargetNameRef;
 /// These uniquely map to nodes of the build graph with 'Configuration's
 /// applied.
 #[derive(
-    Clone, Dupe, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash
+    Copy, Clone, Dupe, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash, Pagable
 )]
 pub struct ConfiguredTargetLabel {
     pub(crate) target: TargetLabel,

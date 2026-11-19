@@ -39,6 +39,7 @@ pub(crate) struct Develop {
     pub(crate) check_cycles: bool,
     pub(crate) invoked_by_ra: bool,
     pub(crate) include_all_buildfiles: bool,
+    pub(crate) rustc_target: Option<String>,
 }
 
 pub(crate) struct OutputCfg {
@@ -54,7 +55,11 @@ pub(crate) enum Output {
 }
 
 impl Develop {
-    pub(crate) fn from_command(command: Command) -> (Develop, Input, OutputCfg) {
+    pub(crate) fn from_command(
+        command: Command,
+        project_root: Option<PathBuf>,
+        isolation_dir: Option<String>,
+    ) -> (Develop, Input, OutputCfg) {
         if let crate::Command::Develop {
             files,
             targets,
@@ -68,6 +73,7 @@ impl Develop {
             buck2_command,
             include_all_buildfiles,
             max_extra_targets,
+            rustc_target,
             ..
         } = command
         {
@@ -86,7 +92,12 @@ impl Develop {
             };
 
             let mode = select_mode(mode.as_deref());
-            let buck = buck::Buck::new(buck2_command.clone(), mode);
+            let buck = buck::Buck::new(
+                buck2_command.clone(),
+                mode,
+                project_root.clone(),
+                isolation_dir,
+            );
 
             let develop = Develop {
                 sysroot,
@@ -94,6 +105,7 @@ impl Develop {
                 check_cycles,
                 invoked_by_ra: false,
                 include_all_buildfiles,
+                rustc_target,
             };
             let max_extra_targets = max_extra_targets.unwrap_or(DEFAULT_EXTRA_TARGETS);
             let out = OutputCfg {
@@ -118,6 +130,7 @@ impl Develop {
             buck2_command,
             max_extra_targets,
             mode,
+            rustc_target,
             ..
         } = command
         {
@@ -137,7 +150,7 @@ impl Develop {
             };
 
             let mode = select_mode(mode.as_deref());
-            let buck = buck::Buck::new(buck2_command.clone(), mode);
+            let buck = buck::Buck::new(buck2_command.clone(), mode, project_root, isolation_dir);
 
             let develop = Develop {
                 sysroot,
@@ -145,6 +158,7 @@ impl Develop {
                 check_cycles: false,
                 invoked_by_ra: true,
                 include_all_buildfiles: false,
+                rustc_target,
             };
             let max_extra_targets = max_extra_targets.unwrap_or(DEFAULT_EXTRA_TARGETS);
             let out = OutputCfg {
@@ -168,11 +182,14 @@ impl Develop {
 
 const DEFAULT_EXTRA_TARGETS: usize = 50;
 
+/// The final rust-project.json result for the rust-analyzer discovery protocol.
+///
+/// <https://rust-analyzer.github.io/book/configuration.html#workspace-discovery-protocol>
 #[derive(Serialize, Deserialize)]
-pub(crate) struct OutputData {
+pub(crate) struct DiscoverProjectFinished {
+    pub(crate) kind: String,
     pub(crate) buildfile: PathBuf,
     pub(crate) project: ProjectJson,
-    pub(crate) kind: String,
 }
 
 impl Develop {
@@ -237,7 +254,7 @@ impl Develop {
                 // we have to log before we write the output, because rust-analyzer will kill us after the write
                 crate::scuba::log_develop(start.elapsed(), input.clone(), self.invoked_by_ra);
 
-                let out = OutputData {
+                let out = DiscoverProjectFinished {
                     buildfile,
                     project,
                     kind: "finished".to_owned(),
@@ -274,6 +291,7 @@ impl Develop {
             buck,
             check_cycles,
             include_all_buildfiles,
+            rustc_target,
             ..
         } = self;
 
@@ -286,7 +304,7 @@ impl Develop {
             },
             SysrootConfig::BuckConfig => {
                 let project_root = buck.resolve_project_root()?;
-                resolve_buckconfig_sysroot(&buck, &project_root)?
+                resolve_buckconfig_sysroot(buck, &project_root, &targets)?
             }
             SysrootConfig::Rustup => resolve_rustup_sysroot()?,
         };
@@ -294,11 +312,18 @@ impl Develop {
         let exclude_workspaces =
             std::env::var("RUST_PROJECT_EXCLUDE_WORKSPACES").is_ok_and(|it| it != "0");
 
+        // For first-party code, assume cfg(test) is active so people can work on tests
+        // on any project in the monorepo.
+        //
+        // For third-party code imported with reindeer, we don't import the test-only
+        // dev-dependencies specified in the Cargo.toml, so we don't want cfg(test) to be active.
+        let first_party_extra_cfgs = &["test".to_owned()];
+
         // FIXME(JakobDegen): This should be set via a configuration mechanism of some kind.
         #[cfg(not(fbcode_build))]
-        let extra_cfgs = &["test".to_owned()];
+        let global_extra_cfgs: &[String] = &[];
         #[cfg(fbcode_build)]
-        let extra_cfgs = &["test".to_owned(), "fbcode_build".to_owned()];
+        let global_extra_cfgs = &["fbcode_build".to_owned()];
 
         develop_with_sysroot(
             buck,
@@ -307,7 +332,9 @@ impl Develop {
             exclude_workspaces,
             *check_cycles,
             *include_all_buildfiles,
-            extra_cfgs,
+            global_extra_cfgs,
+            first_party_extra_cfgs,
+            rustc_target.as_ref(),
         )
     }
 
@@ -344,7 +371,9 @@ pub(crate) fn develop_with_sysroot(
     exclude_workspaces: bool,
     check_cycles: bool,
     include_all_buildfiles: bool,
-    extra_cfgs: &[String],
+    global_extra_cfgs: &[String],
+    first_party_extra_cfgs: &[String],
+    rustc_target: Option<&String>,
 ) -> Result<ProjectJson, anyhow::Error> {
     info!(kind = "progress", "building generated code");
     let expanded_and_resolved = buck.expand_and_resolve(&targets, exclude_workspaces)?;
@@ -360,8 +389,10 @@ pub(crate) fn develop_with_sysroot(
         aliased_libraries,
         check_cycles,
         include_all_buildfiles,
-        extra_cfgs,
+        global_extra_cfgs,
+        first_party_extra_cfgs,
         buck,
+        rustc_target,
     )?;
 
     Ok(rust_project)

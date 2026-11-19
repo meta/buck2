@@ -13,12 +13,28 @@ use buck2_core::deferred::key::DeferredHolderKey;
 use derive_more::Display;
 use dice::DiceComputations;
 use dupe::Dupe;
-use starlark::values::OwnedFrozenValueTyped;
+use pagable::Pagable;
+use starlark::values::OwnedFrozen;
+use starlark::values::StarlarkPagableViaPagable;
+use starlark::values::ValueTyped;
+use strong_hash::StrongHash;
 
 use crate::deferred::calculation::lookup_deferred_holder;
-use crate::interpreter::rule_defs::transitive_set::FrozenTransitiveSet;
+use crate::interpreter::rule_defs::transitive_set::TransitiveSet;
 
-#[derive(Hash, Eq, PartialEq, Clone, Dupe, Display, Debug, Allocative)]
+#[derive(
+    Hash,
+    StrongHash,
+    Eq,
+    PartialEq,
+    Clone,
+    Dupe,
+    Display,
+    Debug,
+    Allocative,
+    Pagable,
+    StarlarkPagableViaPagable
+)]
 #[display("{:?}", self)]
 pub struct TransitiveSetKey(DeferredHolderKey, TransitiveSetIndex);
 
@@ -36,7 +52,9 @@ impl TransitiveSetKey {
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Clone, Dupe, Copy, Display, Debug, Allocative)]
+#[derive(
+    Hash, StrongHash, Eq, PartialEq, Clone, Dupe, Copy, Display, Debug, Allocative, Pagable
+)]
 #[display("{:?}", self)]
 /// Index for the transitive set data in the analysis result
 pub struct TransitiveSetIndex(pub(crate) u32);
@@ -45,7 +63,7 @@ impl TransitiveSetKey {
     pub async fn lookup(
         &self,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<OwnedFrozenValueTyped<FrozenTransitiveSet>> {
+    ) -> buck2_error::Result<OwnedFrozen<ValueTyped<'static, TransitiveSet<'static>>>> {
         lookup_deferred_holder(ctx, &self.0)
             .await?
             .lookup_transitive_set(self)

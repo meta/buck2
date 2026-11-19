@@ -28,10 +28,19 @@ class InnerClassStubsGenerator : StubsGenerator {
         UserTypeUtil.collectMultiSegmentQualifiers(context) +
             ClassReferenceUtil.collectMultiSegmentQualifiers(context)
 
+    val undeclaredImports =
+        (context.importedTypes + context.javaImportedTypes) - context.declaredTypes
+
     // import: com.A.B
     // usage: B
-    val candidatesWithComplexImport =
-        (context.importedTypes - context.declaredTypes).filter { it.names.size >= 2 }
+    val candidatesWithComplexImport = undeclaredImports.filter { it.names.size >= 2 }
+
+    // Promote locally, not in importedTypes: equality is segments-only, so a promoted copy
+    // dedupes against the raw import and loses the Outer binding.
+    val provenNestedImports =
+        undeclaredImports
+            .filter { context.isProvenNestedClassImport(it) }
+            .map { it.withMemberAsNestedName() }
 
     // import: com.A
     // usage: A.B
@@ -42,19 +51,27 @@ class InnerClassStubsGenerator : StubsGenerator {
               // imp:           com.foo.T1.T2
               // segment:       T2.T3...
               val imp: FullTypeQualifier? =
-                  context.importedTypes.find { it.names.last() == segment.first() }
+                  context.resolveImportedType(context.importedTypes, segment.first())
               if (imp == null) {
                 Logger.log("  [Warning] ImportedType matches $segment not found!")
               }
               imp to segment
             }
             .filter { (imp, _) -> imp != null }
-            .map { (imp, segment) -> FullTypeQualifier(imp!!.segments + segment.drop(1)) }
+            .map { (imp, segment) ->
+              // Extend the type path, not the raw import: a member-carrying import (a const or
+              // fun) would otherwise nest the usage under the member instead of its owner.
+              val base = if (imp!!.member != null) imp.segments.dropLast(1) else imp.segments
+              FullTypeQualifier(base + segment.drop(1)).withMemberAsNestedName()
+            }
 
+    // The member filter runs before the dedupe: equality is segments-only, so deduping first
+    // would collapse a promoted nested import against its raw twin and lose the promotion.
     val candidatesToGenerateInnerClass =
-        (candidatesWithComplexImport + candidatesWithComplexUsage)
+        (candidatesWithComplexImport + provenNestedImports + candidatesWithComplexUsage)
             .filter { it.member == null }
             .toSet()
+            .filterNot { context.isCompanionCallableImport(it) }
             // We don't want to stub types if they are declared in compilation context
             .filterDifferentOuterClassIn(context.declaredTypes)
             .filterNot { context.externalTypeReferences.contains(it.outerClassOnlyQualifier()) }
@@ -87,7 +104,7 @@ class InnerClassStubsGenerator : StubsGenerator {
                       |      - name: ${innerStub.pkg ?: ""}:${innerStub.name}
                       |      - type: ${innerStub.type.name}
                     """
-                            .trimMargin()
+                            .trimMargin(),
                     )
                   }
           innerQualifier = "${innerQualifier}.${qualifierPart}"
@@ -95,7 +112,7 @@ class InnerClassStubsGenerator : StubsGenerator {
         }
       }
           ?: Logger.log(
-              "  [Error] An error occurs to qualifier: $qualifier. We should have an outer $pkg:$name stub at this point"
+              "  [Error] An error occurs to qualifier: $qualifier. We should have an outer $pkg:$name stub at this point",
           )
     }
   }

@@ -14,6 +14,8 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::iter;
 use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 
 use allocative::Allocative;
 use buck2_core::build_file_path::BuildFilePath;
@@ -32,30 +34,44 @@ use buck2_core::plugins::PluginLists;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
+use buck2_core::soft_error;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
+use buck2_error::BuckErrorContext;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_hash::BuckMutInsertionSet;
 use buck2_util::arc_str::ArcStr;
 use dupe::Dupe;
+use dupe::IterDupedExt;
 use either::Either;
-use once_cell::sync::Lazy;
+use mini_vec::MiniBoxSlice;
+use pagable::DeferredValue;
+use pagable::Pagable;
+use pagable::PagableDeserialize;
+use pagable::PagableDeserializer;
+use pagable::PagableSerialize;
+use starlark::pagable::DeferredFieldReadsEnabled;
 use starlark_map::Hashed;
-use starlark_map::ordered_map::OrderedMap;
+use starlark_map::StarlarkHashValue;
+use strong_hash::StrongHash;
 
+use crate::attrs::arena::OwnedCoercedAttr;
 use crate::attrs::attr::Attribute;
 use crate::attrs::attr_type::AttrType;
+use crate::attrs::attr_type::any_matches::AnyMatches;
 use crate::attrs::attr_type::dep::DepAttr;
 use crate::attrs::attr_type::dep::DepAttrTransition;
 use crate::attrs::attr_type::dep::DepAttrType;
 use crate::attrs::attr_type::query::ResolvedQueryLiterals;
 use crate::attrs::attr_type::string::StringLiteral;
-use crate::attrs::coerced_attr::CoercedAttr;
-use crate::attrs::coerced_attr_full::CoercedAttrFull;
+use crate::attrs::coerced::CoercedAttrRefKind;
 use crate::attrs::configuration_context::AttrConfigurationContextImpl;
 use crate::attrs::configured_attr::ConfiguredAttr;
 use crate::attrs::configured_attr_full::ConfiguredAttrFull;
 use crate::attrs::configured_traversal::ConfiguredAttrTraversal;
 use crate::attrs::inspect_options::AttrInspectOptions;
 use crate::attrs::spec::internal::TESTS_ATTRIBUTE;
+use crate::attrs::strong_hash_without_config::StrongHashWithoutConfig;
 use crate::bzl_or_bxl_path::BzlOrBxlPath;
 use crate::call_stack::StarlarkCallStack;
 use crate::call_stack::StarlarkTargetCallStackRoot;
@@ -63,6 +79,7 @@ use crate::configuration::resolved::ConfigurationSettingKey;
 use crate::configuration::resolved::MatchedConfigurationSettingKeys;
 use crate::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
 use crate::nodes::attributes::DEPS;
+use crate::nodes::attributes::EXECUTION_GROUP_PLATFORMS;
 use crate::nodes::attributes::EXECUTION_PLATFORM;
 use crate::nodes::attributes::ONCALL;
 use crate::nodes::attributes::PACKAGE;
@@ -77,122 +94,178 @@ use crate::rule_type::StarlarkRuleType;
 
 /// ConfiguredTargetNode contains the information for a target in a particular configuration.
 ///
+/// A node has two parts. The header is what walking the graph needs: the label, the deps and
+/// the kind of rule. Its accessors are on the node itself. Everything else (the unconfigured
+/// node, what its attributes are configured against, the execution platform and the plugins)
+/// is the body, reached through [`ConfiguredTargetNode::body`]. Reaching the body is a
+/// separate, fallible step because it is stored apart from the node: a node paged back in
+/// from storage has its header, and reads its body from storage when it is first asked for.
+///
 /// Most information (like attribute values) is constructed when requested and not stored
-/// in the node, instead the node just stores the base TargetNode and a configuration for
+/// in the node, instead the body just stores the base TargetNode and a configuration for
 /// resolving the attributes. This saves memory, but users should try avoid repeatedly
 /// requesting the same information.
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Allocative)]
-pub struct ConfiguredTargetNode(triomphe::Arc<Hashed<ConfiguredTargetNodeData>>);
+#[derive(Debug, Clone, Allocative, Pagable)]
+pub struct ConfiguredTargetNode(triomphe::Arc<ConfiguredTargetNodeData>);
+
+// SAFETY: `_assert_send_sync` requires the only field to be `Send + Sync`, so these
+// impls hold exactly when the derived ones would. Spelled out so that auto-trait
+// proofs for the many futures holding nodes stop here instead of walking the node
+// and attribute representation in every crate; see `dice::DiceComputations`.
+unsafe impl Send for ConfiguredTargetNode {}
+unsafe impl Sync for ConfiguredTargetNode {}
+
+fn _assert_send_sync(ConfiguredTargetNode(inner): &ConfiguredTargetNode) {
+    fn assert<T: Send + Sync>(_: &T) {}
+    assert(inner);
+}
 
 impl Dupe for ConfiguredTargetNode {}
 
-#[derive(Debug, Eq, PartialEq, Hash, Allocative)]
-enum TargetNodeOrForward {
-    TargetNode(TargetNode),
-    // Coerced attr is always a dependency.
-    Forward(CoercedAttr, ConfiguredTargetNode),
-}
-
 const ACTUAL_ATTR_NAME: &str = "actual";
 
-impl TargetNodeOrForward {
-    fn attrs(&self, opts: AttrInspectOptions) -> impl Iterator<Item = CoercedAttrFull<'_>> + '_ {
-        match self {
-            TargetNodeOrForward::TargetNode(target_node) => Either::Left(target_node.attrs(opts)),
-            TargetNodeOrForward::Forward(actual, _) => {
-                let actual_attr = Some(CoercedAttrFull {
-                    name: ACTUAL_ATTR_NAME,
-                    attr: ConfiguredTargetNode::actual_attribute(),
-                    value: actual,
-                });
-                Either::Right(actual_attr.into_iter())
-            }
-        }
-    }
-
-    fn rule_type(&self) -> &RuleType {
-        match self {
-            TargetNodeOrForward::TargetNode(target_node) => target_node.rule_type(),
-            TargetNodeOrForward::Forward(..) => &RuleType::Forward,
-        }
-    }
-
-    fn underlying_rule_type(&self) -> &RuleType {
-        match self {
-            TargetNodeOrForward::TargetNode(target_node) => target_node.rule_type(),
-            TargetNodeOrForward::Forward(_, node) => node.underlying_rule_type(),
-        }
-    }
-
-    fn rule_kind(&self) -> RuleKind {
-        match self {
-            TargetNodeOrForward::TargetNode(x) => x.rule_kind(),
-            TargetNodeOrForward::Forward(_, x) => x.rule_kind(),
-        }
-    }
-
-    fn buildfile_path(&self) -> &BuildFilePath {
-        match self {
-            TargetNodeOrForward::TargetNode(target_node) => target_node.buildfile_path(),
-            TargetNodeOrForward::Forward(_, x) => x.buildfile_path(),
-        }
-    }
-
-    fn is_visible_to(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
-        match self {
-            TargetNodeOrForward::TargetNode(node) => node.is_visible_to(target),
-            TargetNodeOrForward::Forward(_, forward) => forward.is_visible_to(target),
-        }
-    }
-
-    fn oncall(&self) -> Option<&str> {
-        match self {
-            TargetNodeOrForward::TargetNode(node) => node.oncall(),
-            TargetNodeOrForward::Forward(_, forward) => forward.oncall(),
-        }
-    }
-
-    fn attr_or_none<'a>(
-        &'a self,
-        name: &str,
-        opts: AttrInspectOptions,
-    ) -> Option<CoercedAttrFull<'a>> {
-        match self {
-            TargetNodeOrForward::TargetNode(target_node) => target_node.attr_or_none(name, opts),
-            TargetNodeOrForward::Forward(actual, _) => {
-                if name == ACTUAL_ATTR_NAME {
-                    Some(CoercedAttrFull {
-                        name: ACTUAL_ATTR_NAME,
-                        attr: ConfiguredTargetNode::actual_attribute(),
-                        value: actual,
-                    })
-                } else {
-                    None
-                }
-            }
-        }
+/// The forward node's `actual` attribute, configured: a dep on `forwarded`.
+fn actual_attr(forwarded: &ConfiguredTargetNode) -> ConfiguredAttrFull<'static> {
+    let label = forwarded.label();
+    ConfiguredAttrFull {
+        name: ACTUAL_ATTR_NAME,
+        attr: ConfiguredTargetNode::actual_attribute(),
+        value: ConfiguredAttr::Dep(Box::new(DepAttr {
+            attr_type: DepAttrType::new(
+                ProviderIdSet::EMPTY,
+                DepAttrTransition::Identity(PluginKindSet::EMPTY),
+            ),
+            label: ProvidersLabel::default_for(label.unconfigured().dupe())
+                .configure(label.cfg().dupe()),
+        })),
     }
 }
 
+/// The allocation behind a [`ConfiguredTargetNode`]: the header fields and the body.
 // TODO(cjhopman): There's a lot of optimization opportunities here.
 //  1. we iterate over and configure the attributes multiple times, that could be improved in a bunch of ways
 //  2. we store the same resolvedconfiguration probably in a bunch of nodes, that could be made smaller or shared
 //  3. deps could probably be approximated a diff against the targetnode's deps
-#[derive(Eq, PartialEq, Hash, Allocative)]
+#[derive(Allocative, Pagable)]
 struct ConfiguredTargetNodeData {
     label: Hashed<ConfiguredTargetLabel>,
-    target_node: TargetNodeOrForward,
-    resolved_configuration: MatchedConfigurationSettingKeysWithCfg,
-    resolved_transition_configurations: OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>,
-    execution_platform_resolution: ExecutionPlatformResolution,
+    /// Hash of the label, the deps and the body, taken when the node is built.
+    hash: StarlarkHashValue,
+    /// Whether this is a forward node: one that stands for its only dep, the same target in
+    /// another configuration. Its only attribute is a configured dep on that node.
+    forward: bool,
+    /// The rule type and kind of the body's unconfigured node, copied here because they are
+    /// read while walking the graph.
+    underlying_rule_type: RuleType,
+    rule_kind: RuleKind,
     // all_deps includes regular deps and transitioned deps,
     // and includes exec deps and configuration deps.
     // TODO(cjhopman): Should this be a diff against the node's deps?
     all_deps: ConfiguredTargetNodeDeps,
-    platform_cfgs: OrderedMap<TargetLabel, ConfigurationData>,
+    body: DeferredConfiguredTargetNodeBody,
+}
+
+/// A node's body: resident in a node that was built, and read from storage on first use in a
+/// node that was paged back in.
+#[derive(Allocative, PagableSerialize)]
+struct DeferredConfiguredTargetNodeBody(DeferredValue<triomphe::Arc<ConfiguredTargetNodeBody>>);
+
+impl<'de> PagableDeserialize<'de> for DeferredConfiguredTargetNodeBody {
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        let enabled = deserializer
+            .storage_context()
+            .get::<DeferredFieldReadsEnabled>()
+            .is_some();
+        Ok(Self(DeferredValue::deserialize_arc(deserializer, enabled)?))
+    }
+}
+
+/// The part of a node that walking the graph does not need.
+#[derive(Eq, PartialEq, Hash, Allocative, Pagable)]
+struct ConfiguredTargetNodeBody {
+    /// The unconfigured node. A forward node has that of the node it forwards to.
+    target_node: TargetNode,
+    resolved_configuration: MatchedConfigurationSettingKeysWithCfg,
+    resolved_transition_configurations:
+        BuckFixedSortedMap<Arc<TransitionId>, Arc<TransitionApplied>>,
+    execution_platform_resolution: ExecutionPlatformResolution,
+    platform_cfgs: BuckFixedSortedMap<TargetLabel, ConfigurationData>,
     // TODO(JakobDegen): Consider saving some memory by using a more tset like representation of
     // the plugin lists
     plugin_lists: PluginLists,
+}
+
+impl ConfiguredTargetNodeData {
+    fn new(
+        label: ConfiguredTargetLabel,
+        forward: bool,
+        all_deps: ConfiguredTargetNodeDeps,
+        body: ConfiguredTargetNodeBody,
+    ) -> Self {
+        let label = Hashed::new(label);
+        let hash = StarlarkHashValue::new(&(&label, forward, &all_deps, &body));
+        Self {
+            label,
+            hash,
+            forward,
+            underlying_rule_type: body.target_node.rule_type().clone(),
+            rule_kind: body.target_node.rule_kind(),
+            all_deps,
+            body: DeferredConfiguredTargetNodeBody(DeferredValue::new(triomphe::Arc::new(body))),
+        }
+    }
+
+    /// Equal headers do not settle equality: the hash is 32 bits and covers only the labels
+    /// of the deps. The bodies settle it, so they are read if they are needed.
+    fn try_eq(&self, other: &Self) -> buck2_error::Result<bool> {
+        if std::ptr::eq(self, other) {
+            return Ok(true);
+        }
+        if self.hash != other.hash
+            || self.label != other.label
+            || self.forward != other.forward
+            || self.all_deps != other.all_deps
+        {
+            return Ok(false);
+        }
+        Ok(self.body()? == other.body()?)
+    }
+
+    fn body(&self) -> buck2_error::Result<&ConfiguredTargetNodeBody> {
+        let body = self.body.0.read().with_buck_error_context(|| {
+            format!(
+                "Failed to restore the body of configured target node `{}`",
+                self.label.key()
+            )
+        })?;
+        Ok(body)
+    }
+
+    fn rule_type(&self) -> &RuleType {
+        if self.forward {
+            &RuleType::Forward
+        } else {
+            self.underlying_rule_type()
+        }
+    }
+
+    fn underlying_rule_type(&self) -> &RuleType {
+        &self.underlying_rule_type
+    }
+
+    fn rule_kind(&self) -> RuleKind {
+        self.rule_kind
+    }
+
+    fn forward_target(&self) -> Option<&ConfiguredTargetNode> {
+        if self.forward {
+            self.all_deps.all_deps.first()
+        } else {
+            None
+        }
+    }
 }
 
 impl Debug for ConfiguredTargetNodeData {
@@ -203,13 +276,20 @@ impl Debug for ConfiguredTargetNodeData {
     }
 }
 
+impl Debug for ConfiguredTargetNodeBody {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfiguredTargetNodeBody")
+            .finish_non_exhaustive()
+    }
+}
+
 impl ConfiguredTargetNode {
     /// Creates a minimal ConfiguredTargetNode. Some operations may unexpectedly fail.
     pub fn testing_new(
         name: ConfiguredTargetLabel,
         rule_type: &str,
         execution_platform_resolution: ExecutionPlatformResolution,
-        attrs: Vec<(&str, Attribute, CoercedAttr)>,
+        attrs: Vec<(&str, Attribute, OwnedCoercedAttr)>,
         call_stack: Option<StarlarkCallStack>,
     ) -> Self {
         use crate::nodes::unconfigured::testing::TargetNodeExt;
@@ -226,11 +306,11 @@ impl ConfiguredTargetNode {
                 ConfigurationNoExec::new(name.cfg().dupe()),
                 MatchedConfigurationSettingKeys::empty(),
             ),
-            OrderedMap::new(),
+            BuckFixedSortedMap::new(),
             execution_platform_resolution,
             Vec::new(),
             Vec::new(),
-            OrderedMap::new(),
+            BuckFixedSortedMap::new(),
             PluginLists::new(),
         )
     }
@@ -239,23 +319,26 @@ impl ConfiguredTargetNode {
         name: ConfiguredTargetLabel,
         target_node: TargetNode,
         resolved_configuration: MatchedConfigurationSettingKeysWithCfg,
-        resolved_tr_configurations: OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>,
+        resolved_tr_configurations: BuckFixedSortedMap<Arc<TransitionId>, Arc<TransitionApplied>>,
         execution_platform_resolution: ExecutionPlatformResolution,
         deps: Vec<ConfiguredTargetNode>,
         exec_deps: Vec<ConfiguredTargetNode>,
-        platform_cfgs: OrderedMap<TargetLabel, ConfigurationData>,
+        platform_cfgs: BuckFixedSortedMap<TargetLabel, ConfigurationData>,
         plugin_lists: PluginLists,
     ) -> Self {
-        Self(triomphe::Arc::new(Hashed::new(ConfiguredTargetNodeData {
-            label: Hashed::new(name),
-            target_node: TargetNodeOrForward::TargetNode(target_node),
-            resolved_configuration,
-            resolved_transition_configurations: resolved_tr_configurations,
-            execution_platform_resolution,
-            all_deps: ConfiguredTargetNodeDeps::new(deps, exec_deps),
-            platform_cfgs,
-            plugin_lists,
-        })))
+        Self(triomphe::Arc::new(ConfiguredTargetNodeData::new(
+            name,
+            false,
+            ConfiguredTargetNodeDeps::new(deps, exec_deps),
+            ConfiguredTargetNodeBody {
+                target_node,
+                resolved_configuration,
+                resolved_transition_configurations: resolved_tr_configurations,
+                execution_platform_resolution,
+                platform_cfgs,
+                plugin_lists,
+            },
+        )))
     }
 
     /// New `ConfiguredTargetNode` for a forward node for transitioned target.
@@ -276,47 +359,37 @@ impl ConfiguredTargetNode {
             "Creating a forward node to identical target label would be a mistake"
         );
 
-        // TODO(nga): how to obtain the correct providers name?
-        let providers_name = ProvidersName::Default;
-        let providers_label = ProvidersLabel::new(name.unconfigured().dupe(), providers_name);
-
-        let configured_providers_label =
-            providers_label.configure(transitioned_node.label().cfg().dupe());
-        Ok(ConfiguredTargetNode(triomphe::Arc::new(Hashed::new(
-            ConfiguredTargetNodeData {
-                label: Hashed::new(name.dupe()),
-                target_node: TargetNodeOrForward::Forward(
-                    CoercedAttr::ConfiguredDepForForwardNode(Box::new(DepAttr {
-                        attr_type: DepAttrType::new(
-                            ProviderIdSet::EMPTY,
-                            DepAttrTransition::Identity(PluginKindSet::EMPTY),
-                        ),
-                        label: configured_providers_label,
-                    })),
-                    transitioned_node.dupe(),
-                ),
-                // We have no attributes with selects, so resolved configurations is empty.
-                resolved_configuration: MatchedConfigurationSettingKeysWithCfg::new(
-                    name.cfg_pair().check_no_exec_cfg()?,
-                    MatchedConfigurationSettingKeys::empty(),
-                ),
-                // We have no attributes to transition, so empty map is fine.
-                resolved_transition_configurations: OrderedMap::new(),
-                // Set the execution platform equal to the transitioned node's execution platform
-                // so we can call `buck2 test` on Forward.
-                execution_platform_resolution: transitioned_node
-                    .execution_platform_resolution()
-                    .dupe(),
-                plugin_lists: transitioned_node.plugin_lists().clone(),
-                all_deps: ConfiguredTargetNodeDeps::new(vec![transitioned_node], vec![]),
-                platform_cfgs: OrderedMap::new(),
-            },
-        ))))
+        let transitioned = transitioned_node.body()?;
+        let body = ConfiguredTargetNodeBody {
+            target_node: transitioned.target_node().dupe(),
+            // We have no attributes with selects, so resolved configurations is empty.
+            resolved_configuration: MatchedConfigurationSettingKeysWithCfg::new(
+                name.cfg_pair().check_no_exec_cfg()?,
+                MatchedConfigurationSettingKeys::empty(),
+            ),
+            // We have no attributes to transition, so empty map is fine.
+            resolved_transition_configurations: BuckFixedSortedMap::new(),
+            // Set the execution platform equal to the transitioned node's execution platform
+            // so we can call `buck2 test` on Forward.
+            execution_platform_resolution: transitioned.execution_platform_resolution().dupe(),
+            platform_cfgs: BuckFixedSortedMap::new(),
+            plugin_lists: transitioned.plugin_lists().clone(),
+        };
+        Ok(ConfiguredTargetNode(triomphe::Arc::new(
+            ConfiguredTargetNodeData::new(
+                name,
+                true,
+                ConfiguredTargetNodeDeps::new(vec![transitioned_node], vec![]),
+                body,
+            ),
+        )))
     }
 
     pub(crate) fn actual_attribute() -> &'static Attribute {
-        static ATTRIBUTE: Lazy<Attribute> =
-            Lazy::new(|| Attribute::new(None, "", AttrType::configured_dep(ProviderIdSet::EMPTY)));
+        static ATTRIBUTE: LazyLock<Attribute> = LazyLock::new(|| {
+            Attribute::new(None, "", AttrType::configured_dep(ProviderIdSet::EMPTY))
+                .expect("static Attribute::new failed")
+        });
         &ATTRIBUTE
     }
 
@@ -333,8 +406,35 @@ impl ConfiguredTargetNode {
         }))
     }
 
-    pub fn execution_platform_resolution(&self) -> &ExecutionPlatformResolution {
-        &self.0.execution_platform_resolution
+    /// Everything about this node that is not in its header: the unconfigured node, the
+    /// attributes, the execution platform and the plugins.
+    ///
+    /// A caller about to do this for many nodes calls [`Self::prefetch_bodies`] first.
+    #[inline]
+    pub fn body(&self) -> buck2_error::Result<ConfiguredTargetNodeBodyRef<'_>> {
+        self.as_ref().body()
+    }
+
+    /// Reads the bodies of `nodes` that are not in memory yet, several at a time, so that
+    /// [`Self::body`] of each finds its body there.
+    ///
+    /// Each `body` of a node paged back in from storage is otherwise a read from storage on
+    /// the caller's thread, one node after another.
+    ///
+    /// This only saves time. A body it cannot read is left for `body` to read again and to
+    /// report, to the caller that needs that node. The failure here is a soft error.
+    pub fn prefetch_bodies<'a>(
+        nodes: impl IntoIterator<Item = &'a ConfiguredTargetNode>,
+    ) -> buck2_error::Result<()> {
+        if let Err(error) = DeferredValue::read_all(nodes.into_iter().map(|node| &node.0.body.0)) {
+            soft_error!(
+                "configured_node_body_prefetch_failed",
+                buck2_error::Error::from(error)
+                    .context("Failed to prefetch the bodies of configured target nodes"),
+                task: false
+            );
+        }
+        Ok(())
     }
 
     /// Returns all deps for this node:
@@ -343,8 +443,8 @@ impl ConfiguredTargetNode {
     /// - toolchain deps
     /// - configuration deps
     // TODO(cjhopman): Should this include configuration deps? Should it include the configuration deps that were inspected resolving selects?
-    pub fn deps(&self) -> impl Iterator<Item = &ConfiguredTargetNode> {
-        self.0.all_deps.all_deps.iter()
+    pub fn deps(&self) -> &[ConfiguredTargetNode] {
+        &self.0.all_deps.all_deps
     }
 
     pub fn configuration_deps(&self) -> impl Iterator<Item = &ConfiguredTargetNode> {
@@ -367,17 +467,6 @@ impl ConfiguredTargetNode {
             .filter(|x| x.rule_kind() == RuleKind::Toolchain)
     }
 
-    pub fn inputs(&self) -> impl Iterator<Item = CellPath> + '_ {
-        self.as_ref().inputs()
-    }
-
-    #[inline]
-    pub fn queries(
-        &self,
-    ) -> impl Iterator<Item = (String, ResolvedQueryLiterals<ConfiguredProvidersLabel>)> + '_ {
-        self.as_ref().queries()
-    }
-
     pub fn target_deps(&self) -> impl Iterator<Item = &ConfiguredTargetNode> {
         self.0
             .all_deps
@@ -386,34 +475,8 @@ impl ConfiguredTargetNode {
             .filter(|x| x.rule_kind() == RuleKind::Normal)
     }
 
-    pub fn exec_deps(&self) -> impl Iterator<Item = &ConfiguredTargetNode> {
-        self.0.all_deps.exec_deps().iter()
-    }
-
-    /// Return the `tests` declared for this target configured in same target platform as this target.
-    pub fn tests(&self) -> impl Iterator<Item = ConfiguredProvidersLabel> + use<> {
-        #[derive(Default)]
-        struct TestCollector {
-            labels: Vec<ConfiguredProvidersLabel>,
-        }
-
-        impl ConfiguredAttrTraversal for TestCollector {
-            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
-                // ignored.
-                Ok(())
-            }
-
-            fn label(&mut self, label: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
-                self.labels.push(label.dupe());
-                Ok(())
-            }
-        }
-
-        let mut traversal = TestCollector::default();
-        if let Some(tests) = self.get(TESTS_ATTRIBUTE.name, AttrInspectOptions::All) {
-            tests.traverse(self.label().pkg(), &mut traversal).unwrap();
-        }
-        traversal.labels.into_iter()
+    pub fn exec_deps(&self) -> &[ConfiguredTargetNode] {
+        self.0.all_deps.exec_deps()
     }
 
     pub fn label(&self) -> &ConfiguredTargetLabel {
@@ -425,98 +488,21 @@ impl ConfiguredTargetNode {
         self.0.label.as_ref()
     }
 
-    pub fn target_node(&self) -> &TargetNode {
-        match &self.0.target_node {
-            TargetNodeOrForward::TargetNode(n) => n,
-            TargetNodeOrForward::Forward(_, n) => n.target_node(),
-        }
-    }
-
     pub fn rule_type(&self) -> &RuleType {
-        self.0.target_node.rule_type()
+        self.0.rule_type()
     }
 
     pub fn underlying_rule_type(&self) -> &RuleType {
-        self.0.target_node.underlying_rule_type()
+        self.0.underlying_rule_type()
     }
 
     pub fn rule_kind(&self) -> RuleKind {
-        self.0.target_node.rule_kind()
-    }
-
-    pub fn buildfile_path(&self) -> &BuildFilePath {
-        self.0.target_node.buildfile_path()
-    }
-
-    pub fn is_visible_to(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
-        self.0.target_node.is_visible_to(target)
-    }
-
-    #[inline]
-    pub fn special_attr_or_none(&self, key: &str) -> Option<ConfiguredAttr> {
-        self.as_ref().special_attr_or_none(key)
-    }
-
-    #[inline]
-    pub fn special_attrs(&self) -> impl Iterator<Item = (&str, ConfiguredAttr)> {
-        self.as_ref().special_attrs()
-    }
-
-    #[inline]
-    pub fn oncall(&self) -> Option<&str> {
-        self.as_ref().oncall()
-    }
-
-    pub fn attrs(
-        &self,
-        opts: AttrInspectOptions,
-    ) -> impl Iterator<Item = ConfiguredAttrFull<'_>> + '_ {
-        self.as_ref().attrs(opts)
-    }
-
-    pub fn get<'a>(
-        &'a self,
-        attr: &str,
-        opts: AttrInspectOptions,
-    ) -> Option<ConfiguredAttrFull<'a>> {
-        self.as_ref().get(attr, opts)
-    }
-
-    pub fn call_stack(&self) -> Option<String> {
-        match &self.0.target_node {
-            TargetNodeOrForward::TargetNode(n) => n.call_stack(),
-            TargetNodeOrForward::Forward(_, n) => n.call_stack(),
-        }
-    }
-
-    pub fn root_location(&self) -> Option<StarlarkTargetCallStackRoot> {
-        match &self.0.target_node {
-            TargetNodeOrForward::TargetNode(n) => n.root_location(),
-            TargetNodeOrForward::Forward(_, n) => n.root_location(),
-        }
-    }
-
-    /// Hash the fields that impact how this target is built.
-    /// Don't do any recursive hashing of the dependencies.
-    /// Hashes the attributes _after_ configuration, so changing unconfigured branches that
-    /// are not taken will not change the hash.
-    pub fn target_hash<H: Hasher>(&self, state: &mut H) {
-        self.label().hash(state);
-        self.rule_type().hash(state);
-        self.attrs(AttrInspectOptions::All).for_each(|x| {
-            // We deliberately don't hash the attribute, as if the value being passed to analysis
-            // stays the same, we don't care if the attribute that generated it changed.
-            x.name.hash(state);
-            x.value.hash(state);
-        });
+        self.0.rule_kind()
     }
 
     /// If this node is a forward node, return the target it forwards to.
     pub fn forward_target(&self) -> Option<&ConfiguredTargetNode> {
-        match &self.0.target_node {
-            TargetNodeOrForward::TargetNode(_) => None,
-            TargetNodeOrForward::Forward(_, n) => Some(n),
-        }
+        self.0.forward_target()
     }
 
     pub fn unwrap_forward(&self) -> &ConfiguredTargetNode {
@@ -528,21 +514,7 @@ impl ConfiguredTargetNode {
 
     #[inline]
     pub fn target_configuration(&self) -> &ConfigurationData {
-        self.as_ref().0.get().label.cfg()
-    }
-
-    #[inline]
-    pub fn execution_platform(&self) -> buck2_error::Result<&ExecutionPlatform> {
-        self.as_ref().execution_platform_resolution().platform()
-    }
-
-    #[inline]
-    pub fn uses_plugins(&self) -> &[PluginKind] {
-        self.as_ref().uses_plugins()
-    }
-
-    pub fn plugin_lists(&self) -> &PluginLists {
-        &self.0.plugin_lists
+        self.0.label.cfg()
     }
 
     #[inline]
@@ -553,16 +525,104 @@ impl ConfiguredTargetNode {
     pub fn ptr_eq(&self, other: &Self) -> bool {
         triomphe::Arc::ptr_eq(&self.0, &other.0)
     }
+
+    /// Whether the nodes are equal: they are one allocation, or their labels, their deps (by
+    /// allocation) and their bodies are equal. Fails if a body is needed and cannot be read.
+    pub fn try_eq(&self, other: &Self) -> buck2_error::Result<bool> {
+        self.0.try_eq(&other.0)
+    }
+}
+
+/// Reads bodies ahead of a caller that works through an ordered collection of nodes and reads
+/// the bodies of some of them, such as a script looping over a target set.
+///
+/// When the caller asks for a body that is not in memory, the bodies of the nodes after it are
+/// read with it, several at a time ([`ConfiguredTargetNode::prefetch_bodies`]). How many
+/// depends on what the caller did with the last such read:
+///
+/// - The first covers a few nodes.
+/// - A caller that asks next for the body of the node where the last one ended is working
+///   through the nodes, so the next covers twice as many. It soon finds the bodies ahead of
+///   it in memory.
+/// - A caller that asks for a body anywhere else skipped nodes, and may skip those after it
+///   too, so the next covers a few nodes again. A caller that reads the body of one node in
+///   many has that few bodies read for each one it uses, not all of them.
+///
+/// A caller that stops early has had about as many bodies read again as it used; one that
+/// asks for no body causes no read.
+#[derive(Debug, Allocative)]
+pub struct ConfiguredTargetNodeBodyReadAhead {
+    nodes: Vec<ConfiguredTargetNode>,
+    #[allocative(skip)]
+    last: Mutex<LastReadAhead>,
+}
+
+/// The last read of bodies ahead of a caller: the index after the last node it covered, and
+/// how many nodes it covered. Both 0 before the first.
+#[derive(Debug, Default)]
+struct LastReadAhead {
+    end: usize,
+    window: usize,
+}
+
+impl ConfiguredTargetNodeBodyReadAhead {
+    const FIRST_WINDOW: usize = 16;
+
+    pub fn new(nodes: Vec<ConfiguredTargetNode>) -> Self {
+        Self {
+            nodes,
+            last: Mutex::default(),
+        }
+    }
+
+    /// A read-ahead over `nodes`, or `None` if the body of every one of them is in memory:
+    /// there is then nothing to read ahead, and no reason to hold the nodes.
+    pub fn if_any_body_unread<'a>(
+        nodes: impl Iterator<Item = &'a ConfiguredTargetNode> + Clone,
+    ) -> Option<Self> {
+        nodes
+            .clone()
+            .any(|node| !node.0.body.0.is_resolved())
+            .then(|| Self::new(nodes.duped().collect()))
+    }
+
+    pub fn nodes(&self) -> &[ConfiguredTargetNode] {
+        &self.nodes
+    }
+
+    /// The body of the node at `index`. If it is not in memory, it is read together with the
+    /// bodies of the nodes after it.
+    pub fn body(&self, index: usize) -> buck2_error::Result<ConfiguredTargetNodeBodyRef<'_>> {
+        let node = &self.nodes[index];
+        if !node.0.body.0.is_resolved() {
+            let end = {
+                let mut last = self
+                    .last
+                    .lock()
+                    .expect("read-ahead state should not be poisoned");
+                let reads_on = last.window > 0 && index == last.end;
+                last.window = if reads_on {
+                    last.window.saturating_mul(2)
+                } else {
+                    Self::FIRST_WINDOW
+                };
+                last.end = index.saturating_add(last.window).min(self.nodes.len());
+                last.end
+            };
+            ConfiguredTargetNode::prefetch_bodies(&self.nodes[index..end])?;
+        }
+        node.body()
+    }
 }
 
 /// The representation of the deps for a ConfiguredTargetNode. Provides the operations we require
 /// (iteration, eq, and hash), but guarantees those aren't recursive of the dep nodes' data.
-#[derive(Allocative)]
+#[derive(Allocative, Pagable)]
 struct ConfiguredTargetNodeDeps {
     /// Number of deps, excluding exec deps. Used as an index to retrieve exec_deps
     deps_count: usize,
     /// (target deps and toolchain deps) followed by `exec_deps`.
-    all_deps: Box<[ConfiguredTargetNode]>,
+    all_deps: MiniBoxSlice<ConfiguredTargetNode>,
 }
 
 impl ConfiguredTargetNodeDeps {
@@ -570,21 +630,17 @@ impl ConfiguredTargetNodeDeps {
         if deps.is_empty() {
             ConfiguredTargetNodeDeps {
                 deps_count: 0,
-                all_deps: exec_deps.into_boxed_slice(),
+                all_deps: exec_deps.into(),
             }
         } else if exec_deps.is_empty() {
             ConfiguredTargetNodeDeps {
                 deps_count: deps.len(),
-                all_deps: deps.into_boxed_slice(),
+                all_deps: deps.into(),
             }
         } else {
             ConfiguredTargetNodeDeps {
                 deps_count: deps.len(),
-                all_deps: deps
-                    .into_iter()
-                    .chain(exec_deps)
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
+                all_deps: deps.into_iter().chain(exec_deps).collect(),
             }
         }
     }
@@ -635,7 +691,7 @@ impl Hash for ConfiguredTargetNodeDeps {
 
 /// Like `&ConfiguredTargetNode`, but cheaper (one fewer indirection).
 #[derive(Debug, Copy, Clone)]
-pub struct ConfiguredTargetNodeRef<'a>(triomphe::ArcBorrow<'a, Hashed<ConfiguredTargetNodeData>>);
+pub struct ConfiguredTargetNodeRef<'a>(triomphe::ArcBorrow<'a, ConfiguredTargetNodeData>);
 
 impl Dupe for ConfiguredTargetNodeRef<'_> {}
 
@@ -645,9 +701,18 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
         ConfiguredTargetNode(triomphe::ArcBorrow::clone_arc(&self.0))
     }
 
+    /// See [`ConfiguredTargetNode::body`].
     #[inline]
-    pub fn deps(self) -> impl Iterator<Item = &'a ConfiguredTargetNode> {
-        self.0.get().all_deps.all_deps.iter()
+    pub fn body(self) -> buck2_error::Result<ConfiguredTargetNodeBodyRef<'a>> {
+        Ok(ConfiguredTargetNodeBodyRef {
+            node: self,
+            body: self.0.get().body()?,
+        })
+    }
+
+    #[inline]
+    pub fn deps(self) -> &'a [ConfiguredTargetNode] {
+        &self.0.get().all_deps.all_deps
     }
 
     #[inline]
@@ -665,26 +730,120 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
         self.0.get().label.as_ref()
     }
 
-    fn attr_configuration_context(self) -> AttrConfigurationContextImpl<'a> {
-        AttrConfigurationContextImpl::new(
-            &self.0.get().resolved_configuration,
-            self.0.get().execution_platform_resolution.cfg(),
-            &self.0.get().resolved_transition_configurations,
-            &self.0.get().platform_cfgs,
-        )
+    pub fn rule_type(self) -> &'a RuleType {
+        self.0.get().rule_type()
+    }
+
+    fn forward_target(self) -> Option<&'a ConfiguredTargetNode> {
+        self.0.get().forward_target()
+    }
+}
+
+/// The body of a [`ConfiguredTargetNode`], borrowed from it; see [`ConfiguredTargetNode::body`].
+#[derive(Debug, Copy, Clone)]
+pub struct ConfiguredTargetNodeBodyRef<'a> {
+    node: ConfiguredTargetNodeRef<'a>,
+    body: &'a ConfiguredTargetNodeBody,
+}
+
+impl Dupe for ConfiguredTargetNodeBodyRef<'_> {}
+
+impl<'a> ConfiguredTargetNodeBodyRef<'a> {
+    /// The node this is the body of.
+    #[inline]
+    pub fn node(self) -> ConfiguredTargetNodeRef<'a> {
+        self.node
+    }
+
+    #[inline]
+    pub fn label(self) -> &'a ConfiguredTargetLabel {
+        self.node.label()
+    }
+
+    pub fn target_node(self) -> &'a TargetNode {
+        &self.body.target_node
+    }
+
+    pub fn buildfile_path(self) -> &'a BuildFilePath {
+        self.body.target_node.buildfile_path()
+    }
+
+    pub fn is_visible_to(self, target: &TargetLabel) -> buck2_error::Result<bool> {
+        self.body.target_node.is_visible_to(target)
+    }
+
+    pub fn not_visible_to_error(self, consumer: TargetLabel) -> crate::visibility::VisibilityError {
+        self.body.target_node.not_visible_to_error(consumer)
     }
 
     pub fn oncall(self) -> Option<&'a str> {
-        self.0.get().target_node.oncall()
+        self.body.target_node.oncall()
     }
 
-    pub fn special_attr_or_none(&self, key: &str) -> Option<ConfiguredAttr> {
+    pub fn call_stack(self) -> Option<String> {
+        self.body.target_node.call_stack()
+    }
+
+    pub fn root_location(self) -> Option<StarlarkTargetCallStackRoot> {
+        self.body.target_node.root_location()
+    }
+
+    pub fn execution_platform_resolution(self) -> &'a ExecutionPlatformResolution {
+        &self.body.execution_platform_resolution
+    }
+
+    #[inline]
+    pub fn execution_platform(self) -> buck2_error::Result<&'a ExecutionPlatform> {
+        self.body.execution_platform_resolution.platform()
+    }
+
+    pub fn plugin_lists(self) -> &'a PluginLists {
+        &self.body.plugin_lists
+    }
+
+    fn plugins_as_attr(self) -> ConfiguredAttr {
+        let mut kinds = Vec::new();
+        for (kind, plugins) in self.plugin_lists().iter_by_kind() {
+            // Using plugin dep here is a bit of an abuse. However, there's no
+            // `ConfiguredAttr::TargetLabel` type, and it also seems excessive to add one for this
+            // reason alone
+            let plugins = plugins
+                .map(|(target, _)| ConfiguredAttr::PluginDep(target.dupe(), kind.dupe()))
+                .collect();
+            kinds.push((
+                ConfiguredAttr::String(StringLiteral(ArcStr::from(kind.as_str()))),
+                ConfiguredAttr::List(plugins),
+            ));
+        }
+        ConfiguredAttr::Dict(kinds.into_iter().collect())
+    }
+
+    pub fn uses_plugins(self) -> &'a [PluginKind] {
+        match self.node.forward_target() {
+            None => self.body.target_node.uses_plugins(),
+            Some(_) => &[],
+        }
+    }
+
+    fn attr_configuration_context(self) -> AttrConfigurationContextImpl<'a> {
+        AttrConfigurationContextImpl::new(
+            self.label().dupe(),
+            &self.body.resolved_configuration,
+            &self.body.execution_platform_resolution,
+            &self.body.resolved_transition_configurations,
+            &self.body.platform_cfgs,
+        )
+    }
+
+    pub fn special_attr_or_none(self, key: &str) -> Option<ConfiguredAttr> {
         match key {
             TYPE => Some(ConfiguredAttr::String(StringLiteral(
-                self.rule_type().name().into(),
+                self.node.rule_type().name().into(),
             ))),
             DEPS => Some(ConfiguredAttr::List(
-                self.deps()
+                self.node
+                    .deps()
+                    .iter()
                     .map(|t| {
                         ConfiguredAttr::Label(ConfiguredProvidersLabel::new(
                             t.label().dupe(),
@@ -701,17 +860,39 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
                 Some(x) => ConfiguredAttr::String(StringLiteral(ArcStr::from(x))),
             }),
             TARGET_CONFIGURATION => Some(ConfiguredAttr::String(StringLiteral(ArcStr::from(
-                self.0.label.cfg().to_string(),
+                self.label().cfg().to_string(),
             )))),
             EXECUTION_PLATFORM => Some(ConfiguredAttr::String(StringLiteral(
-                self.0
+                self.body
                     .execution_platform_resolution
                     .platform()
                     .map_or_else(|_| ArcStr::from("<NONE>"), |v| ArcStr::from(v.id())),
             ))),
+            EXECUTION_GROUP_PLATFORMS => self.execution_group_platforms_as_attr(),
             PLUGINS => Some(self.plugins_as_attr()),
             _ => None,
         }
+    }
+
+    fn execution_group_platforms_as_attr(self) -> Option<ConfiguredAttr> {
+        let resolution = &self.body.execution_platform_resolution;
+        if !resolution.has_execution_groups() {
+            return None;
+        }
+        Some(ConfiguredAttr::Dict(
+            resolution
+                .execution_group_platforms()
+                .map(|(group, platform, _)| {
+                    (
+                        ConfiguredAttr::String(StringLiteral(ArcStr::from(group.name()))),
+                        ConfiguredAttr::String(StringLiteral(
+                            platform
+                                .map_or_else(|| ArcStr::from("<NONE>"), |p| ArcStr::from(p.id())),
+                        )),
+                    )
+                })
+                .collect(),
+        ))
     }
 
     pub fn special_attrs(self) -> impl Iterator<Item = (&'a str, ConfiguredAttr)> {
@@ -732,24 +913,105 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
                 self.special_attr_or_none(key).unwrap(),
             )
         })
-        .into_iter()
+        .chain(
+            self.execution_group_platforms_as_attr()
+                .map(|v| (EXECUTION_GROUP_PLATFORMS, v)),
+        )
     }
 
+    /// Not implemented via [`Self::filter_attrs`]: the trivial filter would
+    /// reset the iterator's `size_hint` lower bound to 0, and callers rely on
+    /// the exact size to pre-allocate.
     pub fn attrs(
         self,
         opts: AttrInspectOptions,
+    ) -> impl ExactSizeIterator<Item = ConfiguredAttrFull<'a>> + 'a {
+        match self.node.forward_target() {
+            None => Either::Left(self.body.target_node.attrs(opts).map(move |a| {
+                a.configure(&self.attr_configuration_context())
+                    .expect_compatible("checked attr configuration in constructor")
+            })),
+            Some(n) => Either::Right(iter::once(actual_attr(n))),
+        }
+    }
+
+    /// Like [`attrs`](Self::attrs), but only configures attributes whose name
+    /// and definition pass `filter`. Configuration is the expensive step, so
+    /// callers that need a subset should filter with this rather than
+    /// discarding configured attrs.
+    pub fn filter_attrs(
+        self,
+        opts: AttrInspectOptions,
+        filter: impl Fn(&str, &Attribute) -> bool + 'a,
     ) -> impl Iterator<Item = ConfiguredAttrFull<'a>> + 'a {
-        self.0.get().target_node.attrs(opts).map(move |a| {
-            a.configure(&self.attr_configuration_context())
-                .expect("checked attr configuration in constructor")
-        })
+        match self.node.forward_target() {
+            None => Either::Left(
+                self.body
+                    .target_node
+                    .attrs(opts)
+                    .filter(move |a| filter(a.name, a.attr))
+                    .map(move |a| {
+                        a.configure(&self.attr_configuration_context())
+                            .expect_compatible("checked attr configuration in constructor")
+                    }),
+            ),
+            Some(n) => Either::Right(
+                filter(ACTUAL_ATTR_NAME, ConfiguredTargetNode::actual_attribute())
+                    .then(|| actual_attr(n))
+                    .into_iter(),
+            ),
+        }
     }
 
     pub fn get(self, attr: &str, opts: AttrInspectOptions) -> Option<ConfiguredAttrFull<'a>> {
-        self.0.get().target_node.attr_or_none(attr, opts).map(|v| {
-            v.configure(&self.attr_configuration_context())
-                .expect("checked attr configuration in constructor")
-        })
+        match self.node.forward_target() {
+            None => self.body.target_node.attr_or_none(attr, opts).map(|v| {
+                v.configure(&self.attr_configuration_context())
+                    .expect_compatible("checked attr configuration in constructor")
+            }),
+            Some(n) => (attr == ACTUAL_ATTR_NAME).then(|| actual_attr(n)),
+        }
+    }
+
+    pub(crate) fn attr_matches(
+        self,
+        key: &str,
+        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
+    ) -> buck2_error::Result<bool> {
+        let coerced = match self.node.forward_target() {
+            None => self
+                .body
+                .target_node
+                .attr_or_none(key, AttrInspectOptions::All),
+            Some(n) if key == ACTUAL_ATTR_NAME => {
+                return actual_attr(n).value.any_matches(filter);
+            }
+            Some(_) => None,
+        };
+        match coerced {
+            Some(attr) => match attr.value.kind() {
+                CoercedAttrRefKind::String(v) | CoercedAttrRefKind::EnumVariant(v) => filter(v),
+                CoercedAttrRefKind::List(values)
+                    if values.iter().all(|v| {
+                        matches!(
+                            v.kind(),
+                            CoercedAttrRefKind::String(_) | CoercedAttrRefKind::EnumVariant(_)
+                        )
+                    }) =>
+                {
+                    attr.value.any_matches(filter)
+                }
+                _ => attr
+                    .configure(&self.attr_configuration_context())
+                    .expect_compatible("checked attr configuration in constructor")
+                    .value
+                    .any_matches(filter),
+            },
+            None => match self.special_attr_or_none(key) {
+                Some(attr) => attr.any_matches(filter),
+                None => Ok(false),
+            },
+        }
     }
 
     pub fn inputs(self) -> impl Iterator<Item = CellPath> + 'a {
@@ -775,14 +1037,15 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
     }
 
     // TODO(cjhopman): switch to for_each_query?
+    /// Returns distinct queries and their resolved literals in first-occurrence order.
     pub fn queries(
         self,
     ) -> impl Iterator<Item = (String, ResolvedQueryLiterals<ConfiguredProvidersLabel>)> + 'a {
         struct Traversal {
-            queries: Vec<(String, ResolvedQueryLiterals<ConfiguredProvidersLabel>)>,
+            queries: BuckMutInsertionSet<(String, ResolvedQueryLiterals<ConfiguredProvidersLabel>)>,
         }
         let mut traversal = Traversal {
-            queries: Vec::new(),
+            queries: BuckMutInsertionSet::default(),
         };
         impl ConfiguredAttrTraversal for Traversal {
             fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
@@ -796,59 +1059,501 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
                 resolved_literals: &ResolvedQueryLiterals<ConfiguredProvidersLabel>,
             ) -> buck2_error::Result<()> {
                 self.queries
-                    .push((query.to_owned(), resolved_literals.clone()));
+                    .insert((query.to_owned(), resolved_literals.clone()));
                 Ok(())
             }
         }
 
-        for a in self.attrs(AttrInspectOptions::All) {
-            // Optimization.
-            if !a.attr.coercer().0.may_have_queries {
-                continue;
-            }
-
+        for a in self.filter_attrs(AttrInspectOptions::All, |_, attr| {
+            attr.coercer().0.may_have_queries
+        }) {
             a.traverse(self.label().pkg(), &mut traversal).unwrap();
         }
         traversal.queries.into_iter()
     }
 
-    pub fn rule_type(self) -> &'a RuleType {
-        self.0.get().target_node.rule_type()
+    /// Return the `tests` declared for this target configured in same target platform as this target.
+    pub fn tests(self) -> impl Iterator<Item = ConfiguredProvidersLabel> + use<> {
+        #[derive(Default)]
+        struct TestCollector {
+            labels: Vec<ConfiguredProvidersLabel>,
+        }
+
+        impl ConfiguredAttrTraversal for TestCollector {
+            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+                // ignored.
+                Ok(())
+            }
+
+            fn label(&mut self, label: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+                self.labels.push(label.dupe());
+                Ok(())
+            }
+        }
+
+        let mut traversal = TestCollector::default();
+        if let Some(tests) = self.get(TESTS_ATTRIBUTE.name, AttrInspectOptions::All) {
+            tests.traverse(self.label().pkg(), &mut traversal).unwrap();
+        }
+        traversal.labels.into_iter()
     }
 
-    pub fn execution_platform_resolution(self) -> &'a ExecutionPlatformResolution {
-        &self.0.get().execution_platform_resolution
+    /// Hash the fields that impact how this target is built.
+    /// Don't do any recursive hashing of the dependencies.
+    /// Hashes the attributes _after_ configuration, so changing unconfigured branches that
+    /// are not taken will not change the hash.
+    pub fn target_hash<H: Hasher>(self, state: &mut H) {
+        self.label().strong_hash(state);
+        self.node.rule_type().strong_hash(state);
+        self.attrs(AttrInspectOptions::All).for_each(|x| {
+            // We deliberately don't hash the attribute, as if the value being passed to analysis
+            // stays the same, we don't care if the attribute that generated it changed.
+            x.name.strong_hash(state);
+            x.value.strong_hash(state);
+        });
     }
 
-    pub fn uses_plugins(self) -> &'a [PluginKind] {
-        match &self.0.get().target_node {
-            TargetNodeOrForward::TargetNode(target_node) => target_node.uses_plugins(),
-            TargetNodeOrForward::Forward(_, _) => &[],
+    /// Hash this target's unconfigured label, rule type, and configured attributes.
+    ///
+    /// Configurations are omitted from labels stored in attribute values. Consequently, changing
+    /// configuration does not affect this hash unless it changes a configured attribute on this
+    /// target. Dependency contents and other node metadata are not included.
+    pub fn target_hash_without_configured_labels<H: Hasher>(self, state: &mut H) {
+        self.label().unconfigured().strong_hash(state);
+        self.node.rule_type().strong_hash(state);
+
+        let attrs = self.attrs(AttrInspectOptions::All);
+        (attrs.len() as u64).strong_hash(state);
+        attrs.for_each(|attr| {
+            attr.name.strong_hash(state);
+            attr.value.strong_hash_without_config(state);
+        });
+    }
+}
+
+#[cfg(test)]
+mod body_tests;
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::collections::hash_map::DefaultHasher;
+
+    use buck2_core::configuration::config_setting::ConfigSettingData;
+    use buck2_core::configuration::constraints::ConstraintKey;
+    use buck2_core::configuration::constraints::ConstraintValue;
+    use buck2_core::configuration::data::ConfigurationDataData;
+    use buck2_core::configuration::data::ExecPlatformMarking;
+
+    use super::*;
+    use crate::attrs::attr_type::arg::MacroBase;
+    use crate::attrs::attr_type::arg::QueryExpansion;
+    use crate::attrs::attr_type::arg::StringWithMacros;
+    use crate::attrs::attr_type::arg::StringWithMacrosPart;
+    use crate::attrs::attr_type::query::QueryAttrBase;
+    use crate::attrs::attr_type::query::QueryMacroBase;
+    use crate::configuration::resolved::ConfigurationNode;
+    use crate::nodes::unconfigured::testing::TargetNodeExt;
+
+    /// `literal` is the target's spelling inside `text`; `target` its
+    /// resolved label.
+    fn query(text: &str, literal: &str, target: &str) -> QueryAttrBase<ProvidersLabel> {
+        let start = text.find(literal).unwrap();
+        QueryAttrBase {
+            query: text.to_owned(),
+            resolved_literals: ResolvedQueryLiterals(BTreeMap::from([(
+                (start, literal.len()),
+                ProvidersLabel::default_for(TargetLabel::testing_parse(target)),
+            )])),
         }
     }
 
-    fn plugins_as_attr(self) -> ConfiguredAttr {
-        let mut kinds = Vec::new();
-        for (kind, plugins) in self.plugin_lists().iter_by_kind() {
-            // Using plugin dep here is a bit of an abuse. However, there's no
-            // `ConfiguredAttr::TargetLabel` type, and it also seems excessive to add one for this
-            // reason alone
-            let plugins = plugins
-                .map(|(target, _)| ConfiguredAttr::PluginDep(target.dupe(), kind.dupe()))
-                .collect();
-            kinds.push((
-                ConfiguredAttr::String(StringLiteral(ArcStr::from(kind.as_str()))),
-                ConfiguredAttr::List(plugins),
-            ));
+    /// Asserts `actual` is `expected` as reported by `queries()`: the
+    /// canonical reprint, with one literal whose span slices the reprint to
+    /// the configured label's unconfigured spelling.
+    fn assert_query(
+        actual: &(String, ResolvedQueryLiterals<ConfiguredProvidersLabel>),
+        expected_reprint: &str,
+        expected: &QueryAttrBase<ProvidersLabel>,
+        cfg: &ConfigurationData,
+    ) {
+        assert_eq!(actual.0, expected_reprint);
+        let [label]: [&ProvidersLabel; 1] = expected
+            .resolved_literals
+            .0
+            .values()
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        let ((off, len), configured) = actual.1.0.iter().next().unwrap();
+        assert_eq!(actual.1.0.len(), 1);
+        assert_eq!(configured, &label.configure(cfg.dupe()));
+        assert_eq!(&actual.0[*off..*off + *len], label.to_string());
+    }
+
+    fn node(
+        cfg: ConfigurationData,
+        attrs: Vec<(&str, Attribute, OwnedCoercedAttr)>,
+    ) -> ConfiguredTargetNode {
+        ConfiguredTargetNode::testing_new(
+            TargetLabel::testing_parse("root//pkg:owner").configure(cfg),
+            "test_rule",
+            ExecutionPlatformResolution::new_for_testing(None, Vec::new()),
+            attrs,
+            None,
+        )
+    }
+
+    /// The attribute spells its literal relative and the macros spell it
+    /// in full: all four are one query.
+    #[test]
+    fn test_queries_deduplicate_attributes_and_macro_expansions() {
+        let attr_query = query("deps(:dep)", ":dep", "root//pkg:dep");
+        let macro_query = query("deps(root//pkg:dep)", "root//pkg:dep", "root//pkg:dep");
+        let query_attr = OwnedCoercedAttr::new_with(|b| b.encode_query(&attr_query)).unwrap();
+        let macros = [
+            QueryExpansion::Target,
+            QueryExpansion::Output,
+            QueryExpansion::TargetAndOutput(None),
+        ]
+        .into_iter()
+        .map(|expansion_type| {
+            StringWithMacrosPart::Macro(
+                true,
+                MacroBase::Query(Box::new(QueryMacroBase {
+                    expansion_type,
+                    query: macro_query.clone(),
+                })),
+            )
+        })
+        .collect();
+        let attrs = vec![
+            (
+                "first",
+                Attribute::new_const(None, "", AttrType::query()),
+                query_attr.clone(),
+            ),
+            (
+                "second",
+                Attribute::new_const(None, "", AttrType::query()),
+                query_attr,
+            ),
+            (
+                "command",
+                Attribute::new_const(None, "", AttrType::arg(false)),
+                OwnedCoercedAttr::new_with(|b| b.encode_arg(&StringWithMacros::ManyParts(macros)))
+                    .unwrap(),
+            ),
+        ];
+
+        for cfg in [
+            ConfigurationData::testing_new(),
+            ConfigurationData::unspecified(),
+        ] {
+            let node = node(cfg.dupe(), attrs.clone());
+            let queries: Vec<_> = node.body().unwrap().queries().collect();
+            assert_eq!(queries.len(), 1);
+            assert_query(&queries[0], "deps(root//pkg:dep)", &attr_query, &cfg);
         }
-        ConfiguredAttr::Dict(kinds.into_iter().collect())
     }
 
-    pub fn plugin_lists(self) -> &'a PluginLists {
-        &self.0.get().plugin_lists
+    #[test]
+    fn test_queries_preserve_order_and_distinct_literal_bindings() {
+        let first = query("deps(:dep, 1)", ":dep", "root//pkg:dep");
+        let second = query("deps(:dep)", ":dep", "root//pkg:dep");
+        let third = query(
+            "deps(root//other:dep)",
+            "root//other:dep",
+            "root//other:dep",
+        );
+        let macros = [&first, &second, &first, &third, &second]
+            .into_iter()
+            .map(|query| {
+                StringWithMacrosPart::Macro(
+                    false,
+                    MacroBase::Query(Box::new(QueryMacroBase {
+                        expansion_type: QueryExpansion::Target,
+                        query: query.clone(),
+                    })),
+                )
+            })
+            .collect();
+        let cfg = ConfigurationData::testing_new();
+        let node = node(
+            cfg.dupe(),
+            vec![(
+                "command",
+                Attribute::new_const(None, "", AttrType::arg(false)),
+                OwnedCoercedAttr::new_with(|b| b.encode_arg(&StringWithMacros::ManyParts(macros)))
+                    .unwrap(),
+            )],
+        );
+        let queries: Vec<_> = node.body().unwrap().queries().collect();
+        assert_eq!(queries.len(), 3);
+        for (actual, (reprint, expected)) in queries.iter().zip([
+            ("deps(root//pkg:dep, 1)", first),
+            ("deps(root//pkg:dep)", second),
+            ("deps(root//other:dep)", third),
+        ]) {
+            assert_query(actual, reprint, &expected, &cfg);
+        }
     }
 
-    pub fn buildfile_path(self) -> &'a BuildFilePath {
-        self.0.get().target_node.buildfile_path()
+    fn configured_node(label: ConfiguredTargetLabel, value: &str) -> ConfiguredTargetNode {
+        configured_node_with_rule_type(label, "test_rule", value)
+    }
+
+    fn configured_node_with_rule_type(
+        label: ConfiguredTargetLabel,
+        rule_type: &str,
+        value: &str,
+    ) -> ConfiguredTargetNode {
+        ConfiguredTargetNode::testing_new(
+            label,
+            rule_type,
+            ExecutionPlatformResolution::new_for_testing(None, Vec::new()),
+            vec![(
+                "value",
+                Attribute::new_const(None, "", AttrType::string()),
+                OwnedCoercedAttr::new_with(|b| b.encode_string(value)).unwrap(),
+            )],
+            None,
+        )
+    }
+
+    /// A node in `cfg` with one dep attribute, which configures to `dep`
+    /// in `cfg`.
+    fn configured_node_with_dep(dep: TargetLabel, cfg: ConfigurationData) -> ConfiguredTargetNode {
+        ConfiguredTargetNode::testing_new(
+            TargetLabel::testing_parse("cell//pkg:root").configure(cfg),
+            "test_rule",
+            ExecutionPlatformResolution::new_for_testing(None, Vec::new()),
+            vec![(
+                "dep",
+                Attribute::new_const(
+                    None,
+                    "",
+                    AttrType::dep(ProviderIdSet::EMPTY, PluginKindSet::EMPTY),
+                ),
+                OwnedCoercedAttr::new_with(|b| b.encode_dep(&ProvidersLabel::default_for(dep)))
+                    .unwrap(),
+            )],
+            None,
+        )
+    }
+
+    fn target_hash_without_configured_labels(node: &ConfiguredTargetNode) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        node.body()
+            .unwrap()
+            .target_hash_without_configured_labels(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn target_hash_without_configured_labels_ignores_configuration() {
+        let label = TargetLabel::testing_parse("cell//pkg:target");
+        let first = configured_node(label.configure(ConfigurationData::testing_new()), "value");
+        let second = configured_node(label.configure(ConfigurationData::unspecified()), "value");
+        let changed = configured_node(label.configure(ConfigurationData::unspecified()), "changed");
+
+        assert_eq!(
+            target_hash_without_configured_labels(&first),
+            target_hash_without_configured_labels(&second),
+        );
+        assert_ne!(
+            target_hash_without_configured_labels(&first),
+            target_hash_without_configured_labels(&changed),
+        );
+    }
+
+    #[test]
+    fn target_hash_without_configured_labels_tracks_selected_value() {
+        let label = TargetLabel::testing_parse("cell//pkg:target");
+        let branches = ["cell//cfg:linux", "cell//cfg:macos"];
+        let target_node = TargetNode::testing_new(
+            label,
+            RuleType::Starlark(Arc::new(StarlarkRuleType {
+                path: BzlOrBxlPath::Bzl(ImportPath::testing_new("cell//pkg:rules.bzl")),
+                name: "test_rule".to_owned(),
+            })),
+            vec![(
+                "value",
+                Attribute::new(None, "", AttrType::string()).expect("valid string attribute"),
+                OwnedCoercedAttr::new_with(|b| {
+                    let same = b.encode_string("same")?;
+                    let changed = b.encode_string("changed")?;
+                    let entries: Vec<_> = branches
+                        .iter()
+                        .map(|key| (ConfigurationSettingKey::testing_parse(key), same))
+                        .collect();
+                    b.encode_selector(&entries, Some(changed))
+                })
+                .expect("valid select"),
+            )],
+            None,
+        );
+
+        let configure = |platform: &str| {
+            let constraints = BTreeMap::from_iter([(
+                ConstraintKey::testing_new("cell//cfg:os"),
+                ConstraintValue::testing_new(platform, None),
+            )]);
+            let cfg = ConfigurationData::from_platform(
+                "cell//cfg:platform".to_owned(),
+                ConfigurationDataData::new(constraints.clone()),
+                ExecPlatformMarking::Unmarked,
+            )
+            .expect("valid platform configuration");
+            let matched_keys = MatchedConfigurationSettingKeys::new(
+                branches
+                    .iter()
+                    .map(|key| {
+                        (
+                            ConfigurationSettingKey::testing_parse(key),
+                            ConfigurationNode::new(
+                                (*key == platform)
+                                    .then(|| ConfigSettingData::testing_new(constraints.clone())),
+                            ),
+                        )
+                    })
+                    .collect(),
+            );
+            ConfiguredTargetNode::new(
+                label.configure(cfg.dupe()),
+                target_node.dupe(),
+                MatchedConfigurationSettingKeysWithCfg::new(
+                    ConfigurationNoExec::new(cfg),
+                    matched_keys,
+                ),
+                BuckFixedSortedMap::new(),
+                ExecutionPlatformResolution::new_for_testing(None, Vec::new()),
+                Vec::new(),
+                Vec::new(),
+                BuckFixedSortedMap::new(),
+                PluginLists::new(),
+            )
+        };
+
+        let linux = configure("cell//cfg:linux");
+        let macos = configure("cell//cfg:macos");
+        let windows = configure("cell//cfg:windows");
+
+        for (node, expected) in [(&linux, "same"), (&macos, "same"), (&windows, "changed")] {
+            assert_eq!(
+                node.body()
+                    .unwrap()
+                    .get("value", AttrInspectOptions::All)
+                    .expect("value attribute exists")
+                    .value,
+                ConfiguredAttr::String(StringLiteral(expected.into())),
+            );
+        }
+        assert_ne!(linux.label().cfg(), macos.label().cfg());
+        assert_eq!(
+            target_hash_without_configured_labels(&linux),
+            target_hash_without_configured_labels(&macos),
+            "different select branches with identical values must hash equally",
+        );
+        assert_ne!(
+            target_hash_without_configured_labels(&linux),
+            target_hash_without_configured_labels(&windows),
+            "selecting a different value must change the hash",
+        );
+    }
+
+    #[test]
+    fn target_hash_without_configured_labels_tracks_rule_type() {
+        let label = TargetLabel::testing_parse("cell//pkg:target");
+        let cfg = ConfigurationData::testing_new();
+        let configured_label = label.configure(cfg);
+        let first = configured_node_with_rule_type(configured_label.dupe(), "first_rule", "value");
+        let second = configured_node_with_rule_type(configured_label, "second_rule", "value");
+
+        assert_ne!(
+            target_hash_without_configured_labels(&first),
+            target_hash_without_configured_labels(&second),
+        );
+    }
+
+    #[test]
+    fn target_hash_without_configured_labels_tracks_target_label() {
+        let cfg = ConfigurationData::testing_new();
+        let first = configured_node(
+            TargetLabel::testing_parse("cell//pkg:first").configure(cfg.clone()),
+            "value",
+        );
+        let second = configured_node(
+            TargetLabel::testing_parse("cell//pkg:second").configure(cfg),
+            "value",
+        );
+
+        assert_ne!(
+            target_hash_without_configured_labels(&first),
+            target_hash_without_configured_labels(&second),
+            "changing the unconfigured target label must change the hash",
+        );
+    }
+
+    #[test]
+    fn target_hash_without_configured_labels_hashes_only_unconfigured_dependency_label() {
+        let dep = TargetLabel::testing_parse("cell//dep:target");
+        let changed_dep = TargetLabel::testing_parse("cell//dep:changed");
+
+        let first = configured_node_with_dep(dep.dupe(), ConfigurationData::testing_new());
+        let second = configured_node_with_dep(dep, ConfigurationData::unspecified());
+        let changed = configured_node_with_dep(changed_dep, ConfigurationData::unspecified());
+        assert_ne!(
+            first
+                .body()
+                .unwrap()
+                .get("dep", AttrInspectOptions::All)
+                .unwrap()
+                .value,
+            second
+                .body()
+                .unwrap()
+                .get("dep", AttrInspectOptions::All)
+                .unwrap()
+                .value,
+            "the configured dep labels should differ in configuration",
+        );
+
+        assert_eq!(
+            target_hash_without_configured_labels(&first),
+            target_hash_without_configured_labels(&second),
+        );
+        assert_ne!(
+            target_hash_without_configured_labels(&second),
+            target_hash_without_configured_labels(&changed),
+        );
+    }
+
+    #[test]
+    fn target_hash_without_configured_labels_does_not_hash_dependencies_recursively() {
+        let label = TargetLabel::testing_parse("cell//pkg:target");
+        let first_cfg = ConfigurationData::testing_new();
+        let second_cfg = ConfigurationData::unspecified();
+
+        let first_dep = configured_node(label.configure(first_cfg.clone()), "value");
+        let first =
+            ConfiguredTargetNode::new_forward(label.configure(second_cfg.clone()), first_dep)
+                .expect("forward target should use a different configuration");
+        let second_dep = configured_node(label.configure(second_cfg.clone()), "value");
+        let second =
+            ConfiguredTargetNode::new_forward(label.configure(first_cfg.clone()), second_dep)
+                .expect("forward target should use a different configuration");
+        let changed_dep = configured_node(label.configure(second_cfg), "changed");
+        let changed = ConfiguredTargetNode::new_forward(label.configure(first_cfg), changed_dep)
+            .expect("forward target should use a different configuration");
+
+        assert_eq!(
+            target_hash_without_configured_labels(&first),
+            target_hash_without_configured_labels(&second),
+        );
+        assert_eq!(
+            target_hash_without_configured_labels(&second),
+            target_hash_without_configured_labels(&changed),
+        );
     }
 }

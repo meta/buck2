@@ -8,20 +8,16 @@
  * above-listed licenses.
  */
 
-use std::borrow::Borrow;
+mod interner;
+
 use std::fmt;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::io::Read;
 use std::marker::PhantomData;
-use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
-use std::sync::atomic::Ordering;
+use std::str;
 
 use allocative::Allocative;
-use chrono::DateTime;
-use chrono::TimeZone;
-use chrono::Utc;
 use derivative::Derivative;
 use derive_more::Display;
 use digest::Digest;
@@ -30,9 +26,20 @@ use dupe::Copy_;
 use dupe::Dupe;
 use dupe::Dupe_;
 use num_enum::TryFromPrimitive;
-use once_cell::sync::Lazy;
+use pagable::Pagable;
 use sha1::Sha1;
 use sha2::Sha256;
+use static_interner::Intern;
+use strong_hash::StrongHash;
+
+pub use crate::cas_digest::interner::DigestInterner;
+pub use crate::cas_digest::interner::DigestInternerStats;
+pub use crate::cas_digest::interner::StashRecord;
+pub use crate::cas_digest::interner::SweepStats;
+pub use crate::cas_digest::interner::TrackedFileDigest;
+pub use crate::cas_digest::interner::Verdict;
+pub use crate::cas_digest::interner::file_digest_interner;
+pub use crate::cas_digest::interner::file_digest_interner_stats;
 
 /// The number of bytes required by a SHA-1 hash
 pub const SHA1_SIZE: usize = 20;
@@ -44,7 +51,7 @@ pub const SHA256_SIZE: usize = 32;
 pub const BLAKE3_SIZE: usize = 32;
 
 /// The bytes that make up a file digest.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Allocative, Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Allocative, Clone, Copy, Pagable)]
 pub enum RawDigest {
     // TODO: Perhaps this should be represented as a (DigestAlgorithmKind, [0;32])
     Sha1([u8; SHA1_SIZE]),
@@ -100,10 +107,35 @@ impl RawDigest {
     }
 }
 
+impl fmt::Debug for RawDigest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 impl fmt::Display for RawDigest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", hex::encode(self.as_bytes()))
+        match self {
+            Self::Sha1(x) => fmt_hex::<SHA1_SIZE, { SHA1_SIZE * 2 }>(x, f),
+            Self::Sha256(x) => fmt_hex::<SHA256_SIZE, { SHA256_SIZE * 2 }>(x, f),
+            Self::Blake3(x) | Self::Blake3Keyed(x) => {
+                fmt_hex::<BLAKE3_SIZE, { BLAKE3_SIZE * 2 }>(x, f)
+            }
+        }
     }
+}
+
+/// Hex-encodes `bytes` into a stack buffer, honoring the formatter's fill, alignment, width and
+/// precision like `str` does. `HEX_LEN` must be `N * 2`; the compiler enforces it.
+fn fmt_hex<const N: usize, const HEX_LEN: usize>(
+    bytes: &[u8; N],
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    const { assert!(HEX_LEN == N * 2) };
+    let mut encoded = [0u8; HEX_LEN];
+    hex::encode_to_slice(bytes, &mut encoded)
+        .expect("should fit: the buffer is exactly twice the digest length");
+    f.pad(str::from_utf8(&encoded).expect("should be valid UTF-8: hex output is ASCII"))
 }
 
 /// The family of digest algorithm associated with a digest. This tells you what kind of digest it
@@ -164,12 +196,13 @@ impl std::str::FromStr for DigestAlgorithmFamily {
 }
 
 /// An actual digest algorithm you can use to hash data.
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Dupe, Hash, Allocative)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Dupe, Hash, Allocative, Pagable)]
 pub enum DigestAlgorithm {
     Sha1,
     Sha256,
     Blake3,
-    Blake3Keyed { key: &'static [u8; 32] },
+    Blake3Keyed,
+    Blake3KeyedTest,
 }
 
 impl DigestAlgorithm {
@@ -178,41 +211,48 @@ impl DigestAlgorithm {
             Self::Sha1 => DigestAlgorithmFamily::Sha1,
             Self::Sha256 => DigestAlgorithmFamily::Sha256,
             Self::Blake3 => DigestAlgorithmFamily::Blake3,
-            Self::Blake3Keyed { .. } => DigestAlgorithmFamily::Blake3Keyed,
+            Self::Blake3Keyed | Self::Blake3KeyedTest => DigestAlgorithmFamily::Blake3Keyed,
         }
     }
 }
 
-#[derive(Copy, Clone, Dupe, Debug, Allocative, Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Dupe, Debug, Allocative, Hash, Eq, PartialEq, Pagable)]
 pub struct CasDigestConfig {
-    inner: &'static CasDigestConfigInner,
+    inner: Intern<CasDigestConfigInner>,
 }
 
 impl CasDigestConfig {
     pub fn testing_default() -> Self {
-        static COMPAT: Lazy<CasDigestConfigInner> =
-            Lazy::new(|| CasDigestConfigInner::new(vec![DigestAlgorithm::Sha1], None).unwrap());
-
-        Self { inner: &COMPAT }
+        Self {
+            inner: CAS_DIGEST_CONFIG_INTERNER
+                .intern(CasDigestConfigInner::new(vec![DigestAlgorithm::Sha1], None).unwrap()),
+        }
     }
 
-    /// We just Box::leak this since we create one per daemon and as a result just use
-    /// CasDigestConfig as a pointer.
+    /// Create a new CasDigestConfig. Values are interned so that identical configs
+    /// share a single allocation.
     pub fn leak_new(
         algorithms: Vec<DigestAlgorithm>,
         preferred_source_algorithm: Option<DigestAlgorithm>,
     ) -> Result<Self, CasDigestConfigError> {
-        let inner = Box::leak(Box::new(CasDigestConfigInner::new(
+        let inner = CAS_DIGEST_CONFIG_INTERNER.intern(CasDigestConfigInner::new(
             algorithms,
             preferred_source_algorithm,
-        )?));
+        )?);
         Ok(Self { inner })
     }
 
     /// Allow optimizing the empty file digest path, we do that by having the CasDigestConfig hold
     /// a cell for it (later in this stack).
-    pub fn empty_file_digest(self) -> crate::file_ops::metadata::TrackedFileDigest {
+    pub fn empty_file_digest(self) -> TrackedFileDigest {
         self.inner.empty_file_digest.dupe()
+    }
+
+    /// Whether `digest` is the digest of empty content under one of the configured algorithms. A
+    /// size of 0 alone does not qualify: a declared digest can pair a size of 0 with the hash of
+    /// other content, and that pair names nothing in a CAS.
+    pub fn is_empty_digest<Kind: CasDigestKind>(self, digest: &CasDigest<Kind>) -> bool {
+        digest.size() == 0 && self.inner.empty_digests.contains(digest.raw_digest())
     }
 
     pub fn preferred_algorithm(self) -> DigestAlgorithm {
@@ -242,8 +282,22 @@ impl CasDigestConfig {
     pub fn allows_blake3_keyed(self) -> bool {
         matches!(
             self.inner.digest256,
-            Some(DigestAlgorithm::Blake3Keyed { .. })
+            Some(DigestAlgorithm::Blake3Keyed | DigestAlgorithm::Blake3KeyedTest)
         )
+    }
+
+    /// The configured algorithm of `family`, if this config accepts digests of that family.
+    ///
+    /// This is what to hash with when the result has to compare equal to a digest that is already
+    /// in hand: the preferred algorithm may be a different family from that digest's.
+    pub fn algorithm_for_family(self, family: DigestAlgorithmFamily) -> Option<DigestAlgorithm> {
+        let slot = match family {
+            DigestAlgorithmFamily::Sha1 => self.inner.digest160,
+            DigestAlgorithmFamily::Sha256
+            | DigestAlgorithmFamily::Blake3
+            | DigestAlgorithmFamily::Blake3Keyed => self.inner.digest256,
+        };
+        slot.filter(|algorithm| algorithm.family() == family)
     }
 
     /// Access the config for source files. Note that there is no method to go back to the
@@ -251,7 +305,7 @@ impl CasDigestConfig {
     pub fn source_files_config(self) -> Self {
         match &self.inner.source {
             SourceFilesConfig::UseSelf => self,
-            SourceFilesConfig::UseThis(other) => Self { inner: other },
+            SourceFilesConfig::UseThis(other) => Self { inner: *other },
         }
     }
 }
@@ -267,21 +321,29 @@ impl fmt::Display for CasDigestConfig {
     }
 }
 
-#[derive(Debug, Allocative, Hash, Eq, PartialEq)]
+static_interner::interner!(
+    CAS_DIGEST_CONFIG_INTERNER,
+    buck2_hash::BuckHasher,
+    CasDigestConfigInner
+);
+
+#[derive(Debug, Allocative, Hash, Eq, PartialEq, Pagable)]
 struct CasDigestConfigInner {
     /// The algorithm we use for non-source files, action digests, etc.
     preferred_algorithm: DigestAlgorithm,
     digest160: Option<DigestAlgorithm>,
     digest256: Option<DigestAlgorithm>,
-    empty_file_digest: crate::file_ops::metadata::TrackedFileDigest,
+    empty_file_digest: TrackedFileDigest,
+    /// The digest of empty content under each configured algorithm.
+    empty_digests: Vec<RawDigest>,
     /// A potentially different configuration to use when digesting source files.
     source: SourceFilesConfig,
 }
 
-#[derive(Debug, Allocative, Hash, Eq, PartialEq)]
+#[derive(Debug, Allocative, Hash, Eq, PartialEq, Pagable)]
 enum SourceFilesConfig {
     UseSelf,
-    UseThis(Box<CasDigestConfigInner>),
+    UseThis(Intern<CasDigestConfigInner>),
 }
 
 impl CasDigestConfigInner {
@@ -305,6 +367,15 @@ impl CasDigestConfigInner {
             })
             .transpose()?;
 
+        let empty_digests = algorithms
+            .iter()
+            .map(|algo| {
+                CasDigestData::digester_for_algorithm(*algo)
+                    .finalize()
+                    .digest
+            })
+            .collect();
+
         let mut digest160 = None;
         let mut digest256 = None;
 
@@ -313,7 +384,7 @@ impl CasDigestConfigInner {
                 DigestAlgorithm::Sha1 => &mut digest160,
                 DigestAlgorithm::Sha256 => &mut digest256,
                 DigestAlgorithm::Blake3 => &mut digest256,
-                DigestAlgorithm::Blake3Keyed { .. } => &mut digest256,
+                DigestAlgorithm::Blake3Keyed | DigestAlgorithm::Blake3KeyedTest => &mut digest256,
             };
 
             if let Some(slot) = &slot {
@@ -323,15 +394,15 @@ impl CasDigestConfigInner {
             *slot = Some(algo);
         }
 
-        let empty_file_digest = TrackedCasDigest {
-            inner: Arc::new(TrackedCasDigestInner {
-                data: CasDigest::from_content_for_algorithm(&[], preferred_algorithm),
-                expires: AtomicI64::new(0),
-            }),
-        };
+        let empty_file_digest = TrackedFileDigest::from_parts(
+            CasDigest::from_content_for_algorithm(&[], preferred_algorithm),
+            0,
+        );
 
         let source = match preferred_source_algorithm {
-            Some(algo) => SourceFilesConfig::UseThis(Box::new(Self::new(vec![algo], None)?)),
+            Some(algo) => SourceFilesConfig::UseThis(
+                CAS_DIGEST_CONFIG_INTERNER.intern(Self::new(vec![algo], None)?),
+            ),
             None => SourceFilesConfig::UseSelf,
         };
 
@@ -340,6 +411,7 @@ impl CasDigestConfigInner {
             digest160,
             digest256,
             empty_file_digest,
+            empty_digests,
             source,
         })
     }
@@ -443,7 +515,7 @@ impl<Kind: CasDigestKind> Digester<Kind> {
 /// Separate struct to allow us to use  `repr(transparent)` below and guarantee an identical
 /// layout.
 #[derive(
-    Display, PartialEq, Eq, PartialOrd, Ord, Hash, Allocative, Clone, Dupe, Copy
+    Display, PartialEq, Eq, PartialOrd, Ord, Hash, Allocative, Clone, Dupe, Copy, Pagable
 )]
 #[display("{}:{}", digest, size)]
 pub struct CasDigestData {
@@ -481,8 +553,21 @@ impl CasDigestData {
             DigestAlgorithm::Sha1 => DigesterVariant::Sha1(Sha1::new()),
             DigestAlgorithm::Sha256 => DigesterVariant::Sha256(Sha256::new()),
             DigestAlgorithm::Blake3 => DigesterVariant::Blake3(Box::new(blake3::Hasher::new())),
-            DigestAlgorithm::Blake3Keyed { key } => {
-                DigesterVariant::Blake3Keyed(Box::new(blake3::Hasher::new_keyed(key)))
+            DigestAlgorithm::Blake3Keyed => {
+                #[cfg(fbcode_build)]
+                {
+                    DigesterVariant::Blake3Keyed(Box::new(blake3::Hasher::new_keyed(
+                        blake3_constants::BLAKE3_HASH_KEY,
+                    )))
+                }
+                #[cfg(not(fbcode_build))]
+                {
+                    panic!("Blake3Keyed is not supported in the open source build")
+                }
+            }
+            DigestAlgorithm::Blake3KeyedTest => {
+                static TEST_KEY: [u8; 32] = [0; 32];
+                DigesterVariant::Blake3Keyed(Box::new(blake3::Hasher::new_keyed(&TEST_KEY)))
             }
         };
 
@@ -494,7 +579,7 @@ impl CasDigestData {
     }
 }
 
-#[derive(Display, Derivative, Allocative, Clone_, Dupe_, Copy_)]
+#[derive(Display, Derivative, Allocative, Clone_, Dupe_, Copy_, Pagable)]
 #[allocative(bound = "")]
 #[derivative(PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[display("{}", data)]
@@ -599,7 +684,9 @@ impl<Kind: CasDigestKind> CasDigest<Kind> {
             DigestAlgorithm::Sha1 => RawDigest::parse_sha1(data.as_bytes()),
             DigestAlgorithm::Sha256 => RawDigest::parse_sha256(data.as_bytes()),
             DigestAlgorithm::Blake3 => RawDigest::parse_blake3(data.as_bytes()),
-            DigestAlgorithm::Blake3Keyed { .. } => RawDigest::parse_blake3_keyed(data.as_bytes()),
+            DigestAlgorithm::Blake3Keyed | DigestAlgorithm::Blake3KeyedTest => {
+                RawDigest::parse_blake3_keyed(data.as_bytes())
+            }
         }?;
 
         Ok((digest, algo))
@@ -663,11 +750,9 @@ impl<Kind: CasDigestKind> CasDigest<Kind> {
     }
 }
 
-pub trait CasDigestKind: Sized + 'static {
-    /// This needs to be a concrete implementation since we share the empty instance in a static
-    /// but we can't have static generics.
-    fn empty_digest(config: CasDigestConfig) -> Option<TrackedCasDigest<Self>>;
-}
+/// What a [`CasDigest`] is a digest of. Phantom: it keeps digests of files, actions and dep files
+/// from being passed for one another, and nothing else.
+pub trait CasDigestKind: Sized + 'static {}
 
 #[derive(Display)]
 #[display("{}", hex::encode(&of.raw_digest().as_bytes()[0..4]))]
@@ -697,176 +782,10 @@ pub enum CasDigestParseError {
     InvalidSize(#[source] std::num::ParseIntError),
 }
 
-/// A digest to interact with RE. This, despite the name, can be a file or a directory. We track
-/// the sha1 and the size of the underlying blob. We *also* keep track of its expiry in the CAS.
-/// Note that for directory, the expiry represents that of the directory's blob, not its underlying
-/// contents.
-#[derive(Allocative)]
-#[allocative(bound = "")]
-struct TrackedCasDigestInner<Kind: CasDigestKind> {
-    data: CasDigest<Kind>,
-    expires: AtomicI64,
-}
-
-#[derive(Display, Dupe_, Allocative)]
-#[allocative(bound = "")]
-#[display("{}", self.data())]
-pub struct TrackedCasDigest<Kind: CasDigestKind> {
-    inner: Arc<TrackedCasDigestInner<Kind>>,
-}
-
-impl<Kind: CasDigestKind> Clone for TrackedCasDigest<Kind> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.dupe(),
-        }
-    }
-}
-
-impl<Kind: CasDigestKind> Borrow<CasDigest<Kind>> for TrackedCasDigest<Kind> {
-    fn borrow(&self) -> &CasDigest<Kind> {
-        self.data()
-    }
-}
-
-impl<Kind: CasDigestKind> Borrow<CasDigest<Kind>> for &TrackedCasDigest<Kind> {
-    fn borrow(&self) -> &CasDigest<Kind> {
-        self.data()
-    }
-}
-
-impl<Kind: CasDigestKind> PartialOrd for TrackedCasDigest<Kind> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.data().partial_cmp(other.data())
-    }
-}
-
-impl<Kind: CasDigestKind> Ord for TrackedCasDigest<Kind> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.data().cmp(other.data())
-    }
-}
-
-impl<Kind: CasDigestKind> PartialEq for TrackedCasDigest<Kind> {
-    fn eq(&self, other: &Self) -> bool {
-        self.data().eq(other.data())
-    }
-}
-
-impl<Kind: CasDigestKind> Eq for TrackedCasDigest<Kind> {}
-
-impl<Kind: CasDigestKind> Hash for TrackedCasDigest<Kind> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.data().hash(state)
-    }
-}
-
-impl<Kind: CasDigestKind> fmt::Debug for TrackedCasDigest<Kind> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[{} expires at {}]",
-            self,
-            self.inner.expires.load(Ordering::Relaxed)
-        )
-    }
-}
-
-impl<Kind: CasDigestKind> buck2_core::directory_digest::DirectoryDigest for TrackedCasDigest<Kind> {}
-
-impl<Kind: CasDigestKind> TrackedCasDigest<Kind> {
-    pub fn new(data: CasDigest<Kind>, config: CasDigestConfig) -> Self
-    where
-        Kind: CasDigestKind,
-    {
-        if data.size() == 0 {
-            return Self::empty(config);
-        }
-
-        Self {
-            inner: Arc::new(TrackedCasDigestInner {
-                data,
-                expires: AtomicI64::new(0),
-            }),
-        }
-    }
-
-    pub fn new_expires(
-        data: CasDigest<Kind>,
-        expiry: DateTime<Utc>,
-        config: CasDigestConfig,
-    ) -> Self
-    where
-        Kind: CasDigestKind,
-    {
-        let res = Self::new(data, config);
-        res.update_expires(expiry);
-        res
-    }
-
-    pub fn empty(config: CasDigestConfig) -> Self
-    where
-        Kind: CasDigestKind,
-    {
-        match Kind::empty_digest(config) {
-            Some(o) => o,
-            None => Self {
-                inner: Arc::new(TrackedCasDigestInner {
-                    data: CasDigest::empty(config),
-                    expires: AtomicI64::new(0),
-                }),
-            },
-        }
-    }
-
-    pub fn from_content(bytes: &[u8], config: CasDigestConfig) -> Self
-    where
-        Kind: CasDigestKind,
-    {
-        if bytes.is_empty() {
-            return Self::empty(config);
-        }
-
-        Self {
-            inner: Arc::new(TrackedCasDigestInner {
-                data: CasDigest::from_content(bytes, config),
-                expires: AtomicI64::new(0),
-            }),
-        }
-    }
-
-    pub fn data(&self) -> &CasDigest<Kind> {
-        &self.inner.data
-    }
-
-    pub fn raw_digest(&self) -> &RawDigest {
-        self.inner.data.raw_digest()
-    }
-
-    pub fn size(&self) -> u64 {
-        self.inner.data.size()
-    }
-
-    pub fn expires(&self) -> buck2_error::Result<DateTime<Utc>> {
-        match Utc.timestamp_opt(self.inner.expires.load(Ordering::Relaxed), 0) {
-            chrono::MappedLocalTime::Single(t) => Ok(t),
-            chrono::MappedLocalTime::None => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Environment,
-                "CAS Digest expiration is an invalid local time"
-            )),
-            chrono::MappedLocalTime::Ambiguous(t1, t2) => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Environment,
-                "Cas Digest expiration is ambiguous, ranging from {:?} to {:?}",
-                t1,
-                t2
-            )),
-        }
-    }
-
-    pub fn update_expires(&self, time: DateTime<Utc>) {
-        self.inner
-            .expires
-            .store(time.timestamp(), Ordering::Relaxed)
+impl<Kind: CasDigestKind> StrongHash for CasDigest<Kind> {
+    fn strong_hash<H: Hasher>(&self, state: &mut H) {
+        self.raw_digest().as_bytes().strong_hash(state);
+        self.size().strong_hash(state);
     }
 }
 
@@ -874,53 +793,68 @@ pub mod testing {
     use super::*;
 
     pub fn sha1_sha256() -> CasDigestConfig {
-        static CONFIG: Lazy<CasDigestConfigInner> = Lazy::new(|| {
-            CasDigestConfigInner::new(vec![DigestAlgorithm::Sha1, DigestAlgorithm::Sha256], None)
-                .unwrap()
-        });
-        CasDigestConfig { inner: &CONFIG }
+        CasDigestConfig {
+            inner: CAS_DIGEST_CONFIG_INTERNER.intern(
+                CasDigestConfigInner::new(
+                    vec![DigestAlgorithm::Sha1, DigestAlgorithm::Sha256],
+                    None,
+                )
+                .unwrap(),
+            ),
+        }
     }
 
     pub fn sha1_blake3() -> CasDigestConfig {
-        static CONFIG: Lazy<CasDigestConfigInner> = Lazy::new(|| {
-            CasDigestConfigInner::new(vec![DigestAlgorithm::Sha1, DigestAlgorithm::Blake3], None)
-                .unwrap()
-        });
-        CasDigestConfig { inner: &CONFIG }
+        CasDigestConfig {
+            inner: CAS_DIGEST_CONFIG_INTERNER.intern(
+                CasDigestConfigInner::new(
+                    vec![DigestAlgorithm::Sha1, DigestAlgorithm::Blake3],
+                    None,
+                )
+                .unwrap(),
+            ),
+        }
     }
 
     pub fn sha256_sha1() -> CasDigestConfig {
-        static CONFIG: Lazy<CasDigestConfigInner> = Lazy::new(|| {
-            CasDigestConfigInner::new(vec![DigestAlgorithm::Sha256, DigestAlgorithm::Sha1], None)
-                .unwrap()
-        });
-        CasDigestConfig { inner: &CONFIG }
+        CasDigestConfig {
+            inner: CAS_DIGEST_CONFIG_INTERNER.intern(
+                CasDigestConfigInner::new(
+                    vec![DigestAlgorithm::Sha256, DigestAlgorithm::Sha1],
+                    None,
+                )
+                .unwrap(),
+            ),
+        }
     }
 
     pub fn sha1() -> CasDigestConfig {
-        static CONFIG: Lazy<CasDigestConfigInner> =
-            Lazy::new(|| CasDigestConfigInner::new(vec![DigestAlgorithm::Sha1], None).unwrap());
-        CasDigestConfig { inner: &CONFIG }
+        CasDigestConfig {
+            inner: CAS_DIGEST_CONFIG_INTERNER
+                .intern(CasDigestConfigInner::new(vec![DigestAlgorithm::Sha1], None).unwrap()),
+        }
     }
 
     pub fn sha256() -> CasDigestConfig {
-        static CONFIG: Lazy<CasDigestConfigInner> =
-            Lazy::new(|| CasDigestConfigInner::new(vec![DigestAlgorithm::Sha256], None).unwrap());
-        CasDigestConfig { inner: &CONFIG }
+        CasDigestConfig {
+            inner: CAS_DIGEST_CONFIG_INTERNER
+                .intern(CasDigestConfigInner::new(vec![DigestAlgorithm::Sha256], None).unwrap()),
+        }
     }
 
     pub fn blake3() -> CasDigestConfig {
-        static CONFIG: Lazy<CasDigestConfigInner> =
-            Lazy::new(|| CasDigestConfigInner::new(vec![DigestAlgorithm::Blake3], None).unwrap());
-        CasDigestConfig { inner: &CONFIG }
+        CasDigestConfig {
+            inner: CAS_DIGEST_CONFIG_INTERNER
+                .intern(CasDigestConfigInner::new(vec![DigestAlgorithm::Blake3], None).unwrap()),
+        }
     }
 
     pub fn blake3_keyed() -> CasDigestConfig {
-        static CONFIG: Lazy<CasDigestConfigInner> = Lazy::new(|| {
-            CasDigestConfigInner::new(vec![DigestAlgorithm::Blake3Keyed { key: &[0; 32] }], None)
-                .unwrap()
-        });
-        CasDigestConfig { inner: &CONFIG }
+        CasDigestConfig {
+            inner: CAS_DIGEST_CONFIG_INTERNER.intern(
+                CasDigestConfigInner::new(vec![DigestAlgorithm::Blake3KeyedTest], None).unwrap(),
+            ),
+        }
     }
 }
 
@@ -928,6 +862,46 @@ pub mod testing {
 mod tests {
     use super::*;
     use crate::file_ops::metadata::FileDigestKind;
+
+    #[test]
+    fn test_raw_digest_display_all_algorithms() {
+        // Cover every byte value, including leading zeroes and high-bit bytes.
+        for start in (0u8..=224).step_by(32) {
+            let bytes = std::array::from_fn(|i| start + i as u8);
+            let digests = [
+                RawDigest::Sha1(bytes[..SHA1_SIZE].try_into().unwrap()),
+                RawDigest::Sha256(bytes),
+                RawDigest::Blake3(bytes),
+                RawDigest::Blake3Keyed(bytes),
+            ];
+            for digest in digests {
+                assert_eq!(hex::encode(digest.as_bytes()), digest.to_string());
+            }
+        }
+    }
+
+    #[test]
+    fn test_raw_digest_display_format_options() {
+        let digests = [
+            RawDigest::Sha1([0x9a; SHA1_SIZE]),
+            RawDigest::Sha256([0x9a; SHA256_SIZE]),
+        ];
+        for digest in digests {
+            // Width, fill, alignment and precision apply exactly as they would to the hex `str`.
+            let hex = hex::encode(digest.as_bytes());
+            assert_eq!(format!("{hex:>80}"), format!("{digest:>80}"));
+            assert_eq!(format!("{hex:_<80}"), format!("{digest:_<80}"));
+            assert_eq!(format!("{hex:^80}"), format!("{digest:^80}"));
+            assert_eq!(format!("{hex:.7}"), format!("{digest:.7}"));
+        }
+
+        let digest = RawDigest::Sha256([0x9a; SHA256_SIZE]);
+        assert_eq!(
+            format!("{:>16}{}", "", "9a".repeat(SHA256_SIZE)),
+            format!("{digest:>80}")
+        );
+        assert_eq!("9a9a9a9", format!("{digest:.7}"));
+    }
 
     #[test]
     fn test_digest_from_str() {

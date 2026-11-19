@@ -1,0 +1,21 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error in configured node dependency, dependency chain follows (-> indicates depends on, ^ indicates same configuration as previous):
+       root//:top (<unspecified>)
+    -> root//load_cycle:target (^)
+
+
+Caused by:
+    0: looking up unconfigured target node `root//load_cycle:target`
+    1: Error loading targets in package `root//load_cycle` for target `root//load_cycle:target`
+    2: From load at load_cycle/TARGETS.fixture:1
+    3: From load at load_cycle/1.bzl:9
+    4: Dependency cycle detected (`->` means "depends on"):
+         root//load_cycle/1.bzl ->
+         root//load_cycle/2.bzl ->
+         root//load_cycle/3.bzl ->
+         root//load_cycle/1.bzl

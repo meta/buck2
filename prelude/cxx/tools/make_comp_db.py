@@ -15,8 +15,6 @@ $ make_comp_db.py gen --output=entry2.json foo2.cpp -- g++ -c -fPIC
 $ make_comp_db.py merge --output=comp_db.json entry.json entry2.json
 """
 
-# pyre-unsafe
-
 import argparse
 import json
 import shlex

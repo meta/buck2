@@ -629,8 +629,12 @@ haskell_prebuilt_library(
     }),
     shared_libs = select({
         ":linux-x86_64": {"libHSghc-internal-9.1001.0-79a4-ghc9.10.1.so": "ghc/lib/x86_64-linux-ghc-9.10.1/libHSghc-internal-9.1001.0-79a4-ghc9.10.1.so"},
-        ":macos-arm64": {"libHSghc-internal-9.1001.0-4685-ghc9.10.1.dylib": "ghc/lib/aarch64-osx-ghc-9.10.1/libHSghc-internal-9.1001.0-4685-ghc9.10.1.dylib"},
-        ":macos-x86_64": {"libHSghc-internal-9.1001.0-e204-ghc9.10.1.dylib": "ghc/lib/x86_64-osx-ghc-9.10.1/libHSghc-internal-9.1001.0-e204-ghc9.10.1.dylib"},
+        ":macos-arm64": {
+            "libHSghc-internal-9.1001.0-4685-ghc9.10.1.dylib": "ghc/lib/aarch64-osx-ghc-9.10.1/libHSghc-internal-9.1001.0-4685-ghc9.10.1.dylib"
+        },
+        ":macos-x86_64": {
+            "libHSghc-internal-9.1001.0-e204-ghc9.10.1.dylib": "ghc/lib/x86_64-osx-ghc-9.10.1/libHSghc-internal-9.1001.0-e204-ghc9.10.1.dylib"
+        },
     }),
     static_libs = select({
         ":linux-x86_64": ["ghc/lib/x86_64-linux-ghc-9.10.1/ghc-internal-9.1001.0-79a4/libHSghc-internal-9.1001.0-79a4.a"],

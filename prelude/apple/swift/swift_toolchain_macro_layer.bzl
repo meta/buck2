@@ -19,6 +19,4 @@ def swift_toolchain_macro_impl(swift_toolchain_rule = None, **kwargs):
         elif bitcode.lower() in ["embed", "embed-bitcode", "object-embed-bitcode"]:
             kwargs["object_format"] = "object-embed-bitcode"
 
-    swift_toolchain_rule(
-        **kwargs
-    )
+    swift_toolchain_rule(**kwargs)

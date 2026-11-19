@@ -7,6 +7,17 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
+    autocargo = {
+        "cargo_toml_config": {
+            "package": {
+                "authors": ["Facebook"],
+                "categories": ["rust-patterns"],
+                "description": "Derive Dupe",
+                "documentation": "https://docs.rs/dupe",
+                "version": "0.9.1",
+            },
+        },
+    },
     proc_macro = True,
     deps = [
         "fbsource//third-party/rust:proc-macro2",

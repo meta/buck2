@@ -15,10 +15,10 @@ use async_trait::async_trait;
 use buck2_build_api::actions::query::CONFIGURED_ATTR_TO_VALUE;
 use buck2_build_api::actions::query::PackageLabelOption;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfo;
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
 use buck2_build_api::transition::TRANSITION_CALCULATION;
 use buck2_build_api::transition::TransitionCalculation;
+use buck2_configuration_providers::platform_info::PlatformInfo;
 use buck2_core::configuration::cfg_diff::cfg_diff;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::configuration::transition::applied::TransitionApplied;
@@ -26,6 +26,8 @@ use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_error::BuckErrorContext;
 use buck2_events::dispatch::get_dispatcher;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
 use buck2_interpreter::factory::BuckStarlarkModule;
 use buck2_interpreter::factory::StarlarkEvaluatorProvider;
@@ -35,18 +37,23 @@ use buck2_node::attrs::configured_attr::ConfiguredAttr;
 use buck2_node::attrs::display::AttrDisplayWithContextExt;
 use derive_more::Display;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use itertools::Itertools;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use starlark::eval::Evaluator;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::ValueOf;
+use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::structs::AllocStruct;
-use starlark_map::ordered_map::OrderedMap;
-use starlark_map::sorted_map::SortedMap;
 
 use crate::transition::calculation_fetch_transition::FetchTransition;
 use crate::transition::calculation_fetch_transition::TransitionData;
@@ -71,24 +78,39 @@ enum ApplyTransitionError {
     InconsistentTransitionAndComputation,
 }
 
-fn call_transition_function<'v>(
-    transition: &TransitionData,
-    conf: &ConfigurationData,
+struct TransitionFunctionArgs<'a, 'v> {
+    transition: &'a TransitionData,
     refs: Value<'v>,
     attrs: Option<Value<'v>>,
+}
+
+fn call_transition_function<'v>(
+    conf: &ConfigurationData,
+    params: &TransitionFunctionArgs<'_, 'v>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> buck2_error::Result<TransitionApplied> {
+    let TransitionFunctionArgs {
+        transition,
+        refs,
+        attrs,
+    } = *params;
     let mut args = vec![(
         "platform",
         eval.heap()
-            .alloc_complex(PlatformInfo::from_configuration(conf, eval.heap())?),
+            .alloc(PlatformInfo::from_configuration(conf, eval.heap())?)
+            .to_value(),
     )];
     let impl_ = match transition {
         TransitionData::MagicObject(v) => {
             args.push(("refs", refs));
-            v.implementation.to_value()
+            v.as_ref().add_to_heap(eval.heap()).as_ref().implementation
         }
-        TransitionData::Target(v) => v.r#impl.to_value().get(),
+        TransitionData::Target(v) => v
+            .as_ref()
+            .add_to_heap(eval.heap())
+            .as_ref()
+            .r#impl
+            .to_value(),
     };
     if let Some(attrs) = attrs {
         args.push(("attrs", attrs));
@@ -97,27 +119,27 @@ fn call_transition_function<'v>(
         .eval_function(impl_, &[], &args)
         .map_err(buck2_error::Error::from)?;
     if transition.is_split() {
-        match UnpackDictEntries::<&str, &PlatformInfo>::unpack_value(new_platforms)? {
+        match ValueOf::<DictType<StarlarkStr, PlatformInfo>>::new(new_platforms) {
             Some(dict) => {
-                let mut split = OrderedMap::new();
-                for (k, v) in dict.entries {
-                    let prev = split.insert(k.to_owned(), v.to_configuration()?);
+                let mut split = BuckMutInsertionMap::new();
+                for entry in dict.iter() {
+                    let (k, v) = entry?;
+                    let prev = split.insert(
+                        k.as_str().to_owned(),
+                        v.get().to_configuration(conf.exec_marking().dupe())?,
+                    );
                     assert!(prev.is_none());
                 }
-                Ok(TransitionApplied::Split(SortedMap::from(split)))
+                Ok(TransitionApplied::Split(BuckFixedSortedMap::from(split)))
             }
-            None => Err(buck2_error::Error::from(
-                ApplyTransitionError::SplitTransitionMustReturnDict,
-            )
-            .into()),
+            None => Err(ApplyTransitionError::SplitTransitionMustReturnDict.into()),
         }
     } else {
         match <&PlatformInfo>::unpack_value_err(new_platforms) {
-            Ok(platform) => Ok(TransitionApplied::Single(platform.to_configuration()?)),
-            Err(_) => Err(buck2_error::Error::from(
-                ApplyTransitionError::NonSplitTransitionMustReturnPlatformInfo,
-            )
-            .into()),
+            Ok(platform) => Ok(TransitionApplied::Single(
+                platform.to_configuration(conf.exec_marking().dupe())?,
+            )),
+            Err(_) => Err(ApplyTransitionError::NonSplitTransitionMustReturnPlatformInfo.into()),
         }
     }
 }
@@ -131,33 +153,33 @@ async fn do_apply_transition(
 ) -> buck2_error::Result<TransitionApplied> {
     let transition = ctx.fetch_transition(transition_id).await?;
     let mut refs = Vec::new();
-    let mut refs_refs = Vec::new();
-    for (s, t) in transition.refs() {
-        let provider_collection_value = ctx.fetch_transition_function_reference(&t).await?;
-        refs.push((
-            *s,
-            // This is safe because we store a reference to provider collection in `refs_refs`.
-            unsafe { provider_collection_value.value().to_frozen_value() },
-        ));
-        refs_refs.push(provider_collection_value);
+    for (s, t) in transition.refs().collect::<Vec<_>>() {
+        let provider_collection_value = ctx.fetch_transition_function_reference(t).await?;
+        refs.push((s, provider_collection_value));
     }
     let print = EventDispatcherPrintHandler(get_dispatcher());
     let eval_kind = StarlarkEvalKind::Transition(Arc::new(transition_id.clone()));
     let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind).await?;
-    BuckStarlarkModule::with_profiling(|env_provider| {
-        let module = env_provider.make();
-        let (finished_eval, res) = provider
-            .with_evaluator(&module, cancellation.into(), |eval, _| {
+    BuckStarlarkModule::with_profiling(|module| {
+        let (finished_eval, res) =
+            provider.with_evaluator(&module, cancellation.into(), |eval, _| {
                 eval.set_print_handler(&print);
                 eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
-                let refs = module.heap().alloc(AllocStruct(refs));
+                let refs = module
+                    .heap()
+                    .alloc(AllocStruct(
+                        refs.iter()
+                            .map(|(s, v)| (*s, v.add_heap_ref(module.heap()))),
+                    ))
+                    .to_value();
                 let attrs = match (transition.attr_names(), attrs) {
                     (Some(names), Some(values)) => {
                         let mut attrs = Vec::new();
-                        for (name, value) in names.into_iter().zip_eq(values.iter()) {
+                        for (name, value) in names.zip_eq(values.iter()) {
+                            let name = name?;
                             let value = match value {
                                 Some(value) => (CONFIGURED_ATTR_TO_VALUE.get()?)(
-                                    &value,
+                                    value,
                                     PackageLabelOption::TransitionAttr,
                                     module.heap(),
                                 )
@@ -172,7 +194,7 @@ async fn do_apply_transition(
                             };
                             attrs.push((name, value));
                         }
-                        Some(module.heap().alloc(AllocStruct(attrs)))
+                        Some(module.heap().alloc(AllocStruct(attrs)).to_value())
                     }
                     (None, None) => None,
                     (Some(_), None) | (None, Some(_)) => {
@@ -181,20 +203,23 @@ async fn do_apply_transition(
                         );
                     }
                 };
-                match call_transition_function(&transition, conf, refs, attrs, eval)? {
+                let params = TransitionFunctionArgs {
+                    transition: &transition,
+                    refs,
+                    attrs,
+                };
+                match call_transition_function(conf, &params, eval)? {
                     TransitionApplied::Single(new) => {
-                        let new_2 =
-                            match call_transition_function(&transition, &new, refs, attrs, eval)
-                                .buck_error_context(
-                                    "applying transition again on transition output",
-                                )? {
-                                TransitionApplied::Single(new_2) => new_2,
-                                TransitionApplied::Split(_) => {
-                                    unreachable!(
-                                        "split transition filtered out in call_transition_function"
-                                    )
-                                }
-                            };
+                        let new_2 = match call_transition_function(&new, &params, eval)
+                            .buck_error_context("applying transition again on transition output")?
+                        {
+                            TransitionApplied::Single(new_2) => new_2,
+                            TransitionApplied::Split(_) => {
+                                unreachable!(
+                                    "split transition filtered out in call_transition_function"
+                                )
+                            }
+                        };
                         if let Err(diff) = cfg_diff(&new, &new_2) {
                             return Err(
                                 ApplyTransitionError::SplitTransitionAgainDifferentPlatformInfo(
@@ -212,9 +237,8 @@ async fn do_apply_transition(
                         Ok(TransitionApplied::Split(split))
                     }
                 }
-            })
-            .map_err(buck2_error::Error::from)?;
-        let (token, _) = finished_eval.finish(None)?;
+            })?;
+        let (token, _) = finished_eval.finish()?;
         Ok((token, res))
     })
 }
@@ -249,12 +273,13 @@ impl TransitionCalculation for TransitionCalculationImpl {
     async fn apply_transition(
         &self,
         ctx: &mut DiceComputations<'_>,
-        configured_attrs: &OrderedMap<&str, Arc<ConfiguredAttr>>,
+        configured_attrs: &BuckMutInsertionMap<&str, Arc<ConfiguredAttr>>,
         cfg: &ConfigurationData,
         transition_id: &TransitionId,
     ) -> buck2_error::Result<Arc<TransitionApplied>> {
-        #[derive(Debug, Eq, PartialEq, Hash, Clone, Display, Allocative)]
+        #[derive(Debug, Eq, PartialEq, Hash, Clone, Display, Allocative, Pagable)]
         #[display("{} ({}){}", transition_id, cfg, self.fmt_attrs())]
+        #[pagable_typetag(dice::DiceKeyDyn)]
         struct TransitionKey {
             cfg: ConfigurationData,
             transition_id: TransitionId,
@@ -312,27 +337,30 @@ impl TransitionCalculation for TransitionCalculationImpl {
                 })?))
             }
 
-            fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-                if let (Ok(x), Ok(y)) = (x, y) {
-                    x == y
-                } else {
-                    false
-                }
+            fn equality_behavior() -> EqualityBehavior<Self::Value> {
+                EqualityBehavior::Compare(|x, y| {
+                    if let (Ok(x), Ok(y)) = (x, y) {
+                        x == y
+                    } else {
+                        false
+                    }
+                })
+            }
+
+            fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+                OkPagableValueSerialize::<Self::Value>::new()
             }
         }
 
         let transition = ctx.fetch_transition(transition_id).await?;
 
-        #[allow(clippy::manual_map)]
-        let attrs = if let Some(attrs) = transition.attr_names() {
-            Some(
+        let attrs = match transition.attr_names() {
+            Some(attrs) => Some(
                 attrs
-                    .into_iter()
-                    .map(|attr| configured_attrs.get(attr).duped())
-                    .collect(),
-            )
-        } else {
-            None
+                    .map(|attr| Ok(configured_attrs.get(attr?).duped()))
+                    .collect::<buck2_error::Result<_>>()?,
+            ),
+            None => None,
         };
 
         let key = TransitionKey {
@@ -341,6 +369,6 @@ impl TransitionCalculation for TransitionCalculationImpl {
             attrs,
         };
 
-        ctx.compute(&key).await?.map_err(buck2_error::Error::from)
+        ctx.compute(&key).await?.dupe()
     }
 }

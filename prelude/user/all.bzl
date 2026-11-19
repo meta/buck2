@@ -25,13 +25,7 @@ _all_specs = [
 ]
 
 rules = {
-    s.name: rule(
-        impl = s.impl,
-        attrs = s.attrs,
-        doc = s.doc,
-        is_toolchain_rule = s.is_toolchain_rule,
-        **{k: v for k, v in {"cfg": s.cfg}.items() if v != None}
-    )
+    s.name: rule(impl = s.impl, attrs = s.attrs, doc = s.doc, is_toolchain_rule = s.is_toolchain_rule, **{k: v for k, v in {"cfg": s.cfg}.items() if v != None})
     for s in _all_specs
 }
 

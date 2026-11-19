@@ -24,20 +24,6 @@ def _parse_prefix_mappings(raw_rules):
 
     return rules
 
-def _strip_third_party_rust_version(target: str) -> str:
-    # When upgrading libraries we either suffix them as `-old` or with a version, e.g. `-1-08`
-    # Strip those so we grab the right one in open source.
-    if target.endswith(":md-5"):  # md-5 is the one exception
-        return target
-    xs = target.split("-")
-    for i in reversed(range(len(xs))):
-        s = xs[i]
-        if s == "old" or s.isdigit():
-            xs.pop(i)
-        else:
-            break
-    return "-".join(xs)
-
 # Cell the BUCK file being processed belongs to
 ACTIVE_CELL = native.get_cell_name()
 
@@ -135,16 +121,10 @@ IMPLICIT_REWRITE_RULES = {
         dirs = [
             ("third-party", "third-party"),
         ],
-        dynamic = [
-            ("third-party/rust", _strip_third_party_rust_version),
-        ],
     ),
     "third-party": struct(
         dirs = [
             ("", "third-party"),
-        ],
-        dynamic = [
-            ("rust", lambda path: "third-party/" + _strip_third_party_rust_version(path)),
         ],
     ),
 }
@@ -174,14 +154,14 @@ Some example use cases for this:
   (eg: internal/my_library/... and oss-project/my_library/my_library/...)
 """
 
-def translate_target(
-        target: str,
-        ctx = DEFAULT_REWRITE_CTX) -> str:
+def translate_target(target: str, ctx = DEFAULT_REWRITE_CTX) -> str:
     if "//" not in target:
         # This is a local target, aka ":foo". Don't touch
         return target
 
     (cell, path) = target.split("//", 1)
+    # Ignore the optional @ when matching cells; preserve unmatched targets verbatim.
+    cell = cell.removeprefix("@")
 
     if cell == ctx.cells.root:
         # This cell is explicitly root. Don't touch
@@ -213,13 +193,9 @@ def translate_target(
     if exact != None:
         return ctx.cells.shim + "//" + exact
 
-    for (match_root_dir, replace_root_dir) in getattr(rules, "dirs", []):
+    for match_root_dir, replace_root_dir in getattr(rules, "dirs", []):
         if _path_rooted_in_dir(path, match_root_dir):
             return ctx.cells.shim + "//" + _swap_root_dir_for_path(path, match_root_dir, replace_root_dir)
-
-    for (match_root_dir, fn) in getattr(rules, "dynamic", []):
-        if _path_rooted_in_dir(path, match_root_dir):
-            return ctx.cells.shim + "//" + fn(path)
 
     return target
 

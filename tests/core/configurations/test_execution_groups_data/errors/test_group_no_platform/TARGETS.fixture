@@ -1,0 +1,8 @@
+load(":rules.bzl", "copying_test", "r")
+
+r(name = "t")
+
+copying_test(
+    name = "copied",
+    test = ":t",
+)

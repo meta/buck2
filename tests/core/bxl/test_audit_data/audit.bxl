@@ -15,11 +15,11 @@ def _audit_output_action_exists_impl(ctx):
     action = ctx.audit().output(buck_out)
 
     asserts.equals(action.owner(), target.label)
+    asserts.equals(action.outputs()[0].basename, "foo.txt")
 
 audit_output_action_exists = bxl_main(
     impl = _audit_output_action_exists_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )
 
 def _audit_content_based_output_action_exists_impl(ctx):
@@ -44,8 +44,7 @@ def _audit_output_config_not_match_impl(ctx):
 
 audit_output_config_not_match = bxl_main(
     impl = _audit_output_config_not_match_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )
 
 def _audit_output_invalid_path_impl(ctx):
@@ -53,6 +52,5 @@ def _audit_output_invalid_path_impl(ctx):
 
 audit_output_invalid_path = bxl_main(
     impl = _audit_output_invalid_path_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )

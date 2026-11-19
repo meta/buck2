@@ -12,4 +12,3 @@ Error: error: Args parameter after another args or kwargs parameter
   |
 1 | def test(x, *, *args): pass
   |                ^^^^^
-  |

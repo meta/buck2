@@ -13,6 +13,7 @@ use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 
+use crate::agent::DocsAgentCommand;
 use crate::help_doc::MarkdownHelpDocCommand;
 use crate::query::DocsAqueryCommand;
 use crate::query::DocsCqueryCommand;
@@ -20,6 +21,7 @@ use crate::query::DocsUqueryCommand;
 use crate::starlark::DocsStarlarkCommand;
 use crate::starlark_builtins::StarlarkBuiltinsCommand;
 
+mod agent;
 mod help_doc;
 mod query;
 mod starlark;
@@ -28,6 +30,7 @@ mod starlark_builtins;
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, clap::Parser)]
 enum DocsKind {
+    Agent(DocsAgentCommand),
     Starlark(DocsStarlarkCommand),
     StarlarkBuiltins(StarlarkBuiltinsCommand),
     Uquery(DocsUqueryCommand),
@@ -62,6 +65,7 @@ impl DocsCommand {
 
         let submatches = matches.unwrap_subcommand();
         match self.docs_kind {
+            DocsKind::Agent(cmd) => ctx.exec(cmd, submatches, events_ctx),
             DocsKind::Starlark(cmd) => ctx.exec(cmd, submatches, events_ctx),
             DocsKind::StarlarkBuiltins(cmd) => ctx.exec(cmd, submatches, events_ctx),
             DocsKind::Uquery(cmd) => cmd.exec(submatches, ctx),

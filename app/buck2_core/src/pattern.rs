@@ -14,6 +14,7 @@
 mod ascii_pattern;
 pub mod package;
 pub mod parse_package;
+#[allow(clippy::module_inception)]
 pub mod pattern;
 pub mod pattern_type;
 pub mod query_file_literal;

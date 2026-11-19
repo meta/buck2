@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-use gazebo::prelude::IterOwned;
-
 use crate::paths::file_name::FileName;
 use crate::paths::file_name::FileNameBuf;
 use crate::paths::forward_rel_path::ForwardRelativePath;
@@ -27,7 +25,7 @@ impl<'a> IntoFileNameBufIterator for &'a ForwardRelativePath {
     type Iterator = impl Iterator<Item = FileNameBuf> + 'a;
 
     fn into_iter(self) -> Self::Iterator {
-        self.iter().owned()
+        self.iter().map(FileName::to_owned)
     }
 }
 
@@ -35,7 +33,7 @@ impl<'a> IntoFileNameBufIterator for &'a ForwardRelativePathBuf {
     type Iterator = impl Iterator<Item = FileNameBuf> + 'a;
 
     fn into_iter(self) -> Self::Iterator {
-        self.iter().owned()
+        self.iter().map(FileName::to_owned)
     }
 }
 

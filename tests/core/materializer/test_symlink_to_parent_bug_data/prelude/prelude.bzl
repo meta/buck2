@@ -7,25 +7,31 @@
 # above-listed licenses.
 
 def _whistle(ctx):
-    whistle = ctx.actions.declare_output("whistle")
-    ctx.actions.run([
-        "ln",
-        "-s",
-        ".",
-        whistle.as_output(),
-    ], category = "test")
+    whistle = ctx.actions.declare_output("whistle", has_content_based_path = False)
+    ctx.actions.run(
+        [
+            "ln",
+            "-s",
+            ".",
+            whistle.as_output(),
+        ],
+        category = "test",
+    )
     return [DefaultInfo(default_output = whistle)]
 
 whistle = rule(impl = _whistle, attrs = {})
 
 def _flute(ctx):
-    flute = ctx.actions.declare_output("flute")
-    ctx.actions.run([
-        "ln",
-        "-s",
-        "flute",
-        flute.as_output(),
-    ], category = "test")
+    flute = ctx.actions.declare_output("flute", has_content_based_path = False)
+    ctx.actions.run(
+        [
+            "ln",
+            "-s",
+            "flute",
+            flute.as_output(),
+        ],
+        category = "test",
+    )
     return [DefaultInfo(default_output = flute)]
 
 flute = rule(impl = _flute, attrs = {})

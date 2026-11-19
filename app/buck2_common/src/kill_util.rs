@@ -37,7 +37,6 @@ mod unix {
 
     use nix::sys::signal::Signal;
     use tracing::info;
-    use tracing::warn;
 
     pub(crate) async fn try_terminate_process_gracefully(
         pid: i32,
@@ -53,10 +52,6 @@ mod unix {
                 return Err(e);
             }
         }
-        warn!(
-            "Failed to gracefully terminate process `{}`, sending SIGKILL.",
-            pid,
-        );
         match send_signal_and_wait_for_shutdown(Signal::SIGKILL, pid, None).await {
             ControlFlow::Continue(_) => {
                 unreachable!("Not expected when there is no timeout specified.")
@@ -71,23 +66,17 @@ mod unix {
         UnexpectedError(buck2_error::Error),
     }
 
-    fn check_result(pid: nix::unistd::Pid, result: nix::Result<()>) -> ControlFlow<StoppedWaiting> {
-        match result {
-            // Signal is sent successfully, now we need to wait for a process to terminate.
-            Ok(_) => ControlFlow::Continue(()),
-            // There is no such process, our desired outcome.
-            Err(nix::errno::Errno::ESRCH) => ControlFlow::Break(StoppedWaiting::Success),
-            Err(e) => {
-                ControlFlow::Break(StoppedWaiting::UnexpectedError(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
-                    "Unexpected error while waiting for process `{}` to terminate (`{}`)",
-                    pid,
-                    e
-                )))
-            }
-        }
+    fn unexpected(pid: nix::unistd::Pid, e: impl std::fmt::Display) -> ControlFlow<StoppedWaiting> {
+        ControlFlow::Break(StoppedWaiting::UnexpectedError(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "Unexpected error while waiting for process `{}` to terminate (`{}`)",
+            pid,
+            e
+        )))
     }
 
+    /// `pid` is not a child of this process, so a zombie counts as gone: see
+    /// [`buck2_process_kill::process_is_gone`].
     async fn send_signal_and_wait_for_shutdown(
         signal: nix::sys::signal::Signal,
         pid: nix::unistd::Pid,
@@ -95,17 +84,24 @@ mod unix {
     ) -> ControlFlow<StoppedWaiting> {
         let start = Instant::now();
         info!("Sending signal `{}` to process `{}`.", signal, pid);
-        // Actually send a signal.
-        check_result(pid, nix::sys::signal::kill(pid, signal))?;
+        match nix::sys::signal::kill(pid, signal) {
+            Ok(()) => {}
+            // There is no such process, our desired outcome.
+            Err(nix::errno::Errno::ESRCH) => return ControlFlow::Break(StoppedWaiting::Success),
+            Err(e) => return unexpected(pid, e),
+        }
         loop {
+            match buck2_process_kill::process_is_gone(pid.as_raw()) {
+                Ok(true) => return ControlFlow::Break(StoppedWaiting::Success),
+                Ok(false) => {}
+                Err(e) => return unexpected(pid, e),
+            }
             if let Some(timeout) = timeout {
                 if Instant::now() - start > timeout {
                     break;
                 }
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
-            // Just check the process, signal already sent.
-            check_result(pid, nix::sys::signal::kill(pid, None))?;
         }
         ControlFlow::Continue(())
     }
@@ -151,7 +147,7 @@ mod tests {
         "#;
         child_file.write_all(child_script.as_bytes()).await?;
 
-        // @patternlint-disable-next-line buck2-no-command-new
+        // ast-grep-ignore: rust/buck2-no-command-new
         let mut command = tokio::process::Command::new("sh");
         command
             .args(["parent.sh"])
@@ -170,7 +166,10 @@ mod tests {
             pid_str.unwrap().parse().unwrap()
         };
 
-        try_terminate_process_gracefully(pid, Duration::from_secs(1)).await?;
+        // Generous: on a loaded machine the trap can take more than a second,
+        // and a SIGKILL mid-trap fails the test. The wait ends as soon as the
+        // child is gone, so this costs nothing when the trap is quick.
+        try_terminate_process_gracefully(pid, Duration::from_secs(60)).await?;
 
         assert!(tokio::fs::try_exists(dir.path().join("gracefully_terminated")).await?);
 
@@ -206,7 +205,7 @@ mod tests {
         "#;
         child_file.write_all(child_script.as_bytes()).await?;
 
-        // @patternlint-disable-next-line buck2-no-command-new
+        // ast-grep-ignore: rust/buck2-no-command-new
         let mut command = tokio::process::Command::new("sh");
         command
             .args(["parent.sh"])
@@ -216,7 +215,12 @@ mod tests {
             .stderr(Stdio::null());
 
         let mut parent = command.spawn()?;
-        parent.wait().await?;
+        // Bounded: the parent script spins until the child has registered its
+        // trap, and the SIGKILL leg waits for the child to be gone with no
+        // timeout of its own. A hang here would otherwise be the suite's.
+        tokio::time::timeout(Duration::from_secs(60), parent.wait())
+            .await
+            .expect("the parent script should finish within a minute")?;
 
         let pid = {
             let stdout = parent.stdout.take().unwrap();
@@ -225,7 +229,12 @@ mod tests {
             pid_str.unwrap().parse().unwrap()
         };
 
-        try_terminate_process_gracefully(pid, Duration::from_secs(1)).await?;
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            try_terminate_process_gracefully(pid, Duration::from_secs(1)),
+        )
+        .await
+        .expect("the child should be gone well within a minute of the SIGKILL")?;
 
         assert!(!tokio::fs::try_exists(dir.path().join("gracefully_terminated")).await?);
 

@@ -10,11 +10,14 @@
 
 package com.facebook.buck.android.zipalign;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.io.CharStreams;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.util.Objects;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ZipAlign {
 
   private final String zipalignPath;
@@ -37,7 +40,8 @@ public class ZipAlign {
     zipalignProcess.waitFor();
     if (zipalignProcess.exitValue() != 0) {
       String errorMessage;
-      try (Reader reader = new InputStreamReader(zipalignProcess.getErrorStream())) {
+      try (Reader reader =
+          new InputStreamReader(Objects.requireNonNull(zipalignProcess.getErrorStream()))) {
         errorMessage = CharStreams.toString(reader);
       }
       if (errorMessage.contains("Unable to open")) {

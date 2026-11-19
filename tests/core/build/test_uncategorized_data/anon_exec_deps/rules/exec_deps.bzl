@@ -27,9 +27,12 @@ def _assert_eq(a, b):
 def _mirror_impl(ctx: AnalysisContext) -> list[Provider]:
     return [DefaultInfo(), MirrorInfo(info = ctx.attrs)]
 
-_mirror_exec_dep = rule(impl = _mirror_impl, attrs = {
-    "exec_dep": attrs.exec_dep(),
-})
+_mirror_exec_dep = rule(
+    impl = _mirror_impl,
+    attrs = {
+        "exec_dep": attrs.exec_dep(),
+    },
+)
 
 def _exec_dep_good_impl(ctx: AnalysisContext) -> Promise:
     def f(providers):
@@ -37,13 +40,19 @@ def _exec_dep_good_impl(ctx: AnalysisContext) -> Promise:
         _assert_eq(res.exec_dep.label.configured_target().name, "remote_only")
         return [DefaultInfo()]
 
-    return ctx.actions.anon_target(_mirror_exec_dep, {
-        "exec_dep": ctx.attrs.dep[ExecDepInfo].info,
-    }).promise.map(f)
+    return ctx.actions.anon_target(
+        _mirror_exec_dep,
+        {
+            "exec_dep": ctx.attrs.dep[ExecDepInfo].info,
+        },
+    ).promise.map(f)
 
-exec_dep_good = rule(impl = _exec_dep_good_impl, attrs = {
-    "dep": attrs.dep(),
-})
+exec_dep_good = rule(
+    impl = _exec_dep_good_impl,
+    attrs = {
+        "dep": attrs.dep(),
+    },
+)
 
 def _exec_dep_bad_impl(ctx: AnalysisContext) -> Promise:
     def f(providers):
@@ -51,22 +60,34 @@ def _exec_dep_bad_impl(ctx: AnalysisContext) -> Promise:
         _assert_eq(res.exec_dep, "remote_only")
         return [DefaultInfo()]
 
-    return ctx.actions.anon_target(_mirror_exec_dep, {
-        "exec_dep": ctx.attrs.dep[ExecDepInfo].info,
-    }).promise.map(f)
+    return ctx.actions.anon_target(
+        _mirror_exec_dep,
+        {
+            "exec_dep": ctx.attrs.dep[ExecDepInfo].info,
+        },
+    ).promise.map(f)
 
-exec_dep_bad = rule(impl = _exec_dep_bad_impl, attrs = {
-    "dep": attrs.dep(),
-})
+exec_dep_bad = rule(
+    impl = _exec_dep_bad_impl,
+    attrs = {
+        "dep": attrs.dep(),
+    },
+)
 
 def _exec_dep_rejects_dep_impl(ctx: AnalysisContext) -> Promise:
     def f(_providers):
         return [DefaultInfo()]
 
-    return ctx.actions.anon_target(_mirror_exec_dep, {
-        "exec_dep": ctx.attrs.dep,
-    }).promise.map(f)
+    return ctx.actions.anon_target(
+        _mirror_exec_dep,
+        {
+            "exec_dep": ctx.attrs.dep,
+        },
+    ).promise.map(f)
 
-exec_dep_rejects_dep = rule(impl = _exec_dep_rejects_dep_impl, attrs = {
-    "dep": attrs.dep(),
-})
+exec_dep_rejects_dep = rule(
+    impl = _exec_dep_rejects_dep_impl,
+    attrs = {
+        "dep": attrs.dep(),
+    },
+)

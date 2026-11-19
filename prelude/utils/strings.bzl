@@ -13,6 +13,6 @@ def strip_prefix(prefix: str, s: str) -> [str, None]:
     """
 
     if s.startswith(prefix):
-        return s[len(prefix):]
+        return s[len(prefix) :]
 
     return None

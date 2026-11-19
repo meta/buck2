@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 
+use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use itertools::Itertools;
-use once_cell::sync::Lazy;
 use starlark_derive::starlark_module;
 use thiserror::Error;
 
@@ -32,7 +32,7 @@ use crate::values::none::NoneType;
 
 // A breakpoint takes over the console UI, so having two going at once confuses everything.
 // Have a global mutex to ensure one at a time.
-static BREAKPOINT_MUTEX: Lazy<Mutex<State>> = Lazy::new(|| Mutex::new(State::Allow));
+static BREAKPOINT_MUTEX: LazyLock<Mutex<State>> = LazyLock::new(|| Mutex::new(State::Allow));
 
 /// `breakpoint` function uses this trait to perform console IO.
 pub(crate) trait BreakpointConsole {
@@ -237,7 +237,7 @@ mod tests {
 
     // Breakpoint tests should not be executed concurrently
     // to avoid interfering with `BREAKPOINT_MUTEX`.
-    static TEST_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+    static TEST_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     fn reset_global_state() {
         // `breakpoint()` function modifies the global state.

@@ -8,10 +8,6 @@
  * above-listed licenses.
  */
 
+pub(crate) mod health_check_in_process_service;
 #[cfg(fbcode_build)]
 pub(crate) mod health_check_rpc_client;
-#[cfg(fbcode_build)]
-pub mod health_check_rpc_server;
-
-pub(crate) mod health_check_executor;
-pub(crate) mod health_check_in_process_service;

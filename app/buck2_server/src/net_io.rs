@@ -24,12 +24,12 @@ pub struct NetworkStat {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod collector {
-    use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::Mutex;
 
     use buck2_error::BuckErrorContext;
     use buck2_error::conversion::from_any_with_tag;
+    use buck2_hash::BuckMutMap;
     use dupe::Dupe;
     use psutil::network::NetIoCountersCollector;
 
@@ -54,9 +54,9 @@ mod collector {
         /// * If a new NIC appears between collection periods, we'll start keeping
         ///   track of it.
         /// * If a NIC *disappears*, then we stop reporting on its stats.
-        pub fn collect(&self) -> buck2_error::Result<Option<HashMap<String, NetworkStat>>> {
+        pub fn collect(&self) -> buck2_error::Result<Option<BuckMutMap<String, NetworkStat>>> {
             let mut collector = self.collector.lock().expect("poisoned lock");
-            let counters: HashMap<_, _> = collector
+            let counters: BuckMutMap<_, _> = collector
                 .net_io_counters_pernic()
                 .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
                 .buck_error_context("collecting old counters")?
@@ -108,8 +108,7 @@ mod collector {
 
 #[cfg(target_os = "windows")]
 mod collector {
-    use std::collections::HashMap;
-
+    use buck2_hash::BuckMutMap;
     use buck2_util::os::win::network_interface_table::NetworkInterfaceTable;
     use dupe::Dupe;
 
@@ -123,8 +122,8 @@ mod collector {
             Self
         }
 
-        pub fn collect(&self) -> buck2_error::Result<Option<HashMap<String, NetworkStat>>> {
-            let mut counters = HashMap::new();
+        pub fn collect(&self) -> buck2_error::Result<Option<BuckMutMap<String, NetworkStat>>> {
+            let mut counters = BuckMutMap::default();
             let table = NetworkInterfaceTable::new()?;
 
             for interface in table {
@@ -158,8 +157,7 @@ mod collector {
 // psutil network stats aren't implemented other unix-likes.
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 mod collector {
-    use std::collections::HashMap;
-
+    use buck2_hash::BuckMutMap;
     use dupe::Dupe;
 
     use super::*;
@@ -172,7 +170,7 @@ mod collector {
             Self
         }
 
-        pub fn collect(&self) -> buck2_error::Result<Option<HashMap<String, NetworkStat>>> {
+        pub fn collect(&self) -> buck2_error::Result<Option<BuckMutMap<String, NetworkStat>>> {
             Ok(None)
         }
     }

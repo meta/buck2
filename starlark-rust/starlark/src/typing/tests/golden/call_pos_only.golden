@@ -18,7 +18,6 @@ error: Unexpected parameter named `x`
   |
 7 |     f(x="bad")
   |       ^^^^^^^
-  |
 
 Compiler typechecker (eval):
 error: Unexpected parameter named `x`
@@ -26,4 +25,3 @@ error: Unexpected parameter named `x`
   |
 7 |     f(x="bad")
   |       ^^^^^^^
-  |

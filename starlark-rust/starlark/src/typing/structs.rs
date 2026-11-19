@@ -22,26 +22,46 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use dupe::Dupe;
-use starlark_map::sorted_map::SortedMap;
+use mini_map::MiniFixedSortedMap;
+use pagable::Pagable;
+use pagable::pagable_typetag;
+use starlark_derive::type_matcher;
 
+use crate as starlark;
 use crate::typing::Ty;
 use crate::typing::TyBasic;
 use crate::typing::TypingBinOp;
 use crate::typing::TypingOracleCtx;
+use crate::typing::custom::TyCustomDyn;
 use crate::typing::custom::TyCustomImpl;
 use crate::typing::error::TypingNoContextError;
 use crate::typing::error::TypingNoContextOrInternalError;
 use crate::util::arc_str::ArcStr;
 use crate::values::Value;
-use crate::values::structs::StructRef;
+use crate::values::structs::Struct;
 use crate::values::typing::type_compiled::alloc::TypeMatcherAlloc;
 use crate::values::typing::type_compiled::matcher::TypeMatcher;
+use crate::values::typing::type_compiled::matcher::TypeMatcherDyn;
+
+#[derive(Allocative, Eq, PartialEq, Hash, Debug, Clone, Copy, Dupe, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
+struct StructMatcher;
+
+#[type_matcher]
+impl TypeMatcher for StructMatcher {
+    fn matches(&self, value: Value) -> bool {
+        Struct::is_instance(value)
+    }
+}
 
 /// Struct type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative, Pagable
+)]
+#[pagable_typetag(TyCustomDyn)]
 pub struct TyStruct {
     /// The fields that are definitely present in the struct, with their types.
-    pub(crate) fields: SortedMap<ArcStr, Ty>,
+    pub(crate) fields: MiniFixedSortedMap<ArcStr, Ty>,
     /// [`true`] if there might be additional fields not captured above,
     /// [`false`] if this struct has no extra members.
     pub(crate) extra: bool,
@@ -51,7 +71,7 @@ impl TyStruct {
     /// Any struct.
     pub fn any() -> TyStruct {
         TyStruct {
-            fields: SortedMap::new(),
+            fields: MiniFixedSortedMap::new(),
             extra: true,
         }
     }
@@ -100,7 +120,7 @@ impl TyCustomImpl for TyStruct {
                 fields.push((a_k.dupe(), Ty::union2(a_v.clone(), b_v.clone())));
             }
             Ok(Arc::new(TyStruct {
-                fields: SortedMap::from_iter(fields),
+                fields: MiniFixedSortedMap::from_iter(fields),
                 extra: a.extra,
             }))
         } else {
@@ -109,15 +129,6 @@ impl TyCustomImpl for TyStruct {
     }
 
     fn matcher<T: TypeMatcherAlloc>(&self, factory: T) -> T::Result {
-        #[derive(Allocative, Eq, PartialEq, Hash, Debug, Clone, Copy, Dupe)]
-        struct StructMatcher;
-
-        impl TypeMatcher for StructMatcher {
-            fn matches(&self, value: Value) -> bool {
-                StructRef::is_instance(value)
-            }
-        }
-
         factory.alloc(StructMatcher)
     }
 }

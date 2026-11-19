@@ -1,3 +1,5 @@
-load(":defs.bzl", "projected_output")
+load(":defs.bzl", "projected_output", "projected_symlink_output")
 
 projected_output(name = "projected_output")
+
+projected_symlink_output(name = "projected_symlink_output")

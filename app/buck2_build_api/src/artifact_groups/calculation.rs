@@ -9,7 +9,6 @@
  */
 
 use std::iter::zip;
-use std::sync::Arc;
 
 use allocative::Allocative;
 use async_recursion::async_recursion;
@@ -30,6 +29,7 @@ use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::package::PackageLabel;
 use buck2_directory::directory::directory_data::DirectoryData;
+use buck2_directory::directory::exhaustiveness::Exhaustiveness;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_execute::artifact_value::ArtifactValue;
@@ -41,17 +41,24 @@ use buck2_execute::directory::ActionSharedDirectory;
 use buck2_execute::directory::INTERNER;
 use buck2_execute::directory::extract_artifact_value;
 use buck2_execute::directory::insert_artifact;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_util::size_assert;
+use buck2_util::time_span::TimeSpan;
 use derive_more::Display;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::Future;
 use futures::FutureExt;
 use itertools::Itertools;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use ref_cast::RefCast;
 use smallvec::SmallVec;
-use sorted_vector_map::SortedVectorMap;
 
 use crate::actions::artifact::get_artifact_fs::GetArtifactFs;
 use crate::actions::calculation::ActionCalculation;
@@ -80,9 +87,9 @@ impl ArtifactGroupCalculation for DiceComputations<'_> {
     ) -> buck2_error::Result<ArtifactGroupValues> {
         // TODO consider if we need to cache this
         let resolved_artifacts = input.resolved_artifact(self).await?;
-        ensure_artifact_group_staged(self, resolved_artifacts.clone())
+        ensure_artifact_group_staged(self, resolved_artifacts)
             .await?
-            .to_group_values(&resolved_artifacts)
+            .into_group_values(resolved_artifacts)
     }
 }
 
@@ -101,29 +108,29 @@ impl ArtifactGroupCalculation for DiceComputations<'_> {
 ///  - The staged future is kept to a minimum size (which we track in an assertion below).
 ///  - The result of the staged future is kept to a minimum size (also tracked below).
 ///  - For the single Artifact case from ensure_artifact_group_staged, we defer allocation
-///    of the ArtifactGroupValues until `to_group_values()` is called. For callers waiting
+///    of the ArtifactGroupValues until `into_group_values()` is called. For callers waiting
 ///    on many inputs, this allows them to only allocate those large values only after all
 ///    inputs are ready.
-pub(crate) fn ensure_artifact_group_staged<'a>(
-    ctx: &'a mut DiceComputations,
+pub(crate) fn ensure_artifact_group_staged<'a, 'd>(
+    ctx: &'a mut DiceComputations<'d>,
     input: ResolvedArtifactGroup<'a>,
-) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a, 'd> {
     match input {
         ResolvedArtifactGroup::Artifact(artifact) => {
-            ensure_artifact_staged(ctx, artifact.clone()).left_future()
+            ensure_artifact_staged(ctx, artifact).left_future()
         }
         ResolvedArtifactGroup::TransitiveSetProjection(key) => ctx
             .compute(EnsureTransitiveSetProjectionKey::ref_cast(key))
-            .map(|v| Ok(EnsureArtifactGroupReady::TransitiveSet(v??)))
+            .map(|v| Ok(EnsureArtifactGroupReady::TransitiveSet(v?.dupe()?)))
             .right_future(),
     }
 }
 
 /// See [ensure_artifact_group_staged].
-pub(super) fn ensure_base_artifact_staged<'a>(
-    dice: &'a mut DiceComputations,
-    artifact: BaseArtifactKind,
-) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+pub(super) fn ensure_base_artifact_staged<'a, 'd>(
+    dice: &'a mut DiceComputations<'d>,
+    artifact: &'a BaseArtifactKind,
+) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a, 'd> {
     match artifact {
         BaseArtifactKind::Build(built) => ensure_build_artifact_staged(dice, built).left_future(),
         BaseArtifactKind::Source(source) => {
@@ -133,46 +140,47 @@ pub(super) fn ensure_base_artifact_staged<'a>(
 }
 
 /// See [ensure_artifact_group_staged].
-pub(super) fn ensure_artifact_staged<'a>(
-    dice: &'a mut DiceComputations,
-    artifact: Artifact,
-) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+pub(super) fn ensure_artifact_staged<'a, 'd>(
+    dice: &'a mut DiceComputations<'d>,
+    artifact: &'a Artifact,
+) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a, 'd> {
     let ArtifactKind { base, path } = artifact.data();
     match path.is_empty() {
-        true => ensure_base_artifact_staged(dice, base.clone()).left_future(),
+        true => ensure_base_artifact_staged(dice, base).left_future(),
         false => dice
             .compute(EnsureProjectedArtifactKey::ref_cast(artifact.data()))
-            .map(|v| Ok(EnsureArtifactGroupReady::Single(v??)))
+            .map(|v| Ok(EnsureArtifactGroupReady::Single(v?.dupe()?)))
             .right_future(),
     }
 }
 
-fn ensure_build_artifact_staged<'a>(
-    dice: &'a mut DiceComputations,
-    built: BuildArtifact,
-) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+fn ensure_build_artifact_staged<'a, 'd>(
+    dice: &'a mut DiceComputations<'d>,
+    built: &'a BuildArtifact,
+) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a, 'd> {
     ActionCalculation::build_action(dice, built.key()).map(move |action_outputs| {
         let action_outputs = action_outputs?;
         if let Some(value) = action_outputs.get(built.get_path()) {
             Ok(EnsureArtifactGroupReady::Single(value.dupe()))
         } else {
-            Err(
-                EnsureArtifactStagedError::BuildArtifactMissing(built.clone(), action_outputs)
-                    .into(),
+            Err(EnsureArtifactStagedError::BuildArtifactMissing(
+                built.dupe(),
+                action_outputs.dupe(),
             )
+            .into())
         }
     })
 }
 
 fn ensure_source_artifact_staged<'a>(
     dice: &'a mut DiceComputations,
-    source: SourceArtifact,
+    source: &'a SourceArtifact,
 ) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a> {
     async move {
         Ok(EnsureArtifactGroupReady::Single(
             path_artifact_value(
                 dice,
-                Arc::new(source.get_path().to_cell_path()),
+                source.get_path().to_cell_path(),
                 Some(source.get_path().package()),
             )
             .await?,
@@ -216,15 +224,15 @@ pub(crate) enum EnsureArtifactGroupReady {
 impl EnsureArtifactGroupReady {
     /// Converts the ensured artifact to an ArtifactGroupValues. The caller must ensure that the passed in artifact
     /// is the same one that was used to ensure this.
-    pub(crate) fn to_group_values<'v>(
+    pub(crate) fn into_group_values<'v>(
         self,
-        resolved_artifact_group: &ResolvedArtifactGroup<'v>,
+        resolved_artifact_group: ResolvedArtifactGroup<'v>,
     ) -> buck2_error::Result<ArtifactGroupValues> {
         match self {
             EnsureArtifactGroupReady::TransitiveSet(values) => Ok(values),
             EnsureArtifactGroupReady::Single(value) => match resolved_artifact_group {
                 ResolvedArtifactGroup::Artifact(artifact) => {
-                    Ok(ArtifactGroupValues::from_artifact(artifact.clone(), value))
+                    Ok(ArtifactGroupValues::from_artifact(artifact.dupe(), value))
                 }
                 ResolvedArtifactGroup::TransitiveSetProjection(_) => {
                     Err(EnsureArtifactStagedError::ExpectedTransitiveSet.into())
@@ -243,49 +251,22 @@ impl EnsureArtifactGroupReady {
     }
 }
 
-static_assertions::assert_eq_size!(EnsureArtifactGroupReady, [usize; 4]);
+size_assert::words_of_type!(EnsureArtifactGroupReady, 4);
 
-// This assertion assures we don't unknowingly regress the size of this critical future.
-// TODO(cjhopman): We should be able to wrap this in a convenient assertion macro.
-#[allow(unused, clippy::diverging_sub_expression)]
-fn _assert_ensure_artifact_group_future_size() {
-    let mut ctx: DiceComputations = panic!();
-
-    // These first two are the important ones to track and not regress.
-    let v = ctx.ensure_artifact_group(panic!());
-    let e = [0u8; 128 / 8];
-    static_assertions::assert_eq_size_ptr!(&v, &e);
-
-    let v = ensure_artifact_group_staged(&mut ctx, panic!());
-    let e = [0u8; 1088 / 8];
-    static_assertions::assert_eq_size_ptr!(&v, &e);
-
-    // The rest of these are to help understand how changes are impacting the important ones above. Regressing these
-    // is generally okay if the above don't regress.
-    let v = ensure_artifact_staged(&mut ctx, panic!());
-    let e = [0u8; 1088 / 8];
-    static_assertions::assert_eq_size_ptr!(&v, &e);
-
-    let v = ensure_base_artifact_staged(&mut ctx, panic!());
-    let e = [0u8; 1088 / 8];
-    static_assertions::assert_eq_size_ptr!(&v, &e);
-
-    let v = ensure_build_artifact_staged(&mut ctx, panic!());
-    let e = [0u8; 1088 / 8];
-    static_assertions::assert_eq_size_ptr!(&v, &e);
-
-    let v = ActionCalculation::build_action(&mut ctx, panic!());
-    let e = [0u8; 704 / 8];
-    static_assertions::assert_eq_size_ptr!(&v, &e);
-
-    let v = ensure_source_artifact_staged(&mut ctx, panic!());
-    let e = [0u8; 128 / 8];
-    static_assertions::assert_eq_size_ptr!(&v, &e);
-}
+// Assert we don't unknowingly regress the size of these critical futures. The first two are the
+// important ones to track and not regress; the rest are here to help understand how changes impact
+// the important ones above, and regressing them is generally okay as long as the above don't.
+size_assert::words_of_async_fn_future!(DiceComputations::ensure_artifact_group, (_, _), 2);
+size_assert::words_of_async_fn_future!(ensure_artifact_group_staged, (_, _), 10);
+size_assert::words_of_async_fn_future!(ensure_artifact_staged, (_, _), 10);
+size_assert::words_of_async_fn_future!(ensure_base_artifact_staged, (_, _), 10);
+size_assert::words_of_async_fn_future!(ensure_build_artifact_staged, (_, _), 10);
+size_assert::words_of_async_fn_future!(ActionCalculation::build_action, (_, _), 9);
+size_assert::words_of_async_fn_future!(ensure_source_artifact_staged, (_, _), 2);
 
 async fn dir_artifact_value(
     ctx: &mut DiceComputations<'_>,
-    cell_path: Arc<CellPath>,
+    cell_path: CellPath,
 ) -> buck2_error::Result<ArtifactValue> {
     // We kept running into this performance footgun where a large directory is declared as a source
     // on a toolchain, and then every `BuildKey` using that toolchain ends up taking a DICE edge on
@@ -293,9 +274,12 @@ async fn dir_artifact_value(
     // `DirArtifactValueKey` is an intermediate DICE key to prevent that -  every `BuildKey` using
     // that directory now only depends on one `DirArtifactValueKey`, and that `DirArtifactValueKey`
     // depends on the `PathMetadataKey` of every member of the directory.
-    #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+    #[derive(
+        Clone, Dupe, Copy, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable
+    )]
     #[display("dir_artifact_value({})", _0)]
-    struct DirArtifactValueKey(Arc<CellPath>);
+    #[pagable_typetag(dice::DiceKeyDyn)]
+    struct DirArtifactValueKey(CellPath);
 
     #[async_trait]
     impl Key for DirArtifactValueKey {
@@ -306,25 +290,15 @@ async fn dir_artifact_value(
             ctx: &mut DiceComputations,
             _cancellation: &CancellationContext,
         ) -> Self::Value {
-            let files = DiceFileComputations::read_dir(ctx, self.0.as_ref().as_ref())
-                .await?
-                .included;
+            let files = &DiceFileComputations::read_dir(ctx, self.0).await?.included;
 
             let entry_values = ctx
-                .try_compute_join(files.iter(), |ctx, x| {
-                    async move {
-                        // TODO(scottcao): This current creates a `DirArtifactValueKey` for each subdir of a source directory.
-                        // Instead, this should be 1 key for the entire top-level directory since there's almost
-                        // no chance of getting cache hit with a sub-directory.
-                        let value = path_artifact_value(
-                            ctx,
-                            Arc::new(self.0.as_ref().join(&x.file_name)),
-                            None,
-                        )
-                        .await?;
-                        buck2_error::Ok((x.file_name.clone(), value))
-                    }
-                    .boxed()
+                .try_compute_join(files.iter(), async |ctx, file_name| {
+                    // TODO(scottcao): This current creates a `DirArtifactValueKey` for each subdir of a source directory.
+                    // Instead, this should be 1 key for the entire top-level directory since there's almost
+                    // no chance of getting cache hit with a sub-directory.
+                    let value = path_artifact_value(ctx, self.0.join(file_name), None).await?;
+                    buck2_error::Ok((file_name, value))
                 })
                 .await?;
 
@@ -334,10 +308,11 @@ async fn dir_artifact_value(
                 Multiple(ActionDirectoryBuilder),
             }
 
-            let mut entries = SortedVectorMap::new();
+            // `included` is sorted, so the entries arrive in key order.
+            let mut entries = Vec::with_capacity(entry_values.len());
             let mut deps_merger = DepsMerger::None;
             for (file_name, value) in entry_values {
-                entries.insert(file_name, value.entry().dupe());
+                entries.push((file_name.to_owned(), value.entry().dupe()));
                 if let Some(deps) = value.deps() {
                     deps_merger = match deps_merger {
                         DepsMerger::None => DepsMerger::One(deps.dupe()),
@@ -356,8 +331,13 @@ async fn dir_artifact_value(
             let entries = entries.into_iter().collect();
 
             let digest_config = ctx.global_data().get_digest_config();
-            let d: DirectoryData<_, _, _> =
-                DirectoryData::new(entries, digest_config.as_directory_serializer());
+            // A source directory listing is complete content (only ever *interpreted* under
+            // buck-out, but exhaustive is the accurate marking).
+            let d: DirectoryData<_, _, _> = DirectoryData::new(
+                entries,
+                digest_config.as_directory_serializer(),
+                Exhaustiveness::Exhaustive,
+            );
             let d = INTERNER.intern(d);
 
             let deps = match deps_merger {
@@ -373,25 +353,28 @@ async fn dir_artifact_value(
             Ok(ArtifactValue::new(ActionDirectoryEntry::Dir(d), deps))
         }
 
-        fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-            match (x, y) {
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|x, y| match (x, y) {
                 (Ok(x), Ok(y)) => x == y,
                 _ => false,
-            }
+            })
+        }
+
+        fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+            OkPagableValueSerialize::<Self::Value>::new()
         }
     }
 
-    ctx.compute(&DirArtifactValueKey(cell_path)).await?
+    ctx.compute(&DirArtifactValueKey(cell_path)).await?.dupe()
 }
 
 #[async_recursion]
 async fn path_artifact_value(
     ctx: &mut DiceComputations<'_>,
-    cell_path: Arc<CellPath>,
+    cell_path: CellPath,
     label: Option<PackageLabel>,
 ) -> buck2_error::Result<ArtifactValue> {
-    let raw = match DiceFileComputations::read_path_metadata(ctx, cell_path.as_ref().as_ref()).await
-    {
+    let raw = match DiceFileComputations::read_path_metadata(ctx, cell_path).await {
         Ok(raw) => Ok(raw),
         Err(e) => {
             if let Some(label) = label {
@@ -450,8 +433,8 @@ async fn path_artifact_value(
             let dont_read_through_symlink = use_correct_source_symlink_reading && at == cell_path;
             if dont_read_through_symlink {
                 let artifact_fs = ctx.get_artifact_fs().await?;
-                let target_path = artifact_fs.resolve_cell_path((*target).as_ref())?;
-                let mut builder = ActionDirectoryBuilder::empty();
+                let target_path = artifact_fs.resolve_cell_path(target)?;
+                let mut builder = ActionDirectoryBuilder::empty_non_exhaustive();
                 insert_artifact(&mut builder, target_path, &target_artifact_value)?;
                 let deps = builder
                     .fingerprint(
@@ -471,8 +454,19 @@ async fn path_artifact_value(
     }
 }
 
-#[derive(Clone, Dupe, Eq, PartialEq, Hash, Display, Debug, Allocative, RefCast)]
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum ProjectedArtifactError {
+    #[error("The path `{0}` does not exist in the artifact `{1}`")]
+    #[buck2(tag = buck2_error::ErrorTag::ProjectMissingPath)]
+    MissingInProjectedArtifact(ForwardRelativePathBuf, BaseArtifactKind),
+}
+
+#[derive(
+    Clone, Dupe, Eq, PartialEq, Hash, Display, Debug, Allocative, RefCast, Pagable
+)]
 #[repr(transparent)]
+#[pagable_typetag(dice::DiceKeyDyn)]
 pub struct EnsureProjectedArtifactKey(pub(crate) ArtifactKind);
 
 #[async_trait]
@@ -489,11 +483,10 @@ impl Key for EnsureProjectedArtifactKey {
         if path.is_empty() {
             return Err(internal_error!(
                 "EnsureProjectedArtifactKey with non-empty projected path"
-            )
-            .into());
+            ));
         }
 
-        let base_value = ensure_base_artifact_staged(ctx, base.dupe())
+        let base_value = ensure_base_artifact_staged(ctx, base)
             .await?
             .unpack_single()?;
         let base_content_based_path_hash = base_value.content_based_path_hash();
@@ -510,17 +503,16 @@ impl Key for EnsureProjectedArtifactKey {
 
         let projected_path = base_path.join(path);
 
-        let mut builder = ActionDirectoryBuilder::empty();
+        let mut builder = ActionDirectoryBuilder::empty_non_exhaustive();
         insert_artifact(&mut builder, base_path, &base_value)?;
 
         let value = extract_artifact_value(&builder, &projected_path, digest_config)
             .with_buck_error_context(|| {
                 format!("The path `{path}` cannot be projected in the artifact `{base}`. Are you calling project() on a symlink?")
             })?
-            .with_buck_error_context(|| {
-                format!("The path `{path}` does not exist in the artifact `{base}`")
-            })
-            .tag(buck2_error::ErrorTag::ProjectMissingPath)?;
+            .ok_or_else(|| {
+                ProjectedArtifactError::MissingInProjectedArtifact(path.to_buf(), base.dupe())
+            })?;
 
         // Projected artifacts are located in the same directory as the base artifact, so we
         // need to store the same content based path hash in order to find them in the correct place.
@@ -529,16 +521,29 @@ impl Key for EnsureProjectedArtifactKey {
         Ok(value)
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
             (Ok(x), Ok(y)) => x == y,
             _ => false,
-        }
+        })
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
     }
 }
 
-#[derive(Clone, Dupe, Eq, PartialEq, Hash, Display, Debug, Allocative, RefCast)]
+/// Activation data for [`EnsureTransitiveSetProjectionKey`] DICE evaluations,
+/// used to record duration in the critical path graph.
+pub struct EnsureTransitiveSetProjectionKeyActivationData {
+    pub time_span: TimeSpan,
+}
+
+#[derive(
+    Clone, Dupe, Eq, PartialEq, Hash, Display, Debug, Allocative, RefCast, Pagable
+)]
 #[repr(transparent)]
+#[pagable_typetag(dice::DiceKeyDyn)]
 pub struct EnsureTransitiveSetProjectionKey(pub TransitiveSetProjectionKey);
 
 #[async_trait]
@@ -552,26 +557,25 @@ impl Key for EnsureTransitiveSetProjectionKey {
     ) -> Self::Value {
         let set = self.0.key.lookup(ctx).await?;
 
-        let artifact_fs = ctx.get_artifact_fs().await?;
+        let projection_sub_inputs =
+            set.by_ref(|s| s.get_projection_sub_inputs(self.0.projection))?;
 
-        let projection_sub_inputs = set.get_projection_sub_inputs(self.0.projection)?;
-
-        let sub_inputs: Vec<_> = tokio::task::unconstrained(KeepGoing::try_compute_join_all(
-            ctx,
-            projection_sub_inputs.iter(),
-            |ctx, a| async move { a.resolved_artifact(ctx).await }.boxed(),
-        ))
-        .await?;
+        let sub_inputs: Vec<_> =
+            KeepGoing::try_compute_join_all(ctx, projection_sub_inputs.iter(), async |ctx, a| {
+                a.resolved_artifact(ctx).await
+            })
+            .await?;
 
         let (values, children) = {
             // Compute the new inputs. Note that ordering here (and below) is important to ensure
             // stability of the ArtifactGroupValues we produce across executions, which try_compute_join_all preserves.
-            let ready_inputs: Vec<_> = tokio::task::unconstrained(KeepGoing::try_compute_join_all(
-                ctx,
-                sub_inputs.iter(),
-                |ctx, v| async move { ensure_artifact_group_staged(ctx, v.clone()).await }.boxed(),
-            ))
-            .await?;
+
+            // FIXME(JakobDegen): The amount of stuff we're holding over this await point is extremely clowny
+            let ready_inputs: Vec<_> =
+                KeepGoing::try_compute_join_all(ctx, sub_inputs.iter(), async |ctx, v| {
+                    ensure_artifact_group_staged(ctx, *v).await
+                })
+                .await?;
 
             // Partition our inputs in artifacts and projections.
             let mut values_count = 0;
@@ -584,35 +588,45 @@ impl Key for EnsureTransitiveSetProjectionKey {
             let mut values = SmallVec::<[_; 1]>::with_capacity(values_count);
             let mut children = Vec::with_capacity(sub_inputs.len() - values_count);
 
-            for (group, ready) in zip(sub_inputs.iter(), ready_inputs) {
+            for (group, ready) in zip(sub_inputs.iter().copied(), ready_inputs) {
                 match group {
                     ResolvedArtifactGroup::Artifact(artifact) => {
                         values.push((artifact.dupe(), ready.unpack_single()?))
                     }
                     ResolvedArtifactGroup::TransitiveSetProjection(..) => {
-                        children.push(ready.to_group_values(group)?)
+                        children.push(ready.into_group_values(group)?)
                     }
                 }
             }
             (values, children)
         };
 
+        let artifact_fs = ctx.get_artifact_fs().await?;
+
         // At this point we're holding a lot of data and want to ensure that we don't hold that across any
         // .await, so move into a little sync closure and call that
         (move || {
+            let time_span = TimeSpan::start_now();
             let digest_config = ctx.global_data().get_digest_config();
 
-            let values = ArtifactGroupValues::new(values, children, &artifact_fs, digest_config)
+            let values = ArtifactGroupValues::new(values, children, artifact_fs, digest_config)
                 .buck_error_context("Failed to construct ArtifactGroupValues")?;
 
+            ctx.store_evaluation_data(EnsureTransitiveSetProjectionKeyActivationData {
+                time_span: time_span.end_now(),
+            })?;
             Ok(values)
         })()
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
             (Ok(x), Ok(y)) => x.shallow_equals(y),
             _ => false,
-        }
+        })
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
     }
 }

@@ -11,3 +11,12 @@ prelude.python_bootstrap_binary(
     main = "worker_tool_runner.py",
     visibility = ["PUBLIC"],
 )
+
+prelude.python_test(
+    name = "test_worker_tool_runner",
+    srcs = [
+        "tests/test_worker_tool_runner.py",
+        "worker_tool_runner.py",
+    ],
+    base_module = "",
+)

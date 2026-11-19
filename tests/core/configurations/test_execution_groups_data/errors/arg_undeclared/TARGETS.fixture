@@ -1,0 +1,6 @@
+load(":rules.bzl", "r")
+
+r(
+    name = "t",
+    cmd = "$(exe //groups:any_tool)",
+)

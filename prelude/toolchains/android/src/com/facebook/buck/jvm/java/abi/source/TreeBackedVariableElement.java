@@ -10,7 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.VariableTree;
 import com.sun.source.util.TreePath;
 import java.util.Collections;
@@ -19,7 +19,9 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ElementVisitor;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedVariableElement extends TreeBackedElement implements ArtificialVariableElement {
   private final VariableElement underlyingElement;
 
@@ -53,8 +55,7 @@ class TreeBackedVariableElement extends TreeBackedElement implements ArtificialV
   }
 
   @Override
-  @Nullable
-  VariableTree getTree() {
+  @Nullable VariableTree getTree() {
     return tree;
   }
 
@@ -76,7 +77,7 @@ class TreeBackedVariableElement extends TreeBackedElement implements ArtificialV
   }
 
   @Override
-  public <R, P> R accept(ElementVisitor<R, P> v, P p) {
+  public <R, P> R accept(ElementVisitor<R, P> v, @Nullable P p) {
     return v.visitVariable(this, p);
   }
 }

@@ -69,7 +69,10 @@ impl FlameGraph {
     fn write_flame_graph_impl(&self, stack: &[&str], w: &mut String) {
         if self.node_size != 0 {
             if !stack.is_empty() {
-                writeln!(w, "{} {}", stack.join(";"), self.node_size).unwrap();
+                // `;` separates frames in the collapsed format, so a frame cannot contain one.
+                let frames: Vec<String> =
+                    stack.iter().map(|frame| frame.replace(';', ",")).collect();
+                writeln!(w, "{} {}", frames.join(";"), self.node_size).unwrap();
             } else {
                 // Don't care.
             }
@@ -500,7 +503,7 @@ mod tests {
     use crate::flamegraph::FlameGraphBuilder;
     use crate::flamegraph::Tree;
     use crate::flamegraph::Trees;
-    use crate::key::Key;
+    use crate::key;
 
     #[test]
     fn test_empty() {
@@ -522,7 +525,7 @@ mod tests {
     #[test]
     fn test_simple() {
         let mut fg = FlameGraphBuilder::default();
-        fg.root_visitor().visit_simple(Key::new("a"), 10);
+        fg.root_visitor().visit_simple(key!("a"), 10);
         let tree = fg.finish_impl();
 
         let mut expected = Trees::default();
@@ -532,7 +535,7 @@ mod tests {
         expected[expected_root].rem_size = -10;
         expected[expected_root]
             .children
-            .insert(Key::new("a"), expected_child);
+            .insert(key!("a"), expected_child);
         expected[expected_child].size = 10;
         expected[expected_child].rem_size = 10;
         let expected = Tree {
@@ -547,10 +550,10 @@ mod tests {
     fn test_unique() {
         let mut fg = FlameGraphBuilder::default();
         let mut visitor = fg.root_visitor();
-        let mut s = visitor.enter(Key::new("Struct"), 10);
-        s.visit_simple(Key::new("a"), 3);
-        let mut un = s.enter_unique(Key::new("p"), 6);
-        un.visit_simple(Key::new("x"), 13);
+        let mut s = visitor.enter(key!("Struct"), 10);
+        s.visit_simple(key!("a"), 3);
+        let mut un = s.enter_unique(key!("p"), 6);
+        un.visit_simple(key!("x"), 13);
         un.exit();
         s.exit();
         visitor.exit();
@@ -577,12 +580,12 @@ mod tests {
         let mut visitor = fg.root_visitor();
 
         for _ in 0..2 {
-            let mut s = visitor.enter(Key::new("Struct"), 10);
-            s.visit_simple(Key::new("a"), 3);
+            let mut s = visitor.enter(key!("Struct"), 10);
+            s.visit_simple(key!("a"), 3);
             {
-                let sh = s.enter_shared(Key::new("p"), 6, &p as *const i32 as *const ());
+                let sh = s.enter_shared(key!("p"), 6, &p as *const i32 as *const ());
                 if let Some(mut sh) = sh {
-                    sh.visit_simple(Key::new("Shared"), 13);
+                    sh.visit_simple(key!("Shared"), 13);
                     sh.exit();
                 }
             }
@@ -609,8 +612,8 @@ mod tests {
     fn test_inline_children_too_large() {
         let mut fg = FlameGraphBuilder::default();
         let mut visitor = fg.root_visitor();
-        let mut child_visitor = visitor.enter(Key::new("a"), 10);
-        child_visitor.visit_simple(Key::new("b"), 13);
+        let mut child_visitor = visitor.enter(key!("a"), 10);
+        child_visitor.visit_simple(key!("b"), 13);
         child_visitor.exit();
         visitor.exit();
         let output = fg.finish();
@@ -629,9 +632,29 @@ mod tests {
         b_1.add_self(10);
 
         let mut b = FlameGraph::default();
-        b.add_child(Key::new("x"), b_1);
+        b.add_child(key!("x"), b_1);
 
         a.add(b);
         assert_eq!(10, a.total_size());
+    }
+
+    fn root_frames(output: &str) -> Vec<String> {
+        let root_line = output.lines().find(|line| !line.contains(";ptr")).unwrap();
+        let (stack, _size) = root_line.rsplit_once(' ').unwrap();
+        stack.split(';').map(str::to_owned).collect()
+    }
+
+    /// A type name containing `;` stays one frame.
+    #[test]
+    fn test_type_name_with_semicolon_stays_one_frame() {
+        let v: Vec<[u8; 4]> = vec![[0; 4]; 3];
+        let mut fg = FlameGraphBuilder::default();
+        fg.visit_root(&v);
+        let output = fg.finish_and_write_flame_graph();
+        assert_eq!(
+            root_frames(&output),
+            vec!["alloc::vec::Vec<[u8, 4]>"],
+            "{output}"
+        );
     }
 }

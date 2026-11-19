@@ -13,43 +13,49 @@ use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
-use starlark::values::AllocFrozenValue;
-use starlark::values::AllocStaticSimple;
-use starlark::values::AllocValue;
-use starlark::values::FrozenHeap;
-use starlark::values::FrozenValue;
-use starlark::values::Heap;
+use starlark::static_starlark_value;
+use starlark::values::AllocFrozenRepresentation;
+use starlark::values::AllocRepresentation;
+use starlark::values::Allocator;
+use starlark::values::FrozenAllocator;
 use starlark::values::NoSerialize;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 
-#[derive(Debug, PartialEq, Display, ProvidesStaticType, NoSerialize, Allocative)]
+#[derive(
+    Debug,
+    PartialEq,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
 pub struct StarlarkProjectRoot;
 
-#[starlark_value(type = "ProjectRoot", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "ProjectRoot", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for StarlarkProjectRoot {}
 
-fn instance() -> FrozenValue {
-    static INSTANCE: AllocStaticSimple<StarlarkProjectRoot> =
-        AllocStaticSimple::alloc(StarlarkProjectRoot);
-    INSTANCE.to_frozen_value()
-}
+static_starlark_value!(STARLARK_PROJECT_ROOT: StarlarkProjectRoot = StarlarkProjectRoot);
 
-impl<'v> AllocValue<'v> for StarlarkProjectRoot {
-    fn alloc_value(self, _heap: &'v Heap) -> Value<'v> {
-        instance().to_value()
+impl<'v> AllocRepresentation<'v> for StarlarkProjectRoot {
+    type Repr = Self;
+
+    fn alloc(self, _allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        STARLARK_PROJECT_ROOT.at()
     }
 }
 
-impl AllocFrozenValue for StarlarkProjectRoot {
-    fn alloc_frozen_value(self, _heap: &FrozenHeap) -> FrozenValue {
-        instance()
+impl<'fv> AllocFrozenRepresentation<'fv> for StarlarkProjectRoot {
+    type Repr = Self;
+
+    fn alloc_frozen(self, _allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        STARLARK_PROJECT_ROOT.at()
     }
 }
 
 #[starlark_module]
-pub fn register_project_root(globals: &mut GlobalsBuilder) {
-    const ProjectRoot: StarlarkValueAsType<StarlarkProjectRoot> = StarlarkValueAsType::new();
-}
+#[starlark_types(StarlarkProjectRoot as ProjectRoot)]
+pub fn register_project_root(globals: &mut GlobalsBuilder) {}

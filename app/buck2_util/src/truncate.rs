@@ -20,14 +20,15 @@ pub fn truncate(msg: &str, max_length: usize) -> String {
     }
 
     if let Some(max_length_without_truncation_msg) = max_length.checked_sub(TRUNCATION_MSG.len()) {
-        // Note that for Unicode strings we might end up with less than max_length characters,
-        // because these functions are all in terms of bytes.
+        // Note that for Unicode strings we might end up with less than max_length bytes,
+        // because these functions are all in terms of bytes and a character that straddles a cut
+        // point is dropped rather than kept.
         // Not worth the hassle to do better, given how rare that is.
         format!(
             "{}{}{}",
-            &msg[0..msg.ceil_char_boundary(max_length_without_truncation_msg / 2)],
-            &TRUNCATION_MSG,
-            &msg[msg.floor_char_boundary(msg.len() - (max_length_without_truncation_msg / 2))
+            &msg[0..msg.floor_char_boundary(max_length_without_truncation_msg / 2)],
+            TRUNCATION_MSG,
+            &msg[msg.ceil_char_boundary(msg.len() - (max_length_without_truncation_msg / 2))
                 ..msg.len()]
         )
     } else {
@@ -132,6 +133,25 @@ mod tests {
             &truncate_container(vec.iter().copied(), 35),
             "❤\u{fe0f}🧡💛💚💙💜, 東京<<omitted>>"
         );
+    }
+
+    #[test]
+    fn test_truncate_multibyte_result_length() {
+        let max_length = TRUNCATION_MSG.len() + 2;
+
+        let truncated = truncate(&"\u{e9}".repeat(20), max_length);
+        assert_eq!(truncated, "<<omitted>>");
+        assert!(truncated.len() <= max_length);
+
+        let truncated = truncate(&"\u{1f600}".repeat(4), max_length);
+        assert_eq!(truncated, "<<omitted>>");
+        assert!(truncated.len() <= max_length);
+
+        // Whole characters that fit in each half are kept.
+        let max_length = TRUNCATION_MSG.len() + 6;
+        let truncated = truncate(&"\u{6771}".repeat(10), max_length);
+        assert_eq!(truncated, "\u{6771}<<omitted>>\u{6771}");
+        assert_eq!(truncated.len(), max_length);
     }
 
     #[test]

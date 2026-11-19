@@ -1,0 +1,3 @@
+load(":defs.bzl", "test_target_default")
+
+test_target_default(name = "prevent_unused_loads_lint_error")

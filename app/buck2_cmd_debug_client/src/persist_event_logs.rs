@@ -18,7 +18,7 @@ use buck2_common::chunk_reader::ChunkReader;
 use buck2_common::manifold;
 use buck2_common::manifold::ManifoldChunkedUploader;
 use buck2_common::manifold::ManifoldClient;
-use buck2_core::soft_error;
+use buck2_core::soft_error_or_panic;
 use buck2_data::InstantEvent;
 use buck2_data::PersistEventLogSubprocess;
 use buck2_data::instant_event::Data;
@@ -136,8 +136,8 @@ async fn write_task(
     mut stdin: impl io::AsyncBufRead + Unpin,
 ) -> buck2_error::Result<()> {
     let mut write_position = 0;
+    let mut buf = vec![0; 64 * 1024]; // maximum pipe size in linux
     loop {
-        let mut buf = vec![0; 64 * 1024]; // maximum pipe size in linux
         let bytes_read = stdin.read(&mut buf).await?;
         if bytes_read == 0 {
             break; // closed stdin
@@ -308,7 +308,7 @@ fn status_from_result(res: buck2_error::Result<()>) -> (Vec<String>, Option<Stri
             Some(categorize_error(&e).to_owned()),
             false,
         );
-        let _unused = soft_error!(categorize_error(&e), e.into());
+        soft_error_or_panic!(categorize_error(&e), e);
         status
     } else {
         (vec![], None, true)
@@ -361,9 +361,7 @@ async fn dispatch_event_to_scribe(
                 event.into(),
             ))
             .await;
-    } else {
-        tracing::warn!("Couldn't send log upload result to scribe")
-    };
+    }
 }
 
 fn create_scribe_sink(ctx: &ClientCommandContext) -> buck2_error::Result<Option<RemoteEventSink>> {

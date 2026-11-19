@@ -12,9 +12,9 @@ use allocative::Allocative;
 use buck2_build_api::query::oneshot::QUERY_FRONTEND;
 use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
+use buck2_query::query::syntax::simple::eval::values::QueryValueDepth;
 use buck2_query::query::syntax::simple::functions::helpers::CapturedExpr;
 use dice::DiceComputations;
-use gazebo::prelude::OptionExt;
 use starlark::values::Heap;
 use starlark::values::Value;
 
@@ -56,13 +56,13 @@ pub(crate) enum LazyUqueryOperation {
     },
     Deps {
         universe: OwnedTargetListExprArg,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         filter: Option<String>,
     },
     Rdeps {
         universe: OwnedTargetListExprArg,
         from: OwnedTargetListExprArg,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         filter: Option<String>,
     },
     Filter {
@@ -70,6 +70,11 @@ pub(crate) enum LazyUqueryOperation {
         targets: OwnedTargetListExprArg,
     },
     Buildfile(OwnedTargetListExprArg),
+    AllBuildfiles(OwnedTargetListExprArg),
+    Rbuildfiles {
+        universe: OwnedFileSetExpr,
+        argset: OwnedFileSetExpr,
+    },
     Owner {
         files: OwnedFileSetExpr,
     },
@@ -94,27 +99,33 @@ pub(crate) enum LazyUqueryResult {
     Rdeps(StarlarkTargetSet<TargetNode>),
     Filter(StarlarkTargetSet<TargetNode>),
     Buildfile(StarlarkFileSet),
+    AllBuildfiles(StarlarkFileSet),
+    Rbuildfiles(StarlarkFileSet),
     Owner(StarlarkTargetSet<TargetNode>),
     TargetsInBuildfile(StarlarkTargetSet<TargetNode>),
     Eval(QueryEvaluationResult<TargetNode>),
 }
 
 impl LazyUqueryResult {
-    pub(crate) fn into_value<'v>(self, heap: &'v Heap) -> buck2_error::Result<Value<'v>> {
+    pub(crate) fn into_value<'v>(self, heap: Heap<'v>) -> buck2_error::Result<Value<'v>> {
         match self {
-            LazyUqueryResult::TestsOf(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::AllPaths(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::SomePath(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::AttrFilter(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::AttrRegexFilter(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::Inputs(file_set) => Ok(heap.alloc(file_set)),
-            LazyUqueryResult::Kind(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::Deps(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::Rdeps(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::Filter(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::Buildfile(file_set) => Ok(heap.alloc(file_set)),
-            LazyUqueryResult::Owner(target_set) => Ok(heap.alloc(target_set)),
-            LazyUqueryResult::TargetsInBuildfile(target_set) => Ok(heap.alloc(target_set)),
+            LazyUqueryResult::TestsOf(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::AllPaths(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::SomePath(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::AttrFilter(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::AttrRegexFilter(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::Inputs(file_set) => Ok(heap.alloc(file_set).to_value()),
+            LazyUqueryResult::Kind(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::Deps(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::Rdeps(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::Filter(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::Buildfile(file_set) => Ok(heap.alloc(file_set).to_value()),
+            LazyUqueryResult::AllBuildfiles(file_set) => Ok(heap.alloc(file_set).to_value()),
+            LazyUqueryResult::Rbuildfiles(file_set) => Ok(heap.alloc(file_set).to_value()),
+            LazyUqueryResult::Owner(target_set) => Ok(heap.alloc(target_set).to_value()),
+            LazyUqueryResult::TargetsInBuildfile(target_set) => {
+                Ok(heap.alloc(target_set).to_value())
+            }
             LazyUqueryResult::Eval(result) => parse_query_evaluation_result(result, heap),
         }
     }
@@ -125,12 +136,13 @@ impl LazyUqueryOperation {
         &self,
         dice: &mut DiceComputations<'_>,
         core_data: &BxlContextCoreData,
+        allow_partial_graph: bool,
     ) -> buck2_error::Result<LazyUqueryResult> {
         match self {
             LazyUqueryOperation::TestsOf(expr) => {
                 let target_set = expr.to_unconfigured_target_set(core_data, dice).await?;
 
-                let res = get_uquery_env(core_data)
+                let res = get_uquery_env(core_data, allow_partial_graph)
                     .await?
                     .testsof(dice, &target_set)
                     .await?;
@@ -142,10 +154,11 @@ impl LazyUqueryOperation {
                 let to = to.to_unconfigured_target_set(core_data, dice).await?;
                 let filter = filter
                     .as_ref()
-                    .try_map(|s| buck2_query_parser::parse_expr(s.as_str()))?;
+                    .map(|s| buck2_query_parser::parse_expr(s.as_str()))
+                    .transpose()?;
                 let expr = filter.as_ref().map(|expr| CapturedExpr { expr });
 
-                let res = get_uquery_env(core_data)
+                let res = get_uquery_env(core_data, allow_partial_graph)
                     .await?
                     .allpaths(dice, &from, &to, expr.as_ref())
                     .await?;
@@ -157,10 +170,11 @@ impl LazyUqueryOperation {
                 let to = to.to_unconfigured_target_set(core_data, dice).await?;
                 let filter = filter
                     .as_ref()
-                    .try_map(|s| buck2_query_parser::parse_expr(s.as_str()))?;
+                    .map(|s| buck2_query_parser::parse_expr(s.as_str()))
+                    .transpose()?;
                 let expr = filter.as_ref().map(|expr| CapturedExpr { expr });
 
-                let res = get_uquery_env(core_data)
+                let res = get_uquery_env(core_data, allow_partial_graph)
                     .await?
                     .somepath(dice, &from, &to, expr.as_ref())
                     .await?;
@@ -213,10 +227,11 @@ impl LazyUqueryOperation {
                 let target_set = universe.to_unconfigured_target_set(core_data, dice).await?;
                 let filter = filter
                     .as_ref()
-                    .try_map(|s| buck2_query_parser::parse_expr(s.as_str()))?;
+                    .map(|s| buck2_query_parser::parse_expr(s.as_str()))
+                    .transpose()?;
                 let expr = filter.as_ref().map(|expr| CapturedExpr { expr });
 
-                let res = get_uquery_env(core_data)
+                let res = get_uquery_env(core_data, allow_partial_graph)
                     .await?
                     .deps(dice, &target_set, *depth, expr.as_ref())
                     .await?;
@@ -233,10 +248,11 @@ impl LazyUqueryOperation {
                 let from_set = from.to_unconfigured_target_set(core_data, dice).await?;
                 let filter = filter
                     .as_ref()
-                    .try_map(|s| buck2_query_parser::parse_expr(s.as_str()))?;
+                    .map(|s| buck2_query_parser::parse_expr(s.as_str()))
+                    .transpose()?;
                 let expr = filter.as_ref().map(|expr| CapturedExpr { expr });
 
-                let res = get_uquery_env(core_data)
+                let res = get_uquery_env(core_data, allow_partial_graph)
                     .await?
                     .rdeps(dice, &target_set, &from_set, *depth, expr.as_ref())
                     .await?;
@@ -253,14 +269,35 @@ impl LazyUqueryOperation {
             LazyUqueryOperation::Buildfile(expr) => {
                 let target_set = expr.to_unconfigured_target_set(core_data, dice).await?;
 
-                let res = target_set.buildfile();
+                let res = target_set.buildfile()?;
 
                 Ok(LazyUqueryResult::Buildfile(StarlarkFileSet::from(res)))
+            }
+            LazyUqueryOperation::AllBuildfiles(expr) => {
+                let target_set = expr.to_unconfigured_target_set(core_data, dice).await?;
+
+                let res = get_uquery_env(core_data, allow_partial_graph)
+                    .await?
+                    .allbuildfiles(dice, &target_set)
+                    .await?;
+
+                Ok(LazyUqueryResult::AllBuildfiles(StarlarkFileSet::from(res)))
+            }
+            LazyUqueryOperation::Rbuildfiles { universe, argset } => {
+                let universe = universe.get(core_data)?;
+                let argset = argset.get(core_data)?;
+
+                let res = get_uquery_env(core_data, allow_partial_graph)
+                    .await?
+                    .rbuildfiles(dice, &universe, &argset)
+                    .await?;
+
+                Ok(LazyUqueryResult::Rbuildfiles(StarlarkFileSet::from(res)))
             }
             LazyUqueryOperation::Owner { files } => {
                 let file_set = files.get(core_data)?;
 
-                let res = get_uquery_env(core_data)
+                let res = get_uquery_env(core_data, allow_partial_graph)
                     .await?
                     .owner(dice, &file_set)
                     .await?;
@@ -270,7 +307,7 @@ impl LazyUqueryOperation {
             LazyUqueryOperation::TargetsInBuildfile { files } => {
                 let file_set = files.get(core_data)?;
 
-                let res = get_uquery_env(core_data)
+                let res = get_uquery_env(core_data, allow_partial_graph)
                     .await?
                     .targets_in_buildfile(dice, &file_set)
                     .await?;
@@ -282,7 +319,13 @@ impl LazyUqueryOperation {
             LazyUqueryOperation::Eval { query, query_args } => {
                 let res = QUERY_FRONTEND
                     .get()?
-                    .eval_uquery(dice, &core_data.working_dir()?, query, query_args)
+                    .eval_uquery(
+                        dice,
+                        &core_data.working_dir()?,
+                        query,
+                        query_args,
+                        allow_partial_graph,
+                    )
                     .await?;
 
                 Ok(LazyUqueryResult::Eval(res))

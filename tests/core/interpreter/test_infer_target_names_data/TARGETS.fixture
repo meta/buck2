@@ -1,0 +1,6 @@
+load(":defs.bzl", "consumer")
+
+consumer(
+    name = "consumer",
+    deps = ["//lib/greeting"],
+)

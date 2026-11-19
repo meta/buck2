@@ -1,0 +1,18 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+all_keys.list: True
+analysis/execution_platforms/<unbound>.profile: True
+analysis/simple/ddd/<unspecified>.profile: True
+analysis/simple/test/<unspecified>.profile: True
+analysis/simple/xxx/<unspecified>.profile: True
+analysis/simple/yyy/<unspecified>.profile: True
+analysis/simple/zzz/<unspecified>.profile: True
+load/root.profile: True
+load/root/simple.profile: True
+load_bzl/nano_prelude/asserts.bzl.profile: True
+load_bzl/nano_prelude/cfg_rules.bzl.profile: True
+load_bzl/nano_prelude/execution_platforms.bzl.profile: True
+load_bzl/nano_prelude/prelude.bzl.profile: True
+load_bzl/nano_prelude/stub_rules.bzl.profile: True
+merged.profile: True
+unknown/Check_starlark_stack_size.profile: True

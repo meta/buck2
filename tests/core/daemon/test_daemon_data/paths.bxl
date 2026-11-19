@@ -1,0 +1,16 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+def _paths_impl(ctx):
+    print("evaluating tenant paths")  # buildifier: disable=print
+    root = ctx.root()
+    output = ctx.bxl_actions().actions.write("root.txt", root, has_content_based_path = False)
+    ctx.output.print(json.encode({"root": root}))
+    ctx.output.print(ctx.output.ensure(output).abs_path())
+
+paths = bxl_main(impl = _paths_impl, cli_args = {})

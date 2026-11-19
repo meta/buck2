@@ -13,8 +13,10 @@ package com.facebook.buck.testrunner;
 import com.facebook.buck.test.result.type.ResultType;
 import com.facebook.buck.test.selectors.TestDescription;
 import com.facebook.buck.test.selectors.TestSelector;
+import com.facebook.buck.testresultsoutput.TestResultsOutputEvent;
 import com.facebook.buck.testresultsoutput.TestResultsOutputSender;
 import com.facebook.buck.testrunner.JavaUtilLoggingHelper.LogHandlers;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -26,10 +28,13 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.logging.Level;
-import javax.annotation.Nullable;
 import junit.framework.TestCase;
+import org.jspecify.annotations.Nullable;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.runners.Enclosed;
@@ -45,6 +50,7 @@ import org.junit.runner.Runner;
 import org.junit.runner.manipulation.Filter;
 import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunListener;
+import org.junit.runners.ParentRunner;
 import org.junit.runners.model.RunnerBuilder;
 
 /**
@@ -54,10 +60,18 @@ import org.junit.runners.model.RunnerBuilder;
  * Java API. The objective is to limit the set of files added to the ClassLoader that runs the test,
  * as not to interfere with the results of the test.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class JUnitRunner extends BaseRunner {
 
   static final String JUL_DEBUG_LOGS_HEADER = "====DEBUG LOGS====\n\n";
   static final String JUL_ERROR_LOGS_HEADER = "====ERROR LOGS====\n\n";
+
+  static final String SETUP_CRASH_MESSAGE_PREFIX =
+      "The test suite crashed during setup before any test could run, so no per-case results were"
+          + " produced. Reported as a fatal run failure (not skipped). Check the suite for an"
+          + " exception in class initialization, a @BeforeClass method, or (for Robolectric) the"
+          + " sandbox/SDK configuration (e.g. target_sdk_levels). The originating failure"
+          + " follows:\n\n";
 
   private static final String STD_OUT_LOG_LEVEL_PROPERTY = "com.facebook.buck.stdOutLogLevel";
   private static final String STD_ERR_LOG_LEVEL_PROPERTY = "com.facebook.buck.stdErrLogLevel";
@@ -92,6 +106,33 @@ public final class JUnitRunner extends BaseRunner {
     Optional<TestResultsOutputSender> testResultsOutputSender =
         TestResultsOutputSender.fromDefaultEnvName();
 
+    // Per-test coverage: collect per-test-method JaCoCo coverage if enabled
+    PerTestJUnitCoverageRunListener perTestCoverageListener = null;
+    String perTestCoverageDir = System.getenv("PER_TEST_COVERAGE_DIR");
+    if (perTestCoverageDir != null) {
+      try {
+        perTestCoverageListener = new PerTestJUnitCoverageRunListener(new File(perTestCoverageDir));
+      } catch (Exception e) {
+        // JaCoCo agent not available — report as infra failure via TPX
+        reportRunFailure(
+            testResultsOutputSender,
+            TestResultsOutputEvent.RunFailureStatus.INFRA_FAILURE,
+            "Per-test coverage requested but JaCoCo agent is not available: " + e.getMessage(),
+            null);
+      }
+    }
+
+    // Shared watchdog executor for timeout enforcement (per-test and target-level)
+    ScheduledExecutorService watchdogExecutor = Executors.newScheduledThreadPool(1);
+
+    // Proactive timeout: capture thread dump before RE's SIGKILL
+    TpxTimeoutBufferManager tpxTimeoutBufferManager = null;
+    if (testResultsOutputSender.isPresent()
+        && "true".equals(System.getProperty("android.proactive.timeout.enabled"))) {
+      tpxTimeoutBufferManager =
+          TpxTimeoutBufferManager.create(testResultsOutputSender.get(), watchdogExecutor);
+    }
+
     for (String className : testClassNames) {
       Class<?> testClass = Class.forName(className);
       Class<?>[] testClasses;
@@ -109,22 +150,54 @@ public final class JUnitRunner extends BaseRunner {
         Request request = Request.runner(suite);
         request = request.filterWith(filter);
 
+        JUnitTpxStandardOutputListener tpxListener = null;
         if (testResultsOutputSender.isPresent()) {
-          JUnitTpxStandardOutputListener tpxListener =
-              new JUnitTpxStandardOutputListener(testResultsOutputSender.get());
+          tpxListener = new JUnitTpxStandardOutputListener(testResultsOutputSender.get());
           jUnitCore.addListener(tpxListener);
 
-          // Add Robolectric timeout enforcement listener if this is a Robolectric test
           if (isRobolectricTest(suite)
               && "true".equals(System.getProperty("android.per.test.timeout.enabled"))) {
             RobolectricTimeoutEnforcingRunListener timeoutListener =
-                new RobolectricTimeoutEnforcingRunListener(testResultsOutputSender.get());
+                new RobolectricTimeoutEnforcingRunListener(
+                    testResultsOutputSender.get(), watchdogExecutor);
             jUnitCore.addListener(timeoutListener);
           }
         } else {
           jUnitCore.addListener(new TestListener(results, stdOutLogLevel, stdErrLogLevel));
         }
+
+        if (perTestCoverageListener != null) {
+          jUnitCore.addListener(perTestCoverageListener);
+        }
+
         jUnitCore.run(request);
+
+        // Report filtered-out tests (e.g., @Ignore) to TPX output so they're not retried
+        if (tpxListener != null) {
+          for (TestResult filteredTest : filter.filteredOut) {
+            if (filteredTest.type == ResultType.DISABLED) {
+              String testName =
+                  JUnitTpxStandardOutputListener.getFullTestName(
+                      filteredTest.testMethodName, filteredTest.testClassName);
+              tpxListener.reportOmittedTest(testName, "Test disabled (@Ignore annotation)");
+            }
+          }
+        }
+
+        // On a setup crash the selected cases produce no result and TPX records them as SKIPPED,
+        // outside autopilot's FAILED+FATAL filter. Report the run as FATAL rather than synthesizing
+        // per-case results for cases that never ran (which would break the TPX/runner contract).
+        if (tpxListener != null && !isDryRun) {
+          List<String> setupFailureTraces = tpxListener.getUnpairedFailureTraces();
+          if (!setupFailureTraces.isEmpty()) {
+            String trace = String.join("\n\n", setupFailureTraces);
+            reportRunFailure(
+                testResultsOutputSender,
+                TestResultsOutputEvent.RunFailureStatus.FATAL,
+                SETUP_CRASH_MESSAGE_PREFIX + trace,
+                trace);
+          }
+        }
       }
       // Combine the results with the tests we filtered out
       List<TestResult> actualResults = combineResults(results, filter.filteredOut);
@@ -138,13 +211,39 @@ public final class JUnitRunner extends BaseRunner {
               result -> {
                 System.err.printf(
                     "Failed to list tests for class %s.%n%s",
-                    className, stackTraceToString(result.failure));
+                    className, stackTraceToString(Objects.requireNonNull(result.failure)));
                 System.exit(1);
               });
     }
+
+    if (perTestCoverageListener != null) {
+      perTestCoverageListener.close();
+      if (perTestCoverageListener.getCoverageError() != null) {
+        reportRunFailure(
+            testResultsOutputSender,
+            TestResultsOutputEvent.RunFailureStatus.INFRA_FAILURE,
+            "Per-test coverage collection failed: "
+                + perTestCoverageListener.getCoverageError().getMessage(),
+            null);
+      }
+    }
+
+    // All test classes completed normally — mark as completed so shutdown hook is a no-op
+    if (tpxTimeoutBufferManager != null) {
+      tpxTimeoutBufferManager.markCompleted();
+    }
   }
 
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
+  private static void reportRunFailure(
+      Optional<TestResultsOutputSender> sender,
+      TestResultsOutputEvent.RunFailureStatus status,
+      String message,
+      @Nullable String stacktrace) {
+    if (sender.isPresent()) {
+      sender.get().sendRunFailure(status, System.currentTimeMillis(), message, stacktrace);
+    }
+  }
+
   private void setupLogging() {
     // Check if we have robolectric logging to setup
     // get it as a resource to avoid loading the class
@@ -189,8 +288,6 @@ public final class JUnitRunner extends BaseRunner {
 
   private static Class<?>[] collectTestClasses(Class<?> testClass) {
     ArrayList<Class<?>> classes = new ArrayList<>();
-    // Get all nested classes
-    Class<?>[] declaredClasses = testClass.getDeclaredClasses();
     for (Class<?> cls : testClass.getDeclaredClasses()) {
       int modifiers = cls.getModifiers();
       if (!Modifier.isStatic(modifiers)) {
@@ -200,7 +297,7 @@ public final class JUnitRunner extends BaseRunner {
         continue;
       }
       if (cls.isAnnotationPresent(RunWith.class)
-          && cls.getAnnotation(RunWith.class).value() != Enclosed.class) {
+          && Objects.requireNonNull(cls.getAnnotation(RunWith.class)).value() != Enclosed.class) {
         continue;
       }
       if (mightBeATestClass(cls)) {
@@ -325,68 +422,46 @@ public final class JUnitRunner extends BaseRunner {
     };
   }
 
-  /**
-   * Checks if a test class is a Robolectric test by examining its runner.
-   *
-   * <p>This method handles two cases:
-   *
-   * <ol>
-   *   <li>Direct Robolectric runners: The runner class directly extends RobolectricTestRunner
-   *   <li>Suite-based Robolectric runners: The runner extends Suite (e.g.,
-   *       WhatsAppParameterizedRobolectricTestRunner) but its children extend RobolectricTestRunner
-   * </ol>
-   *
-   * @param runner The instantiated runner for this test class
-   */
+  /** Checks if a test class is a Robolectric test by examining its runner tree. */
   private boolean isRobolectricTest(Runner runner) {
-    Class<?> runnerClass = runner.getClass();
     try {
       Class<?> robolectricTestRunner = Class.forName("org.robolectric.RobolectricTestRunner");
-
-      // Case 1: Runner directly extends RobolectricTestRunner
-      if (robolectricTestRunner.isAssignableFrom(runnerClass)) {
-        return true;
-      }
-
-      // Case 2: Runner extends Suite - check if children extend RobolectricTestRunner
-      Class<?> suiteClass = Class.forName("org.junit.runners.Suite");
-      if (suiteClass.isAssignableFrom(runnerClass)) {
-        return isRobolectricSuiteRunner(runner, robolectricTestRunner);
-      }
+      Class<?> suiteRunner = Class.forName("org.junit.runners.Suite");
+      return isRunnerOfTypeOrSuiteOfType(runner, robolectricTestRunner, suiteRunner);
     } catch (ClassNotFoundException e) {
-      // Not a Robolectric test
+      return false;
     }
-    return false;
   }
 
-  /**
-   * Checks if a Suite-based runner has children that extend RobolectricTestRunner.
-   *
-   * <p>This handles parameterized Robolectric test runners like
-   * WhatsAppParameterizedRobolectricTestRunner which extend Suite but have child runners that
-   * extend RobolectricTestRunner.
-   *
-   * @param runner The instantiated runner
-   * @param robolectricTestRunner The RobolectricTestRunner class to check against
-   */
-  private boolean isRobolectricSuiteRunner(Runner runner, Class<?> robolectricTestRunner) {
-    try {
-      // getChildren() is a protected method defined in ParentRunner
-      Class<?> parentRunner = Class.forName("org.junit.runners.ParentRunner");
-      Method getChildrenMethod = parentRunner.getDeclaredMethod("getChildren");
-      getChildrenMethod.setAccessible(true);
-      @SuppressWarnings("unchecked")
-      List<Runner> children = (List<Runner>) getChildrenMethod.invoke(runner);
-
-      // Check if first child extends RobolectricTestRunner (we only ever deal with one child)
-      if (!children.isEmpty()) {
-        Runner firstChild = children.get(0);
-        return robolectricTestRunner.isAssignableFrom(firstChild.getClass());
-      }
-    } catch (ReflectiveOperationException e) {
-      // Not a Robolectric suite runner
+  static boolean isRunnerOfTypeOrSuiteOfType(
+      Runner runner, Class<?> runnerType, Class<?> suiteType) {
+    if (runnerType.isAssignableFrom(runner.getClass())) {
+      return true;
     }
-    return false;
+
+    if (!suiteType.isAssignableFrom(runner.getClass())) {
+      return false;
+    }
+
+    try {
+      Method getChildrenMethod = ParentRunner.class.getDeclaredMethod("getChildren");
+      getChildrenMethod.setAccessible(true);
+      List<?> children = (List<?>) Objects.requireNonNull(getChildrenMethod.invoke(runner));
+
+      if (children.isEmpty()) {
+        return false;
+      }
+
+      for (Object child : children) {
+        if (!(child instanceof Runner)
+            || !isRunnerOfTypeOrSuiteOfType((Runner) child, runnerType, suiteType)) {
+          return false;
+        }
+      }
+      return true;
+    } catch (ReflectiveOperationException e) {
+      return false;
+    }
   }
 
   /**
@@ -444,21 +519,23 @@ public final class JUnitRunner extends BaseRunner {
     @Override
     public void testFinished(Description description) throws Exception {
       // Shutdown single-test result.
+      Result result = Objects.requireNonNull(this.result);
+      RunListener resultListener = Objects.requireNonNull(this.resultListener);
       resultListener.testFinished(description);
       resultListener.testRunFinished(result);
-      resultListener = null;
+      this.resultListener = null;
 
       // Restore the original stdout/stderr.
       System.setOut(originalOut);
       System.setErr(originalErr);
 
       // Clean up logging handlers
-      JavaUtilLoggingHelper.cleanupLogging(logHandlers);
+      JavaUtilLoggingHelper.cleanupLogging(Objects.requireNonNull(logHandlers));
       logHandlers = null;
 
       // Get the stdout/stderr written during the test as strings.
-      stdOutStream.flush();
-      stdErrStream.flush();
+      Objects.requireNonNull(stdOutStream).flush();
+      Objects.requireNonNull(stdErrStream).flush();
 
       int numFailures = result.getFailureCount();
       String className = description.getClassName();
@@ -478,7 +555,8 @@ public final class JUnitRunner extends BaseRunner {
         }
         failure = numFailures == 0 ? null : result.getFailures().get(0);
         if (failure != null
-            && stackTraceToString(failure.getException()).contains("No runnable methods")
+            && stackTraceToString(Objects.requireNonNull(failure.getException()))
+                .contains("No runnable methods")
             && "initializationError".equals(methodName)) {
           return; // don't record errors if there is no runnable
         }
@@ -492,14 +570,16 @@ public final class JUnitRunner extends BaseRunner {
       }
 
       StringBuilder stdOut = new StringBuilder();
-      stdOut.append(rawStdOutBytes.toString(ENCODING));
+      stdOut.append(Objects.requireNonNull(rawStdOutBytes).toString(ENCODING));
+      ByteArrayOutputStream julLogBytes = Objects.requireNonNull(this.julLogBytes);
       if (type == ResultType.FAILURE && julLogBytes.size() > 0) {
         stdOut.append('\n');
         stdOut.append(JUL_DEBUG_LOGS_HEADER);
         stdOut.append(julLogBytes.toString(ENCODING));
       }
       StringBuilder stdErr = new StringBuilder();
-      stdErr.append(rawStdErrBytes.toString(ENCODING));
+      stdErr.append(Objects.requireNonNull(rawStdErrBytes).toString(ENCODING));
+      ByteArrayOutputStream julErrLogBytes = Objects.requireNonNull(this.julErrLogBytes);
       if (type == ResultType.FAILURE && julErrLogBytes.size() > 0) {
         stdErr.append('\n');
         stdErr.append(JUL_ERROR_LOGS_HEADER);
@@ -522,7 +602,7 @@ public final class JUnitRunner extends BaseRunner {
       if (resultListener != null) {
         // testStarted was called for latest test, but not the testFinished
         // report all failures as unbounded
-        for (Failure failure : result.getFailures()) {
+        for (Failure failure : Objects.requireNonNull(result).getFailures()) {
           recordUnpairedResult(failure, ResultType.FAILURE);
         }
       }

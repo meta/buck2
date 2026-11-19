@@ -15,13 +15,12 @@
  * limitations under the License.
  */
 
-use std::mem::MaybeUninit;
 use std::ptr::NonNull;
-use std::slice;
 
 use bumpalo::Bump;
 use bumpalo::ChunkRawIter;
 
+use crate::values::layout::heap::allocator::api::AllocatedChunk;
 use crate::values::layout::heap::allocator::api::ArenaAllocator;
 use crate::values::layout::heap::allocator::api::ChunkAllocationDirection;
 use crate::values::layout::value_alloc_size::ValueAllocSize;
@@ -31,13 +30,14 @@ pub(crate) struct ChunkIteratorWrapper<'a> {
 }
 
 impl<'a> Iterator for ChunkIteratorWrapper<'a> {
-    type Item = &'a [MaybeUninit<u8>];
+    type Item = AllocatedChunk<'a>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.iter
             .next()
-            .map(|(ptr, len)| unsafe { slice::from_raw_parts(ptr as *mut MaybeUninit<u8>, len) })
+            // SAFETY: the bump owns each allocated range for `'a`.
+            .map(|(ptr, len)| unsafe { AllocatedChunk::new(ptr, len) })
     }
 
     #[inline]

@@ -228,6 +228,18 @@ impl CongestionControlState {
         }
     }
 
+    /// A request of `sent` messages was pushed back as a whole: cut the next request below it.
+    /// The state's cutoff may be above `sent` (a stale `last_cutoff`, or a batch shorter than
+    /// the cutoff), and halving with `+ 1` does not move below 2 by itself.
+    fn congested(&mut self, sent: usize) {
+        self.current_cutoff = sent;
+        self.update_cutoff(true);
+        if self.current_cutoff >= sent {
+            self.current_cutoff = sent.saturating_sub(1).max(1);
+            self.cliff_bottom = self.current_cutoff;
+        }
+    }
+
     /// Compute and return the recovery amount of each step
     fn compute_recovery_amount(&self) -> usize {
         self.cliff_top.saturating_sub(self.current_cutoff) / FAST_RECOVERY_STEPS + 1
@@ -248,6 +260,29 @@ impl CongestionControlState {
             None
         }
     }
+}
+
+/// Upper bound on the payload bytes of one `WriteMessages` request.
+///
+/// A request that times out at the transport is resent whole, but Scribe may already have
+/// accepted it, so every message in it can land twice. Bounding the request bounds both how
+/// long Scribe takes to answer, keeping it well under `thrift_timeout`, and how many messages
+/// one timeout can duplicate. A local Scribe daemon has been measured at 12-40 ms per MiB.
+const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+
+/// The number of leading `messages` to send in the next request: at most `max_messages`, and
+/// at most `MAX_REQUEST_BYTES` of payload unless a single message is larger.
+fn request_len(messages: &[MessageSendState], max_messages: usize) -> usize {
+    let mut bytes = 0;
+    let fitting = messages
+        .iter()
+        .take(max_messages)
+        .take_while(|m| {
+            bytes += m.message.message.len();
+            bytes <= MAX_REQUEST_BYTES
+        })
+        .count();
+    fitting.max(1).min(messages.len())
 }
 
 /// A client of the Scribe ProducerService that buffers, retries, and sends messages to a remote Scribe daemon.
@@ -401,9 +436,12 @@ impl ScribeProducer {
         let mut first_request_error: Option<RequestError> = None;
 
         let retry_intervals: Vec<Duration> = self.make_retry_intervals();
+        // Failed requests in a row. A request that fully succeeds resets it, so a send gives up only
+        // after `retry_attempts` consecutive failures. Every reset delivers at least one message, so
+        // the loop ends.
         let mut retry_count = 0;
         while retry_count < retry_intervals.len() {
-            let cutoff_len = std::cmp::min(messages.len(), cc_state.current_cutoff);
+            let cutoff_len = request_len(&messages, cc_state.current_cutoff);
 
             tracing::debug!(
                 "retry_count={}, interval={:?}, current_cutoff={}, {} remained in batch",
@@ -512,11 +550,12 @@ impl ScribeProducer {
             if cutoff_len == retryable_error_count {
                 // Congested; all messages were pushed back with retryable errors, which means
                 // Scribed/Scribble couldn't prepare enough buffer to hold the message vector.
-                cc_state.update_cutoff(true);
+                cc_state.congested(cutoff_len);
                 retry_count += 1;
             } else if cutoff_len == success_count {
                 // Success; all the messages up to the cutoff were successfully processed.
                 cc_state.update_cutoff(false);
+                retry_count = 0;
             } else {
                 // Partial Success; there were some unretryable errors, or partial successes, or both
                 // not because of congestion. Try again with a longer interval.
@@ -1095,10 +1134,7 @@ mod tests {
                 WriteMessageResultCode::ENQUEUE_FAILED,
                 WriteMessageResultCode::ENQUEUE_FAILED,
             ],
-            vec![
-                WriteMessageResultCode::ENQUEUE_FAILED,
-                WriteMessageResultCode::ENQUEUE_FAILED,
-            ],
+            vec![WriteMessageResultCode::ENQUEUE_FAILED],
         ];
         let client = mock_client(codes.clone());
         let producer = make_ScribeProducer(fb, client, codes[0].len());
@@ -1172,6 +1208,169 @@ mod tests {
         let counters = producer.export_counters();
         assert_eq!(counters.successes, 16);
         assert_eq!(counters.failures(), 0);
+    }
+
+    fn cap_client(cap: usize, sizes: Arc<Mutex<Vec<usize>>>) -> ProducerServiceClient {
+        let client = Arc::new(scribe_producer_service_mocks::new::<dyn ProducerService>());
+        client.WriteMessages.mock(move |req| {
+            let n = req.messages.len();
+            sizes.lock().unwrap().push(n);
+            let code = if n <= cap {
+                WriteMessageResultCode::OK
+            } else {
+                WriteMessageResultCode::ENQUEUE_FAILED
+            };
+            WriteMessagesResponse {
+                results: (0..n)
+                    .map(|_| ThriftWriteMessageResult {
+                        code,
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            }
+        });
+        client
+    }
+
+    /// When Scribe queues only one-message requests, the batch is cut down to one message and
+    /// every message is delivered.
+    #[fbinit::test]
+    async fn test_cutoff_with_one_message_capacity(fb: FacebookInit) {
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let producer = make_ScribeProducer(fb, cap_client(1, Arc::clone(&sizes)), 3);
+        let res = producer
+            .send_messages_now(vec![message("a"), message("b"), message("c")])
+            .await;
+        assert!(res.is_ok(), "{res:?}");
+        assert_eq!(*sizes.lock().unwrap(), vec![3, 2, 1, 1, 1]);
+        assert_eq!(producer.export_counters().successes, 3);
+    }
+
+    /// A stale `last_cutoff` above the batch size does not keep the requests at the full size:
+    /// a congested request is cut from the size that was sent.
+    #[fbinit::test]
+    async fn test_stale_last_cutoff(fb: FacebookInit) {
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let producer = ScribeProducer {
+            last_cutoff: Mutex::new(Some(501)),
+            ..make_ScribeProducer(fb, cap_client(2, Arc::clone(&sizes)), 3)
+        };
+        let res = producer
+            .send_messages_now(vec![message("a"), message("b"), message("c")])
+            .await;
+        assert!(res.is_ok(), "{res:?}");
+        assert_eq!(*sizes.lock().unwrap(), vec![3, 2, 1]);
+    }
+
+    fn sized_message(len: usize) -> Message {
+        Message {
+            category: "buck2_events".to_owned(),
+            message: vec![0; len],
+            ..Default::default()
+        }
+    }
+
+    /// A queue larger than `MAX_REQUEST_BYTES` is sent as several requests that each fit in it,
+    /// and splitting it does not use up retry attempts.
+    #[fbinit::test]
+    async fn test_requests_are_bounded_by_bytes(fb: FacebookInit) {
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let producer = make_ScribeProducer(fb, cap_client(usize::MAX, Arc::clone(&sizes)), 20);
+        let res = producer
+            .send_messages_now((0..20).map(|_| sized_message(300 * 1024)).collect())
+            .await;
+        assert!(res.is_ok(), "{res:?}");
+        // 3 * 300 KiB fits in 1 MiB, 4 * 300 KiB does not. 7 requests exceed the 5 attempts.
+        assert_eq!(*sizes.lock().unwrap(), vec![3, 3, 3, 3, 3, 3, 2]);
+        assert_eq!(producer.export_counters().successes, 20);
+    }
+
+    /// A client whose `n`th `WriteMessages` call fails with an exception when `fails(n)`, and
+    /// accepts every message otherwise.
+    fn flaky_client(
+        fails: impl Fn(usize) -> bool + Send + Sync + 'static,
+        sizes: Arc<Mutex<Vec<usize>>>,
+    ) -> ProducerServiceClient {
+        let client = Arc::new(scribe_producer_service_mocks::new::<dyn ProducerService>());
+        client.WriteMessages.mock_result(move |req| {
+            let mut sizes = sizes.lock().unwrap();
+            let call = sizes.len();
+            sizes.push(req.messages.len());
+            if fails(call) {
+                return Err(WriteMessagesError::ApplicationException(
+                    ApplicationException::unknown_method(),
+                ));
+            }
+            Ok(WriteMessagesResponse {
+                results: (0..req.messages.len())
+                    .map(|_| ThriftWriteMessageResult {
+                        code: WriteMessageResultCode::OK,
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            })
+        });
+        client
+    }
+
+    /// Failures separated by successful requests do not use up the retry attempts.
+    #[fbinit::test]
+    async fn test_failures_between_successes_do_not_exhaust_retries(fb: FacebookInit) {
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let producer = make_ScribeProducer(
+            fb,
+            flaky_client(|call| call % 2 == 0, Arc::clone(&sizes)),
+            20,
+        );
+        let res = producer
+            .send_messages_now((0..20).map(|_| sized_message(300 * 1024)).collect())
+            .await;
+        assert!(res.is_ok(), "{res:?}");
+        // Each of the 7 requests fails once and then succeeds: 7 failures, more than the 5 attempts.
+        assert_eq!(
+            *sizes.lock().unwrap(),
+            vec![3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2]
+        );
+        assert_eq!(producer.export_counters().successes, 20);
+    }
+
+    /// A send gives up after `retry_attempts` consecutive failures.
+    #[fbinit::test]
+    async fn test_consecutive_failures_give_up(fb: FacebookInit) {
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let producer =
+            make_ScribeProducer(fb, flaky_client(|call| call >= 1, Arc::clone(&sizes)), 20);
+        let res = producer
+            .send_messages_now((0..20).map(|_| sized_message(300 * 1024)).collect())
+            .await;
+        assert!(
+            res.is_err(),
+            "the send should give up after 5 failures in a row"
+        );
+        // The first request succeeds, then the second one fails 5 times.
+        assert_eq!(*sizes.lock().unwrap(), vec![3, 3, 3, 3, 3, 3]);
+        let counters = producer.export_counters();
+        assert_eq!(counters.successes, 3);
+        assert_eq!(counters.failures(), 17);
+    }
+
+    /// A message larger than `MAX_REQUEST_BYTES` is still sent, alone in its request.
+    #[fbinit::test]
+    async fn test_oversized_message_is_sent_alone(fb: FacebookInit) {
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let producer = make_ScribeProducer(fb, cap_client(usize::MAX, Arc::clone(&sizes)), 3);
+        let res = producer
+            .send_messages_now(vec![
+                sized_message(2 * MAX_REQUEST_BYTES),
+                sized_message(10),
+                sized_message(10),
+            ])
+            .await;
+        assert!(res.is_ok(), "{res:?}");
+        assert_eq!(*sizes.lock().unwrap(), vec![1, 2]);
+        assert_eq!(producer.export_counters().successes, 3);
     }
 
     #[test]

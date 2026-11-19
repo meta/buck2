@@ -23,4 +23,3 @@ error: Type `3` is not a valid type annotation
   |
 2 | test = int | 3
   |        ^^^^^^^
-  |

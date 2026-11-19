@@ -14,11 +14,14 @@ import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.MkdirIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.SymlinkIsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.util.Map;
+import java.util.Objects;
 
 /** Copies (by creating symlinks) resources from existing paths to desired paths. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CopyResourcesStep {
 
   private CopyResourcesStep() {}
@@ -31,7 +34,7 @@ public class CopyResourcesStep {
       RelPath existingPath = entry.getKey();
       RelPath linkPath = entry.getValue();
 
-      steps.add(new MkdirIsolatedStep(linkPath.getParent()));
+      steps.add(new MkdirIsolatedStep(Objects.requireNonNull(linkPath.getParent())));
       steps.add(new SymlinkIsolatedStep(existingPath, linkPath));
     }
     return steps.build();

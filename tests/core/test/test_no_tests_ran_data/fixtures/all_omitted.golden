@@ -1,0 +1,5 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+exit code: 0
+Tests finished: Pass 0. Fail 0. Timeout 0. Fatal 0. Skip 0. Omit 1. Infra Failure 0. Build failure 0
+NO TESTS RAN

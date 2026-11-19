@@ -12,7 +12,9 @@ package com.facebook.buck.jvm.java.plugin.adapter;
 
 import com.facebook.buck.jvm.java.lang.model.BridgeMethod;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
+import com.facebook.buck.jvm.java.lang.model.ErasedTypes;
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -25,10 +27,10 @@ import javax.lang.model.element.Name;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
-import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Types;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BridgeMethods {
   private final Map<TypeElement, List<BridgeMethod>> allBridgeMethods = new HashMap<>();
   private final Map<TypeElement, Map<Name, List<BridgeMethod>>> bridgeMethodsByName =
@@ -139,26 +141,25 @@ public class BridgeMethods {
                 && !types.isSubtype(
                     types.erasure(vmResolvedMethodOwner.asType()),
                     types.erasure(languageResolvedMethod.getEnclosingElement().asType())))) {
+          // Mirrors javac's TransTypes.addBridgeIfNeeded: an override bridge only when the VM
+          // would not already resolve to the language-level implementation; otherwise fall
+          // through to the access-bridge case.
           if (languageResolvedMethod != null
+              && languageResolvedMethod.getEnclosingElement() != vmResolvedMethodOwner
               && isBridgeNeeded(supertypeMethod, languageResolvedMethod, subclass)) {
-            if (languageResolvedMethod.getEnclosingElement() != vmResolvedMethodOwner) {
-              bridgesNeeded.add(new BridgeMethod(languageResolvedMethod, supertypeMethod));
-            }
+            bridgesNeeded.add(new BridgeMethod(languageResolvedMethod, supertypeMethod));
             // There's a comment in the compiler source about there being a design flaw in
             // Reflection
             // that requires bridge methods to be created if a public class inherits a public method
             // from a non-public supertype.
           } else if (languageResolvedMethod == supertypeMethod
-              && languageResolvedMethod.getEnclosingElement() != subclass
-              && !languageResolvedMethod.getModifiers().contains(Modifier.FINAL)
+              && supertypeMethod.getEnclosingElement() != subclass
+              && !supertypeMethod.getModifiers().contains(Modifier.FINAL)
               && !supertypeMethod.getModifiers().contains(Modifier.ABSTRACT)
               && !supertypeMethod.getModifiers().contains(Modifier.DEFAULT)
               && supertypeMethod.getModifiers().contains(Modifier.PUBLIC)
               && subclass.getModifiers().contains(Modifier.PUBLIC)
-              && !languageResolvedMethod
-                  .getEnclosingElement()
-                  .getModifiers()
-                  .contains(Modifier.PUBLIC)) {
+              && !supertypeMethod.getEnclosingElement().getModifiers().contains(Modifier.PUBLIC)) {
             bridgesNeeded.add(new BridgeMethod(supertypeMethod, supertypeMethod));
           }
         }
@@ -180,20 +181,23 @@ public class BridgeMethods {
           return true;
         }
 
-        return !types.isSameType(
-            methodErasure.getReturnType(), languageImplementationErasure.getReturnType());
+        return !ErasedTypes.isSameType(
+            types, methodErasure.getReturnType(), languageImplementationErasure.getReturnType());
       } else if (!method.getModifiers().contains(Modifier.ABSTRACT)
           && !method.getModifiers().contains(Modifier.DEFAULT)) {
-        return !isSameMemberWhenErased(inType, method, types.erasure(method.asType()));
+        return !isSameMemberWhenErased(
+            inType, method, (ExecutableType) types.erasure(method.asType()));
       }
 
       return false;
     }
 
     private boolean isSameMemberWhenErased(
-        TypeElement inType, ExecutableElement method, TypeMirror erasedType) {
-      return types.isSameType(
-          types.erasure(types.asMemberOf((DeclaredType) inType.asType(), method)), erasedType);
+        TypeElement inType, ExecutableElement method, ExecutableType erasedType) {
+      return ErasedTypes.isSameDescriptor(
+          types,
+          (ExecutableType) types.asMemberOf((DeclaredType) inType.asType(), method),
+          erasedType);
     }
 
     private boolean isHiddenInType(ExecutableElement hidden, TypeElement subclass) {

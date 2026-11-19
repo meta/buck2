@@ -13,19 +13,20 @@ load(":context.bzl", "CompileContext")
 # the action will succeed with those artifacts as outputs. Otherwise it fails.
 # Either way it streams whatever stderr content there is to stream.
 def failure_filter(
-        ctx: AnalysisContext,
-        compile_ctx: CompileContext,
-        predeclared_output: Artifact | None,
-        build_status: Artifact,
-        required: Artifact,
-        stderr: Artifact,
-        identifier: str) -> Artifact:
+    ctx: AnalysisContext,
+    compile_ctx: CompileContext,
+    predeclared_output: Artifact | None,
+    build_status: Artifact,
+    required: Artifact,
+    stderr: Artifact,
+    identifier: str,
+) -> Artifact:
     failure_filter_action = compile_ctx.internal_tools_info.failure_filter_action
 
     if predeclared_output:
         output = predeclared_output
     else:
-        output = ctx.actions.declare_output("out/" + required.short_path)
+        output = ctx.actions.declare_output("out/" + required.short_path, has_content_based_path = getattr(ctx.attrs, "use_content_based_paths", False))
 
     cmd = cmd_args(
         failure_filter_action,

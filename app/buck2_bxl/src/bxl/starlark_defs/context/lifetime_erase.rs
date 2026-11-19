@@ -59,13 +59,13 @@ impl<'a, C: LifetimeErasedTypeClass> LifetimeErased<'a, C> {
     }
 
     pub(crate) fn access<'s, R>(&'s self, f: impl for<'b> FnOnce(&'s C::Concrete<'b>) -> R) -> R {
-        f(&self.0)
+        f(self.0)
     }
 
     pub(crate) fn access_mut<'s, R>(
         &'s mut self,
         f: impl for<'b> FnOnce(&'s mut C::Concrete<'b>) -> R,
     ) -> R {
-        f(&mut self.0)
+        f(self.0)
     }
 }

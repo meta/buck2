@@ -9,3 +9,4 @@
  */
 
 pub mod sc_clk_tck;
+pub mod sc_page_size;

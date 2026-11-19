@@ -8,83 +8,36 @@
  * above-listed licenses.
  */
 
-//!
-//! A 'Package' in Buck corresponds to the subdirectories containing the
-//! repository sources that are accessible to the targets defined in the build
-//! file of current package. Each 'Package' can only contain one build file.
-//!
-//! A 'Package' is usually the entire directory contents where directory
-//! contains a build file, including all transitive subdirectories that do not
-//! contain a build file themselves, i.e. excluding all sub-packages. There's
-//! also a set of outputs that corresponds to building all the targets of the
-//! 'Package'.
-//!
-//! Example:
-//! ```ignore
-//! fbsource
-//! +-- .buck
-//! +-- package1
-//! |   +-- TARGETS
-//! |   +-- my.java
-//! +-- package2
-//! |   +-- subdir     // package 2 contains this subdir
-//! |   |   +-- foo.cpp
-//! |   +-- bar.cpp
-//! |   +-- TARGETS
-//! +-- package3
-//! |   +-- package4  // package 3 excludes all subdirectories rooted at package4
-//! |   |   +-- a.cpp
-//! |   |   +-- TARGETS
-//! |   +-- faz.java
-//! |   +-- TARGETS
-//! ```
-
 pub mod package_relative_path;
 pub mod source_path;
 
-// Re-export for use in submodules
-use std::hash::Hash;
-use std::hash::Hasher;
-
 use allocative::Allocative;
-pub(crate) use buck2_fs::paths::fmt::quoted_display;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_util::hash::BuckHasher;
+use buck2_hash::BuckHasher;
 use derive_more::Display;
 use dupe::Dupe;
-use equivalent::Equivalent;
+use pagable::Pagable;
 use serde::Serialize;
 use serde::Serializer;
 use static_interner::Intern;
-use static_interner::Interner;
+use static_interner::interner;
 use strong_hash::StrongHash;
 
 use crate::cells::cell_path::CellPath;
-use crate::cells::cell_path::CellPathRef;
 use crate::cells::name::CellName;
 use crate::cells::paths::CellRelativePath;
 use crate::pattern::pattern::Modifiers;
 
-/// A 'Package' as defined above.
+/// A label representing a package.
 ///
-/// This type does not assert it represents a valid package.
-/// However, we use it in context where we expect it to be a valid package
-/// (for example, attempt to gather package listing for a package fails
-/// if it is a directory, but does not have a build file).
-///
-/// A **valid** Buck2 package is defined by:
-/// - A `BUCK` file that designates the root of the package.
-/// - All files in the BUCK file’s directory and its subdirectories,
-///   provided that none of those subdirectories contain their own `BUCK` file.
-///   (If a subdirectory does contain a BUCK file, it forms a new, separate package.)
-///
-/// You can find the example above
-///
-/// a valid `PackageLabel` is the `CellPath` that points to a folder containing a `BUCK` file.
-/// e.g. `root//path/to/package` is a valid `PackageLabel` if `root//path/to/package/BUCK` exists.
+/// This is the same data as a `CellPath`, but carries additional expectations/semantics associated
+/// with being treated as a package.
 #[derive(
-    Copy, Clone, Dupe, Debug, Display, Eq, PartialEq, Hash, Ord, PartialOrd, Allocative, StrongHash
+    Copy, Clone, Dupe, Debug, Display, Eq, PartialEq, Hash, Ord, PartialOrd, Allocative,
+    StrongHash, Pagable
 )]
+// FIXME(JakobDegen): Whether this interning makes sense has not been re-evaluated since `CellPath`
+// itself became interned-ish and `Copy`
 pub struct PackageLabel(Intern<PackageLabelData>);
 
 impl Serialize for PackageLabel {
@@ -99,52 +52,22 @@ pub struct PackageLabelWithModifiers {
     pub modifiers: Modifiers,
 }
 
-#[derive(Debug, Display, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash)]
+#[derive(
+    Debug, Display, Eq, PartialEq, Hash, Ord, PartialOrd, Allocative, Pagable, StrongHash
+)]
 struct PackageLabelData(CellPath);
 
-#[derive(Hash, Eq, PartialEq)]
-struct PackageLabelDataRef<'a> {
-    path: CellPathRef<'a>,
-}
-
-impl<'a> From<PackageLabelDataRef<'a>> for PackageLabelData {
-    fn from(package_data: PackageLabelDataRef<'a>) -> Self {
-        PackageLabelData(package_data.path.to_owned())
-    }
-}
-
-impl PackageLabelData {
-    fn as_ref(&self) -> PackageLabelDataRef<'_> {
-        PackageLabelDataRef {
-            path: self.0.as_ref(),
-        }
-    }
-}
-
-#[allow(clippy::derived_hash_with_manual_eq)]
-impl Hash for PackageLabelData {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.as_ref().hash(state)
-    }
-}
-
-impl Equivalent<PackageLabelData> for PackageLabelDataRef<'_> {
-    fn equivalent(&self, key: &PackageLabelData) -> bool {
-        self == &key.as_ref()
-    }
-}
-
-static INTERNER: Interner<PackageLabelData, BuckHasher> = Interner::new();
+interner!(INTERNER, BuckHasher, PackageLabelData);
 
 impl PackageLabel {
     #[inline]
     pub fn new(cell: CellName, path: &CellRelativePath) -> buck2_error::Result<Self> {
-        PackageLabel::from_cell_path(CellPathRef::new(cell, path))
+        PackageLabel::from_cell_path(CellPath::new(cell, path))
     }
 
     #[inline]
-    pub fn from_cell_path(path: CellPathRef) -> buck2_error::Result<Self> {
-        Ok(PackageLabel(INTERNER.intern(PackageLabelDataRef { path })))
+    pub fn from_cell_path(path: CellPath) -> buck2_error::Result<Self> {
+        Ok(PackageLabel(INTERNER.intern(PackageLabelData(path))))
     }
 
     #[inline]
@@ -159,19 +82,19 @@ impl PackageLabel {
 
     #[inline]
     pub fn to_cell_path(&self) -> CellPath {
-        self.0.0.clone()
+        self.0.0
     }
 
     #[inline]
-    pub fn as_cell_path(&self) -> CellPathRef<'_> {
-        self.0.0.as_ref()
+    pub fn as_cell_path(&self) -> CellPath {
+        self.0.0
     }
 
     pub fn join(&self, path: &ForwardRelativePath) -> buck2_error::Result<Self> {
         if path.is_empty() {
             Ok(self.dupe())
         } else {
-            PackageLabel::from_cell_path(self.as_cell_path().join(path).as_ref())
+            PackageLabel::from_cell_path(self.as_cell_path().join(path))
         }
     }
 
@@ -214,8 +137,8 @@ mod tests {
     #[test]
     fn test_serialize() {
         assert_eq!(
-            r#""foo//bar/baz""#,
-            serde_json::to_string(&PackageLabel::testing_parse("foo//bar/baz")).unwrap()
+            "foo//bar/baz",
+            PackageLabel::testing_parse("foo//bar/baz").to_string()
         );
     }
 }

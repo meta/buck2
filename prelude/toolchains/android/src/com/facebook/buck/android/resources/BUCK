@@ -30,7 +30,9 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/util:util",
         "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip",
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
     ],
 )
 
@@ -47,6 +49,8 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
     ],
 )
 
@@ -72,6 +76,8 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/json:json",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
         ":resources",
     ],
 )
@@ -93,10 +99,10 @@ buck_java_library(
     java_version = "11",
     visibility = ["PUBLIC"],
     deps = [
-        "prelude//toolchains/android/src/com/facebook/buck/android/zipalign:zipalign",
         "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":resources",
     ],
 )

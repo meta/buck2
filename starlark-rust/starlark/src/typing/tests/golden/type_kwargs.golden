@@ -17,7 +17,6 @@ error: Expected type `dict[str, typing.Any]` but got `dict[int, str]`
   |
 6 |     foo(**{1: "x"})
   |           ^^^^^^^^
-  |
 
 Compiler typechecker (eval):
 error: Expected type `dict[str, typing.Any]` but got `dict[int, str]`
@@ -25,4 +24,3 @@ error: Expected type `dict[str, typing.Any]` but got `dict[int, str]`
   |
 6 |     foo(**{1: "x"})
   |           ^^^^^^^^
-  |

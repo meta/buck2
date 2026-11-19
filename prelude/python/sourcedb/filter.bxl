@@ -13,9 +13,7 @@ BUCK_PYTHON_RULE_KINDS = [
 ]
 BUCK_PYTHON_RULE_KIND_QUERY = "|".join(BUCK_PYTHON_RULE_KINDS)
 
-def get_unfiltered_root_targets(
-        query: bxl.UqueryContext,
-        target_patterns: typing.Any) -> bxl.UnconfiguredTargetSet:
+def get_unfiltered_root_targets(query: bxl.UqueryContext, target_patterns: typing.Any) -> bxl.TargetSet[bxl.UnconfiguredTargetNode]:
     candidate_targets = utarget_set()
     for pattern in target_patterns:
         candidate_targets += query.kind(
@@ -24,9 +22,7 @@ def get_unfiltered_root_targets(
         )
     return candidate_targets
 
-def filter_root_targets(
-        query: bxl.UqueryContext,
-        target_patterns: typing.Any) -> bxl.UnconfiguredTargetSet:
+def filter_root_targets(query: bxl.UqueryContext, target_patterns: typing.Any) -> bxl.TargetSet[bxl.UnconfiguredTargetNode]:
     # Find all Pure-Python targets
     candidate_targets = get_unfiltered_root_targets(query, target_patterns)
 
@@ -45,9 +41,7 @@ def filter_root_targets(
     )
     return filtered_targets
 
-def do_filter(
-        query: bxl.UqueryContext,
-        target_patterns: typing.Any) -> list[TargetLabel]:
+def do_filter(query: bxl.UqueryContext, target_patterns: typing.Any) -> list[TargetLabel]:
     root_targets = filter_root_targets(query, target_patterns)
     return [root_target.label for root_target in root_targets]
 
@@ -60,10 +54,7 @@ def _do_filter_entry_point(ctx: bxl.Context) -> None:
     ctx.output.print_json(targets)
 
 filter = bxl_main(
-    doc = (
-        "Expand target patterns and look for all targets in immediate sources " +
-        "that will be built by Pyre."
-    ),
+    doc = ("Expand target patterns and look for all targets in immediate sources " + "that will be built by Pyre."),
     impl = _do_filter_entry_point,
     cli_args = {
         "target": cli_args.list(cli_args.string()),

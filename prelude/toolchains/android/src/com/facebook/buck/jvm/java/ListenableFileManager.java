@@ -10,34 +10,48 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Reader;
 import java.io.Writer;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import javax.annotation.Nullable;
-import javax.annotation.concurrent.NotThreadSafe;
 import javax.tools.FileObject;
 import javax.tools.ForwardingJavaFileObject;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.StandardLocation;
+import org.jspecify.annotations.Nullable;
 
-@NotThreadSafe
+/** Not thread-safe. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ListenableFileManager extends ForwardingStandardJavaFileManager {
 
   private final FileObjectWrapper fileTracker;
   private final List<FileManagerListener> listeners = new ArrayList<>();
+  @Nullable private final CompilerClassToSourceMap classToSourceMap;
+  private final Path sourceRoot;
 
   public ListenableFileManager(StandardJavaFileManager fileManager) {
+    this(fileManager, null, Paths.get(""));
+  }
+
+  public ListenableFileManager(
+      StandardJavaFileManager fileManager,
+      @Nullable CompilerClassToSourceMap classToSourceMap,
+      Path sourceRoot) {
     super(fileManager);
     fileTracker = new FileObjectWrapper();
+    this.classToSourceMap = classToSourceMap;
+    this.sourceRoot = sourceRoot;
   }
 
   public void addListener(FileManagerListener listener) {
@@ -49,6 +63,7 @@ class ListenableFileManager extends ForwardingStandardJavaFileManager {
   }
 
   @Override
+  @Nullable
   public String inferBinaryName(Location location, JavaFileObject file) {
     // javac does not play nice with wrapped file objects in this method; so we unwrap
     return super.inferBinaryName(location, unwrap(file));
@@ -125,9 +140,18 @@ class ListenableFileManager extends ForwardingStandardJavaFileManager {
 
   @Override
   public JavaFileObject getJavaFileForOutput(
-      Location location, String className, JavaFileObject.Kind kind, FileObject sibling)
+      Location location, String className, JavaFileObject.Kind kind, @Nullable FileObject sibling)
       throws IOException {
     JavaFileObject javaFileObject = super.getJavaFileForOutput(location, className, kind, sibling);
+    if (classToSourceMap != null
+        && location == StandardLocation.CLASS_OUTPUT
+        && kind == JavaFileObject.Kind.CLASS) {
+      List<Path> sources =
+          sibling != null && "file".equals(sibling.toUri().getScheme())
+              ? List.of(Paths.get(sibling.toUri()))
+              : List.of();
+      classToSourceMap.put(className.replace('.', '/') + kind.extension, sources, sourceRoot);
+    }
     if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
       return javaFileObject;
     } else {
@@ -136,10 +160,11 @@ class ListenableFileManager extends ForwardingStandardJavaFileManager {
   }
 
   @Override
+  @Nullable
   public FileObject getFileForInput(Location location, String packageName, String relativeName)
       throws IOException {
     FileObject fileObject = super.getFileForInput(location, packageName, relativeName);
-    if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
+    if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH || fileObject == null) {
       return fileObject;
     } else {
       return fileTracker.wrap(fileObject);
@@ -148,7 +173,7 @@ class ListenableFileManager extends ForwardingStandardJavaFileManager {
 
   @Override
   public FileObject getFileForOutput(
-      Location location, String packageName, String relativeName, FileObject sibling)
+      Location location, String packageName, String relativeName, @Nullable FileObject sibling)
       throws IOException {
     FileObject fileObject = super.getFileForOutput(location, packageName, relativeName, sibling);
     if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
@@ -235,6 +260,7 @@ class ListenableFileManager extends ForwardingStandardJavaFileManager {
     }
 
     @Override
+    @Nullable
     public CharSequence getCharContent(boolean ignoreEncodingErrors) throws IOException {
       listeners.forEach(it -> it.onFileRead(fileObject));
       return super.getCharContent(ignoreEncodingErrors);

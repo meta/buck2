@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _dep_impl(ctx):
-    out = ctx.actions.declare_output("dep")
+    out = ctx.actions.declare_output("dep", has_content_based_path = False)
     ctx.actions.run(
         [
             "fbpython",
@@ -27,7 +27,7 @@ dep = rule(
 
 def _large_action_input(ctx):
     dep = ctx.attrs.dep[DefaultInfo].default_outputs[0]
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(
             [

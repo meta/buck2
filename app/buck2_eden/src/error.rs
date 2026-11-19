@@ -8,6 +8,9 @@
  * above-listed licenses.
  */
 
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+
 use buck2_certs::validate::validate_certs;
 use buck2_error::ErrorTag;
 use buck2_fs::paths::abs_path::AbsPathBuf;
@@ -31,12 +34,34 @@ pub struct MountNeverBecameReady {
 }
 
 #[derive(buck2_error::Error, Debug)]
+#[buck2(tag = IoEdenDaemonRestarted)]
+#[error(
+    "EdenFS restarted (pid {old_pid} -> {new_pid}, start unixtime {} -> {}) while this buck2 \
+     daemon was running. Restart buck2 with `buck2 kill`",
+    format_start_time(old_start_time),
+    format_start_time(new_start_time)
+)]
+pub struct EdenDaemonRestarted {
+    pub old_pid: i32,
+    pub old_start_time: Option<SystemTime>,
+    pub new_pid: i32,
+    pub new_start_time: Option<SystemTime>,
+}
+
+fn format_start_time(start_time: &Option<SystemTime>) -> String {
+    match start_time.and_then(|t| t.duration_since(UNIX_EPOCH).ok()) {
+        Some(since_epoch) => since_epoch.as_secs().to_string(),
+        None => "unknown".to_owned(),
+    }
+}
+
+#[derive(buck2_error::Error, Debug)]
 pub enum IsMountReadyError {
     #[error("Mount does not exist in Eden: `{mount}`")]
     #[buck2(tag = IoEdenMountDoesNotExist)]
     MountDoesNotExist { mount: AbsPathBuf },
-    #[error(transparent)]
-    #[buck2(tag = IoEdenRequestError)]
+    #[error("Eden Request Failed: {0:?}")]
+    #[buck2(tag = IoEdenRequestError, tag = IoEdenListMounts)]
     RequestError(ListMountsError),
 }
 
@@ -90,24 +115,6 @@ macro_rules! impl_error_from_hanging_mount {
 }
 
 impl_error_from_hanging_mount!(GetDaemonInfoError);
-
-impl<E> std::error::Error for ConnectAndRequestError<E>
-where
-    E: std::error::Error,
-    Self: std::fmt::Debug + std::fmt::Display + std::marker::Send + std::marker::Sync + 'static,
-{
-    fn source(&self) -> std::option::Option<&(dyn std::error::Error + 'static)> {
-        use buck2_error::__for_macro::AsDynError;
-        match self {
-            ConnectAndRequestError::ConnectionError { 0: transparent } => {
-                std::error::Error::source(transparent.as_dyn_error())
-            }
-            ConnectAndRequestError::RequestError { 0: transparent } => {
-                std::error::Error::source(transparent.as_dyn_error())
-            }
-        }
-    }
-}
 
 #[derive(Copy, Clone, Dupe, PartialEq, Eq)]
 pub enum ErrorHandlingStrategy {

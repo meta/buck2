@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use dupe::Dupe;
 use starlark_syntax::codemap::CodeMap;
 use starlark_syntax::codemap::FileSpanRef;
+use starlark_syntax::codemap::Span;
 use starlark_syntax::codemap::Spanned;
 use starlark_syntax::slice_vec_ext::SliceExt;
 use starlark_syntax::syntax::ast::LoadArgP;
@@ -38,19 +39,31 @@ use crate::eval::compiler::scope::scope_resolver_globals::ScopeResolverGlobals;
 use crate::syntax::AstModule;
 use crate::syntax::Dialect;
 use crate::values::FrozenHeap;
+use crate::values::HeapEdge;
+use crate::values::any::StarlarkAny;
 
 /// Unused load statement.
 pub(crate) struct UnusedLoad {
-    /// Location of the statement (i.e. position of `load` keyword).
-    pub(crate) load: Spanned<LoadP<CstPayload>>,
+    /// Span of the whole statement.
+    pub(crate) span: Span,
+    /// Number of names the statement loads.
+    arg_count: usize,
     /// Unused local names, e. g. `x` in `load("foo", x="y")`.
-    pub(crate) unused_args: Vec<LoadArgP<CstPayload>>,
+    pub(crate) unused_args: Vec<UnusedLoadArg>,
+}
+
+/// Unused name in a `load` statement.
+pub(crate) struct UnusedLoadArg {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) span: Span,
+    /// The argument together with its trailing comma, if any.
+    pub(crate) span_with_trailing_comma: Span,
 }
 
 impl UnusedLoad {
     /// If the whole `load` statement is unused.
     pub(crate) fn all_unused(&self) -> bool {
-        self.unused_args.len() == self.load.args.len()
+        self.unused_args.len() == self.arg_count
     }
 }
 
@@ -73,111 +86,116 @@ pub(crate) fn find_unused_loads(
     program: &str,
 ) -> crate::Result<(CodeMap, Vec<UnusedLoad>)> {
     let module = AstModule::parse(name, program.to_owned(), &Dialect::AllOptionsInternal)?;
-    let names = MutableNames::new();
-    let heap = FrozenHeap::new();
-    let (codemap, statement, dialect, ..) = module.into_parts();
-    let codemap = heap.alloc_any(codemap);
-    let module_scopes = ModuleScopes::check_module_err(
-        &names,
-        &heap,
-        &HashMap::new(),
-        statement,
-        ScopeResolverGlobals::unknown(),
-        codemap,
-        &dialect,
-    )?;
+    FrozenHeap::temp(|heap| {
+        let names = MutableNames::new();
+        let (codemap, statement, dialect, ..) = module.into_parts();
+        let codemap = heap.alloc_simple_typed(StarlarkAny::new(codemap));
+        let module_scopes = ModuleScopes::check_module_err(
+            &names,
+            heap,
+            HeapEdge::identity(),
+            &HashMap::new(),
+            statement,
+            ScopeResolverGlobals::unknown(),
+            codemap,
+            &dialect,
+        )?;
 
-    let mut loads = Vec::new();
+        let mut loads = Vec::new();
 
-    struct LoadSymbol<'a> {
-        arg: &'a LoadArgP<CstPayload>,
-        binding_id: BindingId,
-        used: bool,
-    }
-
-    struct LoadWip<'a> {
-        load: Spanned<&'a LoadP<CstPayload>>,
-        args: Vec<LoadSymbol<'a>>,
-    }
-
-    impl<'a> LoadWip<'a> {
-        fn any_unused(&self) -> bool {
-            self.args.iter().any(|arg| !arg.used)
+        struct LoadSymbol<'a, 'f> {
+            arg: &'a LoadArgP<CstPayload<'f>>,
+            binding_id: BindingId,
+            used: bool,
         }
-    }
 
-    for top in top_level_stmts(&module_scopes.cst) {
-        if let StmtP::Load(load) = &**top {
-            let args = load.args.try_map(|arg| {
-                anyhow::Ok(LoadSymbol {
-                    arg,
-                    binding_id: arg
-                        .local
-                        .payload
-                        .ok_or_else(|| anyhow::anyhow!("payload is not set"))?,
-                    used: false,
-                })
-            })?;
-            loads.push(LoadWip {
-                load: Spanned {
-                    span: top.span,
-                    node: load,
-                },
-                args,
-            });
+        struct LoadWip<'a, 'f> {
+            load: Spanned<&'a LoadP<CstPayload<'f>>>,
+            args: Vec<LoadSymbol<'a, 'f>>,
         }
-    }
 
-    for top in top_level_stmts(&module_scopes.cst) {
-        top.visit_ident(|ident| {
-            println!("visit ident: {ident:?}");
-            let ResolvedIdent::Slot(Slot::Module(_), binding_id) = ident
-                .payload
-                .ok_or_else(|| anyhow::anyhow!("ident is not resolved (internal error)"))?
-            else {
-                return Ok(());
-            };
-            for load in &mut loads {
-                for arg in &mut load.args {
-                    if arg.binding_id == binding_id {
-                        arg.used = true;
+        impl LoadWip<'_, '_> {
+            fn any_unused(&self) -> bool {
+                self.args.iter().any(|arg| !arg.used)
+            }
+        }
+
+        for top in top_level_stmts(&module_scopes.cst) {
+            if let StmtP::Load(load) = &**top {
+                let args = load.args.try_map(|arg| {
+                    anyhow::Ok(LoadSymbol {
+                        arg,
+                        binding_id: arg
+                            .local
+                            .payload
+                            .ok_or_else(|| anyhow::anyhow!("payload is not set"))?,
+                        used: false,
+                    })
+                })?;
+                loads.push(LoadWip {
+                    load: Spanned {
+                        span: top.span,
+                        node: load,
+                    },
+                    args,
+                });
+            }
+        }
+
+        for top in top_level_stmts(&module_scopes.cst) {
+            top.visit_ident(|ident| {
+                let ResolvedIdent::Slot(Slot::Module(_), binding_id) = ident
+                    .payload
+                    .ok_or_else(|| anyhow::anyhow!("ident is not resolved (internal error)"))?
+                else {
+                    return Ok(());
+                };
+                for load in &mut loads {
+                    for arg in &mut load.args {
+                        if arg.binding_id == binding_id {
+                            arg.used = true;
+                        }
                     }
                 }
+                anyhow::Ok(())
+            })?;
+        }
+
+        let mut unused = Vec::new();
+
+        for load in loads {
+            if !load.any_unused() {
+                continue;
             }
-            anyhow::Ok(())
-        })?;
-    }
-
-    let mut unused = Vec::new();
-
-    for load in loads {
-        if !load.any_unused() {
-            continue;
+            let unused_args: Vec<_> = load
+                .args
+                .into_iter()
+                .filter_map(|arg| {
+                    if arg.used {
+                        None
+                    } else if has_unused_marker_in_range(FileSpanRef {
+                        file: &codemap,
+                        span: arg.arg.span_with_trailing_comma(),
+                    }) {
+                        None
+                    } else {
+                        Some(UnusedLoadArg {
+                            span: arg.arg.span(),
+                            span_with_trailing_comma: arg.arg.span_with_trailing_comma(),
+                        })
+                    }
+                })
+                .collect();
+            if unused_args.is_empty() {
+                continue;
+            }
+            unused.push(UnusedLoad {
+                span: load.load.span,
+                arg_count: load.load.node.args.len(),
+                unused_args,
+            });
         }
-        let unused_args: Vec<_> = load
-            .args
-            .into_iter()
-            .filter_map(|arg| {
-                if arg.used {
-                    None
-                } else if has_unused_marker_in_range(FileSpanRef {
-                    file: &codemap,
-                    span: arg.arg.span_with_trailing_comma(),
-                }) {
-                    None
-                } else {
-                    Some(arg.arg.clone())
-                }
-            })
-            .collect();
-        if unused_args.is_empty() {
-            continue;
-        }
-        unused.push(UnusedLoad {
-            load: load.load.map(|load| load.clone()),
-            unused_args,
-        });
-    }
 
-    Ok(((*codemap).dupe(), unused))
+        Ok(((*codemap).dupe(), unused))
+    })
 }

@@ -19,6 +19,7 @@ use buck2_query::query::environment::QueryTarget;
 use buck2_query::query::graph::node::LabeledNode;
 use buck2_query::query::graph::node::NodeKey;
 use dupe::Dupe;
+use pagable::Pagable;
 use ref_cast::RefCast;
 
 use crate::attrs::attr_type::any_matches::AnyMatches;
@@ -27,7 +28,7 @@ use crate::attrs::inspect_options::AttrInspectOptions;
 use crate::nodes::configured::ConfiguredTargetNode;
 
 /// `ConfiguredTargetNode` as both `LabeledNode` and `NodeLabel` and also `QueryTarget`.
-#[derive(Debug, Dupe, Clone, RefCast, Allocative)]
+#[derive(Debug, Dupe, Clone, RefCast, Allocative, Pagable)]
 #[repr(C)]
 pub struct ConfiguredGraphNodeRef(ConfiguredTargetNode);
 
@@ -102,6 +103,10 @@ impl LabeledNode for ConfiguredGraphNodeRef {
 impl QueryTarget for ConfiguredGraphNodeRef {
     type Attr<'a> = ConfiguredAttr;
 
+    fn prefetch_bodies<'a>(targets: impl IntoIterator<Item = &'a Self>) -> buck2_error::Result<()> {
+        ConfiguredTargetNode::prefetch_bodies(targets.into_iter().map(|target| &target.0))
+    }
+
     fn label_for_filter(&self) -> String {
         self.0.label().unconfigured().to_string()
     }
@@ -114,16 +119,19 @@ impl QueryTarget for ConfiguredGraphNodeRef {
         Cow::Borrowed(self.0.label().name().as_str())
     }
 
-    fn buildfile_path(&self) -> &BuildFilePath {
-        self.0.buildfile_path()
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath> {
+        Ok(self.0.body()?.buildfile_path())
     }
 
     fn deps(&self) -> impl Iterator<Item = &Self::Key> + Send + '_ {
-        self.0.deps().map(ConfiguredGraphNodeRef::ref_cast)
+        self.0.deps().iter().map(ConfiguredGraphNodeRef::ref_cast)
     }
 
     fn exec_deps(&self) -> impl Iterator<Item = &Self::Key> + Send + '_ {
-        self.0.exec_deps().map(ConfiguredGraphNodeRef::ref_cast)
+        self.0
+            .exec_deps()
+            .iter()
+            .map(ConfiguredGraphNodeRef::ref_cast)
     }
 
     fn target_deps(&self) -> impl Iterator<Item = &Self::Key> + Send + '_ {
@@ -148,64 +156,92 @@ impl QueryTarget for ConfiguredGraphNodeRef {
         attr.any_matches(filter)
     }
 
-    fn special_attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn attr_matches(
+        &self,
+        key: &str,
+        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
+    ) -> buck2_error::Result<bool> {
+        self.0.body()?.attr_matches(key, filter)
+    }
+
+    fn special_attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for (name, attr) in self.0.special_attrs() {
+        for (name, attr) in self.0.body()?.special_attrs() {
             func(name, &attr)?;
         }
         Ok(())
     }
 
-    fn attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for a in self.0.attrs(AttrInspectOptions::All) {
+        for a in self.0.body()?.attrs(AttrInspectOptions::All) {
             func(a.name, &a.value)?;
         }
         Ok(())
     }
 
-    fn defined_attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn defined_attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for a in self.0.attrs(AttrInspectOptions::DefinedOnly) {
+        for a in self.0.body()?.attrs(AttrInspectOptions::DefinedOnly) {
             func(a.name, &a.value)?;
         }
         Ok(())
     }
 
-    fn map_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(&self, key: &str, mut func: F) -> R {
-        func(
+    fn map_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(
+        &self,
+        key: &str,
+        mut func: F,
+    ) -> buck2_error::Result<R> {
+        Ok(func(
             self.0
+                .body()?
                 .get(key, AttrInspectOptions::All)
                 .as_ref()
                 .map(|a| &a.value),
-        )
+        ))
     }
 
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
         &self,
         mut func: F,
     ) -> Result<(), E> {
-        for input in self.0.inputs() {
+        for input in self.0.body()?.inputs() {
             func(input)?;
         }
         Ok(())
     }
 
-    fn map_any_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(&self, key: &str, mut func: F) -> R {
-        match self
-            .0
-            .get(key, AttrInspectOptions::All)
-            .as_ref()
-            .map(|a| &a.value)
-        {
-            Some(attr) => func(Some(attr)),
-            None => func(self.special_attr_or_none(key).as_ref()),
-        }
+    fn map_any_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(
+        &self,
+        key: &str,
+        mut func: F,
+    ) -> buck2_error::Result<R> {
+        let body = self.0.body()?;
+        Ok(
+            match body
+                .get(key, AttrInspectOptions::All)
+                .as_ref()
+                .map(|a| &a.value)
+            {
+                Some(attr) => func(Some(attr)),
+                None => func(body.special_attr_or_none(key).as_ref()),
+            },
+        )
     }
 }

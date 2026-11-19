@@ -27,6 +27,7 @@
 
 pub use components::Component;
 pub use components::DrawMode;
+pub use content::Hyperlink;
 pub use content::Line;
 pub use content::Lines;
 pub use content::Span;
@@ -36,6 +37,7 @@ pub use dimensions::Direction;
 pub use error::Error;
 
 pub use crate::builder::Builder;
+pub use crate::stdin::Stdin;
 pub use crate::superconsole::SuperConsole;
 
 #[allow(type_alias_bounds)]
@@ -48,6 +50,7 @@ pub mod content;
 mod dimensions;
 pub mod error;
 pub mod output;
+pub mod stdin;
 pub mod style;
 mod superconsole;
 pub mod testing;

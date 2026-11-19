@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::io::Write;
 
 use async_recursion::async_recursion;
@@ -16,12 +15,12 @@ use async_trait::async_trait;
 use buck2_cli_proto::ClientContext;
 use buck2_cmd_starlark_client::typecheck::StarlarkTypecheckCommand;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_common::io::IoProvider;
-use buck2_core::cells::CellResolver;
+use buck2_common::file_ops::dice::DiceFileComputations;
+use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_core::cells::name::CellName;
-use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
+use buck2_hash::BuckMutMap;
+use buck2_hash::IntentionallyStdHashMap;
 use buck2_interpreter::file_type::StarlarkFileType;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_interpreter::paths::path::OwnedStarlarkPath;
@@ -43,14 +42,12 @@ use crate::util::paths::starlark_files;
 struct Cache<'a> {
     // Things we have access to get information
     dice: &'a DiceTransaction,
-    io: &'a dyn IoProvider,
-    cell_resolver: &'a CellResolver,
     // Things we have access to write information
     stdout: &'a mut (dyn Write + Send + Sync),
     stderr: &'a mut (dyn Write + Send + Sync),
     // Our accumulated state
-    oracle: HashMap<(CellName, StarlarkFileType), Globals>,
-    cache: HashMap<OwnedStarlarkModulePath, Interface>,
+    oracle: BuckMutMap<(CellName, StarlarkFileType), Globals>,
+    cache: BuckMutMap<OwnedStarlarkModulePath, Interface>,
 }
 
 impl Cache<'_> {
@@ -67,9 +64,10 @@ impl Cache<'_> {
         match self.oracle.get(&(cell, path_type)) {
             Some(g) => Ok(g.dupe()),
             None => {
-                let globals = Environment::new(cell, path_type, &mut self.dice.clone())
-                    .await?
-                    .globals;
+                let env = Environment::new(cell, path_type, &mut self.dice.ctx()).await?;
+                let globals = env
+                    .globals_with_implicit_symbols(path_type, self.dice)
+                    .await?;
                 self.oracle.insert((cell, path_type), globals.dupe());
                 Ok(globals)
             }
@@ -91,23 +89,16 @@ impl Cache<'_> {
     async fn run(&mut self, path: OwnedStarlarkPath) -> buck2_error::Result<Interface> {
         let path_ref = path.borrow();
         writeln!(self.stderr, "Type checking: {path_ref}")?;
-        let proj_path = self
-            .cell_resolver
-            .resolve_path(path_ref.path().as_ref().as_ref())?;
-        let path_str = proj_path.to_string();
-        let src = self
-            .io
-            .read_file_if_exists(proj_path)
-            .await?
-            .with_buck_error_context(|| format!("File not found: `{path_str}`"))?;
-
-        let mut dice = self.dice.clone();
+        let mut dice = self.dice.ctx();
+        let src = DiceFileComputations::read_file(&mut dice, *path_ref.path())
+            .await
+            .without_package_context_information()?;
         let interp = dice
             .get_interpreter_calculator(OwnedStarlarkPath::new(path_ref))
             .await?;
 
         let ParseData(ast, _) = interp.prepare_eval_with_content(path_ref, src)??;
-        let mut loads = HashMap::new();
+        let mut loads = IntentionallyStdHashMap::default();
         for x in ast.loads() {
             let y = interp.resolve_load(path_ref, x.module_id).await?;
             let interface = self.get(y).await?;
@@ -152,23 +143,20 @@ impl StarlarkServerSubcommand for StarlarkTypecheckCommand {
         _client_ctx: ClientContext,
     ) -> buck2_error::Result<()> {
         Ok(server_ctx
-            .with_dice_ctx(|server_ctx, mut dice| async move {
-                let cell_resolver = &dice.get_cell_resolver().await?;
-                let io = &dice.global_data().get_io_provider();
+            .with_dice_ctx(|server_ctx, dice| async move {
+                let cell_resolver = &dice.ctx().get_cell_resolver().await?;
 
                 let files =
-                    starlark_files(&mut dice, &self.paths, server_ctx, cell_resolver, &**io)
+                    starlark_files(&mut dice.ctx(), &self.paths, &[], server_ctx, cell_resolver)
                         .await?;
                 let mut stdout = stdout.as_writer();
                 let mut stderr = server_ctx.stderr()?;
                 let mut cache = Cache {
                     dice: &dice,
-                    io: &**io,
-                    cell_resolver,
                     stdout: &mut stdout,
                     stderr: &mut stderr,
-                    oracle: HashMap::new(),
-                    cache: HashMap::new(),
+                    oracle: BuckMutMap::default(),
+                    cache: BuckMutMap::default(),
                 };
                 for file in files {
                     cache.typecheck(file).await?;

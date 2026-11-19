@@ -8,4 +8,4 @@ optional: None
 enum_type: "a"
 target: root//:foo
 list: [1, 2, 3]
-configured_target: root//:t1 (cfg:<empty>#<HASH>)
+configured_target: root//:t1 (<modifiers>#<HASH>)

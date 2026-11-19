@@ -1,0 +1,52 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+
+oncall("golang")
+
+prelude = native
+
+prelude.write_file(
+    name = "file1",
+    out = "file1.txt",
+    content = ["content 1"],
+)
+
+prelude.write_file(
+    name = "file2",
+    out = "file2.txt",
+    content = ["content 2"],
+)
+
+prelude.filegroup(
+    name = "generated_directory",
+    srcs = {
+        "dir1/dir2/file2.txt": ":file2",
+        "dir1/file1.txt": ":file1",
+    },
+    out = "dir0",
+)
+
+prelude.go_binary(
+    name = "bin",
+    srcs = ["main.go"],
+    embed_srcs = [":generated_directory"],
+)
+
+prelude.go_test(
+    name = "test",
+    srcs = [
+        "main.go",
+        "main_test.go",
+    ],
+    embed_srcs = [":generated_directory"],
+    # @oss-disable[end= ]: env = {"GO_TEST2JSON_TOOL": "$(exe_target fbsource//third-party/go-toolchain:test2json)"},
+)
+
+py_assertion(
+    name = "check_output",
+    script = """
+import subprocess
+import sys
+assert subprocess.check_output([sys.argv[1]]).decode().strip() == "all=2,nosubdir=1,onlysubdir=1,file1=content 1,file2=content 2"
+""",
+    script_args = ["$(exe_target :bin)"],
+)

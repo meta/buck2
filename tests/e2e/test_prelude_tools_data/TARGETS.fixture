@@ -1,0 +1,45 @@
+load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
+load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
+load(":defs.bzl", "manifest_module")
+
+# The prelude tools are python_bootstrap_binary targets.
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    visibility = ["PUBLIC"],
+)
+
+# The clang toolchain of the prelude: `cpp_dep_tracking_mode` is `show_headers`, so every
+# compile runs through `dep_file_processor show_headers` and `clang -H`. The test names the
+# compiler with `-c test.clang=<path>`; without it, `clang` is taken from `PATH`.
+system_cxx_toolchain(
+    name = "cxx",
+    compiler = read_root_config("test", "clang"),
+    compiler_type = "clang",
+    cxx_compiler = read_root_config("test", "clang"),
+    linker = read_root_config("test", "clang"),
+    visibility = ["PUBLIC"],
+)
+
+# One source and three headers, each found by clang relative to the source: a quote include
+# next to it, a header under `-I.gen`, and a header in a directory with a space in its name,
+# which the test writes. The source sits in the project root, where the rules compile it as
+# `./r.c`.
+cxx_library(
+    name = "lib",
+    srcs = ["r.c"],
+    headers = [
+        "sub/my dir/s.h",
+        "v.h",
+    ],
+    include_directories = [".gen"],
+    raw_headers = [".gen/g.h"],
+)
+
+manifest_module(
+    name = "manifest_module",
+    paths = [
+        "pkg/__init__.py",
+        "pkg/_speedups.cpython-312-x86_64-linux-gnu.so",
+        "pkg/data/table.json",
+    ],
+)

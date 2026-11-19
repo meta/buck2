@@ -38,11 +38,18 @@ service Installer {
 
 message InstallInfoRequest {
   string install_id = 1;
-  map<string, string> files = 2;
+  reserved 2;
+  // Set of file names to expect. The actual paths are delivered later via
+  // FileReady requests.
+  repeated string file_names = 3;
 }
 
 message InstallResponse {
   string install_id = 1;
+  // Names the installer implementation, e.g. `android`. Reported at the
+  // handshake rather than alongside a device, so an install that reaches the
+  // installer says which one ran it even when it resolves no device.
+  string installer_name = 2;
 }
 
 message FileReadyRequest {
@@ -82,7 +89,7 @@ message ErrorDetail {
   repeated string tags = 3;
 }
 
-// Should be kept in sync with buck2_error::ErrorTier.
+// Error category for installer errors.
 enum ErrorCategory {
   ERROR_CATEGORY_UNSPECIFIED = 0;
   // Unexpected errors in installer. AKA Infra error.

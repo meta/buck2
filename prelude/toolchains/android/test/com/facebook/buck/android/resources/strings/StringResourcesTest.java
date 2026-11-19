@@ -11,6 +11,7 @@
 package com.facebook.buck.android.resources.strings;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 
 import com.facebook.buck.android.resources.strings.StringResources.Gender;
 import com.google.common.collect.ImmutableList;
@@ -118,6 +119,34 @@ public class StringResourcesTest {
         new StringResources(stringsMap, pluralsMap, arraysMap).getBinaryFileContent();
 
     verifyBinaryStream(binaryOutput);
+  }
+
+  @Test
+  public void testWritesArrayItemCountInOneByte() throws IOException {
+    DataInputStream stream =
+        new DataInputStream(new ByteArrayInputStream(binaryContentForArrayOfSize(255)));
+    stream.skipBytes(4 + 4 + 4 + 4 + 4 + 2 + 1 + 1); // version, empty strings and plurals, header
+    assertEquals(255, stream.readUnsignedByte());
+  }
+
+  @Test
+  public void testRejectsArraysWithMoreThan255Items() {
+    IllegalStateException e =
+        assertThrows(IllegalStateException.class, () -> binaryContentForArrayOfSize(256));
+    assertEquals(
+        "String array 0x7f030001 has 256 items; at most 255 fit in one byte", e.getMessage());
+  }
+
+  private static byte[] binaryContentForArrayOfSize(int size) {
+    ImmutableList.Builder<String> items = ImmutableList.builder();
+    for (int i = 0; i < size; i++) {
+      items.add("item" + i);
+    }
+    EnumMap<Gender, ImmutableList<String>> genderArray = Maps.newEnumMap(Gender.class);
+    genderArray.put(Gender.unknown, items.build());
+    TreeMap<Integer, EnumMap<Gender, ImmutableList<String>>> arraysMap = new TreeMap<>();
+    arraysMap.put(0x7f030001, genderArray);
+    return new StringResources(new TreeMap<>(), new TreeMap<>(), arraysMap).getBinaryFileContent();
   }
 
   @Test

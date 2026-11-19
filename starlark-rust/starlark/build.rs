@@ -32,12 +32,15 @@ fn rust_nightly() {
     // rustc 1.64.0-nightly (affe0d3a0 2022-08-05)
     // Stable output:
     // rustc 1.64.0 (a55dd71d5 2022-09-19)
-    // Meta internal output:
+    // Source build output:
     // rustc 1.64.0-dev
 
     let stdout = String::from_utf8(version.stdout).unwrap();
     assert!(stdout.contains("rustc"), "Sanity check");
-    let nightly = stdout.contains("nightly") || stdout.contains("dev");
+    // `RUSTC_BOOTSTRAP=1` makes a stable compiler accept nightly features too.
+    println!("cargo:rerun-if-env-changed=RUSTC_BOOTSTRAP");
+    let bootstrap = std::env::var("RUSTC_BOOTSTRAP").is_ok_and(|v| v == "1");
+    let nightly = bootstrap || stdout.contains("nightly") || stdout.contains("dev");
     if nightly {
         println!("cargo:rustc-cfg=rust_nightly");
     }

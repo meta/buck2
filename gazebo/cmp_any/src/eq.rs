@@ -88,17 +88,17 @@ mod tests {
         let w2 = Wrap(1);
         let w3 = Wrap(2);
 
-        assert_eq!(w1.token() == w2.token(), true);
-        assert_eq!(w1.token() == w3.token(), false);
+        assert!(w1.token() == w2.token());
+        assert!(w1.token() != w3.token());
 
         let w4 = Wrap("foo");
         let w5 = Wrap("foo");
         let w6 = Wrap("bar");
 
-        assert_eq!(w4.token() == w5.token(), true);
-        assert_eq!(w4.token() == w6.token(), false);
+        assert!(w4.token() == w5.token());
+        assert!(w4.token() != w6.token());
 
-        assert_eq!(w1.token() == w6.token(), false);
+        assert!(w1.token() != w6.token());
     }
 
     #[test]
@@ -107,7 +107,7 @@ mod tests {
         let w = Wrap(1);
         let f = PartialEqAny::always_false();
 
-        assert_eq!(f == f, false);
-        assert_eq!(f == w.token(), false);
+        assert!(f != f);
+        assert!(f != w.token());
     }
 }

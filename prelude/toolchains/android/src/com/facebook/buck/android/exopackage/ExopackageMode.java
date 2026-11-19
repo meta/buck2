@@ -10,8 +10,10 @@
 
 package com.facebook.buck.android.exopackage;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.EnumSet;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum ExopackageMode {
   SECONDARY_DEX(1),
   NATIVE_LIBRARY(2),

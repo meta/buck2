@@ -20,7 +20,9 @@
 use crate::assert;
 use crate::assert::Assert;
 use crate::environment::GlobalsBuilder;
-use crate::values::OwnedFrozenValue;
+use crate::values::Heap;
+use crate::values::OwnedFrozen;
+use crate::values::Value;
 
 #[test]
 fn arithmetic_test() {
@@ -45,6 +47,8 @@ fn bitwise_test() {
 -3 ^ -6 == 7
 1 << 2 == 4
 -1 << 2 == -4
+1 << 31 == 2147483648
+4 << 30 == 4294967296
 1 >> 0 == 1
 111 >> 2 == 27
 ~31 == -32
@@ -100,7 +104,9 @@ fn test_frozen_equality() {
     let program = "(str, (), 1, range(4), True, None, [8], {'test':3})";
     let a = assert::pass(program);
     let b = assert::pass(program);
-    assert_eq!(a.value(), b.value());
+    Heap::temp(|heap| {
+        assert_eq!(a.add_to_heap(heap), b.add_to_heap(heap));
+    });
 
     let mut a = Assert::new();
     a.module("saved", &format!("val = {program}"));
@@ -109,7 +115,7 @@ fn test_frozen_equality() {
 
 #[test]
 fn test_equality_multiple_globals() {
-    fn mk_repr() -> OwnedFrozenValue {
+    fn mk_repr() -> OwnedFrozen<Value<'static>> {
         let mut a = Assert::new();
         let globals = GlobalsBuilder::extended().build();
         a.globals(globals);
@@ -118,7 +124,9 @@ fn test_equality_multiple_globals() {
 
     // Do things that compare by pointer still work if you
     // create fresh Globals for each of them.
-    assert_eq!(mk_repr().value(), mk_repr().value());
+    Heap::temp(|heap| {
+        assert_eq!(mk_repr().add_to_heap(heap), mk_repr().add_to_heap(heap));
+    });
 }
 
 #[test]

@@ -356,44 +356,47 @@ mod tests {
 
     #[test]
     fn test_coverage() {
-        let module = Module::new();
-        let mut eval = Evaluator::new(&module);
+        Module::with_temp_heap(|module| {
+            let mut eval = Evaluator::new(&module);
 
-        let module = AstModule::parse(
-            "cov.star",
-            r#"
+            let ast = AstModule::parse(
+                "cov.star",
+                r#"
 def xx(x):
     return noop(x)
 
 xx(*[1])
 xx(*[2])
 "#
-            .to_owned(),
-            &Dialect::AllOptionsInternal,
-        )
-        .unwrap();
-        eval.enable_profile(&ProfileMode::Coverage).unwrap();
-        let mut globals = GlobalsBuilder::standard();
-        test_functions(&mut globals);
-        eval.eval_module(module, &globals.build()).unwrap();
+                .to_owned(),
+                &Dialect::AllOptionsInternal,
+            )
+            .unwrap();
+            eval.enable_profile(&ProfileMode::Coverage).unwrap();
+            let mut globals = GlobalsBuilder::standard();
+            test_functions(&mut globals);
+            eval.eval_module(ast, &globals.build()).unwrap();
 
-        let mut coverage: Vec<String> = eval
-            .coverage()
-            .unwrap()
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect();
-        coverage.sort();
-        assert_eq!(
-            [
-                "cov.star:2:1-5:1",
-                "cov.star:3:5-19",
-                "cov.star:5:1-9",
-                "cov.star:6:1-9"
-            ]
-            .as_slice(),
-            coverage
-        );
+            let mut coverage: Vec<String> = eval
+                .coverage()
+                .unwrap()
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
+            coverage.sort();
+            assert_eq!(
+                [
+                    "cov.star:2:1-5:1",
+                    "cov.star:3:5-19",
+                    "cov.star:5:1-9",
+                    "cov.star:6:1-9"
+                ]
+                .as_slice(),
+                coverage
+            );
+            crate::Result::Ok(())
+        })
+        .unwrap();
     }
 
     #[test]

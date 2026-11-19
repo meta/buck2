@@ -6,6 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//matlab:matlab_toolchain.bzl", "matlab_toolchain")
 load(":matlab_info.bzl", "MatlabToolchainInfo")
 
 def matlab_program_impl(ctx: AnalysisContext) -> list[Provider]:
@@ -22,3 +24,12 @@ def matlab_program_impl(ctx: AnalysisContext) -> list[Provider]:
     cmd.add("-sd", cmd_args(ctx.attrs.main, parent = 1))
 
     return [DefaultInfo(default_output = None, other_outputs = [cmd]), RunInfo(cmd)]
+
+matlab_program = prelude_rule(
+    name = "matlab_program",
+    impl = matlab_program_impl,
+    attrs = {
+        "main": attrs.source(),
+        "_matlab_toolchain": matlab_toolchain(),
+    },
+)

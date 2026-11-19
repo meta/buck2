@@ -12,18 +12,19 @@ anyhow = "1.0.65"
 async-trait = "0.1.24"
 clap = { version = "3.2.24", features = ["derive"] }
 crossbeam = "0.8"
-derivative = "2.1.1"
-derive_more = { version = "1.0.0", features = ["full"] }
+derivative = "2.2"
+derive_more = { version = "2.1.1", features = ["full"] }
 futures = "0.3"
-itertools = "0.13.0"
-parking_lot = { version = "0.11.2", features = ["send_guard"] }
+itertools = "0.14.0"
+pagable = { workspace = true }
+parking_lot = { version = "0.12.1", features = ["send_guard"] }
 quickcheck = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.48"
-thiserror = "1.0.36"
+thiserror = "2.0.18"
 tokio = { version = "1.5", features = ["full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1.2", features = ["v4"] }
+uuid = { version = "1.23.0", features = ["v4"] }
 
 allocative = { workspace = true }
 dice_futures = { path = "../dice_futures" }

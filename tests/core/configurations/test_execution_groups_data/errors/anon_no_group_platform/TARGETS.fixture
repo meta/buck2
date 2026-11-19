@@ -1,0 +1,8 @@
+load(":rules.bzl", "r")
+
+r(name = "t")
+
+r(
+    name = "plural",
+    plural = True,
+)

@@ -20,15 +20,13 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::name::CellName;
 use derive_more::Display;
 use dupe::Dupe;
-use gazebo::variants::UnpackVariants;
 
 use crate::file_type::StarlarkFileType;
 use crate::paths::module::StarlarkModulePath;
 use crate::paths::package::PackageFilePath;
 
 /// Path to file containing starlark that can be evaluated by the interpreter.
-#[derive(Display, Clone, Copy, Dupe, Debug, UnpackVariants, PartialEq, Eq, Hash)]
-#[display("{}", self.id())]
+#[derive(Display, Clone, Copy, Dupe, Debug, PartialEq, Eq, Hash)]
 pub enum StarlarkPath<'a> {
     /// a build file
     BuildFile(&'a BuildFilePath),
@@ -45,6 +43,20 @@ pub enum StarlarkPath<'a> {
 }
 
 impl<'a> StarlarkPath<'a> {
+    pub fn unpack_load_file(&self) -> Option<&'a ImportPath> {
+        match self {
+            Self::LoadFile(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    pub fn unpack_bxl_file(&self) -> Option<&'a BxlFilePath> {
+        match self {
+            Self::BxlFile(p) => Some(p),
+            _ => None,
+        }
+    }
+
     pub fn cell(&self) -> CellName {
         match self {
             StarlarkPath::BuildFile(b) => b.cell(),

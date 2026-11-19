@@ -6,11 +6,10 @@
 # of this source tree.
 
 [buildfile]
-# see <https://github.com/facebook/buck2/pull/956> -- this helps us make
-# error messages when the user doesn't run "reindeer" much more obvious,
-# because the default BUCK file just errors out. We then make reindeer generate
-# BUCK.reindeer to override that.
-name = BUCK.reindeer,BUCK
+# This helps us make error messages when the user doesn't run "reindeer" much
+# more obvious, because the default BUCK.missing file just errors out. We then
+# make reindeer generate BUCK to override that.
+name = BUCK,BUCK.missing
 
 [cells]
 gh_facebook_buck2_shims_meta = .
@@ -29,7 +28,8 @@ none = none
 
 [cell_aliases]
 config = prelude
-ovr_config = prelude
+ovr_config = gh_facebook_buck2_shims_meta
+antlir = none
 bazel_skylib = gh_facebook_buck2_shims_meta
 buck = gh_facebook_buck2_shims_meta
 fbcode = gh_facebook_buck2_shims_meta
@@ -43,3 +43,9 @@ prelude = bundled
 
 [parser]
 target_platform_detector_spec = target:root//...->prelude//platforms:default target:shim//...->prelude//platforms:default
+
+# Default Windows compiler identity for the shim's ovr_config//os:windows-*
+# and ovr_config//compiler:* config settings; matches the prelude's default
+# MSVC Windows toolchain. Set to "clang" to build with clang-cl.
+[cxx]
+windows_compiler_type = windows

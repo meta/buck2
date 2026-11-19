@@ -1,0 +1,7 @@
+load("@root//:defs.bzl", "simple_build")
+
+simple_build(
+    name = "subtarget",
+    has_content_based_path = True,
+    visibility = ["PUBLIC"],
+)

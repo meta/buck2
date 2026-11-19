@@ -8,13 +8,14 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(used_with_arg)]
 #![feature(anonymous_lifetime_in_impl_trait)]
 
+pub mod agent_recursive_patterns;
 pub mod bxl;
 pub mod commands;
-pub mod concurrency;
+pub mod concurrency {
+    pub use buck2_concurrency::*;
+}
 pub mod ctx;
 pub mod experiment_util;
 pub mod global_cfg_options;

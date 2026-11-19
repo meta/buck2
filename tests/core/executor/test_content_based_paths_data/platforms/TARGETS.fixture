@@ -1,0 +1,26 @@
+platform(
+    name = "default_platform",
+)
+
+constraint_setting(
+    name = "exec_platform_marker",
+)
+
+constraint_value(
+    name = "is_exec_platform",
+    constraint_setting = ":exec_platform_marker",
+)
+
+execution_platform(
+    name = "default",
+    platform = ":default_platform",
+    remote_enabled = True,
+)
+
+execution_platforms(
+    name = "platforms",
+    platforms = [
+        ":default",
+    ],
+    exec_marker_constraint = "root//platforms:is_exec_platform",
+)

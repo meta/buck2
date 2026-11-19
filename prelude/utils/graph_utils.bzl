@@ -9,16 +9,19 @@
 load("@prelude//utils:expect.bzl", "expect")
 
 def pre_order_traversal(
-        graph: dict[typing.Any, list[typing.Any]],
-        node_formatter: typing.Callable[[typing.Any], str] = str,
-        edge_explainer: typing.Callable[[typing.Any, typing.Any], list[str]] = lambda _src, _dest: ["Unknown"]) -> list[typing.Any]:
+    graph: dict[typing.Any, list[typing.Any]],
+    node_formatter: typing.Callable[[typing.Any], str] = str,
+    edge_explainer: typing.Callable[[typing.Any, typing.Any], list[str]] = lambda _src, _dest: ["Unknown"],
+) -> list[typing.Any]:
     """
     Perform a pre-order (topologically sorted) traversal of `graph` and return the ordered nodes
     """
 
+    # A repeated dep is counted once per occurrence here and decremented once per occurrence below,
+    # so it needs no deduplication (Kahn's algorithm works correctly for multigraphs).
     in_degrees = {node: 0 for node in graph}
     for _node, deps in graph.items():
-        for dep in dedupe(deps):
+        for dep in deps:
             in_degrees[dep] += 1
 
     queue = []
@@ -47,9 +50,10 @@ def pre_order_traversal(
     return ordered
 
 def post_order_traversal(
-        graph: dict[typing.Any, list[typing.Any]],
-        node_formatter: typing.Callable[[typing.Any], str] = str,
-        edge_explainer: typing.Callable[[typing.Any, typing.Any], list[str]] = lambda _src, _dest: ["Unknown"]) -> list[typing.Any]:
+    graph: dict[typing.Any, list[typing.Any]],
+    node_formatter: typing.Callable[[typing.Any], str] = str,
+    edge_explainer: typing.Callable[[typing.Any, typing.Any], list[str]] = lambda _src, _dest: ["Unknown"],
+) -> list[typing.Any]:
     """
     Performs a post-order traversal of `graph`.
     """
@@ -84,9 +88,10 @@ def post_order_traversal(
     return ordered
 
 def fail_cycle(
-        graph: dict[typing.Any, list[typing.Any]],
-        node_formatter: typing.Callable[[typing.Any], str],
-        edge_explainer: typing.Callable[[typing.Any, typing.Any], list[str]]) -> typing.Never:
+    graph: dict[typing.Any, list[typing.Any]],
+    node_formatter: typing.Callable[[typing.Any], str],
+    edge_explainer: typing.Callable[[typing.Any, typing.Any], list[str]],
+) -> typing.Never:
     cycle = find_cycle(graph)
     if cycle:
         errors = []
@@ -126,7 +131,7 @@ def find_cycle(graph: dict[typing.Any, list[typing.Any]]) -> list[typing.Any] | 
                 work.append((OUTPUT, node))
                 for dep in graph[node]:
                     if dep in current_parents:
-                        return current_parents + [dep]
+                        return current_parents[current_parents.index(dep) :] + [dep]
                     if dep not in visited:
                         work.append((VISIT, dep))
         else:
@@ -134,9 +139,7 @@ def find_cycle(graph: dict[typing.Any, list[typing.Any]]) -> list[typing.Any] | 
 
     return None
 
-def post_order_traversal_by(
-        roots: typing.Iterable,
-        get_nodes_to_traverse_func) -> list[typing.Any]:
+def post_order_traversal_by(roots: typing.Iterable, get_nodes_to_traverse_func) -> list[typing.Any]:
     """
     Returns the post-order sorted list of the nodes in the traversal.
 
@@ -169,9 +172,7 @@ def post_order_traversal_by(
             ordered.append(node)
     return ordered
 
-def pre_order_traversal_by(
-        roots: typing.Iterable,
-        get_nodes_to_traverse_func) -> list[typing.Any]:
+def pre_order_traversal_by(roots: typing.Iterable, get_nodes_to_traverse_func) -> list[typing.Any]:
     """
     Returns a topological sorted list of the nodes from a pre-order traversal.
 
@@ -180,9 +181,7 @@ def pre_order_traversal_by(
     ordered = post_order_traversal_by(roots, get_nodes_to_traverse_func)
     return ordered[::-1]
 
-def depth_first_traversal(
-        graph_nodes: dict[typing.Any, list[typing.Any]],
-        roots: typing.Iterable) -> list[typing.Any]:
+def depth_first_traversal(graph_nodes: dict[typing.Any, list[typing.Any]], roots: typing.Iterable) -> list[typing.Any]:
     """
     Like `depth_first_traversal_by` but the nodes are stored in the graph.
     """
@@ -212,11 +211,12 @@ GraphTraversal = enum(
 )
 
 def depth_first_traversal_by(
-        graph_nodes: [dict[typing.Any, typing.Any], None],
-        roots: typing.Iterable,
-        get_nodes_to_traverse_func: typing.Callable,
-        traversal: GraphTraversal = GraphTraversal("preorder-right-to-left"),
-        node_formatter: typing.Callable[[typing.Any], str] = str) -> list[typing.Any]:
+    graph_nodes: [dict[typing.Any, typing.Any], None],
+    roots: typing.Iterable,
+    get_nodes_to_traverse_func: typing.Callable,
+    traversal: GraphTraversal = GraphTraversal("preorder-right-to-left"),
+    node_formatter: typing.Callable[[typing.Any], str] = str,
+) -> list[typing.Any]:
     """
     Performs a depth first traversal of `graph_nodes`, beginning
     with the `roots` and queuing the nodes returned by `get_nodes_to_traverse_func`.
@@ -260,9 +260,8 @@ def depth_first_traversal_by(
 # To support migration from a tset-based link strategy, we are trying to match buck's internal tset
 # traversal logic here.  Look for implementation of TopologicalTransitiveSetIteratorGen
 def rust_matching_topological_traversal(
-        graph_nodes: [dict[typing.Any, typing.Any], None],
-        roots: typing.Iterable,
-        get_nodes_to_traverse_func: typing.Callable) -> list[typing.Any]:
+    graph_nodes: [dict[typing.Any, typing.Any], None], roots: typing.Iterable, get_nodes_to_traverse_func: typing.Callable
+) -> list[typing.Any]:
     counts = {}
 
     for label in depth_first_traversal_by(graph_nodes, roots, get_nodes_to_traverse_func, GraphTraversal("preorder-right-to-left")):

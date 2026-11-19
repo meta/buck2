@@ -12,26 +12,17 @@ Fake script that acts as a test
 """
 
 import argparse
-import importlib.machinery
-import json
 import os
 import shlex
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 from typing import Optional
-
-# To prevent the next line from creating a pycache dir
-sys.dont_write_bytecode = True
-lint_levels = importlib.machinery.SourceFileLoader(
-    "lint_levels", str(Path(__file__).parent / "lint_levels.bzl")
-).load_module()
 
 
 def is_windows() -> bool:
@@ -140,250 +131,43 @@ def check_no_changes(git: bool):
         sys.exit(1)
 
 
-def list_starlark_files(git: bool):
-    cmd = None
-    includes = [
-        "**.bxl",
-        "**.bzl",
-        "**/TARGETS",
-        "**/TARGETS.v2",
-    ]
-    excludes = [
-        "starlark-rust/starlark/testcases/",
-        "tests/core/**/test_*_data/**",
-        "tests/e2e/**/test_*_data/**",
-        "**.rs",
-        "**.fixture",
-        "**.buckconfig",
-        "**.bcfg",
-        "**/targets/**",  # TODO(lmvasquezg) Exclude only non-starlark files here
-        "**/BUCK",  # TODO(lmvasquezg)  fix starlark linter to accept these
-        "**/BUCK.v2",
-    ]
-
-    if git:
-        excludes = [f":!:{s}" for s in excludes]
-        cmd = ["git", "ls-files", "--"] + includes + excludes
-    else:
-        includes = [f"--include={s}" for s in includes]
-        excludes = [f"--exclude={s}" for s in excludes]
-        cmd = (
-            [
-                "hg",
-                "files",
-                ".",
-            ]
-            + includes
-            + excludes
-        )
-
-    starlark_files = (
-        run(
-            cmd,
-            capture_output=True,
-        )
-        .stdout.strip()
-        .splitlines()
-    )
-    return starlark_files
-
-
-def rustfmt(buck2_dir: Path, ci: bool, git: bool) -> None:
+def clippy(package_args: list[str], fix: bool, target_args: list[str]) -> None:
     """
-    Make the formatting consistent, using the custom rustfmt,
-    which is a pre-release of rustfmt 2.0.
-    We do that by putting rustfmt on the PATH, but that PATH
-    also has a copy of rustup tools, so use our rustup captured before.
-    Mixing and matching cargo-fmt and rust-fmt doesn't work on Windows,
-    so skip formatting for now.
-    """
-    # @oss-disable[end= ]: internal = True
-    internal = False # @oss-enable
-    if not internal:
-        return
-
-    print_running("rustfmt")
-    cargo_fmt = run(
-        ["rustup", "which", "cargo-fmt"], capture_output=True
-    ).stdout.strip()
-    env = os.environ.copy()
-    env["RUSTFMT"] = str(
-        buck2_dir.parent.parent / "tools" / "third-party" / "rustfmt" / "rustfmt"
-    )
-
-    if run([cargo_fmt, "--"], env=env).returncode != 0:
-        sys.exit(1)
-
-    # On CI, fail if any committed files have changed,
-    # mainly because of cargo fmt changing a source file
-    if ci:
-        check_no_changes(git)
-
-
-RUSTC_ALLOW = {
-    # These are not in the shared-with-buck2 lists because they only appear in third-party deps.
-    # Normally cargo would suppress those, but we do vendored builds and so it doesn't.
-    "unfulfilled-lint-expectations",
-    "unknown-lints",
-    # This is not *actually* a  warning but rather a warning level.
-    "warnings",
-}
-
-
-def _get_default_rustc_warnings() -> list[str]:
-    """
-    We want to error on all Rustc default warnings. The very natural way to do
-    this would be to simply enable -Dwarnings, which would enable the
-    `warnings` lint group from rustc like `clippy::all` does.
-
-    Unfortunately, that's not at all what -Dwarnings does! `warnings` is not a
-    lint group, it's a special magical keyword that turns all `warnings` into
-    errors and is completely incompatible with tweaking lint levels (so e.g. if
-    you `--allow` a warning, but have `-Dwarnings` , that will error out).
-
-    So, we have to ask rustc to list all the default warnings for us, and error
-    out on them here.
-    """
-    rustc = run(["rustup", "which", "rustc"], capture_output=True).stdout.strip()
-    out = run([rustc, "-Whelp"], capture_output=True).stdout.strip()
-
-    # This is some parsing that wants to be a little robust to changes in the
-    # output we're reading we're parsing help here.
-    lints = []
-
-    for line in out.split("\n"):
-        maybe_a_lint = line.split(None, 2)
-        if len(maybe_a_lint) == 3 and maybe_a_lint[1] == "warn":
-            lint = maybe_a_lint[0]
-            if lint not in RUSTC_ALLOW:
-                lints.append(lint)
-
-    return lints
-
-
-def clippy(package_args: list[str], fix: bool) -> None:
-    """
-    Run cargo clippy.
-    Also fails on any rustc warnings or build errors.
-    We'd really like a quiet option (at least for CI), but it doesn't exist
+    Run cargo clippy, failing on any warning. Which lints warn is the
+    workspace's `[workspace.lints]`, the same levels Buck applies.
     """
 
     print_running("clippy")
 
-    rustc_default_warnings = _get_default_rustc_warnings()
-
     clippy_fix_args = ["--fix"] if fix else []
-
-    clippy_deny_lints = [*lint_levels.CLIPPY_DENY, *rustc_default_warnings]
-    clippy_allow_lints = lint_levels.CLIPPY_ALLOW
-    if fix:
-        clippy_deny_lints.extend(lint_levels.CLIPPY_AUTOFIX)
-    else:
-        clippy_allow_lints.extend(lint_levels.CLIPPY_AUTOFIX)
-
-    clippy_deny_args = [f"--deny={c}" for c in clippy_deny_lints]
-    clippy_allow_args = [f"--allow={c}" for c in clippy_allow_lints]
 
     run(
         [
             "cargo",
             "clippy",
+            "--keep-going",
             *package_args,
+            *target_args,
             *clippy_fix_args,
-            "-Z=unstable-options",
             "--profile=test",
             "--tests",
             "--benches",
             "--",
-            *clippy_deny_args,
-            *clippy_allow_args,
+            "--deny=warnings",
         ]
     )
 
 
-def starlark_linter(buck2: str, git: bool) -> None:
-    if git:
-        print_warn("Skipping starlark linter on git")
-        return
-
-    print_running("starlark linter")
-    starlark_files = list_starlark_files(git)
-    with tempfile.NamedTemporaryFile(mode="w+t") as fp:
-        fp.writelines([x + "\n" for x in starlark_files])
-        fp.flush()
-        run(
-            [
-                buck2,
-                "--isolation-dir=starlark-linter",
-                "starlark",
-                "lint",
-                "--no-buckd",
-                "@" + fp.name,
-            ]
-        )
-
-
-def _lookup(d, *keys):
-    """Nested lookup in a dict"""
-    for k in keys:
-        if d is None:
-            return None
-        d = d.get(k)
-    return d
-
-
-def rustdoc(package_args: list[str]) -> None:
+def rustdoc(package_args: list[str], target_args: list[str]) -> None:
     print_running("cargo doc")
-    # We have to chose between showing the output, or capturing it.
-    # We have to capture it to figure out if there were warnings.
-    # We would strongly like to show it, because it might take a while.
-    # Cheat and do it twice, as we know Rust caches it, so the second time is quick.
-    run(["cargo", "doc", "--no-deps", *package_args])
-    output = run(
-        ["cargo", "doc", "--message-format=json", "--no-deps", *package_args],
-        capture_output=True,
+    env = os.environ.copy()
+    env["RUSTDOCFLAGS"] = " ".join(
+        filter(None, [env.get("RUSTDOCFLAGS"), "--deny=warnings"])
     )
-
-    has_warnings = False
-
-    # We'd really like to turn on warnings-as-errors, but we can't
-    # We'd really like to get this information from the exit code, but we can't
-    # Therefore, look for output that suggests there was a warning produced.
-    # Alas, that's the substring 'warning', since given console output, even 'warning:'
-    # might get an escape code within it.
-    for line in output.stdout.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-
-        line = json.loads(line)
-
-        # If it's not a compiler message then ignore it.
-        if line.get("reason") != "compiler-message":
-            continue
-
-        # If it's not from buck2 itself (e.g. a dep), ignore.
-        target = line.get("target", {}).get("src_path", "")
-        if "/buck2/" not in target:
-            continue
-
-        # If it's not a doc warning, ignore it. The `message` field will
-        # contain a `code` field that itself has a `code` field that is machine
-        # readable for we look for this.
-        code = _lookup(line, "message", "code", "code")
-        if code is None or "rustdoc::" not in code:
-            continue
-
-        has_warnings = True
-
-        print_error("Documentation warning:")
-        print(line.get("message", {}).get("rendered", ""))
-
-    if has_warnings:
-        sys.exit(1)
+    run(["cargo", "doc", "--no-deps", *package_args, *target_args], env=env)
 
 
-def test(package_args: list[str]) -> None:
+def test(package_args: list[str], target_args: list[str]) -> None:
     print_running("cargo test --lib")
     extra_args = []
     # Limit number of parallel jobs to prevent OOMs
@@ -391,9 +175,15 @@ def test(package_args: list[str]) -> None:
         extra_args = ["--jobs", str(os.cpu_count() // 2)]
     # Hour should be enough for all tests to run
     timeout_sec = 60 * 60
-    run(["cargo", "test", "--lib", *extra_args, *package_args], timeout=timeout_sec)
+    run(
+        ["cargo", "test", "--lib", *extra_args, *package_args, *target_args],
+        timeout=timeout_sec,
+    )
     print_running("cargo test --doc")
-    run(["cargo", "test", "--doc", *extra_args, *package_args], timeout=timeout_sec)
+    run(
+        ["cargo", "test", "--doc", *extra_args, *package_args, *target_args],
+        timeout=timeout_sec,
+    )
 
 
 def main() -> None:
@@ -411,40 +201,22 @@ def main() -> None:
         help="Use `git` to check repo state, the script defaults to `hg`",
     )
     parser.add_argument(
-        "--buck2",
-        action="store",
-        default="buck2",
-        help="Path to a buck2 binary",
-    )
-    parser.add_argument(
         "--lint-only",
         action="store_true",
         default=False,
-        help="Perform formatting and lints only. Do not run tests.",
-    )
-    parser.add_argument(
-        "--lint-rust-only",
-        action="store_true",
-        default=False,
-        help="Perform rust formatting and lints only. Do not run tests.",
-    )
-    parser.add_argument(
-        "--lint-starlark-only",
-        action="store_true",
-        default=False,
-        help="Perform starlark formatting and lints only. Do not run tests.",
-    )
-    parser.add_argument(
-        "--rustfmt-only",
-        action="store_true",
-        default=False,
-        help="Perform formatting only. Do not run lints or tests.",
+        help="Run clippy only. Do not run rustdoc or tests.",
     )
     parser.add_argument(
         "--rustdoc-only",
         action="store_true",
         default=False,
-        help="Perform rustdoc generation only. Do not run lints or tests.",
+        help="Run rustdoc only. Do not run clippy or tests.",
+    )
+    parser.add_argument(
+        "--test-only",
+        action="store_true",
+        default=False,
+        help="Run tests only. Do not run clippy or rustdoc.",
     )
     parser.add_argument(
         "--exclude",
@@ -456,6 +228,12 @@ def main() -> None:
         action="store_true",
         default=False,
         help="Apply Clippy suggestions",
+    )
+    parser.add_argument(
+        "--toolchain-target",
+        action="store",
+        default=None,
+        help="Target triple passed to cargo via --target (e.g. x86_64-pc-windows-gnu)",
     )
     parser.add_argument(
         "packages",
@@ -474,38 +252,19 @@ def main() -> None:
         package_args.append("--workspace")
         package_args.extend([f"--exclude={p.rstrip('/')}" for p in args.exclude])
 
-    if package_args == [] and not (
-        args.lint_rust_only or args.rustfmt_only or args.rustdoc_only
-    ):
-        with timing():
-            starlark_linter(args.buck2, args.git)
+    target_args = ["--target", args.toolchain_target] if args.toolchain_target else []
 
-    if not (args.rustfmt_only or args.lint_starlark_only or args.rustdoc_only):
+    if not (args.rustdoc_only or args.test_only):
         with timing():
-            clippy(package_args, args.clippy_fix)
+            clippy(package_args, args.clippy_fix, target_args)
 
-    if not (args.lint_starlark_only or args.rustdoc_only):
+    if not (args.lint_only or args.test_only):
         with timing():
-            rustfmt(buck2_dir, args.ci, args.git)
+            rustdoc(package_args, target_args)
 
-    if not (
-        args.lint_only
-        or args.lint_rust_only
-        or args.lint_starlark_only
-        or args.rustfmt_only
-    ):
+    if not (args.lint_only or args.rustdoc_only):
         with timing():
-            rustdoc(package_args)
-
-    if not (
-        args.lint_only
-        or args.lint_rust_only
-        or args.lint_starlark_only
-        or args.rustfmt_only
-        or args.rustdoc_only
-    ):
-        with timing():
-            test(package_args)
+            test(package_args, target_args)
 
     # On CI, check to make sure our test doesn't overwrite existing files
     if args.ci:

@@ -11,8 +11,7 @@ def _my_anon_impl(_ctx: AnalysisContext, _attrs: struct) -> list[Provider]:
 
 anon = bxl.anon_rule(
     impl = _my_anon_impl,
-    attrs = {
-    },
+    attrs = {},
 )
 
 def _wrong_type_impl(_ctx: bxl.Context):

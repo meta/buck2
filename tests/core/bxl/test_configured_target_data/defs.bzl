@@ -10,6 +10,9 @@ def _impl(_ctx: AnalysisContext) -> list[Provider]:
     return [DefaultInfo()]
 
 dummy = rule(
-    attrs = {},
+    attrs = {
+        "deps": attrs.list(attrs.dep(), default = []),
+        "srcs": attrs.list(attrs.source(), default = []),
+    },
     impl = _impl,
 )

@@ -34,17 +34,8 @@ root//:linux (<unbound>):
         ),
         label=root//:linux
       ) },
-      values={}
-    ),
-    ConditionalModifierInfo(
-      inner=ConstraintValueInfo(
-        setting=ConstraintSettingInfo(
-          label=root//:os,
-          default=None
-        ),
-        label=root//:linux
-      ),
-      key=root//:os
+      values={},
+      root_values={}
     )
   ])
 root//:macos (<unbound>):
@@ -69,17 +60,8 @@ root//:macos (<unbound>):
         ),
         label=root//:macos
       ) },
-      values={}
-    ),
-    ConditionalModifierInfo(
-      inner=ConstraintValueInfo(
-        setting=ConstraintSettingInfo(
-          label=root//:os,
-          default=None
-        ),
-        label=root//:macos
-      ),
-      key=root//:os
+      values={},
+      root_values={}
     )
   ])
 root//:cpu (<unbound>):
@@ -116,20 +98,11 @@ root//:arm (<unbound>):
         ),
         label=root//:arm
       ) },
-      values={}
-    ),
-    ConditionalModifierInfo(
-      inner=ConstraintValueInfo(
-        setting=ConstraintSettingInfo(
-          label=root//:cpu,
-          default=None
-        ),
-        label=root//:arm
-      ),
-      key=root//:cpu
+      values={},
+      root_values={}
     )
   ])
-root//:dummy (cfg:<empty>#<HASH>):
+root//:dummy (<modifiers>#<HASH>):
   Providers([
     DefaultInfo(
       sub_targets={},
@@ -139,7 +112,7 @@ root//:dummy (cfg:<empty>#<HASH>):
     Provider1( os="macos" ),
     Provider2( cpu="default" )
   ])
-root//:dummy2 (cfg:<empty>#<HASH>):
+root//:dummy2 (<modifiers>#<HASH>):
   Providers([
     DefaultInfo(
       sub_targets={},
@@ -149,7 +122,7 @@ root//:dummy2 (cfg:<empty>#<HASH>):
     Provider1( os="macos" ),
     Provider2( cpu="default" )
   ])
-root//:dummy_with_subtarget (cfg:<empty>#<HASH>):
+root//:dummy_with_subtarget (<modifiers>#<HASH>):
   Providers([ DefaultInfo(
     sub_targets={ "sub": Providers([
       DefaultInfo(

@@ -25,8 +25,7 @@ def _artifact_path_test_impl(ctx):
 
 artifact_path_test = bxl_main(
     impl = _artifact_path_test_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )
 
 def _cmd_args_artifact_path_test(ctx):
@@ -47,5 +46,26 @@ def _cmd_args_artifact_path_test(ctx):
 
 cmd_args_artifact_path_test = bxl_main(
     impl = _cmd_args_artifact_path_test,
+    cli_args = {},
+)
+
+def _print_json_set_impl(ctx):
+    a = ctx.fs.source("artifacts/DATA")
+    ctx.output.print_json([ctx.output.ensure(a)], pretty = False)
+    ctx.output.print_json(set([ctx.output.ensure(a)]), pretty = False)
+
+print_json_set_test = bxl_main(
+    impl = _print_json_set_impl,
+    cli_args = {},
+)
+
+def _group_order_impl(ctx):
+    a = ctx.fs.source("artifacts/DATA")
+    b = ctx.fs.source("kind/rules.bzl")
+    ctx.output.print_json(get_paths_without_materialization(cmd_args(a, b), ctx), pretty = False)
+    ctx.output.print_json(ctx.output.ensure_multiple(cmd_args(a, b)), pretty = False)
+
+group_order_test = bxl_main(
+    impl = _group_order_impl,
     cli_args = {},
 )

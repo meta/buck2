@@ -24,6 +24,7 @@ use starlark_syntax::syntax::top_level_stmts::top_level_stmts_mut;
 
 use crate::codemap::Spanned;
 use crate::const_frozen_string;
+use crate::eval::bc::bytecode::Bc;
 use crate::eval::bc::frame::alloca_frame;
 use crate::eval::compiler::Compiler;
 use crate::eval::compiler::add_span_to_expr_error;
@@ -33,7 +34,7 @@ use crate::eval::compiler::scope::Slot;
 use crate::eval::compiler::scope::payload::CstPayload;
 use crate::eval::compiler::scope::payload::CstStmt;
 use crate::eval::runtime::frame_span::FrameSpan;
-use crate::eval::runtime::frozen_file_span::FrozenFileSpan;
+use crate::eval::runtime::heap_file_span::HeapFileSpan;
 use crate::typing::Ty;
 use crate::typing::TypingOracleCtx;
 use crate::typing::bindings::BindingsCollect;
@@ -41,8 +42,7 @@ use crate::typing::error::InternalError;
 use crate::typing::fill_types_for_lint::ModuleVarTypes;
 use crate::typing::mode::TypecheckMode;
 use crate::typing::typecheck::solve_bindings;
-use crate::values::FrozenRef;
-use crate::values::FrozenStringValue;
+use crate::values::StringValue;
 use crate::values::Value;
 
 #[derive(Debug, thiserror::Error)]
@@ -55,11 +55,12 @@ enum ModuleError {
     TopLevelStmtCountMismatch,
 }
 
-impl<'v> Compiler<'v, '_, '_, '_> {
-    fn eval_load(&mut self, load: Spanned<&LoadP<CstPayload>>) -> Result<(), EvalException> {
+impl<'v, 'fm> Compiler<'v, '_, '_, '_, 'fm> {
+    fn eval_load(&mut self, load: Spanned<&LoadP<CstPayload<'fm>>>) -> Result<(), EvalException> {
         let name = &load.node.module.node;
 
-        let span = FrameSpan::new(FrozenFileSpan::new(self.codemap, load.span));
+        let span = FrameSpan::new(HeapFileSpan::new(self.codemap, load.span));
+        let span = self.edge.rebrand(span);
 
         let loadenv = match self.eval.loader.as_ref() {
             None => {
@@ -80,11 +81,12 @@ impl<'v> Compiler<'v, '_, '_, '_> {
                 Slot::Local(..) => unreachable!("symbol need to be resolved to module"),
                 Slot::Module(slot) => slot,
             };
+            let span = FrameSpan::new(HeapFileSpan::new(self.codemap, load_arg.span()));
             let value = expr_throw(
                 self.eval
                     .module_env
                     .load_symbol(&loadenv, &load_arg.their.node),
-                FrameSpan::new(FrozenFileSpan::new(self.codemap, load_arg.span())),
+                self.edge.rebrand(span),
                 self.eval,
             )?;
             self.eval.set_slot_module(slot, value)
@@ -97,8 +99,8 @@ impl<'v> Compiler<'v, '_, '_, '_> {
     /// Regular statement is a statement which is not `load` or a sequence of statements.
     fn eval_regular_top_level_stmt(
         &mut self,
-        stmt: &mut CstStmt,
-        local_names: FrozenRef<'static, [FrozenStringValue]>,
+        stmt: &mut CstStmt<'fm>,
+        local_names: &[StringValue<'fm>],
     ) -> Result<Value<'v>, EvalException> {
         if matches!(stmt.node, StmtP::Statements(_) | StmtP::Load(_)) {
             return Err(EvalException::new_anyhow(
@@ -111,12 +113,9 @@ impl<'v> Compiler<'v, '_, '_, '_> {
         let stmt = self
             .module_top_level_stmt(stmt)
             .map_err(|e| e.into_eval_exception())?;
-        let bc = stmt.as_bc(
-            &self.compile_context(false),
-            local_names,
-            0,
-            self.eval.module_env.frozen_heap(),
-        );
+        let bc = stmt.as_bc(&self.compile_context(false), local_names, 0, self.fh);
+        // The compiler's products cross to the evaluator's heap here, once per statement.
+        let bc: &Bc<'v> = self.edge.rebrand_ref(&bc);
         // We don't preserve locals between top level statements.
         // That is OK for now: the only locals used in module evaluation
         // are comprehension bindings.
@@ -126,15 +125,15 @@ impl<'v> Compiler<'v, '_, '_, '_> {
             local_count,
             bc.max_stack_size,
             bc.max_loop_depth,
-            |eval| eval.eval_bc(const_frozen_string!("module").to_value(), &bc),
+            |eval| eval.eval_bc(const_frozen_string!("module").at().to_value(), bc),
         )
     }
 
     #[allow(clippy::mut_mut)] // Another false positive.
     fn eval_top_level_stmt(
         &mut self,
-        stmt: &mut CstStmt,
-        local_names: FrozenRef<'static, [FrozenStringValue]>,
+        stmt: &mut CstStmt<'fm>,
+        local_names: &[StringValue<'fm>],
     ) -> Result<Value<'v>, EvalException> {
         let mut stmts = top_level_stmts_mut(stmt);
 
@@ -167,7 +166,7 @@ impl<'v> Compiler<'v, '_, '_, '_> {
         Ok(last)
     }
 
-    fn typecheck(&mut self, stmts: &mut [&mut CstStmt]) -> Result<(), EvalException> {
+    fn typecheck(&mut self, stmts: &mut [&mut CstStmt<'fm>]) -> Result<(), EvalException> {
         let typecheck = self.eval.static_typechecking || self.typecheck;
         if !typecheck {
             return Ok(());
@@ -213,8 +212,8 @@ impl<'v> Compiler<'v, '_, '_, '_> {
 
     pub(crate) fn eval_module(
         &mut self,
-        mut stmt: CstStmt,
-        local_names: FrozenRef<'static, [FrozenStringValue]>,
+        mut stmt: CstStmt<'fm>,
+        local_names: &[StringValue<'fm>],
     ) -> Result<Value<'v>, EvalException> {
         self.enter_scope(ScopeId::module());
         let value = self.eval_top_level_stmt(&mut stmt, local_names)?;

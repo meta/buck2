@@ -1,0 +1,25 @@
+load("@prelude//configurations:constraint_alias.bzl", "constraint_with_aliases")
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("build_infra")
+
+source_listing()
+
+# Used by open source projects to support `prelude//`
+
+constraint_with_aliases(
+    name = "test_runtime",
+    aliases = {
+        "android-host-test": "android-host",
+        "android-instrumentation-test": "android-instrumentation",
+        "android-unit-test": "android-unit",
+    },
+    default = "unspecified",
+    values = [
+        "android-host",
+        "android-unit",
+        "android-instrumentation",
+        "unspecified",
+    ],
+    visibility = ["PUBLIC"],
+)

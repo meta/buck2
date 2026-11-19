@@ -1,0 +1,40 @@
+{
+    "title": "JSON type coverage test",
+    "types": {
+        "string_val": "hello",
+        "int_val": 42,
+        "negative_int": -7,
+        "float_val": 3.14,
+        "negative_float": -0.5,
+        "bool_true": true,
+        "bool_false": false,
+        "null_val": null,
+        "string_array": ["a", "b", "c"],
+        "int_array": [1, 2, 3],
+        "bool_array": [true, false, true],
+        "mixed_array": [1, "two", true, null],
+        "nested_table": {
+            "key": "value",
+            "number": 99
+        }
+    },
+    "fruits": [
+        {
+            "name": "apple",
+            "physical": {
+                "color": "red",
+                "shape": "round"
+            },
+            "varieties": [
+                {"name": "red delicious"},
+                {"name": "granny smith"}
+            ]
+        },
+        {
+            "name": "banana",
+            "varieties": [
+                {"name": "plantain"}
+            ]
+        }
+    ]
+}

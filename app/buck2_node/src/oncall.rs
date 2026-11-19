@@ -12,9 +12,13 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
+use strong_hash::StrongHash;
 
 /// The `oncall` annotation for a `BUCK` file.
-#[derive(Debug, Hash, Allocative, Eq, PartialEq, Dupe, Clone)]
+#[derive(
+    Debug, Hash, StrongHash, Allocative, Eq, PartialEq, Dupe, Clone, Pagable
+)]
 pub struct Oncall(Arc<String>);
 
 impl Oncall {

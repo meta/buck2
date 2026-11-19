@@ -28,6 +28,7 @@ enum Shell {
     Bash,
     Fish,
     Zsh,
+    Powershell,
 }
 
 #[derive(Debug, clap::Parser)]
@@ -39,6 +40,7 @@ enum Shell {
 /// - `source <(buck2 completion bash)`
 /// - `source <(buck2 completion zsh)`
 /// - `source (buck2 completion fish | psub)`
+/// - `buck2 completion powershell | Out-String | Invoke-Expression`
 pub struct CompletionCommand {
     #[clap(
         value_enum,
@@ -65,9 +67,14 @@ impl CompletionCommand {
     }
 }
 
-const GENERATED_INSERTION_POINT: &str = "# %INSERT_GENERATED_LINE%";
-const GENERATED_TAG: &str = concat!("@", "generated");
-const COMPLETION_INSERTION_POINT: &str = "# %INSERT_OPTION_COMPLETION%";
+// Use 'static here to avoid rust-analyzer crash when pattern matching
+// on these string literals. https://github.com/rust-lang/rust-analyzer/issues/20149
+#[allow(clippy::redundant_static_lifetimes)]
+const GENERATED_INSERTION_POINT: &'static str = "# %INSERT_GENERATED_LINE%";
+#[allow(clippy::redundant_static_lifetimes)]
+const GENERATED_TAG: &'static str = concat!("@", "generated");
+#[allow(clippy::redundant_static_lifetimes)]
+const COMPLETION_INSERTION_POINT: &'static str = "# %INSERT_OPTION_COMPLETION%";
 
 fn completion_wrapper(shell: Shell) -> &'static str {
     #[cfg(buck_build)]
@@ -76,6 +83,7 @@ fn completion_wrapper(shell: Shell) -> &'static str {
             Shell::Bash => completion_wrapper_bash::get(),
             Shell::Fish => completion_wrapper_fish::get(),
             Shell::Zsh => completion_wrapper_zsh::get(),
+            Shell::Powershell => completion_wrapper_powershell::get(),
         }
     }
     #[cfg(not(buck_build))]
@@ -84,6 +92,7 @@ fn completion_wrapper(shell: Shell) -> &'static str {
             Shell::Bash => include_str!("completion/completion-wrapper.bash"),
             Shell::Fish => include_str!("completion/completion-wrapper.fish"),
             Shell::Zsh => include_str!("completion/completion-wrapper.zsh"),
+            Shell::Powershell => include_str!("completion/completion-wrapper.ps1"),
         }
     }
 }
@@ -95,6 +104,7 @@ fn options_wrapper(shell: Shell) -> &'static str {
             Shell::Bash => options_wrapper_bash::get(),
             Shell::Fish => options_wrapper_fish::get(),
             Shell::Zsh => options_wrapper_zsh::get(),
+            Shell::Powershell => options_wrapper_powershell::get(),
         }
     }
     #[cfg(not(buck_build))]
@@ -103,6 +113,7 @@ fn options_wrapper(shell: Shell) -> &'static str {
             Shell::Bash => include_str!("completion/options-wrapper.bash"),
             Shell::Fish => include_str!("completion/options-wrapper.fish"),
             Shell::Zsh => include_str!("completion/options-wrapper.zsh"),
+            Shell::Powershell => include_str!("completion/options-wrapper.ps1"),
         }
     }
 }
@@ -121,6 +132,7 @@ fn print_completion_script(
         Shell::Bash => clap_complete::Shell::Bash,
         Shell::Zsh => clap_complete::Shell::Zsh,
         Shell::Fish => clap_complete::Shell::Fish,
+        Shell::Powershell => clap_complete::Shell::PowerShell,
     };
 
     let mut wrapper_iter = wrapper.lines();
@@ -165,5 +177,52 @@ fn option_completions(
     let mut v = Vec::new();
     // FIXME: it appears that this might silently swallow errors; would require a PR to fix
     generate(shell, cmd, cmd.get_name().to_owned(), &mut v);
-    Ok(String::from_utf8(v)?)
+    let generated = String::from_utf8(v)?;
+
+    if shell == clap_complete::Shell::PowerShell {
+        // Two PowerShell-specific fixups on clap's output:
+        //
+        // 1. `using namespace` directives must precede every other statement. The
+        //    wrapper template declares them at the top of the file, so strip clap's
+        //    copies to avoid a "using must appear first" parse error when they land in
+        //    the middle of the spliced script.
+        //
+        // 2. Rewrite clap's `Register-ArgumentCompleter ... -ScriptBlock { ... }` into
+        //    an assignment `$BuckClapStaticCompleter = { ... }`. The wrapper then owns
+        //    the single native completer registration and layers dynamic (target /
+        //    flagfile) completion on top of clap's static block. Capturing the block by
+        //    assignment avoids shadowing the `Register-ArgumentCompleter` cmdlet and
+        //    avoids a global variable (both flagged by PSScriptAnalyzer).
+        let register_prefix = format!(
+            "Register-ArgumentCompleter -Native -CommandName '{}' -ScriptBlock",
+            cmd.get_name()
+        );
+        let mut rewrote_register = false;
+        let script: String = generated
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("using namespace "))
+            .map(|line| {
+                if line.starts_with(&register_prefix) {
+                    rewrote_register = true;
+                    line.replacen(&register_prefix, "$BuckClapStaticCompleter =", 1) + "\n"
+                } else {
+                    format!("{line}\n")
+                }
+            })
+            .collect();
+        // If clap_complete ever changes how it emits the registration line, the
+        // rewrite above no-ops and the wrapper would splice a script that never
+        // assigns `$BuckClapStaticCompleter`. Fail loudly instead, mirroring the
+        // `found_insertion_point` check in `print_completion_script`.
+        if !rewrote_register {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "Failed to rewrite clap's PowerShell `Register-ArgumentCompleter` line (expected a line starting with `{}`); clap_complete's output format may have changed",
+                register_prefix
+            ));
+        }
+        return Ok(script);
+    }
+
+    Ok(generated)
 }

@@ -10,6 +10,7 @@ load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
 
 def _attributes() -> dict[str, Attr]:
     return {
+        "network_access": attrs.option(attrs.enum(["all", "none", "loopback", "strict", "private"]), default = None),
         "_test_toolchain": toolchains_common.test_toolchain(),
     }
 

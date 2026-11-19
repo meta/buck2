@@ -1,10 +1,10 @@
-load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library_prost_0134")
+load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
 load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
 
 oncall("build_infra")
 
-rust_protobuf_library_prost_0134(
+rust_protobuf_library(
     name = "buck2_cli_proto",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",
@@ -15,14 +15,14 @@ rust_protobuf_library_prost_0134(
     ],
     deps = [
         "fbsource//third-party/rust:bytes",
-        "fbsource//third-party/rust:prost-types-0-13-4",
+        "fbsource//third-party/rust:prost-types",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:tokio-util",
         "//buck2/allocative/allocative:allocative",
-        "//buck2/app/buck2_core:buck2_core",
         "//buck2/app/buck2_data:buck2_data",
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_proto_serde:buck2_proto_serde",
         "//buck2/app/buck2_subscription_proto:buck2_subscription_proto",
     ],
 )

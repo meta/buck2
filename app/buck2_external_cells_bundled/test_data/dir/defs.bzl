@@ -7,8 +7,8 @@
 # above-listed licenses.
 
 def _impl(ctx):
-    tmp = ctx.actions.write("temp.txt", "".join([s + "\n" for s in ctx.attrs.data]))
-    out = ctx.actions.declare_output("out.txt")
+    tmp = ctx.actions.write("temp.txt", "".join([s + "\n" for s in ctx.attrs.data]), has_content_based_path = False)
+    out = ctx.actions.declare_output("out.txt", has_content_based_path = False)
 
     # Good enough for tests
     if host_info().os.is_windows:

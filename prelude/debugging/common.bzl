@@ -16,10 +16,14 @@ def target_name(node: bxl.ConfiguredTargetNode | bxl.UnconfiguredTargetNode) -> 
 def rule_type(node: bxl.ConfiguredTargetNode) -> str:
     return node.rule_type
 
+def rule_name(node: bxl.ConfiguredTargetNode) -> str:
+    """The rule type without the file that defines the rule, e.g. `cxx_binary`."""
+    return node.rule_type.rsplit(":", 1)[-1]
+
 def create_target_info(target: bxl.ConfiguredTargetNode) -> TargetInfo:
     attrs = target.attrs_lazy()
     return TargetInfo(
         target = target_name(target),
-        target_type = rule_type(target).removeprefix("prelude//rules.bzl:"),
+        target_type = rule_name(target),
         labels = attrs.get("labels").value() if attrs.get("labels") != None else [],
     )

@@ -9,27 +9,35 @@
  */
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
 use derive_more::Display;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
-use starlark::coerce::Coerce;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::ValueLifetimeless;
-use starlark::values::ValueLike;
-use starlark::values::ValueOfUncheckedGeneric;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
+use strong_hash::StrongHash;
 
-use crate::interpreter::rule_defs::transitive_set::FrozenTransitiveSet;
 use crate::interpreter::rule_defs::transitive_set::TransitiveSet;
 use crate::interpreter::rule_defs::transitive_set::TransitiveSetError;
 
-#[derive(Debug, Clone, Dupe, Copy, Trace, Freeze, PartialEq, Allocative)]
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    Copy,
+    Trace,
+    Freeze,
+    PartialEq,
+    Allocative,
+    StarlarkPagable,
+    StrongHash
+)]
 pub enum TransitiveSetOrdering {
     /// Preorder depth-first traversal, visiting parent node first, then children in an unspecified
     /// order that minimizes memory usage during traversal.
@@ -70,31 +78,26 @@ impl TransitiveSetOrdering {
     Debug,
     Clone,
     Trace,
-    Coerce,
     Freeze,
     Display,
     ProvidesStaticType,
     NoSerialize,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[display("Traversal({})", inner)]
 #[repr(C)]
-pub struct TransitiveSetTraversalGen<V: ValueLifetimeless> {
-    pub(super) inner: V,
+pub struct TransitiveSetTraversal<'v> {
+    pub(super) inner: ValueTyped<'v, TransitiveSet<'v>>,
     pub ordering: TransitiveSetOrdering,
 }
 
 starlark_complex_value!(pub TransitiveSetTraversal);
 
 #[starlark_value(type = "TransitiveSetIterator")]
-impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for TransitiveSetTraversalGen<V>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    fn iterate_collect(&self, _heap: &'v Heap) -> starlark::Result<Vec<Value<'v>>> {
-        let tset =
-            TransitiveSet::from_value(self.inner.to_value()).buck_error_context("Invalid inner")?;
-        Ok(tset.iter_values(self.ordering)?.collect())
+impl<'v> StarlarkValue<'v> for TransitiveSetTraversal<'v> {
+    fn iterate_collect(&self, _heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+        Ok(self.inner.collect_values(self.ordering)?)
     }
 }
 
@@ -104,17 +107,17 @@ where
     Debug,
     Clone,
     Trace,
-    Coerce,
     Freeze,
     Display,
     ProvidesStaticType,
     NoSerialize,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[display("Traversal({}[\"{}\"])", transitive_set, projection)]
 #[repr(C)]
-pub struct TransitiveSetProjectionTraversalGen<V: ValueLifetimeless> {
-    pub(super) transitive_set: ValueOfUncheckedGeneric<V, FrozenTransitiveSet>,
+pub struct TransitiveSetProjectionTraversal<'v> {
+    pub(super) transitive_set: ValueTyped<'v, TransitiveSet<'v>>,
     pub projection: usize,
     pub ordering: TransitiveSetOrdering,
 }
@@ -122,15 +125,9 @@ pub struct TransitiveSetProjectionTraversalGen<V: ValueLifetimeless> {
 starlark_complex_value!(pub TransitiveSetProjectionTraversal);
 
 #[starlark_value(type = "TransitiveSetArgsProjectionIterator")]
-impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for TransitiveSetProjectionTraversalGen<V>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    fn iterate_collect(&self, _heap: &'v Heap) -> starlark::Result<Vec<Value<'v>>> {
-        let set = TransitiveSet::from_value(self.transitive_set.get().to_value())
-            .buck_error_context("Invalid inner")?;
-        Ok(set
-            .iter_projection_values(self.ordering, self.projection)?
-            .collect())
+impl<'v> StarlarkValue<'v> for TransitiveSetProjectionTraversal<'v> {
+    fn iterate_collect(&self, _heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+        let set = self.transitive_set.as_ref();
+        Ok(set.collect_projection_values(self.ordering, self.projection)?)
     }
 }

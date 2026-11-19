@@ -13,7 +13,7 @@ def _requires_local(ctx):
     return False
 
 def _proto_genrule_impl(ctx):
-    out_artifact = ctx.actions.declare_output(ctx.attrs.out)
+    out_artifact = ctx.actions.declare_output(ctx.attrs.out, has_content_based_path = False)
     env_vars = {
         "OUT": cmd_args(out_artifact.as_output()),
     }

@@ -20,7 +20,7 @@ data class AndroidDeviceInfo(
     val density: DensityClass,
     val sdk: String,
     val isEmulator: Boolean,
-    val androidDeviceImplementation: String,
+    val transport: String,
 ) {
   /** The display density category of the device. */
   enum class DensityClass(private val maxDotsPerInch: Int) {
@@ -56,5 +56,18 @@ data class AndroidDeviceInfo(
 
   companion object {
     var TVDPI_DPI: Int = 213
+
+    /**
+     * Classifies how adb reaches a device, from its serial. Transfer throughput differs enough
+     * between these that install timings are not comparable across them.
+     */
+    @JvmStatic
+    fun transportOf(serialNumber: String): String =
+        when {
+          // `adb connect` target: a networked device, or one tunnelled to a remote host.
+          serialNumber.contains(':') -> "tcp"
+          serialNumber.startsWith("emulator-") -> "emulator"
+          else -> "usb"
+        }
   }
 }

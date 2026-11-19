@@ -17,7 +17,7 @@ load(":apple_utility.bzl", "get_apple_architecture")
 def apple_xcuitest_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
     # The XCUITest runner app bundle copies the application from the platform
     # directory, and includes the UI test bundle in the PlugIns folder.
-    output_bundle = ctx.actions.declare_output(ctx.attrs.name + "." + ctx.attrs.extension)
+    output_bundle = ctx.actions.declare_output(ctx.attrs.name + "." + ctx.attrs.extension, has_content_based_path = False)
     bundle_parts = [
         _get_xctrunner_binary(ctx),
         _get_uitest_bundle(ctx),
@@ -54,16 +54,19 @@ def _get_xctrunner_binary(ctx: AnalysisContext) -> AppleBundlePart:
     arch = get_apple_architecture(ctx)
     lipo = ctx.attrs._apple_toolchain[AppleToolchainInfo].lipo
     platform_path = ctx.attrs._apple_toolchain[AppleToolchainInfo].platform_path
-    thin_binary = ctx.actions.declare_output(ctx.attrs.name)
+    thin_binary = ctx.actions.declare_output(ctx.attrs.name, has_content_based_path = False)
     xctrunner_path = cmd_args(platform_path, "Developer/Library/Xcode/Agents/XCTRunner.app/XCTRunner", delimiter = "/")
-    ctx.actions.run([
-        lipo,
-        xctrunner_path,
-        "-extract",
-        arch,
-        "-output",
-        thin_binary.as_output(),
-    ], category = "copy_xctrunner")
+    ctx.actions.run(
+        [
+            lipo,
+            xctrunner_path,
+            "-extract",
+            arch,
+            "-output",
+            thin_binary.as_output(),
+        ],
+        category = "copy_xctrunner",
+    )
 
     return AppleBundlePart(
         source = thin_binary,
@@ -75,7 +78,7 @@ def _get_xctrunner_frameworks(ctx: AnalysisContext) -> list[AppleBundlePart]:
     # It would be nicer to make this an arglike and avoid the copies.
     # It would also be nicer to exclude the headers.
     def copy_platform_framework(platform_relative_path: str) -> AppleBundlePart:
-        copied_framework = ctx.actions.declare_output(paths.basename(platform_relative_path))
+        copied_framework = ctx.actions.declare_output(paths.basename(platform_relative_path), has_content_based_path = False)
         path = cmd_args(ctx.attrs._apple_toolchain[AppleToolchainInfo].platform_path, platform_relative_path, delimiter = "/")
         ctx.actions.run(["cp", "-PR", path, copied_framework.as_output()], category = "copy_framework", identifier = platform_relative_path)
         return AppleBundlePart(

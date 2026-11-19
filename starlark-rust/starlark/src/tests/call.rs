@@ -103,6 +103,18 @@ fn test_repeated_parameters() {
 }
 
 #[test]
+fn test_kwargs_non_string_key_message() {
+    assert::fail(
+        "def f(**kw): pass\nnoop(f)(**noop({1: 2}))",
+        "The keys of the dictionary provided for **kwargs must be strings",
+    );
+    assert::fail(
+        "dict(**noop({1: 2}))",
+        "The keys of the dictionary provided for **kwargs must be strings",
+    );
+}
+
+#[test]
 fn test_bad_application() {
     assert::fail("noop(['1'])(2)", "not supported");
     assert::fail("noop('test')(2)", "not supported");
@@ -283,18 +295,19 @@ g(x=1, y=2)
 #[cfg_attr(rust_nightly, cfg(not(sanitize = "address")))]
 #[test]
 fn test_frame_size() {
-    use starlark::values::list_or_tuple::UnpackListOrTuple;
+    use starlark::values::list_or_tuple::ListOrTupleType;
     use starlark_derive::starlark_module;
 
     use crate as starlark;
     use crate::environment::GlobalsBuilder;
     use crate::values::UnpackValue;
     use crate::values::Value;
+    use crate::values::ValueOf;
 
     #[starlark_module]
     fn natives(builder: &mut GlobalsBuilder) {
-        fn stack_ptr(args: UnpackListOrTuple<Value>) -> anyhow::Result<usize> {
-            drop(args);
+        fn stack_ptr<'v>(args: ValueOf<'v, ListOrTupleType<Value<'v>>>) -> anyhow::Result<usize> {
+            let _ = args;
 
             let x = std::hint::black_box(1);
             let ptr = &x;
@@ -317,10 +330,10 @@ G_F_PTR = g([])
     let mut a = Assert::new();
     a.globals_add(natives);
     let module = a.pass_module(program);
-    let one = usize::unpack_value(module.get("F_PTR").unwrap().value())
+    let one = usize::unpack_value(module.get("F_PTR").unwrap().as_ref().value())
         .unwrap()
         .unwrap();
-    let two = usize::unpack_value(module.get("G_F_PTR").unwrap().value())
+    let two = usize::unpack_value(module.get("G_F_PTR").unwrap().as_ref().value())
         .unwrap()
         .unwrap();
     assert!(

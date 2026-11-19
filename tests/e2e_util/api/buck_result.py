@@ -6,24 +6,18 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-unsafe
 
 import json
+import re
 import textwrap
 import xml.etree.ElementTree as ET
 from asyncio import subprocess
 from collections import defaultdict
 from enum import auto, Enum
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from buck2.tests.e2e_util.api.result import E, R, Result
-
-
-BuckResultType = Callable[[subprocess.Process, str, str, str], R]
-BuckExceptionType = Callable[
-    [Iterable[str], Path, Dict[str, str], subprocess.Process, str, str, str], E
-]
+from buck2.tests.e2e_util.api.result import Result
 
 
 class ExitCode(Enum):
@@ -58,15 +52,18 @@ class ExitCodeV2(Enum):
     DAEMON_PREEMPTED = 5
     TIMEOUT = 6
     CONNECT_ERROR = 11
+    FATAL_OOM = 12
     BROKEN_PIPE = 130
     SIGNAL_INTERRUPT = 141
 
 
-class AutoName(Enum):
+class AutoName(str, Enum):
     """Makes the value of the Enum its name"""
 
     @staticmethod
-    def _generate_next_value_(name, start, count, last_values):
+    def _generate_next_value_(
+        name: str, start: int, count: int, last_values: list
+    ) -> str:
         return name
 
 
@@ -81,6 +78,43 @@ class ResultType(AutoName):
     SUCCESS = auto()
 
 
+class InvocationRecord:
+    """Parsed invocation record from a Buck2 command."""
+
+    def __init__(self, path: Path) -> None:
+        record_json = json.loads(path.read_text(encoding="utf-8"))
+        self._data = record_json["data"]["Record"]["data"]["InvocationRecord"]
+        self._data["trace_id"] = record_json["trace_id"]
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._data
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._data.get(key, default)
+
+    def single_error(self) -> Dict[str, Any]:
+        errors = self._data["errors"]
+        assert len(errors) == 1
+        return errors[0]
+
+
+# The line buck2's simple console prints when a command starts. A restarted command prints one
+# per attempt, so the last match is the trace id of the attempt that produced the result.
+_TRACE_ID_LINE = re.compile(
+    r"^(?:\[[^\]]*\] )?(?:Buck UI: https://www\.internalfb\.com/buck2/|Build ID: )"
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\s*$",
+    re.MULTILINE,
+)
+
+
+def parse_trace_id(stderr: str) -> Optional[str]:
+    matches = _TRACE_ID_LINE.findall(stderr)
+    return matches[-1] if matches else None
+
+
 class BuckResult(Result):
     """
     Represents a buck process that has finished running and succeeded.
@@ -88,10 +122,37 @@ class BuckResult(Result):
     """
 
     def __init__(
-        self, process: subprocess.Process, stdout: str, stderr: str, buck_build_id: str
+        self,
+        process: subprocess.Process,
+        stdout: str,
+        stderr: str,
+        invocation_record_path: Optional[Path] = None,
+        buck_args: str = "",
     ) -> None:
         super().__init__(process, stdout, stderr)
-        self.buck_build_id = buck_build_id
+        self.buck_args = buck_args
+        self.invocation_record_path = invocation_record_path
+
+    @property
+    def buck_build_id(self) -> str:
+        """
+        The trace id buck2 used for this command, as printed on stderr. It is not the
+        `BUCK_WRAPPER_UUID` the harness sets: a launcher in front of the client (deployed buck2)
+        replaces it, and a restarted command gets a new one.
+        """
+        trace_id = parse_trace_id(self.stderr)
+        if trace_id is None:
+            raise Exception(
+                "No `Buck UI:` or `Build ID:` line on stderr; the command printed no trace id"
+            )
+        return trace_id
+
+    def invocation_record(self) -> InvocationRecord:
+        if self.invocation_record_path is None:
+            raise Exception(
+                "No invocation record available, write_invocation_record not set."
+            )
+        return InvocationRecord(self.invocation_record_path)
 
 
 class BuckException(Exception, BuckResult):
@@ -105,7 +166,7 @@ class BuckException(Exception, BuckResult):
         process: subprocess.Process,
         stdout: str,
         stderr: str,
-        buck_build_id: str,
+        invocation_record_path: Optional[Path] = None,
     ) -> None:
         cmd = " ".join(str(e) for e in cmd_to_run)
         if stdout != "":
@@ -130,7 +191,7 @@ class BuckException(Exception, BuckResult):
             self,
             error_msg,
         )
-        BuckResult.__init__(self, process, stdout, stderr, buck_build_id)
+        BuckResult.__init__(self, process, stdout, stderr, invocation_record_path)
 
     def check_returncode(self) -> None:
         assert self.process.returncode != 0
@@ -169,9 +230,9 @@ class BuildReport:
 
     def __init__(self, parsed) -> None:
         assert isinstance(parsed, Dict)
-        self.build_report: Dict[str, ...] = parsed  # type: ignore
+        self.build_report: Dict[str, Any] = parsed  # type: ignore
         self.root = Path(self.build_report["project_root"])  # type: ignore
-        self.results: Dict[str, Dict[str, ...]] = self.build_report["results"]
+        self.results: Dict[str, Dict[str, Any]] = self.build_report["results"]
 
     def _to_abs_paths(self, paths: Tuple[Path, ...]) -> Tuple[Path, ...]:
         return tuple(self.root / path for path in paths)
@@ -188,12 +249,12 @@ class BuildReport:
                 for t, entry in self.results.items()
                 if t.endswith(target)
             ]
-            assert (
-                len(matched_outputs) > 0
-            ), f"Found no match for target {target} in {self.build_report}"
-            assert (
-                len(matched_outputs) == 1
-            ), f"Found different cells for target {target} in {self.results}"
+            assert len(matched_outputs) > 0, (
+                f"Found no match for target {target} in {self.build_report}"
+            )
+            assert len(matched_outputs) == 1, (
+                f"Found different cells for target {target} in {self.results}"
+            )
             paths = matched_outputs[0]
         else:
             paths = self.results[target]["outputs"][sub_target]
@@ -213,18 +274,23 @@ LOG_COMPUTE_KEY = "build_api::actions::calculation: compute"
 
 
 class TargetsResult(BuckResult):
-    """Represents a Buck process  of a targets command that has finished running"""
+    """Represents a Buck process of a targets command that has finished running"""
 
-    def __init__(
-        self,
-        process: subprocess.Process,
-        stdout: str,
-        stderr: str,
-        buck_build_id: str,
-        *argv: str,
-    ) -> None:
-        self.args = " ".join(argv)
-        super().__init__(process, stdout, stderr, buck_build_id)
+    def __init__(self, base: BuckResult) -> None:
+        self.__dict__.update(base.__dict__)
+
+    def get_target_list(self) -> List[str]:
+        """
+        Returns a list of sorted target labels
+        """
+        assert "--json-lines" in self.buck_args, (
+            "Must add --json-lines arg to get targets"
+        )
+        targets = []
+        for line in self.stdout.splitlines():
+            js = json.loads(line)
+            targets.append(js["buck.package"] + ":" + js["name"])
+        return sorted(targets)
 
     def get_target_to_build_output(self) -> Dict[str, str]:
         """
@@ -232,7 +298,7 @@ class TargetsResult(BuckResult):
         """
         target_to_output = {}
         assert (
-            "--show-output" in self.args or "--show-full-output" in self.args
+            "--show-output" in self.buck_args or "--show-full-output" in self.buck_args
         ), "Must add --show-output or --show-full-output arg to get targets output"
         show_output = self.stdout.strip().splitlines()
         for line in show_output:
@@ -247,18 +313,10 @@ class TargetsResult(BuckResult):
 
 
 class BuildResult(BuckResult):
-    """Represents a Buck process  of a build command that has finished running"""
+    """Represents a Buck process of a build command that has finished running"""
 
-    def __init__(
-        self,
-        process: subprocess.Process,
-        stdout: str,
-        stderr: str,
-        buck_build_id: str,
-        *argv: str,
-    ) -> None:
-        self.args = " ".join(argv)
-        super().__init__(process, stdout, stderr, buck_build_id)
+    def __init__(self, base: BuckResult) -> None:
+        self.__dict__.update(base.__dict__)
 
     def get_target_to_build_output(self) -> Dict[str, str]:
         """
@@ -267,10 +325,10 @@ class BuildResult(BuckResult):
         """
         target_to_output = {}
         assert (
-            "--show-output" in self.args or "--show-full-output" in self.args
+            "--show-output" in self.buck_args or "--show-full-output" in self.buck_args
         ), "Must add --show-output or --show-full-output arg to get build output"
         show_output = self.stdout.strip().splitlines()
-        if "--build-report=-" in self.args:
+        if "--build-report=-" in self.buck_args:
             # When mixing --show-output with --build-report=-, the first line is
             # the build report, and the remaining ones are the results, we only
             # want the results for the purpose of this function so we skip the report
@@ -339,15 +397,8 @@ class TestResultSummary:
 class TestResult(BuckResult):
     """Represents a Buck process  of a test command that has finished running"""
 
-    def __init__(
-        self,
-        process: subprocess.Process,
-        stdout: str,
-        stderr: str,
-        buck_build_id: str,
-        test_output_file: Path,
-    ) -> None:
-        super().__init__(process, stdout, stderr, buck_build_id)
+    def __init__(self, base: BuckResult, test_output_file: Path) -> None:
+        self.__dict__.update(base.__dict__)
         self.test_root = (
             ET.parse(str(test_output_file)).getroot()
             if test_output_file.exists()
@@ -364,9 +415,12 @@ class TestResult(BuckResult):
                 name = testresult.get("name")
                 status = testresult.get("status")
                 testresult_type = testresult.get("type")
-                assert testresult_type in (
-                    e.value for e in ResultType
-                ), f"Type {testresult_type} is not a ResultType Enum"
+                assert name is not None
+                assert status is not None
+                assert testresult_type is not None
+                assert testresult_type in (e.value for e in ResultType), (
+                    f"Type {testresult_type} is not a ResultType Enum"
+                )
                 result_type = ResultType(testresult_type)
                 test_result_summary = TestResultSummary(name, status, result_type)
                 test_list.append(test_result_summary)
@@ -394,22 +448,14 @@ class TestResult(BuckResult):
 class AuditConfigResult(BuckResult):
     """Represents a Buck process of an audit config command that has finished running"""
 
-    def __init__(
-        self,
-        process: subprocess.Process,
-        stdout: str,
-        stderr: str,
-        buck_build_id: str,
-        *argv: str,
-    ) -> None:
-        self.args = " ".join(argv)
-        super().__init__(process, stdout, stderr, buck_build_id)
+    def __init__(self, base: BuckResult) -> None:
+        self.__dict__.update(base.__dict__)
 
     def get_json(self) -> Dict[str, str]:
         """Returns a dict of the json sent back by buck"""
-        assert (
-            "--style=json" in self.args or "--style json" in self.args
-        ), "Must add --style=json or `--style json` arg to get json output"
+        assert "--style=json" in self.buck_args or "--style json" in self.buck_args, (
+            "Must add --style=json or `--style json` arg to get json output"
+        )
         try:
             start = self.stdout.index("{")
             audit_json = self.stdout[start:].strip()
@@ -418,18 +464,3 @@ class AuditConfigResult(BuckResult):
         except Exception as e:
             print(f"stdout: {self.stdout}\nstderr: {self.stderr}")
             raise e
-
-
-class BxlResult(BuckResult):
-    """Represents a Buck process  of a bxl command that has finished running"""
-
-    def __init__(
-        self,
-        process: subprocess.Process,
-        stdout: str,
-        stderr: str,
-        buck_build_id: str,
-        *argv: str,
-    ) -> None:
-        self.args = " ".join(argv)
-        super().__init__(process, stdout, stderr, buck_build_id)

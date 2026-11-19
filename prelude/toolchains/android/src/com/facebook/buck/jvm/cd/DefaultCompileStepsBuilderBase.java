@@ -12,9 +12,11 @@ package com.facebook.buck.jvm.cd;
 
 import com.facebook.buck.jvm.java.CompileToJarStepFactory;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 
 /** Creates a list of {@link IsolatedStep} that is ready for in process execute. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 abstract class DefaultCompileStepsBuilderBase<T extends CompileToJarStepFactory.ExtraParams>
     implements CompileStepsBuilder {
 

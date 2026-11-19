@@ -62,6 +62,7 @@ use crate::typing::error::InternalError;
 use crate::typing::error::TypingError;
 use crate::util::arc_str::ArcStr;
 use crate::values::Heap;
+use crate::values::HeapEdge;
 use crate::values::Value;
 use crate::values::tuple::AllocTuple;
 use crate::values::types::ellipsis::Ellipsis;
@@ -114,16 +115,19 @@ impl<'v> GlobalValue<'v> {
     }
 }
 
-struct GlobalTypesBuilder<'a, 'v> {
+struct GlobalTypesBuilder<'a, 'v, 'f> {
     approximations: &'a mut Vec<Approximation>,
-    heap: &'v Heap,
+    /// The scratch heap the evaluation happens on.
+    heap: Heap<'v>,
+    /// From `heap` to the heap the globals were resolved at.
+    edge: HeapEdge<'v, 'f>,
     values: UnorderedMap<ModuleSlotId, GlobalValue<'v>>,
     errors: Vec<TypingError>,
-    module_scope_data: &'a ModuleScopeData<'a>,
+    module_scope_data: &'a ModuleScopeData<'f>,
     ctx: TypingOracleCtx<'a>,
 }
 
-impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
+impl<'a, 'v, 'f> GlobalTypesBuilder<'a, 'v, 'f> {
     fn internal_error(&self, span: Span, message: impl Display) -> InternalError {
         InternalError::msg(message, span, self.ctx.codemap)
     }
@@ -136,14 +140,14 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
 
     fn call(
         &mut self,
-        _f: &CstExpr,
-        _args: &CallArgsP<CstPayload>,
+        _f: &CstExpr<'f>,
+        _args: &CallArgsP<CstPayload<'f>>,
     ) -> Result<GlobalValue<'v>, InternalError> {
         // TODO(nga): could be a call like `record(...)`, and we need to evaluate it.
         Ok(GlobalValue::any())
     }
 
-    fn expr_ident(&self, ident: &CstIdent) -> Result<GlobalValue<'v>, InternalError> {
+    fn expr_ident(&self, ident: &CstIdent<'f>) -> Result<GlobalValue<'v>, InternalError> {
         let Some(resolved_ident) = &ident.payload else {
             return Err(self.internal_error(ident.span, "unresolved ident"));
         };
@@ -157,22 +161,26 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
             ResolvedIdent::Slot(Slot::Local(_), _) => {
                 Err(self.internal_error(ident.span, "local slot in global scope"))
             }
-            ResolvedIdent::Global(g) => Ok(GlobalValue::value(g.to_value())),
+            ResolvedIdent::Global(g) => Ok(GlobalValue::value(self.edge.rebrand(*g))),
         }
     }
 
     fn expr_literal(&mut self, literal: &AstLiteral) -> Result<GlobalValue<'v>, InternalError> {
         match literal {
-            AstLiteral::String(s) => Ok(GlobalValue::value(self.heap.alloc(s.node.as_str()))),
+            AstLiteral::String(s) => Ok(GlobalValue::value(
+                self.heap.alloc(s.node.as_str()).to_value(),
+            )),
             // Not used in type expressions.
             _ => Ok(GlobalValue::any()),
         }
     }
 
-    fn tuple(&mut self, xs: &[CstExpr]) -> Result<GlobalValue<'v>, InternalError> {
+    fn tuple(&mut self, xs: &[CstExpr<'f>]) -> Result<GlobalValue<'v>, InternalError> {
         let xs = xs.try_map(|x| self.expr_spanned(x))?;
         if let Ok(xs) = xs.try_map(|v| v.value.ok_or(())) {
-            Ok(GlobalValue::value(self.heap.alloc(AllocTuple(xs))))
+            Ok(GlobalValue::value(
+                self.heap.alloc(AllocTuple(xs)).to_value(),
+            ))
         } else {
             Ok(GlobalValue::any())
         }
@@ -181,7 +189,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
     fn dot(
         &mut self,
         span: Span,
-        object: &CstExpr,
+        object: &CstExpr<'f>,
         field: &AstString,
     ) -> Result<GlobalValue<'v>, InternalError> {
         let object = self.expr(object)?;
@@ -198,8 +206,8 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
     fn index(
         &mut self,
         span: Span,
-        array: &CstExpr,
-        index: &CstExpr,
+        array: &CstExpr<'f>,
+        index: &CstExpr<'f>,
     ) -> Result<GlobalValue<'v>, InternalError> {
         let array = self.expr(array)?;
         let index = self.expr_spanned(index)?;
@@ -216,9 +224,9 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
     fn index2(
         &mut self,
         span: Span,
-        array: &CstExpr,
-        index0: &CstExpr,
-        index1: &CstExpr,
+        array: &CstExpr<'f>,
+        index0: &CstExpr<'f>,
+        index1: &CstExpr<'f>,
     ) -> Result<GlobalValue<'v>, InternalError> {
         let array = self.expr(array)?;
         let index0 = self.expr(index0)?;
@@ -237,9 +245,9 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
     fn bin_op(
         &mut self,
         span: Span,
-        lhs: &CstExpr,
+        lhs: &CstExpr<'f>,
         op: BinOp,
-        rhs: &CstExpr,
+        rhs: &CstExpr<'f>,
     ) -> Result<GlobalValue<'v>, InternalError> {
         let lhs = self.expr(lhs)?;
         let rhs = self.expr(rhs)?;
@@ -253,7 +261,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         }
     }
 
-    fn expr(&mut self, expr: &CstExpr) -> Result<GlobalValue<'v>, InternalError> {
+    fn expr(&mut self, expr: &CstExpr<'f>) -> Result<GlobalValue<'v>, InternalError> {
         let span = expr.span;
         match &expr.node {
             ExprP::Tuple(xs) => self.tuple(xs),
@@ -286,7 +294,10 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         }
     }
 
-    fn expr_spanned(&mut self, expr: &CstExpr) -> Result<Spanned<GlobalValue<'v>>, InternalError> {
+    fn expr_spanned(
+        &mut self,
+        expr: &CstExpr<'f>,
+    ) -> Result<Spanned<GlobalValue<'v>>, InternalError> {
         let value = self.expr(expr)?;
         Ok(Spanned {
             span: expr.span,
@@ -294,7 +305,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         })
     }
 
-    fn load(&mut self, load: &LoadP<CstPayload>) -> Result<(), InternalError> {
+    fn load(&mut self, load: &LoadP<CstPayload<'f>>) -> Result<(), InternalError> {
         for LoadArgP { local, their, .. } in &load.args {
             let ty = load.payload.get(their).cloned().unwrap_or_else(Ty::any);
             self.assign_ident_value(local, GlobalValue::ty(ty))?;
@@ -304,7 +315,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
 
     fn resolve_assign_ident_to_module_slot_id(
         &self,
-        ident: &CstAssignIdent,
+        ident: &CstAssignIdent<'f>,
     ) -> Result<ModuleSlotId, InternalError> {
         let binding_id = ident.resolved_binding_id(self.ctx.codemap)?;
         let binding = self.module_scope_data.get_binding(binding_id);
@@ -317,7 +328,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
 
     fn assign_ident_value(
         &mut self,
-        ident: &CstAssignIdent,
+        ident: &CstAssignIdent<'f>,
         value: GlobalValue<'v>,
     ) -> Result<(), InternalError> {
         let module_slot_id = self.resolve_assign_ident_to_module_slot_id(ident)?;
@@ -333,7 +344,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         Ok(())
     }
 
-    fn assign_unset_ident(&mut self, target: &CstAssignIdent) -> Result<(), InternalError> {
+    fn assign_unset_ident(&mut self, target: &CstAssignIdent<'f>) -> Result<(), InternalError> {
         let module_slot_id = self.resolve_assign_ident_to_module_slot_id(target)?;
         self.values.insert(module_slot_id, GlobalValue::any());
         Ok(())
@@ -341,7 +352,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
 
     fn assign_value(
         &mut self,
-        lhs: &AssignTargetP<CstPayload>,
+        lhs: &AssignTargetP<CstPayload<'f>>,
         rhs: GlobalValue<'v>,
     ) -> Result<(), InternalError> {
         match lhs {
@@ -360,8 +371,8 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
 
     fn assign(
         &mut self,
-        lhs: &AssignTargetP<CstPayload>,
-        rhs: &CstExpr,
+        lhs: &AssignTargetP<CstPayload<'f>>,
+        rhs: &CstExpr<'f>,
     ) -> Result<(), InternalError> {
         let rhs = self.expr(rhs)?;
         self.assign_value(lhs, rhs)
@@ -379,7 +390,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
     /// ```
     ///
     /// We don't know what branch is taken. So we just unset both `a` and `b`.
-    fn assign_unset(&mut self, lhs: &AssignTargetP<CstPayload>) -> Result<(), InternalError> {
+    fn assign_unset(&mut self, lhs: &AssignTargetP<CstPayload<'f>>) -> Result<(), InternalError> {
         match lhs {
             AssignTargetP::Tuple(xs) => {
                 for x in xs {
@@ -393,7 +404,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         }
     }
 
-    fn assign_stmt(&mut self, assign: &AssignP<CstPayload>) -> Result<(), InternalError> {
+    fn assign_stmt(&mut self, assign: &AssignP<CstPayload<'f>>) -> Result<(), InternalError> {
         let AssignP { lhs, ty, rhs } = assign;
         match ty {
             None => self.assign(lhs, rhs),
@@ -404,7 +415,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         }
     }
 
-    fn for_stmt_unset(&mut self, for_stmt: &ForP<CstPayload>) -> Result<(), InternalError> {
+    fn for_stmt_unset(&mut self, for_stmt: &ForP<CstPayload<'f>>) -> Result<(), InternalError> {
         let ForP { var, over: _, body } = for_stmt;
         self.assign_unset(var)?;
         self.eval_stmt_unset(body)
@@ -412,7 +423,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
 
     /// When we are not sure if code is executed exactly once (like in a for loop body),
     /// we just reset all the variables.
-    fn eval_stmt_unset(&mut self, stmt: &CstStmt) -> Result<(), InternalError> {
+    fn eval_stmt_unset(&mut self, stmt: &CstStmt<'f>) -> Result<(), InternalError> {
         match &stmt.node {
             StmtP::Break => Ok(()),
             StmtP::Continue => Ok(()),
@@ -440,7 +451,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         }
     }
 
-    fn top_level_def(&mut self, def: &DefP<CstPayload>) -> Result<(), InternalError> {
+    fn top_level_def(&mut self, def: &DefP<CstPayload<'f>>) -> Result<(), InternalError> {
         let DefParams {
             params: def_params,
             indices: _,
@@ -485,7 +496,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         self.assign_ident_value(&def.name, GlobalValue::ty(Ty::function(params, result)))
     }
 
-    fn eval_stmt(&mut self, stmt: &CstStmt) -> Result<(), InternalError> {
+    fn eval_stmt(&mut self, stmt: &CstStmt<'f>) -> Result<(), InternalError> {
         let span = stmt.span;
         match &stmt.node {
             StmtP::Break => Err(self.internal_error(span, "top-level break")),
@@ -519,7 +530,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
 
     fn eval_path(
         &mut self,
-        path: &TypePathP<CstPayload>,
+        path: &TypePathP<CstPayload<'f>>,
     ) -> Result<Option<Value<'v>>, InternalError> {
         let TypePathP { first, rem } = path;
         let Some(mut value) = self.expr_ident(first)?.value else {
@@ -539,7 +550,10 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         Ok(Some(value))
     }
 
-    fn try_proper_ty(&mut self, path: &TypePathP<CstPayload>) -> Result<Option<Ty>, InternalError> {
+    fn try_proper_ty(
+        &mut self,
+        path: &TypePathP<CstPayload<'f>>,
+    ) -> Result<Option<Ty>, InternalError> {
         let TypePathP { first, rem } = path;
         let Some(value) = self.eval_path(path)? else {
             return Ok(None);
@@ -556,7 +570,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         }
     }
 
-    fn path_ty(&mut self, path: &TypePathP<CstPayload>) -> Result<Ty, InternalError> {
+    fn path_ty(&mut self, path: &TypePathP<CstPayload<'f>>) -> Result<Ty, InternalError> {
         let TypePathP { first, rem } = path;
         if let Some(ty) = self.try_proper_ty(path)? {
             return Ok(ty);
@@ -568,7 +582,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
 
     fn from_type_expr_impl(
         &mut self,
-        x: &Spanned<TypeExprUnpackP<CstPayload>>,
+        x: &Spanned<TypeExprUnpackP<CstPayload<'f>>>,
     ) -> Result<Ty, InternalError> {
         match &x.node {
             TypeExprUnpackP::Ellipsis => {
@@ -591,28 +605,34 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
             }
             TypeExprUnpackP::Path(path) => self.path_ty(path),
             TypeExprUnpackP::Index(a, i) => {
-                match self.expr_ident(a)?.value {
+                let i = self.from_type_expr_impl(i)?;
+                match self.eval_path(a)? {
                     Some(a) => {
-                        if !a.ptr_eq(Constants::get().fn_list.0.to_value()) {
-                            self.approximations.push(Approximation::new("Not list", x));
-                            return Ok(Ty::any());
-                        }
-                        let i = self.from_type_expr_impl(i)?;
-                        let i = TypeCompiled::from_ty(&i, self.heap);
-                        match a.get_ref().at(i.to_inner(), self.heap) {
-                            Ok(t) => match TypeCompiled::new(t, self.heap) {
-                                Ok(ty) => Ok(ty.as_ty().clone()),
-                                Err(_) => {
-                                    // TODO(nga): proper error, not approximation.
-                                    self.approximations
-                                        .push(Approximation::new("TypeCompiled::new failed", x));
+                        // Built-in generic types (list, set) are special-cased because they
+                        // are functions, not types, so they lack eval_type(). Their
+                        // parameterization is handled directly via Ty constructors.
+                        if Constants::get().fn_list.is(a) {
+                            Ok(Ty::list(i))
+                        } else {
+                            let i_compiled = TypeCompiled::from_ty(&i, self.heap);
+                            match a.get_ref().at(i_compiled.to_inner(), self.heap) {
+                                Ok(t) => match TypeCompiled::new(t, self.heap) {
+                                    Ok(ty) => Ok(ty.as_ty().clone()),
+                                    Err(_) => {
+                                        self.approximations.push(Approximation::new(
+                                            "TypeCompiled::new failed",
+                                            x,
+                                        ));
+                                        Ok(Ty::any())
+                                    }
+                                },
+                                Err(e) => {
+                                    self.approximations.push(Approximation::new(
+                                        "Type parameterization failed",
+                                        e,
+                                    ));
                                     Ok(Ty::any())
                                 }
-                            },
-                            Err(e) => {
-                                self.approximations
-                                    .push(Approximation::new("Getitem failed", e));
-                                Ok(Ty::any())
                             }
                         }
                     }
@@ -625,7 +645,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
             }
             TypeExprUnpackP::Index2(a, i0, i1) => {
                 if let Some(a) = self.eval_path(a)? {
-                    if a.ptr_eq(Constants::get().fn_dict.0.to_value()) {
+                    if Constants::get().fn_dict.is(a) {
                         let i0 = self.from_type_expr_impl(i0)?;
                         let i1 = self.from_type_expr_impl(i1)?;
                         let i0 = TypeCompiled::from_ty(&i0, self.heap);
@@ -645,7 +665,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
                                 Ok(Ty::any())
                             }
                         }
-                    } else if a.ptr_eq(Constants::get().fn_tuple.0.to_value()) {
+                    } else if Constants::get().fn_tuple.is(a) {
                         let i0 = self.from_type_expr_impl(i0)?;
                         let TypeExprUnpackP::Ellipsis = i1.node else {
                             self.approximations
@@ -653,11 +673,10 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
                             return Ok(Ty::any());
                         };
                         let r0 = TypeCompiled::from_ty(&i0, self.heap);
-                        match a.get_ref().at2(
-                            r0.to_inner(),
-                            Ellipsis::new_value().to_value(),
-                            self.heap,
-                        ) {
+                        match a
+                            .get_ref()
+                            .at2(r0.to_inner(), Ellipsis::new_value(), self.heap)
+                        {
                             Ok(t) => match TypeCompiled::new(t, self.heap) {
                                 Ok(ty) => Ok(ty.as_ty().clone()),
                                 Err(_) => {
@@ -672,7 +691,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
                                 Ok(Ty::any())
                             }
                         }
-                    } else if a.ptr_eq(Constants::get().typing_callable.0.to_value()) {
+                    } else if Constants::get().typing_callable.is(a) {
                         let TypeExprUnpackP::List(items) = &i0.node else {
                             self.approximations.push(Approximation::new(
                                 "Expecting list in Callable[[...], ...]",
@@ -686,7 +705,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
                                     .to_inner(),
                             )
                         })?;
-                        let args = self.heap.alloc_list(&args);
+                        let args = self.heap.alloc_list(&args).to_value();
                         let ret = self.from_type_expr_impl(i1)?;
                         let ret = TypeCompiled::from_ty(&ret, self.heap).to_inner();
                         match a.get_ref().at2(args, ret, self.heap) {
@@ -718,27 +737,27 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         }
     }
 
-    fn ty_expr(&mut self, expr: &CstTypeExpr) -> Result<Ty, InternalError> {
+    fn ty_expr(&mut self, expr: &CstTypeExpr<'f>) -> Result<Ty, InternalError> {
         let x = TypeExprUnpackP::unpack(&expr.expr, self.ctx.codemap)
             .map_err(InternalError::from_diagnostic)?;
         self.from_type_expr_impl(&x)
     }
 
-    fn get_ty_expr(&self, expr: &CstTypeExpr) -> Result<Ty, InternalError> {
+    fn get_ty_expr(&self, expr: &CstTypeExpr<'f>) -> Result<Ty, InternalError> {
         match &expr.payload.typechecker_ty {
             Some(ty) => Ok(ty.clone()),
             None => Err(self.internal_error(expr.span, "type not set")),
         }
     }
 
-    fn get_ty_expr_opt(&mut self, expr: Option<&CstTypeExpr>) -> Result<Ty, InternalError> {
+    fn get_ty_expr_opt(&mut self, expr: Option<&CstTypeExpr<'f>>) -> Result<Ty, InternalError> {
         match expr {
             None => Ok(Ty::any()),
             Some(expr) => self.get_ty_expr(expr),
         }
     }
 
-    fn fill_types(&mut self, stmt: &mut CstStmt) -> Result<(), InternalError> {
+    fn fill_types(&mut self, stmt: &mut CstStmt<'f>) -> Result<(), InternalError> {
         stmt.visit_type_expr_err_mut(&mut |type_expr| {
             if type_expr.payload.typechecker_ty.is_some() {
                 return Err(self.internal_error(type_expr.span, "type already set"));
@@ -748,7 +767,7 @@ impl<'a, 'v> GlobalTypesBuilder<'a, 'v> {
         })
     }
 
-    fn top_level_stmt(&mut self, stmt: &mut CstStmt) -> Result<(), InternalError> {
+    fn top_level_stmt(&mut self, stmt: &mut CstStmt<'f>) -> Result<(), InternalError> {
         // Fill all type payloads.
         self.fill_types(stmt)?;
         // Partially evaluate expressions which can be used in the following type expressions.
@@ -764,15 +783,19 @@ pub(crate) struct ModuleVarTypes {
 
 /// Populate `TypeExprP` type payload when running lint typechecker.
 /// (Compiler typechecked populates the payload after proper full evaluation.)
-pub(crate) fn fill_types_for_lint_typechecker(
-    module: &mut [&mut CstStmt],
+/// `heap` is a scratch heap to evaluate on, with the edge to the heap the module's globals were
+/// resolved at.
+pub(crate) fn fill_types_for_lint_typechecker<'v, 'f>(
+    module: &mut [&mut CstStmt<'f>],
     ctx: TypingOracleCtx,
-    module_scope_data: &ModuleScopeData,
+    module_scope_data: &ModuleScopeData<'f>,
     approximations: &mut Vec<Approximation>,
+    heap: Heap<'v>,
+    edge: HeapEdge<'v, 'f>,
 ) -> Result<(Vec<TypingError>, ModuleVarTypes), InternalError> {
-    let heap = Heap::new();
     let mut builder = GlobalTypesBuilder {
-        heap: &heap,
+        heap,
+        edge,
         ctx,
         values: UnorderedMap::new(),
         errors: Vec::new(),

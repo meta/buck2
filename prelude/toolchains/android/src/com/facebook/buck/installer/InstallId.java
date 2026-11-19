@@ -10,11 +10,14 @@
 
 package com.facebook.buck.installer;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /** Install id. Typically represents fully qualified name of the build target. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstallId {
 
   private final String value;
@@ -33,7 +36,7 @@ public class InstallId {
   }
 
   @Override
-  public boolean equals(Object obj) {
+  public boolean equals(@Nullable Object obj) {
     if (this == obj) {
       return true;
     }

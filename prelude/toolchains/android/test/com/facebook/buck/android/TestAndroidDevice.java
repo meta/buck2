@@ -12,14 +12,13 @@ package com.facebook.buck.android;
 
 import com.facebook.buck.android.exopackage.AndroidDevice;
 import com.facebook.buck.android.exopackage.AndroidIntent;
-import com.facebook.buck.android.exopackage.PackageInfo;
 import com.google.common.collect.ImmutableSortedSet;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import org.jspecify.annotations.Nullable;
 
 /** Basic implementation of AndroidDevice for mocking purposes. */
 public class TestAndroidDevice implements AndroidDevice {
@@ -30,13 +29,20 @@ public class TestAndroidDevice implements AndroidDevice {
       boolean installViaSd,
       boolean quiet,
       boolean verifyTempWritable,
-      boolean stagedInstallMode) {
+      boolean stagedInstallMode,
+      @Nullable String userId,
+      boolean allowFastDeploy,
+      String packageName) {
     throw new UnsupportedOperationException();
   }
 
   @Override
   public boolean installApexOnDevice(
-      File apex, boolean quiet, boolean restart, boolean softRebootAvailable) {
+      File apex,
+      boolean quiet,
+      boolean restart,
+      boolean softRebootAvailable,
+      boolean waitForDeviceReady) {
     throw new UnsupportedOperationException();
   }
 
@@ -51,17 +57,17 @@ public class TestAndroidDevice implements AndroidDevice {
   }
 
   @Override
-  public Optional<PackageInfo> getPackageInfo(String packageName) throws Exception {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
   public void uninstallPackage(String packageName) throws Exception {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public String getSignature(String packagePath) throws Exception {
+  public String getContentHash(String path) throws Exception {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public InstalledApk compareInstalledApk(String packageName, File apk) throws Exception {
     throw new UnsupportedOperationException();
   }
 
@@ -76,12 +82,13 @@ public class TestAndroidDevice implements AndroidDevice {
   }
 
   @Override
-  public AutoCloseable createForward() throws Exception {
+  public void rmStaleFiles(String packageName) {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public void installFiles(String filesType, Map<Path, Path> installPaths) throws Exception {
+  public void installFiles(String filesType, Map<Path, Path> installPaths, String packageName)
+      throws Exception {
     throw new UnsupportedOperationException();
   }
 
@@ -138,11 +145,6 @@ public class TestAndroidDevice implements AndroidDevice {
 
   @Override
   public boolean uninstallApkFromDevice(String packageName, boolean keepData) throws Exception {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public String getInstallerMethodName() {
     throw new UnsupportedOperationException();
   }
 

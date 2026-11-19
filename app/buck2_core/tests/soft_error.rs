@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::Once;
 
+use buck2_core::deprecation;
 use buck2_core::error::StructuredErrorOptions;
 use buck2_core::error::initialize;
-use buck2_core::error::reset_soft_error_counters;
-use buck2_core::is_open_source;
 use buck2_core::soft_error;
 use buck2_error::buck2_error;
 
@@ -25,11 +25,12 @@ fn mock_handler(
     category: &str,
     err: &buck2_error::Error,
     loc: (&str, u32, u32),
+    _context: &Arc<buck2_core::error::SoftErrorContext>,
     options: StructuredErrorOptions,
 ) {
     RESULT.lock().unwrap().push(format!(
-        "{:?}, : {} : {} : {}",
-        loc, err, category, options.quiet
+        "{:?}, : {} : {} : {} : {:?}",
+        loc, err, category, options.user_facing, options.kind
     ));
 }
 
@@ -41,7 +42,7 @@ fn test_init() -> MutexGuard<'static, ()> {
 
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        initialize(Box::new(mock_handler)).unwrap();
+        initialize(Box::new(mock_handler), Box::new(|| None)).unwrap();
     });
 
     RESULT.lock().unwrap().clear();
@@ -50,39 +51,56 @@ fn test_init() -> MutexGuard<'static, ()> {
 }
 
 #[test]
-fn test_soft_error() {
-    if is_open_source() {
-        return; // Errors are always hard in open source
-    }
+fn test_soft_error() -> buck2_error::Result<()> {
     let _guard = test_init();
 
     let before_error_line = line!();
-    let _ignore_hard_error = soft_error!(
+    soft_error!(
         "test_logged_soft_error",
         buck2_error!(buck2_error::ErrorTag::Input, "Should be logged").into(),
     );
     assert_eq!(
         Some(&format!(
-            "({:?}, {}, 30), : Should be logged : test_logged_soft_error : true",
+            "({:?}, {}, 5), : Should be logged : test_logged_soft_error : false : SoftError",
             file!(),
             before_error_line + 1,
         )),
         RESULT.lock().unwrap().first()
     );
+    Ok(())
 }
 
 #[test]
-fn test_reset_counters() {
-    if is_open_source() {
-        return; // Errors are always hard in open source
-    }
+fn test_deprecation() -> buck2_error::Result<()> {
+    let _guard = test_init();
+
+    let before_error_line = line!();
+    deprecation!(
+        "test_logged_deprecation",
+        buck2_error!(buck2_error::ErrorTag::Input, "Still used").into(),
+        owner: "jakobdegen",
+        started: "2026-10-25",
+    );
+    assert_eq!(
+        Some(&format!(
+            "({:?}, {}, 5), : Still used : test_logged_deprecation : false : Deprecation {{ owner: \"jakobdegen\", started: \"2026-10-25\" }}",
+            file!(),
+            before_error_line + 1,
+        )),
+        RESULT.lock().unwrap().first()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_counter_limit() -> buck2_error::Result<()> {
     let _guard = test_init();
 
     assert_eq!(0, RESULT.lock().unwrap().len(), "Sanity check");
 
     for _ in 0..100 {
-        let _ignore = soft_error!(
-            "test_reset_counters",
+        soft_error!(
+            "test_counter_limit",
             buck2_error!(buck2_error::ErrorTag::Input, "Message").into()
         );
     }
@@ -92,19 +110,5 @@ fn test_reset_counters() {
         RESULT.lock().unwrap().len(),
         "Should be logged 10 times"
     );
-
-    reset_soft_error_counters();
-
-    for _ in 0..100 {
-        let _ignore = soft_error!(
-            "test_reset_counters",
-            buck2_error!(buck2_error::ErrorTag::Input, "Message").into()
-        );
-    }
-
-    assert_eq!(
-        20,
-        RESULT.lock().unwrap().len(),
-        "Should be logged 10 more times"
-    );
+    Ok(())
 }

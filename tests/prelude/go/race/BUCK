@@ -1,0 +1,33 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+
+oncall("golang")
+
+prelude = native
+
+# Run on Linux only for now
+
+prelude.go_binary(
+    name = "main",
+    srcs = ["main.go"],
+    target_compatible_with = [
+        "ovr_config//os:linux",
+    ],
+)
+
+py_assertion(
+    name = "check_output",
+    script = """
+import subprocess
+import sys
+result = subprocess.run([sys.argv[1]], capture_output=True, text=True)
+assert result.returncode == 66, f"Got status code {result.returncode}"
+assert "WARNING: DATA RACE" in result.stderr, result.stderr
+assert "main.go:20" in result.stderr, result.stderr
+assert "main.go:23" in result.stderr, result.stderr
+assert "Found 1 data race(s)" in result.stderr, result.stderr
+""",
+    script_args = ["$(exe_target :main)"],
+    target_compatible_with = [
+        "ovr_config//os:linux",
+    ],
+)

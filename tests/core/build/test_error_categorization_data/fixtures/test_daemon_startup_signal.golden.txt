@@ -1,0 +1,22 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+Command failed: Failed to connect to buck daemon.
+    Daemon process info from <BUCKD_INFO>
+    daemon dir: <DAEMON_DIR>
+    status: <missing>
+
+    Try running `rm -rf ~/.buck/buckd` and your command afterwards
+
+Caused by:
+    0: Error connecting to the daemon, daemon stderr follows:
+       <none>
+    1: establishing connection to Buck daemon or start a daemon
+    2: starting new buck2 daemon for reason: No buckd.info
+    3: Error starting buck2 daemon
+    4: buck daemon startup failed
+       stdout:
+
+       stderr:
+
+    5: process killed by SIGTERM (signal 15)

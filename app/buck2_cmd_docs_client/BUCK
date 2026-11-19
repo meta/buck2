@@ -12,6 +12,7 @@ rust_library(
         "fbsource//third-party/rust:termimad",
         "//buck2/app/buck2_cli_proto:buck2_cli_proto",
         "//buck2/app/buck2_client_ctx:buck2_client_ctx",
+        "//buck2/app/buck2_common:buck2_common",
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_query:buck2_query",
         "//buck2/gazebo/dupe:dupe",

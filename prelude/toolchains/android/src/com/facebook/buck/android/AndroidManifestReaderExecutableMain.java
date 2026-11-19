@@ -10,27 +10,30 @@
 
 package com.facebook.buck.android;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import org.jetbrains.annotations.Nullable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 /** Main entry point for executing {@link AndroidManifestReader} calls. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AndroidManifestReaderExecutableMain {
 
   @Option(name = "--manifest-path", required = true)
   private String manifestPath;
 
   @Option(name = "--target-package-output")
-  private String targetPackageOutputPath;
+  private @Nullable String targetPackageOutputPath = null;
 
   @Option(name = "--package-output")
-  private String packageOutputPath;
+  private @Nullable String packageOutputPath = null;
 
   @Option(name = "--instrumentation-test-runner-output")
-  private String instrumentationTestRunnerOutputPath;
+  private @Nullable String instrumentationTestRunnerOutputPath = null;
 
   public static void main(String[] args) throws IOException {
     AndroidManifestReaderExecutableMain main = new AndroidManifestReaderExecutableMain();
@@ -40,7 +43,7 @@ public class AndroidManifestReaderExecutableMain {
       main.run();
       System.exit(0);
     } catch (CmdLineException e) {
-      System.err.println(e.getMessage());
+      System.err.println(e.toString());
       parser.printUsage(System.err);
       System.exit(1);
     }

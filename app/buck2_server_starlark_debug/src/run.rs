@@ -51,11 +51,9 @@ pub async fn run_dap_server_command(
         .command_start_event(buck2_data::StarlarkDebugAttachCommandStart {}.into())
         .await?;
     span_async(start_event, async move {
-        let result = run_dap_server(ctx, partial_result_dispatcher, req)
-            .await
-            .map_err(Into::into);
+        let result = run_dap_server(ctx, partial_result_dispatcher, req).await;
         let end_event = command_end(&result, buck2_data::StarlarkDebugAttachCommandEnd {});
-        (result.map_err(Into::into), end_event)
+        (result, end_event)
     })
     .await
 }
@@ -78,7 +76,7 @@ async fn run_dap_server(
         select! {
             request = req.next() => {
                 let request = match request {
-                    Some(Err(e)) => return Err(e.into()),
+                    Some(Err(e)) => return Err(e),
                     Some(Ok(v)) => v,
                     None => {
                         // client disconnected.

@@ -12,10 +12,6 @@ load("@prelude//utils:utils.bzl", "flatten")
 
 def _make_entry(ctx: bxl.Context, target: Label, compile_command: CxxSrcCompileCommand, add_target_name: bool) -> dict:
     args = compile_command.cxx_compile_cmd.base_compile_cmd.copy()
-
-    # This prevents clangd from jumping into `buck-out` when using Go To
-    # Definition, which significantly improves user experience.
-    args.add(["-I", "."])
     args.add(compile_command.cxx_compile_cmd.argsfile.cmd_form)
     args.add(compile_command.args)
     ctx.output.ensure_multiple(args)
@@ -46,7 +42,7 @@ def _impl(ctx: bxl.Context):
                 if ctx.cli_args.include_headers or (not cc.is_header):
                     db.append(_make_entry(ctx, name, cc, ctx.cli_args.add_target_name))
 
-    db_file = actions.declare_output("compile_commands.json")
+    db_file = actions.declare_output("compile_commands.json", has_content_based_path = False)
     actions.write_json(db_file.as_output(), db, with_inputs = True, pretty = True)
     ctx.output.print(ctx.output.ensure(db_file))
 

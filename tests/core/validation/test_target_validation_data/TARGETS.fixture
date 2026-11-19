@@ -38,3 +38,23 @@ installer(
     name = "my_installer",
     main = "installer.py",
 )
+
+china(
+    name = "broken",
+    malformed = True,
+)
+
+china(
+    name = "consumer",
+    dep = ":broken",
+)
+
+china(
+    name = "no_version",
+    shape = "no_version",
+)
+
+china(
+    name = "other_version",
+    shape = "other_version",
+)

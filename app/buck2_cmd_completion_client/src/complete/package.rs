@@ -63,9 +63,9 @@ impl<'a> PackageCompleter<'a> {
         let cwd_cell_root = self.roots.project_root.resolve(cwd_cell_root);
         match given_path {
             "" => {
-                self.results.insert_dir(self.cwd.path(), "//").await;
+                self.results.insert_dir(&cwd_cell_root, "//").await;
                 self.results
-                    .insert_package_colon_if_buildfile_exists(&cwd_cell_root, given_path)
+                    .insert_package_colon_if_buildfile_exists(self.cwd.path(), given_path)
                     .await;
                 self.complete_partial_cells(given_path).await?;
                 self.complete_partial_path(given_path).await?;
@@ -101,7 +101,7 @@ impl<'a> PackageCompleter<'a> {
                     .roots
                     .project_root
                     .root()
-                    .join_normalized(cell.path().as_project_relative_path())?;
+                    .join(cell.path().as_project_relative_path());
                 if canonical_cell_root == given_path {
                     // "cell1//" -> "cell1//:"
                     self.results
@@ -123,7 +123,12 @@ impl<'a> PackageCompleter<'a> {
     }
 
     async fn complete_partial_path(&mut self, given_path: &str) -> CommandOutcome<()> {
-        let completer = PathCompleter::new(&self.cwd, &self.path_sanitizer, &mut self.results)?;
+        let completer = PathCompleter::new(
+            &self.cwd,
+            self.roots,
+            &self.path_sanitizer,
+            &mut self.results,
+        )?;
         completer.complete(given_path).await
     }
 }
@@ -620,6 +625,107 @@ mod tests {
             actual,
             vec!["cell1//", "cell1//:", "cell1_alias//", "cell1_alias//:"]
         );
+        Ok(())
+    }
+
+    /// With the cwd in a package below a cell root that is not a package, `""` offers `:` for
+    /// the cwd and no `//:`.
+    #[tokio::test]
+    async fn test_empty_string_in_package_subdir_completes_cwd_colon() -> TestResult {
+        let (roots, cwd) = in_dir("baredir0/buckdir0b")?;
+        let uut = PackageCompleter::new(&cwd, &roots).await?;
+
+        let actual = uut.complete("").await?;
+
+        assert_eq!(
+            actual,
+            vec![
+                "//",
+                ":",
+                "cell1//",
+                "cell1//:",
+                "cell2//",
+                "cell3a//",
+                "cell3a//:",
+                "cell3b//",
+                "prelude//",
+                "root//"
+            ]
+        );
+        Ok(())
+    }
+
+    /// A partial whose last part is `.` or `..` has nothing to complete and must not panic.
+    #[tokio::test]
+    async fn test_dot_partial_completes_nothing() -> TestResult {
+        for given in ["//.", "root//.", "//baredir0/.."] {
+            let (roots, cwd) = in_root()?;
+            let uut = PackageCompleter::new(&cwd, &roots).await?;
+
+            let actual = uut.complete(given).await?;
+
+            assert!(actual.is_empty(), "given {given}: {actual:?}");
+        }
+        Ok(())
+    }
+
+    /// A `/` after a directory that does not exist, or a `.` component, completes to nothing
+    /// rather than to directories that do not exist.
+    #[tokio::test]
+    async fn test_fragment_after_dot_or_missing_dir_completes_nothing() -> TestResult {
+        for given in ["//baredir0/.", "cell1//bu/", "//baredir0/bare/"] {
+            let (roots, cwd) = in_root()?;
+            let uut = PackageCompleter::new(&cwd, &roots).await?;
+
+            let actual = uut.complete(given).await?;
+
+            assert!(actual.is_empty(), "given {given}: {actual:?}");
+        }
+        Ok(())
+    }
+
+    /// `baredir0/` names an existing directory of the cwd cell, so its children are offered.
+    #[tokio::test]
+    async fn test_trailing_slash_on_existing_dir_lists_its_children() -> TestResult {
+        let (roots, cwd) = in_root()?;
+        let uut = PackageCompleter::new(&cwd, &roots).await?;
+
+        let actual = uut.complete("baredir0/").await?;
+
+        assert_eq!(
+            actual,
+            vec![
+                "baredir0/baredir0a/",
+                "baredir0/buckdir0b/",
+                "baredir0/buckdir0b:"
+            ]
+        );
+        Ok(())
+    }
+
+    /// A throwaway project with a `buck-out` next to a real directory.
+    fn project_with_buck_out() -> (std::path::PathBuf, InvocationRoots, AbsWorkingDir) {
+        let dir = std::env::temp_dir().join(format!("completion_buck_out_{}", std::process::id()));
+        drop(std::fs::remove_dir_all(&dir));
+        std::fs::create_dir_all(dir.join("buck-out/v2")).unwrap();
+        std::fs::create_dir_all(dir.join("bar")).unwrap();
+        std::fs::write(dir.join(".buckroot"), "").unwrap();
+        std::fs::write(dir.join(".buckconfig"), "[cells]\n  root = .\n").unwrap();
+        let cwd = AbsWorkingDir::unchecked_new(AbsNormPathBuf::new(dir.clone()).unwrap());
+        let roots = find_invocation_roots(&cwd).unwrap();
+        (dir, roots, cwd)
+    }
+
+    /// `buck-out` holds no packages and is never offered.
+    #[tokio::test]
+    async fn test_skips_buck_out() -> TestResult {
+        let (dir, roots, cwd) = project_with_buck_out();
+        let uut = PackageCompleter::new(&cwd, &roots).await?;
+
+        let actual = uut.complete("b").await?;
+
+        drop(std::fs::remove_dir_all(&dir));
+        assert_eq!(actual, vec!["bar/"]);
         Ok(())
     }
 }

@@ -15,36 +15,89 @@
 //! category of all actions that invoke a C++ compiler, of which there are potentially many in a single C++ rule
 //! implementation.
 
+use std::sync::LazyLock;
+
 use allocative::Allocative;
+use buck2_hash::BuckHasher;
 use dupe::Dupe;
-use once_cell::sync::Lazy;
+use pagable::Pagable;
+use pagable::PagableDeserialize;
+use pagable::PagableDeserializer;
+use pagable::PagableSerialize;
+use pagable::PagableSerializer;
 use regex::Regex;
+use static_interner::Intern;
+use static_interner::interner;
+use strong_hash::StrongHash;
+
+/// Interned category data, representing a family of actions.
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Allocative,
+    StrongHash,
+    derive_more::Display,
+    Pagable
+)]
+struct CategoryData(String);
+
+interner!(CATEGORY_INTERNER, BuckHasher, CategoryData, String);
 
 /// A category, representing a family of actions.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Allocative, derive_more::Display)]
-pub struct Category(String);
+#[derive(
+    Clone,
+    Copy,
+    Dupe,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Allocative,
+    StrongHash,
+    derive_more::Display
+)]
+pub struct Category(Intern<CategoryData>);
 
+// TODO(dcssiva): remove CategoryRef because Category has a cheap Copy
 #[derive(Debug, Clone, Copy, Dupe, PartialEq, Eq, Hash, derive_more::Display)]
 pub struct CategoryRef<'a>(&'a str);
 
 impl Category {
     pub fn new(s: String) -> buck2_error::Result<Self> {
         CategoryRef::new(&s)?;
-        Ok(Category(s))
+        Ok(Category(CATEGORY_INTERNER.intern(s)))
     }
 
     /// Returns a string representation of this category.
     pub fn as_str(&self) -> &str {
-        self.0.as_str()
+        self.0.0.as_str()
     }
 
     pub fn as_ref(&self) -> CategoryRef<'_> {
-        CategoryRef(self.0.as_str())
+        CategoryRef(self.0.0.as_str())
+    }
+}
+
+impl PagableSerialize for Category {
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> pagable::Result<()> {
+        self.as_str().pagable_serialize(serializer)
+    }
+}
+
+impl<'de> PagableDeserialize<'de> for Category {
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        let s = String::pagable_deserialize(deserializer)?;
+        Ok(Category(CATEGORY_INTERNER.intern(s)))
     }
 }
 
 impl<'a> CategoryRef<'a> {
-    pub fn unchecked_new(s: &'static str) -> Self {
+    pub fn unchecked_new(s: &'a str) -> Self {
         CategoryRef(s)
     }
 
@@ -53,8 +106,8 @@ impl<'a> CategoryRef<'a> {
     }
 
     pub fn new(s: &'a str) -> buck2_error::Result<Self> {
-        static CATEGORY_REGEX: Lazy<Regex> =
-            Lazy::new(|| Regex::new("^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$").unwrap());
+        static CATEGORY_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new("^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$").unwrap());
 
         if !CATEGORY_REGEX.is_match(s) {
             Err(CategoryParseError::NotSnakeCase(s.to_owned()).into())
@@ -64,7 +117,7 @@ impl<'a> CategoryRef<'a> {
     }
 
     pub fn to_owned(self) -> Category {
-        Category(self.0.to_owned())
+        Category(CATEGORY_INTERNER.intern(self.0.to_owned()))
     }
 }
 

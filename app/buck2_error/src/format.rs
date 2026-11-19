@@ -67,8 +67,8 @@ pub(crate) fn into_anyhow_for_format(
             out = out.context(format!("{ctx}"));
             starlark_error = None;
         }
-        if context.should_display() {
-            out = out.context(format!("{context}"));
+        if let Some(s) = context.display() {
+            out = out.context(s);
         }
     }
 

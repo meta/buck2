@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
-use buck2_core::configuration::compatibility::MaybeCompatible;
+use buck2_core::configuration::compatibility::ResultMaybeCompatible;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
 use buck2_core::package::PackageLabelWithModifiers;
 use buck2_core::pattern::pattern::ModifiersError;
@@ -29,14 +29,13 @@ use buck2_node::target_calculation::ConfiguredTargetCalculation;
 use buck2_query::query::syntax::simple::eval::set::TargetSet;
 use dice::DiceComputations;
 use dupe::Dupe;
-use futures::FutureExt;
 
 // Returns a tuple of compatible targets, incompatible targets, and target-level errors.
 // NOTE: This function returns Result<(..., Vec<Error>)> to support keep-going:
 // - When keep_going = false: Returns Err(e) immediately on first error
 // - When keep_going = true: Returns Ok((..., errors)) with all errors collected in Vec
 fn split_compatible_incompatible(
-    targets: impl IntoIterator<Item = buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>>>,
+    targets: impl IntoIterator<Item = ResultMaybeCompatible<ConfiguredTargetNode>>,
     keep_going: bool,
 ) -> buck2_error::Result<(
     TargetSet<ConfiguredTargetNode>,
@@ -49,13 +48,13 @@ fn split_compatible_incompatible(
 
     for res in targets {
         match res {
-            Ok(MaybeCompatible::Incompatible(reason)) => {
+            ResultMaybeCompatible::Incompatible(reason) => {
                 incompatible_targets.push(reason);
             }
-            Ok(MaybeCompatible::Compatible(target)) => {
+            ResultMaybeCompatible::Compatible(target) => {
                 target_set.insert(target);
             }
-            Err(e) => {
+            ResultMaybeCompatible::Err(e) => {
                 if keep_going {
                     errors.push(e);
                 } else {
@@ -74,13 +73,13 @@ pub struct ErrorWithPackageLabel {
     pub error: buck2_error::Error,
 }
 
-pub async fn get_maybe_compatible_targets<'a, T>(
-    ctx: &'a mut DiceComputations<'_>,
+pub async fn get_maybe_compatible_targets<T>(
+    ctx: &mut DiceComputations<'_>,
     loaded_targets: T,
     global_cfg_options: &GlobalCfgOptions,
     keep_going: bool,
 ) -> buck2_error::Result<(
-    impl Iterator<Item = buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>>> + use<T>,
+    impl Iterator<Item = ResultMaybeCompatible<ConfiguredTargetNode>> + use<T>,
     Vec<ErrorWithPackageLabel>,
 )>
 where
@@ -124,14 +123,13 @@ where
 
                 let target_fns = targets.into_iter().map(|target| {
                     let duped_cfg_options = local_cfg_options.dupe();
-                    DiceComputations::declare_closure(|ctx| {
-                        async move {
-                            let target = ctx
-                                .get_configured_target(target.label(), &duped_cfg_options)
-                                .await?;
-                            buck2_error::Ok(ctx.get_configured_target_node(&target).await?)
-                        }
-                        .boxed()
+                    DiceComputations::declare_closure(async move |ctx| {
+                        let target = ctx
+                            .get_configured_target(target.label(), &duped_cfg_options)
+                            .await?;
+                        ctx.get_configured_target_node(&target)
+                            .await
+                            .map(Dupe::dupe)
                     })
                 });
 
@@ -145,14 +143,14 @@ where
                         error: e,
                     });
                 } else {
-                    return Err(e.into());
+                    return Err(e);
                 }
             }
         }
     }
 
     Ok((
-        futures::future::join_all(ctx.compute_many(by_package_fns))
+        buck2_util::future::join_all(ctx.compute_many(by_package_fns))
             .await
             .into_iter(),
         package_errors,

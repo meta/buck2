@@ -33,7 +33,7 @@ data class ResolvedJavacOptions(
     get() = !javaAnnotationProcessorParams.isEmpty
 
   fun withJavaAnnotationProcessorParams(
-      javaAnnotationProcessorParams: JavacPluginParams
+      javaAnnotationProcessorParams: JavacPluginParams,
   ): ResolvedJavacOptions {
     if (this.javaAnnotationProcessorParams == javaAnnotationProcessorParams) {
       return this
@@ -103,7 +103,7 @@ data class ResolvedJavacOptions(
 
       // Override the bootclasspath if Buck is building Java code for Android.
       if (languageLevelOptions.targetLevelValue <= 8) {
-        bootclasspathString.ifPresent { bootclasspath: String? ->
+        bootclasspathString.ifPresent { bootclasspath: String ->
           optionsConsumer.addOptionValue("bootclasspath", bootclasspath)
         }
       }
@@ -180,7 +180,7 @@ data class ResolvedJavacOptions(
           bootclasspathList
               .stream()
               .map(RelPath::toString)
-              .collect(Collectors.joining(File.pathSeparator))
+              .collect(Collectors.joining(File.pathSeparator)),
       )
     }
   }

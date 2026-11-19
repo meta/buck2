@@ -1,0 +1,7 @@
+load(":helper.bzl", "setup_cap")
+
+package(
+    within_view = ["root//indirect_call/..."],
+)
+
+setup_cap()

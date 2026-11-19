@@ -1,0 +1,5 @@
+# No cap here, so the outside dep is allowed.
+stub(
+    name = "c",
+    deps = ["root//outside:t"],
+)

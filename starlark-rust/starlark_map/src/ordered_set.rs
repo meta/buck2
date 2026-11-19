@@ -21,6 +21,10 @@ use std::cmp::Ordering;
 use std::hash::Hash;
 
 use allocative::Allocative;
+#[cfg(feature = "pagable_dep")]
+use pagable::Pagable;
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::Equivalent;
 use crate::Hashed;
@@ -28,7 +32,9 @@ use crate::small_set;
 use crate::small_set::SmallSet;
 
 /// `SmallSet` wrapper, but equality and hash of self depends on iteration order.
-#[derive(Debug, Clone, Allocative)]
+#[derive(Debug, Clone, Allocative, Serialize, Deserialize)]
+#[cfg_attr(feature = "pagable_dep", derive(Pagable))]
+#[serde(bound(deserialize = "T: Deserialize<'de> + Hash + Eq"))]
 pub struct OrderedSet<T>(SmallSet<T>);
 
 /// Error returned by `try_insert`.

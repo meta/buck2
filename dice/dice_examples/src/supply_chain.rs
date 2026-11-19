@@ -27,21 +27,21 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use derive_more::Display;
 use dice::DiceComputations;
+use dice::DiceKeyDyn;
 use dice::DiceTransactionUpdater;
+use dice::EqualityBehavior;
 use dice::InjectedKey;
 use dice::Key;
-use dice_error::DiceResult;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::FutureExt;
 use futures::StreamExt;
-use futures::future::BoxFuture;
-use futures::future::join_all;
 use futures::stream::FuturesUnordered;
-use gazebo::prelude::*;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use ref_cast::RefCast;
 
-#[derive(Display, Debug, Hash, Eq, Clone, PartialEq, Dupe, Allocative)]
+#[derive(Display, Debug, Hash, Eq, Clone, PartialEq, Dupe, Allocative, Pagable)]
 pub enum Resource {
     Wood,
     Plank,
@@ -138,19 +138,22 @@ impl Setup for DiceTransactionUpdater {
         let mut resource_to_company_local = HashMap::new();
 
         // convert company to insertion ready format
-        let insertion_ready_companies = companies.into_map(|company| {
-            let lookup = LookupCompany(company.name.dupe());
+        let insertion_ready_companies = companies
+            .into_iter()
+            .map(|company| {
+                let lookup = LookupCompany(company.name.dupe());
 
-            // construct a resource => company lookups mapping across all companies
-            for resource in company.makes.keys() {
-                resource_to_company_local
-                    .entry(resource.dupe())
-                    .or_insert_with(Vec::new)
-                    .push(lookup.clone());
-            }
+                // construct a resource => company lookups mapping across all companies
+                for resource in company.makes.keys() {
+                    resource_to_company_local
+                        .entry(resource.dupe())
+                        .or_insert_with(Vec::new)
+                        .push(lookup.clone());
+                }
 
-            (lookup, Arc::new(company))
-        });
+                (lookup, Arc::new(company))
+            })
+            .collect::<Vec<_>>();
 
         self.changed_to(insertion_ready_companies)?;
 
@@ -161,15 +164,14 @@ impl Setup for DiceTransactionUpdater {
             .unzip();
 
         // get the remote resources => company mapping
-        let mut state = self.existing_state().await;
-        let remote_resources = join_all(state.compute_many(resources.iter().map(|res| {
-            DiceComputations::declare_closure(
-                |ctx: &mut DiceComputations<'_>| -> BoxFuture<DiceResult<Arc<Vec<LookupCompany>>>> {
-                    ctx.compute(res).boxed()
-                },
-            )
-        })))
-        .await;
+        let state = self.existing_state().await;
+        let remote_resources =
+            dice_futures::join::join_all(state.ctx().compute_many(
+                resources.iter().map(|res| {
+                    DiceComputations::declare_closure(async |ctx| ctx.compute(res).await)
+                }),
+            ))
+            .await;
 
         // combine remote company list with local company list for reach resource
         let joined: Vec<_> = resources
@@ -177,7 +179,7 @@ impl Setup for DiceTransactionUpdater {
             .zip(companies)
             .zip(remote_resources)
             .map(|((resource, mut local_companies), remote_companies)| {
-                local_companies.append(&mut (*remote_companies?).clone());
+                local_companies.append(&mut (**remote_companies?).clone());
 
                 Ok((resource, Arc::new(local_companies)))
             })
@@ -214,11 +216,16 @@ async fn lookup_company_resource_cost(
     company: &LookupCompany,
     resource: &Resource,
 ) -> Result<Option<u16>, Arc<anyhow::Error>> {
-    #[derive(Display, Debug, Hash, Eq, Clone, Dupe, PartialEq, Allocative)]
+    #[derive(Display, Debug, Hash, Eq, Clone, Dupe, PartialEq, Allocative, Pagable)]
     #[display("{:?}", self)]
+    #[pagable_typetag(DiceKeyDyn)]
     struct LookupCompanyResourceCost(LookupCompany, Resource);
     #[async_trait]
     impl Key for LookupCompanyResourceCost {
+        fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+            dice::NoValueSerialize::<Self::Value>::new()
+        }
+
         type Value = Result<Option<u16>, Arc<anyhow::Error>>;
 
         async fn compute(
@@ -238,14 +245,18 @@ async fn lookup_company_resource_cost(
             }
 
             // get the unit cost for each resource needed to make item
-            let mut futs : FuturesUnordered<_> =
-                ctx.compute_many(recipe.ingredients.iter().map(|(required, resource)| {
-                    DiceComputations::declare_closure(|ctx: &mut DiceComputations<'_>| -> BoxFuture<Result<Option<u16>, Arc<anyhow::Error>>> {
-                            ctx.resource_cost(resource).map(|res| {
+            let mut futs: FuturesUnordered<_> = ctx
+                .compute_many(recipe.ingredients.iter().map(|(required, resource)| {
+                    DiceComputations::declare_closure(async |ctx| {
+                        ctx.resource_cost(resource)
+                            .map(|res| {
                                 Ok::<_, Arc<anyhow::Error>>(res?.map(|x| x * *required as u16))
-                            }).boxed()
+                            })
+                            .await
                     })
-                })).into_iter().collect();
+                }))
+                .into_iter()
+                .collect();
 
             let mut sum = 0;
             while let Some(x) = futs.next().await {
@@ -259,11 +270,11 @@ async fn lookup_company_resource_cost(
             Ok(Some(sum + upcharge.unwrap()))
         }
 
-        fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-            match (x, y) {
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|x, y| match (x, y) {
                 (Ok(x), Ok(y)) => x == y,
                 _ => false,
-            }
+            })
         }
     }
     let key = LookupCompanyResourceCost(company.clone(), resource.dupe());
@@ -271,6 +282,7 @@ async fn lookup_company_resource_cost(
     ctx.compute(&key)
         .await
         .map_err(|e| Arc::new(anyhow::anyhow!(e)))?
+        .dupe()
 }
 
 #[async_trait]
@@ -279,11 +291,18 @@ impl Cost for DiceComputations<'_> {
         &mut self,
         resource: &Resource,
     ) -> Result<Option<u16>, Arc<anyhow::Error>> {
-        #[derive(Display, Debug, Hash, Eq, Dupe, Clone, PartialEq, RefCast, Allocative)]
+        #[derive(
+            Display, Debug, Hash, Eq, Dupe, Clone, PartialEq, RefCast, Allocative, Pagable
+        )]
         #[repr(transparent)]
+        #[pagable_typetag(DiceKeyDyn)]
         struct LookupResourceCost(Resource);
         #[async_trait]
         impl Key for LookupResourceCost {
+            fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+                dice::NoValueSerialize::<Self::Value>::new()
+            }
+
             type Value = Result<Option<u16>, Arc<anyhow::Error>>;
 
             async fn compute(
@@ -296,15 +315,14 @@ impl Cost for DiceComputations<'_> {
                     .await
                     .map_err(|e| Arc::new(anyhow::anyhow!(e)))?;
 
-                let costs = join_all(ctx
-                    .compute_many(companies.iter().map(|company| {
-                        DiceComputations::declare_closure(
-                            |ctx: &mut DiceComputations<'_>| -> BoxFuture<Result<Option<u16>, Arc<anyhow::Error>>> {
-                                lookup_company_resource_cost(ctx, company, &self.0).boxed()
-                            }
-                        )
-                    })))
-                    .await;
+                let costs = dice_futures::join::join_all(ctx.compute_many(companies.iter().map(
+                    |company| {
+                        DiceComputations::declare_closure(async |ctx| {
+                            lookup_company_resource_cost(ctx, company, &self.0).await
+                        })
+                    },
+                )))
+                .await;
 
                 Ok(costs
                     .into_iter()
@@ -314,17 +332,18 @@ impl Cost for DiceComputations<'_> {
                     .flatten())
             }
 
-            fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-                match (x, y) {
+            fn equality_behavior() -> EqualityBehavior<Self::Value> {
+                EqualityBehavior::Compare(|x, y| match (x, y) {
                     (Ok(x), Ok(y)) => x == y,
                     _ => false,
-                }
+                })
             }
         }
 
         self.compute(LookupResourceCost::ref_cast(resource))
             .await
             .map_err(|e| Arc::new(anyhow::anyhow!(e)))?
+            .dupe()
     }
 }
 
@@ -337,8 +356,9 @@ impl CostUpdater for DiceTransactionUpdater {
         new_price: u16,
     ) -> anyhow::Result<()> {
         let company_lookup = LookupCompany(Arc::new(company.to_owned()));
-        let old_company = self.existing_state().await.compute(&company_lookup).await?;
-        let mut new_company = (*old_company).clone();
+        let state = self.existing_state().await;
+        let old_company = state.compute(&company_lookup).await?;
+        let mut new_company = (**old_company).clone();
         let old_price = new_company.makes.get_mut(resource).ok_or_else(|| {
             anyhow::anyhow!("Tried to update cost for a resource company does not make")
         })?;
@@ -350,24 +370,36 @@ impl CostUpdater for DiceTransactionUpdater {
     }
 }
 
-#[derive(Display, Debug, Hash, Eq, Clone, Dupe, PartialEq, RefCast, Allocative)]
+#[derive(
+    Display, Debug, Hash, Eq, Clone, Dupe, PartialEq, RefCast, Allocative, Pagable
+)]
 #[repr(transparent)]
+#[pagable_typetag(DiceKeyDyn)]
 pub struct LookupCompany(pub Arc<String>);
 impl InjectedKey for LookupCompany {
     type Value = Arc<Company>;
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
     }
 }
 
-#[derive(Display, Debug, Hash, Eq, Dupe, Clone, PartialEq, RefCast, Allocative)]
+#[derive(
+    Display, Debug, Hash, Eq, Dupe, Clone, PartialEq, RefCast, Allocative, Pagable
+)]
 #[repr(transparent)]
+#[pagable_typetag(DiceKeyDyn)]
 pub struct LookupResource(pub Resource);
 impl InjectedKey for LookupResource {
     type Value = Arc<Vec<LookupCompany>>;
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
     }
 }

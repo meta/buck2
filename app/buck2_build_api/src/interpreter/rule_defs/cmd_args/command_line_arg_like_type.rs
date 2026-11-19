@@ -8,7 +8,8 @@
  * above-listed licenses.
  */
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
+
 use starlark::typing::Ty;
 
 pub struct CommandLineArgLikeImpl {
@@ -41,7 +42,7 @@ pub use command_line_arg_like_impl;
 pub static COMMAND_LINE_ARG_LIKE_IMPLS: [CommandLineArgLikeImpl] = [..];
 
 pub(crate) fn command_line_arg_like_ty() -> &'static Ty {
-    static TY: Lazy<Ty> = Lazy::new(|| {
+    static TY: LazyLock<Ty> = LazyLock::new(|| {
         assert!(!COMMAND_LINE_ARG_LIKE_IMPLS.is_empty());
         let ty = Ty::unions(
             COMMAND_LINE_ARG_LIKE_IMPLS

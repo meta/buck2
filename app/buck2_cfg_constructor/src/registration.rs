@@ -19,17 +19,14 @@ use buck2_interpreter_for_build::interpreter::package_file_extra::MAKE_CFG_CONST
 use buck2_interpreter_for_build::interpreter::package_file_extra::PackageFileExtra;
 use buck2_node::cfg_constructor::CfgConstructorImpl;
 use buck2_node::metadata::key::MetadataKeyRef;
-use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Freeze;
-use starlark::values::FreezeResult;
-use starlark::values::Freezer;
-use starlark::values::FrozenValue;
 use starlark::values::NoSerialize;
-use starlark::values::OwnedFrozenValue;
+use starlark::values::OwnedFrozen;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
@@ -56,7 +53,9 @@ enum RegisterCfgConstructorError {
     Trace,
     NoSerialize,
     ProvidesStaticType,
-    Allocative
+    Allocative,
+    StarlarkPagable,
+    Freeze
 )]
 #[display("{:?}", self)]
 struct StarlarkCfgConstructor<'v> {
@@ -67,82 +66,24 @@ struct StarlarkCfgConstructor<'v> {
     extra_data: Option<Value<'v>>,
 }
 
-#[derive(
-    Debug,
-    derive_more::Display,
-    NoSerialize,
-    ProvidesStaticType,
-    Allocative
-)]
-#[display("{:?}", self)]
-struct FrozenStarlarkCfgConstructor {
-    stage0: FrozenValue,
-    stage1: FrozenValue,
-    key: String,
-    aliases: Option<FrozenValue>,
-    extra_data: Option<FrozenValue>,
-}
-
-#[starlark_value(type = "StarlarkCfgConstructor")]
+#[starlark_value(type = "StarlarkCfgConstructor", frozen_vtable, alloc = complex)]
 impl<'v> StarlarkValue<'v> for StarlarkCfgConstructor<'v> {}
 
-#[starlark_value(type = "StarlarkCfgConstructor")]
-impl<'v> StarlarkValue<'v> for FrozenStarlarkCfgConstructor {
-    type Canonical = StarlarkCfgConstructor<'v>;
-}
-
-impl Freeze for StarlarkCfgConstructor<'_> {
-    type Frozen = FrozenStarlarkCfgConstructor;
-
-    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
-        let StarlarkCfgConstructor {
-            stage0,
-            stage1,
-            key,
-            aliases,
-            extra_data,
-        } = self;
-        let (stage0, stage1, aliases, extra_data) =
-            (stage0, stage1, aliases, extra_data).freeze(freezer)?;
-        Ok(FrozenStarlarkCfgConstructor {
-            stage0,
-            stage1,
-            key,
-            aliases,
-            extra_data,
-        })
-    }
-}
-
 fn make_cfg_constructor(
-    cfg_constructor: OwnedFrozenValue,
+    cfg_constructor: OwnedFrozen<Value<'static>>,
 ) -> buck2_error::Result<Arc<dyn CfgConstructorImpl>> {
-    let cfg_constructor = cfg_constructor.downcast_starlark::<FrozenStarlarkCfgConstructor>()?;
-    let (
-        cfg_constructor_pre_constraint_analysis,
-        cfg_constructor_post_constraint_analysis,
-        aliases,
-        extra_data,
-    ) = unsafe {
-        (
-            OwnedFrozenValue::new(cfg_constructor.owner().dupe(), cfg_constructor.stage0),
-            OwnedFrozenValue::new(cfg_constructor.owner().dupe(), cfg_constructor.stage1),
-            cfg_constructor
-                .aliases
-                .map(|v| OwnedFrozenValue::new(cfg_constructor.owner().dupe(), v)),
-            cfg_constructor
-                .extra_data
-                .map(|v| OwnedFrozenValue::new(cfg_constructor.owner().dupe(), v)),
-        )
-    };
-    let key = MetadataKeyRef::new(&cfg_constructor.key)?.to_owned();
-    Ok(Arc::new(CfgConstructor {
-        cfg_constructor_pre_constraint_analysis,
-        cfg_constructor_post_constraint_analysis,
-        key,
-        aliases,
-        extra_data,
-    }))
+    cfg_constructor.by_ref_with_reconstructor(|value, reconstructor| {
+        let starlark = value.downcast_ref_err::<StarlarkCfgConstructor>()?;
+        let field = |v| reconstructor.reconstruct::<Value<'static>>(v);
+        let cfg_constructor: Arc<dyn CfgConstructorImpl> = Arc::new(CfgConstructor {
+            cfg_constructor_pre_constraint_analysis: field(starlark.stage0),
+            cfg_constructor_post_constraint_analysis: field(starlark.stage1),
+            key: MetadataKeyRef::new(&starlark.key)?.to_owned(),
+            aliases: starlark.aliases.map(field),
+            extra_data: starlark.extra_data.map(field),
+        });
+        Ok(cfg_constructor)
+    })
 }
 
 #[starlark_module]
@@ -209,13 +150,15 @@ pub(crate) fn register_set_cfg_constructor(globals: &mut GlobalsBuilder) {
             );
         }
         package_file_extra.cfg_constructor.get_or_init(|| {
-            eval.heap().alloc_complex(StarlarkCfgConstructor {
-                stage0,
-                stage1,
-                key: key.to_owned(),
-                aliases: aliases.into_option(),
-                extra_data: extra_data.into_option(),
-            })
+            eval.heap()
+                .alloc(StarlarkCfgConstructor {
+                    stage0,
+                    stage1,
+                    key: key.to_owned(),
+                    aliases: aliases.into_option(),
+                    extra_data: extra_data.into_option(),
+                })
+                .to_value()
         });
         Ok(NoneType)
     }

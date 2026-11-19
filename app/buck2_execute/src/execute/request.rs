@@ -12,10 +12,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allocative::Allocative;
+use buck2_artifact::artifact::output_type::OutputType;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::local_resource_state::LocalResourceState;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
+use buck2_core::execution_types::executor_config::ReGangWorker;
 use buck2_core::execution_types::executor_config::RemoteExecutorCustomImage;
 use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
@@ -24,22 +26,23 @@ use buck2_core::fs::buck_out_path::BuckOutTestPath;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::soft_error;
+pub use buck2_data::NetworkAccess;
+use buck2_data::local_command::EnvironmentRule;
 use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
 use buck2_directory::directory::directory::Directory;
 use buck2_directory::directory::directory_iterator::DirectoryIterator;
 use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
 use buck2_error::buck2_error;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_hash::BuckFixedSortedSet;
+use buck2_hash::BuckMutInsertionSet;
 use derive_more::Display;
 use dupe::Dupe;
-use gazebo::variants::UnpackVariants;
 use host_sharing::host_sharing::HostSharingRequirements;
-use indexmap::IndexSet;
 use itertools::Itertools;
+use pagable::Pagable;
 use prost::Message;
 use remote_execution as RE;
-use sorted_vector_map::SortedVectorMap;
-use starlark_map::sorted_set::SortedSet;
 
 use super::dep_file_digest::DepFileDigest;
 use crate::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
@@ -105,7 +108,7 @@ struct IncompatibleExecutorPreferences {
     b: ExecutorPreference,
 }
 
-#[derive(Copy, Clone, Dupe, Display, Debug, Allocative)]
+#[derive(Copy, Clone, Dupe, Display, Debug, Allocative, PartialEq, Pagable)]
 pub enum ExecutorPreference {
     Default,
     /// Fails when executed by a remote-only executor
@@ -200,16 +203,13 @@ impl ExecutorPreference {
     }
 
     fn erases_preferences(self) -> bool {
-        match self {
-            Self::DefaultErasePreferences => true,
-            _ => false,
-        }
+        matches!(self, Self::DefaultErasePreferences)
     }
 }
 
 pub struct CommandExecutionPaths {
     inputs: Vec<CommandExecutionInput>,
-    outputs: IndexSet<CommandExecutionOutput>,
+    outputs: BuckMutInsertionSet<CommandExecutionOutput>,
 
     input_directory: ActionImmutableDirectory,
     output_paths: Vec<(ProjectRelativePathBuf, OutputType)>,
@@ -221,7 +221,7 @@ pub struct CommandExecutionPaths {
 impl CommandExecutionPaths {
     pub fn new(
         inputs: Vec<CommandExecutionInput>,
-        outputs: IndexSet<CommandExecutionOutput>,
+        outputs: BuckMutInsertionSet<CommandExecutionOutput>,
         fs: &ArtifactFs,
         digest_config: DigestConfig,
         interner: Option<&DashMapDirectoryInterner<ActionDirectoryMember, TrackedFileDigest>>,
@@ -231,7 +231,7 @@ impl CommandExecutionPaths {
         // RE spec requires outputs to be sorted:
         // https://github.com/bazelbuild/remote-apis/blob/1f36c310b28d762b258ea577ed08e8203274efae/build/bazel/remote/execution/v2/remote_execution.proto#L667-L669
         // We sort early here and not when we create RE action in order for local and remote actions to be in-sync.
-        let outputs: IndexSet<_> = outputs
+        let outputs: BuckMutInsertionSet<_> = outputs
             .into_iter()
             .sorted_by_key(|e| {
                 let resolved = e
@@ -282,12 +282,9 @@ impl CommandExecutionPaths {
         let mut input_files_bytes = 0;
 
         for entry in input_directory.unordered_walk_leaves().without_paths() {
-            match entry {
-                ActionDirectoryMember::File(f) => {
-                    input_files_bytes += f.digest.size();
-                }
-                _ => {}
-            };
+            if let ActionDirectoryMember::File(f) = entry {
+                input_files_bytes += f.digest.size();
+            }
         }
 
         input_files_bytes
@@ -330,7 +327,7 @@ pub struct WorkerId(pub u64);
 pub struct WorkerSpec {
     pub id: WorkerId,
     pub exe: Vec<String>,
-    pub env: SortedVectorMap<String, String>,
+    pub env: BuckFixedSortedMap<String, String>,
     pub concurrency: Option<usize>,
     pub streaming: bool,
     pub remote_key: Option<TrackedFileDigest>,
@@ -346,9 +343,37 @@ impl WorkerSpec {
 pub struct RemoteWorkerSpec {
     pub id: WorkerId,
     pub init: Vec<String>,
-    pub env: SortedVectorMap<String, String>,
+    pub env: BuckFixedSortedMap<String, String>,
     pub input_paths: CommandExecutionPaths,
     pub concurrency: Option<usize>,
+}
+
+/// Bytes folded into an action's digest without being part of its command or inputs,
+/// so that the action key covers dependencies the command observes only by content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionSalt(Vec<u8>);
+
+impl ActionSalt {
+    pub fn from_digest(digest: &TrackedFileDigest) -> Self {
+        Self(digest.raw_digest().as_bytes().to_vec())
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// How a local test is killed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TestKillPolicy {
+    /// How long a test that hit its timeout gets to exit after `SIGTERM` before it and
+    /// everything left in its process group get `SIGKILL`. `None` kills immediately.
+    pub timeout_grace_period: Option<Duration>,
+    /// On Linux, kill the processes a test left behind outside its process group, such as
+    /// daemons, when it is killed. Only applies to tests that do not run in an action cgroup. Such
+    /// a test adopts its orphaned descendants, which then stay zombies until it exits instead of
+    /// being reaped by init.
+    pub kill_detached_processes: bool,
 }
 
 /// The data contains the information about the command to be executed.
@@ -358,7 +383,7 @@ pub struct CommandExecutionRequest {
     exe: Vec<String>,
     args: Vec<String>,
     paths: CommandExecutionPaths,
-    env: SortedVectorMap<String, String>,
+    env: BuckFixedSortedMap<String, String>,
     timeout: Option<Duration>,
     pub executor_preference: ExecutorPreference,
     host_sharing_requirements: Arc<HostSharingRequirements>,
@@ -379,7 +404,10 @@ pub struct CommandExecutionRequest {
     force_full_hybrid_if_capable: bool,
     /// Whether to disable capturing performance counters for this execution.
     disable_miniperf: bool,
-    required_local_resources: SortedSet<LocalResourceState>,
+    /// Whether to treat this action as a cache miss everywhere: buck2's remote lookups skip it and
+    /// the remote execution service is told not to serve it from its own cache.
+    induced_cache_miss: bool,
+    required_local_resources: BuckFixedSortedSet<LocalResourceState>,
     /// Persistent worker to use for execution
     worker: Option<WorkerSpec>,
     /// Persistent remote worker to use for execution
@@ -387,21 +415,36 @@ pub struct CommandExecutionRequest {
     /// Whether the executor should guarantee that the inodes for all inputs are unique (i.e. avoid
     /// hardlinking identical input files, for example)
     unique_input_inodes: bool,
+    salt: Option<ActionSalt>,
     /// Remote dep file key, if the action has a dep file.
     /// If this key is set and remote dep file caching is enabled, it will be used to query the cache.
     pub remote_dep_file_key: Option<DepFileDigest>,
+    /// RE gang workers for gang scheduling.
+    re_gang_workers: Vec<ReGangWorker>,
     /// RE dependencies to pass in action metadata.
     remote_execution_dependencies: Vec<RemoteExecutorDependency>,
     /// RE custom tupperware image.
     remote_execution_custom_image: Option<RemoteExecutorCustomImage>,
     /// RE execution policy.
-    meta_internal_extra_params: MetaInternalExtraParams,
+    meta_internal_extra_params: Arc<MetaInternalExtraParams>,
     /// Failed action outputs to materialize
     outputs_for_error_handler: Vec<BuildArtifactPath>,
     /// String representation of a key that uniquely identifies a RunAction
     run_action_key: Option<String>,
 
-    is_test: bool,
+    /// Set for tests only.
+    test_kill_policy: Option<TestKillPolicy>,
+    /// Whether to skip resource control (cgroup) for this command.
+    /// Set for local resource setup commands whose backgrounded processes
+    /// must survive after the setup script exits.
+    skip_resource_control: bool,
+
+    network_access: Option<NetworkAccess>,
+
+    /// When set, the local executor runs this action without network isolation,
+    /// ignoring the inherited `network_access` policy; no effect on RE. Set by the test
+    /// orchestrator's `disable_local_network_isolation`, which explains the rationale.
+    disable_local_network_isolation: bool,
 }
 
 impl CommandExecutionRequest {
@@ -409,7 +452,7 @@ impl CommandExecutionRequest {
         exe: Vec<String>,
         args: Vec<String>,
         paths: CommandExecutionPaths,
-        env: SortedVectorMap<String, String>,
+        env: BuckFixedSortedMap<String, String>,
     ) -> Self {
         Self {
             exe,
@@ -426,17 +469,23 @@ impl CommandExecutionRequest {
             local_environment_inheritance: None,
             force_full_hybrid_if_capable: false,
             disable_miniperf: false,
-            required_local_resources: SortedSet::new(),
+            induced_cache_miss: false,
+            required_local_resources: BuckFixedSortedSet::new(),
             worker: None,
             remote_worker: None,
             unique_input_inodes: false,
+            salt: None,
             remote_dep_file_key: None,
+            re_gang_workers: Vec::new(),
             remote_execution_dependencies: Vec::new(),
             remote_execution_custom_image: None,
-            meta_internal_extra_params: MetaInternalExtraParams::default(),
+            meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
             outputs_for_error_handler: Vec::new(),
             run_action_key: None,
-            is_test: false,
+            test_kill_policy: None,
+            skip_resource_control: false,
+            network_access: None,
+            disable_local_network_isolation: false,
         }
     }
 
@@ -561,7 +610,7 @@ impl CommandExecutionRequest {
         self.paths.outputs.iter().map(|output| output.as_ref())
     }
 
-    pub fn env(&self) -> &SortedVectorMap<String, String> {
+    pub fn env(&self) -> &BuckFixedSortedMap<String, String> {
         &self.env
     }
 
@@ -597,6 +646,13 @@ impl CommandExecutionRequest {
         self.local_environment_inheritance.as_ref()
     }
 
+    /// How the local command's environment is built from buck2's own, as the event log records it.
+    pub fn local_environment_rule(&self) -> EnvironmentRule {
+        self.local_environment_inheritance
+            .as_ref()
+            .map_or(EnvironmentRule::Unspecified, |e| e.rule())
+    }
+
     pub fn with_force_full_hybrid_if_capable(mut self, force_full_hybrid_if_capable: bool) -> Self {
         self.force_full_hybrid_if_capable = force_full_hybrid_if_capable;
         self
@@ -615,6 +671,15 @@ impl CommandExecutionRequest {
         self.disable_miniperf
     }
 
+    pub fn with_induced_cache_miss(mut self, induced_cache_miss: bool) -> Self {
+        self.induced_cache_miss = induced_cache_miss;
+        self
+    }
+
+    pub fn induced_cache_miss(&self) -> bool {
+        self.induced_cache_miss
+    }
+
     pub fn with_required_local_resources(
         mut self,
         required_local_resources: Vec<LocalResourceState>,
@@ -630,7 +695,7 @@ impl CommandExecutionRequest {
         Ok(self)
     }
 
-    pub fn required_local_resources(&self) -> &SortedSet<LocalResourceState> {
+    pub fn required_local_resources(&self) -> &BuckFixedSortedSet<LocalResourceState> {
         &self.required_local_resources
     }
 
@@ -641,6 +706,24 @@ impl CommandExecutionRequest {
 
     pub fn unique_input_inodes(&self) -> bool {
         self.unique_input_inodes
+    }
+
+    pub fn with_salt(mut self, salt: Option<ActionSalt>) -> Self {
+        self.salt = salt;
+        self
+    }
+
+    pub fn salt(&self) -> Option<&ActionSalt> {
+        self.salt.as_ref()
+    }
+
+    pub fn with_re_gang_workers(mut self, re_gang_workers: Vec<ReGangWorker>) -> Self {
+        self.re_gang_workers = re_gang_workers;
+        self
+    }
+
+    pub fn re_gang_workers(&self) -> &Vec<ReGangWorker> {
+        &self.re_gang_workers
     }
 
     pub fn with_remote_execution_dependencies(
@@ -681,7 +764,7 @@ impl CommandExecutionRequest {
 
     pub fn with_meta_internal_extra_params(
         mut self,
-        meta_internal_extra_params: MetaInternalExtraParams,
+        meta_internal_extra_params: Arc<MetaInternalExtraParams>,
     ) -> Self {
         self.meta_internal_extra_params = meta_internal_extra_params;
         self
@@ -700,87 +783,52 @@ impl CommandExecutionRequest {
         &self.run_action_key
     }
 
-    pub fn with_is_test(mut self) -> Self {
-        self.is_test = true;
+    pub fn with_is_test(mut self, kill_policy: TestKillPolicy) -> Self {
+        self.test_kill_policy = Some(kill_policy);
         self
     }
 
     pub fn is_test(&self) -> bool {
-        self.is_test
+        self.test_kill_policy.is_some()
+    }
+
+    pub fn test_kill_policy(&self) -> Option<&TestKillPolicy> {
+        self.test_kill_policy.as_ref()
+    }
+
+    pub fn with_skip_resource_control(mut self) -> Self {
+        self.skip_resource_control = true;
+        self
+    }
+
+    pub fn skip_resource_control(&self) -> bool {
+        self.skip_resource_control
+    }
+
+    pub fn with_network_access(mut self, v: Option<NetworkAccess>) -> Self {
+        self.network_access = v;
+        self
+    }
+
+    pub fn network_access(&self) -> Option<NetworkAccess> {
+        self.network_access
+    }
+
+    pub fn with_disable_local_network_isolation(mut self, v: bool) -> Self {
+        self.disable_local_network_isolation = v;
+        self
+    }
+
+    pub fn disable_local_network_isolation(&self) -> bool {
+        self.disable_local_network_isolation
     }
 }
 
-/// Is an output a file or a directory
-#[derive(
-    PartialEq,
-    Eq,
-    Hash,
-    Debug,
-    Copy,
-    Clone,
-    Dupe,
-    Allocative,
-    Ord,
-    PartialOrd,
-    strong_hash::StrongHash
-)]
-pub enum OutputType {
-    /// We don't know - used to represent legacy code that doesn't yet declare the output type properly.
-    /// We aim to mostly remove this alternative over time.
-    FileOrDirectory,
-    File,
-    Directory,
-}
-
-#[derive(Debug, buck2_error::Error)]
-#[buck2(tag = Input)]
-enum OutputTypeError {
-    #[error("Expected {1:?}, but `{0}` is already declared as {2:?}")]
-    CheckPath(String, OutputType, OutputType),
-}
-
-impl OutputType {
-    /// We are hoping for something of output type self, and got a path of an existing declared type.
-    /// Raise an error if they are incompatible.
-    pub fn check_path(
-        self,
-        path_for_error_message: impl Display,
-        output_type: OutputType,
-    ) -> buck2_error::Result<()> {
-        if self == OutputType::Directory && output_type == OutputType::FileOrDirectory {
-            // If we treat paths whose declared type is FileOrDirectory like files, then that's incompatible with directory
-            soft_error!(
-                "declare_wrong_type",
-                OutputTypeError::CheckPath(
-                    path_for_error_message.to_string(),
-                    self,
-                    OutputType::File
-                )
-                .into(),
-                deprecation: true,
-                quiet: true
-            )?;
-            Ok(())
-        } else if self == output_type
-            || self == OutputType::FileOrDirectory
-            || output_type == OutputType::FileOrDirectory
-        {
-            Ok(())
-        } else {
-            Err(
-                OutputTypeError::CheckPath(path_for_error_message.to_string(), self, output_type)
-                    .into(),
-            )
-        }
-    }
-}
-
-#[derive(UnpackVariants, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Hash, Debug)]
 pub enum CommandExecutionOutputRef<'a> {
     BuildArtifact {
         path: &'a BuildArtifactPath,
         output_type: OutputType,
-        supports_incremental_remote: bool,
     },
     TestPath {
         path: &'a BuckOutTestPath,
@@ -797,11 +845,7 @@ impl CommandExecutionOutputRef<'_> {
         content_hash: Option<&ContentBasedPathHash>,
     ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
         match self {
-            Self::BuildArtifact {
-                path,
-                output_type,
-                supports_incremental_remote: _,
-            } => Ok(ResolvedCommandExecutionOutput {
+            Self::BuildArtifact { path, output_type } => Ok(ResolvedCommandExecutionOutput {
                 path: fs.resolve_build(path, content_hash)?,
                 create: OutputCreationBehavior::Parent,
                 output_type: *output_type,
@@ -821,11 +865,7 @@ impl CommandExecutionOutputRef<'_> {
         fs: &ArtifactFs,
     ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
         match self {
-            Self::BuildArtifact {
-                path,
-                output_type,
-                supports_incremental_remote: _,
-            } => Ok(ResolvedCommandExecutionOutput {
+            Self::BuildArtifact { path, output_type } => Ok(ResolvedCommandExecutionOutput {
                 path: fs.resolve_build_configuration_hash_path(path)?,
                 create: OutputCreationBehavior::Parent,
                 output_type: *output_type,
@@ -840,14 +880,9 @@ impl CommandExecutionOutputRef<'_> {
 
     pub fn cloned(&self) -> CommandExecutionOutput {
         match self {
-            Self::BuildArtifact {
-                path,
-                output_type,
-                supports_incremental_remote,
-            } => CommandExecutionOutput::BuildArtifact {
+            Self::BuildArtifact { path, output_type } => CommandExecutionOutput::BuildArtifact {
                 path: (*path).dupe(),
                 output_type: *output_type,
-                supports_incremental_remote: *supports_incremental_remote,
             },
             Self::TestPath { path, create } => CommandExecutionOutput::TestPath {
                 path: (*path).clone(),
@@ -864,12 +899,11 @@ impl CommandExecutionOutputRef<'_> {
     }
 }
 
-#[derive(UnpackVariants, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Hash, Debug)]
 pub enum CommandExecutionOutput {
     BuildArtifact {
         path: BuildArtifactPath,
         output_type: OutputType,
-        supports_incremental_remote: bool,
     },
     TestPath {
         path: BuckOutTestPath,
@@ -878,16 +912,25 @@ pub enum CommandExecutionOutput {
 }
 
 impl CommandExecutionOutput {
+    pub fn build_artifact_path(&self) -> Option<&BuildArtifactPath> {
+        match self {
+            Self::BuildArtifact { path, .. } => Some(path),
+            Self::TestPath { .. } => None,
+        }
+    }
+
+    pub fn into_test_path(self) -> Option<BuckOutTestPath> {
+        match self {
+            Self::BuildArtifact { .. } => None,
+            Self::TestPath { path, .. } => Some(path),
+        }
+    }
+
     pub fn as_ref(&self) -> CommandExecutionOutputRef<'_> {
         match self {
-            Self::BuildArtifact {
-                path,
-                output_type,
-                supports_incremental_remote,
-            } => CommandExecutionOutputRef::BuildArtifact {
+            Self::BuildArtifact { path, output_type } => CommandExecutionOutputRef::BuildArtifact {
                 path,
                 output_type: *output_type,
-                supports_incremental_remote: *supports_incremental_remote,
             },
             Self::TestPath { path, create } => CommandExecutionOutputRef::TestPath {
                 path,

@@ -15,7 +15,7 @@ def _assert_eq(a, b):
 HelloInfo = provider(fields = ["output"])
 
 def _builder_impl(ctx: AnalysisContext) -> list[Provider]:
-    hello = ctx.actions.write("dir/hello.out", "hello")
+    hello = ctx.actions.write("dir/hello.out", "hello", has_content_based_path = False)
     return [DefaultInfo(), HelloInfo(output = hello)]
 
 _builder = anon_rule(
@@ -31,14 +31,14 @@ def _build_impl(ctx: AnalysisContext) -> list[Provider]:
     artifact = anon_target.artifact("artifact")
     artifact_from_dict = anon_target.artifacts()["artifact"]
     _assert_eq(artifact, artifact_from_dict)
-    out = ctx.actions.declare_output("output")
+    out = ctx.actions.declare_output("output", has_content_based_path = False)
     ctx.actions.run(["cp", artifact, out.as_output()], category = "cp")
     return [DefaultInfo(default_output = out)]
 
 _build = rule(impl = _build_impl, attrs = {})
 
 def _check_impl(ctx: AnalysisContext) -> list[Provider]:
-    out = ctx.actions.declare_output("output")
+    out = ctx.actions.declare_output("output", has_content_based_path = False)
 
     def f(ctx: AnalysisContext, artifacts, outputs):
         _assert_eq(artifacts[ctx.attrs.src].read_string(), "hello")
@@ -65,7 +65,7 @@ def _check_symlink_files_impl(ctx):
     artifact = ctx.actions.anon_target(_builder, {}).artifact("artifact")
     srcs = {"hello": artifact}
 
-    out = ctx.actions.symlinked_dir("out", srcs)
+    out = ctx.actions.symlinked_dir("out", srcs, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 _check_symlink_files = rule(
@@ -77,7 +77,7 @@ _check_symlink_files = rule(
 
 def _check_copy_impl(ctx):
     artifact = ctx.actions.anon_target(_builder, {}).artifact("artifact")
-    out = ctx.actions.copy_file("copied", artifact)
+    out = ctx.actions.copy_file("copied", artifact, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 _check_copy = rule(
@@ -111,7 +111,7 @@ _check_default_output = rule(impl = _check_default_output_impl, attrs = {"src": 
 # Test promise artifacts when calling ctx.actions.anon_targets()
 
 def _anon_rule_impl(ctx: AnalysisContext) -> list[Provider]:
-    hello = ctx.actions.write("dir/hello.out", ctx.attrs.my_content)
+    hello = ctx.actions.write("dir/hello.out", ctx.attrs.my_content, has_content_based_path = False)
     return [DefaultInfo(), HelloInfo(output = hello)]
 
 _anon_rule1 = anon_rule(
@@ -140,16 +140,16 @@ def _build_multiple_impl(ctx: AnalysisContext) -> list[Provider]:
     artifact2 = all_targets.anon_targets[1].artifact("artifact")
     promise = all_targets.promise
     _assert_eq(isinstance(promise, Promise), True)
-    out1 = ctx.actions.declare_output("output1")
+    out1 = ctx.actions.declare_output("output1", has_content_based_path = False)
     ctx.actions.run(["cp", artifact1, out1.as_output()], category = "cp", identifier = "cp1")
-    out2 = ctx.actions.declare_output("output2")
+    out2 = ctx.actions.declare_output("output2", has_content_based_path = False)
     ctx.actions.run(["cp", artifact2, out2.as_output()], category = "cp", identifier = "cp2")
     return [DefaultInfo(default_outputs = [out1, out2])]
 
 _build_multiple = rule(impl = _build_multiple_impl, attrs = {})
 
 def _check_multiple_impl(ctx: AnalysisContext) -> list[Provider]:
-    out = ctx.actions.declare_output("output")
+    out = ctx.actions.declare_output("output", has_content_based_path = False)
 
     def f(ctx: AnalysisContext, artifacts, outputs):
         _assert_eq(artifacts[ctx.attrs.src[0]].read_string(), "content1")

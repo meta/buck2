@@ -1,0 +1,5 @@
+# Default `within_view` (the PACKAGE list) and a dep inside the cap: allowed.
+stub(
+    name = "c",
+    deps = ["root//intersect/lib:t"],
+)

@@ -14,23 +14,32 @@ use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
 use starlark::values::NoSerialize;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::starlark_value;
 
-#[derive(Debug, PartialEq, Display, ProvidesStaticType, NoSerialize, Allocative)]
-pub struct StarlarkConfiguration(pub ConfigurationData);
+#[derive(
+    Debug,
+    PartialEq,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+pub struct StarlarkConfiguration(#[starlark_pagable(pagable)] pub ConfigurationData);
 
 starlark_simple_value!(StarlarkConfiguration);
+
+starlark::methods_static!(CONFIGURATION_METHODS = configuration_methods);
 
 #[starlark_value(type = "Configuration")]
 impl<'v> StarlarkValue<'v> for StarlarkConfiguration {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(configuration_methods)
+        Some(CONFIGURATION_METHODS.methods())
     }
 }
 

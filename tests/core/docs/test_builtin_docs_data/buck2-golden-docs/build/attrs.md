@@ -10,6 +10,7 @@
 ## dep
 ## dict
 ## enum
+## exec\_compatible\_with
 ## exec\_dep
 ## int
 ## label

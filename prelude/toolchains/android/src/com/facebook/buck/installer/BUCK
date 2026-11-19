@@ -14,6 +14,10 @@ buck_kotlin_library(
     visibility = [
         "PUBLIC",
     ],
+    deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
+    ],
     exported_deps = [
         "prelude//toolchains/android/src/com/facebook/buck/installer/proto:installer-model",
         "prelude//toolchains/android/third-party:grpc-netty-shaded",

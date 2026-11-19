@@ -6,6 +6,9 @@ runs:
   - uses: Swatinem/rust-cache@v2
     with:
       prefix-key: buck2-debug
+      # Only `main` writes the cache; a pull request's entries are readable by
+      # that pull request alone and share the repository's 10 GB with everything else.
+      save-if: ${{ github.ref == 'refs/heads/main' }}
   - name: Build buck2 binary (debug)
     run: |-
       mkdir $RUNNER_TEMP/artifacts

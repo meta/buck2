@@ -7,11 +7,11 @@
 
 %% @format
 -module(buck_ct_parser).
--compile(warn_missing_spec_all).
 -moduledoc """
 Utilities method to parse string args given to the test binary
 via user input.
 """.
+-compile(warn_missing_spec_all).
 
 -import(common_util, [unicode_characters_to_list/1]).
 

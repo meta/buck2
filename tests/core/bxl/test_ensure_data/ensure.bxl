@@ -46,7 +46,7 @@ ensure_cmd_line_json_output = bxl_main(
 )
 
 def _ensure_failures(ctx):
-    target = "root//build:fail"
+    target = ctx.configured_targets("root//build:fail")
     analysis_res = ctx.analysis(target)
     outputs = analysis_res.providers()[DefaultInfo].default_outputs
     ctx.output.ensure_multiple(outputs)

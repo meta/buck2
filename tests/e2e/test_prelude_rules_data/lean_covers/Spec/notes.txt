@@ -1,0 +1,1 @@
+Text that `Spec.Add` could embed with `include_str`.

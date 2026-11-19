@@ -8,9 +8,11 @@
  * above-listed licenses.
  */
 
+use std::process;
 use std::thread;
 use std::time::Duration;
 
+use buck2_core::warn_user_or_panic;
 use buck2_util::process_stats::process_cpu_time_us;
 use buck2_util::threads::thread_spawn;
 
@@ -51,13 +53,25 @@ pub(crate) fn maybe_schedule_termination() -> buck2_error::Result<()> {
                 process_cpu_time_us_after,
                 sleep_after,
             );
-            if let Some(elapsed_cpu_time_avg_in_percents) = elapsed_cpu_time_avg_in_percents {
-                panic!(
-                    "Buck is exiting after {duration:?}s elapsed; avg process CPU in the last {sleep_after:?}s is {elapsed_cpu_time_avg_in_percents}%"
-                );
+            let msg = if let Some(elapsed_cpu_time_avg_in_percents) =
+                elapsed_cpu_time_avg_in_percents
+            {
+                format!(
+                    "Buck is exiting after {duration:?} elapsed; avg process CPU in the last {sleep_after:?} is {elapsed_cpu_time_avg_in_percents}%"
+                )
             } else {
-                panic!("Buck is exiting after {duration:?}s elapsed");
-            }
+                format!("Buck is exiting after {duration:?} elapsed")
+            };
+            warn_user_or_panic!(
+                "schedule_termination_exit",
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Environment,
+                    "{}",
+                    msg
+                ),
+                task: false,
+            );
+            process::exit(1);
         })?;
     }
 

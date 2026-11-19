@@ -15,9 +15,11 @@
  * limitations under the License.
  */
 
+use std::sync::LazyLock;
+
 use allocative::Allocative;
 use dupe::Dupe;
-use once_cell::sync::Lazy;
+use pagable::Pagable;
 use starlark_derive::starlark_module;
 
 use crate as starlark;
@@ -34,17 +36,20 @@ use crate::typing::error::TypingOrInternalError;
 use crate::typing::function::TyCustomFunctionImpl;
 use crate::values::Heap;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
 use crate::values::function::SpecialBuiltinFunction;
 use crate::values::list::AllocList;
 use crate::values::list::ListRef;
+use crate::values::list::ListType;
 use crate::values::list::value::FrozenList;
 use crate::values::typing::StarlarkIter;
 
-#[derive(Allocative, Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Debug)]
-struct ListType;
+#[derive(
+    Allocative, Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Debug, Pagable
+)]
+struct ListFunctionTy;
 
-static LIST: Lazy<TyFunction> = Lazy::new(|| {
+static LIST: LazyLock<TyFunction> = LazyLock::new(|| {
     TyFunction::new_with_type_attr(
         ParamSpec::pos_only([], [Ty::iter(Ty::any())]),
         Ty::any_list(),
@@ -52,7 +57,7 @@ static LIST: Lazy<TyFunction> = Lazy::new(|| {
     )
 });
 
-impl TyCustomFunctionImpl for ListType {
+impl TyCustomFunctionImpl for ListFunctionTy {
     fn is_type(&self) -> bool {
         true
     }
@@ -99,28 +104,28 @@ pub(crate) fn register_list(globals: &mut GlobalsBuilder) {
     /// list((1,2,3)) == [1, 2, 3]
     /// # "#);
     /// # starlark::assert::fail(r#"
-    /// list("strings are not iterable") # error: not supported
-    /// # "#, r#"not supported on type"#);
+    /// list("strings are not iterable") # error: expected `typing.Iterable`
+    /// # "#, r#"expected `typing.Iterable`"#);
     /// ```
     #[starlark(
     as_type = FrozenList,
     speculative_exec_safe,
     special_builtin_function = SpecialBuiltinFunction::List,
-    ty_custom_function = ListType,
+    ty_custom_function = ListFunctionTy,
     )]
     fn list<'v>(
-        #[starlark(require = pos)] a: Option<ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>>,
-        heap: &'v Heap,
-    ) -> starlark::Result<ValueOfUnchecked<'v, &'v ListRef<'v>>> {
-        Ok(ValueOfUnchecked::new(if let Some(a) = a {
-            if let Some(xs) = ListRef::from_value(a.get()) {
+        #[starlark(require = pos)] a: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, ListType<Value<'v>>>> {
+        Ok(if let Some(a) = a {
+            if let Some(xs) = ListRef::from_value(a.to_value()) {
                 heap.alloc_list(xs.content())
             } else {
-                let it = a.get().iterate(heap)?;
+                let it = a.to_value().iterate(heap)?;
                 heap.alloc(AllocList(it))
             }
         } else {
             heap.alloc(AllocList::EMPTY)
-        }))
+        })
     }
 }

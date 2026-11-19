@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
 use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::pattern::pattern::ParsedPattern;
@@ -19,13 +19,14 @@ use indoc::indoc;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::ValueOf;
 
 #[starlark_module]
 fn dependency_creator(builder: &mut GlobalsBuilder) {
     fn create_collection<'v>(
         s: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Dependency<'v>> {
+    ) -> starlark::Result<ValueOf<'v, Dependency<'v>>> {
         let c = BuildContext::from_context(eval)?;
         let label = match ParsedPattern::<ProvidersPatternExtra>::parse_precise(
             s,
@@ -41,9 +42,12 @@ fn dependency_creator(builder: &mut GlobalsBuilder) {
                 panic!();
             }
         };
-        let collection = FrozenProviderCollection::testing_new_default(eval.frozen_heap());
+        let collection =
+            eval.frozen_heap(|fh, edge| edge.rebrand(ProviderCollection::testing_new_default(fh)));
 
-        Ok(Dependency::new(eval.heap(), label, collection, None))
+        Ok(eval
+            .heap()
+            .alloc(Dependency::new(eval.heap(), label, collection, None)))
     }
 }
 

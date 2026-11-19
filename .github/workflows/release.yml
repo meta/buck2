@@ -1,0 +1,61 @@
+name: Manually release `buck2`
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  set_version_info:
+    name: Define the version info for this release
+    runs-on: ubuntu-latest
+    outputs:
+      buck2_version: ${{ steps.define_version_info.outputs.buck2_version }}
+      release_timestamp: ${{ steps.define_version_info.outputs.release_timestamp }}
+      tag: ${{ steps.define_version_info.outputs.tag }}
+    steps:
+      - name: Define version info
+        id: define_version_info
+        run: |
+          # Git tags cannot contain ':', so use '.' between the time components
+          tag=$(date -u +%Y-%m-%d-%H.%M.%S)
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release_timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "buck2_version=$tag-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+      - name: Display version info
+        run: |
+          echo "tag: ${{ steps.define_version_info.outputs.tag }}"
+          echo "buck2_version: ${{ steps.define_version_info.outputs.buck2_version }}"
+
+  build:
+    name: Build `buck2`
+    needs:
+      - set_version_info
+    uses: ./.github/workflows/build_buck2.yml
+    with:
+      buck2_version: ${{ needs.set_version_info.outputs.buck2_version }}
+      release_timestamp: ${{ needs.set_version_info.outputs.release_timestamp }}
+
+  release:
+    name: Release the new tag
+    needs:
+      - set_version_info
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      # Publish a new tag and upload all artifacts from the build
+      - uses: ./.github/actions/publish_tag
+        with:
+          tag: ${{ needs.set_version_info.outputs.tag }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: facebook/dotslash-publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          config: .github/dotslash-config.json
+          tag: ${{ needs.set_version_info.outputs.tag }}

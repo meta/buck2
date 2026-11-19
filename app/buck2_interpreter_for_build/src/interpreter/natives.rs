@@ -12,7 +12,6 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::StringValue;
-use starlark::values::Value;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 
@@ -49,22 +48,7 @@ pub(crate) fn register_module_natives(globals: &mut GlobalsBuilder) {
         let internals = ModuleInternals::from_context(eval, "read_oncall")?;
         match internals.get_oncall() {
             None => Ok(NoneOr::None),
-            Some(oncall) => Ok(NoneOr::Other(eval.heap().alloc_str(oncall.as_str()))),
-        }
-    }
-
-    fn implicit_package_symbol<'v>(
-        name: &str,
-        default: Option<Value<'v>>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Value<'v>> {
-        let internals = ModuleInternals::from_context(eval, "implicit_package_symbol")?;
-        match internals.get_package_implicit(name) {
-            None => Ok(default.unwrap_or_else(Value::new_none)),
-            Some(v) => {
-                // FIXME(ndmitchell): Document why this is safe
-                Ok(unsafe { v.unchecked_frozen_value().to_value() })
-            }
+            Some(oncall) => Ok(NoneOr::Other(eval.heap().alloc(oncall.as_str()))),
         }
     }
 }

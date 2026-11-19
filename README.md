@@ -131,8 +131,8 @@ Alternately, you can use [dotslash](https://dotslash-cli.com/) with the
 bi-monthly releases where it's easy to deploy into a repo with a single text
 file and auto pull the correct platform as needed.
 
-You can also compile Buck2 from source, if a binary isn't immediately available
-for your use; check out the [HACKING.md](./HACKING.md) file for information.
+You can also compile Buck2 from source, if a binary isn't immediately available for your use; check
+out the [docs](https://buck2.build/docs/getting_started/install/) for information.
 
 ## Terminology conventions
 

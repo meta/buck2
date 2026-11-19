@@ -18,20 +18,24 @@ use std::path::PathBuf;
 use allocative::Allocative;
 use buck2_util::arc_str::StringInside;
 use derive_more::Display;
-use gazebo::transmute;
+use pagable::Pagable;
+use pagable::PagableBoxDeserialize;
+use pagable::PagableDeserialize;
+use pagable::PagableDeserializer;
+use pagable::PagableSerialize;
 use ref_cast::RefCastCustom;
 use ref_cast::ref_cast_custom;
-use relative_path::RelativePath;
-use relative_path::RelativePathBuf;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use smallvec::SmallVec;
 use strong_hash::StrongHash;
 
-use crate::fs_util;
 use crate::paths::file_name::FileName;
 use crate::paths::path_util::path_remove_prefix;
+use crate::paths::relative_path::RelativePath;
+use crate::paths::relative_path::RelativePathBuf;
+use crate::paths::relative_path::verify_relative_path;
 
 /// A forward pointing, fully normalized relative path and owned pathbuf.
 /// This means that there is no '.' or '..' in this path, and does not begin
@@ -49,32 +53,23 @@ use crate::paths::path_util::path_remove_prefix;
     Ord,
     Hash,
     Allocative,
-    StrongHash
+    StrongHash,
+    PagableSerialize
 )]
 #[repr(transparent)]
 pub struct ForwardRelativePath(
-    // Note we transmute between `ForwardRelativePath` and `str`.
+    // Note we cast between `ForwardRelativePath` and `str`.
     str,
 );
 
 /// The owned version of 'ForwardRelativePath', like how 'PathBuf' relates to
 /// 'Path'
 #[derive(
-    Default,
-    Clone,
-    Display,
-    Debug,
-    Serialize,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Allocative,
-    strong_hash::StrongHash
+    Default, Clone, Display, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash, Allocative,
+    StrongHash, Pagable
 )]
 #[repr(transparent)]
-pub struct ForwardRelativePathBuf(String);
+pub struct ForwardRelativePathBuf(#[pagable(flatten_serde)] String);
 
 impl<'de> Deserialize<'de> for ForwardRelativePathBuf {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -101,14 +96,14 @@ impl StringInside for ForwardRelativePath {
 impl AsRef<RelativePath> for ForwardRelativePath {
     #[inline]
     fn as_ref(&self) -> &RelativePath {
-        RelativePath::new(&self.0)
+        RelativePath::unchecked_new(&self.0)
     }
 }
 
 impl AsRef<RelativePath> for ForwardRelativePathBuf {
     #[inline]
     fn as_ref(&self) -> &RelativePath {
-        RelativePath::new(&self.0)
+        RelativePath::unchecked_new(&self.0)
     }
 }
 
@@ -172,10 +167,8 @@ impl ForwardRelativePath {
 
     #[inline]
     pub fn unchecked_new_box(s: Box<str>) -> Box<ForwardRelativePath> {
-        unsafe {
-            // SAFETY: `ForwardRelativePath` is a transparent wrapper around `str`.
-            transmute!(Box<str>, Box<ForwardRelativePath>, s)
-        }
+        // SAFETY: `ForwardRelativePath` is a transparent wrapper around `str`.
+        unsafe { Box::from_raw(Box::into_raw(s) as *mut ForwardRelativePath) }
     }
 
     #[inline]
@@ -669,7 +662,7 @@ impl ForwardRelativePath {
         &self,
         path: &Path,
     ) -> buck2_error::Result<ForwardRelativePathBuf> {
-        let path = fs_util::relative_path_from_system(path)?;
+        let path = RelativePathBuf::from_system_path(path)?;
         self.join_normalized(path)
     }
 
@@ -741,7 +734,7 @@ impl ForwardRelativePath {
     /// Return a RelativePath representation of this ForwardRelativePath.
     #[inline]
     pub fn as_relative_path(&self) -> &RelativePath {
-        RelativePath::new(&self.0)
+        RelativePath::unchecked_new(&self.0)
     }
 }
 
@@ -877,134 +870,58 @@ impl ForwardRelativePathBuf {
         path
     }
 
-    /// Pushes a `RelativePath` to the existing buffer, normalizing it.
-    /// Note that this does not visit the filesystem to resolve `..`s. Instead, it cancels out the
-    /// components directly, similar to `join_normalized`.
+    /// Pushes a `RelativePath` to the existing buffer, normalizing it: the in-place form of
+    /// `join_normalized`. Note that this does not visit the filesystem to resolve `..`s. Instead,
+    /// it cancels out the components directly. On error, `self` is left unchanged.
     ///
     /// ```
     /// use buck2_fs::paths::RelativePath;
     /// use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     ///
     /// let mut path = ForwardRelativePathBuf::unchecked_new("foo".to_owned());
-    /// path.push_normalized(RelativePath::new("bar"))?;
+    /// path.push_normalized(RelativePath::unchecked_new("bar"))?;
     ///
     /// assert_eq!(
     ///     ForwardRelativePathBuf::unchecked_new("foo/bar".to_owned()),
     ///     path
     /// );
     ///
-    /// path.push_normalized(RelativePath::new("more/file.rs"))?;
+    /// path.push_normalized(RelativePath::unchecked_new("more/file.rs"))?;
     /// assert_eq!(
     ///     ForwardRelativePathBuf::unchecked_new("foo/bar/more/file.rs".to_owned()),
     ///     path
     /// );
     ///
-    /// path.push_normalized(RelativePath::new("../other.rs"))?;
+    /// path.push_normalized(RelativePath::unchecked_new("../other.rs"))?;
     /// assert_eq!(
     ///     ForwardRelativePathBuf::unchecked_new("foo/bar/more/other.rs".to_owned()),
     ///     path
     /// );
     ///
-    /// path.push_normalized(RelativePath::new(".."))?;
+    /// path.push_normalized(RelativePath::unchecked_new(".."))?;
     /// assert_eq!(
     ///     ForwardRelativePathBuf::unchecked_new("foo/bar/more".to_owned()),
     ///     path
     /// );
     ///
-    /// path.push_normalized(RelativePath::new("../.."))?;
+    /// path.push_normalized(RelativePath::unchecked_new("../.."))?;
     /// assert_eq!(
     ///     ForwardRelativePathBuf::unchecked_new("foo".to_owned()),
     ///     path
     /// );
     ///
-    /// path.push_normalized(RelativePath::new(".."))?;
+    /// path.push_normalized(RelativePath::unchecked_new(".."))?;
     /// assert_eq!(ForwardRelativePathBuf::unchecked_new("".to_owned()), path);
     ///
-    /// assert!(path.push_normalized(RelativePath::new("..")).is_err());
+    /// assert!(
+    ///     path.push_normalized(RelativePath::unchecked_new(".."))
+    ///         .is_err()
+    /// );
     ///
     /// # buck2_error::Ok(())
     /// ```
     pub fn push_normalized<P: AsRef<RelativePath>>(&mut self, path: P) -> buck2_error::Result<()> {
-        let buf = &mut self.0;
-        let mut insert_idx = buf.len();
-        let bytes = path.as_ref().as_str().as_bytes();
-
-        let mut i = 0;
-        let mut j = i;
-        while j < bytes.len() {
-            assert!(i <= bytes.len());
-            j = i;
-            while j != bytes.len() {
-                if bytes[j] == b'/' {
-                    break;
-                }
-                j += 1;
-            }
-            if i == j {
-                // Double slashes or trailing slash.
-                unreachable!("not a relative path");
-            } else if j == i + 1 && bytes[i] == b'.' {
-                // Current directory. Skip this segment and do nothing
-            } else if j == i + 2 && bytes[i] == b'.' && bytes[i + 1] == b'.' {
-                // Parent directory. Move the insert index
-
-                if insert_idx == 0 {
-                    // if we are already at 0, then we cannot move towards the parent without
-                    // having this path still be forward pointing
-                    return Err(ForwardRelativePathError::RelativizationError(
-                        path.as_ref().to_string(),
-                    )
-                    .into());
-                }
-
-                let mut buf_i = insert_idx;
-                let buf_bytes = buf.as_bytes();
-                // note we don't bother checking when buf_i is 0, because that would imply our
-                // current forward relative path starts with '/', which would imply that it's not
-                // relative, which is unreachable code.
-                while buf_i > 0 {
-                    buf_i -= 1;
-
-                    if buf_bytes[buf_i] == b'/' {
-                        break;
-                    }
-                }
-                // we got here because we either found a '/', or we got to the beginning of the
-                // current path, but starting with something in it, which means that we are now
-                // at the beginning segment, so insert_idx can be the beginning
-                insert_idx = buf_i;
-            } else {
-                // just a path segment to add
-
-                // first add the '/' since our path representation does not have ending slashes
-                if insert_idx < buf.len() {
-                    buf.replace_range(insert_idx..=insert_idx, "/");
-                } else {
-                    buf.push('/');
-                }
-
-                let seg_to_add = unsafe {
-                    // safe because this is the buf from a `RelativePath`, which enforces `utf8`
-
-                    // also `j` rather than `j+1` to exclude the ending `/`,
-                    // or not run out of bounds if `j = bytes.len()`
-                    std::str::from_utf8_unchecked(&bytes[i..j])
-                };
-                if insert_idx + 1 < buf.len() {
-                    buf.replace_range(insert_idx + 1.., seg_to_add);
-                } else {
-                    buf.push_str(seg_to_add);
-                }
-
-                insert_idx = buf.len();
-            }
-            i = j + 1;
-        }
-
-        if insert_idx < buf.len() {
-            buf.replace_range(insert_idx.., "");
-        }
-
+        *self = self.join_normalized(path)?;
         Ok(())
     }
 
@@ -1026,6 +943,16 @@ impl Clone for Box<ForwardRelativePath> {
     }
 }
 
+impl<'de> PagableBoxDeserialize<'de> for ForwardRelativePath {
+    fn deserialize_box<D: PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Box<Self>> {
+        let owned =
+            <ForwardRelativePathBuf as PagableDeserialize>::pagable_deserialize(deserializer)?;
+        Ok(owned.into_box())
+    }
+}
+
 impl<P: AsRef<ForwardRelativePath>> Extend<P> for ForwardRelativePathBuf {
     fn extend<T: IntoIterator<Item = P>>(&mut self, iter: T) {
         for p in iter {
@@ -1035,17 +962,19 @@ impl<P: AsRef<ForwardRelativePath>> Extend<P> for ForwardRelativePathBuf {
 }
 
 /// Errors from ForwardRelativePath creation
+///
+/// TODO: `PathNotRelative` and `PathNotUtf8` duplicate `PathError`, which describes the same
+/// failures, so the same bad path is reported differently depending on which constructor the
+/// caller reached for. Fold them in - but note these are tagged input today and `PathError`
+/// defaults to internal, so the call sites need attributing at the same time or ~158/day move
+/// from USER to INFRA.
 #[derive(buck2_error::Error, Debug)]
 #[buck2(input)]
 enum ForwardRelativePathError {
     #[error("expected a relative path but got an absolute path instead: `{0}`")]
     PathNotRelative(String),
-    #[error("expected a normalized path but got an un-normalized path instead: `{0}`")]
-    PathNotNormalized(String),
     #[error("Path is not UTF-8: `{0}`")]
     PathNotUtf8(String),
-    #[error("relativizing path `{0}` results would result in a non-forward relative path")]
-    RelativizationError(String),
     #[error("`{0}` does not start with `{1}`")]
     StripPrefix(String, String),
     #[error("`{0}` does not end with `{1}`")]
@@ -1083,8 +1012,7 @@ impl<'a> TryFrom<&'a str> for &'a ForwardRelativePath {
     /// ```
     #[inline]
     fn try_from(s: &'a str) -> buck2_error::Result<&'a ForwardRelativePath> {
-        ForwardRelativePathVerifier::verify_str(s)?;
-        Ok(ForwardRelativePath::unchecked_new(s))
+        ForwardRelativePath::new(s)
     }
 }
 
@@ -1120,7 +1048,7 @@ impl<'a> TryFrom<&'a Path> for &'a ForwardRelativePath {
             .as_os_str()
             .to_str()
             .ok_or_else(|| ForwardRelativePathError::PathNotUtf8(s.display().to_string()))?;
-        ForwardRelativePathVerifier::verify_str(s)?;
+        verify_relative_path(s, true)?;
         Ok(ForwardRelativePath::unchecked_new(s))
     }
 }
@@ -1136,18 +1064,21 @@ impl<'a> TryFrom<&'a RelativePath> for &'a ForwardRelativePath {
     /// use buck2_fs::paths::RelativePath;
     /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
-    /// assert!(<&ForwardRelativePath>::try_from(RelativePath::new("foo/bar")).is_ok());
-    /// assert!(<&ForwardRelativePath>::try_from(RelativePath::new("")).is_ok());
-    /// assert!(<&ForwardRelativePath>::try_from(RelativePath::new("./bar")).is_err());
-    /// assert!(<&ForwardRelativePath>::try_from(RelativePath::new("normalize/./bar")).is_err());
-    /// assert!(<&ForwardRelativePath>::try_from(RelativePath::new("normalize/../bar")).is_err());
+    /// assert!(<&ForwardRelativePath>::try_from(RelativePath::unchecked_new("foo/bar")).is_ok());
+    /// assert!(<&ForwardRelativePath>::try_from(RelativePath::unchecked_new("")).is_ok());
+    /// assert!(<&ForwardRelativePath>::try_from(RelativePath::unchecked_new("./bar")).is_err());
+    /// assert!(
+    ///     <&ForwardRelativePath>::try_from(RelativePath::unchecked_new("normalize/./bar")).is_err()
+    /// );
+    /// assert!(
+    ///     <&ForwardRelativePath>::try_from(RelativePath::unchecked_new("normalize/../bar")).is_err()
+    /// );
     ///
     /// # buck2_error::Ok(())
     /// ```
     #[inline]
     fn try_from(p: &'a RelativePath) -> buck2_error::Result<&'a ForwardRelativePath> {
-        ForwardRelativePathVerifier::verify_str(p.as_str())?;
-        Ok(ForwardRelativePath::unchecked_new(p.as_str()))
+        ForwardRelativePath::new(p.as_str())
     }
 }
 
@@ -1178,8 +1109,7 @@ impl TryFrom<String> for ForwardRelativePathBuf {
     /// ```
     #[inline]
     fn try_from(s: String) -> buck2_error::Result<ForwardRelativePathBuf> {
-        ForwardRelativePathVerifier::verify_str(&s)?;
-        Ok(ForwardRelativePathBuf(s))
+        ForwardRelativePathBuf::new(s)
     }
 }
 
@@ -1205,10 +1135,10 @@ impl TryFrom<PathBuf> for ForwardRelativePathBuf {
     /// # buck2_error::Ok(())
     /// ```
     fn try_from(p: PathBuf) -> buck2_error::Result<ForwardRelativePathBuf> {
-        // RelativePathBuf::from_path actually creates a copy.
-        // avoid the copy by constructing RelativePathBuf from the underlying String
-        ForwardRelativePathBuf::try_from(p.into_os_string().into_string().map_err(|_| {
-            relative_path::FromPathError::from(relative_path::FromPathErrorKind::NonUtf8)
+        // `RelativePathBuf::from_system_path` would allocate a copy. Avoid it by going through
+        // `OsString::into_string` and letting the string verifier reject any backslashes.
+        ForwardRelativePathBuf::try_from(p.into_os_string().into_string().map_err(|os| {
+            ForwardRelativePathError::PathNotUtf8(os.to_string_lossy().into_owned())
         })?)
     }
 }
@@ -1305,60 +1235,6 @@ impl ForwardRelativePathNormalizer {
     }
 }
 
-/// Verifier for ForwardRelativePath to ensure the path is fully relative, and
-/// normalized
-struct ForwardRelativePathVerifier {}
-
-impl ForwardRelativePathVerifier {
-    fn verify_str(rel_path: &str) -> buck2_error::Result<()> {
-        #[cold]
-        #[inline(never)]
-        fn err(rel_path: &str) -> buck2_error::Error {
-            ForwardRelativePathError::PathNotNormalized(rel_path.to_owned()).into()
-        }
-
-        let bytes = rel_path.as_bytes();
-        if bytes.is_empty() {
-            return Ok(());
-        }
-        if bytes[0] == b'/' {
-            return Err(ForwardRelativePathError::PathNotRelative(rel_path.to_owned()).into());
-        }
-
-        if memchr::memchr(b'\\', bytes).is_some() {
-            return Err(err(rel_path));
-        }
-
-        let mut i = 0;
-        loop {
-            assert!(i <= bytes.len());
-            let mut j = i;
-            while j != bytes.len() {
-                if bytes[j] == b'/' {
-                    break;
-                }
-                j += 1;
-            }
-            if i == j {
-                // Double slashes or trailing slash.
-                return Err(err(rel_path));
-            }
-            if j == i + 1 && bytes[i] == b'.' {
-                // Current directory.
-                return Err(err(rel_path));
-            }
-            if j == i + 2 && bytes[i] == b'.' && bytes[i + 1] == b'.' {
-                // Parent directory.
-                return Err(err(rel_path));
-            }
-            if j == bytes.len() {
-                return Ok(());
-            }
-            i = j + 1;
-        }
-    }
-}
-
 impl<A: AsRef<ForwardRelativePath>> FromIterator<A> for ForwardRelativePathBuf {
     fn from_iter<T: IntoIterator<Item = A>>(iter: T) -> Self {
         // Collect up to 20 pointers to the stack.
@@ -1376,6 +1252,7 @@ mod tests {
     use crate::paths::forward_rel_path::FileName;
     use crate::paths::forward_rel_path::ForwardRelativePath;
     use crate::paths::forward_rel_path::ForwardRelativePathBuf;
+    use crate::paths::relative_path::RelativePath;
 
     #[test]
     fn forward_path_is_comparable() -> buck2_error::Result<()> {
@@ -1387,14 +1264,6 @@ mod tests {
         let path2 = ForwardRelativePath::new("foo")?;
         let path3 = ForwardRelativePath::new("bar")?;
 
-        let str2 = "foo";
-        let str3 = "bar";
-        let str_abs = "/ble";
-
-        let string2 = "foo".to_owned();
-        let string3 = "bar".to_owned();
-        let string_abs = "/ble".to_owned();
-
         assert_eq!(path1_buf, path2_buf);
         assert_ne!(path1_buf, path3_buf);
 
@@ -1403,22 +1272,6 @@ mod tests {
 
         assert_eq!(path1_buf, path2);
         assert_ne!(path1, path3_buf);
-
-        assert_eq!(path1_buf, str2);
-        assert_ne!(path1_buf, str3);
-        assert_ne!(path1_buf, str_abs);
-
-        assert_eq!(path1, str2);
-        assert_ne!(path1, str3);
-        assert_ne!(path1, str_abs);
-
-        assert_eq!(path1_buf, string2);
-        assert_ne!(path1_buf, string3);
-        assert_ne!(path1_buf, string_abs);
-
-        assert_eq!(path1, string2);
-        assert_ne!(path1, string3);
-        assert_ne!(path1, string_abs);
 
         Ok(())
     }
@@ -1557,7 +1410,7 @@ mod tests {
         let err = serde_json::from_str::<ForwardRelativePathBuf>(r#""a//b""#)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("expected a normalized path"), "{}", err);
+        assert!(err.contains("contains an empty path component"), "{}", err);
     }
 
     #[test]
@@ -1586,6 +1439,33 @@ mod tests {
             ForwardRelativePath::new("foo").unwrap().split_last(),
         );
         assert_eq!(None, ForwardRelativePath::new("").unwrap().split_last());
+    }
+
+    #[test]
+    fn test_push_normalized_at_start() -> buck2_error::Result<()> {
+        // A segment added at the start of the buffer, on an empty buffer or after `..` removed the
+        // first component, must not get a leading `/`.
+        let mut path = ForwardRelativePathBuf::unchecked_new("".to_owned());
+        path.push_normalized(RelativePath::unchecked_new("a"))?;
+        assert_eq!("a", path.as_str());
+
+        let mut path = ForwardRelativePathBuf::unchecked_new("foo".to_owned());
+        path.push_normalized(RelativePath::unchecked_new("../bar"))?;
+        assert_eq!("bar", path.as_str());
+
+        let mut path = ForwardRelativePathBuf::unchecked_new("a/b".to_owned());
+        path.push_normalized(RelativePath::unchecked_new("../../a"))?;
+        assert_eq!("a", path.as_str());
+
+        // An error leaves the buffer unchanged.
+        let mut path = ForwardRelativePathBuf::unchecked_new("a".to_owned());
+        assert!(
+            path.push_normalized(RelativePath::unchecked_new("b/../../.."))
+                .is_err()
+        );
+        assert_eq!("a", path.as_str());
+
+        Ok(())
     }
 
     #[test]

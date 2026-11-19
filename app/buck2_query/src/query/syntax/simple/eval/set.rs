@@ -12,11 +12,12 @@ use std::fmt;
 use std::fmt::Display;
 
 use allocative::Allocative;
+use buck2_hash::BuckMutInsertionSet;
 use display_container::fmt_container;
 use dupe::IterDupedExt;
 use fancy_regex::Regex;
 use fancy_regex::RegexBuilder;
-use indexmap::IndexSet;
+use pagable::Pagable;
 
 use crate::query::environment::QueryTarget;
 use crate::query::syntax::simple::eval::file_set::FileNode;
@@ -24,10 +25,18 @@ use crate::query::syntax::simple::eval::file_set::FileSet;
 use crate::query::syntax::simple::eval::label_indexed;
 use crate::query::syntax::simple::eval::label_indexed::LabelIndexedSet;
 
-#[derive(Debug, Eq, PartialEq, Clone, Allocative)]
+#[derive(Debug, Clone, Allocative, Pagable)]
 pub struct TargetSet<T: QueryTarget> {
     targets: LabelIndexedSet<T>,
 }
+
+impl<T: QueryTarget> PartialEq for TargetSet<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.targets == other.targets
+    }
+}
+
+impl<T: QueryTarget> Eq for TargetSet<T> {}
 
 impl<T: QueryTarget> TargetSet<T> {
     pub fn new() -> Self {
@@ -71,16 +80,18 @@ impl<T: QueryTarget> TargetSet<T> {
         Ok(Self { targets })
     }
 
-    pub fn buildfile(&self) -> FileSet {
-        let mut files = IndexSet::new();
+    pub fn buildfile(&self) -> buck2_error::Result<FileSet> {
+        T::prefetch_bodies(self)?;
+        let mut files = BuckMutInsertionSet::default();
         for target in self.targets.iter() {
-            files.insert(FileNode(target.buildfile_path().path()));
+            files.insert(FileNode(target.buildfile_path()?.path()));
         }
-        FileSet::new(files)
+        Ok(FileSet::new(files))
     }
 
     pub fn inputs(&self) -> buck2_error::Result<FileSet> {
-        let mut files = IndexSet::new();
+        T::prefetch_bodies(self)?;
+        let mut files = BuckMutInsertionSet::default();
         for target in self.targets.iter() {
             target.inputs_for_each(|file| {
                 files.insert(FileNode(file));
@@ -124,10 +135,6 @@ impl<T: QueryTarget> TargetSet<T> {
 
     pub fn get_index(&self, index: usize) -> Option<&T> {
         self.targets.get_index(index)
-    }
-
-    pub fn get_index_of(&self, item: &T::Key) -> Option<usize> {
-        self.targets.get_index_of(item)
     }
 
     pub fn last(&self) -> Option<&T> {
@@ -175,12 +182,8 @@ impl<T: QueryTarget> TargetSet<T> {
         attribute: &str,
         filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
     ) -> buck2_error::Result<TargetSet<T>> {
-        self.filter(move |node| {
-            node.map_any_attr(attribute, |val| match val {
-                None => Ok(false),
-                Some(v) => T::attr_any_matches(v, &filter),
-            })
-        })
+        T::prefetch_bodies(self)?;
+        self.filter(move |node| node.attr_matches(attribute, filter))
     }
 
     pub fn nattrfilter(
@@ -188,11 +191,12 @@ impl<T: QueryTarget> TargetSet<T> {
         attribute: &str,
         filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
     ) -> buck2_error::Result<TargetSet<T>> {
+        T::prefetch_bodies(self)?;
         self.filter(move |node| {
-            node.map_attr(attribute, |val| match val {
+            node.map_any_attr(attribute, |val| match val {
                 None => Ok(false),
                 Some(v) => Ok(!T::attr_any_matches(v, &filter)?),
-            })
+            })?
         })
     }
 
@@ -216,7 +220,7 @@ impl<T: QueryTarget> TargetSet<T> {
 
     pub fn kind(&self, regex: &str) -> buck2_error::Result<TargetSet<T>> {
         let re = Regex::new(regex)?;
-        self.filter(|node| Ok(re.is_match(&node.rule_type())?))
+        self.filter(|node| Ok(re.is_match(&*node.rule_type())?))
     }
 
     pub fn intersect(&self, right: &TargetSet<T>) -> buck2_error::Result<TargetSet<T>> {

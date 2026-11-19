@@ -10,6 +10,7 @@
 
 use std::cell::RefCell;
 use std::fmt;
+use std::fmt::Display;
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -17,31 +18,34 @@ use buck2_build_api::bxl::types::BxlFunctionLabel;
 use buck2_core::bxl::BxlFilePath;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
+use buck2_hash::BuckFixedInsertionMap;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutInsertionSet;
 use buck2_interpreter::build_context::starlark_path_from_build_context;
 use cli_args::CliArgs;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
-use starlark::collections::SmallMap;
-use starlark::collections::SmallSet;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::starlark_simple_value;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::FrozenValue;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
+use starlark::values::OwnedFrozen;
+use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::dict::UnpackDictEntries;
+use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
+use starlark::values::dict::DictType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
-use starlark_map::ordered_map::OrderedMap;
 
 use crate::bxl::eval::CliResolutionCtx;
 use crate::bxl::starlark_defs::cli_args;
@@ -53,7 +57,7 @@ use crate::bxl::starlark_defs::cli_args::CliArgValue;
 pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) {
     fn bxl_main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
-        #[starlark(require = named)] cli_args: UnpackDictEntries<&'v str, &'v CliArgs>,
+        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<StarlarkStr, CliArgs>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -65,7 +69,7 @@ pub(crate) fn register_bxl_prefixed_main_function(builder: &mut GlobalsBuilder) 
 pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
     fn main<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallable<'v>,
-        #[starlark(require = named)] cli_args: UnpackDictEntries<&'v str, &'v CliArgs>,
+        #[starlark(require = named)] cli_args: ValueOf<'v, DictType<StarlarkStr, CliArgs>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -75,26 +79,27 @@ pub(crate) fn register_bxl_main_function(builder: &mut GlobalsBuilder) {
 
 fn bxl_impl<'v>(
     r#impl: StarlarkCallable<'v>,
-    cli_args: UnpackDictEntries<&'v str, &'v CliArgs>,
+    cli_args: ValueOf<'v, DictType<StarlarkStr, CliArgs>>,
     doc: &str,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
-    let implementation = r#impl.0;
+    let implementation = r#impl.to_value();
 
-    let bxl_path = (*starlark_path_from_build_context(eval)?
+    let bxl_path = starlark_path_from_build_context(eval)?
         .unpack_bxl_file()
         .ok_or_else(|| {
             buck2_error!(
                 buck2_error::ErrorTag::Input,
                 "`bxl` can only be declared in bxl files"
             )
-        })?)
-    .clone();
+        })?
+        .clone();
 
-    let mut unresolved_cli_args = SmallMap::new();
-    let mut short_args = SmallSet::new();
+    let mut unresolved_cli_args = BuckMutInsertionMap::new();
+    let mut short_args = BuckMutInsertionSet::new();
 
-    for (arg, def) in cli_args.entries {
+    for entry in cli_args.iter() {
+        let (arg, def) = entry?;
         if let Some(short) = def.short {
             if short_args.contains(&short) {
                 let buck2_error: buck2_error::Error =
@@ -104,16 +109,19 @@ fn bxl_impl<'v>(
                 short_args.insert(short.to_owned());
             }
         }
-        unresolved_cli_args.insert(arg.to_owned(), def.clone());
+        unresolved_cli_args.insert(arg.as_str().to_owned(), def.as_ref().clone());
     }
 
-    Ok(eval.heap().alloc(BxlFunction {
-        bxl_path,
-        id: RefCell::new(None),
-        implementation,
-        cli_args: unresolved_cli_args,
-        docs: Some(doc.to_owned()),
-    }))
+    Ok(eval
+        .heap()
+        .alloc(BxlFunction {
+            bxl_path,
+            id: RefCell::new(None),
+            implementation,
+            cli_args: unresolved_cli_args,
+            docs: Some(doc.to_owned()),
+        })
+        .to_value())
 }
 
 /// Errors around rule declaration, instantiation, validation, etc
@@ -136,7 +144,7 @@ pub(crate) struct BxlFunction<'v> {
     /// The implementation function for this bxl. Must be callable and take a ctx
     implementation: Value<'v>,
     /// the cli args to this bxl function
-    cli_args: SmallMap<String, CliArgs>,
+    cli_args: BuckMutInsertionMap<String, CliArgs>,
     docs: Option<String>,
 }
 
@@ -149,30 +157,38 @@ impl<'v> Display for BxlFunction<'v> {
     }
 }
 
-impl<'v> AllocValue<'v> for BxlFunction<'v> {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
+/// A bxl function in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub(crate) enum BxlFunctionView<'v> {
+    Unfrozen(ValueTyped<'v, BxlFunction<'v>>),
+    Frozen(ValueTyped<'v, FrozenBxlFunction<'v>>),
 }
 
 #[starlark_value(type = "bxl")]
-impl<'v> StarlarkValue<'v> for BxlFunction<'v> {
+impl<'v> StarlarkType<'v> for BxlFunctionView<'v> {
     fn export_as(
         &self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        *self.id.borrow_mut() = Some(BxlFunctionLabel {
-            bxl_path: self.bxl_path.clone(),
-            name: variable_name.to_owned(),
-        });
+        if let BxlFunctionView::Unfrozen(this) = self {
+            *this.id.borrow_mut() = Some(BxlFunctionLabel {
+                bxl_path: this.bxl_path.clone(),
+                name: variable_name.to_owned(),
+            });
+        }
         Ok(())
     }
 }
 
-impl<'v> Freeze for BxlFunction<'v> {
-    type Frozen = FrozenBxlFunction;
-    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for BxlFunction<'v> {
+    type Type = BxlFunctionView<'v>;
+}
+
+impl<'v> Freeze<'v> for BxlFunction<'v> {
+    type Frozen<'fv> = FrozenBxlFunction<'fv>;
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
         let frozen_impl = self.implementation.freeze(freezer)?;
         let docs = self.docs;
         let id = match self.id.into_inner() {
@@ -194,29 +210,57 @@ impl<'v> Freeze for BxlFunction<'v> {
     }
 }
 
-#[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
 #[display("{}()", bxl_id.name)]
-pub(crate) struct FrozenBxlFunction {
-    implementation: FrozenValue,
-    cli_args: SmallMap<String, CliArgs>,
+pub(crate) struct FrozenBxlFunction<'v> {
+    implementation: Value<'v>,
+    cli_args: BuckMutInsertionMap<String, CliArgs>,
+    #[starlark_pagable(pagable)]
     bxl_id: Arc<BxlFunctionLabel>,
     docs: Option<String>,
 }
-starlark_simple_value!(FrozenBxlFunction);
 
-#[starlark_value(type = "bxl")]
-impl<'v> StarlarkValue<'v> for FrozenBxlFunction {
-    type Canonical = BxlFunction<'v>;
+/// A bxl function kept alive by its owning frozen heap; usable across threads and awaits.
+pub(crate) type OwnedBxlFunction = OwnedFrozen<ValueTyped<'static, FrozenBxlFunction<'static>>>;
+
+#[starlark_value(frozen_vtable)]
+impl<'v> StarlarkValue<'v> for FrozenBxlFunction<'v> {
+    type Type = BxlFunctionView<'v>;
 }
 
-impl FrozenBxlFunction {
-    pub(crate) fn implementation(&self) -> FrozenValue {
+impl<'v> FrozenBxlFunction<'v> {
+    pub(crate) fn implementation(&self) -> Value<'v> {
         self.implementation
     }
 
-    pub(crate) fn to_clap<'v>(&'v self, mut clap: clap::Command) -> clap::Command {
-        if let Some(docs) = self.docs.as_ref() {
-            clap = clap.about(docs.clone())
+    pub(crate) fn cli_spec(&self) -> BxlCliSpec<'_> {
+        BxlCliSpec {
+            cli_args: &self.cli_args,
+            docs: self.docs.as_deref(),
+        }
+    }
+}
+
+/// The command line interface declared by a bxl function: its `cli_args` and its docstring.
+///
+/// Split out from the function because resolving cli args is async, and this holds no
+/// heap-branded values, so unlike a borrow of the function itself it can cross an await.
+pub(crate) struct BxlCliSpec<'a> {
+    cli_args: &'a BuckMutInsertionMap<String, CliArgs>,
+    docs: Option<&'a str>,
+}
+
+impl<'a> BxlCliSpec<'a> {
+    pub(crate) fn to_clap(&self, mut clap: clap::Command) -> clap::Command {
+        if let Some(docs) = self.docs {
+            clap = clap.about(docs.to_owned())
         }
 
         for (arg, def) in self.cli_args.iter() {
@@ -228,12 +272,12 @@ impl FrozenBxlFunction {
 
     /// Parses the cli args as defined by this bxl function. Automatically changes the CLI args
     /// to snakecase when accessed from the bxl context.
-    pub(crate) async fn parse_clap<'a>(
+    pub(crate) async fn parse_clap(
         &self,
         clap: clap::ArgMatches,
-        ctx: &CliResolutionCtx<'a>,
-    ) -> buck2_error::Result<OrderedMap<String, CliArgValue>> {
-        let mut res = OrderedMap::with_capacity(self.cli_args.len());
+        ctx: &CliResolutionCtx<'_>,
+    ) -> buck2_error::Result<BuckFixedInsertionMap<String, CliArgValue>> {
+        let mut res = BuckMutInsertionMap::with_capacity(self.cli_args.len());
 
         for (arg, cli) in self.cli_args.iter() {
             let snake_case_args = arg.replace('-', "_");
@@ -250,6 +294,54 @@ impl FrozenBxlFunction {
             );
         }
 
-        Ok(res)
+        Ok(res.freeze())
+    }
+}
+
+starlark::__starlark_pagable_only! {
+    #[cfg(test)]
+    mod tests {
+        use pagable::PagableDeserialize;
+        use pagable::PagableSerialize;
+        use starlark::values::FrozenHeapName;
+
+        use super::*;
+
+        #[test]
+        fn frozen_bxl_function_round_trips() -> pagable::Result<()> {
+            let expected_label = BxlFunctionLabel {
+                bxl_path: BxlFilePath::testing_new("cell", "dir/test.bxl"),
+                name: "main".to_owned(),
+            };
+            let owned: OwnedFrozen<ValueOf<BxlFunctionView>> = OwnedFrozen::build(
+                FrozenHeapName::user("frozen_bxl_function_round_trips"),
+                |heap| {
+                    heap.alloc(FrozenBxlFunction {
+                        implementation: heap.alloc("implementation").to_value(),
+                        cli_args: BuckMutInsertionMap::new(),
+                        bxl_id: Arc::new(expected_label.clone()),
+                        docs: Some("test docs".to_owned()),
+                    })
+                },
+            );
+
+            let mut serializer = pagable::testing::TestingSerializer::new();
+            owned.pagable_serialize(&mut serializer)?;
+            let bytes = serializer.finish();
+            let mut deserializer = pagable::testing::TestingDeserializer::new(&bytes);
+            let restored =
+                OwnedFrozen::<ValueOf<BxlFunctionView>>::pagable_deserialize(&mut deserializer)?;
+
+            restored.by_ref(|f| {
+                let BxlFunctionView::Frozen(f) = f.get() else {
+                    panic!("expected the frozen representation, got `{f}`");
+                };
+                assert_eq!(f.implementation.unpack_str(), Some("implementation"));
+                assert!(f.cli_args.is_empty());
+                assert_eq!(f.bxl_id.as_ref(), &expected_label);
+                assert_eq!(f.docs.as_deref(), Some("test docs"));
+            });
+            Ok(())
+        }
     }
 }

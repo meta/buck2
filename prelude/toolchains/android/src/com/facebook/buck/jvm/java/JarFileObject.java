@@ -11,13 +11,14 @@
 package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.util.zip.JarBuilder;
+import com.facebook.infer.annotation.Nullsafe;
 import java.net.URI;
-import javax.annotation.Nullable;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.NestingKind;
 import javax.tools.FileObject;
 import javax.tools.JavaFileObject;
 import javax.tools.SimpleJavaFileObject;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A {@link JavaFileObject} implementation that allows using jar URIs unlike {@link
@@ -25,6 +26,7 @@ import javax.tools.SimpleJavaFileObject;
  * used when the CLASS_OUTPUT is represented by a straight to jar write. The only content that it
  * stores is the full uri, the relative path within the jar and the kind of the {@link FileObject}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class JarFileObject implements JavaFileObject {
 
   protected final URI uri;

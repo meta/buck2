@@ -10,7 +10,10 @@
 
 package com.facebook.buck.jvm.cd.serialization;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** CD serialization utilities. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class SerializationUtil {
 
   private SerializationUtil() {}

@@ -36,7 +36,8 @@ pub fn sc_clk_tck() -> buck2_error::Result<u32> {
         .copied()
 }
 
-#[cfg(test)]
+// Miri does not implement this `sysconf`.
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::os::unix_like::sc_clk_tck::sc_clk_tck;
 

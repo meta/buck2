@@ -12,21 +12,19 @@ use allocative::Allocative;
 use buck2_build_api::bxl::build_result::BxlBuildResult;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::ProvidesStaticType;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
-use starlark::values::ValueLike;
+use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
 use crate::bxl::starlark_defs::context::build::StarlarkFailedArtifactIterable;
-use crate::bxl::starlark_defs::context::build::StarlarkFailedArtifactIterableGen;
 use crate::bxl::starlark_defs::context::build::StarlarkProvidersArtifactIterable;
-use crate::bxl::starlark_defs::context::build::StarlarkProvidersArtifactIterableGen;
 
 /// Starlark object for `StarlarkBuildResult` (which is not Starlark value).
 #[derive(
@@ -35,7 +33,8 @@ use crate::bxl::starlark_defs::context::build::StarlarkProvidersArtifactIterable
     derive_more::Display,
     ProvidesStaticType,
     NoSerialize,
-    Allocative
+    Allocative,
+    starlark::StarlarkPagableUnsupported
 )]
 pub(crate) struct StarlarkBxlBuildResult(pub(crate) BxlBuildResult);
 
@@ -52,13 +51,15 @@ fn starlark_build_result_methods(builder: &mut MethodsBuilder) {
     ///         ctx.output.print(value.artifacts())
     /// ```
     fn artifacts<'v>(
-        this: Value<'v>,
-    ) -> starlark::Result<NoneOr<StarlarkProvidersArtifactIterable<'v>>> {
-        match &this.downcast_ref::<StarlarkBxlBuildResult>().unwrap().0 {
+        this: ValueTyped<'v, StarlarkBxlBuildResult>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkProvidersArtifactIterable<'v>>>> {
+        match &this.as_ref().0 {
             BxlBuildResult::None => Ok(NoneOr::None),
-            BxlBuildResult::Built { .. } => {
-                Ok(NoneOr::Other(StarlarkProvidersArtifactIterableGen(this)))
-            }
+            BxlBuildResult::Built { .. } => Ok(NoneOr::Other(ValueOf::alloc(
+                heap,
+                StarlarkProvidersArtifactIterable(this.to_value()),
+            ))),
         }
     }
 
@@ -72,23 +73,26 @@ fn starlark_build_result_methods(builder: &mut MethodsBuilder) {
     ///         ctx.output.print(value.failures())
     /// ```
     fn failures<'v>(
-        this: Value<'v>,
-    ) -> starlark::Result<NoneOr<StarlarkFailedArtifactIterable<'v>>> {
-        match &this.downcast_ref::<StarlarkBxlBuildResult>().unwrap().0 {
+        this: ValueTyped<'v, StarlarkBxlBuildResult>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkFailedArtifactIterable<'v>>>> {
+        match &this.as_ref().0 {
             BxlBuildResult::None => Ok(NoneOr::None),
-            BxlBuildResult::Built { .. } => {
-                Ok(NoneOr::Other(StarlarkFailedArtifactIterableGen(this)))
-            }
+            BxlBuildResult::Built { .. } => Ok(NoneOr::Other(ValueOf::alloc(
+                heap,
+                StarlarkFailedArtifactIterable(this.to_value()),
+            ))),
         }
     }
 }
 
 starlark_simple_value!(StarlarkBxlBuildResult);
 
+starlark::methods_static!(STARLARK_BUILD_RESULT_METHODS = starlark_build_result_methods);
+
 #[starlark_value(type = "bxl.BuildResult")]
 impl<'v> StarlarkValue<'v> for StarlarkBxlBuildResult {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(starlark_build_result_methods)
+        Some(STARLARK_BUILD_RESULT_METHODS.methods())
     }
 }

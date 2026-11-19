@@ -1,0 +1,19 @@
+load(":defs.bzl", "cas_artifact", "consume", "source_file")
+
+# `seed.txt` is written by the test. Consumed by a remote action under another namespace's use
+# case, it is uploaded there under its sha1 digest (sources are hashed with sha1 here).
+source_file(name = "seed_src", src = "seed.txt")
+
+consume(name = "seed", dep = ":seed_src")
+
+# The same sha1 digest named from this daemon's namespace, via the other one.
+cas_artifact(
+    name = "reconciled",
+    digest = read_config("test", "digest", "da39a3ee5e6b4b0d3255bfef95601890afd80709:0"),
+    use_case = "buck2-default",
+)
+
+cas_artifact(
+    name = "canonical",
+    digest = read_config("test", "digest", "da39a3ee5e6b4b0d3255bfef95601890afd80709:0"),
+)

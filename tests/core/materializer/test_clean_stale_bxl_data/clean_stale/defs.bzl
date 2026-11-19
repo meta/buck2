@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _write_json_impl(ctx: AnalysisContext) -> list[Provider]:
-    out = ctx.actions.write_json("out.json", ctx.attrs.content)
+    out = ctx.actions.write_json("out.json", ctx.attrs.content, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 write_json = rule(

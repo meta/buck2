@@ -8,23 +8,9 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
-use buck2_action_impl::dynamic::attrs_starlark::StarlarkDynamicAttrType;
-use buck2_action_impl::dynamic::bxl::EVAL_BXL_FOR_DYNAMIC_OUTPUT;
-use buck2_action_impl::dynamic::deferred::DynamicLambdaArgs;
-use buck2_action_impl::dynamic::deferred::DynamicLambdaCtxDataSpec;
-use buck2_action_impl::dynamic::deferred::InputArtifactsMaterialized;
-use buck2_action_impl::dynamic::deferred::dynamic_lambda_ctx_data;
-use buck2_action_impl::dynamic::deferred::invoke_dynamic_output_lambda;
-use buck2_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallable;
-use buck2_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallbackParam;
-use buck2_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallbackParamSpec;
-use buck2_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallbackReturnType;
-use buck2_action_impl::dynamic::new_dynamic_actions_callable;
-use buck2_action_impl::dynamic::params::FrozenDynamicLambdaParams;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_build_api::analysis::registry::RecordedAnalysisValues;
@@ -35,11 +21,26 @@ use buck2_common::scope::scope_and_collect_with_dice;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKeyBxl;
 use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_dynamic_actions::attrs_starlark::StarlarkDynamicAttrType;
+use buck2_dynamic_actions::bxl::EVAL_BXL_FOR_DYNAMIC_OUTPUT;
+use buck2_dynamic_actions::deferred::DynamicLambdaArgs;
+use buck2_dynamic_actions::deferred::DynamicLambdaCtxDataSpec;
+use buck2_dynamic_actions::deferred::InputArtifactsMaterialized;
+use buck2_dynamic_actions::deferred::dynamic_lambda_ctx_data;
+use buck2_dynamic_actions::deferred::invoke_dynamic_output_lambda;
+use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallableView;
+use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallbackParam;
+use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallbackParamSpec;
+use buck2_dynamic_actions::dynamic_actions_callable::DynamicActionsCallbackReturnType;
+use buck2_dynamic_actions::new_dynamic_actions_callable;
+use buck2_dynamic_actions::params::FrozenDynamicLambdaParams;
 use buck2_error::buck2_error;
 use buck2_error::internal_error;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::digest_config::HasDigestConfig;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutMap;
 use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
 use buck2_interpreter::factory::BuckStarlarkModule;
 use buck2_interpreter::factory::StarlarkEvaluatorProvider;
@@ -48,14 +49,15 @@ use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationObserver;
 use dupe::Dupe;
-use indexmap::IndexMap;
 use itertools::Itertools;
-use starlark::collections::SmallMap;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
-use starlark::values::OwnedRefFrozenRef;
-use starlark::values::ValueTyped;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::Heap;
+use starlark::values::OwnedFrozenRef;
+use starlark::values::StarlarkTypeExpr;
+use starlark::values::ValueOf;
+use starlark::values::dict::DictType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallableChecked;
 
 use crate::bxl::eval::LIMITED_EXECUTOR;
@@ -69,11 +71,11 @@ use crate::bxl::starlark_defs::eval_extra::BxlEvalExtra;
 pub(crate) async fn eval_bxl_for_dynamic_output<'v>(
     base_deferred_key: &'v BaseDeferredKeyBxl,
     self_key: DynamicLambdaResultsKey,
-    dynamic_lambda: OwnedRefFrozenRef<'v, FrozenDynamicLambdaParams>,
+    dynamic_lambda: OwnedFrozenRef<'v, &'static FrozenDynamicLambdaParams<'static>>,
     dice_ctx: &'v mut DiceComputations<'_>,
     input_artifacts_materialized: InputArtifactsMaterialized,
-    ensured_artifacts: &'v IndexMap<&'v Artifact, &'v ArtifactValue>,
-    resolved_dynamic_values: HashMap<DynamicValue, FrozenProviderCollectionValue>,
+    ensured_artifacts: &'v BuckMutInsertionMap<&'v Artifact, &'v ArtifactValue>,
+    resolved_dynamic_values: BuckMutMap<DynamicValue, FrozenProviderCollectionValue>,
     _digest_config: DigestConfig,
     liveness: CancellationObserver,
 ) -> buck2_error::Result<RecordedAnalysisValues> {
@@ -81,6 +83,10 @@ pub(crate) async fn eval_bxl_for_dynamic_output<'v>(
     let dynamic_key =
         BxlDynamicKey::from_base_deferred_key_dyn_impl_err(base_deferred_key.clone())?;
     let key = dynamic_key.key();
+    // FIXME(JakobDegen): Audit that this string is user-friendly.
+    // Currently uses BxlKey's Display, which formats as "{bxl_path}:{name}"
+    // (e.g. "cell//path/to/file.bxl:function_name").
+    let eval_kind = StarlarkEvalKind::BxlDynamic(key.to_string().into());
     let dynamic_data = DynamicBxlContextData {
         exec_deps: dynamic_key
             .0
@@ -107,7 +113,7 @@ pub(crate) async fn eval_bxl_for_dynamic_output<'v>(
         input_artifacts_materialized,
         ensured_artifacts,
         resolved_dynamic_values,
-        artifact_fs,
+        artifact_fs: artifact_fs.dupe(),
 
         print: EventDispatcherPrintHandler(dispatcher.dupe()),
     };
@@ -130,7 +136,6 @@ pub(crate) async fn eval_bxl_for_dynamic_output<'v>(
         scope_and_collect_with_dice(dice_ctx, |dice_ctx, s| {
             s.spawn_cancellable(
                 limited_executor.execute(async move {
-                    let eval_kind = StarlarkEvalKind::BxlDynamic(Arc::new("foo".to_owned()));
                     let eval_provider = StarlarkEvaluatorProvider::new(dice_ctx, eval_kind).await?;
                     tokio::task::block_in_place(|| eval_ctx.do_eval(eval_provider, dice_ctx))
                 }),
@@ -150,12 +155,12 @@ struct BxlDynamicOutputEvaluator<'f> {
     data: BxlContextCoreData,
     self_key: DynamicLambdaResultsKey,
     liveness: CancellationObserver,
-    dynamic_lambda: OwnedRefFrozenRef<'f, FrozenDynamicLambdaParams>,
+    dynamic_lambda: OwnedFrozenRef<'f, &'static FrozenDynamicLambdaParams<'static>>,
     dynamic_data: DynamicBxlContextData,
     digest_config: DigestConfig,
     input_artifacts_materialized: InputArtifactsMaterialized,
-    ensured_artifacts: &'f IndexMap<&'f Artifact, &'f ArtifactValue>,
-    resolved_dynamic_values: HashMap<DynamicValue, FrozenProviderCollectionValue>,
+    ensured_artifacts: &'f BuckMutInsertionMap<&'f Artifact, &'f ArtifactValue>,
+    resolved_dynamic_values: BuckMutMap<DynamicValue, FrozenProviderCollectionValue>,
     artifact_fs: ArtifactFs,
     print: EventDispatcherPrintHandler,
 }
@@ -166,9 +171,7 @@ impl BxlDynamicOutputEvaluator<'_> {
         provider: StarlarkEvaluatorProvider,
         dice: &mut DiceComputations<'_>,
     ) -> buck2_error::Result<RecordedAnalysisValues> {
-        BuckStarlarkModule::with_profiling(|env_provider| {
-            let env = env_provider.make();
-
+        BuckStarlarkModule::with_profiling(|env| {
             let bxl_dice = BxlDiceComputations::new(dice, self.liveness.dupe());
 
             let (finished_eval, analysis_registry) = {
@@ -198,7 +201,7 @@ impl BxlDynamicOutputEvaluator<'_> {
                         self.dynamic_data,
                     )?;
 
-                    let ctx = ValueTyped::<BxlContext>::new_err(env.heap().alloc(bxl_dynamic_ctx))?;
+                    let ctx = env.heap().alloc(bxl_dynamic_ctx).get();
 
                     let args = match (
                         &dynamic_lambda_ctx_data.lambda.attr_values,
@@ -273,8 +276,10 @@ pub(crate) fn init_eval_bxl_for_dynamic_output() {
     );
 }
 
+pagable::static_str!(P_BXLCTX_NAME = "bxl_ctx");
+
 static P_BXLCTX: DynamicActionsCallbackParam = DynamicActionsCallbackParam {
-    name: "bxl_ctx",
+    name: P_BXLCTX_NAME,
     ty: LazyLock::new(BxlContext::starlark_type_repr),
 };
 
@@ -284,8 +289,8 @@ pub(crate) fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
     /// and the result of calling it can be passed to `ctx.actions.dynamic_output_new`.
     ///
     /// Be aware that the context argument of the called impl function differs between
-    /// [`dynamic_actions`](../#dynamic_actions) where it is [`actions: AnalysisActions`](../build/AnalysisActions)
-    /// and [`bxl.dynamic_actions`](../../bxl/#dynamic_actions)
+    /// [`dynamic_actions`](../build/#dynamic_actions) where it is [`actions: AnalysisActions`](../build/AnalysisActions)
+    /// and [`bxl.dynamic_actions`](#dynamic_actions)
     /// where it is [`bxl_ctx: bxl.Context`](../bxl/Context).
     fn dynamic_actions<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallableChecked<
@@ -293,8 +298,12 @@ pub(crate) fn register_dynamic_actions(globals: &mut GlobalsBuilder) {
             DynamicActionsCallbackParamSpec,
             DynamicActionsCallbackReturnType,
         >,
-        #[starlark(require = named)] attrs: SmallMap<String, &'v StarlarkDynamicAttrType>,
-    ) -> starlark::Result<DynamicActionsCallable<'v>> {
-        Ok(new_dynamic_actions_callable(r#impl, attrs, &P_BXLCTX)?)
+        #[starlark(require = named)] attrs: ValueOf<
+            'v,
+            DictType<StarlarkStr, StarlarkDynamicAttrType<'v>>,
+        >,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, DynamicActionsCallableView<'v>>> {
+        Ok(heap.alloc(new_dynamic_actions_callable(r#impl, attrs, &P_BXLCTX)?))
     }
 }

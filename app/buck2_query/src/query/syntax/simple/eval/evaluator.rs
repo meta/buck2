@@ -10,14 +10,13 @@
 
 //! Implementation of the cli and query_* attr query language.
 
+use buck2_hash::BuckMutInsertionSet;
 use buck2_query_parser::Expr;
 use buck2_query_parser::parse_expr;
 use buck2_query_parser::spanned::Spanned;
 use futures::FutureExt;
-use gazebo::prelude::*;
-use gazebo::variants::VariantName;
+use variant_name::VariantName;
 
-use crate::__derive_refs::indexmap::IndexSet;
 use crate::query::environment::QueryEnvironment;
 use crate::query::syntax::simple::eval::error::QueryError;
 use crate::query::syntax::simple::eval::file_set::FileNode;
@@ -55,6 +54,7 @@ impl<'e, Env: QueryEnvironment> QueryEvaluator<'e, Env> {
         // the function impls there to work across bxl and here, but not sure if that's worth the
         // complexity or not.
         match expr {
+            Expr::None => Ok(QueryValue::None),
             Expr::String(word) => Ok(QueryValue::String((*word).to_owned())),
             Expr::Integer(value) => Ok(QueryValue::Integer(*value)),
             Expr::Function {
@@ -90,15 +90,15 @@ impl<'e, Env: QueryEnvironment> QueryEvaluator<'e, Env> {
                 Ok(value)
             }
             Expr::Set(args) => {
-                let patterns: Vec<_> = args.map(|v| v.fragment());
+                let patterns: Vec<_> = args.iter().map(|v| v.fragment()).collect::<Vec<_>>();
                 // TODO(cjhopman): evaluating the literals in this way does not preserver the ordering from
                 // the user, instead the result will be package-ordered. We may need to change this to
                 // preserve order.
                 Ok(self.env.eval_literals(&patterns).await?.into())
             }
             Expr::FileSet(args) => {
-                let patterns: Vec<_> = args.map(|v| v.fragment());
-                let mut files = FileSet::new(IndexSet::<FileNode>::new());
+                let patterns: Vec<_> = args.iter().map(|v| v.fragment()).collect::<Vec<_>>();
+                let mut files = FileSet::new(BuckMutInsertionSet::<FileNode>::new());
 
                 for pattern in patterns {
                     files.insert_all(&self.env.eval_file_literal(pattern).await?)

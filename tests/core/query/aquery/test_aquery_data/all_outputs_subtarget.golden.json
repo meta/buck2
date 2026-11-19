@@ -1,10 +1,10 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
 {
-  "(target: `root//:test (<unspecified>)`, id: `3`)": {
+  "(target: `root//:test (<unspecified>)`, id: `4`)": {
     "identifier": "sub_default"
   },
-  "(target: `root//:test (<unspecified>)`, id: `4`)": {
+  "(target: `root//:test (<unspecified>)`, id: `5`)": {
     "identifier": "sub_other"
   }
 }

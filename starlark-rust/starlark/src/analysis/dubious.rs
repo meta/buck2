@@ -65,6 +65,7 @@ fn duplicate_dictionary_key(module: &AstModule, res: &mut Vec<LintT<Dubious>>) {
         Int(StarlarkInt),
         Float(u64),
         String(&'a str),
+        Bytes(&'a [u8]),
         Identifier(&'a str),
     }
 
@@ -85,6 +86,7 @@ fn duplicate_dictionary_key(module: &AstModule, res: &mut Vec<LintT<Dubious>>) {
                     }
                 }
                 AstLiteral::String(x) => Some((Key::String(&x.node), x.span)),
+                AstLiteral::Bytes(x) => Some((Key::Bytes(&x.node), x.span)),
                 AstLiteral::Ellipsis => None,
             },
             Expr::Identifier(x) => Some((Key::Identifier(&x.node.ident), x.span)),
@@ -188,6 +190,19 @@ mod tests {
                 "\"no1\"", "42", "\"no2\"", "123", "0.25", "no3", "no3", "no4"
             ]
         );
+    }
+
+    #[test]
+    fn test_lint_duplicate_bytes_keys() {
+        let m = module(
+            r#"
+{b"a": 1, b"a": 2}
+{b"x": 1, b"y": 2, b"x": 3}
+"#,
+        );
+        let mut res = Vec::new();
+        duplicate_dictionary_key(&m, &mut res);
+        assert_eq!(res.map(|x| x.problem.about()), &["b\"a\"", "b\"x\""]);
     }
 
     #[test]

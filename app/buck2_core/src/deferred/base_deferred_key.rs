@@ -22,9 +22,12 @@ use buck2_data::ToProtoMessage;
 use buck2_data::action_key_owner::BaseDeferredKeyProto;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_util::size_assert;
 use cmp_any::PartialEqAny;
 use dupe::Dupe;
-use static_assertions::assert_eq_size;
+use pagable::Pagable;
+use pagable::pagable_typetag;
+use pagable::typetag::PagableTagged;
 use strong_hash::StrongHash;
 
 use crate::content_hash::ContentBasedPathHash;
@@ -35,7 +38,10 @@ use crate::global_cfg_options::GlobalCfgOptions;
 use crate::target::configured_target_label::ConfiguredTargetLabel;
 use crate::target::name::EQ_SIGN_SUBST;
 
-pub trait BaseDeferredKeyDyn: Debug + Display + Any + Allocative + Send + Sync + 'static {
+#[pagable_typetag]
+pub trait BaseDeferredKeyDyn:
+    PagableTagged + Debug + Display + Any + Allocative + Send + Sync + 'static
+{
     fn eq_token(&self) -> PartialEqAny<'_>;
     fn hash(&self) -> u64;
     fn strong_hash(&self) -> u64;
@@ -50,13 +56,15 @@ pub trait BaseDeferredKeyDyn: Debug + Display + Any + Allocative + Send + Sync +
     ) -> buck2_error::Result<ProjectRelativePathBuf>;
     /// Fake label for anon targets, `None` for BXL.
     fn configured_label(&self) -> Option<ConfiguredTargetLabel>;
+    /// Short rule type name for anon targets, `None` for BXL.
+    fn rule_type_name(&self) -> Option<&str>;
     fn to_proto(&self) -> BaseDeferredKeyProto;
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
     /// bxl anon target or bxl dynamic action node or bxl itself will return cfg else None
     fn global_cfg_options(&self) -> Option<GlobalCfgOptions>;
 }
 
-#[derive(Debug, derive_more::Display, Dupe, Clone, Allocative)]
+#[derive(Debug, derive_more::Display, Dupe, Clone, Allocative, Pagable)]
 pub struct BaseDeferredKeyBxl(pub Arc<dyn BaseDeferredKeyDyn>);
 
 impl PartialEq for BaseDeferredKeyBxl {
@@ -66,20 +74,20 @@ impl PartialEq for BaseDeferredKeyBxl {
 }
 
 #[derive(Debug, buck2_error::Error)]
-#[buck2(tag = Input)]
+#[buck2(tag = Tier0)]
 pub enum PathResolutionError {
     #[error("Tried to resolve a content-based path {0} without providing the content hash!")]
     ContentBasedPathWithNoContentHash(ForwardRelativePathBuf),
 }
 
-#[derive(Debug, derive_more::Display, Dupe, Clone, Allocative)]
+#[derive(Debug, derive_more::Display, Dupe, Clone, Allocative, Pagable)]
 pub enum BaseDeferredKey {
     TargetLabel(ConfiguredTargetLabel),
     AnonTarget(Arc<dyn BaseDeferredKeyDyn>),
     BxlLabel(BaseDeferredKeyBxl),
 }
 
-assert_eq_size!(BaseDeferredKey, [usize; 3]);
+size_assert::words_of_type!(BaseDeferredKey, 3);
 
 impl PartialEq for BaseDeferredKey {
     fn eq(&self, other: &Self) -> bool {
@@ -97,6 +105,38 @@ impl PartialEq for BaseDeferredKey {
 }
 
 impl Eq for BaseDeferredKey {}
+
+impl PartialOrd for BaseDeferredKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+// `Ord` is only needed so page-out can serialize `HashMap`s keyed by
+// `BaseDeferredKey` in a deterministic (process-stable) order.
+impl Ord for BaseDeferredKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        fn rank(k: &BaseDeferredKey) -> u8 {
+            match k {
+                BaseDeferredKey::TargetLabel(_) => 0,
+                BaseDeferredKey::AnonTarget(_) => 1,
+                BaseDeferredKey::BxlLabel(_) => 2,
+            }
+        }
+        match (self, other) {
+            (BaseDeferredKey::TargetLabel(a), BaseDeferredKey::TargetLabel(b)) => a.cmp(b),
+            // `dyn BaseDeferredKeyDyn` is not `Ord`; order by its content `strong_hash`
+            // (a blake3 hash over all identity fields, stable across processes).
+            (BaseDeferredKey::AnonTarget(a), BaseDeferredKey::AnonTarget(b)) => {
+                a.strong_hash().cmp(&b.strong_hash())
+            }
+            (BaseDeferredKey::BxlLabel(a), BaseDeferredKey::BxlLabel(b)) => {
+                a.0.strong_hash().cmp(&b.0.strong_hash())
+            }
+            _ => rank(self).cmp(&rank(other)),
+        }
+    }
+}
 
 impl Hash for BaseDeferredKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -152,9 +192,9 @@ impl BaseDeferredKey {
                 let cell_relative_path = target.pkg().cell_relative_path().as_str();
                 let escaped_target_name = Self::escape_target_name(target.name().as_str());
 
-                // It is performance critical that we use slices and allocate via `join` instead of
-                // repeated calls to `join` on the path object because `join` allocates on each call,
-                // which has a significant impact.
+                // Keep the identifier as borrowed fragments so the complete output path
+                // can be assembled with one final allocation. Repeated path joins
+                // allocate and copy each growing prefix.
                 let path_identifier = match path_resolution_method {
                     BuckOutPathKind::Configuration => [
                         target.cfg().output_hash().as_str(),
@@ -215,27 +255,41 @@ impl BaseDeferredKey {
                         }
                     }
                 };
-                let path_or_hash = if fully_hash_path {
+                let path_hash;
+                let hash_parts;
+                let path_identifier = if fully_hash_path {
                     let mut hasher = DefaultHasher::new();
                     path_identifier.hash(&mut hasher);
-
-                    format!("{:016x}/", hasher.finish())
+                    path_hash = format!("{:016x}/", hasher.finish());
+                    hash_parts = [path_hash.as_str()];
+                    hash_parts.as_slice()
                 } else {
-                    path_identifier.concat()
+                    path_identifier.as_slice()
                 };
 
-                let hashed_path = [
-                    base.as_str(),
-                    "/",
-                    prefix.as_str(),
-                    "/",
-                    target.pkg().cell_name().as_str(),
-                    "/",
-                    path_or_hash.as_str(),
-                    path.as_str(),
-                ];
+                let cell_name = target.pkg().cell_name();
+                // Copy the identifier directly into the complete path, without
+                // allocating an intermediate String for non-hashed paths.
+                let mut hashed_path = String::with_capacity(
+                    base.as_str().len()
+                        + prefix.as_str().len()
+                        + cell_name.as_str().len()
+                        + 3
+                        + path_identifier.iter().map(|part| part.len()).sum::<usize>()
+                        + path.as_str().len(),
+                );
+                hashed_path.push_str(base.as_str());
+                hashed_path.push('/');
+                hashed_path.push_str(prefix.as_str());
+                hashed_path.push('/');
+                hashed_path.push_str(cell_name.as_str());
+                hashed_path.push('/');
+                for part in path_identifier {
+                    hashed_path.push_str(part);
+                }
+                hashed_path.push_str(path.as_str());
 
-                Ok(ProjectRelativePathBuf::unchecked_new(hashed_path.concat()))
+                Ok(ProjectRelativePathBuf::unchecked_new(hashed_path))
             }
             BaseDeferredKey::AnonTarget(d) | BaseDeferredKey::BxlLabel(BaseDeferredKeyBxl(d)) => d
                 .make_hashed_path(

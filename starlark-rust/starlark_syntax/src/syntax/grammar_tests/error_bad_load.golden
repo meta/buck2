@@ -1,0 +1,81 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+load()
+
+Error:
+error: Parse error: unexpected symbol ')', expected string literal
+ --> error_bad_load:1:6
+  |
+1 | load()
+  |      ^
+
+
+Program:
+load(123)
+
+Error:
+error: Parse error: unexpected integer literal '123', expected string literal
+ --> error_bad_load:1:6
+  |
+1 | load(123)
+  |      ^^^
+
+
+Program:
+load("foo.bzl")
+
+Error:
+error: `load` statement requires at least two arguments
+ --> error_bad_load:1:6
+  |
+1 | load("foo.bzl")
+  |      ^^^^^^^^^
+
+
+Program:
+load("", 1)
+
+Error:
+error: Parse error: unexpected integer literal '1', expected string literal or identifier
+ --> error_bad_load:1:10
+  |
+1 | load("", 1)
+  |          ^
+
+
+Program:
+load(1, 2)
+
+Error:
+error: Parse error: unexpected integer literal '1', expected string literal
+ --> error_bad_load:1:6
+  |
+1 | load(1, 2)
+  |      ^
+
+
+Program:
+load("a", x)
+
+Error:
+error: Parse error: expected string literal in load statement
+ --> error_bad_load:1:11
+  |
+1 | load("a", x)
+  |           ^
+
+
+Program:
+load("a", x2=x)
+
+Error:
+error: Parse error: unexpected identifier 'x', expected string literal
+ --> error_bad_load:1:14
+  |
+1 | load("a", x2=x)
+  |              ^

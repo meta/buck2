@@ -8,67 +8,77 @@
  * above-listed licenses.
  */
 
-use async_trait::async_trait;
-use buck2_core::configuration::compatibility::MaybeCompatible;
+use buck2_core::configuration::compatibility::ResultMaybeCompatible;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_util::late_binding::LateBinding;
 use dice::DiceComputations;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 
 use crate::nodes::configured::ConfiguredTargetNode;
 
-#[async_trait]
 pub trait ConfiguredTargetNodeCalculationImpl: Send + Sync + 'static {
     /// Returns the ConfiguredTargetNode corresponding to a ConfiguredTargetLabel.
-    async fn get_configured_target_node(
+    fn get_configured_target_node<'a, 'd>(
         &self,
-        ctx: &mut DiceComputations<'_>,
-        target: &ConfiguredTargetLabel,
+        ctx: &'a mut DiceComputations<'d>,
+        target: &'a ConfiguredTargetLabel,
         check_dependency_incompatibility: bool,
-    ) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>>;
+    ) -> BoxFuture<'a, ResultMaybeCompatible<&'d ConfiguredTargetNode>>
+    where
+        'd: 'a;
 }
 
 pub static CONFIGURED_TARGET_NODE_CALCULATION: LateBinding<
     &'static dyn ConfiguredTargetNodeCalculationImpl,
 > = LateBinding::new("CONFIGURED_TARGET_NODE_CALCULATION");
 
-#[async_trait]
-pub trait ConfiguredTargetNodeCalculation {
+pub trait ConfiguredTargetNodeCalculation<'d> {
     /// Returns the ConfiguredTargetNode corresponding to a ConfiguredTargetLabel.
-    async fn get_configured_target_node(
-        &mut self,
-        target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>>;
+    fn get_configured_target_node<'a>(
+        &'a mut self,
+        target: &'a ConfiguredTargetLabel,
+    ) -> BoxFuture<'a, ResultMaybeCompatible<&'d ConfiguredTargetNode>>
+    where
+        'd: 'a;
 
     /// Same as `get_configured_target_node` except it doesn't error/soft-error on
     /// configured target that is transitively incompatible. This should only be used
     /// to obtain any configured target node used as deps of other configured nodes,
     /// ex. recursively from `get_configured_target_node` function. All other use cases
     /// should use `get_configured_target_node` instead.
-    async fn get_internal_configured_target_node(
-        &mut self,
-        target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>>;
+    fn get_internal_configured_target_node<'a>(
+        &'a mut self,
+        target: &'a ConfiguredTargetLabel,
+    ) -> BoxFuture<'a, ResultMaybeCompatible<&'d ConfiguredTargetNode>>
+    where
+        'd: 'a;
 }
 
-#[async_trait]
-impl ConfiguredTargetNodeCalculation for DiceComputations<'_> {
-    async fn get_configured_target_node(
-        &mut self,
-        target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>> {
-        CONFIGURED_TARGET_NODE_CALCULATION
-            .get()?
-            .get_configured_target_node(self, target, true)
-            .await
+impl<'d> ConfiguredTargetNodeCalculation<'d> for DiceComputations<'d> {
+    fn get_configured_target_node<'a>(
+        &'a mut self,
+        target: &'a ConfiguredTargetLabel,
+    ) -> BoxFuture<'a, ResultMaybeCompatible<&'d ConfiguredTargetNode>>
+    where
+        'd: 'a,
+    {
+        match CONFIGURED_TARGET_NODE_CALCULATION.get() {
+            Ok(calc) => calc.get_configured_target_node(self, target, true),
+            Err(e) => futures::future::ready(ResultMaybeCompatible::Err(e)).boxed(),
+        }
     }
 
-    async fn get_internal_configured_target_node(
-        &mut self,
-        target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>> {
-        CONFIGURED_TARGET_NODE_CALCULATION
-            .get()?
-            .get_configured_target_node(self, target, false)
-            .await
+    fn get_internal_configured_target_node<'a>(
+        &'a mut self,
+        target: &'a ConfiguredTargetLabel,
+    ) -> BoxFuture<'a, ResultMaybeCompatible<&'d ConfiguredTargetNode>>
+    where
+        'd: 'a,
+    {
+        match CONFIGURED_TARGET_NODE_CALCULATION.get() {
+            Ok(calc) => calc.get_configured_target_node(self, target, false),
+            Err(e) => futures::future::ready(ResultMaybeCompatible::Err(e)).boxed(),
+        }
     }
 }

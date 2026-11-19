@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _echo_check_impl(ctx):
-    app = ctx.actions.declare_output("app")
+    app = ctx.actions.declare_output("app", has_content_based_path = False)
 
     if ctx.attrs.local_only == "true":
         local_only = True
@@ -51,8 +51,8 @@ echo_check = rule(
 )
 
 def _symlink_check_impl(ctx):
-    data = ctx.actions.write("data", ctx.attrs.param)
-    out = ctx.actions.declare_output("out/symlink")
+    data = ctx.actions.write("data", ctx.attrs.param, has_content_based_path = False)
+    out = ctx.actions.declare_output("out/symlink", has_content_based_path = False)
 
     # NOTE: "data" and "out" will be next to each other here, hence ../data
     # NOTE: We use local_only since RE actually returns files for symlinks.

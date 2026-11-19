@@ -8,6 +8,6 @@ float_arg: 3.4
 optional: "value"
 enum_type: "b"
 target: root//bar:foo
-configured_target: root//:t1 (cfg:<empty>#<HASH>)
+configured_target: root//:t1 (<modifiers>#<HASH>)
 sub_target: root//cell/pkg:bar
 list: [1]

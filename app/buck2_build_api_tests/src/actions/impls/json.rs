@@ -14,13 +14,15 @@ use buck2_build_api::actions::impls::json::JsonUnpack;
 use buck2_build_api::actions::impls::json::SerializeValue;
 use buck2_build_api::actions::impls::json::visit_json_artifacts;
 use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use buck2_build_api::interpreter::rule_defs::cmd_args::InputProperties;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+use buck2_hash::BuckMutMap;
 use buck2_interpreter_for_build::interpreter::testing::Tester;
 use dupe::Dupe;
-use fxhash::FxHashMap;
 use indoc::indoc;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
@@ -32,13 +34,20 @@ use crate::interpreter::rule_defs::artifact_tagging::testing::artifact_tag_facto
 
 #[test]
 fn test_tagging() -> buck2_error::Result<()> {
+    let _guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
+
     struct AssertVisitor {
         tag: ArtifactTag,
         artifact: Artifact,
     }
 
     impl<'v> CommandLineArtifactVisitor<'v> for AssertVisitor {
-        fn visit_input(&mut self, input: ArtifactGroup, tags: Vec<&ArtifactTag>) {
+        fn visit_input(
+            &mut self,
+            input: ArtifactGroup,
+            _props: InputProperties,
+            tags: Vec<&ArtifactTag>,
+        ) {
             assert_eq!(tags, vec![&self.tag]);
             assert_eq!(input, ArtifactGroup::Artifact(self.artifact.dupe()));
         }
@@ -58,14 +67,14 @@ fn test_tagging() -> buck2_error::Result<()> {
         fn check_artifact_is_tagged<'v>(
             tagged: Value<'v>,
             tag: Value<'v>,
-            artifact: ValueAsInputArtifactLike<'v>,
+            artifact: StarlarkArtifactView<'v>,
         ) -> starlark::Result<Value<'v>> {
             let tag = ArtifactTag::from_value(tag)
-                .buck_error_context("Invalid tag")?
+                .internal_error("Invalid tag")?
                 .dupe();
 
             let artifact = artifact
-                .0
+                .as_input_artifact_like()
                 .get_bound_artifact()
                 .buck_error_context("Not a bound artifact")?
                 .dupe();
@@ -82,7 +91,7 @@ fn test_tagging() -> buck2_error::Result<()> {
                 value: JsonUnpack::unpack_value_err(tagged)?,
                 fs: None,
                 absolute: false,
-                artifact_path_mapping: &FxHashMap::default(),
+                artifact_path_mapping: &BuckMutMap::default(),
             })
             .map_err(buck2_error::Error::from)?;
 
@@ -90,7 +99,7 @@ fn test_tagging() -> buck2_error::Result<()> {
                 value: JsonUnpack::unpack_value_err(value)?,
                 fs: None,
                 absolute: false,
-                artifact_path_mapping: &FxHashMap::default(),
+                artifact_path_mapping: &BuckMutMap::default(),
             })
             .map_err(buck2_error::Error::from)?;
 

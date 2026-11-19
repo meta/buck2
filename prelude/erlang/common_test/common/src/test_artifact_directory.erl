@@ -13,16 +13,17 @@ Used by TPX to upload diagnostic reports.
 """.
 -compile(warn_missing_spec_all).
 
+%% Public API
+-export([prepare/3, link_to_artifact_dir/3, find_log_private/1]).
+
+-export_type([dir_path/0]).
+
+-include_lib("common/include/buck_ct_records.hrl").
 -include_lib("kernel/include/logger.hrl").
 
 -import(common_util, [unicode_characters_to_list/1]).
 
 -define(raw_file_access, prim_file).
-
-%% Public API
--export([prepare/2, link_to_artifact_dir/3, find_log_private/1]).
-
--export_type([dir_path/0]).
 
 -type dir_path() :: file:filename() | undefined.
 
@@ -75,16 +76,22 @@ coverage_tmp_dir() ->
 
 % Collect, create and link the logs and other relevant files in
 % the artefacts directory.
--spec prepare(ExecutionDir, ArtifactAnnotationFunction) -> ok when
+-spec prepare(ExecutionDir, Tests, ArtifactAnnotationFunction) -> ok when
     ExecutionDir :: file:filename_all(),
+    Tests :: [#ct_test{}],
     ArtifactAnnotationFunction :: artifact_annotations:annotation_function().
-prepare(ExecutionDir, ArtifactAnnotationFunction) ->
+prepare(ExecutionDir, Tests, ArtifactAnnotationFunction) ->
     with_artifact_dir(
         fun(_ArtifactDir) ->
             link_tar_ball(ExecutionDir),
-            link_to_artifact_dir(
-                join_paths(ExecutionDir, "erlang.perfetto-trace"), ExecutionDir, ArtifactAnnotationFunction
-            ),
+            case os:getenv("TEST_RESULTS_OUTPUT_FILE") of
+                false ->
+                    ok;
+                OutputFile ->
+                    link_to_artifact_dir(
+                        OutputFile, filename:dirname(OutputFile), fun artifact_annotations:default_annotation/1
+                    )
+            end,
             case coverage_tmp_dir() of
                 undefined ->
                     ok;
@@ -106,16 +113,28 @@ prepare(ExecutionDir, ArtifactAnnotationFunction) ->
                         filelib:is_regular(File, ?raw_file_access)
                     ],
                     link_to_artifact_dir(
-                        join_paths(LogPrivate, "test_metrics.log.json"),
+                        join_paths(LogPrivate, "test.pftrace"), LogPrivate, ArtifactAnnotationFunction
+                    ),
+                    link_to_artifact_dir(
+                        join_paths(LogPrivate, "test_metrics.tcompact.b64"),
                         LogPrivate,
-                        fun(FileName) ->
-                            #{type => #{generic_blob => #{}}, description => list_to_binary(FileName)}
-                        end
+                        fun(FileName) -> artifact_annotations:test_metrics_artifact_annotation(FileName, Tests) end
                     )
             end,
             ok
         end
     ).
+
+-doc """
+Use hardlinks inside RE which doesn't follow symlinks like local execution uploads.
+""".
+-spec make_artifact_link(file:filename_all(), file:filename_all()) ->
+    ok | {error, badarg | file:posix()}.
+make_artifact_link(File, ArtifactPath) ->
+    case os:getenv("INSIDE_RE_WORKER") of
+        "1" -> file:make_link(File, ArtifactPath);
+        _ -> file:make_symlink(filename:absname(File), ArtifactPath)
+    end.
 
 -spec link_to_artifact_dir(File, Root, ArtifactAnnotationMFA) -> ok when
     File :: file:filename_all(),
@@ -136,7 +155,7 @@ link_to_artifact_dir(File, Root, ArtifactAnnotationMFA) ->
                 unicode_characters_to_list(string:replace(RelativePath, "/", ".", all)),
             case filelib:is_file(File, ?raw_file_access) of
                 true ->
-                    file:make_symlink(File, join_paths(ArtifactDir, FullFileName)),
+                    make_artifact_link(File, join_paths(ArtifactDir, FullFileName)),
                     Annotation = artifact_annotations:create_artifact_annotation(FullFileName, ArtifactAnnotationMFA),
                     dump_annotation(Annotation, FullFileName);
                 _ ->

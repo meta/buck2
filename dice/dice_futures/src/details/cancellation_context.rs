@@ -17,6 +17,7 @@ use futures::future::Either;
 
 use crate::cancellation::CancellationObserver;
 use crate::cancellation::CancellationObserverInner;
+use crate::cancellation::CancellationPoller;
 use crate::cancellation::CriticalSectionGuard;
 use crate::cancellation::DisableCancellationGuard;
 use crate::details::shared_state::CancellationContextSharedStateView;
@@ -166,6 +167,17 @@ pub(crate) enum CancellationContextInner {
 }
 
 impl CancellationContextInner {
+    pub(crate) fn poller(&self) -> CancellationPoller {
+        match self {
+            CancellationContextInner::NeverCancelled => CancellationPoller::never_cancelled(),
+            CancellationContextInner::Explicit(context) => {
+                CancellationPoller(CancellationObserverInner::Explicit(
+                    CancellationObserverFuture::new(&context.inner),
+                ))
+            }
+        }
+    }
+
     /// Enter a critical section during which the current future (if supports explicit cancellation)
     /// should not be dropped. If the future was not cancelled before entering the critical section,
     /// it becomes non-cancellable during the critical section. If it *was* cancelled before

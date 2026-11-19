@@ -18,18 +18,18 @@ to delimit the output of each test-case.
 -export([emit_progress/4]).
 -export([process_raw_stdout_log/3, collect_method_stdout/4]).
 -export([init_process_stdout_state/3, process_stdout_line/2]).
+-export_type([progress/0, progress_line/0, offset/0, fingerprint/0, collected_stdout/0]).
+-export_type([process_stdout_state/0]).
 
 -import(common_util, [unicode_characters_to_binary/1]).
+
+-define(UNICODE_REPLACEMENT_CHAR_UTF8, ~"�").
 
 %% ---------------------------------------------------------------------------
 %% Types
 %% ---------------------------------------------------------------------------
 
--export_type([progress/0, callback/0, progress_line/0, offset/0, fingerprint/0, collected_stdout/0]).
--export_type([process_stdout_state/0]).
-
 -type progress() :: started | finished.
--type callback() :: init_per | end_per.
 -type progress_line() :: binary().
 -type offset() :: integer().
 
@@ -116,7 +116,7 @@ the last `MaxPerCollected` bytes.
 -spec collect_method_stdout(OutputFile, Offsets, TreeResults, MaxPerCollected) -> {ok, collected_stdout()} when
     OutputFile :: file:filename_all(),
     Offsets :: #{progress_line() => offset()},
-    TreeResults :: cth_tpx_test_tree:tree_node(),
+    TreeResults :: cth_tpx_test_tree:tree(),
     MaxPerCollected :: non_neg_integer().
 collect_method_stdout(OutputFile, Offsets, TreeResults, MaxPerCollected) ->
     MethodResults = get_method_results(TreeResults),
@@ -320,17 +320,17 @@ collect_stdout(InH, StartOffset, EndOffset, Max) when StartOffset < EndOffset ->
     case Count =< Max of
         true ->
             case file:pread(InH, StartOffset, Count) of
-                {ok, Result} when is_binary(Result) -> Result
+                {ok, Result} when is_binary(Result) -> fix_unicode_encoding(Result)
             end;
         false ->
             First1 = EndOffset - Max,
             Count1 = Max,
             case file:pread(InH, First1, Count1) of
                 {ok, Result} when is_binary(Result) ->
-                    % utf-8 chars take 1-3 bytes. If by truncating we end
-                    % in the middle of one of the chars taking 2-3 bytes,
-                    % then we get an invalid binary, which we can fix by
-                    % dropping the first 1 or 2 bytes
+                    % Collected stdout is rendered and serialized as UTF-8.
+                    % Sanitize before returning because truncation may start
+                    % in the middle of a codepoint and tests may also emit
+                    % arbitrary raw bytes.
                     {truncated, fix_unicode_encoding(Result)}
             end
     end.
@@ -339,15 +339,24 @@ collect_stdout(InH, StartOffset, EndOffset, Max) when StartOffset < EndOffset ->
 fix_unicode_encoding(Bin) ->
     case unicode:characters_to_binary(Bin) of
         Ok when is_binary(Ok) -> Ok;
-        {error, ~"", Bin} ->
-            <<_:8, Bin1/binary>> = Bin,
-            case unicode:characters_to_binary(Bin1) of
-                Ok when is_binary(Ok) -> Ok;
-                {error, ~"", Bin1} ->
-                    <<_:8, Bin2/binary>> = Bin1,
-                    case unicode:characters_to_binary(Bin2) of
-                        Ok when is_binary(Ok) -> Ok;
-                        _ -> error({unfixable_utf8, Bin})
-                    end
-            end
+        {error, Prefix, Rest0} ->
+            Rest = drop_invalid_utf8_prefix(require_binary(Rest0)),
+            iolist_to_binary([Prefix, ?UNICODE_REPLACEMENT_CHAR_UTF8, fix_unicode_encoding(Rest)]);
+        {incomplete, Prefix, _Rest} ->
+            iolist_to_binary([Prefix, ?UNICODE_REPLACEMENT_CHAR_UTF8])
+    end.
+
+-spec require_binary(unicode:latin1_chardata() | unicode:chardata() | unicode:external_chardata()) -> binary().
+require_binary(Bin) when is_binary(Bin) ->
+    Bin.
+
+-spec drop_invalid_utf8_prefix(binary()) -> binary().
+drop_invalid_utf8_prefix(Bin) ->
+    case unicode:characters_to_binary(Bin) of
+        {error, ~"", <<_:8, Rest/binary>>} ->
+            drop_invalid_utf8_prefix(Rest);
+        {incomplete, ~"", _Rest} ->
+            ~"";
+        _ ->
+            Bin
     end.

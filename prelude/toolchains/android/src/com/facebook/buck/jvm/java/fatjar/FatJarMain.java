@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.fatjar;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.File;
@@ -38,7 +39,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FatJarMain {
 
   public static final String FAT_JAR_INNER_JAR = "inner.jar";
@@ -53,7 +56,6 @@ public class FatJarMain {
    * Main method for fat jar. Unpacks artifact and native libraries into a temporary folder and then
    * launches original artifact as java process.
    */
-  @SuppressWarnings("PMD.BlacklistedDefaultProcessMethod")
   public static void main(String[] args) throws Exception {
 
     boolean debug = args.length > 0 && args[0].equals(DEBUG_OPTION);
@@ -68,6 +70,7 @@ public class FatJarMain {
     ClassLoader classLoader = FatJarMain.class.getClassLoader();
 
     // Create a temp dir to house the native libraries.
+    int exitCode;
     try (ManagedTemporaryDirectory temp = new ManagedTemporaryDirectory("fatjar.", !debug)) {
       Path workingDirectory = temp.getPath();
       if (debug) {
@@ -115,10 +118,11 @@ public class FatJarMain {
       updateEnvironment(environment, nativeLibs, debug);
       processBuilder.inheritIO();
 
-      // Wait for the inner process to finish, and propagate it's exit code, before cleaning
-      // up the native libraries.
-      System.exit(processBuilder.start().waitFor());
+      // Wait for the inner process, then let the try-with-resources delete the unpacked
+      // native libraries before we exit
+      exitCode = processBuilder.start().waitFor();
     }
+    System.exit(exitCode);
   }
 
   private static Path getRootDirectory() throws IOException, InterruptedException {
@@ -128,7 +132,7 @@ public class FatJarMain {
     Path path;
     try (BufferedReader reader =
         new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-      path = Paths.get(reader.readLine());
+      path = Paths.get(Objects.requireNonNull(reader.readLine()));
     }
     int exitCode = process.waitFor();
     if (exitCode != 0) {
@@ -150,7 +154,7 @@ public class FatJarMain {
     try (JarFile jar = new JarFile(getJarPath())) {
       Enumeration<JarEntry> enumEntries = jar.entries();
       while (enumEntries.hasMoreElements()) {
-        JarEntry jarEntry = enumEntries.nextElement();
+        JarEntry jarEntry = Objects.requireNonNull(enumEntries.nextElement());
         String entryName = jarEntry.getName();
         if (jarEntry.isDirectory() || !entryName.startsWith(FAT_JAR_NATIVE_LIBRARIES_DIR)) {
           continue;
@@ -166,11 +170,13 @@ public class FatJarMain {
   }
 
   private static String getJarPath() throws IOException {
-    ProtectionDomain protectionDomain = FatJarMain.class.getProtectionDomain();
-    CodeSource codeSource = protectionDomain.getCodeSource();
-    URL jarUrl = new URL("jar:" + codeSource.getLocation().toExternalForm() + "!/");
+    ProtectionDomain protectionDomain =
+        Objects.requireNonNull(FatJarMain.class.getProtectionDomain());
+    CodeSource codeSource = Objects.requireNonNull(protectionDomain.getCodeSource());
+    URL jarUrl =
+        new URL("jar:" + Objects.requireNonNull(codeSource.getLocation()).toExternalForm() + "!/");
     URL jarFileUrl = ((JarURLConnection) jarUrl.openConnection()).getJarFileURL();
-    return jarFileUrl.getPath();
+    return Objects.requireNonNull(jarFileUrl.getPath());
   }
 
   private static void unpackInnerArtifactTo(ClassLoader loader, Path destination)
@@ -224,7 +230,8 @@ public class FatJarMain {
       // Look for the Java binary given in an alternate location if given,
       // otherwise use the Java binary that started us
       String javaHome =
-          System.getProperty("buck.fatjar.java.home", System.getProperty("java.home"));
+          System.getProperty(
+              "buck.fatjar.java.home", Objects.requireNonNull(System.getProperty("java.home")));
       cmd.add(Paths.get(javaHome, "bin", "java").toString());
     }
     // Pass through any VM arguments to the child process
@@ -330,8 +337,7 @@ public class FatJarMain {
   }
 
   // Avoid using EnvVariablesProvider to avoid extra dependencies.
-  @SuppressWarnings("PMD.BlacklistedSystemGetenv")
-  private static String getEnvValue(String envVariableName) {
+  private static @Nullable String getEnvValue(String envVariableName) {
     if (isWindowsOs(getOsPlatform())) {
       return findMapValueIgnoreKeyCase(envVariableName, System.getenv());
     } else {
@@ -339,7 +345,7 @@ public class FatJarMain {
     }
   }
 
-  private static String findMapValueIgnoreKeyCase(String key, Map<String, String> map) {
+  private static @Nullable String findMapValueIgnoreKeyCase(String key, Map<String, String> map) {
     for (Map.Entry<String, String> entry : map.entrySet()) {
       if (entry.getKey().equalsIgnoreCase(key)) {
         return entry.getValue();
@@ -379,31 +385,38 @@ public class FatJarMain {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
       if (!removeTempDirectory) {
         printDebugInfo("Skipping temp directory removal. Temp directory: " + path);
         return;
       }
-      Files.walkFileTree(
-          path,
-          new SimpleFileVisitor<Path>() {
+      try {
+        Files.walkFileTree(
+            path,
+            new SimpleFileVisitor<Path>() {
 
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
-                throws IOException {
-              Files.delete(file);
-              return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult postVisitDirectory(Path dir, IOException e) throws IOException {
-              if (e != null) {
-                throw e;
+              @Override
+              public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
+                  throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
               }
-              Files.delete(dir);
-              return FileVisitResult.CONTINUE;
-            }
-          });
+
+              @Override
+              public FileVisitResult postVisitDirectory(Path dir, IOException e)
+                  throws IOException {
+                if (e != null) {
+                  throw e;
+                }
+                Files.delete(dir);
+                return FileVisitResult.CONTINUE;
+              }
+            });
+      } catch (IOException e) {
+        // Best-effort: a failure to delete scratch must not mask the child's exit code or the
+        // primary failure. Warn (stderr is captured by callers) and leave it for the tmp reaper.
+        System.err.println("WARNING: failed to remove fat jar temp directory " + path + ": " + e);
+      }
     }
 
     public Path getPath() {

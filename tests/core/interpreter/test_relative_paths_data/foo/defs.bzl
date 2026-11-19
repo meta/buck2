@@ -6,6 +6,9 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-test_target = rule(impl = lambda _ctx: [DefaultInfo()], attrs = {
-    "deps": attrs.list(attrs.dep(), default = []),
-})
+test_target = rule(
+    impl = lambda _ctx: [DefaultInfo()],
+    attrs = {
+        "deps": attrs.list(attrs.dep(), default = []),
+    },
+)

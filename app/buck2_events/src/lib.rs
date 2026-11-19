@@ -8,10 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(used_with_arg)]
-#![feature(once_cell_try)]
-
 //!
 //! Events and event streams for Buck2.
 //!
@@ -39,12 +35,11 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use async_trait::async_trait;
 use buck2_cli_proto::CommandResult;
 use buck2_cli_proto::PartialResult;
-use buck2_error::BuckErrorContext;
 use buck2_wrapper_common::invocation_id::TraceId;
 use derive_more::From;
-use gazebo::variants::UnpackVariants;
 use serde::Serialize;
 
 use crate::sink::channel::ChannelEventSink;
@@ -152,7 +147,7 @@ impl BuckEvent {
                 match span_start_event
                     .data
                     .as_ref()
-                    .with_buck_error_context(|| BuckEventError::MissingField(self.clone()))?
+                    .ok_or_else(|| BuckEventError::MissingField(self.clone()))?
                 {
                     buck2_data::span_start_event::Data::Command(command_start) => {
                         Ok(Some(command_start))
@@ -190,7 +185,7 @@ impl TryFrom<Box<buck2_data::BuckEvent>> for BuckEvent {
 }
 
 /// The set of events that can flow out of an EventSource.
-#[derive(Debug, Clone, From, UnpackVariants)]
+#[derive(Debug, Clone, From)]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {
     /// A command result, produced upon completion of a command.
@@ -199,6 +194,15 @@ pub enum Event {
     PartialResult(PartialResult),
     /// A regular buck event. Is the only type to end up in the Event Log
     Buck(BuckEvent),
+}
+
+impl Event {
+    pub fn unpack_buck(&self) -> Option<&BuckEvent> {
+        match self {
+            Self::Buck(event) => Some(event),
+            Self::CommandResult(..) | Self::PartialResult(..) => None,
+        }
+    }
 }
 
 /// Statistics from this event sink on how messages were processed.
@@ -252,11 +256,21 @@ impl EventSinkStats {
 
 /// A sink for events, easily plumbable to the guts of systems that intend to produce events consumeable by
 /// higher-level clients. Sending an event is synchronous.
+#[async_trait]
 pub trait EventSink: Send + Sync {
     /// Sends an event into this sink, to be consumed elsewhere. Explicitly does not return a Result type; if sending
     /// an event does fail, implementations will handle the failure by panicking or performing some other graceful
     /// recovery; callers of EventSink are not expected to handle failures.
     fn send(&self, event: Event);
+
+    /// Like `send`, but bypasses any internal buffering and delivers the event
+    /// as directly as possible. For the scribe sink this means calling thrift
+    /// synchronously instead of going through the producer queue. This is
+    /// useful for high-priority events that must be delivered even under memory
+    /// pressure. The default implementation falls back to `send`.
+    async fn send_now(&self, event: Event) {
+        self.send(event);
+    }
 }
 
 pub trait EventSinkWithStats: Send + Sync {
@@ -266,9 +280,14 @@ pub trait EventSinkWithStats: Send + Sync {
     fn stats(&self) -> EventSinkStats;
 }
 
+#[async_trait]
 impl EventSink for Arc<dyn EventSink> {
     fn send(&self, event: Event) {
         EventSink::send(self.as_ref(), event);
+    }
+
+    async fn send_now(&self, event: Event) {
+        EventSink::send_now(self.as_ref(), event).await;
     }
 }
 

@@ -6,9 +6,29 @@ source_listing()
 
 prelude = native
 
+prelude.python_bootstrap_library(
+    name = "class_to_source_map_lib",
+    srcs = ["class_to_source_map.py"],
+    visibility = ["prelude//java/tools/..."],
+)
+
+prelude.python_bootstrap_binary(
+    name = "compiler_class_to_source_map",
+    main = "compiler_class_to_source_map.py",
+    visibility = ["PUBLIC"],
+    deps = [":class_to_source_map_lib"],
+)
+
 prelude.python_bootstrap_binary(
     name = "gen_class_to_source_map",
     main = "gen_class_to_source_map.py",
+    visibility = ["PUBLIC"],
+    deps = [":class_to_source_map_lib"],
+)
+
+prelude.python_bootstrap_binary(
+    name = "jvm_launcher_runtime",
+    main = "jvm_launcher_runtime.py",
     visibility = ["PUBLIC"],
 )
 
@@ -64,4 +84,76 @@ prelude.python_bootstrap_library(
         "prelude//java/tools/...",
         "prelude//kotlin/tools/...",
     ],
+)
+
+prelude.python_library(
+    name = "utils",
+    srcs = ["utils.py"],
+    base_module = "",
+    visibility = ["prelude//kotlin/tools/..."],
+)
+
+# Type checking target for Python tool scripts
+prelude.python_library(
+    name = "scripts-typing",
+    srcs = [
+        "class_to_source_map.py",
+        "compile_and_package.py",
+        "compiler_class_to_source_map.py",
+        "fat_jar.py",
+        "gen_class_to_source_map.py",
+        "list_class_names.py",
+        "merge_class_to_source_maps.py",
+        "run_postprocessor.py",
+        "utils.py",
+    ],
+    typing = True,
+)
+
+prelude.python_test(
+    name = "test_fat_jar",
+    srcs = [
+        "fat_jar.py",
+        "tests/test_fat_jar.py",
+        "utils.py",
+    ],
+    base_module = "",
+)
+
+prelude.python_test(
+    name = "test_gen_class_to_source_map",
+    srcs = [
+        "class_to_source_map.py",
+        "gen_class_to_source_map.py",
+        "tests/test_gen_class_to_source_map.py",
+    ],
+    base_module = "",
+)
+
+prelude.python_test(
+    name = "test_list_class_names",
+    srcs = [
+        "list_class_names.py",
+        "tests/test_list_class_names.py",
+    ],
+    base_module = "",
+)
+
+prelude.python_test(
+    name = "test_merge_class_to_source_maps",
+    srcs = [
+        "merge_class_to_source_maps.py",
+        "tests/test_merge_class_to_source_maps.py",
+    ],
+    base_module = "",
+)
+
+prelude.python_test(
+    name = "test_compiler_class_to_source_map",
+    srcs = [
+        "class_to_source_map.py",
+        "compiler_class_to_source_map.py",
+        "tests/test_compiler_class_to_source_map.py",
+    ],
+    base_module = "",
 )

@@ -1,0 +1,35 @@
+load(":defs.bzl", "copy", "declared_size", "download")
+
+# What a test declares about the download comes from the config, so that one fixture serves
+# every combination of checksums and sizes.
+download(
+    name = "download",
+    url = read_config("test", "url"),
+    sha1 = read_config("test", "sha1"),
+    sha256 = read_config("test", "sha256"),
+    size_bytes = declared_size(),
+)
+
+# The same declaration at another output path.
+download(
+    name = "download_again",
+    url = read_config("test", "url"),
+    sha1 = read_config("test", "sha1"),
+    sha256 = read_config("test", "sha256"),
+    size_bytes = declared_size(),
+)
+
+download(
+    name = "content_based",
+    has_content_based_path = True,
+    url = read_config("test", "url"),
+    sha1 = read_config("test", "sha1"),
+    sha256 = read_config("test", "sha256"),
+    size_bytes = declared_size(),
+)
+
+copy(name = "copy", dep = ":download")
+
+copy(name = "copy_again", dep = ":download_again")
+
+copy(name = "copy_content_based", dep = ":content_based")

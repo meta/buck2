@@ -53,6 +53,11 @@ pub fn golden_test_template(golden_rel_path: &str, output: &str) {
 
     let output_with_prefix = make_golden(output);
 
+    if cfg!(miri) {
+        // Miri's isolation has no filesystem. The caller computing `output` was the point.
+        return;
+    }
+
     if env::var(REGENERATE_VAR_NAME).is_ok() {
         fs::write(&golden_file_path, &output_with_prefix)
             .with_context(|| format!("Writing `{golden_file_path}`"))

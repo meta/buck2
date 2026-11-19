@@ -12,21 +12,24 @@ package com.facebook.buck.android;
 
 import static com.google.common.util.concurrent.MoreExecutors.listeningDecorator;
 
+import com.facebook.buck.android.apex.ApexManifestProto.ApexManifest;
 import com.facebook.buck.android.device.TargetDeviceOptions;
+import com.facebook.buck.android.exopackage.AdbCommandFailedException;
 import com.facebook.buck.android.exopackage.AdbUtils;
 import com.facebook.buck.android.exopackage.AndroidDevice;
 import com.facebook.buck.android.exopackage.AndroidDeviceInfo;
 import com.facebook.buck.android.exopackage.AndroidDevicesHelper;
 import com.facebook.buck.android.exopackage.AndroidIntent;
 import com.facebook.buck.android.exopackage.ExopackageInstaller;
+import com.facebook.buck.android.exopackage.InstallTimings;
 import com.facebook.buck.android.exopackage.IsolatedExopackageInfo;
 import com.facebook.buck.android.exopackage.SetDebugAppMode;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.util.log.Logger;
-import com.facebook.buck.util.Console;
 import com.facebook.buck.util.MoreSuppliers;
 import com.facebook.buck.util.Threads;
 import com.facebook.buck.util.environment.EnvVariablesProvider;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
@@ -50,6 +53,7 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
@@ -62,11 +66,13 @@ import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import javax.annotation.Nullable;
+import org.jetbrains.annotations.Nullable;
 
 /** Helper for executing commands over ADB, especially for multiple devices. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AdbHelper implements AndroidDevicesHelper {
 
   private static final Logger LOG = Logger.get(AdbHelper.class);
@@ -89,6 +95,9 @@ public class AdbHelper implements AndroidDevicesHelper {
    */
   static final String SERIAL_NUMBER_ENV = "ANDROID_SERIAL";
 
+  private static final String ABI_PROPERTY = "ro.product.cpu.abi";
+  private static final String ABI_LIST_PROPERTY = "ro.product.cpu.abilist";
+
   static final int NUM_TRIES = 5;
   static final int RETRY_DELAY_MS = 1000;
 
@@ -103,9 +112,10 @@ public class AdbHelper implements AndroidDevicesHelper {
   private final boolean restartAdbOnFailure;
   // Caches the list of android devices for this execution
   private final Supplier<GetDevicesResult> devicesSupplier;
-  private final boolean skipMetadataIfNoInstalls;
+  private final Supplier<ImmutableMap<String, ImmutableSet<String>>> deviceAbisSupplier;
   private final AndroidInstallPrinter androidPrinter;
   private final SetDebugAppMode setDebugAppMode;
+  private final InstallTimings timings;
 
   @Nullable private ListeningExecutorService executorService = null;
 
@@ -118,16 +128,36 @@ public class AdbHelper implements AndroidDevicesHelper {
       AdbExecutionContext adbExecutionContext,
       AndroidInstallPrinter androidPrinter,
       boolean restartAdbOnFailure,
-      boolean skipMetadataIfNoInstalls,
       SetDebugAppMode setDebugAppMode) {
+    this(
+        adbUtils,
+        adbOptions,
+        deviceOptions,
+        adbExecutionContext,
+        androidPrinter,
+        restartAdbOnFailure,
+        setDebugAppMode,
+        InstallTimings.NONE);
+  }
+
+  public AdbHelper(
+      AdbUtils adbUtils,
+      AdbOptions adbOptions,
+      TargetDeviceOptions deviceOptions,
+      AdbExecutionContext adbExecutionContext,
+      AndroidInstallPrinter androidPrinter,
+      boolean restartAdbOnFailure,
+      SetDebugAppMode setDebugAppMode,
+      InstallTimings timings) {
+    this.timings = timings;
     this.adbUtils = adbUtils;
     this.options = adbOptions;
     this.deviceOptions = deviceOptions;
     this.adbExecutionContext = adbExecutionContext;
     this.restartAdbOnFailure = restartAdbOnFailure;
     this.devicesSupplier = MoreSuppliers.memoize(this::getDevicesImpl);
+    this.deviceAbisSupplier = MoreSuppliers.memoize(this::deviceAbisBySerialImpl);
     this.androidPrinter = androidPrinter;
-    this.skipMetadataIfNoInstalls = skipMetadataIfNoInstalls;
     this.setDebugAppMode = setDebugAppMode;
   }
 
@@ -135,6 +165,32 @@ public class AdbHelper implements AndroidDevicesHelper {
   public static void setDevicesSupplierForTests(
       Optional<Supplier<ImmutableList<AndroidDevice>>> devicesSupplierForTests) {
     AdbHelper.devicesSupplierForTests = devicesSupplierForTests;
+  }
+
+  /**
+   * Of the devices this helper resolved, those adb no longer reports.
+   *
+   * <p>The resolved set is fixed at its first use; this asks adb afresh on every call, so it is for
+   * deciding once whether to go on rather than for polling. What it asks for is every serial adb
+   * reports, not the filtered set: a superset can only shrink the answer, and a device that never
+   * matched the filter was never resolved, so it can never be reported gone.
+   */
+  public ImmutableSet<String> departedSerials() {
+    ImmutableSet<String> connected =
+        adbUtils.getDevices().stream()
+            .map(AndroidDevice::getSerialNumber)
+            .collect(ImmutableSet.toImmutableSet());
+    if (connected.isEmpty()) {
+      // Adb answering with nothing is far more likely to be adb than every device at once. Reading
+      // it as a mass departure would fail installs that a retry would have completed, and a device
+      // that really has gone still fails the moment it is used.
+      LOG.warn("adb reported no devices at all; not treating that as a disconnection");
+      return ImmutableSet.of();
+    }
+    return devicesSupplier.get().devices.stream()
+        .map(AndroidDevice::getSerialNumber)
+        .filter(serial -> !connected.contains(serial))
+        .collect(ImmutableSet.toImmutableSet());
   }
 
   @Override
@@ -160,7 +216,6 @@ public class AdbHelper implements AndroidDevicesHelper {
    * is enabled (-x). This flag is used as a marker that user understands that multiple devices will
    * be used to install the apk if needed.
    */
-  @SuppressWarnings("PMD.EmptyCatchBlock")
   @Override
   public synchronized void adbCall(String description, AdbDeviceCallable func, boolean quiet)
       throws InterruptedException {
@@ -181,11 +236,11 @@ public class AdbHelper implements AndroidDevicesHelper {
                   + " devices/emulators.\n");
           return;
         }
-        throw new RuntimeException("Didn't find any attached Android devices/emulators.");
+        throw new RuntimeException(noDevicesMessage(result.listedDevices));
       }
       devices = result.devices;
     } catch (Exception e) {
-      throw new RuntimeException(e.getMessage());
+      throw new RuntimeException(e.toString());
     }
 
     // Start executions on all matching devices.
@@ -260,10 +315,10 @@ public class AdbHelper implements AndroidDevicesHelper {
       AbsPath rootPath,
       boolean installViaSd,
       boolean quiet,
-      String fullyQualifiedName)
+      String fullyQualifiedName,
+      String packageName,
+      boolean restartApp)
       throws InterruptedException {
-    String packageName =
-        tryToExtractPackageNameFromManifest(isolatedApkInfo.getManifestPath().getPath());
     Optional<String> buck2BuildUuid =
         Optional.ofNullable(EnvVariablesProvider.getSystemEnv().get("BUCK2_UUID"));
 
@@ -272,7 +327,13 @@ public class AdbHelper implements AndroidDevicesHelper {
     if (optionalIsolatedExopackageInfo.isPresent()) {
       IsolatedExopackageInfo isolatedExopackageInfo = optionalIsolatedExopackageInfo.get();
       installApkExopackageWithRetries(
-          rootPath, isolatedExopackageInfo, isolatedApkInfo, packageName, quiet, buck2BuildUuid);
+          rootPath,
+          isolatedExopackageInfo,
+          isolatedApkInfo,
+          packageName,
+          quiet,
+          buck2BuildUuid,
+          restartApp);
     } else {
       installApkDirectly(
           installViaSd,
@@ -281,7 +342,8 @@ public class AdbHelper implements AndroidDevicesHelper {
           fullyQualifiedName,
           packageName,
           setDebugAppMode,
-          buck2BuildUuid);
+          buck2BuildUuid,
+          restartApp);
     }
     success.set(true);
   }
@@ -298,10 +360,9 @@ public class AdbHelper implements AndroidDevicesHelper {
             // Need to call both ro.product.cpu.abi and ro.product.cpu.abilist
             // as sticking to ro.product.cpu.abi helped fixing the issue of
             // exopackage install when the app was already installed in the device.
-            String abi = device.getProperty("ro.product.cpu.abi");
+            String abi = device.getProperty(ABI_PROPERTY);
             Set<String> abiList =
-                new HashSet<>(
-                    Arrays.asList(device.getProperty("ro.product.cpu.abilist").split(",")));
+                new HashSet<>(Arrays.asList(device.getProperty(ABI_LIST_PROPERTY).split(",")));
             String locale = getDeviceLocale(device);
             String buildFingerprint = device.getProperty("ro.build.fingerprint");
             String dpi = getDeviceDpi(device);
@@ -322,7 +383,7 @@ public class AdbHelper implements AndroidDevicesHelper {
                     AndroidDeviceInfo.DensityClass.forPhysicalDensity(dpi),
                     sdk,
                     isEmulator,
-                    device.getInstallerMethodName());
+                    AndroidDeviceInfo.transportOf(device.getSerialNumber()));
             LOG.info("Device info [%s]: %s", device.getSerialNumber(), deviceInfo);
             deviceInfos.add(deviceInfo);
           } catch (IncompatibleAbiException e) {
@@ -334,6 +395,53 @@ public class AdbHelper implements AndroidDevicesHelper {
         },
         true);
     return deviceInfos;
+  }
+
+  /**
+   * What each targeted device can run, by serial, read through the configured adb rather than
+   * whatever `adb` is on the path. A device that will not say is left out rather than recorded as
+   * running nothing, so callers can tell "cannot run this" from "would not answer".
+   *
+   * <p>Answered once per helper: these are boot-time properties of a fixed set of devices, and the
+   * check that reads them is offered every time an artifact arrives.
+   */
+  public ImmutableMap<String, ImmutableSet<String>> deviceAbisBySerial() {
+    return deviceAbisSupplier.get();
+  }
+
+  private ImmutableMap<String, ImmutableSet<String>> deviceAbisBySerialImpl() {
+    ImmutableMap.Builder<String, ImmutableSet<String>> abis = ImmutableMap.builder();
+    for (AndroidDevice device : getDevices(true)) {
+      // Both properties, trimmed, blanks dropped: the list is comma separated and devices do put
+      // spaces after the commas. Read separately so a device that answers one still contributes
+      // it.
+      ImmutableSet<String> forDevice =
+          Stream.concat(
+                  readProperty(device, ABI_PROPERTY).stream(),
+                  readProperty(device, ABI_LIST_PROPERTY).stream()
+                      .flatMap(list -> Arrays.stream(list.split(","))))
+              .map(String::trim)
+              .filter(abi -> !abi.isEmpty())
+              .collect(ImmutableSet.toImmutableSet());
+      if (!forDevice.isEmpty()) {
+        abis.put(device.getSerialNumber(), forDevice);
+      }
+    }
+    ImmutableMap<String, ImmutableSet<String>> bySerial = abis.build();
+    if (bySerial.isEmpty()) {
+      LOG.info("No targeted device would report an ABI");
+    }
+    return bySerial;
+  }
+
+  /** One property of one device, or empty if the device will not answer for it. */
+  private Optional<String> readProperty(AndroidDevice device, String property) {
+    try {
+      return Optional.ofNullable(device.getProperty(property));
+    } catch (Exception e) {
+      LOG.warn(e, "Could not read %s of %s", property, device.getSerialNumber());
+      return Optional.empty();
+    }
   }
 
   public void throwIfIncompatibleAbi(
@@ -351,24 +459,12 @@ public class AdbHelper implements AndroidDevicesHelper {
               apk.getName(),
               String.format(" (CPU(s): %s)", String.join(", ", apkAbis)),
               String.join(", ", abis));
-      getConsole().printErrorText(errorMsg);
       throw new IncompatibleAbiException(errorMsg);
     }
   }
 
   private Set<String> getDeviceAbis(String abi, Set<String> abiList) {
-    Set<String> deviceAbis =
-        new HashSet<String>() {
-          {
-            add(abi);
-          }
-        };
-    if (abi.equals("x86_64") && abiList.contains("x86")) {
-      deviceAbis.add("x86");
-    } else if (abi.equals("arm64-v8a") && abiList.contains("armeabi-v7a")) {
-      deviceAbis.add("armeabi-v7a");
-    }
-    return deviceAbis;
+    return ImmutableSet.<String>builder().add(abi).addAll(abiList).build();
   }
 
   private Set<String> getApkAbis(File apk) {
@@ -593,14 +689,7 @@ public class AdbHelper implements AndroidDevicesHelper {
     }
 
     List<AndroidDevice> devices = new ArrayList<>();
-    Optional<Boolean> emulatorsOnly = Optional.empty();
-    if (deviceOptions.isEmulatorsOnlyModeEnabled() && options.isMultiInstallModeEnabled()) {
-      emulatorsOnly = Optional.empty();
-    } else if (deviceOptions.isEmulatorsOnlyModeEnabled()) {
-      emulatorsOnly = Optional.of(true);
-    } else if (deviceOptions.isRealDevicesOnlyModeEnabled()) {
-      emulatorsOnly = Optional.of(false);
-    }
+    Optional<Boolean> emulatorsOnly = emulatorsOnly();
 
     int onlineDevices = 0;
     for (AndroidDevice device : allDevices) {
@@ -678,49 +767,109 @@ public class AdbHelper implements AndroidDevicesHelper {
 
     private final ImmutableList<AndroidDevice> devices;
     private final Optional<String> errorMessage;
+    // Everything adb listed, before filtering, so an empty result can say whether adb or the
+    // filter left nothing.
+    private final ImmutableList<AndroidDevice> listedDevices;
 
-    private GetDevicesResult(ImmutableList<AndroidDevice> devices, Optional<String> errorMessage) {
+    private GetDevicesResult(
+        ImmutableList<AndroidDevice> devices,
+        Optional<String> errorMessage,
+        ImmutableList<AndroidDevice> listedDevices) {
       this.devices = devices;
       this.errorMessage = errorMessage;
+      this.listedDevices = listedDevices;
     }
 
-    static GetDevicesResult createSuccess(ImmutableList<AndroidDevice> devices) {
-      return new GetDevicesResult(devices, Optional.empty());
+    static GetDevicesResult createSuccess(
+        ImmutableList<AndroidDevice> devices, List<AndroidDevice> listedDevices) {
+      return new GetDevicesResult(devices, Optional.empty(), ImmutableList.copyOf(listedDevices));
     }
 
     static GetDevicesResult createFailure(String message) {
-      return new GetDevicesResult(ImmutableList.of(), Optional.of(message));
+      return new GetDevicesResult(ImmutableList.of(), Optional.of(message), ImmutableList.of());
     }
   }
 
   private GetDevicesResult getDevicesImpl() {
     if (devicesSupplierForTests.isPresent()) {
-      return GetDevicesResult.createSuccess(devicesSupplierForTests.get().get());
+      ImmutableList<AndroidDevice> devices = devicesSupplierForTests.get().get();
+      return GetDevicesResult.createSuccess(devices, devices);
     }
 
     // Build list of matching devices.
-    List<AndroidDevice> devices = filterDevices(adbUtils.getDevices());
+    List<AndroidDevice> allDevices = adbUtils.getDevices();
+    List<AndroidDevice> devices = filterDevices(allDevices);
     // Found multiple devices but multi-install mode is not enabled.
     if (devices.size() > 1 && !options.isMultiInstallModeEnabled()) {
       return GetDevicesResult.createFailure(
           String.format(
               "%d devices match specified device filter (1 expected).\n"
-                  + "Either disconnect other devices or enable multi-install mode (%s).",
-              devices.size(), AdbOptions.MULTI_INSTALL_MODE_SHORT_ARG));
+                  + "Matching devices: %s.\n"
+                  + "Either pass one of them with -s, disconnect other devices or enable"
+                  + " multi-install mode (%s).",
+              devices.size(), serials(devices), AdbOptions.MULTI_INSTALL_MODE_SHORT_ARG));
     }
 
-    if (devices.isEmpty() && restartAdbOnFailure) {
+    // Only when adb lists no online device: a restart cannot make a listed device match the
+    // filter, and it drops every device attached with `adb connect`.
+    if (devices.isEmpty()
+        && restartAdbOnFailure
+        && allDevices.stream().noneMatch(AndroidDevice::isOnline)) {
       androidPrinter.printError("No devices found with adb, restarting adb-server.");
       adbUtils.restart();
-      devices = filterDevices(adbUtils.getDevices());
+      allDevices = adbUtils.getDevices();
+      devices = filterDevices(allDevices);
     }
 
     return GetDevicesResult.createSuccess(
-        devices.stream().collect(ImmutableList.toImmutableList()));
+        devices.stream().collect(ImmutableList.toImmutableList()), allDevices);
   }
 
-  private Console getConsole() {
-    return adbExecutionContext.getConsole();
+  private static String serials(List<AndroidDevice> devices) {
+    return devices.stream().map(AndroidDevice::getSerialNumber).collect(Collectors.joining(", "));
+  }
+
+  /**
+   * Why no device was found: adb lists none, none online, or the filter rejected every online one.
+   * The first sentence stays fixed: error classification and scripts match on it.
+   */
+  private String noDevicesMessage(ImmutableList<AndroidDevice> listedDevices) {
+    String message = "Didn't find any attached Android devices/emulators.";
+    if (listedDevices.isEmpty()) {
+      return message + " adb lists no device.";
+    }
+    // Asks adb again, once per device: affordable only because the install is failing anyway.
+    List<AndroidDevice> online =
+        listedDevices.stream().filter(AndroidDevice::isOnline).collect(Collectors.toList());
+    if (online.isEmpty()) {
+      return String.format(
+          "%s None of the devices adb lists is online: %s.", message, serials(listedDevices));
+    }
+    List<String> filter = new ArrayList<>();
+    if (deviceOptions.getSerialNumber().isPresent()) {
+      filter.add("serial " + deviceOptions.getSerialNumber().get());
+    } else if (getEnvironment().containsKey(SERIAL_NUMBER_ENV)) {
+      // Read from this process's environment, which need not be the shell the user typed in.
+      filter.add(
+          String.format(
+              "serial %s from $%s", getEnvironment().get(SERIAL_NUMBER_ENV), SERIAL_NUMBER_ENV));
+    }
+    emulatorsOnly().ifPresent(emulators -> filter.add(emulators ? "emulators" : "real devices"));
+    return String.format(
+        "%s None of the online devices (%s) matches the device filter%s.",
+        message, serials(online), filter.isEmpty() ? "" : ": " + String.join(", ", filter));
+  }
+
+  /** Empty when both device types pass the filter. */
+  private Optional<Boolean> emulatorsOnly() {
+    if (deviceOptions.isEmulatorsOnlyModeEnabled() && options.isMultiInstallModeEnabled()) {
+      return Optional.empty();
+    } else if (deviceOptions.isEmulatorsOnlyModeEnabled()) {
+      return Optional.of(true);
+    } else if (deviceOptions.isRealDevicesOnlyModeEnabled()) {
+      return Optional.of(false);
+    }
+    return Optional.empty();
   }
 
   @Override
@@ -741,13 +890,20 @@ public class AdbHelper implements AndroidDevicesHelper {
       IsolatedApkInfo isolatedApkInfo,
       String packageName,
       boolean quiet,
-      Optional<String> buck2BuildUuid)
+      Optional<String> buck2BuildUuid,
+      boolean restartApp)
       throws InterruptedException {
     int attempt = 1;
     while (true) {
       try {
         installApkExopackage(
-            rootPath, isolatedExopackageInfo, isolatedApkInfo, packageName, quiet, buck2BuildUuid);
+            rootPath,
+            isolatedExopackageInfo,
+            isolatedApkInfo,
+            packageName,
+            quiet,
+            buck2BuildUuid,
+            restartApp);
         LOG.info("Installing the APK using exopackage succeeded on attempt %d", attempt);
         return;
       } catch (RuntimeException e) {
@@ -766,13 +922,41 @@ public class AdbHelper implements AndroidDevicesHelper {
     }
   }
 
+  /**
+   * Pushes exopackage payloads to the matching devices ahead of the install itself.
+   *
+   * <p>Only pushes content. Metadata, collection of stale files and the apk all need the complete
+   * artifact set, so they stay in {@link ExopackageInstaller#doInstall}, which lists the directory
+   * again and skips whatever landed here.
+   */
+  public void streamExopackagePayloads(
+      AbsPath rootPath, IsolatedExopackageInfo isolatedExopackageInfo, String packageName)
+      throws InterruptedException {
+    adbCall(
+        "push exopackage files",
+        device -> {
+          new ExopackageInstaller(
+                  isolatedExopackageInfo,
+                  androidPrinter,
+                  rootPath,
+                  packageName,
+                  device,
+                  Optional.empty(),
+                  timings)
+              .streamPayloads();
+          return true;
+        },
+        /* quiet= */ true);
+  }
+
   private void installApkExopackage(
       AbsPath rootPath,
       IsolatedExopackageInfo isolatedExopackageInfo,
       IsolatedApkInfo isolatedApkInfo,
       String packageName,
       boolean quiet,
-      Optional<String> buck2BuildUuid)
+      Optional<String> buck2BuildUuid,
+      boolean restartApp)
       throws InterruptedException {
     adbCall(
         "install exopackage apk",
@@ -783,9 +967,9 @@ public class AdbHelper implements AndroidDevicesHelper {
                   rootPath,
                   packageName,
                   device,
-                  skipMetadataIfNoInstalls,
-                  buck2BuildUuid)
-              .doInstall(isolatedApkInfo, setDebugAppMode);
+                  buck2BuildUuid,
+                  timings)
+              .doInstall(isolatedApkInfo, setDebugAppMode, restartApp, options.isForceQueryable());
           return true;
         },
         quiet);
@@ -798,7 +982,8 @@ public class AdbHelper implements AndroidDevicesHelper {
       String buildTarget,
       String packageName,
       SetDebugAppMode setDebugAppMode,
-      Optional<String> buck2BuildUuid)
+      Optional<String> buck2BuildUuid,
+      boolean restartApp)
       throws InterruptedException {
     File apk = isolatedApkInfo.getApkPath().toFile();
     if (setDebugAppMode == SetDebugAppMode.SET) {
@@ -809,10 +994,33 @@ public class AdbHelper implements AndroidDevicesHelper {
         (device) -> {
           if (options.isApexModeEnabled()) {
 
-            return device.installApexOnDevice(apk, quiet);
+            boolean restart = false;
+            if (options.getRestartMode().equals("yes")) { // Restart
+              restart = true;
+            } else if (options.getRestartMode().equals("no")) { // Don't Restart
+              restart = false;
+            } else { // Auto - Only restart shell if rebootless is supported
+              restart = isApexFileSupportsRebootlessUpdate(apk);
+            }
+            return device.installApexOnDevice(apk, quiet, restart, options.getWaitForDeviceReady());
+          } else if (!options.isStagedInstallModeEnabled()
+              && !shouldAppBeInstalled(
+                  device, packageName, apk, androidPrinter, options.isForceQueryable())) {
+            if (restartApp) {
+              device.stopPackage(packageName);
+            }
+            return true;
           } else {
             return device.installApkOnDevice(
-                apk, installViaSd, quiet, options.isStagedInstallModeEnabled());
+                apk,
+                installViaSd,
+                quiet,
+                /* verifyTempWritable= */ true,
+                options.isStagedInstallModeEnabled(),
+                /* userId= */ null,
+                /* allowFastDeploy= */ true,
+                packageName,
+                options.isForceQueryable());
           }
         },
         quiet);
@@ -824,6 +1032,93 @@ public class AdbHelper implements AndroidDevicesHelper {
               device.installBuildUuidFile(
                   BUILD_METADATA_INSTALL_ROOT, packageName, buck2BuildUuid.get()),
           true);
+    }
+  }
+
+  /**
+   * Whether {@code device} lacks {@code apk} as the installed apk of {@code packageName}. With
+   * {@code forceQueryable}, also true when the installed package is not queryable or its
+   * queryability cannot be read.
+   */
+  public static boolean shouldAppBeInstalled(
+      AndroidDevice device,
+      String packageName,
+      File apk,
+      AndroidInstallPrinter androidPrinter,
+      boolean forceQueryable)
+      throws Exception {
+    AndroidDevice.InstalledApk installed;
+    try {
+      installed = device.compareInstalledApk(packageName, apk);
+    } catch (AdbCommandFailedException e) {
+      LOG.info("Could not read the installed APK.  Must re-install: %s", e.getMessage());
+      return true;
+    }
+    switch (installed) {
+      case ABSENT:
+        androidPrinter.printMessage("App not installed.  Installing now.");
+        return true;
+      case DIFFERENT:
+        LOG.info("Installed APK differs.  Must re-install.");
+        return true;
+      default:
+        if (forceQueryable) {
+          try {
+            if (!device.isPackageQueryable(packageName)) {
+              LOG.info("Installed APK is not queryable.  Must re-install.");
+              return true;
+            }
+          } catch (AdbCommandFailedException e) {
+            LOG.info("Could not read package queryability.  Must re-install: %s", e.getMessage());
+            return true;
+          }
+        }
+        LOG.info("Installed APK matches.  No need to install.");
+        return false;
+    }
+  }
+
+  private boolean isApexFileSupportsRebootlessUpdate(File apexFile) {
+    try {
+      // Open APEX file as a zip archive
+      try (ZipFile zipFile = new ZipFile(apexFile)) {
+        // Find the apex_manifest.pb entry
+        ZipEntry manifestEntry = zipFile.getEntry("apex_manifest.pb");
+
+        if (manifestEntry == null) {
+          LOG.warn("apex_manifest.pb not found in APEX file: %s", apexFile.getName());
+          return false;
+        }
+
+        // Extract the manifest directly to byte array
+        byte[] manifestBytes;
+        try (java.io.InputStream inputStream =
+                Objects.requireNonNull(zipFile.getInputStream(manifestEntry));
+            java.io.ByteArrayOutputStream outputStream = new java.io.ByteArrayOutputStream()) {
+          byte[] buffer = new byte[8192];
+          int bytesRead;
+          while ((bytesRead = inputStream.read(buffer)) != -1) {
+            outputStream.write(buffer, 0, bytesRead);
+          }
+          manifestBytes = outputStream.toByteArray();
+        }
+
+        LOG.info(
+            "Extracted apex_manifest.pb from %s (%d bytes)",
+            apexFile.getName(), manifestBytes.length);
+
+        // Parse manifestBytes to check for rebootless update support
+        ApexManifest apexManifest = ApexManifest.parseFrom(manifestBytes);
+
+        LOG.info(
+            "supportsRebootlessUpdate: %s",
+            apexManifest.getSupportsRebootlessUpdate() ? "true" : "false");
+
+        return apexManifest.getSupportsRebootlessUpdate();
+      }
+    } catch (IOException e) {
+      LOG.warn(e, "Failed to extract apex_manifest.pb from %s", apexFile.getName());
+      return false;
     }
   }
 

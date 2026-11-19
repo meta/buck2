@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
@@ -21,6 +22,7 @@ import java.util.regex.Pattern;
  * Helper class that keeps a list of compiled patterns and provides a method to check whether a
  * string matches at least one of them.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class PatternsMatcher {
 
   /** A pattern which patches any string */

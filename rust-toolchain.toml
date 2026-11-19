@@ -1,0 +1,13 @@
+[toolchain]
+# When you update `channel` below you must:
+#
+# * Update `docs/getting_started/install.md` (two instances).
+# * Update `../common/rust/tools/reindeer/rust-toolchain` (one instance)
+# * Update `../target_determinator/oss/rust-toolchain` (one instance)
+# * Update `../common/ocaml/interop/rust-toolchain` (one instance)
+#   * NOTE: You may have to change this ocaml file in a follow up commit as ocamlrep
+#     has a dependency on buck2 git trunk.
+# * Update `../monarch/rust-toolchain` (one instance)
+
+channel = "nightly-2026-08-15"
+components = ["llvm-tools-preview", "rust-src"]

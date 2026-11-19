@@ -1,9 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
-# This source code is licensed under both the MIT license found in the
-# LICENSE-MIT file in the root directory of this source tree and the Apache
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
 # License, Version 2.0 found in the LICENSE-APACHE file in the root directory
-# of this source tree.
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
 
 # Configuration for Reindeer to generate Buck targets from Cargo.toml
 #
@@ -22,16 +23,25 @@ include_workspace_members = true
 bindeps = true
 
 [buck]
-# Name of the generated file.
-file_name = "BUCK.reindeer"
+platform_compatibility_on_all_targets = true
 
 # Rules used for various kinds of targets.
-rust_library = "cargo.rust_library"
-rust_binary = "cargo.rust_binary"
+alias = "third_party_rust_alias"
+alias_with_platforms = "third_party_rust_alias"
+rust_library = "third_party_rust_library"
+rust_binary = "third_party_rust_binary"
+cxx_library = "third_party_rust_cxx_library"
 prebuilt_cxx_library = "third_party_rust_prebuilt_cxx_library"
 
 buckfile_imports = """
 load("@prelude//rust:cargo_buildscript.bzl", "buildscript_run")
 load("@prelude//rust:cargo_package.bzl", "cargo")
-load("@shim//third-party/macros:rust_third_party.bzl", "third_party_rust_prebuilt_cxx_library")
+load(
+    "@shim//third-party/macros:rust_third_party.bzl",
+    "third_party_rust_alias",
+    "third_party_rust_binary",
+    "third_party_rust_cxx_library",
+    "third_party_rust_library",
+    "third_party_rust_prebuilt_cxx_library",
+)
 """

@@ -33,7 +33,6 @@ use crate::module::typ::StarArg;
 use crate::module::typ::StarArgSource;
 use crate::module::typ::StarFun;
 use crate::module::typ::StarFunSource;
-use crate::module::typ::StarGenerics;
 use crate::module::util::ident_string;
 
 impl StarFun {
@@ -144,12 +143,10 @@ impl StarFun {
     }
 
     /// Globals builder call to register the function.
-    fn builder_set(&self, generics: &StarGenerics) -> syn::Result<syn::Stmt> {
+    fn builder_set(&self) -> syn::Result<syn::Stmt> {
         let name_str = self.name_str();
-        let components = render_native_callable_components(self, generics)?;
+        let components = render_native_callable_components(self)?;
         let param_spec = render_signature(self)?;
-
-        let turbofish = generics.turbofish();
 
         let special_builtin_function = self.special_builtin_function_expr();
 
@@ -171,8 +168,8 @@ impl StarFun {
                 globals_builder.set_method(
                     #name_str,
                     #components,
-                    #param_spec,
-                    __starlark_invoke_outer #turbofish,
+                    |__heap| #param_spec,
+                    __starlark_invoke_outer,
                 );
             })
         } else {
@@ -183,28 +180,24 @@ impl StarFun {
                 globals_builder.set_function(
                     #name_str,
                     #components,
-                    #param_spec,
+                    |__heap| #param_spec,
                     #as_type,
                     #ty_custom,
                     #special_builtin_function,
-                    __starlark_invoke_outer #turbofish,
+                    __starlark_invoke_outer,
                 );
             })
         }
     }
 }
 
-pub(crate) fn render_fun(x: StarFun, generics: &StarGenerics) -> syn::Result<syn::Stmt> {
-    let generic_decls = generics.decls();
-    let where_clause = generics.where_clause();
-    let turbofish = generics.turbofish();
-
+pub(crate) fn render_fun(x: StarFun) -> syn::Result<syn::Stmt> {
     let (this_outer_param, this_inner_param, this_prepare, this_arg) = x.this_param_arg();
     let (eval_param, eval_arg) = x.eval_param_arg();
     let (heap_param, heap_arg) = x.heap_param_arg();
     let (binding_params, prepare, binding_args) = x.binding_params_arg()?;
 
-    let builder_set = x.builder_set(generics)?;
+    let builder_set = x.builder_set()?;
 
     let StarFun {
         attrs,
@@ -235,9 +228,9 @@ pub(crate) fn render_fun(x: StarFun, generics: &StarGenerics) -> syn::Result<syn
         //   so the warning would be precise.
         #[allow(clippy::extra_unused_lifetimes)]
         #( #attrs )*
-        fn __starlark_invoke_impl #generic_decls(
+        fn __starlark_invoke_impl<'v>(
             #( #invoke_params, )*
-        ) -> #return_type #where_clause {
+        ) -> #return_type {
             #body
         }
     };
@@ -249,30 +242,30 @@ pub(crate) fn render_fun(x: StarFun, generics: &StarGenerics) -> syn::Result<syn
         // https://github.com/rust-lang/rfcs/pull/2515
         // Until then we use this hack as a workaround.
         #[allow(dead_code)] // Function is not used when return type is specified explicitly.
-        fn __starlark_return_type_starlark_type_repr #generic_decls () -> starlark::typing::Ty #where_clause {
+        fn __starlark_return_type_starlark_type_repr() -> starlark::typing::Ty {
             fn get_impl<'v, T: starlark::values::AllocValue<'v>, E>(
                 _f: fn(
                     #( #param_types, )*
                 ) -> std::result::Result<T, E>,
             ) -> starlark::typing::Ty {
-                <T as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
+                <<T as starlark::values::AllocValue<'v>>::Type as starlark::values::StarlarkTypeExpr<'v>>::starlark_type_repr()
             }
-            get_impl(__starlark_invoke_impl #turbofish)
+            get_impl(__starlark_invoke_impl)
         }
     };
 
     let impl_invoke_outer: syn::ItemFn = syn::parse_quote! {
         #[allow(non_snake_case)] // Starlark doesn't have this convention
-        fn __starlark_invoke_outer #generic_decls (
+        fn __starlark_invoke_outer<'v>(
             eval: &mut starlark::eval::Evaluator<'v, '_, '_>,
             #(#this_outer_param,)*
-            signature: &starlark::eval::ParametersSpec<starlark::values::FrozenValue>,
+            signature: &starlark::eval::ParametersSpec<starlark::values::Value<'v>>,
             parameters: &starlark::eval::Arguments<'v, '_>,
-        ) -> starlark::Result<starlark::values::Value<'v>> #where_clause {
+        ) -> starlark::Result<starlark::values::Value<'v>> {
             #this_prepare
             #prepare
-            match __starlark_invoke_impl #turbofish (#( #invoke_args, )*) {
-                Ok(v) => Ok(eval.heap().alloc(v)),
+            match __starlark_invoke_impl(#( #invoke_args, )*) {
+                Ok(v) => Ok(eval.heap().alloc(v).to_value()),
                 Err(e) => Err(starlark::__derive_refs::invoke_macro_error::InvokeMacroError::into_starlark_error(e)),
             }
         }
@@ -445,8 +438,8 @@ fn render_binding_arg(arg: &StarArg) -> syn::Result<BindingArg> {
     })
 }
 
-// Given the arguments, create a variable `signature` with a `ParametersSpec` object.
-// Or return None if you don't need a signature
+// Given the arguments, create an expression building the `ParametersSpec` on the builder's
+// heap, which is in scope as `__heap`.
 fn render_signature(x: &StarFun) -> syn::Result<syn::Expr> {
     let name_str = ident_string(&x.name);
 
@@ -493,27 +486,21 @@ fn render_option(expr: Option<syn::Expr>) -> syn::Expr {
     }
 }
 
-fn render_starlark_type(typ: &syn::Type, generics: &StarGenerics) -> syn::Expr {
-    let decls = generics.decls();
-    let turbofish = generics.turbofish();
-    let where_clause = generics.where_clause();
+fn render_starlark_type(typ: &syn::Type) -> syn::Expr {
     syn::parse_quote! {
         {
-            #[allow(clippy::extra_unused_lifetimes)]
-            fn get_type_string #decls () -> starlark::typing::Ty #where_clause {
-                <#typ as starlark::values::type_repr::StarlarkTypeRepr>::starlark_type_repr()
+            fn get_type_string<'v>() -> starlark::typing::Ty {
+                <<#typ as starlark::values::UnpackValue<'v>>::Type as starlark::values::StarlarkTypeExpr<'v>>::starlark_type_repr()
             }
-            get_type_string #turbofish ()
+            get_type_string()
         }
     }
 }
 
-fn render_regular_native_callable_param(
-    arg: &StarArg,
-    generics: &StarGenerics,
-) -> syn::Result<syn::Expr> {
-    let ty = render_starlark_type(arg.without_option(), generics);
+fn render_regular_native_callable_param(arg: &StarArg) -> syn::Result<syn::Expr> {
+    let ty = render_starlark_type(arg.without_option());
     let name_str = ident_string(&arg.param.ident);
+    let doc_hidden = arg.doc_hidden;
     let required: syn::Expr = match (&arg.default, arg.is_option()) {
         (Some(_), true) => {
             return Err(syn::Error::new(
@@ -530,9 +517,9 @@ fn render_regular_native_callable_param(
             // For things that aren't type value, use optional and then next_opt/unwrap
             // to avoid the to/from value conversion.
             let default = if arg.is_value() {
-                Some(syn::parse_quote! { globals_builder.alloc(#default) })
+                Some(syn::parse_quote! { |__heap| __heap.alloc(#default).to_value() })
             } else {
-                render_default_as_frozen_value(default)
+                render_default_as_value(default)
             };
             render_some(match default {
                 None => {
@@ -546,18 +533,19 @@ fn render_regular_native_callable_param(
     };
 
     Ok(syn::parse_quote! {
-        starlark::__derive_refs::param_spec::NativeCallableParam {
-            name: #name_str,
-            ty: #ty,
-            required: #required,
+        {
+            starlark::__derive_refs::static_str!(__PARAM_STATIC_NAME = #name_str);
+            starlark::__derive_refs::param_spec::NativeCallableParam {
+                name: __PARAM_STATIC_NAME,
+                ty: #ty,
+                required: #required,
+                doc_hidden: #doc_hidden,
+            }
         }
     })
 }
 
-fn render_native_callable_components(
-    x: &StarFun,
-    generics: &StarGenerics,
-) -> syn::Result<TokenStream> {
+fn render_native_callable_components(x: &StarFun) -> syn::Result<TokenStream> {
     let docs = match x.docstring.as_ref() {
         Some(d) => quote!(Some(#d)),
         None => quote!(None),
@@ -581,30 +569,36 @@ fn render_native_callable_components(
             let pos_only: Vec<syn::Expr> = pos_only
                 .iter()
                 .copied()
-                .map(|a| render_regular_native_callable_param(a, generics))
+                .map(render_regular_native_callable_param)
                 .collect::<syn::Result<Vec<_>>>()?;
             let pos_or_named: Vec<syn::Expr> = pos_or_named
                 .iter()
                 .copied()
-                .map(|a| render_regular_native_callable_param(a, generics))
+                .map(render_regular_native_callable_param)
                 .collect::<syn::Result<Vec<_>>>()?;
             let args: Option<syn::Expr> = args.map(|arg| {
                 let name_str = ident_string(&arg.param.ident);
-                let ty = render_starlark_type(&arg.param.ty, generics);
+                let ty = render_starlark_type(&arg.param.ty);
                 syn::parse_quote! {
-                    starlark::__derive_refs::param_spec::NativeCallableParam::args(#name_str, #ty)
+                    {
+                        starlark::__derive_refs::static_str!(__PARAM_STATIC_NAME = #name_str);
+                        starlark::__derive_refs::param_spec::NativeCallableParam::args(__PARAM_STATIC_NAME, #ty)
+                    }
                 }
             });
             let named_only: Vec<syn::Expr> = named_only
                 .iter()
                 .copied()
-                .map(|a| render_regular_native_callable_param(a, generics))
+                .map(render_regular_native_callable_param)
                 .collect::<syn::Result<Vec<_>>>()?;
             let kwargs: Option<syn::Expr> = kwargs.map(|arg| {
                 let name_str = ident_string(&arg.param.ident);
-                let ty = render_starlark_type(&arg.param.ty, generics);
+                let ty = render_starlark_type(&arg.param.ty);
                 syn::parse_quote! {
-                    starlark::__derive_refs::param_spec::NativeCallableParam::kwargs(#name_str, #ty)
+                    {
+                        starlark::__derive_refs::static_str!(__PARAM_STATIC_NAME = #name_str);
+                        starlark::__derive_refs::param_spec::NativeCallableParam::kwargs(__PARAM_STATIC_NAME, #ty)
+                    }
                 }
             });
 
@@ -622,8 +616,6 @@ fn render_native_callable_components(
         }
     };
 
-    let turbofish = generics.turbofish();
-
     let speculative_exec_safe = x.speculative_exec_safe;
     Ok(quote!(
         {
@@ -632,7 +624,7 @@ fn render_native_callable_components(
                 speculative_exec_safe: #speculative_exec_safe,
                 rust_docstring: #docs,
                 param_spec,
-                return_type: __starlark_return_type_starlark_type_repr #turbofish(),
+                return_type: __starlark_return_type_starlark_type_repr(),
             }
         }
     ))
@@ -655,7 +647,7 @@ impl SignatureRegularArgMode {
             // to avoid the to/from value conversion.
             if arg.is_value() {
                 SignatureRegularArgMode::Defaulted(syn::parse_quote! {
-                    globals_builder.alloc(#default)
+                    __heap.alloc(#default).to_value()
                 })
             } else {
                 SignatureRegularArgMode::Optional
@@ -742,16 +734,16 @@ fn parameter_spec_args(star_args: &[StarArg]) -> syn::Result<ParametersSpecArgs>
 }
 
 /// We have an argument that the user wants to use as a default.
-/// That _might_ have a valid `FrozenValue` representation, if so, it would be great to use for documentation.
-/// Try and synthesise it if we can.
-fn render_default_as_frozen_value(default: &Expr) -> Option<syn::Expr> {
+/// That _might_ have a valid Starlark value representation, if so, it would be great to use for
+/// documentation. Try and synthesise it if we can, as a function of the builder's heap.
+fn render_default_as_value(default: &Expr) -> Option<syn::Expr> {
     let x = quote!(#default).to_string();
     if let Ok(x) = x.trim_end_matches("i32").parse::<i32>() {
-        Some(syn::parse_quote! { globals_builder.alloc(#x) })
+        Some(syn::parse_quote! { |__heap| __heap.alloc(#x).to_value() })
     } else if let Ok(x) = x.parse::<bool>() {
-        Some(syn::parse_quote! { starlark::values::FrozenValue::new_bool(#x) })
+        Some(syn::parse_quote! { |_| starlark::values::Value::new_bool(#x) })
     } else if x == "NoneOr :: None" {
-        Some(syn::parse_quote! { starlark::values::FrozenValue::new_none() })
+        Some(syn::parse_quote! { |_| starlark::values::Value::new_none() })
     } else if matches!(
         default,
         Expr::Lit(ExprLit {
@@ -760,11 +752,11 @@ fn render_default_as_frozen_value(default: &Expr) -> Option<syn::Expr> {
         })
     ) {
         // Make sure we don't splice in `x` again, or we double quote the string
-        Some(syn::parse_quote! { starlark::const_frozen_string!(#default).to_frozen_value() })
-    } else if x == "UnpackListOrTuple :: default()" || x == "UnpackList :: default()" {
-        Some(syn::parse_quote! { starlark::values::FrozenValue::new_empty_list() })
-    } else if x == "SmallMap :: new()" {
-        Some(syn::parse_quote! { starlark::values::FrozenValue::new_empty_dict() })
+        Some(syn::parse_quote! { |__heap| __heap.alloc(#default).to_value() })
+    } else if x == "ValueOf :: empty_list()" {
+        Some(syn::parse_quote! { |_| starlark::values::Value::new_empty_list() })
+    } else if x == "ValueOf :: empty_dict()" {
+        Some(syn::parse_quote! { |_| starlark::values::Value::new_empty_dict() })
     } else {
         None
     }

@@ -10,6 +10,7 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -17,6 +18,7 @@ import java.util.regex.Pattern;
  * Analyzes crash information from logcat output to detect specific crash types and provide enhanced
  * crash reporting.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CrashAnalyzer {
 
   /** Defines a crash type with its detection pattern and message. */
@@ -55,11 +57,22 @@ public class CrashAnalyzer {
         "Illegal state exception detected",
         false),
     new CrashType(
-        Pattern.compile("(?i)Fatal signal 6|signal 6|SIGABRT|Abort"),
+        // Match a libc/debuggerd "signal 6 (SIGABRT)" line or debuggerd's "Abort message:". A bare
+        // "Abort" token matched any line containing the word, e.g. WhatsApp's
+        // "SafeModuleLoader ... Loading module: abort_hook" logged at every app start, which
+        // produced a false SIGABRT verdict on every run of those apps.
+        Pattern.compile("(?i)\\bsignal 6\\b|SIGABRT|\\bAbort message\\b"),
         "SIGABRT signal detected",
         true),
     new CrashType(
-        Pattern.compile("(?i)Fatal signal 11|signal 11|SIGSEGV|segmentation fault"),
+        // Match a real native-crash line (libc "Fatal signal 11 (SIGSEGV)" / debuggerd
+        // "signal 11 (SIGSEGV)") or a "Segmentation fault" report. The bare "SIGSEGV" token was
+        // intentionally removed: it matches any log line that merely mentions the word, e.g. the
+        // benign MessageExecutionMonitor warning "...risk of ART nterp stack-walk SIGSEGV..."
+        // (added
+        // by D109574690, fires ~hundreds of times per run), which produced false "native crash"
+        // verdicts. Real SIGSEGV crashes always carry "signal 11", so coverage is unaffected.
+        Pattern.compile("(?i)Fatal signal 11|signal 11|segmentation fault"),
         "SIGSEGV signal detected (native crash)",
         true),
     new CrashType(
@@ -96,7 +109,23 @@ public class CrashAnalyzer {
 
     for (CrashType crashType : CRASH_TYPES) {
       Matcher matcher = crashType.pattern.matcher(logcatOutput);
-      if (matcher.find()) {
+      boolean matched;
+      if (crashType.isSignal) {
+        matched = matcher.find();
+      } else {
+        // A Java-exception token only indicates a crash when it is surfaced by the crash
+        // reporter, not when some component merely logs a caught exception (see
+        // isCrashContext). Scan every occurrence so a genuine crash later in the log is still
+        // found even when benign matches precede it.
+        matched = false;
+        while (matcher.find()) {
+          if (isCrashContext(logcatOutput, matcher.start())) {
+            matched = true;
+            break;
+          }
+        }
+      }
+      if (matched) {
         crashDetected = true;
         System.err.println("AIT_CRASH_DETECTION: " + crashType.detectionMessage);
 
@@ -112,6 +141,39 @@ public class CrashAnalyzer {
       System.err.println("No crashes detected");
     }
     System.err.println("=== END AIT CRASH ANALYSIS ===");
+  }
+
+  /**
+   * Decides whether a matched Java-exception token represents an actual crash rather than a
+   * caught-and-logged exception. An uncaught exception that crashes the process is reported by the
+   * Android runtime's uncaught-exception handler (the "AndroidRuntime" tag / "FATAL EXCEPTION"
+   * header); a failure to load a test class is reported by the instrumentation "TestRunner". A
+   * token logged under any other tag is a component logging a caught exception, e.g. the benign
+   * lines that previously produced false "crash detected" verdicts on every run:
+   *
+   * <pre>
+   *   E QPLProvider: java.lang.IllegalStateException: No QPL instance provided
+   *   D CoverageInit: java.lang.ClassNotFoundException: com.facebook.coverage.e2e.CoverageSetup
+   * </pre>
+   *
+   * The check is on the matched line itself, which works for both brief ("E/AndroidRuntime(pid):")
+   * and threadtime ("... E AndroidRuntime:") logcat formats since the exception token shares the
+   * line with its tag.
+   *
+   * @param logcatOutput The raw logcat output
+   * @param matchStart Offset of the exception token match within {@code logcatOutput}
+   * @return true if the match is on a crash-reporter / test-runner line
+   */
+  private static boolean isCrashContext(String logcatOutput, int matchStart) {
+    int lineStart = logcatOutput.lastIndexOf('\n', matchStart) + 1;
+    int lineEnd = logcatOutput.indexOf('\n', matchStart);
+    if (lineEnd == -1) {
+      lineEnd = logcatOutput.length();
+    }
+    String line = logcatOutput.substring(lineStart, lineEnd);
+    return line.contains("AndroidRuntime")
+        || line.contains("FATAL EXCEPTION")
+        || line.contains("TestRunner");
   }
 
   /**

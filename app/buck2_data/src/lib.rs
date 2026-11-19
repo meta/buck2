@@ -8,41 +8,17 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
+// prost represents proto `map` fields as `std::collections::HashMap`.
+#![allow(clippy::disallowed_types)]
 
 use std::borrow::Cow;
 use std::fmt;
 
+use buck2_miniperf_proto::MiniperfCounter;
+
 pub mod action_key_owner;
-
-pub mod serialize_timestamp {
-    use serde::Deserialize;
-    use serde::Deserializer;
-    use serde::Serialize;
-    use serde::Serializer;
-
-    pub fn serialize<S>(
-        value: &Option<::prost_types::Timestamp>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let d = value.as_ref().map(|v| (v.seconds, v.nanos));
-        d.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<Option<::prost_types::Timestamp>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let d = Option::<(i64, i32)>::deserialize(deserializer)?;
-        let d = d.map(|(seconds, nanos)| ::prost_types::Timestamp { seconds, nanos });
-        Ok(d)
-    }
-}
+pub mod agent_context_keys;
+pub mod timing;
 
 mod serialize_bytes {
     use serde::Deserialize;
@@ -96,9 +72,75 @@ mod serialize_action_kind {
 
 tonic::include_proto!("buck.data");
 
+impl CallerKind {
+    /// Stable lowercase label for caller telemetry.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Agent => "agent",
+            Self::CommandShell => "command_shell",
+            Self::Other => "other",
+            Self::Wrapper => "wrapper",
+            Self::CommandWrapper => "command_wrapper",
+        }
+    }
+}
+
+impl AgentDetectionStopReason {
+    /// Stable lowercase label for caller telemetry.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unspecified => "unspecified",
+            Self::Agent => "agent",
+            Self::Other => "other",
+            Self::Unknown => "unknown",
+            Self::NoParent => "no_parent",
+            Self::ClientUnavailable => "client_unavailable",
+            Self::ParentUnavailable => "parent_unavailable",
+            Self::NewerParent => "newer_parent",
+            Self::Cycle => "cycle",
+            Self::DepthLimit => "depth_limit",
+        }
+    }
+}
+
+// Millions of these can be queued. Keep rare large payloads boxed so they
+// do not increase the allocation size of every common event.
+mini_vec::size_assert::words_of_expr!(BuckEvent::default(), ~40);
+
 pub mod error {
     tonic::include_proto!("buck.data.error");
 }
+
+// Preserve the event producers' `Into<Data>` conversions when a large variant is
+// boxed. The generated derives also provide conversions from the boxed payloads.
+macro_rules! impl_from_boxed_event {
+    ($data:ident, $($variant:ident($event:ident)),+ $(,)?) => {
+        $(
+            impl From<$event> for $data::Data {
+                fn from(event: $event) -> Self {
+                    Self::$variant(Box::new(event))
+                }
+            }
+        )+
+    };
+}
+
+impl_from_boxed_event!(
+    span_end_event,
+    DepFileUpload(DepFileUploadEnd),
+    TestDiscovery(TestDiscoveryEnd),
+    TestRun(TestRunEnd),
+);
+impl_from_boxed_event!(
+    instant_event,
+    ActionError(ActionError),
+    CleanStaleResult(CleanStaleResult),
+    PageOutSummary(PageOutSummary),
+    PagingSummary(PagingSummary),
+    RageResult(RageResult),
+    ResourceControlEvent(ResourceControlEvent),
+);
 
 /// Extract action digest from a list of command executions.
 /// Returns the action digest from the last command execution if available.
@@ -137,12 +179,25 @@ pub trait ToProtoMessage {
     fn as_proto(&self) -> Self::Message;
 }
 
+// Lives here rather than on `MiniperfCounter` because the orphan rule allows
+// only these two crates, and `buck2_miniperf_proto` deliberately has no
+// `buck2_data` dep; see `buck2_miniperf_proto/BUCK`.
+impl From<MiniperfCounter> for CpuCounter {
+    fn from(counter: MiniperfCounter) -> Self {
+        CpuCounter {
+            count: counter.count,
+            time_enabled: counter.time_enabled,
+            time_running: counter.time_running,
+        }
+    }
+}
+
 impl fmt::Display for DaemonShutdown {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}, caller:", self.reason)?;
 
         for caller in self.callers.iter() {
-            let max_len = 70;
+            let max_len = 200;
 
             let short_caller = if caller.len() > max_len {
                 Cow::Owned(
@@ -164,71 +219,20 @@ impl fmt::Display for DaemonShutdown {
     }
 }
 
-pub mod serialize_duration_as_micros {
-    use serde::Deserialize;
-    use serde::Deserializer;
-    use serde::Serialize;
-    use serde::Serializer;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    pub fn serialize<S>(
-        value: &Option<::prost_types::Duration>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        value.as_ref().map(to_micros).serialize(serializer)
-    }
+    #[test]
+    fn test_cpu_counter_from_miniperf_counter() {
+        let counter = CpuCounter::from(MiniperfCounter {
+            count: 123,
+            time_enabled: 100,
+            time_running: 50,
+        });
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<::prost_types::Duration>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Option::<i64>::deserialize(deserializer)?;
-        Ok(value.map(from_micros))
-    }
-
-    const MICROS_IN_SECOND: i64 = 1000000;
-    const NANOS_IN_MICRO: i32 = 1000;
-
-    /// We saturate here since technically not all ::prost_types::Duration would fit (but all those
-    /// we care about would).
-    fn to_micros(duration: &::prost_types::Duration) -> i64 {
-        let mut micros: i64 = 0;
-        micros = micros.saturating_add(duration.seconds.saturating_mul(MICROS_IN_SECOND));
-        micros = micros.saturating_add(duration.nanos.saturating_div(NANOS_IN_MICRO).into());
-        micros
-    }
-
-    fn from_micros(duration: i64) -> ::prost_types::Duration {
-        let seconds = duration / MICROS_IN_SECOND;
-        let nanos = ((duration % MICROS_IN_SECOND) as i32) * NANOS_IN_MICRO;
-        prost_types::Duration {
-            seconds,
-            nanos: nanos as _,
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn test_value() {
-            assert_eq!(
-                to_micros(&::prost_types::Duration {
-                    seconds: 1,
-                    nanos: 1000
-                }),
-                1000001
-            );
-        }
-
-        #[test]
-        fn test_roundtrip() {
-            for v in [-1, 10, i64::MAX, i64::MIN, 0] {
-                assert_eq!(to_micros(&from_micros(v)), v);
-            }
-        }
+        assert_eq!(counter.count, 123);
+        assert_eq!(counter.time_enabled, 100);
+        assert_eq!(counter.time_running, 50);
     }
 }

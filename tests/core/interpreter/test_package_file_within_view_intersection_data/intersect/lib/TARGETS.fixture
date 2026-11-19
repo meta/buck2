@@ -1,0 +1,5 @@
+# Inside the cap; the deps below are allowed to reach it.
+stub(
+    name = "t",
+    visibility = ["PUBLIC"],
+)

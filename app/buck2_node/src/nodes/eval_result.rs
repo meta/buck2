@@ -24,10 +24,10 @@ use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::name::TargetName;
 use buck2_core::target::name::TargetNameRef;
 use dupe::Dupe;
-use gazebo::prelude::*;
 use itertools::Itertools;
+use pagable::Pagable;
 
-use crate::attrs::coerced_attr::CoercedAttr;
+use crate::attrs::coerced::kinds;
 use crate::attrs::inspect_options::AttrInspectOptions;
 use crate::nodes::targets_map::TargetsMap;
 use crate::nodes::unconfigured::TargetNode;
@@ -40,15 +40,13 @@ use crate::super_package::SuperPackage;
 /// attribute we know nothing about. It's also pretty difficult to fix this right now
 /// though.
 pub fn is_generated_target(node: TargetNodeRef) -> bool {
-    if let Some(labels) = node.attr_or_none("labels", AttrInspectOptions::All) {
-        if let CoercedAttr::List(labels) = labels.value {
-            return labels.iter().any(|label| match label {
-                CoercedAttr::String(label) => ***label == *"generated",
-                _ => false,
-            });
-        }
-    }
-    false
+    node.attr_or_none("labels", AttrInspectOptions::All)
+        .and_then(|labels| labels.value.downcast::<kinds::List>())
+        .is_some_and(|items| {
+            items
+                .iter()
+                .any(|x| x.downcast::<kinds::String>() == Some("generated"))
+        })
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -247,7 +245,7 @@ impl MissingTargets {
 }
 
 /// An EvaluationResult contains the list of targets resulting from evaluating a build file.
-#[derive(Debug, Allocative)]
+#[derive(Debug, Allocative, Pagable)]
 pub struct EvaluationResult {
     /// The buildfile path that corresponds to this result.
     /// unlike a .bzl file, a build file (BUCK, TARGETS, etc) will only be loaded in
@@ -256,7 +254,10 @@ pub struct EvaluationResult {
     imports: Vec<ImportPath>,
     super_package: SuperPackage,
     targets: TargetsMap,
+    #[pagable(discard = "None")]
     pub starlark_profile: Option<Arc<dyn StarlarkProfileDataAndStatsDyn>>,
+    /// Peak allocated bytes on the starlark heap during BUCK file evaluation.
+    pub starlark_peak_allocated_bytes: u64,
 }
 
 impl EvaluationResult {
@@ -273,6 +274,7 @@ impl EvaluationResult {
             targets,
             // This is populated later when `Evaluator` is finalized.
             starlark_profile: None,
+            starlark_peak_allocated_bytes: 0,
         }
     }
 
@@ -382,6 +384,8 @@ pub struct EvaluationResultWithStats {
     pub starlark_peak_allocated_bytes: u64,
     /// Instruction count during evaluation of `BUCK` file.
     pub cpu_instruction_count: Option<u64>,
+    /// Starlark tick count (function calls + loop backedges) during evaluation.
+    pub starlark_tick_count: u64,
 }
 
 #[derive(Debug)]
@@ -419,7 +423,9 @@ impl Display for SuggestedSimilarTargets {
         if !self.targets.is_empty() {
             let targets: Vec<String> = self
                 .targets
-                .map(|target| format!("  {}:{}", self.package, target));
+                .iter()
+                .map(|target| format!("  {}:{}", self.package, target))
+                .collect::<Vec<_>>();
             // Add a leading newline because this is used as a suffix in TargetsError.
             // For the same reason, print nothing when self.targets is empty.
             write!(

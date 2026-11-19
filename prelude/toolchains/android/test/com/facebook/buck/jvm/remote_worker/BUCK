@@ -1,0 +1,26 @@
+load(
+    "@prelude//toolchains/android/tools:build_rules.bzl",
+    "buck_java_test",
+)
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("android_devxx")
+
+source_listing()
+
+buck_java_test(
+    name = "remote_worker",
+    srcs = glob(["*Test.java"]),
+    deps = [
+        "fbcode//remote_execution/lib/if/worker_tool:worker_tool_thrift-java-swift-java17",
+        "prelude//toolchains/android/meta_only/src/com/facebook/buck/jvm/remote_worker:workertool_thrift",
+        "prelude//toolchains/android/src/com/facebook/buck/core/util/log:log",
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/cd:cd",
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/java/stepsbuilder/javacd/main:command_lib",
+        "prelude//toolchains/android/src/com/facebook/buck/step:step",
+        "prelude//toolchains/android/third-party:args4j",
+        "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:junit",
+        "prelude//toolchains/android/third-party:mockito",
+    ],
+)

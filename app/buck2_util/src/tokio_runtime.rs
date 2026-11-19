@@ -24,7 +24,8 @@ pub fn new_tokio_runtime(thread_name: &str) -> Builder {
     builder
 }
 
-#[cfg(test)]
+// See `threads::tests`.
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::threads::tests::recursive_function;
     use crate::tokio_runtime::new_tokio_runtime;

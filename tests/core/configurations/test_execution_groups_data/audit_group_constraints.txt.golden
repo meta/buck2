@@ -1,0 +1,19 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Checking each target against execution platforms defined by root//config:platforms_error_fallback
+root//groups:link_on_macos_remote (root//config:linux_local#<HASH>):
+  Failed to configure: Error looking up configured node root//groups:link_on_macos_remote (root//config:linux_local#<HASH>): Error resolving the execution platform of execution group `Link`: No compatible execution platform; 3 candidates were skipped. Run `buck2 audit execution-platform-resolution` on the target, with `--reuse-current-config` and a `--target-universe` matching the failing command, to see why each was skipped
+    Skipped root//config:linux_local
+      root//groups:remote_tool
+          is incompatible with root//config:linux_local#<HASH> (root//config:remote unsatisfied), check the target's compatibility attributes
+    Compatible root//config:linux_remote
+    Skipped root//config:macos_local
+      root//groups:remote_tool
+          is incompatible with root//config:macos_local#<HASH> (root//config:remote unsatisfied), check the target's compatibility attributes
+  Execution group `Link`:
+    Skipped root//config:linux_local
+      exec_compatible_with requires `root//config:macos` but it was not satisfied
+    Skipped root//config:linux_remote
+      exec_compatible_with requires `root//config:macos` but it was not satisfied
+    Skipped root//config:macos_local
+      exec_compatible_with requires `root//config:remote` but it was not satisfied

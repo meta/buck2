@@ -8,30 +8,36 @@
  * above-listed licenses.
  */
 
-//! Processing and reporting the the results of the build
+//! Processing and reporting the results of the build
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 
+use buck2_artifact::artifact::artifact_dyn::ArtifactDyn;
+use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_build_api::build::BuildProviderType;
 use buck2_build_api::build::BuildTargetResult;
 use buck2_build_api::build::ConfiguredBuildTargetResult;
 use buck2_build_api::build::ProviderArtifacts;
-use buck2_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
+use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use buck2_certs::validate::CertState;
-use buck2_certs::validate::check_cert_state;
+use buck2_certs::validate::CertStateReport;
+use buck2_certs::validate::INVALID_CERTS_TAG;
+use buck2_certs::validate::check_cert_state_for;
 use buck2_core::configuration::compatibility::MaybeCompatible;
+use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::execution_types::executor_config::PathSeparatorKind;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::pattern::pattern::Modifiers;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
+use buck2_events::dispatch::console_warning;
+use buck2_events::dispatch::instant_event;
 use buck2_execute::artifact::fs::ExecutorFs;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutMap;
 use dupe::Dupe;
-use fxhash::FxHashMap;
-use indexmap::IndexMap;
-use starlark_map::small_map::SmallMap;
 
 mod proto {
     pub(crate) use buck2_cli_proto::BuildTarget;
@@ -47,7 +53,6 @@ pub(crate) struct BuildErrors {
 #[derive(Copy, Clone, Dupe)]
 pub(crate) struct ResultReporterOptions {
     pub(crate) return_outputs: bool,
-    pub(crate) return_default_other_outputs: bool,
 }
 
 /// Collects build results into a Result<Vec<proto::BuildTarget>, buck2_error::Errors>. If any targets
@@ -69,7 +74,7 @@ impl<'a> ResultReporter<'a> {
         cert_state: CertState,
         options: ResultReporterOptions,
         build_result: &BuildTargetResult,
-    ) -> BuildTargetsAndErrors {
+    ) -> buck2_error::Result<BuildTargetsAndErrors> {
         let mut out = Self {
             artifact_fs,
             options,
@@ -83,10 +88,15 @@ impl<'a> ResultReporter<'a> {
         for (k, v) in &build_result.configured {
             // We omit skipped targets here.
             let Some(v) = v else { continue };
-            non_action_errors.extend(v.errors.iter().cloned());
-            action_errors.extend(v.outputs.iter().filter_map(|x| x.as_ref().err()).cloned());
+            non_action_errors.extend(v.errors.iter().map(|t| t.inner.clone()));
+            action_errors.extend(
+                v.outputs
+                    .iter()
+                    .filter_map(|x| x.inner.as_ref().err())
+                    .cloned(),
+            );
 
-            out.collect_result(k, v, build_result.configured_to_pattern_modifiers.get(k));
+            out.collect_result(k, v, build_result.configured_to_pattern_modifiers.get(k))?;
         }
 
         let mut error_list = if let Some(e) = non_action_errors.pop() {
@@ -99,15 +109,24 @@ impl<'a> ResultReporter<'a> {
         };
 
         if !error_list.is_empty() {
-            if let Some(e) = check_cert_state(cert_state).await {
-                error_list.push(e.into());
+            let report = check_cert_state_for(cert_state, error_list.iter()).await;
+            if report.cert_error().is_some() {
+                instant_event(buck2_data::TagEvent {
+                    tags: vec![INVALID_CERTS_TAG.to_owned()],
+                });
+            }
+            match report {
+                CertStateReport::Valid => {}
+                // Appended rather than wrapped so that the actual error stays visible.
+                CertStateReport::Explains(e) => error_list.push(e),
+                CertStateReport::Hint(e) => console_warning(e.to_string()),
             }
         }
 
-        BuildTargetsAndErrors {
+        Ok(BuildTargetsAndErrors {
             build_targets: out.results,
             build_errors: BuildErrors { errors: error_list },
-        }
+        })
     }
 
     fn collect_result(
@@ -115,17 +134,17 @@ impl<'a> ResultReporter<'a> {
         label: &ConfiguredProvidersLabel,
         result: &ConfiguredBuildTargetResult,
         pattern_modifiers: Option<&BTreeSet<Modifiers>>,
-    ) {
+    ) -> buck2_error::Result<()> {
         let outputs = result
             .outputs
             .iter()
-            .filter_map(|output| output.as_ref().ok());
+            .filter_map(|output| output.inner.as_ref().ok());
 
-        let mut artifact_path_mapping = FxHashMap::default();
+        let mut artifact_path_mapping = BuckMutMap::default();
 
-        // NOTE: We use an SmallMap here to preserve the order the rule author wrote, all
+        // NOTE: We use an BuckMutInsertionMap here to preserve the order the rule author wrote, all
         // the while avoiding duplicates.
-        let mut artifacts = SmallMap::new();
+        let mut artifacts = BuckMutInsertionMap::new();
 
         for output in outputs {
             let ProviderArtifacts {
@@ -137,9 +156,7 @@ impl<'a> ResultReporter<'a> {
                 continue;
             }
 
-            if !self.options.return_default_other_outputs
-                && matches!(provider_type, BuildProviderType::DefaultOther)
-            {
+            if matches!(provider_type, BuildProviderType::DefaultOther) {
                 continue;
             }
 
@@ -179,22 +196,20 @@ impl<'a> ResultReporter<'a> {
 
         let artifact_fs = self.artifact_fs;
 
-        // Write it this way because `.into_iter()` gets rust-analyzer confused
-        let outputs: Vec<proto::BuildOutput> = IntoIterator::into_iter(artifacts)
-            .map(|(a, providers)| proto::BuildOutput {
-                path: a
-                    .resolve_configuration_hash_path(artifact_fs)
-                    .unwrap()
-                    .to_string(),
+        let mut outputs: Vec<proto::BuildOutput> = Vec::new();
+        for (a, providers) in artifacts.into_iter() {
+            let output = proto::BuildOutput {
+                path: a.resolve_configuration_hash_path(artifact_fs)?.to_string(),
                 providers: Some(providers),
-            })
-            .collect();
+            };
+            outputs.push(output);
+        }
 
         let target = label.unconfigured().to_string();
         let configuration = label.cfg().to_string();
 
         let configured_graph_size = match &result.graph_properties {
-            Some(Ok(MaybeCompatible::Compatible(v))) => Some(v.configured_graph_size),
+            Some(Ok(MaybeCompatible::Compatible(v))) => Some(v.configured.configured_graph_size),
             Some(Ok(MaybeCompatible::Incompatible(..))) => None,
             Some(Err(e)) => {
                 // We don't expect an error on this unless something else on this target
@@ -209,26 +224,40 @@ impl<'a> ResultReporter<'a> {
             None => None,
         };
 
-        let run_args = if let Some(providers) = result.provider_collection.as_ref() {
-            if let Some(runinfo) = providers
-                .provider_collection()
-                .builtin_provider::<FrozenRunInfo>()
-            {
-                // Produce arguments to run on a local machine.
-                let path_separator = if cfg!(windows) {
-                    PathSeparatorKind::Windows
-                } else {
-                    PathSeparatorKind::Unix
-                };
-                let executor_fs = ExecutorFs::new(self.artifact_fs, path_separator);
-                let mut cli = Vec::<String>::new();
-                let mut ctx = AbsCommandLineContext::new(&executor_fs);
-                runinfo
-                    .add_to_command_line(&mut cli, &mut ctx, &artifact_path_mapping)
-                    .unwrap();
-                cli
+        let run_args = if let Some(runinfo) = result.run_info.as_ref() {
+            // Produce arguments to run on a local machine.
+            let path_separator = if cfg!(windows) {
+                PathSeparatorKind::Windows
             } else {
+                PathSeparatorKind::Unix
+            };
+            let executor_fs = ExecutorFs::new(self.artifact_fs, path_separator);
+            let mut cli = Vec::<String>::new();
+            let error_counting_artifact_path_mapper =
+                ErrorCountingArtifactPathMapperImpl::new(artifact_path_mapping);
+            let mut fmt = CommandLineBuilder::new_with_options(
+                &mut cli,
+                &error_counting_artifact_path_mapper,
+                &executor_fs,
+                true,
+                None,
+            );
+            runinfo
+                .as_ref()
+                .value()
+                .as_ref()
+                .add_to_command_line(&mut fmt)?;
+            if error_counting_artifact_path_mapper
+                .content_based_paths_with_no_hash
+                .get()
+                > 0
+            {
+                // If we have action errors, then it's possible that we weren't able to produce
+                // the run info because we couldn't resolve a content-based path, and that's okay
+                // because we don't expect to be able to use it anyway.
                 Vec::new()
+            } else {
+                cli
             }
         } else {
             Vec::new()
@@ -261,5 +290,35 @@ impl<'a> ResultReporter<'a> {
                 configured_graph_size,
             }),
         }
+        Ok(())
+    }
+}
+
+struct ErrorCountingArtifactPathMapperImpl<'a> {
+    pub map: BuckMutMap<&'a Artifact, ContentBasedPathHash>,
+    pub content_based_paths_with_no_hash: Cell<usize>,
+    pub scratch_content_based_path_hash: ContentBasedPathHash,
+}
+
+impl<'a> ErrorCountingArtifactPathMapperImpl<'a> {
+    pub fn new(map: BuckMutMap<&'a Artifact, ContentBasedPathHash>) -> Self {
+        Self {
+            map,
+            content_based_paths_with_no_hash: Cell::new(0),
+            scratch_content_based_path_hash: ContentBasedPathHash::Scratch,
+        }
+    }
+}
+
+impl ArtifactPathMapper for ErrorCountingArtifactPathMapperImpl<'_> {
+    fn get(&self, artifact: &Artifact) -> Option<&ContentBasedPathHash> {
+        let content_based_path_hash = self.map.get(artifact);
+        if artifact.path_resolution_requires_artifact_value() && content_based_path_hash.is_none() {
+            self.content_based_paths_with_no_hash
+                .set(self.content_based_paths_with_no_hash.get() + 1);
+            // We don't have a hash, but we want path resolution to succeed, so we use a scratch hash.
+            return Some(&self.scratch_content_based_path_hash);
+        }
+        content_based_path_hash
     }
 }

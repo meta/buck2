@@ -16,9 +16,10 @@ buck_java_library(
     ],
     deps = [
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
     ],
-    exported_deps = [
-    ],
+    exported_deps = [],
 )
 
 buck_java_library(
@@ -31,6 +32,8 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/util:throwing_print_writer",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
         ":build_config",
     ],
 )

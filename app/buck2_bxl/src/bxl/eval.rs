@@ -10,6 +10,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use allocative::Allocative;
 use buck2_build_api::bxl::result::BxlResult;
@@ -33,6 +34,7 @@ use buck2_events::dispatch::get_dispatcher;
 use buck2_events::dispatch::with_dispatcher;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::digest_config::HasDigestConfig;
+use buck2_hash::BuckFixedInsertionMap;
 use buck2_interpreter::factory::BuckStarlarkModule;
 use buck2_interpreter::factory::StarlarkEvaluatorProvider;
 use buck2_interpreter::file_loader::LoadedModule;
@@ -47,19 +49,16 @@ use dice::DiceTransaction;
 use dice_futures::cancellation::CancellationObserver;
 use dupe::Dupe;
 use itertools::Itertools;
-use once_cell::sync::Lazy;
 use starlark::eval::Evaluator;
-use starlark::values::OwnedFrozenValueTyped;
-use starlark::values::UnpackValue;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::OwnedFrozenRef;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::structs::AllocStruct;
-use starlark::values::structs::StructRef;
-use starlark_map::ordered_map::OrderedMap;
 use tokio::sync::Semaphore;
 
 use crate::bxl::key::BxlKey;
 use crate::bxl::starlark_defs::bxl_function::FrozenBxlFunction;
+use crate::bxl::starlark_defs::bxl_function::OwnedBxlFunction;
 use crate::bxl::starlark_defs::cli_args::CliArgValue;
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::context::BxlContextCoreData;
@@ -69,7 +68,7 @@ use crate::bxl::starlark_defs::context::starlark_async::BxlDiceComputations;
 use crate::bxl::starlark_defs::eval_extra::BxlEvalExtra;
 use crate::bxl::starlark_defs::functions::BxlErrorWithoutStacktrace;
 
-pub(crate) static LIMITED_EXECUTOR: Lazy<Arc<LimitedExecutor>> = Lazy::new(|| {
+pub(crate) static LIMITED_EXECUTOR: LazyLock<Arc<LimitedExecutor>> = LazyLock::new(|| {
     Arc::new(LimitedExecutor::new(500)) // Default working thread of tokio is 512 threads. We set it to 500 for here to leave some room for other things.
 });
 
@@ -176,10 +175,10 @@ struct BxlInnerEvaluator {
 }
 
 impl BxlInnerEvaluator {
-    fn do_eval<'a>(
+    fn do_eval(
         self,
         provider: StarlarkEvaluatorProvider,
-        dice: &'a mut DiceComputations,
+        dice: &mut DiceComputations,
     ) -> Result<(BxlResult, Option<Arc<StarlarkProfileDataAndStats>>)> {
         let BxlInnerEvaluator {
             data,
@@ -189,8 +188,7 @@ impl BxlInnerEvaluator {
             dispatcher,
         } = self;
 
-        BuckStarlarkModule::with_profiling(|env_provider| {
-            let env = env_provider.make();
+        BuckStarlarkModule::with_profiling(|env| {
             let key = data.key().dupe();
 
             let bxl_dice = BxlDiceComputations::new(dice, liveness.dupe());
@@ -199,13 +197,14 @@ impl BxlInnerEvaluator {
             let (finished_eval, (actions, output_stream_outcome)) = {
                 let stream_state = OutputStreamState::new();
 
-                let resolved_args = ValueOfUnchecked::<StructRef>::unpack_value_err(
-                    env.heap().alloc(AllocStruct(
+                let resolved_args = ValueOf::alloc(
+                    env.heap(),
+                    AllocStruct(
                         key.cli_args()
                             .iter()
                             .map(|(k, v)| (k, v.as_starlark(env.heap()))),
-                    )),
-                )?;
+                    ),
+                );
 
                 let print = EventDispatcherPrintHandler(dispatcher.clone());
                 let mut extra = BxlEvalExtra::new(bxl_dice, data.dupe(), stream_state.dupe());
@@ -228,7 +227,7 @@ impl BxlInnerEvaluator {
                             digest_config,
                         )?;
 
-                        let bxl_ctx = ValueTyped::<BxlContext>::new_err(env.heap().alloc(bxl_ctx))?;
+                        let bxl_ctx = env.heap().alloc(bxl_ctx).get();
 
                         tokio::task::block_in_place(|| {
                             with_dispatcher(dispatcher.clone(), || {
@@ -297,7 +296,8 @@ async fn eval_bxl_inner(
 ) -> Result<(BxlResult, Option<Arc<StarlarkProfileDataAndStats>>)> {
     let bxl_module = ctx
         .get_loaded_module(StarlarkModulePath::BxlFile(&key.label().bxl_path))
-        .await?;
+        .await?
+        .dupe();
 
     let digest_config = ctx.global_data().get_digest_config();
     let core_data = BxlContextCoreData::new(key.dupe(), ctx).await?;
@@ -324,12 +324,16 @@ async fn eval_bxl_inner(
 
 fn eval_bxl<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
-    frozen_callable: OwnedFrozenValueTyped<FrozenBxlFunction>,
+    frozen_callable: OwnedBxlFunction,
     ctx: ValueTyped<'v, BxlContext<'v>>,
     force_print_stacktrace: bool,
 ) -> buck2_error::Result<()> {
-    let bxl_impl = frozen_callable.implementation();
-    let result = eval.eval_function(bxl_impl.to_value(), &[ctx.to_value()], &[]);
+    let bxl_impl = frozen_callable
+        .as_ref()
+        .add_to_heap(eval.heap())
+        .as_ref()
+        .implementation();
+    let result = eval.eval_function(bxl_impl, &[ctx.to_value()], &[]);
 
     let e = match result {
         Ok(v) => {
@@ -364,33 +368,33 @@ fn eval_bxl<'v>(
             .console_message("Re-run the script with `-v5` to show the full stacktrace".to_owned());
     }
 
-    Err(e.into())
+    Err(e)
 }
 
 pub(crate) fn get_bxl_callable(
     spec: &BxlFunctionLabel,
     bxl_module: &LoadedModule,
-) -> buck2_error::Result<OwnedFrozenValueTyped<FrozenBxlFunction>> {
+) -> buck2_error::Result<OwnedBxlFunction> {
     let callable = bxl_module
         .env()
         .get_any_visibility(&spec.name)
         .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?
         .0;
 
-    Ok(callable.downcast_starlark::<FrozenBxlFunction>()?)
+    Ok(callable.downcast_starlark::<FrozenBxlFunction<'static>>()?)
 }
 
-pub(crate) struct CliResolutionCtx<'a> {
+pub(crate) struct CliResolutionCtx<'d> {
     pub(crate) target_alias_resolver: BuckConfigTargetAliasResolver,
-    pub(crate) cell_resolver: CellResolver,
-    pub(crate) cell_alias_resolver: CellAliasResolver,
+    pub(crate) cell_resolver: &'d CellResolver,
+    pub(crate) cell_alias_resolver: &'d CellAliasResolver,
     pub(crate) relative_dir: PackageLabel,
-    pub(crate) dice: &'a DiceTransaction,
+    pub(crate) dice: &'d DiceTransaction,
     pub(crate) global_cfg_options: GlobalCfgOptions,
 }
 
 pub(crate) enum BxlResolvedCliArgs {
-    Resolved(OrderedMap<String, CliArgValue>),
+    Resolved(BuckFixedInsertionMap<String, CliArgValue>),
     Help,
 }
 
@@ -398,21 +402,24 @@ pub(crate) async fn resolve_cli_args<'a>(
     spec: &BxlFunctionLabel,
     cli_ctx: &CliResolutionCtx<'a>,
     bxl_args: &Vec<String>,
-    frozen_callable: &'a FrozenBxlFunction,
+    frozen_callable: OwnedFrozenRef<'a, ValueTyped<'static, FrozenBxlFunction<'static>>>,
 ) -> buck2_error::Result<BxlResolvedCliArgs> {
-    match frozen_callable
-        .to_clap(clap::Command::new(&spec.name).no_binary_name(true)) // patternlint-disable-line buck2-no-command-new
+    let cli_spec = frozen_callable.value().as_ref().cli_spec();
+    match cli_spec
+        // ast-grep-ignore: rust/buck2-no-command-new
+        .to_clap(clap::Command::new(&spec.name).no_binary_name(true))
         .try_get_matches_from(bxl_args)
     {
         Ok(args) => Ok(BxlResolvedCliArgs::Resolved(
-            frozen_callable.parse_clap(args, cli_ctx).await?,
+            cli_spec.parse_clap(args, cli_ctx).await?,
         )),
         Err(e) => match e.kind() {
             ErrorKind::DisplayHelp => {
                 let mut help_out = Vec::new();
 
-                frozen_callable
-                    .to_clap(clap::Command::new(&spec.name).no_binary_name(true)) // patternlint-disable-line buck2-no-command-new
+                cli_spec
+                    // ast-grep-ignore: rust/buck2-no-command-new
+                    .to_clap(clap::Command::new(&spec.name).no_binary_name(true))
                     .write_long_help(&mut help_out)
                     .unwrap();
                 let help_msg = String::from_utf8(help_out)?;

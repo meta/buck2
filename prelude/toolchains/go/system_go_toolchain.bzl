@@ -37,20 +37,37 @@ def _system_go_toolchain_impl(ctx):
     script_language = ScriptLanguage("bat" if go_os == "windows" else "sh")
     go = "go.exe" if go_os == "windows" else "go"
 
+    go_root = ctx.actions.declare_output("goroot", dir = True, has_content_based_path = True)
+
+    # HACK: We need a physical artifact for GOROOT to project individual source files.
+    # Since we don't know the user's GOROOT location at analysis time, we copy it
+    # at build time. A symlink won't work because .project() requires a real directory.
+    # We use a Go binary for the copy as it's more portable than shell scripts.
+    ctx.actions.run([ctx.attrs.copy_goroot[RunInfo], "-o", go_root.as_output()], category = "go_copy_goroot")
+
+    suffix = ".exe" if go_os == "windows" else ""
+    tool_prefix = "pkg/tool/{}_{}".format(go_os, go_arch)
+
     return [
-        DefaultInfo(sub_targets = {"go": [
-            RunInfo(go),
-        ]}),
+        DefaultInfo(
+            sub_targets = {
+                "go": [
+                    RunInfo(go),
+                ]
+            }
+        ),
         GoToolchainInfo(
+            allow_cache_upload = ctx.attrs.allow_cache_upload,
             assembler = RunInfo(cmd_script(ctx.actions, "asm", cmd_args(go, "tool", "asm"), script_language)),
-            cgo = RunInfo(cmd_script(ctx.actions, "cgo", cmd_args(go, "tool", "cgo"), script_language)),
-            concat_files = ctx.attrs.concat_files[RunInfo],
+            cgo = RunInfo(go_root.project(tool_prefix + "/cgo" + suffix)),
+            pkg_analyzer = ctx.attrs.pkg_analyzer[RunInfo],
+            gen_embedcfg = ctx.attrs.gen_embedcfg[RunInfo],
             compiler = RunInfo(cmd_script(ctx.actions, "compile", cmd_args(go, "tool", "compile"), script_language)),
             cover = RunInfo(cmd_script(ctx.actions, "cover", cmd_args(go, "tool", "cover"), script_language)),
             env_go_arch = go_arch,
             env_go_os = go_os,
+            env_go_root = go_root,
             external_linker_flags = [],
-            gen_stdlib_importcfg = ctx.attrs.gen_stdlib_importcfg[RunInfo],
             go = RunInfo(cmd_script(ctx.actions, "go", cmd_args(go), script_language)),
             go_wrapper = ctx.attrs.go_wrapper[RunInfo],
             linker = RunInfo(cmd_script(ctx.actions, "link", cmd_args(go, "tool", "link"), script_language)),
@@ -59,6 +76,7 @@ def _system_go_toolchain_impl(ctx):
             linker_flags = [],
             assembler_flags = [],
             compiler_flags = [],
+            version = None,  # we are unable to run `go version` during analysis time
         ),
     ]
 
@@ -70,9 +88,11 @@ system_go_toolchain = rule(
       visibility = ["PUBLIC"],
   )""",
     attrs = {
-        "concat_files": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go_bootstrap/tools:go_concat_files")),
-        "gen_stdlib_importcfg": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go/tools:gen_stdlib_importcfg")),
-        "go_wrapper": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go_bootstrap/tools:go_go_wrapper")),
+        "allow_cache_upload": attrs.option(attrs.bool(), default = None),
+        "copy_goroot": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go/tools:copy_goroot")),
+        "gen_embedcfg": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go/tools:gen_embedcfg")),
+        "go_wrapper": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go/tools:go_wrapper")),
+        "pkg_analyzer": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go/tools:pkg_analyzer")),
     },
     is_toolchain_rule = True,
 )

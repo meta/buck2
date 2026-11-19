@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-use std::time::Instant;
-
 use async_trait::async_trait;
 use buck2_core::logging::log_file::TracingLogFile;
 use buck2_data::BuildResult;
@@ -75,7 +73,6 @@ pub async fn run_server_command<T: ServerCommandTemplate>(
     let start_event = server_ctx
         .command_start_event(command.start_event().into())
         .await?;
-    let command_start = Instant::now();
     // refresh our tracing log per command
     TracingLogFile::refresh()?;
 
@@ -90,14 +87,12 @@ pub async fn run_server_command<T: ServerCommandTemplate>(
                     command.command(server_ctx, partial_result_dispatcher, ctx)
                 },
                 command.exclusive_command_name(),
-                Some(command_start),
             )
-            .await
-            .map_err(Into::into);
+            .await;
         let end_event = command_end_ext(&result, command.end_event(&result), |result| {
             command.build_result(result)
         });
-        (result.map_err(Into::into), end_event)
+        (result, end_event)
     })
     .await
 }

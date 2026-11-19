@@ -339,7 +339,7 @@ expecting the artifact to already have been materialized in further BXL
 computations, that would also result in errors.
 
 However, if you are not making any assumptions about the existence of these
-artifacts, you can use use
+artifacts, you can use
 [`get_path_without_materialization()`](../../../api/bxl#get_path_without_materialization),
 which accepts source, declared, or build artifacts. It does _not_ accept ensured
 artifacts (also see

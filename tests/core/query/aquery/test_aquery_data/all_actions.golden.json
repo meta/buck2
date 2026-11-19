@@ -4,19 +4,22 @@
   "(target: `root//:test (<unspecified>)`, id: `1`)": {
     "identifier": "default"
   },
+  "(target: `root//:test (<unspecified>)`, id: `3`)": {
+    "identifier": "other_default"
+  },
   "(target: `root//:test (<unspecified>)`, id: `0`)": {
     "identifier": "dep"
   },
   "(target: `root//:test (<unspecified>)`, id: `2`)": {
     "identifier": "other"
   },
-  "(target: `root//:test (<unspecified>)`, id: `3`)": {
+  "(target: `root//:test (<unspecified>)`, id: `4`)": {
     "identifier": "sub_default"
   },
-  "(target: `root//:test (<unspecified>)`, id: `4`)": {
+  "(target: `root//:test (<unspecified>)`, id: `5`)": {
     "identifier": "sub_other"
   },
-  "(target: `root//:test (<unspecified>)`, id: `5`)": {
+  "(target: `root//:test (<unspecified>)`, id: `6`)": {
     "identifier": "unused"
   }
 }

@@ -1,3 +1,0 @@
-# DICE
-
-- Initial version.

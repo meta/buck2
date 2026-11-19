@@ -13,8 +13,8 @@
 use std::mem;
 
 use crate::Allocative;
-use crate::Key;
 use crate::Visitor;
+use crate::key;
 
 impl Allocative for serde_json::Number {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
@@ -28,10 +28,10 @@ impl Allocative for serde_json::Map<String, serde_json::Value> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         {
-            let mut visitor = visitor.enter_unique(Key::new("data"), mem::size_of::<*mut ()>());
+            let mut visitor = visitor.enter_unique(key!("data"), mem::size_of::<*mut ()>());
             for (k, v) in self.iter() {
-                visitor.visit_field(Key::new("key"), k);
-                visitor.visit_field(Key::new("value"), v);
+                visitor.visit_field(key!("key"), k);
+                visitor.visit_field(key!("value"), v);
             }
             visitor.exit();
         }
@@ -45,10 +45,10 @@ impl Allocative for serde_json::Value {
         match self {
             serde_json::Value::Null => {}
             serde_json::Value::Bool(_b) => {}
-            serde_json::Value::Number(n) => visitor.visit_field(Key::new("Number"), n),
-            serde_json::Value::String(s) => visitor.visit_field(Key::new("String"), s),
-            serde_json::Value::Array(a) => visitor.visit_field(Key::new("Array"), a),
-            serde_json::Value::Object(o) => visitor.visit_field(Key::new("Object"), o),
+            serde_json::Value::Number(n) => visitor.visit_field(key!("Number"), n),
+            serde_json::Value::String(s) => visitor.visit_field(key!("String"), s),
+            serde_json::Value::Array(a) => visitor.visit_field(key!("Array"), a),
+            serde_json::Value::Object(o) => visitor.visit_field(key!("Object"), o),
         }
         visitor.exit();
     }

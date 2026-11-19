@@ -12,7 +12,9 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use buck2_core::execution_types::executor_config::ReGangWorker;
 use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
+use buck2_data::NetworkAccess;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use remote_execution as RE;
@@ -30,7 +32,9 @@ pub struct PreparedAction {
     pub action_and_blobs: ActionDigestAndBlobs,
     pub platform: RE::Platform,
     pub remote_execution_dependencies: Vec<RemoteExecutorDependency>,
+    pub re_gang_workers: Vec<ReGangWorker>,
     pub worker_tool_init_action: Option<ActionDigestAndBlobs>,
+    pub network_access: Option<NetworkAccess>,
 }
 
 impl PreparedAction {

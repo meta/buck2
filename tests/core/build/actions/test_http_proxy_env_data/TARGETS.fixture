@@ -1,0 +1,10 @@
+load(":defs.bzl", "download")
+
+size_bytes = read_config("test", "size_bytes")
+
+download(
+    name = "download",
+    sha256 = read_config("test", "sha256"),
+    size_bytes = None if size_bytes == None else int(size_bytes),
+    url = read_config("test", "url"),
+)

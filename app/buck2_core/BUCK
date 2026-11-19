@@ -7,7 +7,8 @@ rust_library(
     name = "buck2_core",
     srcs = glob(
         ["src/**/*.rs"],
-    ) + ["src/pattern/target_pattern.md"],
+    )
+    + ["src/pattern/target_pattern.md"],
     doc_deps = [
         "fbsource//third-party/rust:maplit",
     ],
@@ -19,42 +20,32 @@ rust_library(
         # ```
         "ovr_config//os:windows": False,
     }),
-    os_deps = [
-        (
-            "windows",
-            [
-                "fbsource//third-party/rust:common-path",
-                "fbsource//third-party/rust:winapi",
-            ],
-        ),
-    ],
     test_deps = [
         "fbsource//third-party/rust:assert_matches",
         "fbsource//third-party/rust:serde_json",
         "fbsource//third-party/rust:test-case",
     ],
+    unittests_miri = True,
     deps = [
         "fbsource//third-party/rust:blake3",
+        "fbsource//third-party/rust:compact_str",
+        "fbsource//third-party/rust:ctor",
         "fbsource//third-party/rust:derivative",
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:equivalent",
         "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:hex",
         "fbsource//third-party/rust:hostname",
-        "fbsource//third-party/rust:indent_write",
         "fbsource//third-party/rust:itertools",
         "fbsource//third-party/rust:memchr",
-        "fbsource//third-party/rust:once_cell",
         "fbsource//third-party/rust:os_str_bytes",
         "fbsource//third-party/rust:pin-project",
         "fbsource//third-party/rust:rand",
         "fbsource//third-party/rust:ref-cast",
         "fbsource//third-party/rust:regex",
-        "fbsource//third-party/rust:relative-path",
         "fbsource//third-party/rust:sequence_trie",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:smallvec",
-        "fbsource//third-party/rust:static_assertions",
         "fbsource//third-party/rust:tempfile",
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tracing",
@@ -65,16 +56,21 @@ rust_library(
         "//buck2/app/buck2_env:buck2_env",
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/gazebo/cmp_any:cmp_any",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
         "//buck2/gazebo/strong_hash:strong_hash",
+        "//buck2/pagable:pagable",
         "//buck2/shed/lock_free_hashtable:lock_free_hashtable",
         "//buck2/shed/static_interner:static_interner",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
         # @oss-disable[end= ]: "//common/rust/user:user",
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:windows": [
+            "fbsource//third-party/rust:common-path",
+        ],
+    }),
 )
 
 rust_unittest(

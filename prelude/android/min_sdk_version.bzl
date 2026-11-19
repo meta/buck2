@@ -13,4 +13,4 @@ def get_min_sdk_version_constraint_value_name(min_sdk: int) -> str:
     return "min_sdk_version_{}".format(min_sdk)
 
 def get_min_sdk_version_range() -> range:
-    return range(_MIN_SDK_VERSION, _MAX_SDK_VERSION)
+    return range(_MIN_SDK_VERSION, _MAX_SDK_VERSION + 1)

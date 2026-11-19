@@ -6,9 +6,16 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+def _configuration_info(constraints, values, root_values = None):
+    return ConfigurationInfo(
+        constraints = constraints,
+        values = values,
+        root_values = root_values or {},
+    )
+
 def _configuration_info_union(infos):
     if len(infos) == 0:
-        return ConfigurationInfo(
+        return _configuration_info(
             constraints = {},
             values = {},
         )
@@ -16,18 +23,21 @@ def _configuration_info_union(infos):
         return infos[0]
     constraints = {k: v for info in infos for (k, v) in info.constraints.items()}
     values = {k: v for info in infos for (k, v) in info.values.items()}
-    return ConfigurationInfo(
+    root_values = {k: v for info in infos for (k, v) in info.root_values.items()}
+    return _configuration_info(
         constraints = constraints,
         values = values,
+        root_values = root_values,
     )
 
 def _constraint_values_to_configuration(values):
-    return ConfigurationInfo(constraints = {
-        info[ConstraintValueInfo].setting.label: info[ConstraintValueInfo]
-        for info in values
-    }, values = {})
+    return _configuration_info(
+        constraints = {info[ConstraintValueInfo].setting.label: info[ConstraintValueInfo] for info in values},
+        values = {},
+    )
 
 util = struct(
+    configuration_info = _configuration_info,
     configuration_info_union = _configuration_info_union,
     constraint_values_to_configuration = _constraint_values_to_configuration,
 )

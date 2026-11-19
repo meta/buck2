@@ -22,18 +22,26 @@ pub enum DirectoryFindError {
 }
 
 trait FindConflict<T> {
-    fn new<'b>(path: &'b FileName, remaining: impl Iterator<Item = &'b FileName>, leaf: T) -> Self;
+    /// `leaf_name` is the name of the leaf that blocks the lookup; `next` and `remaining` are the
+    /// components of the requested path that follow it.
+    fn new<'b>(
+        leaf_name: &'b FileName,
+        next: &'b FileName,
+        remaining: impl Iterator<Item = &'b FileName>,
+        leaf: T,
+    ) -> Self;
 
     fn with(self, path: &FileName) -> Self;
 }
 
 impl<T> FindConflict<T> for PathAccumulator {
     fn new<'b>(
-        path: &'b FileName,
+        leaf_name: &'b FileName,
+        _next: &'b FileName,
         _remaining: impl Iterator<Item = &'b FileName>,
         _leaf: T,
     ) -> Self {
-        PathAccumulator::new(path)
+        PathAccumulator::new(leaf_name)
     }
 
     fn with(self, path: &FileName) -> Self {
@@ -49,10 +57,15 @@ struct PrefixLookupContainer<T> {
 
 #[cfg(test)]
 impl<T> FindConflict<T> for PrefixLookupContainer<T> {
-    fn new<'b>(path: &'b FileName, remaining: impl Iterator<Item = &'b FileName>, leaf: T) -> Self {
+    fn new<'b>(
+        _leaf_name: &'b FileName,
+        next: &'b FileName,
+        remaining: impl Iterator<Item = &'b FileName>,
+        leaf: T,
+    ) -> Self {
         Self {
             leaf,
-            path: std::iter::once(path).chain(remaining).collect(),
+            path: std::iter::once(next).chain(remaining).collect(),
         }
     }
 
@@ -132,7 +145,7 @@ where
     match entry {
         DirectoryEntry::Dir(dir) => find_inner::<_, A>(dir, next_path_needle, path_rest)
             .map_err(|acc| acc.with(path_needle)),
-        DirectoryEntry::Leaf(leaf) => Err(A::new(next_path_needle, path_rest, leaf)),
+        DirectoryEntry::Leaf(leaf) => Err(A::new(path_needle, next_path_needle, path_rest, leaf)),
     }
 }
 
@@ -142,6 +155,7 @@ mod tests {
 
     use crate::directory::directory::Directory;
     use crate::directory::entry::DirectoryEntry;
+    use crate::directory::find::DirectoryFindError;
     use crate::directory::find::find;
     use crate::directory::find::find_prefix;
     use crate::directory::test::NopEntry;
@@ -149,8 +163,38 @@ mod tests {
     use crate::directory::test::path;
 
     #[test]
+    fn test_find_error_names_blocking_leaf() -> buck2_error::Result<()> {
+        // The error names the leaf that blocks the lookup.
+        let mut a = TestDirectoryBuilder::empty_non_exhaustive();
+        a.insert(path("a/b"), DirectoryEntry::Leaf(NopEntry))?;
+        assert_matches!(
+            find(a.as_ref(), path("a/b/c")),
+            Err(DirectoryFindError::CannotTraverseLeaf { path }) => {
+                assert_eq!("a/b", path.to_string());
+            }
+        );
+        assert_matches!(
+            a.remove_prefix(path("a/b/c")),
+            Err(DirectoryFindError::CannotTraverseLeaf { path }) => {
+                assert_eq!("a/b", path.to_string());
+            }
+        );
+
+        let mut a = TestDirectoryBuilder::empty_non_exhaustive();
+        a.insert(path("a"), DirectoryEntry::Leaf(NopEntry))?;
+        assert_matches!(
+            find(a.as_ref(), path("a/b")),
+            Err(DirectoryFindError::CannotTraverseLeaf { path }) => {
+                assert_eq!("a", path.to_string());
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_find() -> buck2_error::Result<()> {
-        let mut a = TestDirectoryBuilder::empty();
+        let mut a = TestDirectoryBuilder::empty_non_exhaustive();
         a.insert(path("a/b/c"), DirectoryEntry::Leaf(NopEntry))?;
 
         assert_matches!(
@@ -173,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_find_prefix() -> buck2_error::Result<()> {
-        let mut a = TestDirectoryBuilder::empty();
+        let mut a = TestDirectoryBuilder::empty_non_exhaustive();
         a.insert(path("a/b/c"), DirectoryEntry::Leaf(NopEntry))?;
 
         assert_matches!(

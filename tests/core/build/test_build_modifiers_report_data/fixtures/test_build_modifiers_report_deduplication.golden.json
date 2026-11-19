@@ -85,7 +85,7 @@
     },
     "root//:target2?root//:linux": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},
@@ -101,7 +101,7 @@
     },
     "root//:target2?root//:macos": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},
@@ -117,7 +117,7 @@
     },
     "root//:target?root//:macos": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},

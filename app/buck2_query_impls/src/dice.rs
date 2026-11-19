@@ -8,15 +8,13 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use buck2_build_api::configure_targets::load_compatible_patterns_with_modifiers;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
+use buck2_common::dice::data::HasProjectRoot;
 use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::package_boundary::HasPackageBoundaryExceptions;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_common::package_listing::resolver::PackageListingResolver;
 use buck2_common::pattern::resolve::ResolveTargetPatterns;
@@ -33,18 +31,19 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
 use buck2_core::package::PackageLabel;
+use buck2_core::pattern::pattern::InferTargetNames;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
 use buck2_core::pattern::pattern::TargetParsingRel;
 use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::pattern::query_file_literal::parse_query_file_literal;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::soft_error;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileNameBuf;
+use buck2_hash::BuckMutMap;
+use buck2_hash::buck_mut_insertion_set;
 use buck2_node::load_patterns::MissingTargetBehavior;
 use buck2_node::load_patterns::load_patterns;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
@@ -56,22 +55,13 @@ use buck2_query::query::syntax::simple::eval::file_set::FileSet;
 use buck2_query::query::syntax::simple::eval::set::TargetSet;
 use dice::DiceComputations;
 use dice::LinearRecomputeDiceComputations;
-use futures::FutureExt;
-use gazebo::prelude::*;
-use indexmap::indexset;
+use dupe::Dupe;
 
 use crate::cquery::environment::CqueryDelegate;
 use crate::uquery::environment::QueryLiterals;
 use crate::uquery::environment::UqueryDelegate;
 
 pub(crate) mod aquery;
-
-#[derive(Debug, buck2_error::Error)]
-#[buck2(tag = Input)]
-enum LiteralParserError {
-    #[error("Expected a target pattern without providers, got: `{0}`")]
-    ExpectingTargetPatternWithoutProviders(String),
-}
 
 pub(crate) struct LiteralParser {
     // file and target literals are resolved relative to the working dir.
@@ -86,23 +76,12 @@ pub(crate) struct LiteralParser {
 impl LiteralParser {
     fn convert_parsed_pattern(
         &self,
-        value: &str,
         providers_pattern: ParsedPattern<ProvidersPatternExtra>,
     ) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
         let target_pattern = match providers_pattern {
-            ParsedPattern::Target(package, target_name, ProvidersPatternExtra { providers }) => {
-                if providers != ProvidersName::Default {
-                    // After converting this to hard error, replace this function body
-                    // with direct call to `ParsedPattern::parse_relative`,
-                    // as `parse_providers_pattern` does.
-                    soft_error!(
-                        "expecting_target_pattern_without_providers",
-                        LiteralParserError::ExpectingTargetPatternWithoutProviders(
-                            value.to_owned()
-                        )
-                        .into()
-                    )?;
-                }
+            // FIXME(JakobDegen): Providers in a query target literal should be an error, at which
+            // point this becomes a plain `ParsedPattern::parse_relative`; today they are dropped.
+            ParsedPattern::Target(package, target_name, ProvidersPatternExtra { .. }) => {
                 ParsedPattern::Target(package, target_name, TargetPatternExtra)
             }
             ParsedPattern::Package(package) => ParsedPattern::Package(package),
@@ -117,7 +96,7 @@ impl LiteralParser {
         value: &str,
     ) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
         let providers_pattern = self.parse_providers_pattern(value)?;
-        self.convert_parsed_pattern(value, providers_pattern)
+        self.convert_parsed_pattern(providers_pattern)
     }
 
     fn parse_target_pattern_with_modifiers(
@@ -129,7 +108,7 @@ impl LiteralParser {
             modifiers,
         } = self.parse_providers_pattern_with_modifiers(value)?;
 
-        let target_pattern = self.convert_parsed_pattern(value, parsed_pattern)?;
+        let target_pattern = self.convert_parsed_pattern(parsed_pattern)?;
 
         Ok(ParsedPatternWithModifiers {
             parsed_pattern: target_pattern,
@@ -144,13 +123,12 @@ impl LiteralParser {
         ParsedPattern::parse_not_relaxed(
             value,
             TargetParsingRel::AllowRelative(
-                &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
-                    self.working_dir.clone(),
-                ),
+                &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(self.working_dir),
                 Some(&self.target_alias_resolver),
             ),
             &self.cell_resolver,
             &self.cell_alias_resolver,
+            InferTargetNames::No,
         )
     }
 
@@ -161,9 +139,7 @@ impl LiteralParser {
         ParsedPatternWithModifiers::parse_not_relaxed(
             value,
             TargetParsingRel::AllowRelative(
-                &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
-                    self.working_dir.clone(),
-                ),
+                &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(self.working_dir),
                 Some(&self.target_alias_resolver),
             ),
             &self.cell_resolver,
@@ -185,13 +161,17 @@ impl LiteralParser {
 /// A Uquery delegate that resolves TargetNodes with the provided
 /// InterpreterCalculation.
 pub(crate) struct DiceQueryDelegate<'c, 'd> {
-    ctx: &'c LinearRecomputeDiceComputations<'d>,
+    ctx: LinearRecomputeDiceComputations<'c, 'd>,
     query_data: Arc<DiceQueryData>,
 }
 
 pub(crate) struct DiceQueryData {
     literal_parser: LiteralParser,
     global_cfg_options: GlobalCfgOptions,
+    /// With uquery `--allow-partial-graph`, skip packages that fail to load
+    /// while enumerating an open-ended (recursive) literal, instead of
+    /// aborting. Explicitly named literals still fail on load errors.
+    allow_partial_graph: bool,
 }
 
 impl DiceQueryData {
@@ -202,6 +182,7 @@ impl DiceQueryData {
         working_dir: &ProjectRelativePath,
         project_root: ProjectRoot,
         target_alias_resolver: BuckConfigTargetAliasResolver,
+        allow_partial_graph: bool,
     ) -> Self {
         let cell_path = cell_resolver.get_cell_path(working_dir);
 
@@ -217,6 +198,7 @@ impl DiceQueryData {
                 target_alias_resolver,
             },
             global_cfg_options,
+            allow_partial_graph,
         }
     }
 
@@ -231,7 +213,7 @@ impl DiceQueryData {
 
 impl<'c, 'd> DiceQueryDelegate<'c, 'd> {
     pub(crate) fn new(
-        ctx: &'c LinearRecomputeDiceComputations<'d>,
+        ctx: LinearRecomputeDiceComputations<'c, 'd>,
         query_data: Arc<DiceQueryData>,
     ) -> Self {
         Self { ctx, query_data }
@@ -251,17 +233,14 @@ impl UqueryDelegate for DiceQueryDelegate<'_, '_> {
     // get the list of potential buildfile names for each cell
     async fn get_buildfile_names_by_cell(
         &self,
-    ) -> buck2_error::Result<HashMap<CellName, Arc<[FileNameBuf]>>> {
+    ) -> buck2_error::Result<BuckMutMap<CellName, Arc<[FileNameBuf]>>> {
         let mut ctx = self.ctx.get();
         let resolver = ctx.get_cell_resolver().await?;
         let buildfiles = ctx
-            .try_compute_join(resolver.cells(), |ctx, (name, _)| {
-                async move {
-                    DiceFileComputations::buildfiles(ctx, name)
-                        .await
-                        .map(|x| (name, x))
-                }
-                .boxed()
+            .try_compute_join(resolver.cells(), async |ctx, (name, _)| {
+                DiceFileComputations::buildfiles(ctx, name)
+                    .await
+                    .map(|x| (name, x.dupe()))
             })
             .await?;
 
@@ -272,43 +251,32 @@ impl UqueryDelegate for DiceQueryDelegate<'_, '_> {
         &self,
         patterns: &[&str],
     ) -> buck2_error::Result<ResolvedPattern<TargetPatternExtra>> {
-        let parsed_patterns =
-            patterns.try_map(|p| self.query_data.literal_parser.parse_target_pattern(p))?;
+        let parsed_patterns = patterns
+            .iter()
+            .map(|p| self.query_data.literal_parser.parse_target_pattern(p))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(ResolveTargetPatterns::resolve(&mut self.ctx.get(), &parsed_patterns).await?)
     }
 
-    // This returns 1 package normally but can return multiple packages if the path is covered under `self.package_boundary_exceptions`.
+    // Returns all packages from immediate enclosing up to cell root that could potentially own the path.
     async fn get_enclosing_packages(
         &self,
         path: &CellPath,
     ) -> buck2_error::Result<Vec<PackageLabel>> {
-        // Without package boundary violations, there is only 1 owning package for a path.
-        // However, with package boundary violations, all parent packages of the enclosing package can also be owners.
-        if let Some(enclosing_violation_path) = self
-            .ctx
-            .get()
-            .get_package_boundary_exception(path.as_ref())
+        let cell_root = CellPath::empty(path.cell());
+        Ok(DicePackageListingResolver(&mut self.ctx.get())
+            .get_enclosing_packages(*path, cell_root)
             .await?
-        {
-            return Ok(DicePackageListingResolver(&mut self.ctx.get())
-                .get_enclosing_packages(path.as_ref(), (*enclosing_violation_path).as_ref())
-                .await?
-                .into_iter()
-                .collect());
-        }
-
-        let package = DicePackageListingResolver(&mut self.ctx.get())
-            .get_enclosing_package(path.as_ref())
-            .await?;
-        Ok(vec![package])
+            .into_iter()
+            .collect())
     }
 
     async fn eval_file_literal(&self, literal: &str) -> buck2_error::Result<FileSet> {
         let cell_path = self.query_data.literal_parser.parse_file_literal(literal)?;
-        Ok(FileSet::new(indexset![FileNode(cell_path)]))
+        Ok(FileSet::new(buck_mut_insertion_set![FileNode(cell_path)]))
     }
 
-    fn linear_dice_computations(&self) -> &LinearRecomputeDiceComputations<'_> {
+    fn linear_dice_computations(&self) -> LinearRecomputeDiceComputations<'_, '_> {
         self.ctx
     }
 
@@ -331,8 +299,9 @@ impl CqueryDelegate for DiceQueryDelegate<'_, '_> {
             .ctx
             .get()
             .get_configured_target_node(target)
-            .await?
-            .require_compatible()?)
+            .await
+            .require_compatible()?
+            .dupe())
     }
 
     async fn get_node_for_default_configured_target(
@@ -340,7 +309,12 @@ impl CqueryDelegate for DiceQueryDelegate<'_, '_> {
         target: &TargetLabel,
     ) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>> {
         let target = self.ctx.get().get_default_configured_target(target).await?;
-        self.ctx.get().get_configured_target_node(&target).await
+        self.ctx
+            .get()
+            .get_configured_target_node(&target)
+            .await
+            .ok()
+            .map(|n| n.map(|n| n.dupe()))
     }
 
     fn ctx(&self) -> DiceComputations<'_> {
@@ -355,8 +329,10 @@ impl QueryLiterals<ConfiguredTargetNode> for DiceQueryData {
         literals: &[&str],
         ctx: &mut DiceComputations<'_>,
     ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>> {
-        let parsed_patterns =
-            literals.try_map(|p| self.literal_parser.parse_target_pattern_with_modifiers(p))?;
+        let parsed_patterns = literals
+            .iter()
+            .map(|p| self.literal_parser.parse_target_pattern_with_modifiers(p))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let result = load_compatible_patterns_with_modifiers(
             ctx,
@@ -377,34 +353,62 @@ impl QueryLiterals<TargetNode> for DiceQueryData {
         literals: &[&str],
         ctx: &mut DiceComputations<'_>,
     ) -> buck2_error::Result<TargetSet<TargetNode>> {
-        let parsed_patterns = literals.try_map(|p| self.literal_parser.parse_target_pattern(p))?;
-        let loaded_patterns =
-            load_patterns(ctx, parsed_patterns, MissingTargetBehavior::Fail).await?;
+        let parsed_patterns = literals
+            .iter()
+            .map(|p| self.literal_parser.parse_target_pattern(p))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // `--allow-partial-graph` tolerates load failures only in the open-ended
+        // parts of a query that have to be enumerated (recursive `//foo/...`
+        // patterns). Explicitly named target/package literals must still fully
+        // resolve, so a broken or missing one always fails the query.
+        let (recursive_patterns, explicit_patterns): (Vec<_>, Vec<_>) = parsed_patterns
+            .into_iter()
+            .partition(|p| matches!(p, ParsedPattern::Recursive(..)));
+
         let mut target_set = TargetSet::new();
-        for (_package, results) in loaded_patterns.into_iter() {
-            target_set.extend(results?.into_values());
+
+        for (_package, result) in load_patterns(ctx, explicit_patterns, MissingTargetBehavior::Fail)
+            .await?
+            .into_iter()
+        {
+            target_set.extend(result?.into_values());
         }
+
+        for (_package, result) in
+            load_patterns(ctx, recursive_patterns, MissingTargetBehavior::Fail)
+                .await?
+                .into_iter()
+        {
+            match result {
+                Ok(res) => target_set.extend(res.into_values()),
+                Err(e) if self.allow_partial_graph => {
+                    tracing::trace!(
+                        "query allow-partial-graph: skipping a package that failed to load: {e:#}"
+                    );
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
         Ok(target_set)
     }
 }
 
 pub(crate) async fn get_dice_query_delegate<'a, 'c: 'a, 'd>(
-    ctx: &'c LinearRecomputeDiceComputations<'d>,
+    ctx: LinearRecomputeDiceComputations<'c, 'd>,
     working_dir: &'a ProjectRelativePath,
     global_cfg_options: GlobalCfgOptions,
+    allow_partial_graph: bool,
 ) -> buck2_error::Result<DiceQueryDelegate<'c, 'd>> {
-    let cell_resolver = ctx.get().get_cell_resolver().await?;
+    let cell_resolver = ctx.get().get_cell_resolver().await?.dupe();
     let cell_alias_resolver = ctx
         .get()
         .get_cell_alias_resolver_for_dir(working_dir)
-        .await?;
-    let target_alias_resolver = ctx.get().target_alias_resolver().await?;
-    let project_root = ctx
-        .get()
-        .global_data()
-        .get_io_provider()
-        .project_root()
-        .to_owned();
+        .await?
+        .dupe();
+    let target_alias_resolver = ctx.get().target_alias_resolver().await?.dupe();
+    let project_root = ctx.get().get_project_root().await?.dupe();
     Ok(DiceQueryDelegate::new(
         ctx,
         Arc::new(DiceQueryData::new(
@@ -414,6 +418,7 @@ pub(crate) async fn get_dice_query_delegate<'a, 'c: 'a, 'd>(
             working_dir,
             project_root,
             target_alias_resolver,
+            allow_partial_graph,
         )),
     ))
 }

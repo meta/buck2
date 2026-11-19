@@ -50,15 +50,13 @@ pub fn spawn_oneshot<T, L>(io: T, router: Router<L>) -> ServerHandle
 where
     T: AsyncRead + AsyncWrite + Send + Unpin + 'static + tonic::transport::server::Connected,
     L: Layer<Routes> + Send + 'static,
-    L::Service: Service<
-            hyper::Request<tonic::body::BoxBody>,
-            Response = hyper::Response<tonic::body::BoxBody>,
-        > + Clone
+    L::Service: Service<hyper::Request<tonic::body::Body>, Response = hyper::Response<tonic::body::Body>>
+        + Clone
         + Send
         + 'static,
-    <<L as Layer<Routes>>::Service as Service<hyper::Request<tonic::body::BoxBody>>>::Future:
+    <<L as Layer<Routes>>::Service as Service<hyper::Request<tonic::body::Body>>>::Future:
         Send + 'static,
-    <<L as Layer<Routes>>::Service as Service<hyper::Request<tonic::body::BoxBody>>>::Error:
+    <<L as Layer<Routes>>::Service as Service<hyper::Request<tonic::body::Body>>>::Error:
         Into<Box<dyn std::error::Error + Send + Sync>> + Send,
 {
     // We reserve 2 slots here: one for the connection and one for the ServerHandle's

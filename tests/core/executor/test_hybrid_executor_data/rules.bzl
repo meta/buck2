@@ -104,7 +104,7 @@ config_setting = rule(
 )
 
 def _file_impl(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     script = "import os; import sys; f = open(sys.argv[2], 'wb'); f.write(os.urandom(int(sys.argv[1]))); f.close()"
     if ctx.attrs.executable:
         script += "; os.chmod(sys.argv[2], 0o755)"
@@ -133,7 +133,7 @@ file = rule(
 )
 
 def _cp_impl(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         [
             "fbpython",
@@ -156,8 +156,8 @@ cp = rule(
 )
 
 def _symlink_impl(ctx):
-    link = ctx.actions.declare_output("link")
-    target = ctx.actions.declare_output("target")
+    link = ctx.actions.declare_output("link", has_content_based_path = False)
+    target = ctx.actions.declare_output("target", has_content_based_path = False)
     ctx.actions.run(
         [
             "fbpython",
@@ -183,7 +183,7 @@ symlink = rule(
 )
 
 def _command_impl(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         [
             "fbpython",
@@ -198,12 +198,14 @@ def _command_impl(ctx):
         force_full_hybrid_if_capable = ctx.attrs.force_full_hybrid_if_capable,
         weight = ctx.attrs.weight,
         unique_input_inodes = ctx.attrs.unique_input_inodes,
+        allow_cache_upload = ctx.attrs.allow_cache_upload,
     )
     return [DefaultInfo(default_output = out)]
 
 command = rule(
     impl = _command_impl,
     attrs = {
+        "allow_cache_upload": attrs.bool(default = False),
         "cache_buster": attrs.string(default = read_config("test", "cache_buster", "")),
         "command": attrs.source(),
         "env": attrs.dict(attrs.string(), attrs.arg(), default = {}),

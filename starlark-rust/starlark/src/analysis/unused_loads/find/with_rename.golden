@@ -15,4 +15,3 @@ error: Unused load
   |
 1 | load("foo", x="y", z="w")
   |             ^^^^^
-  |

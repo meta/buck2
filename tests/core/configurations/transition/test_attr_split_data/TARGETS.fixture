@@ -11,8 +11,7 @@ constraint_value(
 
 platform(
     name = "default_p",
-    constraint_values = [
-    ],
+    constraint_values = [],
 )
 
 constraint_value(

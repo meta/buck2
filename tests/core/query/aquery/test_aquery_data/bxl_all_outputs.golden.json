@@ -4,6 +4,9 @@
   "(target: `root//:test (<unspecified>)`, id: `1`)": {
     "identifier": "default"
   },
+  "(target: `root//:test (<unspecified>)`, id: `3`)": {
+    "identifier": "other_default"
+  },
   "(target: `root//:test (<unspecified>)`, id: `2`)": {
     "identifier": "other"
   }

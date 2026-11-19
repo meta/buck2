@@ -7,8 +7,8 @@
 # above-listed licenses.
 
 def _run_remote(ctx):
-    out = ctx.actions.declare_output("out.txt")
-    data = ctx.actions.write("src.txt", "abcd")
+    out = ctx.actions.declare_output("out.txt", has_content_based_path = False)
+    data = ctx.actions.write("src.txt", "abcd", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(["cp", data, out.as_output()]),
         category = "touch",

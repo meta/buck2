@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::process::Stdio;
@@ -19,7 +18,6 @@ use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::daemon::client::connect::BuckdProcessInfo;
 use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::stdin::Stdin;
 use buck2_client_ctx::thread_dump::thread_dump_command;
 use buck2_client_ctx::upload_re_logs::upload_re_logs;
 use buck2_common::argv::Argv;
@@ -40,15 +38,15 @@ use buck2_events::sink::remote::ScribeConfig;
 use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use buck2_hash::IntentionallyStdHashMap;
 use buck2_util::process::async_background_command;
 use buck2_wrapper_common::invocation_id::TraceId;
-use chrono::DateTime;
-use chrono::offset::Local;
 use derive_more::Display;
 use dupe::Dupe;
 use futures::future::FutureExt;
 use futures::future::LocalBoxFuture;
 use serde::Serialize;
+use superconsole::Stdin;
 use tokio::io::AsyncBufRead;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
@@ -64,14 +62,6 @@ enum RageError {
     InvalidSelectionError,
     #[error("Failed to find the logs for command")]
     LogNotFoundError,
-    #[error("Pastry command timeout, make sure you are on Lighthouse/VPN")]
-    PastryTimeout,
-    #[error("Failed to spawn pastry")]
-    PastrySpawnError,
-    #[error("Error writing to pastry")]
-    PastryWriteError,
-    #[error("Error reading pastry output")]
-    PastryOutputError,
     #[error("Pastry command failed with code '{0}' and error '{1}' ")]
     PastryCommandError(i32, String),
 }
@@ -112,8 +102,10 @@ impl RageCommand {
     }
 
     async fn exec_impl(self, mut ctx: ClientCommandContext<'_>) -> buck2_error::Result<()> {
+        let daemon_dir = ctx.resolve_tenant_daemon_dir().await?;
         let paths = ctx.paths()?;
-        let daemon_dir = paths.daemon_dir()?;
+        // Resolved before anything else borrows `ctx`; cheap, and it needs no daemon.
+        let settings = ctx.settings_report().map(|report| report.render(true));
         let stderr_path = daemon_dir.buckd_stderr();
         let re_logs_dir = ctx.paths()?.re_logs_dir();
         let logdir = paths.log_dir();
@@ -134,18 +126,11 @@ impl RageCommand {
         )?;
 
         // If there is a daemon, start connecting.
-        let info = BuckdProcessInfo::load(&daemon_dir).map_err(buck2_error::Error::from);
+        let info = BuckdProcessInfo::load(&daemon_dir);
 
         let buckd = match &info {
-            Ok(info) => async {
-                info.create_channel()
-                    .await?
-                    .upgrade()
-                    .await
-                    .map_err(buck2_error::Error::from)
-            }
-            .boxed(),
-            Err(e) => futures::future::ready(Err(e.dupe())).boxed(),
+            Ok(info) => async { info.create_channel().await?.upgrade().await }.boxed_local(),
+            Err(e) => futures::future::ready(Err(e.dupe())).boxed_local(),
         }
         .shared();
 
@@ -175,6 +160,7 @@ impl RageCommand {
         );
 
         let system_info_command = self.section("System info", crate::system_info::get);
+        let settings_command = self.section("Buck settings", || async { settings });
         let daemon_stderr_command = self.section("Daemon stderr", || {
             upload_daemon_stderr(stderr_path, &manifold, &manifold_id)
         });
@@ -184,6 +170,7 @@ impl RageCommand {
             crate::dice::upload_dice_dump(
                 buckd.clone().await?,
                 dice_dump_dir,
+                &client_ctx,
                 &manifold,
                 &manifold_id,
             )
@@ -223,6 +210,7 @@ impl RageCommand {
 
         let (
             system_info,
+            settings,
             daemon_stderr_dump,
             hg_snapshot_id,
             dice_dump,
@@ -232,6 +220,7 @@ impl RageCommand {
             re_logs,
         ) = tokio::join!(
             system_info_command,
+            settings_command,
             daemon_stderr_command,
             hg_snapshot_id_command,
             dice_dump_command,
@@ -243,6 +232,7 @@ impl RageCommand {
         let sections = vec![
             build_info.to_string(),
             system_info.to_string(),
+            settings.to_string(),
             daemon_stderr_dump.to_string(),
             hg_snapshot_id.to_string(),
             dice_dump.to_string(),
@@ -300,7 +290,7 @@ impl RageCommand {
             .map(|inv| inv.to_string())
             .unwrap_or_default();
 
-        let mut string_data: std::collections::HashMap<String, _> = [
+        let mut string_data: IntentionallyStdHashMap<String, _> = [
             ("dice_dump", dice_dump.clone()),
             ("materializer_state", materializer_state.clone()),
             ("materializer_fsck", materializer_fsck.clone()),
@@ -329,11 +319,12 @@ impl RageCommand {
         insert_if_some(&mut string_data, "os", os.clone());
         insert_if_some(&mut string_data, "os_version", os_version.clone());
 
-        let mut int_data = HashMap::new();
+        let mut int_data = IntentionallyStdHashMap::new();
         let daemon_uptime_s = build_info.get_field(|o| o.daemon_uptime_s);
         insert_if_some(&mut int_data, "daemon_uptime_s", daemon_uptime_s);
 
-        let timestamp = build_info.get_field(|o| Some(SystemTime::from(o.timestamp).into()));
+        let timestamp =
+            build_info.get_field(|o| Some(SystemTime::from(o.timestamp.timestamp()).into()));
         let command_duration = build_info.get_field(|o| {
             Some(prost_types::Duration {
                 seconds: o.command_duration?.as_secs() as i64,
@@ -511,7 +502,7 @@ where
     }
 }
 
-fn insert_if_some<D>(data: &mut HashMap<String, D>, key: &str, value: Option<D>) {
+fn insert_if_some<D>(data: &mut IntentionallyStdHashMap<String, D>, key: &str, value: Option<D>) {
     if let Some(value) = value {
         data.insert(key.to_owned(), value);
     }
@@ -540,7 +531,7 @@ async fn upload_re_logs_impl(
     re_session_id: String,
 ) -> buck2_error::Result<String> {
     let bucket = Bucket::RAGE_DUMPS;
-    let filename = format!("flat/{}-re_logs.zst", &re_session_id);
+    let filename = format!("flat/{}-re_logs.zst", re_session_id);
     upload_re_logs(manifold, bucket, re_logs_dir, &re_session_id, &filename).await?;
 
     Ok(manifold_leads(&bucket, filename))
@@ -551,7 +542,7 @@ async fn dispatch_result_event(
     rage_id: &TraceId,
     result: RageResult,
 ) -> buck2_error::Result<()> {
-    let data = Some(Data::RageResult(result));
+    let data = Some(Data::RageResult(Box::new(result)));
     dispatch_event_to_scribe(sink, rage_id, InstantEvent { data }).await?;
     Ok(())
 }
@@ -571,12 +562,7 @@ async fn dispatch_event_to_scribe(
                 event.into(),
             ))
             .await;
-    } else {
-        tracing::warn!(
-            "Couldn't send rage results to scribe, rage ID `{}`",
-            trace_id
-        )
-    };
+    }
     Ok(())
 }
 
@@ -630,12 +616,12 @@ async fn log_index(
     Ok(index)
 }
 
-async fn user_prompt_select_log<'a>(
+async fn user_prompt_select_log(
     stdin: impl AsyncBufRead + Unpin,
-    logs: &'a [EventLogPathBuf],
+    logs: &[EventLogPathBuf],
 ) -> buck2_error::Result<usize> {
     buck2_client_ctx::eprintln!("Which buck invocation would you like to report?\n")?;
-    let logs_summary = futures::future::join_all(
+    let logs_summary = buck2_util::future::join_all(
         logs.iter()
             .map(|log_path| async move { log_path.get_summary().await.ok() }),
     )
@@ -680,11 +666,13 @@ fn print_log_summary(
     if let Some(log_summary) = log_summary {
         let cmd = crate::build_info::format_cmd(&log_summary.invocation);
 
-        let timestamp: DateTime<Local> = log_summary.timestamp.into();
+        let timestamp = jiff::Timestamp::try_from(log_summary.timestamp)
+            .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+            .to_zoned(jiff::tz::TimeZone::system());
         Ok(buck2_client_ctx::eprintln!(
             "{:<7} {}    {}",
             format!("[{}].", index),
-            timestamp.format("%c %Z"),
+            timestamp.strftime("%c %Z"),
             cmd
         )?)
     } else {
@@ -725,21 +713,21 @@ async fn generate_paste(title: &str, content: &str) -> buck2_error::Result<Strin
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .buck_error_context(RageError::PastrySpawnError)?;
+        .buck_error_context("Failed to spawn pastry")?;
     let mut stdin = pastry.stdin.take().expect("Stdin should open");
 
     let writer = async move {
         stdin
             .write_all(content.as_bytes())
             .await
-            .buck_error_context(RageError::PastryWriteError)
+            .buck_error_context("Error writing to pastry")
     };
 
     let reader = async move {
         let output = tokio::time::timeout(Duration::from_secs(10), pastry.wait_with_output())
             .await
-            .buck_error_context(RageError::PastryTimeout)?
-            .buck_error_context(RageError::PastryOutputError)?;
+            .buck_error_context("Pastry command timeout, make sure you are on Lighthouse/VPN")?
+            .buck_error_context("Error reading pastry output")?;
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr).to_string();
             let code = output
@@ -749,7 +737,7 @@ async fn generate_paste(title: &str, content: &str) -> buck2_error::Result<Strin
             return Err(RageError::PastryCommandError(code, error).into());
         }
         let output =
-            String::from_utf8(output.stdout).buck_error_context(RageError::PastryOutputError)?;
+            String::from_utf8(output.stdout).buck_error_context("Error reading pastry output")?;
         Ok(output)
     };
 

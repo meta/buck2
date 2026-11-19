@@ -46,7 +46,7 @@ impl<'a> Span<'a> {
         self.fragment
     }
 
-    pub(crate) fn location_offset(&self) -> usize {
+    pub fn location_offset(&self) -> usize {
         self.offset
     }
 }

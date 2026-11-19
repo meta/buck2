@@ -18,15 +18,17 @@
 use allocative::Allocative;
 use dupe::Dupe;
 
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::layout::const_type_id::ConstTypeId;
 
-/// Identifier of a starlark type.
+/// Identifier of a starlark type: the static type id of its [`StarlarkType`].
 ///
-/// This is different from `TypeId` of `StarlarkValue` implementation:
-/// multiple Rust types can share the same `StarlarkTypeId`.
-/// For example, mutable and frozen list share the same `StarlarkTypeId`.
-#[derive(Eq, PartialEq, Hash, Copy, Clone, Dupe, Debug, Allocative)]
+/// This is different from `TypeId` of a `StarlarkValue` implementation: every representation
+/// of a type shares the type's `StarlarkTypeId`. For example, mutable and frozen list share one.
+#[derive(
+    Eq, PartialEq, PartialOrd, Ord, Hash, Copy, Clone, Dupe, Debug, Allocative
+)]
 pub(crate) struct StarlarkTypeId(ConstTypeId);
 
 impl StarlarkTypeId {
@@ -35,60 +37,14 @@ impl StarlarkTypeId {
         StarlarkTypeId(type_id)
     }
 
+    /// The id of the type `T` is a representation of.
     #[inline]
     pub(crate) const fn of<'v, T: StarlarkValue<'v>>() -> StarlarkTypeId {
-        StarlarkTypeId::of_canonical::<T::Canonical>()
+        StarlarkTypeId::of_type::<T::Type>()
     }
 
     #[inline]
-    pub(crate) const fn of_canonical<'v, T: StarlarkValue<'v>>() -> StarlarkTypeId {
-        #[cfg(rust_nightly)]
-        {
-            // We should check type ids, but `TypeId` equality is not available even in nightly.
-            let type_name = std::any::type_name::<T>();
-            let type_name_of_canonical_again = std::any::type_name::<T::Canonical>();
-            if type_name.len() != type_name_of_canonical_again.len() {
-                panic!("Canonical type of already canonical type `T` is not `T`")
-            }
-            let mut i = 0;
-            while i != type_name.len() {
-                if type_name.as_bytes()[i] != type_name_of_canonical_again.as_bytes()[i] {
-                    panic!("Canonical type of already canonical type `T` is not `T`")
-                }
-                i += 1;
-            }
-        }
-
+    pub(crate) const fn of_type<'v, T: StarlarkType<'v>>() -> StarlarkTypeId {
         StarlarkTypeId(ConstTypeId::of::<T::StaticType>())
-    }
-}
-
-/// We require alignment 8 for `StarlarkValue`.
-/// `TypeId` is 16 bytes aligned on Rust 1.72 on Apple Silicon.
-/// Use this struct to put `ConstTypeId` in a `StarlarkValue`.
-// TODO(nga): remove alignment requirement from `Heap`.
-#[repr(C, packed(8))]
-#[derive(Allocative, Eq, Clone, Copy, Dupe, Debug)]
-#[allocative(skip)] // There are no heap allocations in this struct.
-pub(crate) struct StarlarkTypeIdAligned {
-    starlark_type_id: StarlarkTypeId,
-}
-
-impl PartialEq for StarlarkTypeIdAligned {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.get() == other.get()
-    }
-}
-
-impl StarlarkTypeIdAligned {
-    #[inline]
-    pub(crate) const fn new(starlark_type_id: StarlarkTypeId) -> StarlarkTypeIdAligned {
-        StarlarkTypeIdAligned { starlark_type_id }
-    }
-
-    #[inline]
-    pub(crate) const fn get(&self) -> StarlarkTypeId {
-        self.starlark_type_id
     }
 }

@@ -16,10 +16,12 @@
  */
 
 use std::fmt::Display;
+use std::sync::Arc;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
 use starlark_syntax::codemap::Span;
 
 use crate::typing::ParamSpec;
@@ -28,25 +30,26 @@ use crate::typing::TypingOracleCtx;
 use crate::typing::call_args::TyCallArgs;
 use crate::typing::error::TypingOrInternalError;
 use crate::typing::ty::TypeRenderConfig;
-use crate::util::arc_or_static::ArcOrStatic;
 
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Allocative)]
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Allocative, Pagable)]
 struct TyCallableInner {
     params: ParamSpec,
     result: Ty,
 }
 
 /// `typing.Callable`.
-#[derive(Debug, Dupe, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Allocative)]
+#[derive(
+    Debug, Dupe, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Allocative, Pagable
+)]
 pub struct TyCallable {
-    inner: ArcOrStatic<TyCallableInner>,
+    inner: Arc<TyCallableInner>,
 }
 
 impl TyCallable {
     /// Create a new callable type.
     pub fn new(params: ParamSpec, result: Ty) -> TyCallable {
         TyCallable {
-            inner: ArcOrStatic::new(TyCallableInner { params, result }),
+            inner: Arc::new(TyCallableInner { params, result }),
         }
     }
 
@@ -68,12 +71,16 @@ impl TyCallable {
     }
 
     pub(crate) fn any() -> TyCallable {
-        static INNER: OnceLock<TyCallableInner> = OnceLock::new();
+        static INNER: OnceLock<Arc<TyCallableInner>> = OnceLock::new();
         TyCallable {
-            inner: ArcOrStatic::new_static(INNER.get_or_init(|| TyCallableInner {
-                params: ParamSpec::any(),
-                result: Ty::any(),
-            })),
+            inner: INNER
+                .get_or_init(|| {
+                    Arc::new(TyCallableInner {
+                        params: ParamSpec::any(),
+                        result: Ty::any(),
+                    })
+                })
+                .dupe(),
         }
     }
 

@@ -9,7 +9,6 @@
  */
 
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use buck2_build_api::actions::execute::dice_data::CommandExecutorResponse;
 use buck2_build_api::actions::execute::dice_data::HasCommandExecutor;
@@ -24,23 +23,26 @@ use buck2_core::execution_types::executor_config::HybridExecutionLevel;
 use buck2_core::execution_types::executor_config::LocalExecutorOptions;
 use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
 use buck2_core::execution_types::executor_config::PathSeparatorKind;
+use buck2_core::execution_types::executor_config::ReGangWorker;
 use buck2_core::execution_types::executor_config::RePlatformFields;
 use buck2_core::execution_types::executor_config::RemoteEnabledExecutor;
 use buck2_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
 use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
 use buck2_core::execution_types::executor_config::RemoteExecutorOptions;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
+use buck2_core::execution_types::revision::LazyVcsRevision;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::project::ProjectRoot;
-use buck2_error::BuckErrorContext;
 use buck2_events::daemon_id::DaemonId;
 use buck2_execute::execute::blocking::BlockingExecutor;
 use buck2_execute::execute::cache_uploader::NoOpCacheUploader;
 use buck2_execute::execute::cache_uploader::force_cache_upload;
+use buck2_execute::execute::low_pass_filter::LowPassFilter;
 use buck2_execute::execute::prepared::NoOpCommandOptionalExecutor;
 use buck2_execute::execute::prepared::PreparedCommandExecutor;
 use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
 use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::write_action_cache::WriteActionCache;
 use buck2_execute::knobs::ExecutorGlobalKnobs;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::re::manager::ManagedRemoteExecutionClient;
@@ -58,7 +60,7 @@ use buck2_execute_impl::executors::re::ReExecutor;
 use buck2_execute_impl::executors::stacked::StackedExecutor;
 use buck2_execute_impl::executors::to_re_platform::RePlatformFieldsToRePlatform;
 use buck2_execute_impl::executors::worker::WorkerPool;
-use buck2_execute_impl::low_pass_filter::LowPassFilter;
+use buck2_execute_impl::executors::write_action_cache::ReWriteActionCache;
 use buck2_execute_impl::re::paranoid_download::ParanoidDownloader;
 use buck2_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
 use buck2_resource_control::memory_tracker::MemoryTrackerHandle;
@@ -84,6 +86,7 @@ pub struct CommandExecutorFactory {
     skip_cache_read: bool,
     skip_cache_write: bool,
     project_root: ProjectRoot,
+    revision: Arc<LazyVcsRevision>,
     worker_pool: Arc<WorkerPool>,
     paranoid: Option<ParanoidDownloader>,
     materialize_failed_inputs: bool,
@@ -92,18 +95,23 @@ pub struct CommandExecutorFactory {
     cache_upload_permission_checker: Arc<ActionCacheUploadPermissionChecker>,
     fallback_tracker: Arc<FallbackTracker>,
     re_use_case_override: Option<RemoteExecutorUseCase>,
+    /// What every executor handed out attributes its materializer-side CAS traffic to, whatever
+    /// use case its RE work runs under: reading happens for the command, on the machine running
+    /// it, while the RE request and the uploads that feed it belong to the action's executor
+    /// configuration.
+    invocation_re_use_case: RemoteExecutorUseCase,
     memory_tracker: Option<MemoryTrackerHandle>,
     incremental_db_state: Arc<IncrementalDbState>,
-    deduplicate_get_digests_ttl_calls: bool,
     output_trees_download_config: OutputTreesDownloadConfig,
     daemon_id: DaemonId,
+    user_version: Option<String>,
 }
 
 impl CommandExecutorFactory {
     pub fn new(
         re_connection: Arc<ReConnectionHandle>,
         host_sharing_broker: HostSharingBroker,
-        low_pass_filter: LowPassFilter,
+        low_pass_filter: Arc<LowPassFilter>,
         materializer: Arc<dyn Materializer>,
         blocking_executor: Arc<dyn BlockingExecutor>,
         strategy: ExecutionStrategy,
@@ -118,18 +126,20 @@ impl CommandExecutorFactory {
         materialize_failed_inputs: bool,
         materialize_failed_outputs: bool,
         re_use_case_override: Option<RemoteExecutorUseCase>,
+        invocation_re_use_case: RemoteExecutorUseCase,
         memory_tracker: Option<MemoryTrackerHandle>,
         incremental_db_state: Arc<IncrementalDbState>,
-        deduplicate_get_digests_ttl_calls: bool,
         output_trees_download_config: OutputTreesDownloadConfig,
         daemon_id: DaemonId,
+        user_version: Option<String>,
     ) -> Self {
         let cache_upload_permission_checker = Arc::new(ActionCacheUploadPermissionChecker::new());
+        let revision = Arc::new(LazyVcsRevision::new(project_root.root().to_owned()));
 
         Self {
             re_connection,
             host_sharing_broker: Arc::new(host_sharing_broker),
-            low_pass_filter: Arc::new(low_pass_filter),
+            low_pass_filter,
             materializer,
             blocking_executor,
             strategy,
@@ -139,6 +149,7 @@ impl CommandExecutorFactory {
             skip_cache_read,
             skip_cache_write,
             project_root,
+            revision,
             worker_pool,
             paranoid,
             materialize_failed_inputs,
@@ -146,11 +157,12 @@ impl CommandExecutorFactory {
             cache_upload_permission_checker,
             fallback_tracker: Arc::new(FallbackTracker::new()),
             re_use_case_override,
+            invocation_re_use_case,
             memory_tracker,
             incremental_db_state,
-            deduplicate_get_digests_ttl_calls,
             output_trees_download_config,
             daemon_id,
+            user_version,
         }
     }
 
@@ -161,6 +173,18 @@ impl CommandExecutorFactory {
         let use_case = self.re_use_case_override.unwrap_or(use_case);
         self.re_connection.get_client().with_use_case(use_case)
     }
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(buck2_error::Error, Debug)]
+#[buck2(input)]
+enum ExecutorCompatibilityError {
+    #[error("The desired execution strategy (`{0:?}`) is incompatible with the local executor")]
+    LocalIncompatible(ExecutionStrategy),
+    #[error(
+        "The desired execution strategy (`{0:?}`) is incompatible with the executor config that was selected: {1:?}"
+    )]
+    SelectedConfig(ExecutionStrategy, CommandExecutorConfig),
 }
 
 impl HasCommandExecutor for CommandExecutorFactory {
@@ -179,7 +203,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 None
             };
             LocalExecutor::new(
-                artifact_fs.clone(),
+                artifact_fs.dupe(),
                 self.materializer.dupe(),
                 self.incremental_db_state.dupe(),
                 self.blocking_executor.dupe(),
@@ -190,21 +214,14 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 worker_pool,
                 self.memory_tracker.dupe(),
                 self.daemon_id.dupe(),
+                self.user_version.clone(),
+                self.invocation_re_use_case,
             )
         };
 
         if !buck2_core::is_open_source() && !cfg!(fbcode_build) {
-            static WARN: OnceLock<()> = OnceLock::new();
-            WARN.get_or_init(|| {
-                tracing::warn!("Cargo build detected: disabling remote execution and caching!")
-            });
-
             if self.strategy.ban_local() {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "The desired execution strategy (`{:?}`) is incompatible with the local executor",
-                    self.strategy,
-                ));
+                return Err(ExecutorCompatibilityError::LocalIncompatible(self.strategy).into());
             }
 
             return Ok(CommandExecutorResponse {
@@ -214,35 +231,39 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 remote_dep_file_cache_checker: Arc::new(NoOpCommandOptionalExecutor {}),
                 cache_uploader: Arc::new(NoOpCacheUploader {}),
                 output_trees_download_config: self.output_trees_download_config.dupe(),
+                write_action_cache: None,
             });
         }
 
-        let remote_executor_new =
-            |options: &RemoteExecutorOptions,
-             re_use_case: &RemoteExecutorUseCase,
-             re_action_key: &Option<String>,
-             remote_cache_enabled: bool,
-             dependencies: &[RemoteExecutorDependency]| {
-                ReExecutor {
-                    artifact_fs: artifact_fs.clone(),
-                    project_fs: self.project_root.clone(),
-                    materializer: self.materializer.dupe(),
-                    incremental_db_state: self.incremental_db_state.dupe(),
-                    re_client: self.get_prepared_re_client(*re_use_case),
-                    re_action_key: re_action_key.clone(),
-                    re_max_queue_time: options.re_max_queue_time,
-                    re_resource_units: options.re_resource_units,
-                    knobs: self.executor_global_knobs.dupe(),
-                    skip_cache_read: self.skip_cache_read || !remote_cache_enabled,
-                    skip_cache_write: self.skip_cache_write || !remote_cache_enabled,
-                    paranoid: self.paranoid.dupe(),
-                    materialize_failed_inputs: self.materialize_failed_inputs,
-                    materialize_failed_outputs: self.materialize_failed_outputs,
-                    dependencies: dependencies.to_vec(),
-                    deduplicate_get_digests_ttl_calls: self.deduplicate_get_digests_ttl_calls,
-                    output_trees_download_config: self.output_trees_download_config.dupe(),
-                }
-            };
+        let remote_executor_new = |options: &RemoteExecutorOptions,
+                                   re_client: &ManagedRemoteExecutionClient,
+                                   re_action_key: &Option<String>,
+                                   remote_cache_enabled: bool,
+                                   dependencies: &[RemoteExecutorDependency],
+                                   gang_workers: &[ReGangWorker],
+                                   priority: Option<i32>| {
+            ReExecutor {
+                artifact_fs: artifact_fs.dupe(),
+                project_fs: self.project_root.clone(),
+                revision: self.revision.dupe(),
+                materializer: self.materializer.dupe(),
+                re_client: re_client.dupe(),
+                invocation_re_use_case: self.invocation_re_use_case,
+                re_action_key: re_action_key.clone(),
+                re_max_queue_time: options.re_max_queue_time,
+                re_resource_units: options.re_resource_units,
+                knobs: self.executor_global_knobs.dupe(),
+                skip_cache_read: self.skip_cache_read || !remote_cache_enabled,
+                skip_cache_write: self.skip_cache_write || !remote_cache_enabled,
+                paranoid: self.paranoid.dupe(),
+                materialize_failed_inputs: self.materialize_failed_inputs,
+                materialize_failed_outputs: self.materialize_failed_outputs,
+                dependencies: dependencies.to_vec(),
+                gang_workers: gang_workers.to_vec(),
+                output_trees_download_config: self.output_trees_download_config.dupe(),
+                priority,
+            }
+        };
 
         let response = match &executor_config.executor {
             Executor::None => None,
@@ -257,6 +278,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                         remote_dep_file_cache_checker: Arc::new(NoOpCommandOptionalExecutor {}),
                         cache_uploader: Arc::new(NoOpCacheUploader {}),
                         output_trees_download_config: self.output_trees_download_config.dupe(),
+                        write_action_cache: None,
                     })
                 }
             }
@@ -280,6 +302,35 @@ impl HasCommandExecutor for CommandExecutorFactory {
                     applicability = testing
                 )?;
 
+                let re_client = self.get_prepared_re_client(remote_options.re_use_case);
+
+                // `Some` where local results are published, with the size cap on a run's.
+                let cache_upload_max_bytes: Option<Option<u64>> = if force_cache_upload()? {
+                    Some(None)
+                } else if disable_caching {
+                    None
+                } else if let CacheUploadBehavior::Enabled { max_bytes } =
+                    remote_options.cache_upload_behavior
+                {
+                    Some(max_bytes)
+                } else {
+                    None
+                };
+
+                let write_action_cache: Option<Arc<dyn WriteActionCache>> =
+                    if disable_caching || !remote_options.remote_cache_enabled {
+                        None
+                    } else {
+                        Some(Arc::new(ReWriteActionCache {
+                            re_client: re_client.dupe(),
+                            platform: remote_options.re_properties.clone(),
+                            populates: cache_upload_max_bytes.is_some(),
+                            cache_upload_permission_checker: self
+                                .cache_upload_permission_checker
+                                .dupe(),
+                        }))
+                    };
+
                 let cache_checker_new = || -> (Arc<dyn PreparedCommandOptionalExecutor>, Arc<dyn PreparedCommandOptionalExecutor>) {
                     if disable_caching {
                         return (
@@ -291,15 +342,14 @@ impl HasCommandExecutor for CommandExecutorFactory {
                     let remote_dep_file_cache_checker: Arc<dyn PreparedCommandOptionalExecutor> =
                         if remote_options.remote_dep_file_cache_enabled {
                             Arc::new(RemoteDepFileCacheChecker {
-                                artifact_fs: artifact_fs.clone(),
+                                artifact_fs: artifact_fs.dupe(),
                                 materializer: self.materializer.dupe(),
-                                incremental_db_state: self.incremental_db_state.dupe(),
-                                re_client: self.get_prepared_re_client(remote_options.re_use_case),
+                                re_client: re_client.dupe(),
+                                invocation_re_use_case: self.invocation_re_use_case,
                                 re_action_key: remote_options.re_action_key.clone(),
                                 upload_all_actions: self.upload_all_actions,
                                 knobs: self.executor_global_knobs.dupe(),
                                 paranoid: self.paranoid.dupe(),
-                                deduplicate_get_digests_ttl_calls: self.deduplicate_get_digests_ttl_calls,
                                 output_trees_download_config: self.output_trees_download_config.dupe(),
                             }) as _
                         } else {
@@ -311,15 +361,14 @@ impl HasCommandExecutor for CommandExecutorFactory {
                             Arc::new(NoOpCommandOptionalExecutor {}) as _
                         } else {
                             Arc::new(ActionCacheChecker {
-                                artifact_fs: artifact_fs.clone(),
+                                artifact_fs: artifact_fs.dupe(),
                                 materializer: self.materializer.dupe(),
-                                incremental_db_state: self.incremental_db_state.dupe(),
-                                re_client: self.get_prepared_re_client(remote_options.re_use_case),
+                                re_client: re_client.dupe(),
+                                invocation_re_use_case: self.invocation_re_use_case,
                                 re_action_key: remote_options.re_action_key.clone(),
                                 upload_all_actions: self.upload_all_actions,
                                 knobs: self.executor_global_knobs.dupe(),
                                 paranoid: self.paranoid.dupe(),
-                                deduplicate_get_digests_ttl_calls: self.deduplicate_get_digests_ttl_calls,
                                 output_trees_download_config: self.output_trees_download_config.dupe(),
                             }) as _
                         };
@@ -335,10 +384,12 @@ impl HasCommandExecutor for CommandExecutorFactory {
                         RemoteEnabledExecutor::Remote(remote) if !self.strategy.ban_remote() => {
                             Some(Arc::new(remote_executor_new(
                                 remote,
-                                &remote_options.re_use_case,
+                                &re_client,
                                 &remote_options.re_action_key,
                                 remote_options.remote_cache_enabled,
                                 &remote_options.dependencies,
+                                &remote_options.gang_workers,
+                                remote_options.priority,
                             )))
                         }
                         RemoteEnabledExecutor::Hybrid {
@@ -352,10 +403,12 @@ impl HasCommandExecutor for CommandExecutorFactory {
                             let local = local_executor_new(local);
                             let remote = remote_executor_new(
                                 remote,
-                                &remote_options.re_use_case,
+                                &re_client,
                                 &remote_options.re_action_key,
                                 remote_options.remote_cache_enabled,
                                 &remote_options.dependencies,
+                                &remote_options.gang_workers,
+                                remote_options.priority,
                             );
                             let executor_preference = self.strategy.hybrid_preference();
                             let low_pass_filter = self.low_pass_filter.dupe();
@@ -408,32 +461,17 @@ impl HasCommandExecutor for CommandExecutorFactory {
                         cache_checker_new()
                     };
 
-                let cache_uploader = if force_cache_upload()? {
-                    Arc::new(CacheUploader::new(
-                        artifact_fs.clone(),
+                let cache_uploader = match cache_upload_max_bytes {
+                    Some(max_bytes) => Arc::new(CacheUploader::new(
+                        artifact_fs.dupe(),
                         self.materializer.dupe(),
-                        self.get_prepared_re_client(remote_options.re_use_case),
-                        remote_options.re_properties.clone(),
-                        None,
-                        self.cache_upload_permission_checker.dupe(),
-                        self.deduplicate_get_digests_ttl_calls,
-                    )) as _
-                } else if disable_caching {
-                    Arc::new(NoOpCacheUploader {}) as _
-                } else if let CacheUploadBehavior::Enabled { max_bytes } =
-                    remote_options.cache_upload_behavior
-                {
-                    Arc::new(CacheUploader::new(
-                        artifact_fs.clone(),
-                        self.materializer.dupe(),
-                        self.get_prepared_re_client(remote_options.re_use_case),
+                        re_client.dupe(),
+                        self.invocation_re_use_case,
                         remote_options.re_properties.clone(),
                         max_bytes,
                         self.cache_upload_permission_checker.dupe(),
-                        self.deduplicate_get_digests_ttl_calls,
-                    )) as _
-                } else {
-                    Arc::new(NoOpCacheUploader {}) as _
+                    )) as _,
+                    None => Arc::new(NoOpCacheUploader {}) as _,
                 };
 
                 executor.map(|executor| CommandExecutorResponse {
@@ -443,13 +481,14 @@ impl HasCommandExecutor for CommandExecutorFactory {
                     remote_dep_file_cache_checker,
                     cache_uploader,
                     output_trees_download_config: self.output_trees_download_config.dupe(),
+                    write_action_cache,
                 })
             }
         };
 
-        let response = response
-            .with_buck_error_context(|| format!("The desired execution strategy (`{:?}`) is incompatible with the executor config that was selected: {:?}", self.strategy, executor_config)).tag(buck2_error::ErrorTag::Input)?;
-
+        let response = response.ok_or_else(|| {
+            ExecutorCompatibilityError::SelectedConfig(self.strategy, executor_config.clone())
+        })?;
         Ok(response)
     }
 }
@@ -463,24 +502,15 @@ trait ExecutionStrategyExt {
 
 impl ExecutionStrategyExt for ExecutionStrategy {
     fn ban_local(&self) -> bool {
-        match self {
-            Self::RemoteOnly | Self::NoExecution => true,
-            _ => false,
-        }
+        matches!(self, Self::RemoteOnly | Self::NoExecution)
     }
 
     fn ban_remote(&self) -> bool {
-        match self {
-            Self::LocalOnly | Self::NoExecution => true,
-            _ => false,
-        }
+        matches!(self, Self::LocalOnly | Self::NoExecution)
     }
 
     fn ban_hybrid(&self) -> bool {
-        match self {
-            Self::NoExecution => true,
-            _ => false,
-        }
+        matches!(self, Self::NoExecution)
     }
 
     fn hybrid_preference(&self) -> ExecutorPreference {
@@ -512,8 +542,10 @@ pub fn get_default_executor_config(host_platform: HostPlatformOverride) -> Comma
             remote_cache_enabled: true,
             remote_dep_file_cache_enabled: false,
             dependencies: vec![],
+            gang_workers: vec![],
             custom_image: None,
-            meta_internal_extra_params: MetaInternalExtraParams::default(),
+            meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
+            priority: None,
         })
     };
 
@@ -523,13 +555,14 @@ pub fn get_default_executor_config(host_platform: HostPlatformOverride) -> Comma
             path_separator: get_default_path_separator(host_platform),
             output_paths_behavior: Default::default(),
             use_bazel_protocol_remote_persistent_workers: false,
+            network_access: None,
         },
     }
 }
 
 fn get_default_re_properties(host_platform: HostPlatformOverride) -> RePlatformFields {
     let linux = &[("platform", "linux-remote-execution")];
-    let macos = &[("platform", "mac"), ("subplatform", "any")];
+    let macos = &[("platform", "mac"), ("subplatform", "no-xcode")];
     let windows = &[("platform", "windows")];
 
     let props = match host_platform {
@@ -548,7 +581,7 @@ fn get_default_re_properties(host_platform: HostPlatformOverride) -> RePlatformF
         properties: Arc::new(
             props
                 .iter()
-                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .map(|(k, v)| ((*k).to_owned(), vec![(*v).to_owned()]))
                 .collect(),
         ),
     }

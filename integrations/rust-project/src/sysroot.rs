@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 
+#[cfg(not(fbcode_build))]
 use anyhow::Context;
 use tracing::instrument;
 
@@ -42,19 +43,13 @@ pub(crate) enum SysrootConfig {
 pub(crate) fn resolve_buckconfig_sysroot(
     buck: &Buck,
     project_root: &Path,
+    universe_targets: &[Target],
 ) -> Result<Sysroot, anyhow::Error> {
+    #[cfg(fbcode_build)]
+    let sysroot = project_root.join("third-party/rust-toolchain/rustup/current/basic");
+    #[cfg(not(fbcode_build))]
     let sysroot: PathBuf = {
-        // TODO(diliopoulos): remove hardcoded path to toolchain sysroot and replace with something
-        // derived from buck, e.g.
-        //
-        // $ buck cquery -u fbcode//buck2/integrations/rust-project:rust-project -a compiler fbcode//buck2/platform/rust:rust_bootstrap
-        // ...
-        //     "compiler": "fbcode//tools/build/buck/wrappers:rust-platform010-clang-17-nosan-compiler (fbcode//buck2/platform/execution:linux-x86_64#54c5d1cbad5316cb)"
-        // $ buck cquery -u fbcode//buck2/integrations/rust-project:rust-project -a exe fbcode//tools/build/buck/wrappers:rust-platform010-clang-17-nosan-compiler
-        // ...
-        //     "exe": "fbcode//third-party-buck/platform010/build/rust/llvm-fb-17:bin/rustc (fbcode//buck2/platform/execution:linux-x86_64#54c5d1cbad5316cb)",
-        let fbsource_rustc = project_root.join("xplat/rust/toolchain/current/basic/bin/rustc");
-        let mut sysroot_cmd = Command::new(fbsource_rustc);
+        let mut sysroot_cmd = Command::new("rustc");
         sysroot_cmd
             .arg("--print=sysroot")
             .stdin(Stdio::null())
@@ -68,38 +63,50 @@ pub(crate) fn resolve_buckconfig_sysroot(
         sysroot.into()
     };
 
-    let sysroot_src = buck.resolve_sysroot_src()?;
-    let sysroot_targets = Target::new(format!("fbsource//{}:", sysroot_src.to_string_lossy()));
-    // the `library` path component needs to be appended to the `sysroot_src_path`
-    // so that rust-analyzer will be able to find standard library sources.
-    let sysroot_src = project_root.join(sysroot_src).join("library");
+    let (sysroot_src, sysroot_project) = match buck.resolve_sysroot_src()? {
+        Some(sysroot_src) => {
+            let sysroot_targets = buck.query_sysroot_targets(
+                &format!("fbsource//{}:", sysroot_src.to_string_lossy()),
+                universe_targets,
+            );
 
-    let mut sysroot_project = develop_with_sysroot(
-        buck,
-        vec![sysroot_targets],
-        Sysroot {
-            sysroot: sysroot.clone(),
-            sysroot_src: Some(sysroot_src.clone()),
-            sysroot_project: None,
-        },
-        true,
-        false,
-        false,
-        &[], // sysroot doesn't get any extra cfgs
-    )?;
-    for krate in &mut sysroot_project.crates {
-        if let Some(display_name) = &mut krate.display_name {
-            *display_name = display_name
-                .strip_suffix("-0.0.0") // rust-analyzer identifies lang crates by name, so we need `core-0.0.0` to be `core`
-                .unwrap_or(display_name)
-                .to_owned();
+            // the `library` path component needs to be appended to the `sysroot_src_path`
+            // so that rust-analyzer will be able to find standard library sources.
+            let sysroot_src = project_root.join(sysroot_src).join("library");
+
+            let mut sysroot_project = develop_with_sysroot(
+                buck,
+                sysroot_targets,
+                Sysroot {
+                    sysroot: sysroot.clone(),
+                    sysroot_src: Some(sysroot_src.clone()),
+                    sysroot_project: None,
+                },
+                true,
+                false,
+                false,
+                &[], // sysroot doesn't get any extra cfgs
+                &[],
+                None,
+            )?;
+            for krate in &mut sysroot_project.crates {
+                if let Some(display_name) = &mut krate.display_name {
+                    *display_name = display_name
+                        .strip_suffix("-0.0.0") // rust-analyzer identifies lang crates by name, so we need `core-0.0.0` to be `core`
+                        .unwrap_or(display_name)
+                        .to_owned();
+                }
+            }
+
+            (Some(sysroot_src), Some(sysroot_project))
         }
-    }
+        None => (None, None),
+    };
 
     Ok(Sysroot {
         sysroot,
-        sysroot_src: Some(sysroot_src),
-        sysroot_project: Some(sysroot_project),
+        sysroot_src,
+        sysroot_project,
     })
 }
 

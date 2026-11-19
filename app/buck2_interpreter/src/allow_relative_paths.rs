@@ -19,19 +19,22 @@ use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
-use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::paths::CellRelativePathBuf;
+use buck2_core::pattern::parse_package::parse_cell_path;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
+use dupe::ResultDupedErrExt;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(input)]
 enum RelativePathParseError {
-    #[error("Relative path `{0}` could not be parsed.")]
-    InvalidAllowedDirForRelativePaths(String),
     #[error("Multiple relative-enabled directory prefixes found for the current dir: `{0}`.")]
     MultipleAllowedDirsForCurrentDir(String),
     #[error(
@@ -41,21 +44,31 @@ enum RelativePathParseError {
 }
 
 #[async_trait]
-pub trait HasAllowRelativePaths {
+pub trait HasAllowRelativePaths<'d> {
     async fn dirs_allowing_relative_paths(
         &mut self,
         cell_path: CellPath,
-    ) -> buck2_error::Result<Arc<CellPathWithAllowedRelativeDir>>;
+    ) -> buck2_error::Result<&'d Arc<CellPathWithAllowedRelativeDir>>;
 }
 
 #[async_trait]
-impl HasAllowRelativePaths for DiceComputations<'_> {
+impl<'d> HasAllowRelativePaths<'d> for DiceComputations<'d> {
     async fn dirs_allowing_relative_paths(
         &mut self,
         cell_path: CellPath,
-    ) -> buck2_error::Result<Arc<CellPathWithAllowedRelativeDir>> {
-        #[derive(Debug, Eq, PartialEq, Hash, Clone, derive_more::Display, Allocative)]
+    ) -> buck2_error::Result<&'d Arc<CellPathWithAllowedRelativeDir>> {
+        #[derive(
+            Debug,
+            Eq,
+            PartialEq,
+            Hash,
+            Clone,
+            derive_more::Display,
+            Allocative,
+            Pagable
+        )]
         #[display("{}", cell_path)]
+        #[pagable_typetag(dice::DiceKeyDyn)]
         struct AllowRelativePathsKey {
             cell_path: CellPath,
         }
@@ -82,9 +95,9 @@ impl HasAllowRelativePaths for DiceComputations<'_> {
                     .unwrap_or_default()
                     .into_iter()
                     .filter_map(|dir| {
-                        get_cell_path_from_raw_string(dir, cell_alias_resolver)
+                        parse_cell_path(dir.trim(), cell_alias_resolver)
                             .map(|allow_dir| {
-                                if self.cell_path.starts_with(allow_dir.as_ref()) {
+                                if self.cell_path.starts_with(allow_dir) {
                                     Some(allow_dir)
                                 } else {
                                     None
@@ -106,50 +119,45 @@ impl HasAllowRelativePaths for DiceComputations<'_> {
                 if let Some(allowed_relative_dir) = allowed_relative_dir {
                     validate_no_symlinks_between_current_dir_and_allowed_dir(
                         ctx,
-                        &self.cell_path,
-                        allowed_relative_dir,
+                        self.cell_path,
+                        *allowed_relative_dir,
                     )
                     .await?;
                 }
 
                 Ok(Arc::new(CellPathWithAllowedRelativeDir::new(
-                    self.cell_path.clone(),
+                    self.cell_path,
                     allowed_relative_dir.cloned(),
                 )))
             }
 
-            fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-                match (x, y) {
+            fn equality_behavior() -> EqualityBehavior<Self::Value> {
+                EqualityBehavior::Compare(|x, y| match (x, y) {
                     (Ok(x), Ok(y)) => x == y,
                     _ => false,
-                }
+                })
+            }
+
+            fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+                OkPagableValueSerialize::<Self::Value>::new()
             }
         }
 
-        self.compute(&AllowRelativePathsKey { cell_path }).await?
+        self.compute(&AllowRelativePathsKey { cell_path })
+            .await?
+            .as_ref()
+            .duped_err()
     }
-}
-
-fn get_cell_path_from_raw_string(
-    dir: String,
-    cell_alias_resolver: &CellAliasResolver,
-) -> buck2_error::Result<CellPath> {
-    let Some((cell_str, path_str)) = dir.trim().split_once("//") else {
-        return Err(RelativePathParseError::InvalidAllowedDirForRelativePaths(dir).into());
-    };
-    let cell = cell_alias_resolver.resolve(cell_str)?;
-    let path: CellRelativePathBuf = CellRelativePathBuf::try_from(path_str.to_owned())?;
-    Ok(CellPath::new(cell, path))
 }
 
 async fn validate_no_symlinks_between_current_dir_and_allowed_dir(
     ctx: &mut DiceComputations<'_>,
-    current_dir: &CellPath,
-    allowed_dir: &CellPath,
+    current_dir: CellPath,
+    allowed_dir: CellPath,
 ) -> buck2_error::Result<()> {
     // For all the paths between current_dir and allowed_dir, inclusive
     // check that there are no symlinks
-    let mut current_dir = current_dir.as_ref();
+    let mut current_dir = current_dir;
     loop {
         if let RawPathMetadata::Symlink { at, to: _ } =
             DiceFileComputations::read_path_metadata(ctx, current_dir)
@@ -159,11 +167,11 @@ async fn validate_no_symlinks_between_current_dir_and_allowed_dir(
             return Err(RelativePathParseError::SymlinkFound(
                 current_dir.to_string(),
                 allowed_dir.to_string(),
-                at.as_ref().to_string(),
+                at.to_string(),
             )
             .into());
         }
-        if current_dir == allowed_dir.as_ref() {
+        if current_dir == allowed_dir {
             break;
         }
         current_dir = current_dir

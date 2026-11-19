@@ -16,9 +16,15 @@ import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext
 import com.facebook.buck.jvm.kotlin.cd.analytics.ModeParam
 import com.facebook.buck.jvm.kotlin.cd.analytics.logger.model.KotlinCDLogEntry
+import com.google.common.util.concurrent.ThreadFactoryBuilder
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.Executor
+import java.util.concurrent.RejectedExecutionHandler
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 class KotlinCDLoggerAnalytics
 @JvmOverloads
@@ -32,18 +38,27 @@ constructor(
     private val numKotlinFiles: Long,
     private val incremental: Boolean,
     private val clock: Clock = Clock.systemDefaultZone(),
+    private val executor: Executor = defaultLoggingExecutor,
 ) : KotlinCDAnalytics() {
 
   override fun log(context: KotlinCDLoggingContext) {
     if (buildUuid == null) {
       LOG.debug(
-          "No operation performed. This is expected when running an action downloaded from RE."
+          "No operation performed. This is expected when running an action downloaded from RE.",
       )
       return
     }
 
+    // Build the log entry on the calling thread so its timestamps reflect when the
+    // action finished (and so an invalid language version fails fast here), then hand
+    // the blocking scribe write off the critical path.
+    val logEntry = createKotlinCDLogEntry(context)
+    executor.execute { writeLogEntry(logEntry) }
+  }
+
+  private fun writeLogEntry(logEntry: KotlinCDLogEntry) {
     val start = Instant.now(clock)
-    val success: Boolean = kotlinCDLogger.log(createKotlinCDLogEntry(context))
+    val success: Boolean = kotlinCDLogger.log(logEntry)
     val end = Instant.now(clock)
 
     val duration = Duration.between(start, end)
@@ -51,13 +66,13 @@ constructor(
       LOG.info(
           "Successfully wrote KotlinCD logs to scribe. Total time: " +
               duration.toMillis() +
-              " milliseconds"
+              " milliseconds",
       )
     } else {
       LOG.warn(
           (("Failed to write KotlinCD logs to scribe. Total time: " +
               duration.toMillis() +
-              " milliseconds"))
+              " milliseconds")),
       )
     }
   }
@@ -89,6 +104,9 @@ constructor(
         extras = buildJson(context.extras),
         addedAndModifiedFiles = addedAndModifiedFiles,
         removedFiles = removedFiles,
+        numKotlinTokens = context.numKotlinTokens.takeIf { it > 0 },
+        numJavaTokens = context.numJavaTokens.takeIf { it > 0 },
+        durationMs = context.durationMs,
     )
   }
 
@@ -102,5 +120,28 @@ constructor(
 
   companion object {
     private val LOG: Logger = Logger.get(KotlinCDLoggerAnalytics::class.java)
+
+    private const val LOGGER_THREAD_POOL_SIZE = 4
+    private const val MAX_QUEUED_LOG_ENTRIES = 1024
+
+    /**
+     * Scribe writes go through the `logger_cat` subprocess, which can block for several seconds
+     * under host load. That call previously ran on the compile action's critical path, so a slow
+     * `logger_cat` stalled action completion and starved worker threads. The write is offloaded
+     * here to a small, bounded, daemon-thread pool: the fixed thread count and capped queue keep a
+     * degraded `logger_cat` from growing the long-lived worker's heap, and saturating entries are
+     * dropped rather than queued without bound, since these analytics are best-effort.
+     */
+    private val defaultLoggingExecutor: Executor = ThreadPoolExecutor(
+        LOGGER_THREAD_POOL_SIZE,
+        LOGGER_THREAD_POOL_SIZE,
+        0L,
+        TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue(MAX_QUEUED_LOG_ENTRIES),
+        ThreadFactoryBuilder().setDaemon(true).setNameFormat("kotlincd-scribe-logger-%d").build(),
+        RejectedExecutionHandler { _, _ ->
+          LOG.debug("Dropped KotlinCD scribe log entry; logging queue is full")
+        },
+    )
   }
 }

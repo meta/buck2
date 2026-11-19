@@ -1,0 +1,238 @@
+load("@prelude//cfg/modifier:conditional_modifier.bzl", "conditional_modifier")
+load(
+    ":defs.bzl",
+    "get_exec_marker_label",
+    "get_labels",
+    "labeled_dummy",
+    "labeled_tool",
+    "labeled_toolchain",
+    "tool_with_single_transition_dep",
+    "tool_with_split_transition_dep",
+)
+
+# Tool target - this will be built as an exec_dep
+# It produces a simple output file
+labeled_tool(
+    name = "gcc_tool",
+    modifiers = [
+        "root//cfg:build_mode[release]",
+        "root//cfg:compiler[gcc]",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+labeled_tool(
+    name = "clang_tool",
+    modifiers = ["root//cfg:compiler[clang]"],
+)
+
+labeled_tool(
+    name = "macos_clang_tool",
+    modifiers = ["root//cfg:compiler[clang]", "root//cfg:os[macos]"],
+)
+
+labeled_tool(
+    name = "gcc_tool_target_compatible_with_gcc",
+    modifiers = [
+        "root//cfg:compiler[gcc]",
+    ],
+    target_compatible_with = [
+        "root//cfg:compiler[gcc]",
+    ],
+)
+
+labeled_toolchain(
+    name = "clang_toolchain",
+    tool = ":clang_tool",
+    default_target_platform = "root//cfg:debug_platform",
+    visibility = ["PUBLIC"],
+)
+
+# Toolchain that selects based on build mode
+labeled_toolchain(
+    name = "compiler_toolchain",
+    tool = select({
+        "//cfg:compiler[clang]": ":clang_tool",
+        "//cfg:compiler[gcc]": ":gcc_tool",
+        "DEFAULT": None,
+    }),
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+# Binary target that depends on the tool via exec_deps
+# This demonstrates how modifiers affect execution platform selection
+labeled_dummy(
+    name = "binary",
+    deps = [],
+    exec_deps = [":gcc_tool"],
+    toolchain_deps = [":clang_toolchain"],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+# Example with modifiers directly on target
+labeled_dummy(
+    name = "binary_with_macos_execution",
+    deps = [],
+    exec_deps = [":gcc_tool"],
+    toolchain_deps = [":clang_toolchain"],
+    exec_compatible_with = [
+        "root//cfg:os[macos]",
+    ],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+labeled_dummy(
+    name = "binary_with_tool_target_compatible_with_gcc",
+    deps = [],
+    exec_deps = [":gcc_tool_target_compatible_with_gcc"],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+labeled_dummy(
+    name = "binary_with_tool_containing_os_modifier",
+    deps = [],
+    exec_deps = [":macos_clang_tool"],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+# Toolchain with multiple exec deps (additional_tools) to test that different
+# exec deps on the same toolchain can have different configurations due to
+# different modifiers on the exec deps themselves
+labeled_toolchain(
+    name = "multi_tool_toolchain",
+    tool = ":gcc_tool",
+    additional_tools = [":clang_tool"],
+    default_target_platform = "root//cfg:debug_platform",
+    visibility = ["PUBLIC"],
+)
+
+# Binary that uses the multi-tool toolchain to verify different exec deps
+# get different configurations based on their modifiers
+labeled_dummy(
+    name = "binary_with_multi_tool_toolchain",
+    deps = [],
+    toolchain_deps = [":multi_tool_toolchain"],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+conditional_modifier(
+    name = "compiler_by_os",
+    modifier = {
+        "DEFAULT": "root//cfg:compiler[gcc]",
+        "root//cfg:os[linux]": "root//cfg:compiler[gcc]",
+        "root//cfg:os[macos]": "root//cfg:compiler[clang]",
+    },
+)
+
+conditional_modifier(
+    name = "compiler_by_cpu",
+    modifier = {
+        "DEFAULT": "root//cfg:compiler[gcc]",
+        "root//cfg:cpu[arm64]": "root//cfg:compiler[clang]",
+        "root//cfg:cpu[x86_64]": "root//cfg:compiler[gcc]",
+    },
+)
+
+# Tool with conditional modifier based on OS
+labeled_tool(
+    name = "tool_with_os_conditional_compiler",
+    modifiers = ["root//:compiler_by_os"],
+    visibility = ["PUBLIC"],
+)
+
+# Tool with conditional modifier based on CPU
+labeled_tool(
+    name = "tool_with_cpu_conditional_compiler",
+    modifiers = ["root//:compiler_by_cpu"],
+    visibility = ["PUBLIC"],
+)
+
+# Binary using tool with OS-conditional modifier (exec platform: linux_x86_64)
+labeled_dummy(
+    name = "binary_with_os_conditional_tool",
+    deps = [],
+    exec_deps = [":tool_with_os_conditional_compiler"],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+# Binary using tool with OS-conditional modifier (exec platform: macos_x86_64)
+labeled_dummy(
+    name = "binary_with_os_conditional_tool_macos_exec",
+    deps = [],
+    exec_deps = [":tool_with_os_conditional_compiler"],
+    exec_compatible_with = ["root//cfg:os[macos]"],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+# Binary using tool with CPU-conditional modifier (exec platform: linux_arm64)
+labeled_dummy(
+    name = "binary_with_cpu_conditional_tool_arm64",
+    deps = [],
+    exec_deps = [":tool_with_cpu_conditional_compiler"],
+    exec_compatible_with = ["root//cfg:cpu[arm64]"],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+# ============================================================================
+# Targets for testing exec marker preservation across transitions
+# ============================================================================
+
+# Inner dep that goes through a transition.
+# has is_exec to select on exec marker, verifying the marker survives the transition.
+labeled_tool(
+    name = "inner_dep_for_transition",
+    is_exec = get_exec_marker_label(),
+)
+
+# Tool (used as exec_dep) that has a single transition dep inside it.
+# When used as exec_dep, this tool is configured with exec platform config.
+# Its transitioned_dep receives the exec config and goes through the transition.
+tool_with_single_transition_dep(
+    name = "tool_with_single_transition",
+    is_exec = get_exec_marker_label(),
+    labels = get_labels(),
+    set_false_marker = read_config("test", "replace_transition_marker", "false") == "true",
+    transitioned_dep = ":inner_dep_for_transition",
+)
+
+# Binary that uses tool_with_single_transition as an exec dep
+labeled_dummy(
+    name = "binary_with_single_transition_exec_dep",
+    deps = [],
+    exec_deps = [":tool_with_single_transition"],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+labeled_dummy(
+    name = "binary_with_single_transition_target_dep",
+    deps = [":tool_with_single_transition"],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+# Tool (used as exec_dep) that has a split transition dep inside it.
+tool_with_split_transition_dep(
+    name = "tool_with_split_transition",
+    is_exec = get_exec_marker_label(),
+    labels = get_labels(),
+    set_false_marker = read_config("test", "replace_transition_marker", "false") == "true",
+    transitioned_dep = ":inner_dep_for_transition",
+)
+
+# Binary that uses tool_with_split_transition as an exec dep
+labeled_dummy(
+    name = "binary_with_split_transition_exec_dep",
+    deps = [],
+    exec_deps = [":tool_with_split_transition"],
+    default_target_platform = "root//cfg:debug_platform",
+)
+
+platform(
+    name = "target_with_exec_marker_constraint",
+    constraint_values = ["prelude//cfg/exec_platform/marker:is_exec_platform[true]"],
+)
+
+labeled_dummy(
+    name = "binary_with_marker_constraint_target_dep",
+    deps = [":tool_with_split_transition"],
+    default_target_platform = ":target_with_exec_marker_constraint",
+)

@@ -1,0 +1,24 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error evaluating expression:
+    root//intersect/optin_only/bad:c
+    ^------------------------------^
+
+
+Caused by:
+    0: Error evaluating build file: `root//intersect/optin_only/bad:TARGETS.fixture`
+    1: error: checking `within_view` for attribute `deps` of `root//intersect/optin_only/bad:c`
+        --> intersect/optin_only/bad/TARGETS.fixture:4:1
+         |
+       4 | / stub(
+       5 | |     name = "c",
+       6 | |     deps = ["root//outside:t"],
+       7 | | )
+         | |_^
+       Traceback (most recent call last):
+         * intersect/optin_only/bad/TARGETS.fixture:4, in <module>
+             stub(
+       
+    2: Target's effective `within_view` does not allow dependency `root//outside:t` (within_view = ["root//intersect/..."]). Capped to ["root//intersect/..."] by `enforce_within_view_intersection()` in an ancestor PACKAGE

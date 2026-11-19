@@ -32,6 +32,7 @@ use crate::query::graph::successors::GraphSuccessors;
 use crate::query::syntax::simple::eval::error::QueryError;
 use crate::query::syntax::simple::eval::file_set::FileSet;
 use crate::query::syntax::simple::eval::set::TargetSet;
+use crate::query::syntax::simple::eval::values::QueryValueDepth;
 use crate::query::traversal::AsyncNodeLookup;
 use crate::query::traversal::ChildVisitor;
 mod tests;
@@ -64,7 +65,11 @@ impl QueryTargets {
     /// Used to process all the attrs of a node (both the normal rule attrs and the "special" attrs). Applies
     /// a function to the attrs instead of returning an iterator as some of them are owned and some are refs
     /// into the node.
-    pub fn for_all_attrs<E, T: QueryTarget, F: FnMut(&str, &T::Attr<'_>) -> Result<(), E>>(
+    pub fn for_all_attrs<
+        E: From<buck2_error::Error>,
+        T: QueryTarget,
+        F: FnMut(&str, &T::Attr<'_>) -> Result<(), E>,
+    >(
         target: &T,
         mut func: F,
     ) -> Result<(), E> {
@@ -82,20 +87,35 @@ pub struct AttrFmtOptions {
 pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
     type Attr<'a>: ?Sized + Debug + 'a;
 
+    /// Called by a caller about to read the attributes, inputs or build file of every one of
+    /// `targets`. An implementation that loads those on demand loads them here, several at a
+    /// time, so that the caller does not load them one target after another.
+    ///
+    /// This only saves time: what cannot be loaded here is left for the read that needs it
+    /// to report. The error is for buck2's own tests, where a soft error fails the command.
+    fn prefetch_bodies<'a>(
+        _targets: impl IntoIterator<Item = &'a Self>,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
     /// `filter()` function uses this.
     fn label_for_filter(&self) -> String {
         self.node_key().to_string()
     }
 
     /// Returns the input files for this node.
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(&self, func: F) -> Result<(), E>;
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
+        &self,
+        func: F,
+    ) -> Result<(), E>;
 
     fn rule_type(&self) -> Cow<'_, str>;
 
     fn name(&self) -> Cow<'_, str>;
 
     /// Return the path to the buildfile that defines this target, e.g. `fbcode//foo/bar/TARGETS`
-    fn buildfile_path(&self) -> &BuildFilePath;
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath>;
 
     fn deps<'a>(&'a self) -> impl Iterator<Item = &'a Self::Key> + Send + 'a;
 
@@ -107,8 +127,10 @@ pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
 
     fn toolchain_deps<'a>(&'a self) -> impl Iterator<Item = &'a Self::Key> + Send + 'a;
 
-    fn tests<'a>(&'a self) -> Option<impl Iterator<Item = Self::Key> + Send + 'a> {
-        None::<iter::Empty<Self::Key>>
+    fn tests<'a>(
+        &'a self,
+    ) -> buck2_error::Result<Option<impl Iterator<Item = Self::Key> + Send + 'a>> {
+        Ok(None::<iter::Empty<Self::Key>>)
     }
 
     fn attr_any_matches(
@@ -116,27 +138,57 @@ pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
         filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
     ) -> buck2_error::Result<bool>;
 
-    fn special_attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    /// Match a named user-defined or special attribute without requiring an owned attribute.
+    fn attr_matches(
+        &self,
+        key: &str,
+        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
+    ) -> buck2_error::Result<bool> {
+        self.map_any_attr(key, |value| match value {
+            Some(value) => Self::attr_any_matches(value, filter),
+            None => Ok(false),
+        })?
+    }
+
+    fn special_attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         func: F,
     ) -> Result<(), E>;
 
-    fn attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         func: F,
     ) -> Result<(), E>;
 
-    fn defined_attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn defined_attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         func: F,
     ) -> Result<(), E>;
 
     /// map the attr named `key` to a value using `func`
     /// attribute here is usered defined attribute, not including special attributes.
-    fn map_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(&self, key: &str, func: F) -> R;
+    /// Fails only if the attributes could not be read.
+    fn map_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(
+        &self,
+        key: &str,
+        func: F,
+    ) -> buck2_error::Result<R>;
 
     /// map the any attr (user defined attribute or special attribute) named `key` to a value using `func`
-    fn map_any_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(&self, key: &str, func: F) -> R;
+    fn map_any_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(
+        &self,
+        key: &str,
+        func: F,
+    ) -> buck2_error::Result<R>;
 }
 
 #[async_trait]
@@ -151,10 +203,27 @@ pub trait TraversalFilter<T: QueryTarget>: Send + Sync {
 pub trait QueryEnvironment: Send + Sync {
     type Target: QueryTarget;
 
+    /// Whether the query should skip nodes/edges that fail to load and return
+    /// a best-effort partial result, instead of aborting on the first error.
+    /// Defaults to false; `uquery` overrides it from `--allow-partial-graph`
+    fn allow_partial_graph(&self) -> bool {
+        false
+    }
+
     async fn get_node(
         &self,
         node_ref: &<Self::Target as LabeledNode>::Key,
     ) -> buck2_error::Result<Self::Target>;
+
+    /// `get_node`, told which node's expansion is asking for it. Environments
+    /// that load packages on demand can credit the load to the requester.
+    async fn get_node_from(
+        &self,
+        node_ref: &<Self::Target as LabeledNode>::Key,
+        _requester: Option<&<Self::Target as LabeledNode>::Key>,
+    ) -> buck2_error::Result<Self::Target> {
+        self.get_node(node_ref).await
+    }
 
     async fn get_node_for_default_configured_target(
         &self,
@@ -191,7 +260,8 @@ pub trait QueryEnvironment: Send + Sync {
         to: &TargetSet<Self::Target>,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
     ) -> buck2_error::Result<TargetSet<Self::Target>> {
-        self.rdeps(from, to, None, filter).await
+        self.rdeps(from, to, QueryValueDepth::Unbounded, filter)
+            .await
     }
 
     async fn somepath(
@@ -200,17 +270,7 @@ pub trait QueryEnvironment: Send + Sync {
         to: &TargetSet<Self::Target>,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
     ) -> buck2_error::Result<TargetSet<Self::Target>> {
-        let path = async_bfs_find_path(
-            from.iter(),
-            QueryEnvironmentAsNodeLookup { env: self },
-            QueryTargetFilteredDepsSuccesors { filter },
-            |t| to.get(t).duped(),
-        )
-        .await?
-        .unwrap_or_default();
-
-        let target_set = TargetSet::from_iter(path);
-        Ok(target_set)
+        somepath(self, from, to, filter).await
     }
 
     async fn allbuildfiles(
@@ -238,61 +298,22 @@ pub trait QueryEnvironment: Send + Sync {
         &self,
         universe: &TargetSet<Self::Target>,
         from: &TargetSet<Self::Target>,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
     ) -> buck2_error::Result<TargetSet<Self::Target>> {
-        let graph = Graph::build_stable_dfs(
-            &QueryEnvironmentAsNodeLookup { env: self },
-            universe.iter().map(|n| n.node_key().clone()),
-            QueryTargetFilteredDepsSuccesors { filter },
-        )
-        .await?;
-
-        let graph = graph.reverse();
-
-        let mut rdeps = TargetSet::new();
-
-        let mut visit = |target| {
-            rdeps.insert_unique_unchecked(target);
-            Ok(())
-        };
-
-        let roots_in_universe = from.filter(|t| Ok(graph.get(t.node_key()).is_some()))?;
-
-        match depth {
-            // For unbounded traversals, buck1 recommends specifying a large value. We'll accept either a negative (like -1) or
-            // a large value as unbounded. We can't just call it optional because args are positional only in the query syntax
-            // and so to specify a filter you need to specify a depth.
-            Some(v) if (0..1_000_000_000).contains(&v) => {
-                let graph = graph.take_max_depth(
-                    roots_in_universe.iter().map(|t| t.node_key().clone()),
-                    v as u32,
-                );
-                graph.depth_first_postorder_traversal(
-                    roots_in_universe.iter().map(|t| t.node_key().clone()),
-                    |t| visit(t.clone()),
-                )?;
-            }
-            _ => {
-                graph.depth_first_postorder_traversal(
-                    roots_in_universe.iter().map(|t| t.node_key().clone()),
-                    |t| visit(t.clone()),
-                )?;
-            }
-        }
-
-        Ok(rdeps)
+        rdeps(self, universe, from, depth, filter).await
     }
 
     async fn testsof(
         &self,
         targets: &TargetSet<Self::Target>,
     ) -> buck2_error::Result<TargetSet<Self::Target>> {
+        Self::Target::prefetch_bodies(targets)?;
         let target_tests = targets
             .iter()
             .map(|target| {
                 let tests = target
-                    .tests()
+                    .tests()?
                     .ok_or(QueryError::FunctionUnimplemented("testsof"))?;
 
                 buck2_error::Ok((target, tests))
@@ -326,11 +347,12 @@ pub trait QueryEnvironment: Send + Sync {
         &self,
         targets: &TargetSet<Self::Target>,
     ) -> buck2_error::Result<Vec<MaybeCompatible<Self::Target>>> {
+        Self::Target::prefetch_bodies(targets)?;
         let target_tests = targets
             .iter()
             .map(|target| {
                 let tests = target
-                    .tests()
+                    .tests()?
                     .ok_or(QueryError::FunctionUnimplemented("testsof"))?;
 
                 buck2_error::Ok((target, tests))
@@ -366,7 +388,7 @@ pub trait QueryEnvironment: Send + Sync {
     async fn deps(
         &self,
         targets: &TargetSet<Self::Target>,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
     ) -> buck2_error::Result<TargetSet<Self::Target>> {
         deps(self, targets, depth, filter).await
@@ -383,7 +405,7 @@ pub trait QueryEnvironment: Send + Sync {
 pub async fn deps<Env: QueryEnvironment + ?Sized>(
     env: &Env,
     targets: &TargetSet<Env::Target>,
-    depth: Option<i32>,
+    depth: QueryValueDepth,
     filter: Option<&dyn TraversalFilter<Env::Target>>,
 ) -> buck2_error::Result<TargetSet<Env::Target>> {
     let mut deps = TargetSet::new();
@@ -395,19 +417,84 @@ pub async fn deps<Env: QueryEnvironment + ?Sized>(
     };
 
     match depth {
-        // For unbounded traversals, buck1 recommends specifying a large value. We'll accept either a negative (like -1) or
-        // a large value as unbounded. We can't just call it optional because args are positional only in the query syntax
-        // and so to specify a filter you need to specify a depth.
-        Some(v) if (0..1_000_000_000).contains(&v) => {
-            env.depth_limited_traversal(targets, visitor, visit, v as u32)
+        QueryValueDepth::Bounded(v) => {
+            env.depth_limited_traversal(targets, visitor, visit, v)
                 .await?;
         }
-        _ => {
+        QueryValueDepth::Unbounded => {
             env.dfs_postorder(targets, visitor, visit).await?;
         }
     }
 
     Ok(deps)
+}
+
+pub async fn somepath<Env: QueryEnvironment + ?Sized>(
+    env: &Env,
+    from: &TargetSet<Env::Target>,
+    to: &TargetSet<Env::Target>,
+    filter: Option<&dyn TraversalFilter<Env::Target>>,
+) -> buck2_error::Result<TargetSet<Env::Target>> {
+    let path = async_bfs_find_path(
+        from.iter(),
+        QueryEnvironmentAsNodeLookup { env },
+        QueryTargetFilteredDepsSuccesors { filter },
+        |t| to.get(t).duped(),
+        env.allow_partial_graph(),
+    )
+    .await?
+    .unwrap_or_default();
+
+    let target_set = TargetSet::from_iter(path);
+    Ok(target_set)
+}
+
+pub async fn rdeps<Env: QueryEnvironment + ?Sized>(
+    env: &Env,
+    universe: &TargetSet<Env::Target>,
+    from: &TargetSet<Env::Target>,
+    depth: QueryValueDepth,
+    filter: Option<&dyn TraversalFilter<Env::Target>>,
+) -> buck2_error::Result<TargetSet<Env::Target>> {
+    let graph = Graph::build_stable_dfs(
+        &QueryEnvironmentAsNodeLookup { env },
+        universe.iter().map(|n| n.node_key().clone()),
+        QueryTargetFilteredDepsSuccesors { filter },
+        env.allow_partial_graph(),
+    )
+    .await?;
+
+    let graph = graph.reverse();
+
+    let mut rdeps = TargetSet::new();
+
+    let mut visit = |target| {
+        rdeps.insert_unique_unchecked(target);
+        Ok(())
+    };
+
+    let roots_in_universe = from.filter(|t| Ok(graph.get(t.node_key()).is_some()))?;
+
+    match depth {
+        QueryValueDepth::Bounded(depth) => {
+            let graph = graph.take_max_depth(
+                roots_in_universe.iter().map(|t| t.node_key().clone()),
+                depth,
+            );
+            graph.depth_first_postorder_traversal(
+                roots_in_universe.iter().map(|t| t.node_key().clone()),
+                |t| visit(t.clone()),
+            )?;
+        }
+        QueryValueDepth::Unbounded => {
+            graph.depth_first_postorder_traversal(
+                roots_in_universe.iter().map(|t| t.node_key().clone()),
+                |t| visit(t.clone()),
+            )?;
+        }
+    }
+
+    Ok(rdeps)
 }
 
 pub struct QueryTargetDepsSuccessors;
@@ -446,6 +533,14 @@ impl<'q, Q: QueryEnvironment + ?Sized> AsyncNodeLookup<Q::Target>
 {
     async fn get(&self, label: &<Q::Target as LabeledNode>::Key) -> buck2_error::Result<Q::Target> {
         self.env.get_node(label).await
+    }
+
+    async fn get_from(
+        &self,
+        label: &<Q::Target as LabeledNode>::Key,
+        requester: Option<&<Q::Target as LabeledNode>::Key>,
+    ) -> buck2_error::Result<Q::Target> {
+        self.env.get_node_from(label, requester).await
     }
 }
 

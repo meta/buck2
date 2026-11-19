@@ -1,0 +1,70 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+_ = {x for y in z}
+
+Error:
+error: Parse error: unexpected keyword 'for', expected symbol ':'
+ --> error_bad_comprehension:1:8
+  |
+1 | _ = {x for y in z}
+  |        ^^^
+
+
+Program:
+_ = [x for x in 1, 2, 3]
+
+Error:
+error: Parse error: unexpected symbol ',', expected symbol ']'
+ --> error_bad_comprehension:1:18
+  |
+1 | _ = [x for x in 1, 2, 3]
+  |                  ^
+
+
+Program:
+_ = [a for b in c if 1, 2]
+
+Error:
+error: Parse error: unexpected symbol ',', expected symbol ']'
+ --> error_bad_comprehension:1:23
+  |
+1 | _ = [a for b in c if 1, 2]
+  |                       ^
+
+
+Program:
+_ = [a for b in lambda: c]
+
+Error:
+error: Parse error: unexpected keyword 'lambda', expected expression
+ --> error_bad_comprehension:1:17
+  |
+1 | _ = [a for b in lambda: c]
+  |                 ^^^^^^
+
+
+Program:
+_ = [x for x in a if b else c]
+
+Error:
+error: Parse error: unexpected keyword 'else', expected symbol ']'
+ --> error_bad_comprehension:1:24
+  |
+1 | _ = [x for x in a if b else c]
+  |                        ^^^^
+
+
+Program:
+[a for b in c else d]
+
+Error:
+error: Parse error: unexpected keyword 'else', expected symbol ']'
+ --> error_bad_comprehension:1:15
+  |
+1 | [a for b in c else d]
+  |               ^^^^

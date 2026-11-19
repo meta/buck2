@@ -1,12 +1,18 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
-# This source code is licensed under both the MIT license found in the
-# LICENSE-MIT file in the root directory of this source tree and the Apache
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
 # License, Version 2.0 found in the LICENSE-APACHE file in the root directory
-# of this source tree.
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
 
 buildscript.run = true
 cargo_env = [
     "CARGO_PKG_NAME", # Needed by _buck1_handle_manifest_dir
     "CARGO_MANIFEST_DIR",
 ]
+
+# build.rs calls `load_file("assets/oid_db.txt")` at runtime; precise_srcs
+# detects macros like `include!` but not string-based file reads, so declare
+# the asset explicitly.
+extra_srcs = ["assets/oid_db.txt"]

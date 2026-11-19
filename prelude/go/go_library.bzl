@@ -7,12 +7,16 @@
 # above-listed licenses.
 
 load("@prelude//:paths.bzl", "paths")
-load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo")
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//cxx:attrs.bzl", "cxx_common")
 load(
     "@prelude//cxx:preprocessor.bzl",
     "cxx_inherited_preprocessor_infos",
     "cxx_merge_cpreprocessors",
 )
+load("@prelude//decls:common.bzl", "buck")
+load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
+load("@prelude//go/transitions:defs.bzl", "build_tags_attr", "cgo_enabled_attr", "coverage_mode_attr", "go_library_transition")
 load(
     "@prelude//linking:link_groups.bzl",
     "merge_link_group_lib_info",
@@ -38,42 +42,48 @@ load(
 )
 load(
     "@prelude//utils:utils.bzl",
+    "from_named_set",
     "map_idx",
 )
+load(":attrs.bzl", "go_common")
 load(":cgo_builder.bzl", "get_cgo_build_context")
 load(":compile.bzl", "GoPkgCompileInfo", "GoTestInfo")
 load(":coverage.bzl", "GoCoverageMode")
 load(":link.bzl", "GoPkgLinkInfo", "get_inherited_link_pkgs")
-load(":package_builder.bzl", "build_package")
+load(":package_builder.bzl", "GoBuildConfig", "GoSourceInputs", "declare_package_build")
 load(":packages.bzl", "cgo_exported_preprocessor", "go_attr_pkg_name", "merge_pkgs")
 load(":toolchain.bzl", "GoToolchainInfo", "evaluate_cgo_enabled", "get_toolchain_env_vars")
 
 def go_library_impl(ctx: AnalysisContext) -> list[Provider]:
-    cxx_toolchain_available = CxxToolchainInfo in ctx.attrs._cxx_toolchain
-    pkg_name = go_attr_pkg_name(ctx)
+    pkg_import_path = go_attr_pkg_name(ctx)
 
     coverage_mode = GoCoverageMode(ctx.attrs._coverage_mode) if ctx.attrs._coverage_mode else None
     cgo_build_context = get_cgo_build_context(ctx)
 
-    pkg, pkg_info = build_package(
+    pkg, pkg_info, _ = declare_package_build(
         ctx = ctx,
-        pkg_name = pkg_name,
+        pkg_import_path = pkg_import_path,
         main = False,
-        srcs = ctx.attrs.srcs + ctx.attrs.headers,
-        package_root = ctx.attrs.package_root,
+        sources = GoSourceInputs(
+            srcs = ctx.attrs.srcs + ctx.attrs.headers,
+            embed_srcs = from_named_set(ctx.attrs.embed_srcs),
+            package_root = ctx.attrs.package_root,
+        ),
         cgo_build_context = cgo_build_context,
+        config = GoBuildConfig(
+            compiler_flags = ctx.attrs.compiler_flags,
+            assembler_flags = ctx.attrs.assembler_flags,
+            build_tags = ctx.attrs._build_tags,
+            coverage_enabled = ctx.attrs.coverage_enabled,
+            coverage_mode = coverage_mode,
+            cgo_enabled = evaluate_cgo_enabled(ctx.attrs._cgo_enabled, ctx.attrs.override_cgo_enabled),
+        ),
         deps = ctx.attrs.deps,
-        compiler_flags = ctx.attrs.compiler_flags,
-        assembler_flags = ctx.attrs.assembler_flags,
-        build_tags = ctx.attrs._build_tags,
-        coverage_mode = coverage_mode,
-        embedcfg = ctx.attrs.embedcfg,
-        cgo_enabled = evaluate_cgo_enabled(cxx_toolchain_available, ctx.attrs._cgo_enabled, ctx.attrs.override_cgo_enabled),
     )
 
-    default_output = _combine_package(ctx, pkg_name, pkg.pkg, pkg.export_file)
+    default_output = _combine_package(ctx, pkg_import_path, pkg.archive_file, pkg.export_file)
     pkgs = {
-        pkg_name: pkg,
+        pkg_import_path: pkg,
     }
 
     own_exported_preprocessors = [cgo_exported_preprocessor(ctx, pkg_info)] if ctx.attrs.generate_exported_header else []
@@ -81,14 +91,17 @@ def go_library_impl(ctx: AnalysisContext) -> list[Provider]:
     return [
         DefaultInfo(default_output = default_output),
         GoPkgCompileInfo(pkgs = pkgs),
-        GoPkgLinkInfo(pkgs = merge_pkgs([
-            pkgs,
-            get_inherited_link_pkgs(ctx.attrs.deps),
-        ])),
+        GoPkgLinkInfo(
+            pkgs = merge_pkgs([
+                pkgs,
+                get_inherited_link_pkgs(ctx.attrs.deps),
+            ])
+        ),
         GoTestInfo(
             deps = ctx.attrs.deps,
             srcs = ctx.attrs.srcs,
-            pkg_name = pkg_name,
+            pkg_import_path = pkg_import_path,
+            coverage_enabled = ctx.attrs.coverage_enabled,
         ),
         create_merged_link_info_for_propagation(ctx, filter(None, [d.get(MergedLinkInfo) for d in ctx.attrs.deps])),
         merge_shared_libraries(
@@ -123,11 +136,11 @@ def _get_empty_link_infos() -> dict[LibOutputStyle, LinkInfos]:
     return infos
 
 # The combined package is convinient for debugging purposes, but for actual builds we use separate objects.
-def _combine_package(ctx: AnalysisContext, pkg_name: str, a_file: Artifact, x_file: Artifact) -> Artifact:
+def _combine_package(ctx: AnalysisContext, pkg_import_path: str, a_file: Artifact, x_file: Artifact) -> Artifact:
     go_toolchain = ctx.attrs._go_toolchain[GoToolchainInfo]
     env = get_toolchain_env_vars(go_toolchain)
 
-    pkg_file = ctx.actions.declare_output(paths.basename(pkg_name) + "-combined.a", has_content_based_path = True)
+    pkg_file = ctx.actions.declare_output(paths.basename(pkg_import_path) + "-combined.a", has_content_based_path = True)
 
     pack_cmd = [
         go_toolchain.packer,
@@ -137,7 +150,64 @@ def _combine_package(ctx: AnalysisContext, pkg_name: str, a_file: Artifact, x_fi
         x_file,
     ]
 
-    identifier = paths.basename(pkg_name) + "-combined"
-    ctx.actions.run(pack_cmd, env = env, category = "go_pack", identifier = identifier)
+    identifier = paths.basename(pkg_import_path) + "-combined"
+    ctx.actions.run(pack_cmd, env = env, category = "go_pack", identifier = identifier, allow_cache_upload = go_toolchain.allow_cache_upload)
 
     return pkg_file
+
+go_library = prelude_rule(
+    name = "go_library",
+    impl = go_library_impl,
+    docs = """
+        A go\\_library() rule builds a native library from the supplied set of Go source files
+         and dependencies.
+    """,
+    examples = """
+        For more examples, check out our [integration tests](https://github.com/facebook/buck/tree/dev/test/com/facebook/buck/features/go/testdata).
+
+        ```
+        go_library(
+          name='greeting',
+          srcs=[
+            'greeting.go',
+          ],
+          deps=[
+            ':join',
+          ],
+        )
+        ```
+    """,
+    further = None,
+    attrs = (
+        # @unsorted-dict-items
+        go_common.srcs_arg()
+        | go_common.package_name_arg()
+        | go_common.deps_arg()
+        | go_common.compiler_flags_arg()
+        | go_common.assembler_flags_arg()
+        | go_common.embed_srcs_arg()
+        | go_common.package_root_arg()
+        | go_common.override_cgo_enabled_arg()
+        | cxx_common.headers_arg()
+        | cxx_common.header_namespace_arg()
+        | go_common.cxx_preprocessor_flags_arg()
+        | go_common.cxx_compiler_flags_arg()
+        | go_common.external_linker_flags_arg()
+        | go_common.link_style_arg()
+        | go_common.coverage_enabled_arg()
+        | go_common.generate_exported_header()
+        | buck.licenses_arg()
+        | buck.labels_arg()
+        | buck.contacts_arg()
+        | {
+            "_build_tags": build_tags_attr,
+            "_cgo_enabled": cgo_enabled_attr,
+            "_coverage_mode": coverage_mode_attr,
+            "_cxx_toolchain": toolchains_common.cxx(),
+            "_exec_os_type": buck.exec_os_type_arg(),
+            "_go_stdlib": attrs.default_only(attrs.dep(default = "prelude//go/tools:stdlib")),
+            "_go_toolchain": toolchains_common.go(),
+        }
+    ),
+    cfg = go_library_transition,
+)

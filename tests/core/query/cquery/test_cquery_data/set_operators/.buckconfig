@@ -1,9 +1,6 @@
 [buildfile]
 name=TARGETS.fixture
 
-[project]
-package_boundary_exceptions=.
-
 [cells]
 root = .
 nano_prelude = nano_prelude

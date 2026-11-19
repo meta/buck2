@@ -11,7 +11,7 @@
           "other_outputs": {},
           "outputs": {
             "DEFAULT": [
-              "buck-out/v2/gen/root/<HASH>/__rule1__/out.txt"
+              "buck-out/v2/art/root/<HASH>/__rule1__/out.txt"
             ]
           },
           "success": "SUCCESS"
@@ -22,7 +22,7 @@
       "other_outputs": {},
       "outputs": {
         "DEFAULT": [
-          "buck-out/v2/gen/root/<HASH>/__rule1__/out.txt"
+          "buck-out/v2/art/root/<HASH>/__rule1__/out.txt"
         ]
       },
       "success": "SUCCESS"
@@ -35,10 +35,10 @@
           "other_outputs": {},
           "outputs": {
             "DEFAULT": [
-              "buck-out/v2/gen/root/<HASH>/__rule2__/out1.txt"
+              "buck-out/v2/art/root/<HASH>/__rule2__/out1.txt"
             ],
             "out1": [
-              "buck-out/v2/gen/root/<HASH>/__rule2__/out1.txt"
+              "buck-out/v2/art/root/<HASH>/__rule2__/out1.txt"
             ]
           },
           "success": "SUCCESS"
@@ -49,10 +49,10 @@
       "other_outputs": {},
       "outputs": {
         "DEFAULT": [
-          "buck-out/v2/gen/root/<HASH>/__rule2__/out1.txt"
+          "buck-out/v2/art/root/<HASH>/__rule2__/out1.txt"
         ],
         "out1": [
-          "buck-out/v2/gen/root/<HASH>/__rule2__/out1.txt"
+          "buck-out/v2/art/root/<HASH>/__rule2__/out1.txt"
         ]
       },
       "success": "SUCCESS"

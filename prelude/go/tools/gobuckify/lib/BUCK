@@ -1,0 +1,26 @@
+# @oss-disable[end= ]: load("@fbcode_macros//build_defs:go_library.bzl", "go_library")
+# @oss-disable[end= ]: load("@fbcode_macros//build_defs:go_unittest.bzl", "go_unittest")
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("golang")
+
+source_listing()
+
+prelude = native # @oss-enable
+go_library = prelude.go_library # @oss-enable
+go_unittest = prelude.go_test # @oss-enable
+
+go_library(
+    name = "gobuckifylib",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    visibility = ["PUBLIC"],
+)
+
+go_unittest(
+    name = "gobuckifylib_test",
+    srcs = glob(["*_test.go"]),
+    target_under_test = ":gobuckifylib",
+)

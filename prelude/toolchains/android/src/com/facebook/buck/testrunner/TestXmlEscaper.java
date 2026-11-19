@@ -10,17 +10,21 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
+import org.jspecify.annotations.Nullable;
+
 /**
  * An XML escaper that replaces invalid xml characters with valid ones. The behaviour is intended to
  * match that of guava's XmlEscapers
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class TestXmlEscaper {
 
   /**
    * @param str a string to perform XML escape over
    * @return the escaped string
    */
-  // Nullable (but no annotation to avoid extra dependencies)
+  @Nullable
   public final String escape(String /* Nullable */ str) {
     if (str == null) {
       return null;

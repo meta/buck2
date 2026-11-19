@@ -11,11 +11,9 @@
 use std::sync::Arc;
 
 use buck2_core::target::label::label::TargetLabel;
-use buck2_node::attrs::coerced_deps_collector::CoercedDeps;
-use buck2_node::attrs::coerced_deps_collector::CoercedDepsCollector;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
+use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::call_stack::StarlarkCallStack;
-use buck2_node::nodes::unconfigured::TargetNode;
+use buck2_node::nodes::unconfigured::UnsealedTargetNode;
 use buck2_node::package::Package;
 use buck2_node::rule::Rule;
 use dupe::Dupe;
@@ -28,7 +26,7 @@ use crate::call_stack::StarlarkCallStackWrapper;
 use crate::interpreter::module_internals::ModuleInternals;
 use crate::nodes::attr_spec::AttributeSpecExt;
 
-pub trait TargetNodeExt: Sized {
+pub trait UnsealedTargetNodeExt: Sized {
     fn from_params_ignore_attrs_for_profiling<'v>(
         rule: Arc<Rule>,
         package: Arc<Package>,
@@ -40,6 +38,7 @@ pub trait TargetNodeExt: Sized {
         rule: Arc<Rule>,
         package: Arc<Package>,
         internals: &ModuleInternals,
+        coercion_ctx: &dyn AttrCoercionContext<'v>,
         param_parser: &mut ParametersParser<'v, '_>,
         arg_count: usize,
         ignore_attrs_for_profiling: bool,
@@ -47,7 +46,7 @@ pub trait TargetNodeExt: Sized {
     ) -> buck2_error::Result<Self>;
 }
 
-impl TargetNodeExt for TargetNode {
+impl UnsealedTargetNodeExt for UnsealedTargetNode {
     /// Extract only the name attribute from rule arguments, ignore the others.
     fn from_params_ignore_attrs_for_profiling<'v>(
         rule: Arc<Rule>,
@@ -55,7 +54,8 @@ impl TargetNodeExt for TargetNode {
         internals: &ModuleInternals,
         param_parser: &mut ParametersParser<'v, '_>,
     ) -> buck2_error::Result<Self> {
-        let (name, indices, attr_values) = rule.attributes.start_parse(param_parser, 1)?;
+        let (name, indices, attributes) =
+            rule.attributes.start_parse(param_parser, 1, internals)?;
 
         for (_, _, _) in indices {
             // Consume all the arguments.
@@ -65,16 +65,17 @@ impl TargetNodeExt for TargetNode {
 
         let package_cfg_modifiers = internals.super_package.cfg_modifiers().duped();
         let label = TargetLabel::new(internals.buildfile_path().package().dupe(), name);
-        Ok(TargetNode::new(
-            rule.dupe(),
+        Ok(UnsealedTargetNode {
+            rule,
             package,
             label,
-            attr_values,
-            CoercedDeps::default(),
-            None,
+            attributes,
+            call_stack: None,
             package_cfg_modifiers,
-            internals.super_package.test_config_unification_rollout(),
-        ))
+            test_config_unification_rollout: internals
+                .super_package
+                .test_config_unification_rollout(),
+        })
     }
 
     /// The body of the callable returned by `rule()`. Records the target in this package's `TargetMap`
@@ -83,6 +84,7 @@ impl TargetNodeExt for TargetNode {
         rule: Arc<Rule>,
         package: Arc<Package>,
         internals: &ModuleInternals,
+        coercion_ctx: &dyn AttrCoercionContext<'v>,
         param_parser: &mut ParametersParser<'v, '_>,
         arg_count: usize,
         ignore_attrs_for_profiling: bool,
@@ -97,31 +99,26 @@ impl TargetNodeExt for TargetNode {
             );
         }
 
-        let (target_name, attr_values) =
+        let (target_name, attributes) =
             rule.attributes
-                .parse_params(param_parser, arg_count, internals)?;
+                .parse_params(param_parser, arg_count, internals, coercion_ctx)?;
         let package_name = internals.buildfile_path().package();
 
         let label = TargetLabel::new(package_name.dupe(), target_name);
-        let mut deps_cache = CoercedDepsCollector::new();
-
-        for a in rule.attributes.attrs(&attr_values, AttrInspectOptions::All) {
-            a.traverse(label.pkg(), &mut deps_cache)?;
-        }
-
         let package_cfg_modifiers = internals.super_package.cfg_modifiers().duped();
 
-        Ok(TargetNode::new(
+        Ok(UnsealedTargetNode {
             rule,
             package,
             label,
-            attr_values,
-            CoercedDeps::from(deps_cache),
-            call_stack
+            attributes,
+            call_stack: call_stack
                 .map(StarlarkCallStackWrapper)
                 .map(StarlarkCallStack::new),
             package_cfg_modifiers,
-            internals.super_package.test_config_unification_rollout(),
-        ))
+            test_config_unification_rollout: internals
+                .super_package
+                .test_config_unification_rollout(),
+        })
     }
 }

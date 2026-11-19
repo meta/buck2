@@ -52,6 +52,18 @@ impl PartialEq for ConstTypeId {
 
 impl Eq for ConstTypeId {}
 
+impl PartialOrd for ConstTypeId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ConstTypeId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.get().cmp(&other.get())
+    }
+}
+
 impl Hash for ConstTypeId {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.get().hash(state)

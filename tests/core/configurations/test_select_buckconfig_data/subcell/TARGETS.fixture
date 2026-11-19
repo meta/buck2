@@ -1,0 +1,19 @@
+stub(
+    name = "the-root-buckconfig-test",
+    labels = select({
+        "DEFAULT": ["ROOT_NO"],
+        "root//:root-cs": ["ROOT_YES"],
+    })
+    + select({
+        "DEFAULT": [],
+        "root//:root-mismatch": ["ROOT_MISMATCH"],
+    })
+    + select({
+        "DEFAULT": ["TARGET_NO"],
+        "root//:target-cs": ["TARGET_YES"],
+    })
+    + select({
+        "DEFAULT": [],
+        "root//:target-mismatch": ["TARGET_MISMATCH"],
+    }),
+)

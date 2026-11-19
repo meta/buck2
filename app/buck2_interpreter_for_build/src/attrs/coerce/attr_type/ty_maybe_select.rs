@@ -8,12 +8,10 @@
  * above-listed licenses.
  */
 
-use gazebo::prelude::SliceExt;
 use starlark::typing::Ty;
-use starlark::values::Value;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::StarlarkTypeExpr;
 
-use crate::interpreter::selector::StarlarkSelectorGen;
+use crate::interpreter::selector::StarlarkSelector;
 
 pub enum TyMaybeSelect {
     /// No inner selects.
@@ -30,14 +28,14 @@ impl TyMaybeSelect {
             TyMaybeSelect::Basic(ty) => ty.clone(),
             TyMaybeSelect::List(x) => Ty::list(x.to_ty()),
             TyMaybeSelect::Dict(k, v) => Ty::dict(k.to_ty(), v.to_ty()),
-            TyMaybeSelect::Tuple(x) => Ty::tuple(x.map(|x| x.to_ty())),
-            TyMaybeSelect::Union(x) => Ty::unions(x.map(|x| x.to_ty())),
+            TyMaybeSelect::Tuple(x) => Ty::tuple(x.iter().map(|x| x.to_ty()).collect::<Vec<_>>()),
+            TyMaybeSelect::Union(x) => Ty::unions(x.iter().map(|x| x.to_ty()).collect::<Vec<_>>()),
         }
     }
 
     pub(crate) fn to_ty_with_select(&self) -> Ty {
         fn with_select(ty: Ty) -> Ty {
-            Ty::union2(ty, StarlarkSelectorGen::<Value>::starlark_type_repr())
+            Ty::union2(ty, StarlarkSelector::<'static>::starlark_type_repr())
         }
 
         match self {
@@ -46,8 +44,12 @@ impl TyMaybeSelect {
             TyMaybeSelect::Dict(k, v) => {
                 with_select(Ty::dict(k.to_ty_with_select(), v.to_ty_with_select()))
             }
-            TyMaybeSelect::Tuple(x) => with_select(Ty::tuple(x.map(|x| x.to_ty_with_select()))),
-            TyMaybeSelect::Union(x) => with_select(Ty::unions(x.map(|x| x.to_ty_with_select()))),
+            TyMaybeSelect::Tuple(x) => with_select(Ty::tuple(
+                x.iter().map(|x| x.to_ty_with_select()).collect::<Vec<_>>(),
+            )),
+            TyMaybeSelect::Union(x) => with_select(Ty::unions(
+                x.iter().map(|x| x.to_ty_with_select()).collect::<Vec<_>>(),
+            )),
         }
     }
 }

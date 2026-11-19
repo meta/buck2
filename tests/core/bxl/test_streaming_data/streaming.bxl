@@ -8,7 +8,7 @@
 
 def _streaming_output_ensured_artifact(ctx: bxl.Context):
     actions = ctx.bxl_actions().actions
-    output = actions.write("output.txt", "hello world!")
+    output = actions.write("output.txt", "hello world!", has_content_based_path = False)
     ensured_output = ctx.output.ensure(output).abs_path()
 
     ctx.output.print("Line before streaming print")
@@ -30,7 +30,7 @@ streaming_output = bxl_main(
 
 def _streaming_output_without_duplicates(ctx: bxl.Context):
     actions = ctx.bxl_actions().actions
-    output = actions.write("output.txt", "hello world!")
+    output = actions.write("output.txt", "hello world!", has_content_based_path = False)
     ensured_output = ctx.output.ensure(output).abs_path()
 
     ctx.output.print("This is the normal output")
@@ -44,10 +44,10 @@ streaming_output_without_duplicates = bxl_main(
 
 def _streaming_output_waits_on(ctx: bxl.Context):
     actions = ctx.bxl_actions().actions
-    output0 = actions.write("output0.txt", "hello world!")
+    output0 = actions.write("output0.txt", "hello world!", has_content_based_path = False)
     en0 = ctx.output.ensure(output0)
 
-    output1 = actions.write("output1.txt", "hello world!")
+    output1 = actions.write("output1.txt", "hello world!", has_content_based_path = False)
     en1 = ctx.output.ensure(output1)
 
     ctx.output.stream("Waits on two file", wait_on = [en0, en1])
@@ -61,10 +61,10 @@ streaming_output_waits_on = bxl_main(
 
 def _streaming_output_json(ctx: bxl.Context):
     actions = ctx.bxl_actions().actions
-    output0 = actions.write("output0.txt", "hello world!")
+    output0 = actions.write("output0.txt", "hello world!", has_content_based_path = False)
     en0 = ctx.output.ensure(output0)
 
-    output1 = actions.write("output1.txt", "hello world!")
+    output1 = actions.write("output1.txt", "hello world!", has_content_based_path = False)
     en1 = ctx.output.ensure(output1)
 
     output = {"waits_on": "This is streaming output!"}

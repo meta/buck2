@@ -25,6 +25,8 @@ use tonic::transport::Uri;
 use tonic::transport::server::Connected;
 use tower::service_fn;
 
+use crate::flow_control::configure_endpoint;
+
 #[pin_project]
 pub struct DuplexChannel<R, W> {
     #[pin]
@@ -95,8 +97,9 @@ where
     let mut io = Some(io);
     // NOTE: The uri here is only used to populate the requests we send. We don't actually connect
     // anywhere since we already have an I/O channel on hand.
-    let channel = Endpoint::try_from(format!("http://{name}.invalid"))
-        .buck_error_context("Invalid endpoint")?
+    let endpoint = Endpoint::try_from(format!("http://{name}.invalid"))
+        .buck_error_context("Invalid endpoint")?;
+    let channel = configure_endpoint(endpoint)
         .connect_with_connector(service_fn(move |_: Uri| {
             let io = io
                 .take()

@@ -12,9 +12,8 @@ use allocative::Allocative;
 use buck2_build_api::audit_cell::audit_cell;
 use buck2_build_api::audit_output::AuditOutputResult;
 use buck2_build_api::audit_output::audit_output;
-use buck2_core::cells::CellResolver;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
+use buck2_error::internal_error;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use derivative::Derivative;
 use derive_more::Display;
@@ -23,20 +22,19 @@ use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::nodes::action::StarlarkAction;
@@ -56,25 +54,17 @@ use crate::bxl::value_as_starlark_target_label::ValueAsStarlarkTargetLabel;
 pub(crate) struct StarlarkAuditCtx<'v> {
     #[derivative(Debug = "ignore")]
     ctx: ValueTyped<'v, BxlContext<'v>>,
-    #[trace(unsafe_ignore)]
+    #[trace(static)]
     #[derivative(Debug = "ignore")]
     working_dir: ProjectRelativePathBuf,
-    #[trace(unsafe_ignore)]
-    #[derivative(Debug = "ignore")]
-    cell_resolver: CellResolver,
 }
 
-#[starlark_value(type = "bxl.AuditContext", StarlarkTypeRepr, UnpackValue)]
+starlark::methods_static!(AUDIT_METHODS = audit_methods);
+
+#[starlark_value(type = "bxl.AuditContext", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkAuditCtx<'v> {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(audit_methods)
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkAuditCtx<'v> {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
+        Some(AUDIT_METHODS.methods())
     }
 }
 
@@ -82,13 +72,8 @@ impl<'v> StarlarkAuditCtx<'v> {
     pub(crate) fn new(
         ctx: ValueTyped<'v, BxlContext<'v>>,
         working_dir: ProjectRelativePathBuf,
-        cell_resolver: CellResolver,
     ) -> buck2_error::Result<Self> {
-        Ok(Self {
-            ctx,
-            working_dir,
-            cell_resolver,
-        })
+        Ok(Self { ctx, working_dir })
     }
 }
 
@@ -110,7 +95,7 @@ fn audit_methods(builder: &mut MethodsBuilder) {
     /// ```python
     /// def _impl_audit_output(ctx):
     ///     target_platform = "foo"
-    ///     result = ctx.audit().output("buck-out/v2/gen/fbcode/some_cfg_hash/path/to/__target__/artifact", target_platform)
+    ///     result = ctx.audit().output("buck-out/v2/art/fbcode/some_cfg_hash/path/to/__target__/artifact", target_platform)
     ///     ctx.output.print(result)
     /// ```
     fn output<'v>(
@@ -127,7 +112,7 @@ fn audit_methods(builder: &mut MethodsBuilder) {
         let heap = eval.heap();
         let global_cfg_options = this
             .ctx
-            .resolve_global_cfg_options(target_platform, vec![].into())?;
+            .resolve_global_cfg_options(target_platform, vec![])?;
 
         Ok(this.ctx.via_dice(eval, |ctx| {
             ctx.via(|ctx| {
@@ -135,7 +120,7 @@ fn audit_methods(builder: &mut MethodsBuilder) {
                     let output = audit_output(
                         output_path,
                         &this.working_dir,
-                        &this.cell_resolver,
+                        this.ctx.cell_resolver(),
                         ctx,
                         &global_cfg_options,
                     )
@@ -143,17 +128,21 @@ fn audit_methods(builder: &mut MethodsBuilder) {
                     match output {
                         None => Ok(NoneOr::None),
                         Some(result) => buck2_error::Ok(NoneOr::Other(match result {
-                            AuditOutputResult::Match(action) => heap.alloc(StarlarkAction(
-                                action
-                                    .action()
-                                    .buck_error_context("audit_output did not return an action")?
-                                    .dupe(),
-                            )),
+                            AuditOutputResult::Match(action) => heap
+                                .alloc(StarlarkAction(
+                                    action
+                                        .action()
+                                        .ok_or_else(|| {
+                                            internal_error!("audit_output did not return an action")
+                                        })?
+                                        .dupe(),
+                                ))
+                                .to_value(),
                             AuditOutputResult::MaybeRelevantForConfigurationHashPath(label) => {
-                                heap.alloc(StarlarkTargetLabel::new(label))
+                                heap.alloc(StarlarkTargetLabel::new(label)).to_value()
                             }
                             AuditOutputResult::MatchContentBasedPath(label) => {
-                                heap.alloc(StarlarkTargetLabel::new(label))
+                                heap.alloc(StarlarkTargetLabel::new(label)).to_value()
                             }
                         })),
                     }
@@ -180,18 +169,23 @@ fn audit_methods(builder: &mut MethodsBuilder) {
     fn cell<'v>(
         this: &StarlarkAuditCtx<'v>,
         // TODO(nga): parameters should be either positional or named, not both.
-        #[starlark(default = UnpackListOrTuple::default())] aliases_to_resolve: UnpackListOrTuple<
-            String,
+        #[starlark(default = ValueOf::empty_list())] aliases_to_resolve: ValueOf<
+            'v,
+            ListOrTupleType<StarlarkStr>,
         >,
         #[starlark(require = named, default = false)] aliases: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<AllocDict<impl Iterator<Item = (String, String)> + use<>>> {
+        let aliases_to_resolve = aliases_to_resolve
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
         Ok(this.ctx.via_dice(eval, |ctx| {
             ctx.via(|ctx| {
                 async {
                     let result = audit_cell(
                         ctx,
-                        &aliases_to_resolve.items,
+                        &aliases_to_resolve,
                         aliases,
                         &this.working_dir,
                         this.ctx.project_root(),

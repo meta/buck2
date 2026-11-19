@@ -11,20 +11,26 @@
 package com.facebook.buck.jvm.kotlin.buildtools
 
 import com.facebook.buck.core.filesystems.AbsPath
-import com.facebook.buck.jvm.kotlin.buildtools.snapshot.ClasspathSnapshotGenerator
+import com.facebook.buck.jvm.java.CompilerClassToSourceMap
 import com.facebook.buck.jvm.kotlin.buildtools.snapshot.SnapshotGranularity
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.ClasspathChanges
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlinSourceChanges
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode
 import com.facebook.buck.testutil.TemporaryPaths
 import com.google.common.collect.ImmutableList
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.PrintStream
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.nio.file.attribute.FileTime
 import java.util.UUID
+import java.util.jar.JarFile
+import javax.tools.ToolProvider
 import kotlin.io.path.absolute
 import kotlin.io.path.extension
 import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.toPath
 import org.jetbrains.kotlin.buildtools.api.CompilationResult
 import org.jetbrains.kotlin.buildtools.api.CompilationService
 import org.jetbrains.kotlin.buildtools.api.ExperimentalBuildToolsApi
@@ -37,6 +43,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.mockito.kotlin.mock
 
+// Legacy BTA API is DEPRECATION_ERROR from Kotlin 2.4; KotlinToolchains replaces it.
+@Suppress("DEPRECATION_ERROR")
 @OptIn(ExperimentalBuildToolsApi::class)
 internal class KotlinCompilationServiceTest {
 
@@ -78,8 +86,10 @@ internal class KotlinCompilationServiceTest {
             """
             |class Foo {
             |
+            | var counter: Int = 0
+            |
             | fun foo() {
-            |   println("foo")
+            |   counter = 1
             | }
             |
             | fun bar() {}
@@ -158,9 +168,9 @@ internal class KotlinCompilationServiceTest {
             ),
         mode = createIncrementalMode(),
     )
+    resetClassModificationTimesToSentinel()
     val initialClassTimestamps = getClassModificationTimes()
-
-    fooSourceFile.changeContent("println(\"foo\")", "println(\"foo!\")")
+    fooSourceFile.changeContent("counter = 1", "counter = 2")
     val result =
         kotlinCompilationService.compile(
             projectId = ProjectId.ProjectUUID(UUID.randomUUID()),
@@ -189,6 +199,7 @@ internal class KotlinCompilationServiceTest {
             ),
         mode = createIncrementalMode(),
     )
+    resetClassModificationTimesToSentinel()
     val initialClassTimestamps = getClassModificationTimes()
     fooSourceFile.changeContent("foo()", "foo(i: Int = 1)")
 
@@ -262,12 +273,12 @@ internal class KotlinCompilationServiceTest {
             ),
         mode =
             createIncrementalMode(
-                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot))
+                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
             ),
     )
     val initialClassTimestamps = getClassModificationTimes()
 
-    fooSourceFile.changeContent("println(\"foo\")", "println(\"foo!\")")
+    fooSourceFile.changeContent("counter = 1", "counter = 2")
     kotlinCompilationService.compile(
         projectId = ProjectId.ProjectUUID(UUID.randomUUID()),
         arguments =
@@ -288,7 +299,7 @@ internal class KotlinCompilationServiceTest {
             ),
         mode =
             createIncrementalMode(
-                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot))
+                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
             ),
     )
     val postCompilationTimestamps = getClassModificationTimes()
@@ -318,11 +329,11 @@ internal class KotlinCompilationServiceTest {
             ),
         mode =
             createIncrementalMode(
-                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot))
+                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
             ),
     )
+    resetClassModificationTimesToSentinel()
     val initialClassTimestamps = getClassModificationTimes()
-
     fooSourceFile.changeContent("foo()", "foo(i: Int = 1)")
     kotlinCompilationService.compile(
         projectId = ProjectId.ProjectUUID(UUID.randomUUID()),
@@ -344,7 +355,7 @@ internal class KotlinCompilationServiceTest {
             ),
         mode =
             createIncrementalMode(
-                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot))
+                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
             ),
     )
     val postCompilationTimestamps = getClassModificationTimes()
@@ -374,7 +385,7 @@ internal class KotlinCompilationServiceTest {
             ),
         mode =
             createIncrementalMode(
-                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot))
+                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
             ),
     )
     val initialClassTimestamps = getClassModificationTimes()
@@ -400,7 +411,7 @@ internal class KotlinCompilationServiceTest {
             ),
         mode =
             createIncrementalMode(
-                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot))
+                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
             ),
     )
     val postCompilationTimestamps = getClassModificationTimes()
@@ -430,11 +441,11 @@ internal class KotlinCompilationServiceTest {
             ),
         mode =
             createIncrementalMode(
-                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot))
+                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
             ),
     )
+    resetClassModificationTimesToSentinel()
     val initialClassTimestamps = getClassModificationTimes()
-
     fooSourceFile.changeContent("fun bar() {}", "")
     kotlinCompilationService.compile(
         projectId = ProjectId.ProjectUUID(UUID.randomUUID()),
@@ -456,7 +467,7 @@ internal class KotlinCompilationServiceTest {
             ),
         mode =
             createIncrementalMode(
-                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot))
+                ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
             ),
     )
     val postCompilationTimestamps = getClassModificationTimes()
@@ -464,21 +475,230 @@ internal class KotlinCompilationServiceTest {
     assertNotEquals(initialClassTimestamps["Bar.class"], postCompilationTimestamps["Bar.class"])
   }
 
+  @Test
+  fun `failed compilation does not publish a source map`() {
+    val broken = KotlinSourceFile(sourcesDir.resolve("Broken.kt"), "class Broken {")
+    val output = temporaryFolder.root.resolve("class-to-source.json").path
+    fun compile(): CompilationResult =
+        kotlinCompilationService.compile(
+            ProjectId.ProjectUUID(UUID.randomUUID()),
+            createCompilerArgs(listOf(broken), classesDir),
+            KotlincMode.NonIncremental,
+            classToSourceMap = KotlinClassToSourceMap(output, classesDir.path, sourcesDir.path),
+        )
+    assertEquals(CompilationResult.COMPILATION_ERROR, compile())
+    assertEquals(false, Files.exists(output))
+
+    Files.writeString(output, "previous successful report")
+    assertEquals(CompilationResult.COMPILATION_ERROR, compile())
+    assertEquals("previous successful report", Files.readString(output))
+  }
+
+  @Test
+  fun `compiler messages are printed in the kotlinc CLI format`() {
+    val broken =
+        KotlinSourceFile(sourcesDir.resolve("Broken.kt"), "fun f(): Int {\n  return \"s\"\n}")
+    val deprecated = KotlinSourceFile(
+        sourcesDir.resolve("Deprecated.kt"),
+        "@Deprecated(\"d\") fun old() {}\nfun g() {\n  old()\n}",
+    )
+    fun compile(source: KotlinSourceFile): Pair<CompilationResult, List<String>> {
+      val stdErr = ByteArrayOutputStream()
+      val result =
+          kotlinCompilationService.compile(
+              ProjectId.ProjectUUID(UUID.randomUUID()),
+              createCompilerArgs(listOf(source), classesDir),
+              KotlincMode.NonIncremental,
+              BuckKotlinLogger(PrintStream(stdErr, true), mock()),
+          )
+      return result to stdErr.toString().lines()
+    }
+    // kotlinc prints paths under the working directory relative to it.
+    val cwd = Paths.get("").toAbsolutePath()
+    fun shown(source: KotlinSourceFile): Path =
+        source.absPath.path.let { if (it.startsWith(cwd)) cwd.relativize(it) else it }
+
+    val (errorResult, errorLines) = compile(broken)
+    assertEquals(CompilationResult.COMPILATION_ERROR, errorResult)
+    assertEquals(
+        "${shown(broken)}:2:10: error: return type mismatch: expected 'Int', actual 'String'.",
+        errorLines[0],
+    )
+    assertEquals("  return \"s\"", errorLines[1])
+    assertTrue(errorLines[2], errorLines[2].matches(Regex(" {9}\\^+")))
+
+    val (warningResult, warningLines) = compile(deprecated)
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, warningResult)
+    assertTrue(warningLines[0], warningLines[0].startsWith("${shown(deprecated)}:3:3: warning: "))
+    assertEquals("  old()", warningLines[1])
+  }
+
+  @Test
+  fun `compiler maps bodyless data classes from a differently named file`() {
+    val models = KotlinSourceFile(
+        sourcesDir.resolve("Models.kt"),
+        "package example; data class Settings(val value: Int); data class Profile(val enabled: Boolean)",
+    )
+    val output = temporaryFolder.root.resolve("class-to-source.json").path
+    val result =
+        kotlinCompilationService.compile(
+            projectId = ProjectId.ProjectUUID(UUID.randomUUID()),
+            arguments = createCompilerArgs(listOf(models), classesDir),
+            mode = KotlincMode.NonIncremental,
+            classToSourceMap = KotlinClassToSourceMap(output, classesDir.path, sourcesDir.path),
+        )
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, result)
+    assertEquals(
+        mapOf(
+            "example/Settings.class" to setOf("Models.kt"),
+            "example/Profile.class" to setOf("Models.kt"),
+        ),
+        CompilerClassToSourceMap.read(output).entries,
+    )
+  }
+
+  @Test
+  fun `incremental maps retain unchanged classes and remove deleted classes`() {
+    val output = temporaryFolder.root.resolve("mapping.json").path
+    val state = incrementalDir.resolve("class-to-source.json").path
+    fun compile(sources: List<KotlinSourceFile>): CompilationResult =
+        kotlinCompilationService.compile(
+            ProjectId.ProjectUUID(UUID.randomUUID()),
+            createCompilerArgs(sources, classesDir),
+            createIncrementalMode(),
+            classToSourceMap =
+                KotlinClassToSourceMap(output, classesDir.path, sourcesDir.path, state),
+        )
+    assertEquals(
+        CompilationResult.COMPILATION_SUCCESS,
+        compile(listOf(fooSourceFile, barSourceFile)),
+    )
+    val expected = mapOf("Foo.class" to setOf("Foo.kt"), "Bar.class" to setOf("Bar.kt"))
+    assertEquals(expected, CompilerClassToSourceMap.read(output).entries)
+    resetClassModificationTimesToSentinel()
+    fooSourceFile.changeContent("counter = 1", "counter = 2")
+    assertEquals(
+        CompilationResult.COMPILATION_SUCCESS,
+        compile(listOf(fooSourceFile, barSourceFile)),
+    )
+    assertEquals(
+        SENTINEL_TIMESTAMP_MS,
+        Files.getLastModifiedTime(classesDir.resolve("Bar.class").path).toMillis(),
+    )
+    assertEquals(expected, CompilerClassToSourceMap.read(output).entries)
+    assertEquals(
+        CompilationResult.COMPILATION_SUCCESS,
+        compile(listOf(fooSourceFile, barSourceFile)),
+    )
+    assertEquals(expected, CompilerClassToSourceMap.read(output).entries)
+    Files.delete(barSourceFile.absPath.path)
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, compile(listOf(fooSourceFile)))
+    assertEquals(
+        mapOf("Foo.class" to setOf("Foo.kt")),
+        CompilerClassToSourceMap.read(output).entries,
+    )
+    Files.delete(state)
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, compile(listOf(fooSourceFile)))
+    assertEquals(
+        mapOf("Foo.class" to setOf("Foo.kt")),
+        CompilerClassToSourceMap.read(output).entries,
+    )
+    for (invalidState in listOf("{\"", "null", "{\"Foo.class\":null}", "{\"Foo.class\":[null]}")) {
+      Files.writeString(state, invalidState)
+      resetClassModificationTimesToSentinel()
+      assertEquals(CompilationResult.COMPILATION_SUCCESS, compile(listOf(fooSourceFile)))
+      assertNotEquals(
+          SENTINEL_TIMESTAMP_MS,
+          Files.getLastModifiedTime(classesDir.resolve("Foo.class").path).toMillis(),
+      )
+      assertEquals(
+          mapOf("Foo.class" to setOf("Foo.kt")),
+          CompilerClassToSourceMap.read(output).entries,
+      )
+      assertEquals(
+          CompilerClassToSourceMap.read(output).entries,
+          CompilerClassToSourceMap.read(state).entries,
+      )
+    }
+  }
+
+  @Test
+  fun `prebuilt snapshot generator selects the registered compiler version`() {
+    val compilerVersion = checkNotNull(System.getenv("KOTLIN_COMPILER_VERSION"))
+    assertEquals(
+        compilerVersion,
+        CompilationService.loadImplementation(javaClass.classLoader).getCompilerVersion(),
+    )
+    val expectedGeneratorVersion =
+        if (compilerVersion in setOf("2.5.0-Beta2", "2.5.0-RC")) compilerVersion else "2.0.20"
+    val generatorVersion =
+        JarFile(checkNotNull(System.getenv("CP_SNAPSHOT_GENERATOR_JAR"))).use { jar ->
+          jar.getInputStream(jar.getJarEntry("META-INF/compiler.version")).bufferedReader().use {
+            it.readText().trim()
+          }
+        }
+    assertEquals(expectedGeneratorVersion, generatorVersion)
+  }
+
+  @Test
+  fun `prebuilt Java snapshots are consumed incrementally`() {
+    val javaSource = sourcesDir.resolve("JavaDependency.java")
+    val consumer = KotlinSourceFile(
+        sourcesDir.resolve("Consumer.kt"),
+        "class Consumer { fun value() = JavaDependency().value() }",
+    )
+    fun compileDependency(returnType: String) {
+      Files.writeString(
+          javaSource.path,
+          "public class JavaDependency { public $returnType value() { return 1; } }",
+      )
+      assertEquals(
+          0,
+          checkNotNull(ToolProvider.getSystemJavaCompiler())
+              .run(null, null, null, "-d", librariesDir.toString(), javaSource.toString()),
+      )
+    }
+    fun compileConsumer(): CompilationResult {
+      val snapshot = generateClasspathSnapshot(librariesDir, SnapshotGranularity.CLASS_MEMBER_LEVEL)
+      return kotlinCompilationService.compile(
+          ProjectId.ProjectUUID(UUID.randomUUID()),
+          createCompilerArgs(listOf(consumer), classesDir, listOf(librariesDir)),
+          createIncrementalMode(
+              ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
+          ),
+      )
+    }
+
+    compileDependency("int")
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, compileConsumer())
+    resetClassModificationTimesToSentinel()
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, compileConsumer())
+    assertEquals(SENTINEL_TIMESTAMP_MS, getClassModificationTimes()["Consumer.class"])
+
+    compileDependency("long")
+    assertEquals(CompilationResult.COMPILATION_SUCCESS, compileConsumer())
+    assertNotEquals(SENTINEL_TIMESTAMP_MS, getClassModificationTimes()["Consumer.class"])
+  }
+
   private fun createCompilerArgs(
       sourceFiles: List<KotlinSourceFile>,
       outputDir: AbsPath,
       classpath: List<AbsPath> = emptyList(),
   ): List<String> {
+    // The compiler is invoked with `-no-stdlib`, so the stdlib must be supplied explicitly on the
+    // classpath. It has to be a standalone kotlin-stdlib jar: resolving it reflectively from
+    // `KotlinVersion` yields the merged test binary, whose `META-INF/*.kotlin_module` metadata is
+    // stripped, leaving top-level declarations such as `println` unresolvable. The path is injected
+    // by the `KOTLIN_STDLIB_JAR` env var set on the test target.
     val stdlibLocation =
         AbsPath.of(
-            KotlinVersion::class
-                .java
-                .protectionDomain
-                .codeSource
-                .location
-                .toURI()
+            File(
+                checkNotNull(System.getenv(KOTLIN_STDLIB_JAR_ENV)) {
+                  "$KOTLIN_STDLIB_JAR_ENV env var is not set"
+                },
+            )
                 .toPath()
-                .absolute()
+                .absolute(),
         )
 
     return buildList {
@@ -495,7 +715,7 @@ internal class KotlinCompilationServiceTest {
   }
 
   private fun createIncrementalMode(
-      classPathChanges: ClasspathChanges = ClasspathChanges.NoChanges(ImmutableList.of())
+      classPathChanges: ClasspathChanges = ClasspathChanges.NoChanges(ImmutableList.of()),
   ) =
       KotlincMode.Incremental(
           rootProjectDir = temporaryFolder.root,
@@ -512,15 +732,51 @@ internal class KotlinCompilationServiceTest {
         path.fileName.toString() to Files.getLastModifiedTime(path).toMillis()
       }
 
+  /**
+   * Stamp existing `.class` outputs with a fixed past mtime so a later recompile (which writes a
+   * current mtime) is detected as `mtime != sentinel`, independent of filesystem timestamp
+   * granularity. Call after the first compile, before capturing the baseline timestamps.
+   */
+  private fun resetClassModificationTimesToSentinel() {
+    val sentinel = FileTime.fromMillis(SENTINEL_TIMESTAMP_MS)
+    classesDir.path.listDirectoryEntries().forEach { path ->
+      Files.setLastModifiedTime(path, sentinel)
+    }
+  }
+
   private fun generateClasspathSnapshot(
       dependencyOutput: AbsPath,
       granularity: SnapshotGranularity,
   ): File {
-    // see details in docs for `CachedClasspathSnapshotSerializer` for details why we can't use a
-    // fixed name
-    val snapshotFile = librarySnapshotsDir.resolve("dep-${System.currentTimeMillis()}.snapshot")
-    ClasspathSnapshotGenerator(dependencyOutput.path, snapshotFile.path, granularity).run()
+    // `CachedClasspathSnapshotSerializer` caches snapshots by file name (see its docs), so every
+    // snapshot needs a distinct name or a stale cached snapshot is returned. A timestamp-based name
+    // collides when two snapshots are generated within the same millisecond, so use a UUID instead.
+    val snapshotFile = librarySnapshotsDir.resolve("dep-${UUID.randomUUID()}.snapshot")
+    // Exercise the bootstrap prebuilt, not the in-process generator whose compiler always matches.
+    val generatorJar = checkNotNull(System.getenv("CP_SNAPSHOT_GENERATOR_JAR"))
+    val process = ProcessBuilder(
+        File(System.getProperty("java.home"), "bin/java").path,
+        "-jar",
+        generatorJar,
+        "--input-jar",
+        dependencyOutput.toString(),
+        "--output-snapshot",
+        snapshotFile.toString(),
+        "--granularity",
+        granularity.name,
+    )
+        .redirectErrorStream(true)
+        .start()
+    val output = process.inputStream.bufferedReader().use { it.readText() }
+    assertEquals(output, 0, process.waitFor())
 
     return snapshotFile.toFile()
+  }
+
+  companion object {
+    private const val KOTLIN_STDLIB_JAR_ENV = "KOTLIN_STDLIB_JAR"
+
+    // 2000-01-01T00:00:00Z.
+    private const val SENTINEL_TIMESTAMP_MS = 946_684_800_000L
   }
 }

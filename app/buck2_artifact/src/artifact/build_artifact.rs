@@ -12,13 +12,14 @@ use allocative::Allocative;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_data::ToProtoMessage;
 use buck2_error::internal_error;
-use buck2_execute::execute::request::OutputType;
+use buck2_util::size_assert;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;
-use static_assertions::assert_eq_size;
+use pagable::Pagable;
 
 use crate::actions::key::ActionKey;
+use crate::artifact::output_type::OutputType;
 
 /// An artifact that is built by the build system
 #[derive(
@@ -31,7 +32,8 @@ use crate::actions::key::ActionKey;
     Display,
     Derivative,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 #[display("`{}`, action: {}", path, key)]
 pub struct BuildArtifact {
@@ -40,7 +42,7 @@ pub struct BuildArtifact {
     output_type: OutputType,
 }
 
-assert_eq_size!(BuildArtifact, [usize; 6]);
+size_assert::words_of_type!(BuildArtifact, 6);
 
 impl BuildArtifact {
     pub fn new(

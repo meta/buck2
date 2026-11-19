@@ -31,7 +31,7 @@ pub(crate) fn smart_truncate_event(d: &mut buck2_data::buck_event::Data) {
                 Some(Data::Command(command_end)) => {
                     truncate_command_end(command_end, false);
                 }
-                Some(Data::TestEnd(test_end)) => {
+                Some(Data::TestRun(test_end)) => {
                     truncate_test_end(test_end);
                 }
                 Some(Data::TestDiscovery(test_discovery_end)) => {
@@ -42,11 +42,8 @@ pub(crate) fn smart_truncate_event(d: &mut buck2_data::buck_event::Data) {
         }
         Data::Instant(inst) => {
             use buck2_data::instant_event::Data;
-            match &mut inst.data {
-                Some(Data::TargetPatterns(target_patterns)) => {
-                    truncate_target_patterns(&mut target_patterns.target_patterns);
-                }
-                _ => {}
+            if let Some(Data::TargetPatterns(target_patterns)) = &mut inst.data {
+                truncate_target_patterns(&mut target_patterns.target_patterns);
             }
         }
         Data::Record(rec) => {
@@ -67,7 +64,7 @@ fn truncate_invocation_record(invocation_record: &mut buck2_data::InvocationReco
     }
     if let Some(ref mut resolved_target_patterns) = invocation_record.parsed_target_patterns {
         truncate_target_patterns(&mut resolved_target_patterns.target_patterns);
-        // Clear `unresolved_traget_patterns` to save bandwidth. It has less information
+        // Clear `unresolved_target_patterns` to save bandwidth. It has less information
         // than `resolved` one does, and will never be used if `resolved` one is available.
         if let Some(ref mut command_end) = invocation_record.command_end {
             truncate_command_end(command_end, true);
@@ -90,8 +87,8 @@ fn truncate_invocation_record(invocation_record: &mut buck2_data::InvocationReco
         }
     }
 
-    const MAX_ERROR_REPORT_BYTS: usize = 512 * 1024;
-    let max_per_report = MAX_ERROR_REPORT_BYTS / invocation_record.errors.len().max(1);
+    const MAX_ERROR_REPORT_BYTES: usize = 512 * 1024;
+    let max_per_report = MAX_ERROR_REPORT_BYTES / invocation_record.errors.len().max(1);
     for error in &mut invocation_record.errors {
         error.message = truncate(&error.message, max_per_report / 2);
         if let Some(telemetry_message) = &mut error.telemetry_message {
@@ -270,14 +267,16 @@ mod tests {
 
     fn make_test_end(data: buck2_data::TestRunEnd) -> buck2_data::buck_event::Data {
         buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
-            data: Some(buck2_data::span_end_event::Data::TestEnd(data)),
+            data: Some(buck2_data::span_end_event::Data::TestRun(Box::new(data))),
             ..Default::default()
         })
     }
 
     fn make_test_discovery_end(data: buck2_data::TestDiscoveryEnd) -> buck2_data::buck_event::Data {
         buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
-            data: Some(buck2_data::span_end_event::Data::TestDiscovery(data)),
+            data: Some(buck2_data::span_end_event::Data::TestDiscovery(Box::new(
+                data,
+            ))),
             ..Default::default()
         })
     }

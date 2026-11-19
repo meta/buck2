@@ -11,7 +11,7 @@
           "other_outputs": {},
           "outputs": {
             "DEFAULT": [
-              "buck-out/v2/gen/root/<HASH>/__rule1__/out.txt"
+              "buck-out/v2/art/root/<HASH>/__rule1__/out.txt"
             ]
           },
           "success": "SUCCESS"

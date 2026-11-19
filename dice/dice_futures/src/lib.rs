@@ -8,13 +8,14 @@
  * above-listed licenses.
  */
 
-#![feature(assert_matches)]
-
+pub mod atomic_waker_set;
 pub mod cancellation;
 mod details;
 pub mod drop;
 pub mod drop_on_ready;
+pub mod join;
 mod maybe_future;
+pub mod oneshot;
 pub mod owning_future;
 pub mod spawn;
 pub mod spawner;

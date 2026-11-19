@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 //! This crate defines the interactions between Buck and the test executor via a test protocol.
 //!
 //! # Test Executor Protocol

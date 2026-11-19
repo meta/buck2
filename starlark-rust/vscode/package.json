@@ -17,10 +17,11 @@
         "multi-root ready"
     ],
     "engines": {
-        "vscode": "^1.43.0"
+        "vscode": "^1.82.0"
     },
     "activationEvents": [
-        "onLanguage:starlark"
+        "onLanguage:starlark",
+        "onCommand:starlark.restartLanguageServer"
     ],
     "main": "./client/out/extension",
     "contributes": {
@@ -98,6 +99,12 @@
                 ]
             }
         ],
+        "commands": [
+            {
+                "command": "starlark.restartLanguageServer",
+                "title": "Starlark: Restart starlark language server"
+            }
+        ],
         "configuration": {
             "properties": {
                 "starlark.lspPath": {
@@ -131,13 +138,27 @@
     "devDependencies": {
         "@types/mocha": "^9.0.0",
         "@types/node": "^16.10.2",
-        "@typescript-eslint/parser": "^4.32.0",
-        "eslint": "^7.32.0",
+        "@typescript-eslint/parser": "^8.62.1",
+        "eslint": "^10.6.0",
         "mocha": "^11.1.0",
         "typescript": "^4.4.3"
     },
     "dependencies": {
-        "@vscode/vsce": "^3.5.0",
+        "@vscode/vsce": "^4.0.0",
         "vscode-languageclient": "^9.0.1"
+    },
+    "overrides": {
+        "minimatch": ">=3.1.3",
+        "serialize-javascript": ">=7.0.3",
+        "underscore": ">=1.13.8",
+        "lodash": ">=4.17.23",
+        "picomatch": ">=2.3.2",
+        "qs": ">=6.14.2",
+        "tmp": ">=0.2.7",
+        "fast-uri": ">=3.1.8 <4.0.0",
+        "brace-expansion": ">=5.0.12",
+        "markdown-it": ">=14.3.2 <15.0.0",
+        "linkify-it": ">=5.0.2 <6.0.0",
+        "js-yaml": ">=4.3.2 <5.0.0"
     }
 }

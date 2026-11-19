@@ -7,6 +7,8 @@
 # above-listed licenses.
 
 
+from __future__ import annotations
+
 import argparse
 import os
 import pathlib
@@ -25,7 +27,7 @@ _JAVA_OR_KOTLIN_FILE_EXTENSION = [".java", ".kt"]
 _PLUGIN = "-P"
 _X_PLUGIN_ARG = "-Xplugin"
 _KAPT3_PLUGIN = "plugin:org.jetbrains.kotlin.kapt3:"
-_APT_MODE_COMPILE = _KAPT3_PLUGIN + "aptMode=compile"
+_APT_MODE_STUBS_AND_APT = _KAPT3_PLUGIN + "aptMode=stubsAndApt"
 _AP_CLASSPATH_ARG = _KAPT3_PLUGIN + "apclasspath"
 _AP_PROCESSORS_ARG = _KAPT3_PLUGIN + "processors"
 _SOURCES_ARG = _KAPT3_PLUGIN + "sources"
@@ -36,6 +38,8 @@ _LIGHT_ANALYSIS = _KAPT3_PLUGIN + "useLightAnalysis"
 _CORRECT_ERROR_TYPES = _KAPT3_PLUGIN + "correctErrorTypes"
 _AP_OPTIONS = _KAPT3_PLUGIN + "apoptions"
 _JAVAC_ARG = _KAPT3_PLUGIN + "javacArguments"
+_KAPT_USE_K2 = _KAPT3_PLUGIN + "useK2"
+_X_USE_K2_KAPT = "-Xuse-k2-kapt"
 
 _KSP_PLUGIN = "plugin:com.google.devtools.ksp.symbol-processing:"
 _KSP_AP_CLASSPATH_ARG = _KSP_PLUGIN + "apclasspath"
@@ -219,7 +223,45 @@ def _parse_args():
         required=True,
         help="tool for scrubbing timestamps from zip files to produce deterministic output",
     )
+    parser.add_argument(
+        "--jdk_locator",
+        type=pathlib.Path,
+        required=False,
+        metavar="jdk_locator",
+        help="Path to Python script that extracts JAVA_HOME from javac binary",
+    )
+    parser.add_argument(
+        "--java_binary",
+        type=pathlib.Path,
+        required=False,
+        metavar="java_binary",
+        help="Path to java or javac binary for JDK home derivation",
+    )
     return parser.parse_args()
+
+
+def _get_jdk_home(jdk_locator: pathlib.Path, java_binary: pathlib.Path) -> str:
+    """Get JDK home by invoking jdk_locator with java binary."""
+    try:
+        if (
+            jdk_locator
+            and java_binary
+            and jdk_locator.exists()
+            and java_binary.exists()
+        ):
+            result = subprocess.run(
+                [str(jdk_locator), str(java_binary)],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            java_home = result.stdout.strip()
+            if java_home and os.path.isdir(java_home):
+                return java_home
+            utils.log_message("jdk_locator returned invalid path: {}".format(java_home))
+    except Exception as e:
+        utils.log_message("Failed to get JDK home from jdk_locator: {}".format(e))
+    return None
 
 
 def _run_kotlinc(
@@ -228,10 +270,12 @@ def _run_kotlinc(
     zipped_sources_file: pathlib.Path,
     ksp_cmd: List[str],
     kapt_cmd: List[str],
+    kapt_generated_kotlin_output: pathlib.Path,
+    kapt_sources_output: pathlib.Path,
     temp_dir: TemporaryDirectory,
+    java_binary: pathlib.Path = None,
+    jdk_locator: pathlib.Path = None,
 ) -> pathlib.Path:
-    kotlinc_cmd = []
-
     cmd_file = kotlinc_cmd_file
     if zipped_sources_file:
         cmd_file = utils.extract_source_files(
@@ -241,29 +285,68 @@ def _run_kotlinc(
             temp_dir,
         )
 
-    if utils.sources_are_present(cmd_file, [".kt"]):
-        with open(cmd_file, "r") as file:
-            kotlinc_cmd += [line.strip() for line in file.readlines()]
+    if not utils.sources_are_present(cmd_file, [".kt"]):
+        os.mkdir(kotlinc_output)
+        return kotlinc_output
 
-        kotlinc_cmd += ksp_cmd
-        kotlinc_cmd += kapt_cmd
+    with open(cmd_file, "r") as file:
+        base_cmd = [line.strip() for line in file.readlines()]
 
-        if kotlinc_output:
-            kotlinc_cmd += ["-d", kotlinc_output]
+    # Derive JAVA_HOME using jdk_locator + java_binary
+    jdk_args = []
+    jdk_home = _get_jdk_home(jdk_locator, java_binary)
+    if jdk_home:
+        utils.log_message("Derived JAVA_HOME from jdk_locator: {}".format(jdk_home))
+        jdk_args = ["-jdk-home", jdk_home]
 
+    def _exec_kotlinc(cmd: List[str]) -> None:
         utils.log_message(
             "executing command = '{}'".format(
-                " ".join([shlex.quote(str(s)) for s in kotlinc_cmd])
+                " ".join([shlex.quote(str(s)) for s in cmd])
             )
         )
-
-        p = subprocess.run(kotlinc_cmd, stderr=subprocess.PIPE, text=True)
+        p = subprocess.run(cmd, stderr=subprocess.PIPE, text=True)
         if p.returncode != 0:
             print(utils.pretty_exception_k(p.stderr), file=sys.stderr)
             sys.exit(p.returncode)
 
+    if kapt_cmd:
+        # KAPT runs in 'stubsAndApt' mode (the only mode supported on Kotlin 2.x): it
+        # generates Java/Kotlin sources from annotation processors but, unlike the
+        # legacy 'compile' mode, does NOT emit the final Kotlin bytecode. So we invoke
+        # kotlinc twice: first to run annotation processing, then a separate final
+        # compilation that actually produces the Kotlin classes. The generated *Java*
+        # sources are compiled downstream by javac; the generated *Kotlin* sources are
+        # folded into this final compilation so they end up in the Kotlin output.
+        ap_output = os.path.join(temp_dir, "kapt_ap_output")
+        os.mkdir(ap_output)
+        if kapt_generated_kotlin_output and not os.path.exists(
+            kapt_generated_kotlin_output
+        ):
+            os.makedirs(kapt_generated_kotlin_output)
+        _exec_kotlinc(base_cmd + ksp_cmd + kapt_cmd + jdk_args + ["-d", ap_output])
+
+        final_cmd = list(base_cmd) + jdk_args
+        # The final Kotlin compilation must see the sources KAPT generated so it can
+        # resolve references to generated types (e.g. Dagger components, databinding
+        # *BindingImpl). Generated Kotlin is compiled into the Kotlin output; generated
+        # Java is passed only for symbol resolution (kotlinc does not emit bytecode for
+        # .java inputs) and is compiled downstream by javac.
+        for gen_dir in (kapt_generated_kotlin_output, kapt_sources_output):
+            if gen_dir and os.path.isdir(gen_dir):
+                final_cmd += [
+                    str(path)
+                    for ext in ("*.kt", "*.java")
+                    for path in pathlib.Path(gen_dir).rglob(ext)
+                ]
+        if kotlinc_output:
+            final_cmd += ["-d", kotlinc_output]
+        _exec_kotlinc(final_cmd)
     else:
-        os.mkdir(kotlinc_output)
+        kotlinc_cmd = base_cmd + ksp_cmd + jdk_args
+        if kotlinc_output:
+            kotlinc_cmd += ["-d", kotlinc_output]
+        _exec_kotlinc(kotlinc_cmd)
 
     return kotlinc_output
 
@@ -291,13 +374,16 @@ def _encode_kapt_ap_options(
 
 
 def _encode_javac_arguments(
-    jvm_target: str,
+    jvm_target: str | None,
     kapt_base64_encoder_cmd: List[str],
     temp_dir: TemporaryDirectory,
 ) -> str:
     javac_arguments_file = os.path.join(temp_dir, "javac_arguments.txt")
     with open(javac_arguments_file, "w") as file:
-        file.write("-source={}\n-target={}".format(jvm_target, jvm_target))
+        # An empty file encodes to an empty option map, which leaves KAPT's javac
+        # on its own defaults. Writing a blank line instead would crash the encoder.
+        if jvm_target:
+            file.write("-source={}\n-target={}".format(jvm_target, jvm_target))
 
     encoded_javac_arguments_file = os.path.join(temp_dir, "encoded_javac_arguments.txt")
     return _encode_options(
@@ -318,7 +404,35 @@ def _encode_options(
         return file.read().strip()
 
 
+def _get_language_version(kotlinc_cmd_file: pathlib.Path) -> str | None:
+    with open(kotlinc_cmd_file, "r") as file:
+        kotlinc_args = [line.strip() for line in file.readlines()]
+
+    for index, arg in enumerate(kotlinc_args):
+        if arg.startswith("-language-version="):
+            return arg.split("=", 1)[1]
+        if arg == "-language-version" and index + 1 < len(kotlinc_args):
+            return kotlinc_args[index + 1]
+
+    return None
+
+
+def _get_k2_kapt_flag(kotlinc_cmd_file: pathlib.Path) -> str | None:
+    language_version = _get_language_version(kotlinc_cmd_file)
+    if not language_version:
+        return None
+
+    version_parts = language_version.split(".")
+    try:
+        version_tuple = tuple(int(part) for part in version_parts[:2])
+    except ValueError:
+        return None
+
+    return _X_USE_K2_KAPT if version_tuple >= (2, 1) else None
+
+
 def _get_kapt_cmd(
+    kotlinc_cmd_file: pathlib.Path,
     kapt_annotation_processing_jar: pathlib.Path,
     kapt_annotation_processors: str,
     kapt_annotation_processor_params: str,
@@ -328,13 +442,16 @@ def _get_kapt_cmd(
     kapt_stubs: pathlib.Path,
     kapt_base64_encoder: pathlib.Path,
     kapt_generated_kotlin_output: pathlib.Path,
-    kapt_jvm_target: str,
+    kapt_jvm_target: str | None,
     temp_dir: TemporaryDirectory,
 ) -> List[str]:
     if not kapt_annotation_processors:
         return []
 
-    kapt_plugin_options = [_APT_MODE_COMPILE]
+    kapt_plugin_options = [_APT_MODE_STUBS_AND_APT]
+    k2_kapt_flag = _get_k2_kapt_flag(kotlinc_cmd_file)
+    if k2_kapt_flag:
+        kapt_plugin_options.append("=".join([_KAPT_USE_K2, "true"]))
     kapt_plugin_options += [
         "=".join([_AP_PROCESSORS_ARG, ap])
         for ap in kapt_annotation_processors.split(",")
@@ -372,11 +489,14 @@ def _get_kapt_cmd(
         ),
     ]
 
-    return [
+    kapt_cmd = [
         "=".join([_X_PLUGIN_ARG, str(kapt_annotation_processing_jar)]),
         _PLUGIN,
         ",".join(kapt_plugin_options),
     ]
+    if k2_kapt_flag:
+        kapt_cmd.append(k2_kapt_flag)
+    return kapt_cmd
 
 
 def _get_ksp_cmd(
@@ -423,7 +543,8 @@ def _zip_recursive(archive_path: pathlib.Path, source_path: pathlib.Path):
         archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
     ) as z:
         z.write(source_path)
-        for f in source_path.glob("**/*"):
+        # Listing order differs between file systems, and the archive is content hashed.
+        for f in sorted(source_path.glob("**/*")):
             z.write(f)
 
 
@@ -454,6 +575,8 @@ def main():
     ksp_zipped_sources_output = args.ksp_zipped_sources_output
     ksp_generated_classes_and_resources = args.ksp_generated_classes_and_resources
     zip_scrubber = args.zip_scrubber
+    jdk_locator = args.jdk_locator
+    java_binary = args.java_binary
 
     utils.log_message("output: {}".format(output_path))
     utils.log_message("kotlinc_cmd_file: {}".format(kotlinc_cmd_file))
@@ -498,6 +621,8 @@ def main():
         )
     )
     utils.log_message("zip_scrubber: {}".format(zip_scrubber))
+    utils.log_message("jdk_locator: {}".format(jdk_locator))
+    utils.log_message("java_binary: {}".format(java_binary))
 
     if (
         kapt_annotation_processing_jar
@@ -551,6 +676,7 @@ def main():
             ksp_sources_output,
         )
         kapt_cmd = _get_kapt_cmd(
+            kotlinc_cmd_file,
             kapt_annotation_processing_jar,
             kapt_annotation_processors,
             kapt_annotation_processor_params,
@@ -569,7 +695,11 @@ def main():
             zipped_sources_file,
             ksp_cmd,
             kapt_cmd,
+            kapt_generated_kotlin_output,
+            kapt_sources_output,
             temp_dir,
+            java_binary,
+            jdk_locator,
         )
 
     if ksp_sources_output:

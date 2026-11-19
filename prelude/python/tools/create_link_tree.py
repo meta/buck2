@@ -6,13 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
 
 import argparse
 import json
 import os
 import shutil
-from typing import Set
 
 
 def main() -> None:
@@ -28,8 +26,8 @@ def main() -> None:
 
     os.makedirs(args.output)
 
-    pkgs: Set[str] = set()
-    pkgs_with_init: Set[str] = set()
+    pkgs: set[str] = set()
+    pkgs_with_init: set[str] = set()
 
     def _add_pkg(pkg: str) -> None:
         pkgs.add(pkg)

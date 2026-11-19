@@ -1,120 +1,114 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
-# This source code is licensed under both the MIT license found in the
-# LICENSE-MIT file in the root directory of this source tree and the Apache
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
 # License, Version 2.0 found in the LICENSE-APACHE file in the root directory
-# of this source tree.
-
-# Copied from fbsource fixup.
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
 
 buildscript.run = false
 
-# Generate a C/C++ build rule for all the C code
+['cfg(version = "=0.17.14")']
+cargo_env = [
+    "CARGO_PKG_NAME",
+    "CARGO_PKG_VERSION_MAJOR",
+    "CARGO_PKG_VERSION_MINOR",
+    "CARGO_PKG_VERSION_PATCH",
+    "CARGO_PKG_VERSION_PRE",
+]
+['cfg(version = "=0.17.14")'.env]
+RING_CORE_PREFIX = "ring_core_0_17_14"
 
-[['cfg(all(target_arch = "x86_64", target_os = "linux"))'.cxx_library]]
+[['cfg(all(version = "=0.17.14", target_arch = "x86_64", target_os = "linux"))'.cxx_library]]
 name = "ring-c-asm-elf-x86_84"
-srcs = [ "crypto/**/*.c", "pregenerated/*x86_64*-elf.S" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
-include_paths = ["include"]
+srcs = ["crypto/**/*.c", "pregenerated/*x86_64*-elf.S", "third_party/fiat/asm/*.S"]
+headers = ["include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl"]
+include_paths = ["include", "."]
+fixup_include_paths = ["include"]
 compiler_flags = ["-Wno-error"]
+preferred_linkage = "static"
 
-['cfg(all(version = "=0.17.5", target_arch = "x86_64", target_os = "linux"))'.env]
-RING_CORE_PREFIX = "ring_core_0_17_5_"
-[['cfg(all(version = "=0.17.5", target_arch = "x86_64", target_os = "linux"))'.cxx_library]]
+[['cfg(all(version = "=0.17.14", target_arch = "aarch64", target_os = "linux"))'.cxx_library]]
+name = "ring-c-asm-elf-aarch64"
+srcs = ["crypto/**/*.c", "pregenerated/*armv8*-linux64.S", "pregenerated/*armx*-linux64.S", "third_party/fiat/asm/*.S"]
+headers = ["include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl"]
+include_paths = ["include"]
+fixup_include_paths = ["include"]
+compiler_flags = ["-Wno-error"]
+preferred_linkage = "static"
+
+[['cfg(all(version = "=0.17.14", target_arch = "powerpc64", target_os = "linux"))'.cxx_library]]
+name = "ring-c-asm-elf-powerpc64"
+srcs = ["crypto/**/*.c"]
+headers = ["include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl"]
+include_paths = ["include"]
+fixup_include_paths = ["include"]
+compiler_flags = ["-Wno-error"]
+preferred_linkage = "static"
+
+[['cfg(all(version = "=0.17.14", target_arch = "x86_64", target_os = "android"))'.cxx_library]]
 name = "ring-c-asm-elf-x86_84"
-srcs = [ "crypto/**/*.c", "pregenerated/*x86_64*-elf.S", "third_party/fiat/asm/fiat_curve25519_adx_mul.S", "third_party/fiat/asm/fiat_curve25519_adx_square.S" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
+srcs = ["crypto/**/*.c", "pregenerated/*x86_64*-elf.S", "third_party/fiat/asm/*.S"]
+headers = ["include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl"]
 include_paths = ["include"]
-compiler_flags = ["-Wno-error"]
 fixup_include_paths = ["include"]
+compiler_flags = ["-Wno-error"]
+preferred_linkage = "static"
 
-[['cfg(all(target_arch = "aarch64", target_os = "linux"))'.cxx_library]]
+[['cfg(all(version = "=0.17.14", target_arch = "aarch64", target_os = "android"))'.cxx_library]]
 name = "ring-c-asm-elf-aarch64"
-srcs = [ "crypto/**/*.c", "pregenerated/*armv8*-linux64.S", "pregenerated/*armx*-linux64.S" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
-exclude = [ "crypto/cpu-intel.c" ]
+srcs = ["crypto/**/*.c", "pregenerated/*armv8*-linux64.S", "pregenerated/*armx*-linux64.S", "third_party/fiat/asm/*.S"]
+headers = ["include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl"]
 include_paths = ["include"]
-compiler_flags = ["-Wno-error"]
-
-['cfg(all(version = "=0.17.5", target_arch = "aarch64", target_os = "linux"))'.env]
-RING_CORE_PREFIX = "ring_core_0_17_5_"
-[['cfg(all(version = "=0.17.5", target_arch = "aarch64", target_os = "linux"))'.cxx_library]]
-name = "ring-c-asm-elf-aarch64"
-srcs = [ "crypto/**/*.c", "pregenerated/*armv8*-linux64.S", "pregenerated/*armx*-linux64.S" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
-include_paths = ["include"]
-compiler_flags = ["-Wno-error"]
 fixup_include_paths = ["include"]
+compiler_flags = ["-Wno-error"]
+preferred_linkage = "static"
 
-[['cfg(all(target_arch = "x86_64", target_os = "macos"))'.cxx_library]]
+[['cfg(all(version = "=0.17.14", target_arch = "x86_64", target_os = "macos"))'.cxx_library]]
 name = "ring-c-asm-macos-x86_64"
-srcs = [ "crypto/**/*.c", "pregenerated/*x86_64*-macosx.S" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
+srcs = ["crypto/**/*.c", "pregenerated/*x86_64*-macosx.S", "third_party/fiat/asm/*.S"]
+headers = ["include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl"]
 include_paths = ["include"]
-compiler_flags = ["-Wno-error"]
-
-['cfg(all(version = "=0.17.5", target_arch = "x86_64", target_os = "macos"))'.env]
-RING_CORE_PREFIX = "ring_core_0_17_5_"
-[['cfg(all(version = "=0.17.5", target_arch = "x86_64", target_os = "macos"))'.cxx_library]]
-name = "ring-c-asm-macos-x86_64"
-srcs = [ "crypto/**/*.c", "pregenerated/*x86_64*-macosx.S", "third_party/fiat/asm/fiat_curve25519_adx_mul.S", "third_party/fiat/asm/fiat_curve25519_adx_square.S" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
-include_paths = ["include"]
-compiler_flags = ["-Wno-error"]
 fixup_include_paths = ["include"]
+compiler_flags = ["-Wno-error"]
+preferred_linkage = "static"
 
-[['cfg(all(target_arch = "aarch64", target_os = "macos"))'.cxx_library]]
+[['cfg(all(version = "=0.17.14", target_arch = "aarch64", target_os = "macos"))'.cxx_library]]
 name = "ring-c-asm-macos-arm64"
-srcs = [ "crypto/**/*.c", "pregenerated/*armv8*-ios64.S", "pregenerated/*armx*-ios64.S" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
-exclude = [ "crypto/cpu-intel.c" ]
+srcs = ["crypto/**/*.c", "pregenerated/*armv8*-ios64.S", "pregenerated/*armx*-ios64.S", "third_party/fiat/asm/*.S"]
+headers = ["include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl"]
 include_paths = ["include"]
-compiler_flags = ["-Wno-error"]
-
-['cfg(all(version = "=0.17.5", target_arch = "aarch64", target_os = "macos"))'.env]
-RING_CORE_PREFIX = "ring_core_0_17_5_"
-[['cfg(all(version = "=0.17.5", target_arch = "aarch64", target_os = "macos"))'.cxx_library]]
-name = "ring-c-asm-macos-arm64"
-srcs = [ "crypto/**/*.c", "pregenerated/*armv8*-ios64.S", "pregenerated/*armx*-ios64.S" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
-include_paths = ["include"]
-compiler_flags = ["-Wno-error"]
 fixup_include_paths = ["include"]
+compiler_flags = ["-Wno-error"]
+preferred_linkage = "static"
 
-[['cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "gnu"))'.cxx_library]]
+[['cfg(all(version = "=0.17.14", target_arch = "x86_64", target_os = "ios"))'.cxx_library]]
+name = "ring-c-asm-ios-x86_64"
+srcs = ["crypto/**/*.c", "pregenerated/*x86_64*-macosx.S", "third_party/fiat/asm/*.S"]
+headers = ["include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl"]
+include_paths = ["include"]
+fixup_include_paths = ["include"]
+compiler_flags = ["-Wno-error"]
+preferred_linkage = "static"
+
+[['cfg(all(version = "=0.17.14", target_arch = "aarch64", target_os = "ios"))'.cxx_library]]
+name = "ring-c-asm-ios-arm64"
+srcs = ["crypto/**/*.c", "pregenerated/*armv8*-ios64.S", "pregenerated/*armx*-ios64.S", "third_party/fiat/asm/*.S"]
+exclude = ["crypto/poly1305/poly1305_arm.c"]
+headers = ["include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl"]
+include_paths = ["include"]
+fixup_include_paths = ["include"]
+compiler_flags = ["-Wno-error"]
+preferred_linkage = "static"
+
+[['cfg(all(version = "=0.17.14", target_arch = "x86_64", target_os = "windows", target_env = "msvc"))'.cxx_library]]
 name = "ring-c-win-x86_84"
-srcs = [ "crypto/**/*.c" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
-include_paths = ["include"]
-compiler_flags = ["-Wno-error"]
-
-['cfg(all(version = "=0.17.5", target_arch = "x86_64", target_os = "windows", target_env = "gnu"))'.env]
-RING_CORE_PREFIX = "ring_core_0_17_5_"
-[['cfg(all(version = "=0.17.5", target_arch = "x86_64", target_os = "windows", target_env = "gnu"))'.cxx_library]]
-name = "ring-c-win-x86_84"
-srcs = [ "crypto/**/*.c" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
-include_paths = ["include"]
-compiler_flags = ["-Wno-error"]
+srcs = ["crypto/**/*.c"]
+headers = ["include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl"]
+include_paths = ["include", "."]
 fixup_include_paths = ["include"]
-
-[['cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "msvc"))'.cxx_library]]
-name = "ring-c-win-msvc-x86_84"
-srcs = [ "crypto/**/*.c" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
-include_paths = ["include"]
-
-[['cfg(all(version = "=0.17.5", target_arch = "x86_64", target_os = "windows", target_env = "msvc"))'.cxx_library]]
-name = "ring-c-win-msvc-x86_84"
-srcs = [ "crypto/**/*.c" ]
-headers = [ "include/**/*.h", "crypto/**/*.h", "third_party/**/*.h", "crypto/**/*.inl" ]
-include_paths = ["include"]
-fixup_include_paths = ["include"]
-
-[['cfg(all(target_arch = "x86_64", target_os = "windows"))'.prebuilt_cxx_library]]
+compiler_flags = ["/WX-"]
+preferred_linkage = "static"
+[['cfg(all(version = "=0.17.14", target_arch = "x86_64", target_os = "windows"))'.prebuilt_cxx_library]]
 name = "ring-asm-windows-x86_84"
-static_libs = [ "pregenerated/*x86_64*-nasm.obj" ]
-
-[['cfg(all(version = "=0.17.5", target_arch = "x86_64", target_os = "windows"))'.prebuilt_cxx_library]]
-name = "ring-asm-windows-x86_84"
-static_libs = [ "pregenerated/*x86_64*-nasm.o" ]
+static_libs = ["pregenerated/*x86_64*-nasm.o"]

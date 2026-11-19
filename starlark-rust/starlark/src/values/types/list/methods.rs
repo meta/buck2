@@ -26,7 +26,7 @@ use crate::environment::MethodsBuilder;
 use crate::values::Heap;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
 use crate::values::list::ListRef;
 use crate::values::none::NoneOr;
 use crate::values::none::NoneType;
@@ -55,7 +55,7 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
     fn append<'v>(
         this: Value<'v>,
         #[starlark(require = pos)] el: Value<'v>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<NoneType> {
         let this = ListData::from_value_mut(this)?;
         this.push(el, heap);
@@ -102,16 +102,16 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn extend<'v>(
         this: Value<'v>,
-        #[starlark(require = pos)] other: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
-        heap: &'v Heap,
+        #[starlark(require = pos)] other: ValueOf<'v, StarlarkIter<Value<'v>>>,
+        heap: Heap<'v>,
     ) -> starlark::Result<NoneType> {
         let res = ListData::from_value_mut(this)?;
-        if this.ptr_eq(other.get()) {
+        if this.ptr_eq(other.to_value()) {
             // If the types alias, we can't borrow the `other` for iteration.
             // But we can do something smarter to double the elements
             res.double(heap);
         } else {
-            let it = other.get().iterate(heap)?;
+            let it = other.to_value().iterate(heap)?;
             res.extend(it, heap);
         }
         Ok(NoneType)
@@ -128,7 +128,7 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
     /// list L that is inspected.  If provided and not `None`, they must be list
     /// indices of type `int`. If an index is negative, `len(L)` is effectively
     /// added to it, then if the index is outside the range `[0:len(L)]`, the
-    /// nearest value within that range is used; see [Indexing](#indexing).
+    /// nearest value within that range is used; see [Indexing](https://github.com/bazelbuild/starlark/blob/master/spec.md#indexing).
     ///
     /// `index` fails if `x` is not found in L, or if `start` or `end`
     /// is not a valid index (`int` or `None`).
@@ -188,7 +188,7 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
         this: Value<'v>,
         #[starlark(require = pos)] index: i32,
         #[starlark(require = pos)] el: Value<'v>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<NoneType> {
         let this = ListData::from_value_mut(this)?;
         let index = convert_index(this.len() as i32, index);
@@ -266,12 +266,20 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
     fn remove<'v>(
         this: Value<'v>,
         #[starlark(require = pos)] needle: Value<'v>,
-    ) -> anyhow::Result<NoneType> {
+    ) -> starlark::Result<NoneType> {
         // Written in two separate blocks so we ensure we give up the
         // immutable borrow before making the mutable borrow.
         let position = {
             let this = ListRef::from_value(this).unwrap();
-            let position = this.iter().position(|v| v == needle);
+            let mut position = None;
+            for (i, v) in this.iter().enumerate() {
+                // Starlark equality can fail (e.g. on recursive values); report that rather
+                // than treating the element as unequal.
+                if v.equals(needle)? {
+                    position = Some(i);
+                    break;
+                }
+            }
             match position {
                 Some(i) => i,
                 None => {
@@ -279,7 +287,8 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
                         "Element '{}' not found in list '{}'",
                         needle,
                         this
-                    ));
+                    )
+                    .into());
                 }
             }
         };
@@ -295,6 +304,19 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
 #[cfg(test)]
 mod tests {
     use crate::assert;
+
+    /// `L.remove(x)` compares with the fallible Starlark equality, so an element whose
+    /// comparison fails reports the error, like `index` and `in`.
+    #[test]
+    fn test_remove_equality_error() {
+        let prog = "a = []\na.append(a)\nb = []\nb.append(b)\nl = [a, b]\n";
+        assert::fail(&format!("{prog}l.remove(b)"), "Too many recursion levels");
+        assert::fail(&format!("{prog}l.index(b)"), "Too many recursion levels");
+        assert::fail(
+            "a = []\na.append(a)\nb = []\nb.append(b)\n[a].remove(b)",
+            "Too many recursion levels",
+        );
+    }
 
     #[test]
     fn test_error_codes() {

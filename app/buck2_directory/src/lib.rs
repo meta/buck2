@@ -8,9 +8,7 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
 #![feature(impl_trait_in_assoc_type)]
-#![feature(never_type)]
 #![feature(trait_alias)]
 
 pub mod directory;

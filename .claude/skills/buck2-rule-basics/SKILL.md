@@ -67,15 +67,50 @@ When the skill launches, FIRST check what the user has already done:
 - Explain what happened
 - **Show file changes**: After each step, summarize what files were created/modified
 - **Remind about editor**: Tell users they can open the files in their editor to see the changes
-- STOP and wait for user confirmation to continue
+- STOP and run the comprehension check (see below) before continuing
 
-### 3. Use AskUserQuestion Between Major Steps
+### 3. Use the Socratic Method Between Major Steps
 
-After completing each major step (1-8), ask the user:
+After completing each major step (1-8), do NOT simply ask "ready to
+continue?". Verify the user actually understood the step before
+advancing by posing a comprehension check and having them answer in
+their own words.
 
-- Do they understand the concept?
-- Are they ready to move to the next step?
-- Do they want to explore more about the current topic?
+**Ask the question as plain text, then stop and wait for the user's
+typed reply.** Do NOT use `AskUserQuestion` or offer answer choices — the
+user should compose a free-response answer, not pick from a list. Having
+to articulate the idea themselves, with no options to recognize, is what
+reveals whether they actually understood it.
+
+**Generate the question yourself — do not hardcode it.** Look at the
+concepts you just explained and the code you just wrote together, then
+craft a question that probes the "why," not just the "what." A good
+question asks the user to predict, explain, or apply ("what would happen
+if...", "why did X occur", "which line is responsible for Y") rather than
+recite a definition.
+
+Act on the answer:
+
+- Correct: affirm briefly, say why it's right (filling in any nuance they
+  missed), then move to the next step.
+- Partially right or vague: acknowledge what they got, then ask a
+  follow-up that targets the gap.
+- Incorrect: do NOT just reveal the answer. Re-explain from a different
+  angle, point at the relevant code or build output, then ask a fresh
+  open-ended question to confirm. Only advance once they get it.
+
+Keep it to one or two questions per step — a comprehension check, not an
+exam. The user can always ask their own question instead, or say they
+want to skip ahead; honor that.
+
+Illustrative only — the shape to aim for, not a script to copy:
+
+> We built `:hello` and it built successfully but wrote no output file.
+> Why do you think that happened?
+
+Then wait for their answer. What you're listening for here: the impl ran
+during analysis and returned an empty `DefaultInfo`, so no action was
+ever registered to produce a file.
 
 ### 4. Be Adaptive
 
@@ -214,16 +249,13 @@ buck2 build :hello
 - **Analysis phase**: This runs during planning, not execution
 - **DefaultInfo provider**: Minimum provider every rule must return
 
-**Before moving on:**
+**Before moving on — Socratic check:**
 
-```python
-AskUserQuestion:
-  question: "Ready to move to Step 2 where we'll accept input files?"
-  options:
-    - "Yes, let's continue"
-    - "Explain these concepts more"
-    - "Let me experiment first"
-```
+Run a comprehension check (see "Use the Socratic Method Between Major
+Steps"), generating the question from what this step covered. Aim it at
+whether they grasp that the impl runs during the analysis phase, and why
+the build succeeded despite producing no output. Advance only once they
+show they understand.
 
 ---
 
@@ -285,15 +317,13 @@ buck2 build :hello
 - **attrs.source()**: Declares an attribute accepting a source file
 - **Artifact**: Represents a file (input or output)
 
-**Before moving on:**
+**Before moving on — Socratic check:**
 
-```python
-AskUserQuestion:
-  question: "Ready for Step 3 where we'll declare an output file?"
-  options:
-    - "Yes, continue"
-    - "I have questions about attributes"
-```
+Run a comprehension check (see "Use the Socratic Method Between Major
+Steps"), generating the question from what this step covered. Aim it at
+the gap between declaring an attribute and producing output — why adding
+`src` still yields no output, and what `attrs.source()` actually does.
+Advance only once they show they understand.
 
 ---
 
@@ -339,15 +369,13 @@ promised an output, but didn't say how to make it!"
 - **Declaration vs Production**: We declared it exists, but haven't created it
   yet
 
-**Before moving on:**
+**Before moving on — Socratic check:**
 
-```python
-AskUserQuestion:
-  question: "This error is expected! Ready for Step 4 where we'll fix it by creating an action?"
-  options:
-    - "Yes, let's create the action"
-    - "Why did we get this error exactly?"
-```
+Run a comprehension check (see "Use the Socratic Method Between Major
+Steps"), generating the question from what this step covered. Aim it at
+why the build errored — that `declare_output()` only promises an artifact
+while nothing yet produces it (declaration vs production). Advance only
+once they show they understand.
 
 ---
 
@@ -412,15 +440,13 @@ cat <output-path>
   redirect_stdout)
 - **Lazy execution**: Buck2 decides when/if to run based on what's needed
 
-**Before moving on:**
+**Before moving on — Socratic check:**
 
-```python
-AskUserQuestion:
-  question: "Great! Your rule now works. Ready to learn about targets and configurations?"
-  options:
-    - "Yes, let's learn about targets"
-    - "Let me try modifying the rule first"
-```
+Run a comprehension check (see "Use the Socratic Method Between Major
+Steps"), generating the question from what this step covered. Aim it at
+what `as_output()` and `ctx.actions.run()` do, and when the action
+actually runs (lazy execution) — i.e. why adding the action fixed the
+error. Advance only once they show they understand.
 
 ---
 
@@ -509,15 +535,13 @@ buck2 cquery :hello --output-attribute=src
 
 Notice the configuration suffix `(cfg:...)` is added when Buck2 applies platform-specific settings.
 
-**Before moving on:**
+**Before moving on — Socratic check:**
 
-```python
-AskUserQuestion:
-  question: "Ready to use select() to make your rule platform-aware?"
-  options:
-    - "Yes, show me select()"
-    - "Tell me more about configurations"
-```
+Run a comprehension check (see "Use the Socratic Method Between Major
+Steps"), generating the question from what this step covered. Aim it at
+the difference between unconfigured and configured targets — what the
+`(cfg:...)` suffix means, or the parts of a target name. Advance only
+once they show they understand.
 
 ---
 
@@ -607,15 +631,13 @@ buck2 build :hello --show-full-output
 - **DEFAULT**: Fallback if no other branch matches
 - **Resolution**: During configuration phase, Buck2 picks one branch
 
-**Before moving on:**
+**Before moving on — Socratic check:**
 
-```python
-AskUserQuestion:
-  question: "Ready to learn about dependencies between targets?"
-  options:
-    - "Yes, show me dependencies"
-    - "Let me try more select() examples"
-```
+Run a comprehension check (see "Use the Socratic Method Between Major
+Steps"), generating the question from what this step covered. Aim it at
+when and how `select()` resolves (the configuration phase), and what
+differs between the `uquery` and `cquery` output for `output_name`.
+Advance only once they show they understand.
 
 ---
 
@@ -736,15 +758,13 @@ buck2 cquery "deps(:goodbye)"
 - **Automatic ordering**: Buck2 builds deps first, ensuring outputs are ready
 - **cmd.add()**: Dynamically add arguments to the command (for variable number of deps)
 
-**Before moving on:**
+**Before moving on — Socratic check:**
 
-```python
-AskUserQuestion:
-  question: "Final step! Ready to learn the difference between rules and macros?"
-  options:
-    - "Yes, what's the difference?"
-    - "Let me practice with more dependencies first"
-```
+Run a comprehension check (see "Use the Socratic Method Between Major
+Steps"), generating the question from what this step covered. Aim it at
+how Buck2 knows to build `:hello` before `:goodbye`, and how the rule
+reaches a dependency's output via `dep[DefaultInfo]`. Advance only once
+they show they understand.
 
 ---
 
@@ -818,6 +838,14 @@ buck2 build :hello_macro --show-full-output
 - Generate multiple targets from one call
 - Abstract complexity for end users
 
+**Before wrapping up — Socratic check:**
+
+Run a comprehension check (see "Use the Socratic Method Between Major
+Steps"), generating the question from what this step covered. Aim it at
+the rule-vs-macro distinction — which phase each runs in, and why the
+macro itself doesn't appear in `buck2 cquery`/`uquery`. Wrap up only once
+they show they understand.
+
 **Final wrap-up:**
 
 ```python
@@ -875,7 +903,13 @@ Let me explain what just happened:
 - The **implementation function** runs during the analysis phase... [explains
   concepts]
 
-Ready to move to Step 2 where we'll accept input files?"
+Now, before we move on, let me check one thing..."
+
+[Asks an open-ended Socratic comprehension question as plain text,
+generated from what Step 1 taught — e.g. why the build succeeded with no
+output — then waits for the user to answer in their own words. If the
+answer is right, affirm and go to Step 2; if not, re-explain and ask
+again.]
 
 [And continues this pattern through all 8 steps]
 
@@ -886,7 +920,9 @@ Ready to move to Step 2 where we'll accept input files?"
 1. **Celebrate small wins**: "Great!", "Perfect!", "It worked!"
 2. **Normalize errors**: "This error is expected!", "Let's see what Buck2 is
    telling us"
-3. **Check understanding**: Regularly ask if concepts make sense
+3. **Check understanding with Socratic questions**: Gate each step on a
+   comprehension check, not a yes/no "ready?" — see "Use the Socratic
+   Method Between Major Steps"
 4. **Offer choices**: Let users explore or move forward
 5. **Show don't tell**: Build and run, then explain
 6. **Connect concepts**: "Remember in Step 2 when we learned about artifacts?

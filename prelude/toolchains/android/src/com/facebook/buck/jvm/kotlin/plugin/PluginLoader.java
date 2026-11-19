@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.kotlin.plugin;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,7 +19,9 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.Objects;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class PluginLoader {
 
   private static final String DEP_TRACKER_KOTLINC_PLUGIN_JAR_RESOURCE_PATH = "dep-tracker.jar";
@@ -47,7 +50,10 @@ public class PluginLoader {
         PluginLoader.class.getResourceAsStream(DEP_TRACKER_KOTLINC_PLUGIN_JAR_RESOURCE_PATH)) {
       File plugin = File.createTempFile("dep-tracker", ".jar");
       plugin.deleteOnExit();
-      Files.copy(in, Paths.get(plugin.toURI()), StandardCopyOption.REPLACE_EXISTING);
+      Files.copy(
+          Objects.requireNonNull(in),
+          Paths.get(plugin.toURI()),
+          StandardCopyOption.REPLACE_EXISTING);
       return plugin;
     }
   }

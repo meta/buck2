@@ -17,6 +17,13 @@ use std::ops::Deref;
 use allocative::Allocative;
 use dupe::Clone_;
 use dupe::Dupe_;
+use pagable::PagableDeserialize;
+use pagable::PagableDeserializer;
+use pagable::PagableSerialize;
+use pagable::PagableSerializer;
+use serde::Deserialize;
+use serde::Serialize;
+use strong_hash::StrongHash;
 
 use crate::arc_str::ArcStr;
 use crate::arc_str::ThinArcStr;
@@ -29,22 +36,57 @@ pub trait StringInside {
     fn from_str(s: &str) -> &Self;
 }
 
+impl StringInside for str {
+    #[inline]
+    fn as_str(wrapper: &Self) -> &str {
+        wrapper
+    }
+    #[inline]
+    fn from_str(s: &str) -> &Self {
+        s
+    }
+}
+
 #[derive(
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Hash,
-    Clone_,
-    Dupe_,
-    Debug,
-    Allocative,
-    strong_hash::StrongHash
+    Eq, PartialEq, Ord, PartialOrd, Hash, StrongHash, Clone_, Dupe_, Debug, Allocative
 )]
 #[allocative(bound = "")]
-pub struct ArcS<S: StringInside + ?Sized> {
+pub struct ArcS<V: StringInside + ?Sized> {
     s: ArcStr,
-    _marker: PhantomData<*const S>,
+    _marker: PhantomData<*const V>,
+}
+
+impl<S: StringInside + ?Sized> PagableSerialize for ArcS<S> {
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> pagable::Result<()> {
+        Ok(self.serialize(serializer.serde())?)
+    }
+}
+
+impl<'de, S: StringInside + ?Sized> PagableDeserialize<'de> for ArcS<S> {
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        Ok(Self::deserialize(deserializer.serde())?)
+    }
+}
+
+impl<S: StringInside + ?Sized> Serialize for ArcS<S> {
+    fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
+    where
+        Ser: serde::Serializer,
+    {
+        serializer.serialize_str(&self.s)
+    }
+}
+
+impl<'de, S: StringInside + ?Sized> Deserialize<'de> for ArcS<S> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let v = String::deserialize(deserializer)?;
+        Ok(ArcS::from(S::from_str(&v)))
+    }
 }
 
 // Copy-paste these two lines from `std::sync::Arc`.
@@ -125,6 +167,21 @@ pub struct ThinArcS<S: StringInside + ?Sized> {
 // Copy-paste these two lines from `std::sync::Arc`.
 unsafe impl<S: StringInside + ?Sized + Sync + Send> Send for ThinArcS<S> {}
 unsafe impl<S: StringInside + ?Sized + Sync + Send> Sync for ThinArcS<S> {}
+
+impl<S: StringInside + ?Sized> PagableSerialize for ThinArcS<S> {
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> pagable::Result<()> {
+        Ok(self.s.serialize(serializer.serde())?)
+    }
+}
+
+impl<'de, S: StringInside + ?Sized> PagableDeserialize<'de> for ThinArcS<S> {
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        let v = String::deserialize(deserializer.serde())?;
+        Ok(ThinArcS::from(S::from_str(&v)))
+    }
+}
 
 impl<S: StringInside + ?Sized> ThinArcS<S> {
     // Cannot implement `TryFrom` trait, something about conflicting implementations.

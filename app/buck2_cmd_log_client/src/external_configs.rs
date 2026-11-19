@@ -34,13 +34,7 @@ const CLI: &str = "cli";
 pub struct ExternalConfigsCommand {
     #[clap(flatten)]
     event_log: EventLogOptions,
-    #[clap(
-        long,
-        help = "Which output format to use for this command",
-        default_value = "tabulated",
-        ignore_case = true,
-        value_enum
-    )]
+    #[clap(flatten)]
     format: LogCommandOutputFormat,
 }
 
@@ -64,17 +58,12 @@ impl BuckSubcommand for ExternalConfigsCommand {
         )?;
 
         while let Some(event) = events.try_next().await? {
-            match event {
-                StreamValue::Event(event) => match event.data {
-                    Some(buck2_data::buck_event::Data::Instant(instant)) => match instant.data {
-                        Some(buck2_data::instant_event::Data::BuckconfigInputValues(configs)) => {
-                            log_external_configs(&configs.components, format.clone()).await?;
-                        }
-                        _ => {}
-                    },
-                    _ => {}
-                },
-                _ => {}
+            if let StreamValue::Event(event) = event
+                && let Some(buck2_data::buck_event::Data::Instant(instant)) = event.data
+                && let Some(buck2_data::instant_event::Data::BuckconfigInputValues(configs)) =
+                    instant.data
+            {
+                log_external_configs(&configs.components, format.clone()).await?;
             }
         }
 
@@ -99,10 +88,48 @@ struct ExternalConfigFileEntry<'a> {
     origin: &'a str,
 }
 
+/// One csv row shape for config files and values. The csv writer takes the header from the
+/// first row and rejects rows of another width, so every column is always present.
+#[derive(Serialize)]
+struct ExternalConfigCsvRow<'a> {
+    path: &'a str,
+    section: &'a str,
+    key: &'a str,
+    value: &'a str,
+    cell: &'a str,
+    origin: &'a str,
+}
+
+impl ExternalConfigValueEntry<'_> {
+    fn csv_row(&self) -> ExternalConfigCsvRow<'_> {
+        ExternalConfigCsvRow {
+            path: "",
+            section: self.section,
+            key: self.key,
+            value: self.value,
+            cell: self.cell.unwrap_or_default(),
+            origin: self.origin.unwrap_or_default(),
+        }
+    }
+}
+
+impl ExternalConfigFileEntry<'_> {
+    fn csv_row(&self) -> ExternalConfigCsvRow<'_> {
+        ExternalConfigCsvRow {
+            path: self.path,
+            section: "",
+            key: "",
+            value: "",
+            cell: "",
+            origin: self.origin,
+        }
+    }
+}
+
 fn write_config_value<'a>(
     config_value: &'a buck2_data::ConfigValue,
     origin_path: &'a str,
-    mut log_writer: &mut LogCommandOutputFormatWithWriter,
+    log_writer: &mut LogCommandOutputFormatWithWriter,
 ) -> buck2_error::Result<()> {
     let external_config = ExternalConfigValueEntry {
         section: &config_value.section,
@@ -112,8 +139,9 @@ fn write_config_value<'a>(
         origin: Some(origin_path),
     };
 
-    match &mut log_writer {
-        LogCommandOutputFormatWithWriter::Tabulated(writer) => {
+    match log_writer {
+        LogCommandOutputFormatWithWriter::Readable(writer)
+        | LogCommandOutputFormatWithWriter::Tabulated(writer) => {
             writeln!(
                 writer,
                 "{}.{} = {}\t{}\t{}",
@@ -132,7 +160,7 @@ fn write_config_value<'a>(
         }
         LogCommandOutputFormatWithWriter::Csv(writer) => {
             writer
-                .serialize(external_config)
+                .serialize(external_config.csv_row())
                 .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogCmd))?;
         }
     }
@@ -141,7 +169,7 @@ fn write_config_value<'a>(
 
 fn write_config_values(
     global_external_config: &GlobalExternalConfig,
-    mut log_writer: &mut LogCommandOutputFormatWithWriter,
+    log_writer: &mut LogCommandOutputFormatWithWriter,
 ) -> buck2_error::Result<()> {
     global_external_config
         .values
@@ -150,19 +178,20 @@ fn write_config_values(
             write_config_value(
                 config_value,
                 &global_external_config.origin_path,
-                &mut log_writer,
+                log_writer,
             )
         })
 }
 
 fn write_config_file(
     path: &str,
-    mut log_writer: &mut LogCommandOutputFormatWithWriter,
+    log_writer: &mut LogCommandOutputFormatWithWriter,
 ) -> buck2_error::Result<()> {
     let origin = "config-file";
     let config_file = ExternalConfigFileEntry { path, origin };
-    match &mut log_writer {
-        LogCommandOutputFormatWithWriter::Tabulated(writer) => {
+    match log_writer {
+        LogCommandOutputFormatWithWriter::Readable(writer)
+        | LogCommandOutputFormatWithWriter::Tabulated(writer) => {
             writeln!(writer, "{path}\t\t{origin}")?;
         }
         LogCommandOutputFormatWithWriter::Json(writer) => {
@@ -171,7 +200,7 @@ fn write_config_file(
         }
         LogCommandOutputFormatWithWriter::Csv(writer) => {
             writer
-                .serialize(config_file)
+                .serialize(config_file.csv_row())
                 .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogCmd))?;
         }
     }
@@ -201,7 +230,7 @@ async fn log_external_configs(
                     .as_ref()
                     .into_iter()
                     .try_for_each(|data| match data {
-                        CData::ProjectRelativePath(p) => write_config_file(&p, &mut log_writer),
+                        CData::ProjectRelativePath(p) => write_config_file(p, &mut log_writer),
                         CData::GlobalExternalConfig(external_config_values) => {
                             write_config_values(external_config_values, &mut log_writer)
                         }
@@ -215,4 +244,53 @@ async fn log_external_configs(
         }
         Ok(())
     }).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Config files and values share one csv row shape, so any sequence of them writes.
+    #[test]
+    fn test_csv_rows_share_one_shape() {
+        let mut out = Vec::new();
+        {
+            let mut w = csv::WriterBuilder::new().from_writer(&mut out);
+            w.serialize(
+                ExternalConfigFileEntry {
+                    path: "x.bcfg",
+                    origin: "config-file",
+                }
+                .csv_row(),
+            )
+            .unwrap();
+            w.serialize(
+                ExternalConfigValueEntry {
+                    section: "a",
+                    key: "b",
+                    value: "1",
+                    cell: None,
+                    origin: Some("cli"),
+                }
+                .csv_row(),
+            )
+            .unwrap();
+            w.serialize(
+                ExternalConfigValueEntry {
+                    section: "a",
+                    key: "c",
+                    value: "2",
+                    cell: Some("root"),
+                    origin: Some("cli"),
+                }
+                .csv_row(),
+            )
+            .unwrap();
+        }
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(
+            out,
+            "path,section,key,value,cell,origin\nx.bcfg,,,,,config-file\n,a,b,1,,cli\n,a,c,2,root,cli\n"
+        );
+    }
 }

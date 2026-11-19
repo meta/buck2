@@ -14,16 +14,11 @@ use std::sync::Arc;
 use allocative::Allocative;
 use buck2_core::provider::id::ProviderId;
 use dupe::Dupe;
+use pagable::Pagable;
+use strong_hash::StrongHash;
 
 #[derive(
-    Debug,
-    Eq,
-    PartialEq,
-    Hash,
-    Clone,
-    Dupe,
-    Allocative,
-    strong_hash::StrongHash
+    Debug, Eq, PartialEq, Hash, StrongHash, Clone, Dupe, Allocative, Pagable
 )]
 pub struct ProviderIdSet(Option<Arc<Vec<Arc<ProviderId>>>>);
 

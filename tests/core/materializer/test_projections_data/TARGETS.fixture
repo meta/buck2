@@ -1,0 +1,40 @@
+load(":defs.bzl", "consume", "produce")
+
+# Two projections of one directory artifact, each consumed by its own action.
+produce(name = "split", contents = {"a": "split-a", "b": "split-b"})
+
+consume(name = "split_a", dep = ":split", projections = ["a"])
+
+consume(name = "split_b", dep = ":split", projections = ["b"])
+
+# One directory artifact consumed at two granularities in the same build.
+produce(name = "mixed", contents = {"a": "mixed-a", "b": "mixed-b"})
+
+consume(name = "mixed_projection", dep = ":mixed", projections = ["a"])
+
+consume(name = "mixed_whole", dep = ":mixed", whole_dir_entries = ["a", "b"])
+
+# `test_projections.py` rewrites both the contents and the projected subpath of
+# this pair between two builds.
+produce(name = "moving", contents = {"a": "moving-a-1", "b": "moving-b-1"})
+
+consume(name = "moving_consumer", dep = ":moving", projections = ["a"])
+
+# Producer and consumer are built by different daemons.
+produce(name = "restart", contents = {"a": "restart-a", "b": "restart-b"})
+
+consume(name = "restart_consumer", dep = ":restart", projections = ["a"])
+
+# `test_projections.py` consumes this pair whole, then as a projection at new
+# contents, then whole again.
+produce(name = "interleaved", contents = {"a": "interleaved-a-1", "b": "interleaved-b-1"})
+
+consume(name = "interleaved_projection", dep = ":interleaved", projections = ["a"])
+
+consume(name = "interleaved_whole", dep = ":interleaved", whole_dir_entries = ["a", "b"])
+
+# `test_projections.py` adds an entry to this directory between two builds and
+# moves the projection onto it.
+produce(name = "growing", contents = {"a": "growing-a"})
+
+consume(name = "growing_consumer", dep = ":growing", projections = ["a"])

@@ -13,4 +13,3 @@ error: type annotations not allowed on multiple assignments
   |
 1 | (x, y): int = foo
   |         ^^^
-  |

@@ -1,0 +1,7 @@
+# PUBLIC leaf under intermediate non-opt-in PACKAGE. Cap from grandparent
+# (`root//intersect/PACKAGE`) still applies, clipping PUBLIC to
+# `root//intersect/...`.
+stub(
+    name = "t",
+    visibility = ["PUBLIC"],
+)

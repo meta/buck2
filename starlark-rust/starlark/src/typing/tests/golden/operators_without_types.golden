@@ -1,0 +1,23 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Code:
+def test(x: EveryOperator, y: str):
+    binary = (x + y, x - y, x * y, x / y, x // y, x % y, x & y, x | y, x ^ y, x << y, x >> y)
+    boolean = (x < y, y in x)
+    reflected = (None + x, None * x)
+    unary = (+x, -x, ~x)
+
+No errors.
+
+Types:
+binary: (typing.Any, typing.Any, typing.Any, typing.Any, typing.Any, typing.Any, typing.Any, typing.Any, typing.Any, typing.Any, typing.Any)
+boolean: (bool, bool)
+reflected: (typing.Any, typing.Any)
+unary: (every_operator, every_operator, every_operator)
+
+Compiler typechecker (eval):
+No errors.

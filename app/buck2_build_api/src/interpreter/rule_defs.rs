@@ -25,6 +25,7 @@ pub mod required_test_local_resource;
 pub mod resolve_query_macro;
 pub mod resolved_macro;
 pub mod transitive_set;
+pub mod type_id_domain;
 pub mod validation_spec;
 
 pub fn register_rule_defs(globals: &mut GlobalsBuilder) {

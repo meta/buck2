@@ -13,7 +13,9 @@ package com.facebook.buck.android.apk;
 import com.facebook.buck.android.apk.sdk.ApkBuilder;
 import com.facebook.buck.android.apk.sdk.ApkCreationException;
 import com.facebook.buck.android.apk.sdk.DuplicateFileException;
+import com.facebook.buck.android.apk.sdk.FastPackaging;
 import com.facebook.buck.android.apk.sdk.SealedApkException;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -22,16 +24,17 @@ import java.nio.file.Path;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.UnrecoverableKeyException;
+import java.util.function.Predicate;
+import org.jetbrains.annotations.Nullable;
 
 /** A class that provides methods useful for building an APK. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ApkBuilderUtils {
 
   /**
    * The type of a keystore created via the {@code jarsigner} command in Sun/Oracle Java. See
    * http://docs.oracle.com/javase/7/docs/technotes/guides/security/StandardNames.html#KeyStore.
    */
-  private static final String JARSIGNER_KEY_STORE_TYPE = "jks";
-
   public static void buildApk(
       Path resourceApk,
       Path pathToOutputApkFile,
@@ -43,8 +46,54 @@ public class ApkBuilderUtils {
       Path pathToKeystore,
       KeystoreProperties keystoreProperties,
       boolean packageMetaInfVersionFiles,
-      PrintStream output,
-      ImmutableSet<String> excludedResources)
+      @Nullable PrintStream output,
+      ImmutableSet<String> excludedResources,
+      Predicate<String> storedPaths)
+      throws IOException,
+          ApkCreationException,
+          KeyStoreException,
+          NoSuchAlgorithmException,
+          SealedApkException,
+          UnrecoverableKeyException,
+          DuplicateFileException {
+    buildApk(
+        resourceApk,
+        pathToOutputApkFile,
+        dexFile,
+        assetDirectories,
+        nativeLibraryDirectories,
+        zipFiles,
+        jarFilesThatMayContainResources,
+        pathToKeystore,
+        keystoreProperties,
+        packageMetaInfVersionFiles,
+        output,
+        excludedResources,
+        storedPaths,
+        null);
+  }
+
+  /**
+   * Builds the APK like {@link #buildApk(Path, Path, Path, ImmutableSet, ImmutableSet,
+   * ImmutableSet, ImmutableSet, Path, KeystoreProperties, boolean, PrintStream, ImmutableSet,
+   * Predicate)}, with {@link com.facebook.buck.android.apk.sdk.FastApkJarBuilder} when {@code
+   * fastPackaging} is set.
+   */
+  public static void buildApk(
+      Path resourceApk,
+      Path pathToOutputApkFile,
+      Path dexFile,
+      ImmutableSet<Path> assetDirectories,
+      ImmutableSet<Path> nativeLibraryDirectories,
+      ImmutableSet<Path> zipFiles,
+      ImmutableSet<Path> jarFilesThatMayContainResources,
+      Path pathToKeystore,
+      KeystoreProperties keystoreProperties,
+      boolean packageMetaInfVersionFiles,
+      @Nullable PrintStream output,
+      ImmutableSet<String> excludedResources,
+      Predicate<String> storedPaths,
+      @Nullable FastPackaging fastPackaging)
       throws IOException,
           ApkCreationException,
           KeyStoreException,
@@ -59,24 +108,25 @@ public class ApkBuilderUtils {
             dexFile.toFile(),
             packageMetaInfVersionFiles,
             output,
-            excludedResources);
-    for (Path nativeLibraryDirectory : nativeLibraryDirectories) {
+            excludedResources,
+            storedPaths,
+            fastPackaging);
+    for (Path nativeLibraryDirectory : nativeLibraryDirectories.stream().sorted().toList()) {
       builder.addNativeLibraries(nativeLibraryDirectory.toFile());
     }
-    for (Path assetDirectory : assetDirectories) {
+    for (Path assetDirectory : assetDirectories.stream().sorted().toList()) {
       builder.addSourceFolder(assetDirectory.toFile());
     }
-    for (Path zipFile : zipFiles) {
+    for (Path zipFile : zipFiles.stream().sorted().toList()) {
       // TODO(natthu): Skipping silently is bad. These should really be assertions.
       if (Files.exists(zipFile) && Files.isRegularFile(zipFile)) {
         builder.addZipFile(zipFile.toFile());
       }
     }
-    for (Path jarFileThatMayContainResources : jarFilesThatMayContainResources) {
+    for (Path jarFileThatMayContainResources :
+        jarFilesThatMayContainResources.stream().sorted().toList()) {
       builder.addResourcesFromJar(jarFileThatMayContainResources.toFile());
     }
-
-    // Build the APK
     builder.sealApk();
   }
 }

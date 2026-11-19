@@ -10,13 +10,15 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.Attribute;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
@@ -26,8 +28,13 @@ import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.AnnotationNode;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldNode;
+import org.objectweb.asm.tree.MethodNode;
 
 /** A {@link ClassVisitor} that only passes to its delegate events for the class's ABI. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AbiFilteringClassVisitor extends ClassVisitor {
 
   private final List<String> methodsWithRetainedBody;
@@ -41,10 +48,21 @@ class AbiFilteringClassVisitor extends ClassVisitor {
   private final Set<String> includedInnerClasses = new HashSet<>();
   private final List<String> nestMembers = new ArrayList<>();
   private boolean keepSynthetic;
+  private final Set<String> hiddenDeprecatedMethods;
+  // When the visited class is a private Kotlin nested class of strippable kind, no member
+  // is consumer-reachable: drop every field and non-constructor method, keeping only the
+  // class shell (plus the synthesized default constructor from visitEnd) so
+  // InnerClasses/constant-pool/@Metadata references stay valid. Constructors still flow
+  // through the normal filter so a public constructor is kept exactly as source-only-abi
+  // keeps it, as do @JvmStatic/@JvmField members (keptMemberKeys), whose outer-class
+  // static copies callers genuinely reach.
+  private final boolean stripAllMembers;
+  // JVM name+descriptor keys exempt from stripAllMembers. Empty unless stripping.
+  private final Set<String> keptMemberKeys;
 
   public AbiFilteringClassVisitor(
       ClassVisitor cv, List<String> methodsWithRetainedBody, boolean keepSynthetic) {
-    this(cv, methodsWithRetainedBody, null, keepSynthetic);
+    this(cv, methodsWithRetainedBody, null, keepSynthetic, Collections.emptySet());
   }
 
   public AbiFilteringClassVisitor(
@@ -52,10 +70,163 @@ class AbiFilteringClassVisitor extends ClassVisitor {
       List<String> methodsWithRetainedBody,
       @Nullable Set<String> referencedClassNames,
       boolean keepSynthetic) {
+    this(cv, methodsWithRetainedBody, referencedClassNames, keepSynthetic, Collections.emptySet());
+  }
+
+  public AbiFilteringClassVisitor(
+      ClassVisitor cv,
+      List<String> methodsWithRetainedBody,
+      @Nullable Set<String> referencedClassNames,
+      boolean keepSynthetic,
+      Set<String> hiddenDeprecatedMethods) {
+    this(
+        cv,
+        methodsWithRetainedBody,
+        referencedClassNames,
+        keepSynthetic,
+        hiddenDeprecatedMethods,
+        false,
+        Collections.emptySet());
+  }
+
+  public AbiFilteringClassVisitor(
+      ClassVisitor cv,
+      List<String> methodsWithRetainedBody,
+      @Nullable Set<String> referencedClassNames,
+      boolean keepSynthetic,
+      Set<String> hiddenDeprecatedMethods,
+      boolean stripAllMembers,
+      Set<String> keptMemberKeys) {
     super(Opcodes.ASM9, cv);
     this.methodsWithRetainedBody = methodsWithRetainedBody;
     this.referencedClassNames = referencedClassNames;
     this.keepSynthetic = keepSynthetic;
+    this.hiddenDeprecatedMethods = hiddenDeprecatedMethods;
+    this.stripAllMembers = stripAllMembers;
+    this.keptMemberKeys = keptMemberKeys;
+  }
+
+  /**
+   * Finds synthetic methods annotated with {@code @kotlin.Deprecated(level = HIDDEN)}.
+   *
+   * <p>Kotlin compiles {@code DeprecationLevel.HIDDEN} members as {@code ACC_SYNTHETIC} but keeps
+   * them in {@code @kotlin.Metadata}. kotlinc needs the JVM method (with its {@code @Deprecated}
+   * marker) to hide the overload during resolution; dropping it makes calls ambiguous that Gradle
+   * (full jars) resolves. Returns keys of the form {@code name + descriptor}.
+   */
+  static Set<String> findHiddenDeprecatedMethods(ClassNode classNode) {
+    if (classNode.methods == null) {
+      return Collections.emptySet();
+    }
+    Set<String> result = new HashSet<>();
+    for (MethodNode method : classNode.methods) {
+      if ((method.access & Opcodes.ACC_SYNTHETIC) == 0) {
+        continue;
+      }
+      if (isHiddenDeprecated(method.visibleAnnotations)
+          || isHiddenDeprecated(method.invisibleAnnotations)) {
+        result.add(method.name + method.desc);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Finds members that kotlinc also emits as statics on the outer class ({@code @JvmStatic}/
+   * {@code @JvmField}). Kotlin metadata omits these annotations, so read bytecode instead. A
+   * synthetic {@code $annotations} carrier keeps both itself and the accessor it names. Returns
+   * keys of the form {@code name + descriptor}.
+   */
+  static Set<String> findJvmStaticMemberKeys(ClassNode classNode) {
+    Set<String> result = new HashSet<>();
+    if (classNode.methods != null) {
+      for (MethodNode method : classNode.methods) {
+        if (!hasJvmStaticOrJvmField(method.visibleAnnotations)
+            && !hasJvmStaticOrJvmField(method.invisibleAnnotations)) {
+          continue;
+        }
+        String methodName = Objects.requireNonNull(method.name);
+        result.add(methodName + method.desc);
+        if (methodName.endsWith("$annotations")) {
+          String accessorName =
+              methodName.substring(0, methodName.length() - "$annotations".length());
+          for (MethodNode candidate : classNode.methods) {
+            if (Objects.requireNonNull(candidate.name).equals(accessorName)
+                && isAccessorShape(accessorName, Objects.requireNonNull(candidate.desc))) {
+              result.add(candidate.name + candidate.desc);
+            }
+          }
+        }
+      }
+    }
+    if (classNode.fields != null) {
+      for (FieldNode field : classNode.fields) {
+        if (hasJvmStaticOrJvmField(field.visibleAnnotations)
+            || hasJvmStaticOrJvmField(field.invisibleAnnotations)) {
+          result.add(field.name + field.desc);
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Whether a same-named method has the JVM shape of the Kotlin accessor a {@code $annotations}
+   * carrier names: setters take one argument and return void, getters take none. A Kotlin accessor
+   * cannot share name and shape with an unrelated overload (same JVM signature differing only in
+   * return type is a platform clash), so this keeps the accessor and its bridges while dropping
+   * unrelated overloads.
+   */
+  private static boolean isAccessorShape(String accessorName, String desc) {
+    Type methodType = Type.getMethodType(desc);
+    if (accessorName.startsWith("set")) {
+      return methodType.getArgumentTypes().length == 1
+          && methodType.getReturnType().equals(Type.VOID_TYPE);
+    }
+    return methodType.getArgumentTypes().length == 0;
+  }
+
+  private static boolean hasJvmStaticOrJvmField(@Nullable List<AnnotationNode> annotations) {
+    if (annotations == null) {
+      return false;
+    }
+    for (AnnotationNode annotation : annotations) {
+      if ("Lkotlin/jvm/JvmStatic;".equals(annotation.desc)
+          || "Lkotlin/jvm/JvmField;".equals(annotation.desc)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean isHiddenDeprecated(@Nullable List<AnnotationNode> annotations) {
+    if (annotations == null) {
+      return false;
+    }
+    for (AnnotationNode annotation : annotations) {
+      if (!"Lkotlin/Deprecated;".equals(annotation.desc)) {
+        continue;
+      }
+      if (annotation.values == null) {
+        return false;
+      }
+      for (int i = 0; i + 1 < annotation.values.size(); i += 2) {
+        if (!"level".equals(annotation.values.get(i))) {
+          continue;
+        }
+        Object level = annotation.values.get(i + 1);
+        if (level instanceof String[]) {
+          String[] enumValue = (String[]) level;
+          if (enumValue.length == 2
+              && "Lkotlin/DeprecationLevel;".equals(enumValue[0])
+              && "HIDDEN".equals(enumValue[1])) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    return false;
   }
 
   @Override
@@ -63,9 +234,9 @@ class AbiFilteringClassVisitor extends ClassVisitor {
       int version,
       int access,
       String name,
-      String signature,
-      String superName,
-      String[] interfaces) {
+      @Nullable String signature,
+      @Nullable String superName,
+      String @Nullable [] interfaces) {
     this.name = name;
     classAccess = access;
     classVersion = version;
@@ -95,7 +266,10 @@ class AbiFilteringClassVisitor extends ClassVisitor {
   @Override
   @Nullable
   public FieldVisitor visitField(
-      int access, String name, String desc, String signature, Object value) {
+      int access, String name, String desc, @Nullable String signature, @Nullable Object value) {
+    if (stripAllMembers && !keptMemberKeys.contains(name + desc)) {
+      return null;
+    }
     if (!shouldInclude(access)) {
       return null;
     }
@@ -105,11 +279,21 @@ class AbiFilteringClassVisitor extends ClassVisitor {
   @Override
   @Nullable
   public MethodVisitor visitMethod(
-      int access, String name, String desc, String signature, String[] exceptions) {
+      int access,
+      String name,
+      String desc,
+      @Nullable String signature,
+      String @Nullable [] exceptions) {
+    if (stripAllMembers && !name.equals("<init>") && !keptMemberKeys.contains(name + desc)) {
+      return null;
+    }
     if (methodsWithRetainedBody.contains(name)
         || (name.endsWith("$annotations"))
         || (name.endsWith("$default")
-            && methodsWithRetainedBody.contains(name.substring(0, name.length() - 8)))) {
+            && methodsWithRetainedBody.contains(name.substring(0, name.length() - 8)))
+        || (name.endsWith("$$forInline")
+            && methodsWithRetainedBody.contains(
+                name.substring(0, name.length() - "$$forInline".length())))) {
       if (name.equals("<init>") && (access & (Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC)) == 0) {
         hasVisibleConstructor = true;
       }
@@ -121,7 +305,10 @@ class AbiFilteringClassVisitor extends ClassVisitor {
     // implicitly by the Java Virtual Machine; they are never invoked directly from any
     // Java Virtual Machine instruction, but are invoked only indirectly as part of the class
     // initialization process." Thus we don't need to emit a stub of <clinit>.
-    if (!shouldInclude(access) || (name.equals("<clinit>") && (access & Opcodes.ACC_STATIC) > 0)) {
+    boolean isHiddenDeprecatedMethod =
+        (access & Opcodes.ACC_SYNTHETIC) != 0 && hiddenDeprecatedMethods.contains(name + desc);
+    if ((!shouldInclude(access) && !isHiddenDeprecatedMethod)
+        || (name.equals("<clinit>") && (access & Opcodes.ACC_STATIC) > 0)) {
       return null;
     }
 
@@ -243,7 +430,7 @@ class AbiFilteringClassVisitor extends ClassVisitor {
 
   /** A {@link MethodVisitor} that replicates the behavior of {@link ClassReader#SKIP_CODE}. */
   private static class SkipCodeMethodVisitor extends MethodVisitor {
-    public SkipCodeMethodVisitor(int api, MethodVisitor methodVisitor) {
+    public SkipCodeMethodVisitor(int api, @Nullable MethodVisitor methodVisitor) {
       super(api, methodVisitor);
     }
 

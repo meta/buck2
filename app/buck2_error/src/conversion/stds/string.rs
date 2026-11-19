@@ -18,23 +18,6 @@ impl From<std::string::FromUtf8Error> for crate::Error {
     }
 }
 
-// TODO get rid of this
-impl From<std::string::String> for crate::Error {
-    #[cold]
-    #[track_caller]
-    fn from(value: std::string::String) -> Self {
-        let source_location =
-            crate::source_location::SourceLocation::new(std::panic::Location::caller().file());
-
-        crate::Error::new(
-            value,
-            crate::ErrorTag::StringConversion,
-            source_location,
-            None,
-        )
-    }
-}
-
 impl From<std::str::Utf8Error> for crate::Error {
     #[cold]
     #[track_caller]

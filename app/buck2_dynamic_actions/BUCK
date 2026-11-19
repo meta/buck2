@@ -1,0 +1,33 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "buck2_dynamic_actions",
+    srcs = glob(["src/**/*.rs"]),
+    deps = [
+        "fbsource//third-party/rust:async-trait",
+        "fbsource//third-party/rust:derive_more",
+        "fbsource//third-party/rust:futures",
+        "fbsource//third-party/rust:smallvec",
+        "//buck2/allocative/allocative:allocative",
+        "//buck2/app/buck2_artifact:buck2_artifact",
+        "//buck2/app/buck2_build_api:buck2_build_api",
+        "//buck2/app/buck2_build_signals:buck2_build_signals",
+        "//buck2/app/buck2_core:buck2_core",
+        "//buck2/app/buck2_data:buck2_data",
+        "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_events:buck2_events",
+        "//buck2/app/buck2_execute:buck2_execute",
+        "//buck2/app/buck2_hash:buck2_hash",
+        "//buck2/app/buck2_interpreter:buck2_interpreter",
+        "//buck2/app/buck2_util:buck2_util",
+        "//buck2/dice/dice:dice",
+        "//buck2/dice/dice_futures:dice_futures",
+        "//buck2/gazebo/dupe:dupe",
+        "//buck2/pagable:pagable",
+        "//buck2/shed/mini_vec:mini_vec",
+        "//buck2/starlark-rust/starlark:starlark",
+        "//buck2/starlark-rust/starlark_map:starlark_map",
+    ],
+)

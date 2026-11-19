@@ -13,8 +13,7 @@ def _impl(ctx):
 
 print_caching = bxl_main(
     impl = _impl,
-    cli_args = {
-    },
+    cli_args = {},
 )
 
 def _print_error_caching_impl(ctx):
@@ -33,6 +32,5 @@ def _impl_caching_with_target_platforms(ctx):
 
 caching_with_target_platforms = bxl_main(
     impl = _impl_caching_with_target_platforms,
-    cli_args = {
-    },
+    cli_args = {},
 )

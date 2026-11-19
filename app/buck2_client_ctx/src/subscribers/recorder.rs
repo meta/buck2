@@ -10,25 +10,26 @@
 
 use std::cmp::max;
 use std::cmp::min;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::io::Write;
 use std::ops::Sub;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
+use buck2_action_parallelism::ActionInterval;
 use buck2_cli_proto::command_result;
 use buck2_common::build_count::BuildCount;
 use buck2_common::build_count::BuildCountManager;
 use buck2_common::convert::ProstDurationExt;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_core::buck2_env;
-use buck2_core::io_counters::IoCounterKey;
 use buck2_core::soft_error;
+use buck2_core::soft_error_or_panic;
+use buck2_core::warn_user_or_panic;
 use buck2_data::ErrorReport;
 use buck2_data::FileWatcherProvider;
 use buck2_data::FileWatcherStart;
@@ -40,11 +41,14 @@ use buck2_data::SystemInfo;
 use buck2_data::TargetCfg;
 use buck2_data::error::ErrorTag;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::ExitCode;
 use buck2_error::Tier;
 use buck2_error::buck2_error;
 use buck2_error::classify::ERROR_TAG_UNCLASSIFIED;
 use buck2_error::classify::ErrorLike;
+#[cfg(fbcode_build)]
+use buck2_error::classify::best_error;
 use buck2_error::classify::source_area;
 use buck2_error::internal_error;
 use buck2_error::source_location::SourceLocation;
@@ -56,35 +60,40 @@ use buck2_event_observer::last_command_execution_kind::LastCommandExecutionKind;
 use buck2_event_observer::last_command_execution_kind::get_last_command_execution_time;
 use buck2_events::BuckEvent;
 use buck2_events::daemon_id::DaemonId;
+use buck2_events::metadata;
 use buck2_events::sink::remote::ScribeConfig;
 use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_path::AbsPathBuf;
+use buck2_hash::BuckMutMap;
+use buck2_hash::BuckMutSet;
+use buck2_hash::IntentionallyStdHashMap;
 use buck2_util::network_speed_average::NetworkSpeedAverage;
 use buck2_util::sliding_window::SlidingWindow;
 use buck2_wrapper_common::BUCK_WRAPPER_START_TIME_ENV_VAR;
 use buck2_wrapper_common::invocation_id::TraceId;
 use console::strip_ansi_codes;
 use dupe::Dupe;
-use gazebo::prelude::VecExt;
-use gazebo::variants::VariantName;
 use itertools::Itertools;
 use termwiz::istty::IsTty;
 use tokio::sync::mpsc::Receiver;
+use variant_name::VariantName;
 
+use crate::agent_invocation_info::AgentInvocationInfo;
 use crate::client_ctx::ClientCommandContext;
 use crate::client_metadata::ClientMetadata;
 use crate::common::CommonBuildConfigurationOptions;
 use crate::common::CommonEventLogOptions;
 use crate::common::PreemptibleWhen;
-use crate::console_interaction_stream::SuperConsoleToggle;
+use crate::console_interaction_stream::ConsoleInteraction;
 use crate::exit_result::ExitResult;
 use crate::subscribers::classify_server_stderr::classify_server_stderr;
-use crate::subscribers::observer::ErrorObserver;
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::subscribers::system_warning::check_download_speed;
 use crate::subscribers::system_warning::check_memory_pressure;
 use crate::subscribers::system_warning::check_remaining_disk_space;
+use crate::subscribers::system_warning::is_disk_near_full;
 
 pub fn process_memory(snapshot: &buck2_data::Snapshot) -> Option<u64> {
     // buck2_rss is the resident set size observed by daemon (exluding subprocesses).
@@ -99,10 +108,23 @@ pub fn process_memory(snapshot: &buck2_data::Snapshot) -> Option<u64> {
 
 const MEMORY_PRESSURE_TAG: &str = "memory_pressure_warning";
 
+const SYSTEM_LOAD1_WINDOW: Duration = Duration::from_secs(60);
+const SYSTEM_LOAD5_WINDOW: Duration = Duration::from_secs(5 * 60);
+
+/// Soft errors the client itself reports, before or outside of any event stream. The daemon's
+/// arrive as events; these are added to the record when it is written.
+static CLIENT_SOFT_ERRORS: Mutex<Vec<SoftError>> = Mutex::new(Vec::new());
+
+pub fn note_client_soft_error(soft_error: SoftError) {
+    CLIENT_SOFT_ERRORS.lock().unwrap().push(soft_error);
+}
+
 pub struct InvocationRecorder {
     write_to_path: Option<AbsPathBuf>,
     command_name: Option<&'static str>,
     cli_args: Vec<String>,
+    #[cfg(fbcode_build)]
+    expanded_command: String,
     representative_config_flags: Vec<String>,
     isolation_dir: Option<String>,
     start_time: SystemTime,
@@ -114,11 +136,21 @@ pub struct InvocationRecorder {
     re_experiment_name: Option<String>,
     persistent_cache_mode: Option<String>,
     critical_path_duration: Option<Duration>,
+    critical_path_page_in: Option<Duration>,
     tags: Vec<String>,
     run_local_count: u64,
+    /// Dep-file cache work for this command, summed from its own events.
+    dep_file_db_probes: u64,
+    dep_file_db_probe_duration_us: u64,
+    dep_file_db_fetches: u64,
+    dep_file_db_fetch_duration_us: u64,
+    dep_file_db_hits: u64,
+    dep_file_db_writes_queued: u64,
     run_remote_count: u64,
     run_action_cache_count: u64,
     run_remote_dep_file_cache_count: u64,
+    run_remote_served_from_cache_count: u64,
+    run_remote_deduplicated_count: u64,
     run_skipped_count: u64,
     run_fallback_count: u64,
     run_fallback_re_queue_count: u64,
@@ -130,6 +162,7 @@ pub struct InvocationRecorder {
     min_build_count_since_rebase: u64,
     cache_upload_count: u64,
     cache_upload_attempt_count: u64,
+    re_action_cache_query_error_count: u64,
     dep_file_upload_count: u64,
     dep_file_upload_attempt_count: u64,
     parsed_target_patterns: Option<buck2_data::ParsedTargetPatterns>,
@@ -164,6 +197,7 @@ pub struct InvocationRecorder {
     time_to_first_infra_failure_test_result: Option<Duration>,
 
     system_info: SystemInfo,
+    paging_summary: Option<buck2_data::PagingSummary>,
     file_watcher_stats: Option<buck2_data::FileWatcherStats>,
     file_watcher_duration: Option<Duration>,
     time_to_last_action_execution_end: Option<Duration>,
@@ -172,14 +206,11 @@ pub struct InvocationRecorder {
     initial_sink_dropped_count: Option<u64>,
     initial_sink_bytes_written: Option<u64>,
     sink_max_buffer_depth: u64,
-    soft_error_categories: HashSet<SoftError>,
+    soft_error_categories: BuckMutSet<SoftError>,
     concurrent_command_blocking_duration: Option<Duration>,
-    metadata: HashMap<String, String>,
+    metadata: IntentionallyStdHashMap<String, String>,
     analysis_count: u64,
     load_count: u64,
-    daemon_in_memory_state_is_corrupted: bool,
-    daemon_materializer_state_is_corrupted: bool,
-    enable_restarter: bool,
     restarted_trace_id: Option<TraceId>,
     preemptible: Option<PreemptibleWhen>,
     has_command_result: bool,
@@ -189,7 +220,11 @@ pub struct InvocationRecorder {
     bxl_ensure_artifacts_duration: Option<prost_types::Duration>,
     install_duration: Option<prost_types::Duration>,
     install_device_metadata: Vec<buck2_data::DeviceMetadata>,
+    /// Daemon timestamp of `CommandStart`, the origin of `command_duration`.
+    command_start_timestamp: Option<SystemTime>,
+    build_phase_end: Option<(SystemTime, buck2_data::BuildStatus)>,
     installer_log_url: Option<String>,
+    installer_name: Option<String>,
     initial_re_upload_bytes: Option<u64>,
     initial_re_download_bytes: Option<u64>,
     initial_zdb_download_queries: Option<u64>,
@@ -208,12 +243,15 @@ pub struct InvocationRecorder {
     initial_hedwig_download_bytes: Option<u64>,
     initial_hedwig_upload_queries: Option<u64>,
     initial_hedwig_upload_bytes: Option<u64>,
-    concurrent_command_ids: HashSet<String>,
+    concurrent_command_ids: BuckMutSet<String>,
+    re_exceeded_quotas: BuckMutSet<String>,
     daemon_connection_failure: bool,
     /// Daemon started by this command.
     daemon_was_started: Option<buck2_data::DaemonWasStartedReason>,
     should_restart: bool,
+    settings_hash: Option<String>,
     client_metadata: Vec<buck2_data::ClientMetadata>,
+    agent_invocation_info: AgentInvocationInfo,
     command_errors: Vec<ErrorReport>,
     exit_code: Option<u32>,
     exit_result_name: Option<String>,
@@ -228,9 +266,12 @@ pub struct InvocationRecorder {
     peak_process_memory_bytes: Option<u64>,
     has_new_buckconfigs: bool,
     peak_used_disk_space_bytes: Option<u64>,
-    active_networks_kinds: HashSet<i32>,
+    peak_normalized_system_load1: Option<f64>,
+    peak_normalized_system_load5: Option<f64>,
+    active_networks_kinds: BuckMutSet<i32>,
     target_cfg: Option<TargetCfg>,
     hg_revision: Option<String>,
+    git_revision: Option<String>,
     has_local_changes: Option<bool>,
     version_control_errors: Vec<String>,
     concurrent_commands: bool,
@@ -242,7 +283,7 @@ pub struct InvocationRecorder {
     previous_uuid_with_mismatched_config: Option<String>,
     file_watcher: Option<String>,
     health_check_tags_receiver: Option<Receiver<Vec<String>>>,
-    health_check_tags: HashSet<String>,
+    health_check_tags: BuckMutSet<String>,
     exec_time_ms: u64,
     initial_local_cache_hits_files_from_memory_cache: Option<i64>,
     initial_local_cache_hits_files_from_filesystem_cache: Option<i64>,
@@ -258,8 +299,11 @@ pub struct InvocationRecorder {
     max_in_progress_remote_actions: u64,
     current_in_progress_remote_uploads: u64,
     max_in_progress_remote_uploads: u64,
+    // Execution-only intervals of each executed action, used to compute the
+    // action-concurrency distribution emitted on the InvocationRecord.
+    action_intervals: Vec<ActionInterval>,
     // Track executor stage types by span ID to know which counter to decrement on end
-    executor_stages_by_span: HashMap<u64, ExecutorStageType>,
+    executor_stages_by_span: BuckMutMap<u64, ExecutorStageType>,
     // Track maximum buck2 daemon anon memory usage
     memory_max_anon_allprocs: Option<u64>,
     // Track maximum buck2 forkserver anon memory usage
@@ -268,27 +312,34 @@ pub struct InvocationRecorder {
     memory_max_total_allprocs: Option<u64>,
     // Track maximum total buck2 forkserver memory usage (anon+file+kernel)
     memory_max_total_forkserver_actions: Option<u64>,
+    // Track peak allprocs swap usage (bytes)
+    memory_max_swap_bytes_allprocs: Option<u64>,
+    // Track peak allprocs memory pressure (PSI full avg10 %)
+    memory_max_pressure_10s_avg_allprocs: Option<f64>,
+    // Track peak allprocs memory pressure (PSI full avg60 %)
+    memory_max_pressure_60s_avg_allprocs: Option<f64>,
     // CommandOptions data
     command_options: Option<buck2_data::CommandOptions>,
     // Initial IO counters captured at invocation start
-    initial_io_copy_count: u32,
-    initial_io_symlink_count: u32,
-    initial_io_hardlink_count: u32,
-    initial_io_mkdir_count: u32,
-    initial_io_readdir_count: u32,
-    initial_io_readdir_eden_count: u32,
-    initial_io_rmdir_count: u32,
-    initial_io_rmdir_all_count: u32,
-    initial_io_stat_count: u32,
-    initial_io_stat_eden_count: u32,
-    initial_io_chmod_count: u32,
-    initial_io_readlink_count: u32,
-    initial_io_remove_count: u32,
-    initial_io_rename_count: u32,
-    initial_io_read_count: u32,
-    initial_io_write_count: u32,
-    initial_io_canonicalize_count: u32,
-    initial_io_eden_settle_count: u32,
+    initial_io_copy_count: Option<u32>,
+    initial_io_symlink_count: Option<u32>,
+    initial_io_hardlink_count: Option<u32>,
+    initial_io_mkdir_count: Option<u32>,
+    initial_io_readdir_count: Option<u32>,
+    initial_io_readdir_eden_count: Option<u32>,
+    initial_io_rmdir_count: Option<u32>,
+    initial_io_rmdir_all_count: Option<u32>,
+    initial_io_stat_count: Option<u32>,
+    initial_io_stat_eden_count: Option<u32>,
+    initial_io_chmod_count: Option<u32>,
+    initial_io_readlink_count: Option<u32>,
+    initial_io_remove_count: Option<u32>,
+    initial_io_rename_count: Option<u32>,
+    initial_io_read_count: Option<u32>,
+    initial_io_write_count: Option<u32>,
+    initial_io_canonicalize_count: Option<u32>,
+    initial_io_eden_settle_count: Option<u32>,
+    repo_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -309,6 +360,8 @@ impl InvocationRecorder {
             write_to_path: None,
             command_name: None,
             cli_args: args,
+            #[cfg(fbcode_build)]
+            expanded_command: String::new(),
             representative_config_flags: Vec::new(),
             isolation_dir: None,
             start_time,
@@ -320,11 +373,20 @@ impl InvocationRecorder {
             re_experiment_name: None,
             persistent_cache_mode: None,
             critical_path_duration: None,
+            critical_path_page_in: None,
             tags: vec![],
             run_local_count: 0,
+            dep_file_db_probes: 0,
+            dep_file_db_probe_duration_us: 0,
+            dep_file_db_fetches: 0,
+            dep_file_db_fetch_duration_us: 0,
+            dep_file_db_hits: 0,
+            dep_file_db_writes_queued: 0,
             run_remote_count: 0,
             run_action_cache_count: 0,
             run_remote_dep_file_cache_count: 0,
+            run_remote_served_from_cache_count: 0,
+            run_remote_deduplicated_count: 0,
             run_skipped_count: 0,
             run_fallback_count: 0,
             run_fallback_re_queue_count: 0,
@@ -336,6 +398,7 @@ impl InvocationRecorder {
             min_build_count_since_rebase: 0,
             cache_upload_count: 0,
             cache_upload_attempt_count: 0,
+            re_action_cache_query_error_count: 0,
             dep_file_upload_count: 0,
             dep_file_upload_attempt_count: 0,
             parsed_target_patterns: None,
@@ -367,6 +430,7 @@ impl InvocationRecorder {
             time_to_first_infra_failure_test_result: None,
             time_to_first_unknown_test_result: None,
             system_info: SystemInfo::default(),
+            paging_summary: None,
             file_watcher_stats: None,
             file_watcher_duration: None,
             time_to_last_action_execution_end: None,
@@ -375,16 +439,13 @@ impl InvocationRecorder {
             initial_sink_dropped_count: None,
             initial_sink_bytes_written: None,
             sink_max_buffer_depth: 0,
-            soft_error_categories: HashSet::new(),
+            soft_error_categories: BuckMutSet::default(),
             concurrent_command_blocking_duration: None,
             // Use a null daemon_id here initially - if we later get metadata back from the daemon,
             // we'll overwrite this then
             metadata: buck2_events::metadata::collect(&DaemonId::null()),
             analysis_count: 0,
             load_count: 0,
-            daemon_in_memory_state_is_corrupted: false,
-            daemon_materializer_state_is_corrupted: false,
-            enable_restarter: false,
             restarted_trace_id,
             preemptible: None,
             has_command_result: false,
@@ -394,7 +455,10 @@ impl InvocationRecorder {
             bxl_ensure_artifacts_duration: None,
             install_duration: None,
             install_device_metadata: Vec::new(),
+            command_start_timestamp: None,
+            build_phase_end: None,
             installer_log_url: None,
+            installer_name: None,
             initial_re_upload_bytes: None,
             initial_re_download_bytes: None,
             initial_zdb_download_queries: None,
@@ -413,11 +477,14 @@ impl InvocationRecorder {
             initial_hedwig_download_bytes: None,
             initial_hedwig_upload_queries: None,
             initial_hedwig_upload_bytes: None,
-            concurrent_command_ids: HashSet::new(),
+            concurrent_command_ids: BuckMutSet::default(),
+            re_exceeded_quotas: BuckMutSet::default(),
             daemon_connection_failure: false,
             daemon_was_started: None,
+            settings_hash: None,
             should_restart: false,
             client_metadata: Vec::new(),
+            agent_invocation_info: AgentInvocationInfo::default(),
             command_errors: Vec::new(),
             exit_code: None,
             exit_result_name: None,
@@ -439,9 +506,12 @@ impl InvocationRecorder {
             peak_process_memory_bytes: None,
             has_new_buckconfigs: false,
             peak_used_disk_space_bytes: None,
-            active_networks_kinds: HashSet::new(),
+            peak_normalized_system_load1: None,
+            peak_normalized_system_load5: None,
+            active_networks_kinds: BuckMutSet::default(),
             target_cfg: None,
             hg_revision: None,
+            git_revision: None,
             has_local_changes: None,
             version_control_errors: Vec::new(),
             concurrent_commands: false,
@@ -453,7 +523,7 @@ impl InvocationRecorder {
             previous_uuid_with_mismatched_config: None,
             file_watcher: None,
             health_check_tags_receiver: None,
-            health_check_tags: HashSet::new(),
+            health_check_tags: BuckMutSet::default(),
             exec_time_ms: 0,
             initial_local_cache_hits_files_from_memory_cache: None,
             initial_local_cache_hits_files_from_filesystem_cache: None,
@@ -463,36 +533,41 @@ impl InvocationRecorder {
             max_dice_compute_keys: 0,
             current_in_progress_actions: 0,
             max_in_progress_actions: 0,
+            action_intervals: Vec::new(),
             current_in_progress_local_actions: 0,
             max_in_progress_local_actions: 0,
             current_in_progress_remote_actions: 0,
             max_in_progress_remote_actions: 0,
             current_in_progress_remote_uploads: 0,
             max_in_progress_remote_uploads: 0,
-            executor_stages_by_span: HashMap::new(),
+            executor_stages_by_span: BuckMutMap::default(),
             memory_max_anon_allprocs: None,
             memory_max_anon_forkserver_actions: None,
             memory_max_total_allprocs: None,
             memory_max_total_forkserver_actions: None,
+            memory_max_swap_bytes_allprocs: None,
+            memory_max_pressure_10s_avg_allprocs: None,
+            memory_max_pressure_60s_avg_allprocs: None,
             command_options: None,
-            initial_io_copy_count: IoCounterKey::Copy.get_finished(),
-            initial_io_symlink_count: IoCounterKey::Symlink.get_finished(),
-            initial_io_hardlink_count: IoCounterKey::Hardlink.get_finished(),
-            initial_io_mkdir_count: IoCounterKey::MkDir.get_finished(),
-            initial_io_readdir_count: IoCounterKey::ReadDir.get_finished(),
-            initial_io_readdir_eden_count: IoCounterKey::ReadDirEden.get_finished(),
-            initial_io_rmdir_count: IoCounterKey::RmDir.get_finished(),
-            initial_io_rmdir_all_count: IoCounterKey::RmDirAll.get_finished(),
-            initial_io_stat_count: IoCounterKey::Stat.get_finished(),
-            initial_io_stat_eden_count: IoCounterKey::StatEden.get_finished(),
-            initial_io_chmod_count: IoCounterKey::Chmod.get_finished(),
-            initial_io_readlink_count: IoCounterKey::ReadLink.get_finished(),
-            initial_io_remove_count: IoCounterKey::Remove.get_finished(),
-            initial_io_rename_count: IoCounterKey::Rename.get_finished(),
-            initial_io_read_count: IoCounterKey::Read.get_finished(),
-            initial_io_write_count: IoCounterKey::Write.get_finished(),
-            initial_io_canonicalize_count: IoCounterKey::Canonicalize.get_finished(),
-            initial_io_eden_settle_count: IoCounterKey::EdenSettle.get_finished(),
+            initial_io_copy_count: None,
+            initial_io_symlink_count: None,
+            initial_io_hardlink_count: None,
+            initial_io_mkdir_count: None,
+            initial_io_readdir_count: None,
+            initial_io_readdir_eden_count: None,
+            initial_io_rmdir_count: None,
+            initial_io_rmdir_all_count: None,
+            initial_io_stat_count: None,
+            initial_io_stat_eden_count: None,
+            initial_io_chmod_count: None,
+            initial_io_readlink_count: None,
+            initial_io_remove_count: None,
+            initial_io_rename_count: None,
+            initial_io_read_count: None,
+            initial_io_write_count: None,
+            initial_io_canonicalize_count: None,
+            initial_io_eden_settle_count: None,
+            repo_path: None,
         }
     }
 
@@ -511,7 +586,7 @@ impl InvocationRecorder {
         if let Some(client_id_from_client_metadata) = ctx
             .client_metadata
             .iter()
-            .find(|m| m.key == "id")
+            .rfind(|m| m.key == "id")
             .map(|m| m.value.clone())
         {
             self.metadata.insert(
@@ -519,7 +594,66 @@ impl InvocationRecorder {
                 client_id_from_client_metadata.to_owned(),
             );
         }
+
+        self.agent_invocation_info = ctx.agent_invocation_info().clone();
+
+        // Outside a repository there are no settings to resolve; a settings
+        // file that fails to parse fails the command itself later.
+        self.settings_hash = ctx
+            .buck_settings()
+            .ok()
+            .map(|settings| settings.snapshot().hash);
+
         self.command_name = Some(command_name);
+        #[cfg(fbcode_build)]
+        {
+            self.expanded_command = ctx.argv.expanded_argv.args().join(" ");
+        }
+    }
+
+    #[cfg(fbcode_build)]
+    pub(crate) fn log_artillery_trace(&self, result: &mut ExitResult) {
+        if result.exit_code().is_none() && self.command_name != Some("run")
+            || self.should_restart && !result.is_success() && !crate::stdio::has_written_to_stdout()
+        {
+            return;
+        }
+        art_cli_lite_rs_native::trace_cli("cli.buck2");
+        if !art_cli_lite_rs_native::process_may_be_tracing() {
+            return;
+        }
+        art_cli_lite_rs_native::annotate("buck2.uuid", &self.trace_id.to_string());
+        if let Some(command) = self.command_name {
+            art_cli_lite_rs_native::annotate("buck2.command", command);
+            art_cli_lite_rs_native::annotate("buck2.expanded_command", &self.expanded_command);
+        }
+        art_cli_lite_rs_native::annotate("buck2.exit_result_name", result.name());
+        if let Some(code) = result.exit_code() {
+            art_cli_lite_rs_native::exit_code(code.exit_code() as i32);
+        }
+        if let Some(error) = best_error(&result.get_all_errors()) {
+            art_cli_lite_rs_native::annotate(
+                "buck2.best_error_tag",
+                error
+                    .best_tag()
+                    .map_or(ERROR_TAG_UNCLASSIFIED, |tag| tag.as_str_name()),
+            );
+            art_cli_lite_rs_native::annotate("buck2.error_category", &error.category().to_string());
+        }
+        match result.exec_environment() {
+            Some((prog, environment)) => {
+                environment
+                    .set
+                    .extend(art_cli_lite_rs_native::outgoing_exec(
+                        &prog.to_string_lossy(),
+                    ))
+            }
+            None => art_cli_lite_rs_native::finish(),
+        }
+    }
+
+    pub(crate) fn set_should_restart(&mut self) {
+        self.should_restart = true;
     }
 
     pub(crate) fn update_for_command(
@@ -558,7 +692,7 @@ impl InvocationRecorder {
         let build_count = paths.and_then(|p| match BuildCountManager::new(p.build_count_dir()) {
             Ok(manager) => Some(manager),
             Err(e) => {
-                let _unused = soft_error!("build_count_init_failed", e);
+                soft_error_or_panic!("build_count_init_failed", e);
                 None
             }
         });
@@ -571,6 +705,7 @@ impl InvocationRecorder {
         self.compressed_event_log_size_bytes = log_size_counter_bytes;
         self.health_check_tags_receiver = health_check_tags_receiver;
         self.preemptible = build_config_opts.and_then(|opts| opts.preemptible);
+        self.repo_path = paths.map(|p| p.project_root().root().to_string());
     }
 
     async fn build_count(
@@ -644,12 +779,21 @@ impl InvocationRecorder {
 
     fn finalize_errors(&mut self) -> Vec<ProcessedErrorReport> {
         let mut errors = Vec::new();
+        let disk_near_full = match (
+            self.last_snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.used_disk_space_bytes),
+            self.system_info.total_disk_space_bytes,
+        ) {
+            (Some(used), Some(total)) => is_disk_near_full(total.saturating_sub(used), total),
+            _ => false,
+        };
         for error in self.command_errors.drain(..) {
             // FIXME this error should be updated at the source if possible, and not only in the invocation record.
             let error: ErrorReport = if error.tags.contains(&(ErrorTag::ClientGrpc as i32)) {
                 let error: buck2_error::Error = error.into();
                 // Add stderr to GRPC connection errors if available
-                let error = classify_server_stderr(error, &self.server_stderr);
+                let error = classify_server_stderr(error, &self.server_stderr, disk_near_full);
                 let error = if self.server_stderr.is_empty() {
                     let error = error.context("buckd stderr is empty");
                     // Likely buckd received SIGKILL, may be due to memory pressure
@@ -676,10 +820,15 @@ impl InvocationRecorder {
             errors.push(error);
         }
         errors.sort_by_key(|e| e.error_rank());
-        errors.into_map(process_error_report)
+        errors
+            .into_iter()
+            .map(process_error_report)
+            .collect::<Vec<_>>()
     }
 
     fn create_record_event(&mut self) -> BuckEvent {
+        self.soft_error_categories
+            .extend(std::mem::take(&mut *CLIENT_SOFT_ERRORS.lock().unwrap()));
         let mut sink_success_count = None;
         let mut sink_failure_count = None;
         let mut sink_dropped_count = None;
@@ -716,6 +865,43 @@ impl InvocationRecorder {
         let mut local_cache_hits_files_from_filesystem_cache = None;
         let mut local_cache_lookups = None;
         let mut local_cache_lookup_latency_microseconds = None;
+
+        let mut io_copy_count = None;
+        let mut io_symlink_count = None;
+        let mut io_hardlink_count = None;
+        let mut io_mkdir_count = None;
+        let mut io_readdir_count = None;
+        let mut io_readdir_eden_count = None;
+        let mut io_rmdir_count = None;
+        let mut io_rmdir_all_count = None;
+        let mut io_stat_count = None;
+        let mut io_stat_eden_count = None;
+        let mut io_chmod_count = None;
+        let mut io_readlink_count = None;
+        let mut io_remove_count = None;
+        let mut io_rename_count = None;
+        let mut io_read_count = None;
+        let mut io_write_count = None;
+        let mut io_canonicalize_count = None;
+        let mut io_eden_settle_count = None;
+
+        let mut page_in_count = None;
+        let mut page_in_fetch_us = None;
+        let mut page_in_deser_us = None;
+        let mut page_in_bytes = None;
+        let mut page_in_by_key_type = IntentionallyStdHashMap::new();
+
+        // Already a per-command delta from the daemon; sum across key types for
+        // the aggregate scalars.
+        if let Some(paging_summary) = &self.paging_summary
+            && !paging_summary.dice_page_in_by_key_type.is_empty()
+        {
+            page_in_by_key_type = paging_summary.dice_page_in_by_key_type.clone();
+            page_in_count = Some(page_in_by_key_type.values().map(|s| s.count).sum());
+            page_in_fetch_us = Some(page_in_by_key_type.values().map(|s| s.fetch_us).sum());
+            page_in_deser_us = Some(page_in_by_key_type.values().map(|s| s.deser_us).sum());
+            page_in_bytes = Some(page_in_by_key_type.values().map(|s| s.bytes).sum());
+        }
 
         if let Some(snapshot) = &self.last_snapshot {
             sink_success_count =
@@ -841,6 +1027,57 @@ impl InvocationRecorder {
                 &self.initial_local_cache_lookup_latency_microseconds,
             );
 
+            io_copy_count =
+                calculate_diff_if_some(&snapshot.io_copy_count, &self.initial_io_copy_count);
+            io_symlink_count =
+                calculate_diff_if_some(&snapshot.io_symlink_count, &self.initial_io_symlink_count);
+            io_hardlink_count = calculate_diff_if_some(
+                &snapshot.io_hardlink_count,
+                &self.initial_io_hardlink_count,
+            );
+            io_mkdir_count =
+                calculate_diff_if_some(&snapshot.io_mkdir_count, &self.initial_io_mkdir_count);
+            io_readdir_count =
+                calculate_diff_if_some(&snapshot.io_readdir_count, &self.initial_io_readdir_count);
+            io_readdir_eden_count = calculate_diff_if_some(
+                &snapshot.io_readdir_eden_count,
+                &self.initial_io_readdir_eden_count,
+            );
+            io_rmdir_count =
+                calculate_diff_if_some(&snapshot.io_rmdir_count, &self.initial_io_rmdir_count);
+            io_rmdir_all_count = calculate_diff_if_some(
+                &snapshot.io_rmdir_all_count,
+                &self.initial_io_rmdir_all_count,
+            );
+            io_stat_count =
+                calculate_diff_if_some(&snapshot.io_stat_count, &self.initial_io_stat_count);
+            io_stat_eden_count = calculate_diff_if_some(
+                &snapshot.io_stat_eden_count,
+                &self.initial_io_stat_eden_count,
+            );
+            io_chmod_count =
+                calculate_diff_if_some(&snapshot.io_chmod_count, &self.initial_io_chmod_count);
+            io_readlink_count = calculate_diff_if_some(
+                &snapshot.io_readlink_count,
+                &self.initial_io_readlink_count,
+            );
+            io_remove_count =
+                calculate_diff_if_some(&snapshot.io_remove_count, &self.initial_io_remove_count);
+            io_rename_count =
+                calculate_diff_if_some(&snapshot.io_rename_count, &self.initial_io_rename_count);
+            io_read_count =
+                calculate_diff_if_some(&snapshot.io_read_count, &self.initial_io_read_count);
+            io_write_count =
+                calculate_diff_if_some(&snapshot.io_write_count, &self.initial_io_write_count);
+            io_canonicalize_count = calculate_diff_if_some(
+                &snapshot.io_canonicalize_count,
+                &self.initial_io_canonicalize_count,
+            );
+            io_eden_settle_count = calculate_diff_if_some(
+                &snapshot.io_eden_settle_count,
+                &self.initial_io_eden_settle_count,
+            );
+
             // We show memory/disk warnings in the console but we can't emit a tag event there due to having no access to dispatcher.
             // Also, it suffices to only emit a single tag per invocation, not one tag each time memory pressure is exceeded.
             // We can't just rely on the last snapshot here instead we use the peak memory/disk usage to check if we ever reported a warning.
@@ -870,18 +1107,21 @@ impl InvocationRecorder {
         let mut metadata = Self::default_metadata();
         metadata.strings.extend(std::mem::take(&mut self.metadata));
 
-        let preemptible = self
-            .preemptible
-            .take()
-            .map(|p| match p {
-                PreemptibleWhen::Never => "NEVER",
-                PreemptibleWhen::Always => "ALWAYS",
-                PreemptibleWhen::OnDifferentState => "ON_DIFFERENT_STATE",
-            })
-            .unwrap_or("UNSPECIFIED");
+        let preemptible = self.preemptible.take().map_or("UNSPECIFIED", |p| match p {
+            PreemptibleWhen::Never => "NEVER",
+            PreemptibleWhen::Always => "ALWAYS",
+            PreemptibleWhen::OnDifferentState => "ON_DIFFERENT_STATE",
+        });
 
         let errors = self.finalize_errors();
 
+        let action_parallelism = buck2_action_parallelism::compute(
+            &std::mem::take(&mut self.action_intervals),
+            &buck2_action_parallelism::PERCENTILES,
+        );
+
+        let agent_invocation_info = std::mem::take(&mut self.agent_invocation_info);
+        let agent_context = agent_invocation_info.agent_context().to_proto();
         let record = buck2_data::InvocationRecord {
             command_name: Some(self.command_name.unwrap_or("unknown").to_owned()),
             command_end: self.command_end.take(),
@@ -904,16 +1144,19 @@ impl InvocationRecorder {
             cli_args: self.cli_args.clone(),
             representative_config_flags: self.representative_config_flags.clone(),
             critical_path_duration: self.critical_path_duration.and_then(|x| x.try_into().ok()),
+            critical_path_page_in: self.critical_path_page_in.and_then(|x| x.try_into().ok()),
             metadata: Some(metadata),
-            tags: self.tags.drain(..).collect(),
+            tags: std::mem::take(&mut self.tags),
             run_local_count: self.run_local_count,
             run_remote_count: self.run_remote_count,
             run_action_cache_count: self.run_action_cache_count,
             run_remote_dep_file_cache_count: self.run_remote_dep_file_cache_count,
+            run_remote_served_from_cache_count: self.run_remote_served_from_cache_count,
+            run_remote_deduplicated_count: self.run_remote_deduplicated_count,
             cache_hit_rate: total_cache_hit_rate(
                 self.run_local_count,
                 self.run_remote_count,
-                self.run_action_cache_count,
+                self.run_action_cache_count + self.run_remote_served_from_cache_count,
                 self.run_remote_dep_file_cache_count,
             ) as f32,
             run_skipped_count: self.run_skipped_count,
@@ -927,6 +1170,7 @@ impl InvocationRecorder {
             min_build_count_since_rebase: self.min_build_count_since_rebase,
             cache_upload_count: self.cache_upload_count,
             cache_upload_attempt_count: self.cache_upload_attempt_count,
+            re_action_cache_query_error_count: Some(self.re_action_cache_query_error_count),
             dep_file_upload_count: self.dep_file_upload_count,
             dep_file_upload_attempt_count: self.dep_file_upload_attempt_count,
             parsed_target_patterns: self.parsed_target_patterns.take(),
@@ -982,12 +1226,19 @@ impl InvocationRecorder {
                 .time_to_first_unknown_test_result
                 .and_then(duration_as_millis),
             system_total_memory_bytes: self.system_info.system_total_memory_bytes,
+            container_memory_limit_bytes: self.system_info.container_memory_limit_bytes,
             file_watcher_stats: self.file_watcher_stats.take(),
             file_watcher_duration_ms: self.file_watcher_duration.and_then(duration_as_millis),
             time_to_last_action_execution_end_ms: self
                 .time_to_last_action_execution_end
                 .and_then(duration_as_millis),
             isolation_dir: self.isolation_dir.take(),
+            dep_file_db_probes: Some(self.dep_file_db_probes),
+            dep_file_db_probe_duration_us: Some(self.dep_file_db_probe_duration_us),
+            dep_file_db_fetches: Some(self.dep_file_db_fetches),
+            dep_file_db_fetch_duration_us: Some(self.dep_file_db_fetch_duration_us),
+            dep_file_db_hits: Some(self.dep_file_db_hits),
+            dep_file_db_writes_queued: Some(self.dep_file_db_writes_queued),
             sink_success_count,
             sink_failure_count,
             sink_dropped_count,
@@ -1019,12 +1270,34 @@ impl InvocationRecorder {
             concurrent_command_ids: std::mem::take(&mut self.concurrent_command_ids)
                 .into_iter()
                 .collect(),
+            re_exceeded_quotas: std::mem::take(&mut self.re_exceeded_quotas)
+                .into_iter()
+                .collect(),
+            page_out_started: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.page_out_started),
             daemon_connection_failure: Some(self.daemon_connection_failure),
             daemon_was_started: self.daemon_was_started.map(|t| t as i32),
+            settings_hash: self.settings_hash.take(),
             should_restart: Some(self.should_restart),
             client_metadata: std::mem::take(&mut self.client_metadata),
+            agent_direct_call: agent_context
+                .iter()
+                .rev()
+                .find(|entry| entry.key == buck2_data::AgentContextEntry::KEY_DIRECT_CALL)
+                .and_then(|entry| entry.value.parse::<bool>().ok()),
+            agent_inferred_direct_call: agent_invocation_info.inferred_direct_call(),
+            agent_callers: agent_invocation_info.inference().callers.clone(),
+            agent_detection_stop_reason: agent_invocation_info
+                .inference()
+                .stop_reason
+                .map(i32::from),
+            agent_context,
             errors,
-            target_rule_type_names: std::mem::take(&mut self.target_rule_type_names),
+            target_rule_type_names: unique_and_sorted(
+                std::mem::take(&mut self.target_rule_type_names).into_iter(),
+            ),
             new_configs_used: Some(self.has_new_buckconfigs),
             re_max_download_speed: self
                 .re_max_download_speeds
@@ -1039,12 +1312,17 @@ impl InvocationRecorder {
             re_avg_download_speed: self.re_avg_download_speed.avg_per_second(),
             re_avg_upload_speed: self.re_avg_upload_speed.avg_per_second(),
             install_duration: self.install_duration.take(),
-            install_device_metadata: self.install_device_metadata.drain(..).collect(),
+            install_device_metadata: std::mem::take(&mut self.install_device_metadata),
+            build_duration_ms: self.build_duration_ms(),
+            build_status: self.build_status().map(|s| s.into()),
             installer_log_url: self.installer_log_url.take(),
+            installer_name: self.installer_name.take(),
             peak_process_memory_bytes: self.peak_process_memory_bytes.take(),
             event_log_manifold_ttl_s: manifold_event_log_ttl().ok().map(|t| t.as_secs()),
             total_disk_space_bytes: self.system_info.total_disk_space_bytes.take(),
             peak_used_disk_space_bytes: self.peak_used_disk_space_bytes.take(),
+            peak_normalized_system_load1: self.peak_normalized_system_load1.take(),
+            peak_normalized_system_load5: self.peak_normalized_system_load5.take(),
             zdb_download_queries,
             zdb_download_bytes,
             zdb_upload_queries,
@@ -1066,8 +1344,9 @@ impl InvocationRecorder {
                 .collect(),
             target_cfg: self.target_cfg.take(),
             hg_revision: self.hg_revision.take(),
+            git_revision: self.git_revision.take(),
             has_local_changes: self.has_local_changes.take(),
-            version_control_errors: self.version_control_errors.drain(..).collect(),
+            version_control_errors: std::mem::take(&mut self.version_control_errors),
             version_control_revision: None,
             local_cache_hits_files,
             local_cache_hits_bytes,
@@ -1085,112 +1364,143 @@ impl InvocationRecorder {
             local_cache_hits_files_from_filesystem_cache,
             local_cache_lookups,
             re_average_local_cache_lookup_microseconds: local_cache_lookups
-                .map(|c| {
+                .filter(|&c| c != 0)
+                .and_then(|c| {
                     local_cache_lookup_latency_microseconds
                         .map(|duration| duration as f64 / c as f64)
-                })
-                .flatten(),
+                }),
             max_dice_in_progress_keys: Some(self.max_dice_in_progress_keys),
             max_dice_compute_keys: Some(self.max_dice_compute_keys),
             max_in_progress_actions: Some(self.max_in_progress_actions),
             max_in_progress_local_actions: Some(self.max_in_progress_local_actions),
             max_in_progress_remote_actions: Some(self.max_in_progress_remote_actions),
             max_in_progress_remote_uploads: Some(self.max_in_progress_remote_uploads),
+            action_concurrency_percentiles: action_parallelism
+                .percentiles
+                .iter()
+                .map(
+                    |&(percentile, concurrency)| buck2_data::ActionConcurrencyPercentile {
+                        percentile,
+                        concurrency,
+                    },
+                )
+                .collect(),
+            action_avg_concurrency: Some(action_parallelism.avg_concurrency),
+            action_active_duration_ms: Some(
+                (action_parallelism.total_active_duration_us.max(0) / 1000) as u64,
+            ),
             memory_max_anon_allprocs: self.memory_max_anon_allprocs,
             memory_max_anon_forkserver_actions: self.memory_max_anon_forkserver_actions,
             memory_max_total_allprocs: self.memory_max_total_allprocs,
             memory_max_total_forkserver_actions: self.memory_max_total_forkserver_actions,
+            memory_max_swap_bytes_allprocs: self.memory_max_swap_bytes_allprocs,
+            memory_max_pressure_10s_avg_allprocs: self.memory_max_pressure_10s_avg_allprocs,
+            memory_max_pressure_60s_avg_allprocs: self.memory_max_pressure_60s_avg_allprocs,
             command_options: self.command_options,
-            io_copy_count: Some(
-                IoCounterKey::Copy
-                    .get_finished()
-                    .saturating_sub(self.initial_io_copy_count),
-            ),
-            io_symlink_count: Some(
-                IoCounterKey::Symlink
-                    .get_finished()
-                    .saturating_sub(self.initial_io_symlink_count),
-            ),
-            io_hardlink_count: Some(
-                IoCounterKey::Hardlink
-                    .get_finished()
-                    .saturating_sub(self.initial_io_hardlink_count),
-            ),
-            io_mkdir_count: Some(
-                IoCounterKey::MkDir
-                    .get_finished()
-                    .saturating_sub(self.initial_io_mkdir_count),
-            ),
-            io_readdir_count: Some(
-                IoCounterKey::ReadDir
-                    .get_finished()
-                    .saturating_sub(self.initial_io_readdir_count),
-            ),
-            io_readdir_eden_count: Some(
-                IoCounterKey::ReadDirEden
-                    .get_finished()
-                    .saturating_sub(self.initial_io_readdir_eden_count),
-            ),
-            io_rmdir_count: Some(
-                IoCounterKey::RmDir
-                    .get_finished()
-                    .saturating_sub(self.initial_io_rmdir_count),
-            ),
-            io_rmdir_all_count: Some(
-                IoCounterKey::RmDirAll
-                    .get_finished()
-                    .saturating_sub(self.initial_io_rmdir_all_count),
-            ),
-            io_stat_count: Some(
-                IoCounterKey::Stat
-                    .get_finished()
-                    .saturating_sub(self.initial_io_stat_count),
-            ),
-            io_stat_eden_count: Some(
-                IoCounterKey::StatEden
-                    .get_finished()
-                    .saturating_sub(self.initial_io_stat_eden_count),
-            ),
-            io_chmod_count: Some(
-                IoCounterKey::Chmod
-                    .get_finished()
-                    .saturating_sub(self.initial_io_chmod_count),
-            ),
-            io_readlink_count: Some(
-                IoCounterKey::ReadLink
-                    .get_finished()
-                    .saturating_sub(self.initial_io_readlink_count),
-            ),
-            io_remove_count: Some(
-                IoCounterKey::Remove
-                    .get_finished()
-                    .saturating_sub(self.initial_io_remove_count),
-            ),
-            io_rename_count: Some(
-                IoCounterKey::Rename
-                    .get_finished()
-                    .saturating_sub(self.initial_io_rename_count),
-            ),
-            io_read_count: Some(
-                IoCounterKey::Read
-                    .get_finished()
-                    .saturating_sub(self.initial_io_read_count),
-            ),
-            io_write_count: Some(
-                IoCounterKey::Write
-                    .get_finished()
-                    .saturating_sub(self.initial_io_write_count),
-            ),
-            io_canonicalize_count: Some(
-                IoCounterKey::Canonicalize
-                    .get_finished()
-                    .saturating_sub(self.initial_io_canonicalize_count),
-            ),
-            io_eden_settle_count: Some(
-                IoCounterKey::EdenSettle
-                    .get_finished()
-                    .saturating_sub(self.initial_io_eden_settle_count),
-            ),
+            io_copy_count,
+            io_symlink_count,
+            io_hardlink_count,
+            io_mkdir_count,
+            io_readdir_count,
+            io_readdir_eden_count,
+            io_rmdir_count,
+            io_rmdir_all_count,
+            io_stat_count,
+            io_stat_eden_count,
+            io_chmod_count,
+            io_readlink_count,
+            io_remove_count,
+            io_rename_count,
+            io_read_count,
+            io_write_count,
+            io_canonicalize_count,
+            io_eden_settle_count,
+            page_in_count,
+            page_in_fetch_us,
+            page_in_deser_us,
+            page_in_bytes,
+            page_in_by_key_type,
+            paging_db_size_bytes: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_db_size_bytes),
+            paging_resident_node_count: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.resident_node_count),
+            paging_paged_out_node_count: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paged_out_node_count),
+            paging_candidate_node_count: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.candidate_node_count),
+            paging_data_keys_out: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_data_keys_out),
+            paging_data_key_bytes_out: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_data_key_bytes_out),
+            paging_data_keys_in: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_data_keys_in),
+            paging_data_key_bytes_in: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_data_key_bytes_in),
+            paging_daemon_data_keys_out: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_daemon_data_keys_out),
+            paging_daemon_data_key_bytes_out: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_daemon_data_key_bytes_out),
+            paging_daemon_data_keys_in: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_daemon_data_keys_in),
+            paging_daemon_data_key_bytes_in: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_daemon_data_key_bytes_in),
+            paging_memory_offloaded_bytes: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_memory_offloaded_bytes),
+            paging_memory_restored_bytes: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_memory_restored_bytes),
+            paging_arc_cache_entries: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_arc_cache_entries),
+            paging_evictions: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_evictions),
+            paging_evicted_count: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_evicted_count),
+            paging_evicted_bytes: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_evicted_bytes),
+            paging_evictable_bytes: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.paging_evictable_bytes),
+            starlark_partial_deser: self
+                .paging_summary
+                .as_ref()
+                .and_then(|s| s.starlark_partial_deser),
+            repo_path: self.repo_path.take(),
         };
 
         let event = BuckEvent::new(
@@ -1206,7 +1516,10 @@ impl InvocationRecorder {
 
         if let Some(path) = &self.write_to_path {
             let res = (|| {
-                let out = fs_util::create_file(path).buck_error_context("Error opening")?;
+                let out = fs_util::create_file(path)
+                    // input path from --unstable-write-invocation-record
+                    .categorize_input()
+                    .buck_error_context("Error opening")?;
                 let mut out = std::io::BufWriter::new(out);
                 serde_json::to_writer(&mut out, event.event())
                     .buck_error_context("Error writing")?;
@@ -1214,11 +1527,13 @@ impl InvocationRecorder {
                 buck2_error::Ok(())
             })();
 
-            if let Err(e) = &res {
-                tracing::warn!(
-                    "Failed to write InvocationRecord to `{}`: {:#}",
-                    path.as_path().display(),
-                    e
+            if let Err(e) = res {
+                warn_user_or_panic!(
+                    "invocation_record_write_failed",
+                    e.context(format!(
+                        "Failed to write InvocationRecord to `{}`",
+                        path.as_path().display()
+                    ))
                 );
             }
         }
@@ -1242,12 +1557,13 @@ impl InvocationRecorder {
     // Collects client-side state and data, suitable for telemetry.
     // NOTE: If data is visible from the daemon, put it in cli::metadata::collect()
     fn default_metadata() -> buck2_data::TypedMetadata {
-        let mut ints = HashMap::new();
+        let mut ints = IntentionallyStdHashMap::new();
         ints.insert("is_tty".to_owned(), std::io::stderr().is_tty() as i64);
-        buck2_data::TypedMetadata {
-            ints,
-            strings: HashMap::new(),
+        let mut strings = IntentionallyStdHashMap::new();
+        if let Some(agent_identity) = metadata::agent_identity_from_env() {
+            strings.insert("client_agent_identity_from_env".to_owned(), agent_identity);
         }
+        buck2_data::TypedMetadata { ints, strings }
     }
 
     fn handle_command_start(
@@ -1257,6 +1573,7 @@ impl InvocationRecorder {
     ) -> buck2_error::Result<()> {
         self.metadata.extend(command.metadata.clone());
         self.time_to_command_start = Some(duration_since(event.timestamp(), self.start_time));
+        self.command_start_timestamp = Some(event.timestamp());
         Ok(())
     }
 
@@ -1279,7 +1596,7 @@ impl InvocationRecorder {
         let command_data = command
             .data
             .as_ref()
-            .buck_error_context("Missing command data")?;
+            .internal_error("Missing command data")?;
 
         let build_count = match command_data {
             buck2_data::command_end::Data::Build(..)
@@ -1299,7 +1616,7 @@ impl InvocationRecorder {
                     Ok(Some(build_count)) => build_count,
                     Ok(None) => Default::default(),
                     Err(e) => {
-                        let _ignored = soft_error!("build_count_error", e.into());
+                        soft_error!("build_count_error", e);
                         Default::default()
                     }
                 }
@@ -1354,11 +1671,33 @@ impl InvocationRecorder {
 
         Ok(())
     }
+    /// Accumulates one dep-file lookup. The times are absent when the persisted store was not
+    /// consulted, which is the common case once the in-memory cache is warm.
+    fn handle_match_dep_files_end(
+        &mut self,
+        match_dep_files: &buck2_data::MatchDepFilesEnd,
+    ) -> buck2_error::Result<()> {
+        if let Some(probe_us) = match_dep_files.persisted_probe_us {
+            self.dep_file_db_probes += 1;
+            self.dep_file_db_probe_duration_us += probe_us;
+        }
+        if let Some(fetches) = match_dep_files.persisted_fetches {
+            self.dep_file_db_fetches += fetches;
+            self.dep_file_db_fetch_duration_us +=
+                match_dep_files.persisted_fetch_us.unwrap_or_default();
+        }
+        if match_dep_files.outcome == buck2_data::DepFileLookupOutcome::Persisted as i32 {
+            self.dep_file_db_hits += 1;
+        }
+        Ok(())
+    }
+
     fn handle_action_execution_end(
         &mut self,
         action: &buck2_data::ActionExecutionEnd,
         event: &BuckEvent,
     ) -> buck2_error::Result<()> {
+        self.dep_file_db_writes_queued += action.dep_file_db_writes_queued.unwrap_or_default();
         // Decrement current in-progress actions counter
         self.current_in_progress_actions = self.current_in_progress_actions.saturating_sub(1);
 
@@ -1398,6 +1737,13 @@ impl InvocationRecorder {
                 LastCommandExecutionKind::Remote => {
                     self.run_remote_count += 1;
                 }
+                LastCommandExecutionKind::RemoteServedFromCache => {
+                    self.run_remote_served_from_cache_count += 1;
+                }
+                LastCommandExecutionKind::RemoteDeduplicated => {
+                    self.run_remote_count += 1;
+                    self.run_remote_deduplicated_count += 1;
+                }
                 LastCommandExecutionKind::NoCommand => {
                     self.run_skipped_count += 1;
                 }
@@ -1421,6 +1767,13 @@ impl InvocationRecorder {
             Some(duration_since(event.timestamp(), self.start_time));
 
         self.exec_time_ms += get_last_command_execution_time(action).exec_time_ms;
+
+        // Accumulate the execution-only interval for the action-concurrency
+        // distribution (cache hits / no-command actions are excluded by
+        // extract_interval).
+        if let Some(interval) = buck2_action_parallelism::extract_interval(action) {
+            self.action_intervals.push(interval);
+        }
 
         Ok(())
     }
@@ -1481,12 +1834,14 @@ impl InvocationRecorder {
                         self.current_in_progress_remote_uploads,
                     );
                 }
+                Some(buck2_data::re_stage::Stage::QueueOverQuota(over_quota)) => {
+                    self.re_exceeded_quotas
+                        .extend(over_quota.exceeded_quotas.iter().cloned());
+                }
                 _ => {}
             },
-            Some(buck2_data::executor_stage_start::Stage::Local(local_stage)) => match &local_stage
-                .stage
-            {
-                Some(buck2_data::local_stage::Stage::Execute(_)) => {
+            Some(buck2_data::executor_stage_start::Stage::Local(local_stage)) => {
+                if let Some(buck2_data::local_stage::Stage::Execute(_)) = &local_stage.stage {
                     self.executor_stages_by_span
                         .insert(span_id.into(), ExecutorStageType::LocalAction);
                     self.current_in_progress_local_actions =
@@ -1498,8 +1853,7 @@ impl InvocationRecorder {
                     self.time_to_first_command_execution_start
                         .get_or_insert_with(|| duration_since(event.timestamp(), self.start_time));
                 }
-                _ => {}
-            },
+            }
             _ => {}
         }
         Ok(())
@@ -1507,9 +1861,12 @@ impl InvocationRecorder {
 
     fn handle_executor_stage_end(
         &mut self,
-        _executor_stage: buck2_data::ExecutorStageEnd,
+        executor_stage: &buck2_data::ExecutorStageEnd,
         event: &BuckEvent,
     ) -> buck2_error::Result<()> {
+        if executor_stage.cache_query_error.is_some() {
+            self.re_action_cache_query_error_count += 1;
+        }
         // Look up the stage type from the span ID and decrement the appropriate counter
         if let Some(span_id) = event.span_id() {
             if let Some(stage_type) = self.executor_stages_by_span.remove(&span_id.into()) {
@@ -1612,6 +1969,7 @@ impl InvocationRecorder {
         self.install_duration = install_finished.duration;
         self.install_device_metadata = install_finished.device_metadata.clone();
         self.installer_log_url = install_finished.log_url.clone();
+        self.installer_name = install_finished.installer_name.clone();
         Ok(())
     }
 
@@ -1656,6 +2014,47 @@ impl InvocationRecorder {
         self.time_to_first_test_run
             .get_or_insert_with(|| duration_since(event.timestamp(), self.start_time));
         Ok(())
+    }
+
+    fn handle_build_phase_end(
+        &mut self,
+        build_phase_end: &buck2_data::BuildPhaseEnd,
+    ) -> buck2_error::Result<()> {
+        let end_time = build_phase_end
+            .end_time
+            .internal_error("Missing `end_time` in BuildPhaseEnd")?;
+        let end_time = SystemTime::try_from(end_time)
+            .map_err(|e| internal_error!("Invalid `end_time` in BuildPhaseEnd: {e}"))?;
+        self.build_phase_end = Some(merge_build_phase_ends(
+            self.build_phase_end,
+            (end_time, build_phase_end.status()),
+        ));
+        Ok(())
+    }
+
+    fn build_duration_ms(&self) -> Option<u64> {
+        let (end_time, _) = self.build_phase_end?;
+        duration_as_millis(duration_since(end_time, self.command_start_timestamp?))
+    }
+
+    /// The build outcome for commands that have a build phase. Without a `BuildPhaseEnd`
+    /// event the outcome is inferred from how the command ended.
+    fn build_status(&self) -> Option<buck2_data::BuildStatus> {
+        if !matches!(
+            self.command_name,
+            Some("build" | "test" | "install" | "run")
+        ) {
+            return None;
+        }
+        if let Some((_, status)) = self.build_phase_end {
+            return Some(status);
+        }
+        Some(match (self.command_start_timestamp, self.outcome) {
+            (_, Some(InvocationOutcome::Cancelled)) => buck2_data::BuildStatus::Cancelled,
+            (None, _) => buck2_data::BuildStatus::NotStarted,
+            (Some(_), Some(InvocationOutcome::Failed)) => buck2_data::BuildStatus::Failed,
+            (Some(_), _) => buck2_data::BuildStatus::Unknown,
+        })
     }
 
     fn handle_test_result(
@@ -1734,20 +2133,23 @@ impl InvocationRecorder {
         _event: &BuckEvent,
     ) -> buck2_error::Result<()> {
         let mut duration = Duration::default();
-
-        for node in &info.critical_path {
-            if let Some(d) = &node.duration {
-                duration += d.try_into_duration()?;
-            }
-        }
+        let mut page_in = Duration::default();
 
         for node in &info.critical_path2 {
             if let Some(d) = &node.duration {
-                duration += d.try_into_duration()?;
+                let d = d.try_into_duration()?;
+                duration += d;
+                if matches!(
+                    node.entry,
+                    Some(buck2_data::critical_path_entry2::Entry::PageIn(_))
+                ) {
+                    page_in += d;
+                }
             }
         }
 
         self.critical_path_duration = Some(duration);
+        self.critical_path_page_in = Some(page_in);
         self.critical_path_backend = info.backend_name.clone();
         Ok(())
     }
@@ -1777,6 +2179,28 @@ impl InvocationRecorder {
         self.concurrent_commands =
             self.concurrent_commands || concurrent_commands.trace_ids.len() > 1;
         Ok(())
+    }
+
+    fn update_peak_system_load(&mut self, elapsed: Duration, load1: f64, load5: f64) {
+        let num_cores = self.system_info.num_cores.unwrap_or(1) as f64;
+        // `load1`/`load5` are kernel exponential moving averages over the trailing 1 and 5 minutes, so a
+        // sample taken sooner than that after the invocation starts still reflects load from before it
+        // began. Only fold a sample into the peak once its averaging window lies entirely within the
+        // invocation.
+        if elapsed >= SYSTEM_LOAD1_WINDOW {
+            let normalized = load1 / num_cores;
+            self.peak_normalized_system_load1 = Some(
+                self.peak_normalized_system_load1
+                    .map_or(normalized, |v| f64::max(v, normalized)),
+            );
+        }
+        if elapsed >= SYSTEM_LOAD5_WINDOW {
+            let normalized = load5 / num_cores;
+            self.peak_normalized_system_load5 = Some(
+                self.peak_normalized_system_load5
+                    .map_or(normalized, |v| f64::max(v, normalized)),
+            );
+        }
     }
 
     fn handle_snapshot(
@@ -1907,6 +2331,62 @@ impl InvocationRecorder {
                 Some(update.local_cache_lookup_latency_microseconds);
         }
 
+        // Initialize IO counters from first snapshot
+        if self.initial_io_copy_count.is_none() {
+            self.initial_io_copy_count = update.io_copy_count;
+        }
+        if self.initial_io_symlink_count.is_none() {
+            self.initial_io_symlink_count = update.io_symlink_count;
+        }
+        if self.initial_io_hardlink_count.is_none() {
+            self.initial_io_hardlink_count = update.io_hardlink_count;
+        }
+        if self.initial_io_mkdir_count.is_none() {
+            self.initial_io_mkdir_count = update.io_mkdir_count;
+        }
+        if self.initial_io_readdir_count.is_none() {
+            self.initial_io_readdir_count = update.io_readdir_count;
+        }
+        if self.initial_io_readdir_eden_count.is_none() {
+            self.initial_io_readdir_eden_count = update.io_readdir_eden_count;
+        }
+        if self.initial_io_rmdir_count.is_none() {
+            self.initial_io_rmdir_count = update.io_rmdir_count;
+        }
+        if self.initial_io_rmdir_all_count.is_none() {
+            self.initial_io_rmdir_all_count = update.io_rmdir_all_count;
+        }
+        if self.initial_io_stat_count.is_none() {
+            self.initial_io_stat_count = update.io_stat_count;
+        }
+        if self.initial_io_stat_eden_count.is_none() {
+            self.initial_io_stat_eden_count = update.io_stat_eden_count;
+        }
+        if self.initial_io_chmod_count.is_none() {
+            self.initial_io_chmod_count = update.io_chmod_count;
+        }
+        if self.initial_io_readlink_count.is_none() {
+            self.initial_io_readlink_count = update.io_readlink_count;
+        }
+        if self.initial_io_remove_count.is_none() {
+            self.initial_io_remove_count = update.io_remove_count;
+        }
+        if self.initial_io_rename_count.is_none() {
+            self.initial_io_rename_count = update.io_rename_count;
+        }
+        if self.initial_io_read_count.is_none() {
+            self.initial_io_read_count = update.io_read_count;
+        }
+        if self.initial_io_write_count.is_none() {
+            self.initial_io_write_count = update.io_write_count;
+        }
+        if self.initial_io_canonicalize_count.is_none() {
+            self.initial_io_canonicalize_count = update.io_canonicalize_count;
+        }
+        if self.initial_io_eden_settle_count.is_none() {
+            self.initial_io_eden_settle_count = update.io_eden_settle_count;
+        }
+
         for s in self.re_max_download_speeds.iter_mut() {
             s.update(event.timestamp(), update.re_download_bytes);
         }
@@ -1928,6 +2408,11 @@ impl InvocationRecorder {
             update.used_disk_space_bytes,
         );
 
+        if let Some(ref unix_stats) = update.unix_system_stats {
+            let elapsed = duration_since(event.timestamp(), self.start_time);
+            self.update_peak_system_load(elapsed, unix_stats.load1, unix_stats.load5);
+        }
+
         // Track maximum buck2 daemon memory usage from cgroup
         if let Some(allprocs_cgroup) = &update.allprocs_cgroup {
             self.memory_max_anon_allprocs =
@@ -1936,6 +2421,23 @@ impl InvocationRecorder {
                 allprocs_cgroup.anon + allprocs_cgroup.file + allprocs_cgroup.kernel;
             self.memory_max_total_allprocs =
                 max(self.memory_max_total_allprocs, Some(total_daemon_memory));
+            // Track peak allprocs swap usage
+            self.memory_max_swap_bytes_allprocs = max(
+                self.memory_max_swap_bytes_allprocs,
+                Some(allprocs_cgroup.swap_bytes),
+            );
+            // Track peak allprocs memory pressure (avg10 from PSI)
+            let pct = allprocs_cgroup.memory_pressure_10s_avg;
+            self.memory_max_pressure_10s_avg_allprocs = Some(
+                self.memory_max_pressure_10s_avg_allprocs
+                    .map_or(pct, |v| f64::max(v, pct)),
+            );
+            // Track peak allprocs memory pressure (avg60 from PSI)
+            let pct = allprocs_cgroup.memory_pressure_60s_avg;
+            self.memory_max_pressure_60s_avg_allprocs = Some(
+                self.memory_max_pressure_60s_avg_allprocs
+                    .map_or(pct, |v| f64::max(v, pct)),
+            );
         }
 
         // Track maximum buck2 forkserver memory usage from cgroup
@@ -1955,7 +2457,7 @@ impl InvocationRecorder {
 
         for stat in update.network_interface_stats.values() {
             if stat.rx_bytes > 0 || stat.tx_bytes > 0 {
-                self.active_networks_kinds.insert(stat.network_kind.into());
+                self.active_networks_kinds.insert(stat.network_kind);
             }
         }
         self.try_read_health_check_tags();
@@ -1973,7 +2475,7 @@ impl InvocationRecorder {
         // See: https://fb.workplace.com/groups/buck2dev/permalink/3396726613948720/
         self.file_watcher_stats =
             merge_file_watcher_stats(self.file_watcher_stats.take(), file_watcher.stats.clone());
-        if let Some(duration) = duration.cloned().and_then(|x| Duration::try_from(x).ok()) {
+        if let Some(duration) = duration.copied().and_then(|x| Duration::try_from(x).ok()) {
             *self.file_watcher_duration.get_or_insert_default() += duration;
         }
         if let Some(stats) = &file_watcher.stats {
@@ -2014,14 +2516,6 @@ impl InvocationRecorder {
         if let Some(soft_error_category) = err.soft_error_category.as_ref() {
             self.soft_error_categories
                 .insert(soft_error_category.to_owned());
-
-            if err.daemon_in_memory_state_is_corrupted {
-                self.daemon_in_memory_state_is_corrupted = true;
-            }
-
-            if err.daemon_materializer_state_is_corrupted {
-                self.daemon_materializer_state_is_corrupted = true;
-            }
         }
 
         Ok(())
@@ -2086,6 +2580,7 @@ impl InvocationRecorder {
         revision: &buck2_data::VersionControlRevision,
     ) -> buck2_error::Result<()> {
         self.hg_revision = revision.hg_revision.clone().or(self.hg_revision.clone());
+        self.git_revision = revision.git_revision.clone().or(self.git_revision.clone());
         self.has_local_changes = revision.has_local_changes.or(self.has_local_changes);
         self.version_control_errors
             .extend(revision.command_error.clone());
@@ -2112,7 +2607,7 @@ impl InvocationRecorder {
 
         match event.data() {
             buck2_data::buck_event::Data::SpanStart(start) => {
-                match start.data.as_ref().buck_error_context("Missing `start`")? {
+                match start.data.as_ref().internal_error("Missing `start`")? {
                     buck2_data::span_start_event::Data::Command(command) => {
                         self.handle_command_start(command, event)
                     }
@@ -2134,7 +2629,7 @@ impl InvocationRecorder {
                     buck2_data::span_start_event::Data::TestDiscovery(test_discovery) => {
                         self.handle_test_discovery_start(test_discovery, event)
                     }
-                    buck2_data::span_start_event::Data::TestStart(test_start) => {
+                    buck2_data::span_start_event::Data::TestRun(test_start) => {
                         self.handle_test_run_start(test_start, event)
                     }
                     buck2_data::span_start_event::Data::FileWatcher(file_watcher) => {
@@ -2144,7 +2639,7 @@ impl InvocationRecorder {
                 }
             }
             buck2_data::buck_event::Data::SpanEnd(end) => {
-                match end.data.as_ref().buck_error_context("Missing `end`")? {
+                match end.data.as_ref().internal_error("Missing `end`")? {
                     buck2_data::span_end_event::Data::Command(command) => {
                         self.handle_command_end(command, event).await
                     }
@@ -2153,6 +2648,9 @@ impl InvocationRecorder {
                     }
                     buck2_data::span_end_event::Data::ActionExecution(action) => {
                         self.handle_action_execution_end(action, event)
+                    }
+                    buck2_data::span_end_event::Data::MatchDepFiles(match_dep_files) => {
+                        self.handle_match_dep_files_end(match_dep_files)
                     }
                     buck2_data::span_end_event::Data::FileWatcher(file_watcher) => {
                         self.handle_file_watcher_end(file_watcher, end.duration.as_ref(), event)
@@ -2182,7 +2680,7 @@ impl InvocationRecorder {
                         self.handle_dice_cleanup_end(*dice_cleanup_end, event)
                     }
                     buck2_data::span_end_event::Data::ExecutorStage(executor_stage) => {
-                        self.handle_executor_stage_end(*executor_stage, event)
+                        self.handle_executor_stage_end(executor_stage, event)
                     }
                     buck2_data::span_end_event::Data::BxlEnsureArtifacts(_bxl_ensure_artifacts) => {
                         self.handle_bxl_ensure_artifacts_end(*_bxl_ensure_artifacts, event)
@@ -2191,7 +2689,7 @@ impl InvocationRecorder {
                 }
             }
             buck2_data::buck_event::Data::Instant(instant) => {
-                match instant.data.as_ref().buck_error_context("Missing `data`")? {
+                match instant.data.as_ref().internal_error("Missing `data`")? {
                     buck2_data::instant_event::Data::ReSession(session) => {
                         self.handle_re_session_created(session, event)
                     }
@@ -2217,10 +2715,6 @@ impl InvocationRecorder {
                     buck2_data::instant_event::Data::StructuredError(err) => {
                         self.handle_structured_error(err)
                     }
-                    buck2_data::instant_event::Data::RestartConfiguration(conf) => {
-                        self.enable_restarter = conf.enable_restarter;
-                        Ok(())
-                    }
                     buck2_data::instant_event::Data::ConcurrentCommands(concurrent_commands) => {
                         self.handle_concurrent_commands(concurrent_commands)
                     }
@@ -2231,11 +2725,23 @@ impl InvocationRecorder {
                     buck2_data::instant_event::Data::InstallFinished(install_finished) => {
                         self.handle_install_finished(install_finished)
                     }
+                    buck2_data::instant_event::Data::BuildPhaseEnd(build_phase_end) => {
+                        self.handle_build_phase_end(build_phase_end)
+                    }
                     buck2_data::instant_event::Data::SystemInfo(system_info) => {
                         self.handle_system_info(system_info)
                     }
+                    buck2_data::instant_event::Data::PagingSummary(paging_summary) => {
+                        self.paging_summary = Some((**paging_summary).clone());
+                        Ok(())
+                    }
                     buck2_data::instant_event::Data::TargetCfg(target_cfg) => {
                         self.target_cfg = Some(target_cfg.clone());
+                        Ok(())
+                    }
+                    buck2_data::instant_event::Data::TargetRuleTypeName(rule_type) => {
+                        self.target_rule_type_names
+                            .push(rule_type.rule_type.clone());
                         Ok(())
                     }
                     buck2_data::instant_event::Data::VersionControlRevision(revision) => {
@@ -2253,7 +2759,7 @@ impl InvocationRecorder {
                     buck2_data::instant_event::Data::DiceStateSnapshot(dice_state_snapshot) => {
                         self.handle_dice_state_snapshot(dice_state_snapshot)
                     }
-                    buck2_data::instant_event::Data::ComandOptions(command_options) => {
+                    buck2_data::instant_event::Data::CommandOptions(command_options) => {
                         self.handle_command_options(command_options)
                     }
                     _ => Ok(()),
@@ -2297,7 +2803,6 @@ fn process_error_report(error: buck2_data::ErrorReport) -> buck2_data::Processed
     let tags = tags.chain(string_tags).collect();
 
     buck2_data::ProcessedErrorReport {
-        tier: None,
         message: strip_ansi_codes(&error.message).to_string(),
         telemetry_message: error
             .telemetry_message
@@ -2335,14 +2840,13 @@ impl EventSubscriber for InvocationRecorder {
 
     async fn handle_console_interaction(
         &mut self,
-        c: &Option<SuperConsoleToggle>,
+        c: &ConsoleInteraction,
     ) -> buck2_error::Result<()> {
-        match c {
-            Some(c) => self
-                .tags
-                .push(format!("superconsole-toggle:{}", c.key()).to_owned()),
-            None => {}
-        }
+        let ConsoleInteraction::Toggle(c) = c else {
+            return Ok(());
+        };
+        self.tags
+            .push(format!("superconsole-toggle:{}", c.key()).to_owned());
         Ok(())
     }
 
@@ -2353,18 +2857,19 @@ impl EventSubscriber for InvocationRecorder {
         self.has_command_result = true;
         match &result.result {
             Some(command_result::Result::BuildResponse(res)) => {
-                let built_rule_type_names: Vec<String> =
-                    unique_and_sorted(res.build_targets.iter().map(|t| {
+                // Append per-BuildTarget rule type names from the build
+                // response. Extending (not assigning) preserves rule types
+                // already accumulated from `TargetRuleTypeName` instant events.
+                self.target_rule_type_names
+                    .extend(res.build_targets.iter().map(|t| {
                         t.target_rule_type_name
                             .clone()
                             .unwrap_or_else(|| "NULL".to_owned())
                     }));
-                self.target_rule_type_names = built_rule_type_names;
             }
-            Some(command_result::Result::TestResponse(res)) => {
-                let built_rule_type_names: Vec<String> =
-                    unique_and_sorted(res.target_rule_type_names.clone().into_iter());
-                self.target_rule_type_names = built_rule_type_names;
+            Some(command_result::Result::InstallResponse(res)) => {
+                self.target_rule_type_names
+                    .extend(res.target_rule_type_names.iter().cloned());
             }
             _ => {}
         }
@@ -2399,7 +2904,7 @@ impl EventSubscriber for InvocationRecorder {
         self.has_end_of_stream = true;
     }
 
-    async fn finalize(&mut self) -> buck2_error::Result<()> {
+    async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
         // Can't set this before the daemon forks.
         // Typically initialized already unless the command failed early.
         let fb = buck2_common::fbinit::get_or_init_fbcode_globals();
@@ -2422,34 +2927,12 @@ impl EventSubscriber for InvocationRecorder {
         }
     }
 
-    fn as_error_observer(&self) -> Option<&dyn ErrorObserver> {
-        Some(self)
-    }
-
     fn handle_daemon_connection_failure(&mut self) {
         self.daemon_connection_failure = true;
     }
 
     fn handle_daemon_started(&mut self, daemon_was_started: buck2_data::DaemonWasStartedReason) {
         self.daemon_was_started = Some(daemon_was_started);
-    }
-
-    fn handle_should_restart(&mut self) {
-        self.should_restart = self.restarted_trace_id.is_none();
-    }
-}
-
-impl ErrorObserver for InvocationRecorder {
-    fn daemon_in_memory_state_is_corrupted(&self) -> bool {
-        self.daemon_in_memory_state_is_corrupted
-    }
-
-    fn daemon_materializer_state_is_corrupted(&self) -> bool {
-        self.daemon_materializer_state_is_corrupted
-    }
-
-    fn restarter_is_enabled(&self) -> bool {
-        self.enable_restarter
     }
 }
 
@@ -2503,13 +2986,40 @@ fn duration_since(end_time: SystemTime, start_time: SystemTime) -> Duration {
     end_time.duration_since(start_time).unwrap_or_default()
 }
 
+/// A command sends one `BuildPhaseEnd` per independent build it runs (e.g. one per install
+/// request). The build phase ends with the last of them and has the worst of their statuses.
+fn merge_build_phase_ends(
+    prev: Option<(SystemTime, buck2_data::BuildStatus)>,
+    next: (SystemTime, buck2_data::BuildStatus),
+) -> (SystemTime, buck2_data::BuildStatus) {
+    fn severity(status: buck2_data::BuildStatus) -> u8 {
+        match status {
+            buck2_data::BuildStatus::Success => 0,
+            buck2_data::BuildStatus::Unknown => 1,
+            buck2_data::BuildStatus::Cancelled => 2,
+            buck2_data::BuildStatus::NotStarted => 3,
+            buck2_data::BuildStatus::Failed => 4,
+        }
+    }
+    match prev {
+        None => next,
+        Some((prev_time, prev_status)) => (
+            max(prev_time, next.0),
+            std::cmp::max_by_key(prev_status, next.1, |s| severity(*s)),
+        ),
+    }
+}
+
 fn duration_as_millis(duration: Duration) -> Option<u64> {
     u64::try_from(duration.as_millis()).ok()
 }
 
 #[cfg(test)]
 mod tests {
+
     use std::ffi::OsString;
+    use std::sync::Arc;
+    use std::time::Duration;
     use std::time::SystemTime;
 
     use buck2_data::InvocationOutcome;
@@ -2517,11 +3027,15 @@ mod tests {
     use buck2_error::ExitCode;
     use buck2_error::buck2_error;
     use buck2_error::internal_error;
+    use buck2_events::BuckEvent;
     use buck2_wrapper_common::invocation_id::TraceId;
 
+    use crate::exit_result::ExecEnvironment;
     use crate::exit_result::ExitResult;
     use crate::subscribers::recorder::InvocationRecorder;
+    use crate::subscribers::recorder::merge_build_phase_ends;
     use crate::subscribers::recorder::truncate_stderr;
+    use crate::subscribers::subscriber::EventSubscriber;
 
     #[test]
     fn test_truncate_stderr() {
@@ -2554,11 +3068,180 @@ mod tests {
         assert_eq!(recorder.outcome(&exit_result), InvocationOutcome::Crashed);
         recorder.daemon_connection_failure = false;
 
-        let exit_result = ExitResult::exec(OsString::new(), vec![], None, vec![]);
+        let exit_result =
+            ExitResult::exec(OsString::new(), vec![], None, ExecEnvironment::default());
         assert_eq!(recorder.outcome(&exit_result), InvocationOutcome::Success);
 
         let err = buck2_error!(ErrorTag::IoClientBrokenPipe, "test");
         let exit_result = ExitResult::err(err);
         assert_eq!(recorder.outcome(&exit_result), InvocationOutcome::Cancelled);
+    }
+
+    fn recorder_for(command_name: &'static str) -> InvocationRecorder {
+        let mut recorder =
+            InvocationRecorder::new(TraceId::new(), None, SystemTime::UNIX_EPOCH, vec![]);
+        recorder.command_name = Some(command_name);
+        recorder
+    }
+
+    fn at_secs(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn test_build_status_from_build_phase_end() {
+        let mut recorder = recorder_for("test");
+        recorder.command_start_timestamp = Some(at_secs(100));
+        recorder.build_phase_end = Some((at_secs(160), buck2_data::BuildStatus::Success));
+        // Tests failing after the build don't change the build outcome.
+        recorder.outcome = Some(InvocationOutcome::Failed);
+        assert_eq!(
+            recorder.build_status(),
+            Some(buck2_data::BuildStatus::Success)
+        );
+        assert_eq!(recorder.build_duration_ms(), Some(60_000));
+    }
+
+    #[test]
+    fn test_merge_build_phase_ends() {
+        use buck2_data::BuildStatus;
+        let merged = [
+            (at_secs(30), BuildStatus::Success),
+            (at_secs(50), BuildStatus::Success),
+            (at_secs(40), BuildStatus::Failed),
+        ]
+        .into_iter()
+        .fold(None, |acc, next| Some(merge_build_phase_ends(acc, next)));
+        assert_eq!(merged, Some((at_secs(50), BuildStatus::Failed)));
+    }
+
+    #[test]
+    fn test_build_status_without_build_phase_end() {
+        let mut recorder = recorder_for("build");
+        assert_eq!(
+            recorder.build_status(),
+            Some(buck2_data::BuildStatus::NotStarted)
+        );
+        assert_eq!(recorder.build_duration_ms(), None);
+
+        recorder.command_start_timestamp = Some(at_secs(100));
+        recorder.outcome = Some(InvocationOutcome::Failed);
+        assert_eq!(
+            recorder.build_status(),
+            Some(buck2_data::BuildStatus::Failed)
+        );
+        recorder.outcome = Some(InvocationOutcome::Cancelled);
+        assert_eq!(
+            recorder.build_status(),
+            Some(buck2_data::BuildStatus::Cancelled)
+        );
+        recorder.outcome = Some(InvocationOutcome::Crashed);
+        assert_eq!(
+            recorder.build_status(),
+            Some(buck2_data::BuildStatus::Unknown)
+        );
+
+        assert_eq!(recorder_for("targets").build_status(), None);
+    }
+
+    #[test]
+    fn test_peak_system_load_excludes_pre_invocation_window() {
+        let mut recorder =
+            InvocationRecorder::new(TraceId::new(), None, SystemTime::UNIX_EPOCH, vec![]);
+        // num_cores = 1 makes normalization the identity, so peaks equal the raw loads.
+        recorder.system_info.num_cores = Some(1);
+
+        // A sample inside both windows must be ignored: its averaging window reaches before the
+        // invocation started.
+        recorder.update_peak_system_load(Duration::from_secs(30), 10.0, 10.0);
+        assert_eq!(
+            recorder.peak_normalized_system_load1, None,
+            "load1 sampled within the 1-minute window must be ignored"
+        );
+        assert_eq!(
+            recorder.peak_normalized_system_load5, None,
+            "load5 sampled within the 5-minute window must be ignored"
+        );
+
+        // At exactly the 1-minute boundary, load1 counts but load5 is still inside its window.
+        recorder.update_peak_system_load(Duration::from_secs(60), 4.0, 99.0);
+        assert_eq!(recorder.peak_normalized_system_load1, Some(4.0));
+        assert_eq!(
+            recorder.peak_normalized_system_load5, None,
+            "load5 sampled within the 5-minute window must be ignored"
+        );
+
+        // At the 5-minute boundary both count; peak stays the running max, so the earlier larger
+        // load1 (4.0) is kept over the later 2.0.
+        recorder.update_peak_system_load(Duration::from_secs(5 * 60), 2.0, 7.0);
+        assert_eq!(recorder.peak_normalized_system_load1, Some(4.0));
+        assert_eq!(recorder.peak_normalized_system_load5, Some(7.0));
+    }
+
+    fn snapshot_event(
+        trace_id: &TraceId,
+        at: SystemTime,
+        snapshot: buck2_data::Snapshot,
+    ) -> Arc<BuckEvent> {
+        Arc::new(BuckEvent::new(
+            at,
+            trace_id.clone(),
+            None,
+            None,
+            buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
+                data: Some(buck2_data::instant_event::Data::Snapshot(Box::new(
+                    snapshot,
+                ))),
+            }),
+        ))
+    }
+
+    fn record_of(event: &buck2_events::BuckEvent) -> buck2_data::InvocationRecord {
+        match event.data() {
+            buck2_data::buck_event::Data::Record(r) => match r.data.as_ref().unwrap() {
+                buck2_data::record_event::Data::InvocationRecord(r) => (**r).clone(),
+                _ => panic!("not an invocation record"),
+            },
+            _ => panic!("not a record"),
+        }
+    }
+
+    /// The record after two snapshots whose local cache counters moved by the given amounts.
+    async fn record_after_lookups(lookups: i64, latency_us: i64) -> buck2_data::InvocationRecord {
+        let trace_id = TraceId::new();
+        let start = SystemTime::now();
+        let mut recorder = InvocationRecorder::new(trace_id.clone(), None, start, vec![]);
+        // One second apart: the snapshot rates divide by the elapsed time.
+        recorder
+            .handle_events(&[
+                snapshot_event(&trace_id, start, buck2_data::Snapshot::default()),
+                snapshot_event(
+                    &trace_id,
+                    start + Duration::from_secs(1),
+                    buck2_data::Snapshot {
+                        local_cache_lookups: lookups,
+                        local_cache_lookup_latency_microseconds: latency_us,
+                        ..Default::default()
+                    },
+                ),
+            ])
+            .await
+            .unwrap();
+        record_of(&recorder.create_record_event())
+    }
+
+    /// With no local cache lookups between the snapshots there is no average: the field is
+    /// absent instead of `NaN` or `inf`.
+    #[tokio::test]
+    async fn test_average_local_cache_lookup_without_lookups_is_absent() {
+        let record = record_after_lookups(0, 0).await;
+        assert_eq!(record.local_cache_lookups, Some(0));
+        assert_eq!(record.re_average_local_cache_lookup_microseconds, None);
+
+        let record = record_after_lookups(0, 10).await;
+        assert_eq!(record.re_average_local_cache_lookup_microseconds, None);
+
+        let record = record_after_lookups(4, 10).await;
+        assert_eq!(record.re_average_local_cache_lookup_microseconds, Some(2.5));
     }
 }

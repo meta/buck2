@@ -237,7 +237,7 @@ analysis_res_dict = ctx.analysis(nodes)
 ```
 
 This gives us a dictionary, where keys are target
-[labels](../../api/build/Label/#label) and values are of type
+[labels](../../api/build/Label/) and values are of type
 [AnalysisResult](../../api/bxl/AnalysisResult/)
 
 Index data is in each target's "index"

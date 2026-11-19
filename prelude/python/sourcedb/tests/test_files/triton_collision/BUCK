@@ -1,0 +1,25 @@
+load("@fbcode_macros//build_defs:python_library.bzl", fbcode_python_library = "python_library")
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("pyre")
+
+source_listing()
+
+cxx_python_extension(
+    name = "a_b",
+    srcs = ["extension.cpp"],
+    base_module = "triton_collision",
+)
+
+fbcode_python_library(
+    name = "a_b_py",
+    srcs = ["kernel.py"],
+    base_module = "python.sourcedb.tests.test_files.triton_collision",
+    cpp_deps = [":a_b"],
+)
+
+python_library(
+    name = "a_b_lib",
+    srcs = [],
+    deps = [":a_b_py"],
+)

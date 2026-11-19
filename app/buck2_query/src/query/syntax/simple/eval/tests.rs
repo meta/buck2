@@ -55,7 +55,10 @@ impl LabeledNode for Target {
 impl QueryTarget for Target {
     type Attr<'a> = TargetAttr;
 
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(&self, _func: F) -> Result<(), E> {
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
+        &self,
+        _func: F,
+    ) -> Result<(), E> {
         unimplemented!()
     }
 
@@ -67,7 +70,7 @@ impl QueryTarget for Target {
         unimplemented!()
     }
 
-    fn buildfile_path(&self) -> &BuildFilePath {
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath> {
         unimplemented!()
     }
 
@@ -106,7 +109,10 @@ impl QueryTarget for Target {
         _iterator
     }
 
-    fn special_attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn special_attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         _func: F,
     ) -> Result<(), E> {
@@ -120,25 +126,39 @@ impl QueryTarget for Target {
         unimplemented!()
     }
 
-    fn attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         _func: F,
     ) -> Result<(), E> {
         unimplemented!()
     }
 
-    fn defined_attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn defined_attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         _func: F,
     ) -> Result<(), E> {
         unimplemented!()
     }
 
-    fn map_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(&self, _key: &str, _func: F) -> R {
+    fn map_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(
+        &self,
+        _key: &str,
+        _func: F,
+    ) -> buck2_error::Result<R> {
         unimplemented!()
     }
 
-    fn map_any_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(&self, _key: &str, _func: F) -> R {
+    fn map_any_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(
+        &self,
+        _key: &str,
+        _func: F,
+    ) -> buck2_error::Result<R> {
         unimplemented!()
     }
 }
@@ -219,5 +239,22 @@ pub async fn test_missing_arg() -> buck2_error::Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+/// `toolchain_deps()` outside a `deps()` filter reports the error under its own name.
+#[tokio::test]
+pub async fn test_toolchain_deps_outside_deps_names_itself() -> buck2_error::Result<()> {
+    let input = "toolchain_deps()";
+    let parsed = parse_expr(input)?;
+    let err = QueryEvaluator::new(&Env, &DefaultQueryFunctionsModule::new())
+        .eval(&parsed)
+        .await
+        .expect_err("toolchain_deps() is not available at the top level");
+    let msg = format!("{:#}", QueryError::convert_error(err, input));
+    assert!(
+        msg.contains("query function toolchain_deps not available"),
+        "{msg}"
+    );
     Ok(())
 }

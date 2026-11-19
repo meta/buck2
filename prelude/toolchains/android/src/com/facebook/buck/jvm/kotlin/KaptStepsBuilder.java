@@ -22,7 +22,6 @@ import static com.facebook.buck.jvm.kotlin.CompilerPluginUtils.getKotlinCompiler
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.io.filesystem.CopySourceMode;
-import com.facebook.buck.jvm.cd.command.kotlin.AnnotationProcessingTool;
 import com.facebook.buck.jvm.cd.command.kotlin.KotlinSupportedLanguageVersion;
 import com.facebook.buck.jvm.cd.command.kotlin.LanguageVersion;
 import com.facebook.buck.jvm.core.BuildTargetValue;
@@ -37,6 +36,7 @@ import com.facebook.buck.step.isolatedsteps.common.CopyIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.MakeCleanDirectoryIsolatedStep;
 import com.facebook.buck.step.isolatedsteps.common.ZipIsolatedStep;
 import com.facebook.buck.util.zip.ZipCompressionLevel;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -51,6 +51,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KaptStepsBuilder {
 
   private static final String KAPT3_PLUGIN = "plugin:org.jetbrains.kotlin.kapt3:";
@@ -85,7 +86,6 @@ public class KaptStepsBuilder {
    * <p>This method will do nothing if there are no relevant annotation processors to run.
    */
   public static void prepareKaptProcessorsIfNeeded(
-      AnnotationProcessingTool annotationProcessingTool,
       BuildTargetValue invokingRule,
       AbsPath rootCellPath,
       ImmutableList.Builder<IsolatedStep> steps,
@@ -115,16 +115,8 @@ public class KaptStepsBuilder {
       ImmutableSortedSet.Builder<RelPath> sourceWithStubsAndKaptAndKspOutputBuilder,
       ImmutableSortedSet.Builder<RelPath> sourceWithStubsAndKaptOutputBuilder,
       LanguageVersion kotlinLanguageVersion) {
-    if (!isKaptSupportedForCurrentKotlinLanguageVersion(kotlinLanguageVersion)) {
-      return;
-    }
-
     // We don't need the Kapt processor to run for source-only-abi
     if (invokingRule.isSourceOnlyAbi()) {
-      return;
-    }
-
-    if (!annotationProcessingTool.equals(AnnotationProcessingTool.KAPT)) {
       return;
     }
 
@@ -310,16 +302,6 @@ public class KaptStepsBuilder {
     }
 
     return KOTLINC_KAPT_USE_USE_KAPT4_OLD;
-  }
-
-  public static boolean isKaptSupportedForCurrentKotlinLanguageVersion(
-      LanguageVersion languageVersion) {
-    // Newer Java versions removed a constructor from the Java JDK that KAPT relies on. The issue
-    // was fixed on Kotlin 1.6 (https://youtrack.jetbrains.com/issue/KT-47583)
-    //
-    // Once we have our supported AOSP versions on a later Kotlin version, we can remove this.
-    // AOSP 12 uses Kotlin 1.4.2 => https://fburl.com/code/94fkfr6r
-    return languageVersion.getSupportsLanguageVersion();
   }
 
   /**

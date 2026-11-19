@@ -24,13 +24,15 @@ prelude.command_alias(
 prelude.command_alias(
     name = "with_json_env",
     env = {
-        "COMMAND_ALIAS_ENV_TEST_VARS": prelude.json.encode(struct(
-            key = "value",
-            key2 = {
-                "test2_key": "test2_value",
-                "test_key": "test_value",
-            },
-        )),
+        "COMMAND_ALIAS_ENV_TEST_VARS": prelude.json.encode(
+            struct(
+                key = "value",
+                key2 = {
+                    "test2_key": "test2_value",
+                    "test_key": "test_value",
+                },
+            )
+        ),
     },
     exe = ":echo_arg",
 )

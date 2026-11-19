@@ -35,11 +35,13 @@ _consume_dynamic_value = dynamic_actions(
 def _test_rule(ctx):
     v = ctx.actions.dynamic_output_new(_produce_dynamic_value())
 
-    out = ctx.actions.declare_output("poiuy")
-    ctx.actions.dynamic_output_new(_consume_dynamic_value(
-        v = v,
-        out = out.as_output(),
-    ))
+    out = ctx.actions.declare_output("poiuy", has_content_based_path = False)
+    ctx.actions.dynamic_output_new(
+        _consume_dynamic_value(
+            v = v,
+            out = out.as_output(),
+        )
+    )
 
     return [DefaultInfo(default_output = out)]
 

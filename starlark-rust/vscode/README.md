@@ -20,8 +20,8 @@ Based on a combination of:
 
 ## Pre-requisites
 
-You need to have npm v7+ installed. Afterwards, run `npm install` in this folder
-and in `client`.
+You need Node.js 22+ and npm v7+ installed to run the extension packager.
+Afterwards, run `npm install` in this folder and in `client`.
 
 ## Debugging
 
@@ -50,9 +50,8 @@ and in `client`.
 ## Updating
 
 Every few months security advisories will arrive about pinned versions of
-packages.
+packages. This folder and `client` are separate packages and are pinned
+independently; see
+[`docs/developers/js_dependencies.md`](../../docs/developers/js_dependencies.md).
 
-- `npm audit` to see which packages have security updates.
-- `npm audit fix` to fix those issues.
-- Try `npm audit`, if it still has issues run `npm update`.
-- `npm exec vsce package` to confirm everything still works.
+Run `npm exec vsce package` afterwards to confirm everything still works.

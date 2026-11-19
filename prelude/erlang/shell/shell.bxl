@@ -7,10 +7,7 @@
 # above-listed licenses.
 
 def _deduped_paths(paths):
-    return list({
-        str(path): path.abs_path()
-        for path in paths
-    }.values())
+    return list({str(path): path.abs_path() for path in paths}.values())
 
 def _ebin_paths(ctx):
     target_universe = ctx.uquery().owner(ctx.cli_args.source)

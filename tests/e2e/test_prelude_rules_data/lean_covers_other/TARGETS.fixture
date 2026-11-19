@@ -1,0 +1,8 @@
+# A file of this package as the output of a target: `a.txt`, the path that `lean_covers_dir` has
+# for a file of its own.
+export_file(
+    name = "a_txt",
+    src = "a.txt",
+    mode = "reference",
+    visibility = ["PUBLIC"],
+)

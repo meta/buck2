@@ -10,7 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.AnnotationTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
@@ -37,11 +37,13 @@ import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.util.ElementScanner8;
 import javax.tools.JavaFileObject;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Creates {@link TreeBackedElement}s for each element in the {@link CompilationUnitTree}s known to
  * the compiler. This is analogous to the "Enter" phase of javac.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedEnter {
 
   private final TreeBackedElements elements;
@@ -71,7 +73,7 @@ class TreeBackedEnter {
     @Nullable private TreeBackedPackageElement currentPackage;
 
     private TreeBackedElement getCurrentContext() {
-      return contextStack.peek();
+      return Objects.requireNonNull(contextStack.peek());
     }
 
     private TreePath getCurrentPath() {
@@ -107,20 +109,11 @@ class TreeBackedEnter {
           // We use the Tree to find the top-level type elements in a given compilation unit,
           // then switch to Element scanning so that we can catch elements created by the compiler
           // that don't have a tree, such as default constructors or the generated methods on enums.
-          TreePath previousPath = currentPath;
-          Tree previousTree = currentTree;
-          currentPath = getCurrentPath();
-          currentTree = currentPath.getLeaf();
-          try {
-            Element element = javacTrees.getElement(currentPath);
-            if (element != null) {
-              EnteringElementScanner.this.scan(element, null);
-            } else if (node.getKind() != Tree.Kind.EMPTY_STATEMENT) {
-              throw new AssertionError(String.format("Unexpected tree kind %s", node.getKind()));
-            }
-          } finally {
-            currentPath = previousPath;
-            currentTree = previousTree;
+          Element element = javacTrees.getElement(getCurrentPath());
+          if (element != null) {
+            EnteringElementScanner.this.scan(element, null);
+          } else if (node.getKind() != Tree.Kind.EMPTY_STATEMENT) {
+            throw new AssertionError(String.format("Unexpected tree kind %s", node.getKind()));
           }
           return null;
         }
@@ -314,8 +307,7 @@ class TreeBackedEnter {
       }
 
       for (var underlyingAnnotation : underlyingAnnotations) {
-        var annotationTreePath =
-            javacTrees.getPath(element.getUnderlyingElement(), underlyingAnnotation);
+        var annotationTreePath = getAnnotationPath(element, underlyingAnnotation);
         if (annotationTreePath == null) {
           throw new IllegalArgumentException(
               String.format("Annotation node of element %s could not be found.", element));
@@ -324,6 +316,27 @@ class TreeBackedEnter {
             new TreeBackedAnnotationMirror(
                 underlyingAnnotation, annotationTreePath, canonicalizer));
       }
+    }
+
+    /**
+     * {@link Trees#getPath(Element, AnnotationMirror)} rebuilds the path by scanning the whole
+     * compilation unit, once per annotation, which is quadratic in large generated sources. The
+     * annotation's tree sits inside the element's own tree, so search only from there.
+     */
+    @Nullable
+    private TreePath getAnnotationPath(TreeBackedElement element, AnnotationMirror annotation) {
+      Element underlyingElement = element.getUnderlyingElement();
+      TreePath elementPath = element.getTreePath();
+      if (elementPath != null) {
+        Tree annotationTree = javacTrees.getTree(underlyingElement, annotation);
+        if (annotationTree != null) {
+          TreePath annotationPath = TreePath.getPath(elementPath, annotationTree);
+          if (annotationPath != null) {
+            return annotationPath;
+          }
+        }
+      }
+      return javacTrees.getPath(underlyingElement, annotation);
     }
 
     private class ElementContext implements AutoCloseable {

@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -59,26 +58,9 @@ func (s shellCommander) Exec(ctx context.Context, name string, args ...string) (
 
 var lineRe = regexp.MustCompile(`//line\s+(.+):1:1`)
 
-// Makes relative path absolute, if it is not already
-// The compiler and golang.org/x/tools handle relative paths differently
-// We have to put this hack somewhenre until it fixed
-// See https://github.com/golang/go/issues/70478
-func fixupRelPathLine(projectDir, line string) string {
-	if filepath.IsAbs(line) {
-		return line
-	}
-
-	newPath := filepath.Join(projectDir, line)
-	slog.Debug("fixed path for CGo file", "old", line, "new", newPath)
-
-	return newPath
-}
-
-// fixRePath updates lines like
-// "//line fbcode/third-party-go/vendor/github.com/aquasecurity/libbpfgo/libbpfgo.go:1:1"
-// to "//line /home/user1/fbsource/fbcode/third-party-go/vendor/github.com/aquasecurity/libbpfgo/libbpfgo.go:1:1"
-// to proper full path to local checkout
-func fixRePath(platform Platform, file string) error {
+// fixRePath replaces CGo line directives with the absolute source path reported
+// by go/packages.
+func fixRePath(file, absSrcPath string) error {
 	content, err := os.ReadFile(file)
 	if err != nil {
 		return err
@@ -88,25 +70,21 @@ func fixRePath(platform Platform, file string) error {
 
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	for scanner.Scan() {
-		l := scanner.Text()
-		pp := lineRe.FindStringSubmatch(l)
-		if len(pp) == 2 {
-			slog.Debug("fixing up", "file", file, "line", pp[1])
-			nl := fixupRelPathLine(platform.ProjectDir(), pp[1])
-			if nl != "" {
-				fmt.Fprintf(buf, "//line %s:1:1\n", nl)
-			} else {
-				slog.Warn("unsuccessful fixup", "line", l)
-				buf.WriteString(l + "\n")
-			}
+		origLine := scanner.Text()
+		matches := lineRe.FindStringSubmatch(origLine)
+		if len(matches) == 2 {
+			srcPath := matches[1]
+			slog.Debug("fixing CGo source path", "file", file, "old", srcPath, "new", absSrcPath)
+			fmt.Fprintf(buf, "//line %s:1:1\n", absSrcPath)
 		} else {
-			buf.WriteString(l + "\n")
+			buf.WriteString(origLine)
+			buf.WriteString("\n")
 		}
 	}
 	if err = scanner.Err(); err != nil {
 		return err
 	}
-	dst, err := os.OpenFile(file, os.O_RDWR, 0644)
+	dst, err := os.OpenFile(file, os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}

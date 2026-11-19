@@ -26,24 +26,27 @@ use crate::syntax::Dialect;
 
 #[test]
 fn before_stmt() {
-    let module = Module::new();
-    let globals = Globals::new();
-    let counter = Cell::new(0);
-    let before_stmt = |_span: FileSpanRef, _continued: bool, _eval: &mut Evaluator<'_, '_, '_>| {
-        counter.set(counter.get() + 1);
-    };
+    Module::with_temp_heap(|module| {
+        let globals = Globals::new();
+        let counter = Cell::new(0);
+        let before_stmt =
+            |_span: FileSpanRef, _continued: bool, _eval: &mut Evaluator<'_, '_, '_>| {
+                counter.set(counter.get() + 1);
+            };
 
-    let mut evaluator = Evaluator::new(&module);
-    evaluator.before_stmt_fn(&before_stmt);
+        let mut evaluator = Evaluator::new(&module);
+        evaluator.before_stmt_fn(&before_stmt);
 
-    // For a top-level statement, we get an additional before_stmt call for the possible gc, and one after each call instruction
-    let program = "\
+        // For a top-level statement, we get an additional before_stmt call for the possible gc, and one after each call instruction
+        let program = "\
 x = 1          # 0 + 1
 def f():       # 1 + 1
   return x + 1 # 3
 f()            # 2 + 1 + 1
 ";
-    let ast = AstModule::parse("a.star", program.to_owned(), &Dialect::AllOptionsInternal).unwrap();
-    evaluator.eval_module(ast, &globals).unwrap();
-    assert_eq!(8, counter.get());
+        let ast =
+            AstModule::parse("a.star", program.to_owned(), &Dialect::AllOptionsInternal).unwrap();
+        evaluator.eval_module(ast, &globals).unwrap();
+        assert_eq!(8, counter.get());
+    });
 }

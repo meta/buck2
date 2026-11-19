@@ -8,29 +8,28 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::coerced_attr::CoercedAttr;
+use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use starlark::values::Value;
 
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
-mod arc_str_interner;
+pub mod arc_str_interner;
 pub mod attr_type;
 pub mod coerced_attr;
 pub mod ctx;
 pub mod error;
-mod interner;
 pub(crate) mod str_hash;
 pub mod testing;
 
 pub trait AttrTypeCoerce {
-    fn coerce_item(
+    fn coerce_item<'v>(
         &self,
         configurable: AttrIsConfigurable,
-        _ctx: &dyn AttrCoercionContext,
-        value: Value,
-    ) -> buck2_error::Result<CoercedAttr>;
+        _ctx: &dyn AttrCoercionContext<'v>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<AttrToken>;
 
     fn starlark_type(&self) -> TyMaybeSelect;
 }

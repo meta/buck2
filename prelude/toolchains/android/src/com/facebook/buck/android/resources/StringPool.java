@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.resources;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import java.io.ByteArrayOutputStream;
@@ -36,6 +37,7 @@ import java.util.List;
  * indicates the end of a style array (note that the next array may start at the immediately
  * following word).
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class StringPool extends ResChunk {
   private static final short HEADER_SIZE = 28;
   private static final int SORTED_FLAG = 0x1;

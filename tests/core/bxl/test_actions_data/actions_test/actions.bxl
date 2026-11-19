@@ -26,7 +26,7 @@ def _impl_build_and_write(ctx):
     actions = ctx.bxl_actions().actions
     ctx.build(ctx.cli_args.target)
 
-    output1 = actions.declare_output("output1")
+    output1 = actions.declare_output("output1", has_content_based_path = False)
     actions.write(output1, "sample_content")
     ctx.output.ensure(output1)
 
@@ -45,6 +45,7 @@ def _write_json_cell_path(ctx):
         {
             node.label: node.inputs(),
         },
+        has_content_based_path = False,
     )
     output = ctx.output.ensure(output).abs_path()
     ctx.output.print(output)

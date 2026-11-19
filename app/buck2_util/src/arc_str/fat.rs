@@ -18,14 +18,23 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::PagableDeserialize;
+use pagable::PagableDeserializer;
+use pagable::PagableSerialize;
+use pagable::PagableSerializer;
+use pagable::arc_erase::ArcErase;
+use pagable::arc_erase::ArcEraseType;
+use pagable::arc_erase::ArcSerializeOutcome;
+use pagable::arc_erase::StdArcEraseType;
+use pagable::arc_erase::deserialize_arc;
+use serde::Deserialize;
 use serde::Serialize;
-use static_assertions::assert_eq_size;
 use strong_hash::StrongHash;
 
 use crate::arc_str::base::ArcStrBase;
 use crate::arc_str::base::ArcStrBaseInner;
-use crate::arc_str::base::ArcStrBaseInnerConst;
 use crate::arc_str::base::ArcStrLenStrategy;
+use crate::size_assert;
 
 struct ArcStrProperties;
 
@@ -40,7 +49,7 @@ unsafe impl ArcStrLenStrategy for ArcStrProperties {
     }
 
     #[inline]
-    fn inner_empty() -> &'static ArcStrBaseInnerConst<Self> {
+    fn inner_empty() -> &'static ArcStrBaseInner<Self> {
         &INNER_EMPTY
     }
 
@@ -52,16 +61,16 @@ unsafe impl ArcStrLenStrategy for ArcStrProperties {
 
 /// Wrapper for `Arc<str>`.
 #[derive(
-    PartialEq, Eq, Hash, PartialOrd, Ord, Allocative, Clone, Dupe, Default, StrongHash
+    PartialEq, Eq, Hash, StrongHash, PartialOrd, Ord, Allocative, Clone, Dupe, Default
 )]
 pub struct ArcStr {
     base: ArcStrBase<ArcStrProperties>,
 }
 
-assert_eq_size!(ArcStr, Arc<str>);
-assert_eq_size!(Option<ArcStr>, Arc<str>);
+size_assert::same_size!(ArcStr, Arc<str>);
+size_assert::same_size!(Option<ArcStr>, Arc<str>);
 
-static INNER_EMPTY: ArcStrBaseInnerConst<ArcStrProperties> = ArcStrBaseInner::EMPTY;
+static INNER_EMPTY: ArcStrBaseInner<ArcStrProperties> = ArcStrBaseInner::empty();
 
 impl ArcStr {
     #[inline]
@@ -129,6 +138,70 @@ impl Serialize for ArcStr {
     }
 }
 
+impl<'de> Deserialize<'de> for ArcStr {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(String::deserialize(deserializer)?.into())
+    }
+}
+
+impl PagableSerialize for ArcStr {
+    fn pagable_serialize(
+        &self,
+        serializer: &mut dyn PagableSerializer,
+    ) -> pagable::__internal::anyhow::Result<()> {
+        serializer.serialize_arc(&self.dupe())
+    }
+}
+
+impl<'de> PagableDeserialize<'de> for ArcStr {
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        deserialize_arc::<Self, _>(deserializer)
+    }
+}
+
+impl ArcErase for ArcStr {
+    type Weak = ();
+
+    fn dupe_strong(&self) -> Self {
+        self.dupe()
+    }
+
+    fn erase_type() -> impl ArcEraseType {
+        StdArcEraseType::<Self>::new()
+    }
+
+    fn identity(&self) -> usize {
+        self.base.addr()
+    }
+
+    fn downgrade(&self) -> Option<Self::Weak> {
+        None
+    }
+
+    fn is_unique(&self) -> bool {
+        self.base.is_unique()
+    }
+
+    fn serialize_inner(
+        &self,
+        ser: &mut dyn PagableSerializer,
+    ) -> pagable::__internal::anyhow::Result<ArcSerializeOutcome> {
+        Serialize::serialize(&self, ser.serde())?;
+        Ok(ArcSerializeOutcome::Serialized)
+    }
+
+    fn deserialize_inner<'de, D: PagableDeserializer<'de> + ?Sized>(
+        deser: &mut D,
+    ) -> pagable::__internal::anyhow::Result<Self> {
+        Ok(Self::deserialize(deser.serde())?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::hash_map::DefaultHasher;
@@ -137,6 +210,7 @@ mod tests {
     use std::sync::atomic;
 
     use dupe::Dupe;
+    use pagable::arc_erase::ArcErase;
 
     use crate::arc_str::ArcStr;
 
@@ -177,12 +251,25 @@ mod tests {
     }
 
     #[test]
+    fn test_is_unique() {
+        let s = ArcStr::from("hello");
+        assert!(ArcErase::is_unique(&s));
+        let s2 = s.dupe();
+        assert!(!ArcErase::is_unique(&s));
+        drop(s2);
+        assert!(ArcErase::is_unique(&s));
+        assert!(!ArcErase::is_unique(&ArcStr::from("")));
+    }
+
+    #[test]
     fn test_little_stress_test() {
-        for i in 0..100 {
+        // Interpreted, a string costs milliseconds on the Windows CI hosts.
+        let (rounds, churn) = if cfg!(miri) { (20, 100) } else { (100, 1000) };
+        for i in 0..rounds {
             let strings = (0..i)
                 .map(|i| ArcStr::from(i.to_string()))
                 .collect::<Vec<_>>();
-            for j in 0..1000 {
+            for j in 0..churn {
                 let _ignore = ArcStr::from(j.to_string());
             }
             for (k, s) in strings.iter().enumerate() {

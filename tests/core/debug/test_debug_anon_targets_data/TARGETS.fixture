@@ -1,0 +1,5 @@
+use_anon(name = "with_anon")
+
+plain(name = "root", deps = [":with_anon"])
+
+plain(name = "no_anon")

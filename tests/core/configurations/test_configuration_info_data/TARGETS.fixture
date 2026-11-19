@@ -1,0 +1,38 @@
+load(":defs.bzl", "constraint", "probe", "with_transitioned_dep")
+
+constraint(
+    name = "os",
+    values = ["linux", "macos"],
+)
+
+constraint(
+    name = "cpu",
+    values = ["x86_64", "arm64"],
+    default = "x86_64",
+)
+
+constraint(
+    name = "build_mode",
+    values = ["dev", "opt"],
+    default = "dev",
+)
+
+platform(
+    name = "empty",
+)
+
+probe(
+    name = "probe",
+    mode = select({
+        ":build_mode[dev]": "dev",
+        ":build_mode[opt]": "opt",
+    }),
+    default_target_platform = ":empty",
+)
+
+with_transitioned_dep(
+    name = "with_transitioned_dep",
+    dep = ":probe",
+    opt_dep = ":probe",
+    default_target_platform = ":empty",
+)

@@ -16,9 +16,8 @@ pub(crate) fn find_first_valid_parent(mut path: &Path) -> Option<&ProjectRelativ
     loop {
         path = path.parent()?;
 
-        match ProjectRelativePath::new(path) {
-            Ok(path) => return Some(path),
-            Err(_) => {}
+        if let Ok(path) = ProjectRelativePath::new(path) {
+            return Some(path);
         }
     }
 }

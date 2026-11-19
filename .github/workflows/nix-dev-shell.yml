@@ -1,0 +1,41 @@
+name: Nix dev shell
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - flake.nix
+      - flake.lock
+      - rust-toolchain.toml
+      - .github/workflows/nix-dev-shell.yml
+  pull_request:
+    paths:
+      - flake.nix
+      - flake.lock
+      - rust-toolchain.toml
+      - .github/workflows/nix-dev-shell.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-dev-shell-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dev-shell:
+    name: nix develop (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v6
+    - uses: NixOS/nix-installer-action@v1
+      with:
+        extra-conf: |
+          experimental-features = nix-command flakes
+    - name: Enter the dev shell
+      run: nix develop --command rustc --version --verbose

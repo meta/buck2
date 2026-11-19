@@ -15,11 +15,16 @@ use std::hash::Hash;
 use allocative::Allocative;
 use async_trait::async_trait;
 use dice_futures::cancellation::CancellationContext;
-use dupe::Dupe;
+use pagable::Pagable;
+use pagable::PagableDeserializeOwned;
+use pagable::PagableSerialize;
+use pagable::typetag::PagableTagged;
 
 use crate::InvalidationSourcePriority;
 use crate::api::computations::DiceComputations;
+use crate::api::key::EqualityBehavior;
 use crate::api::key::Key;
+use crate::api::key::ValueSerialize;
 use crate::api::storage_type::StorageType;
 
 /// Specialized version of `Key` above. This type of Key is never computed. It
@@ -32,15 +37,33 @@ use crate::api::storage_type::StorageType;
 /// require a `panic!` implementation in `compute` function, both of which are
 /// horrible and breaks semantics of traits.
 pub trait InjectedKey:
-    Allocative + Clone + Debug + Display + Send + Sync + Eq + Hash + 'static
+    PagableSerialize
+    + PagableDeserializeOwned
+    + Allocative
+    + Clone
+    + Debug
+    + Display
+    + Send
+    + Sync
+    + Eq
+    + Hash
+    + Pagable
+    + PagableTagged
+    + 'static
 {
-    type Value: Allocative + Dupe + Send + Sync + 'static;
+    type Value: Allocative + Send + Sync + 'static;
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool;
+    /// Defines how DICE determines whether a newly injected value equals the cached value.
+    ///
+    /// Returning equality for different values would produce inconsistent graph state. Injected
+    /// keys whose values can never be reused should return [`EqualityBehavior::AlwaysUnequal`].
+    fn equality_behavior() -> EqualityBehavior<Self::Value>;
 
     fn invalidation_source_priority() -> InvalidationSourcePriority {
         InvalidationSourcePriority::Normal
     }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value>;
 }
 
 #[async_trait]
@@ -62,8 +85,8 @@ where
         )
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        Self::equality(x, y)
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        K::equality_behavior()
     }
 
     fn storage_type() -> StorageType {
@@ -72,5 +95,9 @@ where
 
     fn invalidation_source_priority() -> InvalidationSourcePriority {
         K::invalidation_source_priority()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        <K as InjectedKey>::value_serialize()
     }
 }

@@ -5,6 +5,6 @@ BUILD FAILED
 Command failed: Buck daemon event bus encountered an error, the root cause (if available) is displayed above this message.
 
 Caused by:
-    0: status: Unknown, message: "h2 protocol error: error reading a body from connection", details: [], metadata: MetadataMap { headers: {} }
+    0: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) })
     1: error reading a body from connection
     2: stream closed because of a broken pipe

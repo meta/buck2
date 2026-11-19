@@ -33,6 +33,7 @@ def _file_mapping_impl(ctx: AnalysisContext) -> list[Provider]:
             out = ctx.actions.symlink_file(
                 out_path,
                 file,
+                has_content_based_path = False,
             )
             outputs.append(out)
 

@@ -22,10 +22,13 @@ import com.facebook.buck.jvm.cd.command.kotlin.KotlinExtraParams;
 import com.facebook.buck.jvm.java.ActionMetadata;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
-import javax.annotation.Nullable;
+import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /** Converts serialized protobuf commands into steps to compile Kotlin targets. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinStepsBuilder implements BuildCommandStepsBuilder {
   private final ImmutableList<IsolatedStep> steps;
   private final AbsPath ruleCellRoot;
@@ -103,7 +106,8 @@ public class KotlinStepsBuilder implements BuildCommandStepsBuilder {
         actionMetadata,
         kotlinExtraParams);
 
-    libraryStepsBuilder.addMakeMissingOutputsStep(baseJarCommand.getAnnotationPath());
+    libraryStepsBuilder.addMakeMissingOutputsStep(
+        Objects.requireNonNull(baseJarCommand.getAnnotationPath()));
 
     return libraryStepsBuilder.buildIsolatedSteps();
   }

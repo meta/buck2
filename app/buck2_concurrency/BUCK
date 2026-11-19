@@ -1,0 +1,35 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+# Deliberately does not depend on buck2_events, buck2_common or buck2_build_signals, which transitively depend on configerator, thrift, dsi, privacy, nodeapi, etc. which all together make code coverage crash.
+rust_library(
+    name = "buck2_concurrency",
+    srcs = glob(["src/**/*.rs"]),
+    test_deps = [
+        "fbsource//third-party/rust:assert_matches",
+        "fbsource//third-party/rust:derivative",
+        "//buck2/pagable:pagable",
+    ],
+    deps = [
+        "fbsource//third-party/rust:async-trait",
+        "fbsource//third-party/rust:derive_more",
+        "fbsource//third-party/rust:futures",
+        "fbsource//third-party/rust:itertools",
+        "fbsource//third-party/rust:parking_lot",
+        "fbsource//third-party/rust:tokio",
+        "fbsource//third-party/rust:tracing",
+        "//buck2/allocative/allocative:allocative",
+        "//buck2/app/buck2_cli_proto:buck2_cli_proto",
+        "//buck2/app/buck2_core:buck2_core",
+        "//buck2/app/buck2_data:buck2_data",
+        "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_file_watcher:buck2_file_watcher",
+        "//buck2/app/buck2_hash:buck2_hash",
+        "//buck2/app/buck2_util:buck2_util",
+        "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",
+        "//buck2/dice/dice:dice",
+        "//buck2/dice/dice_futures:dice_futures",
+        "//buck2/gazebo/dupe:dupe",
+    ],
+)

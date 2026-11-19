@@ -19,8 +19,8 @@ use derivative::Derivative;
 use dice::DiceData;
 use dice::DiceDataBuilder;
 use dupe::Dupe;
-use once_cell::sync::Lazy;
 use ref_cast::RefCast;
+use static_interner::Intern;
 
 use crate::directory::ActionDirectoryBuilder;
 use crate::directory::ActionSharedDirectory;
@@ -28,29 +28,37 @@ use crate::directory::INTERNER;
 use crate::directory::ReDirectorySerializer;
 
 /// This configuration describes how to interpret digests received from a RE backend.
-#[derive(Copy, Clone, Dupe, Debug, Allocative, Hash, Eq, PartialEq)]
+#[derive(
+    Copy,
+    Clone,
+    Dupe,
+    Debug,
+    Allocative,
+    Hash,
+    Eq,
+    PartialEq,
+    pagable::Pagable
+)]
 pub struct DigestConfig {
-    inner: &'static DigestConfigInner,
+    inner: Intern<DigestConfigInner>,
 }
 
 impl DigestConfig {
     pub fn testing_default() -> Self {
-        static COMPAT: Lazy<DigestConfigInner> =
-            Lazy::new(|| DigestConfigInner::new(CasDigestConfig::testing_default()));
-
-        Self { inner: &COMPAT }
+        Self {
+            inner: DIGEST_CONFIG_INTERNER
+                .intern(DigestConfigInner::new(CasDigestConfig::testing_default())),
+        }
     }
 
-    /// We just Box::leak this since we create one per daemon and as a result just use
-    /// CasDigestConfig as a pointer.
+    /// Values are interned so identical configs share a single allocation.
     pub fn leak_new(
         algorithms: Vec<DigestAlgorithm>,
         preferred_source_algorithm: Option<DigestAlgorithm>,
     ) -> Result<Self, CasDigestConfigError> {
-        let inner = Box::leak(Box::new(DigestConfigInner::new(CasDigestConfig::leak_new(
-            algorithms,
-            preferred_source_algorithm,
-        )?)));
+        let inner = DIGEST_CONFIG_INTERNER.intern(DigestConfigInner::new(
+            CasDigestConfig::leak_new(algorithms, preferred_source_algorithm)?,
+        ));
         Ok(Self { inner })
     }
 
@@ -59,14 +67,15 @@ impl DigestConfig {
     }
 
     pub fn empty_file(&self) -> FileMetadata {
-        // TODO: This should be a field on the DigestConfig, obviously.
-        FileMetadata::empty(self.cas_digest_config())
+        self.inner.empty_file.dupe()
     }
 
     pub fn as_directory_serializer(&self) -> &ReDirectorySerializer {
         ReDirectorySerializer::ref_cast(&self.inner.cas_digest_config)
     }
 
+    /// The empty directory as artifact content: an exhaustive listing of nothing, i.e. "this
+    /// directory exists and contains exactly nothing".
     pub fn empty_directory(&self) -> ActionSharedDirectory {
         self.inner.empty_directory.dupe()
     }
@@ -78,23 +87,33 @@ impl fmt::Display for DigestConfig {
     }
 }
 
-#[derive(Debug, Allocative, Derivative, Eq)]
+static_interner::interner!(
+    DIGEST_CONFIG_INTERNER,
+    buck2_hash::BuckHasher,
+    DigestConfigInner
+);
+
+#[derive(Debug, Allocative, Derivative, Eq, pagable::Pagable)]
 #[derivative(Hash, PartialEq)]
 struct DigestConfigInner {
     cas_digest_config: CasDigestConfig,
     #[derivative(PartialEq = "ignore", Hash = "ignore")]
     empty_directory: ActionSharedDirectory,
+    #[derivative(PartialEq = "ignore", Hash = "ignore")]
+    empty_file: FileMetadata,
 }
 
 impl DigestConfigInner {
     fn new(cas_digest_config: CasDigestConfig) -> Self {
-        let empty_directory = ActionDirectoryBuilder::empty()
+        let empty_directory = ActionDirectoryBuilder::empty_exhaustive()
             .fingerprint(&ReDirectorySerializer { cas_digest_config })
             .shared(&*INTERNER);
+        let empty_file = FileMetadata::empty(cas_digest_config);
 
         Self {
             cas_digest_config,
             empty_directory,
+            empty_file,
         }
     }
 }
@@ -116,6 +135,12 @@ impl HasDigestConfig for DiceData {
 }
 
 impl SetDigestConfig for DiceDataBuilder {
+    fn set_digest_config(&mut self, digest_config: DigestConfig) {
+        self.set(digest_config)
+    }
+}
+
+impl SetDigestConfig for DiceData {
     fn set_digest_config(&mut self, digest_config: DigestConfig) {
         self.set(digest_config)
     }

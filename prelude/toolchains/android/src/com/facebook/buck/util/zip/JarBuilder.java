@@ -16,6 +16,7 @@ import static com.facebook.buck.util.zip.ZipOutputStreams.newJarOutputStream;
 import static java.util.Comparator.comparing;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.io.ByteStreams;
@@ -45,8 +46,9 @@ import java.util.jar.Manifest;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarBuilder {
 
   private static final Predicate<? super CustomZipEntry> NO_FILTER = entry -> false;
@@ -78,7 +80,7 @@ public class JarBuilder {
               try {
                 props.load(new StringReader(file));
                 for (String propName : props.stringPropertyNames()) {
-                  String values = props.getProperty(propName);
+                  String values = Objects.requireNonNull(props.getProperty(propName));
                   String mergedValues = mergedProps.getProperty(propName);
                   mergedProps.setProperty(
                       propName, mergedValues == null ? values : mergedValues + "," + values);
@@ -148,7 +150,7 @@ public class JarBuilder {
   @Nullable private String mainClass;
   private boolean shouldMergeManifests;
   private boolean shouldHashEntries;
-  private Path appendJar;
+  @Nullable private Path appendJar;
   private Predicate<? super CustomZipEntry> removeEntryPredicate = NO_FILTER;
   private List<Path> manifestFiles = List.of();
   private final List<JarEntryContainer> sourceContainers = new ArrayList<>();
@@ -157,6 +159,7 @@ public class JarBuilder {
   private final Map<String, Set<String>> mergeableResources = new HashMap<>();
   private final List<JarEntrySupplier> additionalEntries = new ArrayList<>();
 
+  @Nullable
   protected Path getAppendJar() {
     return appendJar;
   }
@@ -225,7 +228,7 @@ public class JarBuilder {
     return this;
   }
 
-  public JarBuilder setMainClass(String mainClass) {
+  public JarBuilder setMainClass(@Nullable String mainClass) {
     this.mainClass = mainClass;
     return this;
   }
@@ -308,8 +311,8 @@ public class JarBuilder {
     closeSourceContainers(overrideSourceContainers);
   }
 
-  protected CustomJarOutputStream getJarOutputStream(final Path appendJar, final Path outputFile)
-      throws IOException {
+  protected CustomJarOutputStream getJarOutputStream(
+      @Nullable final Path appendJar, final Path outputFile) throws IOException {
     if (appendJar != null) {
       return appendJarOutputStream(appendJar, outputFile);
     }
@@ -347,7 +350,7 @@ public class JarBuilder {
     for (String entryName : mergeableResources.keySet()) {
       CustomZipEntry entry = new CustomZipEntry(entryName);
       jar.putNextEntry(entry);
-      Set<String> files = mergeableResources.get(entryName);
+      Set<String> files = Objects.requireNonNull(mergeableResources.get(entryName));
       jar.write(MergeableResource.fromFileName(entryName).merge(files));
       jar.closeEntry();
     }
@@ -355,15 +358,15 @@ public class JarBuilder {
 
   private void writeManifest(CustomJarOutputStream jar) throws IOException {
     mkdirs("META-INF/", jar);
-    DeterministicManifest manifest = jar.getManifest();
+
+    final DeterministicManifest manifest = jar.getManifest();
+    final JarManifestMerger manifestMerger = JarManifestMerger.get();
+
     manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
 
     if (shouldMergeManifests) {
       for (JarEntryContainer sourceContainer : sourceContainers) {
-        Manifest readManifest = sourceContainer.getManifest();
-        if (readManifest != null) {
-          merge(manifest, readManifest);
-        }
+        manifestMerger.merge(manifest, sourceContainer.getManifest());
       }
     }
 
@@ -371,8 +374,7 @@ public class JarBuilder {
     // so that values from the user overwrite values from merged manifests.
     for (Path manifestFile : manifestFiles) {
       try (InputStream stream = Files.newInputStream(manifestFile)) {
-        Manifest readManifest = new Manifest(stream);
-        merge(manifest, readManifest);
+        manifestMerger.merge(manifest, new Manifest(stream));
       }
     }
 
@@ -494,34 +496,6 @@ public class JarBuilder {
       length = name.lastIndexOf('/', length - 2) + 1;
     }
     return name.substring(0, length);
-  }
-
-  /**
-   * Merge entries from two Manifests together, with existing attributes being overwritten.
-   *
-   * @param into The Manifest to modify.
-   * @param from The Manifest to copy from.
-   */
-  private void merge(Manifest into, Manifest from) {
-
-    Attributes attributes = from.getMainAttributes();
-    if (attributes != null) {
-      for (Map.Entry<Object, Object> attribute : attributes.entrySet()) {
-        into.getMainAttributes().put(attribute.getKey(), attribute.getValue());
-      }
-    }
-
-    Map<String, Attributes> entries = from.getEntries();
-    if (entries != null) {
-      for (Map.Entry<String, Attributes> entry : entries.entrySet()) {
-        Attributes existing = into.getAttributes(entry.getKey());
-        if (existing == null) {
-          existing = new Attributes();
-          into.getEntries().put(entry.getKey(), existing);
-        }
-        existing.putAll(entry.getValue());
-      }
-    }
   }
 
   private boolean isDuplicateAllowed(String name) {

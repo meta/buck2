@@ -22,6 +22,7 @@ use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
 use dice::DiceComputations;
+use futures::FutureExt;
 
 use crate::aquery::evaluator::get_aquery_evaluator;
 use crate::cquery::evaluator::eval_cquery;
@@ -43,11 +44,16 @@ impl QueryFrontend for QueryFrontendImpl {
         working_dir: &ProjectRelativePath,
         query: &str,
         query_args: &[String],
+        allow_partial_graph: bool,
     ) -> buck2_error::Result<QueryEvaluationResult<TargetNode>> {
         Ok(ctx
-            .with_linear_recompute(|ctx| async move {
-                let evaluator = get_uquery_evaluator(&ctx, working_dir).await?;
-                evaluator.eval_query(query, query_args).await
+            .with_linear_recompute(|ctx| {
+                async move {
+                    let evaluator =
+                        get_uquery_evaluator(ctx, working_dir, allow_partial_graph).await?;
+                    evaluator.eval_query(query, query_args).await
+                }
+                .boxed()
             })
             .await?)
     }
@@ -71,24 +77,32 @@ impl QueryFrontend for QueryFrontendImpl {
         Option<Vec<Arc<CqueryUniverse>>>,
     )> {
         Ok(ctx
-            .with_linear_recompute(|ctx| async move {
-                let dice_query_delegate =
-                    get_dice_query_delegate(&ctx, working_dir, global_cfg_options).await?;
+            .with_linear_recompute(|ctx| {
+                async move {
+                    let dice_query_delegate = get_dice_query_delegate(
+                        ctx,
+                        working_dir,
+                        global_cfg_options,
+                        false, // allow_partial_graph
+                    )
+                    .await?;
 
-                // TODO(nga): this should support configured target patterns
-                //   similarly to what we do for `build` command.
-                //   Something like this should work:
-                //   ```
-                //   buck2 cquery --target-universe android//:binary 'deps("some//:lib (<arm32>)")'
-                //   ```
-                eval_cquery(
-                    dice_query_delegate,
-                    query,
-                    query_args,
-                    target_universe.as_ref().map(|v| &v[..]),
-                    collect_universes,
-                )
-                .await
+                    // TODO(nga): this should support configured target patterns
+                    //   similarly to what we do for `build` command.
+                    //   Something like this should work:
+                    //   ```
+                    //   buck2 cquery --target-universe android//:binary 'deps("some//:lib (<arm32>)")'
+                    //   ```
+                    eval_cquery(
+                        dice_query_delegate,
+                        query,
+                        query_args,
+                        target_universe.as_ref().map(|v| &v[..]),
+                        collect_universes,
+                    )
+                    .await
+                }
+                .boxed()
             })
             .await?)
     }
@@ -102,9 +116,13 @@ impl QueryFrontend for QueryFrontendImpl {
         global_cfg_options: GlobalCfgOptions,
     ) -> buck2_error::Result<QueryEvaluationResult<ActionQueryNode>> {
         Ok(ctx
-            .with_linear_recompute(|ctx| async move {
-                let evaluator = get_aquery_evaluator(&ctx, working_dir, global_cfg_options).await?;
-                evaluator.eval_query(query, query_args).await
+            .with_linear_recompute(|ctx| {
+                async move {
+                    let evaluator =
+                        get_aquery_evaluator(ctx, working_dir, global_cfg_options).await?;
+                    evaluator.eval_query(query, query_args).await
+                }
+                .boxed()
             })
             .await?)
     }
@@ -116,15 +134,24 @@ async fn universe_from_literals(
     literals: &[String],
     global_cfg_options: GlobalCfgOptions,
 ) -> buck2_error::Result<CqueryUniverse> {
-    ctx.with_linear_recompute(|ctx| async move {
-        let query_delegate = get_dice_query_delegate(&ctx, cwd, global_cfg_options).await?;
-        Ok(preresolve_literals_and_build_universe(
-            &query_delegate,
-            query_delegate.query_data(),
-            literals,
-        )
-        .await?
-        .0)
+    ctx.with_linear_recompute(|ctx| {
+        async move {
+            let query_delegate = get_dice_query_delegate(
+                ctx,
+                cwd,
+                global_cfg_options,
+                false, // allow_partial_graph
+            )
+            .await?;
+            Ok(preresolve_literals_and_build_universe(
+                &query_delegate,
+                query_delegate.query_data(),
+                literals,
+            )
+            .await?
+            .0)
+        }
+        .boxed()
     })
     .await
 }

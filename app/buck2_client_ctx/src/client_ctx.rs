@@ -11,24 +11,36 @@
 use std::future::Future;
 use std::time::SystemTime;
 
+use buck2_agent_interactive::Advice;
+use buck2_agent_interactive::Decision;
+use buck2_agent_interactive::Invocation;
 use buck2_cli_proto::ClientContext;
+use buck2_cli_proto::TenantIdentity;
 use buck2_cli_proto::client_context::ExitWhen as GrpcExitWhen;
 use buck2_cli_proto::client_context::HostArchOverride as GrpcHostArchOverride;
 use buck2_cli_proto::client_context::HostPlatformOverride as GrpcHostPlatformOverride;
 use buck2_cli_proto::client_context::PreemptibleWhen as GrpcPreemptibleWhen;
 use buck2_common::argv::Argv;
+use buck2_common::daemon_dir::DaemonDir;
 use buck2_common::init::LogDownloadMethod;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
 use buck2_core::error::buck2_hard_error_env;
+use buck2_core::error::buck2_show_soft_errors_env;
 use buck2_error::BuckErrorContext;
 use buck2_event_observer::verbosity::Verbosity;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_fs::working_dir::AbsWorkingDir;
+use buck2_settings::BuckSettings;
+use buck2_settings::ResolvedSettings;
 use buck2_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
+use superconsole::Stdin;
 use tokio::runtime::Runtime;
 
+use crate::agent_context::AgentContext;
+use crate::agent_context::coding_agent_metadata_env;
+use crate::agent_invocation_info::AgentInvocationInfo;
 use crate::client_metadata::ClientMetadata;
 use crate::common::BuckArgMatches;
 use crate::common::CommonEventLogOptions;
@@ -38,12 +50,14 @@ use crate::common::HostPlatformOverride;
 use crate::common::PreemptibleWhen;
 use crate::common::ui::CommonConsoleOptions;
 use crate::console_interaction_stream::ConsoleInteractionStream;
+use crate::daemon::client::connect::DaemonConstraintsRequest;
+use crate::daemon::client::connect::DesiredTraceIoState;
+use crate::daemon::client::tenant_slot::SlotOwner;
+use crate::daemon::client::tenant_slot::probe_slot;
 use crate::daemon_constraints::get_possibly_nested_invocation_daemon_uuid;
 use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
 use crate::immediate_config::ImmediateConfigContext;
-use crate::restarter::Restarter;
-use crate::stdin::Stdin;
 use crate::streaming::StreamingCommand;
 
 pub struct ClientCommandContext<'a> {
@@ -61,11 +75,46 @@ pub struct ClientCommandContext<'a> {
     pub(crate) argv: Argv,
     pub trace_id: TraceId,
     stdin: &'a mut Stdin,
-    pub(crate) restarter: &'a mut Restarter,
     runtime: &'a Runtime,
     oncall: Option<String>,
     pub(crate) client_metadata: Vec<ClientMetadata>,
     pub(crate) isolation: FileNameBuf,
+    agent_invocation_info: AgentInvocationInfo,
+}
+
+/// A client-side guard's verdict on one operation, together with what to record about it.
+#[derive(Debug, Clone, Copy)]
+pub struct AgentAdvice {
+    advice: Advice,
+    decision: Decision,
+    /// Whether the guard is on, for a direct call in a repository. `None` for every other call,
+    /// which is outside the guards' A/B tests and records nothing.
+    enabled: Option<bool>,
+}
+
+impl AgentAdvice {
+    /// For an operation the guard does not cover, such as starting the default isolation's daemon.
+    pub(crate) fn not_applicable(advice: Advice) -> Self {
+        Self {
+            advice,
+            decision: Decision::Inactive,
+            enabled: None,
+        }
+    }
+
+    pub(crate) fn decision(self) -> Decision {
+        self.decision
+    }
+
+    /// The guard's state, recorded in both arms of its A/B test, followed by its decision when it
+    /// acted.
+    pub(crate) fn tags(self) -> Vec<String> {
+        self.enabled
+            .map(|enabled| self.advice.state_tag(enabled))
+            .into_iter()
+            .chain(self.decision.tag().map(str::to_owned))
+            .collect()
+    }
 }
 
 impl<'a> ClientCommandContext<'a> {
@@ -80,11 +129,11 @@ impl<'a> ClientCommandContext<'a> {
         argv: Argv,
         trace_id: TraceId,
         stdin: &'a mut Stdin,
-        restarter: &'a mut Restarter,
         runtime: &'a Runtime,
         oncall: Option<String>,
         client_metadata: Vec<ClientMetadata>,
         isolation: FileNameBuf,
+        agent_invocation_info: AgentInvocationInfo,
     ) -> Self {
         ClientCommandContext {
             init,
@@ -97,33 +146,133 @@ impl<'a> ClientCommandContext<'a> {
             argv,
             trace_id,
             stdin,
-            restarter,
             runtime,
             oncall,
             client_metadata,
             isolation,
+            agent_invocation_info,
         }
+    }
+
+    /// Check whether the expanded argv (after flagfile expansion) contains a `--` separator.
+    pub fn expanded_argv_has_separator(&self) -> bool {
+        self.argv.expanded_argv.args().any(|arg| arg == "--")
     }
 
     pub fn fbinit(&self) -> fbinit::FacebookInit {
         self.init
     }
 
+    pub fn agent_context(&self) -> &AgentContext {
+        self.agent_invocation_info.agent_context()
+    }
+
+    pub(crate) fn agent_invocation_info(&self) -> &AgentInvocationInfo {
+        &self.agent_invocation_info
+    }
+
     pub fn paths(&self) -> buck2_error::Result<&InvocationPaths> {
         match &self.paths {
-            InvocationPathsResult::Paths(p) => Ok(p),
+            InvocationPathsResult::Paths(p) => {
+                self.select_unidaemon_namespace(p)?;
+                Ok(p)
+            }
             InvocationPathsResult::OutsideOfRepo(e) | InvocationPathsResult::OtherError(e) => {
-                Err(e.dupe().into())
+                Err(e.dupe())
             }
         }
     }
 
     pub fn maybe_paths(&self) -> buck2_error::Result<Option<&InvocationPaths>> {
         match &self.paths {
-            InvocationPathsResult::Paths(p) => Ok(Some(p)),
+            InvocationPathsResult::Paths(p) => {
+                self.select_unidaemon_namespace(p)?;
+                Ok(Some(p))
+            }
             InvocationPathsResult::OutsideOfRepo(_) => Ok(None), // commands like log don't need a root but still need to create an invocation record
-            InvocationPathsResult::OtherError(e) => Err(e.dupe().into()),
+            InvocationPathsResult::OtherError(e) => Err(e.dupe()),
         }
+    }
+
+    /// Under daemon sharing a client addresses the namespace its own constraints hash to,
+    /// before it has talked to any daemon. The key here takes the trace-I/O state as whatever
+    /// a running daemon has; a command that may start a daemon hashes again when it connects,
+    /// with the trace-I/O state it was asked for, which can name another namespace.
+    fn select_unidaemon_namespace(&self, paths: &InvocationPaths) -> buck2_error::Result<()> {
+        if paths.unidaemon_key().is_none() && paths.shares_daemon() {
+            let constraints = DaemonConstraintsRequest::new(
+                self.immediate_config,
+                DesiredTraceIoState::Existing,
+            )?;
+            paths.select_unidaemon(constraints.compatibility_key()?);
+        }
+        Ok(())
+    }
+
+    /// The directory of the daemon that serves this tenant, for commands that read it without
+    /// connecting. Under daemon sharing that is the namespace the tenant's proxy reports,
+    /// or, without a proxy, the namespace of this client's own constraints.
+    pub async fn resolve_tenant_daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
+        let paths = self.paths()?;
+        if paths.routing()?.is_shared()
+            && let SlotOwner::Proxy(proxy) = probe_slot(paths).await?
+        {
+            paths.select_tenant_generation(proxy.generation);
+            paths.select_unidaemon(proxy.key);
+        }
+        paths.daemon_dir()
+    }
+
+    /// Loads settings for the invocation's repository without parsing its build configuration.
+    pub fn buck_settings(&self) -> buck2_error::Result<&BuckSettings> {
+        self.immediate_config
+            .buck_settings(self.paths()?.project_root())
+    }
+
+    /// Like [`buck_settings`](Self::buck_settings), with where each value came from.
+    pub fn resolved_settings(&self) -> buck2_error::Result<ResolvedSettings> {
+        self.immediate_config
+            .resolved_settings(self.paths()?.project_root())
+    }
+
+    /// The report `buck2 audit settings` and `buck2 rage` show, with the
+    /// buckconfig fallbacks read from the root config as the client reads them.
+    pub fn settings_report(&self) -> buck2_error::Result<buck2_settings::SettingsReport> {
+        let resolved = self.resolved_settings()?;
+        let mut buckconfig = self.immediate_config.root_config()?;
+        buck2_settings::SettingsReport::new(&resolved, &mut buckconfig)
+    }
+
+    /// Evaluates repository-scoped advice without loading build configuration.
+    /// Callers apply the decision only when the guarded operation will actually run.
+    pub fn agent_advice(&self, advice: Advice) -> buck2_error::Result<AgentAdvice> {
+        let agent = self.agent_context();
+        if !agent.is_direct_call() || self.maybe_paths()?.is_none() {
+            return Ok(AgentAdvice::not_applicable(advice));
+        }
+        let settings = &self.buck_settings()?.invocation;
+        let enabled = match advice {
+            Advice::Killall => settings.agent_interactive.killall_enabled(),
+            Advice::Clean => settings.agent_interactive.clean_enabled(),
+            Advice::NewIsolationDir => settings.agent_interactive.new_isolation_dir_enabled(),
+            // These policies need daemon configuration, parsed patterns, or resolved rule types.
+            Advice::Build(_) | Advice::ConfigChange | Advice::RecursivePatterns => {
+                return Ok(AgentAdvice::not_applicable(advice));
+            }
+        };
+        let decision = advice.evaluate(
+            &Invocation {
+                enabled,
+                direct_call: agent.is_direct_call(),
+                reason: agent.reason(),
+            },
+            agent.is_advice_acknowledged(advice.id()),
+        );
+        Ok(AgentAdvice {
+            advice,
+            decision,
+            enabled: Some(enabled),
+        })
     }
 
     pub fn with_runtime<Fut, F>(self, func: F) -> <Fut as Future>::Output
@@ -188,7 +337,7 @@ impl<'a> ClientCommandContext<'a> {
         Ok(ClientContext {
             config_overrides: config_opts.config_overrides(
                 arg_matches,
-                &self.immediate_config,
+                self.immediate_config,
                 &self.working_dir,
             )?,
             host_platform: match config_opts.host_platform_override() {
@@ -226,21 +375,17 @@ impl<'a> ClientCommandContext<'a> {
             target_call_stacks: starlark_opts.target_call_stacks,
             representative_config_flags: arg_matches.get_representative_config_flags_by_source(),
             exit_when: match config_opts.exit_when {
-                None => {
-                    // The --exit-when-different-state flag is deprecated, but still valid.
-                    // If no --exit-when= value is provided, we'll still respect the old flag.
-                    if config_opts.exit_when_different_state {
-                        GrpcExitWhen::ExitDifferentState
-                    } else {
-                        GrpcExitWhen::ExitNever
-                    }
-                }
+                None => GrpcExitWhen::ExitNever,
                 Some(ExitWhen::Never) => GrpcExitWhen::ExitNever,
                 Some(ExitWhen::DifferentState) => GrpcExitWhen::ExitDifferentState,
                 Some(ExitWhen::NotIdle) => GrpcExitWhen::ExitNotIdle,
             }
             .into(),
             profile_pattern_opts: starlark_opts.profile_pattern_opts(&self.working_dir),
+            invocation_settings: Some(serde_json::to_string(&self.buck_settings()?.invocation)?),
+            dice_settings: Some(serde_json::to_string(
+                self.buck_settings()?.dice_sections(),
+            )?),
             ..self.empty_client_context(cmd.logging_name())?
         })
     }
@@ -252,7 +397,15 @@ impl<'a> ClientCommandContext<'a> {
         #[buck2(tag = Input)]
         struct CurrentDirIsNotUtf8;
 
+        let tenant_identity = self.maybe_paths()?.map(|paths| TenantIdentity {
+            project_root: paths.project_root().root().to_string(),
+            isolation: paths.isolation.to_string(),
+        });
+
         Ok(ClientContext {
+            tenant_generation: self
+                .maybe_paths()?
+                .and_then(|paths| paths.tenant_generation()),
             working_dir: self
                 .working_dir
                 .path()
@@ -270,10 +423,12 @@ impl<'a> ClientCommandContext<'a> {
             skip_targets_with_duplicate_names: false,
             trace_id: format!("{}", self.trace_id),
             reuse_current_config: false,
+            reuse_current_config_implicitly: false,
             daemon_uuid: get_possibly_nested_invocation_daemon_uuid(),
             sanitized_argv: Vec::new(),
             argfiles: Vec::new(),
             buck2_hard_error: buck2_hard_error_env()?.unwrap_or_default().to_owned(),
+            buck2_show_soft_errors: buck2_show_soft_errors_env()?.unwrap_or_default().to_owned(),
             command_name: command_name.to_owned(),
             client_metadata: self
                 .client_metadata
@@ -284,13 +439,26 @@ impl<'a> ClientCommandContext<'a> {
             representative_config_flags: Vec::new(),
             exit_when: Default::default(),
             profile_pattern_opts: None,
+            agent_context: self.agent_context().to_proto(),
+            tenant_identity,
+            invocation_settings: None,
+            dice_settings: None,
+            coding_agent_metadata: coding_agent_metadata_env()?.map(str::to_owned),
         })
+    }
+
+    pub fn client_id(&self) -> Option<&str> {
+        self.client_metadata
+            .iter()
+            .find(|m| m.key == "id")
+            .map(|m| m.value.as_str())
     }
 
     pub fn log_download_method(&self) -> buck2_error::Result<LogDownloadMethod> {
         Ok(self
             .immediate_config
             .daemon_startup_config()?
+            .startup_options
             .log_download_method
             .clone())
     }

@@ -1,0 +1,18 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Running buck2 with buck2 daemon spawned from a coding agent's sandbox on certain hosts can make builds extremely slow. This daemon is in that situation on host `<HOSTNAME>`, so its builds are blocked for now. We are working on a long-term fix to remove buck2 daemon from sandbox.
+
+To mitigate in the meantime, a person, not a coding agent, needs to run the following. Please open a terminal on this host, go to:
+
+    <PROJECT_ROOT>
+
+and run:
+
+    buck2 kill && buck2 server
+
+This restarts the buck2 daemon outside the sandbox, after which all buck2 builds (including ones triggered by a coding agent) will work again.
+BUILD FAILED

@@ -7,10 +7,10 @@
 # above-listed licenses.
 
 def _dog_and_bone(ctx):
-    dir = ctx.actions.declare_output("dog")
+    dir = ctx.actions.declare_output("dog", has_content_based_path = False)
     ctx.actions.run(["touch", dir.as_output()], category = "mkdir")
 
-    out = ctx.actions.declare_output("bone")
+    out = ctx.actions.declare_output("bone", has_content_based_path = False)
     ctx.actions.run(
         ["ln", "-s", cmd_args(dir, relative_to = (out, 1)), out.as_output()],
         category = "symlink",

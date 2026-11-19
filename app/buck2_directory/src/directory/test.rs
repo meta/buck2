@@ -13,6 +13,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::sync::OnceLock;
 
 use allocative::Allocative;
 use buck2_core::directory_digest::DirectoryDigest;
@@ -20,22 +21,32 @@ use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use derive_more::Display;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::directory::builder::DirectoryBuilder;
+use crate::directory::dashmap_directory_interner::DashMapDirectoryInterner;
 use crate::directory::directory_hasher::DirectoryDigester;
 use crate::directory::directory_hasher::NoDigest;
 use crate::directory::directory_ref::FingerprintedDirectoryRef;
 use crate::directory::entry::DirectoryEntry;
+use crate::directory::shared_directory::SharedDirectoryInternable;
 
-#[derive(Clone, Dupe, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Dupe, Debug, Eq, PartialEq, Hash, Pagable)]
 pub(crate) struct NopEntry;
 
 pub(crate) struct TestHasher;
 
-#[derive(Clone, Dupe, Debug, Eq, PartialEq, Hash, Allocative, Display)]
+#[derive(Clone, Dupe, Debug, Eq, PartialEq, Hash, Allocative, Display, Pagable)]
 pub(crate) struct TestDigest(u64);
 
 impl DirectoryDigest for TestDigest {}
+
+impl SharedDirectoryInternable<TestDigest> for NopEntry {
+    fn interner() -> DashMapDirectoryInterner<Self, TestDigest> {
+        static INTERNER: OnceLock<DashMapDirectoryInterner<NopEntry, TestDigest>> = OnceLock::new();
+        INTERNER.get_or_init(DashMapDirectoryInterner::new).dupe()
+    }
+}
 
 impl DirectoryDigester<NopEntry, TestDigest> for TestHasher {
     fn hash_entries<'a, D, I>(&self, entries: I) -> TestDigest

@@ -8,27 +8,30 @@
 
 # Returns refs that aren't configuration rules
 def _bad_pre_constraint_analysis(
-        legacy_platform,
-        package_modifiers: dict[str, typing.Any] | None,
-        target_modifiers: dict[str, typing.Any] | None,
-        cli_modifiers: list[str],
-        **_kwargs):
+    legacy_platform, package_modifiers: list[typing.Any] | None, target_modifiers: list[typing.Any] | None, cli_modifiers: list[str], **_kwargs
+):
     _unused = package_modifiers  # buildifier: disable=unused-variable
     _unused = target_modifiers  # buildifier: disable=unused-variable
     _unused = cli_modifiers  # buildifier: disable=unused-variable
-    platform = legacy_platform or PlatformInfo(label = "post_constraint_analysis_test_label_unbound", configuration = ConfigurationInfo(
-        constraints = {},
-        values = {},
-    ))
+    platform = legacy_platform or PlatformInfo(
+        label = "post_constraint_analysis_test_label_unbound",
+        configuration = ConfigurationInfo(
+            constraints = {},
+            values = {},
+        ),
+    )
     return (["root//:not_a_constraint"], platform)
 
 def _cfg_constructor_post_constraint_analysis(refs: dict[str, ProviderCollection], params):
     _unused = refs  # buildifier: disable=unused-variable
     _unused = params  # buildifier: disable=unused-variable
-    return PlatformInfo(label = "post_constraint_analysis_test_label", configuration = ConfigurationInfo(
-        constraints = params.configuration.constraints,
-        values = {},
-    ))
+    return PlatformInfo(
+        label = "post_constraint_analysis_test_label",
+        configuration = ConfigurationInfo(
+            constraints = params.configuration.constraints,
+            values = {},
+        ),
+    )
 
 _ALIASES = struct()
 

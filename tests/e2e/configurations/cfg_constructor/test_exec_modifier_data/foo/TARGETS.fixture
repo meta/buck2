@@ -1,0 +1,8 @@
+load("//:defs.bzl", "labeled_dummy")
+
+labeled_dummy(
+    name = "binary_with_package_modifier",
+    exec_deps = ["root//:gcc_tool"],
+    toolchain_deps = ["root//:clang_toolchain"],
+    default_target_platform = "root//cfg:debug_platform",
+)

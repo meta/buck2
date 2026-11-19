@@ -1,5 +1,69 @@
 {
   "db": {
+    "prelude//python/sourcedb/tests/test_files/triton_collision/a:b": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/triton_collision/a/BUCK",
+      "deps": [],
+      "python_platform": "linux",
+      "python_version": "3.12",
+      "relative_to": null,
+      "srcs": {}
+    },
+    "prelude//python/sourcedb/tests/test_files/triton_collision/a:b_lib": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/triton_collision/a/BUCK",
+      "deps": [
+        "prelude//python/sourcedb/tests/test_files/triton_collision/a:b_py"
+      ],
+      "python_platform": "linux",
+      "python_version": "3.12",
+      "relative_to": null,
+      "srcs": {}
+    },
+    "prelude//python/sourcedb/tests/test_files/triton_collision/a:b_py": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/triton_collision/a/BUCK",
+      "deps": [
+        "prelude//python/sourcedb/tests/test_files/triton_collision/a:b"
+      ],
+      "python_platform": "linux",
+      "python_version": "3.12-pyrefly",
+      "relative_to": null,
+      "srcs": {
+        "python.sourcedb.tests.test_files.triton_collision.kernel": [
+          "buck-out/v2/gen/prelude/<more generated path output>/out/catch_all_sourcedb_stubs/6514d54e329e0204/python/sourcedb/tests/test_files/triton_collision/kernel.pyi"
+        ]
+      }
+    },
+    "prelude//python/sourcedb/tests/test_files/triton_collision:a_b": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/triton_collision/BUCK",
+      "deps": [],
+      "python_platform": "linux",
+      "python_version": "3.12",
+      "relative_to": null,
+      "srcs": {}
+    },
+    "prelude//python/sourcedb/tests/test_files/triton_collision:a_b_lib": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/triton_collision/BUCK",
+      "deps": [
+        "prelude//python/sourcedb/tests/test_files/triton_collision:a_b_py"
+      ],
+      "python_platform": "linux",
+      "python_version": "3.12",
+      "relative_to": null,
+      "srcs": {}
+    },
+    "prelude//python/sourcedb/tests/test_files/triton_collision:a_b_py": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/triton_collision/BUCK",
+      "deps": [
+        "prelude//python/sourcedb/tests/test_files/triton_collision:a_b"
+      ],
+      "python_platform": "linux",
+      "python_version": "3.12-pyrefly",
+      "relative_to": null,
+      "srcs": {
+        "python.sourcedb.tests.test_files.triton_collision.kernel": [
+          "buck-out/v2/gen/prelude/<more generated path output>/out/catch_all_sourcedb_stubs/fa07c7f3671b4749/python/sourcedb/tests/test_files/triton_collision/kernel.pyi"
+        ]
+      }
+    },
     "prelude//python/sourcedb/tests/test_files:alias": {
       "alias": "prelude//python/sourcedb/tests/test_files:alias_lib"
     },
@@ -14,6 +78,9 @@
           "prelude/python/sourcedb/tests/test_files/alias.py"
         ]
       }
+    },
+    "prelude//python/sourcedb/tests/test_files:build_mode_alias": {
+      "alias": "prelude//python/sourcedb/tests/test_files:alias_lib"
     },
     "prelude//python/sourcedb/tests/test_files:generated_file": {
       "buildfile_path": "prelude/python/sourcedb/tests/test_files/BUCK",
@@ -61,8 +128,13 @@
     "prelude//python/sourcedb/tests/test_files:main": {
       "buildfile_path": "prelude/python/sourcedb/tests/test_files/BUCK",
       "deps": [
+        "prelude//python/sourcedb/tests/test_files/triton_collision/a:b_lib",
+        "prelude//python/sourcedb/tests/test_files/triton_collision:a_b_lib",
+        "prelude//python/sourcedb/tests/test_files:build_mode_alias",
         "prelude//python/sourcedb/tests/test_files:lib",
-        "prelude//python/sourcedb/tests/test_files:my_extension_lib"
+        "prelude//python/sourcedb/tests/test_files:my_extension_lib",
+        "prelude//python/sourcedb/tests/test_files:reexported_genrule_lib",
+        "prelude//python/sourcedb/tests/test_files:triton_test_lib"
       ],
       "python_platform": "linux",
       "python_version": "3.12",
@@ -109,6 +181,33 @@
         ]
       }
     },
+    "prelude//python/sourcedb/tests/test_files:reexported_genrule": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/BUCK",
+      "deps": [],
+      "python_platform": "linux",
+      "python_version": "3.12",
+      "relative_to": "buck-out/<some generated path>/out/",
+      "srcs": {}
+    },
+    "prelude//python/sourcedb/tests/test_files:reexported_genrule_lib": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/BUCK",
+      "deps": [
+        "prelude//python/sourcedb/tests/test_files:reexported_genrule",
+        "prelude//python/sourcedb/tests/test_files:reexported_genrule",
+        "prelude//python/sourcedb/tests/test_files:reexported_genrule"
+      ],
+      "python_platform": "linux",
+      "python_version": "3.12",
+      "relative_to": null,
+      "srcs": {
+        "python.sourcedb.tests.test_files.helpers": [
+          "buck-out/v2/gen/prelude/<more generated path output>/out/helpers.py"
+        ],
+        "python.sourcedb.tests.test_files.utils": [
+          "buck-out/v2/gen/prelude/<more generated path output>/out/utils.py"
+        ]
+      }
+    },
     "prelude//python/sourcedb/tests/test_files:subdir": {
       "buildfile_path": "prelude/python/sourcedb/tests/test_files/BUCK",
       "deps": [
@@ -127,7 +226,42 @@
           "prelude/python/sourcedb/tests/test_files/subdir/util.pyi"
         ]
       }
+    },
+    "prelude//python/sourcedb/tests/test_files:triton_test": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/BUCK",
+      "deps": [],
+      "python_platform": "linux",
+      "python_version": "3.12",
+      "relative_to": null,
+      "srcs": {}
+    },
+    "prelude//python/sourcedb/tests/test_files:triton_test_lib": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/BUCK",
+      "deps": [
+        "prelude//python/sourcedb/tests/test_files:triton_test_py"
+      ],
+      "python_platform": "linux",
+      "python_version": "3.12",
+      "relative_to": null,
+      "srcs": {}
+    },
+    "prelude//python/sourcedb/tests/test_files:triton_test_py": {
+      "buildfile_path": "prelude/python/sourcedb/tests/test_files/BUCK",
+      "deps": [
+        "prelude//python/sourcedb/tests/test_files:triton_test"
+      ],
+      "python_platform": "linux",
+      "python_version": "3.12-pyrefly",
+      "relative_to": null,
+      "srcs": {
+        "python.sourcedb.tests.test_files.triton_kernel": [
+          "buck-out/v2/gen/prelude/<more generated path output>/out/catch_all_sourcedb_stubs/7d64be37df83c3cd/python/sourcedb/tests/test_files/triton_kernel.pyi"
+        ]
+      }
     }
   },
+  "extra_filetypes": [
+    "sh"
+  ],
   "root": ""
 }

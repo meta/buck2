@@ -14,3 +14,8 @@ stub(
     name = "none",
     srcs = [],
 )
+
+stub(
+    name = "public_lib",
+    visibility = ["PUBLIC"],
+)

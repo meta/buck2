@@ -10,6 +10,8 @@ load(
     "@prelude//:paths.bzl",
     "paths",
 )
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load(":attrs.bzl", "erlang_rule_attributes")
 load(
     ":erlang_error_handler.bzl",
     "erlang_action_error_handler",
@@ -19,6 +21,7 @@ load(
     "ErlangOTPBinariesInfo",
     "ErlangParseTransformInfo",
     "ErlangToolchainInfo",
+    "ErtsToolchainInfo",
     "Tool",
     "Tools",
 )
@@ -34,16 +37,15 @@ ToolchainUtillInfo = provider(
     # @unsorted-dict-items
     fields = {
         "app_src_script": provider_field(Artifact),
+        "appup_src_script": provider_field(Artifact),
         "boot_script_builder": provider_field(Artifact),
         "core_parse_transforms": provider_field(list[Dependency]),
         "dependency_analyzer": provider_field(Artifact),
         "dependency_finalizer": provider_field(Artifact),
         "dependency_merger": provider_field(Artifact),
-        "erlc_trampoline": provider_field(Artifact),
         "escript_trampoline": provider_field(Artifact),
         "escript_builder": provider_field(Artifact),
         "release_variables_builder": provider_field(Artifact),
-        "extract_from_otp": provider_field(Artifact),
         "utility_modules": provider_field(list[Artifact]),
     },
 )
@@ -52,8 +54,7 @@ def get_toolchain(ctx: AnalysisContext) -> Toolchain:
     return ctx.attrs._toolchain[ErlangToolchainInfo]
 
 def _erlang_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
-    """ rule for erlang toolchain
-    """
+    """rule for erlang toolchain"""
 
     erl_opts = ctx.attrs.erl_opts
     emu_flags = ctx.attrs.emu_flags
@@ -70,11 +71,9 @@ def _erlang_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
     erlc = cmd_args(binaries_info.erlc, hidden = binaries_info.erl)
     escript = cmd_args(binaries_info.escript, hidden = binaries_info.erl)
     otp_binaries = Tools(
-        name = ctx.attrs.name,
         erl = erl,
         erlc = erlc,
         escript = escript,
-        _tools_binaries = binaries_info,
     )
 
     env = ctx.attrs.env
@@ -104,29 +103,22 @@ def _erlang_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
     utility_modules = _gen_util_beams(ctx, env, utils.utility_modules, otp_binaries.erlc)
 
     app_src_script = _gen_toolchain_script(ctx, env, utils.app_src_script, otp_binaries, utility_modules)
+    appup_src_script = _gen_toolchain_script(ctx, env, utils.appup_src_script, otp_binaries, utility_modules)
     boot_script_builder = _gen_toolchain_script(ctx, env, utils.boot_script_builder, otp_binaries, utility_modules)
     dependency_analyzer = _gen_toolchain_script(ctx, env, utils.dependency_analyzer, otp_binaries, utility_modules)
     dependency_finalizer = _gen_toolchain_script(ctx, env, utils.dependency_finalizer, otp_binaries, utility_modules)
     dependency_merger = _gen_toolchain_script(ctx, env, utils.dependency_merger, otp_binaries, utility_modules)
     escript_builder = _gen_toolchain_script(ctx, env, utils.escript_builder, otp_binaries, utility_modules)
     release_variables_builder = _gen_toolchain_script(ctx, env, utils.release_variables_builder, otp_binaries, utility_modules)
-    extract_from_otp = _gen_toolchain_script(ctx, env, utils.extract_from_otp, otp_binaries, utility_modules)
 
-    # extract erts for late usage
-
-    erts = ctx.actions.declare_output("erts-0.0", dir = True)
-    ctx.actions.run(
-        cmd_args(extract_from_otp, "erts-*", erts.as_output()),
-        identifier = ctx.attrs.name,
-        category = "extract_erts",
-        env = env,
-    )
+    erts_toolchain_info = ctx.attrs.erts_toolchain_info[ErtsToolchainInfo] if ctx.attrs.erts_toolchain_info else None
 
     return [
         DefaultInfo(),
         ErlangToolchainInfo(
             name = ctx.attrs.name,
             app_src_script = app_src_script,
+            appup_src_script = appup_src_script,
             boot_script_builder = boot_script_builder,
             dependency_analyzer = dependency_analyzer,
             dependency_finalizer = dependency_finalizer,
@@ -134,17 +126,15 @@ def _erlang_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
             erl_opts = erl_opts,
             env = ctx.attrs.env,
             emu_flags = emu_flags,
-            erlc_trampoline = utils.erlc_trampoline,
             escript_trampoline = utils.escript_trampoline,
             escript_builder = escript_builder,
             otp_binaries = otp_binaries,
             release_variables_builder = release_variables_builder,
-            extract_from_otp = extract_from_otp,
             core_parse_transforms = core_parse_transforms,
             parse_transforms = parse_transforms,
             parse_transforms_filters = ctx.attrs.parse_transforms_filters,
             utility_modules = utility_modules,
-            erts = erts,
+            erts_toolchain_info = erts_toolchain_info,
             error_handler = erlang_action_error_handler,
         ),
     ]
@@ -165,12 +155,7 @@ def _gen_parse_transforms(ctx: AnalysisContext, erlc: Tool, env: dict[str, str],
             transforms[module_name] = cmd_args(transform_arg, cmd_args(beam, format = "-pa{}", parent = 1))
     return transforms
 
-def _gen_parse_transform_beam(
-        ctx: AnalysisContext,
-        env: dict[str, str],
-        src: Artifact,
-        extra: list[Artifact],
-        erlc: Tool) -> (Artifact, [Artifact, None]):
+def _gen_parse_transform_beam(ctx: AnalysisContext, env: dict[str, str], src: Artifact, extra: list[Artifact], erlc: Tool) -> (Artifact, [Artifact, None]):
     name = strip_extension(src.basename)
 
     # install resources
@@ -179,10 +164,11 @@ def _gen_parse_transform_beam(
         resource_dir = ctx.actions.symlinked_dir(
             paths.join(name, "resources"),
             {infile.basename: infile for infile in extra},
+            has_content_based_path = False,
         )
 
     # build beam
-    output = ctx.actions.declare_output(name, name + ".beam")
+    output = ctx.actions.declare_output(name, name + ".beam", has_content_based_path = False)
     _compile_toolchain_module(ctx, env, src, output.as_output(), erlc)
 
     return output, resource_dir
@@ -191,6 +177,8 @@ default_toolchain_script_args_pre = cmd_args(
     "+A0",
     "+S1:1",
     "+sbtu",
+    "+SDio",
+    "1",
     "+MMscs",
     "8",
     "+MMsco",
@@ -199,13 +187,15 @@ default_toolchain_script_args_pre = cmd_args(
     "minimal",
     "-noinput",
     "-noshell",
+    "-boot",
+    "no_dot_erlang",
     "-eval",
 )
 default_toolchain_script_args_post = cmd_args("-s", "erlang", "halt", "--")
 
 def _gen_toolchain_script(ctx: AnalysisContext, env: dict[str, str], script: Artifact, tools: Tools, utility_modules: Artifact) -> Tool:
     name = strip_extension(script.basename)
-    out = ctx.actions.declare_output(name, name + ".beam")
+    out = ctx.actions.declare_output(name, name + ".beam", has_content_based_path = False)
     _compile_toolchain_module(ctx, env, script, out.as_output(), tools.erlc)
     eval = cmd_args(name, ":main(init:get_plain_arguments())", delimiter = "")
     return cmd_args(
@@ -234,41 +224,37 @@ erlang_toolchain = rule(
             attrs.string(),
             default = [],
         ),
-        "otp_binaries": attrs.dep(),
+        "erts_toolchain_info": attrs.option(attrs.dep(providers = [ErtsToolchainInfo]), default = None),
+        "otp_binaries": attrs.toolchain_dep(),
         "parse_transforms": attrs.list(attrs.dep()),
         "parse_transforms_filters": attrs.dict(key = attrs.string(), value = attrs.list(attrs.string())),
-        "toolchain_utilities": attrs.dep(default = "@prelude//erlang/toolchain:toolchain_utilities"),
+        "toolchain_utilities": attrs.toolchain_dep(default = "@prelude//erlang/toolchain:toolchain_utilities"),
     },
     is_toolchain_rule = True,
 )
 
-def _gen_util_beams(
-        ctx: AnalysisContext,
-        env: dict[str, str],
-        sources: list[Artifact],
-        erlc: Tool) -> Artifact:
+def _gen_util_beams(ctx: AnalysisContext, env: dict[str, str], sources: list[Artifact], erlc: Tool) -> Artifact:
     beams = []
     for src in sources:
-        output = ctx.actions.declare_output(paths.join(
-            "__build",
-            paths.replace_extension(src.basename, ".beam"),
-        ))
+        output = ctx.actions.declare_output(
+            paths.join(
+                "__build",
+                paths.replace_extension(src.basename, ".beam"),
+            ),
+            has_content_based_path = False,
+        )
         _compile_toolchain_module(ctx, env, src, output.as_output(), erlc)
         beams.append(output)
 
     beam_dir = ctx.actions.symlinked_dir(
         "utility_modules",
         {beam.basename: beam for beam in beams},
+        has_content_based_path = False,
     )
 
     return beam_dir
 
-def _compile_toolchain_module(
-        ctx: AnalysisContext,
-        env: dict[str, str],
-        src: Artifact,
-        out: OutputArtifact,
-        erlc: Tool):
+def _compile_toolchain_module(ctx: AnalysisContext, env: dict[str, str], src: Artifact, out: OutputArtifact, erlc: Tool):
     # NOTE: since we do NOT define +debug_info, this is hermetic
     ctx.actions.run(
         [erlc, "+deterministic", "-o", cmd_args(out, parent = 1), src],
@@ -308,16 +294,15 @@ def _toolchain_utils(ctx: AnalysisContext) -> list[Provider]:
         DefaultInfo(),
         ToolchainUtillInfo(
             app_src_script = ctx.attrs.app_src_script,
+            appup_src_script = ctx.attrs.appup_src_script,
             boot_script_builder = ctx.attrs.boot_script_builder,
             core_parse_transforms = ctx.attrs.core_parse_transforms,
             dependency_analyzer = ctx.attrs.dependency_analyzer,
             dependency_finalizer = ctx.attrs.dependency_finalizer,
             dependency_merger = ctx.attrs.dependency_merger,
-            erlc_trampoline = ctx.attrs.erlc_trampoline,
             escript_trampoline = ctx.attrs.escript_trampoline,
             escript_builder = ctx.attrs.escript_builder,
             release_variables_builder = ctx.attrs.release_variables_builder,
-            extract_from_otp = ctx.attrs.extract_from_otp,
             utility_modules = ctx.attrs.utility_modules,
         ),
     ]
@@ -326,16 +311,35 @@ toolchain_utilities = rule(
     impl = _toolchain_utils,
     attrs = {
         "app_src_script": attrs.source(),
+        "appup_src_script": attrs.source(),
         "boot_script_builder": attrs.source(),
         "core_parse_transforms": attrs.list(attrs.dep()),
         "dependency_analyzer": attrs.source(),
         "dependency_finalizer": attrs.source(),
         "dependency_merger": attrs.source(),
-        "erlc_trampoline": attrs.source(),
         "escript_builder": attrs.source(),
         "escript_trampoline": attrs.source(),
-        "extract_from_otp": attrs.source(),
         "release_variables_builder": attrs.source(),
         "utility_modules": attrs.list(attrs.source()),
     },
+    is_toolchain_rule = True,
+)
+
+erlang_otp_binaries = prelude_rule(
+    name = "erlang_otp_binaries",
+    impl = erlang_otp_binaries_impl,
+    docs = """
+        This target defines the executables for the Erlang toolchains, and is required to defined a toolchain.
+    """,
+    examples = """
+        erlang_otp_binaries(
+            name = "local",
+            erl = "local/erl",
+            erlc = "local/erlc",
+            escript = "local/escript",
+        )
+    """,
+    further = None,
+    attrs = erlang_rule_attributes["erlang_otp_binaries"],
+    is_toolchain_rule = True,
 )

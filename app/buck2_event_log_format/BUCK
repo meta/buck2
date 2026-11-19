@@ -1,0 +1,18 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "buck2_event_log_format",
+    srcs = glob(["src/**/*.rs"]),
+    deps = [
+        "fbsource//third-party/rust:bytes",
+        "fbsource//third-party/rust:prost",
+        "fbsource//third-party/rust:serde",
+        "fbsource//third-party/rust:serde_json",
+        "//buck2/allocative/allocative:allocative",
+        "//buck2/app/buck2_cli_proto:buck2_cli_proto",
+        "//buck2/app/buck2_data:buck2_data",
+        "//buck2/app/buck2_error:buck2_error",
+    ],
+)

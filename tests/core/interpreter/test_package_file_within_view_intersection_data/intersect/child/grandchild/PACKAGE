@@ -1,0 +1,13 @@
+# Third level of opt-in. Effective cap for targets below:
+#   ["root//intersect/..."]
+#   AND ["root//intersect/child/...", "root//outside/..."]
+#   AND ["root//intersect/child/grandchild/...", "root//intersect/child/lib:", "root//outside/..."]
+package(
+    within_view = [
+        "root//intersect/child/grandchild/...",
+        "root//intersect/child/lib:",
+        "root//outside/...",
+    ],
+)
+
+enforce_within_view_intersection()

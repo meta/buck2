@@ -1,0 +1,106 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+$ buck cquery root//:incompat_foo -v0 --target-platforms=//:platform1
+root//:incompat_foo (root//:platform1#<HASH>)
+
+$ buck cquery root//:incompat_foo -v0 --target-platforms=//:platform2
+
+$ buck cquery root//:incompat_foo -v0 --target-platforms=//:platform3
+
+$ buck build root//:incompat_foo --console=none -v0 --target-platforms=//:platform2
+BUILD FAILED
+root//:incompat_foo
+    is incompatible: select resolved to select_incompatible(): not supported on constraint2
+
+$ buck build root//:incompat_foo -v0 --target-platforms=//:platform2 --skip-incompatible-targets
+
+$ buck uquery root//:incompat_foo -v0 --output-format=starlark
+error_rule(
+  name = "incompat_foo",
+  data = select({
+    "root//:constraint1": "constraint1",
+    "root//:constraint2": select_incompatible("not supported on constraint2"),
+    "DEFAULT": select_incompatible("default incompatible message")
+  }),
+  visibility = [],
+  within_view = ["PUBLIC"],
+)
+
+$ buck uquery root//:incompat_foo -v0 --output-format=json -B
+{
+  "root//:incompat_foo": {
+    "buck.type": "error_rule",
+    "buck.package": "root//:TARGETS.fixture",
+    "name": "incompat_foo",
+    "default_target_platform": null,
+    "target_compatible_with": [],
+    "compatible_with": [],
+    "exec_compatible_with": [],
+    "visibility": [],
+    "within_view": [
+      "PUBLIC"
+    ],
+    "metadata": {},
+    "tests": [],
+    "modifiers": [],
+    "data": {
+      "__type": "selector",
+      "entries": {
+        "DEFAULT": {
+          "__type": "select_incompatible",
+          "message": "default incompatible message"
+        },
+        "root//:constraint1": "constraint1",
+        "root//:constraint2": {
+          "__type": "select_incompatible",
+          "message": "not supported on constraint2"
+        }
+      }
+    },
+    "deps": []
+  }
+}
+
+$ buck uquery root//:incompat_foo2 -v0 --output-format=starlark
+error_rule(
+  name = "incompat_foo2",
+  data = "",
+  visibility = [],
+  within_view = ["PUBLIC"],
+)
+
+$ buck uquery root//:incompat_foo2 --console=none -v0 --output-format=starlark -c user.check_bad_coercion_incompatible=1
+Command failed: 
+Error evaluating expression:
+    root//:incompat_foo2
+    ^------------------^
+
+
+Caused by:
+    0: Error evaluating build file: `root//:TARGETS.fixture`
+    1: error: Error coercing attribute `data` of `root//:incompat_foo2`
+         --> TARGETS.fixture:78:1
+          |
+       78 | / error_rule(
+       79 | |     name = "incompat_foo2",
+       80 | |     data = select_incompatible("bad use") if read_root_config("user", "check_bad_coercion_incompatible") != None else "",
+       81 | | )
+          | |_^
+       Traceback (most recent call last):
+         * TARGETS.fixture:78, in <module>
+             error_rule(
+       
+    2: Error coercing attribute `data` of type `attrs.string()`
+    3: Error coercing "bad use"
+    4: Expected `str`, but got `SelectIncompatible (repr: "bad use")`
+
+$ buck cquery root//:depends_on_incompat -v0 --target-platforms=//:platform1
+root//:depends_on_incompat (root//:platform1#<HASH>)
+
+$ buck cquery root//:depends_on_incompat --console=none -v0 --target-platforms=//:platform2
+Command failed: 
+Upgraded warning to failure via $BUCK2_HARD_ERROR
+
+Caused by:
+    root//:depends_on_incompat (root//:platform2#<HASH>) does not pass compatibility check (will be error in future) because its transitive dep root//:incompat_foo
+        is incompatible: select resolved to select_incompatible(): not supported on constraint2

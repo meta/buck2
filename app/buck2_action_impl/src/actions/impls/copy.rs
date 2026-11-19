@@ -12,28 +12,37 @@ use std::borrow::Cow;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use buck2_artifact::artifact::artifact_dyn::ArtifactDyn;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_build_api::actions::Action;
 use buck2_build_api::actions::ActionExecutionCtx;
 use buck2_build_api::actions::UnregisteredAction;
 use buck2_build_api::actions::box_slice_set::BoxSliceSet;
+use buck2_build_api::actions::errors::execute_error::ExecuteError;
 use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
 use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
 use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
 use buck2_build_api::artifact_groups::ArtifactGroup;
+use buck2_build_signals::env::WaitingData;
 use buck2_core::category::CategoryRef;
 use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_error::BuckErrorContext;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
+use buck2_error::BuckErrorOptionContext;
 use buck2_execute::artifact_utils::ArtifactValueBuilder;
 use buck2_execute::execute::command_executor::ActionExecutionTimingData;
 use buck2_execute::materialize::materializer::CopiedArtifact;
+use buck2_execute::materialize::materializer::DeclareArtifactPayload;
+use buck2_hash::BuckMutInsertionSet;
+use buck2_hash::buck_mut_insertion_set;
 use dupe::Dupe;
-use gazebo::prelude::*;
-use indexmap::IndexSet;
-use indexmap::indexset;
-use starlark::values::OwnedFrozenValue;
+use itertools::Itertools;
+use pagable::Pagable;
+use pagable::pagable_typetag;
+use starlark::values::OwnedFrozen;
+use starlark::values::Value;
+
+use crate::actions::impls::cas_probe;
+use crate::actions::impls::produce;
+use crate::actions::impls::produce::SourceCopy;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -44,7 +53,7 @@ enum CopyActionValidationError {
     UnsupportedInput(ArtifactGroup),
 }
 
-#[derive(Debug, Allocative)]
+#[derive(Debug, Allocative, Pagable, Clone, Copy, Dupe)]
 pub(crate) enum CopyMode {
     Copy {
         // Override the destination executable bit to +x (true) or -x (false)
@@ -68,15 +77,15 @@ impl UnregisteredCopyAction {
 impl UnregisteredAction for UnregisteredCopyAction {
     fn register(
         self: Box<Self>,
-        outputs: IndexSet<BuildArtifact>,
-        _starlark_data: Option<OwnedFrozenValue>,
-        _error_handler: Option<OwnedFrozenValue>,
+        outputs: BuckMutInsertionSet<BuildArtifact>,
+        _starlark_data: Option<OwnedFrozen<Value<'static>>>,
+        _error_handler: Option<OwnedFrozen<Value<'static>>>,
     ) -> buck2_error::Result<Box<dyn Action>> {
         Ok(Box::new(CopyAction::new(self.copy, self.src, outputs)?))
     }
 }
 
-#[derive(Debug, Allocative)]
+#[derive(Debug, Allocative, Pagable)]
 struct CopyAction {
     copy: CopyMode,
     inputs: BoxSliceSet<ArtifactGroup>,
@@ -87,7 +96,7 @@ impl CopyAction {
     fn new(
         copy: CopyMode,
         src: ArtifactGroup,
-        outputs: IndexSet<BuildArtifact>,
+        outputs: BuckMutInsertionSet<BuildArtifact>,
     ) -> buck2_error::Result<Self> {
         // TODO: Exclude other variants once they become available here. For now, this is a noop.
         match src {
@@ -102,7 +111,7 @@ impl CopyAction {
         } else {
             Ok(CopyAction {
                 copy,
-                inputs: BoxSliceSet::from(indexset![src]),
+                inputs: BoxSliceSet::from(buck_mut_insertion_set![src]),
                 outputs: BoxSliceSet::from(outputs),
             })
         }
@@ -123,6 +132,7 @@ impl CopyAction {
     }
 }
 
+#[pagable_typetag]
 #[async_trait]
 impl Action for CopyAction {
     fn kind(&self) -> buck2_data::ActionKind {
@@ -152,17 +162,19 @@ impl Action for CopyAction {
     async fn execute(
         &self,
         ctx: &mut dyn ActionExecutionCtx,
+        waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
         let (input, src_value) = ctx
             .artifact_values(self.input())
             .iter()
-            .into_singleton()
-            .buck_error_context("Input did not dereference to exactly one artifact")?;
+            .exactly_one()
+            .ok()
+            .internal_error("Input did not dereference to exactly one artifact")?;
 
         let artifact_fs = ctx.fs();
         let src = input.resolve_path(
             artifact_fs,
-            if input.has_content_based_path() {
+            if input.path_resolution_requires_artifact_value() {
                 Some(src_value.content_based_path_hash())
             } else {
                 None
@@ -205,33 +217,83 @@ impl Action for CopyAction {
             tmp_dest
         };
 
-        ctx.materializer()
-            .declare_copy(
-                dest.clone(),
-                value.dupe(),
-                // FIXME(JakobDegen): This is wrong in cases where the input artifact is a source
-                // directory with ignored paths, as the materializer will incorrectly assume that
-                // the source directory matches the artifact value when it doesn't.
-                vec![CopiedArtifact::new(
-                    src,
-                    dest,
-                    value.entry().dupe().map_dir(|d| d.as_immutable()),
-                    match self.copy {
-                        CopyMode::Copy {
-                            executable_bit_override,
-                        } => executable_bit_override,
-                        CopyMode::Symlink => None,
-                    },
-                )],
-            )
-            .await?;
+        // A source file's content is not known to be in the CAS. The disk-state core is declared
+        // no copy of it: the probe spares making one when the CAS has the file, and a miss comes
+        // to be as a write's does (`produce`). The deferred core is declared the copy, made when
+        // something needs the file. A build artifact's content is the materializer's already, and
+        // a symlink copies nothing; both are declared, which is nothing to the disk-state core.
+        let source_copy = match self.copy {
+            CopyMode::Copy {
+                executable_bit_override,
+            } if input.is_source() => Some(executable_bit_override),
+            _ => None,
+        };
+        let (execution_kind, declare) = match source_copy {
+            Some(executable_bit_override) if ctx.materializer().is_disk_state() => {
+                let files = cas_probe::files_of(value.entry(), &src);
+                match cas_probe::missing(ctx, &files).await {
+                    Some((info, missing)) if missing.is_empty() => {
+                        ctx.materializer()
+                            .declare_cas_many(
+                                info,
+                                vec![DeclareArtifactPayload {
+                                    path: dest.clone(),
+                                    artifact: value.dupe(),
+                                }],
+                            )
+                            .await?;
+                        (ActionExecutionKind::Deferred, false)
+                    }
+                    probed => {
+                        let kind = produce::produce_copies(
+                            ctx,
+                            vec![SourceCopy {
+                                src: src.clone(),
+                                dest: dest.clone(),
+                                value: value.dupe(),
+                                executable_bit_override,
+                            }],
+                            probed.is_some(),
+                        )
+                        .await?;
+                        (kind, false)
+                    }
+                }
+            }
+            _ => (ActionExecutionKind::Simple, true),
+        };
+        if declare {
+            ctx.materializer()
+                .declare_copy(
+                    dest.clone(),
+                    value.dupe(),
+                    // FIXME(JakobDegen): This is wrong in cases where the input artifact is a
+                    // source directory with ignored paths, as the materializer will incorrectly
+                    // assume that the source directory matches the artifact value when it
+                    // doesn't.
+                    vec![CopiedArtifact::new(
+                        src,
+                        dest,
+                        value.entry().dupe().map_dir(|d| d.as_immutable()),
+                        match self.copy {
+                            CopyMode::Copy {
+                                executable_bit_override,
+                            } => executable_bit_override,
+                            CopyMode::Symlink => None,
+                        },
+                    )],
+                )
+                .await?;
+        }
 
         Ok((
             ActionOutputs::from_single(self.output().get_path().dupe(), value),
             ActionExecutionMetadata {
-                execution_kind: ActionExecutionKind::Simple,
+                dep_file_db_writes_queued: 0,
+                execution_kind,
                 timing: ActionExecutionTimingData::default(),
                 input_files_bytes: None,
+                waiting_data,
             },
         ))
     }

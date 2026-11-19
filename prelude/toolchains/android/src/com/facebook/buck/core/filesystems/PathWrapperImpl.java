@@ -10,9 +10,12 @@
 
 package com.facebook.buck.core.filesystems;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
+import org.jspecify.annotations.Nullable;
 
 /** Base implementation of two path wrappers. Not visible to users. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 abstract class PathWrapperImpl implements PathWrapper {
   protected final Path path;
 
@@ -31,7 +34,7 @@ abstract class PathWrapperImpl implements PathWrapper {
   }
 
   @Override
-  public boolean equals(Object obj) {
+  public boolean equals(@Nullable Object obj) {
     if (this == obj) {
       return true;
     }

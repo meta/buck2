@@ -1,0 +1,2 @@
+[buck2]
+  test_builds_targets = true

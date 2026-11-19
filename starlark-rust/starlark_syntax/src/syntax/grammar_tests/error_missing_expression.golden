@@ -1,0 +1,52 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+x =
+
+Error:
+error: Parse error: unexpected new line, expected expression
+ --> error_missing_expression:1:4
+  |
+1 | x =
+  |    ^
+
+
+Program:
+x +=
+
+Error:
+error: Parse error: unexpected new line, expected expression
+ --> error_missing_expression:1:5
+  |
+1 | x +=
+  |     ^
+
+
+Program:
+x = 1 +
+2
+
+Error:
+error: Parse error: unexpected new line, expected expression
+ --> error_missing_expression:1:8
+  |
+1 |   x = 1 +
+  |  ________^
+2 | | 2
+  | |_^
+
+
+Program:
+return
+1 +
+
+Error:
+error: Parse error: unexpected new line, expected expression
+ --> error_missing_expression:2:4
+  |
+2 | 1 +
+  |    ^

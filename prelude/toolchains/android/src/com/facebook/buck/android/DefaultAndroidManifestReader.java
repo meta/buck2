@@ -11,6 +11,7 @@
 package com.facebook.buck.android;
 
 import com.facebook.buck.util.xml.XmlDomParser;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
@@ -19,6 +20,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
 import javax.xml.namespace.NamespaceContext;
 import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
@@ -30,6 +32,7 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DefaultAndroidManifestReader implements AndroidManifestReader {
 
   /**
@@ -92,11 +95,13 @@ public class DefaultAndroidManifestReader implements AndroidManifestReader {
   public List<String> getLauncherActivities() {
     try {
       NodeList nodes;
-      nodes = (NodeList) launchableActivitiesExpression.evaluate(doc, XPathConstants.NODESET);
+      nodes =
+          Objects.requireNonNull(
+              (NodeList) launchableActivitiesExpression.evaluate(doc, XPathConstants.NODESET));
 
       List<String> activities = new ArrayList<>();
       for (int i = 0; i < nodes.getLength(); i++) {
-        activities.add(nodes.item(i).getTextContent());
+        activities.add(Objects.requireNonNull(nodes.item(i)).getTextContent());
       }
       return activities;
 
@@ -108,7 +113,8 @@ public class DefaultAndroidManifestReader implements AndroidManifestReader {
   @Override
   public String getPackage() {
     try {
-      return (String) packageExpression.evaluate(doc, XPathConstants.STRING);
+      return Objects.requireNonNull(
+          (String) packageExpression.evaluate(doc, XPathConstants.STRING));
     } catch (XPathExpressionException e) {
       throw new RuntimeException(e);
     }
@@ -117,7 +123,8 @@ public class DefaultAndroidManifestReader implements AndroidManifestReader {
   @Override
   public String getVersionCode() {
     try {
-      return (String) versionCodeExpression.evaluate(doc, XPathConstants.STRING);
+      return Objects.requireNonNull(
+          (String) versionCodeExpression.evaluate(doc, XPathConstants.STRING));
     } catch (XPathExpressionException e) {
       throw new RuntimeException(e);
     }
@@ -126,7 +133,8 @@ public class DefaultAndroidManifestReader implements AndroidManifestReader {
   @Override
   public String getInstrumentationTestRunner() {
     try {
-      return (String) instrumentationTestRunnerExpression.evaluate(doc, XPathConstants.STRING);
+      return Objects.requireNonNull(
+          (String) instrumentationTestRunnerExpression.evaluate(doc, XPathConstants.STRING));
     } catch (XPathExpressionException e) {
       throw new RuntimeException(e);
     }
@@ -135,7 +143,8 @@ public class DefaultAndroidManifestReader implements AndroidManifestReader {
   @Override
   public String getTargetPackage() {
     try {
-      return (String) targetPackageExpression.evaluate(doc, XPathConstants.STRING);
+      return Objects.requireNonNull(
+          (String) targetPackageExpression.evaluate(doc, XPathConstants.STRING));
     } catch (XPathExpressionException e) {
       throw new RuntimeException(e);
     }

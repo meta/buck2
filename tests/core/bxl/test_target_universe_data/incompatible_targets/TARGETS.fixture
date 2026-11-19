@@ -1,0 +1,10 @@
+stub(
+    name = "compatible_target",
+    default_target_platform = "//platforms:platform1",
+)
+
+stub(
+    name = "incompatible_target",
+    default_target_platform = "//platforms:platform1",
+    target_compatible_with = ["//platforms:incompatible"],
+)

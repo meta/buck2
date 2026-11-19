@@ -16,7 +16,7 @@ use buck2_cli_proto::HasClientContext as _;
 use buck2_cli_proto::UqueryRequest;
 use buck2_cli_proto::UqueryResponse;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_node::attrs::display::AttrDisplayWithContext;
 use buck2_node::attrs::display::AttrDisplayWithContextExt;
 use buck2_node::attrs::fmt_context::AttrFmtContext;
@@ -37,8 +37,8 @@ use crate::query::printer::ShouldPrintProviders;
 use crate::query::query_target_ext::QueryCommandTarget;
 
 impl QueryCommandTarget for TargetNode {
-    fn call_stack(&self) -> Option<String> {
-        TargetNodeData::call_stack(self)
+    fn call_stack(&self) -> buck2_error::Result<Option<String>> {
+        Ok(TargetNodeData::call_stack(self))
     }
 
     fn attr_to_string_alternate(&self, options: AttrFmtOptions, attr: &Self::Attr<'_>) -> String {
@@ -120,10 +120,10 @@ impl ServerCommandTemplate for UqueryServerCommand {
 async fn uquery(
     server_ctx: &dyn ServerCommandContextTrait,
     mut stdout: impl Write,
-    mut ctx: DiceTransaction,
+    ctx: DiceTransaction,
     request: &UqueryRequest,
 ) -> buck2_error::Result<UqueryResponse> {
-    let cell_resolver = ctx.get_cell_resolver().await?;
+    let cell_resolver = ctx.ctx().get_cell_resolver().await?;
     let output_configuration = QueryResultPrinter::from_request_options(
         &cell_resolver,
         &request.output_attributes,
@@ -135,6 +135,7 @@ async fn uquery(
         query,
         query_args,
         context,
+        allow_partial_graph,
         ..
     } = request;
 
@@ -144,7 +145,13 @@ async fn uquery(
 
     let query_result = QUERY_FRONTEND
         .get()?
-        .eval_uquery(&mut ctx, server_ctx.working_dir(), query, query_args)
+        .eval_uquery(
+            &mut ctx.ctx(),
+            server_ctx.working_dir(),
+            query,
+            query_args,
+            *allow_partial_graph,
+        )
         .await?;
 
     match query_result {

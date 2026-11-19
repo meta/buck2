@@ -1,4 +1,5 @@
-load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_java_binary", "buck_java_library")
+load("@prelude//toolchains/android/tools:build_rules.bzl", "SIGNED_JAR_BLOCKLIST", "buck_java_binary", "buck_java_library", "buck_kotlin_library")
+load("@prelude//toolchains/android/tools/build_rules:fb_native.bzl", "fb_native")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("android_devxx")
@@ -29,7 +30,8 @@ buck_java_library(
     visibility = ["PUBLIC"],
     deps = [
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
     ],
 )
 
@@ -46,7 +48,8 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/xml:xml",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
         ":r_dot_txt",
     ],
 )
@@ -62,12 +65,54 @@ buck_java_binary(
     ],
 )
 
+fb_native.kotlin_library(
+    name = "resource_source_map_format",
+    srcs = ["ResourceSourceMapFormat.kt"],
+    _kotlin_toolchain = "toolchains//:kotlin_bootstrap",
+    provided_deps = [
+        "prelude//toolchains/android/third-party:kotlin-stdlib",
+    ],
+    # @oss-disable[end= ]: source = "8",
+    # @oss-disable[end= ]: target = "8",
+    source = "11", # @oss-enable
+    target = "11", # @oss-enable
+    visibility = ["PUBLIC"],
+)
+
+buck_kotlin_library(
+    name = "resource_source_map",
+    srcs = ["ResourceSourceMapExecutableMain.kt"],
+    tests = [
+        "prelude//toolchains/android/test/com/facebook/buck/android/aapt:aapt",
+    ],
+    visibility = ["PUBLIC"],
+    deps = [
+        "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
+        "prelude//toolchains/android/src/com/facebook/buck/io/pathformat:pathformat",
+        "prelude//toolchains/android/third-party:args4j",
+        "prelude//toolchains/android/third-party:guava",
+        ":mini_aapt",
+        ":r_dot_txt",
+        ":resource_source_map_format",
+    ],
+)
+
+buck_java_binary(
+    name = "resource_source_map_binary",
+    main_class = "com.facebook.buck.android.aapt.ResourceSourceMapExecutableMain",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":resource_source_map",
+    ],
+)
+
 buck_java_library(
     name = "merge_android_resource_sources",
     srcs = MERGE_ANDROID_RESOURCE_SOURCES_SRCS,
     deps = [
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:layoutlib-api",
         "prelude//toolchains/android/third-party:tools-sdk-common",
     ],
@@ -75,7 +120,7 @@ buck_java_library(
 
 buck_java_binary(
     name = "merge_android_resource_sources_binary",
-    blocklist = ["META-INF/BC2048KE"],
+    blocklist = SIGNED_JAR_BLOCKLIST,
     main_class = "com.facebook.buck.android.aapt.MergeAndroidResourceSourcesExecutableMain",
     visibility = [
         "PUBLIC",

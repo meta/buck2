@@ -10,47 +10,39 @@
 
 //! bxl additional artifact types
 
+use std::fmt::Display;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::iter;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
-use buck2_build_api::actions::calculation::ActionCalculation;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
+use buck2_artifact::artifact::artifact_path::ArtifactPath;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::artifact_groups::ResolvedArtifactGroup;
 use buck2_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_execute::path::artifact_path::ArtifactPath;
-use derive_more::Display;
+use buck2_hash::BuckMutInsertionSet;
 use dice::DiceComputations;
 use dupe::Dupe;
 use dupe::IterDupedExt;
-use futures::FutureExt;
-use indexmap::IndexSet;
 use serde::Serialize;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
-use starlark::collections::SmallSet;
 use starlark::collections::StarlarkHasher;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueLike;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 #[derive(Clone, Debug, Dupe, Trace, ProvidesStaticType, Allocative)]
 #[repr(C)]
@@ -59,7 +51,14 @@ pub(crate) struct EnsuredArtifact {
     pub(crate) abs: bool,
 }
 
-#[derive(Clone, Debug, Trace, ProvidesStaticType, Allocative)]
+#[derive(
+    Clone,
+    Debug,
+    Trace,
+    ProvidesStaticType,
+    Allocative,
+    starlark::StarlarkPagableUnsupported
+)]
 #[repr(C)]
 pub(crate) struct EnsuredArtifactGroupInner {
     pub(crate) ags: Vec<ArtifactGroup>,
@@ -76,10 +75,11 @@ pub(crate) async fn visit_artifact_path_without_associated_deduped(
 
     // `get_projection_sub_inputs()` to iterate through the tset, this is also needed to make
     // sure we aren't re-processing tests.
-    let mut visited = SmallSet::new();
+    let mut visited = BuckMutInsertionSet::new();
 
+    // `todo` is a stack, so push in reverse to visit the groups in command line order.
     let mut todo = Vec::new();
-    todo.extend(ags.iter().duped());
+    todo.extend(ags.iter().rev().duped());
 
     while let Some(ag) = todo.pop() {
         if !visited.insert(ag.dupe()) {
@@ -91,7 +91,11 @@ pub(crate) async fn visit_artifact_path_without_associated_deduped(
             }
             ResolvedArtifactGroup::TransitiveSetProjection(t) => {
                 let set = t.key.lookup(ctx).await?;
-                todo.extend(set.get_projection_sub_inputs(t.projection)?);
+                todo.extend(
+                    set.by_ref(|s| s.get_projection_sub_inputs(t.projection))?
+                        .into_iter()
+                        .rev(),
+                );
             }
         }
     }
@@ -99,7 +103,15 @@ pub(crate) async fn visit_artifact_path_without_associated_deduped(
     Ok(())
 }
 
-#[derive(Clone, Dupe, Debug, Trace, ProvidesStaticType, Allocative)]
+#[derive(
+    Clone,
+    Dupe,
+    Debug,
+    Trace,
+    ProvidesStaticType,
+    Allocative,
+    starlark::StarlarkPagableUnsupported
+)]
 #[repr(C)]
 pub(crate) struct EnsuredArtifactGroup<'v> {
     // Have `EnsuredArtifactGroup` be a wrapper around `EnsuredArtifactGroupInner` as a Starlark `Value`
@@ -110,9 +122,9 @@ pub(crate) struct EnsuredArtifactGroup<'v> {
 }
 
 impl<'v> EnsuredArtifactGroup<'v> {
-    pub(crate) fn new(ags: Vec<ArtifactGroup>, abs: bool, heap: &'v Heap) -> Self {
+    pub(crate) fn new(ags: Vec<ArtifactGroup>, abs: bool, heap: Heap<'v>) -> Self {
         EnsuredArtifactGroup {
-            inner: heap.alloc(EnsuredArtifactGroupInner { ags }),
+            inner: heap.alloc(EnsuredArtifactGroupInner { ags }).to_value(),
 
             abs,
         }
@@ -134,31 +146,30 @@ impl<'v> EnsuredArtifactGroup<'v> {
     }
 }
 
-#[starlark_value(type = "bxl.EnsuredArtifactGroup", StarlarkTypeRepr, UnpackValue)]
+starlark::methods_static!(ARTIFACT_GROUP_METHODS = artifact_group_methods);
+
+#[starlark_value(type = "bxl.EnsuredArtifactGroup", no_freeze)]
 impl<'v> StarlarkValue<'v> for EnsuredArtifactGroup<'v>
 where
     Self: ProvidesStaticType<'v>,
 {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(artifact_group_methods)
+        Some(ARTIFACT_GROUP_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         let _hash = self.inner.write_hash(hasher);
         self.abs.hash(hasher);
-        Ok(())
     }
 }
 
-#[starlark_value(type = "bxl.EnsuredArtifactGroupInner", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "bxl.EnsuredArtifactGroupInner", no_freeze)]
 impl<'v> StarlarkValue<'v> for EnsuredArtifactGroupInner
 where
     Self: ProvidesStaticType<'v>,
 {
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.ags.hash(hasher);
-        Ok(())
     }
 }
 
@@ -177,28 +188,21 @@ impl PartialEq for EnsuredArtifact {
 
 impl Eq for EnsuredArtifact {}
 
-#[derive(StarlarkTypeRepr, UnpackValue, Display)]
-pub(crate) enum ArtifactArg<'v> {
-    Artifact(&'v StarlarkArtifact),
-    DeclaredArtifact(&'v StarlarkDeclaredArtifact<'v>),
-}
-
-impl<'v> ArtifactArg<'v> {
-    pub(crate) fn into_ensured_artifact(self) -> buck2_error::Result<EnsuredArtifact> {
-        match self {
-            ArtifactArg::Artifact(artifact) => Ok(EnsuredArtifact {
-                artifact: artifact.dupe(),
-                abs: false,
-            }),
-            ArtifactArg::DeclaredArtifact(artifact) => Ok(EnsuredArtifact {
-                artifact: StarlarkArtifact::new(artifact.get_bound_artifact()?),
-                abs: false,
-            }),
-        }
-    }
-}
-
 impl EnsuredArtifact {
+    pub(crate) fn from_artifact(artifact: StarlarkArtifactView<'_>) -> buck2_error::Result<Self> {
+        let artifact = match artifact {
+            StarlarkArtifactView::Artifact(artifact) => artifact.as_ref().dupe(),
+            StarlarkArtifactView::DeclaredArtifact(_)
+            | StarlarkArtifactView::PromiseArtifact(_) => {
+                StarlarkArtifact::new(artifact.non_promise_artifact()?)
+            }
+        };
+        Ok(EnsuredArtifact {
+            artifact,
+            abs: false,
+        })
+    }
+
     pub(crate) fn as_artifact(&self) -> &dyn StarlarkInputArtifactLike<'_> {
         &self.artifact as &dyn StarlarkInputArtifactLike
     }
@@ -239,24 +243,6 @@ impl Display for EnsuredArtifactGroupInner {
     }
 }
 
-impl<'v> AllocValue<'v> for EnsuredArtifact {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
-impl<'v> AllocValue<'v> for EnsuredArtifactGroup<'v> {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
-impl<'v> AllocValue<'v> for EnsuredArtifactGroupInner {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
 impl Serialize for EnsuredArtifact {
     fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
     where
@@ -284,20 +270,20 @@ impl Serialize for EnsuredArtifactGroupInner {
     }
 }
 
-#[starlark_value(type = "bxl.EnsuredArtifact", StarlarkTypeRepr, UnpackValue)]
+starlark::methods_static!(ENSURED_ARTIFACT_METHODS = ensured_artifact_methods);
+
+#[starlark_value(type = "bxl.EnsuredArtifact", no_freeze)]
 impl<'v> StarlarkValue<'v> for EnsuredArtifact
 where
     Self: ProvidesStaticType<'v>,
 {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(ensured_artifact_methods)
+        Some(ENSURED_ARTIFACT_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        let _artifact_write_hash = self.as_artifact().write_hash(hasher);
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+        self.as_artifact().write_hash(hasher);
         self.abs().hash(hasher);
-        Ok(())
     }
 }
 
@@ -325,17 +311,17 @@ fn ensured_artifact_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn abs_path<'v>(
         this: ValueTyped<'v, EnsuredArtifact>,
-        heap: &'v Heap,
-    ) -> starlark::Result<ValueTyped<'v, EnsuredArtifact>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, EnsuredArtifact>> {
         if this.abs() {
-            Ok(this)
+            Ok(this.into())
         } else {
             let artifact = EnsuredArtifact {
                 artifact: this.artifact.dupe(),
                 abs: true,
             };
 
-            Ok(heap.alloc_typed(artifact))
+            Ok(heap.alloc(artifact))
         }
     }
 
@@ -356,17 +342,17 @@ fn ensured_artifact_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn rel_path<'v>(
         this: ValueTyped<'v, EnsuredArtifact>,
-        heap: &'v Heap,
-    ) -> starlark::Result<ValueTyped<'v, EnsuredArtifact>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, EnsuredArtifact>> {
         if !this.abs() {
-            Ok(this)
+            Ok(this.into())
         } else {
             let artifact = EnsuredArtifact {
                 artifact: this.artifact.dupe(),
                 abs: false,
             };
 
-            Ok(heap.alloc_typed(artifact))
+            Ok(heap.alloc(artifact))
         }
     }
 }
@@ -395,17 +381,17 @@ fn artifact_group_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn abs_path<'v>(
         this: ValueTyped<'v, EnsuredArtifactGroup<'v>>,
-        heap: &'v Heap,
-    ) -> starlark::Result<ValueTyped<'v, EnsuredArtifactGroup<'v>>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, EnsuredArtifactGroup<'v>>> {
         if this.abs {
-            Ok(this)
+            Ok(this.into())
         } else {
             let artifact = EnsuredArtifactGroup {
                 inner: this.inner,
                 abs: true,
             };
 
-            Ok(heap.alloc_typed(artifact))
+            Ok(heap.alloc(artifact))
         }
     }
 
@@ -426,17 +412,17 @@ fn artifact_group_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn rel_path<'v>(
         this: ValueTyped<'v, EnsuredArtifactGroup<'v>>,
-        heap: &'v Heap,
-    ) -> starlark::Result<ValueTyped<'v, EnsuredArtifactGroup<'v>>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, EnsuredArtifactGroup<'v>>> {
         if !this.abs {
-            Ok(this)
+            Ok(this.into())
         } else {
             let artifact = EnsuredArtifactGroup {
                 inner: this.inner,
                 abs: false,
             };
 
-            Ok(heap.alloc_typed(artifact))
+            Ok(heap.alloc(artifact))
         }
     }
 }
@@ -444,7 +430,7 @@ fn artifact_group_methods(builder: &mut MethodsBuilder) {
 #[derive(Debug, Allocative)]
 pub(crate) struct LazyBuildArtifact {
     /// The artifacts that are associated with this artifact. This is used to materialize.
-    artifacts_to_build: IndexSet<ArtifactGroup>,
+    artifacts_to_build: BuckMutInsertionSet<ArtifactGroup>,
     artifact: StarlarkArtifact,
 }
 
@@ -460,7 +446,7 @@ impl LazyBuildArtifact {
             .flat_map(|v| v.iter())
             .cloned()
             .chain(iter::once(ArtifactGroup::Artifact(bound_artifact)))
-            .collect::<IndexSet<_>>();
+            .collect::<BuckMutInsertionSet<_>>();
 
         LazyBuildArtifact {
             artifacts_to_build: artifacts,
@@ -475,30 +461,21 @@ impl LazyBuildArtifact {
     pub(crate) async fn build_artifacts(
         &self,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<Vec<ActionOutputs>> {
-        let res = ctx
-            .try_compute_join(&self.artifacts_to_build, |ctx, artifact_group| {
-                async move {
-                    let artifact_group_values = ctx.ensure_artifact_group(artifact_group).await?;
-                    let build_artifacts = artifact_group_values
-                        .iter()
-                        .filter_map(|(artifact, _value)| {
-                            if let BaseArtifactKind::Build(artifact) = artifact.as_parts().0 {
-                                Some(artifact.dupe())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    ctx.try_compute_join(build_artifacts, |ctx, build_artifact| {
-                        async move { ActionCalculation::build_artifact(ctx, &build_artifact).await }
-                            .boxed()
-                    })
-                    .await
-                }
-                .boxed()
-            })
-            .await?;
-        Ok(res.into_iter().flatten().collect::<Vec<_>>())
+    ) -> buck2_error::Result<()> {
+        build_artifact_groups(ctx, &self.artifacts_to_build).await
     }
+}
+
+/// Builds the artifact groups without materializing them.
+async fn build_artifact_groups(
+    ctx: &mut DiceComputations<'_>,
+    artifact_groups: &BuckMutInsertionSet<ArtifactGroup>,
+) -> buck2_error::Result<()> {
+    // `ensure_artifact_group` builds every artifact in the group, including each member of a
+    // transitive set projection.
+    ctx.try_compute_join(artifact_groups, async |ctx, artifact_group| {
+        ctx.ensure_artifact_group(artifact_group).await.map(|_| ())
+    })
+    .await?;
+    Ok(())
 }

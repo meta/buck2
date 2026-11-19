@@ -15,12 +15,17 @@
  * limitations under the License.
  */
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Write;
 
+use allocative::Allocative;
 use dupe::Dupe;
+use starlark_derive::NoSerialize;
+use starlark_derive::ProvidesStaticType;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_module;
-use starlark_map::small_map::SmallMap;
+use starlark_derive::starlark_value;
 use starlark_syntax::golden_test_template::golden_test_template;
 
 use crate as starlark;
@@ -34,20 +39,30 @@ use crate::syntax::AstModule;
 use crate::syntax::Dialect;
 use crate::tests::util::trim_rust_backtrace;
 use crate::typing::AstModuleTypecheck;
+use crate::typing::OperatorSignature;
 use crate::typing::ParamSpec;
 use crate::typing::Ty;
+use crate::typing::TypingBinOp;
+use crate::typing::TypingUnOp;
 use crate::typing::callable_param::ParamIsRequired;
 use crate::typing::interface::Interface;
 use crate::util::ArcStr;
+use crate::values::Heap;
+use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
+use crate::values::dict::DictType;
+use crate::values::layout::heap::name::StarlarkTestHeapName;
 use crate::values::none::NoneType;
+use crate::values::string::StarlarkStr;
+use crate::values::types::int::view::IntView;
 use crate::values::typing::StarlarkCallable;
 use crate::values::typing::StarlarkCallableParamSpec;
 use crate::values::typing::StarlarkIter;
 
 mod call;
 mod callable;
+mod calls_and_bindings;
 mod list;
 mod special_function;
 mod tuple;
@@ -59,29 +74,211 @@ struct TypeCheck {
     loads: HashMap<String, (Interface, FrozenModule)>,
 }
 
+/// A simple custom type for testing `StarlarkValueAsType` parameterization errors.
+#[derive(
+    derive_more::Display,
+    Debug,
+    NoSerialize,
+    Allocative,
+    ProvidesStaticType,
+    StarlarkPagable
+)]
+#[display("MyType")]
+struct MyCustomType;
+
+#[starlark_value(type = "my_custom_type")]
+impl<'v> StarlarkValue<'v> for MyCustomType {}
+
+/// A type with every operator, each written with the signature the trait declares.
+#[derive(
+    derive_more::Display,
+    Debug,
+    NoSerialize,
+    Allocative,
+    ProvidesStaticType,
+    StarlarkPagable
+)]
+#[display("EveryOperator")]
+struct EveryOperator;
+
+#[starlark_value(type = "every_operator")]
+impl<'v> StarlarkValue<'v> for EveryOperator {
+    fn add(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        Some(Ok(other))
+    }
+
+    fn radd(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        Some(Ok(other))
+    }
+
+    fn mul(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        Some(Ok(other))
+    }
+
+    fn rmul(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        Some(Ok(other))
+    }
+
+    fn sub(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn percent(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn floor_div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn bit_and(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn bit_or(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn bit_xor(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn left_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn right_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(other)
+    }
+
+    fn plus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn minus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn bit_not(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn compare(&self, _other: Value<'v>) -> crate::Result<Ordering> {
+        Ok(Ordering::Equal)
+    }
+
+    fn is_in(&self, _other: Value<'v>) -> crate::Result<bool> {
+        Ok(true)
+    }
+
+    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(index)
+    }
+}
+
+/// A type that writes the signatures of its operators by hand: `+` with a result that
+/// depends on the operand, a reflected `*`, unary `-`, and indexing.
+#[derive(
+    derive_more::Display,
+    Debug,
+    NoSerialize,
+    Allocative,
+    ProvidesStaticType,
+    StarlarkPagable
+)]
+#[display("WithSignatures")]
+struct WithSignatures;
+
+#[starlark_value(type = "with_signatures")]
+impl<'v> StarlarkValue<'v> for WithSignatures {
+    fn bin_op_signatures(op: TypingBinOp) -> Vec<OperatorSignature> {
+        match op {
+            TypingBinOp::Add => vec![
+                OperatorSignature {
+                    operand: Ty::int(),
+                    result: Ty::string(),
+                },
+                OperatorSignature {
+                    operand: Ty::float(),
+                    result: Ty::bool(),
+                },
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn rbin_op_signatures(op: TypingBinOp) -> Vec<OperatorSignature> {
+        match op {
+            TypingBinOp::Mul => vec![OperatorSignature {
+                operand: Ty::float(),
+                result: Ty::string(),
+            }],
+            _ => Vec::new(),
+        }
+    }
+
+    fn un_op_result(op: TypingUnOp) -> Option<Ty> {
+        match op {
+            TypingUnOp::Minus => Some(Ty::int()),
+            _ => None,
+        }
+    }
+
+    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(index)
+    }
+
+    fn at_signature() -> Option<OperatorSignature> {
+        Some(OperatorSignature {
+            operand: Ty::int(),
+            result: Ty::string(),
+        })
+    }
+}
+
 struct NamedXy;
+
+pagable::static_str!(NAMED_XY_X = "x");
+pagable::static_str!(NAMED_XY_Y = "y");
 
 impl StarlarkCallableParamSpec for NamedXy {
     fn params() -> ParamSpec {
         ParamSpec::new_named_only([
-            (ArcStr::new_static("x"), ParamIsRequired::Yes, Ty::string()),
-            (ArcStr::new_static("y"), ParamIsRequired::Yes, Ty::int()),
+            (
+                ArcStr::new_static(NAMED_XY_X),
+                ParamIsRequired::Yes,
+                Ty::string(),
+            ),
+            (
+                ArcStr::new_static(NAMED_XY_Y),
+                ParamIsRequired::Yes,
+                Ty::int(),
+            ),
         ])
         .unwrap()
     }
 }
 
 #[starlark_module]
+#[starlark_types(
+    MyCustomType as MyCustomType,
+    EveryOperator as EveryOperator,
+    WithSignatures as WithSignatures
+)]
 fn register_typecheck_globals(globals: &mut GlobalsBuilder) {
     fn accepts_iterable<'v>(
-        #[starlark(require = pos)] xs: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] xs: ValueOf<'v, StarlarkIter<Value<'v>>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = xs;
         Ok(NoneType)
     }
 
-    fn accepts_typed_kwargs(
-        #[starlark(kwargs)] x: SmallMap<String, u32>,
+    fn accepts_typed_kwargs<'v>(
+        #[starlark(kwargs)] x: ValueOf<'v, DictType<StarlarkStr, IntView<'v>>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = x;
         Ok(NoneType)
@@ -176,28 +373,30 @@ impl TypeCheck {
         let module = {
             writeln!(output).unwrap();
             writeln!(output, "Compiler typechecker (eval):").unwrap();
-            let module = Module::new();
-            let mut eval = Evaluator::new(&module);
+            Module::with_temp_heap(|module| {
+                let mut eval = Evaluator::new(&module);
 
-            eval.set_loader(&loader);
+                eval.set_loader(&loader);
 
-            eval.enable_static_typechecking(true);
-            let eval_result = eval.eval_module(ast, &globals);
-            if eval_result.is_ok() != errors.is_empty() {
-                writeln!(output, "Compiler typechecker and eval results mismatch.").unwrap();
-                writeln!(output).unwrap();
-            }
+                eval.enable_static_typechecking(true);
+                let eval_result = eval.eval_module(ast, &globals);
+                if eval_result.is_ok() != errors.is_empty() {
+                    writeln!(output, "Compiler typechecker and eval results mismatch.").unwrap();
+                    writeln!(output).unwrap();
+                }
 
-            // Additional writes must happen above this line otherwise it might be erased by trim_rust_backtrace
-            match &eval_result {
-                Ok(_) => writeln!(output, "No errors.").unwrap(),
-                Err(err) => writeln!(output, "{err:?}").unwrap(),
-            }
+                // Additional writes must happen above this line otherwise it might be erased by trim_rust_backtrace
+                match &eval_result {
+                    Ok(_) => writeln!(output, "No errors.").unwrap(),
+                    Err(err) => writeln!(output, "{err:?}").unwrap(),
+                }
 
-            // Help borrow checker.
-            drop(eval);
+                // Help borrow checker.
+                drop(eval);
 
-            module.freeze().unwrap()
+                module.freeze_named(StarlarkTestHeapName::frozen_heap_name())
+            })
+            .unwrap()
         };
 
         golden_test_template(
@@ -400,6 +599,241 @@ def test():
     z = -(1 if True else "")
 "#,
     );
+}
+
+#[test]
+fn test_operators_without_types() {
+    TypeCheck::new()
+        .ty("binary")
+        .ty("boolean")
+        .ty("reflected")
+        .ty("unary")
+        .check(
+            "operators_without_types",
+            r#"
+def test(x: EveryOperator, y: str):
+    binary = (x + y, x - y, x * y, x / y, x // y, x % y, x & y, x | y, x ^ y, x << y, x >> y)
+    boolean = (x < y, y in x)
+    reflected = (None + x, None * x)
+    unary = (+x, -x, ~x)
+"#,
+        );
+}
+
+/// Indexing a type that says what index it takes and what is there, one that has `at` and
+/// says nothing, and one that has no `at`.
+#[test]
+fn test_index_signature() {
+    TypeCheck::new()
+        .ty("by_int")
+        .ty("by_unknown")
+        .ty("by_str")
+        .ty("unsaid")
+        .ty("not_indexed")
+        .check(
+            "index_signature",
+            r#"
+def test(x: WithSignatures, y: EveryOperator, z: MyCustomType, i: int, s: str, a):
+    by_int = x[i]
+    by_unknown = x[a]
+    by_str = x[s]
+    unsaid = y[s]
+    not_indexed = z[i]
+"#,
+        );
+}
+
+#[test]
+fn test_operator_signatures() {
+    TypeCheck::new()
+        .ty("one_int")
+        .ty("one_float")
+        .ty("both")
+        .ty("unknown")
+        .ty("none")
+        .ty("reflected")
+        .ty("reflected_none")
+        .ty("unary")
+        .ty("unary_none")
+        .check(
+            "operator_signatures",
+            r#"
+def test(x: WithSignatures, i: int, f: float, n: int | float, a, s: str):
+    # The operand matches one signature.
+    one_int = x + i
+    one_float = x + f
+    # The operand matches both.
+    both = x + n
+    unknown = x + a
+    # The operand matches none.
+    none = x + s
+    # The reflected operator, for a left operand whose type does not have the operator.
+    reflected = f * x
+    reflected_none = None * x
+    # The unary operators.
+    unary = -x
+    unary_none = ~x
+"#,
+        );
+}
+
+/// `<` takes what the type's `compare` takes.
+#[test]
+fn test_compare_operand() {
+    TypeCheck::new().ty("good").ty("bad").check(
+        "compare_operand",
+        r#"
+def test(s: str, i: int):
+    good = s < "x"
+    bad = s < i
+"#,
+    );
+}
+
+/// The operators of `str`, `bytes` and `tuple` take and give what their bodies say, and the
+/// typechecker's own rules for `list`, `dict` and `set` answer before the bodies are asked.
+#[test]
+fn test_operators_of_builtin_types() {
+    TypeCheck::new()
+        .ty("str_add")
+        .ty("str_mul")
+        .ty("int_mul_str")
+        .ty("str_percent")
+        .ty("bytes_add")
+        .ty("bytes_mul")
+        .ty("tuple_add")
+        .ty("tuple_mul")
+        .ty("list_add")
+        .ty("list_mul")
+        .ty("dict_or")
+        .ty("set_or")
+        .check(
+            "operators_of_builtin_types",
+            r#"
+def test(s: str, b: bytes, t: tuple[int, ...], i: int, a):
+    str_add = s + s
+    str_mul = s * i
+    int_mul_str = i * s
+    str_percent = s % a
+    bytes_add = b + b
+    bytes_mul = b * i
+    tuple_add = t + t
+    tuple_mul = t * i
+    list_add = [i] + [s]
+    list_mul = [i] * i
+    dict_or = {i: s} | {s: i}
+    set_or = set([i]) | set([s])
+
+def bad(s: str, b: bytes, t: tuple[int, ...], i: int):
+    s + i
+    s * s
+    b + s
+    t + [i]
+    t * s
+"#,
+        );
+}
+
+/// Indexing and `in` on `str`, `bytes` and `range` take and give what their bodies say, and
+/// the typechecker's own rules for `list`, `tuple`, `dict` and `set` answer before the bodies
+/// are asked.
+#[test]
+fn test_index_and_in_of_builtin_types() {
+    TypeCheck::new()
+        .ty("str_at")
+        .ty("str_in")
+        .ty("bytes_at")
+        .ty("bytes_in")
+        .ty("range_at")
+        .ty("range_in")
+        .ty("list_at")
+        .ty("list_in")
+        .ty("tuple_at")
+        .ty("tuple_in")
+        .ty("dict_at")
+        .ty("dict_in")
+        .ty("set_in")
+        .check(
+            "index_and_in_of_builtin_types",
+            r#"
+def test(s: str, b: bytes, r: range, t: tuple[int, ...], i: int, a):
+    str_at = s[i]
+    str_in = s in s
+    bytes_at = b[i]
+    bytes_in = i in b
+    range_at = r[i]
+    range_in = s in r
+    list_at = [s][i]
+    list_in = s in [s]
+    tuple_at = t[i]
+    tuple_in = s in t
+    dict_at = {s: i}[s]
+    dict_in = s in {s: i}
+    set_in = s in set([s])
+    s[a]
+    a in s
+
+def bad(s: str, b: bytes, r: range, t: tuple[int, ...], i: int):
+    s[s]
+    i in s
+    b[s]
+    r[s]
+    [i][s]
+    t[s]
+    {s: i}[i]
+    i in [s]
+    i in {s: i}
+"#,
+        );
+}
+
+/// The operators of `int` and `float`, whose result depends on the operand.
+#[test]
+fn test_operators_of_numbers() {
+    TypeCheck::new()
+        .ty("int_add_int")
+        .ty("int_add_float")
+        .ty("int_add_any")
+        .ty("float_add_int")
+        .ty("float_add_any")
+        .ty("int_div_int")
+        .ty("int_floor_div_float")
+        .ty("int_percent_int")
+        .ty("int_or_int")
+        .ty("int_or_any")
+        .ty("int_shift_int")
+        .ty("int_less_float")
+        .ty("float_less_any")
+        .check(
+            "operators_of_numbers",
+            r#"
+def test(i: int, f: float, a):
+    int_add_int = i + i
+    int_add_float = i + f
+    int_add_any = i + a
+    float_add_int = f + i
+    float_add_any = f * a
+    int_div_int = i / i
+    int_floor_div_float = i // f
+    int_percent_int = i % i
+    int_or_int = i | i
+    int_or_any = i ^ a
+    int_shift_int = i << i
+    int_less_float = i < f
+    float_less_any = f < a
+
+def bad(i: int, f: float, s: str):
+    i + s
+    f - s
+    i / s
+    i | f
+    f & f
+    i << f
+    i < s
+    f < s
+    i in i
+"#,
+        );
 }
 
 #[test]

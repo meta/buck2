@@ -17,5 +17,4 @@
 [<TIMESTAMP>]       |
 [<TIMESTAMP>]     2 | fail("test_parse_error")
 [<TIMESTAMP>]       | ^^^^^^^^^^^^^^^^^^^^^^^^
-[<TIMESTAMP>]       |
 [<TIMESTAMP>]     

@@ -11,6 +11,7 @@
 use std::fs::File;
 use std::fs::create_dir_all;
 use std::time::Duration;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use buck2_cli_proto::daemon_api_client::*;
@@ -18,12 +19,17 @@ use buck2_cli_proto::new_generic::NewGenericRequest;
 use buck2_cli_proto::new_generic::NewGenericResponse;
 use buck2_cli_proto::*;
 use buck2_common::daemon_dir::DaemonDir;
+use buck2_common::invocation_paths::UNIDAEMON_LOCKS_DIR;
+use buck2_common::invocation_paths::UNIDAEMON_NAMESPACES_DIR;
 use buck2_data::error::ErrorTag;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_event_log::stream_value::StreamValue;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileName;
+use buck2_wrapper_common::BUCKD_LIFECYCLE;
 use futures::Stream;
 use futures::StreamExt;
 use futures::TryStreamExt;
@@ -45,13 +51,15 @@ use crate::events_ctx::PartialResultHandler;
 
 pub mod connect;
 pub mod kill;
+pub mod namespaces;
+pub mod tenant_slot;
 
 use crate::startup_deadline::StartupDeadline;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Environment)]
 enum LifecycleError {
-    #[error("Missing `{}` file in `{}` directory", BuckdLifecycleLock::BUCKD_LIFECYCLE, _0.display())]
+    #[error("Missing `{}` file in `{}` directory", BUCKD_LIFECYCLE, _0.display())]
     MissingLifecycle(AbsNormPathBuf),
 }
 
@@ -59,6 +67,9 @@ enum LifecycleError {
 /// The connector wraps all buckd calls with flushing.
 pub struct BuckdClientConnector {
     client: BuckdClient,
+    pub(crate) daemon_pid: i64,
+    pub(crate) cgroup_path_of_buck2_daemon: Option<String>,
+    pub(crate) daemon_start_instant: Option<Instant>,
 }
 
 impl BuckdClientConnector {
@@ -76,6 +87,7 @@ impl BuckdClientConnector {
 pub struct BuckdLifecycleLock {
     daemon_dir: DaemonDir,
     lock_file: File,
+    external_lifecycle: bool,
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -87,7 +99,6 @@ pub struct LifecycleLockError {
 }
 
 impl BuckdLifecycleLock {
-    const BUCKD_LIFECYCLE: &'static str = "buckd.lifecycle";
     const BUCKD_PREV_DIR: &'static str = "prev";
 
     pub async fn lock_with_timeout(
@@ -99,10 +110,30 @@ impl BuckdLifecycleLock {
             deadline: StartupDeadline,
         ) -> buck2_error::Result<BuckdLifecycleLock> {
             create_dir_all(&daemon_dir.path)?;
-            let lifecycle_path = daemon_dir
-                .path
-                .as_path()
-                .join(BuckdLifecycleLock::BUCKD_LIFECYCLE);
+            let compatibility = daemon_dir.path.parent().filter(|parent| {
+                parent.parent().is_some_and(|root| {
+                    root.file_name() == Some(std::ffi::OsStr::new(UNIDAEMON_NAMESPACES_DIR))
+                })
+            });
+            let external_lifecycle = compatibility.is_some();
+            let lifecycle_path = if let Some(namespace) = compatibility {
+                let root = namespace
+                    .parent()
+                    .and_then(|root| root.parent())
+                    .internal_error("Compatibility namespace has no root")?;
+                let locks = root.join(FileName::unchecked_new(UNIDAEMON_LOCKS_DIR));
+                create_dir_all(&locks)?;
+                locks
+                    .join(FileName::from_os_string(
+                        &namespace
+                            .file_name()
+                            .internal_error("Namespace has no name")?
+                            .to_os_string(),
+                    )?)
+                    .into_path_buf()
+            } else {
+                daemon_dir.path.as_path().join(BUCKD_LIFECYCLE)
+            };
             let file = File::create(lifecycle_path)?;
             let fileref = &file;
             deadline
@@ -110,13 +141,17 @@ impl BuckdLifecycleLock {
                     "locking buckd lifecycle",
                     Duration::from_millis(5),
                     Duration::from_millis(100),
-                    || async { Ok(fs4::fs_std::FileExt::try_lock_exclusive(fileref)?) },
+                    // Contention (`WouldBlock`) must surface as an error here so the
+                    // retry loop keeps polling until the lock is actually held.
+                    || async { Ok(fileref.try_lock().map_err(std::io::Error::from)?) },
                 )
                 .await?;
+            create_dir_all(&daemon_dir.path)?;
 
             Ok(BuckdLifecycleLock {
                 lock_file: file,
                 daemon_dir,
+                external_lifecycle,
             })
         }
 
@@ -125,7 +160,7 @@ impl BuckdLifecycleLock {
             .map_err(|e| LifecycleLockError { error: e })
     }
 
-    /// Remove everything except `buckd.lifecycle` file which is the lock file.
+    /// Remove metadata while preserving the lifecycle lock file.
     /// If `keep_prev` is true, backup previous daemon logs to `prev` dir for debugging.
     pub fn clean_daemon_dir(&self, keep_prev: bool) -> buck2_error::Result<()> {
         let prev_daemon_dir = self
@@ -134,15 +169,15 @@ impl BuckdLifecycleLock {
             .join(FileName::new(Self::BUCKD_PREV_DIR).unwrap());
         if keep_prev {
             if prev_daemon_dir.is_dir() {
-                fs_util::remove_dir_all(&prev_daemon_dir)?;
+                fs_util::remove_dir_all(&prev_daemon_dir).categorize_internal()?;
             }
             fs_util::create_dir_all(&prev_daemon_dir)?;
         }
 
         let mut seen_lifecycle = false;
-        for p in fs_util::read_dir(&self.daemon_dir.path)? {
+        for p in fs_util::read_dir(&self.daemon_dir.path).categorize_internal()? {
             let p = p?;
-            if p.file_name() == Self::BUCKD_LIFECYCLE {
+            if p.file_name() == BUCKD_LIFECYCLE {
                 seen_lifecycle = true;
                 continue;
             }
@@ -150,13 +185,14 @@ impl BuckdLifecycleLock {
                 if p.file_name() != Self::BUCKD_PREV_DIR {
                     let file_name = p.file_name();
                     let file_name = FileName::from_os_string(&file_name)?;
-                    fs_util::rename(p.path(), prev_daemon_dir.join(file_name))?;
+                    fs_util::rename(p.path(), prev_daemon_dir.join(file_name))
+                        .categorize_internal()?;
                 }
             } else {
-                fs_util::remove_all(p.path())?;
+                fs_util::remove_all(p.path()).categorize_internal()?;
             }
         }
-        if !seen_lifecycle {
+        if !seen_lifecycle && !self.external_lifecycle {
             // Self-check.
             return Err(LifecycleError::MissingLifecycle(self.daemon_dir.path.clone()).into());
         }
@@ -170,7 +206,8 @@ impl BuckdLifecycleLock {
 
 impl Drop for BuckdLifecycleLock {
     fn drop(&mut self) {
-        fs4::fs_std::FileExt::unlock(&self.lock_file)
+        self.lock_file
+            .unlock()
             .expect("Unexpected failure to unlock buckd.lifecycle file.")
     }
 }
@@ -379,11 +416,27 @@ macro_rules! stream_method {
             console_interaction: Option<ConsoleInteractionStream<'j>>,
             handler: &mut impl PartialResultHandler<PartialResult = $message>,
         ) -> buck2_error::Result<CommandOutcome<$res>> {
+            // The enclosing function is generic and so is instantiated in every command
+            // crate. The gRPC call is not generic; a non-inlined function keeps its
+            // instantiation (the request encoder, the response decoder) in this crate.
+            #[inline(never)]
+            fn call<'b>(
+                client: &'b mut DaemonApiClient<
+                    InterceptedService<Channel, BuckAddAuthTokenInterceptor>,
+                >,
+                req: Request<$req>,
+            ) -> BoxFuture<
+                'b,
+                Result<tonic::Response<tonic::Streaming<MultiCommandProgress>>, Status>,
+            > {
+                Box::pin(DaemonApiClient::$grpc_method(client, req))
+            }
+
             let mut events_ctx = DaemonEventsCtx::new(self.inner, events_ctx)?;
             let res = self
                 .inner
                 .stream(
-                    |d, r| Box::pin(DaemonApiClient::$grpc_method(d, r)),
+                    call,
                     req,
                     &mut events_ctx,
                     // For now we only support handlers that can be constructed like so, and we
@@ -443,9 +496,20 @@ macro_rules! oneshot_method {
             req: $req,
             events_ctx: &mut EventsCtx,
         ) -> buck2_error::Result<CommandOutcome<$res>> {
+            // See `stream_method!`.
+            #[inline(never)]
+            fn call(
+                client: &mut DaemonApiClient<
+                    InterceptedService<Channel, BuckAddAuthTokenInterceptor>,
+                >,
+                req: Request<$req>,
+            ) -> BoxFuture<'_, Result<tonic::Response<CommandResult>, Status>> {
+                Box::pin(client.$grpc_method(req))
+            }
+
             let mut events_ctx = DaemonEventsCtx::new(self.inner, events_ctx)?;
             let res = events_ctx
-                .unpack_oneshot({ self.inner.client.$method(Request::new(req)) })
+                .unpack_oneshot(call(&mut self.inner.client, Request::new(req)))
                 .await;
             events_ctx.flush().await?;
             res
@@ -465,8 +529,19 @@ macro_rules! debug_method {
             req: $req,
             events_ctx: &mut EventsCtx,
         ) -> buck2_error::Result<$res> {
+            // See `stream_method!`.
+            #[inline(never)]
+            fn call(
+                client: &mut DaemonApiClient<
+                    InterceptedService<Channel, BuckAddAuthTokenInterceptor>,
+                >,
+                req: Request<$req>,
+            ) -> BoxFuture<'_, Result<tonic::Response<$res>, Status>> {
+                Box::pin(client.$grpc_method(req))
+            }
+
             let mut events_ctx = DaemonEventsCtx::new(self.inner, events_ctx)?;
-            let out = self.inner.client.$method(Request::new(req)).await;
+            let out = call(&mut self.inner.client, Request::new(req)).await;
             events_ctx.flush().await?;
             Ok(out?.into_inner())
         }
@@ -582,7 +657,14 @@ impl FlushingBuckdClient<'_> {
         SubscriptionResponseWrapper
     );
 
+    debug_method!(restart, RestartRequest, RestartResponse);
     oneshot_method!(flush_dep_files, FlushDepFilesRequest, GenericResponse);
+    stream_method!(
+        hydration,
+        HydrationRequest,
+        HydrationResponse,
+        NoPartialResult
+    );
 
     oneshot_method!(unstable_crash, UnstableCrashRequest, GenericResponse);
     debug_method!(
@@ -591,9 +673,30 @@ impl FlushingBuckdClient<'_> {
         UnstableHeapDumpResponse
     );
     debug_method!(
+        unstable_recent_alloc_dump,
+        UnstableRecentAllocDumpRequest,
+        UnstableRecentAllocDumpResponse
+    );
+    debug_method!(
+        unstable_flush_pgo_profile,
+        UnstableFlushPgoProfileRequest,
+        UnstableFlushPgoProfileResponse
+    );
+    debug_method!(
         unstable_allocator_stats,
         UnstableAllocatorStatsRequest,
         UnstableAllocatorStatsResponse
+    );
+    debug_method!(
+        unstable_list_tenants,
+        UnstableListTenantsRequest,
+        UnstableListTenantsResponse
+    );
+    debug_method!(evict_tenant, EvictTenantRequest, EvictTenantResponse);
+    debug_method!(
+        evict_project_tenants,
+        EvictProjectTenantsRequest,
+        EvictProjectTenantsResponse
     );
     debug_method!(
         unstable_dice_dump,
@@ -661,4 +764,41 @@ fn create_client_stream<
         request: Some(streaming_request::Request::Context(context)),
     };
     stream::once(async move { init_req }).chain(requests.map(|request| request.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+
+    use super::*;
+    use crate::startup_deadline::StartupDeadline;
+
+    async fn try_lock(dir: &DaemonDir, timeout: Duration) -> Option<BuckdLifecycleLock> {
+        BuckdLifecycleLock::lock_with_timeout(
+            dir.clone(),
+            StartupDeadline::duration_from_now(timeout).unwrap(),
+        )
+        .await
+        .ok()
+    }
+
+    /// A second lock attempt must block until the holder releases, never
+    /// spuriously succeed while the lock is held (the fs4 0.13 regression).
+    #[tokio::test]
+    async fn test_lifecycle_lock_is_exclusive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = DaemonDir {
+            path: AbsNormPathBuf::new(tmp.path().to_owned()).unwrap(),
+        };
+
+        let held = try_lock(&dir, Duration::from_secs(10)).await.unwrap();
+        assert!(
+            try_lock(&dir, Duration::from_millis(300)).await.is_none(),
+            "acquired the lifecycle lock while another handle held it"
+        );
+        drop(held);
+        assert!(try_lock(&dir, Duration::from_secs(10)).await.is_some());
+    }
 }

@@ -1,0 +1,10 @@
+load(":rules.bzl", "grouped_anon_creator", "r", "tool")
+
+tool(name = "tool")
+
+r(
+    name = "t",
+    cmd = "$(exe :tool)",
+)
+
+grouped_anon_creator(name = "grouped_anon")

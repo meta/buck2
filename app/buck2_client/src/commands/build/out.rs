@@ -11,6 +11,9 @@
 use std::borrow::Cow;
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use buck2_cli_proto::BuildTarget;
 use buck2_cli_proto::build_target::BuildOutput;
@@ -18,21 +21,49 @@ use buck2_client_ctx::exit_result::ClientIoError;
 use buck2_client_ctx::output_destination_arg::OutputDestinationArg;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
 use buck2_fs::async_fs_util;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_fs::working_dir::AbsWorkingDir;
+use futures::StreamExt;
 use futures::TryStreamExt;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+
+const COPY_DIRECTORY_CONCURRENCY: usize = 4;
 
 #[derive(Clone)]
 struct CopyContext {
     // Any symlink pointing outside of this path would be copied/recreated as an absolute symlink to original target.
     // Should be canonicalized.
     relative_symlink_boundary: AbsNormPathBuf,
+}
+
+enum CopyWork {
+    Directory {
+        destination: AbsPathBuf,
+        ready: oneshot::Sender<()>,
+    },
+    File {
+        source: AbsPathBuf,
+        destination: AbsPathBuf,
+    },
+    Symlink {
+        source: AbsPathBuf,
+        destination: AbsPathBuf,
+    },
+}
+
+enum CopyQueueItem {
+    Work(CopyWork),
+    Error(buck2_error::Error),
 }
 
 /// Given a list of targets built by this command, extracts a reasonable default output from the list and writes it
@@ -136,7 +167,9 @@ pub(super) async fn copy_to_out(
     for to_be_copied in outputs_to_be_copied {
         match out {
             OutputDestinationArg::Stream => {
-                let mut file = async_fs_util::open(&to_be_copied.from_path).await?;
+                let mut file = async_fs_util::open(&to_be_copied.from_path)
+                    .await
+                    .categorize_tagged(ErrorTag::CopyOutputs)?;
                 tokio::io::copy(&mut file, &mut tokio::io::stdout())
                     .await
                     .map_err(convert_broken_pipe_error)?;
@@ -145,7 +178,8 @@ pub(super) async fn copy_to_out(
                 let path = path.resolve(working_dir);
                 if to_be_copied.is_dir {
                     let context = CopyContext {
-                        relative_symlink_boundary: fs_util::canonicalize(&to_be_copied.from_path)?,
+                        relative_symlink_boundary: fs_util::canonicalize(&to_be_copied.from_path)
+                            .categorize_tagged(ErrorTag::CopyOutputs)?,
                     };
                     copy_directory(&to_be_copied.from_path, &path, &context).await?;
                 } else {
@@ -164,77 +198,207 @@ fn copy_symlink<P: AsRef<AbsPath>, Q: AsRef<AbsPath>>(
     context: &CopyContext,
 ) -> buck2_error::Result<()> {
     // Make symlinks overwrite items which were already present at destination path
-    fs_util::remove_all(&dst_path).buck_error_context(format!(
-        "Removing pre-existing item at path {:?}",
-        src_path.as_ref()
-    ))?;
-    let symlink_target_abs_path = fs_util::canonicalize(src_path.as_ref()).buck_error_context(
-        format!("Resolving symlink to be copied {:?}", src_path.as_ref()),
-    )?;
+    fs_util::remove_all(&dst_path)
+        .categorize_tagged(ErrorTag::CopyOutputs)
+        .buck_error_context(format!(
+            "Removing pre-existing item at path {:?}",
+            src_path.as_ref()
+        ))?;
+    let symlink_target_abs_path = fs_util::canonicalize(src_path.as_ref())
+        .categorize_tagged(ErrorTag::CopyOutputs)
+        .buck_error_context(format!(
+            "Resolving symlink to be copied {:?}",
+            src_path.as_ref()
+        ))?;
     // Now recreate the symlink
     let symlink_target = {
         if symlink_target_abs_path.starts_with(&context.relative_symlink_boundary) {
             // Symlink is not pointing outside the original output we are copying.
             // Just keep it as it is.
-            fs_util::read_link(&src_path).buck_error_context(format!(
-                "Reading value of a symlink to be copied {:?}",
-                src_path.as_ref()
-            ))?
+            fs_util::read_link(&src_path)
+                .categorize_tagged(ErrorTag::CopyOutputs)
+                .buck_error_context(format!(
+                    "Reading value of a symlink to be copied {:?}",
+                    src_path.as_ref()
+                ))?
         } else {
             // Force "copied" symlink to be absolute as it points outside of original output we are copying.
             symlink_target_abs_path.into_path_buf()
         }
     };
-    fs_util::symlink(&symlink_target, &dst_path).buck_error_context(format!(
-        "Creating symlink at {:?} pointing to {:?}",
-        dst_path.as_ref(),
-        &symlink_target
-    ))?;
+    fs_util::symlink(&symlink_target, &dst_path)
+        .categorize_tagged(ErrorTag::CopyOutputs)
+        .buck_error_context(format!(
+            "Creating symlink at {:?} pointing to {:?}",
+            dst_path.as_ref(),
+            symlink_target
+        ))?;
 
     Ok(())
 }
 
-/// Recursively copies a directory to the output path, rooted at `dst`.
-#[async_recursion::async_recursion]
+/// Copies a directory to the output path, rooted at `dst`.
 async fn copy_directory<P, Q>(src: P, dst: Q, context: &CopyContext) -> buck2_error::Result<()>
 where
-    P: AsRef<AbsPath> + std::marker::Send,
-    Q: AsRef<AbsPath> + std::marker::Send + std::marker::Copy + std::marker::Sync,
+    P: AsRef<AbsPath>,
+    Q: AsRef<AbsPath>,
 {
-    tokio::fs::create_dir_all(dst.as_ref()).await?;
+    let (sender, receiver) = mpsc::channel(COPY_DIRECTORY_CONCURRENCY);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let producer_stopped = stopped.clone();
+    let source = src.as_ref().to_owned();
+    let destination = dst.as_ref().to_owned();
+
+    let producer = async move {
+        let result = enqueue_directory(source, destination, &sender, &producer_stopped).await;
+        if let Err(error) = result
+            && !producer_stopped.load(Ordering::Acquire)
+        {
+            let _ignored = sender.send(CopyQueueItem::Error(error)).await;
+        }
+    };
+    let consumer = run_copy_work_queue(receiver, context, stopped);
+    let ((), result) = tokio::join!(producer, consumer);
+    result
+}
+
+#[async_recursion::async_recursion]
+async fn enqueue_directory(
+    source: AbsPathBuf,
+    destination: AbsPathBuf,
+    sender: &mpsc::Sender<CopyQueueItem>,
+    stopped: &AtomicBool,
+) -> buck2_error::Result<()> {
+    if stopped.load(Ordering::Acquire) {
+        return Ok(());
+    }
+
+    let (ready, wait_until_ready) = oneshot::channel();
+    if sender
+        .send(CopyQueueItem::Work(CopyWork::Directory {
+            destination: destination.clone(),
+            ready,
+        }))
+        .await
+        .is_err()
+        || wait_until_ready.await.is_err()
+    {
+        return Ok(());
+    }
+
     let stream = tokio_stream::wrappers::ReadDirStream::new(
-        tokio::fs::read_dir(src.as_ref())
+        tokio::fs::read_dir(&source)
             .await
-            .buck_error_context(format!("reading directory {:?}", src.as_ref()))?,
+            .buck_error_context(format!("reading directory {source:?}"))?,
     )
     .err_into::<buck2_error::Error>();
+    futures::pin_mut!(stream);
 
-    stream
-        .try_for_each(|entry| async move {
-            let entry_source_path = AbsPathBuf::new(entry.path())?;
-            let entry_destination_path = dst.as_ref().join(entry.file_name());
-            let file_type = entry.file_type().await?;
-            if file_type.is_dir() {
-                copy_directory(&entry_source_path, &entry_destination_path, context)
-                    .await
-                    .buck_error_context(format!("Copying subdirectory {:?}", entry.path()))
-            } else if file_type.is_symlink() {
-                let copy_context = context.clone();
-                tokio::task::spawn_blocking(move || {
-                    copy_symlink(&entry_source_path, &entry_destination_path, &copy_context)
-                })
+    while let Some(entry) = stream.try_next().await? {
+        if stopped.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
+        let entry_source = AbsPathBuf::new(entry.path())?;
+        let entry_destination = destination.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .await
+            .buck_error_context(format!("Inspecting output {entry_source:?}"))?;
+        if file_type.is_dir() {
+            enqueue_directory(entry_source, entry_destination, sender, stopped)
                 .await
-                .buck_error_context(format!("Copying symlink {:?}", &entry.path()))?
+                .buck_error_context(format!("Copying subdirectory {:?}", entry.path()))?;
+        } else {
+            let work = if file_type.is_symlink() {
+                CopyWork::Symlink {
+                    source: entry_source,
+                    destination: entry_destination,
+                }
             } else {
-                tokio::fs::copy(&entry.path(), &entry_destination_path)
-                    .await
-                    .buck_error_context(format!("Copying file {:?}", entry.path()))
-                    .map(|_| ())
+                CopyWork::File {
+                    source: entry_source,
+                    destination: entry_destination,
+                }
+            };
+            if sender.send(CopyQueueItem::Work(work)).await.is_err() {
+                return Ok(());
             }
-        })
-        .await?;
+        }
+    }
 
     Ok(())
+}
+
+async fn run_copy_work_queue(
+    receiver: mpsc::Receiver<CopyQueueItem>,
+    context: &CopyContext,
+    stopped: Arc<AtomicBool>,
+) -> buck2_error::Result<()> {
+    // Do not short-circuit this stream. A dropped `spawn_blocking` handle does not cancel its
+    // task, so every admitted filesystem mutation must finish before this function returns.
+    let first_error = tokio_stream::wrappers::ReceiverStream::new(receiver)
+        .map(|item| run_copy_queue_item(item, context, &stopped))
+        .buffer_unordered(COPY_DIRECTORY_CONCURRENCY)
+        .fold(None, |first_error, result| async {
+            match (first_error, result) {
+                (None, Err(error)) => {
+                    stopped.store(true, Ordering::Release);
+                    Some(error)
+                }
+                (first_error, _) => first_error,
+            }
+        })
+        .await;
+
+    first_error.map_or(Ok(()), Err)
+}
+
+async fn run_copy_queue_item(
+    item: CopyQueueItem,
+    context: &CopyContext,
+    stopped: &AtomicBool,
+) -> buck2_error::Result<()> {
+    if stopped.load(Ordering::Acquire) {
+        return Ok(());
+    }
+
+    match item {
+        CopyQueueItem::Work(work) => run_copy_work(work, context).await,
+        CopyQueueItem::Error(error) => Err(error),
+    }
+}
+
+async fn run_copy_work(work: CopyWork, context: &CopyContext) -> buck2_error::Result<()> {
+    match work {
+        CopyWork::Directory { destination, ready } => {
+            tokio::fs::create_dir_all(&destination)
+                .await
+                .buck_error_context(format!("Creating output directory {destination:?}"))?;
+            let _ignored = ready.send(());
+            Ok(())
+        }
+        CopyWork::File {
+            source,
+            destination,
+        } => {
+            tokio::fs::copy(&source, &destination)
+                .await
+                .buck_error_context(format!("Copying file {source:?}"))?;
+            make_writable(&destination)
+        }
+        CopyWork::Symlink {
+            source,
+            destination,
+        } => {
+            let source_for_error = source.clone();
+            let copy_context = context.clone();
+            tokio::task::spawn_blocking(move || copy_symlink(&source, &destination, &copy_context))
+                .await
+                .buck_error_context(format!("Copying symlink {source_for_error:?}"))??;
+            Ok(())
+        }
+    }
 }
 
 async fn copy_file(src: &Path, dst: &Path) -> buck2_error::Result<()> {
@@ -247,7 +411,7 @@ async fn copy_file(src: &Path, dst: &Path) -> buck2_error::Result<()> {
         true => Cow::Owned(
             dst.join(
                 src.file_name()
-                    .buck_error_context("Failed getting output name")?,
+                    .internal_error("Failed getting output name")?,
             ),
         ),
         false => Cow::Borrowed(dst),
@@ -256,23 +420,37 @@ async fn copy_file(src: &Path, dst: &Path) -> buck2_error::Result<()> {
     // NOTE: We don't do the overwrite since we might be writing to e.g. a pipe here and we can't
     // do an atomic move into it.
     match tokio::fs::copy(src, &dest_path).await {
-        Ok(..) => Ok(()),
+        Ok(..) => make_writable(&dest_path),
         Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => {
             let dir = dest_path
                 .parent()
-                .buck_error_context("Output path has no parent")?;
+                .internal_error("Output path has no parent")?;
             let mut tmp_name = dest_path
                 .file_name()
-                .buck_error_context("Output path has no file name")?
+                .internal_error("Output path has no file name")?
                 .to_owned();
             tmp_name.push(".buck2.tmp");
             let tmp_path = dir.join(tmp_name);
             tokio::fs::copy(src, &tmp_path).await?;
-            tokio::fs::rename(&tmp_path, dest_path).await?;
-            Ok(())
+            tokio::fs::rename(&tmp_path, &dest_path).await?;
+            make_writable(&dest_path)
         }
         Err(e) => Err(convert_broken_pipe_error(e)),
     }
+}
+
+/// A copy carries the output's mode, which may be read-only (`buck2.readonly_outputs`), and a
+/// file outside buck-out is the user's to write. Nothing is done to what is not a plain file, a
+/// device `--out` was pointed at for one.
+fn make_writable(path: &Path) -> buck2_error::Result<()> {
+    let path = AbsPath::new(path)?;
+    if fs_util::symlink_metadata(path)
+        .categorize_internal()?
+        .is_file()
+    {
+        fs_util::set_writable(path, true).categorize_internal()?;
+    }
+    Ok(())
 }
 
 fn convert_broken_pipe_error(e: io::Error) -> buck2_error::Error {
@@ -285,9 +463,37 @@ mod tests {
     #[cfg(unix)]
     use std::path::PathBuf;
 
+    use buck2_fs::fs_util::uncategorized as fs_util;
     use tempfile::TempDir;
 
     use super::*;
+
+    #[tokio::test]
+    async fn test_copies_of_read_only_outputs_are_writable() -> buck2_error::Result<()> {
+        let src_dir = tempfile::tempdir()?;
+        let dst_dir = tempfile::tempdir()?;
+        std::fs::create_dir_all(src_dir.path().join("dir"))?;
+        for p in ["dir/sealed", "sealed"] {
+            let path = src_dir.path().join(p);
+            std::fs::write(&path, "content")?;
+            fs_util::set_writable(AbsPath::new(&path)?, false)?;
+        }
+        let (src, dst) = (src_dir.path().join("dir"), dst_dir.path().join("dir"));
+        let copy_context = CopyContext {
+            relative_symlink_boundary: fs_util::canonicalize(AbsPath::new(src_dir.path())?)?,
+        };
+        copy_directory(AbsPath::new(&src)?, AbsPath::new(&dst)?, &copy_context).await?;
+        let (src, dst) = (src_dir.path().join("sealed"), dst_dir.path().join("sealed"));
+        copy_file(&src, &dst).await?;
+        // Over the previous copy, as a second `--out` to the same path goes.
+        copy_file(&src, &dst).await?;
+
+        for p in ["dir/sealed", "sealed"] {
+            let copied = std::fs::metadata(dst_dir.path().join(p))?;
+            assert!(!copied.permissions().readonly(), "{p}");
+        }
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_copy_directory() -> buck2_error::Result<()> {
@@ -399,6 +605,46 @@ mod tests {
             .await
             .buck_error_context("copy second time")?;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_copy_directory_propagates_traversal_error() -> buck2_error::Result<()> {
+        let src_dir = tempfile::tempdir()?;
+        let src_path = AbsPath::new(src_dir.path())?;
+        let missing_src = src_path.join("missing");
+        let dst_dir = tempfile::tempdir()?;
+        let dst_path = AbsPath::new(dst_dir.path())?;
+        let copy_context = CopyContext {
+            relative_symlink_boundary: fs_util::canonicalize(src_path)?,
+        };
+
+        let error = copy_directory(&missing_src, dst_path, &copy_context)
+            .await
+            .expect_err("copying a missing source directory should fail");
+
+        assert!(error.to_string().contains("reading directory"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_copy_directory_propagates_copy_error() -> buck2_error::Result<()> {
+        let src_dir = tempfile::tempdir()?;
+        std::fs::write(src_dir.path().join("foo"), "some content")?;
+        let src_path = AbsPath::new(src_dir.path())?;
+
+        let dst_dir = tempfile::tempdir()?;
+        std::fs::create_dir(dst_dir.path().join("foo"))?;
+        let dst_path = AbsPath::new(dst_dir.path())?;
+        let copy_context = CopyContext {
+            relative_symlink_boundary: fs_util::canonicalize(src_path)?,
+        };
+
+        let error = copy_directory(src_path, dst_path, &copy_context)
+            .await
+            .expect_err("copying a file over a directory should fail");
+
+        assert!(error.to_string().contains("Copying file"));
         Ok(())
     }
 

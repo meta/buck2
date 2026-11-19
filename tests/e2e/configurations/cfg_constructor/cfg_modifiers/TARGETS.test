@@ -1,9 +1,0 @@
-load(":rules.bzl", "test_rule")
-
-test_rule(
-    name = "test",
-    metadata = {"buck.cfg_modifiers": [
-        "ovr_config//os/constraints:linux",
-        "ovr_config//cpu/constraints:arm64",
-    ]},
-)

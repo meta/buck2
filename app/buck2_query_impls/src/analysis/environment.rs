@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt;
 use std::fmt::Debug;
@@ -24,15 +23,18 @@ use buck2_build_api::artifact_groups::ResolvedArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use buck2_build_api::interpreter::rule_defs::cmd_args::InputProperties;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::TemplatePlaceholderInfo;
 use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
 use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutSet;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_node::nodes::configured_node_ref::ConfiguredTargetNodeRefNode;
 use buck2_node::nodes::configured_node_ref::ConfiguredTargetNodeRefNodeDeps;
@@ -47,6 +49,7 @@ use buck2_query::query::syntax::simple::eval::error::QueryError;
 use buck2_query::query::syntax::simple::eval::file_set::FileSet;
 use buck2_query::query::syntax::simple::eval::set::TargetSet;
 use buck2_query::query::syntax::simple::eval::values::QueryValue;
+use buck2_query::query::syntax::simple::eval::values::QueryValueDepth;
 use buck2_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
 use buck2_query::query::syntax::simple::functions::QueryFunctions;
 use buck2_query::query::syntax::simple::functions::helpers::QueryBinaryOp;
@@ -59,8 +62,7 @@ use buck2_query_parser::BinaryOp;
 use dice::DiceComputations;
 use dupe::Dupe;
 use dupe::IterDupedExt;
-use futures::FutureExt;
-use indexmap::IndexMap;
+use pagable::StaticStr;
 use starlark::values::UnpackValue;
 
 #[derive(Debug, buck2_error::Error)]
@@ -80,7 +82,7 @@ pub(crate) trait ConfiguredGraphQueryEnvironmentDelegate: Send + Sync {
 
     async fn get_targets_from_template_placeholder_info(
         &self,
-        template_name: &'static str,
+        template_name: StaticStr,
         targets: TargetSet<ConfiguredGraphNodeRef>,
     ) -> buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>>;
 }
@@ -88,6 +90,12 @@ pub(crate) trait ConfiguredGraphQueryEnvironmentDelegate: Send + Sync {
 pub(crate) struct ConfiguredGraphQueryEnvironment<'a> {
     delegate: &'a dyn ConfiguredGraphQueryEnvironmentDelegate,
 }
+
+pagable::static_str!(TEMPLATE_FIRST_ORDER_CLASSPATH = "first_order_classpath");
+pagable::static_str!(
+    TEMPLATE_CLASSPATH_INCLUDING_TARGETS_WITH_NO_OUTPUT =
+        "classpath_including_targets_with_no_output"
+);
 
 #[derive(Debug)]
 struct ConfiguredGraphFunctions<'a>(PhantomData<&'a ()>);
@@ -97,11 +105,11 @@ impl<'a> ConfiguredGraphFunctions<'a> {
         &self,
         env: &ConfiguredGraphQueryEnvironment<'a>,
         targets: TargetSet<ConfiguredGraphNodeRef>,
-        depth: Option<u64>,
+        depth: QueryValueDepth,
     ) -> Result<QueryValue<ConfiguredGraphNodeRef>, QueryError> {
         // if depth param is provided and it is not equal to 1, then it's not supported
         let mut run_first_order_classpath = false;
-        if let Some(depth_int) = depth.map(|v| v as i32) {
+        if let Some(depth_int) = depth.bound() {
             run_first_order_classpath = depth_int == 1;
             if !run_first_order_classpath {
                 return Err(QueryError::InvalidDepth(depth_int));
@@ -109,9 +117,9 @@ impl<'a> ConfiguredGraphFunctions<'a> {
         }
 
         let template_name = if run_first_order_classpath {
-            "first_order_classpath"
+            TEMPLATE_FIRST_ORDER_CLASSPATH
         } else {
-            "classpath_including_targets_with_no_output"
+            TEMPLATE_CLASSPATH_INCLUDING_TARGETS_WITH_NO_OUTPUT
         };
 
         let targets = env
@@ -171,7 +179,7 @@ impl<'a> ConfiguredGraphQueryEnvironment<'a> {
 
     async fn get_targets_from_template_placeholder_info(
         &self,
-        template_name: &'static str,
+        template_name: StaticStr,
         targets: TargetSet<ConfiguredGraphNodeRef>,
     ) -> buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
         self.delegate
@@ -244,7 +252,15 @@ impl QueryEnvironment for ConfiguredGraphQueryEnvironment<'_> {
         visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
         depth: u32,
     ) -> buck2_error::Result<()> {
-        async_depth_limited_traversal(&NodeLookupId, root.iter(), delegate, visit, depth).await
+        async_depth_limited_traversal(
+            &NodeLookupId,
+            root.iter(),
+            delegate,
+            visit,
+            depth,
+            self.allow_partial_graph(),
+        )
+        .await
     }
 
     async fn owner(&self, _paths: &FileSet) -> buck2_error::Result<TargetSet<Self::Target>> {
@@ -261,10 +277,10 @@ impl QueryEnvironment for ConfiguredGraphQueryEnvironment<'_> {
     async fn deps(
         &self,
         targets: &TargetSet<Self::Target>,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
     ) -> buck2_error::Result<TargetSet<Self::Target>> {
-        if depth.is_none() && filter.is_none() {
+        if depth.is_unbounded() && filter.is_none() {
             // TODO(nga): fast lookup with depth too.
             let mut deps: TargetSet<Self::Target> = TargetSet::new();
             dfs_postorder::<ConfiguredTargetNodeRefNode>(
@@ -302,22 +318,22 @@ async fn get_template_info_provider_artifacts(
             let providers_collection = providers.provider_collection();
 
             if let Some(template_placeholder_info) =
-                providers_collection.builtin_provider::<FrozenTemplatePlaceholderInfo>()
+                providers_collection.builtin_provider::<TemplatePlaceholderInfo>()?
             {
                 if let Some(template_info) = template_placeholder_info
-                    .keyed_variables()
+                    .keyed_variables()?
                     .get(template_name)
                 {
                     let mut cmd_visitor = SimpleCommandLineArtifactVisitor::new();
                     if let either::Either::Left(command_line_arg) = template_info {
                         CommandLineArgLike::visit_artifacts(
-                            command_line_arg.as_command_line_arg(),
+                            command_line_arg.get().0,
                             &mut cmd_visitor,
                         )?;
                     } else if let either::Either::Right(map) = template_info {
                         for (_, command_line_arg) in map.iter() {
                             CommandLineArgLike::visit_artifacts(
-                                command_line_arg.as_command_line_arg(),
+                                command_line_arg.get().0,
                                 &mut cmd_visitor,
                             )?;
                         }
@@ -334,12 +350,13 @@ async fn get_template_info_provider_artifacts(
     Ok(artifacts)
 }
 
-pub(crate) async fn get_from_template_placeholder_info<'x>(
-    ctx: &'x mut DiceComputations<'_>,
-    template_name: &'static str,
-    targets: impl IntoIterator<Item = ConfiguredTargetLabel>,
-) -> buck2_error::Result<IndexMap<ConfiguredTargetLabel, Artifact>> {
-    let mut label_to_artifact: IndexMap<ConfiguredTargetLabel, Artifact> = IndexMap::new();
+pub(crate) async fn get_from_template_placeholder_info(
+    ctx: &mut DiceComputations<'_>,
+    template_name: StaticStr,
+    targets: impl IntoIterator<Item = ConfiguredTargetLabel, IntoIter: ExactSizeIterator>,
+) -> buck2_error::Result<BuckMutInsertionMap<ConfiguredTargetLabel, Artifact>> {
+    let mut label_to_artifact: BuckMutInsertionMap<ConfiguredTargetLabel, Artifact> =
+        BuckMutInsertionMap::default();
 
     // Traversing tsets adds complexity here. Ideally, we could just do a normal traversal of these starlark values
     // we get from the template_info provider, but the cmdlinearglike interface only gives us access via ArtifactGroup
@@ -359,17 +376,14 @@ pub(crate) async fn get_from_template_placeholder_info<'x>(
     // Artifacts are put here to keep them in the correct order in the output, tsets are top-level tset nodes that we need
     // to traverse.
     let artifacts = ctx
-        .try_compute_join(targets, |ctx, target| {
-            async move {
-                let artifacts =
-                    get_template_info_provider_artifacts(ctx, &target, template_name).await?;
-                buck2_error::Ok(
-                    artifacts
-                        .into_iter()
-                        .map(move |artifact| (target.dupe(), artifact)),
-                )
-            }
-            .boxed()
+        .try_compute_join(targets, async |ctx, target| {
+            let artifacts =
+                get_template_info_provider_artifacts(ctx, &target, template_name.as_str()).await?;
+            buck2_error::Ok(
+                artifacts
+                    .into_iter()
+                    .map(move |artifact| (target.dupe(), artifact)),
+            )
         })
         .await?;
     let mut artifacts: VecDeque<_> = artifacts.into_iter().flatten().collect();
@@ -378,17 +392,17 @@ pub(crate) async fn get_from_template_placeholder_info<'x>(
     // for all the tset nodes that we encounter during our traversal of those top-level nodes. We don't need to track artifacts because
     // we just extract the targetlabel and put that in the output set and that can dedupe them (and we don't need to further
     // traverse artifacts).
-    let mut seen = HashSet::new();
+    let mut seen = BuckMutSet::default();
 
     while let Some((target, artifact)) = artifacts.pop_front() {
         let handle_artifact =
-            |label_to_artifact: &mut IndexMap<ConfiguredTargetLabel, Artifact>,
+            |label_to_artifact: &mut BuckMutInsertionMap<ConfiguredTargetLabel, Artifact>,
              artifact: &Artifact|
              -> buck2_error::Result<()> {
                 if let Some(owner) = artifact.owner() {
                     let target_label = owner.unpack_target_label().ok_or_else(|| {
                         AnalysisQueryError::NonTargetBoundArtifact(
-                            template_name.to_owned(),
+                            (*template_name).to_owned(),
                             target.dupe(),
                             artifact.dupe(),
                         )
@@ -405,66 +419,68 @@ pub(crate) async fn get_from_template_placeholder_info<'x>(
             ResolvedArtifactGroup::TransitiveSetProjection(tset_key) => {
                 // We've encountered a "top-level" tset node that we haven't yet seen (as either a top-level or intermediate node, doesn't matter).
                 if seen.insert(tset_key.dupe()) {
-                    let tset_value = tset_key.key.lookup(ctx).await?;
+                    tset_key.key.lookup(ctx).await?.by_ref(|tset_value| {
+                        // Now we can traverse this tset from that node. This is a different traversal than our top-level one as we will
+                        // be accessing tset internals directly and so we can actually traverse the starlark objects without going back through
+                        // dice. We'll be working all with values with lifetimes from `tset_value`.
+                        //
+                        // We can't use tset's normal traverse because we need to avoid retraversing parts of the tset graph that we've already
+                        // traversed (through other top-level tset nodes).
+                        let mut queue = VecDeque::new();
+                        queue.push_back(tset_value.to_value());
+                        while let Some(v) = queue.pop_front() {
+                            let as_tset = TransitiveSet::from_value(v)
+                                .internal_error("invalid tset structure")?;
 
-                    // Now we can traverse this tset from that node. This is a different traversal than our top-level one as we will
-                    // be accessing tset internals directly and so we can actually traverse the starlark objects without going back through
-                    // dice. We'll be working all with values with lifetimes from `tset_value`.
-                    //
-                    // We can't use tset's normal traverse because we need to avoid retraversing parts of the tset graph that we've already
-                    // traversed (through other top-level tset nodes).
-                    let mut queue = VecDeque::new();
-                    queue.push_back(tset_value.to_value());
-                    while let Some(v) = queue.pop_front() {
-                        let as_tset = TransitiveSet::from_value(v)
-                            .buck_error_context("invalid tset structure")?;
+                            // Visit the projection value itself. As this is an opaque cmdargs-like thing, it may contain more top-level tset node
+                            // references that need to be pushed into the outer queue.
+                            if let Some(v) = as_tset.get_projection_value(tset_key.projection)? {
+                                struct Visitor<'a>(
+                                    &'a mut VecDeque<(ConfiguredTargetLabel, ArtifactGroup)>,
+                                    ConfiguredTargetLabel,
+                                );
+                                impl<'v> CommandLineArtifactVisitor<'v> for Visitor<'_> {
+                                    fn visit_input(
+                                        &mut self,
+                                        input: ArtifactGroup,
+                                        _props: InputProperties,
+                                        _tags: Vec<&ArtifactTag>,
+                                    ) {
+                                        self.0.push_back((self.1.dupe(), input));
+                                    }
 
-                        // Visit the projection value itself. As this is an opaque cmdargs-like thing, it may contain more top-level tset node
-                        // references that need to be pushed into the outer queue.
-                        if let Some(v) = as_tset.get_projection_value(tset_key.projection)? {
-                            struct Visitor<'a>(
-                                &'a mut VecDeque<(ConfiguredTargetLabel, ArtifactGroup)>,
-                                ConfiguredTargetLabel,
-                            );
-                            impl<'v> CommandLineArtifactVisitor<'v> for Visitor<'_> {
-                                fn visit_input(
-                                    &mut self,
-                                    input: ArtifactGroup,
-                                    _tags: Vec<&ArtifactTag>,
-                                ) {
-                                    self.0.push_back((self.1.dupe(), input));
+                                    fn visit_declared_output(
+                                        &mut self,
+                                        _artifact: OutputArtifact<'v>,
+                                        _tags: Vec<&ArtifactTag>,
+                                    ) {
+                                    }
+
+                                    fn visit_frozen_output(
+                                        &mut self,
+                                        _artifact: Artifact,
+                                        _tags: Vec<&ArtifactTag>,
+                                    ) {
+                                    }
                                 }
+                                ValueAsCommandLineLike::unpack_value_err(v)?
+                                    .0
+                                    .visit_artifacts(&mut Visitor(&mut artifacts, target.dupe()))?;
+                            }
 
-                                fn visit_declared_output(
-                                    &mut self,
-                                    _artifact: OutputArtifact<'v>,
-                                    _tags: Vec<&ArtifactTag>,
-                                ) {
-                                }
-
-                                fn visit_frozen_output(
-                                    &mut self,
-                                    _artifact: Artifact,
-                                    _tags: Vec<&ArtifactTag>,
-                                ) {
+                            // Enqueue any children we haven't yet seen (and mark them seen).
+                            for child in as_tset.children.read()?.iter() {
+                                let child_as_tset = TransitiveSet::from_value(*child)
+                                    .internal_error("Invalid deferred")?;
+                                let projection_key =
+                                    child_as_tset.get_projection_key(tset_key.projection);
+                                if seen.insert(projection_key) {
+                                    queue.push_back(*child);
                                 }
                             }
-                            ValueAsCommandLineLike::unpack_value_err(v)?
-                                .0
-                                .visit_artifacts(&mut Visitor(&mut artifacts, target.dupe()))?;
                         }
-
-                        // Enqueue any children we haven't yet seen (and mark them seen).
-                        for child in as_tset.children.iter() {
-                            let child_as_tset = TransitiveSet::from_value(*child)
-                                .buck_error_context("Invalid deferred")?;
-                            let projection_key =
-                                child_as_tset.get_projection_key(tset_key.projection);
-                            if seen.insert(projection_key) {
-                                queue.push_back(*child);
-                            }
-                        }
-                    }
+                        buck2_error::Ok(())
+                    })?;
                 }
             }
         }

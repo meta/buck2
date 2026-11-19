@@ -43,13 +43,8 @@
 //! [bumpalo]: https://github.com/fitzgen/bumpalo
 
 #![cfg_attr(rust_nightly, feature(const_type_name))]
-#![cfg_attr(rust_nightly, feature(never_type))]
-// Used so that we can have `rustc_trivial_field_reads`. If it in any way becomes a problem for a
-// rustc upgrade, just delete it
-#![cfg_attr(rust_nightly, allow(internal_features))]
-#![cfg_attr(rust_nightly, feature(rustc_attrs))]
 #![deny(rustdoc::broken_intra_doc_links)]
-#![allow(clippy::empty_enum)]
+#![allow(clippy::empty_enums)]
 
 mod allocative_trait;
 mod flamegraph;
@@ -57,7 +52,6 @@ mod global_root;
 pub(crate) mod golden;
 mod impls;
 mod key;
-mod rc_str;
 mod size_of;
 mod test_derive;
 mod visitor;
@@ -68,8 +62,11 @@ pub use allocative_derive::root;
 pub use crate::allocative_trait::Allocative;
 pub use crate::flamegraph::FlameGraph;
 pub use crate::flamegraph::FlameGraphBuilder;
+pub use crate::flamegraph::FlameGraphOutput;
 pub use crate::global_root::register_root;
+pub use crate::impls::hashbrown_util;
 pub use crate::key::Key;
+pub use crate::size_of::size_of_reachable;
 pub use crate::size_of::size_of_unique;
 pub use crate::size_of::size_of_unique_allocated_data;
 pub use crate::visitor::Visitor;
@@ -79,17 +76,12 @@ pub mod __macro_refs {
     pub use ctor;
 }
 
-/// Create a `const` of type `Key` with the provided `ident` as the value and
-/// return that value. This allows the keys to be placed conveniently inline
-/// without any performance hit because unlike calling `Key::new` this is
-/// guaranteed to be evaluated at compile time.
-///
-/// The main use case is manual implementations of [`Allocative`], like so:
+/// Create a `const` [`Key`], guaranteed to be evaluated at compile time.
 ///
 /// ```
 /// use allocative::Allocative;
 /// use allocative::Visitor;
-/// use allocative::ident_key;
+/// use allocative::key;
 ///
 /// struct MyStruct {
 ///     foo: usize,
@@ -99,21 +91,30 @@ pub mod __macro_refs {
 /// impl Allocative for MyStruct {
 ///     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
 ///         let mut visitor = visitor.enter_self(self);
-///         visitor.visit_field(ident_key!(foo), &self.foo);
-///         visitor.visit_field(ident_key!(bar), &self.bar);
+///         visitor.visit_field(key!("foo"), &self.foo);
+///         visitor.visit_field(key!("bar"), &self.bar);
 ///         visitor.exit();
 ///     }
 /// }
 /// ```
 #[macro_export]
+macro_rules! key {
+    ($s:expr) => {
+        const { $crate::Key::new($s) }
+    };
+}
+
+/// Create a `const` [`Key`] from an identifier. This is a convenience wrapper
+/// around [`key!`] that stringifies the identifier.
+#[macro_export]
 macro_rules! ident_key {
-    ($name:ident) => {{
-        const KEY: $crate::Key = $crate::Key::new(stringify!($name));
-        KEY
-    }};
+    ($name:ident) => {
+        $crate::key!(stringify!($name))
+    };
 }
 
 #[test]
-fn ident_key() {
-    assert_eq!(ident_key!(foo), Key::new("foo"));
+fn test_key() {
+    assert_eq!(key!("foo"), Key::new("foo"));
+    assert_eq!(ident_key!(foo), key!("foo"));
 }

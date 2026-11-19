@@ -13,7 +13,6 @@ error: Parse error: cannot use reserved keyword `as`
   |
 1 | as
   | ^^
-  |
 
 
 Program:
@@ -25,7 +24,6 @@ error: Parse error: cannot use reserved keyword `import`
   |
 1 | import
   | ^^^^^^
-  |
 
 
 Program:
@@ -37,7 +35,6 @@ error: Parse error: cannot use reserved keyword `is`
   |
 1 | is
   | ^^
-  |
 
 
 Program:
@@ -49,7 +46,6 @@ error: Parse error: cannot use reserved keyword `class`
   |
 1 | class
   | ^^^^^
-  |
 
 
 Program:
@@ -61,7 +57,6 @@ error: Parse error: cannot use reserved keyword `nonlocal`
   |
 1 | nonlocal
   | ^^^^^^^^
-  |
 
 
 Program:
@@ -73,7 +68,6 @@ error: Parse error: cannot use reserved keyword `del`
   |
 1 | del
   | ^^^
-  |
 
 
 Program:
@@ -85,7 +79,6 @@ error: Parse error: cannot use reserved keyword `raise`
   |
 1 | raise
   | ^^^^^
-  |
 
 
 Program:
@@ -97,7 +90,6 @@ error: Parse error: cannot use reserved keyword `except`
   |
 1 | except
   | ^^^^^^
-  |
 
 
 Program:
@@ -109,7 +101,6 @@ error: Parse error: cannot use reserved keyword `try`
   |
 1 | try
   | ^^^
-  |
 
 
 Program:
@@ -121,7 +112,6 @@ error: Parse error: cannot use reserved keyword `finally`
   |
 1 | finally
   | ^^^^^^^
-  |
 
 
 Program:
@@ -133,7 +123,6 @@ error: Parse error: cannot use reserved keyword `while`
   |
 1 | while
   | ^^^^^
-  |
 
 
 Program:
@@ -145,7 +134,6 @@ error: Parse error: cannot use reserved keyword `from`
   |
 1 | from
   | ^^^^
-  |
 
 
 Program:
@@ -157,7 +145,6 @@ error: Parse error: cannot use reserved keyword `with`
   |
 1 | with
   | ^^^^
-  |
 
 
 Program:
@@ -169,7 +156,6 @@ error: Parse error: cannot use reserved keyword `global`
   |
 1 | global
   | ^^^^^^
-  |
 
 
 Program:
@@ -181,4 +167,3 @@ error: Parse error: cannot use reserved keyword `yield`
   |
 1 | yield
   | ^^^^^
-  |

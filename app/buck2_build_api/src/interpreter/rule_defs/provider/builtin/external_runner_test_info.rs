@@ -8,46 +8,38 @@
  * above-listed licenses.
  */
 
-use std::iter::empty;
-use std::iter::once;
-
 use allocative::Allocative;
 use buck2_build_api_derive::internal_provider;
+use buck2_core::execution_types::execution_group::ExecutionGroup;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use either::Either;
-use indexmap::IndexMap;
+use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
-use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
+use starlark::eval::Evaluator;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
-use starlark::values::FrozenValue;
+use starlark::values::OwnedFrozen;
+use starlark::values::StarlarkPagable;
+use starlark::values::StringValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue;
-use starlark::values::Value;
-use starlark::values::ValueLifetimeless;
-use starlark::values::ValueLike;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::ValueOfUncheckedGeneric;
-use starlark::values::dict::DictRef;
+use starlark::values::ValueOf;
+use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
-use starlark::values::list::ListRef;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
-use starlark::values::none::NoneType;
-use starlark::values::tuple::TupleRef;
+use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
-use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use crate::analysis::extra_v::AnalysisExtraValue;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
-use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::command_executor_config::StarlarkCommandExecutorConfig;
-use crate::interpreter::rule_defs::provider::builtin::worker_info::FrozenWorkerInfo;
 use crate::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use crate::interpreter::rule_defs::required_test_local_resource::StarlarkRequiredTestLocalResource;
 use crate::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacros;
@@ -55,158 +47,173 @@ use crate::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacros;
 /// Provider that signals that a rule can be tested using an external runner. This is the
 /// Buck1-compatible API for tests.
 #[internal_provider(external_runner_test_info_creator)]
-#[derive(Clone, Debug, Trace, Coerce, Freeze, ProvidesStaticType, Allocative)]
-#[freeze(validator = validate_external_runner_test_info, bounds = "V: ValueLike<'freeze>")]
+#[derive(
+    Clone,
+    Debug,
+    Trace,
+    Freeze,
+    ProvidesStaticType,
+    Allocative,
+    StarlarkPagable
+)]
+#[freeze(validator = validate_external_runner_test_info)]
 #[repr(C)]
-pub struct ExternalRunnerTestInfoGen<V: ValueLifetimeless> {
-    /// A Starlark value representing the type of this test.
-    test_type: ValueOfUncheckedGeneric<V, String>,
+pub struct ExternalRunnerTestInfo<'v> {
+    /// The type of this test.
+    test_type: StringValue<'v>,
 
-    /// A Starlark value representing the command for this test. The external test runner is what
-    /// gives meaning to this command.
-    command: ValueOfUncheckedGeneric<V, Vec<Either<String, FrozenValue>>>,
+    /// The command for this test. The external test runner is what gives meaning to this
+    /// command.
+    command: Option<ValueOf<'v, ListOrTupleType<ValueAsCommandLineLike<'v>>>>,
 
-    /// A Starlark value representing the environment for this test. Here again, the external test
-    /// runner is what will this meaning.
-    /// This is of type `dict[str, ArgLike]`.
-    env: ValueOfUncheckedGeneric<V, DictType<String, FrozenValue>>,
+    /// The environment for this test. Here again, the external test runner is what gives this
+    /// meaning.
+    env: Option<ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>>,
 
-    /// A starlark value representing the labels for this test.
-    labels: ValueOfUncheckedGeneric<V, Vec<String>>,
+    /// The labels for this test.
+    labels: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
 
-    /// A starlark value representing the contacts for this test. This is largely expected to be an
-    /// oncall, though it's not validated in any way.
-    contacts: ValueOfUncheckedGeneric<V, Vec<String>>,
+    /// The contacts for this test. This is largely expected to be an oncall, though it's not
+    /// validated in any way.
+    contacts: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
 
     /// Whether this test should use relative paths
-    use_project_relative_paths: ValueOfUncheckedGeneric<V, bool>,
+    use_project_relative_paths: Option<ValueOf<'v, bool>>,
 
     /// Whether this test should run from the project root, as opposed to the cell root
     ///
     /// Defaults to `True`.
-    run_from_project_root: ValueOfUncheckedGeneric<V, bool>,
+    run_from_project_root: Option<ValueOf<'v, bool>>,
 
     /// Default executor to use to run tests. If none is
     /// passed we will default to the execution platform.
-    default_executor: ValueOfUncheckedGeneric<V, StarlarkCommandExecutorConfig>,
+    default_executor: Option<ValueOf<'v, StarlarkCommandExecutorConfig>>,
+
+    /// The execution group whose execution platform runs the tests when the test runner does not
+    /// request an executor. When the analysis of a rule that declares the group creates the test
+    /// info, the group's executor is recorded in `default_executor`, so it still applies when
+    /// another rule returns the test info. Nothing is recorded when the group has no compatible
+    /// execution platform, when the rule does not declare the group, or outside rule analysis; the
+    /// test then resolves the group against the tested target when it runs. A passed
+    /// `default_executor` wins and the group is not resolved, so copying a test info field by
+    /// field works in any rule. A rule that declares named groups but not `DefaultExecGroup` must
+    /// set `exec_group` or `default_executor`; `executor_overrides` does not replace them, as the
+    /// tests run in the default group whenever no override is picked.
+    exec_group: Option<ValueOf<'v, StarlarkExecutionGroupView<'v>>>,
 
     /// Executors that Tpx can use to override the default executor.
-    executor_overrides: ValueOfUncheckedGeneric<V, DictType<String, StarlarkCommandExecutorConfig>>,
+    executor_overrides: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCommandExecutorConfig>>>,
 
     /// Mapping from a local resource type to a target with a corresponding provider.
     /// Required types are passed from test runner.
     /// If the value for a corresponding type is omitted it means local resource
     /// should be ignored when executing tests even if those are passed as required from test runner.
     local_resources:
-        ValueOfUncheckedGeneric<V, DictType<String, Option<StarlarkConfiguredProvidersLabel>>>,
+        Option<ValueOf<'v, DictType<StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>>,
 
     /// List of local resource types which should be set up additionally to those which are
     /// passed from test runner. Allows specifying local resources on a per-rule basis.
-    required_local_resources: ValueOfUncheckedGeneric<V, Vec<StarlarkRequiredTestLocalResource>>,
+    required_local_resources:
+        Option<ValueOf<'v, ListOrTupleType<StarlarkRequiredTestLocalResource>>>,
 
     /// Configuration needed to spawn a new worker. This worker will be used to run every single
     /// command related to test execution, including listing.
-    worker: ValueOfUncheckedGeneric<V, FrozenWorkerInfo>,
+    worker: Option<ValueOf<'v, WorkerInfo<'v>>>,
+
+    /// Whether test execution results can be read from the remote action cache.
+    supports_test_execution_caching: Option<ValueOf<'v, bool>>,
 }
 
-// NOTE: All the methods here unwrap because we validate at freeze time.
-impl FrozenExternalRunnerTestInfo {
-    pub fn test_type(&self) -> &str {
-        self.test_type.to_value().get().unpack_str().unwrap()
+/// An `ExternalRunnerTestInfo` kept alive by its owning frozen heap; usable across threads and
+/// awaits.
+pub type OwnedExternalRunnerTestInfo =
+    OwnedFrozen<ValueTyped<'static, ExternalRunnerTestInfo<'static>>>;
+
+impl<'v> ExternalRunnerTestInfo<'v> {
+    pub fn test_type(&self) -> &'v str {
+        self.test_type.as_str()
     }
 
-    pub fn command<'v>(&self) -> impl Iterator<Item = TestCommandMember<'v>> {
-        unwrap_all(iter_test_command(self.command.get().to_value()))
+    pub fn command(&self) -> impl Iterator<Item = buck2_error::Result<TestCommandMember<'v>>> + 'v {
+        command_members(self.command)
     }
 
-    pub fn env<'v>(&self) -> impl Iterator<Item = (&'v str, &'v dyn CommandLineArgLike<'v>)> {
-        unwrap_all(iter_test_env(self.env.get().to_value()))
+    pub fn env(
+        &self,
+    ) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> + 'v
+    {
+        env_entries(self.env)
     }
 
-    pub fn labels(&self) -> impl Iterator<Item = &str> {
-        unwrap_all(iter_opt_str_list(self.labels.get().to_value(), "labels"))
+    pub fn labels(&self) -> impl Iterator<Item = buck2_error::Result<&'v str>> + 'v {
+        str_items(self.labels)
     }
 
-    pub fn contacts(&self) -> impl Iterator<Item = &str> {
-        unwrap_all(iter_opt_str_list(
-            self.contacts.get().to_value(),
-            "contacts",
-        ))
+    pub fn contacts(&self) -> impl Iterator<Item = buck2_error::Result<&'v str>> + 'v {
+        str_items(self.contacts)
     }
 
     pub fn use_project_relative_paths(&self) -> bool {
-        NoneOr::<bool>::unpack_value(self.use_project_relative_paths.get().to_value())
-            .unwrap()
-            .unwrap()
-            .into_option()
-            .unwrap_or_else(buck2_core::is_open_source)
+        self.use_project_relative_paths
+            .map_or_else(buck2_core::is_open_source, |v| v.get())
     }
 
     pub fn run_from_project_root(&self) -> bool {
-        NoneOr::<bool>::unpack_value(self.run_from_project_root.get().to_value())
-            .unwrap()
-            .unwrap()
-            .into_option()
-            .unwrap_or(true)
+        self.run_from_project_root.is_none_or(|v| v.get())
     }
 
-    pub fn default_executor(&self) -> Option<&StarlarkCommandExecutorConfig> {
-        unpack_opt_executor(self.default_executor.get().to_value()).unwrap()
+    pub fn default_executor(&self) -> Option<&'v StarlarkCommandExecutorConfig> {
+        self.default_executor.map(|v| v.as_ref())
+    }
+
+    pub fn execution_group(&self) -> buck2_error::Result<Option<ExecutionGroup>> {
+        match self.exec_group {
+            None => Ok(None),
+            Some(exec_group) => Ok(Some(exec_group.get().expect_bound()?)),
+        }
+    }
+
+    pub fn has_executor_overrides(&self) -> bool {
+        self.executor_overrides.is_some()
     }
 
     /// Access a specific executor override.
-    pub fn executor_override(&self, key: &str) -> Option<&StarlarkCommandExecutorConfig> {
-        let executor_overrides =
-            DictRef::from_value(self.executor_overrides.get().to_value()).unwrap();
-        executor_overrides
-            .get_str(key)
-            .map(|v| StarlarkCommandExecutorConfig::from_value(v.to_value()).unwrap())
+    pub fn executor_override(
+        &self,
+        key: &str,
+    ) -> buck2_error::Result<Option<&'v StarlarkCommandExecutorConfig>> {
+        lookup_executor_override(self.executor_overrides, key)
     }
 
-    pub fn local_resources(&self) -> IndexMap<&str, Option<&ConfiguredProvidersLabel>> {
-        unwrap_all(iter_local_resources(self.local_resources.get().to_value())).collect()
+    pub fn local_resources(
+        &self,
+    ) -> buck2_error::Result<BuckMutInsertionMap<&'v str, Option<&'v ConfiguredProvidersLabel>>>
+    {
+        collect_local_resources(self.local_resources)
     }
 
     pub fn required_local_resources(
         &self,
-    ) -> impl Iterator<Item = &StarlarkRequiredTestLocalResource> {
-        let val = self.required_local_resources.get().to_value();
-        if val.is_none() {
-            return Either::Left(empty());
-        }
-        Either::Right(
-            iter_value(val)
-                .expect("checked during construction")
-                .map(|v| {
-                    StarlarkRequiredTestLocalResource::from_value(v)
-                        .expect("checked during construction")
-                }),
-        )
+    ) -> impl Iterator<Item = buck2_error::Result<&'v StarlarkRequiredTestLocalResource>> + 'v {
+        required_local_resource_items(self.required_local_resources)
     }
 
-    pub fn worker(&self) -> Option<&WorkerInfo<'_>> {
-        unpack_opt_worker(self.worker.get().to_value()).unwrap()
+    pub fn worker(&self) -> Option<&'v WorkerInfo<'v>> {
+        self.worker.map(|v| v.as_ref())
+    }
+
+    pub fn supports_test_execution_caching(&self) -> bool {
+        self.supports_test_execution_caching
+            .is_some_and(|v| v.get())
     }
 
     pub fn visit_artifacts(
         &self,
-        visitor: &mut dyn CommandLineArtifactVisitor<'_>,
+        visitor: &mut dyn CommandLineArtifactVisitor<'v>,
     ) -> buck2_error::Result<()> {
-        for member in self.command() {
-            match member {
-                TestCommandMember::Literal(..) => {}
-                TestCommandMember::Arglike(arglike) => {
-                    arglike.visit_artifacts(visitor)?;
-                }
-            }
-        }
-
-        for (_, arglike) in self.env() {
-            arglike.visit_artifacts(visitor)?;
-        }
-
+        visit_command_artifacts(self.command(), visitor)?;
+        visit_env_artifacts(self.env(), visitor)?;
         // Ignoring local resources as those are built on-demand.
-
         Ok(())
     }
 }
@@ -217,327 +224,271 @@ pub enum TestCommandMember<'v> {
 }
 
 impl<'v> TestCommandMember<'v> {
+    /// A literal is a `str`, or a resolved macro that amounts to one; the test runner sees those
+    /// verbatim and everything else through a handle.
+    fn new(arg: ValueOf<'v, ValueAsCommandLineLike<'v>>) -> Self {
+        let value = arg.to_value();
+        if let Some(s) = value.unpack_str() {
+            return Self::Literal(s);
+        }
+        if let Some(s) = value
+            .downcast_ref::<ResolvedStringWithMacros>()
+            .and_then(|s| s.downcast_str())
+        {
+            return Self::Literal(s);
+        }
+        Self::Arglike(arg.get().0)
+    }
+
     pub fn add_to_command_line(
         &self,
-        cli: &mut dyn CommandLineBuilder,
-        context: &mut dyn CommandLineContext,
-        artifact_path_mapping: &dyn ArtifactPathMapper,
+        fmt: &mut CommandLineBuilder<'v, '_>,
     ) -> buck2_error::Result<()> {
         match self {
-            Self::Literal(literal) => {
-                literal.add_to_command_line(cli, context, artifact_path_mapping)
-            }
-            Self::Arglike(arglike) => {
-                arglike.add_to_command_line(cli, context, artifact_path_mapping)
-            }
+            Self::Literal(literal) => literal.add_to_command_line(fmt),
+            Self::Arglike(arglike) => arglike.add_to_command_line(fmt),
         }
     }
 }
 
-fn iter_value<'v>(value: Value<'v>) -> buck2_error::Result<impl Iterator<Item = Value<'v>> + 'v> {
-    match Either::<&ListRef, &TupleRef>::unpack_value_err(value)? {
-        Either::Left(list) => Ok(list.iter()),
-        Either::Right(tuple) => Ok(tuple.iter()),
-    }
+// The field types `ExternalRunnerTestInfo` and `InternalRunnerTestInfo` share, and the readers
+// over them. (The provider macro reads field types syntactically, so the structs spell them out.)
+
+pub(super) type TestCommand<'v> = ValueOf<'v, ListOrTupleType<ValueAsCommandLineLike<'v>>>;
+pub(super) type TestEnv<'v> = ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>;
+pub(super) type StrSeq<'v> = ValueOf<'v, ListOrTupleType<StarlarkStr>>;
+pub(super) type ExecutorOverrides<'v> =
+    ValueOf<'v, DictType<StarlarkStr, StarlarkCommandExecutorConfig>>;
+pub(super) type LocalResources<'v> =
+    ValueOf<'v, DictType<StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>;
+pub(super) type RequiredLocalResources<'v> =
+    ValueOf<'v, ListOrTupleType<StarlarkRequiredTestLocalResource>>;
+
+pub(super) fn command_members<'v>(
+    command: Option<TestCommand<'v>>,
+) -> impl Iterator<Item = buck2_error::Result<TestCommandMember<'v>>> + 'v {
+    command
+        .into_iter()
+        .flat_map(|command| command.iter())
+        .map(|arg| Ok(TestCommandMember::new(arg?)))
 }
 
-fn iter_test_command<'v>(
-    command: Value<'v>,
-) -> impl Iterator<Item = buck2_error::Result<TestCommandMember<'v>>> {
-    if command.is_none() {
-        return Either::Left(Either::Left(empty()));
-    }
-
-    let iterable = match iter_value(command) {
-        Ok(v) => v,
-        Err(e) => {
-            return Either::Left(Either::Right(once(Err(e.context("Invalid `command`")))));
-        }
-    };
-
-    Either::Right(iterable.map(|item| {
-        if let Some(s) = item.unpack_str() {
-            return Ok(TestCommandMember::Literal(s));
-        }
-
-        if let Some(s) = item.downcast_ref::<ResolvedStringWithMacros>() {
-            if let Some(s) = s.downcast_str() {
-                return Ok(TestCommandMember::Literal(s));
-            }
-        }
-
-        let arglike = ValueAsCommandLineLike::unpack_value_err(item)
-            .with_buck_error_context(|| format!("Invalid item in `command`: {item}"))?
-            .0;
-
-        Ok(TestCommandMember::Arglike(arglike))
-    }))
+pub(super) fn env_entries<'v>(
+    env: Option<TestEnv<'v>>,
+) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> + 'v {
+    env.into_iter().flat_map(|env| env.iter()).map(|entry| {
+        let (key, value) = entry?;
+        Ok((key.as_str(), value.get().0))
+    })
 }
 
-fn iter_test_env<'v>(
-    env: Value<'v>,
-) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> {
-    if env.is_none() {
-        return Either::Left(Either::Left(empty()));
-    }
-
-    let env = match DictRef::from_value(env) {
-        Some(env) => env,
-        None => {
-            return Either::Left(Either::Right(once(Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "Invalid `env`: Expected a dict, got: `{}`",
-                env
-            )))));
-        }
-    };
-
-    let env = env.iter().collect::<Vec<_>>();
-
-    Either::Right(env.into_iter().map(|(key, value)| {
-        let key = key.unpack_str().with_buck_error_context(|| {
-            format!("Invalid key in `env`: Expected a str, got: `{key}`")
-        })?;
-
-        let arglike = ValueAsCommandLineLike::unpack_value_err(value)
-            .with_buck_error_context(|| format!("Invalid value in `env` for key `{key}`"))?
-            .0;
-
-        Ok((key, arglike))
-    }))
+pub(super) fn str_items<'v>(
+    list: Option<StrSeq<'v>>,
+) -> impl Iterator<Item = buck2_error::Result<&'v str>> + 'v {
+    list.into_iter()
+        .flat_map(|list| list.iter())
+        .map(|item| Ok(item?.as_str()))
 }
 
-fn iter_opt_str_list<'v>(
-    list: Value<'v>,
-    name: &'static str,
-) -> impl Iterator<Item = buck2_error::Result<&'v str>> {
-    if list.is_none() {
-        return Either::Left(Either::Left(empty()));
-    }
-
-    let iterable = match iter_value(list) {
-        Ok(v) => v,
-        Err(e) => {
-            return Either::Left(Either::Right(once(Err(
-                e.context(format!("Invalid `{name}`"))
-            ))));
-        }
-    };
-
-    Either::Right(iterable.map(move |item| {
-        let item = item
-            .unpack_str()
-            .with_buck_error_context(|| format!("Invalid item in `{name}`: {item}"))?;
-
-        Ok(item)
-    }))
-}
-
-fn iter_executor_overrides<'v>(
-    executor_overrides: Value<'v>,
-) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v StarlarkCommandExecutorConfig)>> {
-    if executor_overrides.is_none() {
-        return Either::Left(Either::Left(empty()));
-    }
-
-    let executor_overrides = match DictRef::from_value(executor_overrides) {
-        Some(executor_overrides) => executor_overrides,
-        None => {
-            return Either::Left(Either::Right(once(Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "Invalid `executor_overrides`: Expected a dict, got: `{}`",
-                executor_overrides
-            )))));
-        }
-    };
-
-    let executor_overrides = executor_overrides.iter().collect::<Vec<_>>();
-
-    Either::Right(executor_overrides.into_iter().map(|(key, value)| {
-        let key = key.unpack_str().with_buck_error_context(|| {
-            format!("Invalid key in `executor_overrides`: Expected a str, got: `{key}`")
-        })?;
-
-        let config =
-            StarlarkCommandExecutorConfig::from_value(value).with_buck_error_context(|| {
-                format!("Invalid value in `executor_overrides` for key `{key}`")
-            })?;
-
-        Ok((key, config))
-    }))
-}
-
-fn iter_local_resources<'v>(
-    local_resources: Value<'v>,
-) -> impl Iterator<Item = buck2_error::Result<(&'v str, Option<&'v ConfiguredProvidersLabel>)>> {
-    if local_resources.is_none() {
-        return Either::Left(Either::Left(empty()));
-    }
-
-    let local_resources = match DictRef::from_value(local_resources) {
-        Some(local_resources) => local_resources,
-        None => {
-            return Either::Left(Either::Right(once(Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "Invalid `local_resources`: Expected a dict, got: `{}`",
-                local_resources
-            )))));
-        }
-    };
-
-    let local_resources = local_resources.iter().collect::<Vec<_>>();
-
-    Either::Right(local_resources.into_iter().map(|(key, value)| {
-        let key = key.unpack_str().with_buck_error_context(|| {
-            format!("Invalid key in `local_resources`: Expected a str, got: `{key}`")
-        })?;
-
-        let resource = if value.is_none() {
-            None
-        } else {
-            Some(
-                StarlarkConfiguredProvidersLabel::from_value(value)
-                    .ok_or_else(|| {
-                        buck2_error!(
-                            buck2_error::ErrorTag::Input,
-                            "{}",
-                            format!("Invalid value in `local_resources` for key `{}`", key)
-                        )
-                    })?
-                    .label(),
-            )
-        };
-
-        Ok((key, resource))
-    }))
-}
-
-fn unpack_opt_executor<'v>(
-    executor: Value<'v>,
+pub(super) fn lookup_executor_override<'v>(
+    overrides: Option<ExecutorOverrides<'v>>,
+    key: &str,
 ) -> buck2_error::Result<Option<&'v StarlarkCommandExecutorConfig>> {
-    if executor.is_none() {
+    let Some(overrides) = overrides else {
         return Ok(None);
-    }
-
-    let executor = StarlarkCommandExecutorConfig::from_value(executor)
-        .with_buck_error_context(|| format!("Value is not an executor config: `{executor}`"))?;
-
-    Ok(Some(executor))
+    };
+    Ok(overrides.lookup_str(key)?.map(|config| config.as_ref()))
 }
 
-fn unpack_opt_worker<'v>(worker: Value<'v>) -> buck2_error::Result<Option<&'v WorkerInfo<'v>>> {
-    if worker.is_none() {
+/// The executor for the test info's `default_executor` field. A passed `default_executor` wins,
+/// and `exec_group` is then not resolved. Otherwise a test info that names an execution group
+/// records that group's executor from the analysis that creates it, so its tests run there even
+/// when another rule returns the test info. Records nothing when the group has no compatible
+/// execution platform, when the rule does not declare the group, or outside rule analysis; the
+/// test then resolves the group against the tested target when it runs. Any other resolution
+/// error fails the creation of the test info.
+///
+/// In rule analysis, a test info with neither `default_executor` nor `exec_group` runs in the
+/// default execution group whenever no executor override is picked, so its creation fails when the
+/// rule does not declare that group, whether or not it has `executor_overrides`.
+pub(super) fn default_executor_with_execution_group<'v>(
+    exec_group: Option<&ExecutionGroup>,
+    default_executor: Option<ValueOf<'v, StarlarkCommandExecutorConfig>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> buck2_error::Result<Option<ValueOf<'v, StarlarkCommandExecutorConfig>>> {
+    if default_executor.is_some() {
+        return Ok(default_executor);
+    }
+    let Some(resolution) = AnalysisExtraValue::execution_platform_resolution(eval.module()) else {
         return Ok(None);
-    }
-
-    let worker = WorkerInfo::from_value(worker)
-        .with_buck_error_context(|| format!("Value is not a worker: `{worker}`"))?;
-
-    Ok(Some(worker))
-}
-
-fn check_all<I, T>(it: I) -> buck2_error::Result<()>
-where
-    I: IntoIterator<Item = buck2_error::Result<T>>,
-{
-    for e in it {
-        e?;
-    }
-    Ok(())
-}
-
-fn unwrap_all<I, T>(it: I) -> impl Iterator<Item = T>
-where
-    I: IntoIterator<Item = buck2_error::Result<T>>,
-{
-    it.into_iter().map(|e| e.unwrap())
-}
-
-fn validate_external_runner_test_info<'v, V>(
-    info: &ExternalRunnerTestInfoGen<V>,
-) -> buck2_error::Result<()>
-where
-    V: ValueLike<'v>,
-{
-    check_all(iter_test_command(info.command.get().to_value()))?;
-    check_all(iter_test_env(info.env.get().to_value()))?;
-    check_all(iter_opt_str_list(info.labels.get().to_value(), "labels"))?;
-    check_all(iter_opt_str_list(
-        info.contacts.get().to_value(),
-        "contacts",
-    ))?;
-    check_all(iter_executor_overrides(
-        info.executor_overrides.get().to_value(),
-    ))?;
-
-    let provided_local_resources =
-        iter_local_resources(info.local_resources.get().to_value())
-            .collect::<buck2_error::Result<IndexMap<&str, Option<&ConfiguredProvidersLabel>>>>()?;
-
-    let required_local_resources = info.required_local_resources.get().to_value();
-    if !required_local_resources.is_none() {
-        for resource_type in iter_value(required_local_resources).buck_error_context("`required_local_resources` should be a list or a tuple of `RequiredTestLocalResource` objects")? {
-            let resource_type = StarlarkRequiredTestLocalResource::from_value(resource_type)
-                .ok_or_else(|| buck2_error!(buck2_error::ErrorTag::Input, "`required_local_resources` should only contain `RequiredTestLocalResource` values, got {}", resource_type))?;
-            if !provided_local_resources.contains_key(&resource_type.name as &str) {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "`required_local_resources` contains `{}` which is not present in `local_resources`",
-                    resource_type.name
-                ));
-            }
+    };
+    let Some(group) = exec_group else {
+        if !resolution.default_execution_group_declared() {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "The test info uses the default execution group, which the rule does not declare. Set `exec_group` or `default_executor`, or add `DefaultExecGroup` to `exec_groups`"
+            ));
+        }
+        return Ok(None);
+    };
+    if let ExecutionGroup::Named(named) = group {
+        if !resolution.is_unspecified()
+            && !resolution
+                .execution_group_platforms()
+                .any(|(declared, _, _)| declared == named)
+        {
+            return Ok(None);
         }
     }
+    if *group == ExecutionGroup::Default && !resolution.default_execution_group_declared() {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "The test info uses the default execution group, which the rule does not declare. Set `exec_group` to a declared group, or add `DefaultExecGroup` to `exec_groups`"
+        ));
+    }
+    // Fails when resolution was not performed.
+    Ok(resolution.platform_for_group(group)?.map(|platform| {
+        ValueOf::alloc(
+            eval.heap(),
+            StarlarkCommandExecutorConfig(platform.executor_config().dupe()),
+        )
+    }))
+}
 
-    NoneOr::<bool>::unpack_value(info.use_project_relative_paths.get().to_value())?
-        .buck_error_context("`use_project_relative_paths` must be a bool if provided")?;
-    NoneOr::<bool>::unpack_value(info.run_from_project_root.get().to_value())?
-        .buck_error_context("`run_from_project_root` must be a bool if provided")?;
-    unpack_opt_executor(info.default_executor.get().to_value())
-        .buck_error_context("Invalid `default_executor`")?;
-    unpack_opt_worker(info.worker.get().to_value()).buck_error_context("Invalid `worker`")?;
-    info.test_type
-        .get()
-        .to_value()
-        .unpack_str()
-        .buck_error_context("`type` must be a str")?;
+pub(super) fn collect_local_resources<'v>(
+    local_resources: Option<LocalResources<'v>>,
+) -> buck2_error::Result<BuckMutInsertionMap<&'v str, Option<&'v ConfiguredProvidersLabel>>> {
+    local_resources
+        .into_iter()
+        .flat_map(|resources| resources.iter())
+        .map(|entry| {
+            let (key, label) = entry?;
+            Ok((
+                key.as_str(),
+                label.get().map(|label| label.as_ref().label()),
+            ))
+        })
+        .collect()
+}
+
+pub(super) fn required_local_resource_items<'v>(
+    required: Option<RequiredLocalResources<'v>>,
+) -> impl Iterator<Item = buck2_error::Result<&'v StarlarkRequiredTestLocalResource>> + 'v {
+    required
+        .into_iter()
+        .flat_map(|required| required.iter())
+        .map(|resource| Ok(resource?.as_ref()))
+}
+
+/// Every type in `required_local_resources` must have an entry in `local_resources`.
+pub(super) fn check_required_local_resources<'v>(
+    local_resources: Option<LocalResources<'v>>,
+    required: Option<RequiredLocalResources<'v>>,
+) -> buck2_error::Result<()> {
+    let provided = collect_local_resources(local_resources)?;
+    for resource in required_local_resource_items(required) {
+        let resource = resource?;
+        if !provided.contains_key(&resource.name as &str) {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "`required_local_resources` contains `{}` which is not present in `local_resources`",
+                resource.name
+            ));
+        }
+    }
     Ok(())
+}
+
+pub(super) fn visit_command_artifacts<'v>(
+    command: impl Iterator<Item = buck2_error::Result<TestCommandMember<'v>>>,
+    visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> buck2_error::Result<()> {
+    for member in command {
+        if let TestCommandMember::Arglike(arglike) = member? {
+            arglike.visit_artifacts(visitor)?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn visit_env_artifacts<'v>(
+    env: impl Iterator<Item = buck2_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>>,
+    visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> buck2_error::Result<()> {
+    for entry in env {
+        let (_, arglike) = entry?;
+        arglike.visit_artifacts(visitor)?;
+    }
+    Ok(())
+}
+
+fn validate_external_runner_test_info<'v>(
+    info: &ExternalRunnerTestInfo<'v>,
+) -> buck2_error::Result<()> {
+    check_required_local_resources(info.local_resources, info.required_local_resources)
 }
 
 #[starlark_module]
 fn external_runner_test_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = FrozenExternalRunnerTestInfo)]
+    #[starlark(as_type = ExternalRunnerTestInfo<'static>)]
     fn ExternalRunnerTestInfo<'v>(
-        r#type: Value<'v>,
-        // TODO(nga): these need types.
-        // TODO(nga): parameters should be either named or positional, not both.
-        #[starlark(default = NoneType)] command: Value<'v>,
-        #[starlark(default = NoneType)] env: Value<'v>,
-        #[starlark(default = NoneType)] labels: Value<'v>,
-        #[starlark(default = NoneType)] contacts: Value<'v>,
-        #[starlark(default = NoneType)] use_project_relative_paths: Value<'v>,
-        #[starlark(default = NoneType)] run_from_project_root: Value<'v>,
-        #[starlark(default = NoneType)] default_executor: Value<'v>,
-        #[starlark(default = NoneType)] executor_overrides: Value<'v>,
-        #[starlark(default = NoneType)] local_resources: Value<'v>,
-        #[starlark(default = NoneType)] required_local_resources: Value<'v>,
-        #[starlark(default = NoneType)] worker: Value<'v>,
-    ) -> starlark::Result<ExternalRunnerTestInfo<'v>> {
+        #[starlark(require = named)] r#type: StringValue<'v>,
+        #[starlark(require = named, default = NoneOr::None)] command: NoneOr<TestCommand<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] env: NoneOr<TestEnv<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] labels: NoneOr<StrSeq<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] contacts: NoneOr<StrSeq<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] use_project_relative_paths: NoneOr<
+            ValueOf<'v, bool>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] run_from_project_root: NoneOr<
+            ValueOf<'v, bool>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] default_executor: NoneOr<
+            ValueOf<'v, StarlarkCommandExecutorConfig>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<
+            ValueOf<'v, StarlarkExecutionGroupView<'v>>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] executor_overrides: NoneOr<
+            ExecutorOverrides<'v>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] local_resources: NoneOr<
+            LocalResources<'v>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] required_local_resources: NoneOr<
+            RequiredLocalResources<'v>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] worker: NoneOr<
+            ValueOf<'v, WorkerInfo<'v>>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)]
+        supports_test_execution_caching: NoneOr<ValueOf<'v, bool>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<ValueOf<'v, ExternalRunnerTestInfo<'v>>> {
+        let exec_group = exec_group.into_option();
+        let group = exec_group.map(|g| g.get().expect_bound()).transpose()?;
+        let default_executor = default_executor_with_execution_group(
+            group.as_ref(),
+            default_executor.into_option(),
+            eval,
+        )?;
         let res = ExternalRunnerTestInfo {
-            test_type: ValueOfUnchecked::new(r#type),
-            command: ValueOfUnchecked::new(command),
-            env: ValueOfUnchecked::new(env),
-            labels: ValueOfUnchecked::new(labels),
-            contacts: ValueOfUnchecked::new(contacts),
-            use_project_relative_paths: ValueOfUnchecked::new(use_project_relative_paths),
-            run_from_project_root: ValueOfUnchecked::new(run_from_project_root),
-            default_executor: ValueOfUnchecked::new(default_executor),
-            executor_overrides: ValueOfUnchecked::new(executor_overrides),
-            local_resources: ValueOfUnchecked::new(local_resources),
-            required_local_resources: ValueOfUnchecked::new(required_local_resources),
-            worker: ValueOfUnchecked::new(worker),
+            test_type: r#type,
+            command: command.into_option(),
+            env: env.into_option(),
+            labels: labels.into_option(),
+            contacts: contacts.into_option(),
+            use_project_relative_paths: use_project_relative_paths.into_option(),
+            run_from_project_root: run_from_project_root.into_option(),
+            default_executor,
+            exec_group,
+            executor_overrides: executor_overrides.into_option(),
+            local_resources: local_resources.into_option(),
+            required_local_resources: required_local_resources.into_option(),
+            worker: worker.into_option(),
+            supports_test_execution_caching: supports_test_execution_caching.into_option(),
         };
         validate_external_runner_test_info(&res)?;
-        Ok(res)
+        Ok(eval.heap().alloc(res))
     }
 }

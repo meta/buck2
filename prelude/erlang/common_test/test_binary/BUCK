@@ -13,8 +13,6 @@ erlang_application(
     applications = [
         "kernel",
         "stdlib",
-        "syntax_tools",
-        "xmerl",
         "prelude//erlang/common_test/common:common",
         "prelude//erlang/common_test/cth_hooks:cth_hooks",
         "prelude//erlang/common_test/test_exec:test_exec",
@@ -26,4 +24,22 @@ erlang_application(
     includes = glob(["include/*.hrl"]),
     use_global_parse_transforms = False,
     visibility = ["PUBLIC"],
+)
+
+erlang_tests(
+    contacts = ["build_infra"],
+    labels = ["unit"],
+    suites = ["test/test_binary_SUITE.erl"],
+    deps = [
+        "stdlib",
+        ":test_binary",
+        ":test_binary_fixtures",
+    ],
+)
+
+erlang_application(
+    name = "test_binary_fixtures",
+    srcs = glob(["test/fixtures/*.erl"]),
+    applications = ["//erlang/common_test/common:common"],
+    labels = ["test_application"],
 )

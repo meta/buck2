@@ -11,10 +11,11 @@
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::list::AllocList;
-use starlark::values::list::UnpackList;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::list::ListType;
+use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::globspec::GlobSpec;
@@ -51,15 +52,23 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
     /// Currently `glob` is evaluated case-insensitively on all file systems, but we expect
     /// that to change to case sensitive in the near future.
     fn glob<'v>(
-        include: UnpackListOrTuple<String>,
-        #[starlark(require = named, default=UnpackListOrTuple::default())]
-        exclude: UnpackListOrTuple<String>,
+        include: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+        #[starlark(require = named, default = ValueOf::empty_list())] exclude: ValueOf<
+            'v,
+            ListOrTupleType<StarlarkStr>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, UnpackList<String>>> {
+    ) -> starlark::Result<ValueOf<'v, ListType<StarlarkStr>>> {
         let extra = ModuleInternals::from_context(eval, "glob")?;
-        let spec = GlobSpec::new(&include.items, &exclude.items)?;
-        let res = extra.resolve_glob(&spec).map(|path| path.as_str());
-        Ok(eval.heap().alloc_typed_unchecked(AllocList(res)).cast())
+        let spec = GlobSpec::new(
+            &include.try_to_vec::<&str>()?,
+            &exclude.try_to_vec::<&str>()?,
+        )?;
+        let heap = eval.heap();
+        let res = extra
+            .resolve_glob(&spec)
+            .map(|path| heap.alloc(path.as_str()));
+        Ok(heap.alloc(AllocList(res)))
     }
 
     /// `package_name()` can only be called in buildfiles (e.g. BUCK files) or PACKAGE files, and returns the name of the package.

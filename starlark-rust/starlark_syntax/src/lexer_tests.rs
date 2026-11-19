@@ -423,3 +423,131 @@ fr'' fr"" fr'\'' fr"\"" fr'"' fr"'" fr'\n'
 "#,
     );
 }
+
+#[test]
+fn test_f_string_expressions() {
+    lexer_golden_test(
+        "f_string_expressions",
+        r#"
+# Simple expressions
+f"{x}"
+f"{x + y}"
+f"{x * 2}"
+f"{a + b + c}"
+
+# Function calls
+f"{foo()}"
+f"{foo(x)}"
+f"{foo(x, y)}"
+f"{foo(x, y, z=1)}"
+f"{obj.method()}"
+f"{obj.method(arg)}"
+
+# Indexing and slicing
+f"{arr[0]}"
+f"{arr[i]}"
+f"{arr[i + 1]}"
+f"{d['key']}"
+f"{d["key"]}"
+f"{arr[1:3]}"
+f"{arr[::2]}"
+f"{arr[1:10:2]}"
+
+# Attribute access
+f"{obj.attr}"
+f"{obj.attr.nested}"
+f"{obj.method().attr}"
+
+# Nested expressions
+f"{(x + y) * z}"
+f"{foo(bar(x))}"
+f"{arr[func()]}"
+f"{d[key1][key2]}"
+
+# Comparison and boolean
+f"{x > 0}"
+f"{x == y}"
+f"{x and y}"
+f"{x or y}"
+f"{not x}"
+f"{x if cond else y}"
+
+# Multiple expressions
+f"{a} and {b}"
+f"start {x} middle {y} end"
+f"{a}{b}{c}"
+
+# Expressions with text
+f"value: {x}"
+f"result = {x + y}!"
+f"[{item}]"
+
+# Conversion specifiers
+f"{x!s}"
+f"{x!r}"
+f"{obj.attr!s}"
+f"{func()!r}"
+
+# Comprehensions inside f-strings
+f"{[x for x in items]}"
+f"{[x*2 for x in range(5)]}"
+f"{{x: y for x, y in pairs}}"
+
+# Dict and list literals
+f"{[1, 2, 3]}"
+f"{{'a': 1}}"
+
+# Escaped braces
+f"{{}}"
+f"{{literal}}"
+f"{x} {{escaped}} {y}"
+
+# Lambda (in parens)
+f"{(lambda x: x + 1)(5)}"
+
+# Nested strings in expressions
+f"{d['key']}"
+f'{d["key"]}'
+f"outer {inner_f} string"
+
+# Complex real-world examples
+f"Hello, {name}!"
+f"Item {i+1} of {total}: {items[i]}"
+f"Error at line {line}: {msg!r}"
+f"{'yes' if flag else 'no'}"
+
+# Empty f-strings
+f""
+f''
+
+# Only text, no expressions
+f"just text"
+f'no expressions here'
+
+# Whitespace in expressions
+f"{ x }"
+f"{  x + y  }"
+f"{ foo( x , y ) }"
+
+# Unary operators
+f"{-x}"
+f"{+x}"
+f"{~bits}"
+f"{not flag}"
+
+# Bitwise operators
+f"{a | b}"
+f"{a & b}"
+f"{a ^ b}"
+f"{a << 2}"
+f"{a >> 2}"
+
+# Triple-quoted f-strings
+f"""multiline {expr}"""
+f'''another {one}'''
+f"""line1
+{expr}
+line3"""
+"#,
+    );
+}

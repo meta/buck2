@@ -58,7 +58,7 @@ func parsePatterns(platform Platform, targets []string, goRoot string) (*targets
 	}
 
 	for _, file := range fileTargets {
-		if strings.Contains(file, goRoot) {
+		if isUnderGoRoot(file, goRoot) {
 			result.stdFiles = append(result.stdFiles, file)
 		} else {
 			result.buckFiles = append(result.buckFiles, file)
@@ -66,6 +66,16 @@ func parsePatterns(platform Platform, targets []string, goRoot string) (*targets
 	}
 
 	return result, nil
+}
+
+// isUnderGoRoot reports whether file lies inside goRoot. An unknown GOROOT matches
+// nothing, so Buck-owned files never go to the stdlib query by accident.
+func isUnderGoRoot(file, goRoot string) bool {
+	if goRoot == "" {
+		return false
+	}
+	goRoot = filepath.Clean(goRoot)
+	return file == goRoot || strings.HasPrefix(file, goRoot+string(filepath.Separator))
 }
 
 // fixPattern fixes target name

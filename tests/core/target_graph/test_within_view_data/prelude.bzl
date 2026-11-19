@@ -12,3 +12,10 @@ test_within_view_rule = rule(
         "deps": attrs.list(attrs.dep()),
     },
 )
+
+test_within_view_defaults_rule = rule(
+    impl = lambda ctx: fail("we don't run analysis in this test, {}".format(ctx)),
+    attrs = {
+        "defaulted": attrs.dep(default = "//a:a"),
+    },
+)

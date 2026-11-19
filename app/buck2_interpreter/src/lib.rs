@@ -8,20 +8,14 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 //! Implements Buck's handling of target patterns and parsing of build files.
-
-#![feature(pattern)]
-#![feature(try_blocks)]
-#![feature(never_type)]
-#![feature(box_patterns)]
 
 pub mod allow_relative_paths;
 pub mod build_context;
 pub mod coerce;
 pub mod dice;
 pub mod downstream_crate_starlark_defs;
+pub mod execution_group;
 pub mod extra;
 pub mod factory;
 pub mod file_loader;
@@ -30,7 +24,6 @@ pub mod from_freeze;
 pub mod import_paths;
 pub mod late_binding_ty;
 pub mod load_module;
-pub mod package_imports;
 pub mod parse_import;
 pub mod paths;
 pub mod plugins;
@@ -40,4 +33,5 @@ pub mod soft_error;
 pub mod starlark_debug;
 pub mod starlark_profiler;
 pub mod starlark_promise;
+pub mod testing;
 pub mod types;

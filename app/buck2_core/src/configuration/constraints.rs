@@ -19,6 +19,7 @@
 use allocative::Allocative;
 use derive_more::Display;
 use dupe::Dupe;
+use pagable::Pagable;
 use strong_hash::StrongHash;
 
 use crate::provider::label::ProvidersLabel;
@@ -27,12 +28,13 @@ use crate::target::label::label::TargetLabel;
 
 /// A ConstraintKey is a label for a `constraint_setting()` target.
 #[derive(
-    Clone, Dupe, Debug, Display, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash
+    Clone, Dupe, Debug, Display, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash,
+    Pagable
 )]
 #[display("{}", key)]
 pub struct ConstraintKey {
     pub key: TargetLabel,
-    // TODO(nero): remove Option when when we migrated to unified constraint rule
+    // TODO(nero): remove Option when we migrated to unified constraint rule
     pub default: Option<ConstraintValue>,
 }
 
@@ -46,7 +48,8 @@ impl ConstraintKey {
 }
 
 #[derive(
-    Clone, Dupe, Debug, Display, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash
+    Clone, Dupe, Debug, Display, Hash, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash,
+    Pagable
 )]
 pub struct ConstraintValue(pub ProvidersLabel);
 

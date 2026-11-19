@@ -1,0 +1,12 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+[<TIMESTAMP>] Error parsing root//loader
+[<TIMESTAMP>] Error loading `load` of `//subcell/subdir:lib.bzl` from `loader/TARGETS.fixture:1:6-32`
+[<TIMESTAMP>]
+[<TIMESTAMP>] Caused by:
+[<TIMESTAMP>]     The `load` at loader/TARGETS.fixture:1:6-32 of `root//subcell/subdir/lib.bzl` should use the canonical name `subcell//subdir/lib.bzl`
+Command failed: 
+Failed to parse 1 package

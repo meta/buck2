@@ -21,33 +21,52 @@ def _name_arg(name_type):
 
 def _sha256_arg():
     return {
-        "sha256": attrs.option(attrs.string(), default = None, doc = """
+        "sha256": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
     The [`SHA-256`](//wikipedia.org/wiki/SHA-2) hash of the downloaded artifact.
      Buck verifies this is correct and fails the fetch command if it doesn't match in order to
      guarantee repeatable builds.
-"""),
+""",
+        ),
     }
 
 def _urls_arg():
     return {
-        "urls": attrs.list(attrs.string(validate = validate_uri), default = [], doc = """
+        "urls": attrs.list(
+            attrs.string(validate = validate_uri),
+            default = [],
+            doc = """
     A list of urls to attempt to download from. They are tried in order, and
      subsequent ones are only tried if the download fails. If validation fails,
      a new URL is not used. Supported protocols are "http", "https", and "mvn".
-"""),
-        "vpnless_urls": attrs.list(attrs.string(), default = [], doc = """
+""",
+        ),
+        "vpnless_urls": attrs.list(
+            attrs.string(),
+            default = [],
+            doc = """
     Additional URLs from which this resource can be downloaded when
      off VPN. Meta-internal only.
-"""),
+""",
+        ),
     }
 
 def _unarchive_args():
     return {
-        "excludes": attrs.list(attrs.regex(), default = [], doc = """
+        "excludes": attrs.list(
+            attrs.regex(),
+            default = [],
+            doc = """
             An optional list of regex patterns. All file paths in the extracted archive which match
              any of the given patterns will be omitted.
-        """),
-        "exec_deps": attrs.exec_dep(providers = [HttpArchiveExecDeps], default = "prelude//http_archive/tools:exec_deps", doc = """
+        """,
+        ),
+        "exec_deps": attrs.exec_dep(
+            providers = [HttpArchiveExecDeps],
+            default = "prelude//http_archive/tools:exec_deps",
+            doc = """
             When using http_archive as an anon target, the rule invoking the
             anon target needs to mirror this attribute into its own
             attributes, and forward the provider into the anon target
@@ -55,16 +74,23 @@ def _unarchive_args():
 
             When using http_archive normally not as an anon target, the
             default value is always fine.
-        """),
-        "out": attrs.option(attrs.string(), default = None, doc = """
+        """,
+        ),
+        "out": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
             An optional name to call the directory that the downloaded artifact is
             extracted into. Buck will generate a default name if one is not
             provided that uses the `name` of the rule.
-        """),
-        "strip_prefix": attrs.option(attrs.string(), default = None, doc = """
+        """,
+        ),
+        "strip_prefix": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
             If set, files under this path will be extracted to the root of the output
             directory. Siblings or cousins to this prefix will not be extracted at all.
-
 
             For example, if a tarball has the layout:
             * foo/bar/bar-0.1.2/data.dat
@@ -73,7 +99,8 @@ def _unarchive_args():
 
             Only `data.dat` will be extracted, and it will be extracted into the output
             directory specified in `out`.
-        """),
+        """,
+        ),
         "sub_targets": attrs.one_of(
             attrs.list(attrs.string()),
             attrs.dict(
@@ -105,13 +132,17 @@ def _unarchive_args():
             `:archive[a.txt]` consisting of one file.
         """,
         ),
-        "type": attrs.option(attrs.string(), default = None, doc = """
+        "type": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
             Normally, archive type is determined by the file's extension. If `type` is set,
             then autodetection is overridden, and the specified type is used instead.
 
             Supported values are: `zip`, `tar`, `tar.gz`,
             `tar.bz2`, `tar.xz`, and `tar.zst`.
-        """),
+        """,
+        ),
     }
 
 remote_common = struct(

@@ -10,9 +10,11 @@
 
 package com.facebook.buck.android.device;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Optional;
 
 /** Represents information about the device we're targeting. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TargetDevice {
 
   private final Type type;

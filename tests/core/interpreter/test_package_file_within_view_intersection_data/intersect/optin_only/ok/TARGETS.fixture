@@ -1,0 +1,5 @@
+# Inherited default `within_view` (`root//intersect/...`) allows this dep.
+stub(
+    name = "c",
+    deps = ["root//intersect/lib:t"],
+)

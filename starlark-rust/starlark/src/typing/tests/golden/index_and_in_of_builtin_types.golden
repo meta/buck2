@@ -1,0 +1,119 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Code:
+def test(s: str, b: bytes, r: range, t: tuple[int, ...], i: int, a):
+    str_at = s[i]
+    str_in = s in s
+    bytes_at = b[i]
+    bytes_in = i in b
+    range_at = r[i]
+    range_in = s in r
+    list_at = [s][i]
+    list_in = s in [s]
+    tuple_at = t[i]
+    tuple_in = s in t
+    dict_at = {s: i}[s]
+    dict_in = s in {s: i}
+    set_in = s in set([s])
+    s[a]
+    a in s
+
+def bad(s: str, b: bytes, r: range, t: tuple[int, ...], i: int):
+    s[s]
+    i in s
+    b[s]
+    r[s]
+    [i][s]
+    t[s]
+    {s: i}[i]
+    i in [s]
+    i in {s: i}
+
+Error:
+error: Type `str` does not have [] operator or [] cannot accept `str`
+  --> filename:20:5
+   |
+20 |     s[s]
+   |     ^^^^
+
+Error:
+error: Binary operator `in` is not available on the types `str` and `int`
+  --> filename:21:5
+   |
+21 |     i in s
+   |     ^^^^^^
+
+Error:
+error: Type `bytes` does not have [] operator or [] cannot accept `str`
+  --> filename:22:5
+   |
+22 |     b[s]
+   |     ^^^^
+
+Error:
+error: Type `range` does not have [] operator or [] cannot accept `str`
+  --> filename:23:5
+   |
+23 |     r[s]
+   |     ^^^^
+
+Error:
+error: Type `list[int]` does not have [] operator or [] cannot accept `str`
+  --> filename:24:5
+   |
+24 |     [i][s]
+   |     ^^^^^^
+
+Error:
+error: Type `tuple[int, ...]` does not have [] operator or [] cannot accept `str`
+  --> filename:25:5
+   |
+25 |     t[s]
+   |     ^^^^
+
+Error:
+error: Type `dict[str, int]` does not have [] operator or [] cannot accept `int`
+  --> filename:26:5
+   |
+26 |     {s: i}[i]
+   |     ^^^^^^^^^
+
+Error:
+error: Binary operator `in` is not available on the types `list[str]` and `int`
+  --> filename:27:5
+   |
+27 |     i in [s]
+   |     ^^^^^^^^
+
+Error:
+error: Binary operator `in` is not available on the types `dict[str, int]` and `int`
+  --> filename:28:5
+   |
+28 |     i in {s: i}
+   |     ^^^^^^^^^^^
+
+Types:
+str_at: str
+str_in: bool
+bytes_at: int
+bytes_in: bool
+range_at: int
+range_in: bool
+list_at: str
+list_in: bool
+tuple_at: int
+tuple_in: bool
+dict_at: int
+dict_in: bool
+set_in: bool
+
+Compiler typechecker (eval):
+error: Type `str` does not have [] operator or [] cannot accept `str`
+  --> filename:20:5
+   |
+20 |     s[s]
+   |     ^^^^

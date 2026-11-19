@@ -1,0 +1,38 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+load("@prelude//:native.bzl", prelude = "native")
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("build_infra")
+
+source_listing()
+
+# Execution platform marker constraint.
+# This constraint is used to distinguish execution platforms from target platforms.
+# When configuring exec deps, this marker will be present in the configuration,
+# allowing modifiers with execution_modifier=False to skip applying.
+
+# This constraint should be registered in the ExecutionPlatformRegistrationInfo
+
+exec_platform_marker_constraint(
+    name = "is_exec_platform",
+    default = "false",
+    values = [
+        "true",
+        "false",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+# Export BUCK file for inclusion in prelude//:prelude filegroup
+prelude.export_file(
+    name = "buck_file",
+    src = "BUCK",
+    visibility = ["PUBLIC"],
+)

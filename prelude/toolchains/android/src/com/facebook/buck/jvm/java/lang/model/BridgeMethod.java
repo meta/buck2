@@ -10,12 +10,15 @@
 
 package com.facebook.buck.jvm.java.lang.model;
 
+import com.facebook.infer.annotation.Nullsafe;
 import javax.lang.model.element.ExecutableElement;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A bridge method is used in Java to translate certain language constructs (like overriding methods
  * with covariant return types) into a form that can be understood by the VM.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BridgeMethod {
 
   /**
@@ -36,7 +39,7 @@ public class BridgeMethod {
   }
 
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(@Nullable Object o) {
     if (this == o) {
       return true;
     }

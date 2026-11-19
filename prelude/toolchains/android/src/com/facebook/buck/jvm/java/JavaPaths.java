@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.util.unarchive.Unzip;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import java.io.IOException;
@@ -23,6 +24,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /** Utilities for handling paths to java source files. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaPaths {
 
   public static final String SRC_ZIP = ".src.zip";
@@ -57,6 +59,32 @@ public class JavaPaths {
       }
     }
     return sources.build();
+  }
+
+  /**
+   * Whether the given source paths expand to at least one {@code .java} compilation unit. A
+   * SRC_ZIP/SRC_JAR staged by an annotation processor may hold no Java sources at all, so the
+   * archives are inspected rather than counted.
+   *
+   * <p>A path that is neither a Java source nor an archive counts as a compilation unit, leaving it
+   * to javac to reject.
+   */
+  static boolean hasJavaCompilationUnits(Iterable<Path> javaSourceFilePaths) throws IOException {
+    for (Path path : javaSourceFilePaths) {
+      String pathString = path.toString();
+      if (!pathString.endsWith(SRC_ZIP) && !pathString.endsWith(SRC_JAR)) {
+        return true;
+      }
+      try (ZipFile zipFile = new ZipFile(path.toFile())) {
+        Enumeration<? extends ZipEntry> entries = zipFile.entries();
+        while (entries.hasMoreElements()) {
+          if (entries.nextElement().getName().endsWith(".java")) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   /**

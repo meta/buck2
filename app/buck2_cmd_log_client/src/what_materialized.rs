@@ -51,13 +51,7 @@ pub struct WhatMaterializedCommand {
     #[clap(long, conflicts_with = "sort_by_total_bytes")]
     aggregate_by_ext: bool,
 
-    #[clap(
-        long = "format",
-        help = "Which output format to use for this command",
-        default_value = "tabulated",
-        ignore_case = true,
-        value_enum
-    )]
+    #[clap(flatten)]
     output: LogCommandOutputFormat,
 }
 
@@ -141,7 +135,8 @@ fn write_output<T: Display + Serialize>(
     record: &T,
 ) -> Result<(), ClientIoError> {
     match output {
-        LogCommandOutputFormatWithWriter::Tabulated(w) => Ok(writeln!(w, "{record}")?),
+        LogCommandOutputFormatWithWriter::Readable(w)
+        | LogCommandOutputFormatWithWriter::Tabulated(w) => Ok(writeln!(w, "{record}")?),
         LogCommandOutputFormatWithWriter::Csv(writer) => Ok(writer.serialize(record)?),
         LogCommandOutputFormatWithWriter::Json(w) => {
             serde_json::to_writer(w.by_ref(), &record)?;
@@ -230,7 +225,7 @@ impl BuckSubcommand for WhatMaterializedCommand {
                 kv.iter()
                     .try_for_each(|(_, v)| write_output(&mut output, v))?;
             } else if sort_by_total_bytes {
-                records.sort_by(|a, b| a.total_bytes.cmp(&b.total_bytes));
+                records.sort_by_key(|a| a.total_bytes);
                 records
                     .iter()
                     .try_for_each(|r| write_output(&mut output, r))?;

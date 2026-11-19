@@ -8,6 +8,10 @@
  * above-listed licenses.
  */
 
+use std::ops::Add as _;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::sync::LazyLock;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -19,6 +23,9 @@ use buck2_common::file_ops::metadata::FileType;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+use buck2_fs::async_fs_util::spawn_blocking;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::RelativePath;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
@@ -29,7 +36,6 @@ use derive_more::Add;
 use faccess::PathExt;
 use futures::Future;
 use futures::future::try_join;
-use once_cell::sync::Lazy;
 use pathdiff::diff_paths;
 use tokio::sync::Semaphore;
 
@@ -54,6 +60,50 @@ impl HashingInfo {
     }
 }
 
+// When cleaning up artifacts in buck-out, std::fs::remove_dir_all() (and
+// non-sudo `rm -rf`) is not able to list/remove files from directories without
+// the read/write/execute bits being set. Since buck and RE make no promises
+// about preserving anything other than the execution bit, we normalize the
+// **directory** permissions here on the outputs of local actions to allow for
+// removal later by operations like "prepare output directory" or "clean" or
+// "clean stale".
+//
+// We also normalize file permissions, so that local action outputs have the
+// same permissions they would as if the action had run remotely, and we'd
+// downloaded the result from CAS. Note that `std::fs:remove*` _can_ remove
+// non-writable files. It's the directories that matter for the cleanup operations.
+fn do_normalize_permissions(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
+    // While the path ould have been populated by an action, we only get here if
+    // we've walked the output tree and know the path exists already. Hence we
+    // categorize this as internal, not user.
+    let m = fs_util::symlink_metadata(path).categorize_internal()?;
+    let mut perms = m.permissions();
+    #[cfg(unix)]
+    {
+        let mode = perms.mode()
+            | if m.is_dir() {
+                0o755
+            } else if 0 != (perms.mode() & 0o111) {
+                0o444
+            } else {
+                0o644
+            };
+        if mode != perms.mode() {
+            perms.set_mode(mode);
+            fs_util::set_permissions(path, perms).categorize_input()?;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if perms.readonly() {
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(false);
+            fs_util::set_permissions(path, perms).categorize_internal()?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn build_entry_from_disk(
     path: AbsNormPathBuf,
     digest_config: FileDigestConfig,
@@ -64,9 +114,38 @@ pub async fn build_entry_from_disk(
     HashingInfo,
 )> {
     // Get file metadata. If the file is missing, ignore it.
-    // TODO(nga): explain why we ignore missing files.
+    //
+    // If the symlink points to an input or output of this action, the artifact
+    // value associated with the symlink will include its target, and something
+    // can just consume the symlink artifact. If the symlink targets something
+    // that isn't in the inputs or outputs, the artifactvalue won't have it
+    // either, and consumers will need to explicitly have the artifact both for
+    // the symlink and its target. Note that this function only processes the
+    // symlink itself, not the target/destination. If the target is also an
+    // output artifact for this action, another call to `build_entry_from_disk`
+    // may process it.
     let m = match std::fs::symlink_metadata(&path) {
         Ok(m) => m,
+        // A NotFound error here means that the action failed to produce one of
+        // its expected outputs. While this output is missing, others may not
+        // be. We intensionally ignore this error so that we can process the
+        // other outputs and normalize their permissions (so the files can be
+        // removed later by the materializer). Ignoring failures here and
+        // catching them later also allows the action executor to report stats
+        // on the action execution prior to turnl If we returned an error here
+        // we'd cut that process short.  The BuckActionExecutor has a check for
+        // missing outputs. When `None` is returned here the output isn't listed
+        // in the digested results, and that check will produce a missing
+        // outputs error.
+        //
+        // Additionally, it's possible the output doesn't exist because the
+        // action failed due to corrupted materialized state (eg a user
+        // deleted/changed a file in buck-out). The "check all inputs match the
+        // materializer state" check is expensive. We don't perform it before
+        // running every action, it's only run if the action returns an
+        // exit_code != 0. If we returned an error for missing files here, we'd
+        // skip those checks, and not know that the materialized state was
+        // incorrect.
         Err(ref err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok((None, HashingInfo::default()));
         }
@@ -76,7 +155,7 @@ pub async fn build_entry_from_disk(
     let value = match FileType::from(m.file_type()) {
         FileType::File => {
             let (file_metadata, file_hashing_info): (FileMetadata, HashingInfo) =
-                build_file_metadata(path, digest_config, blocking_executor).await?;
+                build_file_metadata(path, digest_config).await?;
             hashing_info = hashing_info.add(file_hashing_info);
             DirectoryEntry::Leaf(ActionDirectoryMember::File(file_metadata))
         }
@@ -106,7 +185,9 @@ async fn build_dir_from_disk(
     blocking_executor: &dyn BlockingExecutor,
     project_root: &AbsNormPath,
 ) -> buck2_error::Result<(ActionDirectoryBuilder, HashingInfo)> {
-    let mut builder = ActionDirectoryBuilder::empty();
+    // A disk scan is a complete listing of what's there, so the tree this builds is uniformly
+    // exhaustive (each level is built from its own builder, bottom-up).
+    let mut builder = ActionDirectoryBuilder::empty_exhaustive();
     let mut hashing_info = HashingInfo::default();
 
     let mut directory_names: Vec<FileNameBuf> = Vec::new();
@@ -115,7 +196,12 @@ async fn build_dir_from_disk(
     let mut file_futures: Vec<_> = Vec::new();
 
     let files = blocking_executor
-        .execute_io_inline(|| fs_util::read_dir(&disk_path).map_err(Into::into))
+        .execute_io_inline(|| {
+            do_normalize_permissions(&disk_path)?;
+            fs_util::read_dir(&disk_path)
+                .categorize_internal()
+                .map_err(Into::into)
+        })
         .await?;
     for file in files {
         let file = file?;
@@ -124,7 +210,7 @@ async fn build_dir_from_disk(
 
         let filename = filename
             .to_str()
-            .buck_error_context("Filename is not UTF-8")
+            .internal_error("Filename is not UTF-8")
             .and_then(|f| FileNameBuf::try_from(f.to_owned()))
             .with_buck_error_context(|| {
                 format!("Invalid filename: {}", disk_path.clone().display())
@@ -135,8 +221,7 @@ async fn build_dir_from_disk(
 
         match FileType::from(filetype) {
             FileType::File => {
-                let file_future =
-                    build_file_metadata(child_disk_path, digest_config, blocking_executor);
+                let file_future = build_file_metadata(child_disk_path, digest_config);
                 file_names.push(filename);
                 file_futures.push(file_future)
             }
@@ -184,25 +269,28 @@ async fn build_dir_from_disk(
 fn build_file_metadata(
     disk_path: AbsNormPathBuf,
     digest_config: FileDigestConfig,
-    blocking_executor: &dyn BlockingExecutor,
-) -> impl Future<Output = buck2_error::Result<(FileMetadata, HashingInfo)>> + '_ {
-    static SEMAPHORE: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(100));
-    let exec_path = disk_path.clone();
-    let executable = blocking_executor.execute_io_inline(move || Ok(exec_path.executable()));
-    let file_digest =
-        tokio::task::spawn_blocking(move || FileDigest::from_file(&disk_path, digest_config));
+) -> impl Future<Output = buck2_error::Result<(FileMetadata, HashingInfo)>> {
+    static SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(100));
+    let io_task = move || {
+        do_normalize_permissions(&disk_path)?;
+        let hashing_start = Instant::now();
+        let digest = FileDigest::from_file(&disk_path, digest_config);
+        let hashing_info = HashingInfo::new(Instant::now() - hashing_start, 1);
+
+        buck2_error::Ok((disk_path.executable(), hashing_info, digest))
+    };
 
     async move {
         let _permit = SEMAPHORE.acquire().await.unwrap();
-        let hashing_start = Instant::now();
-        let file_digest = file_digest.await??;
-        let hashing_duration = HashingInfo::new(Instant::now() - hashing_start, 1);
+        let io_task = spawn_blocking(io_task);
+        let (is_executable, hashing_info, file_digest) = io_task.await??;
+        let file_digest = file_digest?;
         let file_metadata = FileMetadata {
             digest: TrackedFileDigest::new(file_digest, digest_config.as_cas_digest_config()),
-            is_executable: executable.await?,
+            is_executable,
         };
 
-        Ok((file_metadata, hashing_duration))
+        Ok((file_metadata, hashing_info))
     }
 }
 
@@ -210,26 +298,28 @@ fn create_symlink(
     path: &AbsNormPathBuf,
     project_root: &AbsNormPath,
 ) -> buck2_error::Result<ActionDirectoryMember> {
-    let mut symlink_target = fs_util::read_link(path)?;
+    let mut symlink_target = fs_util::read_link(path).categorize_internal()?;
     if cfg!(windows) && symlink_target.is_relative() {
         let directory_path = path
             .parent()
-            .buck_error_context(format!("failed to get parent of {}", path.display()))?;
-        let canonical_path = fs_util::canonicalize(directory_path).buck_error_context(format!(
-            "failed to get canonical path of {}",
-            directory_path.display()
-        ))?;
+            .with_internal_error(|| format!("failed to get parent of {}", path.display()))?;
+        let canonical_path = fs_util::canonicalize(directory_path)
+            .categorize_internal()
+            .buck_error_context(format!(
+                "failed to get canonical path of {}",
+                directory_path.display()
+            ))?;
         if !canonical_path.starts_with(project_root) {
             let normalized_target = symlink_target
                 .to_str()
-                .buck_error_context("can't convert path to str")?
+                .internal_error("can't convert path to str")?
                 .replace('\\', "/");
             let target_abspath =
-                canonical_path.join_normalized(RelativePath::from_path(&normalized_target)?)?;
+                canonical_path.join_normalized(RelativePath::unchecked_new(&normalized_target))?;
             // Recalculate symlink target if it points from symlinked buck-out to the files inside project root.
             if target_abspath.starts_with(project_root) {
                 symlink_target = diff_paths(target_abspath, directory_path)
-                    .buck_error_context("can't calculate relative path")?;
+                    .internal_error("can't calculate relative path")?;
             }
         }
     }

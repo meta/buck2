@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 
 use crate::allocative_trait::Allocative;
 use crate::impls::common::PTR_NAME;
-use crate::key::Key;
+use crate::key;
 use crate::visitor::Visitor;
 
 impl<A> Allocative for SmallVec<A>
@@ -28,13 +28,13 @@ where
         if self.spilled() {
             let mut visitor = visitor.enter_unique(PTR_NAME, std::mem::size_of::<*const A::Item>());
             for item in self {
-                visitor.visit_field(Key::new("data"), item);
+                visitor.visit_field(key!("data"), item);
             }
             // TODO(nga): spare capacity.
             visitor.exit();
         } else {
             for item in self {
-                visitor.visit_field(Key::new("data"), item);
+                visitor.visit_field(key!("data"), item);
             }
         }
         visitor.exit();

@@ -6,18 +6,22 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+import io
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Generator
+from unittest.mock import patch
 
 from apple.tools.code_signing.codesign_bundle import CodesignConfiguration
 
+from .action_metadata import parse_action_metadata
 from .assemble_bundle_types import BundleSpecItem
 from .incremental_state import CodesignedOnCopy, IncrementalState, IncrementalStateItem
 from .incremental_utils import (
     calculate_incremental_state,
+    codesigned_on_copy_item,
     IncrementalContext,
     should_assemble_incrementally,
 )
@@ -49,7 +53,7 @@ class TestIncrementalUtils(unittest.TestCase):
             )
         ]
         incremental_context = IncrementalContext(
-            metadata={Path("foo"): "digest"},
+            metadata={"foo": "digest"},
             state=None,
             codesigned=False,
             codesign_configuration=None,
@@ -68,7 +72,7 @@ class TestIncrementalUtils(unittest.TestCase):
             )
         ]
         incremental_context = IncrementalContext(
-            metadata={Path("foo"): "digest"},
+            metadata={"foo": "digest"},
             state=IncrementalState(
                 items=[
                     IncrementalStateItem(
@@ -105,7 +109,7 @@ class TestIncrementalUtils(unittest.TestCase):
             )
         ]
         incremental_context = IncrementalContext(
-            metadata={Path("foo"): "digest"},
+            metadata={"foo": "digest"},
             state=IncrementalState(
                 items=[
                     IncrementalStateItem(
@@ -145,7 +149,7 @@ class TestIncrementalUtils(unittest.TestCase):
             )
         ]
         incremental_context = IncrementalContext(
-            metadata={Path("foo"): "digest"},
+            metadata={"foo": "digest"},
             state=IncrementalState(
                 items=[
                     IncrementalStateItem(
@@ -196,9 +200,9 @@ class TestIncrementalUtils(unittest.TestCase):
         ]
         incremental_context = IncrementalContext(
             metadata={
-                Path("src/foo"): "digest",
-                Path("src/baz"): "digest2",
-                Path("entitlements.plist"): "entitlements_digest",
+                "src/foo": "digest",
+                "src/baz": "digest2",
+                "entitlements.plist": "entitlements_digest",
             },
             state=IncrementalState(
                 items=[
@@ -254,7 +258,7 @@ class TestIncrementalUtils(unittest.TestCase):
             )
         ]
         incremental_context = IncrementalContext(
-            metadata={Path("src/foo"): "digest"},
+            metadata={"src/foo": "digest"},
             state=IncrementalState(
                 items=[
                     IncrementalStateItem(
@@ -301,8 +305,8 @@ class TestIncrementalUtils(unittest.TestCase):
         ]
         incremental_context = IncrementalContext(
             metadata={
-                Path("src/foo"): "digest",
-                Path("baz/entitlements.plist"): "new_digest",
+                "src/foo": "digest",
+                "baz/entitlements.plist": "new_digest",
             },
             state=IncrementalState(
                 items=[
@@ -335,7 +339,7 @@ class TestIncrementalUtils(unittest.TestCase):
             versioned_if_macos=True,
         )
         self.assertFalse(should_assemble_incrementally(spec, incremental_context))
-        incremental_context.metadata[Path("baz/entitlements.plist")] = "old_digest"
+        incremental_context.metadata["baz/entitlements.plist"] = "old_digest"
         self.assertTrue(should_assemble_incrementally(spec, incremental_context))
 
     def test_not_run_incrementally_when_codesign_on_copy_flags_mismatch(self):
@@ -349,7 +353,7 @@ class TestIncrementalUtils(unittest.TestCase):
         ]
         incremental_context = IncrementalContext(
             metadata={
-                Path("src/foo"): "digest",
+                "src/foo": "digest",
             },
             state=IncrementalState(
                 items=[
@@ -403,7 +407,7 @@ class TestIncrementalUtils(unittest.TestCase):
         ]
         incremental_context = IncrementalContext(
             metadata={
-                Path("src/foo"): "digest",
+                "src/foo": "digest",
             },
             state=IncrementalState(
                 items=[
@@ -450,7 +454,7 @@ class TestIncrementalUtils(unittest.TestCase):
         ]
         incremental_context = IncrementalContext(
             metadata={
-                Path("src/foo"): "digest",
+                "src/foo": "digest",
             },
             state=IncrementalState(
                 items=[
@@ -488,7 +492,7 @@ class TestIncrementalUtils(unittest.TestCase):
             )
         ]
         incremental_context = IncrementalContext(
-            metadata={Path("src/foo"): "digest"},
+            metadata={"src/foo": "digest"},
             state=IncrementalState(
                 items=[
                     IncrementalStateItem(
@@ -547,9 +551,9 @@ class TestIncrementalUtils(unittest.TestCase):
             Path("ghi").symlink_to("abc")
 
             action_metadata = {
-                Path("foo"): "hash(foo)",
-                Path("bar/baz"): "hash(baz)",
-                Path("abc/def"): "hash(def)",
+                "foo": "hash(foo)",
+                "bar/baz": "hash(baz)",
+                "abc/def": "hash(def)",
             }
             spec = [
                 BundleSpecItem(
@@ -599,6 +603,114 @@ class TestIncrementalUtils(unittest.TestCase):
                 ],
             )
 
+    def test_calculate_incremental_state_with_nested_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as project_root, chdir(project_root):
+            # project_root
+            #           └── res
+            #                ├── b.txt
+            #                ├── a.txt
+            #                └── sub
+            #                     ├── deep
+            #                     │    └── d.txt
+            #                     └── c.txt
+            res_path = Path("res")
+            (res_path / "sub" / "deep").mkdir(parents=True)
+            (res_path / "b.txt").write_text("b")
+            (res_path / "a.txt").write_text("a")
+            (res_path / "sub" / "c.txt").write_text("c")
+            (res_path / "sub" / "deep" / "d.txt").write_text("d")
+
+            action_metadata = {
+                "res/a.txt": "hash(a)",
+                "res/b.txt": "hash(b)",
+                "res/sub/c.txt": "hash(c)",
+                "res/sub/deep/d.txt": "hash(d)",
+            }
+            spec = [
+                BundleSpecItem(
+                    src="res",
+                    dst="Resources",
+                    codesign_on_copy=False,
+                )
+            ]
+            state = calculate_incremental_state(spec, action_metadata)
+            self.assertEqual(
+                state,
+                [
+                    IncrementalStateItem(
+                        source=Path("res/a.txt"),
+                        destination_relative_to_bundle=Path("Resources/a.txt"),
+                        digest="hash(a)",
+                        resolved_symlink=None,
+                    ),
+                    IncrementalStateItem(
+                        source=Path("res/b.txt"),
+                        destination_relative_to_bundle=Path("Resources/b.txt"),
+                        digest="hash(b)",
+                        resolved_symlink=None,
+                    ),
+                    IncrementalStateItem(
+                        source=Path("res/sub/c.txt"),
+                        destination_relative_to_bundle=Path("Resources/sub/c.txt"),
+                        digest="hash(c)",
+                        resolved_symlink=None,
+                    ),
+                    IncrementalStateItem(
+                        source=Path("res/sub/deep/d.txt"),
+                        destination_relative_to_bundle=Path("Resources/sub/deep/d.txt"),
+                        digest="hash(d)",
+                        resolved_symlink=None,
+                    ),
+                ],
+            )
+
+    def test_calculate_incremental_state_with_empty_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as project_root, chdir(project_root):
+            res_path = Path("res")
+            (res_path / "sub").mkdir(parents=True)
+            (res_path / "a.txt").write_text("a")
+            (res_path / "sub" / "b.txt").write_text("b")
+
+            action_metadata = {
+                "res/a.txt": "hash(a)",
+                "res/sub/b.txt": "hash(b)",
+            }
+            spec = [
+                BundleSpecItem(
+                    src="res",
+                    dst="",
+                    codesign_on_copy=False,
+                )
+            ]
+            state = calculate_incremental_state(spec, action_metadata)
+            self.assertEqual(
+                [item.destination_relative_to_bundle for item in state],
+                [Path("a.txt"), Path("sub/b.txt")],
+            )
+
+    def test_calculate_incremental_state_prefers_action_metadata_to_resolving(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as project_root, chdir(project_root):
+            Path("foo").write_text("hello")
+            action_metadata = {"foo": "hash(foo)"}
+            spec = [BundleSpecItem(src="foo", dst="foo")]
+            with patch.object(
+                Path, "resolve", side_effect=AssertionError("path was resolved")
+            ):
+                state = calculate_incremental_state(spec, action_metadata)
+            self.assertEqual(
+                state,
+                [
+                    IncrementalStateItem(
+                        source=Path("foo"),
+                        destination_relative_to_bundle=Path("foo"),
+                        digest="hash(foo)",
+                        resolved_symlink=None,
+                    ),
+                ],
+            )
+
     def test_calculate_incremental_state_with_ds_store(self) -> None:
         with tempfile.TemporaryDirectory() as project_root, chdir(project_root):
             # project_root
@@ -613,8 +725,8 @@ class TestIncrementalUtils(unittest.TestCase):
             (bar_path / ".DS_Store").touch()
 
             action_metadata = {
-                Path("foo"): "hash(foo)",
-                Path("bar/baz"): "hash(baz)",
+                "foo": "hash(foo)",
+                "bar/baz": "hash(baz)",
             }
             spec = [
                 BundleSpecItem(
@@ -646,3 +758,40 @@ class TestIncrementalUtils(unittest.TestCase):
                     ),
                 ],
             )
+
+    def test_codesign_on_copy_entitlements_use_the_action_metadata_key(self) -> None:
+        # The entitlements digest is looked up in whatever `parse_action_metadata`
+        # returned, while the spec supplies the entitlements path as a `Path`. If
+        # the two disagree on the key, every entitlements lookup misses and the
+        # bundling action fails outright, so pin them together here.
+        metadata = parse_action_metadata(
+            io.StringIO(
+                '{"version": 1, "digests": [{"path": "baz/entitlements.plist", '
+                '"digest": "entitlements_digest"}]}'
+            )
+        )
+        self.assertIsNotNone(metadata)
+        incremental_context = IncrementalContext(
+            metadata=metadata,
+            state=None,
+            codesigned=True,
+            codesign_configuration=None,
+            codesign_identity="identity",
+            codesign_arguments=[],
+            versioned_if_macos=True,
+        )
+        self.assertEqual(
+            codesigned_on_copy_item(
+                path=Path("foo"),
+                entitlements=Path("baz/entitlements.plist"),
+                incremental_context=incremental_context,
+                codesign_flags_override=None,
+                extra_codesign_paths=None,
+            ),
+            CodesignedOnCopy(
+                path=Path("foo"),
+                entitlements_digest="entitlements_digest",
+                codesign_flags_override=None,
+                extra_codesign_paths=None,
+            ),
+        )

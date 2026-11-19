@@ -18,5 +18,7 @@ pub mod project_root;
 pub mod provider;
 pub mod regex;
 pub mod rule;
+pub mod select_fail;
+pub mod select_incompatible;
 pub mod target_label;
 pub mod transition;

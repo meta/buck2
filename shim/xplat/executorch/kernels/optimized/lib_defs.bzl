@@ -80,14 +80,12 @@ def define_libs():
                 ),
             ],
         }),
-        fbandroid_platform_deps = [
-            (
-                "^android-arm64.*$",
-                [
-                    "fbsource//third-party/sleef:sleef_arm",
-                ],
-            ),
-        ],
+        deps = select({
+            "DEFAULT": [],
+            "ovr_config//os:android-arm64": [
+                "fbsource//third-party/sleef:sleef_arm",
+            ],
+        }),
     )
 
     runtime.cxx_library(
@@ -120,22 +118,18 @@ def define_libs():
             "//executorch/...",
             "@EXECUTORCH_CLIENTS",
         ],
-        fbandroid_platform_preprocessor_flags = [
-            (
-                "^android-arm64.*$",
-                [
-                    "-DET_BUILD_WITH_BLAS",
-                ],
-            ),
-        ],
-        fbandroid_platform_deps = [
-            (
-                "^android-arm64.*$",
-                [
-                    "fbsource//third-party/openblas:openblas",
-                ],
-            ),
-        ],
+        preprocessor_flags = select({
+            "DEFAULT": [],
+            "ovr_config//os:android-arm64": [
+                "-DET_BUILD_WITH_BLAS",
+            ],
+        }),
+        deps = select({
+            "DEFAULT": [],
+            "ovr_config//os:android-arm64": [
+                "fbsource//third-party/openblas:openblas",
+            ],
+        }),
         fbobjc_exported_preprocessor_flags = [
             "-DET_BUILD_WITH_BLAS",
             "-DET_BUILD_FOR_APPLE",

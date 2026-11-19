@@ -12,8 +12,10 @@ package com.facebook.buck.jvm.cd;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface BuildCommandStepsBuilder {
 
   ImmutableList<IsolatedStep> getSteps();

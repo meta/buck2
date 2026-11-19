@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
@@ -22,11 +20,12 @@ use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::file_ops::metadata::PathMetadata;
 use buck2_common::file_ops::metadata::PathMetadataOrRedirection;
 use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path::CellPathRef;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
 use buck2_core::package::PackageLabelWithModifiers;
 use buck2_core::target::configured_or_unconfigured::ConfiguredOrUnconfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
+use buck2_hash::BuckMutMap;
+use buck2_hash::BuckMutSet;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_query::query::environment::QueryTarget;
@@ -42,7 +41,6 @@ use dupe::Dupe;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::Shared;
-use futures::future::join_all;
 use futures::join;
 use futures::stream::FuturesUnordered;
 use os_str_bytes::OsStrBytes;
@@ -53,7 +51,11 @@ use siphasher::sip128::SipHasher24;
 #[display("{:032x}", _0)]
 pub struct BuckTargetHash(pub u128);
 
-trait BuckTargetHasher: Hasher + Send + 'static {
+pub(crate) trait BuckTargetHasher: Hasher + Send + 'static {
+    fn new() -> Self
+    where
+        Self: Sized;
+
     fn finish_u128(&mut self) -> BuckTargetHash;
 }
 
@@ -63,14 +65,32 @@ trait BuckTargetHasher: Hasher + Send + 'static {
 /// to blake3 and so there's likely little opportunity remaining for a faster hash function
 /// to capture anyway.
 impl BuckTargetHasher for siphasher::sip128::SipHasher24 {
+    fn new() -> Self {
+        SipHasher24::new()
+    }
+
     fn finish_u128(&mut self) -> BuckTargetHash {
         BuckTargetHash(self.finish128().as_u128())
     }
 }
 
 /// We use blake3 as our "strong" hash.
-struct Blake3Adapter(blake3::Hasher);
+pub(crate) struct Blake3Adapter(blake3::Hasher);
 
+impl Blake3Adapter {
+    pub(crate) fn finalize(&self) -> blake3::Hash {
+        self.0.finalize()
+    }
+}
+
+// This `Hasher` impl only provides `write` and `finish` (not the full set of
+// `write_*` forwarding methods). That is acceptable here because blake3 is a
+// streaming hash — every `write_*` default implementation ultimately calls
+// `self.write()`, and blake3's `update` treats all byte sequences uniformly.
+// For hash functions where individual `write_u8` / `write_usize` / etc.
+// produce different results than the default byte-serialisation path (e.g.
+// FxHasher), all methods *must* be forwarded explicitly; see the comment on
+// `StarlarkHasherSmallPromote` in `buck2_build_api/.../provider/callable.rs`.
 impl Hasher for Blake3Adapter {
     fn finish(&self) -> u64 {
         unimplemented!()
@@ -82,6 +102,10 @@ impl Hasher for Blake3Adapter {
 }
 
 impl BuckTargetHasher for Blake3Adapter {
+    fn new() -> Self {
+        Self(blake3::Hasher::new())
+    }
+
     fn finish_u128(&mut self) -> BuckTargetHash {
         let hash = blake3::Hasher::finalize(&self.0);
         let bytes = hash.as_bytes();
@@ -91,7 +115,7 @@ impl BuckTargetHasher for Blake3Adapter {
 
 pub enum TargetHashesFileMode {
     /// The following files have changed in some way (don't do any IO)
-    PathsOnly(HashSet<CellPath>),
+    PathsOnly(BuckMutSet<CellPath>),
     /// Use IO operations to find the paths and their contents
     PathsAndContents,
     /// Don't hash any files
@@ -105,7 +129,7 @@ trait FileHasher: Send + Sync {
 }
 
 struct PathsOnlyFileHasher {
-    pseudo_changed_paths: HashSet<CellPath>,
+    pseudo_changed_paths: BuckMutSet<CellPath>,
 }
 
 #[async_trait]
@@ -129,10 +153,10 @@ impl FileHasher for PathsAndContentsHasher {
         #[async_recursion]
         async fn hash_item(
             ctx: &mut DiceComputations<'_>,
-            cell_path: CellPathRef<'async_recursion>,
+            cell_path: CellPath,
             res: &mut Vec<u8>,
         ) -> buck2_error::Result<()> {
-            let info = DiceFileComputations::read_path_metadata(ctx, cell_path.dupe())
+            let info = DiceFileComputations::read_path_metadata(ctx, cell_path)
                 .await
                 .without_package_context_information()?;
             // Important that the different branches can never clash, so add a prefix byte to them
@@ -157,28 +181,28 @@ impl FileHasher for PathsAndContentsHasher {
                     }
                     PathMetadata::Directory => {
                         res.push(2u8);
-                        let files = DiceFileComputations::read_dir(ctx, cell_path.dupe())
+                        let files = &DiceFileComputations::read_dir(ctx, cell_path)
                             .await?
                             .included;
                         res.extend(files.len().to_be_bytes());
-                        for x in &*files {
-                            let name = x.file_name.as_str();
+                        for x in files.iter() {
+                            let name = x.as_str();
                             res.extend(name.len().to_be_bytes());
                             res.extend(name.as_bytes());
-                            hash_item(ctx, cell_path.join(&x.file_name).as_ref(), res).await?;
+                            hash_item(ctx, cell_path.join(x), res).await?;
                         }
                     }
                 },
                 PathMetadataOrRedirection::Redirection(r, _) => {
                     // TODO (T126181780): This should have a limit on recursion.
-                    hash_item(ctx, r.as_ref().as_ref(), res).await?;
+                    hash_item(ctx, r, res).await?;
                 }
             }
             Ok(())
         }
 
         let mut res = Vec::new();
-        hash_item(&mut self.dice.clone(), cell_path.as_ref(), &mut res).await?;
+        hash_item(&mut self.dice.ctx(), *cell_path, &mut res).await?;
         Ok(res)
     }
 }
@@ -190,7 +214,7 @@ impl FileHasher for PathsAndContentsHasher {
 pub(crate) trait TargetHashingTargetNode: QueryTarget {
     /// We only hash this node, not its dependencies.
     /// Importantly, we look at the nodes after configuration (for the configured case).
-    fn target_hash<H: Hasher>(&self, state: &mut H);
+    fn target_hash<H: Hasher>(&self, state: &mut H) -> buck2_error::Result<()>;
 
     // Takes in Target Nodes and returns a new set of (un)Configured
     // Target Nodes based on type of hashing specified.
@@ -206,8 +230,9 @@ pub(crate) trait TargetHashingTargetNode: QueryTarget {
 
 #[async_trait]
 impl TargetHashingTargetNode for ConfiguredTargetNode {
-    fn target_hash<H: Hasher>(&self, state: &mut H) {
-        self.target_hash(state)
+    fn target_hash<H: Hasher>(&self, state: &mut H) -> buck2_error::Result<()> {
+        self.body()?.target_hash(state);
+        Ok(())
     }
 
     async fn get_target_nodes(
@@ -227,8 +252,9 @@ impl TargetHashingTargetNode for ConfiguredTargetNode {
 
 #[async_trait]
 impl TargetHashingTargetNode for TargetNode {
-    fn target_hash<H: Hasher>(&self, state: &mut H) {
-        self.target_hash(state)
+    fn target_hash<H: Hasher>(&self, state: &mut H) -> buck2_error::Result<()> {
+        self.target_hash(state);
+        Ok(())
     }
 
     async fn get_target_nodes(
@@ -248,7 +274,7 @@ impl TargetHashingTargetNode for TargetNode {
 }
 pub struct TargetHashes {
     // key is an unconfigured target label, but the hash is generated from the configured target label.
-    target_mapping: HashMap<TargetLabel, buck2_error::Result<BuckTargetHash>>,
+    target_mapping: BuckMutMap<TargetLabel, buck2_error::Result<BuckTargetHash>>,
 }
 
 #[derive(buck2_error::Error, Debug)]
@@ -275,10 +301,10 @@ impl TargetHashes {
     where
         T::Key: ConfiguredOrUnconfiguredTargetLabel,
     {
-        let mut hashes: HashMap<
+        let mut hashes: BuckMutMap<
             T::Key,
             Shared<DropcancelJoinHandle<buck2_error::Result<BuckTargetHash>>>,
-        > = HashMap::new();
+        > = BuckMutMap::default();
 
         let visit = |target: T| {
             // this is postorder, so guaranteed that all deps have futures already.
@@ -305,7 +331,7 @@ impl TargetHashes {
                     |_| {
                         async move {
                             let mut hasher = TargetHashes::new_hasher(use_fast_hash);
-                            TargetHashes::hash_node(&target, &mut *hasher);
+                            TargetHashes::hash_node(&target, &mut *hasher)?;
 
                             let mut input_futs = Vec::new();
                             if let Some(file_hasher) = file_hasher {
@@ -319,8 +345,10 @@ impl TargetHashes {
                                 })?;
                             }
 
-                            let (dep_hashes, input_hashes) =
-                                join!(join_all(dep_futures), join_all(input_futs));
+                            let (dep_hashes, input_hashes) = join!(
+                                buck2_util::future::join_all(dep_futures),
+                                buck2_util::future::join_all(input_futs)
+                            );
 
                             TargetHashes::hash_deps(dep_hashes, &mut *hasher)?;
                             TargetHashes::hash_files(input_hashes, &mut *hasher)?;
@@ -343,6 +371,7 @@ impl TargetHashes {
             targets.iter_names(),
             QueryTargetDepsSuccessors,
             visit,
+            false, // allow_partial_graph
         )
         .await?;
 
@@ -351,8 +380,8 @@ impl TargetHashes {
             .map(|(target, fut)| async move { (target, fut.await) })
             .collect();
 
-        let mut target_mapping: HashMap<TargetLabel, buck2_error::Result<BuckTargetHash>> =
-            HashMap::new();
+        let mut target_mapping: BuckMutMap<TargetLabel, buck2_error::Result<BuckTargetHash>> =
+            BuckMutMap::default();
 
         // TODO(cjhopman): FuturesOrdered/Unordered interacts poorly with tokio cooperative scheduling
         // (see https://github.com/rust-lang/futures-rs/issues/2053). Clean this up once a good
@@ -387,7 +416,7 @@ impl TargetHashes {
                 async move {
                     let hash_result: buck2_error::Result<BuckTargetHash> = try {
                         let mut hasher = TargetHashes::new_hasher(use_fast_hash);
-                        TargetHashes::hash_node(&target, &mut *hasher);
+                        TargetHashes::hash_node(&target, &mut *hasher)?;
 
                         if let Some(file_hasher) = file_hasher {
                             let mut input_futs = Vec::new();
@@ -400,35 +429,36 @@ impl TargetHashes {
                                 buck2_error::Ok(())
                             })?;
 
-                            let input_hashes = join_all(input_futs).await;
+                            let input_hashes = buck2_util::future::join_all(input_futs).await;
                             TargetHashes::hash_files(input_hashes, &mut *hasher)?;
                         }
 
                         hasher.finish_u128()
                     };
-                    (
-                        target.node_key().unconfigured_label().dupe(),
-                        hash_result.map_err(buck2_error::Error::from),
-                    )
+                    (target.node_key().unconfigured_label().dupe(), hash_result)
                 }
                 .boxed()
                 .shared()
             })
             .collect();
 
-        let target_mapping: HashMap<TargetLabel, buck2_error::Result<BuckTargetHash>> =
-            join_all(hashing_futures).await.into_iter().collect();
+        let target_mapping: BuckMutMap<TargetLabel, buck2_error::Result<BuckTargetHash>> =
+            buck2_util::future::join_all(hashing_futures)
+                .await
+                .into_iter()
+                .collect();
         Ok(Self { target_mapping })
     }
 
     pub fn compute_immediate_one(node: &TargetNode, use_fast_hash: bool) -> BuckTargetHash {
         let mut hasher = TargetHashes::new_hasher(use_fast_hash);
-        TargetHashes::hash_node(node, &mut *hasher);
+        let mut state: &mut dyn BuckTargetHasher = &mut *hasher;
+        node.target_hash(&mut state);
         hasher.finish_u128()
     }
 
     pub(crate) async fn compute<T: TargetHashingTargetNode, L: AsyncNodeLookup<T>>(
-        mut dice: DiceTransaction,
+        dice: DiceTransaction,
         lookup: L,
         targets: Vec<(
             PackageLabelWithModifiers,
@@ -442,7 +472,7 @@ impl TargetHashes {
     where
         T::Key: ConfiguredOrUnconfiguredTargetLabel,
     {
-        let targets = T::get_target_nodes(&mut dice, targets, global_cfg_options).await?;
+        let targets = T::get_target_nodes(&mut dice.ctx(), targets, global_cfg_options).await?;
         let file_hasher = Self::new_file_hasher(dice.dupe(), file_hash_mode);
         if target_hash_recursive {
             Self::compute_recursive_target_hashes(dice, lookup, targets, file_hasher, use_fast_hash)
@@ -477,8 +507,11 @@ impl TargetHashes {
         }
     }
 
-    fn hash_node<T: TargetHashingTargetNode>(node: &T, mut hasher: &mut dyn BuckTargetHasher) {
-        node.target_hash(&mut hasher);
+    fn hash_node<T: TargetHashingTargetNode>(
+        node: &T,
+        mut hasher: &mut dyn BuckTargetHasher,
+    ) -> buck2_error::Result<()> {
+        node.target_hash(&mut hasher)
     }
 
     fn hash_deps(

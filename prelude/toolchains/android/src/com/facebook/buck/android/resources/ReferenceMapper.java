@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.resources;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.IntBuffer;
 
 /**
@@ -22,6 +23,7 @@ import java.nio.IntBuffer;
  * <p>A ReferenceMapper implements a method to update references and to rewrite those arrays that
  * they refer to.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface ReferenceMapper {
   /** Converts an id to its new value under this mapping. */
   int map(int id);

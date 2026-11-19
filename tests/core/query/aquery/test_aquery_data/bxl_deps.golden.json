@@ -14,6 +14,15 @@
     "buck.all_outputs_are_content_based": "false",
     "buck.all_inputs_are_eligible_for_dedupe": "true"
   },
+  "(target: `root//:test (<unspecified>)`, id: `3`)": {
+    "kind": "copy",
+    "category": "copy",
+    "identifier": "other_default",
+    "buck.executor_configuration": "RemoteEnabled + executor hybrid + remote cache enabled + cache upload disabled + remote dep file cache disabled",
+    "buck.all_outputs_are_content_based": "false",
+    "buck.all_inputs_are_eligible_for_dedupe": "false",
+    "buck.all_ineligible_for_dedup_inputs": "`(root//:test (<unspecified>))/dep`, action: (target: `root//:test (<unspecified>)`, id: `0`)"
+  },
   "(target: `root//:test (<unspecified>)`, id: `1`)": {
     "kind": "copy",
     "category": "copy",

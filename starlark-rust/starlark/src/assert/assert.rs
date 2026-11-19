@@ -23,10 +23,10 @@
 #![allow(clippy::if_then_panic)]
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use dupe::Dupe;
 use maplit::hashmap;
-use once_cell::sync::Lazy;
 use starlark_derive::starlark_module;
 
 use crate as starlark;
@@ -42,32 +42,36 @@ use crate::syntax::AstModule;
 use crate::syntax::Dialect;
 use crate::values::AllocValue;
 use crate::values::Heap;
-use crate::values::OwnedFrozenValue;
+use crate::values::OwnedFrozen;
 use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::layout::heap::name::StarlarkTestHeapName;
+use crate::values::list::AllocList;
 use crate::values::none::NoneType;
 use crate::values::structs::AllocStruct;
-use crate::values::tuple::UnpackTuple;
+use crate::values::tuple::TupleType;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 
 fn mk_environment() -> GlobalsBuilder {
     GlobalsBuilder::extended().with(test_functions)
 }
 
-static GLOBALS: Lazy<Globals> = Lazy::new(|| mk_environment().build());
+static GLOBALS: LazyLock<Globals> = LazyLock::new(|| mk_environment().build());
 
-static ASSERTS_STAR: Lazy<FrozenModule> = Lazy::new(|| {
+static ASSERTS_STAR: LazyLock<FrozenModule> = LazyLock::new(|| {
     let g = GlobalsBuilder::new()
         .with_namespace("asserts", asserts_star)
         .build();
-    let m = Module::new();
-    m.frozen_heap().add_reference(g.heap());
-    let asserts = g.get("asserts").unwrap();
-    m.set("asserts", asserts);
-    m.set(
-        "freeze",
-        asserts.get_attr("freeze", m.heap()).unwrap().unwrap(),
-    );
-    m.freeze().unwrap()
+    Module::with_temp_heap(move |m| {
+        let asserts = g.get_owned("asserts").unwrap().add_to_heap(m.heap());
+        m.set("asserts", asserts);
+        m.set(
+            "freeze",
+            asserts.get_attr("freeze", m.heap()).unwrap().unwrap(),
+        );
+        m.freeze_named(StarlarkTestHeapName::frozen_heap_name())
+            .unwrap()
+    })
 });
 
 fn assert_equals<'v>(a: Value<'v>, b: Value<'v>) -> starlark::Result<NoneType> {
@@ -152,7 +156,7 @@ fn asserts_star(builder: &mut crate::environment::GlobalsBuilder) {
 #[starlark_module]
 pub(crate) fn test_functions(builder: &mut GlobalsBuilder) {
     // Used by one of the test methods in Go
-    const fibonacci: Vec<i32> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+    const fibonacci: AllocList<[i32; 12]> = AllocList([0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89]);
 
     // Approximate version of a method used by the Go test suite
     fn hasfields<'v>() -> anyhow::Result<impl AllocValue<'v>> {
@@ -193,7 +197,7 @@ pub(crate) fn test_functions(builder: &mut GlobalsBuilder) {
         Ok(NoneType)
     }
 
-    fn assert_type<'v>(v: Value<'v>, ty: Value<'v>, heap: &'v Heap) -> starlark::Result<NoneType> {
+    fn assert_type<'v>(v: Value<'v>, ty: Value<'v>, heap: Heap<'v>) -> starlark::Result<NoneType> {
         TypeCompiled::new(ty, heap)?.check_type(v, Some("v"))?;
         Ok(NoneType)
     }
@@ -202,11 +206,11 @@ pub(crate) fn test_functions(builder: &mut GlobalsBuilder) {
     ///
     /// This function is unknown to optimizer, so it can be used in optimizer tests.
     fn noop<'v>(
-        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
         #[starlark(kwargs)] kwargs: Value<'v>,
     ) -> anyhow::Result<Value<'v>> {
         let _ = kwargs;
-        Ok(args.items.into_iter().next().unwrap_or(Value::new_none()))
+        Ok(args.items().next().unwrap_or(Value::new_none()))
     }
 }
 
@@ -233,8 +237,8 @@ impl<'a> Assert<'a> {
     pub fn new() -> Self {
         Self {
             dialect: Dialect::AllOptionsInternal,
-            modules: hashmap!["asserts.star".to_owned() => Lazy::force(&ASSERTS_STAR).dupe()],
-            globals: Lazy::force(&GLOBALS).dupe(),
+            modules: hashmap!["asserts.star".to_owned() => LazyLock::force(&ASSERTS_STAR).dupe()],
+            globals: LazyLock::force(&GLOBALS).dupe(),
             gc_strategy: None,
             setup_eval: Box::new(|_| ()),
             print_handler: None,
@@ -245,6 +249,11 @@ impl<'a> Assert<'a> {
     /// Disable garbage collection on the tests.
     pub fn disable_gc(&mut self) {
         self.gc_strategy = Some(GcStrategy::Never)
+    }
+
+    /// Configure garbage collection to run aggressively.
+    pub fn always_gc(&mut self) {
+        self.gc_strategy = Some(GcStrategy::Always)
     }
 
     /// Configure a callback which is used to setup evaluator before each evaluation.
@@ -280,7 +289,7 @@ impl<'a> Assert<'a> {
         &self,
         path: &str,
         program: &str,
-        module: &'v Module,
+        module: &Module<'v>,
         gc: GcStrategy,
     ) -> crate::Result<Value<'v>> {
         let mut modules = HashMap::with_capacity(self.modules.len());
@@ -307,14 +316,14 @@ impl<'a> Assert<'a> {
             GcStrategy::Always => eval.before_stmt_fn(&gc_always),
         }
         eval.set_loader(&loader);
-        eval.eval_module(ast, &self.globals).map_err(Into::into)
+        eval.eval_module(ast, &self.globals)
     }
 
     fn execute_fail<'v>(
         &self,
         func: &str,
         program: &str,
-        module: &'v Module,
+        module: &Module<'v>,
         gc: GcStrategy,
     ) -> crate::Error {
         match self.execute("assert.bzl", program, module, gc) {
@@ -330,7 +339,7 @@ impl<'a> Assert<'a> {
         func: &str,
         path: &str,
         program: &str,
-        module: &'v Module,
+        module: &Module<'v>,
         gc: GcStrategy,
     ) -> Value<'v> {
         match self.execute(path, program, module, gc) {
@@ -348,7 +357,7 @@ impl<'a> Assert<'a> {
         &self,
         func: &str,
         program: &str,
-        module: &'v Module,
+        module: &Module<'v>,
         gc: GcStrategy,
     ) {
         let v = self.execute_unwrap(func, "assert.bzl", program, module, gc);
@@ -363,7 +372,7 @@ impl<'a> Assert<'a> {
         &self,
         func: &str,
         program: &str,
-        module: &'v Module,
+        module: &Module<'v>,
         gc: GcStrategy,
     ) {
         let v = self.execute_unwrap(func, "assert.bzl", program, module, gc);
@@ -401,9 +410,10 @@ impl<'a> Assert<'a> {
     pub fn module(&mut self, name: &str, program: &str) -> FrozenModule {
         let module = self
             .with_gc(|gc| {
-                let module = Module::new();
-                self.execute_unwrap("module", &format!("{name}.bzl"), program, &module, gc);
-                module.freeze()
+                Module::with_temp_heap(|module| {
+                    self.execute_unwrap("module", &format!("{name}.bzl"), program, &module, gc);
+                    module.freeze_named(StarlarkTestHeapName::frozen_heap_name())
+                })
             })
             .expect("error freezing module");
         self.module_add(name, module.dupe());
@@ -424,24 +434,33 @@ impl<'a> Assert<'a> {
 
     fn fails_with_name(&self, func: &str, program: &str, msgs: &[&str]) -> crate::Error {
         self.with_gc(|gc| {
-            let module_env = Module::new();
-            let original = self.execute_fail(func, program, &module_env, gc);
-            // We really want to check the error message, but if in our doc tests we do:
-            // fail("bad") # error: magic
-            // Then when we print the source code, magic is contained in the error message.
-            // Therefore, find the internals.
-            let inner = original.without_diagnostic();
-            let err_msg = format!("{inner:#}");
-            for msg in msgs {
-                if !err_msg.contains(msg) {
-                    original.eprint();
-                    panic!(
-                    "starlark::assert::{func}, failed with the wrong message!\nCode:\n{program}\nError:\n{inner:#}\nMissing:\n{msg}\nExpected:\n{msgs:?}"
-                )
+            Module::with_temp_heap(|module_env| {
+                let original = self.execute_fail(func, program, &module_env, gc);
+                // We really want to check the error message, but if in our doc tests we do:
+                // fail("bad") # error: magic
+                // Then when we print the source code, magic is contained in the error message.
+                // Therefore, find the internals.
+                let inner = original.without_diagnostic();
+                let err_msg = format!("{inner:#}");
+                for msg in msgs {
+                    if !err_msg.contains(msg) {
+                        original.eprint();
+                        panic!(
+                            "starlark::assert::{func}, failed with the wrong message!
+Code:
+{program}
+Error:
+{inner:#}
+Missing:
+{msg}
+Expected:
+{msgs:?}"
+                        )
+                    }
                 }
-            }
-            drop(inner);
-            original
+                drop(inner);
+                original
+            })
         })
     }
 }
@@ -482,15 +501,16 @@ impl<'a> Assert<'a> {
     /// # use starlark::assert::Assert;
     /// Assert::new().pass("assert_eq(1, 1)");
     /// ```
-    pub fn pass(&self, program: &str) -> OwnedFrozenValue {
+    pub fn pass(&self, program: &str) -> OwnedFrozen<Value<'static>> {
         self.with_gc(|gc| {
-            let env = Module::new();
-            let res = self.execute_unwrap("pass", "assert.bzl", program, &env, gc);
-            env.set("_", res);
-            env.freeze()
-                .expect("error freezing module")
-                .get("_")
-                .unwrap()
+            Module::with_temp_heap(|env| {
+                let res = self.execute_unwrap("pass", "assert.bzl", program, &env, gc);
+                env.set("_", res);
+                env.freeze_named(StarlarkTestHeapName::frozen_heap_name())
+                    .expect("error freezing module")
+                    .get("_")
+                    .unwrap()
+            })
         })
     }
 
@@ -498,9 +518,11 @@ impl<'a> Assert<'a> {
     /// that `program` was evaluated in.
     pub fn pass_module(&self, program: &str) -> FrozenModule {
         self.with_gc(|gc| {
-            let env = Module::new();
-            self.execute_unwrap("pass", "assert.bzl", program, &env, gc);
-            env.freeze().expect("error freezing module")
+            Module::with_temp_heap(|env| {
+                self.execute_unwrap("pass", "assert.bzl", program, &env, gc);
+                env.freeze_named(StarlarkTestHeapName::frozen_heap_name())
+                    .expect("error freezing module")
+            })
         })
     }
 
@@ -517,16 +539,14 @@ impl<'a> Assert<'a> {
     /// ```
     pub fn is_true(&self, program: &str) {
         self.with_gc(|gc| {
-            let env = Module::new();
-            self.execute_unwrap_true("is_true", program, &env, gc);
+            Module::with_temp_heap(|env| self.execute_unwrap_true("is_true", program, &env, gc))
         })
     }
 
     /// A program that must evaluate to `False`.
     pub fn is_false(&self, program: &str) {
         self.with_gc(|gc| {
-            let env = Module::new();
-            self.execute_unwrap_false("is_false", program, &env, gc);
+            Module::with_temp_heap(|env| self.execute_unwrap_false("is_false", program, &env, gc))
         })
     }
 
@@ -548,8 +568,7 @@ impl<'a> Assert<'a> {
                 if s == "" {
                     continue;
                 }
-                let env = Module::new();
-                self.execute_unwrap_true("all_true", s, &env, gc);
+                Module::with_temp_heap(|env| self.execute_unwrap_true("all_true", s, &env, gc))
             }
         })
     }
@@ -562,15 +581,25 @@ impl<'a> Assert<'a> {
     /// ```
     pub fn eq(&self, lhs: &str, rhs: &str) {
         self.with_gc(|gc| {
-            let lhs_m = Module::new();
-            let rhs_m = Module::new();
-            let lhs_v = self.execute_unwrap("eq", "lhs.bzl", lhs, &lhs_m, gc);
-            let rhs_v = self.execute_unwrap("eq", "rhs.bzl", rhs, &rhs_m, gc);
-            if lhs_v != rhs_v {
-                panic!(
-                "starlark::assert::eq, values differ!\nCode 1:\n{lhs}\nCode 2:\n{rhs}\nValue 1:\n{lhs_v}\nValue 2\n{rhs_v}"
-            );
-            }
+            Heap::temp(|heap| {
+                let lhs_m = Module::with_heap(heap);
+                let rhs_m = Module::with_heap(heap);
+                let lhs_v = self.execute_unwrap("eq", "lhs.bzl", lhs, &lhs_m, gc);
+                let rhs_v = self.execute_unwrap("eq", "rhs.bzl", rhs, &rhs_m, gc);
+                if lhs_v != rhs_v {
+                    panic!(
+                        "starlark::assert::eq, values differ!
+Code 1:
+{lhs}
+Code 2:
+{rhs}
+Value 1:
+{lhs_v}
+Value 2
+{rhs_v}"
+                    );
+                }
+            })
         })
     }
 }
@@ -639,7 +668,7 @@ pub fn all_true(expressions: &str) {
 }
 
 /// See [`Assert::pass`].
-pub fn pass(program: &str) -> OwnedFrozenValue {
+pub fn pass(program: &str) -> OwnedFrozen<Value<'static>> {
     Assert::new().pass(program)
 }
 

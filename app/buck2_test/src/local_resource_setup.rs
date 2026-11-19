@@ -9,19 +9,17 @@
  */
 
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::FrozenExternalRunnerTestInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::local_resource_info::FrozenLocalResourceInfo;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::local_resource_info::LocalResourceInfo;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::local_resource_info::OwnedLocalResourceInfo;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::soft_error;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
+use buck2_error::internal_error;
+use buck2_hash::BuckMutMap;
 use buck2_test_api::data::RequiredLocalResources;
 use buck2_test_api::data::TestStage;
 use dice::DiceComputations;
-use futures::FutureExt;
 use itertools::Itertools;
-use starlark::values::OwnedFrozenValueTyped;
 
 pub(crate) enum TestStageSimple {
     Listing,
@@ -39,30 +37,15 @@ impl From<&TestStage> for TestStageSimple {
 
 pub(crate) async fn required_providers<'v>(
     dice: &mut DiceComputations<'_>,
-    test_info: &'v FrozenExternalRunnerTestInfo,
+    available_resources: BuckMutMap<&'v str, Option<&'v ConfiguredProvidersLabel>>,
+    rule_required_resource_names: Vec<&'v str>,
     required_local_resources: &'v RequiredLocalResources,
-    stage: &TestStageSimple,
-) -> buck2_error::Result<
-    Vec<(
-        &'v ConfiguredTargetLabel,
-        OwnedFrozenValueTyped<FrozenLocalResourceInfo>,
-    )>,
-> {
-    let available_resources = test_info.local_resources();
-
+) -> buck2_error::Result<Vec<(&'v ConfiguredTargetLabel, OwnedLocalResourceInfo)>> {
     let targets = required_local_resources
         .resources
         .iter()
         .map(|resource_type| &resource_type.name as &'v str)
-        .chain(
-            test_info
-                .required_local_resources()
-                .filter_map(|r| match stage {
-                    TestStageSimple::Listing if r.listing => Some(&r.name as &str),
-                    TestStageSimple::Testing if r.execution => Some(&r.name as &str),
-                    _ => None,
-                }),
-        )
+        .chain(rule_required_resource_names)
         .unique()
         .map(|type_name| {
             available_resources.get(type_name).copied().ok_or_else(|| {
@@ -75,15 +58,14 @@ pub(crate) async fn required_providers<'v>(
         .filter_map(|r| match r {
             Ok(Some(x)) => Some(Ok(x)),
             Ok(None) => None,
-            Err(e) => {
-                let _ignore = soft_error!("missing_required_local_resource", e, quiet: true);
-                None
-            }
+            Err(e) => Some(Err(e)),
         })
         .collect::<Result<Vec<_>, buck2_error::Error>>()?;
+    // Several resource types may name the same provider; it is set up once.
+    let targets = targets.into_iter().unique().collect::<Vec<_>>();
 
-    dice.compute_join(targets, |dice, target| {
-        async move { get_local_resource_info(dice, target).await }.boxed()
+    dice.compute_join(targets, async |dice, target| {
+        get_local_resource_info(dice, target).await
     })
     .await
     .into_iter()
@@ -93,21 +75,14 @@ pub(crate) async fn required_providers<'v>(
 async fn get_local_resource_info<'v>(
     dice: &mut DiceComputations<'_>,
     target: &'v ConfiguredProvidersLabel,
-) -> buck2_error::Result<(
-    &'v ConfiguredTargetLabel,
-    OwnedFrozenValueTyped<FrozenLocalResourceInfo>,
-)> {
+) -> buck2_error::Result<(&'v ConfiguredTargetLabel, OwnedLocalResourceInfo)> {
     let local_resource_info = dice
         .get_providers(target)
         .await?
         .require_compatible()?
-        .value
-        .maybe_map(|c| {
-            c.as_ref()
-                .builtin_provider_value::<FrozenLocalResourceInfo>()
-        })
-        .buck_error_context(format!(
-            "Target `{target}` expected to contain `LocalResourceInfo` provider"
-        ))?;
+        .builtin_provider_value::<LocalResourceInfo>()?
+        .ok_or_else(|| {
+            internal_error!("Target `{target}` expected to contain `LocalResourceInfo` provider")
+        })?;
     Ok((target.target(), local_resource_info))
 }

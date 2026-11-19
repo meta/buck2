@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 //! Protobufs for ineteracting with Buck's DownwardApi over GPRC. This isn't the protocol Buck v1
 //! speaks, where the DownwardApi is accessed over named pipes with serialized JSON payloads. This
 //! is a different way to make the same calls.

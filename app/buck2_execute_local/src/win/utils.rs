@@ -11,9 +11,8 @@
 use std::io::Error;
 
 use buck2_error::buck2_error;
-use winapi::shared::minwindef::BOOL;
-use winapi::shared::minwindef::DWORD;
-use winapi::shared::minwindef::FALSE;
+use windows_sys::Win32::Foundation::FALSE;
+use windows_sys::core::BOOL;
 
 pub(crate) fn result_bool(ret: BOOL) -> buck2_error::Result<()> {
     if ret == FALSE {
@@ -27,8 +26,8 @@ pub(crate) fn result_bool(ret: BOOL) -> buck2_error::Result<()> {
     }
 }
 
-pub(crate) fn result_dword(ret: DWORD) -> buck2_error::Result<()> {
-    if ret == DWORD::MAX {
+pub(crate) fn result_dword(ret: u32) -> buck2_error::Result<()> {
+    if ret == u32::MAX {
         Err(buck2_error!(
             buck2_error::ErrorTag::Tier0,
             "{}",

@@ -11,8 +11,8 @@
 use std::fmt::Display;
 use std::hash::Hash;
 
+use buck2_hash::BuckMutInsertionMap;
 use starlark_map::Hashed;
-use starlark_map::small_map::SmallMap;
 
 use crate::graph::Graph;
 use crate::graph::GraphVertex;
@@ -31,7 +31,7 @@ pub enum PushError<K: Display> {
 }
 
 pub struct GraphBuilder<K: Hash + Eq, D> {
-    keys: SmallMap<K, VertexId>,
+    keys: BuckMutInsertionMap<K, VertexId>,
     data: Vec<D>,
     vertices: Vec<GraphVertex>,
     edges: Vec<VertexId>,

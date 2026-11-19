@@ -12,7 +12,7 @@ def _impl(ctx):
     return [DefaultInfo()]
 
 def _transition_impl(platform, refs):
-    _ignore = (platform)
+    _ignore = platform
     constraint = refs.value[ConstraintValueInfo]
     return PlatformInfo(
         label = "<fgfgf>",
@@ -32,8 +32,7 @@ _tr = transition(
 self_transitioned_build = rule(
     impl = _impl,
     cfg = _tr,
-    attrs = {
-    },
+    attrs = {},
 )
 
 def _alias_impl(ctx):

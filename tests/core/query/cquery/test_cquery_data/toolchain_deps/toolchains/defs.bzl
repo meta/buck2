@@ -7,8 +7,9 @@
 # above-listed licenses.
 
 def _toolchain(
-        # starlark-lint-disable unused-argument
-        ctx):  # @unused
+    # starlark-lint-disable unused-argument
+    ctx,
+):  # @unused
     fail("we do not run analysis in query tests")
 
 toolchain = rule(

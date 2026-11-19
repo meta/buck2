@@ -13,6 +13,7 @@ use buck2_build_api::validation::validation_impl::VALIDATION_IMPL;
 use buck2_build_api::validation::validation_impl::ValidationImpl;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use dice::DiceComputations;
+use dupe::ResultDupedErrExt;
 
 use crate::cached_validation_result::CachedValidationResultData;
 use crate::transitive_validation_key::TransitiveValidationKey;
@@ -31,7 +32,7 @@ impl ValidationImpl for ValidationImplInstance {
         target: ConfiguredTargetLabel,
     ) -> Result<(), buck2_error::Error> {
         let key = TransitiveValidationKey(target);
-        let result = ctx.compute(&key).await??;
+        let result = ctx.compute(&key).await?.as_ref().duped_err()?;
         match result.0.as_ref() {
             CachedValidationResultData::Success => Ok(()),
             CachedValidationResultData::Failure(e) => Err(buck2_error::Error::from(e.clone())),

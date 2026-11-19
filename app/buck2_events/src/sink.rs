@@ -11,6 +11,7 @@
 //! Implementations of `[crate::EventSink]` that are useful in different situations. Buck2 primarily uses the `channel`
 //! sink during normal operation.
 pub(crate) mod channel;
+pub mod error_on_event;
 pub mod null;
 pub mod remote;
 #[cfg(fbcode_build)]

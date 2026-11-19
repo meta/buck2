@@ -14,7 +14,9 @@
           "errors": [
             {
               "action_error": null,
+              "category_key": "RunActionError::NoOutputsSpecified:ANALYSIS",
               "cause_index": 0,
+              "error_category": "USER",
               "error_tags": [
                 "ANALYSIS",
                 "INPUT"
@@ -40,9 +42,12 @@
           "errors": [
             {
               "action_error": null,
+              "category_key": "STARLARK_RUNTIME_TYPE_ERROR:STARLARK_VALUE:starlark_runtime_type_error=ATTRIBUTE",
               "cause_index": 1,
+              "error_category": "USER",
               "error_tags": [
                 "ANALYSIS",
+                "STARLARK_RUNTIME_TYPE_ERROR",
                 "STARLARK_VALUE"
               ],
               "message_content": "<STRING_HASH>"

@@ -1,0 +1,16 @@
+{
+  "string_val": "hello",
+  "int_val": 42,
+  "negative_int": -7,
+  "float_val": 3.14,
+  "bool_true": true,
+  "bool_false": false,
+  "null_val": null,
+  "string_array": ["a", "b", "c"],
+  "int_array": [1, 2, 3],
+  "mixed_array": [1, "two", true, null],
+  "nested": {
+    "key": "value",
+    "number": 99
+  }
+}

@@ -1,0 +1,60 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+_ = 1,
+
+Error:
+error: unparenthesized tuple with trailing comma
+ --> error_tuple_trailing_comma:1:5
+  |
+1 | _ = 1,
+  |     ^^
+
+
+Program:
+for k, v, in dict.items():
+  pass
+
+Error:
+error: unparenthesized tuple with trailing comma
+ --> error_tuple_trailing_comma:1:5
+  |
+1 | for k, v, in dict.items():
+  |     ^^^^^
+
+
+Program:
+_ = [(v, k) for k, v, in dict.items()]
+
+Error:
+error: unparenthesized tuple with trailing comma
+ --> error_tuple_trailing_comma:1:17
+  |
+1 | _ = [(v, k) for k, v, in dict.items()]
+  |                 ^^^^^
+
+
+Program:
+a, b, = 1, 2
+
+Error:
+error: unparenthesized tuple with trailing comma
+ --> error_tuple_trailing_comma:1:1
+  |
+1 | a, b, = 1, 2
+  | ^^^^^
+
+
+Program:
+a, b = 1, 2,
+
+Error:
+error: unparenthesized tuple with trailing comma
+ --> error_tuple_trailing_comma:1:8
+  |
+1 | a, b = 1, 2,
+  |        ^^^^^

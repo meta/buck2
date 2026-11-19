@@ -23,7 +23,6 @@ use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::path_arg::PathArg;
 use buck2_client_ctx::streaming::StreamingCommand;
-use gazebo::prelude::SliceExt;
 
 /// Evaluate `bzl` or `bxl` file.
 ///
@@ -61,9 +60,11 @@ impl StreamingCommand for EvalCommand {
             .new_generic(
                 context,
                 NewGenericRequest::DebugEval(DebugEvalRequest {
-                    paths: self.paths.try_map(|p| {
-                        buck2_error::Ok(p.resolve(&ctx.working_dir).to_str()?.to_owned())
-                    })?,
+                    paths: self
+                        .paths
+                        .iter()
+                        .map(|p| buck2_error::Ok(p.resolve(&ctx.working_dir).to_str()?.to_owned()))
+                        .collect::<Result<Vec<_>, _>>()?,
                 }),
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),

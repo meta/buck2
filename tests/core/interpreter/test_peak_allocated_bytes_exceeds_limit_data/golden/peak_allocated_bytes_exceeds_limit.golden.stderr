@@ -1,0 +1,14 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error evaluating expression:
+    //:EEE
+    ^----^
+
+
+Caused by:
+    0: Error evaluating build file: `prelude//:TARGETS.fixture`
+    1: Starlark peak memory usage for prelude//:TARGETS.fixture is  <USAGE> which exceeds the limit <USAGE>! Please reduce memory usage to prevent OOMs. See https://fburl.com/starlark_peak_mem_warning for debugging tips.

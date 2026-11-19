@@ -26,10 +26,6 @@ impl<F: Future> MaybeFuture<F> {
     pub(crate) fn take(mut self: Pin<&mut Self>) {
         self.set(MaybeFuture::None);
     }
-
-    pub(crate) fn set_fut(mut self: Pin<&mut Self>, f: F) {
-        self.set(MaybeFuture::Fut(f));
-    }
 }
 
 impl<F> Future for MaybeFuture<F>

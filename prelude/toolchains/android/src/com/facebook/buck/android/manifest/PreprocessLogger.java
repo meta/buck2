@@ -11,12 +11,14 @@
 package com.facebook.buck.android.manifest;
 
 import com.android.utils.ILogger;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedWriter;
 import java.io.Closeable;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Logger for manifest preprocessing activities.
@@ -24,6 +26,7 @@ import java.nio.file.Paths;
  * <p>Always writes preprocessing logs to a file. If no path is specified, creates a temporary log
  * file in /tmp. Throws exceptions if logging fails to ensure build transparency.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class PreprocessLogger implements Closeable {
   private final BufferedWriter writer;
   private final Path logPath;
@@ -41,7 +44,7 @@ public class PreprocessLogger implements Closeable {
    * @return PreprocessLogger instance
    * @throws IOException if the log file cannot be created
    */
-  public static PreprocessLogger create(Path logPath, ILogger logger) throws IOException {
+  public static PreprocessLogger create(@Nullable Path logPath, ILogger logger) throws IOException {
     Path actualLogPath;
     if (logPath != null) {
       actualLogPath = logPath;

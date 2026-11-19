@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
 
@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use buck2_cli_proto::BuildRequest;
 use buck2_cli_proto::build_request::BuildProviders;
 use buck2_cli_proto::build_request::Materializations;
+use buck2_cli_proto::build_request::ResponseOptions;
 use buck2_cli_proto::build_request::Uploads;
 use buck2_cli_proto::build_request::build_providers;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
@@ -31,6 +32,7 @@ use buck2_client_ctx::common::ui::CommonConsoleOptions;
 use buck2_client_ctx::daemon::client::BuckdClientConnector;
 use buck2_client_ctx::daemon::client::NoPartialResultHandler;
 use buck2_client_ctx::events_ctx::EventsCtx;
+use buck2_client_ctx::exit_result::ExecEnvironment;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::path_arg::PathArg;
 use buck2_client_ctx::streaming::StreamingCommand;
@@ -38,21 +40,40 @@ use buck2_common::argv::Argv;
 use buck2_common::argv::SanitizedArgv;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
+use buck2_hash::BuckMutSet;
+use buck2_wrapper_common::BUCK_WRAPPER_PID_ENV_VAR;
 use buck2_wrapper_common::BUCK_WRAPPER_START_TIME_ENV_VAR;
 use buck2_wrapper_common::BUCK_WRAPPER_UUID_ENV_VAR;
 use buck2_wrapper_common::BUCK2_WRAPPER_ENV_VAR;
 use serde::Serialize;
 
+use crate::commands::build::print_buck_ui;
 use crate::commands::build::print_build_failed;
 use crate::commands::build::print_build_result;
 use crate::commands::build::print_build_succeeded;
 
+const WRAPPER_ENV_VARS: [&str; 4] = [
+    BUCK2_WRAPPER_ENV_VAR,
+    BUCK_WRAPPER_PID_ENV_VAR,
+    BUCK_WRAPPER_UUID_ENV_VAR,
+    BUCK_WRAPPER_START_TIME_ENV_VAR,
+];
+
 /// Build and run the selected target.
+///
+/// Use `--` to separate arguments to the target from arguments to buck2:
+///
+/// buck2 run //my/target -- --arg1 --arg2
 ///
 /// The Build ID for the underlying build execution is made available to the target in
 /// the `BUCK_RUN_BUILD_ID` environment variable.
 #[derive(Debug, clap::Parser)]
-#[clap(name = "run", trailing_var_arg = true)]
+// FIXME(JakobDegen): Remove usage override once soft error is removed
+#[clap(
+    name = "run",
+    trailing_var_arg = true,
+    override_usage = "buck2 run [OPTIONS] <TARGET> [-- <TARGET_ARGS>...]"
+)]
 pub struct RunCommand {
     #[clap(
         long = "command-args-file",
@@ -103,6 +124,12 @@ impl StreamingCommand for RunCommand {
         ctx: &mut ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
+        let run_args_missing_separator =
+            // We will soon require a separator before the start of the runs args.
+            // Check that the expanded argv has a separator (so we catch them in @ files), 
+            // and if not print a warning.
+            !self.extra_run_args.is_empty() && !ctx.expanded_argv_has_separator();
+
         let context = ctx.client_context(matches, &self)?;
         let has_target_universe = !self.target_cfg.target_universe.is_empty();
         // TODO(rafaelc): fail fast on the daemon if the target doesn't have RunInfo
@@ -119,12 +146,18 @@ impl StreamingCommand for RunCommand {
                         run_info: build_providers::Action::Build as i32,
                         test_info: build_providers::Action::Skip as i32,
                     }),
-                    response_options: None,
+                    // `buck run` execs the target, so it needs the resolved run command line.
+                    response_options: Some(ResponseOptions {
+                        return_outputs: false,
+                        return_run_args: true,
+                    }),
                     build_opts: Some(self.build_opts.to_proto()),
                     final_artifact_materializations: Materializations::Materialize as i32,
                     final_artifact_uploads: Uploads::Never as i32,
                     target_universe: self.target_cfg.target_universe,
                     timeout: None, // TODO: maybe it shouild be supported here?
+                    run_args_missing_separator,
+                    streaming_build_report_final_only: false,
                 },
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),
@@ -172,16 +205,8 @@ impl StreamingCommand for RunCommand {
             None
         };
 
+        print_buck_ui(&console, ctx, events_ctx.used_superconsole)?;
         print_build_succeeded(&console, ctx, extra)?;
-
-        // Special case for recursive invocations of buck; `BUCK2_WRAPPER` is set by wrapper scripts that execute
-        // Buck2. We're not a wrapper script, so we unset it to prevent `run` from inheriting it.
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::remove_var(BUCK2_WRAPPER_ENV_VAR) };
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::remove_var(BUCK_WRAPPER_UUID_ENV_VAR) };
-        // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::remove_var(BUCK_WRAPPER_START_TIME_ENV_VAR) };
 
         if let Some(file_path) = self.command_args_file {
             let mut output = File::create(&file_path).with_buck_error_context(|| {
@@ -191,7 +216,9 @@ impl StreamingCommand for RunCommand {
             let command = CommandArgsFile {
                 path: run_args[0].clone(),
                 argv: run_args,
-                envp: std::env::vars().collect(),
+                envp: std::env::vars()
+                    .filter(|(key, _value)| !WRAPPER_ENV_VARS.contains(&key.as_str()))
+                    .collect(),
                 is_fix_script: false,
                 print_command: false,
             };
@@ -217,13 +244,23 @@ impl StreamingCommand for RunCommand {
             }
         }
 
-        let chdir = self.chdir.map(|chdir| chdir.resolve(&ctx.working_dir));
+        // Under --no-buckd the in-process daemon owns this process' working directory and
+        // moves it into buck-out, so the exec'd target would start there instead of where the
+        // user invoked `buck run`: hand it the invocation directory, which was captured before
+        // any daemon ran. An explicit --chdir wins.
+        let chdir = Some(match self.chdir {
+            Some(chdir) => chdir.resolve(&ctx.working_dir),
+            None => ctx.working_dir.path().to_buf().into_abs_path_buf(),
+        });
 
         ExitResult::exec(
             run_args[0].clone().into(),
             run_args.into_iter().map(|arg| arg.into()).collect(),
             chdir,
-            vec![("BUCK_RUN_BUILD_ID".to_owned(), ctx.trace_id.to_string())],
+            ExecEnvironment {
+                set: vec![("BUCK_RUN_BUILD_ID".to_owned(), ctx.trace_id.to_string())],
+                remove: WRAPPER_ENV_VARS.into_iter().map(str::to_owned).collect(),
+            },
         )
     }
 
@@ -244,7 +281,7 @@ impl StreamingCommand for RunCommand {
     }
 
     fn sanitize_argv(&self, argv: Argv) -> SanitizedArgv {
-        let to_redact: std::collections::HashSet<_> = self.extra_run_args.iter().collect();
+        let to_redact: BuckMutSet<_> = self.extra_run_args.iter().collect();
         argv.redacted(to_redact)
     }
 }
@@ -253,7 +290,7 @@ impl StreamingCommand for RunCommand {
 struct CommandArgsFile {
     path: String,
     argv: Vec<String>,
-    envp: HashMap<String, String>,
+    envp: BTreeMap<String, String>,
     // Not used. For buck_v1 back compatibility only.
     is_fix_script: bool,
     // Not used. For buck_v1 back compatibility only.
@@ -271,4 +308,9 @@ pub enum RunCommandError {
     MultipleTargets,
     #[error("Target `{0}` is not found in the specified target universe")]
     TargetNotFoundInTargetUniverse(String),
+    #[error(
+        "`buck2 run` will require a `--` separator before target arguments in the future. \
+         Please use `buck2 run <target> -- <args>` instead of `buck2 run <target> <args>`"
+    )]
+    MissingSeparator,
 }

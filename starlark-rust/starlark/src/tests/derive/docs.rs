@@ -21,24 +21,23 @@ use serde::Serialize;
 use serde::Serializer;
 use starlark_derive::Freeze;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::Trace;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::coerce::Coerce;
 use crate::docs::DocMember;
 use crate::docs::DocString;
 use crate::docs::DocStringKind;
 use crate::docs::DocType;
 use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
-use crate::environment::MethodsStatic;
 use crate::starlark_complex_value;
 use crate::starlark_simple_value;
 use crate::values::StarlarkValue;
-use crate::values::ValueLike;
+use crate::values::Value;
 
 /// Main module docs
 #[starlark_module]
@@ -50,10 +49,19 @@ fn object_docs_1(_: &mut MethodsBuilder) {
     }
 }
 
-#[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
 struct TestExample {}
 
 starlark_simple_value!(TestExample);
+
+starlark::methods_static!(TEST_EXAMPLE_METHODS = object_docs_1);
 
 #[starlark_value(type = "TestExample")]
 impl<'v> StarlarkValue<'v> for TestExample {
@@ -61,28 +69,24 @@ impl<'v> StarlarkValue<'v> for TestExample {
     where
         Self: Sized,
     {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(object_docs_1)
+        Some(TEST_EXAMPLE_METHODS.methods())
     }
 }
 
 #[derive(
     Clone,
     Debug,
-    Coerce,
     Display,
     Trace,
     Freeze,
     ProvidesStaticType,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[repr(C)]
-struct ComplexTestExampleGen<V>(V);
+struct ComplexTestExample<'v>(Value<'v>);
 
-impl<V> Serialize for ComplexTestExampleGen<V>
-where
-    V: Serialize,
-{
+impl<'v> Serialize for ComplexTestExample<'v> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -93,8 +97,10 @@ where
 
 starlark_complex_value!(ComplexTestExample);
 
-#[starlark_value(type = "ComplexTestExample")]
-impl<'v, T: ValueLike<'v> + ProvidesStaticType<'v>> StarlarkValue<'v> for ComplexTestExampleGen<T>
+starlark::methods_static!(COMPLEX_TEST_EXAMPLE_METHODS = object_docs_1);
+
+#[starlark_value(type = "ComplexTestExample", alloc = by_hand)]
+impl<'v> StarlarkValue<'v> for ComplexTestExample<'v>
 where
     Self: ProvidesStaticType<'v>,
 {
@@ -102,8 +108,7 @@ where
     where
         Self: Sized,
     {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(object_docs_1)
+        Some(COMPLEX_TEST_EXAMPLE_METHODS.methods())
     }
 }
 
@@ -129,7 +134,7 @@ fn test_derive_docs() {
 
 #[test]
 fn test_derive_docs_on_complex_values() {
-    let complex_obj = DocType::from_starlark_value::<FrozenComplexTestExample>();
+    let complex_obj = DocType::from_starlark_value::<ComplexTestExample<'static>>();
 
     assert_eq!(
         DocString::from_docstring(DocStringKind::Rust, "Main module docs"),

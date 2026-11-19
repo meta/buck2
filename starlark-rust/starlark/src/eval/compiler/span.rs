@@ -17,19 +17,22 @@
 
 use std::ops::Deref;
 
+use starlark_derive::StarlarkPagable;
+
+use crate as starlark;
 use crate::eval::runtime::frame_span::FrameSpan;
 
 /// Similar to `Spanned<T>` but with file span.
 ///
 /// For intermediate representation.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct IrSpanned<T> {
-    pub(crate) span: FrameSpan,
+#[derive(Clone, Copy, Debug, StarlarkPagable)]
+pub(crate) struct IrSpanned<'f, T> {
+    pub(crate) span: FrameSpan<'f>,
     pub(crate) node: T,
 }
 
-impl<T> IrSpanned<T> {
-    pub fn map<U>(&self, f: impl FnOnce(&T) -> U) -> IrSpanned<U> {
+impl<'f, T> IrSpanned<'f, T> {
+    pub fn map<U>(&self, f: impl FnOnce(&T) -> U) -> IrSpanned<'f, U> {
         IrSpanned {
             node: f(&self.node),
             span: self.span,
@@ -37,7 +40,7 @@ impl<T> IrSpanned<T> {
     }
 }
 
-impl<T> Deref for IrSpanned<T> {
+impl<'f, T> Deref for IrSpanned<'f, T> {
     type Target = T;
 
     fn deref(&self) -> &T {

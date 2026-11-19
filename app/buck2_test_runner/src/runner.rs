@@ -11,6 +11,7 @@
 use std::time::Duration;
 
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_test_api::data::ArgValue;
 use buck2_test_api::data::ArgValueContent;
 use buck2_test_api::data::ConfiguredTargetHandle;
@@ -70,7 +71,7 @@ impl Buck2TestRunner {
             let mut maybe_receiver = self.spec_receiver.lock();
             receiver = maybe_receiver
                 .take()
-                .buck_error_context("Spec channel has already been consumed")?;
+                .internal_error("Spec channel has already been consumed")?;
             drop(maybe_receiver);
         }
         let run_verdict = receiver
@@ -128,6 +129,7 @@ impl Buck2TestRunner {
             suite: spec.target.target,
             testcases: Vec::new(),
             variant: None,
+            repeat_count: None,
         };
 
         let config_args = self.config.test_arg.iter().map(|arg| ArgValue {
@@ -196,6 +198,7 @@ impl Buck2TestRunner {
                 pre_create_dirs,
                 executor_override,
                 RequiredLocalResources { resources: vec![] },
+                false,
             )
             .await
     }

@@ -1,0 +1,24 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+
+oncall("golang")
+
+prelude = native
+
+prelude.go_binary(
+    name = "bin",
+    srcs = [
+        "main.go",
+        "main_amd64.s",
+        "main_arm64.s",
+    ],
+)
+
+py_assertion(
+    name = "check_output",
+    script = """
+import subprocess
+import sys
+assert subprocess.check_output([sys.argv[1]]).decode().strip() == "16"
+""",
+    script_args = ["$(exe_target :bin)"],
+)

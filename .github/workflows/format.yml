@@ -1,0 +1,36 @@
+name: Format
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch: # allows manual triggering
+
+permissions:
+  contents: read
+
+env:
+  # rust-cache keeps only the dependency artifacts between runs, so every run
+  # compiles the workspace crates from scratch and incremental compilation only
+  # costs time and disk.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # `fmt.py --check` formats Rust and Starlark exactly as Meta's internal
+  # `arc f` does (see the docstring of fmt.py), so a pull request that passes
+  # here needs no Rust or Starlark reformatting when it is imported. It is fast
+  # and independent of the build, so it is its own workflow rather than a step
+  # of "Build and test".
+  format:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    # The toolchain of rust-toolchain.toml builds `tools/starlark_fmt`; the
+    # pinned nightly rustfmt is installed by fmt.py itself through rustup.
+    - uses: ./.github/actions/setup_rust_toolchain
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: buck2-format
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Check formatting
+      run: python3 fmt.py --check

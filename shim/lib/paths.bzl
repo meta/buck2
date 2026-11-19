@@ -129,7 +129,7 @@ def _normalize(path):
         initial_slashes = 1
     else:
         initial_slashes = 0
-    is_relative = (initial_slashes == 0)
+    is_relative = initial_slashes == 0
 
     components = path.split("/")
     new_components = []
@@ -177,8 +177,7 @@ def _relativize(path, start):
         start_segments = []
     start_length = len(start_segments)
 
-    if (path.startswith("/") != start.startswith("/") or
-        len(segments) < start_length):
+    if path.startswith("/") != start.startswith("/") or len(segments) < start_length:
         fail("Path '%s' is not beneath '%s'" % (path, start))
 
     for ancestor_segment, segment in zip(start_segments, segments):

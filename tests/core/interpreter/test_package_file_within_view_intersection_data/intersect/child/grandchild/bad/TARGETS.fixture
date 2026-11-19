@@ -1,0 +1,7 @@
+# `root//outside:t` is in this PACKAGE's own list (the target's default
+# `within_view`) and in the parent's, but not in the grandparent's. The
+# three-way cap refuses it and the error shows all three terms.
+stub(
+    name = "c",
+    deps = ["root//outside:t"],
+)

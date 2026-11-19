@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 use std::sync::Arc;
 
 use buck2_cli_proto::HasClientContext;
@@ -20,6 +18,7 @@ use buck2_core::pattern::unparsed::UnparsedPatterns;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_error::conversion::from_any_with_tag;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_path::AbsPath;
@@ -105,7 +104,8 @@ pub fn write_starlark_profile(
     targets: &[String],
     output: &AbsPath,
 ) -> buck2_error::Result<()> {
-    fs_util::create_dir_if_not_exists(output)?;
+    // input path from --profile-output
+    fs_util::create_dir_if_not_exists(output).categorize_input()?;
 
     fs_util::write(
         output.join("targets.txt"),
@@ -115,53 +115,60 @@ pub fn write_starlark_profile(
             .map(|t| format!("{t}\n"))
             .collect::<String>(),
     )
+    .categorize_internal()
     .buck_error_context("Failed to write targets")?;
 
-    match profile_data.profile_data.profile_mode() {
-        ProfileMode::HeapAllocated
-        | ProfileMode::HeapRetained
-        | ProfileMode::HeapFlameAllocated
-        | ProfileMode::HeapFlameRetained
-        | ProfileMode::TimeFlame => {
-            let mut profile = profile_data.profile_data.gen_flame_data()?;
-            if profile.is_empty() {
-                // inferno does not like empty flamegraphs.
-                profile = "empty 1\n".to_owned();
-            }
-            let mut svg = Vec::new();
-            let mut options = inferno::flamegraph::Options::default();
-            let title = format!(
-                "Flame Graph - {}",
-                &profile_data.profile_data.profile_mode().to_string()
-            );
-            options.title = if targets.len() == 1 {
-                format!("{} on {}", title, targets[0])
-            } else if targets.len() > 1 {
-                format!("{} on {} and {} more", title, targets[0], targets.len() - 1)
-            } else {
-                title
-            };
+    if let Some(profile) = profile_data.profile_data.gen_flame_data()? {
+        let mut options = inferno::flamegraph::Options::default();
+        let title = format!("Flame Graph - {}", profile_data.profile_data.profile_mode());
+        options.title = if targets.len() == 1 {
+            format!("{} on {}", title, targets[0])
+        } else if targets.len() > 1 {
+            format!("{} on {} and {} more", title, targets[0], targets.len() - 1)
+        } else {
+            title
+        };
 
-            inferno::flamegraph::from_reader(&mut options, profile.as_bytes(), &mut svg)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Profile))
-                .buck_error_context("writing SVG from profile data")?;
-
-            fs_util::write(output.join("flame.src"), &profile)
-                .buck_error_context("Failed to write flame.src")?;
-            fs_util::write(output.join("flame.svg"), &svg)
-                .buck_error_context("Failed to write flame.svg")?;
-        }
-        _ => {}
-    };
+        write_starlark_flamegraph(profile, &output.join("flame"), options)?;
+    }
 
     match profile_data.profile_data.profile_mode() {
         ProfileMode::HeapFlameAllocated | ProfileMode::HeapFlameRetained => {}
         _ => {
             let profile = profile_data.profile_data.gen_csv()?;
             fs_util::write(output.join("profile.csv"), profile)
+                .categorize_internal()
                 .buck_error_context("Failed to write profile")?;
         }
     };
+    Ok(())
+}
+
+/// Will write the flamegraph profile to `<output_prefix.src` and `<output_prefix>.svg`
+pub fn write_starlark_flamegraph(
+    mut profile: String,
+    output_prefix: &AbsPath,
+    mut options: inferno::flamegraph::Options,
+) -> buck2_error::Result<()> {
+    if profile.is_empty() {
+        // inferno does not like empty flamegraphs.
+        profile = "empty 1\n".to_owned();
+    }
+    let mut svg = Vec::new();
+
+    inferno::flamegraph::from_reader(&mut options, profile.as_bytes(), &mut svg)
+        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Profile))
+        .buck_error_context("writing SVG from profile data")?;
+
+    let src_path = output_prefix.with_added_extension("src");
+    fs_util::write(&src_path, &profile)
+        .categorize_internal()
+        .buck_error_context(format!("Failed to write {src_path}"))?;
+    let svg_path = output_prefix.with_added_extension("svg");
+    fs_util::write(&svg_path, &svg)
+        .categorize_internal()
+        .buck_error_context(format!("Failed to write {svg_path}"))?;
+
     Ok(())
 }
 

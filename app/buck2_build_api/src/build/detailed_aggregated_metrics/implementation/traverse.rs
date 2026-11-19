@@ -15,19 +15,21 @@ use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::internal_error;
+use buck2_error::BuckErrorOptionContext;
+use buck2_hash::BuckMutSet;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use dupe::Dupe;
-use starlark::values::FrozenValueTyped;
-use starlark::values::OwnedFrozenValueTyped;
+use starlark::values::OwnedFrozen;
+use starlark::values::ValueTyped;
 
 use crate::actions::RegisteredAction;
 use crate::artifact_groups::ArtifactGroup;
 use crate::deferred::calculation::ActionLookup;
-use crate::deferred::calculation::DeferredHolder;
+use crate::deferred::calculation::OwnedDeferredHolder;
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use crate::interpreter::rule_defs::transitive_set::FrozenTransitiveSet;
+use crate::interpreter::rule_defs::cmd_args::InputProperties;
+use crate::interpreter::rule_defs::transitive_set::TransitiveSet;
 
 #[derive(Clone, Dupe, Debug, Eq, PartialEq, Hash)]
 enum Key {
@@ -40,23 +42,27 @@ impl Eq for ResolvedTransitiveSetProjection {}
 
 impl PartialEq for ResolvedTransitiveSetProjection {
     fn eq(&self, other: &Self) -> bool {
-        self.projection == other.projection && self.tset.key() == other.tset.key()
+        self.projection == other.projection
+            && self
+                .tset
+                .by_ref(|s| other.tset.by_ref(|o| s.key() == o.key()))
     }
 }
 
 impl std::hash::Hash for ResolvedTransitiveSetProjection {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.tset.get_projection_key(self.projection).hash(state);
+        self.tset
+            .by_ref(|t| t.get_projection_key(self.projection).hash(state));
     }
 }
 
-/// Once we look up a transitive set by key once, we have a reference ot the tset itself. That tset contains direct
+/// Once we look up a transitive set by key once, we have a reference to the tset itself. That tset contains direct
 /// references to its children, so we can use that to look up the children rather than needing to look up through
 /// the key again.
 #[derive(Clone, Dupe, Debug)]
 struct ResolvedTransitiveSetProjection {
     projection: usize,
-    tset: OwnedFrozenValueTyped<FrozenTransitiveSet>,
+    tset: OwnedFrozen<ValueTyped<'static, TransitiveSet<'static>>>,
 }
 
 #[derive(Clone, Dupe, Debug)]
@@ -76,20 +82,20 @@ impl Node {
     }
 }
 
-struct Graph<'a>(&'a fxhash::FxHashMap<DeferredHolderKey, DeferredHolder>);
+struct Graph<'a>(&'a buck2_hash::BuckMutMap<DeferredHolderKey, OwnedDeferredHolder>);
 
 impl<'a> Graph<'a> {
     pub(crate) fn lookup_deferred(
         &self,
         holder_key: &DeferredHolderKey,
-    ) -> Option<&DeferredHolder> {
+    ) -> Option<&OwnedDeferredHolder> {
         self.0.get(holder_key)
     }
 
     fn lookup_node(&self, key: Key) -> buck2_error::Result<Node> {
         match key {
             Key::Action(action_key) => match self.lookup_deferred(action_key.holder_key()) {
-                Some(v) => match v.lookup_action(&action_key)? {
+                Some(v) => match v.as_ref().lookup_action(&action_key)? {
                     ActionLookup::Action(registered_action) => Ok(Node::Action(registered_action)),
                     ActionLookup::Deferred(action_key) => self.lookup_node(Key::Action(action_key)),
                 },
@@ -111,7 +117,7 @@ impl<'a> Graph<'a> {
                 let holder_key = key.key.key.holder_key();
                 match self.lookup_deferred(holder_key) {
                     Some(v) => {
-                        let tset = v.lookup_transitive_set(&key.key.key)?;
+                        let tset = v.as_ref().lookup_transitive_set(&key.key.key)?;
                         Ok(Some(Key::ResolvedTransitiveSetProjection(
                             ResolvedTransitiveSetProjection {
                                 projection: key.key.projection,
@@ -143,20 +149,25 @@ impl<'a> Graph<'a> {
                 }
             }
             Node::TransitiveSetProjection(proj_node) => {
-                for idx in 0..proj_node.tset.children.len() {
+                for idx in 0..proj_node.tset.by_ref(|t| t.children.len()) {
                     visit_dep(Key::ResolvedTransitiveSetProjection(
                         ResolvedTransitiveSetProjection {
                             projection: proj_node.projection,
-                            tset: proj_node.tset.try_map(|v| {
-                                FrozenValueTyped::new(v.children[idx])
-                                    .ok_or_else(|| internal_error!("tset children should be tsets"))
+                            tset: proj_node.tset.dupe().try_map(|v| {
+                                ValueTyped::new(v.children.read()?[idx])
+                                    .internal_error("tset children should be tsets")
                             })?,
                         },
                     ))
                 }
                 struct Visitor<'a, 'b, F: FnMut(Key)>(F, &'a Graph<'b>, buck2_error::Result<()>);
                 impl<'v, F: FnMut(Key)> CommandLineArtifactVisitor<'v> for Visitor<'_, '_, F> {
-                    fn visit_input(&mut self, input: ArtifactGroup, _tags: Vec<&ArtifactTag>) {
+                    fn visit_input(
+                        &mut self,
+                        input: ArtifactGroup,
+                        _props: InputProperties,
+                        _tags: Vec<&ArtifactTag>,
+                    ) {
                         if self.2.is_err() {
                             return;
                         }
@@ -187,9 +198,9 @@ impl<'a> Graph<'a> {
                     }
                 }
                 let mut visitor = Visitor(&mut visit_dep, self, Ok(()));
-                proj_node
-                    .tset
-                    .visit_projection_direct_inputs(proj_node.projection, &mut visitor)?;
+                proj_node.tset.by_ref(|t| {
+                    t.visit_projection_direct_inputs(proj_node.projection, &mut visitor)
+                })?;
                 visitor.2?;
             }
             Node::Missing(_holder_key) => {
@@ -198,17 +209,56 @@ impl<'a> Graph<'a> {
         }
         Ok(())
     }
+
+    fn traverse(
+        &self,
+        roots: impl IntoIterator<Item = Key>,
+        mut visit: impl FnMut(&Self, &Node, &mut TraversalState) -> buck2_error::Result<()>,
+    ) -> buck2_error::Result<bool> {
+        let mut state = TraversalState::new();
+        let mut complete = true;
+
+        for root in roots {
+            state.enqueue(root);
+        }
+
+        // Several keys can resolve to one action: each output of a dynamic_output is
+        // its own key bound to the action that produces it.
+        let mut visited_actions = BuckMutSet::default();
+        while let Some(item) = state.pop() {
+            let node = self.lookup_node(item)?;
+            complete = complete && !node.is_missing();
+            if let Node::Action(action) = &node
+                && !visited_actions.insert(action.key().dupe())
+            {
+                continue;
+            }
+            visit(self, &node, &mut state)?;
+        }
+
+        Ok(complete)
+    }
+
+    fn root_keys<'b>(
+        &self,
+        root_artifacts: impl IntoIterator<Item = &'b ArtifactGroup>,
+    ) -> buck2_error::Result<Vec<Key>> {
+        root_artifacts
+            .into_iter()
+            .filter_map(|a| self.lookup_artifact(a).transpose())
+            .collect()
+    }
 }
 
 struct TraversalState {
-    visited: fxhash::FxHashSet<Key>,
+    visited: BuckMutSet<Key>,
     queue: Vec<Key>,
 }
 
 impl TraversalState {
     fn new() -> Self {
         Self {
-            visited: fxhash::FxHashSet::default(),
+            visited: BuckMutSet::default(),
             queue: Vec::new(),
         }
     }
@@ -227,31 +277,22 @@ impl TraversalState {
 
 pub fn traverse_partial_action_graph<'a>(
     root_artifacts: impl IntoIterator<Item = &'a ArtifactGroup>,
-    state: &fxhash::FxHashMap<DeferredHolderKey, DeferredHolder>,
-) -> buck2_error::Result<(bool, fxhash::FxHashSet<ActionKey>)> {
-    let mut traversal_state = TraversalState::new();
-    let mut actions = fxhash::FxHashSet::default();
+    state: &buck2_hash::BuckMutMap<DeferredHolderKey, OwnedDeferredHolder>,
+) -> buck2_error::Result<(bool, BuckMutSet<ActionKey>)> {
+    let mut actions = BuckMutSet::default();
 
     let graph = Graph(state);
+    let roots = graph.root_keys(root_artifacts)?;
 
-    let mut complete = true;
-
-    for artifact in root_artifacts.into_iter() {
-        if let Some(v) = graph.lookup_artifact(artifact)? {
-            traversal_state.enqueue(v)
-        }
-    }
-
-    while let Some(item) = traversal_state.pop() {
-        let node = graph.lookup_node(item)?;
-        // It's required that we add this on visiting an action node rather than an action key. dynamic outputs produces action keys that point
-        // to other action keys, and we don't want to add those.
-        if let Node::Action(action) = &node {
+    let complete = graph.traverse(roots, |graph, node, state| {
+        // It's required that we add this on visiting an action node rather than an action key.
+        // dynamic outputs produces action keys that point to other action keys,
+        // and we don't want to add those.
+        if let Node::Action(action) = node {
             actions.insert(action.key().dupe());
         }
-        graph.visit_deps(&node, |dep| traversal_state.enqueue(dep))?;
-        complete = complete && !node.is_missing();
-    }
+        graph.visit_deps(node, |dep| state.enqueue(dep))
+    })?;
 
     Ok((complete, actions))
 }
@@ -260,7 +301,7 @@ pub fn traverse_target_graph(
     root: &ConfiguredTargetNode,
     mut visitor: impl FnMut(&ConfiguredTargetLabel),
 ) {
-    let mut visited = fxhash::FxHashSet::default();
+    let mut visited = BuckMutSet::default();
     let mut queue = Vec::new();
     visited.insert(root.label());
     queue.push(root);

@@ -12,37 +12,39 @@ use std::iter;
 
 use allocative::Allocative;
 use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_util::arc_str::ArcS;
+use buck2_util::arc_str::PackedStr;
+use buck2_util::size_assert;
 use either::Either;
-use static_assertions::assert_eq_size;
+use pagable::Pagable;
+use strong_hash::StrongHash;
 
-#[derive(Debug, Eq, PartialEq, Hash, Clone, Allocative, strong_hash::StrongHash)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Allocative, Pagable, StrongHash)]
 pub struct CoercedDirectory {
-    pub dir: ArcS<PackageRelativePath>,
+    pub dir: PackedStr<PackageRelativePath>,
     // We can make this type DST, so there would be only one allocation
     // for directory itself and files. But we don't have a lot of directories,
     // so it is not worth the trouble.
-    pub files: Box<[ArcS<PackageRelativePath>]>,
+    pub files: Box<[PackedStr<PackageRelativePath>]>,
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, Clone, Allocative, strong_hash::StrongHash)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Allocative, Pagable, StrongHash)]
 pub enum CoercedPath {
-    File(ArcS<PackageRelativePath>),
+    File(PackedStr<PackageRelativePath>),
     Directory(Box<CoercedDirectory>),
 }
 
 // Avoid changing the size accidentally.
-assert_eq_size!(CoercedPath, [usize; 2]);
+size_assert::words_of_type!(CoercedPath, 2);
 
 impl CoercedPath {
-    pub fn path(&self) -> &ArcS<PackageRelativePath> {
+    pub fn path(&self) -> &PackedStr<PackageRelativePath> {
         match self {
             CoercedPath::File(x) => x,
             CoercedPath::Directory(x) => &x.dir,
         }
     }
 
-    pub fn inputs(&self) -> impl Iterator<Item = &'_ ArcS<PackageRelativePath>> {
+    pub fn inputs(&self) -> impl Iterator<Item = &'_ PackedStr<PackageRelativePath>> {
         match self {
             CoercedPath::File(x) => Either::Left(iter::once(x)),
             CoercedPath::Directory(x) => Either::Right(x.files.iter()),

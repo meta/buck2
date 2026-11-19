@@ -36,6 +36,7 @@ def protobuf_src_gen(name, srcs, proto_path = [], deps = [], exported_deps = [])
         out = name,
         cmd = " ".join(command),
         cmd_exe = " ".join(command_exe),
+        exec_compatible_with = ["config//cpu:x86_64"],
     )
 
     zip_rule_name = name + ".src.zip"

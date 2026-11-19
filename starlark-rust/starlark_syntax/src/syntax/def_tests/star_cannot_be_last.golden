@@ -12,4 +12,3 @@ Error: error: `*` parameter must not be last
   |
 1 | def test(x, *): pass
   |             ^
-  |

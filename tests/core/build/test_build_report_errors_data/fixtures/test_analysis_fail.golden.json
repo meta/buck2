@@ -3,7 +3,7 @@
 {
   "error_category": "USER",
   "failures": {
-    "root//fail_analysis:fail_analysis": "Error running analysis for `root//fail_analysis:fail_analysis (<unspecified>)`\nCaused by:\n    Traceback (most recent call last):\n      File <builtin>, in <module>\n      * fail_analysis/fail_analysis.bzl:10, in _impl\n          fail(\"Failure during analysis\")\n    error: fail: Failure during analysis\n      --> fail_analysis/fail_analysis.bzl:10:5\n       |\n    10 |     fail(\"Failure during analysis\")\n       |\n       |\n    "
+    "root//fail_analysis:fail_analysis": "Error running analysis for `root//fail_analysis:fail_analysis (<unspecified>)`\nCaused by:\n    Traceback (most recent call last):\n      File <builtin>, in <module>\n      * fail_analysis/fail_analysis.bzl:10, in _impl\n          fail(\"Failure during analysis\")\n    error: fail: Failure during analysis\n      --> fail_analysis/fail_analysis.bzl:10:5\n       |\n    10 |     fail(\"Failure during analysis\")\n       |\n    "
   },
   "results": {
     "root//fail_analysis:fail_analysis": {
@@ -13,7 +13,9 @@
           "errors": [
             {
               "action_error": null,
+              "category_key": "STARLARK_FAIL",
               "cause_index": 0,
+              "error_category": "USER",
               "error_tags": [
                 "ANALYSIS",
                 "STARLARK_FAIL"
@@ -34,7 +36,7 @@
     }
   },
   "strings": {
-    "<STRING_HASH>": "Error running analysis for `root//fail_analysis:fail_analysis (<unspecified>)`\nCaused by:\n    Traceback (most recent call last):\n      File <builtin>, in <module>\n      * fail_analysis/fail_analysis.bzl:10, in _impl\n          fail(\"Failure during analysis\")\n    error: fail: Failure during analysis\n      --> fail_analysis/fail_analysis.bzl:10:5\n       |\n    10 |     fail(\"Failure during analysis\")\n       |\n       |\n    "
+    "<STRING_HASH>": "Error running analysis for `root//fail_analysis:fail_analysis (<unspecified>)`\nCaused by:\n    Traceback (most recent call last):\n      File <builtin>, in <module>\n      * fail_analysis/fail_analysis.bzl:10, in _impl\n          fail(\"Failure during analysis\")\n    error: fail: Failure during analysis\n      --> fail_analysis/fail_analysis.bzl:10:5\n       |\n    10 |     fail(\"Failure during analysis\")\n       |\n    "
   },
   "success": false,
   "truncated": false

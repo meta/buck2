@@ -8,65 +8,58 @@
  * above-listed licenses.
  */
 
-//!
-//! A future that can be canceled via an explicit `CancellationHandle`.
-//! This future is intended to be spawned on tokio-runtime directly, and for its results to be
-//! accessed via the joinhandle.
-//! It is not intended to be polled directly.
+//! A future bundled with data it borrows, so that the two can be spawned as one.
 
 use std::future::Future;
-use std::marker::PhantomPinned;
 use std::mem;
 use std::pin::Pin;
+use std::ptr::NonNull;
 use std::task::Context;
 use std::task::Poll;
 use std::task::ready;
 
 use futures::future::BoxFuture;
-use pin_project::pin_project;
 
 use crate::maybe_future::MaybeFuture;
 
-#[pin_project]
 pub struct OwningFuture<T, D> {
-    // NOTE: The order of these two fields is important. The `OwningFuture` holds a
-    // reference to the `context`, and so absolutely must be dropped first.
-    #[pin]
-    fut: MaybeFuture<BoxFuture<'static, T>>, // not actually static but the lifetime of this struct
-    data: Option<D>,
-
-    _p: PhantomPinned,
+    /// Borrows `*data`. The `'static` is a lie that `take_data` keeps honest by disposing of the
+    /// future before the data.
+    fut: MaybeFuture<BoxFuture<'static, T>>,
+    /// Behind a pointer rather than stored inline because every `poll` reborrows `self`. Under
+    /// the aliasing rules a reborrow covers what is stored inline in `self`, and so would
+    /// invalidate `fut`'s borrow of the data, but not what a raw pointer points at.
+    ///
+    /// `None` once `take_data` has run.
+    data: Option<NonNull<D>>,
 }
+
+// SAFETY: The `D` behind `data` is owned outright, as it would be by a `Box<D>` field. `fut` is a
+// `BoxFuture`, which is `Send` by construction.
+unsafe impl<T, D: Send> Send for OwningFuture<T, D> {}
 
 impl<T, D> OwningFuture<T, D> {
     pub fn new<F>(data: D, f: F) -> Pin<Box<Self>>
     where
-        F: for<'a> FnOnce(&'a mut D) -> BoxFuture<'a, T> + Send,
+        F: for<'a> FnOnce(&'a mut D) -> BoxFuture<'a, T>,
     {
-        let this = OwningFuture {
+        let mut data = NonNull::from(Box::leak(Box::new(data)));
+        // SAFETY: `data` is freshly allocated and nothing else refers to it. The borrow handed to
+        // `f` lives on in `fut`, which `take_data` disposes of before freeing `data`.
+        let fut =
+            unsafe { mem::transmute::<BoxFuture<'_, T>, BoxFuture<'static, T>>(f(data.as_mut())) };
+        Box::pin(OwningFuture {
+            fut: MaybeFuture::Fut(fut),
             data: Some(data),
-            fut: MaybeFuture::None,
-            _p: Default::default(),
-        };
+        })
+    }
 
-        let mut this = Box::pin(this);
-        let fut = unsafe {
-            // SAFETY: The `OwningFuture` is always immediately pinned upon
-            // construction, so the self-reference will remain valid at least until this value
-            // is dropped. Furthermore, the inner future is dropped before the `context` is dropped,
-            // and so the reference will remain valid even during the drop of the `Future`
-            mem::transmute::<BoxFuture<'_, T>, BoxFuture<'static, T>>(f(this
-                .data
-                .as_mut()
-                .unwrap()))
-        };
-
-        {
-            let this = this.as_mut().project();
-            this.fut.set_fut(fut);
-        }
-
-        this
+    /// Drops the future and takes the data it borrowed.
+    fn take_data(&mut self) -> Option<D> {
+        self.fut = MaybeFuture::None;
+        let data = self.data.take()?;
+        // SAFETY: `data` came from `Box::leak` in `new`, and its only borrower is gone.
+        Some(*unsafe { Box::from_raw(data.as_ptr()) })
     }
 
     /// Maps the future with the given 'f', except it takes the data that the original future
@@ -94,12 +87,7 @@ impl<T, D> OwningFuture<T, D> {
                 let (output, d) = match self.as_mut().get_mut() {
                     Map::Incomplete { future, .. } => {
                         let output = ready!(future.as_mut().poll(cx));
-
-                        // drop the future first before taking the object it references
-                        future.fut = MaybeFuture::None;
-
-                        let d = future.data.take().expect("taken twice");
-
+                        let d = future.take_data().expect("taken twice");
                         (output, d)
                     }
                     Map::Complete => {
@@ -120,15 +108,23 @@ impl<T, D> OwningFuture<T, D> {
     }
 }
 
-impl<T, D> Future for OwningFuture<T, D> {
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project().fut.poll(cx)
+impl<T, D> Drop for OwningFuture<T, D> {
+    fn drop(&mut self) {
+        drop(self.take_data());
     }
 }
 
-#[cfg(test)]
+impl<T, D> Future for OwningFuture<T, D> {
+    type Output = T;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.fut).poll(cx)
+    }
+}
+
+// `#[tokio::test]` starts tokio's IO driver: epoll, kqueue or IOCP by OS, and Miri models only
+// epoll.
+#[cfg(all(test, any(not(miri), target_os = "linux")))]
 mod tests {
     use futures::FutureExt;
     use futures::future::BoxFuture;

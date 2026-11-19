@@ -12,8 +12,8 @@
 
 use std::io;
 
-use winapi::um::handleapi::CloseHandle;
-use winapi::um::winnt::HANDLE;
+use windows_sys::Win32::Foundation::CloseHandle;
+use windows_sys::Win32::Foundation::HANDLE;
 
 /// Close handle on drop.
 pub struct WinapiHandle {

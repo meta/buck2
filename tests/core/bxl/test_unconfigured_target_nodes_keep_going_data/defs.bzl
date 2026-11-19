@@ -11,8 +11,7 @@ def _library_impl(_ctx):
 
 _library = rule(
     impl = _library_impl,
-    attrs = {
-    },
+    attrs = {},
 )
 
 def library(name, success = True, **kwargs):

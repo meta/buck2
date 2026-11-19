@@ -9,7 +9,6 @@
  */
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::io::Write;
 
 use buck2_client_ctx::client_ctx::BuckSubcommand;
@@ -23,6 +22,10 @@ use buck2_data::SchedulingMode;
 use buck2_data::re_platform::Property;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_event_log::stream_value::StreamValue;
+use buck2_event_observer::action_sub_error_display::ActionSubErrorDisplay;
+use buck2_event_observer::display::TargetDisplayOptions;
+use buck2_event_observer::display::display_action_identity;
+use buck2_event_observer::display::sanitize_output_colors;
 use buck2_event_observer::fmt_duration;
 use buck2_event_observer::what_ran;
 use buck2_event_observer::what_ran::CommandReproducer;
@@ -33,9 +36,9 @@ use buck2_event_observer::what_ran::WhatRanOutputWriter;
 use buck2_event_observer::what_ran::WhatRanRelevantAction;
 use buck2_event_observer::what_ran::WhatRanState;
 use buck2_events::span::SpanId;
+use buck2_hash::BuckMutInsertionMap;
 use futures::TryStreamExt;
 use futures::stream::Stream;
-use indexmap::IndexMap;
 
 use crate::LogCommandOutputFormat;
 use crate::LogCommandOutputFormatWithWriter;
@@ -97,13 +100,7 @@ pub struct WhatRanCommandCommon {
     #[clap(flatten)]
     event_log: EventLogOptions,
 
-    #[clap(
-        long = "format",
-        help = "Which output format to use for this command",
-        default_value = "tabulated",
-        ignore_case = true,
-        value_enum
-    )]
+    #[clap(flatten)]
     output: LogCommandOutputFormat,
 
     #[clap(flatten)]
@@ -210,8 +207,9 @@ impl WhatRanEntry {
 /// we have seen that are WhatRanRelevantActions, and the CommandReproducer associated with them.
 #[derive(Default)]
 pub struct WhatRanCommandState {
-    /// Maps action spans to their details.
-    known_actions: HashMap<SpanId, WhatRanEntry>,
+    /// Maps action spans to their details, in the order the spans started: unfinished spans are
+    /// printed from this map at the end.
+    known_actions: BuckMutInsertionMap<SpanId, WhatRanEntry>,
 }
 
 impl WhatRanState for WhatRanCommandState {
@@ -223,15 +221,30 @@ impl WhatRanState for WhatRanCommandState {
 impl WhatRanCommandState {
     async fn execute(
         mut events: impl Stream<Item = buck2_error::Result<StreamValue>> + Unpin + Send,
-        output: &mut impl WhatRanOutputWriter,
+        output: &mut OutputFormatWithWriter<'_>,
         options: &WhatRanCommandOptions,
     ) -> Result<(), ClientIoError> {
         let mut cmd = Self::default();
 
         while let Some(event) = events.try_next().await? {
-            match event {
-                StreamValue::Event(event) => cmd.event(event, output, options)?,
-                _ => {}
+            if let StreamValue::Event(event) = event {
+                let diagnostics = if options.failed
+                    && !options.incomplete
+                    && matches!(output.format, LogCommandOutputFormatWithWriter::Readable(_))
+                    && let Some(buck2_data::buck_event::Data::SpanEnd(span)) = &event.data
+                    && let Some(entry) = cmd.known_actions.get(&SpanId::from_u64(event.span_id)?)
+                {
+                    format_failed_action_diagnostics(entry, span, &options.options)?
+                } else {
+                    None
+                };
+
+                cmd.event(event, output, options)?;
+                if let Some(diagnostics) = diagnostics
+                    && let LogCommandOutputFormatWithWriter::Readable(w) = &mut output.format
+                {
+                    w.write_all(diagnostics.as_bytes())?;
+                }
             }
         }
 
@@ -288,59 +301,118 @@ impl WhatRanCommandState {
                 return Ok(());
             }
             // Emit WhatRanRelevantAction when we see the corresponding SpanEnd
-            match &data {
-                buck2_data::buck_event::Data::SpanEnd(span) => {
-                    if let Some(mut entry) =
-                        self.known_actions.remove(&SpanId::from_u64(event.span_id)?)
-                    {
-                        if should_emit_finished_action(&span.data, options) {
-                            // Get extra data out of SpanEnd event
-                            let (execution_kind, std_err, duration, scheduling_mode) = match &span
-                                .data
-                            {
-                                Some(buck2_data::span_end_event::Data::ActionExecution(
-                                    action_exec,
-                                )) => (
-                                    Some(action_exec.execution_kind),
-                                    action_exec.commands.iter().last().and_then(|cmd| {
-                                        cmd.details.as_ref().map(|d| d.cmd_stderr.as_ref())
-                                    }),
-                                    action_exec.wall_time.as_ref().map(
-                                        |prost_types::Duration { seconds, nanos }| {
-                                            std::time::Duration::new(*seconds as u64, *nanos as u32)
-                                        },
-                                    ),
-                                    action_exec
-                                        .scheduling_mode
-                                        .as_ref()
-                                        .and_then(|o| SchedulingMode::try_from(*o).ok()),
-                                ),
-                                _ => (None, None, None, None),
-                            };
+            if let buck2_data::buck_event::Data::SpanEnd(span) = &data
+                && let Some(mut entry) = self
+                    .known_actions
+                    .shift_remove(&SpanId::from_u64(event.span_id)?)
+                && should_emit_finished_action(&span.data, options)
+            {
+                // Get extra data out of SpanEnd event
+                let (execution_kind, std_err, duration, scheduling_mode, remote_command) =
+                    match &span.data {
+                        Some(buck2_data::span_end_event::Data::ActionExecution(action_exec)) => (
+                            Some(action_exec.execution_kind),
+                            action_exec.commands.iter().last().and_then(|cmd| {
+                                cmd.details.as_ref().map(|d| d.cmd_stderr.as_ref())
+                            }),
+                            action_exec.wall_time.as_ref().map(
+                                |prost_types::Duration { seconds, nanos }| {
+                                    std::time::Duration::new(*seconds as u64, *nanos as u32)
+                                },
+                            ),
+                            action_exec
+                                .scheduling_mode
+                                .as_ref()
+                                .and_then(|o| SchedulingMode::try_from(*o).ok()),
+                            last_remote_command(action_exec),
+                        ),
+                        _ => (None, None, None, None, None),
+                    };
 
-                            if execution_kind
-                                == Some(buck2_data::ActionExecutionKind::LocalDepFile as i32)
-                            {
-                                entry
-                                    .reproducers
-                                    .push(CommandReproducer::LocalDepFileCacheHit);
-                            }
-
-                            entry.emit_what_ran_entry(
-                                output,
-                                options,
-                                std_err,
-                                duration,
-                                scheduling_mode,
-                            )?;
-                        }
-                    }
+                if execution_kind == Some(buck2_data::ActionExecutionKind::LocalDepFile as i32)
+                    && !options.options.skip_cache_hits
+                {
+                    entry
+                        .reproducers
+                        .push(CommandReproducer::LocalDepFileCacheHit);
                 }
-                _ => {}
+                if let Some(remote) = remote_command {
+                    entry.reproducers = entry
+                        .reproducers
+                        .into_iter()
+                        .map(|repro| repro.with_remote_origin(remote))
+                        .collect();
+                }
+
+                entry.emit_what_ran_entry(output, options, std_err, duration, scheduling_mode)?;
             }
         }
 
         Ok(())
+    }
+}
+
+fn format_failed_action_diagnostics(
+    entry: &WhatRanEntry,
+    span: &buck2_data::SpanEndEvent,
+    options: &WhatRanOptions,
+) -> buck2_error::Result<Option<String>> {
+    let Some(buck2_data::span_end_event::Data::ActionExecution(action)) = &span.data else {
+        return Ok(None);
+    };
+    if !action.failed || entry.reproducers.is_empty() {
+        return Ok(None);
+    }
+    if let Some(category) = &options.filter_category
+        && !what_ran::matches_category(
+            Some(&entry.action),
+            &regex::Regex::new(&format!(r"^{category}$"))?,
+        )
+    {
+        return Ok(None);
+    }
+    let Some(buck2_data::action_error_diagnostics::Data::SubErrors(sub_errors)) = action
+        .error_diagnostics
+        .as_ref()
+        .and_then(|diagnostics| diagnostics.data.as_ref())
+    else {
+        return Ok(None);
+    };
+    let messages = sub_errors
+        .sub_errors
+        .iter()
+        .filter(|error| error.show_in_stderr)
+        .filter_map(|error| error.display())
+        .map(|message| format!("- {message}\n"))
+        .collect::<String>();
+    if messages.is_empty() {
+        return Ok(None);
+    }
+    let identity = display_action_identity(
+        action.key.as_ref(),
+        action.name.as_ref(),
+        TargetDisplayOptions::for_log(),
+    )?;
+    Ok(Some(sanitize_output_colors(
+        format!("Action sub-errors for {identity}:\n{messages}").as_bytes(),
+    )))
+}
+
+fn last_remote_command(
+    action_exec: &buck2_data::ActionExecutionEnd,
+) -> Option<&buck2_data::RemoteCommand> {
+    match action_exec
+        .commands
+        .last()?
+        .details
+        .as_ref()?
+        .command_kind
+        .as_ref()?
+        .command
+        .as_ref()?
+    {
+        buck2_data::command_execution_kind::Command::RemoteCommand(remote) => Some(remote),
+        _ => None,
     }
 }
 
@@ -387,7 +459,8 @@ impl WhatRanOutputWriter for OutputFormatWithWriter<'_> {
         };
 
         match &mut self.format {
-            LogCommandOutputFormatWithWriter::Tabulated(w) => {
+            LogCommandOutputFormatWithWriter::Readable(w)
+            | LogCommandOutputFormatWithWriter::Tabulated(w) => {
                 w.write_all(format!("{}\n", command.as_tabulated_reproducer()).as_bytes())?;
                 if let Some(std_err) = std_err_formatted {
                     write!(
@@ -417,18 +490,27 @@ impl WhatRanOutputWriter for OutputFormatWithWriter<'_> {
                         }
                     },
                     CommandReproducer::LocalDepFileCacheHit => JsonReproducer::LocalDepFileCache,
-                    CommandReproducer::ReExecute(re_execute) => {
+                    CommandReproducer::ReExecute(re_execute)
+                    | CommandReproducer::ReServedFromCache(re_execute)
+                    | CommandReproducer::ReDeduplicated(re_execute) => {
+                        let not_run = match &command.repro {
+                            CommandReproducer::ReServedFromCache(..) => Some("served_from_cache"),
+                            CommandReproducer::ReDeduplicated(..) => Some("deduplicated"),
+                            _ => None,
+                        };
                         if re_execute.persistent_worker {
                             JsonReproducer::ReWorker {
                                 digest: &re_execute.action_digest,
                                 platform_properties: into_index_map(&re_execute.platform),
                                 action_key: re_execute.action_key.as_deref(),
+                                not_run,
                             }
                         } else {
                             JsonReproducer::Re {
                                 digest: &re_execute.action_digest,
                                 platform_properties: into_index_map(&re_execute.platform),
                                 action_key: re_execute.action_key.as_deref(),
+                                not_run,
                             }
                         }
                     }
@@ -519,13 +601,15 @@ impl WhatRanOutputWriter for OutputFormatWithWriter<'_> {
     }
 }
 
-fn into_index_map(platform: &Option<buck2_data::RePlatform>) -> IndexMap<&str, &str> {
-    platform.as_ref().map_or_else(IndexMap::new, |p| {
-        p.properties
-            .iter()
-            .map(|Property { name, value }| (name.as_ref(), value.as_ref()))
-            .collect()
-    })
+fn into_index_map(platform: &Option<buck2_data::RePlatform>) -> BuckMutInsertionMap<&str, &str> {
+    platform
+        .as_ref()
+        .map_or_else(BuckMutInsertionMap::new, |p| {
+            p.properties
+                .iter()
+                .map(|Property { name, value }| (name.as_ref(), value.as_ref()))
+                .collect()
+        })
 }
 
 #[derive(serde::Serialize)]
@@ -567,27 +651,33 @@ mod json_reproducer {
         LocalDepFileCache,
         Re {
             digest: &'a str,
-            platform_properties: IndexMap<&'a str, &'a str>,
+            platform_properties: BuckMutInsertionMap<&'a str, &'a str>,
             #[serde(skip_serializing_if = "Option::is_none")]
             action_key: Option<&'a str>,
+            /// Why the remote execution service did not run the command, if it did not.
+            #[serde(skip_serializing_if = "Option::is_none")]
+            not_run: Option<&'static str>,
         },
         ReWorker {
             digest: &'a str,
-            platform_properties: IndexMap<&'a str, &'a str>,
+            platform_properties: BuckMutInsertionMap<&'a str, &'a str>,
             #[serde(skip_serializing_if = "Option::is_none")]
             action_key: Option<&'a str>,
+            /// Why the remote execution service did not run the command, if it did not.
+            #[serde(skip_serializing_if = "Option::is_none")]
+            not_run: Option<&'static str>,
         },
         Local {
             command: Cow<'a, [String]>,
-            env: IndexMap<&'a str, &'a str>,
+            env: BuckMutInsertionMap<&'a str, &'a str>,
         },
         Worker {
             command: Cow<'a, [String]>,
-            env: IndexMap<&'a str, &'a str>,
+            env: BuckMutInsertionMap<&'a str, &'a str>,
         },
         WorkerInit {
             command: Cow<'a, [String]>,
-            env: IndexMap<&'a str, &'a str>,
+            env: BuckMutInsertionMap<&'a str, &'a str>,
         },
     }
 }
@@ -610,11 +700,19 @@ impl<'a> From<WhatRanOutputCommandExtra<'a>> for JsonExtra<'a> {
 
 #[cfg(test)]
 mod tests {
+    use buck2_event_observer::what_ran::WhatRanOptions;
+    use buck2_event_observer::what_ran::WhatRanOutputCommand;
+    use buck2_event_observer::what_ran::WhatRanOutputWriter;
+    use dupe::Dupe;
+
     use super::*;
+    use crate::LogCommandOutputFormatOptions;
+    use crate::what_ran::WhatRanCommandOptions;
+    use crate::what_ran::WhatRanCommandState;
 
     fn make_base_command() -> JsonCommand<'static> {
         let command = Cow::Owned(vec!["some".to_owned(), "command".to_owned()]);
-        let mut env = IndexMap::new();
+        let mut env = BuckMutInsertionMap::default();
         env.insert("KEY", "val");
 
         JsonCommand {
@@ -634,10 +732,11 @@ mod tests {
             identity: "some/target",
             reproducer: JsonReproducer::Re {
                 digest: "placeholder",
-                platform_properties: indexmap::indexmap! {
+                platform_properties: buck2_hash::buck_mut_insertion_map! {
                     "platform" => "linux-remote-execution"
                 },
                 action_key: None,
+                not_run: None,
             },
             duration: Some("1".to_owned()),
             extra: None,
@@ -673,9 +772,9 @@ mod tests {
 
     #[test]
     fn serialize_what_ran_command_with_extra() -> buck2_error::Result<()> {
+        let cases = ["case".to_owned()];
         let mut command = make_base_command();
-        let cases = &["case".to_owned()];
-        command.extra = Some(JsonExtra::TestCases(cases));
+        command.extra = Some(JsonExtra::TestCases(&cases));
 
         let expected = r#"{
   "reason": "test.run",
@@ -722,6 +821,395 @@ mod tests {
   "duration": "1"
 }"#;
         assert_eq!(expected, serde_json::to_string_pretty(&command)?);
+        Ok(())
+    }
+
+    /// Collects `(identity, executor)` of every emitted command.
+    #[derive(Default)]
+    struct CollectCommands(Vec<(String, String)>);
+
+    impl WhatRanOutputWriter for CollectCommands {
+        fn emit_command(&mut self, command: WhatRanOutputCommand<'_>) -> buck2_error::Result<()> {
+            self.0
+                .push((command.identity.to_owned(), command.repro.executor()));
+            Ok(())
+        }
+    }
+
+    fn span_event(
+        span: u64,
+        parent: u64,
+        data: buck2_data::buck_event::Data,
+    ) -> buck2_data::BuckEvent {
+        buck2_data::BuckEvent {
+            span_id: span,
+            parent_id: parent,
+            data: Some(data),
+            ..Default::default()
+        }
+    }
+
+    fn action_start_event() -> buck2_data::buck_event::Data {
+        buck2_data::buck_event::Data::SpanStart(buck2_data::SpanStartEvent {
+            data: Some(buck2_data::span_start_event::Data::ActionExecution(
+                buck2_data::ActionExecutionStart {
+                    key: Some(buck2_data::ActionKey {
+                        owner: Some(buck2_data::action_key::Owner::TargetLabel(
+                            buck2_data::ConfiguredTargetLabel {
+                                label: Some(buck2_data::TargetLabel {
+                                    package: "root//pkg".to_owned(),
+                                    name: "t".to_owned(),
+                                }),
+                                configuration: Some(buck2_data::Configuration {
+                                    full_name: "cfg".to_owned(),
+                                }),
+                                execution_configuration: None,
+                            },
+                        )),
+                        ..Default::default()
+                    }),
+                    name: Some(buck2_data::ActionName {
+                        category: "cat".to_owned(),
+                        identifier: "id".to_owned(),
+                    }),
+                    kind: buck2_data::ActionKind::Run as i32,
+                },
+            )),
+        })
+    }
+
+    fn action_end_event(
+        execution_kind: buck2_data::ActionExecutionKind,
+    ) -> buck2_data::buck_event::Data {
+        buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
+            data: Some(buck2_data::span_end_event::Data::ActionExecution(Box::new(
+                buck2_data::ActionExecutionEnd {
+                    kind: buck2_data::ActionKind::Run as i32,
+                    execution_kind: execution_kind as i32,
+                    ..Default::default()
+                },
+            ))),
+            ..Default::default()
+        })
+    }
+
+    fn test_run_start_event(name: &str) -> buck2_data::buck_event::Data {
+        buck2_data::buck_event::Data::SpanStart(buck2_data::SpanStartEvent {
+            data: Some(buck2_data::span_start_event::Data::TestRun(
+                buck2_data::TestRunStart {
+                    suite: Some(buck2_data::TestSuite {
+                        suite_name: name.to_owned(),
+                        ..Default::default()
+                    }),
+                },
+            )),
+        })
+    }
+
+    fn local_execute_start_event() -> buck2_data::buck_event::Data {
+        buck2_data::buck_event::Data::SpanStart(buck2_data::SpanStartEvent {
+            data: Some(buck2_data::span_start_event::Data::ExecutorStage(
+                buck2_data::ExecutorStageStart {
+                    stage: Some(buck2_data::executor_stage_start::Stage::Local(
+                        buck2_data::LocalStage {
+                            stage: Some(buck2_data::local_stage::Stage::Execute(
+                                buck2_data::LocalExecute::default(),
+                            )),
+                        },
+                    )),
+                },
+            )),
+        })
+    }
+
+    fn run_what_ran(
+        events: Vec<buck2_data::BuckEvent>,
+        options: &WhatRanCommandOptions,
+    ) -> buck2_error::Result<Vec<(String, String)>> {
+        let mut state = WhatRanCommandState::default();
+        let mut out = CollectCommands::default();
+        for e in events {
+            state.event(Box::new(e), &mut out, options)?;
+        }
+        state.emit_remaining(&mut out, options)?;
+        Ok(out.0)
+    }
+
+    fn failed_action_events(
+        diagnostics: Option<buck2_data::ActionErrorDiagnostics>,
+    ) -> Vec<buck2_data::BuckEvent> {
+        let start = action_start_event();
+        let buck2_data::buck_event::Data::SpanStart(span) = &start else {
+            unreachable!();
+        };
+        let Some(buck2_data::span_start_event::Data::ActionExecution(action)) = &span.data else {
+            unreachable!();
+        };
+        let error = buck2_data::ActionError {
+            key: action.key.clone(),
+            name: action.name.clone(),
+            error_diagnostics: diagnostics.clone(),
+            ..Default::default()
+        };
+        let end = buck2_data::ActionExecutionEnd {
+            key: action.key.clone(),
+            name: action.name.clone(),
+            failed: true,
+            execution_kind: buck2_data::ActionExecutionKind::Local as i32,
+            error_diagnostics: diagnostics,
+            commands: vec![buck2_data::CommandExecution {
+                details: Some(buck2_data::CommandExecutionDetails {
+                    cmd_stderr: "raw tool stderr\n".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        vec![
+            span_event(1, 0, start),
+            span_event(2, 1, local_execute_start_event()),
+            span_event(3, 1, local_execute_start_event()),
+            span_event(
+                0,
+                1,
+                buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
+                    data: Some(error.into()),
+                }),
+            ),
+            span_event(
+                1,
+                0,
+                buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
+                    data: Some(Box::new(end).into()),
+                    ..Default::default()
+                }),
+            ),
+        ]
+    }
+
+    fn action_diagnostics() -> buck2_data::ActionErrorDiagnostics {
+        buck2_data::ActionErrorDiagnostics {
+            data: Some(buck2_data::action_error_diagnostics::Data::SubErrors(
+                buck2_data::ActionSubErrors {
+                    sub_errors: vec![
+                        buck2_data::ActionSubError {
+                            category: "missing_required_module".to_owned(),
+                            message: Some("Missing required module 'Example'".to_owned()),
+                            remediation: Some(
+                                "\x1b[36mAdd the module dependency\x1b[0m".to_owned(),
+                            ),
+                            show_in_stderr: true,
+                            ..Default::default()
+                        },
+                        buck2_data::ActionSubError {
+                            category: "hidden".to_owned(),
+                            remediation: Some("Do not print this hint".to_owned()),
+                            ..Default::default()
+                        },
+                    ],
+                },
+            )),
+        }
+    }
+
+    async fn render_failed_action_log(
+        format: LogCommandOutputFormatOptions,
+        options: &WhatRanCommandOptions,
+        include_std_err: bool,
+        diagnostics: Option<buck2_data::ActionErrorDiagnostics>,
+    ) -> Result<String, ClientIoError> {
+        let mut bytes = Vec::new();
+        let mut output = OutputFormatWithWriter {
+            format: transform_format(LogCommandOutputFormat { format }, &mut bytes),
+            include_std_err,
+            omit_empty_std_err: false,
+        };
+        let events = futures::stream::iter(
+            failed_action_events(diagnostics)
+                .into_iter()
+                .map(|event| Ok(StreamValue::Event(Box::new(event)))),
+        );
+        WhatRanCommandState::execute(events, &mut output, options).await?;
+        drop(output);
+        Ok(String::from_utf8(bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_what_failed_readable_hints_once_per_action() -> Result<(), ClientIoError> {
+        let options = WhatRanCommandOptions {
+            options: WhatRanOptions::default(),
+            failed: true,
+            incomplete: false,
+        };
+        let output = render_failed_action_log(
+            LogCommandOutputFormatOptions::Readable,
+            &options,
+            false,
+            Some(action_diagnostics()),
+        )
+        .await?;
+        assert_eq!(output.matches("build\t").count(), 2, "{output}");
+        assert_eq!(output.matches("Hint:").count(), 1, "{output}");
+        assert!(
+            output.contains("[missing_required_module] Missing required module 'Example'\n  Hint: Add the module dependency\n"),
+            "{output}"
+        );
+        assert!(!output.contains("Do not print this hint"), "{output}");
+        assert!(!output.contains("raw tool stderr"), "{output}");
+        assert!(!output.contains('\x1b'), "{output}");
+        assert!(
+            output.rfind("build\t").unwrap() < output.find("Action sub-errors for").unwrap(),
+            "{output}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_what_failed_hints_respect_command_filters() -> Result<(), ClientIoError> {
+        for options in [
+            WhatRanCommandOptions {
+                options: WhatRanOptions::default(),
+                failed: false,
+                incomplete: false,
+            },
+            WhatRanCommandOptions {
+                options: WhatRanOptions {
+                    filter_category: Some("other_category".to_owned()),
+                    ..Default::default()
+                },
+                failed: true,
+                incomplete: false,
+            },
+            WhatRanCommandOptions {
+                options: WhatRanOptions {
+                    skip_local_executions: true,
+                    ..Default::default()
+                },
+                failed: true,
+                incomplete: false,
+            },
+            WhatRanCommandOptions {
+                options: WhatRanOptions::default(),
+                failed: true,
+                incomplete: true,
+            },
+        ] {
+            let output = render_failed_action_log(
+                LogCommandOutputFormatOptions::Readable,
+                &options,
+                false,
+                Some(action_diagnostics()),
+            )
+            .await?;
+            assert!(!output.contains("Hint:"), "{output}");
+            assert!(!output.contains("Action sub-errors"), "{output}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_what_failed_hints_preserve_formats_and_raw_stderr() -> Result<(), ClientIoError> {
+        let options = WhatRanCommandOptions {
+            options: WhatRanOptions::default(),
+            failed: true,
+            incomplete: false,
+        };
+        for format in [
+            LogCommandOutputFormatOptions::Tabulated,
+            LogCommandOutputFormatOptions::Json,
+            LogCommandOutputFormatOptions::Csv,
+        ] {
+            for include_std_err in [false, true] {
+                let without_diagnostics =
+                    render_failed_action_log(format.dupe(), &options, include_std_err, None)
+                        .await?;
+                let with_diagnostics = render_failed_action_log(
+                    format.dupe(),
+                    &options,
+                    include_std_err,
+                    Some(action_diagnostics()),
+                )
+                .await?;
+                assert_eq!(without_diagnostics, with_diagnostics);
+                assert_eq!(
+                    with_diagnostics.contains("raw tool stderr"),
+                    include_std_err
+                );
+            }
+        }
+        let output = render_failed_action_log(
+            LogCommandOutputFormatOptions::Readable,
+            &options,
+            true,
+            Some(action_diagnostics()),
+        )
+        .await?;
+        assert_eq!(output.matches("raw tool stderr").count(), 2, "{output}");
+        assert_eq!(output.matches("Hint:").count(), 1, "{output}");
+        Ok(())
+    }
+
+    /// A local dep-file cache hit is a cache hit, so `--skip-cache-hits` drops it.
+    #[test]
+    fn test_skip_cache_hits_skips_local_dep_file_hits() -> buck2_error::Result<()> {
+        let events = || {
+            vec![
+                span_event(1, 0, action_start_event()),
+                span_event(
+                    1,
+                    0,
+                    action_end_event(buck2_data::ActionExecutionKind::LocalDepFile),
+                ),
+            ]
+        };
+        let executors = |options: &WhatRanCommandOptions| -> buck2_error::Result<Vec<String>> {
+            Ok(run_what_ran(events(), options)?
+                .into_iter()
+                .map(|(_, e)| e)
+                .collect())
+        };
+
+        let options = WhatRanCommandOptions {
+            options: WhatRanOptions::default(),
+            failed: false,
+            incomplete: false,
+        };
+        assert_eq!(vec!["dep_file".to_owned()], executors(&options)?);
+
+        let options = WhatRanCommandOptions {
+            options: WhatRanOptions {
+                skip_cache_hits: true,
+                ..Default::default()
+            },
+            failed: false,
+            incomplete: false,
+        };
+        assert_eq!(Vec::<String>::new(), executors(&options)?);
+        Ok(())
+    }
+
+    /// Commands of spans that never ended are printed in the order the spans started.
+    #[test]
+    fn test_incomplete_commands_in_start_order() -> buck2_error::Result<()> {
+        let options = WhatRanCommandOptions {
+            options: WhatRanOptions::default(),
+            failed: false,
+            incomplete: true,
+        };
+        let mut events = Vec::new();
+        for i in 0..64u64 {
+            let span = 2 * i + 1;
+            events.push(span_event(span, 0, test_run_start_event(&format!("s{i}"))));
+            events.push(span_event(span + 1, span, local_execute_start_event()));
+        }
+        let identities: Vec<String> = run_what_ran(events, &options)?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let start_order: Vec<String> = (0..64).map(|i| format!("s{i}")).collect();
+
+        assert_eq!(start_order, identities);
         Ok(())
     }
 }

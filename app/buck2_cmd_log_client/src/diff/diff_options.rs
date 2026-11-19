@@ -58,8 +58,8 @@ impl DiffEventLogOptions {
             allow_remote: true,
         };
 
-        let log_path1 = options1.get(&ctx).await?;
-        let log_path2 = options2.get(&ctx).await?;
+        let log_path1 = options1.get(ctx).await?;
+        let log_path2 = options2.get(ctx).await?;
 
         Ok((log_path1, log_path2))
     }

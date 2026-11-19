@@ -1,0 +1,24 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error evaluating expression:
+    root//indirect_call/leaf:t
+    ^------------------------^
+
+
+Caused by:
+    0: evaluating Starlark PACKAGE file `root//indirect_call`
+    1: error: `enforce_within_view_intersection()` can only be called from a `PACKAGE` file
+         --> indirect_call/helper.bzl:10:5
+          |
+       10 |     enforce_within_view_intersection()
+          |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+       Traceback (most recent call last):
+         * indirect_call/PACKAGE:7, in <module>
+             setup_cap()
+         * indirect_call/helper.bzl:10, in setup_cap
+             enforce_within_view_intersection()
+       

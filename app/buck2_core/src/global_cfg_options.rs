@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::target::label::label::TargetLabel;
 
@@ -26,7 +27,8 @@ use crate::target::label::label::TargetLabel;
     PartialOrd,
     Hash,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 pub struct GlobalCfgOptions {
     pub target_platform: Option<TargetLabel>,

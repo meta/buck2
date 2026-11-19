@@ -1,0 +1,7 @@
+# `"PUBLIC"` is the identity of the intersection: opting in with it leaves
+# the cap at PUBLIC (no restriction).
+package(
+    within_view = ["PUBLIC"],
+)
+
+enforce_within_view_intersection()

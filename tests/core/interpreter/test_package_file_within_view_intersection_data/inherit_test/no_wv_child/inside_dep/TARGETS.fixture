@@ -1,0 +1,6 @@
+# Dep inside the parent's cap: allowed. Fails if the no-within_view opt-in
+# had replaced the cap with an empty list.
+stub(
+    name = "c",
+    deps = ["root//inherit_test/lib:t"],
+)

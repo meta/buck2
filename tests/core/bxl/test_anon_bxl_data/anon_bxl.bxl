@@ -10,17 +10,19 @@ def _assert_eq(a, b):
     if a != b:
         fail("Expected {} == {}".format(a, b))
 
-Info = provider(fields = {
-    "hello": provider_field(Artifact),
-    "world": provider_field(Artifact),
-    "x": int,
-})
+Info = provider(
+    fields = {
+        "hello": provider_field(Artifact),
+        "world": provider_field(Artifact),
+        "x": int,
+    }
+)
 
 def _my_anon_impl(bxl_ctx: bxl.Context, attrs: struct) -> list[Provider]:
     action = bxl_ctx.bxl_actions().actions
-    out = action.write("res.txt", "foo_bar")
-    hello = action.write("hello.txt", "hello" + str(attrs.x))
-    world = action.write("world.txt", "world" + str(attrs.x))
+    out = action.write("res.txt", "foo_bar", has_content_based_path = False)
+    hello = action.write("hello.txt", "hello" + str(attrs.x), has_content_based_path = False)
+    world = action.write("world.txt", "world" + str(attrs.x), has_content_based_path = False)
     info = Info(
         x = attrs.x,
         hello = hello,
@@ -80,13 +82,15 @@ def _check_anon_ouput_artifact(ctx: bxl.Context):
     promise = actions.anon_target(anon, attrs = {"x": 42}).promise
     anon_res = ctx.resolve(actions, promise)
 
-    output = actions.declare_output("output")
+    output = actions.declare_output("output", has_content_based_path = False)
 
-    actions.dynamic_output_new(_check_content(
-        src = anon_res[Info].hello,
-        out = output.as_output(),
-        content = "hello42",
-    ))
+    actions.dynamic_output_new(
+        _check_content(
+            src = anon_res[Info].hello,
+            out = output.as_output(),
+            content = "hello42",
+        )
+    )
     ctx.output.ensure(output)
 
 check_anon_ouput_artifact = bxl_main(
@@ -97,12 +101,15 @@ check_anon_ouput_artifact = bxl_main(
 def _eval_lost_of_anon_bxl(ctx: bxl.Context):
     actions = ctx.bxl_actions().actions
 
-    promise = actions.anon_targets([(
-        anon,
-        {
-            "x": i,
-        },
-    ) for i in range(0, 2000)]).promise
+    promise = actions.anon_targets([
+        (
+            anon,
+            {
+                "x": i,
+            },
+        )
+        for i in range(0, 2000)
+    ]).promise
 
     outputs = []
     for anon_res in ctx.resolve(actions, promise):
@@ -119,7 +126,7 @@ eval_lost_of_anon_bxl = bxl_main(
 
 def _anon_with_arg_impl(bxl_ctx: bxl.Context, attrs: struct) -> list[Provider]:
     action = bxl_ctx.bxl_actions().actions
-    out, _ = action.write("out.txt", attrs.arg, allow_args = True)
+    out, _ = action.write("out.txt", attrs.arg, allow_args = True, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 anon_with_arg = bxl.anon_rule(
@@ -138,8 +145,7 @@ def _eval_of_anon_with_arg_bxl(ctx: bxl.Context):
 
 eval_of_anon_with_arg_bxl = bxl_main(
     impl = _eval_of_anon_with_arg_bxl,
-    cli_args = {
-    },
+    cli_args = {},
 )
 
 def _anon_with_content_based_output_impl(bxl_ctx: bxl.Context, attrs: struct) -> list[Provider]:
@@ -162,6 +168,5 @@ def _eval_of_anon_with_content_based_output_impl(ctx: bxl.Context):
 
 eval_of_anon_with_content_based_output_impl = bxl_main(
     impl = _eval_of_anon_with_content_based_output_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )

@@ -7,14 +7,18 @@
 # above-listed licenses.
 
 def _test(ctx: AnalysisContext):
-    fixture = ctx.actions.write("fixture", "")
+    fixture = ctx.actions.write("fixture", "", has_content_based_path = False)
 
-    out = ctx.actions.write_json("out.json", {
-        "cell_relative_to_fixture": cmd_args(ctx.label.cell_root, delimiter = "", relative_to = fixture),
-        "fixture_relative_to_cell": cmd_args(fixture, delimiter = "", relative_to = ctx.label.cell_root),
-        "fixture_relative_to_project": cmd_args(fixture, delimiter = "", relative_to = ctx.label.project_root),
-        "project_relative_to_fixture": cmd_args(ctx.label.project_root, delimiter = "", relative_to = fixture),
-    })
+    out = ctx.actions.write_json(
+        "out.json",
+        {
+            "cell_relative_to_fixture": cmd_args(ctx.label.cell_root, delimiter = "", relative_to = fixture),
+            "fixture_relative_to_cell": cmd_args(fixture, delimiter = "", relative_to = ctx.label.cell_root),
+            "fixture_relative_to_project": cmd_args(fixture, delimiter = "", relative_to = ctx.label.project_root),
+            "project_relative_to_fixture": cmd_args(ctx.label.project_root, delimiter = "", relative_to = fixture),
+        },
+        has_content_based_path = False,
+    )
 
     return [DefaultInfo(out, other_outputs = [fixture])]
 

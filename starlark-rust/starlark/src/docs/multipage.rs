@@ -42,7 +42,7 @@ pub struct DocModuleInfo<'a> {
 
 impl<'a> DocModuleInfo<'a> {
     fn into_page_renders(&self) -> Vec<PageRender<'a>> {
-        Self::traverse_inner(&self.module, &self.name, &self.page_path)
+        Self::traverse_inner(self.module, &self.name, &self.page_path)
     }
 
     fn traverse_inner(
@@ -67,7 +67,7 @@ impl<'a> DocModuleInfo<'a> {
             };
             match doc {
                 DocItem::Module(doc_module) => {
-                    result.extend(Self::traverse_inner(&doc_module, &name, &path))
+                    result.extend(Self::traverse_inner(doc_module, name, &path))
                 }
                 DocItem::Type(doc_type) => result.push(PageRender {
                     page: DocPageRef::Type(doc_type),

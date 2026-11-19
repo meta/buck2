@@ -80,8 +80,7 @@ public class KotlinTestCompiler extends ExternalResource implements AutoCloseabl
     k2JVMCompilerArguments.setNoStdlib(true);
     k2JVMCompilerArguments.setNoReflect(true);
 
-    // Added in Kotlin 1.8 to fix SMAP and INNERCLASS StubJarTests
-    k2JVMCompilerArguments.setOldInnerClassesLogic(true);
+    // Added in Kotlin 1.8 to fix SMAP StubJarTests
     k2JVMCompilerArguments.setNoSourceDebugExtension(true);
 
     k2JVMCompilerArguments.setFreeArgs(

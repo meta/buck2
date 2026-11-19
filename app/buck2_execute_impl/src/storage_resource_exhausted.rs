@@ -41,13 +41,14 @@ impl REErrorWithCodeAndMessage for TStatus {
 pub(crate) fn is_storage_resource_exhausted<T: REErrorWithCodeAndMessage>(err: &T) -> bool {
     #[cfg(fbcode_build)]
     {
-        use once_cell::sync::Lazy;
+        use std::sync::LazyLock;
+
         use regex::Regex;
 
         fn regex() -> &'static Regex {
             // Taken from https://fburl.com/code/7n3qg2jj
-            static RE: Lazy<Regex> =
-                Lazy::new(|| Regex::new(r"^.*has exceeded quota.*DemandControl.*$").unwrap());
+            static RE: LazyLock<Regex> =
+                LazyLock::new(|| Regex::new(r"^.*has exceeded quota.*DemandControl.*$").unwrap());
             &RE
         }
 

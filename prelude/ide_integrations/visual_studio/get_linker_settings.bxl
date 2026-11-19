@@ -37,10 +37,7 @@ def gen_linker_settings(linker_settings: dict):
     concat_linker_settings = _format_linker_settings(linker_settings)
     return h(
         "Link",
-        [
-            h(key, value, indent_level = 3)
-            for key, value in concat_linker_settings.items()
-        ],
+        [h(key, value, indent_level = 3) for key, value in concat_linker_settings.items()],
         {
             "Label": "LinkerSettings",
         },
@@ -52,8 +49,8 @@ def _main(bxl_ctx):
     target_node = bxl_ctx.configured_targets(target)
     actions = bxl_ctx.bxl_actions().actions
     attrs = get_attrs(target_node, bxl_ctx)
-    attrs_outfile = actions.write_json(get_project_file_path(target_node.label, ".json"), attrs)
-    out = actions.declare_output(get_project_file_path(target_node.label, ".out"))
+    attrs_outfile = actions.write_json(get_project_file_path(target_node.label, ".json"), attrs, has_content_based_path = False)
+    out = actions.declare_output(get_project_file_path(target_node.label, ".out"), has_content_based_path = False)
 
     def f(ctx, artifacts, outputs, attrs_outfile = attrs_outfile, out = out, buck_root = bxl_ctx.root()):
         attrs_input = artifacts[attrs_outfile].read_json()

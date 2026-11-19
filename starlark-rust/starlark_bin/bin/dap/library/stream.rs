@@ -37,13 +37,15 @@ fn log_file() -> PathBuf {
     res
 }
 
+// The directory next to the binary may be read-only, so logging is best effort.
 pub(crate) fn log_begin() {
-    File::create(log_file()).unwrap();
+    File::create(log_file()).ok();
 }
 
 pub(crate) fn log(x: &str) {
-    let mut file = OpenOptions::new().append(true).open(log_file()).unwrap();
-    file.write_all(format!("{x}\n").as_bytes()).unwrap()
+    if let Ok(mut file) = OpenOptions::new().append(true).open(log_file()) {
+        file.write_all(format!("{x}\n").as_bytes()).ok();
+    }
 }
 
 pub(crate) fn send(x: Value) {
@@ -53,9 +55,12 @@ pub(crate) fn send(x: Value) {
     io::stdout().flush().unwrap()
 }
 
-pub(crate) fn read() -> Value {
+/// `None` once the client has closed its end of the pipe.
+pub(crate) fn read() -> Option<Value> {
     let mut s = String::new();
-    io::stdin().read_line(&mut s).unwrap();
+    if io::stdin().read_line(&mut s).unwrap() == 0 {
+        return None;
+    }
     let len: usize = s
         .strip_prefix("Content-Length: ")
         .unwrap()
@@ -67,5 +72,5 @@ pub(crate) fn read() -> Value {
     io::stdin().lock().read_exact(&mut res).unwrap();
     let s = String::from_utf8_lossy(&res);
     log(&format!("RECV: {s}"));
-    serde_json::from_str(&s).unwrap()
+    Some(serde_json::from_str(&s).unwrap())
 }

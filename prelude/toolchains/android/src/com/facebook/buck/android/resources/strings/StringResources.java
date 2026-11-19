@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.resources.strings;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -30,6 +31,7 @@ import java.util.TreeMap;
  * Represents string resources of types string, plural and array for a locale. Also responsible for
  * generating a custom format binary file for the resources.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class StringResources {
 
   /**
@@ -122,7 +124,7 @@ public class StringResources {
    *
    *   [Int: # of arrays]
    *   [Int: Smallest resource id among arrays]
-   *   [[Short: resource id delta] [Byte: #genders] [[Byte: gender enum ordinal] [Int: #elements]
+   *   [[Short: resource id delta] [Byte: #genders] [[Byte: gender enum ordinal] [Byte: #elements]
    *    [Short: length of element] x # phaof elements] x # of genders] x # of arrays
    *   [Byte array of string value] x Summation of genders over array elements over # of arrays
    * </pre>
@@ -231,8 +233,8 @@ public class StringResources {
   /**
    * Writes the metadata and strings in the following format to the output stream: [Int: # of
    * arrays] [Int: Smallest resource id among arrays] [[Short: resource id delta] [Byte: #genders]
-   * [[Byte: gender enum ordinal] [Int: #elements] [[Short: length of element] x # of elements]] x #
-   * of genders] x # of arrays [Byte array of string value] x Summation of genders over array
+   * [[Byte: gender enum ordinal] [Byte: #elements] [[Short: length of element] x # of elements]] x
+   * # of genders] x # of arrays [Byte array of string value] x Summation of genders over array
    * elements over # of arrays
    *
    * @param outputStream
@@ -257,6 +259,11 @@ public class StringResources {
           outputStream.writeByte(gender.getKey().ordinal());
 
           ImmutableList<String> arrayElements = gender.getValue();
+          Preconditions.checkState(
+              arrayElements.size() <= 0xFF,
+              "String array 0x%s has %s items; at most 255 fit in one byte",
+              Integer.toHexString(entry.getKey()),
+              arrayElements.size());
           outputStream.writeByte(arrayElements.size());
           for (String arrayValue : arrayElements) {
             byte[] byteValue = getUnescapedStringBytes(arrayValue);

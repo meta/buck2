@@ -19,9 +19,8 @@
 
 use crate::assert::Assert;
 use crate::eval::bc::opcode::BcOpcode;
-use crate::eval::compiler::def::FrozenDef;
+use crate::eval::compiler::def::Def;
 use crate::tests::bc::golden::bc_golden_test;
-use crate::values::ValueLike;
 
 #[test]
 fn test_def_const_inlined() {
@@ -92,8 +91,8 @@ fn test_dict_inlined_call_stack() {
 
     // Check `f` is inlined into `g` and `h`.
     for (m, f) in [(m_g, "g"), (m_h, "h")] {
-        let f = m.get(f).unwrap();
-        let f = f.value().downcast_ref::<FrozenDef>().unwrap();
+        let owned = m.get(f).unwrap();
+        let f = owned.as_ref().value().downcast_ref::<Def>().unwrap();
         assert_eq!(
             BcOpcode::ListNew,
             f.bc().instrs.opcodes().as_slice()[0],
@@ -123,10 +122,33 @@ error: Value of type `list` is not hashable
   |
 1 | def f(): return {[]: 10}
   |                  ^^
-  |
 ",
         &format!("\n{error:#}")
     );
+}
+
+#[test]
+fn test_dict_key_spans_after_nested_dicts() {
+    let mut a = Assert::new();
+    let source = "\
+def dicts(good_key, bad_key):
+    first = {good_key: {good_key: 0}}
+    return {good_key: first, bad_key: 1}
+";
+    a.module("dicts.bzl", source);
+    for prelude in [source, "load('dicts.bzl', 'dicts')"] {
+        a.is_true(&format!("{prelude}\ndicts(0, 1)[1] == 1"));
+        for (key, message) in [("0", "key repeated"), ("[]", "not hashable")] {
+            let error = a.fail(&format!("{prelude}\ndicts(0, {key})"), message);
+            assert_eq!(
+                "bad_key",
+                error
+                    .span()
+                    .expect("dictionary key error span")
+                    .source_span(),
+            );
+        }
+    }
 }
 
 #[test]

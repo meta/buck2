@@ -3,7 +3,7 @@
 {
   "error_category": "USER",
   "failures": {
-    "root//fail:fail?root//:macos": "Action failed: root//fail:fail (cfg:<empty>#<HASH>) (fail)\nRemote command returned non-zero exit code 1\nRemote action, reproduce with: `frecli cas download-action <DIGEST>`\nStdout: <empty>\nStderr: <empty>\n"
+    "root//fail:fail?root//:macos": "Action failed: root//fail:fail (<modifiers>#<HASH>) (fail)\nRemote command returned non-zero exit code 1\nRemote action, reproduce with: `frecli cas download-action <DIGEST>`\nStdout: <empty>\nStderr: <empty>\n"
   },
   "results": {
     "root//:arm?root//:macos": {
@@ -88,7 +88,7 @@
     },
     "root//:target2?root//:macos": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},
@@ -104,7 +104,7 @@
     },
     "root//:target?root//:macos": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},
@@ -120,7 +120,7 @@
     },
     "root//fail:fail?root//:macos": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [
             {
@@ -129,7 +129,7 @@
                 "error_content": "<STRING_HASH>",
                 "error_diagnostics": null,
                 "key": {
-                  "owner": "root//fail:fail (cfg:<empty>#<HASH>)"
+                  "owner": "root//fail:fail (<modifiers>#<HASH>)"
                 },
                 "name": {
                   "category": "fail",
@@ -138,7 +138,9 @@
                 "stderr_content": "<STRING_HASH>",
                 "stdout_content": "<STRING_HASH>"
               },
+              "category_key": "ACTION_COMMAND_FAILURE",
               "cause_index": 0,
+              "error_category": "USER",
               "error_tags": [
                 "ACTION_COMMAND_FAILURE",
                 "ANY_ACTION_EXECUTION"
@@ -157,9 +159,33 @@
       "outputs": {},
       "success": "FAIL"
     },
+    "root//slow:target?root//:macos": {
+      "configured": {
+        "<modifiers>#<HASH>": {
+          "configured_graph_size": null,
+          "errors": [],
+          "other_outputs": {},
+          "outputs": {
+            "DEFAULT": [
+              "buck-out/v2/art/root/<HASH>/slow/__target__/fast.txt"
+            ]
+          },
+          "success": "SUCCESS"
+        }
+      },
+      "configured_graph_size": null,
+      "errors": [],
+      "other_outputs": {},
+      "outputs": {
+        "DEFAULT": [
+          "buck-out/v2/art/root/<HASH>/slow/__target__/fast.txt"
+        ]
+      },
+      "success": "SUCCESS"
+    },
     "root//subdir:subdir?root//:macos": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},
@@ -176,7 +202,7 @@
   },
   "strings": {
     "<STRING_HASH>": "",
-    "<STRING_HASH>": "Action failed: root//fail:fail (cfg:<empty>#<HASH>) (fail)\nRemote command returned non-zero exit code 1\nRemote action, reproduce with: `frecli cas download-action <DIGEST>`\nStdout: <empty>\nStderr: <empty>\n",
+    "<STRING_HASH>": "Action failed: root//fail:fail (<modifiers>#<HASH>) (fail)\nRemote command returned non-zero exit code 1\nRemote action, reproduce with: `frecli cas download-action <DIGEST>`\nStdout: <empty>\nStderr: <empty>\n",
     "<STRING_HASH>": "Remote command returned non-zero exit code 1"
   },
   "success": false,

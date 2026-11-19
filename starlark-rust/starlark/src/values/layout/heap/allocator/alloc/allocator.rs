@@ -20,15 +20,14 @@ use std::cell::UnsafeCell;
 use std::fmt;
 use std::fmt::Debug;
 use std::mem;
-use std::mem::MaybeUninit;
 use std::ptr::NonNull;
-use std::slice;
 
 use crate::values::layout::aligned_size::AlignedSize;
 use crate::values::layout::heap::allocator::alloc::chain::ChunkChain;
 use crate::values::layout::heap::allocator::alloc::chain::ChunkChainIterator;
 use crate::values::layout::heap::allocator::alloc::per_thread::thread_local_alloc_at_least;
 use crate::values::layout::heap::allocator::alloc::per_thread::thread_local_release;
+use crate::values::layout::heap::allocator::api::AllocatedChunk;
 use crate::values::layout::heap::allocator::api::ArenaAllocator;
 use crate::values::layout::heap::allocator::api::ChunkAllocationDirection;
 use crate::values::layout::value_alloc_size::ValueAllocSize;
@@ -121,22 +120,27 @@ impl ChunkAllocator {
 }
 
 pub(crate) struct ChunkRevIterator<'a> {
-    current: &'a [MaybeUninit<u8>],
+    current: Option<AllocatedChunk<'a>>,
     chain: ChunkChainIterator<'a>,
 }
 
 impl<'a> Iterator for ChunkRevIterator<'a> {
-    type Item = &'a [MaybeUninit<u8>];
+    type Item = AllocatedChunk<'a>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if !self.current.is_empty() {
-            // Reset to empty slice and return.
-            return Some(mem::take(&mut self.current));
+        if let Some(current) = self.current.take().filter(|chunk| !chunk.is_empty()) {
+            return Some(current);
         }
         loop {
             let chain = self.chain.next()?;
-            let data = chain.data_bytes();
+            // SAFETY: the allocator retains the chain's allocated bytes for `'a`.
+            let data = unsafe {
+                AllocatedChunk::new(
+                    chain.begin().cast().as_ptr(),
+                    chain.current_chunk_available_len().bytes() as usize,
+                )
+            };
             if !data.is_empty() {
                 return Some(data);
             }
@@ -177,10 +181,10 @@ impl ArenaAllocator for ChunkAllocator {
         unsafe {
             let begin = (*self.chain.get()).begin();
             ChunkRevIterator {
-                current: slice::from_raw_parts(
+                current: Some(AllocatedChunk::new(
                     begin.cast().as_ptr(),
                     AlignedSize::ptr_diff(begin, self.current_ptr.get()).bytes() as usize,
-                ),
+                )),
                 chain: (*self.chain.get())
                     .prev()
                     .map(|next| next.iter())
@@ -201,7 +205,7 @@ impl ArenaAllocator for ChunkAllocator {
 
 #[cfg(test)]
 mod tests {
-    use rand::Rng;
+    use rand::RngExt as _;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
@@ -255,10 +259,10 @@ mod tests {
         let mut expected_total_size_bytes = 0;
         let mut allocator = ChunkAllocator::default();
         for _ in 0..i {
-            let size = match rng.gen_range(0..=2) {
-                0 => rng.gen_range(0..10),
-                1 => rng.gen_range(0..100),
-                2 => rng.gen_range(0..1000),
+            let size = match rng.random_range(0..=2) {
+                0 => rng.random_range(0..10),
+                1 => rng.random_range(0..100),
+                2 => rng.random_range(0..1000),
                 _ => unreachable!(),
             };
             let Some(size) =

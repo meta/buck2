@@ -22,27 +22,29 @@ use std::hash::Hasher;
 
 use allocative::Allocative;
 use starlark_derive::ProvidesStaticType;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_value;
 use starlark_map::StarlarkHashValue;
 use starlark_map::StarlarkHasher;
 
 use crate as starlark;
+use crate::__derive_refs::ViewOfRepresentations;
 use crate::__derive_refs::serde::Serialize;
 use crate::private::Private;
-use crate::typing::Ty;
+use crate::static_starlark_value;
+use crate::values::AllocStaticSimple;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::ValueError;
-use crate::values::layout::avalue::AValueBasic;
-use crate::values::layout::avalue::AValueImpl;
-use crate::values::layout::avalue::alloc_static;
-use crate::values::layout::heap::repr::AValueRepr;
+use crate::values::ValueTyped;
 
 /// The result of calling `type()` on booleans.
 pub const BOOL_TYPE: &str = "bool";
 
-/// `bool` value.
-#[derive(ProvidesStaticType, Debug, Serialize, Allocative)]
+/// The representation of `bool`. The type is the Rust `bool`, which is what a
+/// [`ValueOf`](crate::values::ValueOf) names and is read as. The only two values of this are
+/// the statics below.
+#[derive(ProvidesStaticType, Debug, Serialize, Allocative, StarlarkPagable)]
 #[serde(transparent)]
 pub struct StarlarkBool(pub(crate) bool);
 
@@ -56,24 +58,22 @@ impl Display for StarlarkBool {
     }
 }
 
-pub(crate) static VALUE_FALSE_TRUE: [AValueRepr<AValueImpl<AValueBasic<StarlarkBool>>>; 2] = [
-    alloc_static(StarlarkBool(false)),
-    alloc_static(StarlarkBool(true)),
-];
+// Define individual boolean values with registration (multiple values of same type)
+static_starlark_value!(StarlarkBool {
+    pub(crate) VALUE_FALSE = StarlarkBool(false);
+    pub(crate) VALUE_TRUE = StarlarkBool(true);
+});
 
-/// Define the bool type
+// Array of references for efficient boolean lookup by index
+pub(crate) static VALUE_FALSE_TRUE: [&AllocStaticSimple<StarlarkBool>; 2] =
+    [&VALUE_FALSE, &VALUE_TRUE];
+
 #[starlark_value(type = BOOL_TYPE)]
-impl<'v> StarlarkValue<'v> for StarlarkBool {
-    fn is_special(_: Private) -> bool
-    where
-        Self: Sized,
-    {
-        true
-    }
-
+impl<'v> StarlarkType<'v> for bool {
     fn collect_repr(&self, s: &mut String) {
-        // repr() for bool is quite hot, so optimise it
-        if self.0 {
+        // The default writes the receiver's `Display`, which for a Rust `bool` is `true`.
+        // repr() for bool is also quite hot, so optimise it
+        if *self {
             s.push_str("True")
         } else {
             s.push_str("False")
@@ -81,36 +81,49 @@ impl<'v> StarlarkValue<'v> for StarlarkBool {
     }
 
     fn to_bool(&self) -> bool {
-        self.0
+        *self
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        hasher.write_u8(if self.0 { 1 } else { 0 });
-        Ok(())
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+        hasher.write_u8(if *self { 1 } else { 0 });
     }
 
     fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {
         // These constants are just two random numbers.
-        Ok(StarlarkHashValue::new_unchecked(if self.0 {
+        Ok(StarlarkHashValue::new_unchecked(if *self {
             0xa4acba08
         } else {
             0x71e8ba71
         }))
     }
 
-    fn compare(&self, other: Value) -> crate::Result<Ordering> {
-        if let Some(other) = other.unpack_bool() {
-            Ok(self.0.cmp(&other))
-        } else {
-            ValueError::unsupported_with(self, "<>", other)
-        }
+    fn compare(&self, other: bool) -> Ordering {
+        self.cmp(&other)
+    }
+}
+
+impl<'v> ViewOfRepresentations<'v> for bool {
+    type Canonical = StarlarkBool;
+
+    #[inline]
+    fn from_value(value: Value<'v>) -> Option<bool> {
+        value.unpack_bool()
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for StarlarkBool {
+    type Type = bool;
+
+    #[inline]
+    fn get_typed(this: ValueTyped<'v, Self>) -> bool {
+        this.as_ref().0
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::bool())
-    }
-
-    fn get_type_starlark_repr() -> Ty {
-        Ty::bool()
+    fn is_special(_: Private) -> bool
+    where
+        Self: Sized,
+    {
+        true
     }
 }

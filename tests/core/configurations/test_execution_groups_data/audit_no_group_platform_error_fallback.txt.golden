@@ -1,0 +1,18 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Checking each target against execution platforms defined by root//config:platforms_error_fallback
+root//errors/no_group_platform:t (<unspecified>):
+  Failed to configure: Error looking up configured node root//errors/no_group_platform:t (<unspecified>): Error resolving the execution platform of execution group `G`: No compatible execution platform; 3 candidates were skipped. Run `buck2 audit execution-platform-resolution` on the target, with `--reuse-current-config` and a `--target-universe` matching the failing command, to see why each was skipped
+    Compatible root//config:linux_local
+    Compatible root//config:linux_remote
+    Compatible root//config:macos_local
+  Execution group `G`:
+    Skipped root//config:linux_local
+      root//groups:macos_tool
+          is incompatible with root//config:linux_local#<HASH> (root//config:macos unsatisfied), check the target's compatibility attributes
+    Skipped root//config:linux_remote
+      root//groups:macos_tool
+          is incompatible with root//config:linux_remote#<HASH> (root//config:macos unsatisfied), check the target's compatibility attributes
+    Skipped root//config:macos_local
+      root//groups:remote_tool
+          is incompatible with root//config:macos_local#<HASH> (root//config:remote unsatisfied), check the target's compatibility attributes

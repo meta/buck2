@@ -1,0 +1,12 @@
+# The target's default `within_view` is the `inherit = True` union
+# `root//inherit_test/...` ∪ `root//inherit_test/restricted_child/...`,
+# which allows this dep. The cap (the AND of the explicit lists) requires
+# the dep to also be under `restricted_child/...` -- so the cap refuses it.
+#
+# This is the test that fails WITHOUT the fix (cap = parent AND (parent ∪ B)
+# = parent, which still allows this dep) and passes WITH the fix
+# (cap = parent AND B, which refuses it).
+stub(
+    name = "c",
+    deps = ["root//inherit_test/lib:t"],
+)

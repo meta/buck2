@@ -4,17 +4,16 @@
 Adding a context after should still keep backtrace on top
 
 Caused by:
-    0: Traceback (most recent call last):
+    0: error: rust failure
+        --> imported.bzl:9:6
+         |
+       9 |      rust_failure()
+         |      ^^^^^^^^^^^^^^
+       Traceback (most recent call last):
          * assert.bzl:3, in <module>
              should_fail()
          * imported.bzl:9, in should_fail
              rust_failure()
        
-       error: rust failure
-        --> imported.bzl:9:6
-         |
-       9 |      rust_failure()
-         |      ^^^^^^^^^^^^^^
-         |
     1: fail 2
     2: fail 1

@@ -8,24 +8,23 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-
 use buck2_error::BuckErrorContext;
+use buck2_hash::BuckMutMap;
 use tracing::Level;
 
 use crate::proto;
 
-impl TryInto<HashMap<String, String>> for proto::Event {
+impl TryInto<BuckMutMap<String, String>> for proto::Event {
     type Error = buck2_error::Error;
 
-    fn try_into(self) -> Result<HashMap<String, String>, Self::Error> {
+    fn try_into(self) -> Result<BuckMutMap<String, String>, Self::Error> {
         use std::collections::hash_map::Entry;
 
         use proto::event::Item;
 
         let proto::Event { items } = self;
 
-        let mut ret = HashMap::new();
+        let mut ret = BuckMutMap::default();
         for Item { key, value } in items {
             match ret.entry(key) {
                 Entry::Vacant(e) => {

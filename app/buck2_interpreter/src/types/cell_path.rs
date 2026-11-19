@@ -12,7 +12,9 @@ use std::hash::Hash;
 
 use allocative::Allocative;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::paths::CellRelativePath;
 use derive_more::Display;
+use pagable::Pagable;
 use serde::Serialize;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
@@ -20,17 +22,24 @@ use starlark::collections::StarlarkHasher;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::Heap;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
-use starlark::values::ValueLike;
+use starlark::values::ValueOf;
 use starlark::values::starlark_value;
-use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 
-#[derive(Debug, PartialEq, Display, ProvidesStaticType, Allocative)]
-pub struct StarlarkCellPath(pub CellPath);
+#[derive(
+    Debug,
+    PartialEq,
+    Display,
+    ProvidesStaticType,
+    Allocative,
+    Pagable,
+    StarlarkPagable
+)]
+pub struct StarlarkCellPath(#[starlark_pagable(pagable)] pub CellPath);
 
 starlark_simple_value!(StarlarkCellPath);
 
@@ -43,23 +52,20 @@ impl Serialize for StarlarkCellPath {
     }
 }
 
+starlark::methods_static!(CELL_PATH_METHODS = cell_path_methods);
+
 #[starlark_value(type = "CellPath")]
 impl<'v> StarlarkValue<'v> for StarlarkCellPath {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(cell_path_methods)
+        Some(CELL_PATH_METHODS.methods())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        match other.downcast_ref::<StarlarkCellPath>() {
-            None => Ok(false),
-            Some(v) => Ok(v.0 == self.0),
-        }
+    fn equals(&self, other: &Self) -> bool {
+        other.0 == self.0
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.0.hash(hasher);
-        Ok(())
     }
 }
 
@@ -74,12 +80,22 @@ fn cell_path_methods(builder: &mut MethodsBuilder) {
     /// The path components are
     /// [normalized](https://docs.rs/relative-path/1.9.3/relative_path/struct.RelativePath.html#method.normalize),
     /// e.g. `puppy/../doggy` will become `doggy`.
-    fn add(this: &StarlarkCellPath, arg: &str) -> starlark::Result<StarlarkCellPath> {
-        Ok(StarlarkCellPath((this).0.join_normalized(arg)?))
+    fn add<'v>(
+        this: &StarlarkCellPath,
+        arg: &str,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkCellPath>> {
+        // FIXME(JakobDegen): `join_normalized` is always wrong
+        let p = this
+            .0
+            .path()
+            .as_forward_relative_path()
+            .join_normalized(arg)?;
+        let p = CellPath::new(this.0.cell(), CellRelativePath::new(&p));
+        Ok(ValueOf::alloc(heap, StarlarkCellPath(p)))
     }
 }
 
 #[starlark_module]
-pub fn register_cell_path(globals: &mut GlobalsBuilder) {
-    const CellPath: StarlarkValueAsType<StarlarkCellPath> = StarlarkValueAsType::new();
-}
+#[starlark_types(StarlarkCellPath as CellPath)]
+pub fn register_cell_path(globals: &mut GlobalsBuilder) {}

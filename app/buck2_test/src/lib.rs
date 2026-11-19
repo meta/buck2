@@ -8,14 +8,12 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(used_with_arg)]
-
 //! Implementation of test running.
 
 pub mod command;
 pub mod downward_api;
 pub mod executor_launcher;
+pub(crate) mod internal_runner;
 pub(crate) mod local_resource_api;
 pub mod local_resource_registry;
 pub(crate) mod local_resource_setup;

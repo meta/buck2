@@ -1,0 +1,15 @@
+load(":rules.bzl", "argsfile_test")
+
+argsfile_test(
+    name = "argsfile",
+    expect_argsfile = "relative",
+    labels = ["tpx:supports_argsfiles"],
+)
+
+argsfile_test(
+    name = "argsfile_absolute",
+    expect_argsfile = "absolute",
+    labels = ["tpx:supports_argsfiles"],
+)
+
+argsfile_test(name = "inline")

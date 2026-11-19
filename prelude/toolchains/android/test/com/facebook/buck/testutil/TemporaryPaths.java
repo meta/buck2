@@ -68,7 +68,6 @@ public class TemporaryPaths extends ExternalResource {
   }
 
   @Override
-  @SuppressWarnings("PMD.EmptyCatchBlock")
   public void after() {
     if (root == null) {
       return;

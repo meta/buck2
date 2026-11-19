@@ -46,13 +46,9 @@ fn convert_index_aux(
     }
 }
 
-/// Function to parse the index for at/set_at methods.
-///
-/// Return an `i32` from self corresponding to the index recenterd between 0
-/// and len. Raise the correct errors if the value is not numeric or the
-/// index is out of bound.
-pub(crate) fn convert_index(v: Value, len: i32) -> crate::Result<i32> {
-    let x = i32::unpack_value_err(v)?;
+/// The position `x` names in a sequence of length `len`, counted from the end if `x` is
+/// negative; the out-of-bounds error if there is none. For `at` and `set_at`.
+pub(crate) fn convert_index(x: i32, len: i32) -> crate::Result<i32> {
     let i = if x < 0 {
         len.checked_add(x).ok_or(ValueError::IntegerOverflow)?
     } else {
@@ -130,12 +126,12 @@ pub(crate) fn apply_slice<T: Copy>(
     if stride < 0 {
         res.reverse();
     }
-    let astride = stride.abs();
+    let astride = stride.unsigned_abs();
     let res = res
         .into_iter()
         .enumerate()
         .filter_map(|x| {
-            if 0 == (x.0 as i32 % astride) {
+            if (x.0 as u32).is_multiple_of(astride) {
                 Some(x.1)
             } else {
                 None
@@ -153,9 +149,8 @@ mod tests {
 
     #[test]
     fn test_convert_index() {
-        let heap = Heap::new();
-        assert_eq!(Some(6), convert_index(Value::testing_new_int(6), 7).ok());
-        assert_eq!(Some(6), convert_index(Value::testing_new_int(-1), 7).ok());
+        assert_eq!(Some(6), convert_index(6, 7).ok());
+        assert_eq!(Some(6), convert_index(-1, 7).ok());
         assert_eq!(
             Some((6, 7, 1)),
             convert_slice_indices(7, Some(Value::testing_new_int(6)), None, None).ok()
@@ -181,9 +176,8 @@ mod tests {
             .ok()
         );
         // Errors
-        assert!(convert_index(heap.alloc("a"), 7).is_err());
-        assert!(convert_index(Value::testing_new_int(8), 7).is_err()); // 8 > 7 = len
-        assert!(convert_index(Value::testing_new_int(-8), 7).is_err()); // -8 + 7 = -1 < 0
+        assert!(convert_index(8, 7).is_err()); // 8 > 7 = len
+        assert!(convert_index(-8, 7).is_err()); // -8 + 7 = -1 < 0
     }
 
     #[test]
@@ -252,5 +246,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(x, &[] as &[i32]);
+    }
+
+    #[test]
+    fn test_slice_i32_min_stride_no_panic() {
+        // Regression for https://github.com/facebook/starlark-rust/issues/230
+        // i32::MIN stride previously panicked on abs()
+        Heap::temp(|heap| {
+            let xs = [1, 2, 3];
+            let res = apply_slice(&xs, None, None, Some(Value::testing_new_int(i32::MIN))).unwrap();
+            assert_eq!(res, vec![3]);
+            let xs2 = ['a', 'b', 'c', 'd', 'e'];
+            let res2 =
+                apply_slice(&xs2, None, None, Some(Value::testing_new_int(i32::MIN))).unwrap();
+            assert_eq!(res2, vec!['e']);
+            // neighbour -2147483647 works too
+            let res3 =
+                apply_slice(&xs, None, None, Some(Value::testing_new_int(-2147483647))).unwrap();
+            assert_eq!(res3, vec![3]);
+            // via string/tuple/list slicing would also go through same path; test direct apply_slice
+            let _ = heap; // keep heap alive
+        });
     }
 }

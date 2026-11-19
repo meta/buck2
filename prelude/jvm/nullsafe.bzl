@@ -15,8 +15,7 @@ NullsafeInfo = record(
     extra_arguments = field(cmd_args),
 )
 
-def get_nullsafe_info(
-        ctx: AnalysisContext) -> [NullsafeInfo, None]:
+def get_nullsafe_info(ctx: AnalysisContext) -> [NullsafeInfo, None]:
     java_toolchain = ctx.attrs._java_toolchain[JavaToolchainInfo]
     extra_arguments = cmd_args(ctx.attrs.extra_arguments)
 
@@ -25,26 +24,31 @@ def get_nullsafe_info(
     nullsafe_extra_args = java_toolchain.nullsafe_extra_args
 
     if nullsafe_plugin:
-        nullsafe_output = ctx.actions.declare_output("reports", dir = True)
-        nullsafe_plugin_params = create_plugin_params(ctx, [nullsafe_plugin])
+        nullsafe_output = ctx.actions.declare_output("reports", dir = True, has_content_based_path = True)
 
-        nullsafe_args = cmd_args(
-            "-XDcompilePolicy=simple",
-            "-Anullsafe.reportToJava=false",
+        plugin_args = cmd_args()
+        plugin_args.add("nullsafe.reportToJava=false")
+        plugin_args.add(
+            cmd_args(
+                nullsafe_output.as_output(),
+                format = "nullsafe.writeJsonReportToDir={}",
+            )
         )
-        nullsafe_args.add(cmd_args(
-            nullsafe_output.as_output(),
-            format = "-Anullsafe.writeJsonReportToDir={}",
-        ))
         if nullsafe_signatures:
-            nullsafe_args.add(cmd_args(
-                nullsafe_signatures,
-                format = "-Anullsafe.signatures={}",
-            ))
-        if nullsafe_extra_args:
-            nullsafe_args.add(nullsafe_extra_args)
+            plugin_args.add(
+                cmd_args(
+                    nullsafe_signatures,
+                    format = "nullsafe.signatures={}",
+                )
+            )
 
-        extra_arguments.add(nullsafe_args)
+        if nullsafe_extra_args:
+            plugin_args.add(nullsafe_extra_args)
+
+        nullsafe_plugin_params = create_plugin_params(ctx, [(nullsafe_plugin, plugin_args)])
+
+        # -XDcompilePolicy=simple is a javac flag, not a plugin option
+        extra_arguments.add("-XDcompilePolicy=simple")
 
         return NullsafeInfo(
             output = nullsafe_output,

@@ -9,6 +9,7 @@
  */
 
 pub mod globals;
+#[allow(clippy::module_inception)]
 mod transitive_set;
 mod transitive_set_args_projection;
 pub mod transitive_set_definition;
@@ -16,24 +17,14 @@ mod transitive_set_iterator;
 mod transitive_set_json_projection;
 mod traversal;
 
-pub use self::transitive_set::FrozenTransitiveSet;
 pub use self::transitive_set::TransitiveSet;
-use self::transitive_set::TransitiveSetGen;
-pub use self::transitive_set::TransitiveSetLike;
-pub use self::transitive_set_args_projection::FrozenTransitiveSetArgsProjection;
 pub use self::transitive_set_args_projection::TransitiveSetArgsProjection;
 pub use self::transitive_set_definition::FrozenTransitiveSetDefinition;
 pub use self::transitive_set_definition::TransitiveSetDefinition;
+pub use self::transitive_set_definition::TransitiveSetDefinitionView;
 pub use self::transitive_set_definition::TransitiveSetOperations;
 pub use self::transitive_set_definition::TransitiveSetProjectionKind;
 pub use self::transitive_set_definition::TransitiveSetProjectionSpec;
-use self::transitive_set_iterator::BfsTransitiveSetIteratorGen;
-use self::transitive_set_iterator::DfsTransitiveSetIteratorGen;
-use self::transitive_set_iterator::PostorderTransitiveSetIteratorGen;
-use self::transitive_set_iterator::PreorderTransitiveSetIteratorGen;
-use self::transitive_set_iterator::TopologicalTransitiveSetIteratorGen;
-use self::transitive_set_iterator::TransitiveSetIteratorLike;
-pub use self::transitive_set_json_projection::FrozenTransitiveSetJsonProjection;
 pub use self::transitive_set_json_projection::TransitiveSetJsonProjection;
 pub use self::traversal::TransitiveSetOrdering;
 

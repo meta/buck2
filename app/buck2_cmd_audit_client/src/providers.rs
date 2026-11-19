@@ -20,22 +20,31 @@ use crate::AuditSubcommand;
     about = "prints out the providers for a target pattern"
 )]
 pub struct AuditProvidersCommand {
-    #[clap(long, conflicts_with_all=&["list", "print_debug"])]
+    #[clap(long, conflicts_with_all=&["list", "print_debug", "provider"])]
     pub quiet: bool,
 
     #[clap(
         long,
         short = 'l',
-        help = "List the available providers", conflicts_with_all=&["print_debug", "quiet"]
+        help = "List the available providers", conflicts_with_all=&["print_debug", "quiet", "provider"]
     )]
     pub list: bool,
 
     #[clap(
         long = "print-debug",
         help = "Print the providers using debug format (very verbose)",
-        conflicts_with_all=&["list", "quiet"]
+        conflicts_with_all=&["list", "quiet", "provider"]
     )]
     pub print_debug: bool,
+
+    #[clap(
+        long = "provider",
+        short = 'p',
+        help = "Print only the named provider(s)",
+        conflicts_with_all=&["list", "print_debug", "quiet"],
+        num_args = 1,
+    )]
+    pub provider: Vec<String>,
 
     #[clap(
         name = "TARGET_PATTERNS",

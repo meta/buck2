@@ -16,32 +16,29 @@
  */
 
 #[inline(always)]
-pub(crate) fn ptr_to_usize<T: ?Sized>(x: &T) -> usize {
-    x as *const T as *const () as usize
-}
-
-/// Undefined behaviour if the argument is zero, or does not satisfy the alignment
-/// of type `T`.
-#[inline(always)]
-pub(crate) unsafe fn usize_to_ptr<'a, T>(x: usize) -> &'a T {
-    debug_assert!(x != 0, "Zero is not a valid pointer");
-    debug_assert!(
-        x.is_multiple_of(std::mem::align_of::<T>()),
-        "Pointer is not aligned"
-    );
-    unsafe { &*(x as *const T) }
-}
-
-#[inline(always)]
 pub(crate) unsafe fn ptr_lifetime<'a, 'b, T: ?Sized>(x: &'a T) -> &'b T {
     unsafe { &*(x as *const T) }
+}
+
+/// # Safety
+///
+/// Same requirements as [`std::mem::transmute`], except that `T` and `U` having the same size is
+/// not checked at compile time.
+pub(crate) unsafe fn transmute_no_size_check<T, U>(t: T) -> U {
+    // SAFETY: The caller guarantees the `transmute` requirements per this function's contract.
+    // `ManuallyDrop` transfers ownership of the value to the returned `U` without dropping the `T`.
+    unsafe {
+        use std::mem::ManuallyDrop;
+        let t = ManuallyDrop::new(t);
+        std::mem::transmute_copy::<T, U>(&*t)
+    }
 }
 
 /// `transmute!(from-type, to-type, value)` will do a [`transmute`](std::mem::transmute),
 /// but the original and result types must be specified.
 macro_rules! transmute {
     ($from:ty, $to:ty, $e:expr) => {
-        std::mem::transmute::<$from, $to>($e)
+        crate::cast::transmute_no_size_check::<$from, $to>($e)
     };
 }
 

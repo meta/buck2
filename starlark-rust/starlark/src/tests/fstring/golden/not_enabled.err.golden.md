@@ -9,4 +9,3 @@ error: Your Starlark dialect must enable f-strings to use them
   |
 1 | f'{foo}'
   | ^^^^^^^^
-  |

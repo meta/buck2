@@ -14,3 +14,14 @@ execution_platforms(
         ":sunos",
     ],
 )
+
+execution_platforms(
+    name = "execution_platforms_error_fallback",
+    fallback = "error",
+    platforms = [
+        ":haiku",
+        ":hurd",
+        ":minix",
+        ":sunos",
+    ],
+)

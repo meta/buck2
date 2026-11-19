@@ -6,33 +6,55 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+def _get_results(lazy: bxl.LazyContext, modifiers, targets, take: list[str] | None) -> dict[Label, list[ValidationSpec]]:
+    results = lazy.join_all([lazy.configured_target_node(target, modifiers = modifiers).catch() for target in targets]).resolve()
+
+    analysis_promises = []
+    for result in results:
+        if not result.is_ok():
+            continue
+        analysis_promises.append(lazy.analysis(result.unwrap()).catch())
+
+    info = {}
+    for analysis_result in lazy.join_all(analysis_promises).resolve():
+        if not analysis_result.is_ok():
+            continue
+
+        providers = analysis_result.unwrap().providers()
+        validation_info = providers.get(ValidationInfo)
+        if not validation_info:
+            info[analysis_result.unwrap().as_dependency().label] = []
+            continue
+
+        specs = []
+        for spec in validation_info.validations:
+            if take and spec.name not in take:
+                continue
+
+            specs.append(spec)
+
+        info[analysis_result.unwrap().as_dependency().label] = specs
+
+    return info
+
 def _impl(ctx: bxl.Context):
     if ctx.cli_args.transitive:
-        targets = (
-            ctx.target_universe(ctx.cli_args.targets).universe_target_set()
-        )
+        targets = ctx.target_universe(ctx.cli_args.targets).universe_target_set()
     else:
         targets = ctx.cli_args.targets
 
+    target_to_specs = _get_results(
+        lazy = ctx.lazy,
+        modifiers = ctx.modifiers,
+        targets = targets,
+        take = ctx.cli_args.take,
+    )
+
     info = {}
-    for target, analysis_result in ctx.analysis(targets).items():
-        providers = analysis_result.providers()
-        validation_info = providers.get(ValidationInfo)
-        if not validation_info:
-            if not ctx.cli_args.trim:
-                info[target] = {}
-            continue
-
-        spec_name_to_path = {}
-        for spec in validation_info.validations:
-            # Yes, I'm aware this is suboptimal. When running this script on
-            # large targets are Meta, there is no discernable regression to performance.
-            #
-            # Read the big ol' comment block below to understand why.
-            o = ctx.output.ensure(spec.validation_result)
-            spec_name_to_path[spec.name] = o.abs_path()
-
-        info[target] = spec_name_to_path
+    for target, specs in target_to_specs.items():
+        ensured = {spec.name: ctx.output.ensure(spec.validation_result) for spec in specs}
+        if ensured or not ctx.cli_args.trim:
+            info[target] = ensured
 
     # We chose to print to stdout because we run into an issue with
     # the ctx.bxl_actions().actions.write_json() API
@@ -54,11 +76,73 @@ def _impl(ctx: bxl.Context):
     # path and not run into an invariant where you are not allowed to freeze EnsuredArtifacts.
     ctx.output.print_json(info)
 
+def _find_and_dump_failures_impl(bxl_ctx: bxl.Context, target_to_results: dict[Label, dict[str, ArtifactValue]], output: OutputArtifact):
+    output_results = {}
+    for target, results in target_to_results.items():
+        target_res = {}
+        for name, artifact_value in results.items():
+            content = artifact_value.read_json()["data"]
+            if content["status"] == "failure":
+                target_res[name] = content["message"]
+
+        if target_res:
+            output_results[target] = target_res
+
+    bxl_ctx.bxl_actions().actions.write_json(output, output_results, pretty = True)
+    return [DefaultInfo()]
+
+_find_and_dump_failures = bxl.dynamic_actions(
+    impl = _find_and_dump_failures_impl,
+    attrs = {
+        "output": dynattrs.output(),
+        "target_to_results": dynattrs.dict(Label, dynattrs.dict(str, dynattrs.artifact_value())),
+    },
+)
+
+def _dump_failures_impl(ctx: bxl.Context):
+    if ctx.cli_args.transitive:
+        targets = ctx.target_universe(ctx.cli_args.targets).universe_target_set()
+    else:
+        targets = ctx.cli_args.targets
+
+    target_to_specs = _get_results(
+        lazy = ctx.lazy,
+        modifiers = ctx.modifiers,
+        targets = targets,
+        take = ctx.cli_args.take,
+    )
+
+    input = {}
+    for target, specs in target_to_specs.items():
+        for spec in specs:
+            input.setdefault(target, {})[spec.name] = spec.validation_result
+
+    actions = ctx.bxl_actions().actions
+    out = actions.declare_output("results.json", has_content_based_path = False)
+    actions.dynamic_output_new(
+        _find_and_dump_failures(
+            target_to_results = input,
+            output = out.as_output(),
+        ),
+    )
+    ctx.output.print(ctx.output.ensure(out).abs_path())
+
+BASE_ARGS = {
+    # Filter specific validation specs.
+    "take": cli_args.list(cli_args.string(), default = []),
+    "targets": cli_args.target_expr(),
+    "transitive": cli_args.bool(False),
+}
+
+dump_failures = bxl_main(
+    impl = _dump_failures_impl,
+    cli_args = BASE_ARGS,
+)
+
 main = bxl_main(
     impl = _impl,
-    cli_args = {
-        "targets": cli_args.target_expr(),
-        "transitive": cli_args.bool(False),
+    cli_args = BASE_ARGS
+    | {
         "trim": cli_args.bool(
             default = True,
             doc = "By default, targets with no validations will be stripped from the output.",

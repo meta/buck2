@@ -19,7 +19,13 @@ use std::any::TypeId;
 use std::marker::PhantomData;
 
 use crate::any::AnyLifetime;
+use crate::values::StarlarkTypeExpr;
 use crate::values::Value;
+use crate::values::predicate::StarlarkPredicate;
+
+/// What a request for the handle of the predicate type `P` is keyed by. Nothing outside this
+/// module can name it, so no value provided by type can be taken for a handle.
+struct PredicateKey<P>(PhantomData<P>);
 
 /// Taken by [`StarlarkValue::provide`](crate::values::StarlarkValue::provide)
 /// to provide different data depending on the type.
@@ -57,6 +63,35 @@ impl<'a, 'v> Demand<'a, 'v> {
             unsafe { *(self.option as *mut Option<&'v T>) = Some(value) };
         }
     }
+
+    /// A demand for the handle of the predicate type `P`.
+    fn for_predicate<P: StarlarkPredicate>(
+        option: &mut Option<<P as StarlarkTypeExpr<'v>>::Get>,
+    ) -> Demand<'a, 'v> {
+        Demand {
+            type_id_of_t: TypeId::of::<PredicateKey<P>>(),
+            option: option as *mut _ as *mut (),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Provide the handle of the predicate type `P`, made by `handle`, if that is what is
+    /// demanded.
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) writes the calls of this, from the
+    /// memberships in the block.
+    #[inline]
+    pub fn provide_handle<P: StarlarkPredicate>(
+        &mut self,
+        handle: impl FnOnce() -> <P as StarlarkTypeExpr<'v>>::Get,
+    ) {
+        if self.type_id_of_t == TypeId::of::<PredicateKey<P>>() {
+            // SAFETY: the key says the option is the one `for_predicate::<P>` was given.
+            unsafe {
+                *(self.option as *mut Option<<P as StarlarkTypeExpr<'v>>::Get>) = Some(handle())
+            };
+        }
+    }
 }
 
 pub(crate) fn request_value_impl<'v, T: AnyLifetime<'v>>(value: Value<'v>) -> Option<T> {
@@ -65,10 +100,26 @@ pub(crate) fn request_value_impl<'v, T: AnyLifetime<'v>>(value: Value<'v>) -> Op
     option
 }
 
+/// The handle of the predicate type `P` to `value`, if the type of `value` says in its
+/// `#[starlark_value]` block that it is a member.
+#[inline]
+pub(crate) fn request_predicate_handle<'v, P: StarlarkPredicate>(
+    value: Value<'v>,
+) -> Option<<P as StarlarkTypeExpr<'v>>::Get> {
+    let value = value.get_ref();
+    if !value.has_predicate_handles() {
+        return None;
+    }
+    let mut option = None;
+    value.provide_predicate_handle(&mut Demand::for_predicate::<P>(&mut option));
+    option
+}
+
 #[cfg(test)]
 mod tests {
     use allocative::Allocative;
     use starlark_derive::NoSerialize;
+    use starlark_derive::StarlarkPagable;
     use starlark_derive::starlark_value;
 
     use crate as starlark;
@@ -92,7 +143,8 @@ mod tests {
         derive_more::Display,
         Debug,
         NoSerialize,
-        Allocative
+        Allocative,
+        StarlarkPagable
     )]
     #[display("SomeType")]
     struct MyValue {
@@ -116,12 +168,13 @@ mod tests {
 
     #[test]
     fn test_trait_downcast() {
-        let heap = Heap::new();
-        let value = heap.alloc_simple(MyValue { payload: 17 });
+        Heap::temp(|heap| {
+            let value = heap.alloc_simple(MyValue { payload: 17 });
 
-        assert!(value.request_value::<String>().is_none());
+            assert!(value.request_value::<String>().is_none());
 
-        let some_trait = value.request_value::<&dyn SomeTrait>().unwrap();
-        assert_eq!(17, some_trait.payload());
+            let some_trait = value.request_value::<&dyn SomeTrait>().unwrap();
+            assert_eq!(17, some_trait.payload());
+        });
     }
 }

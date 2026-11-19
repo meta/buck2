@@ -9,11 +9,15 @@
  */
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use buck2_artifact::actions::key::ActionKey;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_build_signals::env::DeferredBuildSignals;
 use buck2_build_signals::env::NodeDuration;
+use buck2_build_signals::env::WaitingData;
+use buck2_core::package::PackageLabel;
+use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_events::span::SpanId;
 use buck2_util::late_binding::LateBinding;
@@ -21,6 +25,7 @@ use dice::ActivationTracker;
 use dice::UserComputationData;
 use dupe::Dupe;
 
+use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ResolvedArtifactGroupBuildSignalsKey;
 
 pub static CREATE_BUILD_SIGNALS: LateBinding<
@@ -46,11 +51,18 @@ pub trait BuildSignals: Send + Sync + 'static {
         artifacts: Vec<ResolvedArtifactGroupBuildSignalsKey>,
     );
 
+    /// Record a final materialization event for the critical path.
+    ///
+    /// `from_group` is the top-level `ArtifactGroup` that triggered this materialization.
+    /// When the group is a transitive set projection, the critical path dependency is
+    /// recorded against the tset ensure step rather than the individual build action.
     fn final_materialization(
         &self,
         artifact: BuildArtifact,
+        from_group: ArtifactGroup,
         duration: NodeDuration,
         span_id: Option<SpanId>,
+        waiting_data: WaitingData,
     );
 
     fn test_listing(
@@ -59,6 +71,7 @@ pub trait BuildSignals: Send + Sync + 'static {
         suite: String,
         duration: NodeDuration,
         deps: &[ActionKey],
+        waiting_data: WaitingData,
     );
 
     fn test_execution(
@@ -69,6 +82,28 @@ pub trait BuildSignals: Send + Sync + 'static {
         variant: Option<String>,
         duration: NodeDuration,
         deps: &[ActionKey],
+        waiting_data: WaitingData,
+    );
+
+    /// Record an installer run that consumed the artifacts built by `deps`.
+    fn install(
+        &self,
+        installer: ConfiguredProvidersLabel,
+        targets: Vec<ConfiguredTargetLabel>,
+        duration: NodeDuration,
+        deps: &[ActionKey],
+        waiting_data: WaitingData,
+    );
+
+    /// A package load requested at `requested_at` on behalf of a node of
+    /// `discovered_by`, by code that drives loads outside any tracked computation
+    /// (query traversals). Must be called after the request returns. Credits the
+    /// load to that package's load on the critical path if the request started it.
+    fn load_discovered(
+        &self,
+        package: PackageLabel,
+        discovered_by: PackageLabel,
+        requested_at: Instant,
     );
 }
 

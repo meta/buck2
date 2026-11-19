@@ -1,0 +1,10 @@
+# Target with no explicit `visibility =`. Default visibility is
+# inherited from `restricted_child/PACKAGE` via `inherit=True` --
+# i.e., `parent.visibility ∪ this.visibility` =
+# `root//inherit_test/...` ∪ `root//inherit_test/restricted_child/inside/...`
+# = `root//inherit_test/...`. The intersection, however, is the AND of the
+# explicit lists only, which narrows to
+# `root//inherit_test/restricted_child/inside/...`.
+stub(
+    name = "t",
+)

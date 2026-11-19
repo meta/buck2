@@ -22,7 +22,7 @@ def _library(ctx):
     name = ctx.attrs.name
 
     # generate index data
-    index_output = ctx.actions.write(name + ".index", name)
+    index_output = ctx.actions.write(name + ".index", name, has_content_based_path = False)
 
     deps_libs = []
     resources = []
@@ -33,10 +33,10 @@ def _library(ctx):
             deps_libs.append(dep[ResourceInfo].data)
 
     # build lib
-    lib = ctx.actions.write(name + ".o", [name] + resources)
+    lib = ctx.actions.write(name + ".o", [name] + resources, has_content_based_path = False)
     if deps_libs:
         # link lib
-        lib = ctx.actions.write(name + "_linked.o", [lib] + deps_libs)
+        lib = ctx.actions.write(name + "_linked.o", [lib] + deps_libs, has_content_based_path = False)
 
     return [
         DefaultInfo(
@@ -57,7 +57,7 @@ library = rule(
 
 def _resource(ctx):
     name = ctx.attrs.name
-    txt = ctx.actions.write(name + ".txt", name)
+    txt = ctx.actions.write(name + ".txt", name, has_content_based_path = False)
 
     return [
         DefaultInfo(
@@ -76,14 +76,14 @@ resource = rule(
 def _binary(ctx):
     name = ctx.attrs.name
 
-    index_output = ctx.actions.write(name + ".index", name)
+    index_output = ctx.actions.write(name + ".index", name, has_content_based_path = False)
 
     deps = []
-    out = ctx.actions.write(name + ".o", name)
+    out = ctx.actions.write(name + ".o", name, has_content_based_path = False)
 
     for dep in ctx.attrs.deps:
         deps.extend(dep[DefaultInfo].default_outputs)
-    bin = ctx.actions.write(name, [out] + deps)
+    bin = ctx.actions.write(name, [out] + deps, has_content_based_path = False)
     return [
         DefaultInfo(
             default_output = bin,

@@ -10,8 +10,10 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import javax.tools.FileObject;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface FileManagerListener {
   void onFileRead(FileObject file);
 

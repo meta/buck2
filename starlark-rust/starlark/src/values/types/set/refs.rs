@@ -23,18 +23,14 @@ use std::convert::Infallible;
 use dupe::Dupe;
 use either::Either;
 
-use super::value::FrozenSetData;
 use super::value::SetData;
-use crate::coerce::coerce;
-use crate::typing::Ty;
-use crate::values::FrozenValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::layout::value::ValueLike;
+use crate::values::ValueOf;
+use crate::values::set::SetOf;
+use crate::values::set::SetType;
 use crate::values::set::value::SetGen;
-use crate::values::type_repr::SetType;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 /// Define the set type.
 pub struct SetRef<'v> {
@@ -51,6 +47,30 @@ impl<'v> Clone for SetRef<'v> {
                 aref: Either::Right(*x),
             },
         }
+    }
+}
+
+impl<'v> SetRef<'v> {
+    /// Downcast the value to a set.
+    #[inline]
+    pub fn from_value(x: Value<'v>) -> Option<SetRef<'v>> {
+        if let Some(x) = x.downcast_ref::<SetGen<SetData<'v>>>() {
+            Some(SetRef {
+                aref: Either::Right(&x.0),
+            })
+        } else {
+            let ptr = x.downcast_ref::<SetGen<RefCell<SetData<'v>>>>()?;
+            Some(SetRef {
+                aref: Either::Left(ptr.0.borrow()),
+            })
+        }
+    }
+}
+
+impl<'v> SetRef<'v> {
+    /// Iterate through the values in the set.
+    pub fn iter<'a>(&'a self) -> impl ExactSizeIterator<Item = Value<'v>> + 'a {
+        self.aref.iter()
     }
 }
 
@@ -72,7 +92,7 @@ impl<'v> SetMut<'v> {
         #[cold]
         #[inline(never)]
         fn error<'v>(x: Value<'v>) -> anyhow::Error {
-            if x.downcast_ref::<SetGen<FrozenSetData>>().is_some() {
+            if x.downcast_ref::<SetGen<SetData<'v>>>().is_some() {
                 ValueError::CannotMutateImmutableValue.into()
             } else {
                 NotSetError(x.get_type()).into()
@@ -90,31 +110,15 @@ impl<'v> SetMut<'v> {
     }
 }
 
-impl<'v> StarlarkTypeRepr for SetRef<'v> {
-    type Canonical = <SetType<FrozenValue> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        <Self::Canonical as StarlarkTypeRepr>::starlark_type_repr()
-    }
-}
-
 impl<'v> UnpackValue<'v> for SetRef<'v> {
+    type Type = SetType<Value<'v>>;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<SetRef<'v>>, Infallible> {
-        let result = if let Some(value) = value.unpack_frozen() {
-            value
-                .downcast_ref::<SetGen<FrozenSetData>>()
-                .map(|x| SetRef {
-                    aref: Either::Right(coerce(&x.0)),
-                })
-        } else {
-            value
-                .downcast_ref::<SetGen<RefCell<SetData<'v>>>>()
-                .map(|ptr| SetRef {
-                    aref: Either::Left(ptr.0.borrow()),
-                })
-        };
-        Ok(result)
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, Self::Type>,
+        get: SetOf<'v, Value<'v>>,
+    ) -> Result<Self, Infallible> {
+        Ok(get.set())
     }
 }

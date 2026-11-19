@@ -36,11 +36,14 @@ use std::sync::atomic::AtomicUsize;
 
 use either::Either;
 use hashbrown::HashTable;
+use mini_map::MiniMutInsertionMap;
+use mini_map::MiniMutInsertionSet;
+use mini_vec::MiniBoxSlice;
+use mini_vec::MiniVec;
 use starlark_map::Hashed;
 use starlark_map::small_set::SmallSet;
 
 use crate::collections::SmallMap;
-use crate::values::FrozenValue;
 use crate::values::Tracer;
 use crate::values::Value;
 
@@ -80,9 +83,38 @@ unsafe impl<'v, T: Trace<'v>> Trace<'v> for [T] {
     }
 }
 
+unsafe impl<'v, T: Trace<'v>> Trace<'v> for MiniVec<T> {
+    fn trace(&mut self, tracer: &Tracer<'v>) {
+        self.as_mut_slice().trace(tracer);
+    }
+}
+
+unsafe impl<'v, T: Trace<'v>> Trace<'v> for MiniBoxSlice<T> {
+    fn trace(&mut self, tracer: &Tracer<'v>) {
+        self.as_mut_slice().trace(tracer);
+    }
+}
+
 unsafe impl<'v, T: Trace<'v>> Trace<'v> for HashTable<T> {
     fn trace(&mut self, tracer: &Tracer<'v>) {
         self.iter_mut().for_each(|e| e.trace(tracer));
+    }
+}
+
+unsafe impl<'v, K: Trace<'v>, V: Trace<'v>> Trace<'v> for MiniMutInsertionMap<K, V> {
+    fn trace(&mut self, tracer: &Tracer<'v>) {
+        for (k, v) in self.iter_mut_unchecked() {
+            k.trace(tracer);
+            v.trace(tracer);
+        }
+    }
+}
+
+unsafe impl<'v, T: Trace<'v>> Trace<'v> for MiniMutInsertionSet<T> {
+    fn trace(&mut self, tracer: &Tracer<'v>) {
+        for v in self.iter_mut_unchecked() {
+            v.trace(tracer);
+        }
     }
 }
 
@@ -200,10 +232,6 @@ unsafe impl<'v> Trace<'v> for Value<'v> {
     }
 }
 
-unsafe impl<'v> Trace<'v> for FrozenValue {
-    fn trace(&mut self, _tracer: &Tracer<'v>) {}
-}
-
 unsafe impl<'v> Trace<'v> for String {
     fn trace(&mut self, _tracer: &Tracer<'v>) {}
 }
@@ -276,7 +304,7 @@ unsafe impl<'v> Trace<'v> for std::time::Instant {
     fn trace(&mut self, _tracer: &Tracer<'v>) {}
 }
 
-unsafe impl<'v, T> Trace<'v> for marker::PhantomData<T> {
+unsafe impl<'v, T: ?Sized> Trace<'v> for marker::PhantomData<T> {
     fn trace(&mut self, _tracer: &Tracer<'v>) {}
 }
 

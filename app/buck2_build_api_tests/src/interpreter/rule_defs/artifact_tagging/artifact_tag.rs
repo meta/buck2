@@ -17,8 +17,8 @@ use crate::interpreter::rule_defs::artifact_tagging::testing::artifact_tag_facto
 
 #[test]
 fn test_artifact_tag_eq() {
-    let t1 = ArtifactTag::new();
-    let t2 = ArtifactTag::new();
+    let t1 = ArtifactTag::testing_new();
+    let t2 = ArtifactTag::testing_new();
 
     assert_eq!(t1, t1.dupe());
     assert_ne!(t1, t2);

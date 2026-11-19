@@ -34,16 +34,16 @@ def _find_first_variable(string: str) -> [(str, (str, str)), None]:
     variable_end = string.find(expansion_end, variable_start)
     if variable_end == -1:
         fail("Expected variable expansion in string: `{}`".format(string))
-    variable = string[variable_start + len(expansion_start):variable_end - len(expansion_end) + 1]
+    variable = string[variable_start + len(expansion_start) : variable_end - len(expansion_end) + 1]
     prefix = string[:variable_start]
-    suffix = string[variable_end + 1:]
+    suffix = string[variable_end + 1 :]
     return (variable, (prefix, suffix))
 
 def _expand_codesign_entitlements_path(info_plist_substitutions: dict[str, str | Select], path: str) -> str:
     path = path.strip()
     for _ in range(100):
         if path.startswith(_SOURCE_ROOT_PREFIX):
-            path = path[len(_SOURCE_ROOT_PREFIX):]
+            path = path[len(_SOURCE_ROOT_PREFIX) :]
         maybe_variable = _find_first_variable(path)
         if not maybe_variable:
             return path

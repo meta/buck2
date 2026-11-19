@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,7 @@ import traceback
 from typing import Any, Dict
 
 ENCODING = "utf-8"
+AGGREGATE_COMMAND_ARGS_VERSION = 1
 
 TYPE_HANDSHAKE = "handshake"
 TYPE_COMMAND = "command"
@@ -63,6 +65,13 @@ def _parse_args():
         nargs="+",
         metavar="command_args_file",
         help="Path to the file with command arguments",
+    )
+
+    parser.add_argument(
+        "--command-args-file-range",
+        type=str,
+        metavar="command_args_file_range",
+        help="START:END range of command arguments to run from an aggregate command args file",
     )
 
     # TODO(T121096376) remove this hack
@@ -161,7 +170,7 @@ def _receive_command_reply(worker, message_id) -> int:
     reply = _read_from_stream(worker.stdout)
     if not reply:
         raise RuntimeError(
-            f"Failed to receive reply from worker, stderr:\n\n{worker.stderr.read()}"
+            f"Failed to receive reply from worker opened with args: {worker.args}\nstderr:\n{worker.stderr.read()}"
         )
     assert START_MESSAGE_PREFIX == reply[0]
     reply_data = json.loads(reply[1:])
@@ -189,12 +198,22 @@ def _perform_termination(worker):
 
 
 def _maybe_expand_worker_arg(arg, envs) -> str:
-    expanded_arg = arg
-    if "$" in arg:
-        for k, v in os.environ.items():
-            expanded_arg = expanded_arg.replace("${}".format(k), v)
-            expanded_arg = expanded_arg.replace("${}{}{}".format("{", k, "}"), v)
-    return expanded_arg
+    """Expand `$NAME` and `${NAME}` references in a worker argument.
+
+    `NAME` is a whole identifier (`[A-Za-z_][A-Za-z0-9_]*`), so `$AB` looks up
+    `AB` and is never read as `$A` followed by `B`. Values come from `envs`, the
+    environment prepared for the worker from the env file, not from this
+    process's `os.environ`. A reference to a name that is not in `envs` is left
+    as written.
+    """
+
+    def expand(match):
+        name = match.group(1) or match.group(2)
+        return envs.get(name, match.group(0))
+
+    return re.sub(
+        r"\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}", expand, arg
+    )
 
 
 def _println(line):
@@ -203,26 +222,41 @@ def _println(line):
 
 
 def _fixup_command_args_file(command_args_file, index, tmp_dir) -> str:
+    content = _load_command_args_json(command_args_file)
+    content = _fixup_command_args_content(content, command_args_file)
+    return _write_command_args_file(content, index, tmp_dir)
+
+
+def _load_command_args_json(command_args_file) -> Dict[str, Any]:
     with open(command_args_file, "r") as input_f:
         try:
             content = json.load(input_f)
-        except json.JSONDecodeError:
-            raise Exception(
-                f"Unable to decode {command_args_file}, it should be a JSON file.",
-                file=sys.stderr,
-                flush=True,
-            )
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                f"Unable to decode {command_args_file}, it should be a JSON file."
+            ) from error
+
+    if not isinstance(content, dict):
+        raise RuntimeError(f"{command_args_file} should contain a JSON object.")
+
+    return content
+
+
+def _fixup_command_args_content(content, command_args_file):
+    content = dict(content)
 
     if "extraData" in content:
         try:
             content["extraData"] = json.loads(content["extraData"])
-        except json.JSONDecodeError:
-            raise Exception(
-                f"Unable to decode 'extraData' in {command_args_file}, it should be a JSON string.",
-                file=sys.stderr,
-                flush=True,
-            )
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                f"Unable to decode 'extraData' in {command_args_file}, it should be a JSON string."
+            ) from error
 
+    return content
+
+
+def _write_command_args_file(content, index, tmp_dir) -> str:
     args_path = os.path.join(
         tmp_dir,
         "fixup_command_args_{}".format(index),
@@ -233,8 +267,76 @@ def _fixup_command_args_file(command_args_file, index, tmp_dir) -> str:
     return args_path
 
 
+def _parse_command_args_file_range(command_args_file_range):
+    parts = command_args_file_range.split(":")
+    if len(parts) != 2:
+        raise RuntimeError(
+            f"Invalid --command-args-file-range '{command_args_file_range}', expected START:END."
+        )
+
+    try:
+        start = int(parts[0])
+        end = int(parts[1])
+    except ValueError as error:
+        raise RuntimeError(
+            f"Invalid --command-args-file-range '{command_args_file_range}', START and END must be integers."
+        ) from error
+
+    if start < 0 or end < 0 or start > end:
+        raise RuntimeError(
+            f"Invalid --command-args-file-range '{command_args_file_range}', expected 0 <= START <= END."
+        )
+
+    return start, end
+
+
+def _prepare_aggregate_command_args_files(
+    command_args_files,
+    command_args_file_range,
+    command_args_file_extra_data_fixup_hack,
+    tmp_dir,
+):
+    if len(command_args_files) != 1:
+        raise RuntimeError(
+            "--command-args-file-range requires exactly one --command-args-file."
+        )
+
+    command_args_file = command_args_files[0]
+    start, end = _parse_command_args_file_range(command_args_file_range)
+    content = _load_command_args_json(command_args_file)
+
+    if content.get("version") != AGGREGATE_COMMAND_ARGS_VERSION:
+        raise RuntimeError(
+            f"{command_args_file} has unsupported aggregate command args version: {content.get('version')}"
+        )
+
+    commands = content.get("commands")
+    if not isinstance(commands, list):
+        raise RuntimeError(f"{command_args_file} should contain a 'commands' list.")
+
+    if end > len(commands):
+        raise RuntimeError(
+            f"--command-args-file-range '{command_args_file_range}' exceeds {command_args_file} command count {len(commands)}."
+        )
+
+    expanded_command_args_files = []
+    for command_index, command in enumerate(commands[start:end], start):
+        if not isinstance(command, dict):
+            raise RuntimeError(
+                f"{command_args_file} command at index {command_index} should be a JSON object."
+            )
+        if command_args_file_extra_data_fixup_hack:
+            command = _fixup_command_args_content(command, command_args_file)
+        expanded_command_args_files.append(
+            _write_command_args_file(command, command_index, tmp_dir)
+        )
+
+    return expanded_command_args_files
+
+
 def _prepare_command_args_files(parsed_args, unparsed_args, tmp_dir):
     command_args_files = parsed_args.command_args_file
+    command_args_file_range = parsed_args.command_args_file_range
     command_args_file_extra_data_fixup_hack = (
         parsed_args.command_args_file_extra_data_fixup_hack
     )
@@ -243,8 +345,20 @@ def _prepare_command_args_files(parsed_args, unparsed_args, tmp_dir):
     if command_args_files and len(command_args) > 0:
         raise RuntimeError("Use either command line arguments or a file, not both!")
 
+    if command_args_file_range and not command_args_files:
+        raise RuntimeError(
+            "--command-args-file-range requires --command-args-file to be specified."
+        )
+
     if command_args_files:
-        if command_args_file_extra_data_fixup_hack:
+        if command_args_file_range:
+            command_args_files = _prepare_aggregate_command_args_files(
+                command_args_files,
+                command_args_file_range,
+                command_args_file_extra_data_fixup_hack,
+                tmp_dir,
+            )
+        elif command_args_file_extra_data_fixup_hack:
             command_args_files = [
                 _fixup_command_args_file(command_args_file, i, tmp_dir)
                 for i, command_args_file in enumerate(command_args_files)
@@ -331,6 +445,7 @@ def main():
             stderr=subprocess.PIPE,
         ) as worker:
             exit_code = None
+            failed_job_command = None
             try:
                 job_command = None
                 message_id = 0
@@ -342,15 +457,22 @@ def main():
                         command_args_file, message_id, tmp_dir
                     )
                     _send_command(job_command, worker)
-                    exit_code = _receive_command_reply(worker, message_id)
+                    command_exit_code = _receive_command_reply(worker, message_id)
+                    # The first failure decides the outcome of the whole batch.
+                    if not exit_code:
+                        exit_code = command_exit_code
+                        if command_exit_code:
+                            failed_job_command = job_command
 
                 _perform_termination(worker)
 
             except Exception:
                 traceback.print_exc()
-                exit_code = 1
+                if not exit_code:
+                    exit_code = 1
+                    failed_job_command = job_command
             finally:
-                _handle_error(exit_code, job_command)
+                _handle_error(exit_code, failed_job_command or job_command)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,37 @@
+Updated 12 Feb 2026
+CPU: AMD EPYC 9D64 88-Core Processor
+Mem: 251 GB
+
+=== Type Sizes ===
+ExprP:        64 bytes
+AstExprP:     72 bytes
+StmtP:        200 bytes
+AstStmtP:     208 bytes
+AssignP:      200 bytes
+DefP:         72 bytes
+ForP:         128 bytes
+LoadP:        56 bytes
+AstLiteral:   40 bytes
+FStringP:     56 bytes
+TypeExprP:    72 bytes
+String:       24 bytes
+Box<str>:     16 bytes
+AstString:    32 bytes
+AstIdent:     32 bytes
+CallArgsP:    24 bytes
+AssignTarget: 40 bytes
+ForClauseP:   120 bytes
+ClauseP:      120 bytes
+LambdaP:      32 bytes
+Vec<u8>:      24 bytes
+Box<[u8]>:    16 bytes
+
+=== Starlark Memory Benchmark ===
+Configuration: 50000 functions, body_size=6
+Source code: 22 MB (23072240 bytes), generated in 0.0s
+
+--- Parse Phase ---
+RSS before parse: 26 MB
+RSS after parse:  299 MB
+RSS delta:        273 MB
+Parse time:       1.2s

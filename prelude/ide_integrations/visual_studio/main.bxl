@@ -15,7 +15,7 @@ load("get_attrs.bxl", "get_attrs", "get_cxx_toolchain")
 load("get_compiler_settings.bxl", "materialize_compiler_settings_file")
 load("get_deps.bxl", "get_deps")
 load("get_vs_settings.bxl", "get_basic_vs_settings", "get_vs_settings", "get_vs_settings_for_toolchain")
-load("utils.bxl", "basename", "get_project_file_path", "log_debug")
+load("utils.bxl", "basename", "get_project_file_path", "log_debug", "log_warn")
 
 def _match_recursive_target_types(target: bxl.ConfiguredTargetNode, recursive_target_types: list[str], bxl_ctx) -> bool:
     for type_regex in recursive_target_types:
@@ -79,7 +79,8 @@ def _main(bxl_ctx):
             elif ulabel.startswith("//"):
                 ulabel = "fbsource" + ulabel
 
-        is_explicit_target = (":" in ulabel) and (not ulabel.endswith(":"))
+        # Target label or alias.
+        is_explicit_target = ((":" in ulabel) and (not ulabel.endswith(":"))) or ((":" not in ulabel) and ("/" not in ulabel))
 
         # Using bxl_ctx.configured_targets on a wildcard target label will cause all targets to fail
         # if one of the targets is incompatible. We are using unconfigured_target_nodes_keep_going
@@ -110,7 +111,7 @@ def _main(bxl_ctx):
     target_set = bxl.ctarget_set(targets)
     missing_mode_hashes = [m for m in bxl_ctx.cli_args.mode_files if m not in (bxl_ctx.cli_args.mode_hashes or {})]
     if len(bxl_ctx.cli_args.mode_files) > 1 and missing_mode_hashes:
-        warning("Missing mode hashes for following mode files: " + str(missing_mode_hashes))
+        log_warn("Missing mode hashes for following mode files: {}", missing_mode_hashes, bxl_ctx = bxl_ctx)
 
     deps = get_deps(bxl_ctx, target_set)  # list[bxl.ConfiguredTargetNode]
     # print(deps)
@@ -130,7 +131,9 @@ def _main(bxl_ctx):
         deps_with_vcxproj[dep.label.raw_target()] = True
     log_debug("Number of targets to generate vcxproj for: {}", len(deps_with_vcxproj), bxl_ctx = bxl_ctx)
     if not deps_with_vcxproj:
-        fail("No targets selected for generation. Please check provided targets list and/or --recursive_target_types, --target_include_pattern, --target_exclude_pattern.")
+        fail(
+            "No targets selected for generation. Please check provided targets list and/or --recursive_target_types, --target_include_pattern, --target_exclude_pattern."
+        )
 
     basic_vs_settings_list = []
     attrs_artifact_dict = {}  # target label => attrs artifact
@@ -163,14 +166,14 @@ def _main(bxl_ctx):
 
                 toolchain_dep_dict[cxx_toolchain_label] = (cxx_toolchain, cxx_toolchain_target_node)
 
-        attrs_outfile = actions.write_json(get_project_file_path(dep.label, ".attrs.json"), attrs, pretty = True)
+        attrs_outfile = actions.write_json(get_project_file_path(dep.label, ".attrs.json"), attrs, pretty = True, has_content_based_path = False)
         attrs_artifact_dict[dep.label] = attrs_outfile
 
         # Create the output artifacts. Contents will be written into these in the lambda function
         if dep.label.raw_target() in deps_with_vcxproj:
-            vcxproj_artifact = actions.declare_output(get_project_file_path(dep.label, ".vcxproj"))
+            vcxproj_artifact = actions.declare_output(get_project_file_path(dep.label, ".vcxproj"), has_content_based_path = False)
             vcxproj_artifact_dict[dep.label] = vcxproj_artifact
-            filters_artifact = actions.declare_output(get_project_file_path(dep.label, ".vcxproj.filters"))
+            filters_artifact = actions.declare_output(get_project_file_path(dep.label, ".vcxproj.filters"), has_content_based_path = False)
             filters_artifact_dict[dep.label] = filters_artifact
 
         # This vs_settings is generated OUTSIDE of dynamic output and has unresolved macros
@@ -186,17 +189,15 @@ def _main(bxl_ctx):
     # cli_args: bxl_ctx.cli_args, this is not available inside the lambda function so we have to pass them in as param
     # buck_root: bxl_ctx.buck_root(), same as above
     def gen_vcxproj_files(
-            ctx,
-            artifacts,
-            outputs,
-            # additional arguments that needs binding.
-            cli_args = bxl_ctx.cli_args,
-            buck_root = bxl_ctx.root()):
+        ctx,
+        artifacts,
+        outputs,
+        # additional arguments that needs binding.
+        cli_args = bxl_ctx.cli_args,
+        buck_root = bxl_ctx.root(),
+    ):
         # Read in the attrs json file contents. target label => attrs.
-        attrs_content_dict = {
-            dep.label: artifacts[attrs_artifact_dict[dep.label]].read_json()
-            for dep in deps
-        }
+        attrs_content_dict = {dep.label: artifacts[attrs_artifact_dict[dep.label]].read_json() for dep in deps}
 
         for dep, _ in toolchain_deps:
             content = artifacts[attrs_artifact_dict[dep.label]].read_json()
@@ -235,7 +236,7 @@ def _main(bxl_ctx):
 
     # Find out indices of final targets and vs_settings pair to pass on to generate sln file.
     deps_with_vcxproj_indices = {}
-    for (idx, dep) in enumerate(deps):
+    for idx, dep in enumerate(deps):
         if dep.label.raw_target() in deps_with_vcxproj:
             deps_with_vcxproj_indices[idx] = True
     if explicit_targets:
@@ -249,7 +250,7 @@ def _main(bxl_ctx):
         bxl_ctx.cli_args.startup_target or startup_target_fallback,
         bxl_ctx,
     )
-    sln_artifact = actions.declare_output(sln_path)
+    sln_artifact = actions.declare_output(sln_path, has_content_based_path = False)
     actions.write(sln_artifact, sln_content)
 
     ensured_outputs = bxl_ctx.output.ensure_multiple(vcxproj_artifact_dict.values() + filters_artifact_dict.values() + [sln_artifact])

@@ -35,6 +35,14 @@ def _parse_args():
         required=True,
         help="a path to write the output to",
     )
+    parser.add_argument(
+        "--discover-all",
+        action="store_true",
+        default=False,
+        help="Include all top-level classes from the jar, skipping stem-based "
+        "source matching. Useful for Kotlin targets where file names may not "
+        "match class names.",
+    )
 
     return parser.parse_args()
 
@@ -49,17 +57,20 @@ def _is_supported_archive(src):
     return False
 
 
-def _get_class_names(sources_path: pathlib.Path, jar_path: pathlib.Path):
-    sources = []
-    with open(sources_path, "r") as sources_file:
-        for line in sources_file.readlines():
-            source_file_path = pathlib.Path(line.strip())
-            if _is_supported_archive(source_file_path):
-                with zipfile.ZipFile(source_file_path, "r") as sources_archive:
-                    for archived_source in sources_archive.namelist():
-                        sources.append(pathlib.Path(archived_source).stem)
-            else:
-                sources.append(pathlib.Path(line.strip()).stem)
+def _get_class_names(
+    sources_path: pathlib.Path, jar_path: pathlib.Path, discover_all: bool = False
+):
+    sources = set()
+    if not discover_all:
+        with open(sources_path, "r") as sources_file:
+            for line in sources_file.readlines():
+                source_file_path = pathlib.Path(line.strip())
+                if _is_supported_archive(source_file_path):
+                    with zipfile.ZipFile(source_file_path, "r") as sources_archive:
+                        for archived_source in sources_archive.namelist():
+                            sources.add(pathlib.Path(archived_source).stem)
+                else:
+                    sources.add(source_file_path.stem)
 
     with zipfile.ZipFile(jar_path, "r") as jar:
         class_names = []
@@ -70,7 +81,7 @@ def _get_class_names(sources_path: pathlib.Path, jar_path: pathlib.Path):
             if "$" in file_name:
                 continue
 
-            if pathlib.Path(file_name).stem in sources:
+            if discover_all or pathlib.Path(file_name).stem in sources:
                 # Remove the .class suffix and convert the path of the
                 # compiled class to a fully-qualified name.
                 class_names.append(file_name[:-6].replace("/", "."))
@@ -84,7 +95,7 @@ def main():
     jar = args.jar
     output = args.output
 
-    classes = _get_class_names(sources, jar)
+    classes = _get_class_names(sources, jar, discover_all=args.discover_all)
     with open(output, "a") as output_file:
         output_file.write("\n".join(classes))
 

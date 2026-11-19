@@ -58,7 +58,7 @@ message SpanStartEvent {
     LoadBuildFileStart load = 53;
     ExecutorStageStart executor_stage = 54;
     TestDiscoveryStart test_discovery = 55;
-    TestRunStart test_start = 56;
+    TestRunStart test_run = 56;
     FileWatcherStart file_watcher = 57;
     MaterializeRequestedArtifactStart final_materialization = 58;
     AnalysisStageStart analysis_stage = 59;
@@ -91,6 +91,7 @@ message SpanStartEvent {
     DepFileUploadStart dep_file_upload = 88;
     ComputeDetailedAggregatedMetricsStart compute_detailed_aggregated_metrics =
         89;
+    ReSubmitStart re_submit = 91;
     // Used in Buck unit tests.
     FakeStart fake = 999;
   }
@@ -111,7 +112,7 @@ message SpanEndEvent {
     LoadBuildFileEnd load = 53;
     ExecutorStageEnd executor_stage = 54;
     TestDiscoveryEnd test_discovery = 55;
-    TestRunEnd test_end = 56;
+    TestRunEnd test_run = 56;
     SpanCancelled span_cancelled = 57;
     FileWatcherEnd file_watcher = 58;
     MaterializeRequestedArtifactEnd final_materialization = 59;
@@ -131,7 +132,7 @@ message SpanEndEvent {
     DiceCleanupEnd dice_cleanup = 73;
     ExclusiveCommandWaitEnd exclusive_command_wait = 74;
     DeferredPreparationStageEnd deferred_preparation_stage = 75;
-    DeferredEvaluationEnd deferred_evaluation = 76;
+    DynamicLambdaEnd deferred_evaluation = 76;
     BxlExecutionEnd bxl_execution = 77;
     BxlDiceInvocationEnd bxl_dice_invocation = 78;
     ReUploadEnd re_upload = 79;
@@ -144,6 +145,7 @@ message SpanEndEvent {
     DepFileUploadEnd dep_file_upload = 88;
     ComputeDetailedAggregatedMetricsEnd compute_detailed_aggregated_metrics =
         89;
+    ReSubmitEnd re_submit = 91;
     // Used in Buck unit tests.
     FakeEnd fake = 999;
   }
@@ -201,9 +203,102 @@ message StdoutStreamingOutput {
   string message = 1;
 }
 
+/// Preemption of the running command was detected/allowed
+message CommandPreempted {}
+
+/// The result of a background idle page-out, once it finishes, or, for a
+/// command that evicted backed values without starting one, those evictions
+/// (`page_out_started` tells the two apart). Logged to the `buck2_page_outs`
+/// table (see the buck2_cleans pipeline).
+message PageOutSummary {
+  map<string, string> metadata = 1;
+  /// The command whose finalize triggered this idle page-out.
+  optional string command_uuid = 2;
+  /// Graph nodes whose value was dropped for a `DataKey` — what the page-out
+  /// actually evicted.
+  uint64 paged_out_count = 3;
+  /// Wall-clock duration of the page-out.
+  uint64 duration_ms = 4;
+  /// True if a new command interrupted the page-out before it finished (a valid
+  /// state — the remaining values stay paged in).
+  bool cancelled = 5;
+  optional ErrorReport error = 6;
+  /// Process resident set size (bytes) before / after the page-out. Absent if
+  /// the platform doesn't report RSS.
+  optional uint64 resident_bytes_before = 7;
+  optional uint64 resident_bytes_after = 8;
+  /// jemalloc bytes allocated before / after the page-out. Absent when not
+  /// built with jemalloc.
+  optional uint64 allocated_bytes_before = 9;
+  optional uint64 allocated_bytes_after = 10;
+  /// On-disk size (bytes) of the pagable DICE store before / after the
+  /// page-out. Absent if pagable storage is not configured.
+  optional uint64 db_size_bytes_before = 11;
+  optional uint64 db_size_bytes_after = 12;
+  /// Estimated bytes retained by Starlark serialization bookkeeping after the
+  /// page-out. Absent if pagable storage is not configured.
+  optional uint64 starlark_serialization_state_bytes_after = 13;
+  /// Daemon-lifetime running totals as of this page-out finishing. Includes
+  /// nested PagableArc sub-values; `out - in` approximates the bytes currently
+  /// offloaded daemon-wide.
+  optional uint64 daemon_data_keys_out = 14;
+  optional uint64 daemon_data_key_bytes_out = 15;
+  optional uint64 daemon_data_keys_in = 16;
+  optional uint64 daemon_data_key_bytes_in = 17;
+  /// The same four attributed to this page-out alone. The `..._in` pair is
+  /// normally zero — a page-out only writes — unless a page-in overlapped it.
+  optional uint64 data_keys_out = 18;
+  optional uint64 data_key_bytes_out = 19;
+  optional uint64 data_keys_in = 20;
+  optional uint64 data_key_bytes_in = 21;
+  /// Cumulative memory paging has moved since daemon start, measured from the
+  /// allocator where values are actually dropped and rebuilt rather than
+  /// inferred from serialized sizes. An arc still shared with a resident value
+  /// is never freed and so contributes nothing, which the byte counts above
+  /// cannot express. `offloaded - restored` is an upper bound on what paging is
+  /// currently saving: it does not subtract values that were paged out and
+  /// later invalidated, whose memory would have been reclaimed regardless.
+  optional int64 daemon_memory_offloaded_bytes = 22;
+  optional int64 daemon_memory_restored_bytes = 23;
+  /// The same pair attributed to this page-out alone. `restored` is normally
+  /// zero — a page-out only evicts — unless a page-in overlapped it.
+  optional int64 memory_offloaded_bytes = 24;
+  optional int64 memory_restored_bytes = 25;
+  /// Entries in the deserialized-arc cache after this page-out's sweep.
+  optional uint64 daemon_arc_cache_entries = 28;
+  /// Backed values dropped by memory-pressure eviction (not by this page-out)
+  /// while this page-out ran, and the memory that freed, measured from the
+  /// allocator like `memory_offloaded_bytes`. Absent if pagable storage is not
+  /// configured; the bytes also when the allocator counters are unreadable.
+  optional uint64 evicted_count = 29;
+  optional int64 evicted_bytes = 30;
+  /// Daemon-lifetime memory-pressure evictions as of this page-out finishing:
+  /// eviction passes, the values they dropped and the memory that freed.
+  /// Difference consecutive rows of a daemon to see what pressure reclaimed
+  /// between its page-outs.
+  optional uint64 daemon_evictions = 31;
+  optional uint64 daemon_evicted_count = 32;
+  optional int64 daemon_evicted_bytes = 33;
+  /// Serialized size of the rows backing resident values after this page-out:
+  /// what the next memory-pressure eviction would drop, in serialized rather
+  /// than in-memory bytes, excluding nested PagableArc sub-values. A lower
+  /// bound; see `PagableNodeCounts::backed_bytes`.
+  optional uint64 evictable_bytes = 34;
+  /// `STARTED` on a row for an idle page-out. Any other value marks a row for a
+  /// command that evicted without starting one, and says why it did not; on
+  /// those rows the page-out fields are unset or zero (`paged_out_count`,
+  /// `duration_ms`, `cancelled`). Absent from manual page-outs.
+  optional PageOutStarted page_out_started = 35;
+  /// Memory-pressure evictions during the command that triggered this row:
+  /// eviction passes, the values they dropped and the memory that freed.
+  optional uint64 command_evictions = 36;
+  optional uint64 command_evicted_count = 37;
+  optional int64 command_evicted_bytes = 38;
+}
+
 // An event that represents a single point in time.
 message InstantEvent {
-  reserved 2, 8, 9, 12, 13, 22, 24, 38, 41, 52, 53;
+  reserved 2, 8, 9, 12, 13, 22, 24, 38, 41, 52, 53, 60;
 
   oneof data {
     StructuredError structured_error = 1;
@@ -267,7 +362,7 @@ message InstantEvent {
     StarlarkUserEvent starlark_user_event = 30;
 
     // Log options that are command-level and processed by the daemon.
-    CommandOptions comand_options = 31;
+    CommandOptions command_options = 31;
 
     // Concurrent active commands.
     ConcurrentCommands concurrent_commands = 32;
@@ -319,8 +414,150 @@ message InstantEvent {
     StdoutStreamingOutput streaming_output = 51;
 
     // Used to track all resource control events as they happen
-    ResourceControlEvents resource_control_events = 54;
+    ResourceControlEvent resource_control_event = 54;
+
+    // Command preemption was detected
+    CommandPreempted command_preempted = 55;
+
+    // Orphan processes were killed via cgroup after action completed
+    OrphanProcessesKilled orphan_processes_killed = 56;
+
+    // Action digest tracing event
+    ActionDigestTrace action_digest_trace = 57;
+
+    // RE log stream handles available for a running action
+    ReLogStreamAvailable re_log_stream_available = 58;
+
+    // Rule type name for a CLI-resolved top-level target. Emitted once per
+    // resolved target so downstream subscribers (e.g. the invocation
+    // recorder) can accumulate rule types without the producing command
+    // having to thread them through its response.
+    TargetRuleTypeName target_rule_type_name = 59;
+
+    PageOutSummary page_out_summary = 62;
+
+    PagingSummary paging_summary = 63;
+
+    ActionGraphStart action_graph_start = 64;
+    ActionGraphFooter action_graph_footer = 65;
+    TransitiveSetProjectionDef transitive_set_projection_def = 66;
+    ActionGraphStructureDef action_graph_structure_def = 67;
+    ActionGraphAlias action_graph_alias = 68;
+
+    // Marks the end of the build phase of a command that builds targets.
+    BuildPhaseEnd build_phase_end = 69;
+
+    // A settings value seen by this daemon for the first time.
+    BuckSettingsObserved buck_settings_observed = 70;
   }
+}
+
+// What a recorded action or transitive-set projection depends on. Producers
+// that ran in this command are referenced by the span id of their
+// ActionExecution event. Producers that this command did not run are
+// referenced by a per-command id, defined after the command by an
+// `ActionGraphStructureDef` or an `ActionGraphAlias`: their results were reused
+// from an earlier command, or another command sharing the daemon ran them, in
+// which case the log also has a `ConcurrentCommands` event. Inputs that arrive
+// through a transitive set are referenced by the set's per-command id, defined
+// by a `TransitiveSetProjectionDef`.
+message ActionGraphProducers {
+  repeated uint64 span_ids = 1;
+  repeated uint64 reused_ids = 2;
+  repeated uint64 tset_ids = 3;
+}
+
+// A reused-action id that stands for a different action: an output declared
+// in analysis and bound inside a dynamic output has one key where consumers
+// refer to it and another where it ran. Written after the command.
+message ActionGraphAlias {
+  // The reused-action id consumers refer to it by, and its key.
+  uint64 id = 1;
+  ActionKey key = 2;
+  // The action it stands for.
+  oneof canonical {
+    // The span id of its ActionExecution event, if it ran in this command.
+    uint64 span_id = 3;
+    // Otherwise its reused-action id.
+    uint64 reused_id = 4;
+  }
+}
+
+// An action that this command depends on but did not run, defining the id the
+// recorded graph refers to it by, so that the graph stays connected through
+// results this command did not compute. Written after the command, once per
+// such action that an action run by this command depends on, directly or
+// through other reused actions.
+message ActionGraphStructureDef {
+  uint64 reused_id = 1;
+  ActionKey key = 2;
+  ActionName name = 3;
+  // Its inputs, as in `ActionExecutionEnd.graph_producers`.
+  ActionGraphProducers producers = 4;
+  // Set when nothing that ran in this command is below this action: its
+  // inputs took no time in this command, so they are not recorded.
+  bool inputs_omitted = 5;
+}
+
+// The contents of one transitive-set projection that a recorded action
+// referred to, or that such a projection contains. Written after the command,
+// once per projection; a projection too big for one event is split across
+// several with the same `tset_id`, and readers union them.
+message TransitiveSetProjectionDef {
+  // Per-command id, as in `ActionGraphProducers.tset_ids`.
+  uint64 tset_id = 1;
+  // This node's own producers, and its child projections as `tset_ids`.
+  ActionGraphProducers producers = 2;
+  // For display only; truncated, and not an identity.
+  string display_key = 3;
+  // Set when nothing that ran in this command is below this projection: its
+  // contents took no time in this command, so they are not recorded.
+  bool contents_omitted = 4;
+}
+
+// Written when a command starts recording the action graph
+// (`--log-action-graph`), so that a log cut off before the footer still says
+// which schema it uses.
+message ActionGraphStart {
+  uint32 schema = 1;
+}
+
+// Written once, after everything else the command recorded, by a command that
+// recorded the action graph. A log without one was not recorded or was cut
+// off.
+message ActionGraphFooter {
+  enum Incomplete {
+    // Not used.
+    INCOMPLETE_UNSPECIFIED = 0;
+    // Some targets failed to build.
+    BUILD_FAILED = 1;
+    // A target failed and `--fail-fast` stopped the rest.
+    FAIL_FAST = 2;
+    // The command hit `--overall-timeout`.
+    TIMEOUT = 3;
+    // Writing the transitive-set or reused-action definitions did not finish,
+    // or what a dynamic output read could not be looked up for an action that
+    // ran.
+    UNFINISHED_WALK = 4;
+  }
+
+  uint32 schema = 1;
+  // Set when the recorder can't vouch that the graph is complete.
+  optional Incomplete incomplete = 2;
+  // Action-end events this command wrote with graph fields. A reader that
+  // counts fewer has lost events.
+  uint64 action_ends = 3;
+  // Total time the recorder spent, summed over actions.
+  uint64 capture_us = 4;
+  // Transitive-set definition events written, counting each part of a split
+  // definition. A reader that counts fewer has lost events.
+  uint64 tset_def_events = 5;
+  // Time spent writing the definitions after the command.
+  uint64 definitions_walk_us = 6;
+  // Reused-action structure events written, including those without inputs.
+  uint64 structure_defs = 7;
+  // Alias events written.
+  uint64 aliases = 8;
 }
 
 message PreviousCommandWithMismatchedConfig {
@@ -330,6 +567,16 @@ message PreviousCommandWithMismatchedConfig {
 
 message ConfigurationCreated {
   ConfigurationWithConstraints cfg = 1;
+}
+
+// The Buck settings a daemon runs under, sent once per daemon per distinct
+// value. Ingress stores these keyed by `hash`; invocation records carry the
+// same hash as `buck_settings_hash`.
+message BuckSettingsObserved {
+  // `buck2settings-` followed by the hex digest of `settings_json`.
+  string hash = 1;
+  // The settings as JSON, in the same form `buck2 status` prints.
+  string settings_json = 2;
 }
 
 message EndOfTestResults {
@@ -409,6 +656,15 @@ message DebugAdapterSnapshot {
 
 message DiceStateSnapshot {
   map<string, DiceKeyState> key_states = 1;
+  // Depth of the unbounded mpsc queue feeding the dice core-state thread,
+  // sampled at snapshot time. A sustained nonzero value means callers are
+  // submitting state requests faster than the single core-state thread can
+  // process them.
+  uint64 core_state_queue_depth = 2;
+  // Total number of requests the dice core-state thread has dequeued since
+  // the DICE instance was created. Monotonic (spans commands on the same
+  // daemon); diff successive snapshots for the core-state throughput.
+  uint64 core_state_processed_requests = 3;
 }
 
 message DiceKeyState {
@@ -418,6 +674,132 @@ message DiceKeyState {
   uint32 check_deps_finished = 4;
   uint32 compute_started = 5;
   uint32 compute_finished = 6;
+}
+
+// Page-in counters for one DICE key type (a paged-out value read back in).
+// A per-command delta in both Snapshot and InvocationRecord.
+message DicePageInKeyTypeStats {
+  uint64 count = 1;
+  // Microseconds fetching the top-level serialized blob. Nested PagableArc
+  // sub-values are fetched lazily during deserialize, so their I/O is in
+  // deser_us, not here.
+  uint64 fetch_us = 2;
+  // Microseconds deserializing, including the lazy fetch of nested PagableArc
+  // sub-values; dominates for arc-heavy values.
+  uint64 deser_us = 3;
+  // Top-level blob bytes only; excludes nested PagableArc sub-values, so
+  // near-zero for arc-heavy values.
+  uint64 bytes = 4;
+  // Memory the rebuilt values added, measured from the allocator. Unlike
+  // `bytes` this covers nested PagableArc sub-values, and is zero when an arc
+  // came back from the cache instead of being deserialized. Signed: a page-in
+  // that reuses a cached arc allocates only scratch and can net negative.
+  int64 restored_bytes = 5;
+}
+
+// Per-command statistics about DICE pagable storage, emitted once at command
+// end.
+// Outcome of the idle page-out decision at the end of a command: either it was
+// started, or the reason it wasn't.
+enum PageOutStarted {
+  PAGE_OUT_STARTED_UNSPECIFIED = 0;
+  // A background idle page-out was scheduled.
+  PAGE_OUT_STARTED_STARTED = 1;
+  // Idle page-out is disabled: `hydration.page_out_on_idle` off, or
+  // `hydration.eviction_policy` is `on_memory_pressure` on a daemon with no
+  // memory tracker, so nothing a page-out wrote would ever be evicted.
+  PAGE_OUT_STARTED_DISABLED = 2;
+  // Nothing to page out (no pagable candidates).
+  PAGE_OUT_STARTED_NOTHING_TO_PAGE_OUT = 3;
+  // Not enough free disk to write paged-out values to `buck-out`.
+  PAGE_OUT_STARTED_INSUFFICIENT_DISK_HEADROOM = 4;
+  // Free disk couldn't be determined (total or used disk unavailable).
+  PAGE_OUT_STARTED_FREE_DISK_UNKNOWN = 5;
+  // A page-out is already running (single-flight guard held).
+  PAGE_OUT_STARTED_ALREADY_RUNNING = 6;
+  // This command type does not take part in the idle page-out lifecycle.
+  PAGE_OUT_STARTED_COMMAND_OPTED_OUT = 7;
+  // Another command is active, so paging would contend with real work.
+  PAGE_OUT_STARTED_OTHER_COMMANDS_ACTIVE = 8;
+  // A prior idle page-out errored, so it is disabled for the rest of this
+  // daemon's lifetime.
+  PAGE_OUT_STARTED_DISABLED_AFTER_ERROR = 9;
+}
+
+message PagingSummary {
+  // DICE page-in counters per key type, as a delta vs the command-start
+  // baseline.
+  map<string, DicePageInKeyTypeStats> dice_page_in_by_key_type = 1;
+  // Size in bytes of the DICE pagable on-disk store, measured at command end.
+  optional uint64 paging_db_size_bytes = 2;
+  // Resident DICE node count, measured at command end.
+  optional uint64 resident_node_count = 3;
+  // Paged-out DICE node count, measured at command end.
+  optional uint64 paged_out_node_count = 4;
+  // Page-out candidate DICE node count, measured at command end.
+  optional uint64 candidate_node_count = 5;
+  // Whether a background idle page-out was started at the end of this command,
+  // or the reason it wasn't.
+  optional PageOutStarted page_out_started = 6;
+  // Attributed to this command (delta vs the command-start baseline). Absent if
+  // pagable storage is not configured.
+  optional uint64 paging_data_keys_out = 7;
+  optional uint64 paging_data_key_bytes_out = 8;
+  optional uint64 paging_data_keys_in = 9;
+  optional uint64 paging_data_key_bytes_in = 10;
+  // The same four as daemon-lifetime running totals, whose `out - in` gives the
+  // bytes currently offloaded daemon-wide.
+  optional uint64 paging_daemon_data_keys_out = 11;
+  optional uint64 paging_daemon_data_key_bytes_out = 12;
+  optional uint64 paging_daemon_data_keys_in = 13;
+  optional uint64 paging_daemon_data_key_bytes_in = 14;
+  // Cumulative memory paging has moved since daemon start, measured from the
+  // allocator where values are dropped and rebuilt. `offloaded - restored` is
+  // an upper bound on what paging is currently saving.
+  optional int64 paging_memory_offloaded_bytes = 15;
+  optional int64 paging_memory_restored_bytes = 16;
+  // Entries in the deserialized-arc cache at command end.
+  optional uint64 paging_arc_cache_entries = 20;
+  // Daemon-lifetime totals, not a per-command delta.
+  optional StarlarkPartialDeserStats starlark_partial_deser = 17;
+  // Memory-pressure eviction during this command (delta vs the command-start
+  // baseline): eviction passes, the backed values they dropped, and the memory
+  // that freed, measured from the allocator. Absent if pagable storage is not
+  // configured; the bytes also when the allocator counters are unreadable.
+  optional uint64 paging_evictions = 21;
+  optional uint64 paging_evicted_count = 22;
+  optional int64 paging_evicted_bytes = 23;
+  // Serialized size of the rows backing resident values at command end: what
+  // the next memory-pressure eviction would drop, in serialized rather than
+  // in-memory bytes, excluding nested PagableArc sub-values. A lower bound.
+  optional uint64 paging_evictable_bytes = 24;
+}
+
+// What paging in a Starlark value costs at heap granularity versus value
+// granularity. A value is only reachable through its heap, so claiming one
+// value pays for the heap's whole blob and slot table: `heap_*` is what
+// page-in must load, `claimed_*` what it actually uses.
+message StarlarkPartialDeserStats {
+  // Heaps whose blob was fetched and retained, dependency-only heaps included.
+  uint64 heaps_loaded = 1;
+  // Serialized bytes those blobs held so any value in them could still be
+  // claimed later. Cumulative, like every field here: nothing is subtracted
+  // when a heap is dropped.
+  uint64 heap_retained_blob_bytes = 2;
+  // Of heaps_loaded, those whose slot table was parsed; the remainder were
+  // loaded but never used.
+  uint64 heaps_with_metadata = 3;
+  // The heap_retained_blob_bytes belonging to those heaps; the remainder is
+  // held by heaps nothing ever read.
+  uint64 used_heap_retained_blob_bytes = 9;
+  // Serialized value-region bytes of the heaps in heaps_with_metadata.
+  uint64 heap_value_serialized_bytes = 4;
+  // Values in those heaps, and the memory they would take if all were built.
+  uint64 heap_values = 5;
+  uint64 heap_value_alloc_bytes = 6;
+  // Values actually built, and their memory.
+  uint64 claimed_values = 7;
+  uint64 claimed_alloc_bytes = 8;
 }
 
 message RemoteExecutionSessionCreated {
@@ -488,8 +870,18 @@ message StructuredError {
   // Is this error indicative of the RE action cache returning corrupted
   // results?
   bool action_cache_is_corrupted = 10;
-  // Whether the error should be converted to a hard error in the future.
-  bool deprecation = 11;
+  reserved 11;
+  // The error the soft error reported, if it has
+  // `daemon_in_memory_state_is_corrupted` or `daemon_restart_requested`. A
+  // command that was sent it, and that the daemon then shutting down
+  // interrupts, fails with it.
+  //
+  // We should consider setting this on every soft error, and using it to
+  // replace `payload`, `location`, the flags above, etc.
+  ErrorReport error = 12;
+  // The daemon is to be replaced now. A daemon that can restart itself sends
+  // this to every running command and shuts down.
+  bool daemon_restart_requested = 13;
 }
 
 message CriticalPathEntry {
@@ -508,6 +900,27 @@ message CriticalPathEntry2 {
     oneof target {
       ConfiguredTargetLabel standard_target = 1;
     }
+    optional string target_rule_type_name = 2;
+    // When analysis is split due to anon target dependencies:
+    // absent/0 = whole (unsplit), 1 = part before anon targets, 2 = part after
+    // anon targets
+    optional uint32 part = 3;
+  }
+
+  message AnonAnalysis {
+    AnonTarget anon_target = 1;
+    // When anon analysis is split due to inner anon target dependencies:
+    // absent/0 = whole (unsplit), 1 = part before inner anon targets, 2 = part
+    // after
+    optional uint32 part = 2;
+  }
+
+  message DynamicAnalysis {
+    oneof target {
+      ConfiguredTargetLabel standard_target = 10;
+    }
+
+    uint32 index = 1;
   }
 
   message ActionExecution {
@@ -534,6 +947,13 @@ message CriticalPathEntry2 {
     optional string variant = 4;
   }
 
+  // Handing built artifacts to an installer and waiting for it to finish. Only
+  // the part after the installed artifacts were built is critical.
+  message Install {
+    ConfiguredTargetLabel installer_label = 1;
+    repeated ConfiguredTargetLabel target_labels = 2;
+  }
+
   message TestListing {
     ConfiguredTargetLabel target_label = 1;
     string suite = 2;
@@ -552,11 +972,30 @@ message CriticalPathEntry2 {
 
   message ComputeCriticalPath {}
 
+  /// Represents time gaps between critical path entries.
+  /// These entries are automatically inserted when there's a gap between
+  /// consecutive critical path entries, helping identify unaccounted time
+  /// in the build process.
+  message Waiting {
+    /// Optional category to help identify the source of the waiting time
+    optional string category = 1;
+  }
+
   /// Tracks time spent on the critical path (i.e. not accounted by other
   /// categories) such as early command processing (time spent synchronizing and
   /// waiting for concurrent commands)
   message GenericEntry {
     string kind = 1;
+  }
+
+  message PageIn {
+    // The DICE key type that was paged in, e.g. "analysis_key".
+    string key_type = 1;
+    // Number of page-ins represented by this entry. Older entries with the
+    // default value represent one page-in.
+    uint64 count = 2;
+    // Per-key-type breakdown when multiple page-ins are grouped together.
+    map<string, uint64> key_type_counts = 3;
   }
 
   message Load {
@@ -566,6 +1005,8 @@ message CriticalPathEntry2 {
   message Listing {
     string package = 1;
   }
+
+  message EnsureTransitiveSetProjection {}
 
   repeated uint64 span_ids = 1;
 
@@ -588,7 +1029,23 @@ message CriticalPathEntry2 {
 
   // The subset of the duration that can be attributed to waiting
   // for actions to run
+  // TODO(cjhopman): Queue durations should not be considered critical path
+  // time. This should migrate to an entry with a non-critical path duration.
   optional google.protobuf.Duration queue_duration = 6;
+
+  // The subset of the total duration that is not on the critical path.
+  // This represents time that did not contribute to the overall build duration.
+  optional google.protobuf.Duration non_critical_path_duration = 7;
+
+  // Indicates the offset from the start of the build for this entry.
+  optional uint64 start_offset_ns = 8;
+
+  // Set when this entry's DICE computation was not performed in this command:
+  // DICE validated the node's dependencies and reused the value from a
+  // previous command. Reused entries have zero duration and their
+  // start_offset_ns is when dependency validation completed, not when the
+  // value was originally computed.
+  optional bool was_reused = 9;
 
   oneof entry {
     Analysis analysis = 100;
@@ -600,6 +1057,12 @@ message CriticalPathEntry2 {
     GenericEntry generic_entry = 106;
     TestExecution test_execution = 107;
     TestListing test_listing = 108;
+    Waiting waiting = 109;
+    DynamicAnalysis dynamic_analysis = 110;
+    EnsureTransitiveSetProjection ensure_transitive_set_projection = 111;
+    AnonAnalysis anon_analysis = 112;
+    PageIn page_in = 113;
+    Install install = 114;
   }
 }
 
@@ -636,6 +1099,18 @@ message TopLevelTargetMetrics {
   optional uint64 remote_max_memory_peak_bytes = 6;
   // Max value for peak memory usage across all local actions.
   optional uint64 local_max_memory_peak_bytes = 7;
+  // Name of the rule type for this top-level target.
+  string target_rule_type_name = 8;
+  // Distinct RE platform identifiers used by actions for this target. Each
+  // value is the worker's `platform` property, optionally suffixed with
+  // `.subplatform` (e.g. `gpu-remote-execution.H100`) when set.
+  repeated string re_platform_names = 9;
+  // Wall-clock time in milliseconds from the start of the build at which this
+  // top-level target succeeded, failed, or timed out.
+  // The exact point in time at which the build is deemed to have started is set
+  // in the Buck2 daemon, so use this to compare durations but don't add it to a
+  // start timestamp to produce an end timestamp.
+  optional uint64 wall_clock_completion_ms = 10;
 }
 
 // Aggregated metrics across all targets in a build.
@@ -674,8 +1149,8 @@ message TopLevelTargetCriticalPath {
 
 // Sent once per build.
 message BuildGraphExecutionInfo {
-  // The actions that made up the critical path, in chronological order.
-  repeated CriticalPathEntry critical_path = 1;
+  reserved 1;
+
   // Metadata associated with this build. Values in this map have no particular
   // semantics and are useful for logging and telemetry only.
   map<string, string> metadata = 2;
@@ -683,8 +1158,7 @@ message BuildGraphExecutionInfo {
   uint64 num_nodes = 3;
   // Number of directed edges in the action graph (directed acyclic graph).
   uint64 num_edges = 4;
-  // The actions that made up the critical path, in chronological order, in a
-  // new format. We will have either that, or critical_path;
+  // The critical path in the build, in chronological order.
   repeated CriticalPathEntry2 critical_path2 = 5;
   // The backend that was use to produce the critical path.
   optional string backend_name = 7;
@@ -694,6 +1168,15 @@ message BuildGraphExecutionInfo {
   optional string isolation_dir = 9;
   // The critical path for top level targets
   repeated TopLevelTargetCriticalPath top_level_targets = 10;
+
+  // The slowest path in the build, in chronological order.
+  repeated CriticalPathEntry2 slowest_path = 11;
+
+  // The `id` values from `--client-metadata`, in order. Forwarded so ingress
+  // can log the full `clients` union on the critical/slowest path tables.
+  // Carries only ids rather than the whole metadata list to send less data
+  // over the network.
+  repeated string client_ids = 12;
 }
 
 // An event capturing information from the test discovery phase.
@@ -706,15 +1189,25 @@ message TestDiscovery {
   }
 }
 
-message ResourceControlEvents {
+message ResourceControlEvent {
   string uuid = 1;
   ResourceControlEventKind kind = 3;
-  google.protobuf.Timestamp event_time = 4;
+  google.protobuf.Timestamp time_event_generated = 4;
+  google.protobuf.Timestamp time_collected = 50;
 
   // Memory information regarding buck2.slice cgroup
   uint64 allprocs_memory_current = 6;
   uint64 allprocs_memory_pressure = 7;
   uint64 allprocs_memory_swap_current = 12;
+  // The part of `allprocs_memory_current` that is page cache which the kernel
+  // can drop
+  uint64 allprocs_page_cache = 20;
+  // The part of `allprocs_page_cache` that the kernel has seen in repeated use,
+  // which it drops last
+  uint64 allprocs_page_cache_active = 21;
+  // How many times so far the kernel wanted to move memory of these processes
+  // to swap and couldn't
+  uint64 allprocs_swap_failures = 22;
 
   // Memory information regarding the buck2 daemon cgroup
   uint64 daemon_memory_current = 17;
@@ -738,6 +1231,10 @@ message ResourceControlEvents {
 
   // Ancestor cgroup constraints that may limit Buck2 processes
   optional AncestorCgroupConstraints ancestor_cgroup_constraints = 14;
+
+  // Arbitrary tags for categorizing events (e.g. experimental algorithm
+  // variant)
+  repeated string tags = 19;
 }
 
 // Memory constraints inherited from ancestor cgroups in the hierarchy.
@@ -799,6 +1296,8 @@ message VersionControlRevision {
   // Unset: Unknown state.
   optional bool has_local_changes = 2;
   optional string command_error = 3;
+  // 40 characters hash for git revision.
+  optional string git_revision = 4;
 }
 
 // Event sent during build commands
@@ -809,8 +1308,17 @@ message TargetCfg {
   repeated string cli_modifiers = 2;
 }
 
+// Rule type name for one CLI-resolved top-level target, emitted once per
+// target by commands that know the target node early (e.g. `buck2 test`'s
+// pattern interpretation step). The invocation recorder accumulates these
+// into `InvocationRecord.target_rule_type_names`.
+message TargetRuleTypeName {
+  string rule_type = 1;
+}
+
 // A snapshot of current system state, with useful info.
 message Snapshot {
+  reserved 102, 120;
   // Resident set size in bytes of the buck2 daemon.
   // Does not include subprocesses (e.g. local actions).
   optional uint64 buck2_rss = 11;
@@ -823,14 +1331,19 @@ message Snapshot {
   uint64 buck2_system_cpu_us = 3;
   // Queue size of the blocking executor.
   uint64 blocking_executor_io_queue_size = 4;
+  // Inline I/O on the blocking executor: operations running on their caller's
+  // thread right now, and operations waiting for a permit to do so. The pooled
+  // executor bounds them to the host's parallelism; the direct one does not
+  // wait, so `waiting` stays zero under it.
+  uint64 blocking_executor_io_inline_in_flight = 19;
+  uint64 blocking_executor_io_inline_waiting = 20;
   // Tokio blocking queue depth.
   uint64 tokio_blocking_queue_depth = 14;
   // Tokio num idle blocking threads.
   uint64 tokio_num_idle_blocking_threads = 15;
   // Tokio total number of blocking threads.
   uint64 tokio_num_blocking_threads = 16;
-  // Memory pressure as seen from all Buck2 processes (under buck2.slice)
-  uint32 allprocs_memory_pressure = 17;
+  reserved 17;
 
   uint64 re_download_bytes = 5;
   uint64 re_upload_bytes = 6;
@@ -855,6 +1368,24 @@ message Snapshot {
   uint32 re_get_digest_expirations_started = 1064;
   uint32 re_get_digest_expirations_finished_successfully = 1065;
   uint32 re_get_digest_expirations_finished_with_error = 1066;
+  // CAS presence checks: RPCs issued, digests they carried, digests answered
+  // from an expiration the daemon already knew, and the largest batch since the
+  // previous snapshot.
+  uint64 re_presence_check_rpcs = 1067;
+  uint64 re_presence_check_digests_queried = 1068;
+  uint64 re_presence_check_digest_answers = 1069;
+  uint64 re_presence_check_largest_batch = 1070;
+
+  // Write actions served from the action cache (`buck2.write_action_cache`).
+  uint64 write_action_cache_hits = 1209;
+  uint64 write_action_cache_misses = 1210;
+  uint64 write_action_cache_lookup_failures = 1211;
+  uint64 write_action_cache_populated = 1212;
+  uint64 write_action_cache_populate_failures = 1213;
+  uint64 write_action_cache_verified = 1214;
+  uint64 write_action_cache_mismatches = 1215;
+  uint64 write_action_cache_uploaded = 1216;
+  uint64 write_action_cache_written = 1217;
 
   // I/O operations in progress.
   uint32 io_in_flight_copy = 1101;
@@ -876,6 +1407,26 @@ message Snapshot {
   uint32 io_in_flight_canonicalize = 1117;
   uint32 io_in_flight_eden_settle = 1118;
 
+  // Total I/O operations count.
+  optional uint32 io_copy_count = 1119;
+  optional uint32 io_symlink_count = 1120;
+  optional uint32 io_hardlink_count = 1121;
+  optional uint32 io_mkdir_count = 1122;
+  optional uint32 io_readdir_count = 1123;
+  optional uint32 io_readdir_eden_count = 1124;
+  optional uint32 io_rmdir_count = 1125;
+  optional uint32 io_rmdir_all_count = 1126;
+  optional uint32 io_stat_count = 1127;
+  optional uint32 io_stat_eden_count = 1128;
+  optional uint32 io_chmod_count = 1129;
+  optional uint32 io_readlink_count = 1130;
+  optional uint32 io_remove_count = 1131;
+  optional uint32 io_rename_count = 1132;
+  optional uint32 io_read_count = 1133;
+  optional uint32 io_write_count = 1134;
+  optional uint32 io_canonicalize_count = 1135;
+  optional uint32 io_eden_settle_count = 1136;
+
   // Time passed since buck2 daemon was started
   uint64 daemon_uptime_s = 7;
 
@@ -895,8 +1446,6 @@ message Snapshot {
   optional uint64 host_cpu_usage_user_ms = 13;
 
   uint64 dice_key_count = 101;
-  // the number of keys actively present in the per transaction cache
-  uint64 dice_currently_active_key_count = 102;
   uint32 dice_active_transaction_count = 103;
 
   uint64 deferred_materializer_queue_size = 104;
@@ -928,6 +1477,24 @@ message Snapshot {
 
   uint64 deferred_materializer_declares = 200;
   uint64 deferred_materializer_declares_reused = 201;
+  uint64 deferred_materializer_final_output_logical_bytes = 202;
+  uint64 deferred_materializer_intermediate_only_logical_bytes = 203;
+  // The BlobStore's stash: the files in it and their bytes, the bytes it has
+  // unlinked and the files it has put at their destinations since the daemon
+  // started.
+  uint64 blob_store_entries = 204;
+  uint64 blob_store_bytes = 205;
+  uint64 blob_store_removed_bytes = 206;
+  uint64 blob_store_served_files = 207;
+  // Files the disk-state materializer put on disk by copying a tracked path
+  // holding the same content, rather than downloading, since the daemon
+  // started.
+  uint64 disk_state_materializer_copied_from_disk = 208;
+  // The BlobStore's memory: the blobs in it and their bytes as compressed, and
+  // the files it has written at their destinations since the daemon started.
+  uint64 blob_store_memory_entries = 209;
+  uint64 blob_store_memory_bytes = 210;
+  uint64 blob_store_memory_served_files = 211;
 
   optional UnixSystemStats unix_system_stats = 300;
 
@@ -964,6 +1531,75 @@ message Snapshot {
   int64 local_cache_lookups = 440;
   int64 local_cache_lookup_latency_microseconds = 441; // Client side metrics.
 
+  // Persisted dep-file cache writes queued but not yet applied to sqlite.
+  uint64 dep_file_db_queue_size = 442;
+  // Writes the dep-file db writer thread has applied, and how long they took.
+  // Cumulative for the daemon's life; `max` is kept because the total only
+  // gives a mean and a single slow write is what would stall `flush` at the end
+  // of a command.
+  // Every message the writer handled, including `Flush`, so `queue_size` stays
+  // correct. Divide the duration below by the sum of the per-kind counts below
+  // rather than by this: a flush does no database work and is excluded from the
+  // duration.
+  uint64 dep_file_db_writes_applied = 443;
+  reserved 457; // dep_file_db_writes, now the sum of the per-kind counts
+  uint64 dep_file_db_write_duration_us = 444;
+  uint64 dep_file_db_write_max_us = 445;
+  // Reads, counted the same way. `MatchDepFilesEnd` carries per-action probe
+  // and fetch times, which give a distribution but only for one invocation and
+  // only by parsing its event log; these are the cheap always-on aggregate,
+  // which is what answers how much the cache costs across the fleet rather than
+  // in one forced-local build.
+  uint64 dep_file_db_probes = 446;
+  uint64 dep_file_db_probe_duration_us = 447;
+  // Fetches issued, and those that found their row. A fetch that finds one is
+  // not necessarily a served hit: `check_action` re-validates the entry and can
+  // still reject it.
+  uint64 dep_file_db_fetches = 448;
+  uint64 dep_file_db_fetches_found = 449;
+  uint64 dep_file_db_fetch_duration_us = 450;
+  uint64 dep_file_db_read_max_us = 451;
+  // Of `probe_duration_us` + `fetch_duration_us`, the part spent waiting for
+  // the single database connection rather than querying it. Separates a slow
+  // lookup caused by the database working from one caused by queueing behind
+  // another reader; the two want different fixes.
+  uint64 dep_file_db_read_lock_wait_us = 452;
+  uint64 dep_file_db_read_lock_wait_max_us = 453;
+  uint64 dep_file_db_read_connections = 458;
+  // The write counts above, split by what the write did. `Flush` is in neither:
+  // it touches no table. Kept alongside the totals because a slow insert and a
+  // slow prune-driven delete call for different fixes.
+  uint64 dep_file_db_inserts = 459;
+  uint64 dep_file_db_insert_duration_us = 460;
+  uint64 dep_file_db_deletes = 461;
+  uint64 dep_file_db_delete_duration_us = 462;
+  uint64 dep_file_db_clears = 463;
+  uint64 dep_file_db_clear_duration_us = 464;
+  // Entries actually served from disk: the row survived re-validation and its
+  // outputs were still materialized. Strictly fewer than `fetches_found`, which
+  // only says the row existed.
+  uint64 dep_file_db_hits = 456;
+  reserved 454, 455; // dep_file_db_{entries,bytes}_at_start, replaced below
+  // How many entries -- (logical_key, config_key) pairs -- the database holds
+  // in the dep_file_state table. Absent when it could not be measured.
+  optional uint64 dep_file_db_entries = 465;
+  // The database's footprint on disk. Absent when it could not be measured.
+  optional uint64 dep_file_db_bytes = 466;
+
+  // The interner that deduplicates tracked file digests by value: live entries
+  // (one per distinct digest), entries kept alive past their last holder
+  // because a CAS expiration is recorded for them, and the cumulative number of
+  // digest constructions (page-ins included) that found an entry / created one.
+  uint64 file_digest_interner_entries = 467;
+  uint64 file_digest_interner_pinned_entries = 468;
+  uint64 file_digest_interner_hits = 469;
+  uint64 file_digest_interner_misses = 470;
+
+  // Interner entries that a row on disk holds, and so are kept and refreshed
+  // for the rest of the daemon's life: the row can be read back any number of
+  // times.
+  uint64 file_digest_interner_paged_entries = 471;
+
   // Delay between time snapshot is created and time it is received
   // by the client.
   optional int64 this_event_client_delay_ms = 2001;
@@ -974,12 +1610,113 @@ message Snapshot {
   optional UnixCgroupMemoryStats allprocs_cgroup = 2003;
   // Memory usage of the forkserver daemon's slice from cgroup (if available)
   optional UnixCgroupMemoryStats forkserver_actions_cgroup = 2004;
+
+  // Detailed Tokio runtime metrics. Always populated by current daemons;
+  // absent in event logs recorded by older daemons that pre-date this field.
+  optional TokioRuntimeStats tokio_runtime_stats = 3001;
+
+  // The TTL refresher that walks the file digest interner rather than the
+  // materializer's declared artifacts. Always populated by current daemons;
+  // absent in event logs recorded by older daemons that pre-date this field.
+  optional StandaloneTtlRefreshStats standalone_ttl_refresh = 3002;
+
+  // Time since this command's tenant generation was created. Equals
+  // `daemon_uptime_s` for the tenant a daemon started with; a tenant that
+  // joined a shared daemon later, or was recreated after eviction, is younger.
+  optional uint64 tenant_uptime_s = 3003;
+}
+
+message StandaloneTtlRefreshStats {
+  // Cumulative since the daemon started.
+  uint64 passes = 1;
+  uint64 errors = 2;
+  // The most recent pass: interner entries visited by its sweep, entries the
+  // sweep removed, digests whose expiration fell inside the refresh window,
+  // how many of those the CAS still had, how many it reported gone, and how
+  // long the pass took.
+  uint64 last_pass_visited = 3;
+  uint64 last_pass_swept = 4;
+  uint64 last_pass_candidates = 5;
+  uint64 last_pass_refreshed = 6;
+  uint64 last_pass_gone = 7;
+  uint64 last_pass_duration_us = 8;
+}
+
+// https://docs.rs/tokio/latest/tokio/runtime/struct.RuntimeMetrics.html for
+// full details
+message TokioRuntimeStats {
+  message Worker {
+    // Per-snapshot delta of the count of times this worker unparked but
+    // found no work.
+    uint64 noop_count = 1;
+    // Cumulative count of park OR unpark events. Kept cumulative (unlike
+    // the other counters in this message) because per tokio docs: "an odd
+    // count means that the worker is currently parked" — the parity at
+    // snapshot time tells the consumer whether the worker is idly parked
+    // vs stuck in an in-progress long synchronous poll. Both pieces of
+    // info — delta and current parity — would otherwise need separate
+    // fields. The runtime-wide park count is derivable as half this value.
+    uint64 park_unpark_count = 2;
+    // Per-snapshot delta of the count of tasks this worker stole from
+    // other workers.
+    uint64 steal_count = 3;
+    // Per-snapshot delta of the count of tasks this worker has polled.
+    uint64 poll_count = 4;
+    // Per-snapshot delta of microseconds this worker spent busy (not
+    // parked).
+    uint64 total_busy_duration_us = 5;
+    // Per-snapshot delta of the count of tasks scheduled to this worker's
+    // local queue.
+    uint64 local_schedule_count = 6;
+    // Per-snapshot delta of the count of times this worker overflowed its
+    // local queue (forcing a push to the global queue).
+    uint64 overflow_count = 7;
+    // Current depth of this worker's local run queue at snapshot time.
+    // Gauge, not delta.
+    uint64 local_queue_depth = 8;
+    // Per-snapshot delta of per-bucket poll counts since the previous
+    // Snapshot the daemon emitted. Indices line up with
+    // `TokioRuntimeStats.poll_time_histogram_bucket_upper_bound_ns`. Trailing
+    // zeros are trimmed (consumers must treat missing trailing entries as 0;
+    // this is most snapshots, since long-poll buckets are usually empty).
+    // Empty if (a) the histogram isn't enabled in this daemon, (b) this is
+    // the first snapshot of the recording (no baseline to diff against), or
+    // (c) all per-bucket deltas were zero.
+    repeated uint64 poll_time_bucket_counts = 9;
+  }
+  // Number of currently alive tasks tracked by the runtime. Gauge.
+  uint64 num_alive_tasks = 1;
+  // Current depth of the runtime's global run queue. Gauge.
+  uint64 global_queue_depth = 2;
+  // Per-snapshot delta of the count of forced cooperative yields.
+  uint64 budget_forced_yield_count = 3;
+  // Per-snapshot delta of the count of tasks scheduled to the runtime from
+  // outside any worker thread (e.g. spawn from a blocking thread, or wake
+  // from an external thread). These tasks land in the global injection queue
+  // rather than a worker's local queue.
+  uint64 remote_schedule_count = 4;
+  // Per-worker metrics, indexed by worker id (i.e. workers[i] is the entry
+  // for worker i).
+  repeated Worker workers = 5;
+  // Upper bound (inclusive) of each histogram bucket, in nanoseconds. Same
+  // length as `Worker.poll_time_bucket_counts`. Constant for the daemon's
+  // lifetime, so to save space the daemon only populates this on the first
+  // Snapshot it emits per command — subsequent snapshots leave it empty and
+  // consumers should reuse the value captured from the first snapshot.
+  repeated uint64 poll_time_histogram_bucket_upper_bound_ns = 6;
 }
 
 message UnixCgroupMemoryStats {
   uint64 anon = 1;
   uint64 file = 2;
   uint64 kernel = 3;
+  uint64 swap_bytes = 4;
+  // Memory pressure (PSI full avg10 %) from cgroup memory.pressure.
+  // Kernel-maintained 10-second EWMA.
+  double memory_pressure_10s_avg = 5;
+  // Memory pressure (PSI full avg60 %) from cgroup memory.pressure.
+  // Kernel-maintained 60-second EWMA.
+  double memory_pressure_60s_avg = 6;
 }
 
 message UnixSystemStats {
@@ -1023,6 +1760,7 @@ message TestResult {
 message TestSessionInfo {
   // Usually this contains a test link, like in Tpx
   string info = 2;
+  optional string test_session_id = 3;
 }
 
 // We report all of the tests for a particular target simultaneously
@@ -1069,6 +1807,7 @@ message CommandStart {
     ExplainCommandStart explain = 40;
     ExpandExternalCellsCommandStart expand_external_cell = 41;
     CompleteCommandStart complete = 42;
+    HydrationCommandStart hydration = 43;
   }
 }
 
@@ -1148,6 +1887,8 @@ message ExpandExternalCellsCommandStart {}
 
 message CompleteCommandStart {}
 
+message HydrationCommandStart {}
+
 message CommandEnd {
   reserved 3, 4;
   oneof data {
@@ -1174,6 +1915,7 @@ message CommandEnd {
     ExplainCommandEnd explain = 40;
     ExpandExternalCellsCommandEnd expand_external_cell = 41;
     CompleteCommandEnd complete = 42;
+    HydrationCommandEnd hydration = 43;
   }
 
   // This should eventually be deleted. Retaining only so that ingress
@@ -1252,11 +1994,80 @@ message CleanStaleStats {
   uint64 retained_bytes = 4;
   uint64 untracked_artifact_count = 5;
   uint64 untracked_bytes = 6;
+  // Cleaned count and bytes include unmaterialization count and bytes.
   uint64 cleaned_artifact_count = 8;
   uint64 cleaned_bytes = 9;
   uint64 total_duration_s = 10;
   uint64 scan_duration_s = 11;
   uint64 clean_duration_s = 12;
+  uint64 unmaterialized_only_artifact_count = 13;
+  uint64 unmaterialized_only_bytes = 14;
+  uint64 unmaterialization_ineligible_artifact_count = 15;
+  uint64 unmaterialization_ineligible_bytes = 16;
+  // Paths skipped because they could not be read or deleted due to
+  // insufficient permissions.
+  uint64 skipped_unreadable_count = 17;
+  uint64 materialized_final_output_bytes_before = 18;
+  uint64 materialized_final_output_bytes_after = 19;
+  uint64 materialized_intermediate_only_bytes_before = 20;
+  uint64 materialized_intermediate_only_bytes_after = 21;
+  uint64 adaptive_free_bytes_before = 22;
+  uint64 adaptive_total_bytes = 23;
+  uint64 adaptive_bytes_needed = 24;
+  uint64 adaptive_shortfall_bytes = 25;
+  uint64 ttl_stale_artifact_count = 26;
+  uint64 ttl_stale_bytes = 27;
+  uint64 adaptive_stale_artifact_count = 28;
+  uint64 adaptive_stale_bytes = 29;
+  // Retained totals partition into inactive, active, and artifacts selected
+  // for adaptive unmaterialization.
+  uint64 retained_inactive_artifact_count = 30;
+  uint64 retained_inactive_bytes = 31;
+  uint64 retained_active_artifact_count = 32;
+  uint64 retained_active_bytes = 33;
+  uint64 cleaned_untracked_artifact_count = 34;
+  uint64 cleaned_untracked_bytes = 35;
+  uint64 cleaned_stale_artifact_count = 36;
+  uint64 cleaned_stale_bytes = 37;
+  // Counted when adaptive policy selects paths, before runtime validation.
+  uint64 adaptive_unmaterialization_selected_artifact_count = 38;
+  uint64 adaptive_unmaterialization_selected_bytes = 39;
+  uint64 unmaterialization_ineligible_final_output_artifact_count = 40;
+  uint64 unmaterialization_ineligible_final_output_bytes = 41;
+  uint64
+      unmaterialization_ineligible_no_rematerialization_method_artifact_count =
+          42;
+  uint64 unmaterialization_ineligible_no_rematerialization_method_bytes = 43;
+  uint64 unmaterialization_ineligible_remote_ttl_too_short_artifact_count = 44;
+  uint64 unmaterialization_ineligible_remote_ttl_too_short_bytes = 45;
+  uint64 unmaterialization_ineligible_processing_artifact_count = 46;
+  uint64 unmaterialization_ineligible_processing_bytes = 47;
+  uint64 unmaterialization_ineligible_state_changed_artifact_count = 48;
+  uint64 unmaterialization_ineligible_state_changed_bytes = 49;
+  uint64 delete_permission_denied_artifact_count = 50;
+  uint64 delete_permission_denied_bytes = 51;
+  uint64 delete_interrupted_artifact_count = 52;
+  uint64 delete_interrupted_bytes = 53;
+  uint64 delete_failed_artifact_count = 54;
+  uint64 delete_failed_bytes = 55;
+  uint64 scan_unreadable_count = 56;
+  uint64 scan_invalid_filename_count = 57;
+  uint64 scan_tree_state_mismatch_count = 58;
+  uint64 scan_failed_directory_count = 59;
+  uint64 adaptive_unmaterialization_statically_ineligible_artifact_count = 60;
+  uint64 adaptive_unmaterialization_statically_ineligible_bytes = 61;
+  uint64 unmaterialization_upload_attempted_artifact_count = 62;
+  uint64 unmaterialization_upload_attempted_bytes = 63;
+  uint64 unmaterialization_upload_succeeded_artifact_count = 64;
+  uint64 unmaterialization_upload_succeeded_bytes = 65;
+  uint64 unmaterialization_upload_failed_artifact_count = 66;
+  uint64 unmaterialization_upload_failed_bytes = 67;
+  uint64 unmaterialization_upload_skipped_oversize_artifact_count = 68;
+  uint64 unmaterialization_upload_skipped_oversize_bytes = 69;
+  // Used bytes (total minus free) on the buck-out filesystem; absent on probe
+  // failure.
+  optional uint64 used_disk_space_bytes_start = 70;
+  optional uint64 used_disk_space_bytes_end = 71;
 }
 
 enum CleanStaleResultKind {
@@ -1270,12 +2081,68 @@ enum CleanStaleResultKind {
 }
 
 message CleanStaleResult {
+  enum Trigger {
+    TRIGGER_UNSPECIFIED = 0;
+    MANUAL_EXPLICIT = 1;
+    MANUAL_CONFIGURED = 2;
+    SCHEDULED = 3;
+  }
+
+  // What issued the clean-stale run.
+  enum Origin {
+    ORIGIN_UNSPECIFIED = 0;
+    // `buck2 clean --stale` run directly.
+    CLEAN_COMMAND = 1;
+    // `buck2 clean --stale` spawned by `buck2 cleanall --stale`.
+    CLEANALL_COMMAND = 2;
+    // The daemon's clean-stale schedule.
+    DAEMON_SCHEDULE = 3;
+  }
+
+  enum PolicyMode {
+    POLICY_MODE_UNSPECIFIED = 0;
+    EXPLICIT_TTL = 1;
+    EXPLICIT_ADAPTIVE = 2;
+    CONFIGURED_FIXED_TTL = 3;
+    CONFIGURED_ADAPTIVE = 4;
+    CONFIGURED_TTL = 5;
+  }
+
+  enum FailurePhase {
+    NONE = 0;
+    ROOT_DISCOVERY = 1;
+    SCAN = 2;
+    STATE_VALIDATION = 3;
+    INVALIDATION = 4;
+    UNMATERIALIZATION = 5;
+    CLEAN = 6;
+  }
+
+  enum AdaptiveOutcome {
+    ADAPTIVE_OUTCOME_UNSPECIFIED = 0;
+    DISABLED = 1;
+    ROOT_UNAVAILABLE = 2;
+    DISK_STAT_FAILURE = 3;
+    ABOVE_THRESHOLD = 4;
+    NO_BYTES_NEEDED = 5;
+    SATISFIED_BY_STALE_DELETION = 6;
+    SATISFIED_BY_UNMATERIALIZATION = 7;
+    INSUFFICIENT_CANDIDATES = 8;
+    INVALID_DISK_STATS = 9;
+  }
+
   map<string, string> metadata = 1;
   CleanStaleResultKind kind = 2;
   optional ErrorReport error = 3;
   CleanStaleStats stats = 4;
   // Set if clean stale is invoked as a command
   optional string command_uuid = 5;
+  Trigger trigger = 6;
+  PolicyMode policy_mode = 7;
+  FailurePhase failure_phase = 8;
+  AdaptiveOutcome adaptive_outcome = 9;
+  bool tracked_only = 10;
+  Origin origin = 11;
 }
 
 message InstallCommandEnd {
@@ -1291,6 +2158,8 @@ message ProfileCommandEnd {}
 message ExpandExternalCellsCommandEnd {}
 
 message CompleteCommandEnd {}
+
+message HydrationCommandEnd {}
 
 message LoadPackageStart {
   string path = 1;
@@ -1317,6 +2186,8 @@ message LoadBuildFileEnd {
   optional uint64 cpu_instruction_count = 5;
   // Number of targets
   optional uint64 target_count = 6;
+  // Number of Starlark ticks during evaluation of BUCK file.
+  optional uint64 starlark_tick_count = 7;
 }
 
 message SharedTaskStart {
@@ -1386,6 +2257,13 @@ enum ActionExecutionKind {
   ACTION_EXECUTION_KIND_LOCAL_ACTION_CACHE = 10;
   // This action was executed remotely via a persistent worker.
   ACTION_EXECUTION_KIND_REMOTE_WORKER = 11;
+  // This action was submitted for remote execution, but the service served
+  // its own action cache instead of running it.
+  ACTION_EXECUTION_KIND_REMOTE_SERVED_FROM_CACHE = 12;
+  // This action was executed remotely as an execution shared with another
+  // build: the service deduplicated it against an identical execution already
+  // in flight.
+  ACTION_EXECUTION_KIND_REMOTE_DEDUPLICATED = 13;
 }
 
 // A name for a particular action, suitable for offline analytics and user
@@ -1487,6 +2365,64 @@ message CommandExecutionMetadata {
   /// The number of times this action was suspended. None indicates that
   /// resource control was not enabled.
   optional uint64 suspend_count = 11;
+
+  reserved 12; // client_start_time, now in `client_attempt`
+
+  /// This attempt as the client saw it. Unset when there was no real attempt
+  /// interval. Written to the event log only, not to Scribe.
+  ClientAttempt client_attempt = 13;
+}
+
+/// One command attempt as the client saw it.
+message ClientAttempt {
+  /// The client's wall-clock time when this attempt started, read alongside
+  /// the monotonic start of `CommandExecutionMetadata.wall_time`. Unlike
+  /// `CommandExecutionMetadata.start_time`, which can come from an RE worker or
+  /// from the original execution of a cached result, this is always this
+  /// attempt's own and on the client's clock. Whole milliseconds.
+  google.protobuf.Timestamp start_time = 1;
+}
+
+/// What the RE worker reported about running a command for this build. Times
+/// are at two significant figures. RE reports zero both for a real zero and for
+/// "not reported", so a number it reported as zero is left unset, and a
+/// duration is unset when RE did not record both ends.
+message ReWorkerDetails {
+  /// Microseconds from the worker receiving the command to finishing it.
+  optional uint64 worker_wall_time_us = 1;
+
+  /// Microseconds the worker spent uploading the command's outputs.
+  optional uint64 output_upload_us = 2;
+
+  /// Whether RE ran the command on elastic capacity.
+  bool elastic_capacity = 3;
+
+  /// CPU time the command used, in microseconds. Their sum is the total CPU
+  /// time RE reports.
+  optional uint64 cpu_time_user_us = 4;
+  optional uint64 cpu_time_system_us = 5;
+
+  reserved 6, 7; // execution_attempts and final_queue_us, now in `attempts`
+
+  /// Bytes the worker downloaded for inputs and uploaded for outputs.
+  optional uint64 input_download_bytes = 8;
+  optional uint64 output_upload_bytes = 9;
+
+  /// Set only when RE attempted the command more than once. After one attempt
+  /// there is nothing to add: the final queue time equals
+  /// `CommandExecutionMetadata.queue_duration`.
+  ReAttempts attempts = 10;
+}
+
+/// The attempts RE made at a command it attempted more than once.
+message ReAttempts {
+  /// Number of attempts, at least two.
+  uint32 count = 1;
+
+  /// Microseconds the final attempt spent queued: from RE last queuing the
+  /// command to a worker receiving it. The two ends are stamped on different
+  /// machines, so it is unset when clock skew would make it negative.
+  optional uint64 final_queue_us = 2;
 }
 
 message CommandOutputsMissing {
@@ -1504,7 +2440,11 @@ message CommandExecution {
 
   message Success {}
 
-  message Failure {}
+  message Failure {
+    // True when a declared input that Buck had materialized was missing before
+    // a local command failure. This is never set for remote execution.
+    bool missing_materialized_inputs = 1;
+  }
 
   message WorkerFailure {}
 
@@ -1515,6 +2455,9 @@ message CommandExecution {
   message Error {
     string stage = 1;
     string error = 2;
+    // buck2's classification of `error`, so consumers can act on what buck2
+    // already knows about the failure instead of parsing `error`.
+    repeated buck.data.error.ErrorTag tags = 3;
   }
 
   // (Hybrid execution only) This executor released its claim in order to allow
@@ -1609,7 +2552,7 @@ message ActionExecutionEnd {
   bool prefers_local = 27;
   bool requires_local = 28;
   bool allows_cache_upload = 29;
-  bool did_cache_upload = 30;
+  UploadResult cache_upload_result = 30;
 
   // Revision hash (version) for this action. This is set only when the action
   // fails.
@@ -1622,12 +2565,15 @@ message ActionExecutionEnd {
   // from the command, hybrid is turned on).
   optional bool eligible_for_full_hybrid = 33;
 
-  // Hostname of this action ran on. This is set only when the action fails.
+  // Hostname of the host this action ran on. Always set for locally-executed
+  // actions (which run on the buck2 daemon's host). Additionally set for any
+  // failed action regardless of execution kind, for logging in
+  // buck2_action_errors.
   optional string hostname = 34;
 
   // Fields related to the remote dep file cache
   bool allows_dep_file_cache_upload = 35;
-  bool did_dep_file_cache_upload = 36;
+  UploadResult dep_file_cache_upload_result = 36;
   // Remote dep file key (the digest we use to populate the action cache).
   // This is set if the action contains a dep file
   optional string dep_file_key = 37;
@@ -1654,6 +2600,45 @@ message ActionExecutionEnd {
 
   // Whether the action is eligible for deduplication across configurations.
   EligibleForDedupe eligible_for_dedupe = 45;
+
+  // Whether the action is expected to be eligible for deduplication across
+  // configurations.
+  ExpectedEligibleForDedupe expected_eligible_for_dedupe = 46;
+
+  // Dep-file cache entries this action queued for persisting. At most one, but
+  // carried as a count so summing it across a command's actions gives the
+  // command's total.
+  optional uint64 dep_file_db_writes_queued = 47;
+
+  // prepare_command_us and finish_action_us, now in `run_action_timings`
+  reserved 48, 49;
+
+  // The producers of this action's direct inputs, recorded only with
+  // `--log-action-graph`. For an action a dynamic output created, they include
+  // the producers of what its lambda read, since the action could not start
+  // before those were built. Inputs that arrive through a transitive set are
+  // referenced by the set's id instead of being expanded. Written to the event
+  // log only, not to Scribe.
+  ActionGraphProducers graph_producers = 50;
+
+  // The name of the execution group the action ran in; empty for the default
+  // execution group.
+  string exec_group = 51;
+
+  // For `run` actions; unset for other actions and for failed ones. Written to
+  // the event log only, not to Scribe.
+  RunActionTimings run_action_timings = 52;
+}
+
+// Where a `run` action spent its time outside the command, in microseconds at
+// two significant figures.
+message RunActionTimings {
+  // Before checking caches: expanding the command line, building the input
+  // tree, fingerprinting dep files.
+  optional uint64 prepare_command_us = 1;
+  // After the result arrived: unpacking outputs, writing the dep-file
+  // database. Unset when a local dep-file cache hit skipped execution.
+  optional uint64 finish_action_us = 2;
 }
 
 enum IncrementalKind {
@@ -1692,6 +2677,46 @@ enum EligibleForDedupe {
   ELIGIBLE = 0;
   INELIGIBLE_INPUT = 1;
   INELIGIBLE_OUTPUT = 2;
+  EXECUTION_PLATFORM_UNKNOWN_ELIGIBILITY = 3;
+}
+
+enum ExpectedEligibleForDedupe {
+  EXPECTED_ELIGIBLE = 0;
+  EXPECTED_INELIGIBLE = 1;
+  UNKNOWN_ELIGIBILITY = 2;
+}
+
+// N.B. Historically, `ActionExecutionEnd.did_*cache_upload_result`` were
+// boolean values. They've been converted to this `*_cache_upload_result` with
+// values from this enum, but it's important that the semantic meaning of the
+// 0/1 values here match the false/true meanings of the old `did_*` fields. That
+// way old buck instances that still generate true/false are interpreted
+// correctly by new ingress/buck clients.
+enum UploadResult {
+  UPLOAD_RESULT_DID_NOT_UPLOAD_UNSPECIFIED = 0;
+  UPLOAD_RESULT_UPLOADED = 1;
+  UPLOAD_RESULT_NOT_ATTEMPTED = 2;
+  UPLOAD_RESULT_NON_COMMAND_ACTION = 3;
+  UPLOAD_RESULT_ACTION_NOT_SUCCESSFUL = 4;
+  UPLOAD_RESULT_REMOTE_DEP_FILE_CACHE_HIT = 5;
+  UPLOAD_RESULT_ACTION_UPLOAD_NOT_ALLOWED = 6;
+  UPLOAD_RESULT_EXECUTOR_UPLOAD_DISABLED = 7;
+  UPLOAD_RESULT_NON_LOCAL_EXECUTION = 8;
+  UPLOAD_RESULT_REJECTED_OUTPUT_EXCEEDS_LIMIT = 9;
+  UPLOAD_RESULT_REJECTED_PERMISSION_DENIED = 10;
+  UPLOAD_RESULT_REJECTED_SYMLINK_OUTPUT = 11;
+  UPLOAD_RESULT_FAILED_UPLOAD_ACTION_BLOBS = 12;
+  UPLOAD_RESULT_FAILED_UPLOAD_OUTPUTS = 13;
+  UPLOAD_RESULT_FAILED_WRITE_ACTION_RESULT = 14;
+  UPLOAD_RESULT_FAILED_OTHER = 15;
+  UPLOAD_RESULT_HAD_DEP_FILE_BUNDLE = 16;
+  UPLOAD_RESULT_DEP_FILE_ENTRY_EXISTS = 17;
+  // The action declares dep files but does not allow dep-file cache uploads.
+  UPLOAD_RESULT_DEP_FILE_UPLOAD_NOT_ALLOWED = 18;
+  // Not uploaded: the command ran locally only because a hybrid executor fell
+  // back to local or local won the race. A local result is published only
+  // where the command was configured to run locally.
+  UPLOAD_RESULT_LOCAL_IN_PLACE_OF_REMOTE = 19;
 }
 
 message CommandInvalidationInfo {
@@ -1831,6 +2856,7 @@ message AnalysisEnd {
   AnalysisProfile profile = 2;
   optional uint64 declared_actions = 6;
   optional uint64 declared_artifacts = 7;
+  optional string error = 8;
 }
 
 message AnalysisStageStart {
@@ -1855,10 +2881,26 @@ message ExecutorStageStart {
     CacheQuery cache_query = 22;
     CacheHit cache_hit = 23;
     PrepareAction prepare = 24;
+    CasArtifactStage cas_artifact = 25;
   }
 }
 
 message PrepareAction {}
+
+// A step of the `cas_artifact` action, which declares an artifact that is
+// already in CAS. None of the steps downloads file contents.
+message CasArtifactStage {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    CHECK_EXPIRATION = 1;
+    EXTEND_EXPIRATION = 2;
+    RECHECK_EXPIRATION = 3;
+    // Fetching the tree metadata and building the local directory from it.
+    TREE_METADATA = 4;
+    DECLARE_OUTPUTS = 5;
+  }
+  Phase phase = 1;
+}
 
 enum CacheType {
   CACHE_TYPE_ACTION_CACHE = 0;
@@ -1868,6 +2910,13 @@ enum CacheType {
 message CacheQuery {
   string action_digest = 1;
   CacheType cache_type = 2;
+}
+
+// A cache query that failed with a real error, i.e. anything other than a hit
+// or an outright miss. The lookup is treated as a cache miss.
+message CacheQueryError {
+  string error = 1;
+  optional string re_error_code = 2;
 }
 
 message CacheHit {
@@ -1927,6 +2976,9 @@ message ReQueueCancelled {
 
 message ReQueueOverQuota {
   ReQueue queue_info = 1;
+  // Names of the exceeded quotas, e.g.
+  // `worker_units:<quota_pool>:<platform>[:<subplatform>]`.
+  repeated string exceeded_quotas = 2;
 }
 
 message ReQueueAcquiringDependencies {
@@ -1959,6 +3011,42 @@ message ReAfterAction {
   string action_digest = 1;
 }
 
+// Event that traces operations on a subset of action digests
+message ActionDigestTrace {
+  enum ActionDigestTraceEvent {
+    UNKNOWN = 0;
+    CACHE_HIT = 1;
+    CACHE_MISS = 2;
+    REMOTE_EXECUTION = 3;
+    CACHE_UPLOAD = 4;
+  }
+
+  // Command level metadata
+  map<string, string> metadata = 1;
+  string action_digest = 2;
+  ActionDigestTraceEvent event = 3;
+  optional string event_subtype = 4;
+  optional uint64 ttl_secs = 5;
+  string re_use_case = 6;
+  // Inverse sampling rate
+  uint64 weight = 7;
+  // Schedule type (e.g., "diff", "continuous")
+  optional string schedule_type = 8;
+  // Sum of output digest sizes in bytes
+  optional uint64 storage_cost_bytes = 9;
+  // Execution time in milliseconds
+  optional uint64 compute_cost_ms = 10;
+}
+
+// RE log stream handles available for a running action
+message ReLogStreamAvailable {
+  string action_digest = 1;
+  string stdout_stream_name = 2;
+  string stderr_stream_name = 3;
+  optional string action_key = 4;
+  string use_case = 5;
+}
+
 message LocalStage {
   oneof stage {
     LocalQueued queued = 1;
@@ -1970,6 +3058,7 @@ message LocalStage {
     WorkerExecute worker_execute = 7;
     WorkerQueued worker_queued = 8;
     WorkerWait worker_wait = 9;
+    LocalFinalizeOutputs finalize_outputs = 10;
   }
 }
 
@@ -1989,6 +3078,10 @@ message LocalMaterializeInputs {}
 
 message LocalPrepareOutputDirs {}
 
+// After the command finishes: hashing its outputs and recording them with the
+// materializer.
+message LocalFinalizeOutputs {}
+
 message AcquireLocalResource {}
 
 message WorkerWait {}
@@ -1997,7 +3090,47 @@ message WorkerInit {
   WorkerInitCommand command = 1;
 }
 
-message ExecutorStageEnd {}
+message ExecutorStageEnd {
+  // Set when a cache_query stage failed with a real error; the lookup was
+  // degraded to a cache miss.
+  CacheQueryError cache_query_error = 1;
+
+  // Set on every cache-query stage.
+  CacheQueryTimings cache_query = 2;
+
+  // Set on a cache-hit stage.
+  CacheHitTimings cache_hit = 3;
+}
+
+// Where a cache hit's time went, measured on the client, in microseconds at two
+// significant figures. These are parts of the cache-hit stage, not time in
+// addition to it.
+message CacheHitTimings {
+  // Phases a download did not reach, because it failed earlier, are unset.
+
+  // Waiting for the output-tree download limit. Unset when no limit is
+  // configured.
+  optional uint64 tree_admission_us = 1;
+  // Fetching the output trees. With no trees this may not make a request.
+  optional uint64 tree_fetch_us = 2;
+  // Building the output metadata from the result, and claiming the action.
+  optional uint64 local_bookkeeping_us = 3;
+  // Declaring the outputs to the materializer. Unset in paranoid mode, which
+  // downloads and declares in one step.
+  optional uint64 declare_us = 4;
+  // Number of output trees in the result.
+  uint64 tree_count = 5;
+}
+
+// Where an action-cache query's time went, measured on the client, in
+// microseconds at two significant figures.
+message CacheQueryTimings {
+  // Waiting for a client-side action-cache slot.
+  uint64 slot_wait_us = 1;
+  // The lookup itself, from getting the slot to the response, including the
+  // RE client's queues and retries.
+  uint64 remote_lookup_us = 2;
+}
 
 // For most tests, tpx calls the test orchestrator's `execute` method.
 // The `execute` method calls a test binary.
@@ -2106,7 +3239,35 @@ message MatchDepFilesStart {
   bool remote_cache = 2;
 }
 
-message MatchDepFilesEnd {}
+// What served a local dep-file cache lookup. Distinguishes a hit from the
+// in-memory map, which costs nothing, from one reloaded off disk, which costs
+// the queries measured below.
+enum DepFileLookupOutcome {
+  DEP_FILE_LOOKUP_OUTCOME_NOT_SET = 0;
+  // Nothing served the lookup; the action goes on to execute.
+  DEP_FILE_LOOKUP_OUTCOME_MISS = 1;
+  // Served from the in-memory cache, i.e. built earlier in this daemon session.
+  DEP_FILE_LOOKUP_OUTCOME_LIVE = 2;
+  // Served from the persisted store, i.e. built by an earlier daemon.
+  DEP_FILE_LOOKUP_OUTCOME_PERSISTED = 3;
+  // The lookup failed. Distinct from a miss: the action does not go on to
+  // execute, it fails, so counting these as misses would understate the hit
+  // rate against a denominator that includes actions that never ran.
+  DEP_FILE_LOOKUP_OUTCOME_ERROR = 4;
+}
+
+message MatchDepFilesEnd {
+  DepFileLookupOutcome outcome = 1;
+  // Time spent in the persisted store, absent when it was not consulted (the
+  // in-memory cache answered, or persistence is off). Split because the probe
+  // reads only the scalar row of each candidate while the fetch reads its
+  // outputs and declared dep files.
+  optional uint64 persisted_probe_us = 2;
+  optional uint64 persisted_fetch_us = 3;
+  // How many candidates this lookup fetched. A lookup probes once but may fetch
+  // several times, so the duration above covers more work than one fetch.
+  optional uint64 persisted_fetches = 4;
+}
 
 // Returned when a Span is dropped before terminating.
 message SpanCancelled {}
@@ -2200,6 +3361,32 @@ message LocalCommand {
   repeated string argv = 1;
   repeated EnvironmentEntry env = 2;
   string action_digest = 3;
+  reserved 4, 5; // working_directory and environment_rule, now in `context`
+  // Where and how the command ran beyond `argv` and `env`. Written to the
+  // event log only, not to Scribe.
+  LocalCommandContext context = 6;
+  // How the command's environment was built from buck2's own, before `env` was
+  // set on top of it.
+  enum EnvironmentRule {
+    // No rule: the command inherited buck2's whole environment.
+    ENVIRONMENT_RULE_UNSPECIFIED = 0;
+    // buck2's environment minus a fixed list of variables known to break
+    // commands, such as `LD_PRELOAD` and `PYTHONPATH`.
+    INHERIT_EXCEPT_EXCLUSIONS = 1;
+    // An empty environment plus the allow-listed variables buck2 had. With
+    // `buck2.tests_inherit_client_coding_agent_metadata`, a test also gets the
+    // invoking client's `CODING_AGENT_METADATA`, which `env` doesn't list.
+    TEST_ALLOWLIST = 2;
+    // An empty environment.
+    CLEARED = 3;
+  }
+}
+
+message LocalCommandContext {
+  // Working directory, relative to the project root. Unset when it is the
+  // project root, where most commands run; tests run in their cell's root.
+  optional string working_directory = 1;
+  LocalCommand.EnvironmentRule environment_rule = 2;
 }
 
 message WorkerInitCommand {
@@ -2217,15 +3404,27 @@ message WorkerCommand {
   repeated string fallback_exe = 4;
 }
 
-enum CacheHitType {
+// Where the result of a remote command came from.
+enum RemoteCommandOrigin {
+  // buck2's own action cache lookup.
   ACTION_CACHE = 0;
+  // buck2's own remote dep-file cache lookup.
   REMOTE_DEP_FILE_CACHE = 1;
-  EXECUTED = 2; // not a cache hit
+  // The remote execution service ran the command.
+  EXECUTED = 2;
+  // Submitted for execution, but the remote execution service served its
+  // own action cache instead of running the command.
+  RE_SERVED_FROM_CACHE = 3;
+  // Submitted for execution, but the remote execution service deduplicated
+  // it against an identical execution already in flight.
+  RE_DEDUPLICATED = 4;
 }
 
 // A representation of a command we executed remotely.
 message RemoteCommand {
   string action_digest = 1;
+  // Whether one of buck2's own cache lookups produced the result; restates
+  // `cache_hit_type` for readers that only want that distinction.
   bool cache_hit = 2;
 
   /// How long this build waited in queue.
@@ -2234,7 +3433,8 @@ message RemoteCommand {
   // Potentially more details about this command.
   optional RemoteCommandDetails details = 4;
 
-  CacheHitType cache_hit_type = 5;
+  // External readers of the JSON event log key on this field name.
+  RemoteCommandOrigin cache_hit_type = 5;
   optional string remote_dep_file_key = 6;
 
   // Project relative paths to the materialized inputs for failed
@@ -2244,6 +3444,10 @@ message RemoteCommand {
   // Project relative paths to the materialized outputs for failed actions, if
   // `--unstable_materialize_failed_action_outputs` was passed to build options
   repeated string materialized_outputs_for_failed_actions = 8;
+  /// What the worker reported, when RE ran this command for this build. Unset
+  /// for a reused result (a cache hit or a deduplicated execution), whose
+  /// metadata describes another execution.
+  ReWorkerDetails re_worker = 9;
 }
 
 message RemoteCommandDetails {
@@ -2306,11 +3510,55 @@ enum DaemonWasStartedReason {
   NO_DAEMON_PROCESS = 16;
 }
 
+// A single (percentile, concurrency) point of the action-concurrency
+// distribution reported on the InvocationRecord. Self-describing so the
+// reported set of percentiles can evolve without misinterpreting historical
+// data.
+message ActionConcurrencyPercentile {
+  // The percentile (e.g. 5, 10, 50, 99, 100).
+  uint32 percentile = 1;
+  // The number of actions executing concurrently at that percentile.
+  uint64 concurrency = 2;
+}
+
+// See `Caller` in buck2_client_ctx/src/agent_detection.rs.
+enum CallerKind {
+  CALLER_KIND_UNKNOWN = 0;
+  CALLER_KIND_AGENT = 1;
+  CALLER_KIND_COMMAND_SHELL = 2;
+  CALLER_KIND_OTHER = 3;
+  // The launching Buck wrapper, identified by its direct-parent PID marker.
+  CALLER_KIND_WRAPPER = 4;
+  // A command launcher that leaves output for its caller, e.g. timeout.
+  CALLER_KIND_COMMAND_WRAPPER = 5;
+}
+
+enum AgentDetectionStopReason {
+  AGENT_DETECTION_STOP_REASON_UNSPECIFIED = 0;
+  AGENT_DETECTION_STOP_REASON_AGENT = 1;
+  AGENT_DETECTION_STOP_REASON_OTHER = 2;
+  AGENT_DETECTION_STOP_REASON_UNKNOWN = 3;
+  AGENT_DETECTION_STOP_REASON_NO_PARENT = 4;
+  AGENT_DETECTION_STOP_REASON_CLIENT_UNAVAILABLE = 5;
+  AGENT_DETECTION_STOP_REASON_PARENT_UNAVAILABLE = 6;
+  AGENT_DETECTION_STOP_REASON_NEWER_PARENT = 7;
+  AGENT_DETECTION_STOP_REASON_CYCLE = 8;
+  AGENT_DETECTION_STOP_REASON_DEPTH_LIMIT = 9;
+}
+
+// One inspected ancestor, ordered from the client's parent outwards.
+message CallerProcess {
+  CallerKind kind = 1;
+  // Executable basename only; absent when unavailable. Exclude argv and full
+  // paths because they may contain restricted information.
+  optional string executable = 2;
+}
+
 // This is the origin for every sample in buck2_builds scuba table
 // It's sent from the client to Scribe at the end of each invocation
 message InvocationRecord {
   reserved 1, 22, 27, 28, 36, 61, 62, 66, 77, 82, 88, 89, 100, 234, 235, 400,
-      401;
+      401, 443;
 
   // Optional - present if ever sent to client.
   // Will be missing on a cancelled build.
@@ -2395,6 +3643,8 @@ message InvocationRecord {
   optional uint64 time_to_first_command_execution_start_ms = 45;
   // Total system memory in bytes
   optional uint64 system_total_memory_bytes = 46;
+  // See `SystemInfo.container_memory_limit_bytes`.
+  optional uint64 container_memory_limit_bytes = 776;
   // Information of file changes provided by file watcher
   FileWatcherStats file_watcher_stats = 47;
   // How long did we spend querying the file watcher
@@ -2441,10 +3691,14 @@ message InvocationRecord {
   // The client has failed to connect to the daemon.
   optional bool daemon_connection_failure = 75;
   // Daemon was started by this command.
-  // Unset if the the command connected to existing daemon or did not start one.
+  // Unset if the command connected to existing daemon or did not start one.
   optional DaemonWasStartedReason daemon_was_started = 751;
   // Set if an event occurred that should trigger a command restart.
   optional bool should_restart = 752;
+  // Hash identifying the Buck settings this command ran under; the settings
+  // themselves are stored by ingress under this key, see
+  // `BuckSettingsObserved`. Unset for commands outside a repository.
+  optional string settings_hash = 775;
   // Metadata provided by the client. Unlike TypedMetadata, this won't become
   // its own column in Scuba, all those entries will land in a NormVector.
   repeated ClientMetadata client_metadata = 76;
@@ -2488,6 +3742,8 @@ message InvocationRecord {
   repeated DeviceMetadata install_device_metadata = 99;
   // Path to uploaded installer log file.
   optional string installer_log_url = 247;
+  // Which installer implementation ran an install command, e.g. `android`.
+  optional string installer_name = 260;
   // The list of active network devices
   repeated NetworkKind active_networks_kinds = 102;
   // Configuration used during the build command.
@@ -2510,6 +3766,8 @@ message InvocationRecord {
   optional bool has_local_changes = 107;
   // Errors encountered during version control operations.
   repeated string version_control_errors = 108;
+  // 40 characters hash for git revision.
+  optional string git_revision = 109;
 
   // Detailed per-backend RE stats.
   optional uint64 zdb_download_queries = 200;
@@ -2645,6 +3903,155 @@ message InvocationRecord {
   optional uint32 io_write_count = 428;
   optional uint32 io_canonicalize_count = 429;
   optional uint32 io_eden_settle_count = 430;
+
+  // Absolute path to the repo (project root).
+  optional string repo_path = 431;
+
+  // Peak normalized system load averages during the invocation.
+  optional double peak_normalized_system_load1 = 432;
+  optional double peak_normalized_system_load5 = 433;
+
+  // Peak swap usage (bytes) of all Buck2 processes during the invocation,
+  // from allprocs cgroup memory.swap.current.
+  optional uint64 memory_max_swap_bytes_allprocs = 434;
+  // Peak memory pressure (PSI full avg10 %) of all Buck2
+  // processes during the invocation, from allprocs cgroup memory.pressure.
+  optional double memory_max_pressure_10s_avg_allprocs = 435;
+  // Peak memory pressure (PSI full avg60 %) of all Buck2
+  // processes during the invocation, from allprocs cgroup memory.pressure.
+  optional double memory_max_pressure_60s_avg_allprocs = 436;
+
+  // Agent context entries passed via --agent-context.
+  repeated AgentContextEntry agent_context = 437;
+
+  // Last direct_call context entry parsed as true/false. Unset if absent or
+  // invalid.
+  optional bool agent_direct_call = 760;
+  // Count of actions submitted for remote execution that the service served
+  // from its own action cache instead of running.
+  uint64 run_remote_served_from_cache_count = 762;
+  // Count of `run_remote_count` actions the service ran as an execution
+  // shared with another build, deduplicated against an identical execution
+  // already in flight.
+  uint64 run_remote_deduplicated_count = 763;
+
+  // Client ancestry inference, independent of agent_direct_call and never used
+  // to enable advice. Unset when inference is unavailable or inconclusive.
+  optional bool agent_inferred_direct_call = 764;
+
+  // Inspected ancestors up to the classifier's stopping point, nearest first.
+  repeated CallerProcess agent_callers = 765;
+  // Absent when inference is disabled. Explains matches, boundaries, and
+  // inconclusive inspection without changing the explicit direct_call marker.
+  optional AgentDetectionStopReason agent_detection_stop_reason = 766;
+
+  // DICE page-in overhead for this invocation, computed as the delta between
+  // the first and last snapshot of the command.
+  optional uint64 page_in_count = 438;
+  optional uint64 page_in_fetch_us = 439;
+  optional uint64 page_in_deser_us = 440;
+  optional uint64 page_in_bytes = 441;
+  // Per-DICE-key-type page-in breakdown for this invocation. Key types with no
+  // page-ins during the command are omitted.
+  map<string, DicePageInKeyTypeStats> page_in_by_key_type = 442;
+  // Size in bytes of the DICE pagable on-disk store, measured at command end.
+  optional uint64 paging_db_size_bytes = 444;
+  // Whether a background idle page-out was started at the end of this command,
+  // or the reason it wasn't (reflects the decision, not completion).
+  optional PageOutStarted page_out_started = 445;
+  // Resident (non-paged out) DICE node count at command end.
+  optional uint64 paging_resident_node_count = 446;
+  // Paged-out DICE node count at command end.
+  optional uint64 paging_paged_out_node_count = 447;
+  // Page-out candidate DICE node count at command end.
+  optional uint64 paging_candidate_node_count = 448;
+
+  // Total DICE page-in time on the critical path.
+  google.protobuf.Duration critical_path_page_in = 449;
+
+  // DataKeys written to / read from pagable storage during this invocation, and
+  // their serialized value bytes. Unlike `page_in_*` above (per-DICE-value,
+  // top-level blob only) these count every DataKey, including nested PagableArc
+  // sub-values. Absent, not zero, if pagable storage is not configured.
+  optional uint64 paging_data_keys_out = 453;
+  optional uint64 paging_data_key_bytes_out = 454;
+  optional uint64 paging_data_keys_in = 455;
+  optional uint64 paging_data_key_bytes_in = 456;
+  // The same four as daemon-lifetime running totals, whose `out - in`
+  // approximates the bytes currently offloaded. Compare across rows, never sum.
+  optional uint64 paging_daemon_data_keys_out = 457;
+  optional uint64 paging_daemon_data_key_bytes_out = 458;
+  optional uint64 paging_daemon_data_keys_in = 459;
+  optional uint64 paging_daemon_data_key_bytes_in = 460;
+  // Cumulative memory paging has moved since daemon start, measured from the
+  // allocator at the points values are actually dropped and rebuilt rather than
+  // inferred from serialized sizes. `offloaded - restored` is an upper bound on
+  // the memory paging is currently saving.
+  optional int64 paging_memory_offloaded_bytes = 461;
+  optional int64 paging_memory_restored_bytes = 462;
+  // Entries in the deserialized-arc cache at command end.
+  optional uint64 paging_arc_cache_entries = 768;
+  // Memory-pressure eviction during this command: eviction passes, the backed
+  // values they dropped, and the memory that freed, measured from the
+  // allocator. Each pass drops every backed value, which the command then pages
+  // back in as it reads them.
+  optional uint64 paging_evictions = 771;
+  optional uint64 paging_evicted_count = 772;
+  optional int64 paging_evicted_bytes = 773;
+  // Serialized size of the rows backing resident values at command end: what
+  // the next eviction would drop, in serialized rather than in-memory bytes,
+  // excluding nested PagableArc sub-values. A lower bound.
+  optional uint64 paging_evictable_bytes = 774;
+
+  // Time from the start of the daemon command span (the same origin as
+  // `command_duration`) to the end of the build phase. Absent for commands
+  // without a build phase and when the build phase never ended.
+  optional uint64 build_duration_ms = 769;
+  // Outcome of the build phase, independent of whether tests or installs that
+  // follow it succeeded. Absent for commands without a build phase.
+  optional BuildStatus build_status = 770;
+  // Heap-granularity versus value-granularity cost of Starlark page-in, as
+  // daemon-lifetime totals rather than a per-command delta.
+  optional StarlarkPartialDeserStats starlark_partial_deser = 759;
+
+  // Action cache queries (including remote dep-file cache queries) that failed
+  // with a real error - anything other than a hit or an outright miss. Each
+  // such failure was degraded to a cache miss.
+  optional uint64 re_action_cache_query_error_count = 463;
+
+  // Distribution of how many actions were executing concurrently during this
+  // invocation (execution-only intervals; cache hits excluded), computed by the
+  // client-side InvocationRecorder, as (percentile, concurrency) pairs. Each
+  // entry is self-describing so the reported set of percentiles can change over
+  // time without misinterpreting historical data. Empty if no actions executed.
+  repeated ActionConcurrencyPercentile action_concurrency_percentiles = 450;
+  // Time-weighted mean number of concurrently-executing actions over the time
+  // at least one action was executing.
+  optional double action_avg_concurrency = 451;
+  // Total wall-clock time in milliseconds during which at least one action was
+  // executing.
+  optional uint64 action_active_duration_ms = 452;
+
+  // Local dep-file (action) cache work done by this command, accumulated from
+  // this command's own events. Counts and totals
+  // are separate rather than means, so they stay summable across commands.
+  // Absent when the cache is off, which is distinct from zero.
+  //
+  // A probe reads only the scalar row of each candidate; a fetch reads its
+  // outputs and declared dep files, so the two are kept apart.
+  optional uint64 dep_file_db_probes = 753;
+  optional uint64 dep_file_db_probe_duration_us = 754;
+  optional uint64 dep_file_db_fetches = 755;
+  optional uint64 dep_file_db_fetch_duration_us = 756;
+  // Entries served: the row survived re-validation and its outputs were still
+  // materialized. No more than the fetches that found a row.
+  optional uint64 dep_file_db_hits = 757;
+  // Entries this command queued for persisting. Writes are applied off-thread
+  // and can outlive the command, so what they cost is a daemon-level figure and
+  // lives on `Snapshot`; only the queuing belongs to a command.
+  optional uint64 dep_file_db_writes_queued = 758;
+  // Names of the RE quotas that throttled this command's actions.
+  repeated string re_exceeded_quotas = 761;
 }
 
 enum InvocationOutcome {
@@ -2664,6 +4071,9 @@ message BuildGraphStats {
 message SoftError {
   string category = 1;
   bool is_quiet = 2;
+  // A use of something that is being removed, as opposed to something going
+  // wrong.
+  bool is_deprecation = 3;
 }
 
 message BuildTarget {
@@ -2675,6 +4085,12 @@ message BuildTarget {
 }
 
 message ClientMetadata {
+  string key = 1;
+  string value = 2;
+}
+
+// A single agent context key-value pair passed via --agent-context.
+message AgentContextEntry {
   string key = 1;
   string value = 2;
 }
@@ -2739,7 +4155,7 @@ message DepFileUploadEnd {
 message CreateOutputSymlinksStart {};
 
 message CreateOutputSymlinksEnd {
-  uint64 created = 1;
+  reserved 1;
 };
 
 message InstallEventInfoStart {
@@ -2840,7 +4256,7 @@ message ErrorReport {
   message SourceLocation {
     string path = 1;
     optional string type_name = 2;
-    optional uint32 source_line = 3;
+    uint32 source_line = 3;
   }
   message StringTag {
     string tag = 1;
@@ -2869,8 +4285,7 @@ message ErrorReport {
 // of this protobuf definition outside of buck2. Currently used in the
 // invocation record and nowhere else.
 message ProcessedErrorReport {
-  reserved 2;
-  optional buck.data.error.ErrorTier tier = 1;
+  reserved 1, 2;
   string message = 3;
   optional string telemetry_message = 4;
   optional string source_location = 5;
@@ -2928,6 +4343,9 @@ message DaemonShutdown {
   reserved 3;
   string reason = 1;
   repeated string callers = 4;
+  // Tags the errors of the commands this shutdown interrupts, in place of
+  // INTERRUPTED_BY_DAEMON_SHUTDOWN.
+  optional buck.data.error.ErrorTag error_tag = 5;
 }
 
 message ConsolePreferences {
@@ -2955,6 +4373,7 @@ message DynamicLambdaStart {
     BxlFunctionKey bxl_key = 2;
     AnonTarget anon_target = 3;
   }
+  uint64 dynamic_inputs_bytes = 4;
 }
 
 message DynamicLambdaOwner {
@@ -2965,7 +4384,7 @@ message DynamicLambdaOwner {
   }
 }
 
-message DeferredEvaluationEnd {}
+message DynamicLambdaEnd {}
 
 // Wraps the RE upload stage of execution to report useful data on network
 // traffic.
@@ -2982,6 +4401,52 @@ message ReUploadEnd {
   optional uint64 digests_uploaded = 1;
   optional uint64 bytes_uploaded = 2;
   map<string, ReUploadMetrics> stats_by_extension = 3;
+  // Set when the upload succeeds.
+  ReUploadStats stats = 4;
+}
+
+// Where a successful input upload's time went, and what the presence check
+// reported about its inputs. Times are microseconds at two significant figures.
+// The second walk over the input directory, which collects what to upload, and
+// assembling the request are not timed.
+message ReUploadStats {
+  /// Waiting for a client-side upload slot.
+  uint64 slot_wait_us = 1;
+  /// Walking the input directory, checking which inputs are in the CAS and
+  /// deciding what to upload.
+  uint64 find_missing_us = 2;
+  /// Asking the materializer where each file to upload is on disk.
+  uint64 materializer_query_us = 3;
+  /// Materializing files that were not on disk yet.
+  uint64 materialize_us = 4;
+  /// The RE client's upload call, including its own retries.
+  uint64 cas_write_us = 5;
+  /// Input digests checked for presence. These count content identities, not
+  /// requests: a check may be shared with other actions, or answered without
+  /// asking the CAS.
+  uint64 digests_queried = 6;
+  /// Checked digests reported absent, which this upload then wrote.
+  uint64 digests_missing = 7;
+}
+
+// Submitting an action to RE: from starting to wait for a client-side
+// execution slot until RE's progress stream opens, where the `Re.Queue` stage
+// begins. The slot itself is held beyond this span, until RE finishes the
+// action, so the span's length is not how long the slot was occupied.
+message ReSubmitStart {}
+
+// Times are microseconds at two significant figures.
+message ReSubmitEnd {
+  // Waiting for a client-side execution slot.
+  uint64 slot_wait_us = 1;
+  // Building the RE request after getting the slot.
+  uint64 request_prep_us = 2;
+  // Opening RE's progress stream.
+  uint64 rpc_open_us = 3;
+  // Free execution slots when this action started waiting; zero means all were
+  // taken. A hint of contention, not an exact count: other actions change it
+  // concurrently.
+  uint64 free_slots_hint = 4;
 }
 
 message ConnectToInstallerStart {
@@ -2998,10 +4463,33 @@ message DeviceMetadata {
   repeated Entry entry = 1;
 }
 
+// The build phase of a command covers loading, analysis, actions and the
+// materializations the command waits on for the targets it was asked to build.
+// For `test` and `install` it can end before the command does, since tests and
+// installs run after or alongside it.
+message BuildPhaseEnd {
+  // When the build phase ended, on the daemon clock. For `test` this is the end
+  // of the last build work item, which can precede the event itself.
+  google.protobuf.Timestamp end_time = 1;
+  BuildStatus status = 2;
+}
+
+enum BuildStatus {
+  BUILD_STATUS_UNKNOWN = 0;
+  BUILD_STATUS_SUCCESS = 1;
+  BUILD_STATUS_FAILED = 2;
+  BUILD_STATUS_CANCELLED = 3;
+  // The command failed before its build phase started.
+  BUILD_STATUS_NOT_STARTED = 4;
+}
+
 message InstallFinished {
   google.protobuf.Duration duration = 1;
   repeated DeviceMetadata device_metadata = 2;
   optional string log_url = 3;
+  // Which installer implementation ran this install, as it named itself at the
+  // handshake. Absent when the install never reached an installer.
+  optional string installer_name = 4;
 }
 
 message SystemInfo {
@@ -3014,6 +4502,16 @@ message SystemInfo {
   optional string optin_vpn_check_targets_regex = 8;
   optional bool enable_stable_revision_check = 9;
   optional bool enable_health_check_process_isolation = 10;
+  optional string daemon_cgroup_path = 11;
+  optional string allprocs_cgroup_path = 12;
+  optional string daemon_cgroup_slice_path = 13;
+  // Number of CPU cores on the system (from sysconf _SC_NPROCESSORS_ONLN).
+  optional uint64 num_cores = 14;
+  // Memory limit of the container the daemon runs in, as published by the
+  // container's launcher. Unlike `system_total_memory_bytes`, which reports
+  // the host, this is the container's own size. Absent outside such
+  // containers.
+  optional uint64 container_memory_limit_bytes = 15;
 }
 
 message CpuCounter {
@@ -3027,6 +4525,8 @@ message CommandExecutionStats {
   optional uint64 cpu_instructions_kernel = 2;
   optional CpuCounter userspace_events = 3;
   optional CpuCounter kernel_events = 4;
+  /// Peak memory of the execution. On cache hits this describes the original
+  /// execution, not this build, so filter on cache status before using it.
   optional uint64 memory_peak = 5;
 }
 
@@ -3034,6 +4534,26 @@ enum NetworkKind {
   WI_FI = 0;
   ETHERNET = 1;
   UNKNOWN_NET_KIND = 2;
+}
+
+// Network access policy for command execution.
+enum NetworkAccess {
+  NETWORK_ACCESS_ALL = 0;
+  NETWORK_ACCESS_NONE = 1;
+  NETWORK_ACCESS_LOOPBACK = 2;
+  NETWORK_ACCESS_STRICT = 3;
+  NETWORK_ACCESS_PRIVATE = 4;
+}
+
+// Logged as an instant event when cgroup-based cleanup kills orphan processes
+// that outlived the main action process.
+message OrphanProcessesKilled {
+  message OrphanProcess {
+    uint32 pid = 1;
+    // Process name from `/proc/<pid>/comm`
+    string comm = 2;
+  }
+  repeated OrphanProcess orphan_processes = 1;
 }
 
 message NetworkInterfaceStats {
@@ -3077,6 +4597,9 @@ message MaterializerCommand {
   message InvalidateFilePaths {
     repeated string paths = 1;
   }
+
+  reserved 4, 5;
+  reserved "register_eager_paths", "eager_dispatch_on_declare";
 
   oneof data {
     Declare declare = 1;

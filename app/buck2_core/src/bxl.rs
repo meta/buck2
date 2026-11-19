@@ -9,12 +9,13 @@
  */
 
 use allocative::Allocative;
+use pagable::Pagable;
 use strong_hash::StrongHash;
 
 use crate::cells::build_file_cell::BuildFileCell;
 use crate::cells::cell_path::CellPath;
 use crate::cells::name::CellName;
-use crate::cells::paths::CellRelativePathBuf;
+use crate::cells::paths::CellRelativePath;
 
 /// Path of a `bxl` file for `bxl` commands
 #[derive(
@@ -27,7 +28,8 @@ use crate::cells::paths::CellRelativePathBuf;
     Ord,
     PartialOrd,
     Allocative,
-    StrongHash
+    StrongHash,
+    Pagable
 )]
 #[display("{}", path)]
 pub struct BxlFilePath {
@@ -42,7 +44,7 @@ struct BxlPathError(CellPath);
 
 impl BxlFilePath {
     pub fn new(path: CellPath) -> buck2_error::Result<Self> {
-        let err = || BxlPathError(path.clone());
+        let err = || BxlPathError(path);
 
         if path.path().file_name().ok_or_else(err)?.extension() != Some("bxl") {
             return Err(err().into());
@@ -58,7 +60,7 @@ impl BxlFilePath {
     pub fn testing_new(cell: &str, cell_relative_path: &str) -> Self {
         let path = CellPath::new(
             CellName::testing_new(cell),
-            CellRelativePathBuf::try_from(cell_relative_path.to_owned()).unwrap(),
+            CellRelativePath::from_path(cell_relative_path).unwrap(),
         );
         Self::unverified_new(path)
     }

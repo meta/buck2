@@ -13,18 +13,40 @@ f'basic2 {stuff2}'
 fr'' fr"" fr'\'' fr"\"" fr'"' fr"'" fr'\n'
 
 Tokens:
-f-string "basic1 {stuff1}"  # f"basic1 {stuff1}"
-new line                    # \n
-f-string "basic2 {stuff2}"  # f'basic2 {stuff2}'
-new line                    # \n
-new line                    # \n
-comment ' Raw f-string'     # # Raw f-string
-new line                    # \n
-f-string ""                 # fr''
-f-string ""                 # fr""
-f-string "'"                # fr'\''
-f-string "\""               # fr"\""
-f-string "\""               # fr'"'
-f-string "'"                # fr"'"
-f-string "\\n"              # fr'\n'
-new line                    #
+f-string start                 # f"
+f-string text "basic1 "        # basic1 
+f-string expression start '{'  # {
+identifier 'stuff1'            # stuff1
+f-string expression end '}'    # }
+f-string end                   # "
+new line                       # \n
+f-string start                 # f'
+f-string text "basic2 "        # basic2 
+f-string expression start '{'  # {
+identifier 'stuff2'            # stuff2
+f-string expression end '}'    # }
+f-string end                   # '
+new line                       # \n
+new line                       # \n
+comment ' Raw f-string'        # # Raw f-string
+new line                       # \n
+f-string start                 # fr'
+f-string end                   # '
+f-string start                 # fr"
+f-string end                   # "
+f-string start                 # fr'
+f-string text "'"              # \'
+f-string end                   # '
+f-string start                 # fr"
+f-string text "\""             # \"
+f-string end                   # "
+f-string start                 # fr'
+f-string text "\""             # "
+f-string end                   # '
+f-string start                 # fr"
+f-string text "'"              # '
+f-string end                   # "
+f-string start                 # fr'
+f-string text "\\n"            # \n
+f-string end                   # '
+new line                       #

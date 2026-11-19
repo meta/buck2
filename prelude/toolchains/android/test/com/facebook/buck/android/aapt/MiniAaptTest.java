@@ -18,7 +18,6 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import com.facebook.buck.android.aapt.MiniAapt.ResourceParseException;
-import com.facebook.buck.android.aapt.RDotTxtEntry.CustomDrawableType;
 import com.facebook.buck.android.aapt.RDotTxtEntry.IdType;
 import com.facebook.buck.android.aapt.RDotTxtEntry.RType;
 import com.facebook.buck.core.filesystems.RelPath;
@@ -74,11 +73,6 @@ public class MiniAaptTest {
 
   private static Set<RDotTxtEntry> createTestingFakesWithParents(Set<RDotTxtEntry> entries) {
     return createTestingFakes(entries, RDotTxtEntryUtil::matchParent);
-  }
-
-  private static Set<RDotTxtEntry> createTestingFakesWithCustomDrawables(
-      Set<RDotTxtEntry> entries) {
-    return createTestingFakes(entries, RDotTxtEntryUtil::matchCustomDrawables);
   }
 
   @Before
@@ -308,39 +302,6 @@ public class MiniAaptTest {
             FakeEntry.create(IdType.INT, RType.DRAWABLE, "android_drawable")));
   }
 
-  @Test
-  public void testParsingCustomDrawables() throws IOException, ResourceParseException {
-    ImmutableList<String> lines =
-        ImmutableList.<String>builder()
-            .add(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
-                "<app-network xmlns:android=\"http://schemas.android.com/apk/res/android\">",
-                "  xmlns:fbui=\"http://schemas.android.com/apk/res-auto\"",
-                "  fbui:imageUri=\"http://facebook.com\"",
-                "  android:width=\"128px\"",
-                "  android:height=\"128px\"",
-                "  fbui:density=\"160\"",
-                "  >",
-                "</app-network>")
-            .build();
-
-    ProjectFilesystemUtils.writeLinesToPath(
-        tmpFolder.getRoot(), lines, Paths.get("custom_drawable.xml"));
-
-    MiniAapt aapt = new MiniAapt(ImmutableSet.of());
-    aapt.processDrawables(
-        ProjectFilesystemUtils.getPathForRelativePath(
-            tmpFolder.getRoot(), Paths.get("custom_drawable.xml")));
-
-    Set<RDotTxtEntry> definitions = aapt.getResourceCollector().getResources();
-
-    assertEquals(
-        createTestingFakesWithCustomDrawables(definitions),
-        ImmutableSet.<RDotTxtEntry>of(
-            FakeEntry.createWithCustomDrawable(
-                IdType.INT, RType.DRAWABLE, "custom_drawable", CustomDrawableType.CUSTOM)));
-  }
-
   private void testParsingGrayscaleImageImpl(String normalFilename, String grayscaleFilename)
       throws IOException, ResourceParseException {
     ImmutableList<String> lines = ImmutableList.<String>builder().add("").build();
@@ -353,15 +314,12 @@ public class MiniAaptTest {
 
     Set<RDotTxtEntry> definitions = aapt.getResourceCollector().getResources();
 
+    // Both spellings of the grayscale suffix are trimmed off the resource name.
     assertThat(
-        createTestingFakesWithCustomDrawables(definitions),
+        createTestingFakes(definitions),
         IsEqual.equalToObject(
             ImmutableSet.<RDotTxtEntry>of(
-                FakeEntry.createWithCustomDrawable(
-                    IdType.INT,
-                    RType.DRAWABLE,
-                    "fbui_tomato",
-                    CustomDrawableType.GRAYSCALE_IMAGE))));
+                FakeEntry.create(IdType.INT, RType.DRAWABLE, "fbui_tomato"))));
   }
 
   @Test
@@ -518,6 +476,277 @@ public class MiniAaptTest {
             FakeEntry.create(IdType.INT, RType.DRAWABLE, "some_image"),
             FakeEntry.create(IdType.INT, RType.ATTR, "some_attr")),
         createTestingFakes(missing));
+  }
+
+  @Test
+  public void testVerifyStyleItemReferences()
+      throws IOException, XPathExpressionException, ResourceParseException {
+    Path valuesFile = Paths.get("res/values/themes.xml");
+    ProjectFilesystemUtils.createParentDirs(tmpFolder.getRoot(), valuesFile);
+    ProjectFilesystemUtils.writeLinesToPath(
+        tmpFolder.getRoot(),
+        ImmutableList.of(
+            "<resources>",
+            "<color name=\"local_color\">#ffffff</color>",
+            "<style name=\"ImageCanvas.TextButton\">",
+            "<item name=\"android:textColor\">@color/local_color</item>",
+            "<item name=\"android:background\">@drawable/background</item>",
+            "<item name=\"android:tint\">?attr/accent</item>",
+            "<item name=\"android:colorAccent\">?accent</item>",
+            "<item name=\"android:shadowColor\">\n @color/shadow_color \n</item>",
+            "</style>",
+            "</resources>"),
+        valuesFile);
+    Path nightFile = Paths.get("res/values-night/themes.xml");
+    ProjectFilesystemUtils.createParentDirs(tmpFolder.getRoot(), nightFile);
+    ProjectFilesystemUtils.writeLinesToPath(
+        tmpFolder.getRoot(),
+        ImmutableList.of(
+            "<resources><style name=\"NightTheme\">",
+            "<item name=\"android:textSize\">@dimen/night_text_size</item>",
+            "</style></resources>"),
+        nightFile);
+    Path depSymbols = tmpFolder.getRoot().resolve("R.txt").getPath();
+    Files.write(
+        depSymbols,
+        ImmutableList.of("int drawable background 0x7f010001", "int attr accent 0x7f020001"));
+
+    MiniAapt aapt = new MiniAapt(ImmutableSet.of(depSymbols));
+    ImmutableSet<RDotTxtEntry> references =
+        aapt.processAllFiles(MiniAapt.getAllResourceFiles(tmpFolder.getRoot(), RelPath.get("res")));
+
+    assertEquals(
+        ImmutableSet.of(
+            FakeEntry.create(IdType.INT, RType.COLOR, "shadow_color"),
+            FakeEntry.create(IdType.INT, RType.DIMEN, "night_text_size")),
+        createTestingFakes(aapt.verifyReferences(references)));
+
+    Files.write(
+        depSymbols,
+        ImmutableList.of(
+            "int drawable background 0x7f010001",
+            "int attr accent 0x7f020001",
+            "int color shadow_color 0x7f030001",
+            "int dimen night_text_size 0x7f040001"));
+    assertTrue(aapt.verifyReferences(references).isEmpty());
+  }
+
+  @Test
+  public void testStyleItemFrameworkReferencesAndLiterals()
+      throws IOException, XPathExpressionException, ResourceParseException {
+    Path valuesFile = Paths.get("res/values/styles.xml");
+    ProjectFilesystemUtils.createParentDirs(tmpFolder.getRoot(), valuesFile);
+    ProjectFilesystemUtils.writeLinesToPath(
+        tmpFolder.getRoot(),
+        ImmutableList.of(
+            "<resources><style name=\"Theme\">",
+            "<item name=\"android:textColor\">@android:color/white</item>",
+            "<item name=\"android:textColorHint\">?android:attr/textColorHint</item>",
+            "<item name=\"android:background\">@null</item>",
+            "<item name=\"android:foreground\">@empty</item>",
+            "<item name=\"android:shadowColor\">#ff000000</item>",
+            "<item name=\"android:textSize\">16sp</item>",
+            "<item name=\"android:text\">\\@color/literal</item>",
+            "<item name=\"android:hint\">\"@string/quoted\"</item>",
+            "</style></resources>"),
+        valuesFile);
+
+    MiniAapt aapt = new MiniAapt(ImmutableSet.of());
+    ImmutableSet<RDotTxtEntry> references =
+        aapt.processAllFiles(MiniAapt.getAllResourceFiles(tmpFolder.getRoot(), RelPath.get("res")));
+
+    assertTrue(references.isEmpty());
+  }
+
+  @Test
+  public void testStyleItemIdDefinition()
+      throws IOException, XPathExpressionException, ResourceParseException {
+    Path valuesFile = Paths.get("res/values/styles.xml");
+    ProjectFilesystemUtils.createParentDirs(tmpFolder.getRoot(), valuesFile);
+    ProjectFilesystemUtils.writeLinesToPath(
+        tmpFolder.getRoot(),
+        ImmutableList.of(
+            "<resources><style name=\"Theme\">",
+            "<item name=\"android:id\">@+id/styled_view</item>",
+            "<item name=\"android:nextFocusDown\">@id/styled_view</item>",
+            "</style></resources>"),
+        valuesFile);
+
+    MiniAapt aapt = new MiniAapt(ImmutableSet.of());
+    ImmutableSet<RDotTxtEntry> references =
+        aapt.processAllFiles(MiniAapt.getAllResourceFiles(tmpFolder.getRoot(), RelPath.get("res")));
+
+    assertEquals(
+        ImmutableSet.of(FakeEntry.create(IdType.INT, RType.ID, "styled_view")),
+        createTestingFakes(references));
+    assertTrue(aapt.verifyReferences(references).isEmpty());
+  }
+
+  @Test
+  public void testStyleItemResourceLikeLiterals() throws IOException, ResourceParseException {
+    for (String value :
+        ImmutableList.of(
+            "@",
+            "@color",
+            "@0",
+            "@0x01040000",
+            "@hello/world",
+            "@color/",
+            "@:color/literal",
+            "@color/:literal",
+            "@string-array/literal",
+            "@integer-array/literal",
+            "@declare-styleable/literal",
+            "@+string/literal",
+            "?",
+            "?attr/",
+            "?foo/bar",
+            "?color/literal")) {
+      MiniAapt aapt = new MiniAapt(ImmutableSet.of());
+      assertTrue(value, processStyleItemValues(aapt, value).isEmpty());
+      assertEquals(
+          value,
+          ImmutableSet.of(FakeEntry.create(IdType.INT, RType.STYLE, "Theme")),
+          createTestingFakes(aapt.getResourceCollector().getResources()));
+    }
+  }
+
+  @Test
+  public void testQualifiedStyleItemReferences() throws IOException, ResourceParseException {
+    Path depSymbols = tmpFolder.getRoot().resolve("R.txt").getPath();
+    Files.write(depSymbols, ImmutableList.of("int color accent 0x7f010001"));
+    for (String value :
+        ImmutableList.of(
+            "@com.example:color/accent",
+            "@*com.example:color/accent",
+            "@*color/accent",
+            "@color/com.example:accent",
+            "@*color/com.example:accent")) {
+      MiniAapt aapt = new MiniAapt(ImmutableSet.of(depSymbols));
+      ImmutableSet<RDotTxtEntry> references = processStyleItemValues(aapt, value);
+      assertEquals(
+          value,
+          ImmutableSet.of(FakeEntry.create(IdType.INT, RType.COLOR, "accent")),
+          createTestingFakes(references));
+      assertTrue(value, aapt.verifyReferences(references).isEmpty());
+      assertEquals(value, references, new MiniAapt(ImmutableSet.of()).verifyReferences(references));
+    }
+
+    Files.write(depSymbols, ImmutableList.of("int attr label_appearance 0x7f010001"));
+    for (String value :
+        ImmutableList.of(
+            "?com.example:attr/label.appearance",
+            "?com.example:label.appearance",
+            "?*com.example:attr/label.appearance",
+            "?*attr/label.appearance",
+            "?attr/com.example:label.appearance")) {
+      MiniAapt aapt = new MiniAapt(ImmutableSet.of(depSymbols));
+      ImmutableSet<RDotTxtEntry> references = processStyleItemValues(aapt, value);
+      assertEquals(
+          value,
+          ImmutableSet.of(FakeEntry.create(IdType.INT, RType.ATTR, "label_appearance")),
+          createTestingFakes(references));
+      assertTrue(value, aapt.verifyReferences(references).isEmpty());
+      assertEquals(value, references, new MiniAapt(ImmutableSet.of()).verifyReferences(references));
+    }
+  }
+
+  @Test
+  public void testPrivateAndLegacyFrameworkStyleItemReferences()
+      throws IOException, ResourceParseException {
+    MiniAapt aapt = new MiniAapt(ImmutableSet.of());
+    assertTrue(
+        processStyleItemValues(
+                aapt,
+                "@*android:color/white",
+                "@color/android:white",
+                "@id/android:empty",
+                "?android:textColor",
+                "?*android:attr/textColor",
+                "?attr/android:textColor")
+            .isEmpty());
+  }
+
+  @Test
+  public void testStyledStringItems() throws IOException, ResourceParseException {
+    for (String value :
+        ImmutableList.of(
+            "<b>@string/missing</b>",
+            "<b/>@string/missing",
+            "<annotation key=\"value\">?missing</annotation>",
+            "<xliff:g xmlns:xliff=\"urn:oasis:names:tc:xliff:document:1.2\" id=\"x\">"
+                + "<i>@string/missing</i></xliff:g>",
+            "<g xmlns=\"urn:oasis:names:tc:xliff:document:1.2\" id=\"x\">"
+                + "<b xmlns=\"\">@string/missing</b></g>")) {
+      assertTrue(value, processStyleItemValues(new MiniAapt(ImmutableSet.of()), value).isEmpty());
+    }
+  }
+
+  @Test
+  public void testStyleItemReferencesWithTransparentMarkup()
+      throws IOException, ResourceParseException {
+    for (String value :
+        ImmutableList.of(
+            "<![CDATA[@string/missing]]>",
+            "@string/<!-- comment -->missing",
+            "<xliff:g xmlns:xliff=\"urn:oasis:names:tc:xliff:document:1.2\" id=\"x\">"
+                + "@string/missing</xliff:g>",
+            "<x:g xmlns:x=\"urn:oasis:names:tc:xliff:document:1.2\" id=\"x\">"
+                + "@string/missing</x:g>",
+            "<g xmlns=\"urn:oasis:names:tc:xliff:document:1.2\" id=\"x\">" + "@string/missing</g>",
+            "<x:g xmlns:x=\"urn:oasis:names:tc:xliff:document:1.2\" id=\"x\">"
+                + "<x:g id=\"y\">@string/missing</x:g></x:g>")) {
+      MiniAapt aapt = new MiniAapt(ImmutableSet.of());
+      ImmutableSet<RDotTxtEntry> references = processStyleItemValues(aapt, value);
+      assertEquals(
+          value,
+          ImmutableSet.of(FakeEntry.create(IdType.INT, RType.STRING, "missing")),
+          createTestingFakes(references));
+      assertEquals(value, references, aapt.verifyReferences(references));
+    }
+  }
+
+  @Test
+  public void testDottedAndQualifiedStyleItemIdDefinitions()
+      throws IOException, ResourceParseException {
+    for (String value :
+        ImmutableList.of(
+            "@+id/styled.view", "@+com.example:id/styled.view", "@+id/com.example:styled.view")) {
+      MiniAapt aapt = new MiniAapt(ImmutableSet.of());
+      ImmutableSet<RDotTxtEntry> references =
+          processStyleItemValues(aapt, value, "@id/styled.view");
+      assertEquals(
+          value,
+          ImmutableSet.of(FakeEntry.create(IdType.INT, RType.ID, "styled_view")),
+          createTestingFakes(references));
+      assertTrue(value, aapt.verifyReferences(references).isEmpty());
+    }
+  }
+
+  @Test
+  public void testStyleItemReferenceNames() throws IOException, ResourceParseException {
+    MiniAapt aapt = new MiniAapt(ImmutableSet.of());
+    ImmutableSet<RDotTxtEntry> references =
+        processStyleItemValues(aapt, "?attr", "@string/missing suffix", "@string/missing/path");
+    assertEquals(
+        ImmutableSet.of(
+            FakeEntry.create(IdType.INT, RType.ATTR, "attr"),
+            FakeEntry.create(IdType.INT, RType.STRING, "missing suffix"),
+            FakeEntry.create(IdType.INT, RType.STRING, "missing/path")),
+        createTestingFakes(aapt.verifyReferences(references)));
+  }
+
+  private ImmutableSet<RDotTxtEntry> processStyleItemValues(MiniAapt aapt, String... values)
+      throws IOException, ResourceParseException {
+    ImmutableList.Builder<String> lines = ImmutableList.builder();
+    lines.add("<resources><style name=\"Theme\">");
+    for (String value : values) {
+      lines.add("<item name=\"android:text\">" + value + "</item>");
+    }
+    lines.add("</style></resources>");
+    Path valuesFile = tmpFolder.getRoot().resolve("styles.xml").getPath();
+    Files.write(valuesFile, lines.build());
+    return aapt.processValuesFile(valuesFile);
   }
 
   @Test

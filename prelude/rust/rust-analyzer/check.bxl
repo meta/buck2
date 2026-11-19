@@ -12,7 +12,7 @@ def _check_targets_impl(ctx: bxl.Context) -> list[bxl.EnsuredArtifact]:
     uquery_owners = ctx.uquery().owner(ctx.cli_args.file)
     target_universe = ctx.target_universe(uquery_owners)
     owners = ctx.cquery().owner(ctx.cli_args.file, target_universe.target_set())
-    nodes = ctx.cquery().kind("^(rust_binary|rust_library|rust_test)$", owners)
+    nodes = ctx.cquery().kind("^(rust_binary|rust_library|rust_python_extension|rust_test)$", owners)
 
     if len(nodes) == 0:
         return []
@@ -25,21 +25,18 @@ def _check_targets_impl(ctx: bxl.Context) -> list[bxl.EnsuredArtifact]:
         # Temporarily disabled due to ICE reports in https://fb.workplace.com/groups/rust.analyzer/posts/1512577186779084
         # and https://github.com/rust-lang/rust/issues/141540
         # if ctx.cli_args.use_clippy:
-        #     artifacts.append(o.clippy_incr.diag_json)
+        #     artifacts.append(o.clippy_incr.compile_output.diag_json)
         # else:
-        #     artifacts.append(o.metadata_incr.diag_json)
+        #     artifacts.append(o.metadata_incr.compile_output.diag_json)
 
         if ctx.cli_args.use_clippy:
-            artifacts.append(o.clippy.diag_json)
+            artifacts.append(o.clippy.compile_output.diag_json)
         else:
-            artifacts.append(o.metadata.diag_json)
+            artifacts.append(o.metadata.compile_output.diag_json)
 
     art_output = ctx.output.ensure_multiple(artifacts)
 
-    return [
-        artifact.abs_path()
-        for artifact in art_output
-    ]
+    return [artifact.abs_path() for artifact in art_output]
 
 def _run(ctx: bxl.Context) -> None:
     diagnostic_paths = _check_targets_impl(ctx)

@@ -1,15 +1,12 @@
-[buildfile]
-name=TARGETS.fixture
-
-[repositories]
-root = .
-prelude = prelude
+[cells]
+  root = .
+  nano_prelude = nano_prelude
 
 [cell_aliases]
-fbsource = root
-fbcode = root
-ovr_config = prelude
-toolchains = prelude
+  prelude = nano_prelude
 
 [external_cells]
-prelude = bundled
+  nano_prelude = bundled
+
+[buildfile]
+  name = TARGETS.fixture

@@ -12,7 +12,6 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::StringValue;
-use starlark::values::StringValueLike;
 use starlark::values::Value;
 use starlark::values::none::NoneOr;
 
@@ -20,10 +19,10 @@ use crate::interpreter::build_context::BuildContext;
 
 #[starlark_module]
 pub(crate) fn register_read_config(globals: &mut GlobalsBuilder) {
-    /// Read a configuration from the nearest enclosing `.buckconfig`
-    /// of the `BUCK` file that started evaluation of this code.
+    /// Read a configuration value from the .buckconfig for the current
+    /// cell of the `BUCK` file that started evaluation of this code.
     ///
-    /// As an example, if you have a `.buckconfig` of:
+    /// As an example, if the current cell's .buckconfig contains:
     ///
     /// ```toml
     /// [package_options]
@@ -66,7 +65,7 @@ pub(crate) fn register_read_config(globals: &mut GlobalsBuilder) {
     ) -> starlark::Result<NoneOr<StringValue<'v>>> {
         let buckconfigs = &BuildContext::from_context(eval)?.buckconfigs;
         match buckconfigs.root_cell_get(section, key, eval)? {
-            Some(v) => Ok(NoneOr::Other(v.to_string_value())),
+            Some(v) => Ok(NoneOr::Other(v)),
             None => Ok(default),
         }
     }

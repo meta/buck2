@@ -11,11 +11,13 @@
 package com.facebook.buck.jvm.cd;
 
 import com.facebook.buck.core.util.log.Logger;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.logging.ConsoleHandler;
 import java.util.logging.FileHandler;
@@ -24,6 +26,7 @@ import java.util.logging.Level;
 import java.util.logging.SimpleFormatter;
 
 /** Utility class for setting up default logger for compiler daemon worker tool. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CompilerDaemonLoggerUtil {
   static {
     // set java.util.logging (JUL) simple formatter to 1 liner.
@@ -55,7 +58,7 @@ public class CompilerDaemonLoggerUtil {
             logFilePrefix,
             new SimpleDateFormat("yyyyMMdd_HHmmss_SSS").format(new Date().getTime()),
             UUID.randomUUID().toString().substring(0, 8));
-    Files.createDirectories(Paths.get(logFileName).getParent());
+    Files.createDirectories(Objects.requireNonNull(Paths.get(logFileName).getParent()));
     FileHandler fileHandler = new FileHandler(logFileName);
     fileHandler.setFormatter(new SimpleFormatter());
     fileHandler.setLevel(logLevel);

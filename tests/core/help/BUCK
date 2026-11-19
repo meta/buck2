@@ -4,6 +4,9 @@ oncall("build_infra")
 
 buck2_core_tests(
     target_extra_attrs = {
+        "test_help": {
+            "deps": ["fbsource//third-party/rust:regex"],
+        },
         "test_help_env": {
             "use_compiled_buck2_client_and_tpx": True,
         },

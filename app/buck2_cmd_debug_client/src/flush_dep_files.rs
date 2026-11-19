@@ -39,14 +39,16 @@ impl StreamingCommand for FlushDepFilesCommand {
         self,
         buckd: &mut BuckdClientConnector,
         _matches: BuckArgMatches<'_>,
-        _ctx: &mut ClientCommandContext<'_>,
+        ctx: &mut ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
+        let context = ctx.empty_client_context("debug-flush-dep-files")?;
         buckd
             .with_flushing()
             .flush_dep_files(
                 FlushDepFilesRequest {
                     retain_locally_produced_dep_files: self.retain_local,
+                    context: Some(context),
                 },
                 events_ctx,
             )

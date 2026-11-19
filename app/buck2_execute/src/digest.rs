@@ -14,7 +14,7 @@ use buck2_common::cas_digest::CasDigest;
 use buck2_common::cas_digest::CasDigestKind;
 use buck2_common::cas_digest::CasDigestParseError;
 use buck2_common::cas_digest::DigestAlgorithm;
-use buck2_common::cas_digest::TrackedCasDigest;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use remote_execution::Digest;
 use remote_execution::TDigest;
 
@@ -102,7 +102,7 @@ impl<Kind: CasDigestKind> CasDigestConversionResultExt
     }
 }
 
-impl<Kind: CasDigestKind> CasDigestToReExt for TrackedCasDigest<Kind> {
+impl CasDigestToReExt for TrackedFileDigest {
     fn to_re(&self) -> TDigest {
         self.data().to_re()
     }

@@ -78,7 +78,7 @@ fn impl_struct(input: Struct) -> TokenStream {
         quote! {
             #field_pats
             #tags
-            let error_msg = format!("{}", &#arg_token);
+            let error_msg = format!("{}", #arg_token);
 
             // All errors called by source should have From implemented
             let error: buck2_error::Error = #arg_token.#member.into();
@@ -92,7 +92,7 @@ fn impl_struct(input: Struct) -> TokenStream {
             #field_pats
             #tags
 
-            let source_location = buck2_error::source_location::SourceLocation::new(core::file!()).with_type_name(#source_location_type_name);
+            let source_location = buck2_error::source_location::SourceLocation::new(core::file!(), core::line!()).with_type_name(#source_location_type_name);
             let root_error = buck2_error::Error::new(format!("{}", #arg_token), tags[0], source_location, None);
             root_error.tag(tags)
         }
@@ -109,7 +109,7 @@ fn impl_struct(input: Struct) -> TokenStream {
     } else if let Some(display) = &input.attrs.display {
         display_implied_bounds = display.implied_bounds.clone();
         Some(quote! {
-            #[allow(unused_variables, deprecated)]
+            #[allow(unused_assignments, unused_variables, deprecated)]
             let Self #pat = self;
             #display
         })
@@ -142,7 +142,7 @@ fn impl_struct(input: Struct) -> TokenStream {
         impl #impl_generics From<#ty #ty_generics> for buck2_error::Error #error_where_clause
         {
             #[cold]
-            #[allow(unused_variables, deprecated)]
+            #[allow(unused_assignments, unused_variables, deprecated)]
             fn from(#arg_token: #ty #ty_generics) -> buck2_error::Error {
                 #content
             }
@@ -204,16 +204,10 @@ fn impl_enum(mut input: Enum) -> TokenStream {
             #[allow(unused_qualifications)]
             impl #impl_generics std::fmt::Display for #ty #ty_generics #display_where_clause {
                 fn fmt(&self, __formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                    #[allow(unused_variables, deprecated, clippy::used_underscore_binding)]
+                    #[allow(unused_assignments, unused_variables, deprecated, clippy::used_underscore_binding)]
                     match #void_deref self {
                         #(#arms,)*
                     }
-                }
-            }
-
-            impl #impl_generics From<#ty #ty_generics> for buck2_error::__for_macro::ContextValue #display_where_clause  {
-                fn from(#arg_token: #ty #ty_generics) -> buck2_error::__for_macro::ContextValue {
-                    format!("{}", #arg_token).into()
                 }
             }
         })
@@ -254,11 +248,11 @@ fn impl_enum(mut input: Enum) -> TokenStream {
             }
         } else {
             let source_location_type_name =
-                syn::LitStr::new(&format!("{}::{}", &ty, &variant.ident), Span::call_site());
+                syn::LitStr::new(&format!("{}::{}", ty, variant.ident), Span::call_site());
             quote! {
                 #tags
 
-                let source_location = buck2_error::source_location::SourceLocation::new(core::file!()).with_type_name(#source_location_type_name);
+                let source_location = buck2_error::source_location::SourceLocation::new(core::file!(), core::line!()).with_type_name(#source_location_type_name);
                 let root_error = buck2_error::Error::new(err_msg, tags[0], source_location, None);
                 root_error.tag(tags)
             }
@@ -267,7 +261,7 @@ fn impl_enum(mut input: Enum) -> TokenStream {
         let ident = &variant.ident;
         let pat = fields_pat(&variant.fields);
         quote! {
-            #[allow(unused_variables, deprecated)]
+            #[allow(unused_assignments, unused_variables, deprecated)]
             #ty::#ident #pat => {
                 #content
             },

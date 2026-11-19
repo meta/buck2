@@ -12,8 +12,10 @@ package com.facebook.buck.jvm.cd.serialization.java;
 
 import com.facebook.buck.cd.model.java.ResolvedJavacOptions;
 import com.facebook.buck.jvm.java.JavacLanguageLevelOptions;
+import com.facebook.infer.annotation.Nullsafe;
 
 /** {@link JavacLanguageLevelOptions} to protobuf serializer */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class JavacLanguageLevelOptionsSerializer {
 
   private JavacLanguageLevelOptionsSerializer() {}

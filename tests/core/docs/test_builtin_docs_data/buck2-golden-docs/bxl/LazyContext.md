@@ -7,6 +7,7 @@
 ## LazyContext.cquery
 ## LazyContext.join
 ## LazyContext.join\_all
+## LazyContext.resolve\_dynamic\_value
 ## LazyContext.unconfigured\_target\_node
 ## LazyContext.unconfigured\_target\_nodes\_keep\_going
 ## LazyContext.uquery

@@ -1,0 +1,30 @@
+load("@prelude//:native.bzl", "native")
+load("//:defs.bzl", "unified_foo")
+
+constraint_value = native.constraint_value
+platform = native.platform
+
+constraint_value(
+    name = "ps5",
+    constraint_setting = "//:os",
+)
+
+platform(
+    name = "ps5_platform",
+    constraint_values = [":ps5"],
+)
+
+platform(
+    name = "macos_platform",
+    constraint_values = ["//:os[macos]"],
+)
+
+unified_foo(
+    name = "foo",
+    os = select({
+        "//:os[macos]": "macos",
+        ":ps5": "ps5",
+    }),
+    cpu = "x86_64",
+    sanitizer_name = "none",
+)

@@ -27,8 +27,15 @@ other things apart from Starlark’s evaluation.
 ## How do I see my build file's peak memory usage?
 
 To see the Starlark peak memory usage of a build file, you can inspect the event
-log for your build file. Here is an example entry from the event log for buck2
-uquery `target` showing that it uses 1.5GB:
+log for your build file. Run a uquery command for your target and then inspect
+the event log:
+
+```bash
+buck2 uquery //path/to/your:target --output-all-attributes
+buck2 log show
+```
+
+Here is an example entry from the event log showing that a target uses 1.5GB:
 
 ```json
 {"Event":{..."data":{"Load":{"module_id":"target:BUCK","cell":"...","error":null,"starlark_peak_allocated_bytes":1610608640}}}}

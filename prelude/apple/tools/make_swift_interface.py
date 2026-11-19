@@ -15,11 +15,9 @@ swift-ide-test with said arguments.
 import argparse
 import dataclasses
 import optparse
-import pathlib
 import subprocess as proc
 import sys
 from collections.abc import Iterable
-
 from contextlib import contextmanager
 from typing import Optional
 
@@ -122,6 +120,10 @@ class IgnoreUnknownLongSingleDashOptParser(optparse.OptionParser):
 
     def __init__(self, *args, **kwargs):
         kwargs["option_class"] = LongSingleDashOpt
+        # These are swiftc flags, not flags of this tool: with the optparse `-h`
+        # registered, the joined-value rule below reads a value such as
+        # `-headerpad_max_install_names` as `-h` and exits before `--out` is written.
+        kwargs.setdefault("add_help_option", False)
         super().__init__(*args, **kwargs)
 
     def _process_args(self, largs, rargs, values):
@@ -134,7 +136,12 @@ class IgnoreUnknownLongSingleDashOptParser(optparse.OptionParser):
                 elif arg[0:2] == "--":
                     self._process_long_opt(rargs, values)
                 elif arg[:1] == "-" and len(arg) > 1:
-                    if len(arg) > 2:
+                    # A registered long option such as `-Fsystem` wins over the short option
+                    # `-F` with a joined value.
+                    if len(arg) > 2 and (
+                        arg.split("=", 1)[0] in self._long_opt
+                        or arg[:2] not in self._short_opt
+                    ):
                         self._process_long_opt(rargs, values)
                     else:
                         self._process_short_opts(rargs, values)
@@ -165,6 +172,7 @@ def parse_swiftc_args(arguments: list[str]) -> SwiftIDETestArguments:  # noqa: C
     parser.add_option("-Xcc", action="append", default=[], dest="xcc")
     parser.add_option("-D", dest="defines", action="append", default=[])
     parser.add_option("-F", dest="frameworks", action="append", default=[])
+    parser.add_option("-Fsystem", dest="frameworks", action="append")
     parser.add_option("-I", dest="includes", action="append", default=[])
     parser.add_option("-resource-dir", dest="resource_dir")
     parser.add_option(
@@ -177,7 +185,7 @@ def parse_swiftc_args(arguments: list[str]) -> SwiftIDETestArguments:  # noqa: C
     parser.add_option("-swift-version", dest="swift_version")
     parser.add_option("-cxx-interoperability-mode", dest="cxx_interoperability_mode")
 
-    options, leftovers = parser.parse_args(arguments)
+    options, _ = parser.parse_args(arguments)
 
     frontend_parser = IgnoreUnknownLongSingleDashOptParser()
     frontend_parser.add_option(
@@ -193,15 +201,10 @@ def parse_swiftc_args(arguments: list[str]) -> SwiftIDETestArguments:  # noqa: C
 
     resource_dir = options.resource_dir
     if not resource_dir:
-        # If an explicit resource dir was not provided, we need to figure out
-        # which resource id would have been used, which, in the case of Xcode,
-        # is relative to the swiftc used.
-        assert len(leftovers) >= 1
-        compiler_path = pathlib.Path(leftovers[0])
-        assert compiler_path.name == "swiftc"
-        resource_dir_path = compiler_path.parents[1] / "lib" / "swift"
-        assert resource_dir_path.exists()
-        resource_dir = str(resource_dir_path)
+        raise SystemExit(
+            "make_swift_interface: no -resource-dir in the swiftc flags; "
+            "set resource_dir on the swift_toolchain"
+        )
 
     return SwiftIDETestArguments(
         options.sdk,

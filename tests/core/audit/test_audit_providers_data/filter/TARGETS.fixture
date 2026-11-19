@@ -1,0 +1,4 @@
+load(":defs.bzl", "both_rule", "foo_rule")
+
+both_rule(name = "has_all")
+foo_rule(name = "has_foo")

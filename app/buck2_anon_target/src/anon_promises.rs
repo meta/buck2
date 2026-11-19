@@ -12,7 +12,9 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_build_api::analysis::anon_promises_dyn::AnonPromisesDyn;
 use buck2_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
+use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
+use dupe::Dupe;
 use either::Either;
 use futures::FutureExt;
 use starlark::eval::Evaluator;
@@ -51,7 +53,11 @@ impl<'v> AnonPromisesDyn<'v> for AnonPromises<'v> {
     async fn run_promises<'a, 'e: 'a>(
         self: Box<Self>,
         accessor: &mut dyn RunAnonPromisesAccessor<'v, 'a, 'e>,
-    ) -> buck2_error::Result<()> {
+        record_requested: bool,
+    ) -> buck2_error::Result<Vec<BaseDeferredKey>>
+    where
+        'v: 'a,
+    {
         // Resolve all the targets in parallel
         // We have vectors of vectors, so we create a "shape" which has the same shape but with indices
         let mut shape = Vec::new();
@@ -71,8 +77,9 @@ impl<'v> AnonPromisesDyn<'v> for AnonPromises<'v> {
 
         let values = accessor
             .with_dice(|dice| {
-                dice.try_compute_join(anon_target_keys.iter(), |dice, anon_target_key| {
-                    async move { anon_target_key.resolve(dice).await }.boxed()
+                dice.try_compute_join(anon_target_keys.iter(), async |dice, anon_target_key| {
+                    let (key, result) = anon_target_key.resolve_with_key(dice).await?;
+                    buck2_error::Ok((key, result.dupe()))
                 })
                 .boxed_local()
             })
@@ -83,20 +90,30 @@ impl<'v> AnonPromisesDyn<'v> for AnonPromises<'v> {
             for (promise, xs) in shape.iter() {
                 match xs {
                     Either::Left(i) => {
-                        let val = values[*i].providers()?.add_heap_ref(eval.frozen_heap());
+                        let val = values[*i].1.providers()?.add_heap_ref(eval.heap());
                         promise.resolve(val.to_value(), eval)?
                     }
                     Either::Right(is) => {
                         let xs: Vec<_> = is
                             .clone()
-                            .map(|i| Ok(values[i].providers()?.add_heap_ref(eval.frozen_heap())))
+                            .map(|i| Ok(values[i].1.providers()?.add_heap_ref(eval.heap())))
                             .collect::<buck2_error::Result<_>>()?;
-                        let list = eval.heap().alloc(AllocList(xs));
+                        let list = eval.heap().alloc(AllocList(xs)).to_value();
                         promise.resolve(list, eval)?
                     }
                 }
             }
             Ok(())
-        })
+        })?;
+
+        if !record_requested {
+            return Ok(Vec::new());
+        }
+        // Record the key allocations DICE holds, not this requester's copies:
+        // every analysis requesting the same anon target then shares one.
+        Ok(values
+            .into_iter()
+            .map(|(key, _)| BaseDeferredKey::AnonTarget(key.0.dupe()))
+            .collect::<Vec<_>>())
     }
 }

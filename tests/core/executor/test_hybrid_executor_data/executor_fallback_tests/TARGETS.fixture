@@ -44,6 +44,34 @@ command(
     exec_compatible_with = ["//platforms:full_hybrid_with_failure_fallbacks"],
 )
 
+# Remote execution fails this command and the fallback runs it locally; its result is not the
+# one the platform configured it to produce, so it is not published.
+command(
+    name = "local_only_with_uploads",
+    command = "local_only.py",
+    default_target_platform = "//platforms:target",
+    exec_compatible_with = ["//platforms:fallback_with_uploads"],
+    allow_cache_upload = True,
+)
+
+# The same fallback for an action that may not publish at all, which is the reason reported.
+command(
+    name = "local_only_with_uploads_not_allowed",
+    command = "local_only.py",
+    default_target_platform = "//platforms:target",
+    exec_compatible_with = ["//platforms:fallback_with_uploads"],
+)
+
+# The same command run locally by its own preference, which is published.
+command(
+    name = "prefer_local_with_uploads",
+    command = "local_only.py",
+    default_target_platform = "//platforms:target",
+    exec_compatible_with = ["//platforms:fallback_with_uploads"],
+    prefer_local = True,
+    allow_cache_upload = True,
+)
+
 command(
     name = "fails_both",
     command = "fails_both.py",

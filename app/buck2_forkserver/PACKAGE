@@ -1,0 +1,3 @@
+load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
+
+ci.package(ci.remove(ci.windows()))

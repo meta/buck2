@@ -41,14 +41,13 @@ internal class IncrementalAbiWriterTest {
   @Test
   fun `when jvmAbiGenOutput exists, abi jar is created`() {
     jvmAbiGenWorkingDir = temporaryFolder.newFile("jvm_abi_gen_output")
-    val writer =
-        IncrementalAbiWriter(
-            kotlincOutputStubJar,
-            jvmAbiGenWorkingDir,
-            jvmAbiGenJar,
-            libraryStubJar,
-            abiJar,
-        )
+    val writer = IncrementalAbiWriter(
+        kotlincOutputStubJar,
+        jvmAbiGenWorkingDir,
+        jvmAbiGenJar,
+        libraryStubJar,
+        abiJar,
+    )
 
     writer.execute()
 

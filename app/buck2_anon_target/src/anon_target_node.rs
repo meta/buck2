@@ -9,8 +9,8 @@
  */
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::fmt;
+use std::fmt::Write;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
@@ -23,7 +23,7 @@ use buck2_build_api::anon_target::AnonTargetDependentAnalysisResults;
 use buck2_build_api::anon_target::AnonTargetDyn;
 use buck2_build_api::artifact_groups::promise::PromiseArtifactId;
 use buck2_build_api::artifact_groups::promise::PromiseArtifactResolveError;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::configuration::pair::ConfigurationNoExec;
 use buck2_core::content_hash::ContentBasedPathHash;
@@ -39,49 +39,65 @@ use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_data::ToProtoMessage;
 use buck2_data::action_key_owner::BaseDeferredKeyProto;
+use buck2_error::internal_error;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_hash::BuckHasher;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutMap;
+use buck2_interpreter::dice::starlark_provider::DynEvalKindKey;
 use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use buck2_node::attrs::spec::AttributeSpec;
+use buck2_node::attrs::values::SortedAttrValues;
 use buck2_node::rule_type::StarlarkRuleType;
 use buck2_util::strong_hasher::Blake3StrongHasher;
 use cmp_any::PartialEqAny;
+use compact_str::CompactString;
 use dupe::Dupe;
-use fxhash::FxHasher;
-use starlark::collections::SmallMap;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use starlark::environment::Module;
 use starlark::eval::Evaluator;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOfUncheckedGeneric;
+use starlark::values::ValueOf;
 use starlark::values::structs::AllocStruct;
-use starlark::values::structs::StructRef;
-use starlark_map::sorted_map::SortedMap;
+use starlark::values::structs::Struct;
 use strong_hash::StrongHash;
 
 use crate::anon_target_attr::AnonTargetAttr;
 use crate::anon_target_attr_resolve::AnonTargetAttrResolution;
 use crate::anon_target_attr_resolve::AnonTargetAttrResolutionContext;
 
-#[derive(Eq, PartialEq, Clone, Debug, Allocative)]
+/// The attribute values of an anon target.
+///
+/// Unlike `TargetNode`, every non-internal attribute is present: defaults
+/// are filled in eagerly so that key equality does not distinguish a default
+/// from the same value passed explicitly. Attribute names are not stored;
+/// ids resolve against the [`AttributeSpec`] of the rule identified by the
+/// `rule_type` stored alongside this in [`AnonTarget`].
+pub(crate) type AnonAttrValues = SortedAttrValues<AnonTargetAttr>;
+
+#[derive(Eq, PartialEq, Clone, Debug, Allocative, Pagable)]
 pub(crate) struct AnonTarget {
     /// Not necessarily a "real" target label that actually exists, but could be.
     name: TargetLabel,
     /// The type of the rule we are running.
     rule_type: Arc<StarlarkRuleType>,
-    /// The attributes the target was defined with.
-    /// We use a sorted map since we want to iterate in a defined order.
-    attrs: SortedMap<String, AnonTargetAttr>,
+    /// The attributes the target was defined with. Iteration order is
+    /// deterministic (sorted by id), which the cached hashes below rely on.
+    attrs: AnonAttrValues,
     /// The execution configuration - same as the parent.
     exec_cfg: ConfigurationNoExec,
     /// Variant of the anon target, either bxl or bzl.
     variant: AnonTargetVariant,
     /// The cached strong hash value - we do have to cache this, it's quite perf sensitive
     strong_hash: u64,
-    strong_hash_str: String,
     /// Cached hash value
     hash: u64,
 }
 
-#[derive(Hash, Eq, PartialEq, Clone, Debug, Allocative, StrongHash)]
+#[derive(Hash, Eq, PartialEq, Clone, Debug, Allocative, StrongHash, Pagable)]
 pub(crate) enum AnonTargetVariant {
     Bzl,
     Bxl(GlobalCfgOptions),
@@ -91,9 +107,9 @@ impl fmt::Display for AnonTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} (anon: {}) ({})",
+            "{} (anon: {:016x}) ({})",
             self.name(),
-            self.path_hash(),
+            self.strong_hash,
             self.exec_cfg()
         )
     }
@@ -105,23 +121,31 @@ impl Hash for AnonTarget {
     }
 }
 
+impl StrongHash for AnonTarget {
+    fn strong_hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.strong_hash);
+    }
+}
+
+pagable::register_typetag!(AnonTarget as dyn DynEvalKindKey);
+
 impl AnonTarget {
     pub(crate) fn as_proto(&self) -> buck2_data::AnonTarget {
         buck2_data::AnonTarget {
             name: Some(self.name().as_proto()),
             execution_configuration: Some(self.exec_cfg().cfg().as_proto()),
-            hash: self.path_hash().to_owned(),
+            hash: format!("{:016x}", self.strong_hash),
         }
     }
 
     pub(crate) fn new(
         rule_type: Arc<StarlarkRuleType>,
         name: TargetLabel,
-        attrs: SortedMap<String, AnonTargetAttr>,
+        attrs: AnonAttrValues,
         exec_cfg: ConfigurationNoExec,
         variant: AnonTargetVariant,
     ) -> Self {
-        let mut full_hash = FxHasher::default();
+        let mut full_hash = BuckHasher::default();
         rule_type.hash(&mut full_hash);
         name.hash(&mut full_hash);
         attrs.hash(&mut full_hash);
@@ -129,14 +153,15 @@ impl AnonTarget {
         variant.hash(&mut full_hash);
         let full_hash = full_hash.finish();
 
+        // `StrongHash`, not `Hash`: the standard hash of a target label is 32 bits with many
+        // collisions between similar names, and this hash names the output directory.
         let mut strong_hash = Blake3StrongHasher::new();
-        rule_type.hash(&mut strong_hash);
-        name.hash(&mut strong_hash);
-        attrs.hash(&mut strong_hash);
-        exec_cfg.hash(&mut strong_hash);
-        variant.hash(&mut strong_hash);
+        rule_type.strong_hash(&mut strong_hash);
+        name.strong_hash(&mut strong_hash);
+        attrs.strong_hash(&mut strong_hash);
+        exec_cfg.strong_hash(&mut strong_hash);
+        variant.strong_hash(&mut strong_hash);
         let strong_hash = strong_hash.finish();
-        let strong_hash_str = format!("{strong_hash:x}");
 
         AnonTarget {
             name,
@@ -146,7 +171,6 @@ impl AnonTarget {
             variant,
             hash: full_hash,
             strong_hash,
-            strong_hash_str,
         }
     }
 
@@ -154,13 +178,8 @@ impl AnonTarget {
         &self.name
     }
 
-    pub(crate) fn attrs(&self) -> &SortedMap<String, AnonTargetAttr> {
+    pub(crate) fn attrs(&self) -> &AnonAttrValues {
         &self.attrs
-    }
-
-    /// The hash that is used in anon target artifact paths
-    fn path_hash(&self) -> &str {
-        &self.strong_hash_str
     }
 
     pub(crate) fn exec_cfg(&self) -> &ConfigurationNoExec {
@@ -189,18 +208,19 @@ impl AnonTargetDyn for AnonTarget {
 
     fn resolve_attrs<'v>(
         &self,
-        env: &'v Module,
-        dependents_analyses: AnonTargetDependentAnalysisResults<'v>,
+        env: &Module<'v>,
+        attrs_spec: &AttributeSpec,
+        dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
         exec_resolution: ExecutionPlatformResolution,
-    ) -> buck2_error::Result<ValueOfUncheckedGeneric<Value<'v>, StructRef<'static>>> {
+    ) -> buck2_error::Result<ValueOf<'v, Struct<'v>>> {
         let dep_analysis_results =
             get_deps_from_analysis_results(dependents_analyses.dep_analysis_results)?;
 
         // No attributes are allowed to contain macros or other stuff, so an empty resolution context works
         let rule_analysis_attr_resolution_ctx = RuleAnalysisAttrResolutionContext {
-            module: &env,
+            module: env,
             dep_analysis_results,
-            query_results: HashMap::new(),
+            query_results: BuckMutMap::default(),
             execution_platform_resolution: exec_resolution,
         };
 
@@ -209,47 +229,57 @@ impl AnonTargetDyn for AnonTarget {
             rule_analysis_attr_resolution_ctx,
         };
 
+        // Both `self.attrs` and `attr_specs()` are sorted by id, so a single
+        // merge walk recovers each attribute's name.
         let mut resolved_attrs = Vec::with_capacity(self.attrs().len());
-        for (name, attr) in self.attrs().iter() {
+        let mut attr_specs = attrs_spec.attr_specs();
+        for (id, attr) in self.attrs().iter() {
+            let name = loop {
+                let (name, spec_id, _) = attr_specs.next().ok_or_else(|| {
+                    internal_error!("anon target attr id not in the rule's attribute spec")
+                })?;
+                if spec_id == *id {
+                    break name;
+                }
+            };
             resolved_attrs.push((
                 name,
                 attr.resolve_single(self.name().pkg(), &resolution_ctx)?,
             ));
         }
-        let attributes = env
-            .heap()
-            .alloc_typed_unchecked(AllocStruct(resolved_attrs))
-            .cast();
-        Ok(attributes)
+        // The field order of `ctx.attrs` is user-visible (e.g. `dir()`, repr).
+        // Storage order (attribute ids) is an internal detail; present the
+        // fields in name order.
+        resolved_attrs.sort_unstable_by_key(|(name, _)| *name);
+        Ok(ValueOf::alloc(env.heap(), AllocStruct(resolved_attrs)))
     }
 
     fn get_fulfilled_promise_artifacts<'v>(
         self: Arc<Self>,
-        promise_artifact_mappings: SmallMap<String, Value<'v>>,
+        promise_artifact_mappings: BuckMutInsertionMap<String, Value<'v>>,
         anon_target_result: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<HashMap<PromiseArtifactId, Artifact>> {
-        let mut fulfilled_artifact_mappings = HashMap::new();
+    ) -> buck2_error::Result<BuckFixedSortedMap<PromiseArtifactId, Artifact>> {
+        promise_artifact_mappings
+            .values()
+            .enumerate()
+            .map(|(id, func)| {
+                let artifact = eval.eval_function(*func, &[anon_target_result], &[])?;
 
-        for (id, func) in promise_artifact_mappings.values().enumerate() {
-            let artifact = eval.eval_function(*func, &[anon_target_result], &[])?;
+                let promise_id =
+                    PromiseArtifactId::new(BaseDeferredKey::AnonTarget(self.dupe()), id);
 
-            let promise_id = PromiseArtifactId::new(BaseDeferredKey::AnonTarget(self.dupe()), id);
-
-            match ValueAsInputArtifactLike::unpack_value(artifact)? {
-                Some(artifact) => {
-                    fulfilled_artifact_mappings
-                        .insert(promise_id.clone(), artifact.0.get_bound_artifact()?);
+                match StarlarkArtifactView::unpack_value(artifact)? {
+                    Some(artifact) => Ok((
+                        promise_id,
+                        artifact.as_input_artifact_like().get_bound_artifact()?,
+                    )),
+                    None => {
+                        Err(PromiseArtifactResolveError::NotAnArtifact(artifact.to_repr()).into())
+                    }
                 }
-                None => {
-                    return Err(
-                        PromiseArtifactResolveError::NotAnArtifact(artifact.to_repr()).into(),
-                    );
-                }
-            }
-        }
-
-        Ok(fulfilled_artifact_mappings)
+            })
+            .collect()
     }
 
     fn eval_kind(self: Arc<Self>) -> StarlarkEvalKind {
@@ -257,6 +287,7 @@ impl AnonTargetDyn for AnonTarget {
     }
 }
 
+#[pagable_typetag]
 impl BaseDeferredKeyDyn for AnonTarget {
     fn eq_token(&self) -> PartialEqAny<'_> {
         PartialEqAny::new(self)
@@ -280,6 +311,22 @@ impl BaseDeferredKeyDyn for AnonTarget {
         content_hash: Option<&ContentBasedPathHash>,
     ) -> buck2_error::Result<ProjectRelativePathBuf> {
         let cell_relative_path = self.name().pkg().cell_relative_path().as_str();
+        let mut configuration_path_hash = CompactString::with_capacity(16);
+        let path_hash = if path_resolution_method == BuckOutPathKind::Configuration {
+            // Unpadded on purpose, unlike the key's `Display` and every other
+            // key hash: this hex is baked into existing output paths, and
+            // padding it would change ~1/16 of anon paths and invalidate
+            // their action cache entries.
+            write!(&mut configuration_path_hash, "{:x}", self.strong_hash)
+                .expect("u64 hex formatting fits in 16 bytes");
+            configuration_path_hash.as_str()
+        } else if let Some(content_hash) = content_hash {
+            content_hash.as_str()
+        } else {
+            return Err(PathResolutionError::ContentBasedPathWithNoContentHash(
+                path.to_buf(),
+            ))?;
+        };
 
         // It is performance critical that we use slices and allocate via `join` instead of
         // repeated calls to `join` on the path object because `join` allocates on each call,
@@ -306,17 +353,7 @@ impl BaseDeferredKeyDyn for AnonTarget {
             } else {
                 "/"
             },
-            if path_resolution_method == BuckOutPathKind::Configuration {
-                self.path_hash()
-            } else {
-                if let Some(content_hash) = content_hash {
-                    content_hash.as_str()
-                } else {
-                    return Err(PathResolutionError::ContentBasedPathWithNoContentHash(
-                        path.to_buf(),
-                    ))?;
-                }
-            },
+            path_hash,
             "/__",
             self.name().name().as_str(),
             "__",
@@ -333,6 +370,10 @@ impl BaseDeferredKeyDyn for AnonTarget {
         Some(self.configured_label())
     }
 
+    fn rule_type_name(&self) -> Option<&str> {
+        Some(self.rule_type.name.as_str())
+    }
+
     fn to_proto(&self) -> BaseDeferredKeyProto {
         BaseDeferredKeyProto::AnonTarget(self.as_proto())
     }
@@ -345,6 +386,91 @@ impl BaseDeferredKeyDyn for AnonTarget {
         match &self.variant {
             AnonTargetVariant::Bzl => None,
             AnonTargetVariant::Bxl(global_cfg_options) => Some(global_cfg_options.dupe()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use buck2_core::bzl::ImportPath;
+    use buck2_core::configuration::pair::ConfigurationNoExec;
+    use buck2_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
+    use buck2_core::fs::buck_out_path::BuckOutPathKind;
+    use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    use buck2_core::provider::label::ProvidersLabel;
+    use buck2_core::target::label::label::TargetLabel;
+    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    use buck2_node::attrs::spec::AttributeId;
+    use buck2_node::attrs::values::SortedAttrValues;
+    use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
+    use buck2_node::rule_type::StarlarkRuleType;
+    use buck2_util::vec2::Vec2;
+
+    use super::AnonTarget;
+    use super::AnonTargetVariant;
+    use crate::anon_target_attr::AnonTargetAttr;
+
+    /// `ctx.actions.anon_target(shadow, {"target": <label>})` with the default name.
+    fn shadow(label: &str) -> AnonTarget {
+        // `AttributeId` has no public constructor; it derives `Deserialize` over its index.
+        let id: AttributeId = serde_json::from_str("0").unwrap();
+        let mut attrs = Vec2::new();
+        attrs.push(
+            id,
+            AnonTargetAttr::Label(ProvidersLabel::default_for(TargetLabel::testing_parse(
+                label,
+            ))),
+        );
+        AnonTarget::new(
+            Arc::new(StarlarkRuleType {
+                path: BzlOrBxlPath::Bzl(ImportPath::testing_new("root//:defs.bzl")),
+                name: "shadow".to_owned(),
+            }),
+            TargetLabel::testing_parse("anon//:shadow"),
+            SortedAttrValues::new(attrs),
+            ConfigurationNoExec::testing_new(),
+            AnonTargetVariant::Bzl,
+        )
+    }
+
+    fn out_path(t: &AnonTarget) -> String {
+        t.make_hashed_path(
+            ProjectRelativePath::unchecked_new("buck-out/v2"),
+            ForwardRelativePath::unchecked_new("gen"),
+            None,
+            ForwardRelativePath::unchecked_new("out.txt"),
+            BuckOutPathKind::Configuration,
+            None,
+        )
+        .unwrap()
+        .as_str()
+        .to_owned()
+    }
+
+    /// 33 anon targets that differ only in a label attribute whose target names are 8 bytes
+    /// long and share their first 4 bytes.
+    fn similar_targets() -> Vec<AnonTarget> {
+        (0..33)
+            .map(|i| shadow(&format!("root//pkg:lib_{i:04}")))
+            .collect()
+    }
+
+    /// Distinct anon targets get distinct `strong_hash` values and output paths, also when they
+    /// differ only in a label whose 32-bit `Hash` collides with another's.
+    #[test]
+    fn test_distinct_anon_targets_get_distinct_output_paths() {
+        let targets = similar_targets();
+        for i in 0..targets.len() {
+            for j in i + 1..targets.len() {
+                assert_ne!(targets[i], targets[j]);
+                assert_ne!(
+                    targets[i].strong_hash, targets[j].strong_hash,
+                    "{i} and {j} share a strong hash"
+                );
+                assert_ne!(out_path(&targets[i]), out_path(&targets[j]));
+            }
         }
     }
 }

@@ -35,6 +35,13 @@ def do_unzip(archive, output_dir):
                     _file_attributes(info) | stat.S_IXUSR,
                 )
         for info in (i for i in z.infolist() if _is_symlink(i)):
+            if (
+                os.path.isabs(info.filename)
+                or os.path.normpath(info.filename).split(os.sep)[0] == os.pardir
+            ):
+                raise RuntimeError(
+                    f"Symlink `{info.filename}` has a name outside of archive output directory which is prohibited."
+                )
             symlink_path = os.path.join(output_dir, info.filename)
             symlink_dst = z.read(info).decode("utf-8")
             if os.path.isabs(symlink_dst):
@@ -49,6 +56,15 @@ def do_unzip(archive, output_dir):
                     f"Symlink `{info.filename}` -> `{symlink_dst}` (normalized destination path relative to archive output directory is `{output_dir_relative_symlink_dst}`) points outside of archive output directory which is prohibited."
                 )
             os.symlink(symlink_dst, symlink_path)
+        # A target is resolved through the other links, so a chain of them can leave the
+        # output directory even when each target passes the check above.
+        real_output_dir = os.path.realpath(output_dir)
+        for info in (i for i in z.infolist() if _is_symlink(i)):
+            resolved = os.path.realpath(os.path.join(output_dir, info.filename))
+            if os.path.commonpath([real_output_dir, resolved]) != real_output_dir:
+                raise RuntimeError(
+                    f"Symlink `{info.filename}` resolves to `{resolved}` which is outside of archive output directory which is prohibited."
+                )
 
 
 def _file_attributes(zip_info):

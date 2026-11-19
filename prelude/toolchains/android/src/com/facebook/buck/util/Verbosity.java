@@ -10,9 +10,12 @@
 
 package com.facebook.buck.util;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * An indication of how verbose Buck should be. Enum values are in order from least to most verbose.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public enum Verbosity {
   // TODO(mbolin): Consider introducing more Verbosity levels that affect the Java Logger
   // setting.

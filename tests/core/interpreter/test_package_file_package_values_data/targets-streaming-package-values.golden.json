@@ -6,9 +6,29 @@
     "buck.deps":[],
     "buck.inputs":[],
     "buck.package":"root//",
-    "buck.package_values":{"aaa.bbb":"ccc","xxx.yyy":"zzz"},
+    "buck.package_values":{"aaa.bbb":"ccc","sel.concat":{"__type":"concat","items":[{"__type":"selector","entries":{"DEFAULT":"x"}},{"__type":"selector","entries":{"DEFAULT":"y"}}]},"sel.ector":{"__type":"selector","entries":{"//config:a":"val_a","DEFAULT":"default_val"}},"xxx.yyy":"zzz"},
     "name":"test_target",
     "visibility":[],
+    "within_view":["PUBLIC"]
+  },
+  {
+    "buck.type":"root//defs.bzl:test_target",
+    "buck.deps":[],
+    "buck.inputs":[],
+    "buck.package":"root//intersection/child",
+    "buck.package_values":{"aaa.bbb":"ccc","sel.concat":{"__type":"concat","items":[{"__type":"selector","entries":{"DEFAULT":"x"}},{"__type":"selector","entries":{"DEFAULT":"y"}}]},"sel.ector":{"__type":"selector","entries":{"//config:a":"val_a","DEFAULT":"default_val"}},"xxx.yyy":"zzz"},
+    "name":"t",
+    "visibility":["root//intersection/child/..."],
+    "within_view":["PUBLIC"]
+  },
+  {
+    "buck.type":"root//defs.bzl:test_target",
+    "buck.deps":[],
+    "buck.inputs":[],
+    "buck.package":"root//intersection/exempt",
+    "buck.package_values":{"aaa.bbb":"ccc","sel.concat":{"__type":"concat","items":[{"__type":"selector","entries":{"DEFAULT":"x"}},{"__type":"selector","entries":{"DEFAULT":"y"}}]},"sel.ector":{"__type":"selector","entries":{"//config:a":"val_a","DEFAULT":"default_val"}},"xxx.yyy":"zzz"},
+    "name":"t",
+    "visibility":["root//intersection/exempt/..."],
     "within_view":["PUBLIC"]
   }
 ]

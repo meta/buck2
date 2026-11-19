@@ -24,6 +24,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
+use std::mem;
 use std::ptr;
 use std::slice;
 
@@ -33,16 +34,13 @@ use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::cast::transmute;
 use crate::private::Private;
+use crate::values::AllocStaticSimple;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
+use crate::values::StaticValueRegistered;
 use crate::values::Value;
-use crate::values::layout::avalue::AValue;
-use crate::values::layout::avalue::AValueArray;
-use crate::values::layout::avalue::AValueImpl;
-use crate::values::layout::avalue::alloc_static;
-use crate::values::layout::heap::repr::AValueRepr;
+use crate::values::ValueTyped;
 use crate::values::types::list::value::display_list;
 
 /// Fixed-capacity list.
@@ -68,7 +66,13 @@ pub(crate) struct Array<'v> {
     //     and iterator object holds the capacity.
     #[allocative(skip)]
     iter_count: UnsafeCell<u32>,
-    content: [Value<'v>; 0],
+    /// Elements, which continue past the end of this struct into the arena.
+    ///
+    /// `UnsafeCell` because the array is mutated through a shared reference: without it, any
+    /// pointer reaching the elements would be derived from a shared reference to freeze-able
+    /// memory, and writing through such a pointer is undefined behaviour.
+    #[allocative(skip)]
+    content: [UnsafeCell<Value<'v>>; 0],
 }
 
 impl<'v> Debug for Array<'v> {
@@ -82,33 +86,36 @@ impl<'v> Debug for Array<'v> {
     }
 }
 
+// SAFETY: The empty array static (VALUE_EMPTY_ARRAY) is properly registered
+// for pagable serialization via inventory::submit!.
+unsafe impl StaticValueRegistered for Array<'static> {}
+
 /// `Array` is not `Sync`, so wrap it into this struct to store it in static variable.
 /// Empty `Array` is logically `Sync`.
-pub(crate) struct ValueEmptyArray(AValueRepr<AValueImpl<'static, AValueArray>>);
+pub(crate) struct ValueEmptyArray(AllocStaticSimple<Array<'static>>);
 unsafe impl Sync for ValueEmptyArray {}
 
 pub(crate) static VALUE_EMPTY_ARRAY: ValueEmptyArray =
-    ValueEmptyArray(alloc_static(unsafe { Array::new(0, 0) }));
+    ValueEmptyArray(AllocStaticSimple::alloc(unsafe { Array::new(0, 0) }));
+
+// Manual registration for pagable serialization (can't use macro due to wrapper struct)
+inventory::submit! {
+    crate::__derive_refs::StaticValueEntry::new(
+        file!(),
+        line!(),
+        || VALUE_EMPTY_ARRAY.0.unpack().to_value()
+    )
+}
 
 impl ValueEmptyArray {
-    pub(crate) fn repr<'v>(
-        &'static self,
-    ) -> &'v AValueRepr<AValueImpl<'v, impl AValue<'v, StarlarkValue = Array<'v>>>> {
-        // Cast lifetimes. Cannot use `crate::cast::ptr_lifetime` here
-        // because type parameter of `AValue` also need to be casted.
-        unsafe {
-            transmute!(
-                &AValueRepr<AValueImpl<AValueArray>>,
-                &AValueRepr<AValueImpl<AValueArray>>,
-                &self.0
-            )
-        }
+    pub(crate) fn unpack<'v>(&'static self) -> ValueTyped<'v, Array<'v>> {
+        self.0.at()
     }
 }
 
 impl<'v> Array<'v> {
     pub(crate) fn offset_of_content() -> usize {
-        memoffset::offset_of!(Self, content)
+        mem::offset_of!(Self, content)
     }
 
     /// Create an array with specified length and capacity.
@@ -150,21 +157,19 @@ impl<'v> Array<'v> {
     /// This is memory-safe, because we never overwrite content with
     /// invalid `Value` values.
     pub(crate) fn content(&self) -> &[Value<'v>] {
-        unsafe { slice::from_raw_parts(self.content.as_ptr(), self.len()) }
+        unsafe { slice::from_raw_parts(self.ptr_at(0), self.len()) }
     }
 
     pub(crate) fn content_mut(&mut self) -> &mut [Value<'v>] {
-        unsafe { slice::from_raw_parts_mut(self.content.as_mut_ptr(), self.len()) }
+        unsafe { slice::from_raw_parts_mut(self.ptr_at(0), self.len()) }
     }
 
     /// Pointer to an element at given offset.
-    fn ptr_at(&self, index: usize) -> *const Value<'v> {
-        unsafe { self.content.as_ptr().add(index) }
-    }
-
-    /// Pointer to an element at given offset.
-    fn mut_ptr_at(&self, index: usize) -> *mut Value<'v> {
-        self.ptr_at(index) as *mut Value
+    ///
+    /// Goes through the `UnsafeCell` so the result is valid to write through, which the
+    /// mutating operations rely on since they only hold a shared reference.
+    fn ptr_at(&self, index: usize) -> *mut Value<'v> {
+        unsafe { UnsafeCell::raw_get(self.content.as_ptr().add(index)) }
     }
 
     unsafe fn get_unchecked(&self, index: usize) -> Value<'v> {
@@ -178,7 +183,7 @@ impl<'v> Array<'v> {
         debug_assert!(!self.iter_count_is_non_zero());
         assert!(index < self.len());
         unsafe {
-            *self.mut_ptr_at(index) = value;
+            *self.ptr_at(index) = value;
         }
     }
 
@@ -214,10 +219,10 @@ impl<'v> Array<'v> {
         unsafe {
             ptr::copy(
                 self.ptr_at(index),
-                self.mut_ptr_at(index + 1),
+                self.ptr_at(index + 1),
                 self.len() - index,
             );
-            *self.mut_ptr_at(index) = value;
+            *self.ptr_at(index) = value;
             *self.len.get() += 1;
         }
     }
@@ -225,7 +230,7 @@ impl<'v> Array<'v> {
     pub(crate) fn push(&self, value: Value<'v>) {
         assert!(self.remaining_capacity() >= 1);
         unsafe {
-            *self.mut_ptr_at(self.len()) = value;
+            *self.ptr_at(self.len()) = value;
             *self.len.get() += 1;
         }
     }
@@ -233,8 +238,13 @@ impl<'v> Array<'v> {
     /// `self.extend_from_within(..)`.
     pub(crate) fn double(&self) {
         assert!(self.remaining_capacity() >= self.len());
+        if self.is_statically_allocated() {
+            // The shared empty array: doubling it is a no-op, and a store to it is a
+            // cache line bouncing between every thread that evaluates an empty list.
+            return;
+        }
         unsafe {
-            ptr::copy_nonoverlapping(self.ptr_at(0), self.mut_ptr_at(self.len()), self.len());
+            ptr::copy_nonoverlapping(self.ptr_at(0), self.ptr_at(self.len()), self.len());
             *self.len.get() *= 2;
         }
     }
@@ -255,14 +265,23 @@ impl<'v> Array<'v> {
 
     pub(crate) fn extend_from_slice(&self, slice: &[Value<'v>]) {
         assert!(self.remaining_capacity() >= slice.len());
+        if slice.is_empty() {
+            // Also keeps the shared empty array (the only array a list of capacity 0 can
+            // have) unwritten; see `double`.
+            return;
+        }
         unsafe {
-            ptr::copy_nonoverlapping(slice.as_ptr(), self.mut_ptr_at(self.len()), slice.len());
+            ptr::copy_nonoverlapping(slice.as_ptr(), self.ptr_at(self.len()), slice.len());
             *self.len.get() += slice.len() as u32;
         }
     }
 
     pub(crate) fn clear(&self) {
         debug_assert!(!self.iter_count_is_non_zero());
+        if self.is_statically_allocated() {
+            // Already empty; see `double`.
+            return;
+        }
         unsafe {
             *self.len.get() = 0;
         }
@@ -275,7 +294,7 @@ impl<'v> Array<'v> {
             let r = self.get_unchecked(index);
             ptr::copy(
                 self.ptr_at(index + 1),
-                self.mut_ptr_at(index),
+                self.ptr_at(index),
                 self.len() - 1 - index,
             );
             *self.len.get() -= 1;
@@ -303,11 +322,11 @@ impl<'v> StarlarkValue<'v> for Array<'v> {
         true
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        Ok(self.len() as i32)
+    fn length(&self) -> i32 {
+        self.len() as i32
     }
 
-    unsafe fn iter_next(&self, index: usize, _heap: &'v Heap) -> Option<Value<'v>> {
+    unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
         debug_assert!(self.len() == 0 || self.iter_count_is_non_zero());
         self.content().get(index).copied()
     }
@@ -339,28 +358,31 @@ mod tests {
 
     #[test]
     fn debug() {
-        let heap = Heap::new();
-        let array = heap.alloc_array(10);
-        array.push(heap.alloc(23));
-        // Just check it does not crash.
-        drop(array.to_string());
+        Heap::temp(|heap| {
+            let array = heap.alloc_array(10);
+            array.push(heap.alloc(23i32).to_value());
+            // Just check it does not crash.
+            drop(array.to_string());
+        });
     }
 
     #[test]
     fn display() {
-        let heap = Heap::new();
-        let array = heap.alloc_array(10);
-        array.push(heap.alloc(29));
-        array.push(Value::new_none());
-        assert_eq!("array([29, None], cap=10)", array.to_string());
+        Heap::temp(|heap| {
+            let array = heap.alloc_array(10);
+            array.push(heap.alloc(29i32).to_value());
+            array.push(Value::new_none());
+            assert_eq!("array([29, None], cap=10)", array.to_string());
+        });
     }
 
     #[test]
     fn push() {
-        let heap = Heap::new();
-        let array = heap.alloc_array(10);
-        array.push(heap.alloc(17));
-        array.push(heap.alloc(19));
-        assert_eq!(heap.alloc(19), array.content()[1]);
+        Heap::temp(|heap| {
+            let array = heap.alloc_array(10);
+            array.push(heap.alloc(17i32).to_value());
+            array.push(heap.alloc(19i32).to_value());
+            assert_eq!(heap.alloc(19i32).to_value(), array.content()[1]);
+        });
     }
 }

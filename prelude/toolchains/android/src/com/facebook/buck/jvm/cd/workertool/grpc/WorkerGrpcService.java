@@ -18,6 +18,7 @@ import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.worker.model.ExecuteCommand;
 import com.facebook.buck.worker.model.ExecuteResponse;
 import com.facebook.buck.worker.model.WorkerGrpc;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.protobuf.ByteString;
@@ -28,6 +29,7 @@ import java.io.PrintStream;
 import org.kohsuke.args4j.CmdLineException;
 
 /** Worker Service that implements {@code workertool.v2.proto} */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class WorkerGrpcService extends WorkerGrpc.WorkerImplBase {
   private static final Logger LOG = Logger.get(WorkerGrpcService.class);
 
@@ -90,7 +92,7 @@ public class WorkerGrpcService extends WorkerGrpc.WorkerImplBase {
       LOG.error(error);
       return ExecuteResponse.newBuilder()
           .setExitCode(result.getExitCode())
-          .setStderr(ErrorInterceptor.prettyPrint(error))
+          .setStderr(java.util.Objects.requireNonNull(ErrorInterceptor.prettyPrint(error)))
           .build();
     }
     command.postExecute();

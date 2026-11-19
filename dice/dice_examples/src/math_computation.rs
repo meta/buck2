@@ -21,26 +21,28 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use derive_more::Display;
 use dice::DiceComputations;
+use dice::DiceKeyDyn;
 use dice::DiceTransactionUpdater;
+use dice::EqualityBehavior;
 use dice::InjectedKey;
 use dice::Key;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
-use futures::FutureExt;
 use futures::future;
-use futures::future::BoxFuture;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
-#[derive(Clone, Dupe, PartialEq, Eq, Hash, Display, Debug, Allocative)]
+#[derive(Clone, Dupe, PartialEq, Eq, Hash, Display, Debug, Allocative, Pagable)]
 #[display("Var({})", _0)]
 pub struct Var(pub Arc<String>);
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Allocative)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Allocative, Pagable)]
 pub enum Unit {
     Var(Var),
     Literal(i64),
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, Allocative)]
+#[derive(PartialEq, Eq, Clone, Debug, Allocative, Pagable)]
 pub enum Equation {
     Add(Vec<Unit>),
     Unit(Unit),
@@ -126,12 +128,17 @@ impl MathEquations for DiceTransactionUpdater {
     }
 }
 
-#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("Eval({})", _0)]
+#[pagable_typetag(DiceKeyDyn)]
 pub struct EvalVar(pub Var);
 #[async_trait]
 impl Key for EvalVar {
     type Value = Result<i64, Arc<anyhow::Error>>;
+
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
     async fn compute(
         &self,
@@ -141,15 +148,15 @@ impl Key for EvalVar {
         let equation = lookup_unit(ctx, &self.0).await.map_err(Arc::new)?;
         Ok(match &*equation {
             Equation::Add(adds) => resolve_units(ctx, &adds[..]).await?.iter().sum(),
-            Equation::Unit(unit) => resolve_units(ctx, std::slice::from_ref(&unit)).await?[0],
+            Equation::Unit(unit) => resolve_units(ctx, std::slice::from_ref(unit)).await?[0],
         })
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
             (Ok(x), Ok(y)) => x == y,
             _ => false,
-        }
+        })
     }
 }
 
@@ -159,7 +166,8 @@ impl Math for DiceComputations<'_> {
         Ok(self
             .compute(&EvalVar(var))
             .await
-            .map_err(|e| Arc::new(anyhow::anyhow!(e)))??)
+            .map_err(|e| Arc::new(anyhow::anyhow!(e)))?
+            .dupe()?)
     }
 }
 
@@ -168,14 +176,10 @@ async fn resolve_units<'a>(
     units: &[Unit],
 ) -> Result<Vec<i64>, Arc<anyhow::Error>> {
     let futs = ctx.compute_many(units.iter().map(|unit| {
-        DiceComputations::declare_closure(
-            move |ctx: &mut DiceComputations| -> BoxFuture<Result<i64, Arc<anyhow::Error>>> {
-                match unit {
-                    Unit::Var(var) => ctx.eval(var.clone()).boxed(),
-                    Unit::Literal(lit) => futures::future::ready(Ok(*lit)).boxed(),
-                }
-            },
-        )
+        DiceComputations::declare_closure(async move |ctx| match unit {
+            Unit::Var(var) => ctx.eval(var.clone()).await,
+            Unit::Literal(lit) => Ok(*lit),
+        })
     }));
 
     future::join_all(futs)
@@ -185,17 +189,22 @@ async fn resolve_units<'a>(
 }
 
 async fn lookup_unit(ctx: &mut DiceComputations<'_>, var: &Var) -> anyhow::Result<Arc<Equation>> {
-    Ok(ctx.compute(&LookupVar(var.clone())).await?)
+    Ok(ctx.compute(&LookupVar(var.clone())).await?.dupe())
 }
 
-#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("Lookup({})", _0)]
+#[pagable_typetag(DiceKeyDyn)]
 struct LookupVar(Var);
 impl InjectedKey for LookupVar {
     type Value = Arc<Equation>;
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
     }
 }
 

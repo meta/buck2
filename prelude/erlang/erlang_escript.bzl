@@ -7,6 +7,8 @@
 # above-listed licenses.
 
 load("@prelude//:paths.bzl", "paths")
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load(":attrs.bzl", "erlang_rule_attributes")
 load(":erlang_build.bzl", "erlang_build")
 load(":erlang_dependencies.bzl", "flatten_dependencies")
 load(":erlang_info.bzl", "ErlangAppInfo")
@@ -50,7 +52,7 @@ def erlang_escript_impl(ctx: AnalysisContext) -> list[Provider]:
             artifacts[artifact.short_path] = artifact
 
     escript_name = _escript_name(ctx)
-    output = ctx.actions.declare_output(escript_name)
+    output = ctx.actions.declare_output(escript_name, has_content_based_path = False)
 
     args = ctx.attrs.emu_args
 
@@ -73,6 +75,7 @@ def erlang_escript_impl(ctx: AnalysisContext) -> list[Provider]:
         "escript_build_spec.json",
         escript_build_spec,
         with_inputs = True,
+        has_content_based_path = False,
     )
 
     create_escript(ctx, spec_file, toolchain, escript_name)
@@ -89,13 +92,8 @@ def erlang_escript_impl(ctx: AnalysisContext) -> list[Provider]:
         RunInfo(escript_cmd),
     ]
 
-def create_escript(
-        ctx: AnalysisContext,
-        spec_file: WriteJsonCliArgs,
-        toolchain: Toolchain,
-        escript_name: str) -> None:
-    """ build the escript with the escript builder tool
-    """
+def create_escript(ctx: AnalysisContext, spec_file: WriteJsonCliArgs, toolchain: Toolchain, escript_name: str) -> None:
+    """build the escript with the escript builder tool"""
 
     erlang_build.utils.run_with_env(
         ctx,
@@ -139,6 +137,7 @@ def build_escript_unbundled_trampoline(ctx: AnalysisContext, config_files: list[
         paths.join(erlang_build.utils.BUILD_DIR, "run.escript"),
         data,
         is_executable = True,
+        has_content_based_path = False,
     )
 
 def build_escript_bundled_trampoline(ctx: AnalysisContext, toolchain, config_files: list[Artifact]) -> Artifact:
@@ -156,8 +155,9 @@ EscriptDir = escript:script_name(),""",
     escript_trampoline_erl = ctx.actions.write(
         paths.join(erlang_build.utils.BUILD_DIR, "erlang_escript_trampoline.erl"),
         data,
+        has_content_based_path = False,
     )
-    my_output = ctx.actions.declare_output("erlang_escript_trampoline.beam")
+    my_output = ctx.actions.declare_output("erlang_escript_trampoline.beam", has_content_based_path = False)
 
     erlang_build.utils.run_with_env(
         ctx,
@@ -215,3 +215,43 @@ parse_bin(Bin) ->
         {ok, Tokens, _} = erl_scan:string(binary_to_list(Bin)),
         erl_parse:parse_term(Tokens).
         """
+
+erlang_escript = prelude_rule(
+    name = "erlang_escript",
+    impl = erlang_escript_impl,
+    docs = """
+        The `erlang_escript` target builds and runs bundled escripts. Please refer to the
+        [OTP documentation](https://www.erlang.org/doc/man/escript.html) for more details about escripts.
+
+        Escripts by default always try to use the module that has the same name as the escripts basename as entry point, e.g. if
+        the escript is called `script.escript` then running the escript will try to call `script:main/1`. Both name and
+        main module can be overwritten though.
+
+        The target name doubles as the default escript name. If the `main_module` attribute is not used, the escript filename will
+        be `<name>.escript`.
+    """,
+    examples = """
+        ```
+        erlang_escript(
+            name = "script",
+            main_module = "main_module",
+            script_name = "the_script",
+            deps = [
+                ":escript_app",
+            ],
+            emu_args = ["+sbtu", "+A1"],
+        )
+
+        erlang_application(
+            name = "escript_app",
+            srcs = ["src/main_module.erl"],
+            applications = [
+                "kernel",
+                "stdlib",
+            ],
+        )
+        ```
+    """,
+    further = None,
+    attrs = erlang_rule_attributes["erlang_escript"],
+)

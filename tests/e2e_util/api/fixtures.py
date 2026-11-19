@@ -6,7 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-unsafe
 
 import re
 from dataclasses import dataclass
@@ -41,7 +40,7 @@ class Lines:
 
     lines: List[Tuple[int, int]]
 
-    def __init__(self, content: str):
+    def __init__(self, content: str) -> None:
         lines = []
         idx = 0
         for line in content.splitlines(keepends=True):
@@ -118,7 +117,7 @@ class Fixture:
     content: str
     spans: Dict[str, Span]
 
-    def __init__(self, content: str):
+    def __init__(self, content: str) -> None:
         raw_positions = {}
         new_content = ""
         idx = 0

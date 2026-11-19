@@ -8,25 +8,5 @@
  * above-listed licenses.
  */
 
-use std::ffi::OsStr;
-
-/// Creates `std::process::Command` which doesn't show any windows on Windows.
-pub fn background_command<S: AsRef<OsStr>>(program: S) -> std::process::Command {
-    #[allow(unused_mut)]
-    // @patternlint-disable-next-line buck2-no-command-new
-    let mut cmd = std::process::Command::new(program);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(winapi::um::winbase::CREATE_NO_WINDOW);
-    }
-    // Prevent sub buck commands (persist-event-log, internal-test-runner, forkserver, etc.) from
-    // reusing the UUID of the original command.
-    cmd.env_remove(buck2_wrapper_common::BUCK_WRAPPER_UUID_ENV_VAR);
-    cmd
-}
-
-/// Creates `tokio::process::Command` which doesn't show any windows on Windows.
-pub fn async_background_command<S: AsRef<OsStr>>(program: S) -> tokio::process::Command {
-    background_command(program).into()
-}
+pub use buck2_wrapper_common::async_background_command;
+pub use buck2_wrapper_common::background_command;

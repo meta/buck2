@@ -1,124 +1,87 @@
 name: Build and test
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch: # allows manual triggering
+
+permissions:
+  contents: read
+
+# A pull request's superseded run is cancelled; on `main` the run in flight
+# finishes so that every push still gets a verdict (see build-with-buck2.yml).
+concurrency:
+  group: build-and-test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # rust-cache keeps only the dependency artifacts between runs, so every run
+  # compiles the workspace crates from scratch and incremental compilation only
+  # costs time and disk.
+  CARGO_INCREMENTAL: 0
+  # Backtraces keep their file:line; nothing in CI attaches a debugger. The
+  # `test` profile inherits this from `dev`.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
 jobs:
-  linux-build-and-test:
-    runs-on: 4-core-ubuntu
+  # Clippy and rustdoc check the crates; the tests build them. The two share no
+  # artifacts, so they run as separate jobs for wall time.
+  #
+  # Runner labels are repository (owner) specific, so the Meta larger runners
+  # (16-core-ubuntu, macos-15-xlarge, windows-8-core) don't exist on forks and
+  # jobs requesting them would sit queued forever waiting for a runner that
+  # isn't available. Fall back to the standard GitHub-hosted runners there.
+  lint:
+    name: lint (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            runs-on: ${{ github.repository_owner == 'meta' && '16-core-ubuntu' || 'ubuntu-latest' }}
+          - name: macos
+            runs-on: ${{ github.repository_owner == 'meta' && 'macos-15-xlarge' || 'macos-15' }}
+          - name: windows
+            runs-on: ${{ github.repository_owner == 'meta' && 'windows-8-core' || 'windows-latest' }}
+    runs-on: ${{ matrix.runs-on }}
     steps:
-    - uses: actions/checkout@v4.1.0
-    - uses: ./.github/actions/setup_linux_env
-    - uses: ./.github/actions/build_debug
-    - uses: ./.github/actions/run_test_py
-  macos-build-and-test:
-    runs-on: macos-latest
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_cargo_env
+      with:
+        components: clippy
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: buck2-lint
+        cache-on-failure: true
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Run clippy
+      run: python3 test.py --ci --git --lint-only
+      shell: bash
+    - name: Run rustdoc
+      run: python3 test.py --ci --git --rustdoc-only
+      shell: bash
+  test:
+    name: test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            runs-on: ${{ github.repository_owner == 'meta' && '16-core-ubuntu' || 'ubuntu-latest' }}
+          - name: macos
+            runs-on: ${{ github.repository_owner == 'meta' && 'macos-15-xlarge' || 'macos-15' }}
+          - name: windows
+            runs-on: ${{ github.repository_owner == 'meta' && 'windows-8-core' || 'windows-latest' }}
+    runs-on: ${{ matrix.runs-on }}
     steps:
-    - uses: maxim-lobanov/setup-xcode@v1.6.0
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_cargo_env
+    - uses: Swatinem/rust-cache@v2
       with:
-        xcode-version: 16.4.0
-    - uses: actions/checkout@v4.1.0
-    - uses: ./.github/actions/setup_macos_env
-    - uses: ./.github/actions/build_debug
-    - uses: ./.github/actions/run_test_py
-  windows-build-and-test:
-    runs-on: windows-8-core
-    steps:
-    - uses: actions/checkout@v4.1.0
-    - uses: ./.github/actions/setup_windows_env
-    - uses: ./.github/actions/build_debug
-    - uses: ./.github/actions/run_test_py
-  macos-build-examples:
-    runs-on: macos-latest
-    steps:
-    - uses: maxim-lobanov/setup-xcode@v1.6.0
-      with:
-        xcode-version: 16.4.0
-    - uses: actions/checkout@v4.1.0
-    - uses: ./.github/actions/setup_macos_env
-    - uses: ./.github/actions/init_opam
-    - uses: ./.github/actions/build_release
-    - name: Setup the 'example/with_prelude' project
-      run: |-
-        cd examples/with_prelude
-        ./haskell-setup.sh
-        ./ocaml-setup.sh
-    - name: Build the 'example/with_prelude' project
-      run: |-
-        cd examples/with_prelude
-        $RUNNER_TEMP/artifacts/buck2 build //... -v 2
-        $RUNNER_TEMP/artifacts/buck2 test //... -v 2
-    - uses: ./.github/actions/build_example_no_prelude
-    - uses: ./.github/actions/build_example_toolchain
-      with:
-        toolchain: python_toolchain
-    - uses: ./.github/actions/build_example_toolchain
-      with:
-        toolchain: go_toolchain
-    - uses: ./.github/actions/build_example_toolchain
-      continue-on-error: true
-      with:
-        toolchain: cxx_zig_toolchain
-    - uses: ./.github/actions/setup_reindeer
-    - uses: ./.github/actions/build_bootstrap
-  linux-build-examples:
-    runs-on: ubuntu-22.04
-    steps:
-    - uses: actions/checkout@v4.1.0
-    - uses: ./.github/actions/setup_linux_env
-    - uses: ./.github/actions/init_opam
-    - uses: ./.github/actions/build_release
-    - name: Setup the 'example/with_prelude' project
-      run: |-
-        cd examples/with_prelude
-        ./haskell-setup.sh
-        ./ocaml-setup.sh
-    - name: Build the 'example/with_prelude' project
-      run: |-
-        cd examples/with_prelude
-        $RUNNER_TEMP/artifacts/buck2 build //... -v 2
-        $RUNNER_TEMP/artifacts/buck2 test //... -v 2
-    - uses: ./.github/actions/build_example_conan
-    - uses: ./.github/actions/build_example_no_prelude
-    - uses: ./.github/actions/build_example_toolchain
-      with:
-        toolchain: python_toolchain
-    - uses: ./.github/actions/build_example_toolchain
-      with:
-        toolchain: go_toolchain
-    - uses: ./.github/actions/build_example_toolchain
-      continue-on-error: true
-      with:
-        toolchain: cxx_zig_toolchain
-    - uses: ./.github/actions/build_example_persistent_worker
-      with:
-        buildbuddyApiKey: ${{ secrets.BUILDBUDDY_API_KEY }}
-    - uses: ./.github/actions/build_example_nativelink
-      with:
-        NATIVELINK_HEADER_RW_KEY_SECRET: ${{ secrets.NATIVELINK_HEADER_RW_KEY_SECRET }}
-    - uses: ./.github/actions/setup_reindeer
-    - uses: ./.github/actions/build_bootstrap
-  windows-build-examples:
-    runs-on: windows-8-core
-    steps:
-      - uses: actions/checkout@v4.1.0
-      - uses: ./.github/actions/setup_windows_env
-      - uses: ./.github/actions/build_release
-      - name: Build example/prelude directory
-        run: |-
-          cd examples/with_prelude
-          & $Env:RUNNER_TEMP/artifacts/buck2 build //... -v 2
-          & $Env:RUNNER_TEMP/artifacts/buck2 test //... -v 2
-      - uses: ./.github/actions/build_example_no_prelude
-      - uses: ./.github/actions/build_example_toolchain
-        with:
-          toolchain: python_toolchain
-      - uses: ./.github/actions/build_example_toolchain
-        with:
-          toolchain: go_toolchain
-      - uses: ./.github/actions/build_example_toolchain
-        continue-on-error: true
-        with:
-          toolchain: cxx_zig_toolchain
-      - uses: ./.github/actions/setup_reindeer
-      - uses: ./.github/actions/build_bootstrap
+        prefix-key: buck2-test
+        cache-on-failure: true
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Run the tests
+      run: python3 test.py --ci --git --test-only
+      shell: bash

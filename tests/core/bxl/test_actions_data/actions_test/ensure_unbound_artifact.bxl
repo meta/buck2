@@ -8,12 +8,11 @@
 
 def _ensure_unbound_artifact_test_impl(ctx):
     actions = ctx.bxl_actions().actions
-    output = actions.declare_output("foo.txt")
+    output = actions.declare_output("foo.txt", has_content_based_path = False)
     ctx.output.ensure(output)
     actions.write(output.as_output(), "contents")
 
 ensure_unbound_artifact_test = bxl_main(
     impl = _ensure_unbound_artifact_test_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )

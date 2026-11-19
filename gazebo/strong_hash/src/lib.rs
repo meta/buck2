@@ -9,7 +9,6 @@
  */
 
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
@@ -75,7 +74,13 @@ macro_rules! impl_strong_hash_for_impl_hash {
     };
 }
 
-impl_strong_hash_for_impl_hash!(bool u8 i8 u16 i16 u32 i32 u64 i64 usize str &str String);
+impl_strong_hash_for_impl_hash!(bool u8 i8 u16 i16 u32 i32 u64 i64 usize str String);
+
+impl<T: StrongHash + ?Sized> StrongHash for &T {
+    fn strong_hash<H: Hasher>(&self, state: &mut H) {
+        (**self).strong_hash(state);
+    }
+}
 
 impl<T: StrongHash> StrongHash for [T] {
     fn strong_hash<H: Hasher>(&self, state: &mut H) {
@@ -86,16 +91,10 @@ impl<T: StrongHash> StrongHash for [T] {
     }
 }
 
-impl<T: StrongHash> StrongHash for &[T] {
-    fn strong_hash<H: Hasher>(&self, state: &mut H) {
-        <[T] as StrongHash>::strong_hash(*self, state);
-    }
-}
-
 impl<T: StrongHash> StrongHash for Vec<T> {
     fn strong_hash<H: Hasher>(&self, state: &mut H) {
         self.len().strong_hash(state);
-        (&self[..]).strong_hash(state);
+        self[..].strong_hash(state);
     }
 }
 
@@ -158,15 +157,10 @@ impl<K: StrongHash, V: StrongHash> StrongHash for BTreeMap<K, V> {
     }
 }
 
-impl<K: StrongHash, V: StrongHash> StrongHash for HashMap<K, V> {
-    fn strong_hash<H: Hasher>(&self, state: &mut H) {
-        self.len().strong_hash(state);
-        for (k, v) in self.iter() {
-            k.strong_hash(state);
-            v.strong_hash(state);
-        }
-    }
-}
+// There is deliberately no `StrongHash` for `HashMap`: its iteration order is
+// nondeterministic, so two equal maps can produce different hashes, violating
+// this trait's equality contract. Use `BTreeMap`, or hash entries in an
+// explicitly canonical order.
 
 impl StrongHash for *const () {
     fn strong_hash<H: Hasher>(&self, state: &mut H) {

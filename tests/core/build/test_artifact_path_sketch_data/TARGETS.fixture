@@ -1,0 +1,38 @@
+load(
+    ":rules.bzl",
+    "content_based_write",
+    "copy_dep",
+    "projected_output",
+    "simple_write",
+    "symlink_rule",
+    "symlinked_dir_rule",
+)
+
+simple_write(name = "simple")
+
+simple_write(name = "base")
+
+copy_dep(
+    name = "with_dep",
+    dep = ":base",
+)
+
+simple_write(name = "shared_base")
+
+copy_dep(
+    name = "dep_a",
+    dep = ":shared_base",
+)
+
+copy_dep(
+    name = "dep_b",
+    dep = ":shared_base",
+)
+
+content_based_write(name = "content_based")
+
+projected_output(name = "projected_target")
+
+symlink_rule(name = "symlink_target")
+
+symlinked_dir_rule(name = "symlinked_dir_target")

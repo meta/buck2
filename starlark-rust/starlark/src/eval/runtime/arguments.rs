@@ -22,23 +22,23 @@ use std::marker::PhantomData;
 use dupe::Clone_;
 use dupe::Dupe_;
 use either::Either;
+use starlark_derive::StarlarkPagable;
 use starlark_map::small_set::SmallSet;
 use starlark_syntax::value_error;
 use thiserror::Error;
 
-use crate::cast::transmute;
-use crate::coerce::Coerce;
-use crate::coerce::coerce;
+use crate as starlark;
 use crate::collections::Hashed;
 use crate::collections::SmallMap;
 use crate::collections::StarlarkHashValue;
 use crate::collections::symbol::symbol::Symbol;
 use crate::eval::ParametersSpec;
 use crate::hint::unlikely;
+use crate::pagable::StarlarkDeserialize;
+use crate::pagable::StarlarkSerialize;
 use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueLike;
 use crate::values::dict::Dict;
 use crate::values::dict::DictRef;
 use crate::values::iter::StarlarkIterator;
@@ -54,8 +54,8 @@ pub(crate) enum FunctionError {
     },
     #[error("Argument `{name}` occurs more than once")]
     RepeatedArg { name: String },
-    #[error("The argument provided for *args is not an identifier")]
-    ArgsValueIsNotString,
+    #[error("The keys of the dictionary provided for **kwargs must be strings")]
+    KwargsKeyIsNotString,
     #[error("The argument provided for *args is not iterable")]
     ArgsArrayIsNotIterable,
     #[error("The argument provided for **kwargs is not a dictionary")]
@@ -67,26 +67,25 @@ pub(crate) enum FunctionError {
 
 impl From<FunctionError> for crate::Error {
     fn from(e: FunctionError) -> Self {
-        crate::Error::new_kind(crate::ErrorKind::Function(anyhow::Error::new(e)))
+        crate::Error::new_runtime_type(
+            crate::RuntimeTypeErrorKind::FunctionCall,
+            anyhow::Error::new(e),
+        )
     }
 }
 
 /// An object accompanying argument name for faster argument resolution.
-pub(crate) trait ArgSymbol: Debug + Coerce<Self> + 'static {
-    fn get_index_from_param_spec<'v, V: ValueLike<'v>>(
-        &self,
-        ps: &ParametersSpec<V>,
-    ) -> Option<usize>;
+pub(crate) trait ArgSymbol:
+    Debug + 'static + StarlarkSerialize + for<'fv> StarlarkDeserialize<'fv>
+{
+    fn get_index_from_param_spec<V>(&self, ps: &ParametersSpec<V>) -> Option<usize>;
 
     fn small_hash(&self) -> StarlarkHashValue;
 }
 
 impl ArgSymbol for Symbol {
-    fn get_index_from_param_spec<'v, V: ValueLike<'v>>(
-        &self,
-        ps: &ParametersSpec<V>,
-    ) -> Option<usize> {
-        ps.names.get(self).map(|i| *i as usize)
+    fn get_index_from_param_spec<V>(&self, ps: &ParametersSpec<V>) -> Option<usize> {
+        ps.names().get(self).map(|i| *i as usize)
     }
 
     fn small_hash(&self) -> StarlarkHashValue {
@@ -95,7 +94,7 @@ impl ArgSymbol for Symbol {
 }
 
 /// `Symbol` resolved to function parameter index.
-#[derive(Debug)]
+#[derive(Debug, StarlarkPagable)]
 pub(crate) struct ResolvedArgName {
     /// Hash of the argument name.
     pub(crate) hash: StarlarkHashValue,
@@ -104,10 +103,7 @@ pub(crate) struct ResolvedArgName {
 }
 
 impl ArgSymbol for ResolvedArgName {
-    fn get_index_from_param_spec<'v, V: ValueLike<'v>>(
-        &self,
-        _ps: &ParametersSpec<V>,
-    ) -> Option<usize> {
+    fn get_index_from_param_spec<V>(&self, _ps: &ParametersSpec<V>) -> Option<usize> {
         self.param_index.map(|i| i as usize)
     }
 
@@ -115,8 +111,6 @@ impl ArgSymbol for ResolvedArgName {
         self.hash
     }
 }
-
-unsafe impl Coerce<ResolvedArgName> for ResolvedArgName {}
 
 #[derive(Debug, Clone_, Dupe_)]
 pub(crate) struct ArgNames<'a, 'v, S: ArgSymbol> {
@@ -294,7 +288,7 @@ impl<'v, 'a> Arguments<'v, 'a> {
                 if self.0.names().names().is_empty() {
                     match kwargs.downcast_ref_key_string() {
                         Some(kwargs) => Ok(kwargs.clone()),
-                        None => Err(FunctionError::ArgsValueIsNotString.into()),
+                        None => Err(FunctionError::KwargsKeyIsNotString.into()),
                     }
                 } else {
                     // We have to insert the names before the kwargs since the iteration order is observable
@@ -342,13 +336,13 @@ impl<'v, 'a> Arguments<'v, 'a> {
     ///
     /// This operation fails if named argument names are not unique.
     pub(crate) fn names(&self) -> crate::Result<Dict<'v>> {
-        Ok(Dict::new(coerce(self.names_map()?)))
+        Ok(Dict::from_string_keyed(self.names_map()?))
     }
 
     /// Unpack all positional parameters into an iterator.
     pub fn positions<'b>(
         &'b self,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> crate::Result<impl Iterator<Item = Value<'v>> + 'b> {
         let tail = match self.0.args {
             None => Either::Left(iter::empty()),
@@ -376,7 +370,7 @@ impl<'v, 'a> Arguments<'v, 'a> {
     #[inline(always)]
     pub(crate) fn unpack_kwargs_key_as_value(k: Value<'v>) -> crate::Result<StringValue<'v>> {
         match StringValue::new(k) {
-            None => Err(FunctionError::ArgsValueIsNotString.into()),
+            None => Err(FunctionError::KwargsKeyIsNotString.into()),
             Some(k) => Ok(k),
         }
     }
@@ -389,7 +383,7 @@ impl<'v, 'a> Arguments<'v, 'a> {
 
     /// Produce [`Err`] if there are any positional arguments.
     #[inline(always)]
-    pub fn no_positional_args(&self, heap: &'v Heap) -> crate::Result<()> {
+    pub fn no_positional_args(&self, heap: Heap<'v>) -> crate::Result<()> {
         let [] = self.positional(heap)?;
         Ok(())
     }
@@ -429,10 +423,7 @@ impl<'v, 'a> Arguments<'v, 'a> {
     /// Collect exactly `N` positional arguments from the [`Arguments`], failing if there are too many/few
     /// arguments. Ignores named arguments.
     #[inline(always)]
-    pub(crate) fn positional<const N: usize>(
-        &self,
-        heap: &'v Heap,
-    ) -> crate::Result<[Value<'v>; N]> {
+    pub fn positional<const N: usize>(&self, heap: Heap<'v>) -> crate::Result<[Value<'v>; N]> {
         let (positional, []) = self.optional::<N, 0>(heap)?;
         Ok(positional)
     }
@@ -443,13 +434,13 @@ impl<'v, 'a> Arguments<'v, 'a> {
     #[inline(always)]
     pub(crate) fn optional<const REQUIRED: usize, const OPTIONAL: usize>(
         &self,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> crate::Result<([Value<'v>; REQUIRED], [Option<Value<'v>>; OPTIONAL])> {
         #[cold]
         #[inline(never)]
         fn rare<'v, const REQUIRED: usize, const OPTIONAL: usize>(
             x: &Arguments<'v, '_>,
-            heap: &'v Heap,
+            heap: Heap<'v>,
         ) -> crate::Result<([Value<'v>; REQUIRED], [Option<Value<'v>>; OPTIONAL])> {
             // Very sad that we allocate into a vector, but I expect calling into a small positional argument
             // with a *args is very rare.
@@ -492,7 +483,7 @@ impl<'v, 'a> Arguments<'v, 'a> {
     /// Collect 1 positional arguments from the [`Arguments`], failing if there are too many/few
     /// arguments. Ignores named arguments.
     #[inline(always)]
-    pub fn positional1(&self, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn positional1(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         // Could be implemented more directly, let's see if profiling shows it up
         let [x] = self.positional(heap)?;
         Ok(x)
@@ -501,18 +492,10 @@ impl<'v, 'a> Arguments<'v, 'a> {
     /// Collect up to 1 optional arguments from the [`Arguments`], failing if there are too many
     /// arguments. Ignores named arguments.
     #[inline(always)]
-    pub(crate) fn optional1(&self, heap: &'v Heap) -> crate::Result<Option<Value<'v>>> {
+    pub(crate) fn optional1(&self, heap: Heap<'v>) -> crate::Result<Option<Value<'v>>> {
         // Could be implemented more directly, let's see if profiling shows it up
         let ([], [x]) = self.optional(heap)?;
         Ok(x)
-    }
-}
-
-impl<'a> Arguments<'static, 'a> {
-    /// Convert `Arguments` with `FrozenValue` (because no other values can have `'v` lifetime)
-    /// to arbitrary `'v` lifetime.
-    pub(crate) fn frozen_to_v<'v>(&self) -> &Arguments<'v, 'a> {
-        unsafe { transmute!(&Arguments, &Arguments, self) }
     }
 }
 
@@ -520,136 +503,147 @@ impl<'a> Arguments<'static, 'a> {
 mod tests {
     use super::*;
     use crate::const_frozen_string;
-    use crate::values::StringValueLike;
+    use crate::values::list::AllocList;
+
+    #[test]
+    fn function_errors_are_runtime_type_errors() {
+        let error: crate::Error = FunctionError::WrongNumberOfArgs {
+            min: 1,
+            max: 1,
+            got: 2,
+        }
+        .into();
+
+        assert!(matches!(
+            error.kind(),
+            crate::ErrorKind::RuntimeType(crate::RuntimeTypeErrorKind::FunctionCall, _)
+        ));
+    }
 
     #[test]
     fn test_parameter_unpack() {
-        let heap = Heap::new();
-        fn f<'v, F: Fn(&Arguments<'v, '_>), const N: usize>(heap: &'v Heap, op: F) {
-            for i in 0..=N {
-                let mut p = Arguments::default();
-                let pos = (0..i)
-                    .map(|x| Value::testing_new_int(x as i32))
-                    .collect::<Vec<_>>();
-                let args = (i..N)
-                    .map(|x| Value::testing_new_int(x as i32))
-                    .collect::<Vec<_>>();
-                let empty_args = args.is_empty();
-                p.0.pos = &pos;
-                p.0.args = Some(heap.alloc(args));
-                op(&p);
-                if empty_args {
-                    p.0.args = None;
+        Heap::temp(|heap| {
+            fn f<'v, F: Fn(&Arguments<'v, '_>), const N: usize>(heap: Heap<'v>, op: F) {
+                for i in 0..=N {
+                    let mut p = Arguments::default();
+                    let pos = (0..i)
+                        .map(|x| Value::testing_new_int(x as i32))
+                        .collect::<Vec<_>>();
+                    let args = (i..N)
+                        .map(|x| Value::testing_new_int(x as i32))
+                        .collect::<Vec<_>>();
+                    let empty_args = args.is_empty();
+                    p.0.pos = &pos;
+                    p.0.args = Some(heap.alloc(AllocList(args)).to_value());
                     op(&p);
+                    if empty_args {
+                        p.0.args = None;
+                        op(&p);
+                    }
+                    assert_eq!(p.len().unwrap(), N);
                 }
-                assert_eq!(p.len().unwrap(), N);
             }
-        }
 
-        f::<_, 0>(&heap, |p| {
-            assert_eq!(&p.positional::<0>(&heap).unwrap(), &[]);
-            assert!(&p.positional::<1>(&heap).is_err());
-            assert!(&p.positional::<2>(&heap).is_err());
-            assert_eq!(&p.optional::<0, 1>(&heap).unwrap(), &([], [None]));
-            assert!(&p.optional::<1, 1>(&heap).is_err());
-            assert_eq!(&p.optional::<0, 2>(&heap).unwrap(), &([], [None, None]));
-        });
-        f::<_, 1>(&heap, |p| {
-            assert!(&p.positional::<0>(&heap).is_err());
-            assert_eq!(
-                &p.positional::<1>(&heap).unwrap(),
-                &[Value::testing_new_int(0)]
-            );
-            assert!(&p.positional::<2>(&heap).is_err());
-            assert_eq!(
-                &p.optional::<0, 1>(&heap).unwrap(),
-                &([], [Some(Value::testing_new_int(0))])
-            );
-            assert_eq!(
-                &p.optional::<1, 1>(&heap).unwrap(),
-                &([Value::testing_new_int(0)], [None])
-            );
-            assert_eq!(
-                &p.optional::<0, 2>(&heap).unwrap(),
-                &([], [Some(Value::testing_new_int(0)), None])
-            );
-        });
-        f::<_, 2>(&heap, |p| {
-            assert!(&p.positional::<0>(&heap).is_err());
-            assert!(&p.positional::<1>(&heap).is_err());
-            assert_eq!(
-                &p.positional::<2>(&heap).unwrap(),
-                &[Value::testing_new_int(0), Value::testing_new_int(1)]
-            );
-            assert!(p.optional::<0, 1>(&heap).is_err());
-            assert_eq!(
-                &p.optional::<1, 1>(&heap).unwrap(),
-                &(
-                    [Value::testing_new_int(0)],
-                    [Some(Value::testing_new_int(1))]
-                )
-            );
-            assert_eq!(
-                &p.optional::<0, 2>(&heap).unwrap(),
-                &(
-                    [],
-                    [
-                        Some(Value::testing_new_int(0)),
-                        Some(Value::testing_new_int(1))
-                    ]
-                )
-            );
-        });
-        f::<_, 3>(&heap, |p| {
-            assert!(&p.positional::<0>(&heap).is_err());
-            assert!(&p.positional::<1>(&heap).is_err());
-            assert!(&p.positional::<2>(&heap).is_err());
-            assert!(p.optional::<0, 1>(&heap).is_err());
-            assert!(p.optional::<1, 1>(&heap).is_err());
-            assert!(p.optional::<0, 2>(&heap).is_err());
+            f::<_, 0>(heap, |p| {
+                assert_eq!(&p.positional::<0>(heap).unwrap(), &[]);
+                assert!(&p.positional::<1>(heap).is_err());
+                assert!(&p.positional::<2>(heap).is_err());
+                assert_eq!(&p.optional::<0, 1>(heap).unwrap(), &([], [None]));
+                assert!(&p.optional::<1, 1>(heap).is_err());
+                assert_eq!(&p.optional::<0, 2>(heap).unwrap(), &([], [None, None]));
+            });
+            f::<_, 1>(heap, |p| {
+                assert!(&p.positional::<0>(heap).is_err());
+                assert_eq!(
+                    &p.positional::<1>(heap).unwrap(),
+                    &[Value::testing_new_int(0)]
+                );
+                assert!(&p.positional::<2>(heap).is_err());
+                assert_eq!(
+                    &p.optional::<0, 1>(heap).unwrap(),
+                    &([], [Some(Value::testing_new_int(0))])
+                );
+                assert_eq!(
+                    &p.optional::<1, 1>(heap).unwrap(),
+                    &([Value::testing_new_int(0)], [None])
+                );
+                assert_eq!(
+                    &p.optional::<0, 2>(heap).unwrap(),
+                    &([], [Some(Value::testing_new_int(0)), None])
+                );
+            });
+            f::<_, 2>(heap, |p| {
+                assert!(&p.positional::<0>(heap).is_err());
+                assert!(&p.positional::<1>(heap).is_err());
+                assert_eq!(
+                    &p.positional::<2>(heap).unwrap(),
+                    &[Value::testing_new_int(0), Value::testing_new_int(1)]
+                );
+                assert!(p.optional::<0, 1>(heap).is_err());
+                assert_eq!(
+                    &p.optional::<1, 1>(heap).unwrap(),
+                    &(
+                        [Value::testing_new_int(0)],
+                        [Some(Value::testing_new_int(1))]
+                    )
+                );
+                assert_eq!(
+                    &p.optional::<0, 2>(heap).unwrap(),
+                    &(
+                        [],
+                        [
+                            Some(Value::testing_new_int(0)),
+                            Some(Value::testing_new_int(1))
+                        ]
+                    )
+                );
+            });
+            f::<_, 3>(heap, |p| {
+                assert!(&p.positional::<0>(heap).is_err());
+                assert!(&p.positional::<1>(heap).is_err());
+                assert!(&p.positional::<2>(heap).is_err());
+                assert!(p.optional::<0, 1>(heap).is_err());
+                assert!(p.optional::<1, 1>(heap).is_err());
+                assert!(p.optional::<0, 2>(heap).is_err());
+            });
         });
     }
 
     #[test]
     fn test_parameter_no_named() {
-        let heap = Heap::new();
-        let mut p = Arguments::default();
-        assert!(p.no_named_args().is_ok());
-        assert_eq!(p.len().unwrap(), 0);
+        Heap::temp(|heap| {
+            let mut p = Arguments::default();
+            assert!(p.no_named_args().is_ok());
+            assert_eq!(p.len().unwrap(), 0);
 
-        // Test lots of forms of kwargs work properly
-        p.0.kwargs = Some(Value::new_none());
-        assert!(p.no_named_args().is_err());
-        p.0.kwargs = Some(heap.alloc(Dict::default()));
-        assert!(p.no_named_args().is_ok());
-        assert_eq!(p.len().unwrap(), 0);
-        let mut sm = SmallMap::new();
-        sm.insert_hashed(heap.alloc_str("test").get_hashed(), Value::new_none());
-        p.0.kwargs = Some(heap.alloc(Dict::new(coerce(sm))));
-        assert!(p.no_named_args().is_err());
-        assert_eq!(p.len().unwrap(), 1);
+            // Test lots of forms of kwargs work properly
+            p.0.kwargs = Some(Value::new_none());
+            assert!(p.no_named_args().is_err());
+            p.0.kwargs = Some(heap.alloc(Dict::default()).to_value());
+            assert!(p.no_named_args().is_ok());
+            assert_eq!(p.len().unwrap(), 0);
+            let mut sm = SmallMap::new();
+            sm.insert_hashed(heap.alloc("test").get_hashed_value(), Value::new_none());
+            p.0.kwargs = Some(heap.alloc(Dict::new(sm)).to_value());
+            assert!(p.no_named_args().is_err());
+            assert_eq!(p.len().unwrap(), 1);
 
-        // Test named arguments work properly
-        p.0.kwargs = None;
-        let named = [Value::new_none()];
-        p.0.named = &named;
-        let names = [(Symbol::new("test"), heap.alloc_str("test"))];
-        p.0.names = ArgNames::new_check_unique(&names).unwrap();
-        assert!(p.no_named_args().is_err());
-        assert_eq!(p.len().unwrap(), 1);
+            // Test named arguments work properly
+            p.0.kwargs = None;
+            let named = [Value::new_none()];
+            p.0.named = &named;
+            let names = [(Symbol::new("test"), heap.alloc("test"))];
+            p.0.names = ArgNames::new_check_unique(&names).unwrap();
+            assert!(p.no_named_args().is_err());
+            assert_eq!(p.len().unwrap(), 1);
+        });
     }
 
     #[test]
     fn test_names_map_repeated_name_in_arg_names() {
         let names = vec![
-            (
-                Symbol::new("a"),
-                const_frozen_string!("a").to_string_value(),
-            ),
-            (
-                Symbol::new("a"),
-                const_frozen_string!("a").to_string_value(),
-            ),
+            (Symbol::new("a"), const_frozen_string!("a").at()),
+            (Symbol::new("a"), const_frozen_string!("a").at()),
         ];
         assert!(ArgNames::new_check_unique(&names).is_err());
     }

@@ -1,5 +1,7 @@
 load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
 load("@fbcode_macros//build_defs:python_library.bzl", "python_library")
+load("@fbcode_macros//build_defs:python_unittest.bzl", "python_unittest")
+load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_access_utils")
 
 oncall("build_infra")
 
@@ -12,6 +14,7 @@ python_library(
     name = "utils",
     srcs = ["helper/utils.py"],
     deps = [
+        "fbsource//third-party/pypi/psutil:psutil",
         "//buck2/tests/e2e_util/api:api",
     ],
 )
@@ -19,6 +22,20 @@ python_library(
 python_library(
     name = "golden",
     srcs = ["helper/golden.py"],
+)
+
+python_library(
+    name = "http_server",
+    srcs = ["helper/http_server.py"],
+    deps = [
+        "fbsource//third-party/pypi/aiohttp:aiohttp",
+    ],
+)
+
+python_library(
+    name = "http_archive",
+    srcs = ["helper/http_archive.py"],
+    deps = [":http_server"],
 )
 
 python_library(
@@ -32,17 +49,55 @@ python_library(
     ],
     deps = [
         "fbsource//third-party/pypi/decorator:decorator",
-        "fbsource//third-party/pypi/pytest:pytest",
         "//buck2/tests/e2e_util/api:api",
     ],
 )
 
-export_file(
-    name = "conftest.py",
-    src = "conftest.py",
-    visibility = ["PUBLIC"],
+python_unittest(
+    name = "test_buck_workspace",
+    srcs = ["tests/test_buck_workspace.py"],
+    network_access = network_access_utils.none(),
+    deps = [
+        "//buck2/tests/e2e_util:utilities",
+        "//buck2/tests/e2e_util/api:api",
+    ],
 )
 
 export_file(name = "test_bxl_template.py")
 
 export_file(name = "test_bxl_check_dependencies_template.py")
+
+# Type checking target for Python scripts
+python_library(
+    name = "scripts-typing",
+    srcs = [
+        "test_bxl_check_dependencies_template.py",
+        "test_bxl_template.py",
+    ],
+    typing = True,
+    deps = [
+        "//buck2/tests/e2e_util:utilities",
+        "//buck2/tests/e2e_util/api:api",
+    ],
+)
+
+python_unittest(
+    name = "golden_test",
+    srcs = ["tests/test_golden.py"],
+    network_access = network_access_utils.none(),
+    deps = [":golden"],
+)
+
+python_unittest(
+    name = "utils_test",
+    srcs = ["tests/test_utils.py"],
+    network_access = network_access_utils.none(),
+    deps = [":utils"],
+)
+
+python_unittest(
+    name = "buck_result_test",
+    srcs = ["tests/test_buck_result.py"],
+    network_access = network_access_utils.none(),
+    deps = ["//buck2/tests/e2e_util/api:api"],
+)

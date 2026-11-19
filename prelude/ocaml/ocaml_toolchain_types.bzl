@@ -49,9 +49,11 @@ OCamlToolchainInfo = provider(
 )
 
 # Stores "platform"/flavor name used to resolve *platform_* arguments
-OCamlPlatformInfo = provider(fields = {
-    "name": provider_field(typing.Any, default = None),
-})
+OCamlPlatformInfo = provider(
+    fields = {
+        "name": provider_field(typing.Any, default = None),
+    }
+)
 
 # A list of `OCamlLibraryInfo`s.
 OCamlLinkInfo = provider(
@@ -123,10 +125,9 @@ OtherOutputsInfo = provider(
 
 def merge_other_outputs_info(ctx: AnalysisContext, value: dict[str, list[Artifact]], infos: list[OtherOutputsInfo]) -> OtherOutputsInfo:
     return OtherOutputsInfo(
-        info =
-            ctx.actions.tset(
-                OtherOutputsTSet,
-                value = value,
-                children = [p.info for p in infos],
-            ),
+        info = ctx.actions.tset(
+            OtherOutputsTSet,
+            value = value,
+            children = [p.info for p in infos],
+        ),
     )

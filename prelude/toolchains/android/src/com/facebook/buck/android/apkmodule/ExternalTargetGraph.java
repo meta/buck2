@@ -10,13 +10,17 @@
 
 package com.facebook.buck.android.apkmodule;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
+import java.util.Objects;
 import java.util.Set;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A "target graph" that is constructed based on an external graph, that can then be used to create
  * an {@link APKModuleGraph}
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ExternalTargetGraph implements TargetGraphInterface<ExternalTargetGraph.ExternalBuildTarget> {
   private final ImmutableMap<ExternalBuildTarget, ExternalTargetNode> map;
   private final ImmutableMap<String, ExternalBuildTarget> nameToBuildTargetMap;
@@ -28,6 +32,7 @@ class ExternalTargetGraph implements TargetGraphInterface<ExternalTargetGraph.Ex
     this.nameToBuildTargetMap = nameToBuildTargetMap;
   }
 
+  @Nullable
   ExternalBuildTarget getBuildTarget(String buildTargetName) {
     return nameToBuildTargetMap.get(buildTargetName);
   }
@@ -39,7 +44,7 @@ class ExternalTargetGraph implements TargetGraphInterface<ExternalTargetGraph.Ex
 
   @Override
   public HasBuildTargetAndBuildDeps<ExternalBuildTarget> get(ExternalBuildTarget buildTarget) {
-    return map.get(buildTarget);
+    return Objects.requireNonNull(map.get(buildTarget));
   }
 
   /** A node in an external target graph. */

@@ -12,10 +12,7 @@ load("@prelude//utils:utils.bzl", "flatten")
 def _check_targets_batched(ctx: bxl.Context, checked_targets: list[Label]) -> typing.Any:
     build_result = ctx.build(checked_targets)
     output = ctx.output.ensure_multiple(build_result)
-    return {
-        label.raw_target(): [artifact.rel_path() for artifact in artifacts]
-        for label, artifacts in output.items()
-    }
+    return {label.raw_target(): [artifact.rel_path() for artifact in artifacts] for label, artifacts in output.items()}
 
 def _is_python_target(rule_type: str) -> bool:
     for kind in BUCK_PYTHON_RULE_KINDS:
@@ -34,15 +31,13 @@ def _should_type_check_configured(configured_target: bxl.ConfiguredTargetNode, a
         # NOTE(grievejia): This is NOT the same as checking `srcs` on the unconfigured target, as
         # empty `srcs` on unconfigured target does not necessarily imply empty `srcs` on configured
         # target (due to, e.g. `select()`).
-        srcs != None and
-        len(srcs) > 0 and
-        "typecheck" in analysis_result.providers()[DefaultInfo].sub_targets
+        srcs != None and len(srcs) > 0 and "typecheck" in analysis_result.providers()[DefaultInfo].sub_targets
     )
 
-def _filter_unconfigured_targets(targets: bxl.UnconfiguredTargetSet) -> list[bxl.UnconfiguredTargetNode]:
+def _filter_unconfigured_targets(targets: bxl.TargetSet[bxl.UnconfiguredTargetNode]) -> list[bxl.UnconfiguredTargetNode]:
     return [target for target in targets if _should_type_check_unconfigured(target)]
 
-def filter_and_get_typecheck_subtargets(ctx: bxl.Context, targets: bxl.UnconfiguredTargetSet) -> list[Label]:
+def filter_and_get_typecheck_subtargets(ctx: bxl.Context, targets: bxl.TargetSet[bxl.UnconfiguredTargetNode]) -> list[Label]:
     unconfigured_targets = _filter_unconfigured_targets(targets)
     configured_targets = ctx.configured_targets(unconfigured_targets, modifiers = ctx.modifiers)
     analysis_results = ctx.analysis(configured_targets)
@@ -53,7 +48,7 @@ def filter_and_get_typecheck_subtargets(ctx: bxl.Context, targets: bxl.Unconfigu
         if _should_type_check_configured(configured_target, analysis_results[configured_target.label.with_sub_target()])
     ]
 
-def filter_and_get_typecheck_subtargets_keep_going(ctx: bxl.Context, targets: bxl.UnconfiguredTargetSet) -> list[Label]:
+def filter_and_get_typecheck_subtargets_keep_going(ctx: bxl.Context, targets: bxl.TargetSet[bxl.UnconfiguredTargetNode]) -> list[Label]:
     unconfigured_targets = _filter_unconfigured_targets(targets)
 
     configured_targets = []
@@ -73,7 +68,7 @@ def filter_and_get_typecheck_subtargets_keep_going(ctx: bxl.Context, targets: bx
         if _should_type_check_configured(configured_target, analysis_results[configured_target.label.with_sub_target()])
     ]
 
-def check_targets(ctx: bxl.Context, targets: bxl.UnconfiguredTargetSet) -> None:
+def check_targets(ctx: bxl.Context, targets: bxl.TargetSet[bxl.UnconfiguredTargetNode]) -> None:
     if ctx.cli_args.keep_going:
         checked_targets = filter_and_get_typecheck_subtargets_keep_going(ctx, targets)
     else:

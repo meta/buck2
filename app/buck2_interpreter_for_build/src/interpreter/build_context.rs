@@ -17,6 +17,7 @@ use buck2_core::cells::CellResolver;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::package::PackageLabel;
+use buck2_core::pattern::pattern::InferTargetNames;
 use buck2_interpreter::build_context::STARLARK_PATH_FROM_BUILD_CONTEXT;
 use buck2_interpreter::file_type::StarlarkFileType;
 use buck2_interpreter::paths::path::StarlarkPath;
@@ -174,6 +175,11 @@ pub struct BuildContext<'a> {
     /// When true, rule function is no-op.
     pub(crate) ignore_attrs_for_profiling: bool,
 
+    /// Whether to infer a target name when a label pattern does not provide one,
+    /// making `//foo/bar` equivalent to `//foo/bar:bar`. Controlled by the
+    /// `buck2.infer_target_names` buckconfig.
+    pub(crate) infer_target_names: InferTargetNames,
+
     /// Peak allocated bytes limit for starlark.
     pub(crate) starlark_peak_allocated_byte_limit: OnceCell<Option<u64>>,
 }
@@ -186,6 +192,7 @@ impl<'a> BuildContext<'a> {
         host_info: &'a HostInfo,
         additional: PerFileTypeContext,
         ignore_attrs_for_profiling: bool,
+        infer_target_names: InferTargetNames,
     ) -> BuildContext<'a> {
         let buckconfigs = LegacyBuckConfigsForStarlark::new(buckconfigs);
         BuildContext {
@@ -194,6 +201,7 @@ impl<'a> BuildContext<'a> {
             host_info,
             additional,
             ignore_attrs_for_profiling,
+            infer_target_names,
             starlark_peak_allocated_byte_limit: OnceCell::new(),
         }
     }

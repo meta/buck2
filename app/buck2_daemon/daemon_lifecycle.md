@@ -17,23 +17,63 @@ version of buck and may restart buckd to ensure that's the case.
 
 The daemon process is started with the (hidden) `buck daemon` command.
 
-The daemon process has a simple startup. It will first daemonize itself and
-write its pid to a locked file "buckd.pid" in the "daemon directory" (a
-directory in `$HOME/.buck` specific to that repository+output directory). The
-file is locked exclusively by the daemon process until it exits. This means that
-only a single daemon is allowed at a time. It redirects its stdout and stderr to
-files in the daemon directory.
+The daemon process has a simple startup. It redirects its stdout and stderr to
+files in the "daemon directory" (a directory under `$HOME/.buck/buckd` specific
+to that repository+isolation dir), binds the socket for the grpc DaemonApi
+server, and daemonizes itself. It then writes its pid to the "buckd.pid" file
+and the endpoint it is serving on (along with some other information) to the
+"buckd.info" file in the daemon dir, overwriting whatever was there. Once that
+is done, the server is ready to be used.
 
-The daemon then starts up the grpc DaemonApi server. Once that is running, it
-will write the port it is running on (along with some other information) to the
-"buckd.info" file in the daemon dir. Once that is done, the server is ready to
-be used.
+A daemon of its own holds no lock: nothing daemon-side prevents a second
+daemon from starting over the same daemon directory. Exclusivity relies on the
+client-side lifecycle lock described below, plus the periodic self-check in
+point 2 here. A unidaemon additionally holds an exclusive lock on
+`.unidaemon_locks/<key>.alive` from before it writes to its namespace until it
+exits; a second daemon of the namespace cannot acquire it, and clients probe it
+to tell a running daemon from damaged metadata. A unidaemon that exits normally
+removes its namespace directory; `buck2 killall`, and a client that has just
+registered, remove the namespace directories of daemons that have exited, as
+judged by that lock. The lock files themselves stay: unlinking one while a
+daemon of the key waits on it would leave that daemon holding a lock on an
+unlinked file.
+
+With `[buck2] share_daemon = true`, compatible tenants share one daemon whose
+connection information lives under `.unidaemons/<compatibility key>/`, while
+each tenant's own daemon directory holds a proxy that represents it to clients
+of other releases. Tenants retain separate output and cache state.
+
+Sharing is opt-in during initial rollout. The key is read from the root
+buckconfig by the client before it selects a daemon directory, and is part of
+the daemon startup options, so a daemon serves only tenants routed the same
+way. A hostname share (`hostname:<fraction>`) enables sharing on a stable
+subset of hosts; hosts that cannot run a shared daemon stay unshared. Core E2E
+tests pin `share_daemon = false` in their external config unless they opt into
+sharing. Because the namespace is keyed by the compatibility key, a client
+never connects to a shared daemon of another release: it evicts its tenant
+through the proxy and starts or joins a daemon for its own key. Unshared
+daemons retain restart recovery.
+
+Tenant disk ownership uses a persistent OS file lock independent of daemon
+routing. A conflicting daemon cannot initialize the same tenant output and cache
+paths until the owner releases them. `buck2 clean` evicts the selected shared
+tenant and waits for cancellation and cleanup before deletion; sibling tenants and the
+daemon-global forkserver state remain available. Lock files are outside the
+disposable tenant directories. A shared tenant's own daemon directory is fenced
+by its lifecycle lock as before: a client holds it while it replaces the
+directory's previous owner, and the tenant's proxy publishes its connection
+files under it, refusing a directory that a live process of another release
+still owns.
+
 
 There are 3 ways that the buckd process will shutdown:
 
 1. The grpc api includes a `kill()` call that will shutdown buckd.
-2. buckd will periodically (every 100s or so) check the "buckd.pid" and
-   "buckd.info" files to ensure that they still match that buckd process.
+2. buckd will periodically (every 60s by default) check that the "buckd.pid"
+   file still contains its own pid and that the project root is still
+   accessible, and exits if not. This is how a daemon that has been replaced,
+   or whose daemon directory was deleted, goes away — up to one check interval
+   late, so a replaced daemon can briefly coexist with its replacement.
 3. If buckd hits a rust `panic()` the buckd process will exit
 
 # client connection and buckd startup
@@ -50,17 +90,17 @@ needs to (re)start the buck daemon. Otherwise, the client can continue as it now
 has made a connection with a correctly versioned buckd.
 
 When the client is killing or starting the buckd process, it will grab an
-exclusive lock on the "lifecycle.lock" file in the daemon directory to ensure
+exclusive lock on the "buckd.lifecycle" file in the daemon directory to ensure
 that multiple clients aren't racing with each other.
 
 To start/restart the buckd process, the client does:
 
-1. lock the "lifecycle.lock" file
+1. lock the "buckd.lifecycle" file
 2. send a kill command to the existing buckd
 3. ensure the buckd process has exited (based on pid)
 4. run a `buck daemon` command to start buckd
 5. wait for the daemon to start up and the grpc server to be ready
-6. release the "lifecycle.lock" file
+6. release the "buckd.lifecycle" file
 
 After that, it will repeat the connection steps (including verifying the version
 after connecting).
@@ -82,10 +122,20 @@ operation that changes the buckversion.
 
 We have a couple of guarantees here.
 
-1. Only a single buckd is running at a time
-2. Only a single client is killing/starting a buckd at a time
+1. Only a single client is killing/starting a buckd for a given daemon
+   directory at a time
+2. A buckd that is no longer the one named by its daemon directory exits within
+   one self-check interval
 3. A client only uses a buckd connection after making sure it has a compatible
    version
+
+Note what is **not** guaranteed: that only a single buckd is running at a time.
+A replaced daemon lingers for up to one self-check interval, and the daemon
+directory lives under `$HOME`, so environments that give clients different
+`$HOME`s (containers, sandboxes) can start daemons that never see each other
+while sharing the same buck-out. During such overlap the daemons contend on
+shared state in buck-out (materializer/dep-file sqlite databases, the
+forkserver's miniperf binary).
 
 The main way that we could run into issues would be if there are multiple
 clients that are racing and they want different versions of buck. In that case,

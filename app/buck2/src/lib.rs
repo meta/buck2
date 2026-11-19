@@ -8,14 +8,12 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(used_with_arg)]
-
 use std::thread;
 
 use buck2_client::commands::build::BuildCommand;
 use buck2_client::commands::bxl::BxlCommand;
 use buck2_client::commands::clean::CleanCommand;
+use buck2_client::commands::cleanall::CleanallCommand;
 use buck2_client::commands::ctargets::ConfiguredTargetsCommand;
 use buck2_client::commands::expand_external_cell::ExpandExternalCellsCommand;
 use buck2_client::commands::explain::ExplainCommand;
@@ -36,12 +34,20 @@ use buck2_client::commands::status::StatusCommand;
 use buck2_client::commands::subscribe::SubscribeCommand;
 use buck2_client::commands::targets::TargetsCommand;
 use buck2_client::commands::test::TestCommand;
+use buck2_client_ctx::agent_context::AgentContext;
+use buck2_client_ctx::agent_context::AgentContextEntries;
+use buck2_client_ctx::agent_context::AgentContextEntry;
+use buck2_client_ctx::agent_context::parse_agent_context_entries;
+use buck2_client_ctx::agent_invocation_info::AgentInvocationInfo;
 use buck2_client_ctx::argfiles::expand_argv;
 use buck2_client_ctx::client_ctx::BuckSubcommand;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::client_metadata::ClientMetadata;
+use buck2_client_ctx::client_metadata::add_legacy_client_id_if_missing;
+use buck2_client_ctx::client_metadata::legacy_client_id_from_config_flags;
 use buck2_client_ctx::client_metadata::parse_client_metadata;
 use buck2_client_ctx::common::BuckArgMatches;
+use buck2_client_ctx::exit_result::ClientIoError;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::immediate_config::ImmediateConfigContext;
 use buck2_client_ctx::version::BuckVersion;
@@ -51,9 +57,14 @@ use buck2_cmd_log_client::LogCommand;
 use buck2_cmd_rage_client::rage::RageCommand;
 use buck2_cmd_starlark_client::StarlarkCommand;
 use buck2_common::argv::Argv;
+use buck2_common::argv::ConfigFlagValue;
+use buck2_common::argv::parse_config_flags;
+use buck2_common::daemon_routing::DaemonRouting;
+use buck2_common::invocation_paths::RESERVED_BUCK_OUT_PREFIX;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
 use buck2_common::invocation_roots::get_invocation_paths_result;
 use buck2_core::buck2_env;
+use buck2_core::buck2_env_name;
 use buck2_data::ErrorReport;
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
@@ -62,6 +73,8 @@ use buck2_error::buck2_error;
 use buck2_error::conversion::clap::buck_error_clap_parser;
 use buck2_event_observer::verbosity::Verbosity;
 use buck2_fs::paths::file_name::FileNameBuf;
+use buck2_settings::args::SettingOverride;
+use buck2_settings::args::parse_setting_flag_arg;
 use buck2_util::threads::thread_spawn_scoped;
 use clap::CommandFactory;
 use clap::FromArgMatches;
@@ -77,8 +90,16 @@ pub mod panic;
 pub mod process_context;
 
 fn parse_isolation_dir(s: &str) -> buck2_error::Result<FileNameBuf> {
+    if s.starts_with(RESERVED_BUCK_OUT_PREFIX) {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Isolation dir names starting with `{RESERVED_BUCK_OUT_PREFIX}` are reserved for buck2's internal use"
+        ));
+    }
     FileNameBuf::try_from(s.to_owned()).buck_error_context("isolation dir must be a directory name")
 }
+
+const AGENT_CONTEXT_ARG_ID: &str = "agent_context";
 
 /// Options of `buck2` command, before subcommand.
 #[derive(Clone, Debug, clap::Parser)]
@@ -115,7 +136,8 @@ struct BeforeSubcommandOptions {
         long = "verbose",
         default_value = "1",
         global = true,
-        value_parser= buck_error_clap_parser(Verbosity::try_from_cli)
+        env = buck2_env_name!("BUCK_VERBOSE"),
+        value_parser = buck_error_clap_parser(Verbosity::try_from_cli)
     )]
     verbosity: Verbosity,
 
@@ -128,6 +150,30 @@ struct BeforeSubcommandOptions {
     /// datasets.
     #[clap(long, global = true, value_parser = buck_error_clap_parser(parse_client_metadata))]
     client_metadata: Vec<ClientMetadata>,
+
+    /// Override a Buck setting using `section.key=value`.
+    #[clap(
+        long = "setting",
+        value_name = "SECTION.KEY=VALUE",
+        global = true,
+        num_args = 1,
+        value_parser = buck_error_clap_parser(parse_setting_flag_arg)
+    )]
+    settings: Vec<SettingOverride>,
+
+    /// Agent context key=value pairs for telemetry.
+    /// Used by AI agents to pass structured metadata. Schema is defined via buckconfig.
+    /// Examples:
+    ///   --agent-context intent=fix,attempt=2,prior_error=missing_target
+    ///   --agent-context intent=build --agent-context attempt=1
+    ///   --agent-context "reason=fix the build, then test"
+    #[clap(
+        id = AGENT_CONTEXT_ARG_ID,
+        long = "agent-context",
+        value_name = "AGENT_CONTEXT",
+        value_parser = buck_error_clap_parser(parse_agent_context_entries)
+    )]
+    agent_context: Vec<AgentContextEntries>,
 
     /// Do not launch a daemon process, run buck server in client process.
     ///
@@ -162,7 +208,7 @@ fn help() -> &'static str {
 #[clap(
     name = "buck2",
     about(Some(help())),
-    version(BuckVersion::get_version()),
+    version(BuckVersion::get_version_for_clap()),
     styles = cli_style::get_styles(),
 )]
 pub(crate) struct Opt {
@@ -173,6 +219,36 @@ pub(crate) struct Opt {
 }
 
 impl Opt {
+    fn clap_command() -> clap::Command {
+        // Clap replaces a global argument's entire value list at subcommand boundaries.
+        // Local registrations preserve independently supplied entries for from_clap_matches.
+        let command = Self::command();
+        let agent_context = command
+            .get_arguments()
+            .find(|arg| arg.get_id() == AGENT_CONTEXT_ARG_ID)
+            .expect("agent_context is declared in BeforeSubcommandOptions")
+            .clone();
+
+        fn add_to_subcommands(command: clap::Command, arg: &clap::Arg) -> clap::Command {
+            command
+                .mut_subcommands(|subcommand| add_to_subcommands(subcommand.arg(arg.clone()), arg))
+        }
+
+        add_to_subcommands(command, &agent_context)
+    }
+
+    fn from_clap_matches(mut matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        let mut opt = Self::from_arg_matches(matches)?;
+        while let Some((_, subcommand)) = matches.subcommand() {
+            if let Some(entries) = subcommand.get_many::<AgentContextEntries>(AGENT_CONTEXT_ARG_ID)
+            {
+                opt.common_opts.agent_context.extend(entries.cloned());
+            }
+            matches = subcommand;
+        }
+        Ok(opt)
+    }
+
     pub(crate) fn exec(
         self,
         process: ProcessContext<'_>,
@@ -201,6 +277,7 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
         process.shared.args.to_vec(),
         &mut immediate_config,
         &cwd,
+        &process.shared.stdin_argfile,
     )
     .buck_error_context("Error expanding argsfiles")?;
 
@@ -209,12 +286,14 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
         expanded_argv: expanded_args,
     };
 
-    let clap = Opt::command();
+    let clap = Opt::clap_command();
     let matches = match clap.try_get_matches_from(argv.expanded_argv.args()) {
         Ok(matches) => matches,
         Err(e) => {
-            // Print colorized output, ExitResult::report will not colorize
-            e.print()?;
+            // Print colorized output, ExitResult::report will not colorize.
+            // `ClientIoError` so that a closed stdout exits quietly instead of as a buck2 failure,
+            // e.g. `buck2 build --help | head`.
+            e.print().map_err(ClientIoError::from)?;
             return if e.exit_code() == 0 {
                 ExitResult::success()
             } else {
@@ -227,6 +306,23 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
         }
     };
     let mut opt = ParsedArgv::parse(argv, matches)?;
+    let setting_arg_layers = opt
+        .opt
+        .common_opts
+        .settings
+        .drain(..)
+        .map(SettingOverride::into_table)
+        .collect();
+    immediate_config.set_setting_arg_layers(setting_arg_layers)?;
+
+    let legacy_client_id = legacy_client_id_from_config_flags(
+        parse_config_flags(&opt.argv.expanded_argv)
+            .iter()
+            .filter_map(|(flag, _)| match flag {
+                ConfigFlagValue::ConfigFlag(value) => Some(value.as_str()),
+                _ => None,
+            }),
+    );
 
     let client_metadata = ClientMetadata::from_env()?;
     if !client_metadata.is_empty() {
@@ -236,6 +332,24 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
             .client_metadata
             .splice(0..0, client_metadata);
     }
+
+    let agent_env_metadata = AgentContextEntry::from_env()?;
+    if !agent_env_metadata.is_empty() {
+        opt.opt
+            .common_opts
+            .agent_context
+            .insert(0, AgentContextEntries(agent_env_metadata));
+    }
+
+    // Forward the legacy `-c client.id=` value into the id list when it isn't
+    // already there, so every client id flows through `client_metadata` and
+    // the flattened `metadata["client"]` copy stays redundant. This must run
+    // before the fallback below: a `-c client.id=` id is a real client id and
+    // must suppress `terminal-fallback`/`vscode-fallback`.
+    add_legacy_client_id_if_missing(
+        &mut opt.opt.common_opts.client_metadata,
+        legacy_client_id.as_deref(),
+    );
 
     // If --client-metadata=? was not set and from_env did not find "id", then
     // if we are running in a terminal, we add id=terminal-fallback to
@@ -272,6 +386,7 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
             });
         }
     }
+
     opt.exec(process, &immediate_config)
 }
 
@@ -283,7 +398,7 @@ struct ParsedArgv {
 
 impl ParsedArgv {
     fn parse(argv: Argv, matches: clap::ArgMatches) -> buck2_error::Result<Self> {
-        let opt: Opt = Opt::from_arg_matches(&matches)?;
+        let opt = Opt::from_clap_matches(&matches)?;
 
         if opt.common_opts.help_wrapper {
             return Err(buck2_error!(
@@ -295,7 +410,7 @@ impl ParsedArgv {
         match &opt.cmd {
             #[cfg(not(client_only))]
             CommandKind::Daemon(..) | CommandKind::Forkserver(..) => {}
-            CommandKind::Clean(..) => {}
+            CommandKind::Clean(..) | CommandKind::Cleanall(..) => {}
             _ => {
                 check_user_allowed()?;
             }
@@ -312,7 +427,7 @@ impl ParsedArgv {
         let expanded_args = self.argv.expanded_argv.clone();
         self.opt.exec(
             process,
-            &immediate_config,
+            immediate_config,
             BuckArgMatches::from_clap(&self.matches, &expanded_args),
             self.argv,
         )
@@ -370,6 +485,7 @@ pub(crate) enum CommandKind {
     #[clap(hide(true))] // @oss-enable
     Rage(RageCommand),
     Clean(CleanCommand),
+    Cleanall(CleanallCommand),
     #[clap(subcommand)]
     Log(LogCommand),
     Lsp(LspCommand),
@@ -377,6 +493,31 @@ pub(crate) enum CommandKind {
 }
 
 impl CommandKind {
+    /// Whether the command may contact, start or manage a daemon, and so needs the daemon
+    /// routing from the root buckconfig. The daemon process takes its routing from its startup
+    /// config, and helpers such as the event-log uploaders run for every command; parsing the
+    /// root buckconfig in them would only cost time.
+    fn selects_daemon(&self) -> bool {
+        match self {
+            #[cfg(not(client_only))]
+            CommandKind::Daemon(_)
+            | CommandKind::Forkserver(_)
+            | CommandKind::InternalTestRunner(_) => false,
+            CommandKind::Root(root) => root.prints_daemon_dir(),
+            CommandKind::Log(log) => log.connects_to_daemon(),
+            CommandKind::HelpEnv(_) | CommandKind::Init(_) | CommandKind::Completion(_) => false,
+            CommandKind::Debug(
+                DebugCommand::PersistEventLogs(_)
+                | DebugCommand::UploadReLogs(_)
+                | DebugCommand::Exe(_)
+                | DebugCommand::InternalVersion(_)
+                | DebugCommand::ChromeTrace(_)
+                | DebugCommand::LogPerf(_),
+            ) => false,
+            _ => true,
+        }
+    }
+
     pub(crate) fn exec(
         self,
         process: ProcessContext<'_>,
@@ -388,6 +529,20 @@ impl CommandKind {
         let paths_result = get_invocation_paths_result(
             &process.shared.working_dir,
             common_opts.isolation_dir.clone(),
+            || {
+                if !self.selects_daemon() {
+                    return None;
+                }
+                Some(match immediate_config.daemon_startup_config() {
+                    // An in-process daemon serves this command alone.
+                    Ok(_) if common_opts.no_buckd => DaemonRouting::Unshared,
+                    Ok(config) => config.startup_options.routing,
+                    // Commands that need a daemon report this error when they build the startup
+                    // config; the others (`clean`, `kill`) keep working on the unshared paths, as
+                    // they did before routing was configurable.
+                    Err(_) => DaemonRouting::Unshared,
+                })
+            },
         );
 
         // Handle the daemon command earlier: it wants to fork, but the things we do below might
@@ -400,7 +555,7 @@ impl CommandKind {
                     process.shared.log_reload_handle.dupe(),
                     paths_result.get_result()?,
                     false,
-                    || {},
+                    Box::new(|| {}),
                 )
                 .into();
         }
@@ -455,15 +610,26 @@ impl CommandKind {
 
         let start_in_process_daemon = if common_opts.no_buckd {
             #[cfg(not(client_only))]
-            let v = buck2_daemon::no_buckd::start_in_process_daemon(
-                immediate_config.daemon_startup_config()?,
-                paths.clone().get_result()?,
-                &runtime,
-            )?;
+            {
+                // The default filter logs events inside the `daemon_listener` tracing spans at
+                // level "info" for recording in buckd.stderr. The in-process daemon would dump this
+                // to the user's terminal; drop that directive unless the user tweaked logging
+                // explicitly.
+                if buck2_env!("BUCK_LOG")?.is_none() {
+                    shared.log_reload_handle.update_log_filter("warn")?;
+                }
+                let mut daemon_startup_config = immediate_config.daemon_startup_config()?.clone();
+                daemon_startup_config.startup_options.routing = DaemonRouting::Unshared;
+                buck2_daemon::no_buckd::start_in_process_daemon(
+                    &daemon_startup_config,
+                    paths.clone().get_result()?,
+                    runtime,
+                )?
+            }
             #[cfg(client_only)]
-            let v = unreachable!(); // case covered above
-            #[allow(dead_code)]
-            v
+            {
+                unreachable!() // case covered above
+            }
         } else {
             None
         };
@@ -479,11 +645,17 @@ impl CommandKind {
             argv,
             trace_id.dupe(),
             &mut shared.stdin,
-            &mut shared.restarter,
-            &runtime,
+            runtime,
             common_opts.oncall,
             common_opts.client_metadata,
             common_opts.isolation_dir,
+            AgentInvocationInfo::from_client(AgentContext::new(
+                common_opts
+                    .agent_context
+                    .into_iter()
+                    .flat_map(|entries| entries.0)
+                    .collect(),
+            )),
         );
         if let Some(recorder) = events_ctx.recorder.as_mut() {
             recorder.update_for_client_ctx(&command_ctx, self.command_name());
@@ -510,6 +682,7 @@ impl CommandKind {
             CommandKind::Kill(cmd) => command_ctx.exec(cmd, matches, events_ctx),
             CommandKind::Killall(cmd) => command_ctx.exec(cmd, matches, events_ctx),
             CommandKind::Clean(cmd) => cmd.exec(matches, command_ctx, events_ctx),
+            CommandKind::Cleanall(cmd) => command_ctx.exec(cmd, matches, events_ctx),
             CommandKind::Root(cmd) => cmd.exec(matches, command_ctx).into(),
             CommandKind::Query(cmd) => {
                 buck2_client_ctx::eprintln!(
@@ -522,14 +695,20 @@ impl CommandKind {
             CommandKind::Targets(cmd) => command_ctx.exec(cmd, matches, events_ctx),
             CommandKind::Utargets(cmd) => command_ctx.exec(cmd, matches, events_ctx),
             CommandKind::Ctargets(cmd) => command_ctx.exec(cmd, matches, events_ctx),
+            // Settings are resolved on the client; no daemon is involved.
+            CommandKind::Audit(AuditCommand::Settings(cmd)) => {
+                cmd.exec(matches, command_ctx).into()
+            }
             CommandKind::Audit(cmd) => command_ctx.exec(cmd, matches, events_ctx),
             CommandKind::Starlark(cmd) => cmd.exec(matches, command_ctx, events_ctx),
             CommandKind::Run(cmd) => command_ctx.exec(cmd, matches, events_ctx),
             CommandKind::Uquery(cmd) => command_ctx.exec(cmd, matches, events_ctx),
             CommandKind::Debug(cmd) => cmd.exec(matches, command_ctx, events_ctx),
             CommandKind::Complete(cmd) => cmd.exec(matches, command_ctx, events_ctx),
-            CommandKind::Completion(cmd) => cmd.exec(Opt::command(), matches, command_ctx),
-            CommandKind::Docs(cmd) => cmd.exec(Opt::command(), matches, command_ctx, events_ctx),
+            CommandKind::Completion(cmd) => cmd.exec(Opt::clap_command(), matches, command_ctx),
+            CommandKind::Docs(cmd) => {
+                cmd.exec(Opt::clap_command(), matches, command_ctx, events_ctx)
+            }
             CommandKind::Profile(cmd) => cmd.exec(matches, command_ctx, events_ctx),
             CommandKind::Rage(cmd) => cmd.exec(matches, command_ctx),
             CommandKind::Init(cmd) => cmd.exec(matches, command_ctx),
@@ -559,6 +738,7 @@ impl CommandKind {
             CommandKind::Kill(cmd) => cmd.logging_name(),
             CommandKind::Killall(cmd) => cmd.logging_name(),
             CommandKind::Clean(cmd) => cmd.command_name(),
+            CommandKind::Cleanall(cmd) => cmd.logging_name(),
             CommandKind::Root(_) => "root",
             CommandKind::Query(cmd) => cmd.logging_name(),
             CommandKind::Server(cmd) => cmd.logging_name(),
@@ -584,5 +764,178 @@ impl CommandKind {
             CommandKind::Subscribe(cmd) => cmd.logging_name(),
             CommandKind::ExpandExternalCell(cmd) => cmd.logging_name(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use buck2_client_ctx::agent_context::parse_agent_context;
+
+    use super::*;
+
+    fn agent_context(args: &[&str]) -> Vec<AgentContextEntry> {
+        let matches = Opt::clap_command()
+            .try_get_matches_from(std::iter::once("buck2").chain(args.iter().copied()))
+            .expect("test arguments should parse");
+        Opt::from_clap_matches(&matches)
+            .expect("test arguments should construct Opt")
+            .common_opts
+            .agent_context
+            .into_iter()
+            .flat_map(|entries| entries.0)
+            .collect()
+    }
+
+    fn entries(values: &[&str]) -> Vec<AgentContextEntry> {
+        values
+            .iter()
+            .map(|value| parse_agent_context(value).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn test_no_command_has_two_arguments_with_the_same_name() {
+        // clap checks this itself only when it is built with debug assertions, as open source's
+        // debug buck2 is, and then panics when it builds the command.
+        fn check(command: &clap::Command, path: &str) {
+            let mut longs = BTreeSet::new();
+            let mut shorts = BTreeSet::new();
+            for arg in command.get_arguments() {
+                if let Some(long) = arg.get_long() {
+                    assert!(longs.insert(long), "`{path}` has two `--{long}` arguments");
+                }
+                if let Some(short) = arg.get_short() {
+                    assert!(
+                        shorts.insert(short),
+                        "`{path}` has two `-{short}` arguments"
+                    );
+                }
+            }
+            for subcommand in command.get_subcommands() {
+                check(subcommand, &format!("{path} {}", subcommand.get_name()));
+            }
+        }
+
+        // Building the command gives each subcommand the global arguments.
+        let mut command = Opt::clap_command();
+        command.build();
+        check(&command, "buck2");
+    }
+
+    #[test]
+    fn agent_context_accumulates_across_subcommand() {
+        for args in [
+            [
+                "--agent-context",
+                "direct_call=true",
+                "--agent-context",
+                "reason=verify",
+                "build",
+                "//foo:bar",
+            ],
+            [
+                "build",
+                "//foo:bar",
+                "--agent-context",
+                "direct_call=true",
+                "--agent-context",
+                "reason=verify",
+            ],
+            [
+                "--agent-context",
+                "direct_call=true",
+                "build",
+                "//foo:bar",
+                "--agent-context",
+                "reason=verify",
+            ],
+        ] {
+            assert_eq!(
+                agent_context(&args),
+                entries(&["direct_call=true", "reason=verify"])
+            );
+        }
+    }
+
+    #[test]
+    fn agent_context_preserves_nested_and_repeated_entries() {
+        assert_eq!(
+            agent_context(&[
+                "--agent-context=reason=outer",
+                "docs",
+                "--agent-context=reason=middle",
+                "agent",
+                "--agent-context=reason=inner",
+            ]),
+            entries(&["reason=outer", "reason=middle", "reason=inner"]),
+        );
+    }
+
+    #[test]
+    fn agent_context_preserves_comma_separated_entries() {
+        assert_eq!(
+            agent_context(&[
+                "--agent-context=direct_call=true,advice_ack=build_intent",
+                "build",
+                "//foo:bar",
+                "--agent-context",
+                "direct_call=false,advice_ack=other",
+            ]),
+            entries(&[
+                "direct_call=true",
+                "advice_ack=build_intent",
+                "direct_call=false",
+                "advice_ack=other",
+            ]),
+        );
+    }
+
+    #[test]
+    fn agent_context_keeps_commas_in_values() {
+        assert_eq!(
+            agent_context(&[
+                "--agent-context",
+                "reason=fix the build, then test,direct_call=true",
+                "build",
+                "//foo:bar",
+            ]),
+            entries(&["reason=fix the build, then test", "direct_call=true"]),
+        );
+    }
+
+    #[test]
+    fn agent_context_excludes_arguments_after_separator() {
+        for command in ["run", "test"] {
+            assert_eq!(
+                agent_context(&[
+                    "--agent-context",
+                    "direct_call=true",
+                    command,
+                    "//foo:bar",
+                    "--",
+                    "--agent-context",
+                    "direct_call=false",
+                ]),
+                entries(&["direct_call=true"]),
+            );
+        }
+    }
+
+    #[test]
+    fn agent_context_excludes_implicit_run_arguments() {
+        assert_eq!(
+            agent_context(&[
+                "--agent-context",
+                "direct_call=true",
+                "run",
+                "//foo:bar",
+                "program-arg",
+                "--agent-context",
+                "direct_call=false",
+            ]),
+            entries(&["direct_call=true"]),
+        );
     }
 }

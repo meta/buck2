@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _normal_impl(ctx):
-    out = ctx.actions.declare_output("out.txt")
+    out = ctx.actions.declare_output("out.txt", has_content_based_path = False)
 
     cmd = cmd_args(
         ctx.attrs.buck2_path,
@@ -30,16 +30,20 @@ def _normal_impl(ctx):
     return [DefaultInfo(default_output = out)]
 
 def _trace_impl(ctx):
-    trace_out = ctx.actions.declare_output("trace_out.txt")
-    nested_out = ctx.actions.declare_output("nested_out.txt")
+    trace_out = ctx.actions.declare_output("trace_out.txt", has_content_based_path = False)
+    nested_out = ctx.actions.declare_output("nested_out.txt", has_content_based_path = False)
 
-    script = ctx.actions.write("script.py", """
+    script = ctx.actions.write(
+        "script.py",
+        """
 import subprocess
 import sys
 
 buck_path = sys.argv[1]
 subprocess.run([buck_path, "debug", "trace-io", "enable"])
-    """)
+    """,
+        has_content_based_path = False,
+    )
     ctx.actions.run(
         [
             "fbpython",
@@ -67,6 +71,34 @@ subprocess.run([buck_path, "debug", "trace-io", "enable"])
         category = "run",
     )
     return [DefaultInfo(default_output = nested_out)]
+
+def _daemon_dir_impl(ctx):
+    out = ctx.actions.declare_output("daemon_dir.txt", has_content_based_path = False)
+    script = ctx.actions.write(
+        "daemon_dir.py",
+        """
+import subprocess
+import sys
+
+with open(sys.argv[2], "w") as out:
+    subprocess.run([sys.argv[1], "root", "--kind", "daemon"], stdout=out, check=True)
+    """,
+        has_content_based_path = False,
+    )
+    ctx.actions.run(
+        ["fbpython", script, ctx.attrs.buck2_path, out.as_output()],
+        env = {"SANDCASTLE_ID": ""},
+        local_only = True,
+        category = "daemon_dir",
+    )
+    return [DefaultInfo(default_output = out)]
+
+nested_daemon_dir = rule(
+    impl = _daemon_dir_impl,
+    attrs = {
+        "buck2_path": attrs.string(),
+    },
+)
 
 normal_nested_invocation = rule(
     impl = _normal_impl,

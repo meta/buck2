@@ -2,3 +2,14 @@ platform(
     name = "platform1",
     visibility = ["PUBLIC"],
 )
+
+constraint_setting(
+    name = "compatibility",
+    visibility = ["PUBLIC"],
+)
+
+constraint_value(
+    name = "incompatible",
+    constraint_setting = ":compatibility",
+    visibility = ["PUBLIC"],
+)

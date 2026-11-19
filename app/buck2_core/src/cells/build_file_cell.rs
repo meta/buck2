@@ -10,6 +10,7 @@
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
 use strong_hash::StrongHash;
 
 use crate::cells::name::CellName;
@@ -24,10 +25,13 @@ use crate::cells::name::CellName;
     Hash,
     Eq,
     PartialEq,
+    Ord,
+    PartialOrd,
     Debug,
     derive_more::Display,
     Allocative,
-    StrongHash
+    StrongHash,
+    Pagable
 )]
 #[repr(C)]
 pub struct BuildFileCell(CellName);

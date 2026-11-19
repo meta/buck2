@@ -14,9 +14,11 @@ import com.android.ddmlib.testrunner.TestIdentifier;
 import com.android.ddmlib.testrunner.XmlTestRunListener;
 import com.facebook.buck.android.exopackage.AdbUtils;
 import com.facebook.buck.android.exopackage.AndroidDevice;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 import java.io.IOException;
 import java.util.Map;
+import java.util.Objects;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -25,16 +27,19 @@ import javax.xml.transform.TransformerException;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
+import org.jspecify.annotations.Nullable;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.xml.sax.SAXException;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BuckXmlTestRunListener extends XmlTestRunListener {
 
   protected static final String TEST_RESULT_FILE = "test_result.xml";
-  private String mRunFailureMessage = null;
-  private File mReportDir;
+  private @Nullable String mRunFailureMessage = null;
+  private @Nullable String mRunName = null;
+  private @Nullable File mReportDir;
   private AndroidDevice mAndroidDevice;
   private AdbUtils mAdbUtils;
 
@@ -51,6 +56,7 @@ public class BuckXmlTestRunListener extends XmlTestRunListener {
 
   @Override
   public void testRunStarted(String runName, int testCount) {
+    mRunName = runName;
     super.testRunStarted(runName, testCount);
   }
 
@@ -80,13 +86,13 @@ public class BuckXmlTestRunListener extends XmlTestRunListener {
 
       DocumentBuilderFactory docFactory = DocumentBuilderFactory.newInstance();
       DocumentBuilder docBuilder = docFactory.newDocumentBuilder();
-      Document doc = docBuilder.parse(resultFile);
+      Document doc = Objects.requireNonNull(docBuilder.parse(resultFile));
 
-      Node testsuite = doc.getElementsByTagName("testsuite").item(0);
       if (mRunFailureMessage != null) {
+        Node testsuite = getOrCreateTestSuite(doc);
         Element failureNode = doc.createElement("failure");
         failureNode.setTextContent(mRunFailureMessage);
-        testsuite.appendChild(failureNode);
+        Objects.requireNonNull(testsuite).appendChild(failureNode);
 
         TransformerFactory transformerFactory = TransformerFactory.newInstance();
         Transformer transformer = transformerFactory.newTransformer();
@@ -100,6 +106,24 @@ public class BuckXmlTestRunListener extends XmlTestRunListener {
     }
   }
 
+  private Node getOrCreateTestSuite(Document doc) {
+    Node testSuite = doc.getElementsByTagName("testsuite").item(0);
+    if (testSuite != null) {
+      return testSuite;
+    }
+
+    Element syntheticSuite = doc.createElement("testsuite");
+    syntheticSuite.setAttribute("name", mRunName == null ? "instrumentation" : mRunName);
+    syntheticSuite.setAttribute("tests", "0");
+    syntheticSuite.setAttribute("failures", "1");
+    Element root = doc.getDocumentElement();
+    if (root == null) {
+      throw new IllegalStateException("Parsed instrumentation XML has no document element");
+    }
+    root.appendChild(syntheticSuite);
+    return syntheticSuite;
+  }
+
   /**
    * Creates a {@link File} where the report will be created. Instead of creating a temp file,
    * create a file with the devices serial number, so it's possible to refer back to it afterwards.
@@ -109,7 +133,7 @@ public class BuckXmlTestRunListener extends XmlTestRunListener {
    * @throws IOException
    */
   @Override
-  protected File getResultFile(File reportDir) {
+  protected File getResultFile(@Nullable File reportDir) {
     return new File(reportDir, TEST_RESULT_FILE);
   }
 }

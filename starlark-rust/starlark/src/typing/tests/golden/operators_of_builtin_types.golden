@@ -1,0 +1,83 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Code:
+def test(s: str, b: bytes, t: tuple[int, ...], i: int, a):
+    str_add = s + s
+    str_mul = s * i
+    int_mul_str = i * s
+    str_percent = s % a
+    bytes_add = b + b
+    bytes_mul = b * i
+    tuple_add = t + t
+    tuple_mul = t * i
+    list_add = [i] + [s]
+    list_mul = [i] * i
+    dict_or = {i: s} | {s: i}
+    set_or = set([i]) | set([s])
+
+def bad(s: str, b: bytes, t: tuple[int, ...], i: int):
+    s + i
+    s * s
+    b + s
+    t + [i]
+    t * s
+
+Error:
+error: Binary operator `+` is not available on the types `str` and `int`
+  --> filename:17:5
+   |
+17 |     s + i
+   |     ^^^^^
+
+Error:
+error: Binary operator `*` is not available on the types `str` and `str`
+  --> filename:18:5
+   |
+18 |     s * s
+   |     ^^^^^
+
+Error:
+error: Binary operator `+` is not available on the types `bytes` and `str`
+  --> filename:19:5
+   |
+19 |     b + s
+   |     ^^^^^
+
+Error:
+error: Binary operator `+` is not available on the types `tuple[int, ...]` and `list[int]`
+  --> filename:20:5
+   |
+20 |     t + [i]
+   |     ^^^^^^^
+
+Error:
+error: Binary operator `*` is not available on the types `tuple[int, ...]` and `str`
+  --> filename:21:5
+   |
+21 |     t * s
+   |     ^^^^^
+
+Types:
+str_add: str
+str_mul: str
+int_mul_str: str
+str_percent: str
+bytes_add: bytes
+bytes_mul: bytes
+tuple_add: tuple
+tuple_mul: tuple
+list_add: list[int | str]
+list_mul: list[int]
+dict_or: dict[int | str, int | str]
+set_or: set[typing.Any]
+
+Compiler typechecker (eval):
+error: Binary operator `+` is not available on the types `str` and `int`
+  --> filename:17:5
+   |
+17 |     s + i
+   |     ^^^^^

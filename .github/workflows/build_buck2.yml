@@ -1,0 +1,169 @@
+name: Build `buck2`
+
+on:
+  workflow_call:
+    inputs:
+      buck2_version:
+        description: "Version string stamped into the binaries via BUCK2_SET_EXPLICIT_VERSION"
+        required: true
+        type: string
+      release_timestamp:
+        description: "Timestamp stamped into the binaries via BUCK2_RELEASE_TIMESTAMP"
+        required: true
+        type: string
+
+env:
+  # rust-cache keeps only the dependency artifacts between runs, so every run
+  # compiles the workspace crates from scratch and incremental compilation only
+  # costs time and disk.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  get_prelude_hash:
+    name: Get the latest prelude hash
+    runs-on: ubuntu-latest
+    outputs:
+      prelude_hash: ${{ steps.get_latest_prelude_hash.outputs.prelude_hash }}
+    steps:
+      - name: Shallow clone buck2-prelude
+        run: git clone --depth=1 https://github.com/facebook/buck2-prelude
+      - name: Get latest commit hash into prelude_hash
+        id: get_latest_prelude_hash
+        run: |
+          mkdir artifacts/
+          cd buck2-prelude/
+          git rev-parse HEAD > ../artifacts/prelude_hash
+          echo "prelude_hash=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Upload prelude_hash
+        uses: actions/upload-artifact@v6
+        with:
+          path: artifacts/prelude_hash
+          name: prelude_hash
+
+  build:
+    needs:
+      - get_prelude_hash
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - os: 'ubuntu-26.04'
+            triple: 'aarch64-unknown-linux-gnu'
+            cross: true
+          - os: 'ubuntu-26.04'
+            triple: 'aarch64-unknown-linux-musl'
+            cross: true
+          - os: 'ubuntu-26.04'
+            triple: 'x86_64-unknown-linux-gnu'
+          - os: 'ubuntu-26.04'
+            triple: 'x86_64-unknown-linux-musl'
+            cross: true
+          - os: 'ubuntu-26.04'
+            triple: 'riscv64gc-unknown-linux-gnu'
+            cross: true
+          # macos-15-xlarge is a Meta larger runner; forks get the standard one.
+          - os: ${{ github.repository_owner == 'meta' && 'macos-15-xlarge' || 'macos-15' }}
+            triple: 'aarch64-apple-darwin'
+            cross: true
+          - os: ${{ github.repository_owner == 'meta' && 'macos-15-xlarge' || 'macos-15' }}
+            triple: 'x86_64-apple-darwin'
+          - os: 'windows-2025'
+            triple: 'x86_64-pc-windows-msvc'
+            is_windows: true
+          - os: 'windows-11-arm'
+            triple: 'aarch64-pc-windows-msvc'
+            is_windows: true
+    runs-on: ${{ matrix.target.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: SebRollen/toml-action@v1.0.2
+        id: read_rust_toolchain
+        with:
+          file: 'rust-toolchain.toml'
+          field: 'toolchain.channel'
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.read_rust_toolchain.outputs.value }}
+          targets: ${{ matrix.target.triple }}
+      # No rust-cache here: the repository's Actions cache holds 10 GB, and
+      # the nine release targets' dependency caches alone outgrow it, evicting
+      # the caches the pull-request workflows depend on.
+      - uses: actions-rs/install@v0.1
+        if: matrix.target.cross
+        with:
+          crate: cross
+          version: latest
+      - name: Set variables
+        id: set_variables
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target.is_windows }}" ]; then
+            echo "buck2_out=target/${{ matrix.target.triple }}/release/buck2.exe" >> "$GITHUB_OUTPUT"
+            echo "buck2_zst=artifacts/buck2-${{ matrix.target.triple }}.exe.zst" >> "$GITHUB_OUTPUT"
+            echo "buck2_rust_project_out=target/${{ matrix.target.triple }}/release/rust-project.exe" >> "$GITHUB_OUTPUT"
+            echo "buck2_rust_project_zst=artifacts/rust-project-${{ matrix.target.triple }}.exe.zst" >> "$GITHUB_OUTPUT"
+            echo "starlark_fmt_out=target/${{ matrix.target.triple }}/release/starlark_fmt.exe" >> "$GITHUB_OUTPUT"
+            echo "starlark_fmt_zst=artifacts/starlark_fmt-${{ matrix.target.triple }}.exe.zst" >> "$GITHUB_OUTPUT"
+          else
+            echo "buck2_out=target/${{ matrix.target.triple }}/release/buck2" >> "$GITHUB_OUTPUT"
+            echo "buck2_zst=artifacts/buck2-${{ matrix.target.triple }}.zst" >> "$GITHUB_OUTPUT"
+            echo "buck2_rust_project_out=target/${{ matrix.target.triple }}/release/rust-project" >> "$GITHUB_OUTPUT"
+            echo "buck2_rust_project_zst=artifacts/rust-project-${{ matrix.target.triple }}.zst" >> "$GITHUB_OUTPUT"
+            echo "starlark_fmt_out=target/${{ matrix.target.triple }}/release/starlark_fmt" >> "$GITHUB_OUTPUT"
+            echo "starlark_fmt_zst=artifacts/starlark_fmt-${{ matrix.target.triple }}.zst" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build
+        shell: bash
+        env:
+          # BUCK2 prefixed variables used within the build to stamp in a version information
+          # BUCK2_SET_EXPLICIT_VERSION will populate the buck2 --version string
+          BUCK2_RELEASE_TIMESTAMP: ${{ inputs.release_timestamp }}
+          BUCK2_SET_EXPLICIT_VERSION: ${{ inputs.buck2_version }}
+          RUSTFLAGS: "--cfg tokio_unstable -C strip=debuginfo -C codegen-units=1"
+        run: |
+          # aarch64-linux builds need JEMALLOC_SYS_WITH_LG_PAGE=16
+          # this is for e.g. linux running on apple silicon with native 16k pages
+          if [[ "${{ matrix.target.triple }}" == aarch64-unknown-linux* ]]; then
+            export JEMALLOC_SYS_WITH_LG_PAGE=16
+          fi
+
+          if [ -n "${{ matrix.target.cross }}" ]; then
+            CARGO=cross
+          else
+            CARGO=cargo
+          fi
+          $CARGO build --release --bin buck2 --bin rust-project --bin starlark_fmt --target ${{ matrix.target.triple }}
+      - name: Sanity check with examples/with_prelude
+        if: ${{ !matrix.target.cross }}
+        shell: bash
+        run: |
+          BUCK2="$(pwd)/${{ steps.set_variables.outputs.buck2_out }}"
+          cd examples/with_prelude
+          # TODO: rust examples don't work on windows + arm64
+          if [[ "${{ matrix.target.triple }}" == "aarch64-pc-windows-msvc" ]]; then
+            TARGETS="cpp/... python/..."
+          else
+            TARGETS="rust/... cpp/... python/..."
+          fi
+          "$BUCK2" build $TARGETS -v=2
+        # TODO: investigate segmentation fault on windows-11-arm
+        continue-on-error: ${{ matrix.target.triple == 'aarch64-pc-windows-msvc' }}
+      - name: Install zstd
+        shell: pwsh
+        if: ${{ matrix.target.os == 'windows-11-arm' }}
+        run: choco install zstandard
+      - name: Move binary to artifacts/
+        shell: bash
+        run: |
+          mkdir artifacts
+          zstd -z ${{ steps.set_variables.outputs.buck2_out }} -o ${{ steps.set_variables.outputs.buck2_zst }}
+          zstd -z ${{ steps.set_variables.outputs.buck2_rust_project_out }} -o ${{ steps.set_variables.outputs.buck2_rust_project_zst }}
+          zstd -z ${{ steps.set_variables.outputs.starlark_fmt_out }} -o ${{ steps.set_variables.outputs.starlark_fmt_zst }}
+      - name: Upload
+        uses: actions/upload-artifact@v6
+        with:
+          name: buck2-${{ matrix.target.triple }}
+          path: artifacts/

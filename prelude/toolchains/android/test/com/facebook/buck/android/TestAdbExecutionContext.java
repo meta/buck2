@@ -10,19 +10,17 @@
 
 package com.facebook.buck.android;
 
-import com.facebook.buck.util.Console;
 import com.google.common.collect.ImmutableMap;
 
 public class TestAdbExecutionContext extends AdbExecutionContext {
 
   private final ImmutableMap<String, String> extraEnvironment;
 
-  public TestAdbExecutionContext(Console console) {
-    this(console, ImmutableMap.of());
+  public TestAdbExecutionContext() {
+    this(ImmutableMap.of());
   }
 
-  public TestAdbExecutionContext(Console console, ImmutableMap<String, String> environment) {
-    super(console);
+  public TestAdbExecutionContext(ImmutableMap<String, String> environment) {
     extraEnvironment = environment;
   }
 

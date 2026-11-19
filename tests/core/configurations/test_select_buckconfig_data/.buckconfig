@@ -1,5 +1,6 @@
 [cells]
   root = .
+  subcell = subcell
   nano_prelude = nano_prelude
 
 [cell_aliases]
@@ -10,3 +11,9 @@
 
 [buildfile]
   name = TARGETS.fixture
+
+[select_root]
+  key = root-value
+
+[select_target]
+  key = root-value

@@ -8,11 +8,10 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutMap;
 use dupe::Dupe;
 use serde::Serialize;
-use starlark::collections::SmallMap;
 use starlark::docs::DocItem;
 use starlark::docs::DocMember;
 use starlark::docs::DocModule;
@@ -35,7 +34,7 @@ fn serialize_opt_ty<S: serde::Serializer>(ty: &Option<Ty>, s: S) -> Result<S::Ok
 struct JsonDoc {
     id: JsonIdentifier,
     item: JsonDocItem,
-    custom_attrs: HashMap<String, String>,
+    custom_attrs: BuckMutMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -57,7 +56,7 @@ impl JsonDoc {
                 location: Some(JsonLocation { path: doc.location }),
             },
             item: JsonDocItem::from_starlark(doc.item),
-            custom_attrs: HashMap::new(),
+            custom_attrs: BuckMutMap::default(),
         }
     }
 }
@@ -89,7 +88,7 @@ impl JsonDocItem {
 #[derive(Serialize)]
 struct JsonDocModule {
     docs: Option<JsonDocString>,
-    members: SmallMap<String, JsonDocMember>,
+    members: BuckMutInsertionMap<String, JsonDocMember>,
 }
 
 impl JsonDocModule {
@@ -113,7 +112,7 @@ impl JsonDocModule {
 #[derive(Serialize)]
 struct JsonDocObject {
     docs: Option<JsonDocString>,
-    members: SmallMap<String, JsonDocMember>,
+    members: BuckMutInsertionMap<String, JsonDocMember>,
 }
 
 impl JsonDocObject {
@@ -322,7 +321,7 @@ fn to_docs_list(import_path: &StarlarkFilePath, module_docs: DocModule) -> Vec<D
             location: import_path_string.clone(),
             item: DocItem::Module(DocModule {
                 docs: Some(module_doc),
-                members: SmallMap::new(),
+                members: Default::default(),
             }),
         });
     }

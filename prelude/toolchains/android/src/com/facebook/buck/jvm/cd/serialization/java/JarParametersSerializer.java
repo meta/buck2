@@ -13,10 +13,13 @@ package com.facebook.buck.jvm.cd.serialization.java;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.cd.serialization.RelPathSerializer;
 import com.facebook.buck.jvm.java.JarParameters;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSortedSet;
 import java.util.Optional;
+import java.util.logging.Level;
 
 /** {@link JarParameters} to protobuf serializer */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarParametersSerializer {
 
   private JarParametersSerializer() {}
@@ -47,6 +50,6 @@ public class JarParametersSerializer {
             .collect(ImmutableSortedSet.toImmutableSortedSet(RelPath.comparator())),
         mainClass,
         manifestFile,
-        LogLevelSerializer.deserialize(jarParameters.getDuplicatesLogLevel()));
+        Level.FINE);
   }
 }

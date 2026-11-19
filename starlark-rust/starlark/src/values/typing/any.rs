@@ -18,17 +18,20 @@
 use allocative::Allocative;
 use starlark_derive::NoSerialize;
 use starlark_derive::ProvidesStaticType;
+use starlark_derive::StarlarkPagable;
 
 use crate as starlark;
+use crate::docs::DocItem;
+use crate::docs::DocString;
+use crate::docs::DocType;
+use crate::static_starlark_value;
 use crate::typing::Ty;
-use crate::values::AllocFrozenValue;
-use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
+use crate::values::AllocFrozenRepresentation;
+use crate::values::AllocRepresentation;
+use crate::values::Allocator;
+use crate::values::FrozenAllocator;
 use crate::values::StarlarkValue;
-use crate::values::layout::avalue::AValueBasic;
-use crate::values::layout::avalue::AValueImpl;
-use crate::values::layout::avalue::alloc_static;
-use crate::values::layout::heap::repr::AValueRepr;
+use crate::values::ValueTyped;
 use crate::values::starlark_value;
 
 #[derive(
@@ -36,24 +39,51 @@ use crate::values::starlark_value;
     derive_more::Display,
     Allocative,
     ProvidesStaticType,
-    NoSerialize
+    NoSerialize,
+    StarlarkPagable
 )]
 #[display("{}", Self::TYPE)]
 pub(crate) struct TypingAny;
 
-#[starlark_value(type = "typing.Any")]
+#[starlark_value(type = "typing.Any", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for TypingAny {
+    fn documentation(&self) -> DocItem {
+        DocItem::Type(DocType {
+            docs: DocString::from_docstring(
+                crate::docs::DocStringKind::Rust,
+                "\
+This type matches any type.
+
+Any value can be assigned to a name or parameter of this type.
+See also [`typing.Any` in the Python documentation][1].
+
+[1]: https://docs.python.org/3/library/typing.html#typing.Any",
+            ),
+            ..DocType::from_starlark_value::<Self>()
+        })
+    }
+
     fn eval_type(&self) -> Option<Ty> {
         Some(Ty::any())
     }
 }
 
-impl AllocFrozenValue for TypingAny {
-    fn alloc_frozen_value(self, _heap: &FrozenHeap) -> FrozenValue {
-        static ANY: AValueRepr<AValueImpl<'static, AValueBasic<TypingAny>>> =
-            alloc_static(TypingAny);
+static_starlark_value!(ANY: TypingAny = TypingAny);
 
-        FrozenValue::new_repr(&ANY)
+/// The one static, which is immortal: nothing is allocated.
+impl<'v> AllocRepresentation<'v> for TypingAny {
+    type Repr = Self;
+
+    fn alloc(self, _allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        ANY.at()
+    }
+}
+
+impl<'fv> AllocFrozenRepresentation<'fv> for TypingAny {
+    type Repr = Self;
+
+    fn alloc_frozen(self, _allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        ANY.at()
     }
 }
 

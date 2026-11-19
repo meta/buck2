@@ -17,24 +17,39 @@ use crossbeam::queue::SegQueue;
 use derivative::Derivative;
 use derive_more::Display;
 use dice::DiceComputations;
+use dice::DiceKeyDyn;
 use dice::DiceTransactionUpdater;
+use dice::EqualityBehavior;
 use dice::InjectedKey;
 use dice::Key;
+use dice::NoValueSerialize;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
-use futures::FutureExt;
 use futures::future;
-use futures::future::BoxFuture;
+use pagable::Pagable;
+use pagable::PagablePanic;
+use pagable::pagable_typetag;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Display, Debug, Allocative)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Display, Debug, Allocative, Pagable)]
 #[derive(Serialize, Deserialize)]
 #[display("key{}", _0)]
 #[serde(transparent)]
 pub struct Var(pub usize);
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Allocative)]
+#[derive(
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    Serialize,
+    Deserialize,
+    Allocative,
+    Pagable
+)]
 pub enum Unit {
     Variable(Var),
     Literal(bool),
@@ -47,14 +62,10 @@ async fn resolve_units<'a>(
 ) -> anyhow::Result<Vec<bool>> {
     let futs = ctx.compute_many(units.iter().map(|unit| {
         let state = state.dupe();
-        DiceComputations::declare_closure(
-            move |ctx: &mut DiceComputations| -> BoxFuture<Result<bool, anyhow::Error>> {
-                match unit {
-                    Unit::Variable(var) => ctx.eval(state, *var).boxed(),
-                    Unit::Literal(lit) => futures::future::ready(Ok(*lit)).boxed(),
-                }
-            },
-        )
+        DiceComputations::declare_closure(async move |ctx| match unit {
+            Unit::Variable(var) => ctx.eval(state, *var).await,
+            Unit::Literal(lit) => Ok(*lit),
+        })
     }));
     future::join_all(futs).await.into_iter().collect()
 }
@@ -71,17 +82,22 @@ pub enum Expr {
 }
 
 async fn lookup_unit(ctx: &mut DiceComputations<'_>, var: Var) -> anyhow::Result<Arc<Expr>> {
-    Ok(ctx.compute(&LookupVar(var)).await?)
+    Ok(ctx.compute(&LookupVar(var)).await?.dupe())
 }
 
-#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("Lookup({})", _0)]
+#[pagable_typetag(DiceKeyDyn)]
 struct LookupVar(Var);
 impl InjectedKey for LookupVar {
     type Value = Arc<Expr>;
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
     }
 }
 
@@ -116,11 +132,10 @@ pub trait FuzzMath {
 #[async_trait]
 impl FuzzMath for DiceComputations<'_> {
     async fn eval(&mut self, state: Arc<FuzzState>, var: Var) -> anyhow::Result<bool> {
-        Ok(*self
-            .compute(&state.eval_var(var))
-            .await?
-            .map_err(|e| anyhow::anyhow!(format!("{:#}", e)))?
-            .as_ref())
+        match self.compute(&state.eval_var(var)).await? {
+            Ok(v) => Ok(*v.as_ref()),
+            Err(e) => Err(anyhow::anyhow!(format!("{:#}", e))),
+        }
     }
 }
 
@@ -158,11 +173,12 @@ impl FuzzState {
     }
 }
 
-#[derive(Derivative, Clone, Display, Allocative)]
+#[derive(Derivative, Clone, Display, Allocative, PagablePanic)]
 #[derivative(Hash, Debug)]
 #[display("Eval({})", key)]
+#[pagable_typetag(DiceKeyDyn)]
 pub struct EvalVar {
-    key: Var,
+    pub key: Var,
     #[derivative(Debug = "ignore", Hash = "ignore")]
     state: Arc<FuzzState>,
 }
@@ -199,6 +215,10 @@ impl<T> MaybeTransient<T> {
 #[async_trait]
 impl Key for EvalVar {
     type Value = Result<MaybeTransient<bool>, Arc<anyhow::Error>>;
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
 
     async fn compute(
         &self,
@@ -241,11 +261,11 @@ impl Key for EvalVar {
         })
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
             (Ok(x), Ok(y)) => x == y,
             _ => false,
-        }
+        })
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -264,8 +284,9 @@ mod tests {
     pub async fn test_smoke() -> anyhow::Result<()> {
         let empty_state = Arc::new(FuzzState::new());
         let dice = Dice::builder().build(DetectCycles::Disabled);
-        let mut ctx = {
-            let mut ctx = dice.updater();
+        let root = dice.new_root().await;
+        let ctx = {
+            let mut ctx = dice.updater(root);
             // let x1 = true
             ctx.set_equation(Var(1), Expr::Unit(Unit::Literal(true)))?;
             // let x2 = x1
@@ -286,10 +307,10 @@ mod tests {
             )?;
             ctx.commit().await
         };
-        assert!(ctx.eval(empty_state.dupe(), Var(1)).await?);
-        assert!(ctx.eval(empty_state.dupe(), Var(2)).await?);
-        assert!(!ctx.eval(empty_state.dupe(), Var(3)).await?);
-        assert!(ctx.eval(empty_state.dupe(), Var(4)).await?);
+        assert!(ctx.ctx().eval(empty_state.dupe(), Var(1)).await?);
+        assert!(ctx.ctx().eval(empty_state.dupe(), Var(2)).await?);
+        assert!(!ctx.ctx().eval(empty_state.dupe(), Var(3)).await?);
+        assert!(ctx.ctx().eval(empty_state.dupe(), Var(4)).await?);
         Ok(())
     }
 }

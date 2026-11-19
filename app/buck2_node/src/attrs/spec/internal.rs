@@ -10,21 +10,18 @@
 
 //! Builtin note attributes.
 
-use std::sync::Arc;
+use std::sync::LazyLock;
 
-use once_cell::sync::Lazy;
-use starlark_map::ordered_map::OrderedMap;
-use starlark_map::ordered_set::OrderedSet;
+use buck2_hash::BuckFixedInsertionMap;
+use buck2_hash::BuckFixedSortedSet;
 
 use crate::attrs::attr::Attribute;
 use crate::attrs::attr_type::AttrType;
-use crate::attrs::attr_type::any::AnyAttrType;
 use crate::attrs::attr_type::configuration_dep::ConfigurationDepKind;
-use crate::attrs::coerced_attr::CoercedAttr;
 use crate::attrs::configurable::AttrIsConfigurable;
 use crate::attrs::spec::AttributeId;
-use crate::attrs::values::TargetModifiersValue;
 use crate::metadata::map::MetadataMap;
+use crate::modifiers::CfgModifiers;
 use crate::visibility::VisibilitySpecification;
 use crate::visibility::WithinViewSpecification;
 
@@ -38,7 +35,7 @@ pub struct InternalAttribute {
 pub const NAME_ATTRIBUTE: InternalAttribute = InternalAttribute {
     id: AttributeId(0),
     name: "name",
-    attr: || Attribute::new(None, "name of the target", AttrType::string()),
+    attr: || Attribute::new_const(None, "name of the target", AttrType::string()),
     is_configurable: AttrIsConfigurable::No,
 };
 
@@ -46,10 +43,12 @@ pub(crate) const DEFAULT_TARGET_PLATFORM_ATTRIBUTE: InternalAttribute = Internal
     id: AttributeId(1),
     name: "default_target_platform",
     attr: || {
-        Attribute::new(
-            Some(Arc::new(CoercedAttr::None)),
+        Attribute::new_const(
+            Some(|b| b.encode_none()),
             "specifies the default target platform, used when no platforms are specified on the command line",
-            AttrType::option(AttrType::label()),
+            AttrType::option(AttrType::configuration_dep(
+                ConfigurationDepKind::DefaultTargetPlatform,
+            )),
         )
     },
     is_configurable: AttrIsConfigurable::No,
@@ -62,8 +61,8 @@ pub const TARGET_COMPATIBLE_WITH_ATTRIBUTE: InternalAttribute = InternalAttribut
     id: AttributeId(2),
     name: "target_compatible_with",
     attr: || {
-        Attribute::new(
-            Some(Arc::new(AnyAttrType::empty_list())),
+        Attribute::new_const(
+            Some(|b| b.encode_list(&[])),
             "a list of constraints that are required to be satisfied for this target to be compatible with a configuration",
             AttrType::list(AttrType::configuration_dep(
                 ConfigurationDepKind::CompatibilityAttribute,
@@ -77,8 +76,8 @@ pub const LEGACY_TARGET_COMPATIBLE_WITH_ATTRIBUTE: InternalAttribute = InternalA
     id: AttributeId(3),
     name: "compatible_with",
     attr: || {
-        Attribute::new(
-            Some(Arc::new(AnyAttrType::empty_list())),
+        Attribute::new_const(
+            Some(|b| b.encode_list(&[])),
             "a list of constraints that are required to be satisfied for this target to be compatible with a configuration",
             AttrType::list(AttrType::configuration_dep(
                 ConfigurationDepKind::CompatibilityAttribute,
@@ -92,8 +91,8 @@ pub const EXEC_COMPATIBLE_WITH_ATTRIBUTE: InternalAttribute = InternalAttribute 
     id: AttributeId(4),
     name: "exec_compatible_with",
     attr: || {
-        Attribute::new(
-            Some(Arc::new(AnyAttrType::empty_list())),
+        Attribute::new_const(
+            Some(|b| b.encode_list(&[])),
             "a list of constraints that are required to be satisfied for this target to be compatible with an execution platform",
             AttrType::list(AttrType::configuration_dep(
                 ConfigurationDepKind::CompatibilityAttribute,
@@ -107,10 +106,8 @@ pub const VISIBILITY_ATTRIBUTE: InternalAttribute = InternalAttribute {
     id: AttributeId(5),
     name: "visibility",
     attr: || {
-        Attribute::new(
-            Some(Arc::new(CoercedAttr::Visibility(
-                VisibilitySpecification::DEFAULT,
-            ))),
+        Attribute::new_const(
+            Some(|b| b.encode_visibility(&VisibilitySpecification::DEFAULT)),
             "a list of visibility patterns restricting what targets can depend on this one",
             AttrType::visibility(),
         )
@@ -123,10 +120,8 @@ pub const WITHIN_VIEW_ATTRIBUTE: InternalAttribute = InternalAttribute {
     id: AttributeId(6),
     name: "within_view",
     attr: || {
-        Attribute::new(
-            Some(Arc::new(CoercedAttr::WithinView(
-                WithinViewSpecification::PUBLIC,
-            ))),
+        Attribute::new_const(
+            Some(|b| b.encode_within_view(&WithinViewSpecification::PUBLIC)),
             "a list of visibility patterns restricting what this target can depend on",
             AttrType::within_view(),
         )
@@ -138,8 +133,8 @@ pub(crate) const METADATA_ATTRIBUTE: InternalAttribute = InternalAttribute {
     id: AttributeId(7),
     name: "metadata",
     attr: || {
-        Attribute::new(
-            Some(Arc::new(CoercedAttr::Metadata(MetadataMap::default()))),
+        Attribute::new_const(
+            Some(|b| b.encode_metadata(&MetadataMap::default())),
             "a key-value map of metadata associated with this target",
             AttrType::metadata(),
         )
@@ -151,8 +146,8 @@ pub(crate) const TESTS_ATTRIBUTE: InternalAttribute = InternalAttribute {
     id: AttributeId(8),
     name: "tests",
     attr: || {
-        Attribute::new(
-            Some(Arc::new(AnyAttrType::empty_list())),
+        Attribute::new_const(
+            Some(|b| b.encode_list(&[])),
             "a list of targets that provide tests for this one",
             AttrType::list(AttrType::label()),
         )
@@ -164,10 +159,8 @@ pub(crate) const TARGET_MODIFIERS_ATTRIBUTE: InternalAttribute = InternalAttribu
     id: AttributeId(9),
     name: "modifiers",
     attr: || {
-        Attribute::new(
-            Some(Arc::new(CoercedAttr::TargetModifiers(
-                TargetModifiersValue::new(serde_json::Value::Array(vec![])),
-            ))),
+        Attribute::new_const(
+            Some(|b| b.encode_target_modifiers(&CfgModifiers::empty())),
             "an array of modifiers associated with this target",
             AttrType::target_modifiers(),
         )
@@ -197,8 +190,8 @@ pub struct OptionalInternalAttribute {
 pub const INCOMING_TRANSITION_ATTRIBUTE: OptionalInternalAttribute = OptionalInternalAttribute {
     name: "incoming_transition",
     attr: || {
-        Attribute::new(
-            Some(Arc::new(CoercedAttr::None)),
+        Attribute::new_const(
+            Some(|b| b.encode_none()),
             "specifies the incoming transition to apply to this target",
             AttrType::option(AttrType::configuration_dep(
                 ConfigurationDepKind::Transition,
@@ -232,14 +225,17 @@ const ALL_INTERNAL_ATTRS: [OptionalInternalAttribute; 11] = [
 ];
 
 pub fn is_internal_attr(name: &str) -> bool {
-    static ATTRS: Lazy<OrderedSet<&'static str>> =
-        Lazy::new(|| OrderedSet::from_iter(ALL_INTERNAL_ATTRS.iter().map(|attr| attr.name)));
+    static ATTRS: LazyLock<BuckFixedSortedSet<&'static str>> =
+        LazyLock::new(|| ALL_INTERNAL_ATTRS.iter().map(|attr| attr.name).collect());
     ATTRS.contains(name)
 }
 
-pub(super) fn common_internal_attrs() -> &'static OrderedMap<&'static str, Attribute> {
-    static ATTRS: Lazy<OrderedMap<&'static str, Attribute>> = Lazy::new(|| {
-        OrderedMap::from_iter(INTERNAL_ATTRS.iter().map(|attr| (attr.name, (attr.attr)())))
+pub(super) fn common_internal_attrs() -> &'static BuckFixedInsertionMap<&'static str, Attribute> {
+    static ATTRS: LazyLock<BuckFixedInsertionMap<&'static str, Attribute>> = LazyLock::new(|| {
+        INTERNAL_ATTRS
+            .iter()
+            .map(|attr| (attr.name, (attr.attr)()))
+            .collect()
     });
     &ATTRS
 }
@@ -256,11 +252,13 @@ pub fn attr_is_configurable(name: &str) -> AttrIsConfigurable {
 #[cfg(test)]
 mod tests {
     use crate::attrs::spec::internal::INTERNAL_ATTRS;
+    use crate::attrs::spec::internal::common_internal_attrs;
 
     #[test]
     fn verify_attr_ids() {
         for (i, a) in INTERNAL_ATTRS.iter().enumerate() {
             assert_eq!(a.id.0 as usize, i);
+            assert_eq!(common_internal_attrs().get_index_of(a.name), Some(i));
         }
     }
 }

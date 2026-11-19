@@ -7,13 +7,16 @@
 # above-listed licenses.
 
 def _slow_impl(ctx: AnalysisContext) -> list[Provider]:
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         ["fbpython", ctx.attrs.src, out.as_output()],
         category = "slow",
     )
     return [DefaultInfo(out)]
 
-slow_actions = rule(impl = _slow_impl, attrs = {
-    "src": attrs.source(),
-})
+slow_actions = rule(
+    impl = _slow_impl,
+    attrs = {
+        "src": attrs.source(),
+    },
+)

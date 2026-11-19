@@ -18,6 +18,44 @@ from typing import Optional
 import utils
 
 
+def _prepare_meta_inf_override(
+    meta_inf_staging: pathlib.Path,
+    temp_dir: str,
+    concat_jars: bool,
+) -> pathlib.Path:
+    """Prepare the meta_inf override entries file for the jar builder.
+
+    When concat_jars is True, packages the meta_inf_staging directory into a
+    jar file first (ConcatJarBuilder requires all entries to be jar files).
+    Otherwise, passes the directory path directly.
+
+    Returns the path to a file whose content is the path to the override entry.
+    """
+    if concat_jars:
+        # ConcatJarBuilder requires all entries to be jar files,
+        # so package the meta_inf_staging directory into a jar.
+        meta_inf_jar = pathlib.Path(temp_dir) / "meta_inf_staging.jar"
+        with zipfile.ZipFile(
+            meta_inf_jar,
+            mode="w",
+            strict_timestamps=False,
+            compression=zipfile.ZIP_STORED,
+        ) as zf:
+            for content in meta_inf_staging.rglob("*"):
+                if content.is_file():
+                    zf.write(
+                        content,
+                        content.relative_to(meta_inf_staging),
+                    )
+        meta_inf_directory_file = pathlib.Path(temp_dir) / "meta_inf_directory_file"
+        meta_inf_directory_file.write_text(str(meta_inf_jar))
+    else:
+        meta_inf_directory_file = pathlib.Path(temp_dir) / "meta_inf_directory_file"
+        meta_inf_directory_file.write_text(str(meta_inf_staging))
+
+    return meta_inf_directory_file
+
+
 def _parse_args():
     parser = argparse.ArgumentParser(
         description="Tool to create a fat jar from passed multiple jars."
@@ -347,12 +385,11 @@ def main():
                     dirs_exist_ok=True,
                 )
 
-                meta_inf_directory_file = (
-                    pathlib.Path(temp_dir) / "meta_inf_directory_file"
+                override_entries_to_jar = _prepare_meta_inf_override(
+                    meta_inf_staging,
+                    temp_dir,
+                    concat_jars,
                 )
-                meta_inf_directory_file.write_text(str(meta_inf_staging))
-
-                override_entries_to_jar = meta_inf_directory_file
 
             jar_output = (
                 os.path.join(temp_dir, "inner.jar")

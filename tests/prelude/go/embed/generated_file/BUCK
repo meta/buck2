@@ -1,0 +1,37 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+
+oncall("golang")
+
+prelude = native
+
+prelude.write_file(
+    name = "greeting",
+    out = "greeting.txt",
+    content = ["HELLO WORLD"],
+)
+
+prelude.go_binary(
+    name = "bin",
+    srcs = ["main.go"],
+    embed_srcs = [":greeting"],
+)
+
+prelude.go_test(
+    name = "test",
+    srcs = [
+        "main.go",
+        "main_test.go",
+    ],
+    embed_srcs = [":greeting"],
+    # @oss-disable[end= ]: env = {"GO_TEST2JSON_TOOL": "$(exe_target fbsource//third-party/go-toolchain:test2json)"},
+)
+
+py_assertion(
+    name = "check_output",
+    script = """
+import subprocess
+import sys
+assert subprocess.check_output([sys.argv[1]]).decode().strip() == "HELLO WORLD"
+""",
+    script_args = ["$(exe_target :bin)"],
+)

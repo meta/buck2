@@ -1,0 +1,28 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "hmap",
+    srcs = glob(["src/**/*.rs"]),
+    autocargo = {
+        "cargo_toml_config": {
+            "package": {
+                "description": "Read and write Clang header maps",
+                "version": "0.1.0",
+            },
+        },
+    },
+    test_deps = ["fbsource//third-party/rust:tempfile"],
+    test_env = select({
+        "DEFAULT": {},
+        "ovr_config//os:linux": {
+            "HMAP_TEST_CLANG": "$(location_exec fbcode//buck2/platform/cxx/fbcode:llvm-21-bin/clang)",
+        },
+    }),
+    visibility = ["PUBLIC"],
+    deps = [
+        "fbsource//third-party/rust:hashbrown",
+        "fbsource//third-party/rust:thiserror",
+    ],
+)

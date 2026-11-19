@@ -9,15 +9,17 @@
 def project(f: Artifact):
     return f
 
-NameSet = transitive_set(args_projections = {
-    "project": project,
-})
+NameSet = transitive_set(
+    args_projections = {
+        "project": project,
+    }
+)
 
 NameInfo = provider(fields = ["tset"])
 
 def _test_impl(ctx):
     # Produce a file that contains our name.
-    out = ctx.actions.write("out.txt", str(ctx.label.name) + "\n")
+    out = ctx.actions.write("out.txt", str(ctx.label.name) + "\n", has_content_based_path = False)
 
     # Produce a tset that is our file concatenated with all the files emitted by
     # our children.
@@ -26,15 +28,18 @@ def _test_impl(ctx):
 
     # Concatenate all the files declared by the tset, into a single file
     # (agg.txt), which we'll return as our output.
-    agg = ctx.actions.declare_output("agg.txt")
-    ctx.actions.run([
-        "sh",
-        "-c",
-        'out="$1" && shift && cat "$@" > "$out"',
-        "--",
-        agg.as_output(),
-        tset.project_as_args("project"),
-    ], category = "test")
+    agg = ctx.actions.declare_output("agg.txt", has_content_based_path = False)
+    ctx.actions.run(
+        [
+            "sh",
+            "-c",
+            'out="$1" && shift && cat "$@" > "$out"',
+            "--",
+            agg.as_output(),
+            tset.project_as_args("project"),
+        ],
+        category = "test",
+    )
 
     return [
         NameInfo(tset = tset),
@@ -49,7 +54,7 @@ test = rule(
 )
 
 def _test_duplication_impl(ctx):
-    out = ctx.actions.write("out.txt", "hello world")
+    out = ctx.actions.write("out.txt", "hello world", has_content_based_path = False)
 
     tset1 = ctx.actions.tset(NameSet, value = out)
     tset2 = ctx.actions.tset(NameSet, value = out)
@@ -99,7 +104,7 @@ OptionalArgsNameInfo = provider(fields = ["tset"])
 def _optional_args_impl(ctx):
     # Produce a file whose short-name is our name.
     if ctx.attrs.has_artifact:
-        out = ctx.actions.write("{}".format(str(ctx.label.name)), "hello world")
+        out = ctx.actions.write("{}".format(str(ctx.label.name)), "hello world", has_content_based_path = False)
     else:
         out = None
 
@@ -108,7 +113,7 @@ def _optional_args_impl(ctx):
     tset = ctx.actions.tset(OptionalArgsNameSet, value = OptionalArtifact(artifact = out), children = children)
 
     # Write the projection of the tset to a file.
-    agg = ctx.actions.declare_output("agg.txt")
+    agg = ctx.actions.declare_output("agg.txt", has_content_based_path = False)
     ctx.actions.write(agg, tset.project_as_args("project"))
 
     return [
@@ -135,7 +140,7 @@ OptionalJsonArgsNameInfo = provider(fields = ["tset"])
 def _optional_json_args_impl(ctx):
     # Produce a file whose short-name is our name.
     if ctx.attrs.has_artifact:
-        out = ctx.actions.write("{}".format(str(ctx.label.name)), "hello world")
+        out = ctx.actions.write("{}".format(str(ctx.label.name)), "hello world", has_content_based_path = False)
     else:
         out = None
 
@@ -145,7 +150,7 @@ def _optional_json_args_impl(ctx):
 
     # Concatenate all the files declared by the tset, into a single file
     # (agg.txt), which we'll return as our output.
-    agg = ctx.actions.declare_output("agg.txt")
+    agg = ctx.actions.declare_output("agg.txt", has_content_based_path = False)
 
     ctx.actions.write_json(agg, tset.project_as_json("project_json"))
 

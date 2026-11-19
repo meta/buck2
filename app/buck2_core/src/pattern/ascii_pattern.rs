@@ -18,7 +18,7 @@ use std::str;
 use dupe::Dupe;
 
 const fn assert_ascii_char(c: char) -> u8 {
-    assert!((c as u32) <= 0xf7);
+    assert!(c.is_ascii());
     c as u8
 }
 
@@ -27,7 +27,7 @@ const fn assert_ascii_str(s: &str) -> &[u8] {
     // We use `const fn` to make sure compiler is able to optimize this away.
     let mut i = 0;
     while i != s.len() {
-        assert!(s.as_bytes()[i] <= 0xf7);
+        assert!(s.as_bytes()[i].is_ascii());
         i += 1;
     }
     s.as_bytes()
@@ -36,6 +36,13 @@ const fn assert_ascii_str(s: &str) -> &[u8] {
 /// Fixed ASCII string as search pattern.
 ///
 /// Caller of this trait skips boundary checks/UTF-8 checks, so this trait is `unsafe`.
+///
+/// # Safety
+///
+/// Implementors must ensure that all methods correctly handle ASCII strings and that
+/// the pattern methods (`first_index_in`, `last_index_in`, `is_prefix_of`, `is_suffix_of`)
+/// return valid byte indices that lie on UTF-8 character boundaries when used with
+/// valid UTF-8 strings. The `len()` method must return the correct byte length of the pattern.
 pub(crate) unsafe trait AsciiPattern {
     fn first_index_in(&self, s: &str) -> Option<usize>;
     #[allow(dead_code)]
@@ -185,11 +192,11 @@ unsafe impl AsciiPattern for AsciiStr<'_> {
     }
 
     fn is_prefix_of(&self, s: &str) -> bool {
-        unsafe { s.len() >= self.len() && s.get_unchecked(..self.len()) == self.0 }
+        s.as_bytes().starts_with(self.0.as_bytes())
     }
 
     fn is_suffix_of(&self, s: &str) -> bool {
-        unsafe { s.len() >= self.len() && s.get_unchecked(s.len() - self.len()..) == self.0 }
+        s.as_bytes().ends_with(self.0.as_bytes())
     }
 
     fn len(&self) -> usize {
@@ -234,6 +241,7 @@ mod tests {
     use crate::pattern::ascii_pattern::AsciiPattern;
     use crate::pattern::ascii_pattern::AsciiStr;
     use crate::pattern::ascii_pattern::AsciiStr2;
+    use crate::pattern::ascii_pattern::strip_suffix_ascii;
 
     const STRINGS: &[&str] = &[
         "", "x", "y", "xx", "xy", "yx", "yy", "xxx", "xxy", "xyx", "xyy", "yxx", "yxy", "yyx",
@@ -296,6 +304,42 @@ mod tests {
         test_first_index_in_impl(AsciiStr2::new("xy"), "xy");
         test_first_index_in_impl(AsciiStr::new("xx"), "xx");
         test_first_index_in_impl(AsciiStr::new("xy"), "xy");
+    }
+
+    // With panic=abort the panic kills the in-process Miri harness.
+    #[cfg(not(all(miri, panic = "abort")))]
+    #[test]
+    #[should_panic]
+    fn test_non_ascii_char_is_rejected() {
+        let _ = AsciiChar::new(std::hint::black_box('\u{a9}'));
+    }
+
+    // With panic=abort the panic kills the in-process Miri harness.
+    #[cfg(not(all(miri, panic = "abort")))]
+    #[test]
+    #[should_panic]
+    fn test_non_ascii_str_is_rejected() {
+        let _ = AsciiStr::new(std::hint::black_box("\u{e9}"));
+    }
+
+    // With panic=abort the panic kills the in-process Miri harness.
+    #[cfg(not(all(miri, panic = "abort")))]
+    #[test]
+    #[should_panic]
+    fn test_non_ascii_str2_is_rejected() {
+        let _ = AsciiStr2::new(std::hint::black_box("\u{e9}"));
+    }
+
+    #[test]
+    fn test_is_suffix_of_non_ascii_haystack() {
+        // The needle's length measured back from the end lands inside `é`, so the check must not
+        // slice the haystack there.
+        let needle = AsciiStr::new("/...");
+        let haystack = "\u{e9}...";
+        assert!(!haystack.is_char_boundary(haystack.len() - needle.len()));
+        assert!(!needle.is_suffix_of(haystack));
+        assert_eq!(None, strip_suffix_ascii(haystack, needle));
+        assert_eq!(Some("\u{e9}"), strip_suffix_ascii("\u{e9}/...", needle));
     }
 
     #[test]

@@ -1,0 +1,8 @@
+# PUBLIC target inside the no-visibility-arg child PACKAGE. With the
+# bug, the intersection would be empty and even the inside consumer would be
+# rejected. With the fix, the intersection stays at parent's
+# `root//inherit_test/...` and inside consumers succeed.
+stub(
+    name = "t",
+    visibility = ["PUBLIC"],
+)

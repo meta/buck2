@@ -8,11 +8,21 @@
  * above-listed licenses.
  */
 
+fn has_certificate_expired_message(error: &dyn std::fmt::Display) -> bool {
+    error.to_string().contains("CertificateExpired")
+}
+
 impl From<hyper_util::client::legacy::Error> for crate::Error {
     #[cold]
     #[track_caller]
     fn from(value: hyper_util::client::legacy::Error) -> Self {
-        crate::conversion::from_any_with_tag(value, crate::ErrorTag::Hyper)
+        let cert_expired = has_certificate_expired_message(&value);
+        let error = crate::conversion::from_any_with_tag(value, crate::ErrorTag::Hyper);
+        if cert_expired {
+            error.tag([crate::ErrorTag::CertExpired])
+        } else {
+            error
+        }
     }
 }
 
@@ -20,6 +30,12 @@ impl From<hyper::Error> for crate::Error {
     #[cold]
     #[track_caller]
     fn from(value: hyper::Error) -> Self {
-        crate::conversion::from_any_with_tag(value, crate::ErrorTag::Hyper)
+        let cert_expired = has_certificate_expired_message(&value);
+        let error = crate::conversion::from_any_with_tag(value, crate::ErrorTag::Hyper);
+        if cert_expired {
+            error.tag([crate::ErrorTag::CertExpired])
+        } else {
+            error
+        }
     }
 }

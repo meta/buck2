@@ -23,7 +23,6 @@ use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::path_arg::PathArg;
 use buck2_client_ctx::streaming::StreamingCommand;
-use gazebo::prelude::*;
 
 #[derive(Debug, clap::Parser)]
 pub struct FileStatusCommand {
@@ -61,7 +60,9 @@ impl StreamingCommand for FileStatusCommand {
                     context: Some(context),
                     paths: self
                         .paths
-                        .try_map(|x| x.resolve(&ctx.working_dir).into_string())?,
+                        .iter()
+                        .map(|x| x.resolve(&ctx.working_dir).into_string())
+                        .collect::<Result<Vec<_>, _>>()?,
                     show_matches: self.show_matches,
                 },
                 events_ctx,

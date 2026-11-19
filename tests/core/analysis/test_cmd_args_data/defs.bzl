@@ -8,7 +8,7 @@
 
 def _output_artifact_in_relative_to(ctx):
     src = ctx.attrs.source
-    output = ctx.actions.declare_output("myout")
+    output = ctx.actions.declare_output("myout", has_content_based_path = False)
 
     c = cmd_args(
         "fbpython",

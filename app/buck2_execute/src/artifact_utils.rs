@@ -14,8 +14,8 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_fs::fs_util;
+use buck2_error::BuckErrorOptionContext;
+use buck2_fs::paths::RelativePathBuf;
 use dupe::Dupe;
 
 use crate::artifact_value::ArtifactValue;
@@ -43,7 +43,7 @@ impl<'a> ArtifactValueBuilder<'a> {
     pub fn new(project_fs: &'a ProjectRoot, digest_config: DigestConfig) -> Self {
         Self {
             project_fs,
-            builder: ActionDirectoryBuilder::empty(),
+            builder: ActionDirectoryBuilder::empty_non_exhaustive(),
             digest_config,
         }
     }
@@ -64,6 +64,17 @@ impl<'a> ArtifactValueBuilder<'a> {
         value: &ArtifactValue,
     ) -> buck2_error::Result<()> {
         insert_artifact(&mut self.builder, path, value)
+    }
+
+    /// Creates a symlink to `src` at `dest`, saying nothing about what is at `src`.
+    pub fn add_symlink(
+        &mut self,
+        src: &ProjectRelativePath,
+        dest: &ProjectRelativePath,
+    ) -> buck2_error::Result<()> {
+        let symlink = new_symlink(self.project_fs.relative_path(src, dest))?;
+        self.builder.insert(dest, DirectoryEntry::Leaf(symlink))?;
+        Ok(())
     }
 
     /// Takes an input `src_value`, adds it to the builder at `src`. Then
@@ -109,12 +120,11 @@ impl<'a> ArtifactValueBuilder<'a> {
             DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(s)) => {
                 // TODO: This seems like it normally shouldn't need to be normalizing anything.
                 let reldest = self.project_fs.relative_path(
-                    src.parent()
-                        .buck_error_context("Symlink has no dir parent")?,
+                    src.parent().internal_error("Symlink has no dir parent")?,
                     dest,
                 );
-                // RelativePathBuf converts platform specific path separators.
-                let reldest = fs_util::relative_path_from_system(&reldest)?;
+                // RelativePathBuf::from_system_path converts platform-specific path separators.
+                let reldest = RelativePathBuf::from_system_path(&reldest)?;
                 let s = s.relativized(reldest);
                 DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(Arc::new(s)))
             }
@@ -139,6 +149,32 @@ impl<'a> ArtifactValueBuilder<'a> {
             .insert(dest, entry.dupe().map_dir(|d| d.into_builder()))?;
 
         Ok(entry)
+    }
+
+    /// Builds the `ArtifactValue` as [`Self::build`] does, with the directory at `output` and
+    /// every directory under it marked exhaustive: the whole of what is at `output` is what was
+    /// put there, so a materializer may remove whatever else it finds under it.
+    pub fn build_exhaustive(
+        &self,
+        output: &ProjectRelativePath,
+    ) -> buck2_error::Result<ArtifactValue> {
+        let value = self.build(output)?;
+        let entry = match value.entry() {
+            DirectoryEntry::Dir(dir) => {
+                let mut builder = dir.dupe().into_builder();
+                builder.mark_uniformly_exhaustive();
+                DirectoryEntry::Dir(
+                    builder
+                        .fingerprint(self.digest_config.as_directory_serializer())
+                        .shared(&*INTERNER),
+                )
+            }
+            leaf @ DirectoryEntry::Leaf(_) => leaf.dupe(),
+        };
+        Ok(ArtifactValue::new(
+            entry,
+            value.deps().map(|deps| deps.dupe()),
+        ))
     }
 
     /// Builds the `ArtifactValue`. Since `self.builder` is rooted at the

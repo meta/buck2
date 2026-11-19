@@ -11,14 +11,9 @@ load("@prelude//go/transitions:tags_helper.bzl", "allowed_build_tags")
 
 def generate_tag_constraints():
     for tag in allowed_build_tags:
-        setting_name = "setting__" + tag
-        native.constraint_setting(
-            name = setting_name,
-            visibility = ["PUBLIC"],
-        )
-
-        native.constraint_value(
+        native.constraint(
             name = tag,
-            constraint_setting = ":" + setting_name,
+            default = "unset",
+            values = ["set", "unset"],
             visibility = ["PUBLIC"],
         )

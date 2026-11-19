@@ -11,9 +11,11 @@
 package com.facebook.buck.android.apk.sdk;
 
 import com.facebook.buck.android.apk.sdk.ApkJarBuilder.IZipEntryFilter.ZipAbortException;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.File;
 
 /** An exception thrown during packaging of an APK file. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class DuplicateFileException extends ZipAbortException {
   private static final long serialVersionUID = 1L;
   private final String mArchivePath;

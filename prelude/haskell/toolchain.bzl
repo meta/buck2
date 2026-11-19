@@ -6,9 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-HaskellPlatformInfo = provider(fields = {
-    "name": provider_field(typing.Any, default = None),
-})
+HaskellPlatformInfo = provider(
+    fields = {
+        "name": provider_field(typing.Any, default = None),
+    }
+)
 
 HaskellToolchainInfo = provider(
     # @unsorted-dict-items

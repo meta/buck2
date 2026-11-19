@@ -1,0 +1,14 @@
+load("@prelude//cxx:headers.bzl", "headers_for_tests")
+load("//:defs.bzl", "value")
+
+# A renamed header: the source `config/linux-config.h` is exported as `config.h`.
+value(
+    name = "renamed_header_prefix",
+    value = str(headers_for_tests.infer_include_prefix({"config.h": "config/linux-config.h"}, "", "third-party/foo")),
+)
+
+# A header under a subdirectory, exported by its file name.
+value(
+    name = "subdir_header_prefix",
+    value = str(headers_for_tests.infer_include_prefix({"config.h": "config/config.h"}, "", "third-party/foo")),
+)

@@ -1,0 +1,7 @@
+# A cap that does not even include this package. Deps within the same
+# package are exempt from `within_view`, cap included.
+package(
+    within_view = ["root//outside/..."],
+)
+
+enforce_within_view_intersection()

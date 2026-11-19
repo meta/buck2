@@ -10,7 +10,6 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Write;
-use std::iter;
 use std::sync::Arc;
 
 use buck2_build_api::configure_targets::ConfiguredTargetsWithErrors;
@@ -44,9 +43,9 @@ use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_node::nodes::unconfigured::TargetNodeRef;
 use buck2_node::super_package::SuperPackage;
 use buck2_util::indent::indent;
-use gazebo::prelude::SliceExt;
 use regex::RegexSet;
 
+use crate::configured_target_hash::ConfiguredTargetHash;
 use crate::json::QuotedJson;
 use crate::target_hash::BuckTargetHash;
 
@@ -92,12 +91,15 @@ pub(crate) trait TargetFormatter: Send + Sync {
 
 #[allow(unused_variables)]
 pub trait ConfiguredTargetFormatter: Send + Sync {
+    /// Whether [`Self::target`] reads the body of each node.
+    fn reads_bodies(&self) -> bool;
     fn begin(&self, buffer: &mut String) {}
     fn end(&self, buffer: &mut String) {}
     fn separator(&self, buffer: &mut String) {}
     fn target(
         &self,
         target_node: &ConfiguredTargetNode,
+        target_hash: Option<ConfiguredTargetHash>,
         buffer: &mut String,
     ) -> buck2_error::Result<()> {
         Ok(())
@@ -322,7 +324,12 @@ impl TargetFormatter for JsonFormat {
             buffer,
             &mut first,
             "buck.imports",
-            QuotedJson::list(imports.map(|d| QuotedJson::quote_display(d.path()))),
+            QuotedJson::list(
+                imports
+                    .iter()
+                    .map(|d| QuotedJson::quote_display(d.path()))
+                    .collect::<Vec<_>>(),
+            ),
         );
         self.writer.entry_end(buffer, first);
     }
@@ -357,6 +364,10 @@ impl TargetFormatter for JsonFormat {
 }
 
 impl ConfiguredTargetFormatter for JsonFormat {
+    fn reads_bodies(&self) -> bool {
+        true
+    }
+
     fn begin(&self, buffer: &mut String) {
         self.writer.begin(buffer)
     }
@@ -372,6 +383,7 @@ impl ConfiguredTargetFormatter for JsonFormat {
     fn target(
         &self,
         target_node: &ConfiguredTargetNode,
+        target_hash: Option<ConfiguredTargetHash>,
         buffer: &mut String,
     ) -> buck2_error::Result<()> {
         self.writer.entry_start(buffer);
@@ -389,25 +401,34 @@ impl ConfiguredTargetFormatter for JsonFormat {
             QuotedJson::list(
                 target_node
                     .deps()
-                    .map(|n| QuotedJson::quote_display(n.label())),
+                    .iter()
+                    .map(|n| QuotedJson::quote_display(n.label()))
+                    .collect::<Vec<_>>(),
             )
         });
 
+        let body = target_node.body()?;
         self.print_attr(buffer, &mut is_first_entry, INPUTS, || {
-            QuotedJson::list(target_node.inputs().map(QuotedJson::quote_display))
+            QuotedJson::list(body.inputs().map(QuotedJson::quote_display))
         });
+
+        if let Some(hash) = target_hash {
+            self.print_attr(buffer, &mut is_first_entry, TARGET_HASH, || {
+                QuotedJson::quote_display(hash)
+            });
+        }
 
         self.print_attr(buffer, &mut is_first_entry, PACKAGE, || {
             QuotedJson::quote_display(target_node.label().pkg())
         });
 
-        if let Some(oncall) = target_node.oncall() {
+        if let Some(oncall) = body.oncall() {
             self.print_attr(buffer, &mut is_first_entry, ONCALL, || {
                 QuotedJson::quote_display(oncall)
             });
         }
 
-        for a in target_node.attrs(self.attr_inspect_opts) {
+        for a in body.attrs(self.attr_inspect_opts) {
             let json_value = configured_value_to_json(&a.value, target_node.label().pkg())?;
             self.print_attr(buffer, &mut is_first_entry, a.name, || {
                 QuotedJson::from_serde_json_value(json_value)
@@ -415,13 +436,10 @@ impl ConfiguredTargetFormatter for JsonFormat {
         }
 
         if self.target_call_stacks {
-            match target_node.call_stack() {
-                Some(call_stack) => {
-                    self.print_attr(buffer, &mut is_first_entry, TARGET_CALL_STACK, || {
-                        QuotedJson::quote_str(&call_stack)
-                    });
-                }
-                None => {}
+            if let Some(call_stack) = body.call_stack() {
+                self.print_attr(buffer, &mut is_first_entry, TARGET_CALL_STACK, || {
+                    QuotedJson::quote_str(&call_stack)
+                });
             }
         }
 
@@ -488,6 +506,7 @@ impl Stats {
         self.errors += stats.errors;
         self.success += stats.success;
         self.targets += stats.targets;
+        self.error_tags.extend(stats.error_tags.iter().copied());
     }
 
     pub(crate) fn add_error(&mut self, e: &buck2_error::Error) {
@@ -515,7 +534,7 @@ impl Stats {
 
         let mut e = buck2_error::Error::from(TargetsError::FailedToParse(self.errors, package_str));
         e = e.tag(self.error_tags.iter().copied());
-        Some(e.into())
+        Some(e)
     }
 }
 
@@ -534,12 +553,10 @@ struct TargetNameFormat {
 impl TargetFormatter for TargetNameFormat {
     fn target(&self, target_info: TargetInfo<'_>, buffer: &mut String) {
         if self.target_hash_graph_type != TargetHashGraphType::None {
-            match target_info.target_hash {
-                Some(hash) => {
-                    writeln!(buffer, "{label} {hash}", label = target_info.node.label()).unwrap()
-                }
-                None => {} // print nothing if there is no hash and show_target_hash is specified.
-            };
+            if let Some(hash) = target_info.target_hash {
+                writeln!(buffer, "{label} {hash}", label = target_info.node.label()).unwrap()
+            }
+            // print nothing if there is no hash and show_target_hash is specified.
         } else {
             writeln!(buffer, "{}", target_info.node.label()).unwrap();
         }
@@ -550,15 +567,26 @@ impl TargetFormatter for TargetNameFormat {
 }
 
 impl ConfiguredTargetFormatter for TargetNameFormat {
+    fn reads_bodies(&self) -> bool {
+        self.target_call_stacks
+    }
+
     fn target(
         &self,
         target_node: &ConfiguredTargetNode,
+        target_hash: Option<ConfiguredTargetHash>,
         buffer: &mut String,
     ) -> buck2_error::Result<()> {
-        writeln!(buffer, "{}", target_node.label())
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+        match target_hash {
+            Some(hash) => writeln!(buffer, "{} {}", target_node.label(), hash),
+            None => writeln!(buffer, "{}", target_node.label()),
+        }
+        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
         if self.target_call_stacks {
-            print_target_call_stack_after_target(buffer, target_node.call_stack().as_deref());
+            print_target_call_stack_after_target(
+                buffer,
+                target_node.body()?.call_stack().as_deref(),
+            );
         };
 
         Ok(())
@@ -595,23 +623,28 @@ impl JsonReportFormat {
     pub fn format_report(
         &self,
         result: &ConfiguredTargetsWithErrors,
+        target_hash_lookup: impl Fn(
+            &ConfiguredTargetNode,
+        ) -> buck2_error::Result<Option<ConfiguredTargetHash>>,
         output: &mut String,
         stderr: &mut String,
     ) -> buck2_error::Result<()> {
         output.push_str("{\n  \"compatible_targets\": [\n");
 
         // Format compatible targets
+        ConfiguredTargetNode::prefetch_bodies(&result.compatible_targets)?;
         let mut needs_separator = false;
         for node in &result.compatible_targets {
-            // TODO(nga): we should probably get rid of forward nodes.
-            let nodes = iter::once(node).chain(node.forward_target());
-            for node in nodes {
-                if needs_separator {
-                    self.json_format.writer.separator(output);
-                }
-                needs_separator = true;
-                ConfiguredTargetFormatter::target(&self.json_format, node, output)?;
+            if needs_separator {
+                self.json_format.writer.separator(output);
             }
+            needs_separator = true;
+            ConfiguredTargetFormatter::target(
+                &self.json_format,
+                node,
+                target_hash_lookup(node)?,
+                output,
+            )?;
         }
 
         output.push_str("\n  ],\n  \"incompatible_targets\": [\n");
@@ -669,7 +702,8 @@ impl JsonReportFormat {
         );
 
         let cause_str = match &reason.cause {
-            IncompatiblePlatformReasonCause::UnsatisfiedConfig(_) => "ValidIncompatible",
+            IncompatiblePlatformReasonCause::UnsatisfiedConfig(_)
+            | IncompatiblePlatformReasonCause::SelectIncompatible(_) => "ValidIncompatible",
             IncompatiblePlatformReasonCause::Dependency(_) => "InvalidIncompatible",
         };
         self.json_format.writer.entry_item(
@@ -785,5 +819,34 @@ pub fn create_configured_formatter(
                 target_call_stacks,
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_error::ErrorTag;
+
+    use super::Stats;
+
+    /// `Stats::merge` carries the error tags of the merged stats, so the error built by the
+    /// streaming command keeps the tags of the package failures.
+    #[test]
+    fn test_stats_merge_error_tags() {
+        let e = buck2_error::buck2_error!(ErrorTag::Tier0, "package failed");
+        let mut package = Stats::default();
+        package.add_error(&e);
+        assert!(
+            package
+                .to_error()
+                .unwrap()
+                .tags()
+                .contains(&ErrorTag::Tier0)
+        );
+
+        let mut total = Stats::default();
+        total.merge(&package);
+        let err = total.to_error().unwrap();
+        assert!(err.tags().contains(&ErrorTag::Tier0));
+        assert!(err.tags().contains(&ErrorTag::Input));
     }
 }

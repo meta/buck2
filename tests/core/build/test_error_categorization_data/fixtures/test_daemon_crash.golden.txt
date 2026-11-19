@@ -1,14 +1,14 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
 
-[<TIMESTAMP>] thread 'buck2-tn' (<THREAD_ID>) panicked at <PATH>
+[<TIMESTAMP>] thread 'buck2-crash' (<THREAD_ID>) panicked at <PATH>
 [<TIMESTAMP>] explicitly requested panic (via unstable_crash)
 [<TIMESTAMP>] stack backtrace:
 [<TIMESTAMP>] note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
 Command failed: Buck daemon event bus encountered an error, the root cause (if available) is displayed above this message.
 
 Caused by:
-    0: status: Unknown, message: "transport error", details: [], metadata: MetadataMap { headers: {} }
+    0: code: 'Unknown error', message: "transport error", source: tonic::transport::Error(Transport, hyper::Error(Io, Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }))
     1: transport error
     2: connection error
     3: stream closed because of a broken pipe

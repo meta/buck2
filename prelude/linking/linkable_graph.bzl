@@ -6,11 +6,9 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//cxx:cxx_context.bzl", "get_cxx_platform_info")
+load("@prelude//cxx:compile_types.bzl", "CxxSrcCompileCommand")
 load("@prelude//cxx:cxx_toolchain_types.bzl", "PicBehavior")
 load("@prelude//cxx:headers.bzl", "CPrecompiledHeaderInfo")
-load("@prelude//cxx:platform.bzl", "cxx_by_platform")
-
 # TODO(mattpayne): Add this back once the type is supported by dependency mgmt
 # load("@prelude//cxx:shared_library_interface.bzl", "SharedInterfaceInfo")
 load("@prelude//linking:types.bzl", "Linkage")
@@ -19,10 +17,6 @@ load("@prelude//utils:expect.bzl", "expect")
 load(
     "@prelude//utils:graph_utils.bzl",
     "depth_first_traversal_by",
-)
-load(
-    "@prelude//utils:utils.bzl",
-    "flatten",
 )
 load(
     ":link_info.bzl",
@@ -78,7 +72,6 @@ LinkableNode = record(
     # deps and their (transitive) exported deps. This helps keep link lines smaller
     # and produces more efficient libs (for example, DT_NEEDED stays a manageable size).
     exported_deps = field(list[Label], []),
-
     # List of both deps and exported deps. We traverse linkable graph lots of times
     # and preallocating this list saves RAM during analysis
     all_deps = field(list[Label], []),
@@ -90,31 +83,30 @@ LinkableNode = record(
     # TODO(cjhopman): We should probably make all use of linker_flags explicit, but that may need to wait
     # for all link strategies to operate on the LinkableGraph.
     linker_flags = field(LinkerFlags),
-
     # Shared libraries provided by this target.  Used if this target is
     # excluded.
     shared_libs = field(SharedLibraries, SharedLibraries(libraries = [])),
-
     # The soname this node would use in default link strategies. May be used by non-default
     # link strategies as a lib's soname.
     default_soname = field(str | None),
-
     # Records Android's can_be_asset value for the node. This indicates whether the node can be bundled
     # as an asset in android apks.
     can_be_asset = field(bool),
-
     # Collected target sources from the target.
     srcs = field(list[_TargetSourceType]),
-
     # Whether the node should appear in the android mergemap (which provides information about the original
     # soname->final merged lib mapping)
     include_in_android_mergemap = field(bool),
     # Don't follow dependents on this node even if has preferred linkage static
     ignore_force_static_follows_dependents = field(bool),
-
     # Should this library only be used for build time linkage
     stub = field(bool),
-
+    supports_shlib_interfaces = field(bool, True),
+    # Per-source C/C++ compile commands for this node, used to aggregate an app-level native
+    # compile-command database (the [native_build_commands][compile] sub-target). Populated only when
+    # compile-command capture is enabled (see cxx_library); empty otherwise and for nodes with no
+    # sources (e.g. prebuilt libraries).
+    compile_cmds = field(list[CxxSrcCompileCommand], []),
     # Only allow constructing within this file.
     _private = _DisallowConstruction,
 )
@@ -122,17 +114,13 @@ LinkableNode = record(
 LinkableGraphNode = record(
     # Target/label of this node
     label = field(Label),
-
     # If this node has linkable output, it's linkable data
     linkable = field([LinkableNode, None]),
-
     # All potential root notes for an omnibus link (e.g. C++ libraries,
     # C++ Python extensions).
     roots = field(dict[Label, LinkableRootInfo]),
-
     # Exclusions this node adds to the Omnibus graph
     excluded = field(dict[Label, None]),
-
     # Only allow constructing within this file.
     _private = _DisallowConstruction,
 )
@@ -144,15 +132,27 @@ LinkableGraphTSet = transitive_set()
 #
 # TODO(cjhopman): Rather than flattening this at each node, we should build up an actual
 # graph structure.
-LinkableGraph = provider(fields = {
-    # Target identifier of the graph.
-    "label": provider_field(typing.Any, default = None),  # Label
-    "nodes": provider_field(typing.Any, default = None),  # "LinkableGraphTSet"
-})
+LinkableGraph = provider(
+    fields = {
+        # Target identifier of the graph.
+        "label": provider_field(typing.Any, default = None),  # Label
+        "nodes": provider_field(typing.Any, default = None),  # "LinkableGraphTSet"
+    }
+)
 
 # Used to tag a rule as providing a shared native library that may be loaded
 # dynamically, at runtime (e.g. via `dlopen`).
-DlopenableLibraryInfo = provider(fields = {})
+DlopenableLibraryInfo = provider(
+    fields = {
+        # The library ships its own prebuilt shared library, which should be used
+        # as-is rather than re-linked from its archive. The prebuilt one may have
+        # properties that a re-link would lose, e.g. symbol versioning that
+        # external consumers depend on.
+        "prebuilt_shared_lib": provider_field(bool, default = False),
+    }
+)
+
+DLOPENABLE_LIBRARY_INFO_MARKER = DlopenableLibraryInfo()
 
 def _get_required_outputs_for_linkage(linkage: Linkage) -> list[LibOutputStyle]:
     if linkage == Linkage("shared"):
@@ -164,25 +164,24 @@ def _get_target_sources(ctx: AnalysisContext) -> list[_TargetSourceType]:
     srcs = []
     if hasattr(ctx.attrs, "srcs"):
         srcs.extend(ctx.attrs.srcs)
-    if hasattr(ctx.attrs, "platform_srcs"):
-        cxx_platform_info = get_cxx_platform_info(ctx)
-        srcs.extend(flatten(cxx_by_platform(cxx_platform_info, ctx.attrs.platform_srcs)))
     return srcs
 
 def create_linkable_node(
-        ctx: AnalysisContext,
-        default_soname: str | None,
-        preferred_linkage: Linkage = Linkage("any"),
-        default_link_strategy: LinkStrategy = LinkStrategy("shared"),
-        deps: list[Dependency | LinkableGraph] = [],
-        exported_deps: list[Dependency | LinkableGraph] = [],
-        link_infos: dict[LibOutputStyle, LinkInfos] = {},
-        shared_libs: SharedLibraries = SharedLibraries(libraries = []),
-        can_be_asset: bool = True,
-        include_in_android_mergemap: bool = True,
-        linker_flags: [LinkerFlags, None] = None,
-        ignore_force_static_follows_dependents: bool = False,
-        stub: bool = False) -> LinkableNode:
+    ctx: AnalysisContext,
+    default_soname: str | None,
+    preferred_linkage: Linkage = Linkage("any"),
+    default_link_strategy: LinkStrategy = LinkStrategy("shared"),
+    deps: list[Dependency | LinkableGraph] = [],
+    exported_deps: list[Dependency | LinkableGraph] = [],
+    link_infos: dict[LibOutputStyle, LinkInfos] = {},
+    shared_libs: SharedLibraries = SharedLibraries(libraries = []),
+    can_be_asset: bool = True,
+    include_in_android_mergemap: bool = True,
+    linker_flags: [LinkerFlags, None] = None,
+    ignore_force_static_follows_dependents: bool = False,
+    stub: bool = False,
+    compile_cmds: list[CxxSrcCompileCommand] = [],
+) -> LinkableNode:
     for output_style in _get_required_outputs_for_linkage(preferred_linkage):
         expect(
             output_style in link_infos,
@@ -208,15 +207,18 @@ def create_linkable_node(
         linker_flags = linker_flags,
         ignore_force_static_follows_dependents = ignore_force_static_follows_dependents,
         stub = stub,
+        supports_shlib_interfaces = getattr(ctx.attrs, "supports_shlib_interfaces", True),
+        compile_cmds = compile_cmds,
         _private = _DisallowConstruction(),
     )
 
 def create_linkable_graph_node(
-        ctx: AnalysisContext,
-        linkable_node: [LinkableNode, None] = None,
-        roots: dict[Label, LinkableRootInfo] = {},
-        excluded: dict[Label, None] = {},
-        label: Label | None = None) -> LinkableGraphNode:
+    ctx: AnalysisContext,
+    linkable_node: [LinkableNode, None] = None,
+    roots: dict[Label, LinkableRootInfo] = {},
+    excluded: dict[Label, None] = {},
+    label: Label | None = None,
+) -> LinkableGraphNode:
     if not label:
         label = ctx.label
     return LinkableGraphNode(
@@ -228,10 +230,11 @@ def create_linkable_graph_node(
     )
 
 def create_linkable_graph(
-        ctx: AnalysisContext,
-        node: [LinkableGraphNode, None] = None,
-        # This list of deps must include all deps referenced by the LinkableGraphNode.
-        deps: list[[LinkableGraph, Dependency]] = []) -> LinkableGraph:
+    ctx: AnalysisContext,
+    node: [LinkableGraphNode, None] = None,
+    # This list of deps must include all deps referenced by the LinkableGraphNode.
+    deps: list[[LinkableGraph, Dependency]] = [],
+) -> LinkableGraph:
     graph_deps = []
     for d in deps:
         if isinstance(d, LinkableGraph):
@@ -246,7 +249,11 @@ def create_linkable_graph(
         for l in [node.linkable.deps, node.linkable.exported_deps]:  # buildifier: disable=confusing-name
             for d in l:
                 if not d in deps_labels:
-                    fail("LinkableNode had {} in its deps, but that label is missing from the node's linkable graph children (`{}`)".format(d, ", ".join(deps_labels)))
+                    fail(
+                        "LinkableNode had {} in its deps, but that label is missing from the node's linkable graph children (`{}`)".format(
+                            d, ", ".join(deps_labels)
+                        )
+                    )
 
     children = [x.nodes for x in graph_deps]
 
@@ -267,7 +274,6 @@ ReducedLinkableGraph = record(
     # Label to information map for whole graph.
     # Does not have entry for executable
     nodes = field(dict[Label, LinkableNode]),
-
     # Order of linkable in the graph as it would go into linker argsfile
     # when building executable in static link strategy
     link_order = field(dict[Label, int]),
@@ -338,11 +344,7 @@ def linkable_graph(dep: Dependency) -> [LinkableGraph, None]:
 
     return dep[LinkableGraph]
 
-def get_link_info(
-        node: LinkableNode,
-        output_style: LibOutputStyle,
-        prefer_stripped: bool = False,
-        prefer_optimized: bool = False) -> LinkInfo:
+def get_link_info(node: LinkableNode, output_style: LibOutputStyle, prefer_stripped: bool = False, prefer_optimized: bool = False) -> LinkInfo:
     info = _get_link_info(
         node.link_infos[output_style],
         prefer_stripped = prefer_stripped,
@@ -351,10 +353,8 @@ def get_link_info(
     return info
 
 def get_deps_for_link(
-        node: LinkableNode,
-        strategy: LinkStrategy,
-        pic_behavior: PicBehavior,
-        overridden_preferred_linkage: Linkage | None = None) -> list[Label]:
+    node: LinkableNode, strategy: LinkStrategy, pic_behavior: PicBehavior, overridden_preferred_linkage: Linkage | None = None
+) -> list[Label]:
     """
     Return deps to follow when linking against this node with the given link
     style.
@@ -367,9 +367,7 @@ def get_deps_for_link(
     else:
         return node.exported_deps
 
-def get_transitive_deps(
-        link_infos: dict[Label, LinkableNode],
-        roots: list[Label]) -> list[Label]:
+def get_transitive_deps(link_infos: dict[Label, LinkableNode], roots: list[Label]) -> list[Label]:
     """
     Return all transitive deps from following the given nodes.
     """

@@ -1,8 +1,0 @@
-load(":graph_utils_tests.bzl", "test_find_cycle")
-load(":link_info_tests.bzl", "test_get_lib_output_style")
-
-oncall("build_infra")
-
-test_get_lib_output_style()
-
-test_find_cycle()

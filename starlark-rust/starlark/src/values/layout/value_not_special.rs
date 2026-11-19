@@ -16,50 +16,41 @@
  */
 
 use dupe::Dupe;
+use starlark_derive::StarlarkPagable;
 
-use crate::values::FrozenValue;
+use crate as starlark;
 use crate::values::Value;
-use crate::values::layout::vtable::AValueDyn;
+use crate::values::layout::vtable::AValueDynFull;
 use crate::values::stack_guard;
 
-/// `FrozenValue` which is not `i32` or `str`.
-#[derive(Copy, Clone, Dupe, Debug, derive_more::Display)]
-pub(crate) struct FrozenValueNotSpecial(FrozenValue);
+/// A frozen `Value` which is not `i32` or `str`, at the brand of the heap it lives in.
+#[derive(Copy, Clone, Dupe, Debug, derive_more::Display, StarlarkPagable)]
+pub(crate) struct ValueNotSpecial<'v>(Value<'v>);
 
-impl FrozenValueNotSpecial {
+impl<'v> ValueNotSpecial<'v> {
     #[inline]
-    pub(crate) fn new(value: FrozenValue) -> Option<FrozenValueNotSpecial> {
-        if value.is_str() || value.unpack_inline_int().is_some() {
+    pub(crate) fn new(value: Value<'v>) -> Option<ValueNotSpecial<'v>> {
+        if value.is_str() || value.unpack_inline_int().is_some() || !value.is_frozen() {
             None
         } else {
-            Some(FrozenValueNotSpecial(value))
+            Some(ValueNotSpecial(value))
         }
     }
 
     #[inline]
-    pub(crate) fn to_frozen_value(self) -> FrozenValue {
+    pub(crate) fn to_value(self) -> Value<'v> {
         self.0
     }
 
     #[inline]
-    pub(crate) fn to_value<'v>(self) -> Value<'v> {
-        self.0.to_value()
+    fn get_ref(self) -> AValueDynFull<'v> {
+        // SAFETY: we checked in constructor that it is a frozen value which is not a str or i32,
+        // and the vtable is read from the value itself.
+        unsafe { AValueDynFull::new(self.0.0.value_header_ptr_unchecked().unpack(), self.0) }
     }
 
     #[inline]
-    fn get_ref<'v>(self) -> AValueDyn<'v> {
-        // SAFETY: we checked in constructor that it is not a str or i32.
-        unsafe {
-            self.0
-                .0
-                .unpack_ptr_no_int_no_str_unchecked()
-                .unpack_header_unchecked()
-                .unpack()
-        }
-    }
-
-    #[inline]
-    pub(crate) fn equals(self, other: Value) -> crate::Result<bool> {
+    pub(crate) fn equals(self, other: Value<'v>) -> crate::Result<bool> {
         if self.to_value().ptr_eq(other) {
             Ok(true)
         } else {
@@ -71,7 +62,7 @@ impl FrozenValueNotSpecial {
     }
 
     #[inline]
-    fn equals_not_ptr_eq(self, other: Value) -> crate::Result<bool> {
+    fn equals_not_ptr_eq(self, other: Value<'v>) -> crate::Result<bool> {
         let _guard = stack_guard::stack_guard()?;
         self.get_ref().equals(other)
     }

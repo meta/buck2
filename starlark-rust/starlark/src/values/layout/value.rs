@@ -15,25 +15,11 @@
  * limitations under the License.
  */
 
-// Possible optimisations:
-// Avoid the Box duplication
-// Encode Int in the pointer too
-
-// We use pointer tagging on the bottom two bits:
-// 00 => this Value pointer is actually a FrozenValue pointer
-// 01 => this is a real Value pointer
-// 11 => this is a bool (next bit: 1 => true, 0 => false)
-// 10 => this is a None
-//
-// We don't use pointer tagging for Int (although we'd like to), because
-// our val_ref requires a pointer to the value. We need to put that pointer
-// somewhere. The solution is to have a separate value storage vs vtable.
-
-use std::any;
 use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::ptr::NonNull;
 
 use allocative::Allocative;
 use dupe::Clone_;
@@ -43,18 +29,14 @@ use dupe::Dupe_;
 use dupe::IterDupedExt;
 use dupe::OptionDupedExt;
 use either::Either;
-use num_bigint::BigInt;
 use serde::Serialize;
 use serde::Serializer;
-use starlark_map::Equivalent;
 use starlark_syntax::value_error;
 
 use crate as starlark;
 use crate::any::AnyLifetime;
 use crate::any::ProvidesStaticType;
 use crate::cast::transmute;
-use crate::coerce::Coerce;
-use crate::coerce::CoerceKey;
 use crate::collections::Hashed;
 use crate::collections::StarlarkHashValue;
 use crate::collections::StarlarkHasher;
@@ -63,10 +45,12 @@ use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::eval::ParametersSpec;
 use crate::eval::compiler::def::Def;
-use crate::eval::compiler::def::FrozenDef;
 use crate::eval::runtime::arguments::ArgumentsFull;
 use crate::eval::runtime::frame_span::FrameSpan;
-use crate::sealed::Sealed;
+use crate::pagable::starlark_deserialize::StarlarkDeserialize;
+use crate::pagable::starlark_deserialize::StarlarkDeserializeContext;
+use crate::pagable::starlark_serialize::StarlarkSerialize;
+use crate::pagable::starlark_serialize::StarlarkSerializeContext;
 use crate::typing::ParamIsRequired;
 use crate::typing::ParamSpec;
 use crate::typing::Ty;
@@ -74,59 +58,48 @@ use crate::typing::TyCallable;
 use crate::util::ArcStr;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
-use crate::values::FrozenRef;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValueTyped;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
-use crate::values::Trace;
 use crate::values::UnpackValue;
 use crate::values::ValueError;
 use crate::values::ValueIdentity;
+use crate::values::ValueTyped;
 use crate::values::bool::value::VALUE_FALSE_TRUE;
 use crate::values::demand::request_value_impl;
-use crate::values::dict::FrozenDictRef;
+use crate::values::dict::Dict;
+use crate::values::dict::value::DictGen;
 use crate::values::dict::value::VALUE_EMPTY_FROZEN_DICT;
-use crate::values::enumeration::EnumType;
-use crate::values::enumeration::FrozenEnumValue;
+use crate::values::function::BoundMethod;
 use crate::values::function::FUNCTION_TYPE;
-use crate::values::function::FrozenBoundMethod;
 use crate::values::function::NativeFunction;
 use crate::values::int::pointer_i32::PointerI32;
 use crate::values::iter::StarlarkIterator;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::avalue::AValueImpl;
 use crate::values::layout::heap::repr::AValueHeader;
-use crate::values::layout::heap::repr::AValueOrForwardUnpack;
+use crate::values::layout::heap::repr::AValueHeapEntryState;
 use crate::values::layout::heap::repr::AValueRepr;
-use crate::values::layout::pointer::FrozenPointer;
 use crate::values::layout::pointer::Pointer;
 use crate::values::layout::pointer::RawPointer;
-use crate::values::layout::static_string::VALUE_EMPTY_STRING;
-use crate::values::layout::typed::string::StringValueLike;
-use crate::values::layout::value_lifetimeless::ValueLifetimeless;
-use crate::values::layout::vtable::AValueDyn;
 use crate::values::layout::vtable::AValueDynFull;
 use crate::values::layout::vtable::AValueVTable;
 use crate::values::list::value::VALUE_EMPTY_FROZEN_LIST;
 use crate::values::none::none_type::VALUE_NONE;
 use crate::values::range::Range;
-use crate::values::record::instance::FrozenRecord;
-use crate::values::record::record_type::RecordType;
+use crate::values::recursive_repr_or_json_guard::JsonStackError;
 use crate::values::recursive_repr_or_json_guard::json_stack_push;
 use crate::values::recursive_repr_or_json_guard::repr_stack_push;
 use crate::values::stack_guard;
 use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::string::str_type::StarlarkStr;
-use crate::values::structs::value::FrozenStruct;
+use crate::values::structs::value::Struct;
 use crate::values::tuple::value::VALUE_EMPTY_TUPLE;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::int::inline_int::InlineInt;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
 use crate::values::types::list::value::FrozenListData;
+use crate::values::types::list::value::ListGen;
 use crate::values::types::num::value::NumRef;
-use crate::values::types::tuple::value::FrozenTuple;
 use crate::values::types::tuple::value::Tuple;
 
 // We already import another `ValueError`, hence the odd name.
@@ -136,27 +109,32 @@ enum ValueValueError {
     WrongType(&'static str, String),
 }
 
-/// A Starlark value. The lifetime argument `'v` corresponds to the [`Heap`](crate::values::Heap) it is stored on.
+/// A Starlark value. The lifetime argument `'v` identifies the [`Heap`](crate::values::Heap) it
+/// is stored on, or a frozen heap that heap keeps alive; the `branding` module in
+/// `values/layout/heap/branding.rs` explains what that means.
 ///
 /// Many of the methods simply forward to the underlying [`StarlarkValue`](crate::values::StarlarkValue).
 /// The [`Display`](std::fmt::Display) trait is equivalent to the `repr()` function in Starlark.
+///
+/// # Representation
+///
+/// A `Value` is one word, a tagged pointer (`Pointer` in `values/layout/pointer.rs`, which
+/// defines the tags). It is either an inline 32-bit integer (`PointerTags::Int`), which lives in
+/// no heap, or a pointer to a heap object: an `AValueHeader`, which is a pointer to the object's
+/// vtable, followed by the Rust value itself. The other tag bits record two facts about the
+/// pointee that the runtime wants without dereferencing it: whether it is a string (`TAG_STR`)
+/// and whether it is unfrozen (`TAG_UNFROZEN`), which is what [`is_frozen`](Value::is_frozen)
+/// reads. `None`, the booleans, the empty string and the empty containers are statics
+/// ([`AllocStaticSimple`](crate::values::AllocStaticSimple)) in no heap, and count as frozen.
 #[derive(Clone_, Copy_, Dupe_, ProvidesStaticType, Allocative)]
-#[allocative(skip)] // Value is owned by heap.
+#[allocative(skip)]
+// Value is owned by heap.
 // One possible change: moving to Forward during GC.
+// Transparent so that a `Deferred<Value>` can hand out `&Value` over its word.
+#[repr(transparent)]
 pub struct Value<'v>(pub(crate) Pointer<'v>);
 
-unsafe impl<'v> Coerce<Value<'v>> for Value<'v> {}
-unsafe impl<'v> CoerceKey<Value<'v>> for Value<'v> {}
-unsafe impl<'v> Coerce<Value<'v>> for FrozenValue {}
-unsafe impl<'v> CoerceKey<Value<'v>> for FrozenValue {}
-
 impl Default for Value<'_> {
-    fn default() -> Self {
-        Self::new_none()
-    }
-}
-
-impl Default for FrozenValue {
     fn default() -> Self {
         Self::new_none()
     }
@@ -179,19 +157,19 @@ impl Display for Value<'_> {
     }
 }
 
-impl Display for FrozenValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.to_value(), f)
-    }
-}
-
 fn debug_value(typ: &str, v: Value, f: &mut fmt::Formatter) -> fmt::Result {
     // When value is being moved during GC or freeze,
     // `Value` pointee is not a proper value, but a GC-related information.
     // Regular operations like `.to_repr()` crash, but `Debug` should work.
     if let Some(x) = v.0.unpack_ptr() {
-        if let AValueOrForwardUnpack::Forward(fwd) = x.unpack() {
-            return f.debug_tuple(typ).field(&fwd).finish();
+        match x.state() {
+            AValueHeapEntryState::Forward(fwd) => {
+                return f.debug_tuple(typ).field(&fwd).finish();
+            }
+            AValueHeapEntryState::Reservation(size) => {
+                return f.debug_struct(typ).field("reservation", &size).finish();
+            }
+            AValueHeapEntryState::Value(_) => {}
         }
     }
     f.debug_tuple(typ).field(v.get_ref().as_debug()).finish()
@@ -203,58 +181,13 @@ impl Debug for Value<'_> {
     }
 }
 
-impl Debug for FrozenValue {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        debug_value("FrozenValue", Value::new_frozen(*self), f)
-    }
-}
-
 impl<'v> PartialEq for Value<'v> {
     fn eq(&self, other: &Value<'v>) -> bool {
         self.equals(*other).ok() == Some(true)
     }
 }
 
-impl PartialEq for FrozenValue {
-    fn eq(&self, other: &FrozenValue) -> bool {
-        self.to_value().eq(&other.to_value())
-    }
-}
-
 impl Eq for Value<'_> {}
-
-impl Eq for FrozenValue {}
-
-impl Equivalent<FrozenValue> for Value<'_> {
-    fn equivalent(&self, key: &FrozenValue) -> bool {
-        key.equals(*self).unwrap()
-    }
-}
-
-impl Equivalent<Value<'_>> for FrozenValue {
-    fn equivalent(&self, key: &Value) -> bool {
-        self.equals(*key).unwrap()
-    }
-}
-
-/// A [`Value`] that can never be changed. Can be converted back to a [`Value`] with [`to_value`](FrozenValue::to_value).
-///
-/// A [`FrozenValue`] exists on a [`FrozenHeap`](crate::values::FrozenHeap), which in turn can be kept
-/// alive by a [`FrozenHeapRef`](crate::values::FrozenHeapRef). If the frozen heap gets dropped
-/// while a [`FrozenValue`] from it still exists, the program will probably segfault, so be careful
-/// when working directly with [`FrozenValue`]s. See the type [`OwnedFrozenValue`](crate::values::OwnedFrozenValue)
-/// for a little bit more safety.
-#[derive(Clone, Copy, Dupe, ProvidesStaticType, Allocative)]
-// One possible change: moving from Blackhole during GC
-pub struct FrozenValue(
-    #[allocative(skip)] // Because it is owned by the heap.
-    pub(crate)  FrozenPointer<'static>,
-);
-
-// These can both be shared, but not obviously, because we hide a fake RefCell in Pointer to stop
-// it having variance.
-unsafe impl Send for FrozenValue {}
-unsafe impl Sync for FrozenValue {}
 
 #[derive(thiserror::Error, Debug)]
 #[error("Integer value is too big to fit in {integer_type}: {value}")]
@@ -264,93 +197,125 @@ pub(crate) struct IntegerTooBigError {
 }
 
 impl<'v> Value<'v> {
+    /// # Safety
+    ///
+    /// `x` is the header of a value in the unfrozen heap of `'v`, by a pointer with provenance
+    /// over the whole value (the allocation's, not a `&AValueHeader`'s).
     #[inline]
-    pub(crate) fn new_ptr(x: &'v AValueHeader, is_str: bool) -> Self {
-        Self(Pointer::new_unfrozen(x, is_str))
+    pub(crate) unsafe fn new_ptr(x: NonNull<AValueHeader>, is_str: bool) -> Self {
+        unsafe { Self(Pointer::new_unfrozen(x, is_str)) }
     }
 
+    /// # Safety
+    ///
+    /// As for [`new_ptr`](Self::new_ptr).
     #[inline]
-    pub(crate) fn new_ptr_query_is_str(x: &'v AValueHeader) -> Self {
-        let is_string = x.0.is_str;
-        Self::new_ptr(x, is_string)
+    pub(crate) unsafe fn new_ptr_query_is_str(x: NonNull<AValueHeader>) -> Self {
+        unsafe {
+            let is_string = x.as_ref().0.is_str;
+            Self::new_ptr(x, is_string)
+        }
     }
 
+    /// # Safety
+    ///
+    /// As for [`new_ptr`](Self::new_ptr).
     #[inline]
-    pub(crate) fn new_repr<T: AValue<'v>>(x: &'v AValueRepr<AValueImpl<'v, T>>) -> Self {
-        Self::new_ptr(&x.header, T::IS_STR)
+    pub(crate) unsafe fn new_repr<T: AValue<'v>>(
+        x: NonNull<AValueRepr<AValueImpl<'v, T>>>,
+    ) -> Self {
+        unsafe { Self::new_ptr(x.cast(), T::IS_STR) }
     }
 
+    /// A value in a frozen heap, at the brand of the caller's choosing.
+    ///
+    /// # Safety
+    ///
+    /// `x` is the header of a value in a frozen heap that the heap of `'v` keeps alive, or of
+    /// a static, by a pointer with provenance over the whole value.
     #[inline]
-    pub(crate) unsafe fn new_ptr_usize_with_str_tag(x: usize) -> Self {
-        unsafe { Self(Pointer::new_unfrozen_usize_with_str_tag(x)) }
+    pub(crate) unsafe fn new_frozen_ptr(x: NonNull<AValueHeader>, is_str: bool) -> Self {
+        unsafe { Self(Pointer::new_frozen(x, is_str)) }
     }
 
+    /// # Safety
+    ///
+    /// `x` must point at an [`AValueHeader`] in the unfrozen heap of `'v`, with the string tag
+    /// set iff the value is a string and the other tag bits clear.
     #[inline]
-    pub(crate) unsafe fn cast_lifetime<'w>(self) -> Value<'w> {
-        unsafe { Value(self.0.cast_lifetime()) }
+    pub(crate) unsafe fn new_ptr_with_str_tag(x: NonNull<()>) -> Self {
+        unsafe { Self(Pointer::new_unfrozen_ptr_with_str_tag(x)) }
+    }
+
+    /// # Safety
+    ///
+    /// `x` must point at an [`AValueHeader`] in a frozen heap that the heap of `'v` keeps
+    /// alive, with the string tag set iff the value is a string and the other tag bits clear.
+    #[inline]
+    pub(crate) unsafe fn new_frozen_ptr_with_str_tag(x: NonNull<()>) -> Self {
+        Self(Pointer::new_frozen_ptr_with_str_tag(x))
     }
 
     /// Create a new `None` value.
     #[inline]
     pub fn new_none() -> Self {
-        FrozenValue::new_none().to_value()
+        VALUE_NONE.at().to_value()
     }
 
     /// Create a new boolean.
     #[inline]
     pub fn new_bool(x: bool) -> Self {
-        FrozenValue::new_bool(x).to_value()
+        // Implemented by indexing into a static so that
+        // the compiler makes this function branchless.
+        VALUE_FALSE_TRUE[x as usize].at().to_value()
     }
 
     /// Create a new integer.
     #[inline]
     pub(crate) fn new_int(x: InlineInt) -> Self {
-        FrozenValue::new_int(x).to_value()
+        Self(Pointer::new_int(x))
+    }
+
+    /// The immutable empty list.
+    #[inline]
+    pub fn new_empty_list() -> Self {
+        VALUE_EMPTY_FROZEN_LIST.at().to_value()
+    }
+
+    /// The immutable empty dict.
+    #[inline]
+    pub fn new_empty_dict() -> Self {
+        VALUE_EMPTY_FROZEN_DICT.at().to_value()
     }
 
     #[cfg(test)]
     pub(crate) fn testing_new_int(x: i32) -> Self {
-        FrozenValue::testing_new_int(x).to_value()
-    }
-
-    /// Create a new blank string.
-    #[inline]
-    pub(crate) fn new_empty_string() -> Self {
-        FrozenValue::new_empty_string().to_value()
+        Self::new_int(InlineInt::try_from(x).ok().unwrap())
     }
 
     /// Create a new empty tuple.
     #[inline]
     pub(crate) fn new_empty_tuple() -> Self {
-        FrozenValue::new_empty_tuple().to_value()
+        VALUE_EMPTY_TUPLE.at().to_value()
     }
 
-    /// Turn a [`FrozenValue`] into a [`Value`]. See the safety warnings on
-    /// [`OwnedFrozenValue`](crate::values::OwnedFrozenValue).
+    /// Whether the value is frozen: allocated in a frozen heap, a static, or an inline integer.
     #[inline]
-    pub fn new_frozen(x: FrozenValue) -> Self {
-        // Safe if every FrozenValue must have had a reference added to its heap first.
-        // That property is NOT statically checked.
-        Self(x.0.to_pointer())
+    pub fn is_frozen(self) -> bool {
+        !self.0.is_unfrozen()
     }
 
-    /// Obtain the underlying [`FrozenValue`] from inside the [`Value`], if it is one.
+    /// The same frozen value, at the brand of another heap.
+    ///
+    /// # Safety
+    ///
+    /// The value must be frozen, and the heap of `'v2` must keep alive the frozen heap the value
+    /// lives in. `SealEdge::rebrand` is the caller; the `branding` module says what it rests on.
     #[inline]
-    pub fn unpack_frozen(self) -> Option<FrozenValue> {
-        if self.0.is_unfrozen() {
-            None
-        } else {
-            // SAFETY: We've just checked the value is frozen.
-            unsafe { Some(self.unpack_frozen_unchecked()) }
-        }
-    }
-
-    #[inline]
-    unsafe fn unpack_frozen_unchecked(self) -> FrozenValue {
-        unsafe {
-            debug_assert!(!self.0.is_unfrozen());
-            FrozenValue(self.0.cast_lifetime().to_frozen_pointer_unchecked())
-        }
+    pub(crate) unsafe fn rebrand_frozen_unchecked<'v2>(self) -> Value<'v2> {
+        debug_assert!(self.is_frozen());
+        // SAFETY: The caller's obligation.
+        Value(unsafe { self.0.cast_lifetime() })
     }
 
     /// Is this value `None`.
@@ -370,27 +335,6 @@ impl<'v> Value<'v> {
         }
     }
 
-    pub(crate) fn unpack_integer<I>(self) -> crate::Result<Option<I>>
-    where
-        I: TryFrom<i32>,
-        I: TryFrom<&'v BigInt>,
-    {
-        let Some(num) = StarlarkIntRef::unpack_value_opt(self) else {
-            return Ok(None);
-        };
-        let option = match num {
-            StarlarkIntRef::Small(x) => I::try_from(x.to_i32()).ok(),
-            StarlarkIntRef::Big(x) => x.unpack_integer(),
-        };
-        match option {
-            Some(i) => Ok(Some(i)),
-            None => Err(crate::Error::new_value(IntegerTooBigError {
-                integer_type: any::type_name::<I>(),
-                value: num.to_string(),
-            })),
-        }
-    }
-
     /// Obtain the underlying `bool` if it is a boolean.
     #[inline]
     pub fn unpack_bool(self) -> Option<bool> {
@@ -401,6 +345,15 @@ impl<'v> Value<'v> {
         } else {
             None
         }
+    }
+
+    /// Obtain the underlying `bool`.
+    ///
+    /// # Safety
+    /// The caller must ensure the value is a boolean.
+    #[inline]
+    pub unsafe fn unpack_bool_unchecked(self) -> bool {
+        self.ptr_eq(Value::new_bool(true))
     }
 
     /// Obtain the underlying integer if it fits in an `i32`.
@@ -420,14 +373,10 @@ impl<'v> Value<'v> {
     }
 
     #[inline]
-    pub(crate) fn unpack_int_value(self) -> Option<FrozenValueTyped<'static, PointerI32>> {
+    pub(crate) fn unpack_int_value(self) -> Option<ValueTyped<'v, PointerI32>> {
         if self.unpack_inline_int().is_some() {
             // SAFETY: We've just checked the value is an int.
-            unsafe {
-                Some(FrozenValueTyped::new_unchecked(
-                    self.unpack_frozen_unchecked(),
-                ))
-            }
+            unsafe { Some(ValueTyped::new_unchecked(self)) }
         } else {
             None
         }
@@ -447,18 +396,22 @@ impl<'v> Value<'v> {
     #[inline]
     pub fn unpack_starlark_str(self) -> Option<&'v StarlarkStr> {
         if self.is_str() {
-            unsafe {
-                Some(
-                    &self
-                        .0
-                        .unpack_ptr_no_int_unchecked()
-                        .unpack_header_unchecked()
-                        .as_repr::<StarlarkStr>()
-                        .payload,
-                )
-            }
+            Some(unsafe { self.unpack_starlark_str_unchecked() })
         } else {
             None
+        }
+    }
+
+    /// # Safety
+    /// The caller must ensure the value is a string.
+    #[inline]
+    unsafe fn unpack_starlark_str_unchecked(self) -> &'v StarlarkStr {
+        unsafe {
+            let repr = self
+                .0
+                .raw()
+                .unpack_ptr_no_int_unchecked_raw::<AValueRepr<StarlarkStr>>();
+            &(*repr).payload
         }
     }
 
@@ -466,6 +419,15 @@ impl<'v> Value<'v> {
     #[inline]
     pub fn unpack_str(self) -> Option<&'v str> {
         self.unpack_starlark_str().map(|s| s.as_str())
+    }
+
+    /// Obtain the underlying `str`.
+    ///
+    /// # Safety
+    /// The caller must ensure the value is a string.
+    #[inline]
+    pub unsafe fn unpack_str_unchecked(self) -> &'v str {
+        unsafe { self.unpack_starlark_str_unchecked() }.as_str()
     }
 
     /// Obtain the underlying `str` if it is a string, otherwise return an error for users.
@@ -476,27 +438,20 @@ impl<'v> Value<'v> {
 
     /// Get a pointer to a [`AValue`].
     #[inline]
-    pub(crate) fn get_ref(self) -> AValueDyn<'v> {
-        unsafe {
-            match self.0.unpack() {
-                Either::Left(x) => x.unpack_header_unchecked().unpack(),
-                Either::Right(x) => x.as_avalue_dyn(),
-            }
-        }
-    }
-
-    #[inline]
-    fn get_ref_full(self) -> AValueDynFull<'v> {
-        unsafe { AValueDynFull::new(self.get_ref(), self) }
+    pub(crate) fn get_ref(self) -> AValueDynFull<'v> {
+        let avalue = match self.0.unpack() {
+            Either::Left(x) => x.unpack(),
+            Either::Right(x) => x.as_avalue_dyn(),
+        };
+        // SAFETY: `avalue` was just read from `self`.
+        unsafe { AValueDynFull::new(avalue, self) }
     }
 
     #[inline]
     pub(crate) fn vtable(self) -> &'static AValueVTable {
-        unsafe {
-            match self.0.unpack() {
-                Either::Left(x) => x.unpack_header_unchecked().0,
-                Either::Right(_) => PointerI32::vtable(),
-            }
+        match self.0.unpack() {
+            Either::Left(x) => x.header().0,
+            Either::Right(_) => PointerI32::vtable(),
         }
     }
 
@@ -508,10 +463,7 @@ impl<'v> Value<'v> {
             if PointerI32::type_is_pointer_i32::<T>() {
                 transmute!(&PointerI32, &T, self.0.unpack_pointer_i32_unchecked())
             } else {
-                self.0
-                    .unpack_ptr_no_int_unchecked()
-                    .unpack_header_unchecked()
-                    .payload()
+                self.0.value_header_ptr_unchecked().payload()
             }
         }
     }
@@ -572,7 +524,7 @@ impl<'v> Value<'v> {
     }
 
     /// `x[index]`.
-    pub fn at(self, index: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn at(self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().at(index, heap)
     }
 
@@ -582,7 +534,7 @@ impl<'v> Value<'v> {
         start: Option<Value<'v>>,
         stop: Option<Value<'v>>,
         stride: Option<Value<'v>>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
         self.get_ref().slice(start, stop, stride, heap)
     }
@@ -598,22 +550,22 @@ impl<'v> Value<'v> {
     }
 
     /// `+x`.
-    pub fn plus(self, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn plus(self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().plus(heap)
     }
 
     /// `-x`.
-    pub fn minus(self, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn minus(self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().minus(heap)
     }
 
     /// `x - other`.
-    pub fn sub(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn sub(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().sub(other, heap)
     }
 
     /// `x * other`.
-    pub fn mul(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn mul(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match self.get_ref().mul(other, heap) {
             Some(r) => r,
             _ => match other.get_ref().rmul(self, heap) {
@@ -624,76 +576,124 @@ impl<'v> Value<'v> {
     }
 
     /// `x % other`.
-    pub fn percent(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn percent(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().percent(other, heap)
     }
 
     /// `x / other`.
-    pub fn div(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn div(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().div(other, heap)
     }
 
     /// `x // other`.
-    pub fn floor_div(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn floor_div(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().floor_div(other, heap)
     }
 
     /// `x & other`.
-    pub fn bit_and(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn bit_and(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().bit_and(other, heap)
     }
 
     /// `x | other`.
-    pub fn bit_or(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn bit_or(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().bit_or(other, heap)
     }
 
     /// `x ^ other`.
-    pub fn bit_xor(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn bit_xor(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().bit_xor(other, heap)
     }
 
     /// `~x`.
-    pub fn bit_not(self, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn bit_not(self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().bit_not(heap)
     }
 
     /// `x << other`.
-    pub fn left_shift(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn left_shift(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().left_shift(other, heap)
     }
 
     /// `x >> other`.
-    pub fn right_shift(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn right_shift(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         self.get_ref().right_shift(other, heap)
+    }
+
+    /// Is this type builtin? We perform certain optimizations only on builtin types
+    /// because we know they have well defined semantics.
+    pub(crate) fn is_builtin(self) -> bool {
+        // The list is not comprehensive, this is fine.
+        // If some type is not listed here, some optimizations won't work for this type.
+        self.is_none()
+            || self.is_str()
+            || self.unpack_bool().is_some()
+            || NumRef::unpack_value(self).is_ok_and(|n| n.is_some())
+            || self.downcast_ref::<ListGen<FrozenListData<'v>>>().is_some()
+            || self.downcast_ref::<DictGen<Dict<'v>>>().is_some()
+            || self.downcast_ref::<Tuple<'v>>().is_some()
+            || self.downcast_ref::<Range>().is_some()
+            || self.downcast_ref::<Def<'v>>().is_some()
+            || self.downcast_ref::<NativeFunction<'v>>().is_some()
+            || self.downcast_ref::<Struct<'v>>().is_some()
+    }
+
+    /// Can `invoke` be called on this object speculatively?
+    /// (E. g. at compiled time when all the arguments are known.)
+    pub(crate) fn speculative_exec_safe(self) -> bool {
+        if let Some(v) = self.downcast_ref::<NativeFunction>() {
+            v.speculative_exec_safe
+        } else if let Some(v) = self.downcast_ref::<BoundMethod>() {
+            v.method.speculative_exec_safe
+        } else {
+            false
+        }
+    }
+
+    /// `self == b` is `ptr_eq`.
+    pub(crate) fn eq_is_ptr_eq(self) -> bool {
+        // Note `int` is not `ptr_eq` because `int` can be equal to `float`.
+
+        // If a value does not override equality, it is `ptr_eq`.
+        !self.get_ref().vtable().starlark_value.ty.HAS_equals
+            // Strings of length <= 1 are statically allocated.
+            || matches!(self.unpack_str(), Some(s) if s.len() <= 1)
+            // Empty tuple is statically allocated.
+            || matches!(Tuple::from_value(self), Some(t) if t.len() == 0)
     }
 
     pub(crate) fn invoke_with_loc(
         self,
-        location: Option<FrozenRef<'static, FrameSpan>>,
+        location: Option<&'v FrameSpan<'v>>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        eval.with_call_stack(self, location, |eval| {
-            self.get_ref_full().invoke(args, eval)
-        })
+        eval.with_call_stack(self, location, |eval| self.get_ref().invoke(args, eval))
     }
 
     /// Callable parameters if known.
     ///
     /// For now it only returns parameter spec for `def` and `lambda`.
     pub fn parameters_spec(self) -> Option<&'v ParametersSpec<Value<'v>>> {
+        Some(&self.downcast_ref::<Def>()?.parameters)
+    }
+
+    /// Returns the name of a callable value, if known.
+    ///
+    /// Works for user-defined functions (`def`/`lambda`) and native functions.
+    pub fn function_name(self) -> Option<&'v str> {
         if let Some(def) = self.downcast_ref::<Def>() {
-            Some(&def.parameters)
-        } else if let Some(def) = self.downcast_ref::<FrozenDef>() {
-            Some(def.parameters.as_value())
+            Some(def.def_info.value.name.as_str())
+        } else if let Some(native) = self.downcast_ref::<NativeFunction>() {
+            Some(&native.name)
         } else {
             None
         }
     }
 
     /// Invoke self with given arguments.
-    pub(crate) fn invoke(
+    /// Call this value as a function with given arguments.
+    pub fn invoke(
         self,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -715,7 +715,7 @@ impl<'v> Value<'v> {
     }
 
     fn check_callable(self) -> crate::Result<()> {
-        if !self.vtable().starlark_value.HAS_invoke {
+        if !self.vtable().starlark_value.ty.HAS_invoke {
             return Err(value_error!(
                 "Value is not callable: {}",
                 self.to_string_for_type_error()
@@ -786,8 +786,9 @@ impl<'v> Value<'v> {
         Ok(())
     }
 
-    /// `type(x)`.
-    pub fn get_type_value(self) -> FrozenStringValue {
+    /// `type(x)`, at the `'static` brand: the type name is a static, see
+    /// [`StarlarkValue::get_type_value_static`].
+    pub fn get_type_value(self) -> StringValue<'static> {
         self.vtable().type_value()
     }
 
@@ -802,15 +803,15 @@ impl<'v> Value<'v> {
         self.vtable().type_starlark_repr()
     }
 
-    /// Add two [`Value`]s together. Will first try using [`add`](StarlarkValue::add),
-    /// before falling back to [`radd`](StarlarkValue::radd).
-    pub fn add(self, other: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    /// Add two [`Value`]s together. Will first try using [`add`](crate::values::StarlarkType::add),
+    /// before falling back to [`radd`](crate::values::StarlarkType::radd).
+    pub fn add(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         // Fast special case for ints.
         if let Some(ls) = self.unpack_inline_int() {
             if let Some(rs) = other.unpack_inline_int() {
                 // On overflow take the slow path below.
                 if let Some(sum) = ls.checked_add(rs) {
-                    return Ok(heap.alloc(sum));
+                    return Ok(heap.alloc(sum).to_value());
                 }
             }
         }
@@ -837,18 +838,17 @@ impl<'v> Value<'v> {
         }
     }
 
-    /// Convert a value to a [`FrozenValue`] using a supplied [`Freezer`].
-    pub fn freeze(self, freezer: &Freezer) -> FreezeResult<FrozenValue> {
+    /// Freeze the value into the [`Freezer`]'s heap.
+    pub fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Value<'fv>> {
         freezer.freeze(self)
     }
 
     /// Implement the `str()` function - converts a string value to itself,
-    /// otherwise uses `repr()`.
+    /// otherwise calls `collect_str()` (which handles bytes, etc.).
     pub fn to_str(self) -> String {
-        match self.unpack_str() {
-            None => self.to_repr(),
-            Some(s) => s.to_owned(),
-        }
+        let mut s = String::new();
+        self.collect_str(&mut s);
+        s
     }
 
     /// Implement the `repr()` function.
@@ -874,32 +874,44 @@ impl<'v> Value<'v> {
         serde_json::to_value(self).map_err(|e| anyhow::anyhow!(e))
     }
 
-    /// Forwards to [`StarlarkValue::set_attr`].
+    /// Forwards to [`StarlarkType::set_attr`](crate::values::StarlarkType::set_attr).
     pub fn set_attr(self, attribute: &str, alloc_value: Value<'v>) -> crate::Result<()> {
         self.get_ref().set_attr(attribute, alloc_value)
     }
 
-    /// Forwards to [`StarlarkValue::set_at`].
+    /// Forwards to [`StarlarkType::set_at`](crate::values::StarlarkType::set_at).
     pub fn set_at(self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
         self.get_ref().set_at(index, alloc_value)
     }
 
-    /// Forwards to [`StarlarkValue::documentation`].
+    /// Forwards to [`StarlarkType::documentation`](crate::values::StarlarkType::documentation).
     pub fn documentation(self) -> DocItem {
         self.get_ref().documentation()
     }
 
     /// Produce an iterable from a value.
     #[inline]
-    pub fn iterate(self, heap: &'v Heap) -> crate::Result<StarlarkIterator<'v>> {
+    pub fn iterate(self, heap: Heap<'v>) -> crate::Result<StarlarkIterator<'v>> {
         let iter = self.get_ref().iterate(self, heap)?;
         Ok(StarlarkIterator::new(iter, heap))
+    }
+
+    /// The value itself. Exists so that `.to_value()` reads the same on a `Value` as on its
+    /// typed wrappers such as [`ValueTyped`](crate::values::ValueTyped).
+    #[inline]
+    pub fn to_value(self) -> Value<'v> {
+        self
     }
 
     /// Get the [`Hashed`] version of this [`Value`].
     #[inline]
     pub fn get_hashed(self) -> crate::Result<Hashed<Self>> {
-        ValueLike::get_hashed(self)
+        let hash = if let Some(s) = self.unpack_starlark_str() {
+            s.get_hash()
+        } else {
+            self.get_hash()?
+        };
+        Ok(Hashed::new_unchecked(hash, self))
     }
 
     /// Are two values equal. If the values are of different types it will
@@ -923,9 +935,94 @@ impl<'v> Value<'v> {
     }
 
     /// How are two values comparable. For values of different types will return [`Err`].
-    #[inline]
     pub fn compare(self, other: Value<'v>) -> crate::Result<Ordering> {
-        ValueLike::compare(self, other)
+        let _guard = stack_guard::stack_guard()?;
+        self.get_ref().compare(other)
+    }
+
+    /// Hash the value.
+    pub fn write_hash(self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+        self.get_ref().write_hash(hasher)
+    }
+
+    /// `repr(x)`.
+    pub fn collect_repr(self, collector: &mut String) {
+        match repr_stack_push(self) {
+            Ok(_guard) => {
+                self.get_ref().collect_repr(collector);
+            }
+            Err(..) => {
+                self.get_ref().collect_repr_cycle(collector);
+            }
+        }
+    }
+
+    /// `str(x)`.
+    pub fn collect_str(self, collector: &mut String) {
+        // Fast path: strings don't need cycle detection or vtable dispatch.
+        if let Some(s) = self.unpack_starlark_str() {
+            collector.push_str(s.as_str());
+            return;
+        }
+        match repr_stack_push(self) {
+            Ok(_guard) => {
+                self.get_ref().collect_str(collector);
+            }
+            Err(..) => {
+                self.get_ref().collect_repr_cycle(collector);
+            }
+        }
+    }
+
+    /// Whether the value's representation is `T`: the test of
+    /// [`downcast_ref`](Self::downcast_ref), without the reference. A handle is made from this,
+    /// since testing the `Option` of a reference costs a check that the reference is not null.
+    #[inline]
+    pub(crate) fn has_representation<T: StarlarkValue<'v>>(self) -> bool {
+        if T::static_type_id() == StarlarkStr::static_type_id() {
+            self.is_str()
+        } else if PointerI32::type_is_pointer_i32::<T>() {
+            self.unpack_inline_int().is_some()
+        } else {
+            match self.0.unpack_ptr() {
+                None => false,
+                Some(entry) => match entry.state() {
+                    // SAFETY: just checked to be a live value.
+                    AValueHeapEntryState::Value(_) => {
+                        unsafe { self.0.value_header_ptr_unchecked() }
+                            .unpack()
+                            .is::<T>()
+                    }
+                    AValueHeapEntryState::Forward(_) | AValueHeapEntryState::Reservation(_) => {
+                        false
+                    }
+                },
+            }
+        }
+    }
+
+    /// Get a reference to underlying data or [`None`]
+    /// if contained object has different type than requested.
+    #[inline]
+    pub fn downcast_ref<T: StarlarkValue<'v>>(self) -> Option<&'v T> {
+        if self.has_representation::<T>() {
+            // SAFETY: the representation was just checked to be `T`.
+            Some(unsafe { self.downcast_ref_unchecked() })
+        } else {
+            None
+        }
+    }
+
+    /// Get a reference to underlying data or [`Err`]
+    /// if contained object has different type than requested.
+    pub fn downcast_ref_err<T: StarlarkValue<'v>>(self) -> crate::Result<&'v T> {
+        match self.downcast_ref() {
+            Some(v) => Ok(v),
+            None => Err(crate::Error::new_value(ValueValueError::WrongType(
+                T::TYPE,
+                self.to_string_for_type_error(),
+            ))),
+        }
     }
 
     /// Describe the value, in order to get its metadata in a way that could be used
@@ -952,12 +1049,12 @@ impl<'v> Value<'v> {
     }
 
     /// Return the attribute with the given name.
-    pub fn get_attr(self, attribute: &str, heap: &'v Heap) -> crate::Result<Option<Value<'v>>> {
+    pub fn get_attr(self, attribute: &str, heap: Heap<'v>) -> crate::Result<Option<Value<'v>>> {
         let aref = self.get_ref();
         if let Some(methods) = aref.vtable().methods() {
             let attribute = Hashed::new(attribute);
             if let Some(v) = methods.get_hashed(attribute) {
-                return Ok(Some(v.bind(self, heap)?));
+                return Ok(Some(v.at().bind(self, heap)?));
             }
             Ok(aref.get_attr_hashed(attribute, heap))
         } else {
@@ -966,7 +1063,7 @@ impl<'v> Value<'v> {
     }
 
     /// Like `get_attr` but return an error if the attribute is not available.
-    pub fn get_attr_error(self, attribute: &str, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub fn get_attr_error(self, attribute: &str, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match self.get_attr(attribute, heap)? {
             None => ValueError::unsupported_owned(self.get_type(), &format!(".{attribute}"), None),
             Some(x) => Ok(x),
@@ -975,7 +1072,7 @@ impl<'v> Value<'v> {
 
     /// Query whether an attribute exists on a type. Should be equivalent to whether
     /// [`get_attr`](Value::get_attr) succeeds, but potentially more efficient.
-    pub fn has_attr(self, attribute: &str, heap: &'v Heap) -> bool {
+    pub fn has_attr(self, attribute: &str, heap: Heap<'v>) -> bool {
         let aref = self.get_ref();
         if let Some(methods) = aref.vtable().methods() {
             if methods.get(attribute).is_some() {
@@ -1056,196 +1153,6 @@ impl<'v> Value<'v> {
     }
 }
 
-impl FrozenValue {
-    #[inline]
-    pub(crate) fn new_ptr(x: &'static AValueHeader, is_str: bool) -> Self {
-        Self(FrozenPointer::new_frozen(x, is_str))
-    }
-
-    #[inline]
-    pub(crate) fn new_ptr_query_is_str(x: &'static AValueHeader) -> Self {
-        let is_string = x.0.is_str;
-        Self::new_ptr(x, is_string)
-    }
-
-    #[inline]
-    pub(crate) fn new_repr<'a, T: AValue<'a>>(x: &'static AValueRepr<AValueImpl<'a, T>>) -> Self {
-        Self::new_ptr(&x.header, T::IS_STR)
-    }
-
-    #[inline]
-    pub(crate) fn new_ptr_usize_with_str_tag(x: usize) -> Self {
-        Self(FrozenPointer::new_frozen_usize_with_str_tag(x))
-    }
-
-    /// Create a new value representing `None` in Starlark.
-    #[inline]
-    pub fn new_none() -> Self {
-        Self::new_repr(&VALUE_NONE)
-    }
-
-    /// Create a new boolean in Starlark.
-    #[inline]
-    pub fn new_bool(x: bool) -> Self {
-        // Implemented by indexing into a static so that
-        // the compiler makes this function branchless.
-        Self::new_repr(&VALUE_FALSE_TRUE[x as usize])
-    }
-
-    /// Create a new int in Starlark.
-    #[inline]
-    pub(crate) fn new_int(x: InlineInt) -> Self {
-        Self(FrozenPointer::new_int(x))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn testing_new_int(x: i32) -> Self {
-        Self::new_int(InlineInt::try_from(x).ok().unwrap())
-    }
-
-    /// Create a new empty string.
-    #[inline]
-    pub(crate) fn new_empty_string() -> Self {
-        VALUE_EMPTY_STRING.unpack()
-    }
-
-    /// Create a new empty tuple.
-    #[inline]
-    pub(crate) fn new_empty_tuple() -> Self {
-        FrozenValue::new_repr(&VALUE_EMPTY_TUPLE)
-    }
-
-    /// Create a new empty list.
-    #[inline]
-    pub fn new_empty_list() -> Self {
-        FrozenValue::new_repr(&VALUE_EMPTY_FROZEN_LIST)
-    }
-
-    /// Create a new empty dict.
-    #[inline]
-    pub fn new_empty_dict() -> Self {
-        FrozenValue::new_repr(&VALUE_EMPTY_FROZEN_DICT)
-    }
-
-    #[inline]
-    pub(crate) fn ptr_value(self) -> RawPointer {
-        self.0.raw()
-    }
-
-    /// Is a value a Starlark `None`.
-    #[inline]
-    pub fn is_none(self) -> bool {
-        self.to_value().is_none()
-    }
-
-    /// Return the [`bool`] if the value is a boolean, otherwise [`None`].
-    #[inline]
-    pub fn unpack_bool(self) -> Option<bool> {
-        self.to_value().unpack_bool()
-    }
-
-    /// Obtain the underlying integer if it fits in an `i32`.
-    /// Note floats are not considered integers, i. e. `unpack_i32` for `1.0` will return `None`.
-    #[inline]
-    pub fn unpack_i32(self) -> Option<i32> {
-        self.to_value().unpack_i32()
-    }
-
-    #[inline]
-    pub(crate) fn unpack_inline_int(self) -> Option<InlineInt> {
-        self.to_value().unpack_inline_int()
-    }
-
-    #[inline]
-    pub(crate) fn is_str(self) -> bool {
-        self.to_value().is_str()
-    }
-
-    // The resulting `str` is alive as long as the `FrozenHeap` is,
-    // but we don't have that lifetime available to us. Therefore,
-    // we cheat a little, and use the lifetime of the `FrozenValue`.
-    // Because of this cheating, we don't expose it outside Starlark.
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    #[inline]
-    pub(crate) fn unpack_str<'v>(&'v self) -> Option<&'v str> {
-        self.to_value().unpack_str()
-    }
-
-    /// Convert a [`FrozenValue`] back to a [`Value`].
-    #[inline]
-    pub fn to_value<'v>(self) -> Value<'v> {
-        Value::new_frozen(self)
-    }
-
-    /// Is this type builtin? We perform certain optimizations only on builtin types
-    /// because we know they have well defined semantics.
-    pub(crate) fn is_builtin(self) -> bool {
-        // The list is not comprehensive, this is fine.
-        // If some type is not listed here, some optimizations won't work for this type.
-        self.is_none()
-            || self.is_str()
-            || self.unpack_bool().is_some()
-            || NumRef::unpack_value(self.to_value()).is_ok_and(|n| n.is_some())
-            || FrozenListData::from_frozen_value(&self).is_some()
-            || FrozenDictRef::from_frozen_value(self).is_some()
-            || FrozenValueTyped::<FrozenTuple>::new(self).is_some()
-            || FrozenValueTyped::<Range>::new(self).is_some()
-            || FrozenValueTyped::<FrozenDef>::new(self).is_some()
-            || FrozenValueTyped::<NativeFunction>::new(self).is_some()
-            || FrozenValueTyped::<FrozenStruct>::new(self).is_some()
-            || FrozenValueTyped::<RecordType>::new(self).is_some()
-            || FrozenValueTyped::<FrozenRecord>::new(self).is_some()
-            || FrozenValueTyped::<EnumType>::new(self).is_some()
-            || FrozenValueTyped::<FrozenEnumValue>::new(self).is_some()
-    }
-
-    /// Can `invoke` be called on this object speculatively?
-    /// (E. g. at compiled time when all the arguments are known.)
-    pub(crate) fn speculative_exec_safe(self) -> bool {
-        if let Some(v) = FrozenValueTyped::<NativeFunction>::new(self) {
-            v.speculative_exec_safe
-        } else if let Some(v) = FrozenValueTyped::<FrozenBoundMethod>::new(self) {
-            v.method.speculative_exec_safe
-        } else {
-            false
-        }
-    }
-
-    /// `self == b` is `ptr_eq`.
-    pub(crate) fn eq_is_ptr_eq(self) -> bool {
-        // Note `int` is not `ptr_eq` because `int` can be equal to `float`.
-
-        // If a value does not override equality, it is `ptr_eq`.
-        !self.to_value().get_ref().vtable().starlark_value.HAS_equals
-            // Strings of length <= 1 are statically allocated.
-            || matches!(self.unpack_str(), Some(s) if s.len() <= 1)
-            // Empty tuple is statically allocated.
-            || matches!(Tuple::from_value(self.to_value()), Some(t) if t.len() == 0)
-    }
-
-    /// Downcast to given type.
-    #[inline]
-    pub fn downcast_frozen_ref<T: StarlarkValue<'static>>(self) -> Option<FrozenRef<'static, T>> {
-        self.downcast_ref::<T>().map(|value| FrozenRef { value })
-    }
-
-    /// Downcast to string.
-    #[inline]
-    pub fn downcast_frozen_str(self) -> Option<FrozenRef<'static, str>> {
-        self.to_value()
-            .unpack_str()
-            .map(|value| FrozenRef { value })
-    }
-
-    /// Note: see docs about ['Value::unpack_box_str'] about instability
-    #[inline]
-    pub fn downcast_frozen_starlark_str(self) -> Option<FrozenRef<'static, StarlarkStr>> {
-        self.to_value()
-            .unpack_starlark_str()
-            .map(|value| FrozenRef { value })
-    }
-}
-
 impl<'v> Serialize for Value<'v> {
     fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
     where
@@ -1253,228 +1160,38 @@ impl<'v> Serialize for Value<'v> {
     {
         match json_stack_push(*self) {
             Ok(_guard) => erased_serde::serialize(self.get_ref().as_serialize(), s),
-            Err(..) => Err(serde::ser::Error::custom(ToJsonCycleError(self.get_type()))),
+            Err(e) => Err(serde::ser::Error::custom(match e {
+                JsonStackError::Cycle => ToJsonError::Cycle(self.get_type()),
+                JsonStackError::TooDeep => ToJsonError::TooDeep(self.get_type()),
+            })),
         }
     }
 }
 
-impl Serialize for FrozenValue {
-    fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        self.to_value().serialize(s)
+/// Only frozen heaps are serialized, so a `Value` reached during serialization is always frozen
+/// (the context checks); frozen types store their contents as `Value<'fv>`.
+impl<'v> StarlarkSerialize for Value<'v> {
+    fn starlark_serialize(&self, ctx: &mut dyn StarlarkSerializeContext) -> crate::Result<()> {
+        ctx.serialize_value(*self)
     }
 }
 
-impl<'v> StarlarkTypeRepr for Value<'v> {
-    type Canonical = <FrozenValue as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        FrozenValue::starlark_type_repr()
-    }
-}
-
-impl StarlarkTypeRepr for FrozenValue {
-    type Canonical = Self;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::any()
-    }
-}
-
-/// Abstract over [`Value`] and [`FrozenValue`].
-///
-/// The methods on this trait are those required to implement containers,
-/// allowing implementations of [`ComplexValue`](crate::values::ComplexValue)
-/// to be agnostic of their contained type.
-/// For details about each function, see the documentation for [`Value`],
-/// which provides the same functions (and more).
-pub trait ValueLike<'v>:
-    ValueLifetimeless + Trace<'v> + CoerceKey<Value<'v>> + ProvidesStaticType<'v> + 'v
-{
-    /// `StringValue` or `FrozenStringValue`.
-    type String: StringValueLike<'v>;
-
-    /// Produce a [`Value`] regardless of the type you are starting with.
-    fn to_value(self) -> Value<'v>;
-
-    /// Convert from [`FrozenValue`].
-    fn from_frozen_value(v: FrozenValue) -> Self;
-
-    /// Call this value as a function with given arguments.
-    fn invoke(
-        self,
-        args: &Arguments<'v, '_>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> crate::Result<Value<'v>> {
-        self.to_value().invoke(args, eval)
-    }
-
-    /// Hash the value.
-    fn write_hash(self, hasher: &mut StarlarkHasher) -> crate::Result<()>;
-
-    /// Get hash value.
-    fn get_hashed(self) -> crate::Result<Hashed<Self>> {
-        let hash = if let Some(s) = self.to_value().unpack_starlark_str() {
-            s.get_hash()
-        } else {
-            self.to_value().get_hash()?
-        };
-        Ok(Hashed::new_unchecked(hash, self))
-    }
-
-    /// `repr(x)`.
-    fn collect_repr(self, collector: &mut String);
-
-    /// `str(x)`.
-    fn collect_str(self, collector: &mut String) {
-        if let Some(s) = self.to_value().unpack_str() {
-            collector.push_str(s);
-        } else {
-            self.collect_repr(collector);
-        }
-    }
-
-    /// `x == other`.
-    ///
-    /// This operation can only return error on stack overflow.
-    fn equals(self, other: Value<'v>) -> crate::Result<bool>;
-
-    /// `x <=> other`.
-    fn compare(self, other: Value<'v>) -> crate::Result<Ordering>;
-
-    /// Get a reference to underlying data or [`None`]
-    /// if contained object has different type than requested.
-    fn downcast_ref<T: StarlarkValue<'v>>(self) -> Option<&'v T>;
-
-    /// Get a reference to underlying data or [`Err`]
-    /// if contained object has different type than requested.
-    fn downcast_ref_err<T: StarlarkValue<'v>>(self) -> crate::Result<&'v T> {
-        match self.downcast_ref() {
-            Some(v) => Ok(v),
-            None => Err(crate::Error::new_value(ValueValueError::WrongType(
-                T::TYPE,
-                self.to_value().to_string_for_type_error(),
-            ))),
-        }
+impl<'v> StarlarkDeserialize<'v> for Value<'v> {
+    fn starlark_deserialize(
+        ctx: &mut dyn StarlarkDeserializeContext<'_, 'v>,
+    ) -> crate::Result<Self> {
+        ctx.deserialize_value()
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("Cycle detected when serializing value of type `{0}` to JSON")]
-struct ToJsonCycleError(&'static str);
-
-impl<'v> Sealed for Value<'v> {}
-
-impl<'v> ValueLifetimeless for Value<'v> {}
-
-impl<'v> ValueLike<'v> for Value<'v> {
-    type String = StringValue<'v>;
-
-    #[inline]
-    fn to_value(self) -> Value<'v> {
-        self
-    }
-
-    #[inline]
-    fn from_frozen_value(v: FrozenValue) -> Self {
-        v.to_value()
-    }
-
-    fn downcast_ref<T: StarlarkValue<'v>>(self) -> Option<&'v T> {
-        if T::static_type_id() == StarlarkStr::static_type_id() {
-            if self.is_str() {
-                // SAFETY: we just checked this is string, and requested type is string.
-                Some(unsafe { self.downcast_ref_unchecked() })
-            } else {
-                None
-            }
-        } else if PointerI32::type_is_pointer_i32::<T>() {
-            if self.unpack_inline_int().is_some() {
-                // SAFETY: we just checked this is int, and requested type is int.
-                Some(unsafe { self.downcast_ref_unchecked() })
-            } else {
-                None
-            }
-        } else {
-            self.get_ref().downcast_ref::<T>()
-        }
-    }
-
-    fn collect_repr(self, collector: &mut String) {
-        match repr_stack_push(self) {
-            Ok(_guard) => {
-                self.get_ref().collect_repr(collector);
-            }
-            Err(..) => {
-                self.get_ref().collect_repr_cycle(collector);
-            }
-        }
-    }
-
-    fn write_hash(self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        self.get_ref().write_hash(hasher)
-    }
-
-    #[inline]
-    fn equals(self, other: Value<'v>) -> crate::Result<bool> {
-        self.equals(other)
-    }
-
-    fn compare(self, other: Value<'v>) -> crate::Result<Ordering> {
-        let _guard = stack_guard::stack_guard()?;
-        self.get_ref().compare(other)
-    }
-}
-
-impl Sealed for FrozenValue {}
-
-impl ValueLifetimeless for FrozenValue {}
-
-impl<'v> ValueLike<'v> for FrozenValue {
-    type String = FrozenStringValue;
-
-    #[inline]
-    fn to_value(self) -> Value<'v> {
-        Value::new_frozen(self)
-    }
-
-    #[inline]
-    fn from_frozen_value(v: FrozenValue) -> Self {
-        v
-    }
-
-    #[inline]
-    fn downcast_ref<T: StarlarkValue<'v>>(self) -> Option<&'v T> {
-        self.to_value().downcast_ref()
-    }
-
-    #[inline]
-    fn collect_repr(self, collector: &mut String) {
-        self.to_value().collect_repr(collector)
-    }
-
-    #[inline]
-    fn write_hash(self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        self.to_value().write_hash(hasher)
-    }
-
-    #[inline]
-    fn equals(self, other: Value<'v>) -> crate::Result<bool> {
-        self.to_value().equals(other)
-    }
-
-    #[inline]
-    fn compare(self, other: Value<'v>) -> crate::Result<Ordering> {
-        self.to_value().compare(other)
-    }
-}
-
-fn _test_send_sync()
-where
-    FrozenValue: Send + Sync,
-{
+enum ToJsonError {
+    #[error("Cycle detected when serializing value of type `{0}` to JSON")]
+    Cycle(&'static str),
+    #[error(
+        "Value of type `{0}` is nested too deeply to serialize to JSON without running out of stack"
+    )]
+    TooDeep(&'static str),
 }
 
 #[cfg(test)]
@@ -1486,7 +1203,6 @@ mod tests {
     use crate::typing::Ty;
     use crate::values::Heap;
     use crate::values::Value;
-    use crate::values::ValueLike;
     use crate::values::int::pointer_i32::PointerI32;
     use crate::values::list::AllocList;
     use crate::values::none::NoneType;
@@ -1495,49 +1211,61 @@ mod tests {
 
     #[test]
     fn test_downcast_ref() {
-        let heap = Heap::new();
-        let string = heap.alloc_str("asd").to_value();
-        let none = Value::new_none();
-        let integer = Value::testing_new_int(17);
+        Heap::temp(|heap| {
+            let string = heap.alloc("asd").to_value();
+            let none = Value::new_none();
+            let integer = Value::testing_new_int(17);
 
-        assert!(string.downcast_ref::<NoneType>().is_none());
-        assert!(integer.downcast_ref::<NoneType>().is_none());
-        assert!(none.downcast_ref::<NoneType>().is_some());
+            assert!(string.downcast_ref::<NoneType>().is_none());
+            assert!(integer.downcast_ref::<NoneType>().is_none());
+            assert!(none.downcast_ref::<NoneType>().is_some());
 
-        assert_eq!(
-            "asd",
-            string.downcast_ref::<StarlarkStr>().unwrap().as_str()
-        );
-        assert!(integer.downcast_ref::<StarlarkStr>().is_none());
-        assert!(none.downcast_ref::<StarlarkStr>().is_none());
+            assert_eq!(
+                "asd",
+                string.downcast_ref::<StarlarkStr>().unwrap().as_str()
+            );
+            assert!(integer.downcast_ref::<StarlarkStr>().is_none());
+            assert!(none.downcast_ref::<StarlarkStr>().is_none());
 
-        assert!(string.downcast_ref::<PointerI32>().is_none());
-        assert_eq!(17, integer.downcast_ref::<PointerI32>().unwrap().get());
-        assert!(none.downcast_ref::<PointerI32>().is_none());
+            assert!(string.downcast_ref::<PointerI32>().is_none());
+            assert_eq!(17, integer.downcast_ref::<PointerI32>().unwrap().get());
+            assert!(none.downcast_ref::<PointerI32>().is_none());
+        });
     }
 
     #[test]
     fn test_unpack_i32() {
-        let heap = Heap::new();
-        let value = heap.alloc(i32::MAX);
-        assert_eq!(Some(i32::MAX), value.unpack_i32());
+        Heap::temp(|heap| {
+            let value = heap.alloc(i32::MAX).to_value();
+            assert_eq!(Some(i32::MAX), value.unpack_i32());
+        });
     }
 
     #[test]
-    fn test_unpack_frozen() {
-        assert!(Value::new_none().unpack_frozen().is_some());
-        assert!(Value::testing_new_int(10).unpack_frozen().is_some());
+    fn test_is_frozen() {
+        assert!(Value::new_none().is_frozen());
+        assert!(Value::testing_new_int(10).is_frozen());
+        Heap::temp(|heap| {
+            assert!(!heap.alloc("unfrozen").to_value().is_frozen());
+            assert!(
+                !heap
+                    .alloc(AllocList([Value::new_none()]))
+                    .to_value()
+                    .is_frozen()
+            );
+        });
     }
 
     #[test]
     fn test_unpack_bigint() {
-        let heap = Heap::new();
-        let value = heap.alloc(BigInt::from(i64::MAX));
-        assert_eq!(None, value.unpack_i32());
-        assert_eq!(
-            Some(BigInt::from(i64::MAX)),
-            BigInt::unpack_value(value).unwrap()
-        );
+        Heap::temp(|heap| {
+            let value = heap.alloc(BigInt::from(i64::MAX)).to_value();
+            assert_eq!(None, value.unpack_i32());
+            assert_eq!(
+                Some(BigInt::from(i64::MAX)),
+                BigInt::unpack_value(value).unwrap()
+            );
+        });
     }
 
     #[test]
@@ -1545,7 +1273,7 @@ mod tests {
         let value = assert::pass("{'a': 10}");
         assert_eq!(
             serde_json::json!({"a": 10}),
-            value.value().to_json_value().unwrap()
+            value.by_ref(|v| v.to_json_value()).unwrap()
         );
     }
 
@@ -1556,12 +1284,13 @@ mod tests {
             Value::new_none().to_string_for_type_error(),
         );
 
-        let heap = Heap::new();
-        let list = heap.alloc(AllocList(0..12345));
-        assert_eq!(
-            "list (repr: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,<<...>>42, 12343, 12344])",
-            list.to_string_for_type_error(),
-        );
+        Heap::temp(|heap| {
+            let list = heap.alloc(AllocList(0..12345)).to_value();
+            assert_eq!(
+                "list (repr: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,<<...>>42, 12343, 12344])",
+                list.to_string_for_type_error(),
+            );
+        });
     }
 
     #[test]
@@ -1573,6 +1302,33 @@ mod tests {
             e.to_string().contains("Value is not callable: NoneType"),
             "{e}"
         );
+    }
+
+    #[test]
+    fn test_function_name_def() {
+        let module = assert::pass_module("def my_func(x, y): return x + y");
+        let f = module.get("my_func").unwrap();
+        assert_eq!(Some("my_func"), f.as_ref().value().function_name());
+    }
+
+    #[test]
+    fn test_function_name_lambda() {
+        let module = assert::pass_module("f = lambda x: x");
+        let f = module.get("f").unwrap();
+        assert_eq!(Some("lambda"), f.as_ref().value().function_name());
+    }
+
+    #[test]
+    fn test_function_name_native() {
+        let g = Globals::standard();
+        let f = g.get("bool").unwrap();
+        assert_eq!(Some("bool"), f.function_name());
+    }
+
+    #[test]
+    fn test_function_name_non_callable() {
+        assert_eq!(None, Value::new_none().function_name());
+        assert_eq!(None, Value::testing_new_int(5).function_name());
     }
 
     #[test]

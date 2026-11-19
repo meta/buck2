@@ -8,9 +8,8 @@
  * above-listed licenses.
  */
 
+use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr_type::bool::BoolAttrType;
-use buck2_node::attrs::attr_type::bool::BoolLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
@@ -21,15 +20,14 @@ use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
 impl AttrTypeCoerce for BoolAttrType {
-    fn coerce_item(
+    fn coerce_item<'v>(
         &self,
         _configurable: AttrIsConfigurable,
-        _ctx: &dyn AttrCoercionContext,
-        value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
-        Ok(CoercedAttr::Bool(BoolLiteral(
-            UnpackValue::unpack_value_err(value)?,
-        )))
+        ctx: &dyn AttrCoercionContext<'v>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<AttrToken> {
+        ctx.attr_arena()
+            .encode_bool(UnpackValue::unpack_value_err(value)?)
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {

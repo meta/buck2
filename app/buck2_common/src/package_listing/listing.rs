@@ -14,31 +14,34 @@ use allocative::Allocative;
 use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_util::arc_str::ArcS;
+use buck2_util::arc_str::PackedStr;
+use buck2_util::arc_str::PackedStringSlice;
 use dupe::Dupe;
-use starlark_map::sorted_set::SortedSet;
-use starlark_map::sorted_vec::SortedVec;
+use pagable::Pagable;
 
 use crate::package_listing::file_listing::PackageFileListing;
 
-#[derive(Clone, Dupe, Eq, PartialEq, Debug, Allocative)]
+#[derive(Clone, Dupe, Eq, PartialEq, Debug, Allocative, Pagable)]
 pub struct PackageListing {
     listing: Arc<PackageListingData>,
 }
 
-#[derive(Eq, PartialEq, Debug, Allocative)]
+#[derive(Eq, PartialEq, Debug, Allocative, Pagable)]
 struct PackageListingData {
     files: PackageFileListing,
-    directories: SortedSet<ArcS<PackageRelativePath>>,
-    subpackages: SortedVec<ArcS<PackageRelativePath>>,
+    /// Sorted by path content. All directories at or under this package, except
+    /// for subpackages and their contents.
+    directories: PackedStringSlice<PackageRelativePath>,
+    /// Sorted by path content. Subpackages of this package.
+    subpackages: PackedStringSlice<PackageRelativePath>,
     buildfile: FileNameBuf,
 }
 
 impl PackageListing {
     pub(crate) fn new(
-        files: SortedSet<ArcS<PackageRelativePath>>,
-        directories: SortedSet<ArcS<PackageRelativePath>>,
-        subpackages: SortedVec<ArcS<PackageRelativePath>>,
+        files: PackedStringSlice<PackageRelativePath>,
+        directories: PackedStringSlice<PackageRelativePath>,
+        subpackages: PackedStringSlice<PackageRelativePath>,
         buildfile: FileNameBuf,
     ) -> Self {
         Self {
@@ -53,9 +56,9 @@ impl PackageListing {
 
     pub fn empty(buildfile: FileNameBuf) -> Self {
         Self::new(
-            SortedSet::new(),
-            SortedSet::new(),
-            SortedVec::new(),
+            PackedStringSlice::empty(),
+            PackedStringSlice::empty(),
+            PackedStringSlice::empty(),
             buildfile,
         )
     }
@@ -64,25 +67,28 @@ impl PackageListing {
         &self.listing.files
     }
 
-    pub fn get_file(&self, file: &PackageRelativePath) -> Option<ArcS<PackageRelativePath>> {
+    pub fn get_file(&self, file: &PackageRelativePath) -> Option<PackedStr<PackageRelativePath>> {
         self.listing.files.get_file(file)
     }
 
-    pub fn get_dir(&self, dir: &PackageRelativePath) -> Option<ArcS<PackageRelativePath>> {
+    pub fn get_dir(&self, dir: &PackageRelativePath) -> Option<PackedStr<PackageRelativePath>> {
         // Empty paths must refer to a directory, since the whole thing is rooted
         // at a directory. But empty paths are not explicitly added to the `directories` variable,
         // so handle them specially.
         if dir.is_empty() {
-            Some(ArcS::from(PackageRelativePath::empty()))
+            Some(PackedStr::new(PackageRelativePath::empty()))
         } else {
-            self.listing.directories.get(dir).map(|x| x.dupe())
+            match self.listing.directories.binary_search(dir) {
+                Ok(i) => Some(self.listing.directories.get_handle(i)),
+                Err(_) => None,
+            }
         }
     }
 
     pub fn files_within<'a>(
         &'a self,
         dir: &PackageRelativePath,
-    ) -> impl Iterator<Item = &'a ArcS<PackageRelativePath>> + use<'a> {
+    ) -> impl Iterator<Item = PackedStr<PackageRelativePath>> + 'a {
         self.listing.files.files_within(dir)
     }
 
@@ -93,7 +99,6 @@ impl PackageListing {
         self.listing
             .subpackages
             .iter()
-            .map(|x| x.as_ref())
             .filter(move |x: &&PackageRelativePath| x.starts_with(dir))
     }
 
@@ -103,10 +108,10 @@ impl PackageListing {
 }
 
 pub mod testing {
-    use buck2_core::package::package_relative_path::PackageRelativePathBuf;
+    use buck2_core::package::package_relative_path::PackageRelativePath;
     use buck2_fs::paths::file_name::FileNameBuf;
-    use starlark_map::sorted_set::SortedSet;
-    use starlark_map::sorted_vec::SortedVec;
+    use buck2_util::arc_str::PackedStringSlice;
+    use buck2_util::arc_str::PackedStringSliceBuilder;
 
     use crate::package_listing::listing::PackageListing;
 
@@ -126,15 +131,15 @@ pub mod testing {
         }
 
         fn testing_new(files: &[&str], buildfile: &str) -> Self {
-            let files = files.iter().map(|f| {
-                PackageRelativePathBuf::try_from((*f).to_owned())
-                    .unwrap()
-                    .to_arc()
-            });
+            let mut builder: PackedStringSliceBuilder<PackageRelativePath> =
+                PackedStringSliceBuilder::with_capacity(files.len());
+            for f in files {
+                builder.push(PackageRelativePath::new(*f).unwrap(), ());
+            }
             PackageListing::new(
-                SortedSet::from_iter(files),
-                SortedSet::new(),
-                SortedVec::new(),
+                builder.sort_and_build(),
+                PackedStringSlice::empty(),
+                PackedStringSlice::empty(),
                 FileNameBuf::unchecked_new(buildfile),
             )
         }

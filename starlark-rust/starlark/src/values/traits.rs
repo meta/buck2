@@ -39,6 +39,16 @@ use erased_serde::Serialize;
 use starlark_derive::starlark_internal_vtable;
 use starlark_map::StarlarkHashValue;
 
+use crate::__derive_refs::behaviour::bit_and_unsupported;
+use crate::__derive_refs::behaviour::bit_or_unsupported;
+use crate::__derive_refs::behaviour::bit_xor_unsupported;
+use crate::__derive_refs::behaviour::compare_unsupported;
+use crate::__derive_refs::behaviour::div_unsupported;
+use crate::__derive_refs::behaviour::floor_div_unsupported;
+use crate::__derive_refs::behaviour::left_shift_unsupported;
+use crate::__derive_refs::behaviour::percent_unsupported;
+use crate::__derive_refs::behaviour::right_shift_unsupported;
+use crate::__derive_refs::behaviour::sub_unsupported;
 use crate::any::ProvidesStaticType;
 use crate::collections::Hashed;
 use crate::collections::StarlarkHasher;
@@ -49,167 +59,103 @@ use crate::environment::Methods;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::private::Private;
+use crate::typing::OperatorSignature;
 use crate::typing::Ty;
-use crate::typing::TyBasic;
 use crate::typing::TypingBinOp;
-use crate::values::Freeze;
-use crate::values::FreezeResult;
-use crate::values::Freezer;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValue;
+use crate::typing::TypingUnOp;
+use crate::values::FreezeDynamic;
 use crate::values::Heap;
+use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueTyped;
 use crate::values::demand::Demand;
 use crate::values::error::ControlError;
 use crate::values::function::FUNCTION_TYPE;
+use crate::values::layout::vtable::StarlarkValueRawPtr;
+use crate::values::predicate::Predicate;
 
 /// A trait for values which are more complex - because they are either mutable
 /// (e.g. using [`RefCell`](std::cell::RefCell)), or contain references to other values.
 ///
-/// For values that contain nested [`Value`] types (mutable or not) there are a bunch of helpers
-/// and macros.
+/// A `ComplexValue` is allocated with
+/// [`alloc_complex`](crate::values::Heap::alloc_complex). Types whose only
+/// lifetime parameter is the heap brand can derive
+/// [`Freeze`](crate::values::Freeze) and let
+/// [`starlark_complex_value!`](crate::starlark_complex_value!) write the
+/// boilerplate; the blanket [`FreezeDynamic`](crate::values::FreezeDynamic) implementation
+/// carries them through the same freeze protocol.
 ///
 /// ## Types containing [`Value`]
 ///
-/// A Starlark type containing values will need to exist in two states: one containing [`Value`]
-/// and one containing [`FrozenValue`](crate::values::FrozenValue). To deal with that, if we are defining the type
-/// containing a single value, let's call it `One`, we'd define `OneGen`
-/// (for the general version), and then have the
-/// [`starlark_complex_value!`](crate::starlark_complex_value!) macro
-/// generate `One` and `FrozenOne` aliases.
+/// A Starlark type containing values is one type constructor instantiated at
+/// different heap brands: unfrozen at a mutable heap's brand, frozen at a
+/// frozen heap's. If we are defining the type containing a single value,
+/// let's call it `One`, we define it once over its brand and freeze
+/// `One<'v>` into `One<'fv>` with
+/// [`Freeze`](crate::values::Freeze):
 ///
 /// ```
 /// use allocative::Allocative;
 /// use derive_more::Display;
-/// use starlark::starlark_complex_value;
-/// use starlark::values::Coerce;
-/// use starlark::values::ComplexValue;
 /// use starlark::values::Freeze;
 /// use starlark::values::FreezeResult;
 /// use starlark::values::Freezer;
-/// use starlark::values::FrozenValue;
 /// use starlark::values::NoSerialize;
 /// use starlark::values::ProvidesStaticType;
+/// use starlark::values::StarlarkPagable;
 /// use starlark::values::StarlarkValue;
 /// use starlark::values::Trace;
-/// use starlark::values::Tracer;
 /// use starlark::values::Value;
-/// use starlark::values::ValueLike;
 /// use starlark_derive::starlark_value;
 ///
 /// #[derive(
 ///     Debug,
 ///     Trace,
-///     Coerce,
 ///     Display,
 ///     ProvidesStaticType,
 ///     NoSerialize,
+///     StarlarkPagable,
 ///     Allocative
 /// )]
-/// #[repr(C)]
-/// struct OneGen<V>(V);
-/// starlark_complex_value!(One);
+/// struct One<'v>(Value<'v>);
 ///
-/// #[starlark_value(type = "one")]
-/// impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for OneGen<V>
-/// where
-///     Self: ProvidesStaticType<'v>,
-/// {
-///     // To implement methods which work for both `One` and `FrozenOne`,
-///     // use the `ValueLike` trait.
-/// }
+/// #[starlark_value(type = "one", frozen_vtable)]
+/// impl<'v> StarlarkValue<'v> for One<'v> {}
 ///
-/// impl<'v> Freeze for One<'v> {
-///     type Frozen = FrozenOne;
-///     fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
-///         Ok(OneGen(self.0.freeze(freezer)?))
+/// impl<'v> Freeze<'v> for One<'v> {
+///     type Frozen<'fv> = One<'fv>;
+///     fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
+///         Ok(One(freezer.freeze(self.0)?))
 ///     }
 /// }
 /// ```
 ///
-/// The [`starlark_complex_value!`](crate::starlark_complex_value!) requires that
-/// the type have an instance for `Coerce`, then the macro defines two type aliases.
-/// ```
-/// # use crate::starlark::values::*;
-/// # #[derive(Debug, Trace)]
-/// # struct OneGen<V>(V);
-/// type One<'v> = OneGen<Value<'v>>;
-/// type FrozenOne = OneGen<FrozenValue>;
-/// ```
-///
-/// To make these aliases public (or public to the crate) pass a visibility
-/// to the macro, e.g. `starlark_complex_value!(pub One)`.
-///
-/// The macro also defines instances of [`ProvidesStaticType`] for both,
-/// [`AllocValue`](crate::values::AllocValue) for both,
-/// [`AllocFrozenValue`](crate::values::AllocFrozenValue) for the frozen one, and
-/// [`UnpackValue`](crate::values::UnpackValue) for the non-frozen one.
-/// It also defines the methods:
-/// ```
-/// # use crate::starlark::values::*;
-/// # use std::cell::RefMut;
-/// # struct OneGen<V>(V);
-/// # type One<'v> = OneGen<Value<'v>>;
-/// impl<'v> One<'v> {
-///     // Obtain a reference to `One` from a `Value`, regardless
-///     // of whether the underlying `Value` is a `One` or `FrozenOne`.
-///     pub fn from_value(x: Value<'v>) -> Option<&'v Self> {
-/// # unimplemented!(
-/// # r#"
-///         ...
-/// # "#);
-///     }
-/// }
-/// ```
-///
-/// ## Different types
-///
-/// If the types are different between the frozen and non-frozen values you can define your own
-/// type specialisations as `type One<'v> = OneGen<Value<'v>>` and `type FrozenOne = OneGen<String>`
-/// and use [`starlark_complex_values!`](crate::starlark_complex_values!) which will provide similar facilities to
-/// [`starlark_complex_value!`](crate::starlark_simple_value!).
-///
-/// ## Other types
-///
-/// The macro [`starlark_complex_value!`](crate::starlark_complex_value!) is applicable
-/// when there is a single base type, `FooGen<V>`, with specialisations
-/// `FooGen<Value<'v>>` and `FooGen<FrozenValue>`.
-/// If you have a type where the difference between frozen and non-frozen does not follow this
-/// pattern then you will have to write instances of the traits you need manually.
-/// Examples of cases where the macro doesn't work include:
-///
-/// * If your type doesn't contain any [`Value`] types, but instead implements this trait for mutability.
-/// * If the difference between frozen and non-frozen is more complex, e.g. a [`Cell`](std::cell::Cell)
-///   when non-frozen and a direct value when frozen.
-pub trait ComplexValue<'v>: StarlarkValue<'v> + Trace<'v> + Freeze
-where
-    <Self as Freeze>::Frozen: StarlarkValue<'static>,
-{
-}
+/// If the difference between frozen and non-frozen does not follow this pattern — for
+/// example your type contains no [`Value`]s and implements this trait for mutability, or
+/// it holds a [`Cell`](std::cell::Cell) when non-frozen and a direct value when frozen —
+/// write the types and trait instances you need manually.
+pub trait ComplexValue<'v>: StarlarkValue<'v> + Trace<'v> + FreezeDynamic<'v> {}
 
-impl<'v, V> ComplexValue<'v> for V
-where
-    V: StarlarkValue<'v> + Trace<'v> + Freeze,
-    <V as Freeze>::Frozen: StarlarkValue<'static>,
-{
-}
+impl<'v, V> ComplexValue<'v> for V where V: StarlarkValue<'v> + Trace<'v> + FreezeDynamic<'v> {}
 
 /// How to put a Rust values into [`Value`]s.
 ///
 /// Every Rust value stored in a [`Value`] must implement this trait.
-/// You _must_ also implement [`ComplexValue`] if:
 ///
-/// * A type is not [`Send`] and [`Sync`], typically because it contains
-///   interior mutability such as a [`RefCell`](std::cell::RefCell).
-/// * A type contains nested Starlark [`Value`]s.
+/// A type that contains nested Starlark [`Value`]s, or that is not [`Send`] and [`Sync`] because
+/// it has interior mutability such as a [`RefCell`](std::cell::RefCell), additionally needs
+/// [`Trace`](crate::values::Trace) and [`Freeze`](crate::values::Freeze), and is
+/// allocated with [`alloc_complex`](Heap::alloc_complex) — see
+/// [`starlark_complex_value!`](crate::starlark_complex_value!), which writes the
+/// boilerplate for the common shape.
 ///
-/// There are only two required members of [`StarlarkValue`], namely
-/// [`TYPE`](StarlarkValue::TYPE)
-/// and [`get_type_value_static`](StarlarkValue::get_type_value_static).
-/// Both these should be implemented with the [`starlark_value`](crate::values::starlark_value)
-/// proc macro:
+/// A value's behaviour, from `type()` to iteration, is its type's and lives on
+/// [`StarlarkType`]; this trait says that a Rust type is a representation of one, and which.
+/// Implement it with the [`starlark_value`](crate::values::starlark_value) proc macro, which
+/// writes this trait's items and makes the methods in the block the type's `StarlarkType`
+/// impl:
 ///
 /// ```
 /// use allocative::Allocative;
@@ -217,10 +163,18 @@ where
 /// use derive_more::Display;
 /// use starlark::values::NoSerialize;
 /// use starlark::values::ProvidesStaticType;
+/// use starlark::values::StarlarkPagable;
 /// use starlark::values::StarlarkValue;
 /// use starlark_derive::starlark_value;
 ///
-/// #[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
+/// #[derive(
+///     Debug,
+///     Display,
+///     ProvidesStaticType,
+///     NoSerialize,
+///     StarlarkPagable,
+///     Allocative
+/// )]
 /// #[display("Foo")]
 /// struct Foo;
 /// # starlark_simple_value!(Foo);
@@ -228,82 +182,117 @@ where
 /// impl<'v> StarlarkValue<'v> for Foo {}
 /// ```
 ///
-/// Every additional field enables further features in Starlark. In most cases the default
-/// implementation returns an "unimplemented" [`Err`].
+/// Every method of [`StarlarkType`] added to the block enables a further feature in Starlark.
+/// In most cases the default implementation returns an "unimplemented" [`Err`].
+///
+/// # How a value is stored
+///
+/// A value is allocated on a heap as a header, which points at a vtable generated from this
+/// trait, followed by the Rust value itself. [`Value`]'s methods dispatch through the vtable to
+/// the methods below. Which heaps a type can be allocated on, and what happens to it when its
+/// module is frozen, follows from what it contains:
+///
+/// * A *simple* value needs neither tracing nor freezing. On a [`Heap`] that means it holds no
+///   [`Value`]s at all and is `Send + Sync + 'static` ([`Heap::alloc_simple`]); on a
+///   [`FrozenHeap`](crate::values::FrozenHeap) it may hold values at that heap's brand, since
+///   nothing there is ever traced or moved ([`FrozenHeap::alloc_simple`](crate::values::FrozenHeap::alloc_simple)). Freezing copies a
+///   simple value to the frozen heap as it is.
+/// * A *complex* value holds [`Value`]s of an unfrozen heap, or interior mutability. It
+///   implements [`Trace`](crate::values::Trace), so the garbage collector can find what it
+///   points at, and [`Freeze`](crate::values::Freeze), whose output is the simple
+///   value that stands in for it on the frozen heap ([`Heap::alloc_complex`]).
+///   [`Heap::alloc_complex_no_freeze`] is for a type that must be traced but has no frozen form;
+///   freezing a module that still holds one is an error.
+///
+/// The behaviour of a Starlark type: what `type()` says, its methods and attributes, and what
+/// its values do when compared, iterated, called, indexed, and so on.
+///
+/// A type with one Rust representation implements this for that representation, and
+/// [`#[starlark_value]`](crate::values::starlark_value) writes the impl from the
+/// `impl StarlarkValue` block, so most types never spell this trait. A type with several
+/// representations, say a mutable and a frozen layout, implements it once, for a view over its
+/// representations, and each representation names the view as its
+/// [`Type`](StarlarkValue::Type).
 ///
 /// # Note To Implementors
-/// Any additional methods that are added to this trait also need to be added to the
-/// [`StarlarkValue`] implementation in `crate::values::layout::avalue::Wrapper`. Otherwise,
-/// any implementations other than the default implementation will not be run.
+/// The vtable entry for a method added to this trait is generated by
+/// `#[starlark_internal_vtable]`, but [`Value`] reaches it through a forwarding method on
+/// `AValueDyn` in `crate::values::layout::vtable`, which has to be written by hand. Without it,
+/// implementations other than the default are never run.
 #[starlark_internal_vtable]
 #[allow(non_upper_case_globals, non_snake_case)] // For generated members.
-pub trait StarlarkValue<'v>:
-    'v + ProvidesStaticType<'v> + Allocative + Debug + Display + Serialize + Sized
-{
-    /// Two implementations of `StarlarkValue` are considered to have the same type,
-    /// if `Canonical` field points to the same type.
-    ///
-    /// This field is generated by `#[starlark_value]` proc macro by default
-    /// when proc macro can infer the type, otherwise this implementation cannot serve as a type.
-    // Using qualified path here because proc macro erases the type.
-    type Canonical: StarlarkValue<'v> = Self;
-
+pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Sized {
     /// Return a string describing the type of self, as returned by the type()
     /// function.
     ///
     /// This can be only implemented by the [`#[starlark_value]`](crate::values::starlark_value)
     /// proc macro.
-    const TYPE: &'static str = panic!("This field is implemented by #[starlark_value] proc macro");
+    const TYPE: &'static str;
 
-    /// Like [`TYPE`](Self::TYPE), but returns a reusable [`FrozenStringValue`]
-    /// pointer to it. This function deliberately doesn't take a heap,
-    /// as it would not be performant to allocate a new value each time.
+    /// Like [`TYPE`](Self::TYPE), but returns a reusable [`StringValue`] pointer to it. The
+    /// string is a static, which is what the `'static` brand means; use
+    /// [`at`](StringValue::at) to bring it to the brand of the heap in use. This function
+    /// deliberately doesn't take a heap, as it would not be performant to allocate a new value
+    /// each time.
     ///
     /// This can be only implemented by the [`#[starlark_value]`](crate::values::starlark_value)
     /// proc macro.
-    fn get_type_value_static() -> FrozenStringValue {
+    fn get_type_value_static() -> StringValue<'static> {
         panic!("This function is implemented by #[starlark_value] proc macro")
     }
 
-    /// Return a string that is the representation of a type that a user would use in
-    /// type annotations. This often will be the same as [`Self::TYPE`], but in
-    /// some instances it might be slightly different than what is returned by `TYPE`.
+    /// What a value of this type is read through: `ValueTyped<'v, Self>` for a type with one
+    /// representation, the view itself for a type with several.
     ///
     /// This can be only implemented by the [`#[starlark_value]`](crate::values::starlark_value)
     /// proc macro.
-    fn get_type_starlark_repr() -> Ty {
-        Ty::starlark_value::<Self>()
-    }
+    type Get;
 
-    /// Please do not implement this method or `get_type`,
-    /// but use [`#[starlark_value]`](crate::values::starlark_value) proc macro.
-    #[doc(hidden)]
-    #[starlark_internal_vtable(skip)]
-    fn please_use_starlark_type_macro() {
-        panic!("This function is implemented by #[starlark_value] proc macro")
-    }
-
-    /// Type is special in Starlark, it is implemented differently than user defined types.
-    /// For example, some special types like `bool` cannon be heap allocated.
+    /// `value` as this type's [`Get`](Self::Get), if it is of this type.
     ///
-    /// This function must not be implemented outside of starlark crate.
-    #[doc(hidden)]
+    /// This can be only implemented by the [`#[starlark_value]`](crate::values::starlark_value)
+    /// proc macro.
     #[starlark_internal_vtable(skip)]
-    fn is_special(_private: Private) -> bool {
-        false
-    }
+    fn get(value: Value<'v>) -> Option<Self::Get>;
 
-    /// Function is implemented for types values.
-    #[doc(hidden)]
-    fn type_matches_value(&self, _value: Value<'v>, _private: Private) -> bool {
-        unreachable!("`type_matches_value` should only be called on special types")
-    }
+    /// The type as a user would write it in a type annotation. This often will be the same as
+    /// [`Self::TYPE`], but in some instances it might be slightly different than what is
+    /// returned by `TYPE`.
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) generates this, as the nominal type
+    /// of the representation, unless the block overrides it.
+    fn get_type_starlark_repr() -> Ty;
 
     /// Get the members associated with this type, accessible via `this_type.x`.
     /// These members will have `dir`/`getattr`/`hasattr` properly implemented,
-    /// so it is the preferred way to go if possible. See
-    /// [`MethodsStatic`](crate::environment::MethodsStatic) for an example of how
-    /// to define this method.
+    /// so it is the preferred way to go if possible.
+    ///
+    /// `#[starlark_module]` creates a [`MethodsStatic`](crate::environment::MethodsStatic)
+    /// named after the initializer function. Attributes and methods can be attached
+    /// to a value with that generated static:
+    ///
+    /// ```ignore
+    /// #[starlark_module]
+    /// fn foo_methods(builder: &mut MethodsBuilder) {
+    ///     #[starlark(attribute)]
+    ///     fn name<'v>(this: &'v Foo) -> starlark::Result<&'v str> {
+    ///         Ok(this.name.as_str())
+    ///     }
+    /// }
+    ///
+    /// #[starlark_value(type = "foo")]
+    /// impl<'v> StarlarkValue<'v> for Foo {
+    ///     fn get_methods() -> Option<&'static Methods> {
+    ///         Some(FOO_METHODS_STATICS.methods())
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// The generated `FOO_METHODS_STATICS` already owns the method table; do not
+    /// also register the initializer with [`methods_static!`](crate::methods_static).
+    /// When migrating from `StarlarkAttrs`, remove field-level `#[starlark(skip)]`
+    /// and `#[starlark(clone)]` attributes. Omit getters for skipped fields, and
+    /// return borrowed or preallocated values instead of cloning expensive fields.
     fn get_methods() -> Option<&'static Methods>
     where
         Self: Sized,
@@ -367,6 +356,13 @@ pub trait StarlarkValue<'v>:
         write!(collector, "<{}...>", Self::TYPE).unwrap()
     }
 
+    /// Return a string representation of self, as returned by the `str()` function.
+    /// Defaults to `collect_repr`. Override to provide a different string representation
+    /// for `str()` vs `repr()` (e.g. bytes decodes as UTF-8 for `str()`).
+    fn collect_str(&self, collector: &mut String) {
+        self.collect_repr(collector)
+    }
+
     /// String used when printing call stack. `repr(self)` by default.
     fn name_for_call_stack(&self, me: Value<'v>) -> String {
         me.to_repr()
@@ -383,6 +379,27 @@ pub trait StarlarkValue<'v>:
     /// Return a hash data for self to be used when self is placed as a key in a `Dict`.
     /// Return an [`Err`] if there is no hash for this value (e.g. list).
     /// Must be stable between frozen and non-frozen values.
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// A type whose values all hash writes the method without a result:
+    ///
+    /// ```ignore
+    /// fn write_hash(&self, hasher: &mut StarlarkHasher) {
+    ///     self.name.hash(hasher)
+    /// }
+    /// ```
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) derives this method from it, and
+    /// implements [`StarlarkTypeExprHashable`](crate::values::StarlarkTypeExprHashable) for the
+    /// type. A type with values that do not hash, such as a container that hashes what it
+    /// contains, writes this method as it is declared here.
+    ///
+    /// A value the type holds is hashed through its handle: with
+    /// [`ValueOf::write_hash`](crate::values::ValueOf::write_hash) where the type of the part
+    /// always hashes, which needs no result here either, and with
+    /// [`ValueOf::try_write_hash`](crate::values::ValueOf::try_write_hash) or
+    /// [`Value::write_hash`] where it may not.
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
         if Self::TYPE == FUNCTION_TYPE {
             // The Starlark spec says values of type "function" must be hashable.
@@ -405,7 +422,7 @@ pub trait StarlarkValue<'v>:
     fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {
         let mut hasher = StarlarkHasher::new();
         self.write_hash(&mut hasher)?;
-        Ok(hasher.finish_small())
+        Ok(hasher.finish_short())
     }
 
     /// Compare `self` with `other` for equality.
@@ -419,6 +436,32 @@ pub trait StarlarkValue<'v>:
     /// Equality must be symmetric (`a == b` implies `b == a`).
     /// When evaluating `a == b` (or when using equality in dicts and such),
     /// it is not specified whether `a.equals(b)` or `b.equals(a)` is called.
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// The method is written with the operand it compares with, and the plain result if it
+    /// cannot fail:
+    ///
+    /// ```ignore
+    /// fn equals(&self, other: &Self) -> bool {
+    ///     self.name == other.name
+    /// }
+    /// ```
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) derives this method from it.
+    ///
+    /// * The operand is any [`UnpackValue`](crate::values::UnpackValue): `&Self` for a type
+    ///   with one representation; for a type with several, `Self`, the view, or a reference
+    ///   the type is read through, such as [`&ListRef`](crate::values::list::ListRef); a union
+    ///   such as `Either<&Self, &str>`.
+    /// * The result is `bool`, or `starlark::Result<bool>` for a body that compares the values
+    ///   it contains.
+    /// * A value that is not of the operand's type is not equal, as with the default. A value
+    ///   that is of the operand's type but does not convert (an `int` that does not fit an
+    ///   `i32` operand) is the conversion's error.
+    ///
+    /// A method is taken to be written as declared here, and left as it is, when its operand's
+    /// type is spelled `Value` and its result's `Result`.
     fn equals(&self, _other: Value<'v>) -> crate::Result<bool> {
         // Type is only equal via a pointer
         Ok(false)
@@ -427,8 +470,22 @@ pub trait StarlarkValue<'v>:
     /// Compare `self` with `other`.
     /// This method returns a result of type [`Ordering`], or an [`Err`]
     /// if the two types differ.
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// The method is written as [`equals`](Self::equals) is, with the operand it compares with:
+    ///
+    /// ```ignore
+    /// fn compare(&self, other: &Self) -> Ordering {
+    ///     self.name.cmp(&other.name)
+    /// }
+    /// ```
+    ///
+    /// The result is [`Ordering`] or `starlark::Result<Ordering>`. A value that is not of the
+    /// operand's type gets the default's error, that the two types do not compare. The
+    /// operand's type is also what the typechecker takes `<` and its like to accept.
     fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
-        ValueError::unsupported_with(self, "compare", other)
+        compare_unsupported(self, other)
     }
 
     /// Directly invoke a function.
@@ -436,8 +493,8 @@ pub trait StarlarkValue<'v>:
     ///
     /// # Parameters
     ///
-    /// * `me` - self, but as `Value`, meaning it has unfrozen flag,
-    ///   so it can be stored in a heap.
+    /// * `me` - `self` as the [`Value`] it is stored in, for putting on the call stack or in
+    ///   other values.
     fn invoke(
         &self,
         _me: Value<'v>,
@@ -448,7 +505,27 @@ pub trait StarlarkValue<'v>:
     }
 
     /// Return the result of `a[index]` if `a` is indexable.
-    fn at(&self, index: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// The method is written with the index it takes and what it returns, as an operator is
+    /// with its operand and result ([`add`](Self::add)), and may leave out the heap the same
+    /// way:
+    ///
+    /// ```ignore
+    /// fn at(&self, index: i32) -> starlark::Result<Value<'v>> {
+    ///     self.items.get(index as usize).copied().ok_or_else(|| out_of_bounds(index))
+    /// }
+    /// ```
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) derives this method from it, and
+    /// from its two types what the typechecker knows of `a[index]`
+    /// ([`at_signature`](Self::at_signature)).
+    ///
+    /// A value that is not of the index's type is the error of a conversion that expected one
+    /// ("Expected `int`, but got ..") rather than what this default answers: the type is
+    /// indexed, and was given the wrong kind of index.
+    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         ValueError::unsupported_with(self, "[]", index)
     }
 
@@ -457,7 +534,7 @@ pub trait StarlarkValue<'v>:
         &self,
         _index0: Value<'v>,
         _index1: Value<'v>,
-        _heap: &'v Heap,
+        _heap: Heap<'v>,
         _private: Private,
     ) -> crate::Result<Value<'v>> {
         ValueError::unsupported(self, "[,]")
@@ -492,7 +569,7 @@ pub trait StarlarkValue<'v>:
         _start: Option<Value<'v>>,
         _stop: Option<Value<'v>>,
         _stride: Option<Value<'v>>,
-        _heap: &'v Heap,
+        _heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
         ValueError::unsupported(self, "[::]")
     }
@@ -500,7 +577,7 @@ pub trait StarlarkValue<'v>:
     /// Implement iteration over the value of this container by providing
     /// the values in a `Vec`.
     #[starlark_internal_vtable(skip)]
-    fn iterate_collect(&self, _heap: &'v Heap) -> crate::Result<Vec<Value<'v>>> {
+    fn iterate_collect(&self, _heap: Heap<'v>) -> crate::Result<Vec<Value<'v>>> {
         ValueError::unsupported(self, "(iter)")
     }
 
@@ -529,8 +606,8 @@ pub trait StarlarkValue<'v>:
     /// So implementations of iterators may acquire mutation lock in `iterate`,
     /// assume that it is held in `iter_next`, and release it in `iter_stop`.
     /// Obviously, there are no such guarantees if these functions are called directly.
-    unsafe fn iterate(&self, _me: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc_tuple(&self.iterate_collect(heap)?))
+    unsafe fn iterate(&self, _me: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(heap.alloc_tuple(&self.iterate_collect(heap)?).to_value())
     }
 
     /// Returns the size hint for the iterator.
@@ -550,7 +627,7 @@ pub trait StarlarkValue<'v>:
     /// Default implementation panics.
     ///
     /// This function is only called before [`iter_stop`](Self::iter_stop).
-    unsafe fn iter_next(&self, _index: usize, _heap: &'v Heap) -> Option<Value<'v>> {
+    unsafe fn iter_next(&self, _index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
         panic!(
             "iter_next called on non-iterable value of type {}",
             Self::TYPE
@@ -571,13 +648,16 @@ pub trait StarlarkValue<'v>:
     }
 
     /// Returns the length of the value, if this value is a sequence.
+    ///
+    /// In a `#[starlark_value]` block, a length that cannot fail is written
+    /// `fn length(&self) -> i32`.
     fn length(&self) -> crate::Result<i32> {
         ValueError::unsupported(self, "len()")
     }
 
     /// Attribute type, for the typechecker.
     ///
-    /// If [`get_attr`](StarlarkValue::get_attr) is implemented,
+    /// If [`get_attr`](StarlarkType::get_attr) is implemented,
     /// `#[starlark_value]` proc macro will generate this to return `Some(Any)`.
     fn attr_ty(_name: &str) -> Option<Ty> {
         Some(Ty::any())
@@ -586,12 +666,12 @@ pub trait StarlarkValue<'v>:
     /// Get an attribute for the current value as would be returned by dotted
     /// expression (i.e. `a.attribute`).
     ///
-    /// The three methods [`get_attr`](StarlarkValue::get_attr),
-    /// [`has_attr`](StarlarkValue::has_attr) and [`dir_attr`](StarlarkValue::dir_attr)
+    /// The three methods [`get_attr`](StarlarkType::get_attr),
+    /// [`has_attr`](StarlarkType::has_attr) and [`dir_attr`](StarlarkType::dir_attr)
     /// must be consistent - if you implement one, you should probably implement all three.
     ///
     /// This operations must have no side effects, because it can be called speculatively.
-    fn get_attr(&self, _attribute: &str, _heap: &'v Heap) -> Option<Value<'v>> {
+    fn get_attr(&self, _attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
         None
     }
 
@@ -601,26 +681,26 @@ pub trait StarlarkValue<'v>:
     ///
     /// This function is optional, but if it is implemented, it must be consistent with
     /// [`get_attr`](Self::get_attr).
-    fn get_attr_hashed(&self, attribute: Hashed<&str>, heap: &'v Heap) -> Option<Value<'v>> {
+    fn get_attr_hashed(&self, attribute: Hashed<&str>, heap: Heap<'v>) -> Option<Value<'v>> {
         self.get_attr(attribute.key(), heap)
     }
 
     /// Return true if an attribute of name `attribute` exists for the current
     /// value.
     ///
-    /// The three methods [`get_attr`](StarlarkValue::get_attr),
-    /// [`has_attr`](StarlarkValue::has_attr) and [`dir_attr`](StarlarkValue::dir_attr)
+    /// The three methods [`get_attr`](StarlarkType::get_attr),
+    /// [`has_attr`](StarlarkType::has_attr) and [`dir_attr`](StarlarkType::dir_attr)
     /// must be consistent.
     ///
     /// Default implementation of this function delegates to [`get_attr`](Self::get_attr).
-    fn has_attr(&self, attribute: &str, heap: &'v Heap) -> bool {
+    fn has_attr(&self, attribute: &str, heap: Heap<'v>) -> bool {
         self.get_attr(attribute, heap).is_some()
     }
 
     /// Return a vector of string listing all attribute of the current value.
     ///
-    /// The three methods [`get_attr`](StarlarkValue::get_attr),
-    /// [`has_attr`](StarlarkValue::has_attr) and [`dir_attr`](StarlarkValue::dir_attr)
+    /// The three methods [`get_attr`](StarlarkType::get_attr),
+    /// [`has_attr`](StarlarkType::has_attr) and [`dir_attr`](StarlarkType::dir_attr)
     /// must be consistent - if you implement one, you should probably implement all three.
     fn dir_attr(&self) -> Vec<String> {
         Vec::new()
@@ -637,6 +717,21 @@ pub trait StarlarkValue<'v>:
     /// ('z' in 'abc') == False
     /// # "#);
     /// ```
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// The method is written with the operand it takes, as [`equals`](Self::equals) is:
+    ///
+    /// ```ignore
+    /// fn is_in(&self, other: &str) -> bool {
+    ///     self.name.contains(other)
+    /// }
+    /// ```
+    ///
+    /// The result is `bool` or `starlark::Result<bool>`. The operand's type is what the
+    /// typechecker takes `other in a` to accept. A value that is not of it is the error of a
+    /// conversion that expected one, as for [`at`](Self::at), rather than what this default
+    /// answers, which says that the type has no `in`.
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
         ValueError::unsupported_owned(other.get_type(), "in", Some(Self::TYPE))
     }
@@ -650,7 +745,10 @@ pub trait StarlarkValue<'v>:
     /// +1 == 1
     /// # "#);
     /// ```
-    fn plus(&self, _heap: &'v Heap) -> crate::Result<Value<'v>> {
+    ///
+    /// In a `#[starlark_value]` block it is written with the type of its result, as
+    /// [`add`](Self::add) is with its types.
+    fn plus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         ValueError::unsupported(self, "+")
     }
 
@@ -663,18 +761,22 @@ pub trait StarlarkValue<'v>:
     /// -(1) == -1
     /// # "#);
     /// ```
-    fn minus(&self, _heap: &'v Heap) -> crate::Result<Value<'v>> {
+    ///
+    /// In a `#[starlark_value]` block it is written with the type of its result, as
+    /// [`add`](Self::add) is with its types.
+    fn minus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         ValueError::unsupported(self, "-")
     }
 
     /// Add with the arguments the other way around.
     /// Normal `add` should return `None` in order for it to be evaluated.
-    fn radd(&self, _lhs: Value<'v>, _heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn radd(&self, _lhs: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         None
     }
 
-    /// Add `other` to the current value. Pass both self and
-    /// the Value form of self as original. Should return [`None`]
+    /// Add `rhs` to the current value. Should return [`None`]
     /// to fall through to `radd`.
     ///
     /// # Examples
@@ -687,7 +789,39 @@ pub trait StarlarkValue<'v>:
     /// (1, 2, 3) + (2, 3) == (1, 2, 3, 2, 3)
     /// # "#);
     /// ```
-    fn add(&self, _rhs: Value<'v>, _heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
+    ///
+    /// # In a `#[starlark_value]` block
+    ///
+    /// An operator is written with the operand it takes and what it makes:
+    ///
+    /// ```ignore
+    /// fn add(&self, other: &Self) -> Seconds {
+    ///     Seconds(self.0 + other.0)
+    /// }
+    /// ```
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) derives this method from it, and
+    /// from its two types what the typechecker knows of the operator
+    /// ([`bin_op_signatures`](Self::bin_op_signatures)). This goes for every binary operator,
+    /// and for the unary ones with the result alone.
+    ///
+    /// * The operand is any [`UnpackValue`](crate::values::UnpackValue), as for
+    ///   [`equals`](Self::equals).
+    /// * The result is an [`AllocValue`](crate::values::AllocValue), which the derived method
+    ///   puts on the heap, or a `starlark::Result` of one. The type is named, not
+    ///   `impl AllocValue`: the typechecker reads it.
+    /// * A body that allocates takes the heap as its last parameter, `heap: Heap<'v>`, and
+    ///   returns the handle it got ([`ValueOf`](crate::values::ValueOf)); a body that does not
+    ///   use the heap leaves the parameter out.
+    /// * A value that is not of the operand's type gets what the default of the method gives.
+    ///   For `add`, `radd`, `mul` and `rmul` that is `None`, so that the other operand gets its
+    ///   turn; for the other operators it is the error that the operator is not supported. A
+    ///   value that is of the operand's type but does not convert is the conversion's error.
+    ///
+    /// A method is taken to be written as declared here, and left as it is, when it takes the
+    /// heap, its operand's type is spelled `Value` and its result's `Option`; for the operators
+    /// that return a `starlark::Result<Value>`, when the result is spelled so.
+    fn add(&self, _rhs: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         None
     }
 
@@ -700,12 +834,16 @@ pub trait StarlarkValue<'v>:
     /// 1 - 2 == -1
     /// # "#);
     /// ```
-    fn sub(&self, other: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "-", other)
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn sub(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        sub_unsupported(self, other)
     }
 
     /// Called on `rhs` of `lhs * rhs` when `lhs.mul` returns `None`.
-    fn rmul(&self, lhs: Value<'v>, heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn rmul(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         let _ignore = (lhs, heap);
         None
     }
@@ -724,7 +862,9 @@ pub trait StarlarkValue<'v>:
     /// (1, 2, 3) * 3 == (1, 2, 3, 1, 2, 3, 1, 2, 3)
     /// # "#);
     /// ```
-    fn mul(&self, _rhs: Value<'v>, _heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn mul(&self, _rhs: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         None
     }
 
@@ -738,8 +878,10 @@ pub trait StarlarkValue<'v>:
     /// 7 / 2 == 3.5
     /// # "#);
     /// ```
-    fn div(&self, other: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "/", other)
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        div_unsupported(self, other)
     }
 
     /// Apply the percent operator between the current value and `other`. Usually used on
@@ -769,8 +911,10 @@ pub trait StarlarkValue<'v>:
     /// "test" % () == "test"
     /// # "#);
     /// ```
-    fn percent(&self, other: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "%", other)
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn percent(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        percent_unsupported(self, other)
     }
 
     /// Floor division between the current value and `other`.
@@ -790,13 +934,17 @@ pub trait StarlarkValue<'v>:
     /// 3.0 // 2.0 == 1.0
     /// # "#);
     /// ```
-    fn floor_div(&self, other: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "//", other)
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn floor_div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        floor_div_unsupported(self, other)
     }
 
     /// Bitwise `&` operator.
-    fn bit_and(&self, other: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "&", other)
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn bit_and(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        bit_and_unsupported(self, other)
     }
 
     /// Bitwise `|` operator.
@@ -811,38 +959,110 @@ pub trait StarlarkValue<'v>:
     /// {1: 2} | {1: 3} == {1: 3}
     /// # "#);
     /// ```
-    fn bit_or(&self, other: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "|", other)
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn bit_or(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        bit_or_unsupported(self, other)
     }
 
     /// Bitwise `^` operator.
-    fn bit_xor(&self, other: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "^", other)
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn bit_xor(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        bit_xor_unsupported(self, other)
     }
 
     /// Bitwise `~` operator.
-    fn bit_not(&self, _heap: &'v Heap) -> crate::Result<Value<'v>> {
+    ///
+    /// In a `#[starlark_value]` block it is written with the type of its result, as
+    /// [`add`](Self::add) is with its types.
+    fn bit_not(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         ValueError::unsupported(self, "~")
     }
 
     /// Bitwise `<<` operator.
-    fn left_shift(&self, other: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "<<", other)
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn left_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        left_shift_unsupported(self, other)
     }
 
     /// Bitwise `>>` operator.
-    fn right_shift(&self, other: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, ">>", other)
+    ///
+    /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
+    fn right_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        right_shift_unsupported(self, other)
     }
 
-    /// Typecheck `this op rhs`.
-    fn bin_op_ty(_op: TypingBinOp, _rhs: &TyBasic) -> Option<Ty> {
+    /// The typing of `this op rhs`: the signatures of the operator, each with the type of
+    /// `rhs` it takes and the type of the result. None if the type does not have the operator.
+    /// The typechecker matches the operand against them; see [`OperatorSignature`].
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) generates this from the operator
+    /// methods of the block: for one written with types (see [`add`](Self::add)), the types of
+    /// its operand and result; for one written as declared here,
+    /// [`OperatorSignature::any`]. `<` is [`compare`](Self::compare) with its operand, and
+    /// `in` is [`is_in`](Self::is_in) with its.
+    fn bin_op_signatures(_op: TypingBinOp) -> Vec<OperatorSignature> {
+        Vec::new()
+    }
+
+    /// The typing of `lhs op this` for the operators with a reflected method (`radd`,
+    /// `rmul`), as [`bin_op_signatures`](Self::bin_op_signatures); the operand is `lhs`.
+    fn rbin_op_signatures(_op: TypingBinOp) -> Vec<OperatorSignature> {
+        Vec::new()
+    }
+
+    /// The type of the result of the unary operator, if the type has it.
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) generates this from the unary
+    /// methods of the block: for one written with the type of its result, that type; for one
+    /// written as declared here, the type itself.
+    fn un_op_result(_op: TypingUnOp) -> Option<Ty> {
         None
     }
 
-    /// Typecheck `lhs op this`.
-    fn rbin_op_ty(_lhs: &TyBasic, _op: TypingBinOp) -> Option<Ty> {
+    /// The typing of `this[index]`: the type of index the type takes and the type of what is
+    /// there, or `None` if the type is not indexed. The typechecker matches the index against
+    /// it as it matches an operand against the signature of an operator.
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) generates this from the
+    /// [`at`](Self::at) of the block: the types of its index and result if it is written with
+    /// them, [`OperatorSignature::any`] if it is written as declared here.
+    fn at_signature() -> Option<OperatorSignature> {
         None
+    }
+
+    /// Provides the handle of each [predicate type](crate::values::predicate) this type is a
+    /// member of, for the value `this`.
+    ///
+    /// This is not written by hand. A type is a member of a predicate type by a conversion
+    /// from its own handle to the predicate's, written in its
+    /// [`#[starlark_value]`](crate::values::starlark_value) block:
+    ///
+    /// ```ignore
+    /// #[starlark(implements = StarlarkCmdArgsLike)]
+    /// fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
+    ///     this.as_ref()
+    /// }
+    /// ```
+    ///
+    /// The parameter is the type's [`Get`](Self::Get): `ValueTyped<'v, Self>` for a type with
+    /// one representation, the view itself, by value, for a type with several. The result is
+    /// the predicate's handle, which lives as long as the heap, and that is why the conversion
+    /// starts from the handle and not from `&self`. The macro derives this function and
+    /// [`implemented_predicates`](Self::implemented_predicates) from the conversions of a
+    /// block, so a type is a member once, for every representation.
+    #[starlark_internal_vtable(skip)]
+    fn provide_predicate_handle(_this: Self::Get, _demand: &mut Demand<'_, 'v>) {}
+
+    /// The [predicate types](crate::values::predicate) this type says it is a member of, which
+    /// is what the typechecker and the documentation know of it.
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) generates this with
+    /// [`provide_predicate_handle`](Self::provide_predicate_handle).
+    fn implemented_predicates() -> Vec<Predicate> {
+        Vec::new()
     }
 
     /// Called when exporting a value under a specific name,
@@ -877,6 +1097,76 @@ pub trait StarlarkValue<'v>:
     fn set_attr(&self, attribute: &str, _new_value: Value<'v>) -> crate::Result<()> {
         ValueError::unsupported(self, &format!(".{attribute}="))
     }
+}
+
+/// [`FrozenHeap::alloc_simple`]: crate::values::FrozenHeap::alloc_simple
+pub trait StarlarkValue<'v>:
+    'v + ProvidesStaticType<'v> + Allocative + Debug + Display + Serialize + Sized
+{
+    /// The Starlark type this is a representation of: `Self` for a type with one
+    /// representation, otherwise the view the type implements [`StarlarkType`] for.
+    type Type: StarlarkType<'v>;
+
+    /// This value as its type's [`Get`](StarlarkType::Get): what [`get`](StarlarkType::get)
+    /// gives for a value of this representation, for a caller that already knows the
+    /// representation. That is the handle itself for a type with one representation, and the
+    /// type's view of this representation for a type with several.
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) writes this, except for a type
+    /// that writes its own `Get` and for a representation whose type is not a view that
+    /// `#[derive(StarlarkRepresentations)]` wrote; those write it by hand.
+    fn get_typed(this: ValueTyped<'v, Self>) -> <Self::Type as StarlarkType<'v>>::Get;
+
+    /// Calls `f` on the receiver of the type's methods for this value. This is for the vtable
+    /// entries, which hold the payload and the value, and `#[starlark_value]` writes it: the
+    /// payload for a type that is its own representation, and what
+    /// [`get_typed`](Self::get_typed) gives for a representation of another type, whose `Get`
+    /// is the type.
+    #[doc(hidden)]
+    fn with_receiver<R>(
+        payload: &'v Self,
+        this: ValueTyped<'v, Self>,
+        f: impl FnOnce(&Self::Type) -> R,
+    ) -> R;
+
+    /// [`StarlarkType::TYPE`] of [`Type`](Self::Type), for code generic over representations.
+    const TYPE: &'static str = <Self::Type as StarlarkType<'v>>::TYPE;
+
+    /// [`StarlarkType::get_type_value_static`] of [`Type`](Self::Type).
+    fn get_type_value_static() -> StringValue<'static> {
+        <Self::Type as StarlarkType<'v>>::get_type_value_static()
+    }
+
+    /// [`StarlarkType::get_type_starlark_repr`] of [`Type`](Self::Type).
+    fn get_type_starlark_repr() -> Ty {
+        <Self::Type as StarlarkType<'v>>::get_type_starlark_repr()
+    }
+
+    /// [`StarlarkType::get_methods`] of [`Type`](Self::Type).
+    fn get_methods() -> Option<&'static Methods> {
+        <Self::Type as StarlarkType<'v>>::get_methods()
+    }
+
+    /// [`StarlarkType::attr_ty`] of [`Type`](Self::Type).
+    fn attr_ty(name: &str) -> Option<Ty> {
+        <Self::Type as StarlarkType<'v>>::attr_ty(name)
+    }
+
+    /// Please do not implement this method or `get_type`,
+    /// but use [`#[starlark_value]`](crate::values::starlark_value) proc macro.
+    #[doc(hidden)]
+    fn please_use_starlark_type_macro() {
+        panic!("This function is implemented by #[starlark_value] proc macro")
+    }
+
+    /// Type is special in Starlark, it is implemented differently than user defined types.
+    /// For example, some special types like `bool` cannon be heap allocated.
+    ///
+    /// This function must not be implemented outside of starlark crate.
+    #[doc(hidden)]
+    fn is_special(_private: Private) -> bool {
+        false
+    }
 
     /// Dynamically provide values based on type.
     ///
@@ -884,28 +1174,21 @@ pub trait StarlarkValue<'v>:
     ///
     /// The API is based on
     /// [std::any::Provider](https://doc.rust-lang.org/std/any/trait.Provider.html).
+    ///
+    /// This lives on the representation rather than on [`StarlarkType`]: what it provides are
+    /// references into the representation's memory, for the heap's lifetime, which the receiver
+    /// of a `StarlarkType` method, built for the call, cannot give out.
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         let _ = demand;
     }
 
-    /// When freezing, this function is called on the value first and can return a `FrozenValue`
-    /// directly to bypass the freeze impl.
+    /// Whether `value` is of the type this value denotes, for the representations of `type`.
     ///
-    /// Most types, when being frozen, want to implement their `Freeze` by converting themselves to
-    /// a value of a new type that is then allocated in the frozen heap. In this case, the `Freeze`
-    /// trait should just be used.
-    ///
-    /// This function is needed in the rare case when that is not appropriate - most typically, when
-    /// freezing some values, it may be possible to return a statically allocated value instead of
-    /// allocating a new one. In such cases, this function can be implemented to enable that.
-    ///
-    /// FIXME(JakobDegen):
-    ///   1. This behavior really belongs on the freeze trait, not here
-    ///   2. We need to verify that the returned `FrozenValue`'s underlying type agrees with the
-    ///      type on the `Freeze` implementation
-    ///   3. We may want to make it possible to *only* implement this, thereby not allowing by-value
-    ///      freezes of the type.
-    fn try_freeze_directly(&self, _freezer: &Freezer<'_>) -> Option<FreezeResult<FrozenValue>> {
-        None
+    /// This lives on the representation rather than on [`StarlarkType`]: it runs on every runtime
+    /// type check, and a representation of `type` is monomorphised over its matcher, so here the
+    /// matcher is called statically where the view of `type` could only call it dynamically.
+    #[doc(hidden)]
+    fn type_matches_value(&self, _value: Value<'v>, _private: Private) -> bool {
+        unreachable!("`type_matches_value` should only be called on special types")
     }
 }

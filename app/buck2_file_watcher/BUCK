@@ -5,30 +5,36 @@ oncall("build_infra")
 rust_library(
     name = "buck2_file_watcher",
     srcs = glob(["src/**/*.rs"]),
+    autocargo = {
+        "cargo_toml_config": {
+            "extra_buck_dependencies": {
+                "dependencies": [
+                    (None, "//common/rust/shed/detect_eden:detect_eden"),
+                    (None, "//common/rust/shed/fbinit:fbinit"),
+                    (None, "//eden/fs/service:thrift-rust"),
+                    (None, "//watchman/rust/watchman_client:watchman_client"),
+                    "fbsource//third-party/rust:fbinit",
+                    "fbsource//third-party/rust:watchman_client",
+                ],
+            },
+        },
+    },
     named_deps = {
         # @oss-disable[end= ]: "edenfs": "//eden/fs/service:thrift-rust",
     },
     test_deps = [
         "fbsource//third-party/rust:tempfile",
-    ],
-    test_os_deps = [
-        (
-            "linux",
-            [
-                "fbsource//third-party/rust:assert_matches",
-                "//buck2/app/buck2_util:buck2_util",
-                "//buck2/gazebo/gazebo:gazebo",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "fbsource//third-party/rust:assert_matches",
-                "//buck2/app/buck2_util:buck2_util",
-                "//buck2/gazebo/gazebo:gazebo",
-            ],
-        ),
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:assert_matches",
+            "//buck2/app/buck2_util:buck2_util",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:assert_matches",
+            "//buck2/app/buck2_util:buck2_util",
+        ],
+    }),
     deps = [
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:blake3",
@@ -36,6 +42,7 @@ rust_library(
         "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:hex",
         "fbsource//third-party/rust:notify",
+        "fbsource//third-party/rust:regex",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tracing",
@@ -49,10 +56,10 @@ rust_library(
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_events:buck2_events",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/dice/dice:dice",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
         # @oss-disable[end= ]: "//common/rust/shed/detect_eden:detect_eden",
         "//common/rust/shed/fbinit:fbinit",
         "//watchman/rust/watchman_client:watchman_client",

@@ -16,6 +16,8 @@ load(
 )
 load(":cxx_context.bzl", "get_cxx_toolchain_info")
 
+PRE_BOLT_SUFFIX = "-wrapper"
+
 CxxBoltOutput = record(
     output = field(Artifact),
     dwo_output = field(Artifact | None),
@@ -25,21 +27,29 @@ def cxx_use_bolt(ctx: AnalysisContext) -> bool:
     cxx_toolchain_info = get_cxx_toolchain_info(ctx)
     return cxx_toolchain_info.bolt_enabled and ctx.attrs.bolt_profile != None
 
-def bolt(ctx: AnalysisContext, prebolt_output: Artifact, external_debug_info: ArtifactTSet, identifier: [str, None], generate_dwp: bool, allow_cache_upload: bool = False) -> CxxBoltOutput:
-    output_name = prebolt_output.short_path.removesuffix("-wrapper")
-    postbolt_output = ctx.actions.declare_output(output_name)
+def bolt(
+    ctx: AnalysisContext,
+    prebolt_output: Artifact,
+    external_debug_info: ArtifactTSet,
+    identifier: [str, None],
+    generate_dwp: bool,
+    allow_cache_upload: bool = False,
+) -> CxxBoltOutput:
+    output_name = prebolt_output.short_path.removesuffix(PRE_BOLT_SUFFIX)
+    postbolt_output = ctx.actions.declare_output(output_name, has_content_based_path = False)
     dwo_output = None
-    bolt_msdk = get_cxx_toolchain_info(ctx).binary_utilities_info.bolt_msdk
+    cxx_toolchain_info = get_cxx_toolchain_info(ctx)
+    bolt_tool = cxx_toolchain_info.binary_utilities_info.bolt
 
-    if not bolt_msdk or not cxx_use_bolt(ctx):
-        fail("Cannot use bolt if bolt_msdk is not available or bolt profile is not available")
+    if not bolt_tool or not cxx_use_bolt(ctx):
+        fail("Cannot use bolt if bolt tool is not available or bolt profile is not available")
 
     materialized_external_debug_info = project_artifacts(ctx.actions, external_debug_info)
 
     # bolt command format:
     # {llvm_bolt} {input_bin} -o $OUT -data={fdata} {args}
     args = cmd_args(
-        cmd_args(bolt_msdk, format = "{}/bin/llvm-bolt"),
+        bolt_tool,
         prebolt_output,
         "-o",
         postbolt_output.as_output(),
@@ -49,7 +59,7 @@ def bolt(ctx: AnalysisContext, prebolt_output: Artifact, external_debug_info: Ar
     )
 
     if generate_dwp:
-        dwo_output = ctx.actions.declare_output(output_name + ".dwo.d", dir = True)
+        dwo_output = ctx.actions.declare_output(output_name + ".dwo.d", dir = True, has_content_based_path = False)
         args.add(cmd_args(dwo_output.as_output(), format = "--dwarf-output-path={}"))
         args = cmd_args(
             "/bin/sh",
@@ -71,7 +81,7 @@ def bolt(ctx: AnalysisContext, prebolt_output: Artifact, external_debug_info: Ar
     output = postbolt_output
 
     if strip_stapsdt:
-        stripped_postbolt_output = ctx.actions.declare_output(output_name + "-nostapsdt")
+        stripped_postbolt_output = ctx.actions.declare_output(output_name + "-nostapsdt", has_content_based_path = False)
         ctx.actions.run(
             # We --rename-section instead of --remove-section because objcopy's processing
             # in an invalid ELF file

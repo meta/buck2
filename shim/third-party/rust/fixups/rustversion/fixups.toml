@@ -1,8 +1,15 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
-# This source code is licensed under both the MIT license found in the
-# LICENSE-MIT file in the root directory of this source tree and the Apache
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
 # License, Version 2.0 found in the LICENSE-APACHE file in the root directory
-# of this source tree.
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
 
-buildscript.run = true
+[buildscript.run.env]
+# As in fbsource: `#[rustversion::since(YYYY-MM-DD)]` evaluates as true even
+# when the compiler is a stable release, which fbsource's is; unstable features
+# are allowed through RUSTC_BOOTSTRAP=1, and bytemuck's unstable `core::simd`
+# support, which the third-party manifest enables, picks the current portable
+# SIMD API only on what rustversion takes for a recent nightly.
+RUSTC_OVERRIDE_VERSION_STRING = "1.999.0-nightly"

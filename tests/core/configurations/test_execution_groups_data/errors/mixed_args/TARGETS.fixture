@@ -1,0 +1,11 @@
+load(":rules.bzl", "r", "tool")
+
+tool(name = "tool")
+
+r(
+    name = "t",
+    default_group = ("$(exe :tool)", ["-g"]),
+    either = "$(exe :tool)",
+    mapping = {"-g": "$(exe :tool)"},
+    pair = ("$(exe :tool)", ["-g"]),
+)

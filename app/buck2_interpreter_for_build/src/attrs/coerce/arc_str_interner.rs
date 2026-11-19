@@ -16,18 +16,18 @@ use hashbrown::HashTable;
 
 use crate::attrs::coerce::str_hash::str_hash;
 
-pub(crate) struct ArcStrInterner {
+pub struct ArcStrInterner {
     cache: RefCell<HashTable<(u64, ArcStr)>>,
 }
 
 impl ArcStrInterner {
-    pub(crate) fn new() -> ArcStrInterner {
+    pub fn new() -> ArcStrInterner {
         ArcStrInterner {
             cache: RefCell::new(HashTable::new()),
         }
     }
 
-    pub(crate) fn intern(&self, s: &str) -> ArcStr {
+    pub fn intern(&self, s: &str) -> ArcStr {
         if s.is_empty() {
             return ArcStr::default();
         }

@@ -14,7 +14,8 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
 
-use buck2_util::hash::BuckHasher;
+use buck2_core::package::PackageLabel;
+use buck2_hash::BuckHasher;
 use cmp_any::PartialEqAny;
 use dupe::Dupe;
 
@@ -25,6 +26,17 @@ pub trait BuildSignalsNodeKeyImpl:
     fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry> {
         None
     }
+
+    fn kind(&self) -> &'static str {
+        "unknown"
+    }
+
+    /// The package of the target this computation is about, for computations
+    /// (configuring a target, resolving its select keys) whose dependencies on
+    /// other packages count as discovering those packages.
+    fn package(&self) -> Option<PackageLabel> {
+        None
+    }
 }
 
 pub trait BuildSignalsNodeKeyDyn: Send + Sync + 'static {
@@ -33,6 +45,8 @@ pub trait BuildSignalsNodeKeyDyn: Send + Sync + 'static {
     fn debug(&self) -> &dyn Debug;
     fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry>;
     fn hash(&self) -> u64;
+    fn kind(&self) -> &'static str;
+    fn package(&self) -> Option<PackageLabel>;
 }
 
 impl<T: BuildSignalsNodeKeyImpl> BuildSignalsNodeKeyDyn for T {
@@ -57,6 +71,14 @@ impl<T: BuildSignalsNodeKeyImpl> BuildSignalsNodeKeyDyn for T {
         self.hash(&mut hasher);
         hasher.finish()
     }
+
+    fn kind(&self) -> &'static str {
+        BuildSignalsNodeKeyImpl::kind(self)
+    }
+
+    fn package(&self) -> Option<PackageLabel> {
+        BuildSignalsNodeKeyImpl::package(self)
+    }
 }
 
 #[derive(Clone, Dupe)]
@@ -69,6 +91,14 @@ impl BuildSignalsNodeKey {
 
     pub fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry> {
         self.0.critical_path_entry_proto()
+    }
+
+    pub fn package(&self) -> Option<PackageLabel> {
+        self.0.package()
+    }
+
+    pub fn kind(&self) -> &'static str {
+        self.0.kind()
     }
 }
 

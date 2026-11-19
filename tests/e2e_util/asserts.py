@@ -7,7 +7,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-unsafe
 
 import platform
 import re
@@ -15,7 +14,6 @@ import stat
 from pathlib import Path
 from typing import Awaitable, Optional, Type, TypeVar, Union
 
-import pytest
 from buck2.tests.e2e_util.api.buck_result import (
     BuckException,
     BuckResult,
@@ -72,9 +70,12 @@ async def expect_failure(
             An optional regex pattern to search for in stderr if provided.
             Raises an AssertionError if the regex pattern is not found.
     """
-    with pytest.raises(exception) as execinfo:  # type: ignore
+    try:
         await process
-    failure = execinfo.value
+    except exception as e:
+        failure = e
+    else:
+        raise AssertionError(f"{exception.__name__} was not raised")
     if not isinstance(failure, BuckException):
         return failure
     if exit_code is not None:
@@ -83,15 +84,15 @@ async def expect_failure(
             if isinstance(exit_code, ExitCode)
             else failure.get_exit_code_v2()
         )
-        assert (
-            actual_exit_code == exit_code
-        ), f"Expected exit code {exit_code} but found {actual_exit_code}\n<stderr>\n{_indent(failure.stderr)}</stderr>"
+        assert actual_exit_code == exit_code, (
+            f"Expected exit code {exit_code} but found {actual_exit_code}\n<stderr>\n{_indent(failure.stderr)}</stderr>"
+        )
     if stdout_regex is not None:
-        assert re.search(
-            stdout_regex, failure.stdout, re.DOTALL
-        ), f'Did not find pattern: "{stdout_regex}" in stdout: "{failure.stdout}"'
+        assert re.search(stdout_regex, failure.stdout, re.DOTALL), (
+            f'Did not find pattern: "{stdout_regex}" in stdout: "{failure.stdout}"'
+        )
     if stderr_regex is not None:
-        assert re.search(
-            stderr_regex, failure.stderr, re.DOTALL | re.IGNORECASE
-        ), f'Did not find pattern: "{stderr_regex}" in stderr: "{failure.stderr}"'
+        assert re.search(stderr_regex, failure.stderr, re.DOTALL | re.IGNORECASE), (
+            f'Did not find pattern: "{stderr_regex}" in stderr: "{failure.stderr}"'
+        )
     return failure

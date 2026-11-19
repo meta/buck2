@@ -11,8 +11,11 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use buck2_core::soft_error_or_panic;
 use buck2_error::BuckErrorContext;
-use gazebo::eq_chain;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_settings::buckconfig::BuckconfigSource;
+use buck2_util::env_vars::substitute_env_vars;
 
 use crate::legacy_configs::configs::ConfigValue;
 use crate::legacy_configs::configs::LegacyBuckConfig;
@@ -21,18 +24,25 @@ use crate::legacy_configs::configs::LegacyBuckConfigValue;
 use crate::legacy_configs::key::BuckconfigKeyRef;
 use crate::legacy_configs::view::LegacyBuckConfigView;
 
-#[derive(buck2_error::Error, Debug)]
-#[buck2(tag = Input)]
-enum ConfigValueError {
-    #[error(
-        "Invalid value for buckconfig `{section}.{key}`: conversion to {ty} failed, value as `{value}`"
-    )]
-    ParseFailed {
-        section: String,
-        key: String,
-        value: String,
-        ty: &'static str,
-    },
+/// Read the `[buck2_metadata]` section from a `LegacyBuckConfig` and resolve any `$VAR`
+/// references. Entries whose env vars are not set are skipped and reported.
+pub fn parse_buckconfig_metadata(config: &LegacyBuckConfig) -> BuckFixedSortedMap<String, String> {
+    let Some(section) = config.get_section("buck2_metadata") else {
+        return BuckFixedSortedMap::default();
+    };
+    section
+        .iter()
+        .filter_map(|(key, value)| match substitute_env_vars(value.as_str()) {
+            Ok(resolved) => Some((key.to_owned(), resolved)),
+            Err(e) => {
+                soft_error_or_panic!(
+                    "buckconfig_metadata_env_var_unset",
+                    e.context(format!("Skipping [buck2_metadata] key `{}`", key))
+                );
+                None
+            }
+        })
+        .collect()
 }
 
 impl LegacyBuckConfigView for &LegacyBuckConfig {
@@ -41,16 +51,22 @@ impl LegacyBuckConfigView for &LegacyBuckConfig {
     }
 }
 
+impl BuckconfigSource for &LegacyBuckConfig {
+    fn get(&mut self, section: &str, property: &str) -> buck2_error::Result<Option<String>> {
+        Ok(LegacyBuckConfig::get(self, BuckconfigKeyRef { section, property }).map(str::to_owned))
+    }
+}
+
 impl LegacyBuckConfigSection {
     /// configs are equal if the data they resolve in is equal, regardless of the origin of the config
     pub(crate) fn compare(&self, other: &Self) -> bool {
-        eq_chain!(
-            self.values.len() == other.values.len(),
-            self.values.iter().all(|(name, value)| other
-                .values
-                .get(name)
-                .is_some_and(|other_val| other_val.as_str() == value.as_str()))
-        )
+        self.values.len() == other.values.len()
+            && self.values.iter().all(|(name, value)| {
+                other
+                    .values
+                    .get(name)
+                    .is_some_and(|other_val| other_val.as_str() == value.as_str())
+            })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, LegacyBuckConfigValue<'_>)> {
@@ -104,11 +120,14 @@ impl LegacyBuckConfig {
         value
             .parse()
             .map_err(buck2_error::Error::from)
-            .with_buck_error_context(|| ConfigValueError::ParseFailed {
-                section: section.to_owned(),
-                key: property.to_owned(),
-                value: value.to_owned(),
-                ty: std::any::type_name::<T>(),
+            .with_buck_error_context(|| {
+                format!(
+                    "Invalid value for buckconfig `{}.{}`: conversion to {} failed, value as `{}`",
+                    section.to_owned(),
+                    property.to_owned(),
+                    std::any::type_name::<T>(),
+                    value.to_owned(),
+                )
             })
     }
 
@@ -185,15 +204,13 @@ impl LegacyBuckConfig {
 
     /// configs are equal if the data they resolve in is equal, regardless of the origin of the config
     pub(crate) fn compare(&self, other: &Self) -> bool {
-        eq_chain!(
-            self.0.values.len() == other.0.values.len(),
-            self.0.values.iter().all(|(section_name, section)| {
+        self.0.values.len() == other.0.values.len()
+            && self.0.values.iter().all(|(section_name, section)| {
                 other
                     .0
                     .values
                     .get(section_name)
                     .is_some_and(|other_sec| other_sec.compare(section))
             })
-        )
     }
 }

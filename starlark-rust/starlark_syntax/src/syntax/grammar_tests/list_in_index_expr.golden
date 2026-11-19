@@ -13,4 +13,3 @@ error: left-hand-side of assignment must take the form `a`, `a.b` or `a[b]`
   |
 1 | x[1, 2] = 3
   | ^^^^^^^
-  |

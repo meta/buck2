@@ -14,8 +14,8 @@ use std::marker::PhantomData;
 use std::ops::Index;
 use std::ops::IndexMut;
 
+use buck2_hash::BuckMutInsertionMap;
 use derive_more::Display;
-use starlark_map::small_map::SmallMap;
 
 #[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
 pub struct GraphVertexKind;
@@ -202,14 +202,14 @@ where
 /// The keys for a graph built using GraphBuilder. This can be accessed using both VertexId
 /// (because the IDs are assigned in order), or K.
 #[derive(Clone)]
-pub struct AbstractKeys<K, Kind: VertexKind>(SmallMap<K, AbstractVertexId<Kind>>);
+pub struct AbstractKeys<K, Kind: VertexKind>(BuckMutInsertionMap<K, AbstractVertexId<Kind>>);
 
 impl<K, Kind> AbstractKeys<K, Kind>
 where
     Kind: VertexKind,
     K: Hash + Eq,
 {
-    pub(crate) fn new(v: SmallMap<K, AbstractVertexId<Kind>>) -> Self {
+    pub(crate) fn new(v: BuckMutInsertionMap<K, AbstractVertexId<Kind>>) -> Self {
         Self(v)
     }
 

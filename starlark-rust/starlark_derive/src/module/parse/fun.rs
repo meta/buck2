@@ -49,6 +49,7 @@ use crate::module::typ::StarFun;
 use crate::module::typ::StarFunSource;
 use crate::module::typ::StarStmt;
 use crate::module::typ::ThisParam;
+use crate::module::util::is_type_name;
 use crate::util::GenericsUtil;
 
 #[derive(Default)]
@@ -71,6 +72,7 @@ struct FnParamAttrs {
     named_only: bool,
     args: bool,
     kwargs: bool,
+    doc_hidden: bool,
 }
 
 impl FnParamAttrs {
@@ -82,8 +84,15 @@ impl FnParamAttrs {
             named_only,
             args,
             kwargs,
+            doc_hidden,
         } = self;
-        default.is_none() && !*this && !*pos_only && !*named_only && !*args && !*kwargs
+        default.is_none()
+            && !*this
+            && !*pos_only
+            && !*named_only
+            && !*args
+            && !*kwargs
+            && !*doc_hidden
     }
 }
 
@@ -119,6 +128,14 @@ fn parse_starlark_fn_param_attr(
             } else if ident == "kwargs" {
                 param_attrs.kwargs = true;
                 continue;
+            } else if ident == "doc_hidden" {
+                param_attrs.doc_hidden = if parser.peek(Token![=]) {
+                    parser.parse::<Token![=]>()?;
+                    parser.parse::<syn::LitBool>()?.value
+                } else {
+                    true
+                };
+                continue;
             } else if ident == "require" {
                 parser.parse::<Token!(=)>()?;
                 let require = parser.parse::<Ident>()?;
@@ -137,6 +154,7 @@ fn parse_starlark_fn_param_attr(
                 `#[starlark(default = expr)]`, \
                 `#[starlark(require = pos)]`, \
                 `#[starlark(require = named)]`, \
+                `#[starlark(doc_hidden)]`, \
                 `#[starlark(this)]` attribute",
             ));
         }
@@ -318,7 +336,7 @@ pub(crate) fn parse_fun(func: ItemFn, module_kind: ModuleKind) -> syn::Result<St
         match parsed_arg {
             StarArgOrSpecial::Heap(special) => {
                 if heap.is_some() {
-                    return Err(syn::Error::new(span, "Repeated `&Heap` parameter"));
+                    return Err(syn::Error::new(span, "Repeated `Heap<'_>` parameter"));
                 }
                 heap = Some(special);
             }
@@ -376,7 +394,7 @@ pub(crate) fn parse_fun(func: ItemFn, module_kind: ModuleKind) -> syn::Result<St
     if eval.is_some() && heap.is_some() {
         return Err(syn::Error::new(
             sig_span,
-            "Can't have both `&mut Evaluator` and `&Heap` parameters",
+            "Can't have both `&mut Evaluator` and `Heap<'_>` parameters",
         ));
     }
 
@@ -587,7 +605,7 @@ enum StarArgOrSpecial {
     Arguments(StarArguments),
     /// `&mut Evaluator`.
     Eval(SpecialParam),
-    /// `&Heap`.
+    /// `Heap<'_>`.
     Heap(SpecialParam),
 }
 
@@ -609,13 +627,13 @@ fn is_eval(param: &SimpleParam, attrs: &FnParamAttrs) -> syn::Result<Option<Spec
     }
 }
 
-/// Function parameter is `heap: &Heap`.
+/// Function parameter is `heap: Heap<'_>`.
 fn is_heap(param: &SimpleParam, attrs: &FnParamAttrs) -> syn::Result<Option<SpecialParam>> {
-    if is_ref_something(&param.ty, "Heap") {
+    if is_type_name(&param.ty, "Heap") {
         if !attrs.is_empty() {
             return Err(syn::Error::new_spanned(
                 &param.ident,
-                "`&Heap` parameter cannot have attributes",
+                "`Heap<'_>` parameter cannot have attributes",
             ));
         }
         Ok(Some(SpecialParam {
@@ -634,6 +652,7 @@ fn parse_this_param(param: &SimpleParam, attrs: &FnParamAttrs) -> syn::Result<Th
         named_only,
         args,
         kwargs,
+        doc_hidden,
     } = attrs;
 
     if !this && &param.ident != "this" {
@@ -644,7 +663,7 @@ fn parse_this_param(param: &SimpleParam, attrs: &FnParamAttrs) -> syn::Result<Th
         ));
     }
 
-    if default.is_some() || *pos_only || *named_only || *args || *kwargs {
+    if default.is_some() || *pos_only || *named_only || *args || *kwargs || *doc_hidden {
         return Err(syn::Error::new_spanned(
             param,
             "Attributes are not compatible with receiver parameter",
@@ -665,8 +684,10 @@ fn is_arguments(param: &SimpleParam, attrs: &FnParamAttrs) -> syn::Result<Option
             named_only,
             args,
             kwargs,
+            doc_hidden,
         } = attrs;
-        if default.is_some() || *this || *pos_only || *named_only || *args || *kwargs {
+        if default.is_some() || *this || *pos_only || *named_only || *args || *kwargs || *doc_hidden
+        {
             return Err(syn::Error::new_spanned(
                 param,
                 "Attributes are not compatible with `&Arguments` parameter",
@@ -702,7 +723,7 @@ fn parse_arg(
             if this {
                 return Err(syn::Error::new(
                     span,
-                    "Receiver parameter cannot be `&Heap`",
+                    "Receiver parameter cannot be `Heap<'_>`",
                 ));
             }
             return Ok(StarArgOrSpecial::Heap(heap));
@@ -739,6 +760,16 @@ fn parse_arg(
         return Ok(StarArgOrSpecial::Arguments(arguments));
     }
 
+    let star = param_attrs.args || param_attrs.kwargs;
+    let both = param_attrs.args && param_attrs.kwargs;
+    let qualified = param_attrs.pos_only || param_attrs.named_only;
+    if star && (both || qualified || param_attrs.default.is_some()) {
+        return Err(syn::Error::new(
+            span,
+            "`args` and `kwargs` cannot be combined with each other, `require` or `default`",
+        ));
+    }
+
     let pass_style = match (
         param_attrs.args,
         param_attrs.kwargs,
@@ -771,11 +802,19 @@ fn parse_arg(
         (false, false, false, true, false) => StarArgPassStyle::PosOnly,
         (false, false, false, false, true) => StarArgPassStyle::NamedOnly,
     };
+    if param_attrs.doc_hidden && pass_style != StarArgPassStyle::NamedOnly {
+        return Err(syn::Error::new(
+            span,
+            "`doc_hidden` parameter must be named-only, \
+                so that the documented signature stays callable as rendered",
+        ));
+    }
     Ok(StarArgOrSpecial::StarArg(StarArg {
         span,
         param,
         pass_style,
         default: param_attrs.default,
+        doc_hidden: param_attrs.doc_hidden,
         source: StarArgSource::Unknown,
     }))
 }

@@ -19,7 +19,7 @@ use buck2_query_parser::Expr;
 use buck2_query_parser::SpannedExpr;
 use buck2_query_parser::spanned::Spanned;
 use enum_iterator::Sequence;
-use gazebo::variants::VariantName;
+use variant_name::VariantName;
 
 use crate::query::environment::QueryEnvironment;
 use crate::query::syntax::simple::eval::error::QueryError;
@@ -27,6 +27,7 @@ use crate::query::syntax::simple::eval::evaluator::QueryEvaluator;
 use crate::query::syntax::simple::eval::file_set::FileSet;
 use crate::query::syntax::simple::eval::set::TargetSet;
 use crate::query::syntax::simple::eval::values::QueryValue;
+use crate::query::syntax::simple::eval::values::QueryValueDepth;
 use crate::query::syntax::simple::eval::values::QueryValueSet;
 
 mod _scoped_allow {
@@ -139,6 +140,7 @@ pub trait QueryFunction<Env: QueryEnvironment>: Send + Sync {
     ) -> Result<QueryValue<Env::Target>, QueryError>;
 
     fn arg_type(&self, idx: usize) -> Result<QueryArgType, QueryError>;
+    fn arg_name(&self, idx: usize) -> Result<&'static str, QueryError>;
 }
 
 #[async_trait]
@@ -278,6 +280,28 @@ impl<'a, Env: QueryEnvironment> QueryFunctionArg<'a, Env> for FileSet {
     }
 }
 
+/// Used to specify the depth of some graph traversals. None maps to unbounded,
+/// and u64 is clamped to a u32 and converted such that large values
+/// automatically become unbounded (see `QueryValueDepth`).
+#[async_trait]
+impl<'a, Env: QueryEnvironment> QueryFunctionArg<'a, Env> for QueryValueDepth {
+    const ARG_TYPE: QueryArgType = QueryArgType::Integer;
+
+    fn accept_none() -> Option<Self> {
+        Some(QueryValueDepth::Unbounded)
+    }
+
+    async fn accept(_env: &Env, val: QueryValue<Env::Target>) -> Result<Self, QueryError> {
+        match val {
+            QueryValue::Integer(v) => Ok((v.clamp(0, u32::MAX as u64) as u32).into()),
+            _ => Err(QueryError::InvalidType {
+                expected: "uint",
+                actual: val.variant_name(),
+            }),
+        }
+    }
+}
+
 /// Straightforward implementation for u64.
 #[async_trait]
 impl<'a, Env: QueryEnvironment> QueryFunctionArg<'a, Env> for u64 {
@@ -323,17 +347,34 @@ impl<'a, Env: QueryEnvironment, A: QueryFunctionArg<'a, Env>> QueryFunctionArg<'
 
 // Helper for buck_query_proc_macro implementations. Evaluates an arg at an index and tries to convert it to the QueryFunctionArg type, providing decent errors on failures.
 pub async fn eval_arg<'a, Env: QueryEnvironment, A: QueryFunctionArg<'a, Env>>(
-    func_name: &str,
+    func: &impl QueryFunction<Env>,
     evaluator: &QueryEvaluator<'a, Env>,
     args: &'a [Spanned<Expr<'a>>],
     idx: usize,
 ) -> Result<A, QueryError> {
     match args.get(idx) {
-        Some(v) => A::eval(evaluator, v).await,
+        Some(v) => {
+            if let Expr::None = v.value {
+                match A::accept_none() {
+                    Some(v) => Ok(v),
+                    None => Err(QueryError::NoneNotAccepted {
+                        function: func.name().to_owned(),
+                        arg_idx: idx.to_string(),
+                        arg_name: func.arg_name(idx)?.to_owned(),
+                        arg_type: A::ARG_TYPE.rendered_reference(&MarkdownOptions {
+                            links_enabled: false,
+                        }),
+                    }),
+                }
+            } else {
+                A::eval(evaluator, v).await
+            }
+        }
         None => match A::accept_none() {
             Some(v) => Ok(v),
             None => Err(QueryError::TooFewArgs {
-                function: func_name.to_owned(),
+                function: func.name().to_owned(),
+                next_arg_name: func.arg_name(idx)?.to_owned(),
                 min: idx + 1,
                 actual: args.len(),
             }),

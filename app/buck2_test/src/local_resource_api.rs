@@ -15,7 +15,7 @@ use buck2_common::local_resource_state::LocalResource;
 use buck2_common::local_resource_state::LocalResourceState;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_error::ErrorTag;
-use indexmap::IndexMap;
+use buck2_hash::BuckMutInsertionMap;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -29,17 +29,26 @@ pub(crate) struct LocalResourcesSetupResult {
     /// to a value which represents resource. String alias is mapped to an environment variable key
     /// (which will be added to a command requiring such resource) using a `LocalResourceInfo` provider.
     pub(crate) resources: Vec<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub(crate) cleanup_registration: Option<CleanupRegistration>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CleanupRegistration {
+    pub(crate) version: u32,
+    pub(crate) attempt_id: String,
 }
 
 impl LocalResourcesSetupResult {
     pub(crate) fn into_state(
         self,
         resource_target: ConfiguredTargetLabel,
-        provider_env_mapping: &IndexMap<String, String>,
+        provider_env_mapping: &BuckMutInsertionMap<String, String>,
     ) -> buck2_error::Result<LocalResourceState> {
         fn make_resource(
             alias_to_value: BTreeMap<String, String>,
-            env_var_to_alias: &IndexMap<String, String>,
+            env_var_to_alias: &BuckMutInsertionMap<String, String>,
         ) -> buck2_error::Result<LocalResource> {
             let env_vars = env_var_to_alias
                 .iter()
@@ -58,6 +67,26 @@ impl LocalResourcesSetupResult {
                 .collect::<Result<_, buck2_error::Error>>()?;
             Ok(LocalResource(env_vars))
         }
+        // The pid is passed to `kill(2)` when the resources are released: 0 is our own process
+        // group and a negative value is a process group or every process.
+        if let Some(pid) = self.pid
+            && pid <= 0
+        {
+            return Err(buck2_error::buck2_error!(
+                ErrorTag::LocalResourceSetup,
+                "Local resource setup for `{}` reported pid `{}`, which is not a process",
+                resource_target,
+                pid,
+            ));
+        }
+        // A test that needs the resource waits for one to be free, so an empty pool is a hang.
+        if self.resources.is_empty() {
+            return Err(buck2_error::buck2_error!(
+                ErrorTag::LocalResourceSetup,
+                "Local resource setup for `{}` reported no resources",
+                resource_target,
+            ));
+        }
         let specs = self
             .resources
             .into_iter()
@@ -74,7 +103,7 @@ mod tests {
     use buck2_common::local_resource_state::LocalResource;
     use buck2_core::configuration::data::ConfigurationData;
     use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-    use indexmap::indexmap;
+    use buck2_hash::buck_mut_insertion_map;
     use maplit::btreemap;
 
     use crate::local_resource_api::LocalResourcesSetupResult;
@@ -82,6 +111,7 @@ mod tests {
     #[tokio::test]
     async fn test_into_state() -> buck2_error::Result<()> {
         let setup_result = LocalResourcesSetupResult {
+            cleanup_registration: None,
             pid: Some(42),
             resources: vec![
                 btreemap! { "socket_address".to_owned() => "foo".to_owned(), "named_pipe".to_owned() => "bar".to_owned() },
@@ -91,7 +121,7 @@ mod tests {
         };
         let target =
             ConfiguredTargetLabel::testing_parse("foo//bar:baz", ConfigurationData::testing_new());
-        let provider_env_mapping = indexmap! {
+        let provider_env_mapping = buck_mut_insertion_map! {
             "ENV_SOCKET".to_owned() => "socket_address".to_owned(),
         };
         let state = setup_result.into_state(target, &provider_env_mapping)?;
@@ -123,9 +153,59 @@ mod tests {
         Ok(())
     }
 
+    /// `pid` is passed to `kill(2)` when the resources are released, so only a process id is
+    /// accepted.
+    #[test]
+    fn test_non_positive_pid_is_rejected() {
+        for pid in [0, -1] {
+            let setup_result = LocalResourcesSetupResult {
+                cleanup_registration: None,
+                pid: Some(pid),
+                resources: vec![btreemap! { "socket_address".to_owned() => "foo".to_owned() }],
+            };
+            let target = ConfiguredTargetLabel::testing_parse(
+                "foo//bar:baz",
+                ConfigurationData::testing_new(),
+            );
+            let provider_env_mapping = buck_mut_insertion_map! {
+                "ENV_SOCKET".to_owned() => "socket_address".to_owned(),
+            };
+            let err = setup_result
+                .into_state(target, &provider_env_mapping)
+                .unwrap_err();
+            assert!(
+                format!("{err:#}").contains("which is not a process"),
+                "{err:#}"
+            );
+        }
+    }
+
+    /// A setup that reports no resources is a setup failure, not a pool to wait on.
+    #[test]
+    fn test_empty_resource_list_is_rejected() {
+        let setup_result = LocalResourcesSetupResult {
+            cleanup_registration: None,
+            pid: None,
+            resources: vec![],
+        };
+        let target =
+            ConfiguredTargetLabel::testing_parse("foo//bar:baz", ConfigurationData::testing_new());
+        let provider_env_mapping = buck_mut_insertion_map! {
+            "ENV_SOCKET".to_owned() => "socket_address".to_owned(),
+        };
+        let err = setup_result
+            .into_state(target, &provider_env_mapping)
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("reported no resources"),
+            "{err:#}"
+        );
+    }
+
     #[tokio::test]
     async fn test_missing_value() -> buck2_error::Result<()> {
         let setup_result = LocalResourcesSetupResult {
+            cleanup_registration: None,
             pid: Some(42),
             resources: vec![
                 btreemap! { "socket_address".to_owned() => "foo".to_owned() },
@@ -134,7 +214,7 @@ mod tests {
         };
         let target =
             ConfiguredTargetLabel::testing_parse("foo//bar:baz", ConfigurationData::testing_new());
-        let provider_env_mapping = indexmap! {
+        let provider_env_mapping = buck_mut_insertion_map! {
             "ENV_SOCKET".to_owned() => "socket_address".to_owned(),
         };
         let result = setup_result.into_state(target, &provider_env_mapping);

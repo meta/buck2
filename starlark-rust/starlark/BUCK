@@ -1,7 +1,23 @@
 load("@fbcode_macros//build_defs:native_rules.bzl", "alias", "buck_filegroup")
 load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+load("@fbsource//tools/build_defs:rust_unittest.bzl", "rust_unittest")
 
 oncall("build_infra")
+
+# Constraint controlling the "pagable" Cargo feature of the starlark crate.
+# When enabled, pagable serialization/deserialization support for starlark values is enabled.
+# Buck2 internal targets set this to "enabled" via package modifier in buck2/PACKAGE.
+# External consumers get "disabled" by default.
+constraint(
+    name = "pagable",
+    default = "disabled",
+    execution_modifier = True,
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["PUBLIC"],
+)
 
 alias(
     name = "starlark-bin",
@@ -21,11 +37,75 @@ buck_filegroup(
 rust_library(
     name = "starlark",
     srcs = glob(["src/**/*.rs"]),
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    # Only the impls the published crate needs, not everything
+                    # buck2 enables on these crates.
+                    "allocative": {"features": ["bumpalo", "dashmap", "num-bigint", "triomphe"]},
+                    # fbsource enables `allocator_api`, which needs nightly; the
+                    # starlark-rust repository builds on stable.
+                    "bumpalo": {"features": ["collections"], "workspace": False},
+                    "pagable": {"features": []},
+                    "strong_hash": {"features": []},
+                },
+            },
+            "extra_buck_dependencies": {
+                # rustyline and tokio do not build for wasm, which the OSS CI
+                # covers; tokio only serves fbcode-only tests.
+                "dependencies": [(None, "fbsource//third-party/rust:rustyline")],
+                "dev-dependencies": [(None, "fbsource//third-party/rust:tokio")],
+                "target": {
+                    "'cfg(not(target_arch = \"wasm32\"))'": {
+                        "dependencies": ["fbsource//third-party/rust:rustyline"],
+                        "dev-dependencies": ["fbsource//third-party/rust:tokio"],
+                    },
+                },
+            },
+            "extra_check_cfgs": [
+                "cfg(rust_nightly)",
+                "cfg(starlark_require_heap_names)",
+            ],
+            "features": {
+                "default": [],
+                "pagable": [],
+            },
+            "package": {
+                "authors": [
+                    "Damien Martin-Guillerez <dmarting@google.com>",
+                    "Stepan Koltsov <stepan.koltsov@gmail.com>",
+                    "Facebook",
+                ],
+                "categories": ["parser-implementations", "development-tools"],
+                "description": "An implementation of the Starlark language in Rust.",
+                "documentation": "https://docs.rs/starlark",
+                "keywords": ["starlark", "skylark", "bazel", "language", "interpreter"],
+                "license": "Apache-2.0",
+                "repository": "https://github.com/facebook/starlark-rust",
+                "version": "0.14.2",
+            },
+        },
+        # The `features` attribute is a `select`, which autocargo cannot read.
+        "edge_features": ["pagable"],
+    },
+    # `pagable` controls type registration for starlark values which shouldn't be enforced everywhere.
+    # `pagable_dep` controls whether to depend on pagable at all, used for OSS because to support stable rustc.
+    features = select({
+        ":pagable[enabled]": [
+            "pagable",
+            "pagable_dep",
+        ],
+        "DEFAULT": ["pagable_dep"],
+    }),
     rustc_flags = [
         "--cfg=rust_nightly",
-    ],
+    ] + select({
+        ":pagable[enabled]": ["--cfg=starlark_require_heap_names"],
+        "DEFAULT": [],
+    }),
     test_deps = [
-        "fbsource//third-party/rust:rand",
+        "fbsource//third-party/rust:tokio",
         # This is a hack to build `:testcases` when invoking a test.
         # Otherwise `OUT_DIR` is set, but it points to non-existing directory.
         # This is likely a bug in `rust_test` rule.
@@ -38,7 +118,9 @@ rust_library(
     },
     deps = [
         "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:blake3",
         "fbsource//third-party/rust:bumpalo",
+        "fbsource//third-party/rust:dashmap",
         "fbsource//third-party/rust:debugserver-types",
         "fbsource//third-party/rust:derivative",
         "fbsource//third-party/rust:derive_more",
@@ -48,26 +130,43 @@ rust_library(
         "fbsource//third-party/rust:inventory",
         "fbsource//third-party/rust:itertools",
         "fbsource//third-party/rust:maplit",
-        "fbsource//third-party/rust:memoffset",
+        "fbsource//third-party/rust:memchr",
         "fbsource//third-party/rust:num-bigint",
         "fbsource//third-party/rust:num-traits",
         "fbsource//third-party/rust:once_cell",
-        "fbsource//third-party/rust:paste",
+        "fbsource//third-party/rust:rand",
         "fbsource//third-party/rust:ref-cast",
         "fbsource//third-party/rust:regex",
         "fbsource//third-party/rust:rustyline",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:serde_json",
+        "fbsource//third-party/rust:stacker",
         "fbsource//third-party/rust:static_assertions",
         "fbsource//third-party/rust:strsim",
         "fbsource//third-party/rust:textwrap",
         "fbsource//third-party/rust:thiserror",
+        "fbsource//third-party/rust:triomphe",
         "//buck2/allocative/allocative:allocative",
         "//buck2/gazebo/cmp_any:cmp_any",
         "//buck2/gazebo/display_container:display_container",
         "//buck2/gazebo/dupe:dupe",
+        "//buck2/gazebo/strong_hash:strong_hash",
+        "//buck2/pagable:pagable",
+        "//buck2/shed/mini_map:mini_map",
+        "//buck2/shed/mini_vec:mini_vec",
         "//buck2/starlark-rust/starlark_derive:starlark_derive",
         "//buck2/starlark-rust/starlark_map:starlark_map",
         "//buck2/starlark-rust/starlark_syntax:starlark_syntax",
     ],
+)
+
+# Cargo discovers `tests/miri.rs` on its own; starlark-rust's GitHub CI runs it with
+# `cargo miri test --test miri`.
+rust_unittest(
+    name = "miri_regressions",
+    srcs = ["tests/miri.rs"],
+    autocargo = {"ignore_rule": True},
+    crate_root = "tests/miri.rs",
+    miri = True,
+    deps = [":starlark"],
 )

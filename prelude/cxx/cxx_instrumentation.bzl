@@ -15,9 +15,11 @@ CxxExportedNeedsCoverageInstrumentationTSet = transitive_set(
     },
 )
 
-CxxExportedNeedsCoverageInstrumentation = provider(fields = {
-    "nodes": CxxExportedNeedsCoverageInstrumentationTSet,
-})
+CxxExportedNeedsCoverageInstrumentation = provider(
+    fields = {
+        "nodes": CxxExportedNeedsCoverageInstrumentationTSet,
+    }
+)
 
 def build_needs_coverage_tset(ctx: AnalysisContext, deps: list[Dependency]) -> CxxExportedNeedsCoverageInstrumentationTSet:
     return ctx.actions.tset(

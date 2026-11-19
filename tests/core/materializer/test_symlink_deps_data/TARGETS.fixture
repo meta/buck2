@@ -1,0 +1,34 @@
+load(":defs.bzl", "check", "remote_text", "symlink_dir", "symlink_file")
+
+remote_text(name = "remote_text", text = "text")
+
+# A directory of symlinks pointing at another target's output, consumed both
+# through the symlink and, after a daemon restart, from scratch.
+symlink_dir(name = "dir_to_artifact", dep = ":remote_text")
+
+check(
+    name = "check_dir_to_artifact",
+    dep = ":dir_to_artifact",
+    entry = "link",
+    hidden = ["text"],
+)
+
+# The symlink target is a source file rather than a build artifact, so nothing
+# in buck-out covers it.
+symlink_dir(name = "dir_to_source", src = "source.txt")
+
+check(
+    name = "check_dir_to_source",
+    dep = ":dir_to_source",
+    entry = "link",
+    hidden = ["source.txt"],
+)
+
+# The same two targets reached through a bare symlink artifact.
+symlink_file(name = "file_to_artifact", dep = ":remote_text")
+
+check(name = "check_file_to_artifact", dep = ":file_to_artifact", hidden = ["text"])
+
+symlink_file(name = "file_to_source", src = "source.txt")
+
+check(name = "check_file_to_source", dep = ":file_to_source", hidden = ["source.txt"])

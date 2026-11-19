@@ -12,6 +12,7 @@ use std::fmt;
 use std::fmt::Debug;
 
 use buck2_common::file_ops::metadata::FileDigest;
+use buck2_core::soft_error_or_panic;
 use buck2_error::BuckErrorContext;
 use futures::future;
 use remote_execution::InlinedBlobWithDigest;
@@ -91,7 +92,10 @@ impl ReStdStream {
                 match client.download_blob(digest).await {
                     Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
                     Err(e) => {
-                        tracing::warn!("Failed to download action stderr: {:#}", e);
+                        soft_error_or_panic!(
+                            "action_output_download_failed",
+                            e.context("Failed to download action stderr")
+                        );
                         format!(
                             "Result could not be downloaded{}",
                             Self::download_blob_help(digest, digest_config),
@@ -248,7 +252,7 @@ impl CommandStdStreams {
                 Ok(StdStreamPair { stdout, stderr })
             }
             Self::Remote(remote) => {
-                // TODO (torozco): This assumes that the existing remote outputs we have have the
+                // TODO (torozco): This assumes that the existing remote outputs we have the
                 // same re use case as what we passed in. Lots of things make this assumption, but
                 // for the sake of being safe, check it.
                 if remote.use_case() != client.use_case {

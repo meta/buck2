@@ -13,6 +13,16 @@ rust_binary(
     # JEMalloc isn't super lean (and we don't actually allocate anything here),
     # so dont use it.
     default_strip_mode = "full",
+    # Under `build_info=full` the linker would otherwise stamp revision/time/user
+    # straight into the binary, making the link non-hermetic and so ineligible
+    # for cache upload. Late stamping moves that into a separate action and
+    # leaves the link itself reproducible.
+    late_build_info_stamping = True,
+    # Must be statically linked because the binary is embedded in the forkserver
+    # and written to disk without its shared library dependencies.
+    link_style = "static",
+    # Keep this dep set small and slow-moving: the binary is linked into
+    # `buck2` as data, so any change to it re-links `buck2` too.
     deps = [
         "fbsource//third-party/rust:anyhow",
     ] + select({
@@ -20,10 +30,12 @@ rust_binary(
         "DEFAULT": [],
         "ovr_config//os:linux": [
             "fbsource//third-party/rust:bincode",
+            "fbsource//third-party/rust:libc",
             "fbsource//third-party/rust:perf-event",
             "fbsource//third-party/rust:smallvec",
             "fbsource//third-party/rust:thiserror",
             "//buck2/app/buck2_miniperf_proto:buck2_miniperf_proto",
+            "//buck2/app/buck2_process_kill:buck2_process_kill",
         ],
     }),
 )
@@ -34,6 +46,7 @@ rust_library(
     srcs = glob(
         ["test/**/*.rs"],
     ),
+    autocargo = {"ignore_rule": True},
     test_deps = select({
         # Ideally we'd use compatible_with, but TD does not understand that.
         "DEFAULT": [],
@@ -42,6 +55,7 @@ rust_library(
             "fbsource//third-party/rust:bincode",
             "fbsource//third-party/rust:tempfile",
             "//buck2/app/buck2_miniperf_proto:buck2_miniperf_proto",
+            "//buck2/app/buck2_process_kill:buck2_process_kill",
         ],
     }),
     test_env = {

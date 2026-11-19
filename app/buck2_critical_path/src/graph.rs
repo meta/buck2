@@ -118,7 +118,21 @@ impl Graph {
                         }
 
                         if *marked {
-                            return Err(TopoSortError::Cycle);
+                            // Extract the cycle from the DFS stack. The queue contains
+                            // interleaved Push/Pop entries; the Pop entries represent
+                            // the current DFS path. Walk backward to find `j` and
+                            // collect the cycle.
+                            let mut cycle = vec![j];
+                            for (node, w) in queue.iter().rev() {
+                                if let Work::Pop = w {
+                                    cycle.push(*node);
+                                    if *node == j {
+                                        break;
+                                    }
+                                }
+                            }
+                            cycle.reverse();
+                            return Err(TopoSortError::Cycle(cycle));
                         }
 
                         *marked = true;
@@ -239,8 +253,8 @@ impl Graph {
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tier0)]
 pub enum TopoSortError {
-    #[error("cycle")]
-    Cycle,
+    #[error("cycle ({} nodes)", .0.len())]
+    Cycle(Vec<VertexId>),
 }
 
 pub trait AddEdges {
@@ -283,6 +297,8 @@ pub struct PathCost {
 
 #[cfg(test)]
 mod tests {
+    use buck2_hash::BuckMutSet;
+
     use super::*;
     use crate::builder::GraphBuilder;
     use crate::test_utils::make_dag;
@@ -293,13 +309,14 @@ mod tests {
     const K1: &str = "key1";
     const K2: &str = "key2";
     const K3: &str = "key3";
+    const K4: &str = "key4";
 
     fn test_graph() -> (Graph, VertexKeys<&'static str>, VertexData<&'static str>) {
         let mut builder = GraphBuilder::new();
         builder.push(K3, std::iter::empty(), K3).unwrap();
-        builder.push(K2, vec![K3].into_iter(), K2).unwrap();
+        builder.push(K2, vec![K3], K2).unwrap();
         builder.push(K1, std::iter::empty(), K1).unwrap();
-        builder.push(K0, vec![K1, K2].into_iter(), K0).unwrap();
+        builder.push(K0, vec![K1, K2], K0).unwrap();
 
         builder.finish()
     }
@@ -365,20 +382,34 @@ mod tests {
 
     #[test]
     fn test_topo_sort_cycle() {
+        // Graph: a(K0) -> b(K1) -> c(K2) -> d(K3), b -> e(K4)
+        // Then add c -> b to create a cycle. Only b and c should be in the cycle;
+        // a is above, d is below, and e is a sibling.
         let mut builder = GraphBuilder::new();
-        builder.push(K1, std::iter::empty(), ()).unwrap();
-        builder.push(K0, std::iter::empty(), ()).unwrap();
+        builder.push(K3, std::iter::empty(), ()).unwrap(); // d
+        builder.push(K4, std::iter::empty(), ()).unwrap(); // e
+        builder.push(K2, vec![K3], ()).unwrap(); // c -> d
+        builder.push(K1, vec![K2, K4], ()).unwrap(); // b -> c, e
+        builder.push(K0, vec![K1], ()).unwrap(); // a -> b
         let (graph, keys, _data) = builder.finish();
 
-        let v0 = keys.get(&K0).unwrap();
-        let v1 = keys.get(&K1).unwrap();
+        let vb = keys.get(&K1).unwrap();
+        let vc = keys.get(&K2).unwrap();
 
+        // Add c -> b to create a cycle
         let mut new_edges = graph.allocate_vertex_data(OptionalVertexId::none());
-        new_edges[v0] = v1.into();
-        new_edges[v1] = v0.into();
+        new_edges[vc] = vb.into();
         let graph = graph.add_edges(&new_edges, None).unwrap();
 
-        assert!(graph.topo_sort().is_err());
+        match graph.topo_sort() {
+            Err(TopoSortError::Cycle(cycle)) => {
+                let cycle_set: BuckMutSet<_> = cycle.iter().copied().collect();
+                assert_eq!(cycle_set.len(), 2, "cycle should contain exactly b and c");
+                assert!(cycle_set.contains(&vb), "cycle should contain b");
+                assert!(cycle_set.contains(&vc), "cycle should contain c");
+            }
+            other => panic!("Expected cycle error, got {:?}", other),
+        }
     }
 
     #[test]

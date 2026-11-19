@@ -1,0 +1,6 @@
+# Intermediate PACKAGE that does NOT call
+# `enforce_visibility_intersection()` itself. The intersection from
+# `root//intersect/PACKAGE` should still propagate to descendants.
+package(
+    visibility = ["root//intersect/..."],
+)

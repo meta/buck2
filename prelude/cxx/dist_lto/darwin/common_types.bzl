@@ -17,8 +17,8 @@ EagerBitcodeLinkData = record(
     output_index_shard_file = Artifact,
     plan = Artifact,
     output_first_codegen_round_native_object_file = field([Artifact, None]),
+    output_precodegen_ir = field([Artifact, None]),
     output_final_native_object_file = Artifact,
-    merged_bc = field([Artifact, None]),
     extra_outputs = field(dict[str, Artifact]),
 )
 
@@ -29,7 +29,7 @@ LazyBitcodeLinkData = record(
     plan = Artifact,
     output_final_native_object_file = Artifact,
     output_first_codegen_round_native_object_file = field([Artifact, None]),
-    merged_bc = field([Artifact, None]),
+    output_precodegen_ir = field([Artifact, None]),
     archive_start = bool,
     archive_end = bool,
     extra_outputs = field(dict[str, Artifact]),

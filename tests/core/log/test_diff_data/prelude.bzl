@@ -8,7 +8,7 @@
 
 # Rule with no attrs that may produce an output non-deterministically based on the path provided in buckconfig
 def _non_det_build(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("foo.txt", ctx.attrs.buck2_output))]
+    return [DefaultInfo(default_output = ctx.actions.write("foo.txt", ctx.attrs.buck2_output, has_content_based_path = False))]
 
 non_det_build = rule(
     impl = _non_det_build,
@@ -19,7 +19,7 @@ non_det_build = rule(
 
 # Rule with no attrs that produces an output deterministically
 def _trivial_build(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("foo.txt", "abcd"))]
+    return [DefaultInfo(default_output = ctx.actions.write("foo.txt", "abcd", has_content_based_path = False))]
 
 trivial_build = rule(
     impl = _trivial_build,

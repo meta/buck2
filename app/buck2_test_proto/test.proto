@@ -22,6 +22,8 @@ message Testing {
   string suite = 1;
   repeated string testcases = 2;
   optional string variant = 3;
+  // Unique id for tests being run multiple times, e.g. for stress runs.
+  optional uint64 repeat_count = 4;
 }
 
 message TestStage {
@@ -107,6 +109,7 @@ message ReportTestsDiscoveredRequest {
 message ReportTestSessionRequest {
   reserved 2;
   string session_info = 3;
+  optional string test_session_id = 4;
 }
 
 message EndOfTestResultsRequest {
@@ -181,6 +184,7 @@ message ExecuteRequest2 {
   TestExecutable test_executable = 8;
   ExecutorConfigOverride executor_override = 9;
   repeated LocalResourceType required_local_resources = 10;
+  bool disable_test_execution_caching = 11;
 }
 
 message PrepareForLocalExecutionRequest {
@@ -207,6 +211,16 @@ message ArgValueContent {
   oneof value {
     ExternalRunnerSpecValue spec_value = 1;
     OutputName declared_output = 2;
+    // Argsfile contents the test runner has already encoded. Buck writes out
+    // the argsfile, materializes it as a test input, and expands this argument
+    // to `@<path>`. Used to avoid command lines becoming too long to spawn.
+    //
+    // The runner generates the argsfile contents because only it knows which
+    // arguments can go in the argsfile and what format the test reads. E.g. for
+    // an invocation like `python3 runner.py <cases>`, only the cases can go in
+    // the argsfile: `python3` itself doesn't understand argsfiles, `runner.py`
+    // does.
+    bytes argsfile_contents = 3;
   }
 }
 
@@ -285,6 +299,7 @@ message ExecutionResult2 {
   google.protobuf.Duration execution_time = 6;
   ExecutionDetails execution_details = 7;
   optional uint64 max_memory_used_bytes = 8;
+  optional buck.data.CommandExecution command_execution = 9;
 }
 
 message ExecutionDetails {
@@ -335,6 +350,17 @@ message AttachInfoMessageRequest {
   string message = 1;
 }
 
+message UploadFileToCasRequest {
+  // Absolute path to the local file to upload to CAS.
+  string local_path = 1;
+  // TTL and use-case configuration for the uploaded blob.
+  TtlConfig ttl_config = 2;
+}
+
+message UploadFileToCasResponse {
+  CasDigest digest = 1;
+}
+
 message UnstableHeapDumpRequest {
   // The path to write the heap dump to. If this path is relative, it is made
   // absolute relative to the working directory of the daemon.
@@ -351,6 +377,7 @@ service TestOrchestrator {
   rpc PrepareForLocalExecution(PrepareForLocalExecutionRequest)
       returns (PrepareForLocalExecutionResponse);
   rpc AttachInfoMessage(AttachInfoMessageRequest) returns (Empty);
+  rpc UploadFileToCas(UploadFileToCasRequest) returns (UploadFileToCasResponse);
 }
 
 service TestExecutor {

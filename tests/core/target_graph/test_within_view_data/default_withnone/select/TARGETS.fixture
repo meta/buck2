@@ -1,0 +1,7 @@
+test_within_view_defaults_rule(
+    name = "target",
+    defaulted = select({"DEFAULT": None}),
+    within_view = [
+        "//c/...",
+    ],
+)

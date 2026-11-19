@@ -19,120 +19,78 @@
 
 use std::convert::Infallible;
 
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValue;
 use crate::values::Heap;
-use crate::values::StringValue;
 use crate::values::UnpackValue;
-use crate::values::Value;
-use crate::values::alloc_value::AllocFrozenStringValue;
-use crate::values::alloc_value::AllocStringValue;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
+use crate::values::string::str_type::StarlarkStr;
 
-impl AllocFrozenValue for String {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        self.alloc_frozen_string_value(heap).to_frozen_value()
-    }
-}
+impl<'fv> AllocFrozenValue<'fv> for String {
+    type Type = StarlarkStr;
 
-impl AllocFrozenStringValue for String {
-    fn alloc_frozen_string_value(self, heap: &FrozenHeap) -> FrozenStringValue {
+    #[inline]
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         heap.alloc_str(self.as_str())
     }
 }
 
-impl<'a> AllocFrozenValue for &'a str {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        self.alloc_frozen_string_value(heap).to_frozen_value()
-    }
-}
+impl<'fv, 'a> AllocFrozenValue<'fv> for &'a str {
+    type Type = StarlarkStr;
 
-impl<'a> AllocFrozenStringValue for &'a str {
-    fn alloc_frozen_string_value(self, heap: &FrozenHeap) -> FrozenStringValue {
+    #[inline]
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         heap.alloc_str(self)
     }
 }
 
 impl<'v> AllocValue<'v> for String {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        self.alloc_string_value(heap).to_value()
-    }
-}
+    type Type = StarlarkStr;
 
-impl<'v> AllocStringValue<'v> for String {
-    fn alloc_string_value(self, heap: &'v Heap) -> StringValue<'v> {
+    #[inline]
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         heap.alloc_str(self.as_str())
     }
 }
 
-impl StarlarkTypeRepr for char {
-    type Canonical = <String as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        String::starlark_type_repr()
-    }
-}
-
 impl<'v> AllocValue<'v> for char {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        self.alloc_string_value(heap).to_value()
-    }
-}
+    type Type = StarlarkStr;
 
-impl<'v> AllocStringValue<'v> for char {
-    fn alloc_string_value(self, heap: &'v Heap) -> StringValue<'v> {
+    #[inline]
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         heap.alloc_char(self)
     }
 }
 
-impl StarlarkTypeRepr for &'_ String {
-    type Canonical = <String as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        String::starlark_type_repr()
-    }
-}
-
 impl<'v> AllocValue<'v> for &'_ String {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        self.alloc_string_value(heap).to_value()
-    }
-}
+    type Type = StarlarkStr;
 
-impl<'v> AllocStringValue<'v> for &'_ String {
-    fn alloc_string_value(self, heap: &'v Heap) -> StringValue<'v> {
+    #[inline]
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         heap.alloc_str(self.as_str())
     }
 }
 
 impl<'v> AllocValue<'v> for &'_ str {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        self.alloc_string_value(heap).to_value()
-    }
-}
+    type Type = StarlarkStr;
 
-impl<'v> AllocStringValue<'v> for &'_ str {
-    fn alloc_string_value(self, heap: &'v Heap) -> StringValue<'v> {
+    #[inline]
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         heap.alloc_str(self)
     }
 }
 
 impl<'v> UnpackValue<'v> for &'v str {
+    type Type = StarlarkStr;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(value.unpack_str())
-    }
-}
-
-impl<'v> UnpackValue<'v> for String {
-    type Error = Infallible;
-
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        Ok(value.unpack_str().map(ToOwned::to_owned))
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, StarlarkStr>,
+        get: ValueTyped<'v, StarlarkStr>,
+    ) -> Result<Self, Infallible> {
+        Ok(get.as_ref().as_str())
     }
 }

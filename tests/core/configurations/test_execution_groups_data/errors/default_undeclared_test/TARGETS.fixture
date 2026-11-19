@@ -1,0 +1,19 @@
+load(":rules.bzl", "explicit_default", "forwarding", "grouped_forwarding", "groupless", "overrides_only", "r")
+
+r(name = "t")
+
+explicit_default(name = "explicit_default")
+
+overrides_only(name = "overrides_only")
+
+forwarding(
+    name = "alias",
+    test = ":t",
+)
+
+groupless(name = "groupless")
+
+grouped_forwarding(
+    name = "grouped_alias",
+    test = ":groupless",
+)

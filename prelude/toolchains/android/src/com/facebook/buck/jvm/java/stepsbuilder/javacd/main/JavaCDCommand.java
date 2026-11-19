@@ -18,8 +18,11 @@ import com.facebook.buck.jvm.cd.DepFileUtils;
 import com.facebook.buck.jvm.cd.JvmCDCommand;
 import com.facebook.buck.jvm.cd.command.PostBuildParams;
 import com.facebook.buck.jvm.cd.command.java.BuildJavaCommand;
+import com.facebook.buck.jvm.java.CompilerClassToSourceMap;
+import com.facebook.buck.jvm.java.CompilerOutputPaths;
 import com.facebook.buck.jvm.java.JavaStepsBuilder;
 import com.facebook.buck.jvm.java.abi.StubJar;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.protobuf.util.JsonFormat;
@@ -28,12 +31,16 @@ import java.io.IOException;
 import java.io.Reader;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 /** Represents a javacd command invocation, on the command line or sent to a worker */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JavaCDCommand implements JvmCDCommand {
   @Option(name = "--action-id", required = true)
   public String actionId;
@@ -45,7 +52,10 @@ public class JavaCDCommand implements JvmCDCommand {
   private int loggingLevel = 0;
 
   private final JavaStepsBuilder stepsBuilder;
+  private final ImmutableMap<Path, Path> jarToJarDirMap;
   private final PostBuildParams postBuildParams;
+  private final CompilerOutputPaths compilerOutputPaths;
+  private final List<Path> sourcePaths;
 
   public JavaCDCommand(String[] args, ImmutableMap<String, String> env)
       throws CmdLineException, IOException {
@@ -62,13 +72,25 @@ public class JavaCDCommand implements JvmCDCommand {
     try (Reader reader = new FileReader(commandFile.toFile())) {
       JsonFormat.parser().ignoringUnknownFields().merge(reader, builder);
     }
-    RelPath buckScratchPath = RelPath.get(env.get(WORKING_DIRECTORY_ENV_VAR));
+    RelPath buckScratchPath =
+        RelPath.get(Objects.requireNonNull(env.get(WORKING_DIRECTORY_ENV_VAR)));
 
     com.facebook.buck.cd.model.java.BuildJavaCommand proto = builder.build();
     BuildJavaCommand buildJavaCommand =
         BuildJavaCommand.Companion.fromProto(proto.getBuildCommand(), Optional.of(buckScratchPath));
     this.postBuildParams = PostBuildParams.Companion.fromProto(proto.getPostBuildParams());
     this.stepsBuilder = new JavaStepsBuilder(buildJavaCommand);
+    this.jarToJarDirMap = buildJavaCommand.getBaseJarCommand().getJarToJarDirMap();
+    this.compilerOutputPaths =
+        buildJavaCommand
+            .getBaseJarCommand()
+            .getCompilerOutputPathsValue()
+            .getLibraryCompilerOutputPath();
+    CompilerClassToSourceMap.prepare(compilerOutputPaths, stepsBuilder.getRuleCellRoot().getPath());
+    this.sourcePaths =
+        buildJavaCommand.getBaseJarCommand().getJavaSrcs().stream()
+            .map(RelPath::getPath)
+            .collect(Collectors.toList());
   }
 
   public void maybeWriteClassAbi() throws IOException {
@@ -78,8 +100,9 @@ public class JavaCDCommand implements JvmCDCommand {
 
     AbsPath root = AbsPath.of(Paths.get(".").toAbsolutePath().normalize());
     Preconditions.checkState(postBuildParams.getAbiJar() != null);
-    StubJar stubJar = new StubJar(root.resolve(postBuildParams.getLibraryJar()), false);
-    stubJar.writeTo(root.resolve(postBuildParams.getAbiJar()));
+    StubJar stubJar =
+        new StubJar(root.resolve(Objects.requireNonNull(postBuildParams.getLibraryJar())), false);
+    stubJar.writeTo(root.resolve(Objects.requireNonNull(postBuildParams.getAbiJar())));
   }
 
   public void maybeWriteAbiDir() throws IOException {
@@ -104,7 +127,7 @@ public class JavaCDCommand implements JvmCDCommand {
       DepFileUtils.usedClassesToDepFile(
           postBuildParams.getUsedClassesPaths(),
           postBuildParams.getDepFile(),
-          Optional.ofNullable(postBuildParams.getJarToJarDirMap()),
+          jarToJarDirMap,
           false);
     }
   }
@@ -135,6 +158,8 @@ public class JavaCDCommand implements JvmCDCommand {
 
   @Override
   public void postExecute() throws IOException {
+    CompilerClassToSourceMap.writeCombined(
+        compilerOutputPaths, stepsBuilder.getRuleCellRoot().getPath(), sourcePaths);
     maybeWriteClassAbi();
     maybeWriteAbiDir();
     maybeWriteDepFile();

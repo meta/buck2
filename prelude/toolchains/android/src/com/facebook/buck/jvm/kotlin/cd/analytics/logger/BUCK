@@ -20,5 +20,6 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics/logger/model:model",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/kotlinc/incremental:incremental",
         "prelude//toolchains/android/src/com/facebook/buck/step/isolatedsteps:isolatedsteps",
+        "prelude//toolchains/android/third-party:guava",
     ],
 )

@@ -48,7 +48,7 @@ public class ClassNameFilterTest {
     assertTrue(filter.matches("com/facebook/intent$FbrpcIntent"));
     assertFalse(filter.matches("com/facebook/intent$FbrpcIntent/Config"));
     assertTrue(filter.matches("com/facebook/intent$ChooserActivityIntent"));
-    assertTrue(filter.matches("/com/facebook/intent$ChooserActivityIntent"));
+    assertFalse(filter.matches("/com/facebook/intent$ChooserActivityIntent"));
     assertTrue(filter.matches("com/facebook/intent/local/utility/store"));
     assertFalse(filter.matches("com/facebook/intent/local/store"));
     assertFalse(filter.matches("/com/facebook/whatever/util/whatever"));

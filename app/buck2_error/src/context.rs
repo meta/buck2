@@ -14,7 +14,6 @@ use smallvec::smallvec;
 
 use crate::context_value::ContextValue;
 use crate::context_value::TypedContext;
-use crate::{self as buck2_error};
 
 /// Provides the `context` method for `Result`.
 ///
@@ -114,48 +113,34 @@ where
     }
 }
 
-#[derive(Debug, buck2_error_derive::Error)]
-#[error("NoneError")]
-#[buck2(tag = UnexpectedNone)]
-struct NoneError;
-
-impl<T> Sealed for Option<T> {}
-
-impl<T> BuckErrorContext<T> for Option<T> {
-    fn buck_error_context<C>(self, c: C) -> crate::Result<T>
-    where
-        C: Into<ContextValue>,
-    {
-        match self {
-            Some(x) => Ok(x),
-            None => Err(crate::Error::from(NoneError).context(c)),
-        }
-    }
-
-    fn with_buck_error_context<C, F>(self, f: F) -> crate::Result<T>
-    where
-        C: Into<ContextValue>,
-        F: FnOnce() -> C,
-    {
-        match self {
-            Some(x) => Ok(x),
-            None => Err(crate::Error::from(NoneError).context(f())),
-        }
+/// Provides `internal_error` for `Option`, turning an unexpected `None` into a tagged internal
+/// error. `Option` deliberately gets only this subset of [`BuckErrorContext`]: there is no
+/// underlying error to wrap, so the general context methods would have to synthesize a root
+/// error out of an arbitrary `ContextValue`.
+pub trait BuckErrorOptionContext<T>: Sealed {
+    #[track_caller]
+    fn internal_error(self, message: &str) -> crate::Result<T> {
+        self.with_internal_error(|| message.to_owned())
     }
 
     #[track_caller]
-    fn compute_context<
-        TC: TypedContext,
-        C1: Into<ContextValue>,
-        C2: Into<ContextValue>,
-        F: FnOnce(Arc<TC>) -> C1,
-        F2: FnOnce() -> C2,
-    >(
-        self,
-        _map_context: F,
-        new_context: F2,
-    ) -> crate::Result<T> {
-        Err(crate::Error::from(NoneError).context(new_context()))
+    fn with_internal_error<F>(self, f: F) -> crate::Result<T>
+    where
+        F: FnOnce() -> String;
+}
+
+impl<T> Sealed for Option<T> {}
+
+impl<T> BuckErrorOptionContext<T> for Option<T> {
+    #[track_caller]
+    fn with_internal_error<F>(self, f: F) -> crate::Result<T>
+    where
+        F: FnOnce() -> String,
+    {
+        match self {
+            Some(x) => Ok(x),
+            None => Err(crate::macros::internal_error_impl(format_args!("{}", f()))),
+        }
     }
 }
 
@@ -163,7 +148,6 @@ impl<T> BuckErrorContext<T> for Option<T> {
 mod tests {
     use std::any::Any;
     use std::error::Error as StdError;
-    use std::fmt::Display;
 
     use allocative::Allocative;
 
@@ -181,7 +165,7 @@ mod tests {
             crate::Error::new(
                 "".to_owned(),
                 crate::ErrorTag::Input,
-                SourceLocation::new(file!()),
+                SourceLocation::new(file!(), line!()),
                 None,
             )
         }
@@ -190,12 +174,6 @@ mod tests {
     #[derive(Debug, Allocative, Eq, PartialEq)]
     struct SomeContext(Vec<u32>);
 
-    impl Display for SomeContext {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{self:?}")
-        }
-    }
-
     impl TypedContext for SomeContext {
         fn eq(&self, other: &dyn TypedContext) -> bool {
             match (other as &dyn Any).downcast_ref::<Self>() {
@@ -203,6 +181,34 @@ mod tests {
                 None => false,
             }
         }
+
+        fn display(&self) -> Option<String> {
+            Some(format!("{self:?}"))
+        }
+    }
+
+    #[test]
+    fn test_option_internal_error() {
+        assert_eq!(
+            Some(42).internal_error("missing").unwrap(),
+            42,
+            "Some should pass through unchanged"
+        );
+
+        let err = None::<u32>.internal_error("missing").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("missing (internal error)"),
+            "message should match the Result path's shape, got: {err:#}"
+        );
+        assert!(err.has_tag(crate::ErrorTag::InternalError));
+
+        let err = None::<u32>
+            .with_internal_error(|| format!("key `{}`", 1))
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("key `1` (internal error)"),
+            "lazy message should be formatted, got: {err:#}"
+        );
     }
 
     #[test]
@@ -223,16 +229,6 @@ mod tests {
                     |_t: Arc<SomeContext>| -> SomeContext { SomeContext(vec![0, 1, 2]) },
                     || "string",
                 ),
-        );
-
-        crate::Error::check_equal(
-            &crate::Error::from(Option::<()>::None.buck_error_context("string").unwrap_err()),
-            &Option::<()>::None
-                .compute_context(
-                    |_t: Arc<SomeContext>| -> SomeContext { panic!() },
-                    || "string",
-                )
-                .unwrap_err(),
         );
     }
 }

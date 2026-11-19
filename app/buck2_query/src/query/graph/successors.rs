@@ -27,9 +27,7 @@ pub trait AsyncChildVisitor<N: LabeledNode>: Send + Sync {
     ) -> impl Future<Output = buck2_error::Result<()>> + Send;
 }
 
-impl<'a, N: LabeledNode, A: AsyncChildVisitor<N> + ?Sized + Send + Sync> AsyncChildVisitor<N>
-    for &'a A
-{
+impl<N: LabeledNode, A: AsyncChildVisitor<N> + ?Sized + Send + Sync> AsyncChildVisitor<N> for &A {
     async fn for_each_child(
         &self,
         node: &N,

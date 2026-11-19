@@ -8,7 +8,7 @@
 
 load("@prelude//utils:expect.bzl", "expect")
 
-_DEFAULT_FMT = "found different values for key \"{}\": {} != {}"
+_DEFAULT_FMT = 'found different values for key "{}": {} != {}'
 
 def update_x(dst: dict[typing.Any, typing.Any], k: typing.Any, v: typing.Any, fmt = _DEFAULT_FMT):
     p = dst.setdefault(k, v)

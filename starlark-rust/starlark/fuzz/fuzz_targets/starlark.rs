@@ -28,10 +28,11 @@ fn run_arbitrary_starlark_err(content: &str) -> starlark::Result<String> {
     let ast: AstModule =
         AstModule::parse("hello_world.star", content.to_owned(), &Dialect::Standard)?;
     let globals: Globals = Globals::standard();
-    let module: Module = Module::new();
-    let mut eval: Evaluator = Evaluator::new(&module);
-    let value = eval.eval_module(ast, &globals)?;
-    Ok(format!("{value:?}"))
+    Module::with_temp_heap(|module| {
+        let mut eval: Evaluator = Evaluator::new(&module);
+        let value = eval.eval_module(ast, &globals)?;
+        Ok(format!("{value:?}"))
+    })
 }
 
 fn run_arbitrary_starlark(content: &str) -> String {

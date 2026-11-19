@@ -18,6 +18,10 @@
 
 REPEAT_100M = 100000000
 
+# Creation benchmarks allocate a closure per iteration, so they use a smaller
+# repeat count to keep memory bounded.
+REPEAT_10M = 10000000
+
 
 def benchmark_loop():
     for _x in range(REPEAT_100M):
@@ -89,6 +93,47 @@ def benchmark_call_def_8name():
     for x in range(REPEAT_100M):
         op7(a=x, b=x, c=x, d=x, e=x, f=x, g=x, h=x)
     return y
+
+
+def benchmark_call_def_4pos_4name():
+    y = 0
+    for x in range(REPEAT_100M):
+        op7(x, x, x, x, e=x, f=x, g=x, h=x)
+    return y
+
+
+def benchmark_create_lambda_0pos():
+    f = None
+    for _x in range(REPEAT_10M):
+        f = lambda: 0  # noqa: E731
+    return f()
+
+
+def benchmark_create_lambda_2pos():
+    f = None
+    for _x in range(REPEAT_10M):
+        f = lambda a, b: 0  # noqa: E731
+    return f(1, 2)
+
+
+def benchmark_create_lambda_capture1():
+    f = None
+    for x in range(REPEAT_10M):
+        # Deliberate late binding: the benchmark measures closure capture,
+        # and f() only runs after the loop.
+        f = lambda: x  # noqa: B023, E731
+    return f()
+
+
+def benchmark_create_def_2default():
+    f = None
+    for x in range(REPEAT_10M):
+
+        def op8(a=x, b=x):
+            return a
+
+        f = op8
+    return f()
 
 
 print(benchmark_call_def_1name())

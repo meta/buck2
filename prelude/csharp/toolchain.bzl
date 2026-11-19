@@ -6,7 +6,9 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-CSharpToolchainInfo = provider(fields = [
-    "csc",
-    "framework_dirs",
-])
+CSharpToolchainInfo = provider(
+    fields = [
+        "csc",
+        "framework_dirs",
+    ]
+)

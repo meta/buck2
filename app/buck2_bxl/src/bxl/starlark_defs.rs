@@ -38,3 +38,4 @@ pub(crate) mod targetset;
 pub(crate) mod time;
 pub(crate) mod type_names;
 pub(crate) mod uquery;
+pub(crate) mod visibility_intersection;

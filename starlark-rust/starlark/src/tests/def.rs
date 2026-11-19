@@ -56,6 +56,43 @@ assert_eq(add18(24), 42)
 }
 
 #[test]
+fn test_def_default_per_instantiation() {
+    assert::is_true(
+        "
+def outer():
+    fs = []
+    for i in [1, 2, 3]:
+        def g(x = i):
+            return x
+        fs.append(g)
+    return [f() for f in fs]
+outer() == [1, 2, 3]",
+    );
+}
+
+#[test]
+fn test_def_default_per_instantiation_frozen() {
+    let mut a = Assert::new();
+    a.module(
+        "defs",
+        r#"
+fs = []
+for i in [1, 2, 3]:
+    def g(x = i):
+        return x
+    fs.append(g)
+garbage_collect()
+"#,
+    );
+    a.pass(
+        r#"
+load("defs", "fs")
+assert_eq([f() for f in fs], [1, 2, 3])
+"#,
+    );
+}
+
+#[test]
 fn test_nested_def_1() {
     assert::is_true(
         "
@@ -171,10 +208,15 @@ value = {"test": "hello"}
     );
     let f = m.get("function").unwrap();
     let x = m.get("value").unwrap();
-    let module = Module::new();
-    let mut eval = Evaluator::new(&module);
-    let res = eval.eval_function(f.value(), &[x.value()], &[]).unwrap();
-    assert_eq!(res.to_str(), "hello");
+    Module::with_temp_heap(|module| {
+        let f = f.add_to_heap(module.heap());
+        let x = x.add_to_heap(module.heap());
+        let mut eval = Evaluator::new(&module);
+        let res = eval.eval_function(f, &[x], &[]).unwrap();
+        assert_eq!(res.to_str(), "hello");
+        crate::Result::Ok(())
+    })
+    .unwrap();
 }
 
 #[test]

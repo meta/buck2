@@ -13,14 +13,15 @@ package com.facebook.buck.jvm.java.abi;
 import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
 import com.facebook.buck.jvm.java.lang.extra.MoreTypeAnnotations;
 import com.facebook.buck.jvm.java.lang.model.BridgeMethod;
+import com.facebook.buck.jvm.java.lang.model.ClassFileTypes;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
 import com.facebook.buck.jvm.java.lang.model.MoreElements;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import javax.annotation.Nullable;
 import javax.annotation.processing.Messager;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.AnnotationMirror;
@@ -36,10 +37,12 @@ import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.ElementScanner8;
 import javax.lang.model.util.SimpleAnnotationValueVisitor8;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic.Kind;
+import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
@@ -48,6 +51,7 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.TypePath;
 import org.objectweb.asm.TypeReference;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ClassVisitorDriverFromElement {
 
   private final DescriptorFactory descriptorFactory;
@@ -93,8 +97,11 @@ class ClassVisitorDriverFromElement {
 
   private interface VisitorWithTypeAnnotations {
 
-    AnnotationVisitor visitTypeAnnotation(
-        final int typeRef, final TypePath typePath, final String descriptor, final boolean visible);
+    @Nullable AnnotationVisitor visitTypeAnnotation(
+        final int typeRef,
+        final @Nullable TypePath typePath,
+        final String descriptor,
+        final boolean visible);
   }
 
   private class ElementVisitorAdapter extends ElementScanner8<Void, ClassVisitor> {
@@ -164,7 +171,7 @@ class ClassVisitorDriverFromElement {
       if (e.getKind().isClass() || classFileVersion >= Opcodes.V1_8) {
         try {
           generateBridges(e, visitor, innerClassesTable);
-        } catch (UnsupportedOperationException | CannotInferException ex) { // NOPMD
+        } catch (UnsupportedOperationException | CannotInferException ex) {
           // Can't generate bridges in source-only mode
         }
       }
@@ -177,7 +184,7 @@ class ClassVisitorDriverFromElement {
     private void visitNestHost(TypeElement e, ClassVisitor visitor) {
       TypeElement nestHost = e;
       while (nestHost.getNestingKind().isNested()) {
-        nestHost = (TypeElement) nestHost.getEnclosingElement();
+        nestHost = (TypeElement) Objects.requireNonNull(nestHost.getEnclosingElement());
       }
 
       visitor.visitNestHost(descriptorFactory.getInternalName(nestHost));
@@ -223,8 +230,15 @@ class ClassVisitorDriverFromElement {
 
       private void generateBridge(ExecutableElement fromMethod, ExecutableElement toMethod) {
         ExecutableType toErasure = (ExecutableType) types.erasure(toMethod.asType());
-        String bridgeDescriptor = descriptorFactory.getDescriptor(toErasure);
-        if (bridgedDescriptors.get(toMethod.getSimpleName()).contains(bridgeDescriptor)) {
+        boolean fromClassFile =
+            ClassFileTypes.isReadFromClassFile(toMethod.getEnclosingElement())
+                && ClassFileTypes.getDescriptor(types, toErasure) != null;
+        String bridgeDescriptor =
+            fromClassFile
+                ? Objects.requireNonNull(ClassFileTypes.getDescriptor(types, toErasure))
+                : descriptorFactory.getDescriptor(toErasure);
+        if (bridgedDescriptors.get(toMethod.getSimpleName()).contains(bridgeDescriptor)
+            || declaresMethodWithDescriptor(toMethod.getSimpleName(), bridgeDescriptor)) {
           return;
         }
 
@@ -232,7 +246,11 @@ class ClassVisitorDriverFromElement {
 
         String[] exceptions =
             toErasure.getThrownTypes().stream()
-                .map(descriptorFactory::getInternalName)
+                .map(
+                    thrown ->
+                        fromClassFile
+                            ? Objects.requireNonNull(ClassFileTypes.getInternalName(thrown))
+                            : descriptorFactory.getInternalName(thrown))
                 .toArray(String[]::new);
 
         MethodVisitor methodVisitor =
@@ -265,6 +283,21 @@ class ClassVisitorDriverFromElement {
         }
       }
 
+      /**
+       * javac never writes a bridge with the descriptor of a method the class declares. The bridge
+       * finder can still ask for one when a missing class that the source names by its simple name
+       * is the class a class file names.
+       */
+      private boolean declaresMethodWithDescriptor(Name name, String descriptor) {
+        for (ExecutableElement method : ElementFilter.methodsIn(subclass.getEnclosedElements())) {
+          if (method.getSimpleName().contentEquals(name)
+              && descriptor.equals(descriptorFactory.getDescriptor(method))) {
+            return true;
+          }
+        }
+        return false;
+      }
+
       private int getBridgeAccessFlags(ExecutableElement method) {
         return accessFlagsUtils.getAccessFlags(method)
                 & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED | Opcodes.ACC_PRIVATE)
@@ -288,7 +321,7 @@ class ClassVisitorDriverFromElement {
           visitor.visitMethod(
               accessFlagsUtils.getAccessFlags(e),
               e.getSimpleName().toString(),
-              descriptorFactory.getDescriptor(e),
+              Objects.requireNonNull(descriptorFactory.getDescriptor(e)),
               signatureFactory.getSignature(e),
               exceptions);
 
@@ -356,10 +389,11 @@ class ClassVisitorDriverFromElement {
         //       for the synthetic parameter. See comment in <code>visitParameters</code>.
         visitAnnotationValues(
             annotationMirror,
-            methodVisitor.visitParameterAnnotation(
-                index,
-                descriptorFactory.getDescriptor(annotationMirror.getAnnotationType()),
-                MoreElements.isRuntimeRetention(annotationMirror)));
+            Objects.requireNonNull(
+                methodVisitor.visitParameterAnnotation(
+                    index,
+                    descriptorFactory.getDescriptor(annotationMirror.getAnnotationType()),
+                    MoreElements.isRuntimeRetention(annotationMirror))));
       }
     }
 
@@ -373,8 +407,8 @@ class ClassVisitorDriverFromElement {
                   + "1. A dependency is missing in the BUCK file for the current target. "
                   + "Try building the current rule without the #source-only-abi flavor, "
                   + "fix any errors that are reported, and then build this flavor again.\n"
-                  + "2. The rule that owns %1$s is not marked with "
-                  + "required_for_source_only_abi = True. Add that parameter to the rule and try "
+                  + "2. The rule that owns %1$s is not on this target's source-only ABI "
+                  + "classpath. Add that rule to this target's source_only_abi_deps and try "
                   + "again.",
               annotationType),
           element,
@@ -387,7 +421,8 @@ class ClassVisitorDriverFromElement {
         return;
       }
 
-      AnnotationVisitor annotationVisitor = methodVisitor.visitAnnotationDefault();
+      AnnotationVisitor annotationVisitor =
+          Objects.requireNonNull(methodVisitor.visitAnnotationDefault());
       visitAnnotationValue(null, defaultValue, annotationVisitor);
       annotationVisitor.visitEnd();
     }
@@ -399,12 +434,13 @@ class ClassVisitorDriverFromElement {
       }
 
       FieldVisitor fieldVisitor =
-          classVisitor.visitField(
-              accessFlagsUtils.getAccessFlags(e),
-              e.getSimpleName().toString(),
-              descriptorFactory.getDescriptor(e),
-              signatureFactory.getSignature(e),
-              e.getConstantValue());
+          Objects.requireNonNull(
+              classVisitor.visitField(
+                  accessFlagsUtils.getAccessFlags(e),
+                  e.getSimpleName().toString(),
+                  Objects.requireNonNull(descriptorFactory.getDescriptor(e)),
+                  signatureFactory.getSignature(e),
+                  e.getConstantValue()));
       visitAnnotations(e, fieldVisitor::visitAnnotation);
       visitTypeAnnotations(e, fieldVisitor::visitTypeAnnotation);
       fieldVisitor.visitEnd();
@@ -455,11 +491,12 @@ class ClassVisitorDriverFromElement {
         }
 
         AnnotationVisitor annotationVisitor =
-            visitor.visitTypeAnnotation(
-                typeRef.getValue(),
-                MoreTypeAnnotations.getAnnotationTypePath(annotation),
-                descriptorFactory.getDescriptor(annotation.getAnnotationType()),
-                MoreElements.isRuntimeRetention(annotation));
+            Objects.requireNonNull(
+                visitor.visitTypeAnnotation(
+                    typeRef.getValue(),
+                    MoreTypeAnnotations.getAnnotationTypePath(annotation),
+                    descriptorFactory.getDescriptor(annotation.getAnnotationType()),
+                    MoreElements.isRuntimeRetention(annotation)));
         visitAnnotationValues(annotation, annotationVisitor);
         annotationVisitor.visitEnd();
       } catch (CannotInferException e) {
@@ -518,8 +555,9 @@ class ClassVisitorDriverFromElement {
       @Override
       public Void visitAnnotation(AnnotationMirror value, Void aVoid) {
         AnnotationVisitor annotationValueVisitor =
-            visitor.visitAnnotation(
-                name, descriptorFactory.getDescriptor(value.getAnnotationType()));
+            Objects.requireNonNull(
+                visitor.visitAnnotation(
+                    name, descriptorFactory.getDescriptor(value.getAnnotationType())));
         visitAnnotationValues(value, annotationValueVisitor);
         annotationValueVisitor.visitEnd();
         return null;
@@ -527,7 +565,7 @@ class ClassVisitorDriverFromElement {
 
       @Override
       public Void visitArray(List<? extends AnnotationValue> listValue, Void aVoid) {
-        AnnotationVisitor arrayMemberVisitor = visitor.visitArray(name);
+        AnnotationVisitor arrayMemberVisitor = Objects.requireNonNull(visitor.visitArray(name));
         listValue.forEach(
             annotationValue -> visitAnnotationValue(null, annotationValue, arrayMemberVisitor));
         arrayMemberVisitor.visitEnd();

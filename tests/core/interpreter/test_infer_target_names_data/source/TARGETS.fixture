@@ -1,0 +1,6 @@
+load("//:defs.bzl", "src_consumer")
+
+src_consumer(
+    name = "src_consumer",
+    srcs = ["//lib/greeting"],
+)

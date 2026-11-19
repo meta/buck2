@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
+use strong_hash::StrongHash;
 
 use crate::bzl_or_bxl_path::BzlOrBxlPath;
 
@@ -23,8 +25,9 @@ use crate::bzl_or_bxl_path::BzlOrBxlPath;
     Eq,
     PartialEq,
     Hash,
-    Allocative,
-    strong_hash::StrongHash
+    StrongHash,
+    Pagable,
+    Allocative
 )]
 #[display("{}:{}", path, name)]
 pub struct StarlarkRuleType {
@@ -42,6 +45,8 @@ pub struct StarlarkRuleType {
     Eq,
     PartialEq,
     Hash,
+    StrongHash,
+    Pagable,
     Allocative
 )]
 pub enum RuleType {

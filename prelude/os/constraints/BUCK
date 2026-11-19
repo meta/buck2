@@ -1,3 +1,4 @@
+load("@prelude//configurations:constraint_alias.bzl", "constraint_with_aliases")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("build_infra")
@@ -6,85 +7,32 @@ source_listing()
 
 # Used by open source projects to support `prelude//`
 
-constraint_setting(
+constraint_with_aliases(
     name = "os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "linux",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "macos",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "windows",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "android",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "iphoneos",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "tvos",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "watchos",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "freebsd",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "fuchsia",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "illumos",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "netbsd",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "wasi",
-    constraint_setting = ":os",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "none",
-    constraint_setting = ":os",
+    aliases = {
+        "android": "android",
+        "iphoneos": "iphoneos",
+        "linux": "linux",
+        "macos": "macos",
+        "watchos": "watchos",
+        "windows": "windows",
+    },
+    default = "unspecified",
+    values = [
+        "linux",
+        "macos",
+        "windows",
+        "android",
+        "iphoneos",
+        "tvos",
+        "watchos",
+        "freebsd",
+        "fuchsia",
+        "illumos",
+        "netbsd",
+        "wasi",
+        "none",
+        "unspecified",
+    ],
     visibility = ["PUBLIC"],
 )

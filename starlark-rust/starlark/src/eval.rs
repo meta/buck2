@@ -25,12 +25,12 @@ pub(crate) mod runtime;
 pub(crate) mod soft_error;
 
 use std::collections::HashMap;
-use std::mem;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use dupe::Dupe;
 pub use runtime::arguments::Arguments;
+pub use runtime::before_stmt::BeforeStmtFunc;
 pub use runtime::before_stmt::BeforeStmtFuncDyn;
 pub use runtime::evaluator::Evaluator;
 pub use runtime::file_loader::FileLoader;
@@ -41,11 +41,13 @@ pub use runtime::params::spec::ParametersSpecParam;
 pub use runtime::profile::data::ProfileData;
 pub use runtime::profile::mode::ProfileMode;
 pub use soft_error::SoftErrorHandler;
+pub use soft_error::set_global_soft_error_handler;
 pub use starlark_syntax::call_stack::CallStack;
 use starlark_syntax::slice_vec_ext::SliceExt;
 use starlark_syntax::syntax::module::AstModule;
 use starlark_syntax::syntax::module::AstModuleFields;
 
+use crate::codemap::CodeMap;
 use crate::collections::symbol::symbol::Symbol;
 use crate::docs::DocString;
 use crate::environment::Globals;
@@ -58,8 +60,16 @@ pub use crate::eval::params::param_specs;
 use crate::eval::runtime::arguments::ArgNames;
 use crate::eval::runtime::arguments::ArgumentsFull;
 use crate::eval::runtime::evaluator;
+use crate::register_starlark_any;
 use crate::syntax::DialectTypes;
+use crate::values::FrozenValueTyped;
+use crate::values::StringValue;
 use crate::values::Value;
+use crate::values::any::StarlarkAny;
+use crate::values::any_complex::StarlarkAnyComplex;
+
+// Register CodeMap for use with StarlarkAny
+register_starlark_any!(CodeMap);
 
 impl<'v, 'a, 'e> Evaluator<'v, 'a, 'e> {
     /// Evaluate an [`AstModule`] with this [`Evaluator`], modifying the in-scope
@@ -70,77 +80,92 @@ impl<'v, 'a, 'e> Evaluator<'v, 'a, 'e> {
 
         let (codemap, statement, dialect, typecheck) = ast.into_parts();
 
-        let codemap = self.module_env.frozen_heap().alloc_any(codemap.dupe());
+        // Compilation and execution happen within one scope on the module's frozen heap; the
+        // compiler's products live there.
+        let module_env = self.module_env;
+        let res = module_env.heaps().frozen_heap(|fh, edge, seal_edge| {
+            let codemap = fh.alloc_simple_typed(StarlarkAny::new(codemap.dupe()));
 
-        let globals = self.module_env.frozen_heap().alloc_any(globals.dupe());
+            if let Some(docstring) = DocString::extract_raw_starlark_docstring(&statement) {
+                module_env.set_docstring(docstring)
+            }
 
-        if let Some(docstring) = DocString::extract_raw_starlark_docstring(&statement) {
-            self.module_env.set_docstring(docstring)
-        }
+            let ModuleScopes {
+                cst,
+                module_slot_count,
+                scope_data,
+                top_level_stmt_count,
+            } = globals.data().by_ref_with_reconstructor(|globals, r| {
+                // The edge makes the module's frozen heap keep the globals alive.
+                let gedge = r.frozen_edge(fh);
+                ModuleScopes::check_module_err(
+                    module_env.mutable_names(),
+                    fh,
+                    edge,
+                    &HashMap::new(),
+                    statement,
+                    ScopeResolverGlobals {
+                        globals: Some((globals, gedge)),
+                    },
+                    codemap,
+                    &dialect,
+                )
+            })?;
 
-        let ModuleScopes {
-            cst,
-            module_slot_count,
-            scope_data,
-            top_level_stmt_count,
-        } = ModuleScopes::check_module_err(
-            self.module_env.mutable_names(),
-            self.module_env.frozen_heap(),
-            &HashMap::new(),
-            statement,
-            ScopeResolverGlobals {
-                globals: Some(globals),
-            },
-            codemap,
-            &dialect,
-        )?;
+            let globals = fh.alloc_simple_typed(StarlarkAny::new(globals.dupe()));
 
-        let scope_names = scope_data.get_scope(ScopeId::module());
-        let local_names = self.frozen_heap().alloc_any_slice(&scope_names.used);
+            let scope_names = scope_data.get_scope(ScopeId::module());
+            let local_names: Box<[StringValue]> = scope_names.used.clone().into_boxed_slice();
+            let parent = scope_names.parent.clone().into_boxed_slice();
 
-        self.module_env.slots().ensure_slots(module_slot_count);
-        let old_def_info = mem::replace(
-            &mut self.module_def_info,
-            self.module_env.frozen_heap().alloc_any(DefInfo::for_module(
-                codemap,
-                local_names,
-                self.module_env
-                    .frozen_heap()
-                    .alloc_any_slice(&scope_names.parent),
+            module_env.slots().ensure_slots(module_slot_count);
+            // Like the bytecode, the module's `DefInfo` crosses to the evaluator's heap once.
+            let module_def_info = fh.alloc_simple_typed(StarlarkAnyComplex::new(
+                DefInfo::for_module(codemap, local_names.clone(), parent, globals),
+            ));
+            let module_def_info =
+                FrozenValueTyped::from_typed(module_def_info).expect("allocated in a frozen heap");
+            let old_def_info = self.module_def_info.replace(edge.rebrand(module_def_info));
+
+            self.call_stack.alloc_if_needed(
+                self.max_callstack_size
+                    .unwrap_or(evaluator::DEFAULT_STACK_SIZE),
+            )?;
+
+            // Set up the world to allow evaluation (do NOT use ? from now on)
+
+            self.call_stack.push(Value::new_none(), None).unwrap();
+
+            // Evaluation
+            let mut compiler = Compiler {
+                scope_data,
+                locals: Vec::new(),
                 globals,
-            )),
-        );
+                codemap,
+                eval: self,
+                fh,
+                edge,
+                seal_edge,
+                check_types: dialect.enable_types == DialectTypes::Enable,
+                top_level_stmt_count,
+                typecheck,
+                local_as_values: Vec::new(),
+            };
 
-        self.call_stack.alloc_if_needed(
-            self.max_callstack_size
-                .unwrap_or(evaluator::DEFAULT_STACK_SIZE),
-        )?;
+            let res = compiler.eval_module(cst, &local_names);
 
-        // Set up the world to allow evaluation (do NOT use ? from now on)
+            // Clean up the world, putting everything back
+            self.call_stack.pop();
 
-        self.call_stack.push(Value::new_none(), None).unwrap();
+            self.module_def_info = old_def_info;
 
-        // Evaluation
-        let mut compiler = Compiler {
-            scope_data,
-            locals: Vec::new(),
-            globals,
-            codemap,
-            eval: self,
-            check_types: dialect.enable_types == DialectTypes::Enable,
-            top_level_stmt_count,
-            typecheck,
-        };
-
-        let res = compiler.eval_module(cst, local_names);
-
-        // Clean up the world, putting everything back
-        self.call_stack.pop();
-
-        self.module_def_info = old_def_info;
+            crate::Result::Ok(res)
+        })?;
 
         #[cfg(not(target_arch = "wasm32"))]
         self.module_env.add_eval_duration(start.elapsed());
+
+        self.run_infrequent_instr_checks()?;
 
         // Return the result of evaluation
         res.map_err(|e| e.into_error())
@@ -153,7 +178,7 @@ impl<'v, 'a, 'e> Evaluator<'v, 'a, 'e> {
         positional: &[Value<'v>],
         named: &[(&str, Value<'v>)],
     ) -> crate::Result<Value<'v>> {
-        let names = named.map(|(s, _)| (Symbol::new(s), self.heap().alloc_str(s)));
+        let names = named.map(|(s, _)| (Symbol::new(s), self.heap().alloc(*s)));
         let named = named.map(|x| x.1);
         let params = Arguments(ArgumentsFull {
             pos: positional,
@@ -168,9 +193,12 @@ impl<'v, 'a, 'e> Evaluator<'v, 'a, 'e> {
         )?;
         // eval_module pushes an "empty" call stack frame. other places expect that first frame to be ignorable, and
         // so we push an empty frame too (otherwise things would ignore this function's own frame).
-        self.with_call_stack(Value::new_none(), None, |this| {
+        let res = self.with_call_stack(Value::new_none(), None, |this| {
             function.invoke(&params, this)
-        })
-        .map_err(Into::into)
+        });
+
+        self.run_infrequent_instr_checks()?;
+
+        res
     }
 }

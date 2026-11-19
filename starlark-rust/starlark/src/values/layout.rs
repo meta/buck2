@@ -16,12 +16,11 @@
  */
 
 // Possible optimisations:
-// Encoding none, bool etc in the pointer of frozen value
+// Encoding none, bool etc in the pointer
 
 pub(crate) mod aligned_size;
-pub(crate) mod alloc_static_simple;
 pub(crate) mod avalue;
-pub(crate) mod complex;
+pub(crate) mod avalues;
 mod const_frozen_string;
 pub(crate) mod const_type_id;
 pub(crate) mod heap;
@@ -32,6 +31,5 @@ pub(crate) mod typed;
 pub(crate) mod value;
 pub(crate) mod value_alloc_size;
 pub(crate) mod value_captured;
-pub(crate) mod value_lifetimeless;
 pub(crate) mod value_not_special;
 pub(crate) mod vtable;

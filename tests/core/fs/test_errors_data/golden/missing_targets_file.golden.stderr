@@ -1,0 +1,11 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Command failed: 
+Error evaluating expression:
+    //missing_targets_file:target
+    ^---------------------------^
+
+
+Caused by:
+    package `root//missing_targets_file:` does not exist
+        missing `TARGETS.fixture` file (also missing alternatives `TARGETS.fixture.v2`)

@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
+use buck2_artifact::artifact::artifact_dyn::ArtifactDyn;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 
-use crate::artifact::artifact_dyn::ArtifactDyn;
 use crate::artifact_value::ArtifactValue;
 use crate::directory::LazyActionDirectoryBuilder;
 

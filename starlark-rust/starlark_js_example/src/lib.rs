@@ -59,8 +59,9 @@ fn evaluate_starlark(content: &str) -> Result<String, starlark::Error> {
     let ast: AstModule =
         AstModule::parse("hello_world.star", content.to_owned(), &Dialect::Standard)?;
     let globals = Globals::standard();
-    let module: Module = Module::new();
-    let mut eval: Evaluator = Evaluator::new(&module);
-    let res: Value = eval.eval_module(ast, &globals)?;
-    Ok(res.to_string())
+    Module::with_temp_heap(|module| {
+        let mut eval: Evaluator = Evaluator::new(&module);
+        let res: Value = eval.eval_module(ast, &globals)?;
+        Ok::<_, starlark::Error>(res.to_string())
+    })
 }

@@ -11,20 +11,25 @@
 use std::collections::BTreeMap;
 
 use allocative::Allocative;
+use pagable::Pagable;
 
 use crate::configuration::constraints::ConstraintKey;
 use crate::configuration::constraints::ConstraintValue;
 
 /// Parsed provider returned from `config_setting` rule.
-#[derive(Debug, Eq, PartialEq, Hash, Allocative)]
+#[derive(Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
 pub struct ConfigSettingData {
     // contains the full specification of the platform configuration
     pub constraints: BTreeMap<ConstraintKey, ConstraintValue>,
-    // contains mappings of `section.key` to `value` for buckconfigs
+    // contains mappings of `section.key` to `value` for buckconfigs.
+    // `buckconfigs` are evaluated from the target's cell (like `read_config`).
+    // `root_buckconfigs` are evaluated from the root cell (like `read_root_config`).
     // TODO(scottcao): Make this into a Vec<ConfigArgumentPair> for more structured data
     // This can't be done right now because ConfigArgumentPair lives in buck2_common
     // and buck2_core cannot depend on buck2_common.
     pub buckconfigs: BTreeMap<String, String>,
+    /// Buckconfigs that are always evaluated from the root cell's .buckconfig.
+    pub root_buckconfigs: BTreeMap<String, String>,
 }
 
 impl ConfigSettingData {
@@ -34,13 +39,19 @@ impl ConfigSettingData {
     }
 
     fn len_sum(&self) -> usize {
-        self.constraints.len() + self.buckconfigs.len()
+        self.constraints.len() + self.buckconfigs.len() + self.root_buckconfigs.len()
     }
 
     pub fn refines(&self, that: &ConfigSettingData) -> bool {
-        self.len_sum() > that.len_sum()
-            && Self::is_subset(&that.constraints, &self.constraints)
-            && Self::is_subset(&that.buckconfigs, &self.buckconfigs)
+        if self.len_sum() <= that.len_sum() {
+            return false;
+        }
+        if !Self::is_subset(&that.constraints, &self.constraints) {
+            return false;
+        }
+
+        Self::is_subset(&that.buckconfigs, &self.buckconfigs)
+            && Self::is_subset(&that.root_buckconfigs, &self.root_buckconfigs)
     }
 
     pub fn testing_new(
@@ -49,6 +60,7 @@ impl ConfigSettingData {
         ConfigSettingData {
             constraints: constraint_values,
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         }
     }
 }
@@ -100,10 +112,12 @@ mod tests {
         let c_linux = ConfigSettingData {
             constraints: BTreeMap::from_iter([(os.dupe(), linux.dupe())]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
         let c_arm64 = ConfigSettingData {
             constraints: BTreeMap::from_iter([(cpu.dupe(), arm64.dupe())]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
         let c_linux_arm64 = ConfigSettingData {
             constraints: BTreeMap::from_iter([
@@ -111,6 +125,7 @@ mod tests {
                 (cpu.dupe(), arm64.dupe()),
             ]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
         let c_linux_x86_64 = ConfigSettingData {
             constraints: BTreeMap::from_iter([
@@ -118,6 +133,7 @@ mod tests {
                 (cpu.dupe(), x86_64.dupe()),
             ]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
 
         // Config setting does not refines identical config setting.
@@ -137,6 +153,7 @@ mod tests {
         let c1 = ConfigSettingData {
             constraints: BTreeMap::new(),
             buckconfigs: BTreeMap::from_iter([("foo.bar".to_owned(), "baz".to_owned())]),
+            root_buckconfigs: BTreeMap::new(),
         };
         let c11 = ConfigSettingData {
             constraints: BTreeMap::new(),
@@ -144,12 +161,48 @@ mod tests {
                 ("foo.bar".to_owned(), "baz".to_owned()),
                 ("foo.qux".to_owned(), "quux".to_owned()),
             ]),
+            root_buckconfigs: BTreeMap::new(),
         };
 
         assert!(c11.refines(&c1));
         assert!(!c11.refines(&c11));
         assert!(!c1.refines(&c1));
         assert!(!c1.refines(&c11));
+    }
+
+    #[test]
+    fn root_buckconfig_refines() {
+        let target_cell = ConfigSettingData {
+            constraints: BTreeMap::new(),
+            buckconfigs: BTreeMap::from_iter([("foo.bar".to_owned(), "baz".to_owned())]),
+            root_buckconfigs: BTreeMap::new(),
+        };
+        let target_cell_more_specific = ConfigSettingData {
+            constraints: BTreeMap::new(),
+            buckconfigs: BTreeMap::from_iter([
+                ("foo.bar".to_owned(), "baz".to_owned()),
+                ("foo.qux".to_owned(), "quux".to_owned()),
+            ]),
+            root_buckconfigs: BTreeMap::new(),
+        };
+        let root_values = ConfigSettingData {
+            constraints: BTreeMap::new(),
+            buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::from_iter([("foo.bar".to_owned(), "baz".to_owned())]),
+        };
+        let root_values_more_specific = ConfigSettingData {
+            constraints: BTreeMap::new(),
+            buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::from_iter([
+                ("foo.bar".to_owned(), "baz".to_owned()),
+                ("foo.qux".to_owned(), "quux".to_owned()),
+            ]),
+        };
+
+        assert!(target_cell_more_specific.refines(&target_cell));
+        assert!(root_values_more_specific.refines(&root_values));
+        assert!(!target_cell.refines(&root_values));
+        assert!(!root_values.refines(&target_cell));
     }
 
     #[test]
@@ -165,18 +218,22 @@ mod tests {
         let c_asan = ConfigSettingData {
             constraints: BTreeMap::from_iter([(sanitizer_key.dupe(), asan.dupe())]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
         let c_tsan = ConfigSettingData {
             constraints: BTreeMap::from_iter([(sanitizer_key.dupe(), tsan.dupe())]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
         let c_msan = ConfigSettingData {
             constraints: BTreeMap::from_iter([(sanitizer_key.dupe(), msan.dupe())]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
         let c_none = ConfigSettingData {
             constraints: BTreeMap::from_iter([(sanitizer_key.dupe(), none.dupe())]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
 
         // All should be different from each other
@@ -210,10 +267,12 @@ mod tests {
         let c_dev = ConfigSettingData {
             constraints: BTreeMap::from_iter([(build_mode_key.dupe(), dev_old.dupe())]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
         let c_linux = ConfigSettingData {
             constraints: BTreeMap::from_iter([(os_key.dupe(), linux_new.dupe())]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
         let c_dev_linux = ConfigSettingData {
             constraints: BTreeMap::from_iter([
@@ -221,6 +280,7 @@ mod tests {
                 (os_key.dupe(), linux_new.dupe()),
             ]),
             buckconfigs: BTreeMap::new(),
+            root_buckconfigs: BTreeMap::new(),
         };
 
         // Combined should refine both

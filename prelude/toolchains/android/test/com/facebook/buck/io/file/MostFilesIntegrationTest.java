@@ -18,7 +18,6 @@ import static org.junit.Assert.assertTrue;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.testutil.TemporaryPaths;
 import com.facebook.buck.util.CreateSymlinksForTests;
-import com.facebook.buck.util.environment.Platform;
 import com.google.common.base.Joiner;
 import java.io.File;
 import java.io.IOException;
@@ -28,7 +27,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -38,9 +36,6 @@ public class MostFilesIntegrationTest {
 
   @Test
   public void testCopyTestdataDirectoryWithSymlinks() throws IOException {
-    Platform platform = Platform.detect();
-    Assume.assumeTrue(platform == Platform.LINUX || platform == Platform.MACOS);
-
     AbsPath root = tmp.newFolder();
 
     AbsPath srcDir = root.resolve("src");

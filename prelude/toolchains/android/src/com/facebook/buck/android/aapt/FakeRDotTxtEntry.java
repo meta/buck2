@@ -10,10 +10,13 @@
 
 package com.facebook.buck.android.aapt;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * An {@link RDotTxtEntry} with fake {@link #idValue}, useful for comparing two resource entries for
  * equality, since {@link RDotTxtEntry#compareTo(RDotTxtEntry)} ignores the id value.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FakeRDotTxtEntry extends RDotTxtEntry {
 
   private static final String FAKE_ID = "0x00000000";

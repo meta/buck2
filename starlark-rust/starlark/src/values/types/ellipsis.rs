@@ -18,43 +18,55 @@
 use allocative::Allocative;
 use starlark_derive::NoSerialize;
 use starlark_derive::ProvidesStaticType;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
-use crate::values::AllocFrozenValue;
-use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
+use crate::static_starlark_value;
+use crate::values::AllocFrozenRepresentation;
+use crate::values::AllocRepresentation;
+use crate::values::Allocator;
+use crate::values::FrozenAllocator;
 use crate::values::StarlarkValue;
-use crate::values::layout::avalue::AValueBasic;
-use crate::values::layout::avalue::AValueImpl;
-use crate::values::layout::avalue::alloc_static;
-use crate::values::layout::heap::repr::AValueRepr;
+use crate::values::Value;
+use crate::values::ValueTyped;
 
 #[derive(
     Allocative,
     NoSerialize,
     Debug,
     derive_more::Display,
-    ProvidesStaticType
+    ProvidesStaticType,
+    StarlarkPagable
 )]
 #[display("Ellipsis")]
 pub(crate) struct Ellipsis;
 
-pub(crate) static VALUE_ELLIPSIS: AValueRepr<AValueImpl<'static, AValueBasic<Ellipsis>>> =
-    alloc_static(Ellipsis);
+static_starlark_value!(pub(crate) VALUE_ELLIPSIS: Ellipsis = Ellipsis);
 
-#[starlark_value(type = "ellipsis")]
+#[starlark_value(type = "ellipsis", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for Ellipsis {}
 
 impl Ellipsis {
-    pub(crate) fn new_value() -> FrozenValue {
-        FrozenValue::new_repr(&VALUE_ELLIPSIS)
+    pub(crate) fn new_value<'v>() -> Value<'v> {
+        VALUE_ELLIPSIS.at().to_value()
     }
 }
 
-impl AllocFrozenValue for Ellipsis {
-    fn alloc_frozen_value(self, _heap: &FrozenHeap) -> FrozenValue {
-        Ellipsis::new_value()
+/// The one static, which is immortal: nothing is allocated.
+impl<'v> AllocRepresentation<'v> for Ellipsis {
+    type Repr = Self;
+
+    fn alloc(self, _allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        VALUE_ELLIPSIS.at()
+    }
+}
+
+impl<'fv> AllocFrozenRepresentation<'fv> for Ellipsis {
+    type Repr = Self;
+
+    fn alloc_frozen(self, _allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        VALUE_ELLIPSIS.at()
     }
 }
 

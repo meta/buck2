@@ -13,6 +13,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use derivative::Derivative;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::cells::cell_root_path::CellRootPath;
 use crate::cells::cell_root_path::CellRootPathBuf;
@@ -32,11 +33,20 @@ enum CellInstanceError {
 }
 
 /// A 'CellInstance', contains a 'CellName' and a path for that cell.
-#[derive(Clone, Debug, derive_more::Display, Dupe, PartialEq, Eq, Allocative)]
+#[derive(
+    Clone,
+    Debug,
+    derive_more::Display,
+    Dupe,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable
+)]
 #[display("{}", _0.name)]
 pub struct CellInstance(Arc<CellData>);
 
-#[derive(Derivative, PartialEq, Eq, Allocative)]
+#[derive(Derivative, PartialEq, Eq, Allocative, Pagable)]
 #[derivative(Debug)]
 struct CellData {
     /// the fully canonicalized 'CellName'

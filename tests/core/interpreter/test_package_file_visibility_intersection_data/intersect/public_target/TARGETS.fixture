@@ -1,0 +1,7 @@
+# `visibility=["PUBLIC"]` is *not* rejected -- the intersection silently clips it
+# to `root//intersect/...`. A consumer inside the intersection can depend; a
+# consumer outside cannot.
+stub(
+    name = "t",
+    visibility = ["PUBLIC"],
+)

@@ -59,8 +59,7 @@ mod tests {
     use std::thread::sleep;
     use std::time::Duration;
 
-    use buck2_util::process::background_command;
-
+    use crate::background_command;
     use crate::pid::Pid;
     use crate::unix::kill::process_exists;
 

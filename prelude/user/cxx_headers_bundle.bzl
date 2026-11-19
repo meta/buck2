@@ -9,6 +9,7 @@
 load("@prelude//:artifacts.bzl", "ArtifactGroupInfo")
 load("@prelude//:paths.bzl", "paths")
 load("@prelude//cxx:preprocessor.bzl", "CPreprocessorInfo", "cxx_merge_cpreprocessors")
+load("@prelude//decls:common.bzl", "buck")
 load("@prelude//utils:expect.bzl", "expect")
 load(":rule_spec.bzl", "RuleRegistrationSpec")
 
@@ -32,7 +33,7 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
             ctx.attrs.limit,
             len(headers),
         )
-    output = ctx.actions.symlinked_dir(ctx.label.name, headers)
+    output = ctx.actions.symlinked_dir(ctx.label.name, headers, has_content_based_path = False)
     artifacts = [output.project(name, hide_prefix = True) for name in headers]
     return [
         ArtifactGroupInfo(artifacts = artifacts),
@@ -48,7 +49,9 @@ registration_spec = RuleRegistrationSpec(
         libraries that export them.
     """,
     impl = _impl,
-    attrs = {
+    attrs = buck.labels_arg()
+    | buck.contacts_arg()
+    | {
         "deps": attrs.list(
             attrs.dep(providers = [CPreprocessorInfo]),
             default = [],

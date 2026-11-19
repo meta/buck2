@@ -18,8 +18,6 @@ enum SourceControlError {
     HgCommand(i32, String),
     #[error("Git command failed with code '{0}' and error '{1}' ")]
     GitCommand(i32, String),
-    #[error("`{0}` was not UTF-8")]
-    Utf8(String),
 }
 
 enum CommandResult {
@@ -110,5 +108,5 @@ async fn get_git_info() -> buck2_error::Result<CommandResult> {
 }
 
 fn from_utf8(result: Vec<u8>, subject: &str) -> buck2_error::Result<String> {
-    String::from_utf8(result).buck_error_context(SourceControlError::Utf8(subject.to_owned()))
+    String::from_utf8(result).with_buck_error_context(|| format!("{subject} is not utf8"))
 }

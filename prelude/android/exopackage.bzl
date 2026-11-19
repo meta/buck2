@@ -18,7 +18,7 @@ def get_exopackage_flags(exopackage_modes: list[str]) -> int:
     expect("modules" not in exopackage_modes, "Modular exopackage is not supported!")
     flags = 0
 
-    for (name, flag) in [
+    for name, flag in [
         ("secondary_dex", SECONDARY_DEX),
         ("native_library", NATIVE_LIBRARY),
         ("resources", RESOURCES),

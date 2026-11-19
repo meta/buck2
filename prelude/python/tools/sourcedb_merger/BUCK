@@ -41,3 +41,18 @@ prelude.sh_binary(
     main = "tests/main.sh",
     resources = glob(["**/*.py"]),
 )
+
+# Type checking target for Python tool scripts.
+prelude.python_library(
+    name = "scripts-typing",
+    srcs = [
+        "inputs.py",
+        "legacy_merge.py",
+        "legacy_outputs.py",
+        "merge.py",
+        "outputs.py",
+    ]
+    + glob(["tests/**/*.py"]),
+    base_module = "",
+    typing = True,
+)

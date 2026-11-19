@@ -23,11 +23,12 @@ use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_error::BuckErrorContext;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_http::HttpClient;
-use buck2_http::retries::AsBuck2Error;
 use buck2_http::retries::HttpError;
 use buck2_http::retries::HttpErrorForRetry;
+use buck2_http::retries::IntoBuck2Error;
 use buck2_http::retries::http_retry;
 use bytes::Bytes;
 use digest::DynDigest;
@@ -35,6 +36,7 @@ use dupe::Dupe;
 use futures::StreamExt;
 use futures::stream::Stream;
 use hyper::Response;
+use pagable::Pagable;
 use sha1::Digest;
 use sha1::Sha1;
 use sha2::Sha256;
@@ -42,7 +44,7 @@ use smallvec::SmallVec;
 
 use crate::digest_config::DigestConfig;
 
-#[derive(Debug, Clone, Dupe, Allocative)]
+#[derive(Debug, Clone, Dupe, Allocative, Pagable)]
 pub enum Checksum {
     Sha1(Arc<str>),
     Sha256(Arc<str>),
@@ -163,7 +165,7 @@ enum HttpDownloadError {
         expected: String,
         obtained: String,
         url: String,
-        debug: MaybeResponseDebugInfo,
+        debug: Box<MaybeResponseDebugInfo>,
     },
 
     #[error(
@@ -174,7 +176,7 @@ enum HttpDownloadError {
         want: String,
         got: String,
         url: String,
-        debug: MaybeResponseDebugInfo,
+        debug: Box<MaybeResponseDebugInfo>,
     },
 
     #[error(transparent)]
@@ -223,14 +225,14 @@ impl HttpErrorForRetry for HttpDownloadError {
     }
 }
 
-impl AsBuck2Error for HttpHeadError {
-    fn as_buck2_error(self) -> buck2_error::Error {
+impl IntoBuck2Error for HttpHeadError {
+    fn into_buck2_error(self) -> buck2_error::Error {
         buck2_error::Error::from(self)
     }
 }
 
-impl AsBuck2Error for HttpDownloadError {
-    fn as_buck2_error(self) -> buck2_error::Error {
+impl IntoBuck2Error for HttpDownloadError {
+    fn into_buck2_error(self) -> buck2_error::Error {
         buck2_error::Error::from(self)
     }
 }
@@ -272,7 +274,8 @@ pub async fn http_download(
 
             let (head, stream) = response.into_parts();
             let file = fs_util::create_file(&abs_path)
-                .map_err(|e| HttpDownloadError::IoError(buck2_error::Error::from(e)))?;
+                .categorize_internal()
+                .map_err(HttpDownloadError::IoError)?;
             let buf_writer = std::io::BufWriter::new(file);
 
             let digest = copy_and_hash(
@@ -289,7 +292,7 @@ pub async fn http_download(
 
             if executable {
                 fs.set_executable(path)
-                    .map_err(|e| HttpDownloadError::IoError(e.into()))?;
+                    .map_err(HttpDownloadError::IoError)?;
             }
 
             Result::<_, HttpDownloadError>::Ok(TrackedFileDigest::new(
@@ -358,7 +361,7 @@ async fn copy_and_hash(
         buff.peek(&chunk);
 
         writer
-            .write(&chunk)
+            .write_all(&chunk)
             .with_buck_error_context(|| format!("write({abs_path})"))
             .map_err(HttpDownloadError::IoError)?;
 
@@ -384,12 +387,12 @@ async fn copy_and_hash(
         };
 
         if expected != obtained {
-            let debug = MaybeResponseDebugInfo {
+            let debug = Box::new(MaybeResponseDebugInfo {
                 bytes_seen: buff.bytes_seen,
                 buff: buff.to_utf8().map(ToOwned::to_owned),
                 head,
                 is_final: false,
-            };
+            });
 
             if is_vpnless {
                 return Err(HttpDownloadError::MaybeNotAllowedOnVpnless {
@@ -556,6 +559,39 @@ mod tests {
 
         assert_eq!(std::str::from_utf8(&bytes).unwrap(), "foobar");
 
+        Ok(())
+    }
+    /// `copy_and_hash` writes every byte of a chunk even when the writer accepts a chunk in
+    /// several pieces.
+    #[tokio::test]
+    async fn test_copy_and_hash_short_write() -> buck2_error::Result<()> {
+        struct ShortWriter<'a>(&'a mut Vec<u8>);
+        impl Write for ShortWriter<'_> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let n = buf.len().min(2);
+                self.0.extend_from_slice(&buf[..n]);
+                Ok(n)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut out = Vec::new();
+        let digest = copy_and_hash(
+            "test",
+            None,
+            "test",
+            stream::iter(vec![Ok(Bytes::from("foo")), Ok(Bytes::from("bar"))]),
+            ShortWriter(&mut out),
+            testing::sha1(),
+            &Checksum::Sha1(Arc::from("8843d7f92416211de9ebb963ff4ce28125932878")),
+            false,
+        )
+        .await?;
+
+        assert_eq!(digest.size(), 6);
+        assert_eq!(std::str::from_utf8(&out).unwrap(), "foobar");
         Ok(())
     }
 

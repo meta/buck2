@@ -8,15 +8,15 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
 use std::hash::Hash;
 use std::sync::Arc;
 
 use allocative::Allocative;
+use buck2_artifact::artifact::artifact_dyn::ArtifactDyn;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_error::BuckErrorContext;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
+use buck2_error::internal_error;
 use buck2_execute::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::DigestConfig;
@@ -24,12 +24,15 @@ use buck2_execute::directory::ActionSharedDirectory;
 use buck2_execute::directory::INTERNER;
 use buck2_execute::directory::LazyActionDirectoryBuilder;
 use buck2_execute::directory::insert_artifact_lazy;
+use buck2_hash::BuckMutSet;
 use dupe::Dupe;
+use mini_vec::MiniBoxSlice;
+use pagable::Pagable;
 use smallvec::SmallVec;
 use smallvec::smallvec;
 
 /// The [`ArtifactValue`]s for an [`crate::artifact_groups::ArtifactGroup`].
-#[derive(Clone, Dupe, Allocative)]
+#[derive(Clone, Dupe, Allocative, Pagable)]
 pub struct ArtifactGroupValues(pub(super) Arc<ArtifactGroupValuesData>);
 
 impl ArtifactGroupValues {
@@ -44,7 +47,7 @@ impl ArtifactGroupValues {
         let mut builder = LazyActionDirectoryBuilder::empty();
 
         for (artifact, value) in values.iter() {
-            if artifact.has_content_based_path() {
+            if artifact.path_resolution_requires_artifact_value() {
                 let path = artifact
                     .resolve_path(artifact_fs, Some(&value.content_based_path_hash()))
                     .buck_error_context("Invalid artifact")?;
@@ -61,11 +64,10 @@ impl ArtifactGroupValues {
             // NOTE: Technically, we could fall back to iterating the artifacts in the
             // ArtifactGroupValues here, but we *do* rely on the fact that TransitiveSetProjections
             // produce intermediate directories, so if they don't, it is preferable to report it.
-            let child_dir = child
-                .0
-                .directory
-                .as_ref()
-                .buck_error_context("TransitiveSetProjection was missing directory!")?;
+            let child_dir =
+                child.0.directory.as_ref().ok_or_else(|| {
+                    internal_error!("TransitiveSetProjection was missing directory!")
+                })?;
 
             builder
                 .merge(child_dir.dupe())
@@ -79,7 +81,7 @@ impl ArtifactGroupValues {
 
         Ok(Self(Arc::new(ArtifactGroupValuesData {
             values,
-            children,
+            children: children.into(),
             directory: Some(directory),
         })))
     }
@@ -87,7 +89,7 @@ impl ArtifactGroupValues {
     pub fn from_artifact(artifact: Artifact, value: ArtifactValue) -> Self {
         Self(Arc::new(ArtifactGroupValuesData {
             values: smallvec![(artifact, value)],
-            children: Vec::new(),
+            children: MiniBoxSlice::new(),
             directory: None,
         }))
     }
@@ -105,7 +107,7 @@ impl ArtifactGroupValues {
         for (artifact, value) in self.iter() {
             let projrel_path = artifact.resolve_path(
                 artifact_fs,
-                if artifact.has_content_based_path() {
+                if artifact.path_resolution_requires_artifact_value() {
                     Some(value.content_based_path_hash())
                 } else {
                     None
@@ -122,6 +124,12 @@ impl ArtifactGroupValues {
         TransitiveSetIterator::new(self)
     }
 
+    pub fn iter_many<'a>(
+        values: impl IntoIterator<Item = &'a Self>,
+    ) -> impl Iterator<Item = &'a (Artifact, ArtifactValue)> {
+        TransitiveSetIterator::new_many(values)
+    }
+
     pub fn shallow_equals(&self, other: &Self) -> bool {
         let this = &self.0;
         let other = &other.0;
@@ -134,10 +142,10 @@ impl ArtifactGroupValues {
     }
 }
 
-#[derive(Allocative)]
+#[derive(Allocative, Pagable)]
 pub struct ArtifactGroupValuesData {
     pub(super) values: SmallVec<[(Artifact, ArtifactValue); 1]>,
-    pub(super) children: Vec<ArtifactGroupValues>,
+    pub(super) children: MiniBoxSlice<ArtifactGroupValues>,
     /// If set, a precomputed directory represented the union of all values in this
     /// ArtifactGroupValuesData.
     pub(super) directory: Option<ActionSharedDirectory>,
@@ -179,7 +187,7 @@ trait TransitiveSetContainer: Sized {
 struct TransitiveSetIterator<'a, C, V, I> {
     values: &'a [V],
     queue: Vec<&'a C>,
-    seen: HashSet<I>,
+    seen: BuckMutSet<I>,
 }
 
 impl<'a, C>
@@ -196,10 +204,29 @@ where
         let mut ret = Self {
             values: container.values(),
             queue: Vec::new(),
-            seen: HashSet::new(),
+            seen: BuckMutSet::default(),
         };
         ret.enqueue_children(container.children());
         ret
+    }
+
+    fn new_many(containers: impl IntoIterator<Item = &'a C>) -> Self {
+        let mut ret = Self {
+            values: &[],
+            queue: Vec::new(),
+            seen: BuckMutSet::default(),
+        };
+        ret.enqueue_roots(containers);
+        ret
+    }
+
+    fn enqueue_roots(&mut self, roots: impl IntoIterator<Item = &'a C>) {
+        let roots = roots.into_iter().collect::<Vec<_>>();
+        for t in roots.into_iter().rev() {
+            if self.seen.insert(t.identity()) {
+                self.queue.push(t);
+            }
+        }
     }
 
     fn enqueue_children(&mut self, transitive: &'a [C]) {
@@ -282,7 +309,9 @@ mod tests {
         }
 
         fn chain(mut self, child: &ArtifactGroupValues) -> Self {
-            self.children.push(child.dupe());
+            let mut children = std::mem::take(&mut self.children).into_vec();
+            children.push(child.dupe());
+            self.children = children.into();
             self
         }
 
@@ -344,5 +373,19 @@ mod tests {
             let s2 = builder().value(&a1).chain(&v2).build();
             assert!(!s1.shallow_equals(&s2));
         }
+    }
+
+    #[test]
+    fn test_iter_many_dedups_shared_children() {
+        let a1 = artifact("a1");
+        let a2 = artifact("a2");
+        let a3 = artifact("a3");
+
+        let shared = builder().value(&a2).build();
+        let r1 = builder().value(&a1).chain(&shared).build();
+        let r2 = builder().value(&a3).chain(&shared).build();
+
+        let all = ArtifactGroupValues::iter_many([&r1, &r2]).collect::<Vec<_>>();
+        assert_eq!(all, vec![&a1, &a2, &a3]);
     }
 }

@@ -38,9 +38,7 @@ def _assert_equals(expected, actual, msg = None):
             full_msg = expectation_msg
         fail(full_msg)
 
-def _assert_true(
-        condition,
-        msg = "Expected condition to be true, but was false."):
+def _assert_true(condition, msg = "Expected condition to be true, but was false."):
     """Asserts that the given `condition` is true.
 
     Args:
@@ -51,9 +49,7 @@ def _assert_true(
     if not condition:
         fail(msg)
 
-def _assert_false(
-        condition,
-        msg = "Expected condition to be false, but was true."):
+def _assert_false(condition, msg = "Expected condition to be false, but was true."):
     """Asserts that the given `condition` is false.
 
     Args:

@@ -13,9 +13,10 @@ use buck2_core::bzl::ImportPath;
 use buck2_core::cells::CellResolver;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePathBuf;
+use buck2_core::cells::paths::CellRelativePath;
+use pagable::Pagable;
 
-#[derive(Debug, derive_more::Display, Clone, Eq, PartialEq, Allocative)]
+#[derive(Debug, derive_more::Display, Clone, Eq, PartialEq, Allocative, Pagable)]
 pub struct PreludePath(ImportPath);
 
 impl PreludePath {
@@ -43,7 +44,7 @@ pub fn prelude_path(cell_resolver: &CellResolver) -> buck2_error::Result<Option<
     let Ok(prelude_cell) = alias_resolver.resolve("prelude") else {
         return Ok(None);
     };
-    let prelude_file = CellRelativePathBuf::unchecked_new("prelude.bzl".to_owned());
+    let prelude_file = CellRelativePath::unchecked_new("prelude.bzl");
     Ok(Some(PreludePath(ImportPath::new_same_cell(
         CellPath::new(prelude_cell, prelude_file),
     )?)))

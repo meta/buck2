@@ -94,13 +94,18 @@ def build_command(json_data, json_file_dir, lib_dir, depot_dir):
 
     # Compose the environment variables to pass
     my_env = os.environ.copy()
+    my_env.update(json_data.get("env") or {})
     my_env["JULIA_LOAD_PATH"] = "{}:{}::".format(lib_path, lib_dir)
     my_env["JULIA_DEPOT_PATH"] = "{}:{}::".format(lib_path, depot_dir)
 
     # For now, we hard code the path of the shlibs relative to the json file.
-    my_env["LD_LIBRARY_PATH"] = "{}:{}".format(
-        os.path.join(lib_path, "../__shared_libs_symlink_tree__"),
-        my_env.setdefault("LD_LIBRARY_PATH", ""),
+    # An empty LD_LIBRARY_PATH entry means the current directory, so none is added.
+    shared_libs_path = os.path.join(lib_path, "../__shared_libs_symlink_tree__")
+    inherited_library_path = my_env.get("LD_LIBRARY_PATH")
+    my_env["LD_LIBRARY_PATH"] = (
+        "{}:{}".format(shared_libs_path, inherited_library_path)
+        if inherited_library_path
+        else shared_libs_path
     )
 
     binary_path = clean_relative_paths(json_file_dir, json_data["julia_binary"])

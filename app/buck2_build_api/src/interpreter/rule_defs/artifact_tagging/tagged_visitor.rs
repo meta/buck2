@@ -14,6 +14,7 @@ use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use super::ArtifactTag;
 use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use crate::interpreter::rule_defs::cmd_args::InputProperties;
 
 /// Wrap an existing CommandLineArtifactVisitor into one that adds an ArtifactTag.
 pub struct TaggedVisitor<'a, 'b, 'v> {
@@ -39,10 +40,15 @@ impl<'a, 'b, 'v> TaggedVisitor<'a, 'b, 'v> {
 impl<'a, 'b, 'v> CommandLineArtifactVisitor<'v> for TaggedVisitor<'a, 'b, 'v> {
     /// Ignore the inner tag, set our own. Nesting input groups generally isn't a great idea, but
     /// we can't statically prevent it.
-    fn visit_input(&mut self, input: ArtifactGroup, existing_tags: Vec<&ArtifactTag>) {
+    fn visit_input(
+        &mut self,
+        input: ArtifactGroup,
+        props: InputProperties,
+        existing_tags: Vec<&ArtifactTag>,
+    ) {
         let mut tags = vec![self.tag];
         tags.extend(existing_tags);
-        self.inner.visit_input(input, tags)
+        self.inner.visit_input(input, props, tags)
     }
 
     fn visit_declared_output(
@@ -69,5 +75,13 @@ impl<'a, 'b, 'v> CommandLineArtifactVisitor<'v> for TaggedVisitor<'a, 'b, 'v> {
             tags
         };
         self.inner.visit_frozen_output(artifact, tags)
+    }
+
+    fn skip_hidden(&self) -> bool {
+        self.inner.skip_hidden()
+    }
+
+    fn inputs_for_path_resolution(&self) -> bool {
+        self.inner.inputs_for_path_resolution()
     }
 }

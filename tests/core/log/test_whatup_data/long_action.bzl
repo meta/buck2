@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _impl(ctx):
-    out = ctx.actions.declare_output("out.txt")
+    out = ctx.actions.declare_output("out.txt", has_content_based_path = False)
     py = cmd_args(
         "import time; time.sleep(3); ",
         "import sys; open(sys.argv[1], 'w').write('')",

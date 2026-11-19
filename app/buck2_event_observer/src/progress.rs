@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-
 use buck2_data::ActionExecutionStart;
 use buck2_data::AnalysisEnd;
 use buck2_data::AnalysisStageStart;
@@ -27,6 +25,7 @@ use buck2_data::span_end_event;
 use buck2_data::span_start_event;
 use buck2_events::BuckEvent;
 use buck2_events::span::SpanId;
+use buck2_hash::BuckMutMap;
 
 use crate::last_command_execution_kind::get_last_command_execution_time;
 use crate::unpack_event::UnpackedBuckEvent;
@@ -41,7 +40,7 @@ enum State {
 
 #[derive(Debug, Default)]
 pub struct SpanMap<T> {
-    map: HashMap<SpanId, (State, T)>,
+    map: BuckMutMap<SpanId, (State, T)>,
     running: u64,
     finished: u64,
     cancelled: u64,
@@ -73,18 +72,14 @@ impl<T> SpanMap<T> {
     }
 
     fn running(&mut self, id: SpanId) -> Option<&mut T> {
-        match self.map.get_mut(&id) {
-            Some((state, v)) => {
-                match state {
-                    State::Started => {
-                        *state = State::Running;
-                        self.running += 1;
-                    }
-                    _ => {}
-                }
-                Some(v)
+        if let Some((state, v)) = self.map.get_mut(&id) {
+            if let State::Started = state {
+                *state = State::Running;
+                self.running += 1;
             }
-            None => None,
+            Some(v)
+        } else {
+            None
         }
     }
 
@@ -159,6 +154,7 @@ pub struct BuildProgressPhaseStats {
     pub loads: BuildProgressPhaseStatsItem,
     pub analyses: BuildProgressPhaseStatsItem,
     pub actions: BuildProgressPhaseStatsItem,
+    pub validations: BuildProgressPhaseStatsItem,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -168,12 +164,13 @@ struct TrackedActionSpan {
 }
 
 #[derive(Default)]
-
 struct TrackedLoadSpan {}
 
 #[derive(Default)]
-
 struct TrackedAnalysisSpan {}
+
+#[derive(Default)]
+struct TrackedValidationSpan {}
 
 #[derive(Default)]
 pub struct BuildProgressStateTracker {
@@ -182,6 +179,7 @@ pub struct BuildProgressStateTracker {
     loads: SpanMap<TrackedLoadSpan>,
     analyses: SpanMap<TrackedAnalysisSpan>,
     actions: SpanMap<TrackedActionSpan>,
+    validations: SpanMap<TrackedValidationSpan>,
 }
 
 impl BuildProgressStateTracker {
@@ -228,6 +226,11 @@ impl BuildProgressStateTracker {
                 if let Some(states) = snapshot.key_states.get("BuildKey") {
                     self.actions.min_started = states.started as u64;
                     self.actions.min_finished = states.finished as u64;
+                }
+
+                if let Some(states) = snapshot.key_states.get("SingleValidationKey") {
+                    self.validations.min_started = states.started as u64;
+                    self.validations.min_finished = states.finished as u64;
                 }
             }
             UnpackedBuckEvent::SpanEnd(
@@ -363,16 +366,21 @@ impl BuildProgressStateTracker {
                         stage: Some(re_stage::Stage::Execute(..)),
                     }) => {
                         if let Some(data) = self.actions.running(*parent_id) {
-                            data.running_remote = true;
-                            self.stats.running_remote += 1;
+                            // An action can enter a stage more than once; it runs once.
+                            if !data.running_remote {
+                                data.running_remote = true;
+                                self.stats.running_remote += 1;
+                            }
                         }
                     }
                     executor_stage_start::Stage::Local(LocalStage {
                         stage: Some(local_stage::Stage::Execute(..)),
                     }) => {
                         if let Some(data) = self.actions.running(*parent_id) {
-                            data.running_local = true;
-                            self.stats.running_local += 1;
+                            if !data.running_local {
+                                data.running_local = true;
+                                self.stats.running_local += 1;
+                            }
                         }
                     }
                     _ => {}
@@ -405,6 +413,7 @@ impl BuildProgressStateTracker {
             loads: self.loads.get_stats(),
             analyses: self.analyses.get_stats(),
             actions: self.actions.get_stats(),
+            validations: self.validations.get_stats(),
         }
     }
 
@@ -415,7 +424,63 @@ impl BuildProgressStateTracker {
 
 #[cfg(test)]
 mod tests {
+    use buck2_wrapper_common::invocation_id::TraceId;
+
     use super::*;
+
+    fn event(
+        span: u64,
+        parent: Option<u64>,
+        data: buck2_data::buck_event::Data,
+    ) -> buck2_error::Result<BuckEvent> {
+        Ok(BuckEvent::new(
+            std::time::SystemTime::now(),
+            TraceId::new(),
+            Some(SpanId::from_u64(span)?),
+            parent.map(SpanId::from_u64).transpose()?,
+            data,
+        ))
+    }
+
+    fn re_execute_start() -> buck2_data::buck_event::Data {
+        buck2_data::SpanStartEvent {
+            data: Some(span_start_event::Data::ExecutorStage(ExecutorStageStart {
+                stage: Some(executor_stage_start::Stage::Re(ReStage {
+                    stage: Some(re_stage::Stage::Execute(buck2_data::ReExecute::default())),
+                })),
+            })),
+        }
+        .into()
+    }
+
+    /// An action whose RE execution goes through the `EXECUTING` stage twice (the RE client opens
+    /// a new `Execute` stage span on every transition into it) is one running remote action, and
+    /// none once it has finished.
+    #[test]
+    fn test_running_remote_with_two_execute_stages() -> buck2_error::Result<()> {
+        let mut tracker = BuildProgressStateTracker::new();
+        let start: buck2_data::buck_event::Data = buck2_data::SpanStartEvent {
+            data: Some(span_start_event::Data::ActionExecution(
+                ActionExecutionStart::default(),
+            )),
+        }
+        .into();
+        let end: buck2_data::buck_event::Data = buck2_data::SpanEndEvent {
+            data: Some(span_end_event::Data::ActionExecution(Box::default())),
+            ..Default::default()
+        }
+        .into();
+
+        tracker.handle_event(&event(1, None, start)?)?;
+        tracker.handle_event(&event(2, Some(1), re_execute_start())?)?;
+        tracker.handle_event(&event(3, Some(1), re_execute_start())?)?;
+        assert_eq!(tracker.progress_stats().running_remote, 1);
+        tracker.handle_event(&event(1, None, end)?)?;
+
+        assert_eq!(tracker.progress_stats().running_remote, 0);
+        assert_eq!(tracker.phase_stats().actions.finished, 1);
+        Ok(())
+    }
 
     #[test]
     fn test_span_map() -> buck2_error::Result<()> {

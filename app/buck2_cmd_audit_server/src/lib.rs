@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
 #![feature(try_blocks)]
 #![allow(clippy::comparison_to_empty)]
 
@@ -29,6 +28,7 @@ mod configurations;
 pub mod deferred_materializer;
 mod dep_files;
 mod execution_platform_resolution;
+mod file_package;
 mod includes;
 pub mod output;
 mod package_values;
@@ -36,6 +36,7 @@ mod perf;
 mod prelude;
 mod providers;
 mod server;
+mod settings;
 mod starlark;
 mod subtargets;
 mod visibility;
@@ -84,6 +85,7 @@ impl AuditCommandExt for AuditCommand {
     fn as_subcommand(&self) -> &dyn ServerAuditSubcommand {
         match self {
             AuditCommand::Cell(cmd) => cmd,
+            AuditCommand::FilePackage(cmd) => cmd,
             AuditCommand::Classpath(cmd) => cmd,
             AuditCommand::Config(cmd) => cmd,
             AuditCommand::Configurations(cmd) => cmd,
@@ -101,6 +103,7 @@ impl AuditCommandExt for AuditCommand {
             AuditCommand::Parse(cmd) => cmd,
             AuditCommand::PackageValues(cmd) => cmd,
             AuditCommand::Perf(cmd) => cmd,
+            AuditCommand::Settings(cmd) => cmd,
         }
     }
 }

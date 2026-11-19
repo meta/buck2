@@ -15,50 +15,97 @@
  * limitations under the License.
  */
 
+use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use allocative::Allocative;
 use starlark_derive::NoSerialize;
 use starlark_derive::ProvidesStaticType;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
+use crate::docs::DocItem;
+use crate::docs::DocString;
+use crate::docs::DocType;
+use crate::static_starlark_value;
 use crate::typing::Ty;
-use crate::values::AllocFrozenValue;
-use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
+use crate::typing::TyStarlarkValue;
+use crate::values::AllocFrozenRepresentation;
+use crate::values::AllocRepresentation;
+use crate::values::Allocator;
+use crate::values::FrozenAllocator;
 use crate::values::StarlarkValue;
-use crate::values::layout::avalue::AValueBasic;
-use crate::values::layout::avalue::AValueImpl;
-use crate::values::layout::avalue::alloc_static;
-use crate::values::layout::heap::repr::AValueRepr;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::UnpackValue;
+use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::type_expr::StarlarkTypeExprStable;
 
-enum NonInstantiable {}
+/// `typing.Iterable[T]`: a type marker, and the check that a value is iterable.
+///
+/// The check is the one the type's matcher does: that the value iterates. What it yields is
+/// not looked at, so `T` is what the caller asserts of the items, not something verified.
+pub struct StarlarkIter<T>(PhantomData<T>);
 
-/// `StarlarkTypeRepr` for iterable types.
-pub struct StarlarkIter<T: StarlarkTypeRepr>(PhantomData<T>, NonInstantiable);
+impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for StarlarkIter<T> {
+    type Type = Self;
+    type Error = Infallible;
 
-impl<T: StarlarkTypeRepr> StarlarkTypeRepr for StarlarkIter<T> {
-    type Canonical = StarlarkIter<T::Canonical>;
+    fn unpack(_value: ValueOf<'v, Self>, _get: ValueOf<'v, Self>) -> Result<Self, Infallible> {
+        Ok(StarlarkIter(PhantomData))
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExpr<'v> for StarlarkIter<T> {
+    /// The handle, which is what iterates.
+    type Get = ValueOf<'v, StarlarkIter<T>>;
 
     fn starlark_type_repr() -> Ty {
         Ty::iter(T::starlark_type_repr())
     }
+
+    fn get(value: Value<'v>) -> Option<Self::Get> {
+        TyStarlarkValue::is_iterable(&value.vtable().starlark_value.ty)
+            .then(|| ValueOf::new_unchecked(value))
+    }
 }
+
+impl<'v, T: StarlarkTypeExpr<'v>> StarlarkTypeExprStable<'v> for StarlarkIter<T> {}
 
 #[derive(
     Debug,
     derive_more::Display,
     Allocative,
     ProvidesStaticType,
-    NoSerialize
+    NoSerialize,
+    StarlarkPagable
 )]
 #[display("{}", Self::TYPE)]
 pub(crate) struct TypingIterable;
 
-#[starlark_value(type = "typing.Iterable")]
+#[starlark_value(type = "typing.Iterable", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for TypingIterable {
+    fn documentation(&self) -> DocItem {
+        DocItem::Type(DocType {
+            docs: DocString::from_docstring(
+                crate::docs::DocStringKind::Rust,
+                "\
+Represents a type that can be [iterated][1].
+
+`Iterable` takes one type argument, which may indicate the type of values yielded by the `Iterable`
+instance. Specifying the type to be iterated over is not currently supported.
+
+See also [`typing.Iterable` in the Python documentation][2].
+
+[1]: https://github.com/bazelbuild/starlark/blob/master/spec.md#iteration
+[2]: https://docs.python.org/3/library/typing.html#typing.Iterable",
+            ),
+            ..DocType::from_starlark_value::<Self>()
+        })
+    }
+
     fn eval_type(&self) -> Option<Ty> {
         Some(Ty::iter(Ty::any()))
     }
@@ -66,12 +113,22 @@ impl<'v> StarlarkValue<'v> for TypingIterable {
     // TODO(nga): support `[]`.
 }
 
-impl AllocFrozenValue for TypingIterable {
-    fn alloc_frozen_value(self, _heap: &FrozenHeap) -> FrozenValue {
-        static ANY: AValueRepr<AValueImpl<'static, AValueBasic<TypingIterable>>> =
-            alloc_static(TypingIterable);
+static_starlark_value!(ITERABLE: TypingIterable = TypingIterable);
 
-        FrozenValue::new_repr(&ANY)
+/// The one static, which is immortal: nothing is allocated.
+impl<'v> AllocRepresentation<'v> for TypingIterable {
+    type Repr = Self;
+
+    fn alloc(self, _allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        ITERABLE.at()
+    }
+}
+
+impl<'fv> AllocFrozenRepresentation<'fv> for TypingIterable {
+    type Repr = Self;
+
+    fn alloc_frozen(self, _allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        ITERABLE.at()
     }
 }
 

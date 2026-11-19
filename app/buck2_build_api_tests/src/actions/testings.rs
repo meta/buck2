@@ -13,25 +13,29 @@ use std::borrow::Cow;
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
+use buck2_artifact::artifact::output_type::OutputType;
 use buck2_build_api::actions::Action;
 use buck2_build_api::actions::ActionExecutionCtx;
 use buck2_build_api::actions::UnregisteredAction;
 use buck2_build_api::actions::box_slice_set::BoxSliceSet;
+use buck2_build_api::actions::errors::execute_error::ExecuteError;
 use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
 use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
 use buck2_build_api::artifact_groups::ArtifactGroup;
+use buck2_build_signals::env::WaitingData;
 use buck2_core::category::Category;
 use buck2_core::category::CategoryRef;
 use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionPaths;
 use buck2_execute::execute::request::CommandExecutionRequest;
-use buck2_execute::execute::request::OutputType;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_hash::BuckMutInsertionSet;
 use derivative::Derivative;
 use dupe::Dupe;
-use indexmap::IndexSet;
-use sorted_vector_map::sorted_vector_map;
-use starlark::values::OwnedFrozenValue;
+use pagable::Pagable;
+use pagable::pagable_typetag;
+use starlark::values::OwnedFrozen;
+use starlark::values::Value;
 
 /// A simple unregistered action that will eventually be resolved into an action that runs the
 /// given cmd as the action execution command. Used for testing
@@ -40,7 +44,7 @@ use starlark::values::OwnedFrozenValue;
 /// modules
 #[derive(Allocative, Clone, PartialEq)]
 pub(crate) struct SimpleUnregisteredAction {
-    inputs: IndexSet<ArtifactGroup>,
+    inputs: BuckMutInsertionSet<ArtifactGroup>,
     cmd: Vec<String>,
     category: Category,
     identifier: Option<String>,
@@ -48,7 +52,7 @@ pub(crate) struct SimpleUnregisteredAction {
 
 impl SimpleUnregisteredAction {
     pub(crate) fn new(
-        inputs: IndexSet<ArtifactGroup>,
+        inputs: BuckMutInsertionSet<ArtifactGroup>,
         cmd: Vec<String>,
         category: Category,
         identifier: Option<String>,
@@ -63,7 +67,7 @@ impl SimpleUnregisteredAction {
 }
 
 /// The action created by SimpleUnregisteredAction, or directly.
-#[derive(Derivative, Allocative)]
+#[derive(Derivative, Allocative, Pagable)]
 #[derivative(Debug)]
 pub(crate) struct SimpleAction {
     inputs: BoxSliceSet<ArtifactGroup>,
@@ -75,8 +79,8 @@ pub(crate) struct SimpleAction {
 
 impl SimpleAction {
     pub(crate) fn new(
-        inputs: IndexSet<ArtifactGroup>,
-        outputs: IndexSet<BuildArtifact>,
+        inputs: BuckMutInsertionSet<ArtifactGroup>,
+        outputs: BuckMutInsertionSet<BuildArtifact>,
         cmd: Vec<String>,
         category: Category,
         identifier: Option<String>,
@@ -94,9 +98,9 @@ impl SimpleAction {
 impl UnregisteredAction for SimpleUnregisteredAction {
     fn register(
         self: Box<Self>,
-        outputs: IndexSet<BuildArtifact>,
-        _starlark_data: Option<OwnedFrozenValue>,
-        _error_handler: Option<OwnedFrozenValue>,
+        outputs: BuckMutInsertionSet<BuildArtifact>,
+        _starlark_data: Option<OwnedFrozen<Value<'static>>>,
+        _error_handler: Option<OwnedFrozen<Value<'static>>>,
     ) -> buck2_error::Result<Box<dyn Action>> {
         Ok(Box::new(SimpleAction {
             inputs: BoxSliceSet::from(self.inputs),
@@ -108,6 +112,7 @@ impl UnregisteredAction for SimpleUnregisteredAction {
     }
 }
 
+#[pagable_typetag]
 #[async_trait]
 impl Action for SimpleAction {
     fn kind(&self) -> buck2_data::ActionKind {
@@ -137,6 +142,7 @@ impl Action for SimpleAction {
     async fn execute(
         &self,
         ctx: &mut dyn ActionExecutionCtx,
+        _waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
         let req = CommandExecutionRequest::new(
             vec![],
@@ -148,18 +154,17 @@ impl Action for SimpleAction {
                     .map(|b| CommandExecutionOutput::BuildArtifact {
                         path: b.get_path().dupe(),
                         output_type: OutputType::File,
-                        supports_incremental_remote: false,
                     })
                     .collect(),
                 ctx.fs(),
                 ctx.digest_config(),
                 None,
             )?,
-            sorted_vector_map![],
+            BuckFixedSortedMap::new(),
         );
 
         let prepared_action = ctx.prepare_action(&req, true)?;
-        let manager = ctx.command_execution_manager();
+        let manager = ctx.command_execution_manager(WaitingData::new());
         let result = ctx.exec_cmd(manager, &req, &prepared_action).await;
         let (outputs, meta) = ctx.unpack_command_execution_result(
             req.executor_preference,

@@ -42,10 +42,10 @@ def _buck2_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
 
     if ctx.attrs.tpx:
         tpx = ctx.attrs.tpx[DefaultInfo].default_outputs[0]
-        copied_dir[buck2_tpx_binary] = ctx.actions.symlink_file(buck2_tpx_binary, tpx)
+        copied_dir[buck2_tpx_binary] = ctx.actions.symlink_file(buck2_tpx_binary, tpx, has_content_based_path = False)
         materialisations.extend(ctx.attrs.tpx[DefaultInfo].other_outputs)
 
-    out = ctx.actions.copied_dir("out", copied_dir)
+    out = ctx.actions.copied_dir("out", copied_dir, has_content_based_path = False)
 
     return [DefaultInfo(out, other_outputs = materialisations), RunInfo(cmd_args(out.project("buck2" + binary_extension), hidden = materialisations))]
 
@@ -69,5 +69,47 @@ def buck2_bundle(buck2, buck2_client, buck2_health_check, tpx, **kwargs):
         # @oss-disable[end= ]: buck2_health_check = buck2_health_check,
         # @oss-disable[end= ]: tpx = tpx,
         default_target_platform = cxx_platform.target_platform,
-        **kwargs
+        **kwargs,
+    )
+
+def _pagable_transition_impl(platform: PlatformInfo, refs: struct) -> PlatformInfo:
+    val = refs.val[ConstraintValueInfo]
+    new_cfg = ConfigurationInfo(
+        constraints = platform.configuration.constraints | {val.setting.label: val},
+        values = platform.configuration.values,
+    )
+    return PlatformInfo(
+        label = platform.label,
+        configuration = new_cfg,
+    )
+
+_pagable_transition = transition(
+    impl = _pagable_transition_impl,
+    refs = {
+        "val": translate_target("//buck2/starlark-rust/starlark:pagable[enabled]"),
+    },
+)
+
+def _pagable_alias_impl(ctx: AnalysisContext) -> list[Provider]:
+    return ctx.attrs.actual.providers
+
+_pagable_transition_alias = rule(
+    impl = _pagable_alias_impl,
+    attrs = {
+        "actual": attrs.dep(),
+        "labels": attrs.list(attrs.string(), default = []),
+    },
+    cfg = _pagable_transition,
+)
+
+def pagable_transition_alias(name: str, actual, labels, modifiers, visibility = None):
+    platform = platform_utils.get_cxx_platform_for_base_path(native.package_name())
+    default_target_platform = platform.target_platform
+    _pagable_transition_alias(
+        name = name,
+        actual = translate_target(actual),
+        labels = labels,
+        default_target_platform = default_target_platform,
+        modifiers = modifiers,
+        visibility = visibility,
     )

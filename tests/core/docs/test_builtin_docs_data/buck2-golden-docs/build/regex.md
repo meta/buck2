@@ -2,5 +2,7 @@
 
 # regex
 ## Fanciness
+## regex.all\_match
+## regex.any\_match
 ## regex.match
 ## regex.replace\_all

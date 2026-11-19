@@ -1,0 +1,13 @@
+load(":rules.bzl", "named_test")
+
+named_test(
+    name = "line_break",
+    status = "FAIL",
+    test_name = "names the page for function Loading() {\n  return x;\n}",
+)
+
+named_test(
+    name = "tab",
+    status = "SKIP",
+    test_name = "parses whitespace then\t+1",
+)

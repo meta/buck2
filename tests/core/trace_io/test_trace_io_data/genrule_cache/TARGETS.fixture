@@ -1,0 +1,12 @@
+genrule(
+    name = "cached",
+    cmd = "echo 'cached genrule output' > $OUT",
+    out = "output.txt",
+    allow_offline_output_cache = True,
+)
+
+genrule(
+    name = "uncached",
+    cmd = "echo 'uncached genrule output' > $OUT",
+    out = "output.txt",
+)

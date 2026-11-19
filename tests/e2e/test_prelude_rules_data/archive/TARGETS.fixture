@@ -1,0 +1,9 @@
+load("//:defs.bzl", "tarball", "unpack")
+
+tarball(name = "pages")
+
+unpack(
+    name = "unpacked",
+    archive = ":pages",
+    excludes = ["\\[id\\]\\.js$"],
+)

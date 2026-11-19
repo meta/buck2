@@ -30,9 +30,12 @@ load("@prelude//linking:link_info.bzl", "LinkStyle")
 # 3. Computing the project solution (flags, sources and dependencies)
 # 4. Outputting the solution as JSON
 
-_HASKELL_BIN = "prelude//rules.bzl:haskell_binary"
-_HASKELL_IDE = "prelude//rules.bzl:haskell_ide"
-_HASKELL_LIB = "prelude//rules.bzl:haskell_library"
+_HASKELL_BIN = "haskell_binary"
+_HASKELL_IDE = "haskell_ide"
+_HASKELL_LIB = "haskell_library"
+
+def _rule_name(target) -> str:
+    return target.rule_type.rsplit(":", 1)[-1]
 
 linkStyle = LinkStyle("static")
 
@@ -85,7 +88,10 @@ def _solution_for_file(ctx, file, project_universe):
     return result
 
 def _find_project_and_solve(ctx, target, project_universe = []):
-    prefix = target.label.package.split("/", 1)[0]
+    if target.label.package.startswith("users/"):
+        prefix = "/".join(target.label.package.split("/")[:3])
+    else:
+        prefix = target.label.package.split("/", 1)[0]
     local_universe = _find_project_universe(ctx, target.label.cell, prefix)
     if local_universe:
         project_universe.extend(local_universe)
@@ -98,10 +104,14 @@ def _find_project_and_solve(ctx, target, project_universe = []):
 
 def _find_target_in_universe(ctx, target, project_universe):
     for p in project_universe:
-        cfg_p = ctx.lazy.configured_target_node(
-            p,
-            modifiers = configuration_modifiers,
-        ).catch().resolve()
+        cfg_p = (
+            ctx.lazy.configured_target_node(
+                p,
+                modifiers = configuration_modifiers,
+            )
+            .catch()
+            .resolve()
+        )
         if not (cfg_p.is_ok()) or cfg_p.unwrap() == None:
             continue
         cfg_p = cfg_p.unwrap()
@@ -117,11 +127,11 @@ def _find_project_universe(ctx, cell, prefix):
 
 def _solution_for_target(ctx, target, exclude = {}):
     result = None
-    if target.rule_type == _HASKELL_LIB:
+    if _rule_name(target) == _HASKELL_LIB:
         result = _solution_for_haskell_lib(ctx, target, exclude)
-    elif target.rule_type == _HASKELL_BIN:
+    elif _rule_name(target) == _HASKELL_BIN:
         result = _solution_for_haskell_bin(ctx, target, exclude)
-    elif target.rule_type == _HASKELL_IDE:
+    elif _rule_name(target) == _HASKELL_IDE:
         result = _solution_for_haskell_ide(ctx, target)
 
     if result == None:
@@ -137,7 +147,7 @@ def _solution_for_haskell_ide(ctx, target):
             dep.label.raw_target(),
             modifiers = configuration_modifiers,
         )
-        if (t.rule_type == _HASKELL_LIB or t.rule_type == _HASKELL_BIN):
+        if _rule_name(t) in (_HASKELL_LIB, _HASKELL_BIN):
             deps[dep.label] = t
     for lib in deps.values():
         results.append(_solution_for_target(ctx, lib, deps))
@@ -318,14 +328,20 @@ _common_flags = {
 
 ide_for_target = bxl_main(
     impl = _impl_target,
-    cli_args = dict(_common_flags.items() + {
-        "target": cli_args.target_label(),
-    }.items()),
+    cli_args = dict(
+        _common_flags.items()
+        + {
+            "target": cli_args.target_label(),
+        }.items()
+    ),
 )
 
 ide_for_file = bxl_main(
     impl = _impl_file,
-    cli_args = dict(_common_flags.items() + {
-        "file": cli_args.string("File to load in IDE"),
-    }.items()),
+    cli_args = dict(
+        _common_flags.items()
+        + {
+            "file": cli_args.string("File to load in IDE"),
+        }.items()
+    ),
 )

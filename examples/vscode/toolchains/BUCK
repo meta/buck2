@@ -22,10 +22,10 @@ path_clang_tools(
 
 cxx_tools_info_toolchain(
     name = "cxx",
-    #The flags in the below attributes' Windows config are copied from Visual Studio's project "Console App", with some changes listed in each attribute
+    # The flags in the below attributes' Windows config are copied from Visual Studio's project "Console App", with some changes listed in each attribute
     c_flags = select({
         "config//os:linux": [],
-        #Copied from the C++ flags
+        # Copied from the C++ flags
         "config//os:windows": [
             "/c",
             "/Z7",
@@ -43,13 +43,13 @@ cxx_tools_info_toolchain(
             "/permissive-",
             "/TC",
         ] + select({
-            "root//buck2_utils/configuration:debug": [
+            "root//buck2_utils/configuration:configuration[debug]": [
                 "/Od",
                 "/D_DEBUG",
                 "/RTC1",
                 "/MDd",
             ],
-            "root//buck2_utils/configuration:release": [
+            "root//buck2_utils/configuration:configuration[release]": [
                 "/O2",
                 "/Oi",
                 "/GL",
@@ -61,13 +61,13 @@ cxx_tools_info_toolchain(
     }),
     cxx_flags = select({
         "config//os:linux": [],
-        #Added C++ 20 version flag
-        #Removed flags that are already the default: /GS, /fp:precise /Gd /Zc:wchar_t /Gm-
-        #Removed deprecated /errorReport:prompt
-        #Converted /ZI to /Z7 because I'm guessing /ZI won't play very well with remote execution
-        #Removed /FC because it probably doesn't work with remote execution
-        #Removed /external:W3 because it's redundant
-        #Removed /JMC because it doesn't work with lldb
+        # Added C++ 20 version flag
+        # Removed flags that are already the default: /GS, /fp:precise /Gd /Zc:wchar_t /Gm-
+        # Removed deprecated /errorReport:prompt
+        # Converted /ZI to /Z7 because I'm guessing /ZI won't play very well with remote execution
+        # Removed /FC because it probably doesn't work with remote execution
+        # Removed /external:W3 because it's redundant
+        # Removed /JMC because it doesn't work with lldb
         "config//os:windows": [
             "/std:c++20",
             "/c",
@@ -86,13 +86,13 @@ cxx_tools_info_toolchain(
             "/permissive-",
             "/TP",
         ] + select({
-            "root//buck2_utils/configuration:debug": [
+            "root//buck2_utils/configuration:configuration[debug]": [
                 "/Od",
                 "/D_DEBUG",
                 "/RTC1",
                 "/MDd",
             ],
-            "root//buck2_utils/configuration:release": [
+            "root//buck2_utils/configuration:configuration[release]": [
                 "/O2",
                 "/Oi",
                 "/GL",
@@ -108,18 +108,18 @@ cxx_tools_info_toolchain(
     }),
     link_flags = select({
         "config//os:linux": [],
-        #Removed flags that are already the default: /TLBID:1 /DYNAMICBASE /NXCOMPAT /ERRORREPORT:PROMPT /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /SUBSYSTEM:CONSOLE
-        #Removed /manifest:embed because I don't know what it does
-        #Removed default extra libs that are unnecessary most of the time: kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib
-        #Added /INCREMENTAL:NO to force non-incremental mode
+        # Removed flags that are already the default: /TLBID:1 /DYNAMICBASE /NXCOMPAT /ERRORREPORT:PROMPT /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /SUBSYSTEM:CONSOLE
+        # Removed /manifest:embed because I don't know what it does
+        # Removed default extra libs that are unnecessary most of the time: kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib
+        # Added /INCREMENTAL:NO to force non-incremental mode
         "config//os:windows": [
             "/NOLOGO",
             "/DEBUG",
             "/INCREMENTAL:NO",
         ] + select({
-            "root//buck2_utils/configuration:debug": [],
-            #Converted /LTCG:incremental to /LTCG because I'm guessing incremental actions won't work well with Buck2
-            "root//buck2_utils/configuration:release": [
+            "root//buck2_utils/configuration:configuration[debug]": [],
+            # Converted /LTCG:incremental to /LTCG because I'm guessing incremental actions won't work well with Buck2
+            "root//buck2_utils/configuration:configuration[release]": [
                 "/OPT:REF",
                 "/OPT:ICF",
                 "/LTCG",

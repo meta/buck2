@@ -1,0 +1,9 @@
+[buildfile]
+name = TARGETS.fixture
+
+[repositories]
+root = .
+prelude = .
+
+[buck2]
+readonly_outputs = true

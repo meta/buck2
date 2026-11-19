@@ -11,7 +11,7 @@ prelude = native  # Avoid warnings and auto-formatters
 config_setting(
     name = "linux",
     constraint_values = [
-        "//os/constraints:linux",
+        "//os/constraints:os[linux]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -19,7 +19,7 @@ config_setting(
 config_setting(
     name = "macos",
     constraint_values = [
-        "//os/constraints:macos",
+        "//os/constraints:os[macos]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -27,7 +27,7 @@ config_setting(
 config_setting(
     name = "windows",
     constraint_values = [
-        "//os/constraints:windows",
+        "//os/constraints:os[windows]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -37,14 +37,14 @@ config_setting(
 config_setting(
     name = "android",
     constraint_values = [
-        "//os/constraints:android",
+        "//os/constraints:os[android]",
     ],
     visibility = ["PUBLIC"],
 )
 
 prelude.constraint_setting(
     name = "maybe_building_android_binary",
-    visibility = ["prelude//..."],
+    visibility = ["PUBLIC"],
 )
 
 prelude.constraint_value(
@@ -58,7 +58,7 @@ prelude.constraint_value(
 config_setting(
     name = "iphoneos",
     constraint_values = [
-        "//os/constraints:iphoneos",
+        "//os/constraints:os[iphoneos]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -66,7 +66,7 @@ config_setting(
 config_setting(
     name = "tvos",
     constraint_values = [
-        "//os/constraints:tvos",
+        "//os/constraints:os[tvos]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -74,7 +74,7 @@ config_setting(
 config_setting(
     name = "watchos",
     constraint_values = [
-        "//os/constraints:watchos",
+        "//os/constraints:os[watchos]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -85,7 +85,7 @@ config_setting(
 config_setting(
     name = "freebsd",
     constraint_values = [
-        "//os/constraints:freebsd",
+        "//os/constraints:os[freebsd]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -93,7 +93,7 @@ config_setting(
 config_setting(
     name = "fuchsia",
     constraint_values = [
-        "//os/constraints:fuchsia",
+        "//os/constraints:os[fuchsia]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -101,7 +101,7 @@ config_setting(
 config_setting(
     name = "illumos",
     constraint_values = [
-        "//os/constraints:illumos",
+        "//os/constraints:os[illumos]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -109,7 +109,7 @@ config_setting(
 config_setting(
     name = "netbsd",
     constraint_values = [
-        "//os/constraints:netbsd",
+        "//os/constraints:os[netbsd]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -117,7 +117,7 @@ config_setting(
 config_setting(
     name = "wasi",
     constraint_values = [
-        "//os/constraints:wasi",
+        "//os/constraints:os[wasi]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -125,7 +125,7 @@ config_setting(
 config_setting(
     name = "linux-sgx",
     constraint_values = [
-        "//os/constraints:linux",
+        "//os/constraints:os[linux]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -133,8 +133,8 @@ config_setting(
 config_setting(
     name = "linux-arm64",
     constraint_values = [
-        "//cpu/constraints:arm64",
-        "//os/constraints:linux",
+        "//cpu/constraints:cpu[arm64]",
+        "//os/constraints:os[linux]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -143,7 +143,7 @@ config_setting(
 config_setting(
     name = "none",
     constraint_values = [
-        "//os/constraints:none",
+        "//os/constraints:os[none]",
     ],
     visibility = ["PUBLIC"],
 )

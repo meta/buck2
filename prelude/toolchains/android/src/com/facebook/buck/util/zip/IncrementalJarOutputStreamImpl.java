@@ -14,12 +14,12 @@ import static java.nio.file.StandardOpenOption.CREATE;
 import static java.nio.file.StandardOpenOption.READ;
 import static java.nio.file.StandardOpenOption.WRITE;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import javax.annotation.Nonnull;
 
 /**
  * Alternative implementation to dependency packing, instead of copying several jars which is slow,
@@ -27,6 +27,7 @@ import javax.annotation.Nonnull;
  *
  * @see AppendableCentralDirectory
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class IncrementalJarOutputStreamImpl extends AppendingZipOutputStreamImpl {
 
   /**
@@ -45,7 +46,22 @@ public class IncrementalJarOutputStreamImpl extends AppendingZipOutputStreamImpl
       final FileChannel dstChannel = FileChannel.open(dst, CREATE, WRITE);
 
       // copy the block of files that exists in the input jar
-      dstChannel.transferFrom(srcChannel, 0, centralDirectory.getEntryOffset());
+      // transferFrom may not transfer all requested bytes in a single call,
+      // so we need to loop until all bytes are transferred
+      long bytesToTransfer = centralDirectory.getEntryOffset();
+      long position = 0;
+      while (position < bytesToTransfer) {
+        long transferred =
+            dstChannel.transferFrom(srcChannel, position, bytesToTransfer - position);
+        if (transferred == 0) {
+          throw new IOException(
+              "Failed to transfer bytes from source jar: transferred 0 bytes at position "
+                  + position
+                  + " of "
+                  + bytesToTransfer);
+        }
+        position += transferred;
+      }
       dstChannel.position(centralDirectory.getEntryOffset());
 
       return new IncrementalJarOutputStreamImpl(
@@ -66,7 +82,6 @@ public class IncrementalJarOutputStreamImpl extends AppendingZipOutputStreamImpl
     setCurrentOffset(appendableDirectory.getEntryOffset());
   }
 
-  @Nonnull
   @Override
   protected CentralDirectory getCentralDirectory() {
     return appendableDirectory;

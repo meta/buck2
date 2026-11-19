@@ -1,0 +1,8 @@
+load("@prelude//rust:with_workspace.bzl", "with_rust_workspace")
+
+with_rust_workspace(
+    targets = [
+        "//buck2/integrations/rust-project/tests/targets/foo:a",
+        "//buck2/integrations/rust-project/tests/targets/bar:d",
+    ]
+)

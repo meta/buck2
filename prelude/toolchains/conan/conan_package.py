@@ -209,9 +209,9 @@ def main():
     args = parser.parse_args()
 
     conan_common.install_user_home(args.user_home, args.conan_init)
-    assert len(args.dep_reference) == len(
-        args.dep_cache_out
-    ), "Mismatching dependency arguments."
+    assert len(args.dep_reference) == len(args.dep_cache_out), (
+        "Mismatching dependency arguments."
+    )
     for ref, cache_out in zip(args.dep_reference, args.dep_cache_out):
         conan_common.install_reference(args.user_home, ref, cache_out)
 

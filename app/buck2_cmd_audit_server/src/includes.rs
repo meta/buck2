@@ -19,10 +19,12 @@ use buck2_core::cells::CellResolver;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::package::PackageLabel;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileNameBuf;
+use buck2_hash::buck_mut_insertion_map;
 use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::paths::module::StarlarkModulePath;
@@ -41,10 +43,9 @@ use derive_more::Display;
 use dice::DiceComputations;
 use dice::LinearRecomputeDiceComputations;
 use dupe::Dupe;
+use futures::FutureExt;
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
-use gazebo::prelude::*;
-use indexmap::indexmap;
 use itertools::Itertools;
 use ref_cast::RefCast;
 use serde::Serialize;
@@ -94,7 +95,7 @@ async fn get_transitive_includes(
     }
 
     struct Lookup<'a, 'd> {
-        ctx: &'a LinearRecomputeDiceComputations<'d>,
+        ctx: LinearRecomputeDiceComputations<'a, 'd>,
     }
 
     #[async_trait]
@@ -104,7 +105,8 @@ async fn get_transitive_includes(
                 self.ctx
                     .get()
                     .get_loaded_module(StarlarkModulePath::LoadFile(&label.0))
-                    .await?,
+                    .await?
+                    .dupe(),
             ))
         }
     }
@@ -130,16 +132,24 @@ async fn get_transitive_includes(
         }
     }
 
-    ctx.with_linear_recompute(|ctx| async move {
-        let lookup = Lookup { ctx: &ctx };
+    ctx.with_linear_recompute(|ctx| {
+        async move {
+            let lookup = Lookup { ctx };
 
-        async_depth_first_postorder_traversal(
-            &lookup,
-            load_result.imports().map(NodeRef::ref_cast),
-            Delegate,
-            visit,
-        )
-        .await
+            async_depth_first_postorder_traversal(
+                &lookup,
+                load_result
+                    .imports()
+                    .iter()
+                    .map(NodeRef::ref_cast)
+                    .collect::<Vec<_>>(),
+                Delegate,
+                visit,
+                false, // allow_partial_graph
+            )
+            .await
+        }
+        .boxed()
     })
     .await?;
     Ok(imports)
@@ -151,7 +161,7 @@ async fn load_and_collect_includes(
 ) -> buck2_error::Result<Vec<ImportPath>> {
     let parent = path
         .parent()
-        .ok_or_else(|| AuditIncludesError::InvalidPath(path.clone()))?;
+        .ok_or_else(|| AuditIncludesError::InvalidPath(*path))?;
     let package = PackageLabel::from_cell_path(parent)?;
     let load_result = ctx.get_interpreter_results(package).await?;
 
@@ -162,14 +172,12 @@ async fn load_and_collect_includes(
             .file_name()
             .expect("checked that this has a parent above")
     {
-        return Err(AuditIncludesError::WrongBuildfilePath(
-            path.clone(),
-            buildfile_name.to_owned(),
-        )
-        .into());
+        return Err(
+            AuditIncludesError::WrongBuildfilePath(*path, buildfile_name.to_owned()).into(),
+        );
     }
 
-    get_transitive_includes(ctx, &load_result).await
+    get_transitive_includes(ctx, load_result).await
 }
 
 fn resolve_path(
@@ -185,8 +193,8 @@ fn resolve_path(
     //
     // Note if the path is already absolute, this operation is a no-op.
     let path = current_cell_abs_path.as_abs_path().join(path);
-
-    let abs_path = fs_util::canonicalize(path)?;
+    // input path from `buck2 audit includes [BUILD_FILES]`
+    let abs_path = fs_util::canonicalize(path).categorize_input()?;
 
     let project_path = fs.relativize(&abs_path)?;
     Ok(cells.get_cell_path(&project_path))
@@ -201,8 +209,8 @@ impl ServerAuditSubcommand for AuditIncludesCommand {
         _client_ctx: ClientContext,
     ) -> buck2_error::Result<()> {
         Ok(server_ctx
-            .with_dice_ctx(|server_ctx, mut ctx| async move {
-                let cells = ctx.get_cell_resolver().await?;
+            .with_dice_ctx(|server_ctx, ctx| async move {
+                let cells = ctx.ctx().get_cell_resolver().await?;
                 let cwd = server_ctx.working_dir();
                 let current_cell = cells.get(cells.find(cwd))?;
                 let fs = server_ctx.project_root();
@@ -215,12 +223,12 @@ impl ServerAuditSubcommand for AuditIncludesCommand {
                     .unique()
                     .map(|path| {
                         let path = path.to_owned();
-                        let mut ctx = ctx.dupe();
+                        let ctx = ctx.dupe();
                         let cell_path = resolve_path(&cells, fs, &current_cell_abs_path, &path);
                         async move {
                             let load_result = try {
                                 let cell_path = cell_path?;
-                                load_and_collect_includes(&mut ctx, &cell_path).await?
+                                load_and_collect_includes(&mut ctx.ctx(), &cell_path).await?
                             };
                             (path, load_result)
                         }
@@ -237,10 +245,15 @@ impl ServerAuditSubcommand for AuditIncludesCommand {
                 };
                 let absolutize_paths =
                     |paths: Vec<ImportPath>| -> buck2_error::Result<Vec<AbsNormPathBuf>> {
-                        paths.into_try_map(&to_absolute_path)
+                        paths
+                            .into_iter()
+                            .map(&to_absolute_path)
+                            .collect::<Result<Vec<_>, _>>()
                     };
                 let results: Vec<(String, buck2_error::Result<Vec<AbsNormPathBuf>>)> = results
-                    .into_map(|(path, includes)| (path, includes.and_then(absolutize_paths)));
+                    .into_iter()
+                    .map(|(path, includes)| (path, includes.and_then(absolutize_paths)))
+                    .collect::<Vec<_>>();
 
                 let mut stdout = stdout.as_writer();
 
@@ -252,18 +265,19 @@ impl ServerAuditSubcommand for AuditIncludesCommand {
                     // it also, sadly, prints just a single list of outputs for that case. we match
                     // buck1's behavior for 1 successful file and print a dictionary for multiple. This is
                     // unfortunate, but we hope that users can migrate to the equivalent query commands instead.
-                    if let Some((_path, Ok(includes))) = results.as_singleton() {
+                    if let [(_path, Ok(includes))] = results.as_slice() {
                         includes.serialize(&mut ser)?
                     } else {
                         let mut map = ser.serialize_map(Some(results.len()))?;
                         for (path, includes) in &results {
                             match includes {
-                                Ok(includes) => {
-                                    map.serialize_entry(path, &indexmap! {"includes" => &includes})?
-                                }
+                                Ok(includes) => map.serialize_entry(
+                                    path,
+                                    &buck_mut_insertion_map! {"includes" => &includes},
+                                )?,
                                 Err(e) => map.serialize_entry(
                                     path,
-                                    &indexmap! {"$error" => format!("{:#}", e)},
+                                    &buck_mut_insertion_map! {"$error" => format!("{:#}", e)},
                                 )?,
                             }
                         }

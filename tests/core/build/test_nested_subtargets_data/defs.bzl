@@ -7,17 +7,23 @@
 # above-listed licenses.
 
 def _nested_subtargets(ctx):
-    out = ctx.actions.write("foo", "foo_content")
+    out = ctx.actions.write("foo", "foo_content", has_content_based_path = False)
 
-    nested_info = [DefaultInfo(
-        sub_targets = {"nested_sub": [
-            DefaultInfo(default_output = out),
-        ]},
-    )]
+    nested_info = [
+        DefaultInfo(
+            sub_targets = {
+                "nested_sub": [
+                    DefaultInfo(default_output = out),
+                ]
+            },
+        )
+    ]
 
-    return [DefaultInfo(
-        sub_targets = {"sub": nested_info},
-    )]
+    return [
+        DefaultInfo(
+            sub_targets = {"sub": nested_info},
+        )
+    ]
 
 nested_subtargets = rule(
     impl = _nested_subtargets,

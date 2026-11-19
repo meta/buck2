@@ -2,7 +2,7 @@
 
 Command failed: 
 Error in configured node dependency, dependency chain follows (-> indicates depends on, ^ indicates same configuration as previous):
-       root//:configured_dep_platform_error_before_compatibility_when_incoming_edge_transition (root//:p-cat#7275fbcf1b8d83cf)
+       root//:configured_dep_platform_error_before_compatibility_when_incoming_edge_transition (root//:p-cat#80a6d043e3330ec7)
     -> root//:incoming_edge_transition_with_broken_configured_dep (^)
 
 

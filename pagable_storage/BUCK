@@ -1,0 +1,51 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "pagable_storage",
+    srcs = glob(
+        ["src/**/*.rs"],
+    ),
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    # fbsource enables features on bytemuck that need nightly,
+                    # and far more of rusqlite than the backend uses.
+                    "bytemuck": {"features": [], "workspace": False},
+                    "rusqlite": {"features": ["bundled", "limits"], "workspace": False},
+                    "tokio": {"optional": True},
+                },
+            },
+            "features": {
+                "default": [],
+                "tokio": ["dep:tokio"],
+            },
+            "package": {
+                "description": "Sled and SQLite storage backends for the pagable serialization framework",
+                "version": "0.4.2",
+            },
+        },
+        # FIXME(JakobDegen): Needed because autocargo doesn't handle the select below
+        "edge_features": [
+            "tokio",
+        ],
+    },
+    crate_root = "src/lib.rs",
+    features = select({
+        "DEFAULT": ["tokio"],
+        # @oss-disable[end= ]: "ovr_config//runtime/constraints:wasm": [],
+    }),
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:async-trait",
+        "fbsource//third-party/rust:bytemuck",
+        "fbsource//third-party/rust:bytesize",
+        "fbsource//third-party/rust:parking_lot",
+        "fbsource//third-party/rust:rusqlite",
+        "fbsource//third-party/rust:sled",
+        "fbsource//third-party/rust:tokio",
+        "//buck2/pagable:pagable",
+    ],
+)

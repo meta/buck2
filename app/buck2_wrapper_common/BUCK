@@ -5,38 +5,42 @@ oncall("build_infra")
 rust_library(
     name = "buck2_wrapper_common",
     srcs = glob(["src/**/*.rs"]),
-    os_deps = [
-        (
-            "linux",
-            [
-                "fbsource//third-party/rust:nix",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "fbsource//third-party/rust:nix",
-            ],
-        ),
-        (
-            "windows",
-            [
-                "fbsource//third-party/rust:winapi",
-            ],
-        ),
-    ],
+    # See `buck2_client_ctx` for why sysinfo's default features are off.
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    "sysinfo": {"default-features": False, "features": ["system"]},
+                },
+            },
+        },
+    },
     test_deps = [
         "fbsource//third-party/rust:serde_json",
-        "//buck2/app/buck2_util:buck2_util",
+        "fbsource//third-party/rust:tempfile",
     ],
     deps = [
         "fbsource//third-party/rust:derive_more",
+        "fbsource//third-party/rust:dirs",
+        "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:serde",
-        "fbsource//third-party/rust:shlex",
         "fbsource//third-party/rust:sysinfo",
+        "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:uuid",
         "//buck2/allocative/allocative:allocative",
         "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/gazebo/dupe:dupe",
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:nix",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:nix",
+        ],
+        "ovr_config//os:windows": [
+            "fbsource//third-party/rust:windows-sys",
+        ],
+    }),
 )

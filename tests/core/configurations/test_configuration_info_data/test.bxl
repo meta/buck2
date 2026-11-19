@@ -1,0 +1,49 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+def _assert_eq(a, b):
+    if a != b:
+        fail("Expected {} == {}".format(a, b))
+
+# The `ConstraintSettingInfo` and `ConstraintValueInfo`s (by value name) of a `constraint` target
+def _constraint(ctx: bxl.Context, target: str):
+    providers = ctx.analysis(ctx.configured_targets(target)).providers()
+    values = {name: sub[ConstraintValueInfo] for name, sub in providers[DefaultInfo].sub_targets.items()}
+    return providers[ConstraintSettingInfo], values
+
+def _configuration_info(ctx: bxl.Context):
+    os, os_values = _constraint(ctx, "root//:os")
+    cpu, cpu_values = _constraint(ctx, "root//:cpu")
+    _assert_eq(cpu.default.sub_target[0], "x86_64")
+
+    cfg = ConfigurationInfo(constraints = {os.label: os_values["linux"]}, values = {})
+    _assert_eq(cfg.get(os), os_values["linux"])
+
+    # Lookups of unset settings fall back to the setting's default, if it has one
+    _assert_eq(cfg.get(cpu), cpu_values["x86_64"])
+    _assert_eq(ConfigurationInfo(constraints = {}, values = {}).get(os), None)
+
+    # `insert` and `pop` report the previous value, with the same fallback
+    _assert_eq(cfg.insert(os_values["macos"]), os_values["linux"])
+    _assert_eq(cfg.get(os), os_values["macos"])
+    _assert_eq(cfg.insert(cpu_values["arm64"]), cpu_values["x86_64"])
+    _assert_eq(cfg.get(cpu), cpu_values["arm64"])
+    _assert_eq(cfg.pop(cpu), cpu_values["arm64"])
+    _assert_eq(cfg.get(cpu), cpu_values["x86_64"])
+    _assert_eq(cfg.pop(cpu), cpu_values["x86_64"])
+
+    # Copies are independent of the original
+    copied = cfg.copy()
+    copied.insert(cpu_values["arm64"])
+    _assert_eq(cfg.get(cpu), cpu_values["x86_64"])
+    _assert_eq(copied.get(cpu), cpu_values["arm64"])
+
+configuration_info = bxl_main(
+    impl = _configuration_info,
+    cli_args = {},
+)

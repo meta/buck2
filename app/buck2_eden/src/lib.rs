@@ -10,12 +10,11 @@
 
 // This can't be built in our OSS implementation.
 #![cfg(fbcode_build)]
-#![feature(error_generic_member_access)]
-#![feature(used_with_arg)]
 
 pub mod connection;
 pub mod error;
 pub mod io_provider;
+pub mod tenting;
 
 pub mod semaphore {
     use buck2_core::buck2_env;
@@ -34,10 +33,40 @@ pub mod semaphore {
     /// A buck2-specific semaphore that is used to limit the number of outstanding requests to
     /// EdenFS. Reads buck2 specific environment variable "BUCK2_EDEN_SEMAPHORE" to determine the
     /// number of permits.
-    pub fn buck2_default() -> Semaphore {
-        let permits =
-            buck2_env!("BUCK2_EDEN_SEMAPHORE", type=usize, default=DEFAULT_MAX_OUTSTANDING_REQUESTS, applicability=internal)
-                .unwrap_or(DEFAULT_MAX_OUTSTANDING_REQUESTS);
-        Semaphore::new(permits)
+    pub fn buck2_default() -> buck2_error::Result<Semaphore> {
+        let permits = buck2_env!("BUCK2_EDEN_SEMAPHORE", type=usize, default=DEFAULT_MAX_OUTSTANDING_REQUESTS, applicability=internal)?;
+        with_permits(permits)
+    }
+
+    /// A semaphore with `permits` permits; zero is refused because such a semaphore never admits
+    /// a request, so every Eden call would wait forever.
+    pub(crate) fn with_permits(permits: usize) -> buck2_error::Result<Semaphore> {
+        if permits == 0 {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "`BUCK2_EDEN_SEMAPHORE` must be at least 1: a semaphore without permits never admits a request"
+            ));
+        }
+        Ok(Semaphore::new(permits))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::semaphore::with_permits;
+
+    #[test]
+    fn zero_permits_is_an_error_naming_the_variable() {
+        let err = with_permits(0).expect_err("zero permits must be an error");
+        assert!(
+            format!("{err:#}").contains("BUCK2_EDEN_SEMAPHORE"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn one_permit_is_accepted() {
+        let semaphore = with_permits(1).expect("one permit is a valid semaphore");
+        assert_eq!(1, semaphore.available_permits());
     }
 }

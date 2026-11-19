@@ -42,7 +42,7 @@ impl BuckSubcommand for UploadReLogsCommand {
             Bucket::RE_LOGS,
             &re_logs_dir,
             &self.session_id,
-            &format!("flat/{}.log.zst", &self.session_id),
+            &format!("flat/{}.log.zst", self.session_id),
         )
         .await?;
         ExitResult::success()

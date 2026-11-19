@@ -1,0 +1,31 @@
+load("@prelude//utils:source_listing.bzl", "source_listing")
+load(":buildscript_platform.bzl", "transitions_for_constraint")
+
+oncall("build_infra")
+
+source_listing()
+
+prelude = native
+
+prelude.export_file(
+    name = "buildscript_platform.bzl",
+    has_content_based_path = True,
+    visibility = ["PUBLIC"],
+)
+
+constraint(
+    name = "buildscript_for_platform",
+    default = "none",
+    values = map(
+        str,
+        range(1000),
+    )
+    + ["none"],
+    visibility = ["PUBLIC"],
+)
+
+transitions_for_constraint(
+    name = "buildscript_platform_transition",
+    constraint = ":buildscript_for_platform",
+    visibility = ["PUBLIC"],
+)

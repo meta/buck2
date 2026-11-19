@@ -9,12 +9,14 @@
 -module(ct_daemon_node).
 -compile(warn_missing_spec_all).
 
--include_lib("kernel/include/logger.hrl").
-
 %% Public API
 -export([start/1, start/2, stop/0, alive/0, get_node/0]).
 
 -export([node_main/1, get_domain_type/0]).
+
+-export_type([config/0]).
+
+-include_lib("kernel/include/logger.hrl").
 
 -import(common_util, [unicode_characters_to_binary/1, filename_all_to_filename/1]).
 
@@ -31,8 +33,6 @@
     {multiply_timetraps, number() | infinity}
     | {ct_hooks, [atom() | {atom(), [term()]}]}
     | {output_dir, file:filename_all()}.
-
--export_type([config/0]).
 
 -doc """
 start node for running tests in isolated way and keep state
@@ -142,7 +142,7 @@ stop() ->
     true = erlang:monitor_node(Node, true),
     %% kill node
     %% elp:ignore W0014
-    _Pid = erlang:spawn(Node, fun() -> erlang:halt() end),
+    _Pid = erlang:spawn(Node, fun erlang:halt/0),
     %% wait for node to come down
     receive
         {nodedown, Node} -> ok
@@ -178,6 +178,9 @@ node_main([Parent, OutputDirAtom]) ->
 
     %% setup logger and prepare IO
     ok = ct_daemon_logger:start(OutputDir),
+
+    %% setup capture-aware group leader to support ct:capture_* API
+    ok = setup_capture_group_leader(),
 
     true = net_kernel:connect_node(Parent),
 
@@ -222,8 +225,10 @@ ensure_distribution(Type, RandomName, Cookie) ->
             ok;
         _ ->
             %% check that the domain is correct
-            Type = get_domain_type(),
-            ok
+            case get_domain_type() of
+                Type -> ok;
+                Other -> error({distribution_type_mismatch, Type, Other})
+            end
     end,
     true = erlang:set_cookie(Cookie),
     ok.
@@ -299,3 +304,17 @@ get_domain_type() ->
 -spec get_runner_pid() -> pid() | undefined.
 get_runner_pid() ->
     global:whereis_name(ct_daemon_runner:name(node())).
+
+-spec setup_capture_group_leader() -> ok.
+setup_capture_group_leader() ->
+    %% Create a capture-aware group leader that handles {capture, Pid} messages
+    %% from ct:capture_start()/test_server:capture_start()
+    OriginalGL = erlang:group_leader(),
+    case ct_daemon_capture:start_link(OriginalGL) of
+        {ok, CaptureGL} ->
+            true = erlang:group_leader(CaptureGL, self()),
+            ok;
+        _ ->
+            %% If capture setup fails, continue without it
+            ok
+    end.

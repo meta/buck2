@@ -9,6 +9,7 @@
  */
 
 use buck2_error::BuckErrorContext as _;
+use buck2_error::BuckErrorOptionContext;
 use buck2_grpc::ServerHandle;
 use buck2_grpc::make_channel;
 use buck2_grpc::spawn_oneshot;
@@ -91,7 +92,7 @@ where
             let ExternalRunnerSpecRequest { test_spec } = request.into_inner();
 
             let test_spec = test_spec
-                .buck_error_context("Missing `test_spec`")?
+                .internal_error("Missing `test_spec`")?
                 .try_into()
                 .buck_error_context("Invalid `test_spec`")?;
 
@@ -140,7 +141,7 @@ where
     I: AsyncRead + AsyncWrite + Send + Unpin + 'static + tonic::transport::server::Connected,
     E: TestExecutor + Send + Sync + 'static,
 {
-    let router = tonic::transport::Server::builder().add_service(
+    let router = buck2_grpc::server_builder().add_service(
         test_executor_server::TestExecutorServer::new(Service { inner: executor })
             .max_encoding_message_size(usize::MAX)
             .max_decoding_message_size(usize::MAX),

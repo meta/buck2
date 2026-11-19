@@ -8,16 +8,11 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(decl_macro)]
 #![feature(never_type)]
-#![feature(pattern)]
-#![feature(box_patterns)]
+#![cfg_attr(test, feature(pattern))]
 #![feature(impl_trait_in_assoc_type)]
-#![feature(io_error_more)]
-#![feature(once_cell_try)]
-#![feature(try_blocks)]
-#![feature(used_with_arg)]
+#![feature(try_trait_v2)]
+#![feature(try_trait_v2_residual)]
 
 // Re-export these because we don't want to make people add a dependency on this crate everywhere
 pub use buck2_env::env;
@@ -28,6 +23,7 @@ pub mod async_once_cell;
 pub mod build_file_path;
 pub mod bxl;
 pub mod bzl;
+pub mod bzl_global;
 pub mod category;
 pub mod cells;
 pub mod ci;
@@ -58,11 +54,21 @@ pub use buck2_env::env::buck2_env;
 pub use buck2_env::env::buck2_env_name;
 // Re-export these macros at the crate root so they work like before when error was #[macro_use]
 #[doc(inline)]
+pub use buck2_env::soft_error::deprecation;
+#[doc(inline)]
+pub use buck2_env::soft_error::deprecation_or_panic;
+#[doc(inline)]
 pub use buck2_env::soft_error::soft_error;
+#[doc(inline)]
+pub use buck2_env::soft_error::soft_error_or_panic;
 #[doc(inline)]
 pub use buck2_env::soft_error::tag_error;
 #[doc(inline)]
 pub use buck2_env::soft_error::tag_result;
+#[doc(inline)]
+pub use buck2_env::soft_error::warn_user;
+#[doc(inline)]
+pub use buck2_env::soft_error::warn_user_or_panic;
 
 /// Marker for things that are only sensible to use inside Facebook,
 /// not intended to be complete, but intended to be useful to audit

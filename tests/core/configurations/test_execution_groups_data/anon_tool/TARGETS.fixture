@@ -1,0 +1,5 @@
+load(":rules.bzl", "passes_group_tool", "tool")
+
+tool(name = "tool")
+
+passes_group_tool(name = "t")

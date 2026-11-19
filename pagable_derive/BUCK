@@ -7,6 +7,15 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
+    autocargo = {
+        "cargo_toml_config": {
+            "package": {
+                "authors": ["Meta"],
+                "description": "Implementation of derive(Pagable) for pagable crate",
+                "version": "0.4.2",
+            },
+        },
+    },
     crate_root = "src/lib.rs",
     proc_macro = True,
     deps = [

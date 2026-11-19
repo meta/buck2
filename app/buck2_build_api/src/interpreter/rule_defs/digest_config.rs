@@ -16,16 +16,12 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
-use starlark::values::AllocValue;
 use starlark::values::Freeze;
-use starlark::values::Heap;
 use starlark::values::NoSerialize;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
 use starlark::values::starlark_value;
-use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 
 /// Functions to access the daemon's digest config. This is not normally all that useful, but it
 /// allows instrospection in a few useful cases (such as knowing what hashes the daemon will be
@@ -39,25 +35,22 @@ use starlark::values::starlark_value_as_type::StarlarkValueAsType;
     Trace,
     ProvidesStaticType,
     NoSerialize,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[display("{}", self.digest_config)]
 pub struct StarlarkDigestConfig {
     #[freeze(identity)]
+    #[starlark_pagable(pagable)]
     pub digest_config: DigestConfig,
 }
 
-#[starlark_value(type = "DigestConfig", StarlarkTypeRepr, UnpackValue)]
+starlark::methods_static!(DIGEST_CONFIG_METHODS = digest_config_methods);
+
+#[starlark_value(type = "DigestConfig")]
 impl<'v> StarlarkValue<'v> for StarlarkDigestConfig {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(digest_config_methods)
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkDigestConfig {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_simple(self)
+        Some(DIGEST_CONFIG_METHODS.methods())
     }
 }
 
@@ -81,6 +74,5 @@ fn digest_config_methods(builder: &mut MethodsBuilder) {
 }
 
 #[starlark_module]
-pub(crate) fn register_digest_config_type(globals: &mut GlobalsBuilder) {
-    const DigestConfig: StarlarkValueAsType<StarlarkDigestConfig> = StarlarkValueAsType::new();
-}
+#[starlark_types(StarlarkDigestConfig as DigestConfig)]
+pub(crate) fn register_digest_config_type(globals: &mut GlobalsBuilder) {}

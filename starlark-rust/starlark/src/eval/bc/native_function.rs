@@ -20,21 +20,44 @@ use dupe::Dupe;
 
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
-use crate::values::FrozenValueTyped;
+use crate::pagable::StarlarkDeserialize;
+use crate::pagable::StarlarkDeserializeContext;
+use crate::pagable::StarlarkSerialize;
+use crate::pagable::StarlarkSerializeContext;
+use crate::pagable::starlark_deserialize_context::deserialize_for_inspection;
 use crate::values::Value;
+use crate::values::ValueTyped;
 use crate::values::function::NativeFunc;
 use crate::values::function::NativeFunction;
 
-/// Pointer to a native function optimized for bytecode execution.
+/// Pointer to a native function optimized for bytecode execution, at the brand of the bytecode.
 #[derive(Copy, Clone, Dupe, Allocative)]
-pub(crate) struct BcNativeFunction {
-    fun: FrozenValueTyped<'static, NativeFunction>,
+pub(crate) struct BcNativeFunction<'v> {
+    fun: ValueTyped<'v, NativeFunction<'v>>,
     /// Copy function here from `fun` to avoid extra dereference when calling.
-    imp: &'static NativeFunc,
+    #[allocative(skip)]
+    imp: &'v NativeFunc<'v>,
 }
 
-impl BcNativeFunction {
-    pub(crate) fn new(fun: FrozenValueTyped<'static, NativeFunction>) -> BcNativeFunction {
+// Only the value is on the wire; `imp` is recomputed from `fun` on
+// deserialize via `BcNativeFunction::new`.
+impl<'v> StarlarkSerialize for BcNativeFunction<'v> {
+    fn starlark_serialize(&self, ctx: &mut dyn StarlarkSerializeContext) -> crate::Result<()> {
+        self.fun.starlark_serialize(ctx)
+    }
+}
+
+impl<'v> StarlarkDeserialize<'v> for BcNativeFunction<'v> {
+    fn starlark_deserialize(
+        ctx: &mut dyn StarlarkDeserializeContext<'_, 'v>,
+    ) -> crate::Result<Self> {
+        let fun = deserialize_for_inspection(ctx)?;
+        Ok(BcNativeFunction::new(fun))
+    }
+}
+
+impl<'v> BcNativeFunction<'v> {
+    pub(crate) fn new(fun: ValueTyped<'v, NativeFunction<'v>>) -> BcNativeFunction<'v> {
         BcNativeFunction {
             fun,
             imp: &fun.as_ref().function,
@@ -42,17 +65,17 @@ impl BcNativeFunction {
     }
 
     #[inline]
-    pub(crate) fn fun(&self) -> FrozenValueTyped<'static, NativeFunction> {
+    pub(crate) fn fun(&self) -> ValueTyped<'v, NativeFunction<'v>> {
         self.fun
     }
 
     #[inline]
-    pub(crate) fn to_value<'v>(&self) -> Value<'v> {
+    pub(crate) fn to_value(&self) -> Value<'v> {
         self.fun.to_value()
     }
 
     #[inline]
-    pub(crate) fn invoke<'v>(
+    pub(crate) fn invoke(
         &self,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,

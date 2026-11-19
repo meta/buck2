@@ -7,9 +7,9 @@
 # above-listed licenses.
 
 import importlib.resources
+import io
 import unittest
 from json import JSONDecodeError
-from pathlib import Path
 
 from .action_metadata import parse_action_metadata
 
@@ -26,8 +26,8 @@ class TestActionMetadata(unittest.TestCase):
         self.assertEqual(
             result,
             {
-                Path("repo/foo.txt"): "foo_digest",
-                Path("buck-out/bar.txt"): "bar_digest",
+                "repo/foo.txt": "foo_digest",
+                "buck-out/bar.txt": "bar_digest",
             },
         )
 
@@ -46,3 +46,23 @@ class TestActionMetadata(unittest.TestCase):
                 context.exception,
                 RuntimeError("Expected metadata version to be `1` got `2`."),
             )
+
+    def test_newer_version_is_rejected_even_when_shape_is_unchanged(self):
+        content = io.StringIO(
+            '{"version": 2, "digests": [{"path": "repo/foo.txt", "digest": "d"}]}'
+        )
+        with self.assertRaises(RuntimeError) as context:
+            _ = parse_action_metadata(content)
+        self.assertEqual(
+            str(context.exception),
+            "Expected metadata version to be `1` got `2`.",
+        )
+
+    def test_paths_are_keyed_by_the_string_buck_wrote(self):
+        content = io.StringIO(
+            '{"version": 1, "digests": ['
+            '{"path": "repo/foo.txt", "digest": "foo_digest"}]}'
+        )
+        result = parse_action_metadata(content)
+        self.assertEqual(result, {"repo/foo.txt": "foo_digest"})
+        self.assertIsInstance(next(iter(result)), str)

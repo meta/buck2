@@ -29,28 +29,28 @@ fn source_artifact() -> buck2_error::Result<()> {
                 a3 = source_artifact("foo/bar", "baz/quz.cpp")
                 a4 = source_artifact("foo/bar", "baz/file2")
 
-                assert_eq("<source foo/bar/baz/quz.h>", repr(a1))
+                assert_eq("<source artifact foo/bar/baz/quz.h>", repr(a1))
                 assert_eq("quz.h", a1.basename)
                 assert_eq("baz/quz.h", a1.short_path)
                 assert_eq(".h", a1.extension)
                 assert_eq(True, a1.is_source)
                 assert_eq(None, a1.owner)
 
-                assert_eq("<source foo/bar/baz/file1>", repr(a2))
+                assert_eq("<source artifact foo/bar/baz/file1>", repr(a2))
                 assert_eq("file1", a2.basename)
                 assert_eq("baz/file1", a2.short_path)
                 assert_eq("", a2.extension)
                 assert_eq(True, a2.is_source)
                 assert_eq(None, a2.owner)
 
-                assert_eq("<source foo/bar/baz/quz.cpp>", repr(a3))
+                assert_eq("<source artifact foo/bar/baz/quz.cpp>", repr(a3))
                 assert_eq("quz.cpp", a3.basename)
                 assert_eq("baz/quz.cpp", a3.short_path)
                 assert_eq(".cpp", a3.extension)
                 assert_eq(True, a3.is_source)
                 assert_eq(None, a3.owner)
 
-                assert_eq("<source foo/bar/baz/file2>", repr(a4))
+                assert_eq("<source artifact foo/bar/baz/file2>", repr(a4))
                 assert_eq("file2", a4.basename)
                 assert_eq("baz/file2", a4.short_path)
                 assert_eq("", a4.extension)
@@ -215,7 +215,7 @@ fn output_artifact() -> buck2_error::Result<()> {
                     for prop in dir(a):
                         assert_eq(True, hasattr(a, prop))
                         getattr(a, prop)
-                
+
                 # Check that output artifacts compare equal to each other but not their non-output
                 # versions
                 assert_eq(a1.as_output(), a1.as_output())
@@ -290,7 +290,7 @@ fn project_declared_artifact() -> buck2_error::Result<()> {
             r#"
             def test():
                 source = source_artifact("foo/bar", "src").project("baz.cpp")
-                assert_eq("<source foo/bar/src/baz.cpp>", repr(source))
+                assert_eq("<source artifact foo/bar/src/baz.cpp>", repr(source))
                 assert_eq("baz.cpp", source.basename)
                 assert_eq(".cpp", source.extension)
 
@@ -359,9 +359,9 @@ fn stringifies_for_command_line() -> buck2_error::Result<()> {
                 a3 = bound_artifact("//foo:bar", "baz/quz.cpp")
                 a4 = source_artifact("foo/bar", "baz/file2")
 
-                assert_eq_ignore_hash("buck-out/v2/gen/root/<HASH>/foo/__bar__/baz/quz.h", stringify_for_cli(a1))
+                assert_eq_ignore_hash("buck-out/v2/art/root/<HASH>/foo/__bar__/baz/quz.h", stringify_for_cli(a1))
                 assert_eq("foo/bar/baz/file1", stringify_for_cli(a2))
-                assert_eq_ignore_hash("buck-out/v2/gen/root/<HASH>/foo/__bar__/baz/quz.cpp", stringify_for_cli(a3))
+                assert_eq_ignore_hash("buck-out/v2/art/root/<HASH>/foo/__bar__/baz/quz.cpp", stringify_for_cli(a3))
                 assert_eq("foo/bar/baz/file2", stringify_for_cli(a4))
             "#
         ))

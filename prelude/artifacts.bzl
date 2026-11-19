@@ -22,11 +22,9 @@ ArtifactOutputs = record(
     # Single output. This is the artifact whose path would go into the resources
     # JSON when this artifact is used as a resource.
     default_output = field(Artifact),
-
     # Other artifacts which need to be present in order to run the resource as
     # an executable. This includes shared library dependencies and resources.
     nondebug_runtime_files = field(list[ArgLike]),
-
     # Other outputs that would be materialized if this artifact is the output of
     # a build, or generally in any context where a user might run this artifact
     # in a debugger.
@@ -69,8 +67,7 @@ def single_artifact(dep: Artifact | Dependency) -> ArtifactOutputs:
         info = dep[DefaultInfo]
         expect(
             len(info.default_outputs) == 1,
-            "expected exactly one default output from {} ({})"
-                .format(dep, info.default_outputs),
+            "expected exactly one default output from {} ({})".format(dep, info.default_outputs),
         )
         default_output = info.default_outputs[0]
         other_outputs = info.other_outputs
@@ -96,20 +93,24 @@ def unpack_artifacts(artifacts: list[Artifact | Dependency]) -> list[ArtifactOut
 
     for artifact in artifacts:
         if isinstance(artifact, Artifact):
-            out.append(ArtifactOutputs(
-                default_output = artifact,
-                nondebug_runtime_files = [],
-                other_outputs = [],
-            ))
+            out.append(
+                ArtifactOutputs(
+                    default_output = artifact,
+                    nondebug_runtime_files = [],
+                    other_outputs = [],
+                )
+            )
             continue
 
         if ArtifactGroupInfo in artifact:
             for artifact in artifact[ArtifactGroupInfo].artifacts:
-                out.append(ArtifactOutputs(
-                    default_output = artifact,
-                    nondebug_runtime_files = [],
-                    other_outputs = [],
-                ))
+                out.append(
+                    ArtifactOutputs(
+                        default_output = artifact,
+                        nondebug_runtime_files = [],
+                        other_outputs = [],
+                    )
+                )
             continue
 
         out.append(single_artifact(artifact))
@@ -151,9 +152,7 @@ def _as_arg(artifact: Artifact, sub_path: str | None) -> ArgLike:
         return artifact
     return cmd_args(artifact, format = "{{}}/{}".format(sub_path))
 
-def artifact_ext(
-        artifact: Artifact,
-        sub_path: str | None = None) -> ArtifactExt:
+def artifact_ext(artifact: Artifact, sub_path: str | None = None) -> ArtifactExt:
     return ArtifactExt(
         artifact = artifact,
         sub_path = sub_path,

@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _action(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(cmd_args(["sh", "-c", 'echo > "$1"', "--", out.as_output()]), category = "run")
     return [DefaultInfo(default_outputs = [out])]
 

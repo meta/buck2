@@ -103,14 +103,14 @@ async fn audit_output<'v>(
 
     let analysis = dice_ctx
         .get_analysis_result(&configured_target_label)
-        .await?
+        .await
         .require_compatible()?;
 
     Ok(FIND_MATCHING_ACTION.get()?(
         dice_ctx,
         working_dir,
         global_cfg_options,
-        &analysis,
+        analysis,
         short_path,
     )
     .await?
@@ -140,7 +140,7 @@ impl ServerAuditSubcommand for AuditOutputCommand {
         _client_ctx: ClientContext,
     ) -> buck2_error::Result<()> {
         Ok(server_ctx
-            .with_dice_ctx(|server_ctx, mut dice_ctx| async move {
+            .with_dice_ctx(|server_ctx, dice_ctx| async move {
                 // First, we parse the buck-out path to get a target label. Next, we configure the target
                 // label and run analysis on it to get the `DeferredTable`. Then, we iterate through the
                 // deferred table's entries and look at their build outputs (if they have any) to try to
@@ -149,16 +149,16 @@ impl ServerAuditSubcommand for AuditOutputCommand {
                 // matching build output, and print out the result.
 
                 let working_dir = server_ctx.working_dir();
-                let cell_resolver = dice_ctx.get_cell_resolver().await?;
+                let cell_resolver = dice_ctx.ctx().get_cell_resolver().await?;
 
                 let global_cfg_options = global_cfg_options_from_client_context(
                     &self.target_cfg.target_cfg(),
                     server_ctx,
-                    &mut dice_ctx,
+                    &mut dice_ctx.ctx(),
                 )
                 .await?;
 
-                let result = audit_output(&self.output_path, working_dir, cell_resolver.dupe(), &mut dice_ctx, &global_cfg_options).await?;
+                let result = audit_output(&self.output_path, working_dir, cell_resolver.dupe(), &mut dice_ctx.ctx(), &global_cfg_options).await?;
 
                 let mut stdout = stdout.as_writer();
 

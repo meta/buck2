@@ -29,7 +29,7 @@ use crate::codemap::FileSpan;
 use crate::eval::Evaluator;
 use crate::syntax::AstModule;
 use crate::values::dict::DictRef;
-use crate::values::layout::heap::heap_type::Heap;
+use crate::values::layout::heap::unfrozen::Heap;
 use crate::values::layout::value::Value;
 
 mod implementation;
@@ -139,11 +139,11 @@ impl Display for PathSegment {
 }
 
 impl PathSegment {
-    fn get<'v>(&self, v: &Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    fn get<'v>(&self, v: &Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match self {
-            PathSegment::Index(i) => v.at(heap.alloc(*i), heap).map_err(Into::into),
+            PathSegment::Index(i) => v.at(heap.alloc(*i).to_value(), heap),
             PathSegment::Attr(key) => v.get_attr_error(key.as_str(), heap),
-            PathSegment::Key(i) => v.at(heap.alloc(i.to_owned()), heap).map_err(Into::into),
+            PathSegment::Key(i) => v.at(heap.alloc(i.to_owned()).to_value(), heap),
         }
     }
 }
@@ -296,7 +296,7 @@ impl InspectVariableInfo {
         })
     }
 
-    fn try_from_struct_like<'v>(v: Value<'v>, heap: &'v Heap) -> crate::Result<Self> {
+    fn try_from_struct_like<'v>(v: Value<'v>, heap: Heap<'v>) -> crate::Result<Self> {
         Ok(Self {
             sub_values: v
                 .dir_attr()
@@ -310,12 +310,12 @@ impl InspectVariableInfo {
         })
     }
 
-    fn try_from_array_like<'v>(v: Value<'v>, heap: &'v Heap) -> crate::Result<Self> {
+    fn try_from_array_like<'v>(v: Value<'v>, heap: Heap<'v>) -> crate::Result<Self> {
         let len = v.length()?;
         Ok(Self {
             sub_values: (0..len)
                 .map(|i| {
-                    let index = heap.alloc(i);
+                    let index = heap.alloc(i).to_value();
                     v.at(index, heap)
                         .map(|v| Variable::from_value(PathSegment::Index(i), v))
                 })
@@ -324,7 +324,7 @@ impl InspectVariableInfo {
     }
 
     /// Trying to create InspectVariableInfo from a given starlark value
-    pub fn try_from_value<'v>(v: Value<'v>, heap: &'v Heap) -> crate::Result<Self> {
+    pub fn try_from_value<'v>(v: Value<'v>, heap: Heap<'v>) -> crate::Result<Self> {
         match v.get_type() {
             "dict" => Self::try_from_dict(
                 DictRef::from_value(v).ok_or(anyhow::Error::msg("not a dictionary"))?,
@@ -372,17 +372,21 @@ pub trait DapAdapter: Debug + Send + 'static {
     /// Gets the variables scope for a frame.
     ///
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Scopes>
-    fn scopes(&self) -> anyhow::Result<ScopesInfo>;
+    fn scopes(&self, frame_id: usize) -> anyhow::Result<ScopesInfo>;
 
-    /// Gets variables for the current scope
+    /// Gets variables for the given frame
     ///
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Variables>
-    fn variables(&self) -> anyhow::Result<VariablesInfo>;
+    fn variables(&self, frame_id: usize) -> anyhow::Result<VariablesInfo>;
 
-    /// Gets all child variables for the given access path
+    /// Gets all child variables for the given access path in the given frame
     ///
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Variables>
-    fn inspect_variable(&self, path: VariablePath) -> anyhow::Result<InspectVariableInfo>;
+    fn inspect_variable(
+        &self,
+        frame_id: usize,
+        path: VariablePath,
+    ) -> anyhow::Result<InspectVariableInfo>;
 
     /// Resumes execution.
     ///

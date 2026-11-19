@@ -7,7 +7,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-unsafe
 
 # credits to implementation in https://www.internalfb.com/code/fbsource/fbcode/eden/addons/build-tar.py
 
@@ -20,7 +19,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-
 import tempfile
 from typing import cast, List, Protocol
 
@@ -37,7 +35,7 @@ print_err = functools.partial(print, file=sys.stderr)
 glob_r = functools.partial(glob.glob, recursive=True)
 
 
-def run(command: List[str], cwd=None, env=None):
+def run(command: List[str], cwd=None, env=None) -> None:
     print_err(f"{cwd if cwd else ' '} $ {shlex.join(command)}")
 
     if env is not None:
@@ -48,7 +46,7 @@ def run(command: List[str], cwd=None, env=None):
     subprocess.run(command, shell=(os.name == "nt"), check=True, cwd=cwd, env=env)
 
 
-def copy_writable(src, dst, *, follow_symlinks=True):
+def copy_writable(src, dst, *, follow_symlinks=True) -> None:
     """shutil.copy, but ensure that yarn.lock is writable
     - RE might make src/ read-only with its "restrictive mode".
     - When copying the RE "restrictive" src/, yarn.lock is read-only.
@@ -59,7 +57,7 @@ def copy_writable(src, dst, *, follow_symlinks=True):
         os.chmod(dst, 0o666)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Creates a html from explain source.")
     parser.add_argument(
         "-o",
@@ -98,20 +96,31 @@ def main():
         args.src, tmp_src_path, dirs_exist_ok=True, copy_function=copy_writable
     )
 
-    env = {"YARN_YARN_OFFLINE_MIRROR": os.path.realpath(args.yarn_offline_mirror)}
-    run(
-        yarn
-        + [
-            "--cwd",
-            tmp_src_path,
-            "install",
-            "--offline",
-            "--frozen-lockfile",
-            "--ignore-scripts",
-            "--check-files",
-        ],
-        env=env,
-    )
+    offline_mirror = args.yarn_offline_mirror
+    # Resolving Buck's symlinked artifact points into Eden scratch on Windows.
+    if os.name != "nt":
+        offline_mirror = os.path.realpath(offline_mirror)
+    env = {"YARN_YARN_OFFLINE_MIRROR": offline_mirror}
+    # Yarn's default cache is shared by every yarn process on the host and has
+    # no cross-process locking, so concurrent installs corrupt it.
+    with tempfile.TemporaryDirectory(
+        prefix="yarn_cache", dir=args.tmp, ignore_cleanup_errors=True
+    ) as yarn_cache:
+        run(
+            yarn
+            + [
+                "--cwd",
+                tmp_src_path,
+                "install",
+                "--offline",
+                "--frozen-lockfile",
+                "--ignore-scripts",
+                "--check-files",
+                "--cache-folder",
+                yarn_cache,
+            ],
+            env=env,
+        )
 
     rm_rf(os.path.join(tmp_src_path, "dist"))
 

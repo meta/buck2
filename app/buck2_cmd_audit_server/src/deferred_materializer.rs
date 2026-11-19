@@ -15,7 +15,7 @@ use buck2_cli_proto::ClientContext;
 use buck2_cmd_audit_client::deferred_materializer::DeferredMaterializerCommand;
 use buck2_cmd_audit_client::deferred_materializer::DeferredMaterializerSubcommand;
 use buck2_error::BuckErrorContext;
-use buck2_execute::materialize::materializer::DeferredMaterializerIterItem;
+use buck2_execute::materialize::materializer::MaterializerIterItem;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use futures::stream::StreamExt;
@@ -32,10 +32,7 @@ impl ServerAuditSubcommand for DeferredMaterializerCommand {
     ) -> buck2_error::Result<()> {
         let mut stdout = stdout.as_writer();
 
-        let materializer = server_ctx.materializer();
-        let deferred_materializer = materializer
-            .as_deferred_materializer_extension()
-            .buck_error_context("Deferred materializer is not in use")?;
+        let deferred_materializer = server_ctx.materializer();
 
         match self.subcommand {
             DeferredMaterializerSubcommand::List => {
@@ -43,7 +40,7 @@ impl ServerAuditSubcommand for DeferredMaterializerCommand {
                     .iterate()
                     .buck_error_context("Failed to start iterating")?;
 
-                while let Some(DeferredMaterializerIterItem {
+                while let Some(MaterializerIterItem {
                     artifact_path,
                     artifact_display,
                     deps,
@@ -54,15 +51,6 @@ impl ServerAuditSubcommand for DeferredMaterializerCommand {
                     for (dep_path, dep_kind) in deps {
                         writeln!(stdout, "    {dep_path} {dep_kind}")?;
                     }
-                }
-            }
-            DeferredMaterializerSubcommand::ListSubscriptions => {
-                let mut stream = deferred_materializer
-                    .list_subscriptions()
-                    .buck_error_context("Failed to start listing subscriptions")?;
-
-                while let Some(path) = stream.next().await {
-                    writeln!(stdout, "{path}")?;
                 }
             }
             DeferredMaterializerSubcommand::Fsck => {

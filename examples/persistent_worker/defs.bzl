@@ -26,7 +26,7 @@ worker = rule(
 )
 
 def _demo_impl(ctx: AnalysisContext) -> list[Provider]:
-    output = ctx.actions.declare_output(ctx.label.name)
+    output = ctx.actions.declare_output(ctx.label.name, has_content_based_path = False)
     argfile = at_argfile(
         actions = ctx.actions,
         name = "demo." + ctx.label.name + ".args",

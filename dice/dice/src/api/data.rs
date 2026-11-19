@@ -9,9 +9,9 @@
  */
 
 //!
-//! Dice allows users to attach a set of immutable data when constructing it. These data are for
-//! users to attach context information for computations to use. These values are NOT tracked by
-//! Dice. They are obtained synchronously.
+//! Dice allows users to attach immutable data to the engine or to a root. These data are
+//! context information for computations to use. These values are NOT tracked by Dice. They are
+//! obtained synchronously.
 //!
 //! To attach data to Dice, you can implement a trait on DiceData, and use the methods to retrieve
 //! values itself as the key for setting values.

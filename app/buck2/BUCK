@@ -7,44 +7,42 @@ oncall("build_infra")
 
 prelude = native
 
+# Opt-in allocation-site fragmentation profiler (facebook/mem_frag). Enable with
+# `-c buck2_dev.memfrag=true`; off by default so normal builds are unaffected.
+_memfrag = read_config("buck2_dev", "memfrag", "") == "true"
+
 rust_library(
     name = "buck2",
     srcs = glob(["src/**/*.rs"]),
-    os_deps = [
-        (
-            "linux",
-            [
-                "fbsource//third-party/rust:dirs",
-                "fbsource//third-party/rust:libc",
-                "fbsource//third-party/rust:nix",
-                "//buck2/app/buck2_forkserver:buck2_forkserver",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "fbsource//third-party/rust:dirs",
-                "fbsource//third-party/rust:libc",
-                "fbsource//third-party/rust:nix",
-                "//buck2/app/buck2_forkserver:buck2_forkserver",
-            ],
-        ),
-        (
-            "windows",
-            [
-                "fbsource//third-party/rust:winapi",
-            ],
-        ),
-    ],
+    # Cargo-only deps used in `bin/buck2.rs` under `#[cfg(not(buck_build))]`.
+    # On linux/macos cargo uses jemalloc as the global allocator; buck builds
+    # rely on fbcode.default_allocator instead.
+    autocargo = {
+        "cargo_toml_config": {
+            "extra_buck_dependencies": {
+                "dependencies": [
+                    (None, "//common/rust/shed/fbinit:fbinit"),
+                    "fbsource//third-party/rust:fbinit",
+                ],
+                "target": {
+                    '\'cfg(any(target_os = "linux", target_os = "macos"))\'': {
+                        "dependencies": [
+                            "fbsource//third-party/rust:jemallocator",
+                        ],
+                    },
+                },
+            },
+            "extra_check_cfgs": ["cfg(buck2_memfrag)"],
+        },
+    },
     rustc_flags = select({
-        ":buck2_client_only_build": ["--cfg=client_only"],
+        ":buck2_client_only_setting[build]": ["--cfg=client_only"],
         "DEFAULT": [],
     }),
     deps = [
         "fbsource//third-party/rust:backtrace",
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:tokio",
-        "fbsource//third-party/rust:tracing",
         "//buck2/app/buck2_client:buck2_client",
         "//buck2/app/buck2_client_ctx:buck2_client_ctx",
         "//buck2/app/buck2_cmd_audit_client:buck2_cmd_audit_client",
@@ -61,16 +59,38 @@ rust_library(
         "//buck2/app/buck2_event_observer:buck2_event_observer",
         "//buck2/app/buck2_events:buck2_events",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
+        "//buck2/app/buck2_settings:buck2_settings",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",
         "//buck2/gazebo/dupe:dupe",
+        "//buck2/superconsole:superconsole",
         "//common/rust/shed/fbinit:fbinit",
-    ] + select({
-        ":buck2_client_only_build": [],
+    ]
+    + select({
+        ":buck2_client_only_setting[build]": [],
         "DEFAULT": [
             "//buck2/app/buck2_daemon:buck2_daemon",
             "//buck2/app/buck2_server:buck2_server",
             "//buck2/app/buck2_test_runner:buck2_test_runner",
+        ],
+    })
+    + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:dirs",
+            "fbsource//third-party/rust:libc",
+            "fbsource//third-party/rust:nix",
+            "//buck2/app/buck2_forkserver:buck2_forkserver",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:dirs",
+            "fbsource//third-party/rust:libc",
+            "fbsource//third-party/rust:nix",
+            "//buck2/app/buck2_forkserver:buck2_forkserver",
+        ],
+        "ovr_config//os:windows": [
+            "fbsource//third-party/rust:windows-sys",
         ],
     }),
 )
@@ -91,8 +111,13 @@ buck_rust_binary(
         # This config value is set by the upload script, and controls the output of `--internal-version` on windows
         "BUCK2_WIN_INTERNAL_VERSION": read_config("buck", "win_internal_version", ""),
     },
-    rustc_flags = select({
-        ":buck2_client_only_build": ["--cfg=client_only"],
+    # Set via -c buck2.emit_relocs=true in the deploy script to produce a
+    # binary with ELF relocations for BOLT post-link optimization.
+    linker_flags = ["-Wl,--emit-relocs"] if read_config("buck2", "emit_relocs", "") == "true" else [],
+    # @oss-disable[end= ]: pgo = "//buck2/facebook/pgo:pgo",
+    rustc_flags = (["--cfg=buck2_memfrag"] if _memfrag else [])
+    + select({
+        ":buck2_client_only_setting[build]": ["--cfg=client_only"],
         "DEFAULT": [],
     }),
     unittests = False,
@@ -109,13 +134,16 @@ buck_rust_binary(
         "//buck2/app/buck2_fs:buck2_fs",
         "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",
         "//buck2/gazebo/dupe:dupe",
-    ] + select({
+        "//buck2/superconsole:superconsole",
+    ]
+    + select({
         "DEFAULT": [],
         "ovr_config//os:windows": [
             "fbsource//third-party/rust:mimalloc",
         ],
-    }) + select({
-        ":buck2_client_only_build": [],
+    })
+    + select({
+        ":buck2_client_only_setting[build]": [],
         "DEFAULT": [
             "//buck2/app/buck2_action_impl:buck2_action_impl",
             "//buck2/app/buck2_analysis:buck2_analysis",
@@ -126,6 +154,7 @@ buck_rust_binary(
             "//buck2/app/buck2_cfg_constructor:buck2_cfg_constructor",
             "//buck2/app/buck2_cmd_audit_server:buck2_cmd_audit_server",
             "//buck2/app/buck2_cmd_docs_server:buck2_cmd_docs_server",
+            "//buck2/app/buck2_cmd_lsp_server:buck2_cmd_lsp_server",
             "//buck2/app/buck2_cmd_query_server:buck2_cmd_query_server",
             "//buck2/app/buck2_cmd_starlark_server:buck2_cmd_starlark_server",
             "//buck2/app/buck2_cmd_targets_server:buck2_cmd_targets_server",
@@ -133,25 +162,34 @@ buck_rust_binary(
             "//buck2/app/buck2_external_cells:buck2_external_cells",
             "//buck2/app/buck2_interpreter_for_build:buck2_interpreter_for_build",
             "//buck2/app/buck2_query_impls:buck2_query_impls",
+            "//buck2/app/buck2_server:buck2_server",
             "//buck2/app/buck2_server_commands:buck2_server_commands",
             "//buck2/app/buck2_test:buck2_test",
             "//buck2/app/buck2_transition:buck2_transition",
             "//buck2/app/buck2_validation:buck2_validation",
         ],
-    }),
+    })
+    + (
+        [
+            "//buck2/facebook/mem_frag:mem_frag",
+        ]
+        if _memfrag
+        else []
+    ),
 )
 
 platform_utils = None # @oss-enable
 
 _dtp = platform_utils.get_cxx_platform_for_base_path(prelude.package_name()).target_platform if platform_utils else None
 
-prelude.constraint_setting(
+constraint(
     name = "buck2_client_only_setting",
-)
-
-prelude.constraint_value(
-    name = "buck2_client_only_build",
-    constraint_setting = ":buck2_client_only_setting",
+    default = "unspecified",
+    values = [
+        "build",
+        "unspecified",
+    ],
+    visibility = ["PUBLIC"],
 )
 
 buck2_client_transition_alias(

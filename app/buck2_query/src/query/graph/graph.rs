@@ -68,6 +68,55 @@ impl<N: LabeledNode> GraphBuilder<N> {
         }
     }
 
+    /// Like `build` but but drops missing nodes and edges pointing to them.
+    fn build_dropping_missing(self) -> Graph<N> {
+        let GraphBuilder {
+            mut node_to_index,
+            nodes,
+        } = self;
+
+        // Old index -> new (compacted) index, for populated nodes only.
+        let mut old_to_new: VecAsMap<u32> = VecAsMap::default();
+        let mut new_len = 0u32;
+        for old_index in 0..(nodes.vec.len() as u32) {
+            if nodes.contains_key(old_index) {
+                old_to_new.insert(old_index, new_len);
+                new_len += 1;
+            }
+        }
+
+        let new_nodes: Vec<GraphNode<N>> = nodes
+            .vec
+            .into_iter()
+            .flatten()
+            .map(|mut node| {
+                node.children
+                    .retain_mut(|child| match old_to_new.get(*child) {
+                        Some(new_child) => {
+                            *child = *new_child;
+                            true
+                        }
+                        None => false,
+                    });
+                node
+            })
+            .collect();
+        assert_eq!(new_nodes.len(), new_len as usize);
+
+        node_to_index.retain(|_, index| match old_to_new.get(*index) {
+            Some(new_index) => {
+                *index = *new_index;
+                true
+            }
+            None => false,
+        });
+
+        Graph {
+            nodes: new_nodes,
+            node_to_index,
+        }
+    }
+
     fn get_or_create_node(&mut self, node: &N::Key) -> u32 {
         let node = Hashed::new(node);
         let new_index = self.node_to_index.len();
@@ -97,22 +146,31 @@ impl<T: LabeledNode> Graph<T> {
     /// Build the graph by traversing the nodes in `root` and their children.
     ///
     /// Resulting graph have node indices assigned non-deterministically.
+    ///
+    /// With `allow_partial_graph`, a node that fails to load (or whose
+    /// children cannot be enumerated) is skipped instead of aborting and the
+    /// returned graph omits those nodes and any edges pointing at them.
     pub(crate) async fn build(
         nodes: &impl AsyncNodeLookup<T>,
         root: impl IntoIterator<Item = T::Key>,
         successors: impl AsyncChildVisitor<T>,
+        allow_partial_graph: bool,
     ) -> buck2_error::Result<Graph<T>> {
         let mut graph = GraphBuilder::<T> {
             nodes: VecAsMap::default(),
             node_to_index: UnorderedMap::default(),
         };
+        // Set when `allow_partial_graph` skips a node, so we know to drop the
+        // resulting holes (and edges into them) when finalizing the graph.
+        let mut had_failures = false;
 
         // Map from node to parent node.
         let mut visited: VecAsMap<Option<u32>> = VecAsMap::default();
         let mut push = |queue: &mut FuturesUnordered<_>,
                         target_ref: &T::Key,
                         target_index: u32,
-                        parent: Option<u32>| {
+                        parent: Option<u32>,
+                        requester: Option<&T::Key>| {
             if visited.contains_key(target_index) {
                 return;
             }
@@ -120,9 +178,10 @@ impl<T: LabeledNode> Graph<T> {
             visited.insert(target_index, parent);
 
             let target_ref = target_ref.clone();
+            let requester = requester.cloned();
 
             queue.push(async move {
-                let result = nodes.get(&target_ref).await;
+                let result = nodes.get_from(&target_ref, requester.as_ref()).await;
                 (target_index, result)
             })
         };
@@ -131,7 +190,7 @@ impl<T: LabeledNode> Graph<T> {
 
         for target in root {
             let index = graph.get_or_create_node(&target);
-            push(&mut queue, &target, index, None);
+            push(&mut queue, &target, index, None, None);
         }
 
         // TODO(cjhopman): FuturesOrdered/Unordered interacts poorly with tokio cooperative scheduling
@@ -152,7 +211,13 @@ impl<T: LabeledNode> Graph<T> {
                             .unwrap()
                             .children
                             .push(child_index);
-                        push(&mut queue, child, child_index, Some(target_index));
+                        push(
+                            &mut queue,
+                            child,
+                            child_index,
+                            Some(target_index),
+                            Some(node.node_key()),
+                        );
                         Ok(())
                     })
                     .await?;
@@ -164,6 +229,11 @@ impl<T: LabeledNode> Graph<T> {
                     .shrink_to_fit();
             };
             if let Err(mut e) = result {
+                if allow_partial_graph {
+                    had_failures = true;
+                    tracing::trace!("query allow-partial-graph: skipping node due to error: {e:#}");
+                    continue;
+                }
                 let mut target = target_index;
                 while let Some(Some(parent_index)) = visited.get(target) {
                     match graph.nodes.get(*parent_index) {
@@ -185,7 +255,11 @@ impl<T: LabeledNode> Graph<T> {
             }
         }
 
-        Ok(graph.build())
+        if had_failures {
+            Ok(graph.build_dropping_missing())
+        } else {
+            Ok(graph.build())
+        }
     }
 
     /// Build graph with nodes laid out in stable DFS order.
@@ -193,10 +267,18 @@ impl<T: LabeledNode> Graph<T> {
         nodes: &impl AsyncNodeLookup<T>,
         root: impl IntoIterator<Item = T::Key>,
         successors: impl AsyncChildVisitor<T>,
+        allow_partial_graph: bool,
     ) -> buck2_error::Result<Graph<T>> {
         let root = root.into_iter().collect::<Vec<_>>();
-        let graph = Self::build(nodes, root.iter().cloned(), successors).await?;
-        let root = root.into_iter().map(|n| graph.node_to_index[&n]);
+        let graph =
+            Self::build(nodes, root.iter().cloned(), successors, allow_partial_graph).await?;
+        // A root may have been dropped from the graph if it failed to load
+        // under `allow_partial_graph`; skip it. Every node still in the graph
+        // remains reachable from a surviving root, so the post-DFS length
+        // assert still holds.
+        let root = root
+            .into_iter()
+            .filter_map(|n| graph.node_to_index.get(&n).copied());
         let mut old_to_new: VecAsMap<u32> = VecAsMap::default();
 
         let mut new_index = 0;
@@ -294,7 +376,11 @@ impl<T: LabeledNode> Graph<T> {
         mut visitor: impl FnMut(&T) -> buck2_error::Result<()>,
     ) -> buck2_error::Result<()> {
         dfs_postorder_impl::<_, VecAsSet>(
-            root.into_iter().map(|root| self.node_to_index[&root]),
+            // A root absent from the graph (e.g. dropped under
+            // `allow_partial_graph`) is skipped rather than panicking on a
+            // missing index.
+            root.into_iter()
+                .filter_map(|root| self.node_to_index.get(&root).copied()),
             GraphSuccessorsImpl { graph: self },
             |index| visitor(&self.nodes[index as usize].node),
         )
@@ -429,6 +515,7 @@ mod tests {
             Successors {
                 edges: edges.to_vec(),
             },
+            false, // allow_partial_graph
         )
         .await
         .unwrap()

@@ -8,21 +8,29 @@
  * above-listed licenses.
  */
 
-use buck2_core::buck2_env;
 #[cfg(target_os = "macos")]
 use buck2_error::conversion::from_any_with_tag;
+use buck2_settings::MacosQosClass;
 
-/// Buck2 sets priority class = utility on macOS.
-///
-/// To disable this behavior, set this variable to `true`.
-///
-/// To experiment with other priority classes, set this variable to `true`,
-/// and start `buck2` daemon like `taskpolicy -c utility buck2 ...`.
-fn enable_macos_qos() -> buck2_error::Result<bool> {
-    Ok(!buck2_env!("BUCK2_DISABLE_MACOS_QOS", bool)?)
+/// The `libc::qos_class_t` for a class the daemon can be spawned with. Higher
+/// classes (`user_interactive`, `user_initiated`) and the sentinel values
+/// (`default`, `unspecified`) are rejected by `posix_spawnattr_set_qos_class_np`
+/// with `EINVAL`, which is why the setting only offers these two.
+#[cfg(target_os = "macos")]
+fn to_qos_class_t(qos_class: MacosQosClass) -> buck2_error::Result<libc::qos_class_t> {
+    match qos_class {
+        MacosQosClass::Utility => Ok(libc::qos_class_t::QOS_CLASS_UTILITY),
+        MacosQosClass::Background => Ok(libc::qos_class_t::QOS_CLASS_BACKGROUND),
+        MacosQosClass::SkipLowering => Err(buck2_error::internal_error!(
+            "SkipLowering should not reach do_lower_priority"
+        )),
+    }
 }
 
-pub(crate) fn daemon_lower_priority(skip_macos_qos_flag: bool) -> buck2_error::Result<()> {
+pub(crate) fn daemon_lower_priority(
+    skip_macos_qos_flag: bool,
+    macos_qos_class: Option<MacosQosClass>,
+) -> buck2_error::Result<()> {
     if skip_macos_qos_flag {
         // Either:
         // * we already lowered priority or
@@ -30,10 +38,15 @@ pub(crate) fn daemon_lower_priority(skip_macos_qos_flag: bool) -> buck2_error::R
         return Ok(());
     }
 
-    if cfg!(target_os = "macos") && enable_macos_qos()? {
-        #[cfg(target_os = "macos")]
-        {
-            do_lower_priority()?;
+    let qos_class = macos_qos_class.unwrap_or(MacosQosClass::Utility);
+
+    match qos_class {
+        MacosQosClass::SkipLowering => {}
+        MacosQosClass::Utility | MacosQosClass::Background => {
+            #[cfg(target_os = "macos")]
+            {
+                do_lower_priority(qos_class)?;
+            }
         }
     }
     Ok(())
@@ -53,7 +66,7 @@ pub(crate) fn daemon_lower_priority(skip_macos_qos_flag: bool) -> buck2_error::R
 ///
 /// This function never return `Ok`.
 #[cfg(target_os = "macos")]
-fn do_lower_priority() -> buck2_error::Result<()> {
+fn do_lower_priority(qos_class: MacosQosClass) -> buck2_error::Result<()> {
     use std::env;
     use std::ffi::CString;
     use std::io;
@@ -129,10 +142,7 @@ fn do_lower_priority() -> buck2_error::Result<()> {
                 .buck_error_context("posix_spawnattr_setflags");
         }
 
-        let r = posix_spawnattr_set_qos_class_np(
-            &mut spawnattr.0,
-            libc::qos_class_t::QOS_CLASS_UTILITY,
-        );
+        let r = posix_spawnattr_set_qos_class_np(&mut spawnattr.0, to_qos_class_t(qos_class)?);
 
         if r != 0 {
             return Err(io::Error::from_raw_os_error(r))

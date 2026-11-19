@@ -8,10 +8,13 @@
  * above-listed licenses.
  */
 
+use std::fmt::Write;
+
 use async_trait::async_trait;
 use buck2_cli_proto::CounterWithExamples;
 use buck2_cli_proto::TestRequest;
 use buck2_cli_proto::TestSessionOptions;
+use buck2_cli_proto::test_executor::test_executor_error;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::common::CommonBuildConfigurationOptions;
@@ -29,19 +32,19 @@ use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::final_console::FinalConsole;
 use buck2_client_ctx::output_destination_arg::OutputDestinationArg;
 use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::stdio::eprint_line;
 use buck2_client_ctx::streaming::StreamingCommand;
 use buck2_client_ctx::subscribers::superconsole::test::TestCounterColumn;
 use buck2_client_ctx::subscribers::superconsole::test::span_from_build_failure_count;
 use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::ExitCode;
-use buck2_error::buck2_error;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::working_dir::AbsWorkingDir;
 use superconsole::Line;
 use superconsole::Span;
 
+use crate::commands::build::print_buck_ui;
 use crate::commands::build::print_build_result;
 
 fn forward_output_to_path(
@@ -50,6 +53,8 @@ fn forward_output_to_path(
     working_dir: &AbsWorkingDir,
 ) -> buck2_error::Result<()> {
     fs_util::write(path_arg.resolve(working_dir), output)
+        // input path from --test-executor-stderr=FILEPATH
+        .categorize_input()
         .buck_error_context("Failed to write test executor output to path")
 }
 
@@ -73,6 +78,44 @@ fn print_error_counter(
     }
     Ok(())
 }
+
+/// Whether no test ran. Omitted tests did not run.
+fn no_tests_ran(statuses: &buck2_cli_proto::test_response::TestStatuses) -> bool {
+    [
+        &statuses.passed,
+        &statuses.failed,
+        &statuses.timed_out,
+        &statuses.fatals,
+        &statuses.skipped,
+        &statuses.infra_failure,
+    ]
+    .into_iter()
+    .flatten()
+    .all(|counter| counter.count == 0)
+}
+
+/// Check if we should warn about potentially misplaced --include/--exclude flags.
+/// Returns Some(suspicious_labels) if warning should be shown, where suspicious_labels
+/// are label values that look like they might be target patterns (contain '/' or ':').
+fn should_warn_about_flag_position(
+    patterns: &[String],
+    include: &[String],
+    exclude: &[String],
+) -> Option<Vec<String>> {
+    if patterns.is_empty() && (!include.is_empty() || !exclude.is_empty()) {
+        let suspicious_labels: Vec<String> = include
+            .iter()
+            .chain(exclude.iter())
+            .filter(|label| label.contains('/') || label.contains(':'))
+            .cloned()
+            .collect();
+
+        Some(suspicious_labels)
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, clap::Parser)]
 #[clap(name = "test", about = "Build and test the specified targets")]
 pub struct TestCommand {
@@ -87,7 +130,7 @@ pub struct TestCommand {
         long = "include",
         alias = "labels",
         help = "Labels on targets to include from tests. Prefixing with `!` means to exclude. First match wins unless overridden by `always-exclude` flag.\n\
-If include patterns are present, regardless of whether exclude patterns are present, then all targets are by default excluded unless explicitly included.",
+If any include pattern without a `!` prefix is present, regardless of whether exclude patterns are present, then all targets are by default excluded unless explicitly included. Include patterns that all carry a `!` prefix only exclude.",
         num_args=1..,
     )]
     include: Vec<String>,
@@ -154,21 +197,27 @@ If include patterns are present, regardless of whether exclude patterns are pres
     #[clap(name = "TEST_EXECUTOR_ARGS", raw = true)]
     test_executor_args: Vec<String>,
 
-    /// Also build DefaultInfo provider, which is what `buck2 build` command builds (this is not the default)
+    /// Also build DefaultInfo provider, which is what `buck2 build` builds.
+    ///
+    /// This overrides the `buck2.test_builds_targets` buckconfig.
     #[clap(long, group = "default-info")]
     build_default_info: bool,
 
-    /// Do not build DefaultInfo provider (this is the default)
-    #[allow(unused)]
+    /// Do not build DefaultInfo provider.
+    ///
+    /// This overrides the `buck2.test_builds_targets` buckconfig.
     #[clap(long, group = "default-info")]
     skip_default_info: bool,
 
-    /// Also build RunInfo provider, which builds artifacts needed for `buck2 run` (this is not the default)
+    /// Also build RunInfo provider, which builds artifacts needed for `buck2 run`.
+    ///
+    /// This overrides the `buck2.test_builds_targets` buckconfig.
     #[clap(long, group = "run-info")]
     build_run_info: bool,
 
-    /// Do not build RunInfo provider (this is the default)
-    #[allow(unused)]
+    /// Do not build RunInfo provider.
+    ///
+    /// This overrides the `buck2.test_builds_targets` buckconfig.
     #[clap(long, group = "run-info")]
     skip_run_info: bool,
 
@@ -189,6 +238,10 @@ If include patterns are present, regardless of whether exclude patterns are pres
     #[clap(flatten)]
     timeout_options: CommonTimeoutOptions,
 
+    /// Write the test session ID into this file
+    #[clap(long, value_name = "PATH")]
+    write_test_id: Option<PathArg>,
+
     #[clap(flatten)]
     common_opts: CommonCommandOptions,
 }
@@ -204,7 +257,60 @@ impl StreamingCommand for TestCommand {
         ctx: &mut ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
+        // Warn if no target patterns but label filters are set
+        // This usually means the patterns were accidentally consumed as label values
+        // NOTE: maybe these should accept just one arg, but that probably breaks users who
+        // are doing buck test //... --include myproject myproject2
+        if let Some(suspicious_labels) =
+            should_warn_about_flag_position(&self.patterns, &self.include, &self.exclude)
+        {
+            let console = self.common_opts.console_opts.final_console();
+
+            let mut message = String::new();
+            writeln!(
+                &mut message,
+                "No target patterns specified, but --include/--exclude flags are set."
+            )
+            .unwrap();
+            writeln!(
+                &mut message,
+                "This is likely a mistake: put targets first, then --include/--exclude, since include/exclude consume all remaining args"
+            ).unwrap();
+            if !suspicious_labels.is_empty() {
+                writeln!(
+                    &mut message,
+                    "hint: The following requested labels look like target patterns: {sus}\n\
+                    hint: Try putting them before --include/--exclude.\n\
+                    hint: For example: buck2 test //foo --include mylabel",
+                    sus = suspicious_labels
+                        .iter()
+                        .map(|s| format!("'{}'", s))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+                .unwrap();
+            }
+            console.print_warning(&message)?;
+        }
+
         let context = ctx.client_context(matches, &self)?;
+
+        let build_default_info = if self.skip_default_info {
+            Some(false)
+        } else if self.build_default_info {
+            Some(true)
+        } else {
+            None
+        };
+
+        let build_run_info = if self.skip_run_info {
+            Some(false)
+        } else if self.build_run_info {
+            Some(true)
+        } else {
+            None
+        };
+
         let response = buckd
             .with_flushing()
             .test(
@@ -228,8 +334,8 @@ impl StreamingCommand for TestCommand {
                     }),
                     timeout: self.timeout_options.overall_timeout()?,
                     ignore_tests_attribute: self.ignore_tests_attribute,
-                    build_default_info: self.build_default_info,
-                    build_run_info: self.build_run_info,
+                    build_default_info,
+                    build_run_info,
                 },
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),
@@ -245,38 +351,34 @@ impl StreamingCommand for TestCommand {
         let listing_failed = statuses
             .listing_failed
             .as_ref()
-            .buck_error_context("Missing `listing_failed`")?;
-        let passed = statuses
-            .passed
-            .as_ref()
-            .buck_error_context("Missing `passed`")?;
+            .internal_error("Missing `listing_failed`")?;
         let failed = statuses
             .failed
             .as_ref()
-            .buck_error_context("Missing `failed`")?;
+            .internal_error("Missing `failed`")?;
+        let timeout = statuses
+            .timed_out
+            .as_ref()
+            .internal_error("Missing `timed_out`")?;
         let fatals = statuses
             .fatals
             .as_ref()
-            .buck_error_context("Missing `fatals`")?;
-        let skipped = statuses
-            .skipped
-            .as_ref()
-            .buck_error_context("Missing `skipped`")?;
-        let omitted = statuses
-            .omitted
-            .as_ref()
-            .buck_error_context("Missing `omitted`")?;
+            .internal_error("Missing `fatals`")?;
         let infra_failure = statuses
             .infra_failure
             .as_ref()
-            .buck_error_context("Missing `infra failure`")?;
+            .internal_error("Missing `infra failure`")?;
 
         let console = self.common_opts.console_opts.final_console();
-        print_build_result(&console, &response.errors)?;
+        print_build_result(&console, &response.build_errors)?;
+        print_build_result(&console, &response.test_errors)?;
 
-        if statuses.build_errors != 0 {
-            console.print_error(&format!("{} BUILDS FAILED", statuses.build_errors))?;
+        let build_error_count: u64 = response.build_errors.len().try_into()?;
+        if build_error_count != 0 {
+            console.print_error(&format!("{} BUILDS FAILED", build_error_count))?;
         }
+
+        print_buck_ui(&console, ctx, events_ctx.used_superconsole)?;
 
         let mut line = Line::default();
         line.push(Span::new_unstyled_lossy("Tests finished: "));
@@ -287,6 +389,7 @@ impl StreamingCommand for TestCommand {
         let columns = [
             TestCounterColumn::PASS,
             TestCounterColumn::FAIL,
+            TestCounterColumn::TIMEOUT,
             TestCounterColumn::FATAL,
             TestCounterColumn::SKIP,
             TestCounterColumn::OMIT,
@@ -296,22 +399,16 @@ impl StreamingCommand for TestCommand {
             line.push(column.to_span_from_test_statuses(statuses)?);
             line.push(Span::new_unstyled_lossy(". "));
         }
-        line.push(span_from_build_failure_count(statuses.build_errors)?);
-        eprint_line(&line)?;
+        line.push(span_from_build_failure_count(build_error_count)?);
+        console.print_line(&line)?;
 
         print_error_counter(&console, listing_failed, "LISTINGS FAILED", "⚠")?;
         print_error_counter(&console, failed, "TESTS FAILED", "✗")?;
+        print_error_counter(&console, timeout, "TESTS TIMED OUT", "⏱")?;
         print_error_counter(&console, fatals, "TESTS FATALS", "⚠")?;
         print_error_counter(&console, infra_failure, "TESTS Infra Failed", "🛠")?;
 
-        if passed.count
-            + failed.count
-            + fatals.count
-            + skipped.count
-            + omitted.count
-            + infra_failure.count
-            == 0
-        {
+        if no_tests_ran(statuses) {
             console.print_warning("NO TESTS RAN")?;
         }
 
@@ -334,9 +431,18 @@ impl StreamingCommand for TestCommand {
             buck2_client_ctx::println!("{}", build_report)?;
         }
 
-        let exit_result = if let Some(exit_code) = response.exit_code {
+        let exit_result = if !response.build_errors.is_empty() {
+            // If we had build errors return their exit code.
+            ExitResult::from_command_result_errors(response.build_errors)
+        } else {
+            let mut errors = response.test_errors;
+            // Create an error if executor returned non-zero exit code.
+            // Error is for tagging and categorization only, not shown to user.
+            if let Some(error) = test_executor_error(response.executor_exit_code, statuses) {
+                errors.push((&error).into());
+            }
             // If exit code is set in response, it should be used and not derived from command errors.
-            let exit_code = if let Ok(code) = exit_code.try_into() {
+            let exit_code = if let Ok(code) = response.executor_exit_code.try_into() {
                 match code {
                     0 => ExitCode::Success,
                     _ => ExitCode::TestRunner(code),
@@ -345,18 +451,7 @@ impl StreamingCommand for TestCommand {
                 // The exit code isn't an allowable value, so just switch to generic failure
                 ExitCode::UnknownFailure
             };
-            ExitResult::status_with_emitted_errors(exit_code, response.errors)
-        } else if !response.errors.is_empty() {
-            // If we had build errors return their exit code.
-            ExitResult::from_command_result_errors(response.errors)
-        } else {
-            // But if we had no build errors, and Tpx did not provide an exit code, then that's
-            // going to be an error.
-            buck2_error!(
-                ErrorTag::TestExecutor,
-                "Test executor did not provide an exit code"
-            )
-            .into()
+            ExitResult::status_with_emitted_errors(exit_code, errors)
         };
 
         match self.test_executor_stdout {
@@ -385,5 +480,61 @@ impl StreamingCommand for TestCommand {
 
     fn starlark_opts(&self) -> &CommonStarlarkOptions {
         &self.common_opts.starlark_opts
+    }
+
+    fn write_test_id(&self) -> &Option<PathArg> {
+        &self.write_test_id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_warn_when_no_patterns_with_include() {
+        let result = should_warn_about_flag_position(&[], &["some_label".to_owned()], &[])
+            .expect("should warn");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_warn_when_no_patterns_with_exclude() {
+        let result = should_warn_about_flag_position(&[], &[], &["some_label".to_owned()])
+            .expect("should warn");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_warn_detects_suspicious_target_pattern_with_slashes() {
+        let result = should_warn_about_flag_position(
+            &[],
+            &["some_label".to_owned(), "//foobar/...".to_owned()],
+            &["//foobar2/...".to_owned(), "//foobar2:".to_owned()],
+        )
+        .expect("should warn");
+
+        assert_eq!(result, vec!["//foobar/...", "//foobar2/...", "//foobar2:"]);
+    }
+
+    #[test]
+    fn test_no_warn_when_patterns_present() {
+        let result = should_warn_about_flag_position(
+            &["//target/...".to_owned()],
+            &["some_label".to_owned()],
+            &["some_other_label".to_owned()],
+        );
+
+        assert!(
+            result.is_none(),
+            "Should not warn when patterns are present"
+        );
+    }
+
+    #[test]
+    fn test_no_warn_when_nothing_specified() {
+        let result = should_warn_about_flag_position(&[], &[], &[]);
+
+        assert!(result.is_none(), "Should not warn when nothing specified");
     }
 }

@@ -10,10 +10,12 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import javax.lang.model.SourceVersion;
 import org.objectweb.asm.Opcodes;
 
 /** Utility methods for working with source versions. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class SourceVersionUtils {
   /** Gets the class file version corresponding to the given source version constant. */
   public static int sourceVersionToClassFileVersion(SourceVersion version) {

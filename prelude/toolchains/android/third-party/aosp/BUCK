@@ -5,49 +5,22 @@ oncall("android_devxx")
 
 source_listing()
 
-APK_BUILDER_SRCS = ["src/com/android/common/sdklib/**/*.java"]
-
-SDK_CONSTANTS_SRCS = ["src/com/android/common/SdkConstants.java"]
-
 buck_java_library(
     name = "aosp",
-    srcs = glob(
-        ["src/**/*.java"],
-        exclude = APK_BUILDER_SRCS + SDK_CONSTANTS_SRCS,
-    ),
-    extra_arguments = [
-        "--add-exports",
-        "java.base/sun.security.pkcs=ALL-UNNAMED",
-        "--add-exports",
-        "java.base/sun.security.x509=ALL-UNNAMED",
-    ],
-    licenses = [
-        "LICENSE",
-        "NOTICE",
-    ],
-    required_for_source_only_abi = True,
-    visibility = ["PUBLIC"],
-    deps = [
-        "prelude//toolchains/android/third-party:android-annotations",
-        "prelude//toolchains/android/third-party:gson",
-        "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:sdklib",
-        ":sdk_constants",
+    visibility = [
+        "prelude//toolchains/android/src/com/facebook/buck/android/manifest:manifest",
+        "prelude//toolchains/android/src/com/facebook/buck/cli/bootstrapper:bootstrapper_lib",
     ],
     exported_deps = [
-        ":sdk_constants",
+        "prelude//toolchains/android/third-party:android-annotations",
+        "prelude//toolchains/android/third-party:android-common",
+        "prelude//toolchains/android/third-party:gson",
+        "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:kotlin-stdlib",
+        "prelude//toolchains/android/third-party:manifest-merger",
+        "prelude//toolchains/android/third-party:sdk-common",
+        "prelude//toolchains/android/third-party:sdklib",
     ],
-)
-
-buck_java_library(
-    name = "sdk_constants",
-    srcs = SDK_CONSTANTS_SRCS,
-    licenses = [
-        "LICENSE",
-        "NOTICE",
-    ],
-    required_for_source_only_abi = True,
-    visibility = ["PUBLIC"],
 )
 
 third_party_jar(
@@ -58,5 +31,6 @@ third_party_jar(
     visibility = [
         "prelude//toolchains/android/src/com/facebook/buck/android/apk:apk",
         "prelude//toolchains/android/src/com/facebook/buck/android/bundle:bundle",
+        "prelude//toolchains/android/test/com/facebook/buck/android:unit",
     ],
 )

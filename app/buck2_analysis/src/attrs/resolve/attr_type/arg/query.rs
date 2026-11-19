@@ -43,8 +43,8 @@ impl ConfiguredQueryMacroBaseExt for QueryMacroBase<ConfiguredProvidersLabel> {
                         Ok(providers
                             .provider_collection()
                             .default_info()?
-                            .default_outputs()
-                            .into_boxed_slice())
+                            .default_outputs()?
+                            .into())
                     })
                     .collect::<buck2_error::Result<_>>()?,
             )),
@@ -71,8 +71,8 @@ impl ConfiguredQueryMacroBaseExt for QueryMacroBase<ConfiguredProvidersLabel> {
                                     providers
                                         .provider_collection()
                                         .default_info()?
-                                        .default_outputs()
-                                        .into_boxed_slice(),
+                                        .default_outputs()?
+                                        .into(),
                                 ))
                             })
                             .collect::<buck2_error::Result<_>>()?,

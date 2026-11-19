@@ -29,7 +29,7 @@ def _library_impl(ctx):
     ]
 
 def _binary_impl(ctx):
-    output, _ = ctx.actions.write("out", ctx.attrs.flags, allow_args = True)
+    output, _ = ctx.actions.write("out", ctx.attrs.flags, allow_args = True, has_content_based_path = False)
     return [
         DefaultInfo(
             default_output = output,

@@ -10,18 +10,21 @@
 
 use std::borrow::Cow;
 use std::io::Write;
+use std::sync::Arc;
 
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_build_api::audit_dep_files::AUDIT_DEP_FILES;
+use buck2_build_api::materialize::invocation_re_use_case;
 use buck2_core::category::Category;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_directory::directory::directory::Directory;
 use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::buck2_error;
 use buck2_execute::digest_config::HasDigestConfig;
 use buck2_execute::materialize::materializer::HasMaterializer;
+use buck2_file_watcher::dep_files::HasDepFileCache;
 use dice::DiceTransaction;
 
 use crate::actions::impls::run::RunActionKey;
@@ -42,10 +45,14 @@ async fn audit_dep_files(
     identifier: Option<String>,
     stdout: &mut (dyn Write + Send),
 ) -> buck2_error::Result<()> {
-    let key = RunActionKey::new(BaseDeferredKey::TargetLabel(label), category, identifier);
+    let key = RunActionKey::new(
+        BaseDeferredKey::TargetLabel(label),
+        category,
+        identifier.map(Arc::from),
+    );
 
-    let state = get_dep_files(&key)
-        .with_buck_error_context(|| format!("Failed to find dep files for key `{key}`"))?;
+    let state = get_dep_files(ctx.per_transaction_data().get_dep_file_cache(), &key)
+        .with_internal_error(|| format!("Failed to find dep files for key `{key}`"))?;
 
     let declared_dep_files = match state.declared_dep_files() {
         Some(declared_dep_files) => declared_dep_files,
@@ -57,23 +64,25 @@ async fn audit_dep_files(
         }
     };
 
-    let artifact_fs = ctx.clone().get_artifact_fs().await?;
+    let artifact_fs = ctx.ctx().get_artifact_fs().await?;
+    let result = state.result();
+    let re_use_case = invocation_re_use_case(&ctx.ctx());
     let dep_files = read_dep_files(
         state.has_signatures(),
         declared_dep_files,
-        state.result(),
-        &artifact_fs,
-        ctx.per_transaction_data().get_materializer().as_ref(),
+        result,
+        artifact_fs,
+        ctx.per_transaction_data().get_materializer(),
+        re_use_case,
     )
-    .await
-    .buck_error_context("Failed to read dep files")?
-    .buck_error_context("Dep fils have expired")?;
+    .await?
+    .internal_error("Dep files have expired")?;
 
     let fingerprints = state.locked_compute_fingerprints(
         Cow::Owned(dep_files),
         true,
         ctx.global_data().get_digest_config(),
-        &artifact_fs,
+        artifact_fs,
     )?;
 
     let dirs = match &*fingerprints {

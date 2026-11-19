@@ -16,5 +16,5 @@ erlang_escript(
 assert_output(
     name = "check_main",
     command = "$(exe_target :script) Erlang",
-    output = "Hello Erlang!",
+    output = "Hello, Erlang!",
 )

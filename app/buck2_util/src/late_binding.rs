@@ -10,7 +10,7 @@
 
 use std::sync::OnceLock;
 
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 
 /// Value (typically a function pointer or a trait pointer) that is initialized at program start.
 ///

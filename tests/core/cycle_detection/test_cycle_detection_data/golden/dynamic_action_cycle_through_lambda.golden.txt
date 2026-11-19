@@ -1,0 +1,12 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+BUILD FAILED
+Dependency cycle detected (`->` means "depends on"):
+  (target: `root//dynamic_cycle:through_lambda (<unspecified>)_1`, id: `0`) ->
+  root//dynamic_cycle:through_lambda (<unspecified>)_1 ->
+  (target: `root//dynamic_cycle:through_lambda (<unspecified>)_0`, id: `0`) ->
+  (target: `root//dynamic_cycle:through_lambda (<unspecified>)_0`, id: `1`) ->
+  (target: `root//dynamic_cycle:through_lambda (<unspecified>)_1`, id: `0`)

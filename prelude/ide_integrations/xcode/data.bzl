@@ -9,9 +9,11 @@
 XCODE_DATA_SUB_TARGET = "xcode-data"
 _XCODE_DATA_FILE_NAME = "xcode_data.json"
 
-XcodeDataInfo = provider(fields = {
-    "data": provider_field(typing.Any, default = None),  # {str: _a}
-})
+XcodeDataInfo = provider(
+    fields = {
+        "data": provider_field(typing.Any, default = None),  # {str: _a}
+    }
+)
 
 XcodeDataInfoKeys = struct(
     APP_EXTENSION_DEPENDENCIES = "app_extension_dependencies",
@@ -46,11 +48,8 @@ XcodeDataInfoKeys = struct(
 )
 
 def generate_xcode_data(
-        ctx: AnalysisContext,
-        rule_type: str,
-        output: Artifact | None,
-        populate_rule_specific_attributes_func: [typing.Callable, None] = None,
-        **kwargs) -> (list[DefaultInfo], XcodeDataInfo):
+    ctx: AnalysisContext, rule_type: str, output: Artifact | None, populate_rule_specific_attributes_func: [typing.Callable, None] = None, **kwargs
+) -> (list[DefaultInfo], XcodeDataInfo):
     data = {
         XcodeDataInfoKeys.RULE_TYPE: rule_type,
         XcodeDataInfoKeys.TARGET: ctx.label,
@@ -65,5 +64,5 @@ def generate_xcode_data(
     if populate_rule_specific_attributes_func:
         data.update(populate_rule_specific_attributes_func(ctx, **kwargs))
 
-    json_file = ctx.actions.write_json(_XCODE_DATA_FILE_NAME, data)
+    json_file = ctx.actions.write_json(_XCODE_DATA_FILE_NAME, data, has_content_based_path = False)
     return [DefaultInfo(default_output = json_file)], XcodeDataInfo(data = data)

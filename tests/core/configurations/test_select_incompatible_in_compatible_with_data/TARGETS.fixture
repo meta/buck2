@@ -1,0 +1,41 @@
+constraint_setting(name = "setting")
+
+constraint_value(
+    name = "a",
+    constraint_setting = ":setting",
+)
+
+constraint_value(
+    name = "b",
+    constraint_setting = ":setting",
+)
+
+platform(
+    name = "platform_a",
+    constraint_values = [":a"],
+)
+
+stub(
+    name = "ok",
+    default_target_platform = ":platform_a",
+)
+
+stub(
+    name = "incompatible",
+    default_target_platform = ":platform_a",
+    target_compatible_with = [":b"],
+)
+
+# select_incompatible() in an ordinary attribute makes the target incompatible.
+stub(
+    name = "attr_select_incompatible",
+    default_target_platform = ":platform_a",
+    deps = select({":a": select_incompatible("not for a"), "DEFAULT": []}),
+)
+
+# select_incompatible() in target_compatible_with.
+stub(
+    name = "tcw_select_incompatible",
+    default_target_platform = ":platform_a",
+    target_compatible_with = select({":a": select_incompatible("not for a"), "DEFAULT": []}),
+)

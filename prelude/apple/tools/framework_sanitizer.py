@@ -21,7 +21,6 @@ import argparse
 import os
 import re
 import shutil
-
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -64,7 +63,7 @@ def main() -> None:
         # Use realpath() because for macOS versioned bundles
         # we may need to follow a symlink:
         framework_binary_path = os.path.realpath(out_path / framework_name)
-        os.chmod(framework_binary_path, 644)
+        os.chmod(framework_binary_path, 0o644)
 
         shutil.copy(args.replacement_binary, framework_binary_path)
 

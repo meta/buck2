@@ -18,6 +18,5 @@ def _artifact_test_impl(ctx):
 
 artifact_test = bxl_main(
     impl = _artifact_test_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )

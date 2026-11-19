@@ -14,10 +14,12 @@ import com.facebook.buck.core.util.log.Logger;
 import com.facebook.buck.util.Console;
 import com.facebook.buck.util.perf.PerfStatsTracking;
 import com.facebook.buck.util.unit.SizeUnit;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /** Shared utilities for the compiler daemon entry points. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class MainUtils {
   private static final Logger LOG = Logger.get(MainUtils.class);
 

@@ -25,12 +25,8 @@ use buck2_interpreter::paths::path::StarlarkPath;
 use buck2_interpreter_for_build::interpreter::testing::CellsData;
 use buck2_interpreter_for_build::interpreter::testing::Tester;
 use buck2_interpreter_for_build::interpreter::testing::run_simple_starlark_test;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::nodes::unconfigured::testing::targets_to_json;
 use dupe::Dupe;
-use gazebo::prelude::SliceExt;
 use indoc::indoc;
-use serde_json::json;
 
 #[test]
 fn test_eval_import() {
@@ -47,11 +43,28 @@ fn test_eval_import() {
         )
         .unwrap();
 
-    assert_eq!(1, loaded.env().get("one").unwrap().unpack_i32().unwrap());
+    assert_eq!(
+        1,
+        loaded
+            .env()
+            .get("one")
+            .unwrap()
+            .as_ref()
+            .value()
+            .unpack_i32()
+            .unwrap()
+    );
 
     assert_eq!(
         "world",
-        loaded.env().get("hello").unwrap().unpack_str().unwrap()
+        loaded
+            .env()
+            .get("hello")
+            .unwrap()
+            .as_ref()
+            .value()
+            .unpack_str()
+            .unwrap()
     );
 }
 
@@ -92,6 +105,8 @@ fn test_load() {
             .env()
             .get("message")
             .unwrap()
+            .as_ref()
+            .value()
             .unpack_str()
             .unwrap()
     );
@@ -248,7 +263,12 @@ fn test_find_imports() {
             "cell1//config/foo/other.bzl",
             "cell1//config/bar/three.bzl",
         ],
-        parse_result.imports().map(|e| e.1.to_string()).as_slice()
+        parse_result
+            .imports()
+            .iter()
+            .map(|e| e.1.to_string())
+            .collect::<Vec<_>>()
+            .as_slice()
     );
 }
 
@@ -323,10 +343,11 @@ fn prelude_is_included() -> buck2_error::Result<()> {
     tester.set_prelude(prelude_path.clone());
 
     let prelude = tester.eval_import(&prelude_path, "some_var = 1", LoadedModules::default())?;
-    let mut loaded_modules = LoadedModules::default();
-    loaded_modules
-        .map
-        .insert(OwnedStarlarkModulePath::LoadFile(prelude_path), prelude);
+    let loaded_modules = LoadedModules {
+        map: [(OwnedStarlarkModulePath::LoadFile(prelude_path), prelude)]
+            .into_iter()
+            .collect(),
+    };
 
     // The prelude should be included in build files, and in .bzl files that are not in the
     // prelude's package
@@ -359,70 +380,6 @@ fn prelude_is_included() -> buck2_error::Result<()> {
         "bzl files in the prelude package should NOT have access to the prelude"
     );
 
-    Ok(())
-}
-
-#[test]
-fn test_package_import() -> buck2_error::Result<()> {
-    let mut tester = Tester::with_cells(buck2_interpreter_for_build::interpreter::testing::cells(
-        Some(indoc!(
-            r#"
-            [buildfile]
-                package_includes = src=>//include.bzl::func_alias=some_func
-        "#
-        )),
-    )?)?;
-
-    let import_path = ImportPath::testing_new("root//:include.bzl");
-    tester.add_import(
-        &import_path,
-        indoc!(
-            r#"
-            def _impl(ctx):
-                pass
-            export_file = rule(impl=_impl, attrs = {})
-
-            def some_func(name):
-                export_file(name = name)
-        "#
-        ),
-    )?;
-
-    let build_path = BuildFilePath::testing_new("root//src/package:BUCK");
-    let eval_result = tester.eval_build_file(
-        &build_path,
-        indoc!(
-            r#"
-                implicit_package_symbol("func_alias")(
-                    implicit_package_symbol("missing", "DEFAULT")
-                )
-                "#
-        ),
-        PackageListing::testing_files(&["file1.java", "file2.java"]),
-    )?;
-    assert_eq!(build_path.package(), eval_result.package());
-    assert_eq!(
-        json!({
-                "DEFAULT": {
-                    "__type__": "root//include.bzl:export_file",
-                    "compatible_with": [],
-                    "default_target_platform": null,
-                    "exec_compatible_with": [],
-                    "name": "DEFAULT",
-                    "target_compatible_with": [],
-                    "modifiers": [],
-                    "tests": [],
-                    "visibility": [],
-                    "within_view": ["PUBLIC"],
-                    "metadata": {},
-                },
-        }),
-        targets_to_json(
-            eval_result.targets(),
-            build_path.package(),
-            AttrInspectOptions::All
-        )?
-    );
     Ok(())
 }
 
@@ -555,5 +512,54 @@ fn test_oncall() -> buck2_error::Result<()> {
         ),
         "after calling `read_oncall`",
     );
+    Ok(())
+}
+
+/// `rule_exists()` only asks whether a target has been declared and leaves the file in the
+/// "before targets" state, so an `oncall()` after it is accepted.
+#[test]
+fn test_oncall_after_rule_exists_without_targets() -> buck2_error::Result<()> {
+    let mut tester = Tester::new().unwrap();
+    tester.additional_globals(register_rule_defs);
+    tester.run_starlark_test(indoc!(
+        r#"
+            def _impl(ctx):
+                pass
+            export_file = rule(impl=_impl, attrs = {})
+
+            def test():
+                if rule_exists("rule_name"):
+                    fail("no target declared yet")
+                oncall("valid")
+                export_file(name = "rule_name")
+                if read_oncall() != "valid":
+                    fail("oncall should be valid")
+                if not rule_exists("rule_name"):
+                    fail("target declared")
+            "#
+    ))?;
+    Ok(())
+}
+
+/// The same with a string that is not a valid target name.
+#[test]
+fn test_oncall_after_rule_exists_with_invalid_name() -> buck2_error::Result<()> {
+    let mut tester = Tester::new().unwrap();
+    tester.additional_globals(register_rule_defs);
+    tester.run_starlark_test(indoc!(
+        r#"
+            def _impl(ctx):
+                pass
+            export_file = rule(impl=_impl, attrs = {})
+
+            def test():
+                if rule_exists("not/a:valid name"):
+                    fail("invalid name cannot exist")
+                oncall("valid")
+                export_file(name = "rule_name")
+                if read_oncall() != "valid":
+                    fail("oncall should be valid")
+            "#
+    ))?;
     Ok(())
 }

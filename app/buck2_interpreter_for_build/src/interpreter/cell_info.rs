@@ -12,8 +12,9 @@ use allocative::Allocative;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::CellResolver;
 use buck2_core::cells::build_file_cell::BuildFileCell;
+use pagable::Pagable;
 
-#[derive(Clone, Debug, Allocative)]
+#[derive(Clone, Debug, Allocative, Pagable)]
 pub struct InterpreterCellInfo {
     cell_name: BuildFileCell,
     cell_resolver: CellResolver,

@@ -11,6 +11,5 @@ def _library_impl(_ctx):
 
 library = rule(
     impl = _library_impl,
-    attrs = {
-    },
+    attrs = {},
 )

@@ -11,13 +11,21 @@ load(
     "ArtifactGroupInfo",
     "ArtifactOutputs",  # @unused Used as a type
 )
+load("@prelude//:attrs_validators.bzl", "get_attrs_validation_specs", "validation_common")
 load("@prelude//:paths.bzl", "paths")
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
 load("@prelude//:resources.bzl", "gather_resources")
+load("@prelude//cxx:attrs.bzl", "cxx_binary_base_attrs")
+load("@prelude//cxx:cxx_context.bzl", "get_cxx_toolchain_info", "get_opt_cxx_toolchain_info")
 load(
     "@prelude//cxx:cxx_library_utility.bzl",
     "cxx_is_gnu",
 )
 load("@prelude//cxx:cxx_utility.bzl", "cxx_attrs_get_allow_cache_upload")
+load("@prelude//decls:common.bzl", "LinkableDepType", "buck")
+load("@prelude//decls:native_common.bzl", "native_common")
+load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
+load("@prelude//linking:generated_build_info.bzl", "BUILD_INFO_DSO_SONAME")
 load(
     "@prelude//linking:link_info.bzl",
     "LinkArgs",  # @unused Used as a type
@@ -34,7 +42,9 @@ load(
     "traverse_shared_library_info",
 )
 load("@prelude//linking:strip.bzl", "strip_debug_with_gnu_debuglink")
+load("@prelude//python:attrs.bzl", "python_common", "python_executable_attrs", "typing_arg")
 load("@prelude//python:compute_providers.bzl", "ExecutableType", "compute_providers")
+load("@prelude//python:python.bzl", "python_attr_preload_deps")
 load(
     "@prelude//python/linking:link_helper.bzl",
     "LinkProviders",
@@ -42,10 +52,16 @@ load(
     "process_native_linking_rule",
     "python_implicit_attrs",
 )
-load("@prelude//python/linking:native.bzl", "process_native_linking")
+load(
+    "@prelude//python/linking:native.bzl",
+    "generate_build_info_shared_library_after_link",
+    "process_native_linking",
+    "python_source_build_info_invalidation_inputs",
+)
 load("@prelude//python/linking:native_python_util.bzl", "compute_link_strategy", "merge_native_deps")
 load("@prelude//python/linking:omnibus.bzl", "process_omnibus_linking")
-load("@prelude//utils:utils.bzl", "flatten", "value_or")
+load("@prelude//transitions:constraint_overrides.bzl", "constraint_overrides")
+load("@prelude//utils:utils.bzl", "value_or")
 load(":compile.bzl", "compile_manifests")
 load(
     ":interface.bzl",
@@ -53,8 +69,8 @@ load(
     "EntryPointKind",
 )
 load(":internal_tools.bzl", "PythonInternalToolsInfo")
-load(":lazy_imports.bzl", "run_lazy_imports_analyzer")
-load(":make_py_package.bzl", "PexModules", "PexProviders", "make_py_package")
+load(":lazy_imports.bzl", "get_lazy_imports_analyzer", "run_lazy_imports_analyzer", "run_lazy_imports_cached_analysis", "run_lazy_imports_library_analyzer")
+load(":make_py_package.bzl", "LateBuildInfoPatch", "PexModules", "PexProviders", "make_py_package")
 load(
     ":manifest.bzl",
     "ManifestInfo",  # @unused Used as a type
@@ -67,23 +83,24 @@ load(
     "create_python_library_info",
     "gather_dep_libraries",
     "py_attr_resources",
-    "py_resources",
+    "py_resources_deduped",
     "qualify_srcs",
 )
 load(":python_runtime_bundle.bzl", "PythonRuntimeBundleInfo")
 load(":source_db.bzl", "create_dbg_source_db", "create_python_source_db_info", "create_source_db_no_deps")
-load(":toolchain.bzl", "NativeLinkStrategy", "PackageStyle", "PythonPlatformInfo", "PythonToolchainInfo", "get_package_style", "get_platform_attr")
-load(":typing.bzl", "create_per_target_type_check")
+load(":toolchain.bzl", "NativeLinkStrategy", "PackageStyle", "PythonToolchainInfo", "get_package_style")
+load(":typing.bzl", "create_per_target_type_check", "create_type_check_validation")
 load(":versions.bzl", "LibraryName", "LibraryVersion", "gather_versioned_dependencies", "resolve_versions")
 
 # We do a lot of merging extensions, so don't use O(n) type annotations
 def _merge_extensions(
-        # {str: ("_a", "label")}
-        extensions,
-        # Label
-        incoming_label,
-        # {str: "_a"}
-        incoming_extensions) -> None:
+    # {str: ("_a", "label")}
+    extensions,
+    # Label
+    incoming_label,
+    # {str: "_a"}
+    incoming_extensions,
+) -> None:
     """
     Merges a incoming_extensions into `extensions`. Fails if duplicate dests exist.
     """
@@ -91,11 +108,7 @@ def _merge_extensions(
         existing = extensions.get(extension_name)
         if existing != None and existing[0] != incoming_artifact:
             existing_artifact, existing_label = existing
-            error = (
-                "Duplicate extension: {}! Conflicting mappings:\n" +
-                "{} from {}\n" +
-                "{} from {}"
-            )
+            error = "Duplicate extension: {}! Conflicting mappings:\n" + "{} from {}\n" + "{} from {}"
             fail(
                 error.format(
                     extension_name,
@@ -117,39 +130,28 @@ def _qualify_entry_point(main: EntryPoint, base_module: str) -> EntryPoint:
     return (main[0], fqname)
 
 def python_executable(
-        ctx: AnalysisContext,
-        main: EntryPoint,
-        srcs: dict[str, Artifact],
-        default_resources: dict[str, ArtifactOutputs],
-        standalone_resources: dict[str, ArtifactOutputs] | None,
-        compile: bool,
-        allow_cache_upload: bool,
-        executable_type: ExecutableType) -> list[Provider] | Promise:
+    ctx: AnalysisContext,
+    main: EntryPoint,
+    srcs: dict[str, Artifact],
+    default_resources: dict[str, ArtifactOutputs],
+    standalone_resources: dict[str, ArtifactOutputs] | None,
+    outplace_resources: dict[str, ArtifactOutputs] | None,
+    compile: bool,
+    allow_cache_upload: bool,
+    executable_type: ExecutableType,
+) -> list[Provider] | Promise:
     # Returns a three tuple: the Python binary, all its potential runtime files,
     # and a provider for its source DB.
-
-    # TODO(nmj): See if people are actually setting cxx_platform here. Really
-    #                 feels like it should be a property of the python platform
-    python_platform = ctx.attrs._python_toolchain[PythonPlatformInfo]
-    cxx_toolchain = ctx.attrs._cxx_toolchain
-
     raw_deps = ctx.attrs.deps
-
-    raw_deps.extend(flatten(
-        get_platform_attr(python_platform, cxx_toolchain, ctx.attrs.platform_deps),
-    ))
 
     # `preload_deps` is used later to configure `LD_PRELOAD` environment variable,
     # here we make the actual libraries to appear in the distribution.
-    # TODO: make fully consistent with its usage later
-    raw_deps.extend(ctx.attrs.preload_deps)
+    preload_deps = python_attr_preload_deps(ctx)
+    raw_deps.extend(preload_deps)
 
     selected_deps = resolve_versions(
         gather_versioned_dependencies(raw_deps),
-        {
-            LibraryName(value = key): LibraryVersion(value = ver)
-            for key, ver in ctx.attrs.version_selections.items()
-        },
+        {LibraryName(value = key): LibraryVersion(value = ver) for key, ver in ctx.attrs.version_selections.items()},
     )
     raw_deps.extend(selected_deps)
 
@@ -165,38 +167,52 @@ def python_executable(
     if srcs:
         src_manifest = create_manifest_for_source_map(ctx, "srcs", srcs)
 
-        # TODO(T245694881) let the toolchain decide whether pyc's should be precompiled
-        py_version = ctx.attrs._python_toolchain[PythonToolchainInfo].version
-        if py_version == None or "3.15" not in py_version:
+        python_toolchain = ctx.attrs._python_toolchain[PythonToolchainInfo]
+        if python_toolchain.pyc_compilation_enabled:
             bytecode_manifest = compile_manifests(ctx, [src_manifest])
 
     all_default_resources = {}
     all_standalone_resources = {}
+    all_outplace_resources = {}
     cxx_extra_resources = {}
     for cxx_resources in gather_resources(ctx.label, deps = raw_deps).values():
         for name, resource in cxx_resources.items():
             cxx_extra_resources[paths.join("__cxx_resources__", name)] = resource
     all_default_resources.update(cxx_extra_resources)
     all_standalone_resources.update(cxx_extra_resources)
+    all_outplace_resources.update(cxx_extra_resources)
 
     if default_resources:
         all_default_resources.update(default_resources)
     if standalone_resources:
         all_standalone_resources.update(standalone_resources)
+    if outplace_resources:
+        all_outplace_resources.update(outplace_resources)
+
+    binary_default_resources, binary_standalone_resources, binary_outplace_resources = py_resources_deduped(
+        ctx,
+        [
+            ("", all_default_resources),
+            ("_standalone", all_standalone_resources),
+            ("_outplace", all_outplace_resources),
+        ],
+    )
 
     library_info = create_python_library_info(
         ctx.actions,
         ctx.label,
         srcs = src_manifest,
         src_types = src_manifest,
-        default_resources = py_resources(ctx, all_default_resources) if all_default_resources else None,
-        standalone_resources = py_resources(ctx, all_standalone_resources, "_standalone") if all_standalone_resources else None,
+        default_resources = binary_default_resources,
+        standalone_resources = binary_standalone_resources,
+        outplace_resources = binary_outplace_resources,
         bytecode = bytecode_manifest,
         deps = python_deps,
         shared_libraries = shared_deps,
-        native_deps = merge_native_deps(ctx, raw_deps),
+        native_deps = merge_native_deps(ctx, raw_deps, shared_deps = ctx.attrs.deps + preload_deps),
         is_native_dep = False,
         par_style = ctx.attrs.par_style,
+        package_style = get_package_style(ctx).value,
     )
 
     source_db_no_deps = create_source_db_no_deps(ctx, srcs)
@@ -218,15 +234,16 @@ def python_executable(
     )
 
 def _add_executable_subtargets(
-        ctx,
-        exe: PexProviders,
-        dbg_source_db: DefaultInfo,
-        dbg_source_db_output: Artifact | None,
-        library_info: PythonLibraryInfo,
-        main: EntryPoint,
-        source_db_no_deps: DefaultInfo,
-        src_manifest: ManifestInfo | None,
-        python_deps: list[PythonLibraryInfo]) -> PexProviders:
+    ctx,
+    exe: PexProviders,
+    dbg_source_db: DefaultInfo,
+    dbg_source_db_output: Artifact | None,
+    library_info: PythonLibraryInfo,
+    main: EntryPoint,
+    source_db_no_deps: DefaultInfo,
+    src_manifest: ManifestInfo | None,
+    python_deps: list[PythonLibraryInfo],
+) -> (PexProviders, Artifact | None):
     python_toolchain = ctx.attrs._python_toolchain[PythonToolchainInfo]
     exe = PexProviders(
         default_output = exe.default_output,
@@ -241,45 +258,54 @@ def _add_executable_subtargets(
     exe.sub_targets.update({
         "dbg-source-db": [dbg_source_db],
         "library-info": [library_info],
-        "main": [DefaultInfo(default_output = ctx.actions.write_json("main.json", main))],
+        "main": [DefaultInfo(default_output = ctx.actions.write_json("main.json", main, has_content_based_path = False))],
         "source-db-no-deps": [source_db_no_deps, create_python_source_db_info(library_info.manifests)],
     })
 
     # Type check
-    type_checker = python_toolchain.type_checker
-    if type_checker != None:
-        exe.sub_targets.update({
-            "typecheck": [
-                create_per_target_type_check(
-                    ctx,
-                    type_checker,
-                    src_manifest,
-                    python_deps,
-                    typeshed = python_toolchain.typeshed_stubs,
-                    py_version = ctx.attrs.py_version_for_type_checking,
-                    typing_enabled = ctx.attrs.typing,
-                    sharding_enabled = ctx.attrs.shard_typing,
-                ),
-            ],
-        })
+    typing_enabled = ctx.attrs.typing != None and ctx.attrs.typing != False
+    type_checker = ctx.attrs.typing[RunInfo] if typing_enabled and ctx.attrs.typing != True else python_toolchain.type_checker
+    validation_output = None
 
-    return exe
+    if type_checker != None:
+        type_check_info = create_per_target_type_check(
+            ctx,
+            type_checker,
+            src_manifest,
+            python_deps,
+            typeshed = python_toolchain.typeshed_stubs,
+            py_version = ctx.attrs.py_version_for_type_checking,
+            typing_enabled = typing_enabled,
+            sharding_enabled = ctx.attrs.shard_typing,
+        )
+        exe.sub_targets.update({"typecheck": [type_check_info]})
+
+        if typing_enabled and ctx.attrs.typing_validation:
+            validation_output = create_type_check_validation(ctx, type_check_info.default_outputs[0])
+
+    return exe, validation_output
 
 def _compute_pex_providers(
-        ctx,
-        src_manifest: ManifestInfo | None,
-        python_deps: list[PythonLibraryInfo],
-        source_db_no_deps: DefaultInfo,
-        main: EntryPoint,
-        compile: bool,
-        library: PythonLibraryInfo,
-        allow_cache_upload: bool,
-        shared_libs: list[(SharedLibrary, str)],
-        extensions: dict[str, (LinkedObject, Label)],
-        link_args: list[LinkArgs],
-        extra: dict[str, typing.Any],
-        link_extra_artifacts: dict[str, typing.Any],
-        executable_type: ExecutableType) -> list[Provider] | Promise:
+    ctx,
+    src_manifest: ManifestInfo | None,
+    python_deps: list[PythonLibraryInfo],
+    source_db_no_deps: DefaultInfo,
+    main: EntryPoint,
+    compile: bool,
+    library: PythonLibraryInfo,
+    allow_cache_upload: bool,
+    shared_libs: list[(SharedLibrary, str)],
+    extensions: dict[str, (LinkedObject, Label)],
+    link_args: list[LinkArgs],
+    extra: dict[str, typing.Any],
+    link_extra_artifacts: dict[str, typing.Any],
+    executable_type: ExecutableType,
+    linker_map_data = None,
+    gc_sections_data = None,
+    native_runtime_files = [],
+    build_info_manifest_entries = None,
+    late_build_info_patch = None,
+) -> list[Provider] | Promise:
     dbg_source_db_output = ctx.actions.declare_output("dbg-db.json", has_content_based_path = True)
     dbg_source_db = create_dbg_source_db(ctx, dbg_source_db_output, src_manifest, python_deps)
 
@@ -294,15 +320,41 @@ def _compute_pex_providers(
         entry_point = "runtime/bin/{}".format(ctx.attrs.executable_name)
         build_args.append(cmd_args("--passthrough=--runtime-binary={}".format(entry_point)))
 
-    if dbg_source_db_output:
-        extra_artifacts["dbg-db.json"] = dbg_source_db_output
+    extra_artifacts["dbg-db.json"] = dbg_source_db_output
 
-    # Run lazy import analysis using the existing dbg-db.json only if the attribute is enabled
-    if getattr(ctx.attrs, "lazy_imports_analyzer", None):
-        lazy_import_analysis_output = ctx.actions.declare_output("lazy-import-analysis.json")
+    # Run lazy import analysis if the attribute is enabled.
+    # Prefer the cache-based path (analyze_binary from per-library caches) when
+    # incremental mode is on. Fall back to the monolithic path
+    # (analyze against dbg-db.json) for backward compatibility.
+    lazy_imports_analyzer = get_lazy_imports_analyzer(ctx)
+    if getattr(ctx.attrs, "use_lifeguard_incremental", False) and lazy_imports_analyzer != None:
+        lazy_import_analysis_output = ctx.actions.declare_output("safer_lazy_imports/lazy-import-analysis.json", has_content_based_path = False)
+        if library.lazy_imports_caches != None:
+            dep_caches = list(library.lazy_imports_caches.traverse())
+        else:
+            dep_caches = []
+
+        binary_lib_cache = ctx.actions.declare_output("safer_lazy_imports/binary-library-cache.bin")
+        # This first call pulls in the hidden __par__ modules
+        run_lazy_imports_library_analyzer(
+            ctx,
+            lazy_imports_analyzer,
+            binary_lib_cache,
+            source_db_no_deps,
+        )
+
+        # This call builds the Lifeguard output file
+        run_lazy_imports_cached_analysis(
+            ctx,
+            lazy_imports_analyzer,
+            lazy_import_analysis_output,
+            dep_caches + [binary_lib_cache],
+        )
+        extra_artifacts["safer_lazy_imports/lazy-import-analysis.json"] = lazy_import_analysis_output
+    elif getattr(ctx.attrs, "lazy_imports_analyzer", None):
+        lazy_import_analysis_output = ctx.actions.declare_output("safer_lazy_imports/lazy-import-analysis.json", has_content_based_path = False)
         run_lazy_imports_analyzer(ctx, dbg_source_db.other_outputs, lazy_import_analysis_output, dbg_source_db_output)
-        if lazy_import_analysis_output:
-            extra_artifacts["lazy-import-analysis.json"] = lazy_import_analysis_output
+        extra_artifacts["safer_lazy_imports/lazy-import-analysis.json"] = lazy_import_analysis_output
 
     extra_artifacts["sitecustomize.py"] = python_internal_tools.default_sitecustomize
 
@@ -323,14 +375,27 @@ def _compute_pex_providers(
         if ctx.attrs.runtime_bundle_full:
             extra_artifacts["runtime/include/{}".format(bundle.include.basename)] = bundle.include
 
+    # Add additional runtime libs
+    for name, dep in ctx.attrs.runtime_libs.items():
+        dep_info = dep.get(DefaultInfo)
+        if dep_info != None:
+            extra_artifacts["runtime/lib/{}".format(name)] = dep_info.default_outputs[0]
+
     extra_manifests = create_manifest_for_source_map(ctx, "extra_manifests", extra_artifacts)
     package_style = get_package_style(ctx)
+
+    # Collect HIP sidecars from shared libs before stripping (strip replaces LinkedObjects).
+    hip_all_debug_files = {}
+    for shlib, _libdir in shared_libs:
+        for arch, files in shlib.lib.hip_arch_debug_files.items():
+            hip_all_debug_files.setdefault(arch, [])
+            hip_all_debug_files[arch].extend(files)
 
     # Strip native libraries and extensions and update the .gnu_debuglink references if we are extracting
     # debug symbols from the par
     debuginfo_files = []
     debuginfos = {}
-    if ctx.attrs.strip_libpar == "extract" and package_style == PackageStyle("standalone") and cxx_is_gnu(ctx):
+    if ctx.attrs.strip_libpar == "extract" and package_style in [PackageStyle("standalone"), PackageStyle("outplace")] and cxx_is_gnu(ctx):
         stripped_shlibs = []
         for shlib, libdir in shared_libs:
             name = paths.join(
@@ -350,6 +415,7 @@ def _compute_pex_providers(
                 debuginfos[name] = (stripped, debuginfo)
             else:
                 stripped, debuginfo = existing
+
             shlib = SharedLibrary(
                 soname = shlib.soname,
                 label = shlib.label,
@@ -362,13 +428,14 @@ def _compute_pex_providers(
             stripped_shlibs.append((shlib, libdir))
             debuginfo_files.append(((libdir, shlib, ".debuginfo"), debuginfo))
         shared_libs = stripped_shlibs
+        stripped_extensions = {}
         for name, (extension, label) in extensions.items():
             stripped, debuginfo = strip_debug_with_gnu_debuglink(
                 ctx = ctx,
                 name = name,
                 obj = extension.unstripped_output,
             )
-            extensions[name] = (
+            stripped_extensions[name] = (
                 LinkedObject(
                     output = stripped,
                     unstripped_output = extension.unstripped_output,
@@ -377,6 +444,10 @@ def _compute_pex_providers(
                 label,
             )
             debuginfo_files.append((name + ".debuginfo", debuginfo))
+        extensions = stripped_extensions
+
+    if late_build_info_patch != None:
+        late_build_info_patch = _restamp_packaged_executable(ctx, shared_libs, late_build_info_patch)
 
     # Combine sources and extensions into a map of all modules.
     pex_modules = PexModules(
@@ -387,11 +458,20 @@ def _compute_pex_providers(
             ctx,
             extensions,
             dwp = ctx.attrs.package_split_dwarf_dwp,
-        ) if extensions else None,
+        )
+        if extensions
+        else None,
     )
 
+    # Add GPU sidecars to debuginfo regardless of strip_libpar setting.
+    for debug_artifacts in hip_all_debug_files.values():
+        for debug_artifact in debug_artifacts:
+            debuginfo_files.append(
+                (debug_artifact.basename, debug_artifact),
+            )
+
     # Convert preloaded deps to a set of their names to be loaded by.
-    preload_labels = set([_linkable_graph(d).label for d in ctx.attrs.preload_deps if _linkable_graph(d)])
+    preload_labels = set([_linkable_graph(d).label for d in python_attr_preload_deps(ctx) if _linkable_graph(d)])
 
     # Build the PEX.
     pex = make_py_package(
@@ -408,25 +488,277 @@ def _compute_pex_providers(
         allow_cache_upload = allow_cache_upload,
         debuginfo_files = debuginfo_files,
         link_args = link_args,
+        manifest_entries_overlay = build_info_manifest_entries,
+        late_build_info_patch = late_build_info_patch,
     )
 
     pex.sub_targets.update(extra)
 
-    updated_pex = _add_executable_subtargets(ctx, pex, dbg_source_db, dbg_source_db_output, library, main, source_db_no_deps, src_manifest, python_deps)
+    # Native PARs build their executable via cxx_executable, which already emits
+    # `<binary>.resources.json` and adds it (plus the referenced C++ resources)
+    # to its runtime_files. process_native_linking otherwise drops these, so the
+    # manifest is declared next to the binary but never materialized, and the C++
+    # build::ExternalResourceManager FATALs at startup with
+    # "Cannot find resource: ...". Re-attach them as PAR runtime files so they
+    # land next to the executable.
+    if native_runtime_files:
+        pex.other_outputs.extend(native_runtime_files)
 
-    return compute_providers(ctx, updated_pex, executable_type)
+    if linker_map_data != None:
+        pex.sub_targets["linker-map"] = [
+            DefaultInfo(
+                default_output = linker_map_data.map,
+                other_outputs = [linker_map_data.binary],
+            )
+        ]
+
+    if gc_sections_data != None:
+        pex.sub_targets["gc-sections"] = [
+            DefaultInfo(
+                default_output = gc_sections_data.gc_sections,
+                other_outputs = [gc_sections_data.binary],
+            )
+        ]
+
+    if hip_all_debug_files:
+        all_files = [f for files in hip_all_debug_files.values() for f in files]
+        hip_debug_manifest = ctx.actions.write(
+            "__hip_debug_manifest_par__.txt",
+            cmd_args(all_files, delimiter = "\n"),
+        )
+        pex.sub_targets["hip_debug"] = [
+            DefaultInfo(
+                default_output = hip_debug_manifest,
+                other_outputs = all_files,
+                sub_targets = {arch: [DefaultInfo(default_outputs = files)] for arch, files in hip_all_debug_files.items()},
+            ),
+        ]
+
+    updated_pex, validation_output = _add_executable_subtargets(
+        ctx, pex, dbg_source_db, dbg_source_db_output, library, main, source_db_no_deps, src_manifest, python_deps
+    )
+
+    providers = compute_providers(ctx, updated_pex, executable_type)
+
+    # Build-time type check validation
+    validation_specs = get_attrs_validation_specs(ctx)
+    if validation_output != None:
+        validation_specs.append(ValidationSpec(name = "pyre", validation_result = validation_output))
+    if validation_specs:
+        providers.append(ValidationInfo(validations = validation_specs))
+
+    return providers
+
+def _replace_placeholder_build_info(
+    ctx: AnalysisContext,
+    shared_libs: list[(SharedLibrary, str)],
+    extra: dict[str, typing.Any],
+    link_args: list[LinkArgs],
+    build_info_manifest_entries: Artifact | None,
+    generated_build_info_invalidation_deps: list[Dependency],
+    generated_build_info_invalidation_sources: list[Artifact],
+    output_suffix: str = "",
+) -> (list[(SharedLibrary, str)], dict[str, typing.Any], Artifact | None, LateBuildInfoPatch | None):
+    """Generate the real full-mode build-info DSO and swap it in.
+
+    The native link (anon or not) linked a stable-mode placeholder DSO, so
+    its actions are byte-stable across build hosts. This regenerates the
+    real DSO in the `python_binary` analysis and replaces the placeholder
+    in the packaged shared libraries. No-op unless
+    `_generate_build_info_after_link` is set.
+    """
+    late_build_info_patch = None
+    if not ctx.attrs._generate_build_info_after_link:
+        return (shared_libs, extra, build_info_manifest_entries, late_build_info_patch)
+
+    invalidation_inputs = python_source_build_info_invalidation_inputs(
+        ctx,
+        generated_build_info_invalidation_deps,
+        generated_build_info_invalidation_sources,
+    )
+    if "native-executable" in extra:
+        # The linked binary invalidates the real build info, mirroring the
+        # invalidation the link-internal generation used.
+        invalidation_inputs = invalidation_inputs + [
+            extra["native-executable"][0].default_outputs[0],
+        ]
+    after_link = generate_build_info_shared_library_after_link(
+        ctx,
+        shared_libs,
+        extra,
+        link_args,
+        invalidation_inputs,
+        output_suffix = output_suffix,
+    )
+    if after_link == None:
+        return (shared_libs, extra, build_info_manifest_entries, late_build_info_patch)
+
+    shared_libs, extra, real_build_info, placeholder_dso = after_link
+    placeholder_manifest_entries = build_info_manifest_entries
+    build_info_manifest_entries = real_build_info.manifest_entries
+    late_build_info_patch = _late_build_info_patch(
+        shared_libs,
+        extra,
+        real_build_info,
+        placeholder_manifest_entries,
+        placeholder_dso,
+    )
+    return (shared_libs, extra, build_info_manifest_entries, late_build_info_patch)
+
+def _compute_pex_providers_from_anon(
+    ctx: AnalysisContext,
+    providers,
+    src_manifest: ManifestInfo | None,
+    python_deps: list[PythonLibraryInfo],
+    source_db_no_deps: DefaultInfo,
+    main: EntryPoint,
+    compile: bool,
+    library: PythonLibraryInfo,
+    allow_cache_upload: bool,
+    executable_type: ExecutableType,
+    generated_build_info_invalidation_deps: list[Dependency],
+    generated_build_info_invalidation_sources: list[Artifact],
+) -> list[Provider]:
+    """`_compute_pex_providers` for the anon-target native-linking path.
+
+    The anon target linked a stable-mode placeholder build-info DSO (via the
+    the anon rule links a stable-mode placeholder DSO in full mode).
+    Generate the real full-mode DSO here and swap it in, so the packaged
+    artifacts carry the real per-build values while every anon action stays
+    byte-stable across build hosts.
+    """
+    shared_libs, extra, build_info_manifest_entries, late_build_info_patch = _replace_placeholder_build_info(
+        ctx,
+        providers[LinkProviders].shared_libraries,
+        providers[LinkProviders].extra,
+        providers[LinkProviders].link_args,
+        providers[LinkProviders].build_info_manifest_entries,
+        generated_build_info_invalidation_deps,
+        generated_build_info_invalidation_sources,
+    )
+
+    return _compute_pex_providers(
+        ctx,
+        src_manifest,
+        python_deps,
+        source_db_no_deps,
+        main,
+        compile,
+        library,
+        allow_cache_upload,
+        shared_libs,
+        providers[LinkProviders].extensions,
+        providers[LinkProviders].link_args,
+        extra,
+        providers[LinkProviders].extra_artifacts,
+        executable_type,
+        providers[LinkProviders].linker_map_data,
+        providers[LinkProviders].gc_sections_data,
+        native_runtime_files = providers[LinkProviders].runtime_files,
+        build_info_manifest_entries = build_info_manifest_entries,
+        late_build_info_patch = late_build_info_patch,
+    )
+
+def _late_build_info_patch(
+    shared_libs: list[(SharedLibrary, str)],
+    extra: dict[str, typing.Any],
+    real_build_info,
+    placeholder_manifest_entries: Artifact | None,
+    placeholder_dso,
+) -> LateBuildInfoPatch | None:
+    """The late build-info patch for a binary whose build info is generated after the link.
+
+    Locates the swapped-in DSO and the native executable in the packaged
+    shared libraries. The executable is re-stamped by
+    `_restamp_packaged_executable` once it is final (e.g. stripped).
+    Returns None when either is missing, in which case packaging falls back
+    to applying the real build info before packaging as before.
+    """
+    dso_dest = None
+    exe_dest = None
+    for shlib, libdir in shared_libs:
+        if not shlib.soname.is_str:
+            continue
+        dest = paths.join(libdir, shlib.soname.ensure_str())
+        if shlib.soname.ensure_str() == BUILD_INFO_DSO_SONAME:
+            dso_dest = dest
+        elif libdir == "runtime/bin":
+            exe_dest = dest
+    if dso_dest == None or exe_dest == None or "native-executable" not in extra:
+        return None
+    return LateBuildInfoPatch(
+        dso = real_build_info.library.lib.output,
+        placeholder_dso = placeholder_dso,
+        dso_dest = dso_dest,
+        exe_dest = exe_dest,
+        placeholder_manifest_entries = placeholder_manifest_entries,
+        build_info_json = real_build_info.json,
+    )
+
+def _restamp_packaged_executable(
+    ctx: AnalysisContext,
+    shared_libs: list[(SharedLibrary, str)],
+    late_build_info_patch: LateBuildInfoPatch,
+) -> LateBuildInfoPatch:
+    """Set `stamped_exe` by re-stamping the executable `shared_libs` packages
+    at `exe_dest`, so a stripped executable stays stripped."""
+    for shlib, libdir in shared_libs:
+        if shlib.soname.is_str and paths.join(libdir, shlib.soname.ensure_str()) == late_build_info_patch.exe_dest:
+            return LateBuildInfoPatch(
+                dso = late_build_info_patch.dso,
+                placeholder_dso = late_build_info_patch.placeholder_dso,
+                dso_dest = late_build_info_patch.dso_dest,
+                exe_dest = late_build_info_patch.exe_dest,
+                placeholder_manifest_entries = late_build_info_patch.placeholder_manifest_entries,
+                build_info_json = late_build_info_patch.build_info_json,
+                stamped_exe = _restamp_executable(ctx, shlib.lib.output, late_build_info_patch.build_info_json),
+            )
+    fail("no packaged executable at {}".format(late_build_info_patch.exe_dest))
+
+def _restamp_executable(ctx: AnalysisContext, exe: Artifact, build_info_json: Artifact) -> Artifact:
+    """Re-stamp `exe`'s `fb_build_info` section with the real build info.
+
+    The placeholder executable is already stamped (with stable-mode build
+    info), so `elf_stamp` -- which only fills placeholder sections -- cannot
+    be used; `objcopy --update-section` replaces the section contents.
+    Non-GNU toolchains have no `fb_build_info` section to re-stamp (the DSO
+    carries the build info there), so the placeholder is only acceptable
+    there; on GNU, silently shipping it would discard the real build info.
+    """
+    objcopy = get_cxx_toolchain_info(ctx).binary_utilities_info.objcopy
+    if objcopy == None:
+        if cxx_is_gnu(ctx):
+            fail("re-stamping {} requires an objcopy from the C++ toolchain".format(exe.short_path))
+        return exe
+    stamped = ctx.actions.declare_output(
+        paths.basename(exe.short_path) + "-build-info-stamped",
+        has_content_based_path = False,
+    )
+    ctx.actions.run(
+        cmd_args(
+            objcopy,
+            "--update-section",
+            cmd_args(build_info_json, format = "fb_build_info={}"),
+            exe,
+            stamped.as_output(),
+        ),
+        category = "stamp_build_info",
+        identifier = "restamp_python_exe",
+    )
+    return stamped
 
 def _convert_python_library_to_executable(
-        ctx: AnalysisContext,
-        main: EntryPoint,
-        library: PythonLibraryInfo,
-        deps: list[Dependency],
-        compile: bool,
-        allow_cache_upload: bool,
-        src_manifest: ManifestInfo | None,
-        python_deps: list[PythonLibraryInfo],
-        source_db_no_deps: DefaultInfo,
-        executable_type: ExecutableType) -> list[Provider] | Promise:
+    ctx: AnalysisContext,
+    main: EntryPoint,
+    library: PythonLibraryInfo,
+    deps: list[Dependency],
+    compile: bool,
+    allow_cache_upload: bool,
+    src_manifest: ManifestInfo | None,
+    python_deps: list[PythonLibraryInfo],
+    source_db_no_deps: DefaultInfo,
+    executable_type: ExecutableType,
+) -> list[Provider] | Promise:
     extra = {}
 
     python_toolchain = ctx.attrs._python_toolchain[PythonToolchainInfo]
@@ -436,58 +768,89 @@ def _convert_python_library_to_executable(
     extra_artifacts = {}
     link_args = []
     link_strategy = compute_link_strategy(ctx)
+    native_runtime_files = []
+    late_build_info_patch = None
 
     if link_strategy == NativeLinkStrategy("native"):
+        invalidate_build_info_on_python_sources = getattr(ctx.attrs, "_generated_build_info_enabled", False) and ctx.attrs._generated_build_info_mode == "full"
+        generated_build_info_invalidation_deps = deps if invalidate_build_info_on_python_sources else []
+        generated_build_info_invalidation_sources = (
+            [artifact for artifact, _ in src_manifest.artifacts] if invalidate_build_info_on_python_sources and src_manifest != None else []
+        )
+
         use_anon_target = getattr(ctx.attrs, "use_anon_target_for_analysis", False)
         if use_anon_target:
-            # For caching link groups, we just need to pass cxx_deps
             native_deps = {}
-            for dep in library.native_deps.traverse():
-                native_deps.update(dep.native_deps)
+            dlopen_deps = {}
+            shared_only_deps = {}
+            for info in library.native_deps.traverse():
+                native_deps.update(info.native_deps)
+                dlopen_deps.update(info.dlopen_deps)
+                shared_only_deps.update(info.shared_only_deps)
 
             explicit_attrs = {
                 "allow_cache_upload": allow_cache_upload,
                 "deps": list(native_deps.values()),
+                "dlopen_deps": list(dlopen_deps.values()),
+                "generated_build_info_invalidation_deps": generated_build_info_invalidation_deps,
+                "generated_build_info_invalidation_sources": generated_build_info_invalidation_sources,
                 "name": "python_linking:" + ctx.attrs.name,
-                "package_style": package_style,
-                "python_toolchain": ctx.attrs._python_toolchain,
+                "package_style": package_style.value,
                 "rpath": ctx.attrs.name,
+                "shared_only_deps": list(shared_only_deps.values()),
                 "static_extension_utils": ctx.attrs.static_extension_utils,
                 "transformation_spec": ctx.attrs.transformation_spec,
                 "_cxx_toolchain": ctx.attrs._cxx_toolchain,
+                "_generate_build_info_after_link": ctx.attrs._generate_build_info_after_link,
                 "_python_internal_tools": ctx.attrs._python_internal_tools,
+                "_python_toolchain": ctx.attrs._python_toolchain,
             }
             implicit_attrs = {
-                a: getattr(ctx.attrs, a)
-                for a in (set(cxx_implicit_attrs.keys()) | set(python_implicit_attrs.keys())) - set(explicit_attrs.keys())
+                a: getattr(ctx.attrs, a) for a in (set(cxx_implicit_attrs.keys()) | set(python_implicit_attrs.keys())) - set(explicit_attrs.keys())
             }
             return ctx.actions.anon_target(
                 process_native_linking_rule,
                 explicit_attrs | implicit_attrs,
-            ).promise.map(lambda providers: _compute_pex_providers(
-                ctx,
-                src_manifest,
-                python_deps,
-                source_db_no_deps,
-                main,
-                compile,
-                library,
-                allow_cache_upload,
-                providers[LinkProviders].shared_libraries,
-                providers[LinkProviders].extensions,
-                providers[LinkProviders].link_args,
-                providers[LinkProviders].extra,
-                providers[LinkProviders].extra_artifacts,
-                executable_type,
-            ))
+            ).promise.map(
+                lambda providers: _compute_pex_providers_from_anon(
+                    ctx,
+                    providers,
+                    src_manifest,
+                    python_deps,
+                    source_db_no_deps,
+                    main,
+                    compile,
+                    library,
+                    allow_cache_upload,
+                    executable_type,
+                    generated_build_info_invalidation_deps,
+                    generated_build_info_invalidation_sources,
+                )
+            )
         else:
-            shared_libs, extensions, link_args, extra, extra_artifacts = process_native_linking(
+            shared_libs, extensions, link_args, extra, extra_artifacts, linker_map_data, gc_sections_data, native_runtime_files, build_info_manifest_entries = (
+                process_native_linking(
+                    ctx,
+                    deps,
+                    python_toolchain,
+                    python_internal_tools,
+                    package_style,
+                    allow_cache_upload,
+                    generated_build_info_invalidation_deps = generated_build_info_invalidation_deps,
+                    generated_build_info_invalidation_sources = generated_build_info_invalidation_sources,
+                )
+            )
+            shared_libs, extra, build_info_manifest_entries, late_build_info_patch = _replace_placeholder_build_info(
                 ctx,
-                deps,
-                python_toolchain,
-                python_internal_tools,
-                package_style,
-                allow_cache_upload,
+                shared_libs,
+                extra,
+                link_args,
+                build_info_manifest_entries,
+                generated_build_info_invalidation_deps,
+                generated_build_info_invalidation_sources,
+                # Same-context regeneration: keep its outputs distinct from
+                # the placeholder generation inside the link.
+                output_suffix = "-real",
             )
             if ctx.attrs.runtime_bundle:
                 runtime_bundle = ctx.attrs.runtime_bundle[PythonRuntimeBundleInfo]
@@ -496,18 +859,23 @@ def _convert_python_library_to_executable(
                 # in the PAR in this case.
                 for dep in runtime_bundle.shared_libs:
                     lib = dep.get(DefaultInfo).default_outputs[0]
-                    shared_libs.append((
-                        # There's probably a smarter way to get the shared library object out of the
-                        # dependency, but I'm not sure what that is.
-                        SharedLibrary(
-                            soname = to_soname(lib.basename),
-                            label = dep.label,
-                            lib = LinkedObject(output = lib, unstripped_output = lib),
-                        ),
-                        "",
-                    ))
+                    shared_libs.append(
+                        (
+                            # There's probably a smarter way to get the shared library object out of the
+                            # dependency, but I'm not sure what that is.
+                            SharedLibrary(
+                                soname = to_soname(lib.basename),
+                                label = dep.label,
+                                lib = LinkedObject(output = lib, unstripped_output = lib),
+                            ),
+                            "",
+                        )
+                    )
 
     else:
+        build_info_manifest_entries = None
+        linker_map_data = None
+        gc_sections_data = None
         extensions = {}
         for manifest in library.manifests.traverse():
             if manifest.extensions:
@@ -515,10 +883,7 @@ def _convert_python_library_to_executable(
         if link_strategy == NativeLinkStrategy("merged"):
             shared_libs, extensions = process_omnibus_linking(ctx, deps, extensions, python_toolchain, extra)
         else:
-            shared_libs = [
-                (shared_lib, "")
-                for shared_lib in traverse_shared_library_info(library.shared_libraries, transformation_provider = None)
-            ]
+            shared_libs = [(shared_lib, "") for shared_lib in traverse_shared_library_info(library.shared_libraries, transformation_provider = None)]
 
             # darwin and windows expect self-contained dynamically linked
             # python extensions without additional transitive shared libraries
@@ -542,6 +907,11 @@ def _convert_python_library_to_executable(
         extra,
         extra_artifacts,
         executable_type,
+        linker_map_data = linker_map_data if link_strategy == NativeLinkStrategy("native") else None,
+        gc_sections_data = gc_sections_data if link_strategy == NativeLinkStrategy("native") else None,
+        native_runtime_files = native_runtime_files,
+        build_info_manifest_entries = build_info_manifest_entries,
+        late_build_info_patch = late_build_info_patch,
     )
 
 def python_binary_impl(ctx: AnalysisContext) -> list[Provider] | Promise:
@@ -556,20 +926,6 @@ def python_binary_impl(ctx: AnalysisContext) -> list[Provider] | Promise:
         if main_module.endswith(".py"):
             main_module = main_module[:-3]
 
-    # if "python-version=3.8" in ctx.attrs.labels:
-    #     # buildifier: disable=print
-    #     print((
-    #         "\033[1;33m \u26A0 [Warning] " +
-    #         "{0} 3.8 is EOL, and is going away by the end of H1 2024. " +
-    #         "This build triggered //{1}:{2} which still uses {0} 3.8. " +
-    #         "Make sure someone (you or the appropriate maintainers) upgrades it to {0} 3.10 soon to avoid breakages. " +
-    #         "https://fburl.com/python-eol \033[0m"
-    #     ).format(
-    #         "Cinder" if "python-flavor=cinder" in ctx.attrs.labels else "Python",
-    #         ctx.label.package,
-    #         ctx.attrs.name,
-    #     ))
-
     if main_module != None:
         main = (EntryPointKind("module"), main_module)
     else:
@@ -579,9 +935,13 @@ def python_binary_impl(ctx: AnalysisContext) -> list[Provider] | Promise:
     if ctx.attrs.main != None:
         srcs[ctx.attrs.main.short_path] = ctx.attrs.main
     srcs = qualify_srcs(ctx.label, ctx.attrs.base_module, srcs)
-    default_resources_map, standalone_resources_map = py_attr_resources(ctx)
+    default_resources_map, standalone_resources_map, outplace_resources_map = py_attr_resources(ctx)
     standalone_resources = qualify_srcs(ctx.label, ctx.attrs.base_module, standalone_resources_map)
+    outplace_resources = qualify_srcs(ctx.label, ctx.attrs.base_module, outplace_resources_map)
     default_resources = qualify_srcs(ctx.label, ctx.attrs.base_module, default_resources_map)
+
+    cxx_toolchain_info = get_opt_cxx_toolchain_info(ctx)
+    toolchain_allow_cache_upload = cxx_toolchain_info.cxx_compiler_info.allow_cache_upload if cxx_toolchain_info else None
 
     return python_executable(
         ctx,
@@ -589,7 +949,107 @@ def python_binary_impl(ctx: AnalysisContext) -> list[Provider] | Promise:
         srcs,
         default_resources,
         standalone_resources,
+        outplace_resources,
         compile = value_or(ctx.attrs.compile, False),
-        allow_cache_upload = cxx_attrs_get_allow_cache_upload(ctx.attrs),
+        allow_cache_upload = cxx_attrs_get_allow_cache_upload(ctx.attrs, toolchain_allow_cache_upload),
         executable_type = ExecutableType("binary"),
     )
+
+python_binary = prelude_rule(
+    name = "python_binary",
+    impl = python_binary_impl,
+    docs = """
+        A `python_binary()` rule is used to build an executable Python package
+        that includes Python sources and resources from all transitive
+        dependencies.
+    """,
+    examples = """
+        Build an executable from the Python files in the BUCK directory.
+
+        ```
+        # BUCK
+
+        python_binary(
+          name = 'tailer',
+          main_module = 'tailer',
+          deps = [
+            ':tailerutils',
+          ],
+        )
+
+        python_library(
+          name = 'tailerutils',
+          # The main module, tailer.py, is specified here.
+          # (Separated out from the glob pattern for clarity.)
+          srcs = glob(['tailer.py', '*.py']),
+        )
+        ```
+    """,
+    further = None,
+    attrs = (
+        # @unsorted-dict-items
+        {k: attrs.default_only(v) for k, v in cxx_binary_base_attrs().items()}
+        | buck.labels_arg()
+        | {
+            "base_module": attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                The package in which the main module should reside in its final
+                 location in the binary. If unset, Buck uses the project-relative directory
+                 that contains the BUCK file.
+            """,
+            ),
+            "main": attrs.option(
+                attrs.source(),
+                default = None,
+                doc = """
+                The Python file which serves as the entry point for the binary.
+                 The interpreter initiates execution of the binary with the code in this file.
+            """,
+            ),
+            "main_module": attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                The python module that should be the entry point of the binary. This should be
+                 a module name within a `python_library` that this binary depends on. Note that
+                 module names take `base_module` of the library into account.
+                 This property is mutually exclusive with `main`, and should be preferred to `main`, which is deprecated.
+            """,
+            ),
+        }
+        | python_common.deps_arg()
+        | python_common.version_selections_arg()
+        | python_common.preload_deps_arg()
+        | python_common.package_style_arg()
+        | python_common.linker_flags_arg()
+        | python_common.deduplicate_merged_link_roots()
+        | python_common.executable_deps_arg()
+        | native_common.link_group_deps()
+        | native_common.transformation_spec_arg()
+        | native_common.link_group_public_deps_label()
+        | {
+            "build_args": attrs.list(attrs.arg(), default = []),
+            "compile": attrs.option(attrs.bool(), default = None),
+            "dummy_omnibus": attrs.option(attrs.dep(), default = None),
+            "extension": attrs.option(attrs.string(), default = None),
+            "prefer_stripped_native_objects": attrs.bool(default = False),
+            "repl_main": attrs.option(attrs.string(), default = None),
+            "repl_only_deps": attrs.list(attrs.dep(), default = []),
+            "zip_safe": attrs.option(attrs.bool(), default = None),
+        }
+        | buck.licenses_arg()
+        | buck.contacts_arg()
+        | buck.allow_cache_upload_arg()
+        | typing_arg()
+        | python_executable_attrs()
+        | {
+            "link_style": attrs.enum(LinkableDepType, default = "static"),
+            "_python_internal_tools": python_common.internal_tools_arg(),
+            "_python_toolchain": toolchains_common.python(),
+        }
+        | validation_common.attrs_validators_arg()
+    ),
+    cfg = constraint_overrides.python_transition,
+)

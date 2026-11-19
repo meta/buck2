@@ -8,13 +8,12 @@
 
 def _declared_artifact_path_test_impl(ctx):
     actions = ctx.bxl_actions().actions
-    artifact = actions.write("foo", "bar")
+    artifact = actions.write("foo", "bar", has_content_based_path = False)
 
     ctx.output.print(get_path_without_materialization(artifact, ctx))
     ctx.output.print(ctx.output.ensure(artifact))
 
 declared_artifact_path_test = bxl_main(
     impl = _declared_artifact_path_test_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )

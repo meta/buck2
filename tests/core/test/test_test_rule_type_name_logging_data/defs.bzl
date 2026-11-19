@@ -8,7 +8,7 @@
 
 def _one(ctx):
     return [
-        DefaultInfo(default_output = ctx.actions.write("out", "one")),
+        DefaultInfo(default_output = ctx.actions.write("out", "one", has_content_based_path = False)),
         ExternalRunnerTestInfo(
             command = ["fbpython", "-c", "import sys; sys.exit(0)"],
             type = "custom",
@@ -24,7 +24,7 @@ one = rule(
 
 def _two(ctx):
     return [
-        DefaultInfo(default_output = ctx.actions.write("out", "two")),
+        DefaultInfo(default_output = ctx.actions.write("out", "two", has_content_based_path = False)),
         ExternalRunnerTestInfo(
             command = ["fbpython", "-c", "import sys; sys.exit(0)"],
             type = "custom",
@@ -33,5 +33,16 @@ def _two(ctx):
 
 two = rule(
     impl = _two,
+    attrs = {},
+)
+
+def _not_a_test(ctx):
+    return [DefaultInfo(default_output = ctx.actions.write("out", "not_a_test", has_content_based_path = False))]
+
+# A non-test rule. Mirrors macro-generated sibling targets (e.g. genrules)
+# that users sometimes accidentally pass to `buck2 test`. Before this stack
+# such invocations logged empty target_rule_type_names.
+not_a_test = rule(
+    impl = _not_a_test,
     attrs = {},
 )

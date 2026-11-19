@@ -15,6 +15,18 @@ prelude.python_bootstrap_binary(
     ],
 )
 
+prelude.python_library(
+    name = "duplicate_class_checker_lib",
+    srcs = ["duplicate_class_checker.py"],
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
+    name = "consolidate_class_names",
+    main = "consolidate_class_names.py",
+    visibility = ["PUBLIC"],
+)
+
 prelude.python_bootstrap_binary(
     name = "unpack_aar",
     main = "unpack_aar.py",
@@ -27,6 +39,24 @@ prelude.python_bootstrap_binary(
 prelude.python_bootstrap_binary(
     name = "filter_dex",
     main = "filter_dex.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_library(
+    name = "filter_dex_lib",
+    srcs = ["filter_dex.py"],
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
+    name = "sort_pre_dexed_files",
+    main = "sort_pre_dexed_files.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_library(
+    name = "sort_pre_dexed_files_lib",
+    srcs = ["sort_pre_dexed_files.py"],
     visibility = ["PUBLIC"],
 )
 
@@ -54,6 +84,12 @@ prelude.python_bootstrap_binary(
     visibility = ["PUBLIC"],
 )
 
+prelude.python_library(
+    name = "merge_sequence_lib",
+    srcs = ["merge_sequence.py"],
+    visibility = ["PUBLIC"],
+)
+
 prelude.python_bootstrap_binary(
     name = "filter_extra_resources",
     main = "filter_extra_resources.py",
@@ -74,4 +110,36 @@ prelude.python_bootstrap_binary(
     name = "create_jdk_system_image",
     main = "create_jdk_system_image.py",
     visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
+    name = "combine_apk_with_relinked_libs",
+    main = "combine_apk_with_relinked_libs.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_library(
+    name = "combine_apk_with_relinked_libs_lib",
+    srcs = ["combine_apk_with_relinked_libs.py"],
+    visibility = ["PUBLIC"],
+)
+
+# Type checking target for Python tool scripts
+prelude.python_library(
+    name = "scripts-typing",
+    srcs = [
+        "combine_apk_with_relinked_libs.py",
+        "combine_native_library_dirs.py",
+        "consolidate_class_names.py",
+        "create_jdk_system_image.py",
+        "duplicate_class_checker.py",
+        "filter_dex.py",
+        "filter_extra_resources.py",
+        "filter_prebuilt_native_library_dir.py",
+        "merge_sequence.py",
+        "native_libs_as_assets_metadata.py",
+        "sort_pre_dexed_files.py",
+        "unpack_aar.py",
+    ],
+    typing = True,
 )

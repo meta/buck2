@@ -7,6 +7,18 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
+    autocargo = {
+        "cargo_toml_config": {
+            "package": {
+                "authors": ["Facebook"],
+                "description": "Derive helpers for the starlark package.",
+                "documentation": "https://docs.rs/starlark_derive",
+                "license": "Apache-2.0",
+                "repository": "https://github.com/facebook/starlark-rust",
+                "version": "0.14.2",
+            },
+        },
+    },
     proc_macro = True,
     visibility = [
         "//buck2/starlark-rust/...",

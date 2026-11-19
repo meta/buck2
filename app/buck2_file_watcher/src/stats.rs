@@ -9,6 +9,7 @@
  */
 
 use allocative::Allocative;
+use buck2_core::fs::i_project_rel_path::IProjectRelativePath;
 
 /// We limit the number of file change records so we don't use too much memory
 /// or too much space in scribe.
@@ -45,7 +46,7 @@ impl FileWatcherStats {
     /// I have seen an event that I am processing
     pub(crate) fn add(
         &mut self,
-        path: String,
+        path: IProjectRelativePath,
         event: buck2_data::FileWatcherEventType,
         kind: buck2_data::FileWatcherKind,
     ) {
@@ -56,7 +57,7 @@ impl FileWatcherStats {
             self.changes.push(buck2_data::FileWatcherEvent {
                 event: event as i32,
                 kind: kind as i32,
-                path,
+                path: path.to_string(),
             });
         } else {
             self.changes_missed = true;

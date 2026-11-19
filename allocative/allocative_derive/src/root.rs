@@ -32,7 +32,7 @@ fn global_root_impl(input: proc_macro2::TokenStream) -> syn::Result<proc_macro2:
     Ok(quote_spanned! {item_static.span()=>
         #item_static
 
-        #[allocative::__macro_refs::ctor::ctor]
+        #[allocative::__macro_refs::ctor::ctor(unsafe)]
         fn #register_name() {
             allocative::register_root(&#name);
         }

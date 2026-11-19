@@ -18,10 +18,8 @@ buck_kotlin_library(
         "prelude//toolchains/android/test/com/facebook/buck/android/apkmodule:apkmodule",
     ],
     visibility = ["PUBLIC"],
-    deps = [
-    ],
-    exported_deps = [
-    ],
+    deps = [],
+    exported_deps = [],
 )
 
 buck_java_library(
@@ -40,6 +38,8 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/classes:classes",
         "prelude//toolchains/android/src/com/facebook/buck/util:util",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
     ],
     exported_deps = [
         ":module-only",
@@ -59,6 +59,8 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/json:json",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
         ":apkmodule",
     ],
 )

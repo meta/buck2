@@ -2,4 +2,30 @@ load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_core_tests")
 
 oncall("build_infra")
 
-buck2_core_tests()
+buck2_core_tests(
+    materializer_variants = [
+        "test_clean_stale",
+        "test_clean_stale_bxl",
+        "test_materializer",
+        "test_granularity",
+        "test_projections",
+        "test_readonly_outputs",
+        "test_symlink_deps",
+        "test_symlink_local_remote_bug",
+        "test_symlink_to_parent_bug",
+    ],
+    target_extra_attrs = {
+        "test_clean_stale": {
+            "deps": [
+                "fbsource//third-party/rust:jiff",
+                "fbsource//third-party/rust:regex",
+            ],
+        },
+        "test_materializer": {
+            "env": {
+                # `cpe::x2p` resolves `localhost` incorrectly, and the download test fails.
+                "CPE_RUST_X2P_SUPPORTS_VPNLESS": "0",
+            },
+        },
+    },
+)

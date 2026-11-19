@@ -7,4 +7,5 @@ platform(
 
 clay_library(
     name = "candy",
+    value = read_config("test", "value", "before"),
 )

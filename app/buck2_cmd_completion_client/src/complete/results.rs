@@ -9,7 +9,6 @@
  */
 
 use std::collections::BTreeSet;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
@@ -20,13 +19,14 @@ use buck2_core::cells::name::CellName;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::file_name::FileNameBuf;
+use buck2_hash::BuckMutMap;
 
 use super::path_sanitizer::SanitizedPath;
 
 pub(crate) struct CompletionResults<'a> {
     roots: &'a InvocationRoots,
     cell_configs: Arc<BuckConfigBasedCells>,
-    buildfiles: HashMap<CellName, Vec<FileNameBuf>>,
+    buildfiles: BuckMutMap<CellName, Vec<FileNameBuf>>,
     results: BTreeSet<String>,
 }
 
@@ -35,7 +35,7 @@ impl<'a> CompletionResults<'a> {
         Self {
             roots,
             cell_configs,
-            buildfiles: HashMap::new(),
+            buildfiles: BuckMutMap::default(),
             results: BTreeSet::<String>::new(),
         }
     }
@@ -46,7 +46,7 @@ impl<'a> CompletionResults<'a> {
     }
 
     pub(crate) async fn insert_path(&mut self, path: &SanitizedPath) -> &mut Self {
-        self.insert_dir(&path.abs_path(), path.given()).await
+        self.insert_dir(path.abs_path(), path.given()).await
     }
 
     pub(crate) async fn insert_dir(&mut self, abs_dir: &AbsNormPath, nickname: &str) -> &mut Self {

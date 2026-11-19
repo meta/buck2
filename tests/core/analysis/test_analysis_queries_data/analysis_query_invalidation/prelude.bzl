@@ -8,7 +8,7 @@
 
 target = rule(
     impl = lambda ctx: [
-        DefaultInfo(default_output = ctx.actions.write("out", ctx.attrs.arg or "", allow_args = True)[0]),
+        DefaultInfo(default_output = ctx.actions.write("out", ctx.attrs.arg or "", allow_args = True, has_content_based_path = False)[0]),
         RunInfo(),
     ],
     attrs = {"arg": attrs.option(attrs.arg(), default = None)},

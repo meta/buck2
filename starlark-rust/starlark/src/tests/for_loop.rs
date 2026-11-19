@@ -16,6 +16,7 @@
  */
 
 use crate::assert;
+use crate::assert::Assert;
 
 #[test]
 fn test_for_loop_bug_1() {
@@ -30,5 +31,29 @@ l = [1]
 test(l)
 l.append(1)
 "#,
+    );
+}
+
+/// A `for` statement or a comprehension over `""` fails like one over any other string:
+/// strings have a length but are not iterable, so they are not removed as empty iterables.
+#[test]
+fn test_for_over_empty_string_fails() {
+    assert::fail("[x for x in '']", "not supported on type `string`");
+    assert::fail("{x: 1 for x in ''}", "not supported on type `string`");
+    assert::eq("[x for x in ()]", "[]");
+    assert::eq("[x for x in []]", "[]");
+    let mut a = Assert::new();
+    a.disable_static_typechecking();
+    a.fail(
+        "def f():\n    for x in '':\n        pass\n    return 1\nf()",
+        "not supported on type `string`",
+    );
+    a.module(
+        "lib.star",
+        "E = 'x'\nE = ''\ndef f():\n    for x in E:\n        pass\n    return 1\n",
+    );
+    a.fail(
+        "load('lib.star', 'f')\nf()",
+        "not supported on type `string`",
     );
 }

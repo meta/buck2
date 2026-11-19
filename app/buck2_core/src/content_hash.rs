@@ -8,10 +8,9 @@
  * above-listed licenses.
  */
 
-use std::cmp::min;
-
 use allocative::Allocative;
-use buck2_error::internal_error;
+use compact_str::CompactString;
+use pagable::Pagable;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -21,6 +20,10 @@ enum ContentBasedPathHashError {
 }
 
 /// Hash of some content, serialized as a hex string.
+///
+/// The `Specified` variant uses `CompactString`, which stores the 16 ASCII hex
+/// characters inline and provides constant-time string access without a heap
+/// allocation per hash.
 #[derive(
     Clone,
     Debug,
@@ -30,10 +33,12 @@ enum ContentBasedPathHashError {
     Allocative,
     derive_more::Display,
     Ord,
-    PartialOrd
+    PartialOrd,
+    Pagable,
+    strong_hash::StrongHash
 )]
 pub enum ContentBasedPathHash {
-    Specified(String),
+    Specified(#[pagable(flatten_serde)] CompactString),
     OutputArtifact,
     /// When running aquery we don't have content hashes for any of our inputs, so we
     /// just use a placeholder value instead.
@@ -52,15 +57,16 @@ pub enum ContentBasedPathHash {
 
 impl ContentBasedPathHash {
     pub fn new(bytes: &[u8]) -> buck2_error::Result<ContentBasedPathHash> {
-        let value = hex::encode(&bytes[0..min(8, bytes.len())]);
+        if bytes.len() < 8 {
+            return Err(ContentBasedPathHashError::NotLongEnough(hex::encode(bytes)).into());
+        }
 
-        let value = if value.len() < 16 {
-            return Err(ContentBasedPathHashError::NotLongEnough(value.to_owned()).into());
-        } else if value.len() > 16 {
-            return Err(internal_error!("Content hash is too long: {}", value));
-        } else {
-            value
-        };
+        // 8 input bytes encode to exactly 16 hex characters, which matches the
+        // length of `value`, so `encode_to_slice` cannot fail.
+        let mut value = [0u8; 16];
+        hex::encode_to_slice(&bytes[0..8], &mut value)
+            .expect("8 bytes always encode to 16 hex characters");
+        let value = CompactString::from_utf8(value).expect("hex output is always valid UTF-8");
 
         Ok(ContentBasedPathHash::Specified(value))
     }
@@ -74,7 +80,7 @@ impl ContentBasedPathHash {
     #[inline]
     pub fn as_str(&self) -> &str {
         match self {
-            ContentBasedPathHash::Specified(value) => value,
+            ContentBasedPathHash::Specified(value) => value.as_str(),
             // We deliberately make this 16 characters long so that it's the same length
             // as the content hash that will replace it.
             ContentBasedPathHash::OutputArtifact => "output_artifacts",
@@ -111,6 +117,15 @@ mod tests {
         let res = ContentBasedPathHash::new("0000".as_bytes());
         assert!(res.is_err());
         assert!(res.unwrap_err().category_key().ends_with("NotLongEnough"));
+    }
+
+    #[test]
+    fn test_hash_is_stored_inline() {
+        let hash = ContentBasedPathHash::new(b"00000000").expect("valid content hash");
+        let ContentBasedPathHash::Specified(value) = hash else {
+            panic!("expected specified content hash");
+        };
+        assert!(!value.is_heap_allocated());
     }
 
     #[test]

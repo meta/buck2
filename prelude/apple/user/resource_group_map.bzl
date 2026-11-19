@@ -30,10 +30,7 @@ load("@prelude//utils:utils.bzl", "flatten")
 def resource_group_map_impl(ctx: AnalysisContext) -> list[Provider]:
     resource_groups = parse_groups_definitions(ctx.attrs.map, lambda root: root.label)
 
-    resource_group_to_implicit_deps_mapping = {
-        group: flatten([get_roots_from_mapping(mapping) for mapping in mappings])
-        for group, mappings in ctx.attrs.map
-    }
+    resource_group_to_implicit_deps_mapping = {group: flatten([get_roots_from_mapping(mapping) for mapping in mappings]) for group, mappings in ctx.attrs.map}
     flattend_resource_group_deps = flatten(resource_group_to_implicit_deps_mapping.values())
 
     resource_graph = create_resource_graph(
@@ -61,9 +58,11 @@ def resource_group_map_impl(ctx: AnalysisContext) -> list[Provider]:
         graph_map = resource_graph_node_map,
     )
     return [
-        DefaultInfo(sub_targets = {
-            "info": make_info_subtarget_providers(ctx, resource_groups, mappings),
-        }),
+        DefaultInfo(
+            sub_targets = {
+                "info": make_info_subtarget_providers(ctx, resource_groups, mappings),
+            }
+        ),
         ResourceGroupInfo(
             groups = resource_groups,
             groups_hash = hash(str(resource_groups)),
@@ -80,11 +79,7 @@ def _fixup_mapping_to_only_include_roots_in_the_map(mapping: GroupMapping, node_
     if not mapping.roots:
         return mapping
 
-    filtered_roots = [
-        root
-        for root in mapping.roots
-        if root in node_map
-    ]
+    filtered_roots = [root for root in mapping.roots if root in node_map]
     if not filtered_roots:
         return None
 

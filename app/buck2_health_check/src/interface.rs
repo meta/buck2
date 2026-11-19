@@ -25,9 +25,9 @@ pub enum HealthCheckType {
 }
 
 /// Trait to generalize a buck2 health check.
-/// Refer https://fburl.com/buck_health_checks for details on adding a new health check.
+/// Refer <https://fburl.com/buck_health_checks> for details on adding a new health check.
 #[async_trait::async_trait]
-pub(crate) trait HealthCheck: Send + Sync {
+pub trait HealthCheck: Send + Sync {
     /// Returns an optional report when invoked at every `snapshot` event.
     /// Return value is interpreted as follows:
     /// `None`: Health check cannot run. e.g. not applicable for this command/target
@@ -46,7 +46,7 @@ pub(crate) trait HealthCheck: Send + Sync {
 
 /// Trait to generalize a health check service e.g. in-process, out-of-process over gRPC.
 #[async_trait::async_trait]
-pub(crate) trait HealthCheckService: Sync + Send {
+pub trait HealthCheckService: Sync + Send {
     /// Update the context for the health check service.
     async fn update_context(&mut self, event: HealthCheckContextEvent) -> buck2_error::Result<()>;
 
@@ -60,7 +60,7 @@ pub(crate) trait HealthCheckService: Sync + Send {
 /// A subset of the client data that is relevant for health checks.
 /// This is intentionally kept as a small set to avoid serialization costs.
 #[derive(Default)]
-pub(crate) struct HealthCheckContext {
+pub struct HealthCheckContext {
     /// Data from the command start.
     /// Example use: Run a check only on a subset of commands.
     pub command_data: Option<buck2_data::command_start::Data>,
@@ -82,6 +82,10 @@ pub(crate) struct HealthCheckContext {
 
     /// Configurations for health check experiments.
     pub experiment_configurations: Option<buck2_data::SystemInfo>,
+
+    /// Test override for slow build threshold (seconds). When set, bypasses
+    /// the normal p99 Scuba lookup and uses this value instead.
+    pub test_slow_build_threshold_secs: Option<u64>,
 }
 
 /// A subset of the Snapshot data specifically for health check use.
@@ -111,4 +115,7 @@ pub enum HealthCheckContextEvent {
     HasExcessCacheMisses(),
     /// Configuration about the health checks.
     ExperimentConfigurations(buck2_data::SystemInfo),
+    /// Test override for slow build threshold (in seconds).
+    /// Set via BUCK2_TEST_SLOW_BUILD_CHECK env var on the client.
+    TestSlowBuildThreshold(u64),
 }

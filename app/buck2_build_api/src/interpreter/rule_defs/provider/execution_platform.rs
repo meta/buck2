@@ -15,12 +15,25 @@ use allocative::Allocative;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use starlark::any::ProvidesStaticType;
 use starlark::starlark_simple_value;
+use starlark::values::Freeze;
 use starlark::values::NoSerialize;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::starlark_value;
 
-#[derive(ProvidesStaticType, Debug, NoSerialize, Allocative)]
-pub struct StarlarkExecutionPlatformResolution(pub ExecutionPlatformResolution);
+#[derive(
+    ProvidesStaticType,
+    Debug,
+    NoSerialize,
+    Allocative,
+    Freeze,
+    StarlarkPagable
+)]
+pub struct StarlarkExecutionPlatformResolution(
+    #[starlark_pagable(pagable)]
+    #[freeze(identity)]
+    pub ExecutionPlatformResolution,
+);
 
 starlark_simple_value!(StarlarkExecutionPlatformResolution);
 

@@ -8,15 +8,15 @@
  * above-listed licenses.
  */
 
+use buck2_hash::BuckFixedSortedMap;
 use starlark::typing::Ty;
 use starlark::typing::TyStarlarkValue;
 use starlark::typing::TyUser;
 use starlark::typing::TyUserFields;
 use starlark::typing::TyUserParams;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::typing::TypeInstanceId;
 use starlark::values::typing::TypeMatcherFactory;
-use starlark_map::sorted_map::SortedMap;
 
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
@@ -27,7 +27,7 @@ pub(crate) fn ty_provider(
     base: TyStarlarkValue,
     // Use default matcher from `StarlarkValue` if `None`.
     matcher: Option<TypeMatcherFactory>,
-    fields: SortedMap<String, Ty>,
+    fields: BuckFixedSortedMap<String, Ty>,
 ) -> buck2_error::Result<Ty> {
     Ok(Ty::custom(TyUser::new(
         name.to_owned(),

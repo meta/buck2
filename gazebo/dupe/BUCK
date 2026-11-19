@@ -7,6 +7,17 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
+    autocargo = {
+        "cargo_toml_config": {
+            "package": {
+                "authors": ["Facebook"],
+                "categories": ["rust-patterns"],
+                "description": "Marker for types which are cheap to clone",
+                "documentation": "https://docs.rs/dupe",
+                "version": "0.9.1",
+            },
+        },
+    },
     deps = [
         "//buck2/gazebo/dupe_derive:dupe_derive",
     ],

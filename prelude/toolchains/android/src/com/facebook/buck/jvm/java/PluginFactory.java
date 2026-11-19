@@ -12,8 +12,10 @@ package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.util.ClassLoaderCache;
+import com.facebook.infer.annotation.Nullsafe;
 
 // Counter part of AnnotationProcessorFactory
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class PluginFactory implements AutoCloseable {
 
   private final ClassLoader compilerClassLoader;

@@ -21,7 +21,6 @@ error: Expected type `tuple[int, ...]` but got `(int, str)`
    |
 10 |     f((1, "x"))
    |       ^^^^^^^^
-   |
 
 Compiler typechecker (eval):
 error: Expected type `tuple[int, ...]` but got `(int, str)`
@@ -29,4 +28,3 @@ error: Expected type `tuple[int, ...]` but got `(int, str)`
    |
 10 |     f((1, "x"))
    |       ^^^^^^^^
-   |

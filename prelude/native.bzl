@@ -7,16 +7,28 @@
 # above-listed licenses.
 
 # `native` is fine to use in the prelude for v2
-# @lint-ignore-every BUCKLINT
 
 # This is buck2's shim import. Any public symbols here will be available within
 # **all** interpreted files.
 
+load("@prelude//:build_variants.bzl", "build_variants_macro")
 load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load("@prelude//:paths.bzl", "paths")
 load("@prelude//:rules.bzl", __rules__ = "rules")
 load("@prelude//android:cpu_filters.bzl", "ALL_CPU_FILTERS", "CPU_FILTER_FOR_DEFAULT_PLATFORM")
-load("@prelude//apple:apple_macro_layer.bzl", "apple_binary_macro_impl", "apple_bundle_macro_impl", "apple_library_for_distribution_macro_impl", "apple_library_macro_impl", "apple_metal_library_macro_impl", "apple_package_macro_impl", "apple_test_macro_impl", "apple_universal_executable_macro_impl", "apple_xcuitest_macro_impl", "prebuilt_apple_framework_macro_impl")
+load(
+    "@prelude//apple:apple_macro_layer.bzl",
+    "apple_binary_macro_impl",
+    "apple_bundle_macro_impl",
+    "apple_library_for_distribution_macro_impl",
+    "apple_library_macro_impl",
+    "apple_metal_library_macro_impl",
+    "apple_package_macro_impl",
+    "apple_test_macro_impl",
+    "apple_universal_executable_macro_impl",
+    "apple_xcuitest_macro_impl",
+    "prebuilt_apple_framework_macro_impl",
+)
 load("@prelude//apple:prebuilt_apple_xcframework_macro_impl.bzl", "prebuilt_apple_xcframework_macro_impl")
 load("@prelude//apple/swift:swift_toolchain_macro_layer.bzl", "swift_toolchain_macro_impl")
 load("@prelude//cxx:cxx_toolchain.bzl", "cxx_toolchain_inheriting_target_platform")
@@ -24,12 +36,16 @@ load("@prelude//cxx:cxx_toolchain_macro_layer.bzl", "cxx_toolchain_macro_impl")
 load("@prelude//cxx:cxx_toolchain_types.bzl", _cxx = "cxx")
 load("@prelude//erlang:erlang.bzl", _erlang_application = "erlang_application", _erlang_tests = "erlang_tests")
 load("@prelude//python:toolchain.bzl", _python = "python")
-load("@prelude//rust:link_info.bzl", "RustLinkInfo")
 load("@prelude//rust:rust_common.bzl", "rust_common_macro_wrapper")
 load("@prelude//rust:rust_library.bzl", "rust_library_macro_wrapper")
 load("@prelude//rust:with_workspace.bzl", "with_rust_workspace")
 load("@prelude//user:all.bzl", _user_rules = "rules")
-load("@prelude//utils:buckconfig.bzl", _read_config = "read_config_with_logging", _read_root_config = "read_root_config_with_logging", log_buckconfigs = "LOG_BUCKCONFIGS")
+load(
+    "@prelude//utils:buckconfig.bzl",
+    _read_config = "read_config_with_logging",
+    _read_root_config = "read_root_config_with_logging",
+    log_buckconfigs = "LOG_BUCKCONFIGS",
+)
 load("@prelude//utils:expect.bzl", "expect")
 load("@prelude//utils:selects.bzl", "selects")
 
@@ -182,60 +198,30 @@ def _get_valid_cpu_filters(cpu_filters: [list[str], None]) -> list[str]:
 
     return [cpu_filter for cpu_filter in cpu_filters if cpu_filter in cpu_abis]
 
-def _android_aar_macro_stub(
-        cpu_filters = None,
-        **kwargs):
-    __rules__["android_aar"](
-        cpu_filters = _get_valid_cpu_filters(cpu_filters),
-        **kwargs
-    )
+def _android_aar_macro_stub(cpu_filters = None, **kwargs):
+    __rules__["android_aar"](cpu_filters = _get_valid_cpu_filters(cpu_filters), **kwargs)
 
 def _convert_kotlin_compiler_plugins(kotlin_compiler_plugins):
+    if type(kotlin_compiler_plugins) == type(select({})):
+        return native.select_map(kotlin_compiler_plugins, _convert_kotlin_compiler_plugins)
     if type(kotlin_compiler_plugins) == type({}):
-        return [
-            (key, value)
-            for key, value in kotlin_compiler_plugins.items()
-        ]
+        return [(key, value) for key, value in kotlin_compiler_plugins.items()]
     else:
         return kotlin_compiler_plugins
 
-def _kotlin_library_macro_stub(
-        kotlin_compiler_plugins = {},
-        **kwargs):
-    __rules__["kotlin_library"](
-        kotlin_compiler_plugins = _convert_kotlin_compiler_plugins(kotlin_compiler_plugins),
-        **kwargs
-    )
+def _kotlin_library_macro_stub(kotlin_compiler_plugins = {}, **kwargs):
+    __rules__["kotlin_library"](kotlin_compiler_plugins = _convert_kotlin_compiler_plugins(kotlin_compiler_plugins), **kwargs)
 
-def _kotlin_test_macro_stub(
-        kotlin_compiler_plugins = {},
-        **kwargs):
-    __rules__["kotlin_test"](
-        kotlin_compiler_plugins = _convert_kotlin_compiler_plugins(kotlin_compiler_plugins),
-        **kwargs
-    )
+def _kotlin_test_macro_stub(kotlin_compiler_plugins = {}, **kwargs):
+    __rules__["kotlin_test"](kotlin_compiler_plugins = _convert_kotlin_compiler_plugins(kotlin_compiler_plugins), **kwargs)
 
-def _android_library_macro_stub(
-        kotlin_compiler_plugins = {},
-        **kwargs):
-    __rules__["android_library"](
-        kotlin_compiler_plugins = _convert_kotlin_compiler_plugins(kotlin_compiler_plugins),
-        **kwargs
-    )
+def _android_library_macro_stub(kotlin_compiler_plugins = {}, **kwargs):
+    __rules__["android_library"](kotlin_compiler_plugins = _convert_kotlin_compiler_plugins(kotlin_compiler_plugins), **kwargs)
 
-def _robolectric_test_macro_stub(
-        kotlin_compiler_plugins = {},
-        **kwargs):
-    __rules__["robolectric_test"](
-        kotlin_compiler_plugins = _convert_kotlin_compiler_plugins(kotlin_compiler_plugins),
-        **kwargs
-    )
+def _robolectric_test_macro_stub(kotlin_compiler_plugins = {}, **kwargs):
+    __rules__["robolectric_test"](kotlin_compiler_plugins = _convert_kotlin_compiler_plugins(kotlin_compiler_plugins), **kwargs)
 
-def _android_binary_macro_stub(
-        allow_r_dot_java_in_secondary_dex = False,
-        cpu_filters = None,
-        primary_dex_patterns = [],
-        **kwargs):
+def _android_binary_macro_stub(allow_r_dot_java_in_secondary_dex = False, cpu_filters = None, primary_dex_patterns = [], **kwargs):
     if not allow_r_dot_java_in_secondary_dex:
         primary_dex_patterns = primary_dex_patterns + [
             "/R^",
@@ -249,56 +235,47 @@ def _android_binary_macro_stub(
         allow_r_dot_java_in_secondary_dex = allow_r_dot_java_in_secondary_dex,
         cpu_filters = cpu_filters if isinstance(cpu_filters, Select) else _get_valid_cpu_filters(cpu_filters),
         primary_dex_patterns = primary_dex_patterns,
-        **kwargs
+        **kwargs,
     )
 
-def _android_bundle_macro_stub(
-        cpu_filters = None,
-        **kwargs):
+def _android_bundle_macro_stub(cpu_filters = None, **kwargs):
     __rules__["android_bundle"](
         # TODO: T218493860 Accept `select` for `cpu_filters` and apply the same logic as for non-select cases
         cpu_filters = cpu_filters if isinstance(cpu_filters, Select) else _get_valid_cpu_filters(cpu_filters),
-        **kwargs
+        **kwargs,
     )
 
-def _android_instrumentation_apk_macro_stub(
-        cpu_filters = None,
-        primary_dex_patterns = [],
-        **kwargs):
+def _android_instrumentation_apk_macro_stub(cpu_filters = None, primary_dex_patterns = [], **kwargs):
     primary_dex_patterns = primary_dex_patterns + [
         "/R^",
         "/R$",
         # Pin this to the primary for apps with no primary dex classes.
         "^com/facebook/buck_generated/AppWithoutResourcesStub^",
     ]
-    __rules__["android_instrumentation_apk"](
-        cpu_filters = _get_valid_cpu_filters(cpu_filters),
-        primary_dex_patterns = primary_dex_patterns,
-        **kwargs
-    )
+    __rules__["android_instrumentation_apk"](cpu_filters = _get_valid_cpu_filters(cpu_filters), primary_dex_patterns = primary_dex_patterns, **kwargs)
 
 # export_file src defaults to name, despite being string vs source, so adjust it in the macros
+def _build_variants_macro_stub(**kwargs):
+    build_variants_macro(build_variants_rule = __rules__["build_variants"], **kwargs)
+
 def _export_file_macro_stub(name, src = None, **kwargs):
     __rules__["export_file"](name = name, src = name if src == None else src, **kwargs)
 
 def _prebuilt_cxx_library_macro_stub(
-        exported_preprocessor_flags = None,
-        versioned_exported_preprocessor_flags = None,
-        exported_lang_preprocessor_flags = None,
-        versioned_exported_lang_preprocessor_flags = None,
-        exported_platform_preprocessor_flags = None,
-        versioned_exported_platform_preprocessor_flags = None,
-        exported_lang_platform_preprocessor_flags = None,
-        versioned_exported_lang_platform_preprocessor_flags = None,
-        static_lib = None,
-        versioned_static_lib = None,
-        static_pic_lib = None,
-        versioned_static_pic_lib = None,
-        shared_lib = None,
-        versioned_shared_lib = None,
-        header_dirs = None,
-        versioned_header_dirs = None,
-        **kwargs):
+    exported_preprocessor_flags = None,
+    versioned_exported_preprocessor_flags = None,
+    exported_lang_preprocessor_flags = None,
+    versioned_exported_lang_preprocessor_flags = None,
+    static_lib = None,
+    versioned_static_lib = None,
+    static_pic_lib = None,
+    versioned_static_pic_lib = None,
+    shared_lib = None,
+    versioned_shared_lib = None,
+    header_dirs = None,
+    versioned_header_dirs = None,
+    **kwargs,
+):
     __rules__["prebuilt_cxx_library"](
         exported_preprocessor_flags = _concat(
             exported_preprocessor_flags,
@@ -307,14 +284,6 @@ def _prebuilt_cxx_library_macro_stub(
         exported_lang_preprocessor_flags = _concat(
             exported_lang_preprocessor_flags,
             _versioned_param_to_select(versioned_exported_lang_preprocessor_flags),
-        ),
-        exported_platform_preprocessor_flags = _concat(
-            exported_platform_preprocessor_flags,
-            _versioned_param_to_select(versioned_exported_platform_preprocessor_flags),
-        ),
-        exported_lang_platform_preprocessor_flags = _concat(
-            exported_lang_platform_preprocessor_flags,
-            _versioned_param_to_select(versioned_exported_lang_platform_preprocessor_flags),
         ),
         static_lib = selects.apply_n(
             [static_lib, selects.apply(versioned_static_lib, _versioned_param_to_select)],
@@ -332,38 +301,28 @@ def _prebuilt_cxx_library_macro_stub(
             [header_dirs, selects.apply(versioned_header_dirs, _versioned_param_to_select)],
             _at_most_one,
         ),
-        **kwargs
+        **kwargs,
     )
 
-def _python_library_macro_stub(
-        srcs = None,
-        versioned_srcs = None,
-        resources = None,
-        versioned_resources = None,
-        **kwargs):
+def _python_library_macro_stub(srcs = None, versioned_srcs = None, resources = None, versioned_resources = None, **kwargs):
     __rules__["python_library"](
         srcs = _concat(srcs, _versioned_param_to_select(versioned_srcs, default = None)),
         resources = _concat(resources, _versioned_param_to_select(versioned_resources, default = None)),
-        **kwargs
+        **kwargs,
     )
 
 def _versioned_alias_macro_stub(versions = {}, **kwargs):
     project = paths.basename(package_name())
-    __rules__["alias"](
-        actual = select({
-            _tp2_constraint(project, version): actual
-            for version, actual in versions.items()
-        }),
-        **kwargs
-    )
+    __rules__["alias"](actual = select({_tp2_constraint(project, version): actual for version, actual in versions.items()}), **kwargs)
 
 def _configured_alias_macro_stub(
-        name,
-        actual,
-        platform,
-        # Whether to fallback to a unconfigured `alias` if `platform` is `None`.
-        fallback_to_unconfigured_alias = False,
-        **kwargs):
+    name,
+    actual,
+    platform,
+    # Whether to fallback to a unconfigured `alias` if `platform` is `None`.
+    fallback_to_unconfigured_alias = False,
+    **kwargs,
+):
     pred = lambda platform: platform != None or not fallback_to_unconfigured_alias
     __rules__["configured_alias"](
         name = name,
@@ -382,88 +341,46 @@ def _configured_alias_macro_stub(
         # Unused.
         actual = actual,
         platform = platform,
-        **kwargs
+        **kwargs,
     )
 
 def _apple_bundle_macro_stub(**kwargs):
-    apple_bundle_macro_impl(
-        apple_bundle_rule = __rules__["apple_bundle"],
-        apple_resource_bundle_rule = __rules__["apple_resource_bundle"],
-        **kwargs
-    )
+    apple_bundle_macro_impl(apple_bundle_rule = __rules__["apple_bundle"], **kwargs)
 
 def _apple_watchos_bundle_macro_stub(**kwargs):
-    apple_bundle_macro_impl(
-        apple_bundle_rule = __rules__["apple_watchos_bundle"],
-        apple_resource_bundle_rule = __rules__["apple_resource_bundle"],
-        **kwargs
-    )
+    apple_bundle_macro_impl(apple_bundle_rule = __rules__["apple_watchos_bundle"], **kwargs)
 
 def _apple_macos_bundle_macro_stub(**kwargs):
-    apple_bundle_macro_impl(
-        apple_bundle_rule = __rules__["apple_macos_bundle"],
-        apple_resource_bundle_rule = __rules__["apple_resource_bundle"],
-        **kwargs
-    )
+    apple_bundle_macro_impl(apple_bundle_rule = __rules__["apple_macos_bundle"], **kwargs)
 
 def _apple_test_macro_stub(**kwargs):
-    apple_test_macro_impl(
-        apple_test_rule = __rules__["apple_test"],
-        apple_resource_bundle_rule = __rules__["apple_resource_bundle"],
-        **kwargs
-    )
+    apple_test_macro_impl(apple_test_rule = __rules__["apple_test"], **kwargs)
 
 def _apple_xcuitest_macro_stub(**kwargs):
-    apple_xcuitest_macro_impl(
-        apple_xcuitest_rule = __rules__["apple_xcuitest"],
-        **kwargs
-    )
+    apple_xcuitest_macro_impl(apple_xcuitest_rule = __rules__["apple_xcuitest"], **kwargs)
 
 def _apple_binary_macro_stub(**kwargs):
-    apple_binary_macro_impl(
-        apple_binary_rule = __rules__["apple_binary"],
-        apple_universal_executable = __rules__["apple_universal_executable"],
-        **kwargs
-    )
+    apple_binary_macro_impl(apple_binary_rule = __rules__["apple_binary"], apple_universal_executable = __rules__["apple_universal_executable"], **kwargs)
 
 def _apple_library_macro_stub(**kwargs):
-    apple_library_macro_impl(
-        apple_library_rule = __rules__["apple_library"],
-        **kwargs
-    )
+    apple_library_macro_impl(apple_library_rule = __rules__["apple_library"], **kwargs)
 
 def _apple_metal_library_macro_stub(**kwargs):
-    apple_metal_library_macro_impl(
-        apple_metal_library_rule = __rules__["apple_metal_library"],
-        **kwargs
-    )
+    apple_metal_library_macro_impl(apple_metal_library_rule = __rules__["apple_metal_library"], **kwargs)
 
 def _apple_library_for_distribution_macro_stub(**kwargs):
-    apple_library_for_distribution_macro_impl(
-        apple_library_for_distribution_rule = __rules__["apple_library_for_distribution"],
-        **kwargs
-    )
+    apple_library_for_distribution_macro_impl(apple_library_for_distribution_rule = __rules__["apple_library_for_distribution"], **kwargs)
 
 def _apple_package_macro_stub(**kwargs):
-    apple_package_macro_impl(
-        apple_package_rule = __rules__["apple_package"],
-        apple_ipa_package_rule = __rules__["apple_ipa_package"],
-        **kwargs
-    )
+    apple_package_macro_impl(apple_package_rule = __rules__["apple_package"], apple_ipa_package_rule = __rules__["apple_ipa_package"], **kwargs)
 
 def _apple_universal_executable_macro_stub(**kwargs):
-    apple_universal_executable_macro_impl(
-        apple_universal_executable_rule = __rules__["apple_universal_executable"],
-        **kwargs
-    )
+    apple_universal_executable_macro_impl(apple_universal_executable_rule = __rules__["apple_universal_executable"], **kwargs)
 
 def _swift_toolchain_macro_stub(**kwargs):
     rule = __rules__["swift_toolchain"]
 
-    swift_toolchain_macro_impl(
-        swift_toolchain_rule = rule,
-        **kwargs
-    )
+    swift_toolchain_macro_impl(swift_toolchain_rule = rule, **kwargs)
 
 def _cxx_toolchain_macro_stub(**kwargs):
     if is_full_meta_repo():
@@ -472,30 +389,16 @@ def _cxx_toolchain_macro_stub(**kwargs):
             "DEFAULT": cache_links,
             "ovr_config//platform/execution/constraints:execution-platform-transitioned": True,
         })
-    cxx_toolchain_macro_impl(
-        cxx_toolchain_rule = cxx_toolchain_inheriting_target_platform,
-        **kwargs
-    )
+    cxx_toolchain_macro_impl(cxx_toolchain_rule = cxx_toolchain_inheriting_target_platform, **kwargs)
 
 def _cxx_toolchain_override_macro_stub(**kwargs):
-    cxx_toolchain_macro_impl(
-        cxx_toolchain_rule = _user_rules["cxx_toolchain_override"],
-        **kwargs
-    )
+    cxx_toolchain_macro_impl(cxx_toolchain_rule = _user_rules["cxx_toolchain_override"], **kwargs)
 
 def _erlang_application_macro_stub(**kwargs):
-    _erlang_application(
-        erlang_app_rule = __rules__["erlang_app"],
-        erlang_app_includes_rule = __rules__["erlang_app_includes"],
-        **kwargs
-    )
+    _erlang_application(erlang_app_rule = __rules__["erlang_app"], erlang_app_includes_rule = __rules__["erlang_app_includes"], **kwargs)
 
 def _erlang_tests_macro_stub(**kwargs):
-    _erlang_tests(
-        erlang_app_rule = __rules__["erlang_app"],
-        erlang_test_rule = __rules__["erlang_test"],
-        **kwargs
-    )
+    _erlang_tests(erlang_app_rule = __rules__["erlang_app"], erlang_test_rule = __rules__["erlang_test"], **kwargs)
 
 def _rust_library_macro_stub(**kwargs):
     rust_library = rust_common_macro_wrapper(__rules__["rust_library"])
@@ -511,21 +414,14 @@ def _rust_test_macro_stub(**kwargs):
     rust_test(**kwargs)
 
 def _prebuilt_apple_framework_macro_stub(**kwargs):
-    prebuilt_apple_framework_macro_impl(
-        prebuilt_apple_framework_rule = __rules__["prebuilt_apple_framework"],
-        **kwargs
-    )
+    prebuilt_apple_framework_macro_impl(prebuilt_apple_framework_rule = __rules__["prebuilt_apple_framework"], **kwargs)
 
 def _prebuilt_apple_xcframework_macro_stub(**kwargs):
     prebuilt_apple_xcframework_macro_impl(
-        alias_rule = __rules__["alias"],
-        filegroup_rule = __rules__["filegroup"],
-        genrule = __rules__["genrule"],
-        prebuilt_apple_framework_rule = __rules__["prebuilt_apple_framework"],
-        **kwargs
+        filegroup_rule = __rules__["filegroup"], genrule = __rules__["genrule"], prebuilt_apple_framework_rule = __rules__["prebuilt_apple_framework"], **kwargs
     )
 
-# TODO(cjhopman): These macro wrappers should be handled in prelude/rules.bzl+rule_impl.bzl.
+# TODO(cjhopman): These macro wrappers should be handled in prelude/rules.bzl.
 # Probably good if they were defined to take in the base rule that
 # they are wrapping and return the wrapped one.
 __extra_rules__ = {
@@ -545,6 +441,7 @@ __extra_rules__ = {
     "apple_universal_executable": _apple_universal_executable_macro_stub,
     "apple_watchos_bundle": _apple_watchos_bundle_macro_stub,
     "apple_xcuitest": _apple_xcuitest_macro_stub,
+    "build_variants": _build_variants_macro_stub,
     "configured_alias": _configured_alias_macro_stub,
     "cxx_toolchain": _cxx_toolchain_macro_stub,
     "cxx_toolchain_override": _cxx_toolchain_override_macro_stub,
@@ -566,10 +463,14 @@ __extra_rules__ = {
     "versioned_alias": _versioned_alias_macro_stub,
 }
 
-__overridden_builtins__ = {
-    "read_config": _read_config,
-    "read_root_config": _read_root_config,
-} if log_buckconfigs else {}
+__overridden_builtins__ = (
+    {
+        "read_config": _read_config,
+        "read_root_config": _read_root_config,
+    }
+    if log_buckconfigs
+    else {}
+)
 
 __shimmed_native__ = __struct_to_dict(__buck2_builtins__)
 __shimmed_native__.update(__overridden_builtins__)
@@ -579,10 +480,5 @@ __shimmed_native__.update(_user_rules)
 # Should come after the rules which are macro overridden
 __shimmed_native__.update(__extra_rules__)
 __shimmed_native__.update({"cxx": _cxx, "python": _python})
-__shimmed_native__.update({
-    "__internal_autodeps_hacks__": struct(
-        rust_link_info = RustLinkInfo,
-    ),
-})
 
 native = struct(**__shimmed_native__)

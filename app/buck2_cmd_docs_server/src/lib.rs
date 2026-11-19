@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 use async_trait::async_trait;
 use buck2_cli_proto::new_generic::DocsRequest;
 use buck2_cli_proto::new_generic::DocsResponse;

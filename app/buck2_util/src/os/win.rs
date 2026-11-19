@@ -11,3 +11,4 @@
 pub mod network_interface;
 pub mod network_interface_table;
 pub mod os_str;
+pub mod page_size;

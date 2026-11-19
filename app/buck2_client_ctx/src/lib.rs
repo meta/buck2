@@ -9,12 +9,14 @@
  */
 
 #![feature(once_cell_try)]
-#![feature(error_generic_member_access)]
-#![feature(if_let_guard)]
 #![feature(try_blocks)]
 #![feature(try_trait_v2)]
-#![feature(used_with_arg)]
+#![feature(try_trait_v2_residual)]
 
+pub mod agent_context;
+#[cfg(all(fbcode_build, target_os = "linux"))]
+mod agent_detection;
+pub mod agent_invocation_info;
 pub mod argfiles;
 pub mod client_cpu_tracker;
 pub mod client_ctx;
@@ -37,7 +39,6 @@ pub mod query_args;
 pub mod restarter;
 pub mod signal_handler;
 pub mod startup_deadline;
-pub mod stdin;
 pub mod stdio;
 pub mod stream_util;
 pub mod streaming;

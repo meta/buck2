@@ -1,0 +1,4 @@
+stub(
+    name = "c",
+    deps = ["root//outside:t"],
+)

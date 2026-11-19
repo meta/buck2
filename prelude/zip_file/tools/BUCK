@@ -9,3 +9,21 @@ python_bootstrap_binary(
     main = "unzip.py",
     visibility = ["PUBLIC"],
 )
+
+# Type checking target for Python tool scripts
+python_library(
+    name = "scripts-typing",
+    srcs = [
+        "unzip.py",
+    ],
+    typing = True,
+)
+
+python_test(
+    name = "test_unzip",
+    srcs = [
+        "tests/test_unzip.py",
+        "unzip.py",
+    ],
+    base_module = "",
+)

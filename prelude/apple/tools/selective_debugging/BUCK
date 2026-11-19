@@ -8,6 +8,7 @@ source_listing()
 python_library(
     name = "lib",
     srcs = [
+        "dsym_allowlist.py",
         "macho.py",
         "macho_parser.py",
         "scrubber.py",
@@ -28,9 +29,28 @@ python_binary(
     ],
 )
 
+python_binary(
+    name = "dsym_allowlist_tool",
+    main = "dsym_allowlist_main.py",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":lib",
+    ],
+)
+
+python_binary(
+    name = "benchmark",
+    main = "benchmark.py",
+    deps = [
+        ":lib",
+    ],
+)
+
 meta_python_test(
     name = "tests",
     srcs = [
+        "dsym_allowlist_main.py",
+        "dsym_allowlist_test.py",
         "scrubber_test.py",
         "spec_test.py",
     ],

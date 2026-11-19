@@ -9,7 +9,11 @@
 
 import unittest
 
-from cxx.dist_lto.tools.dist_lto_opt_gnu import _filter_flags
+from cxx.dist_lto.tools.dist_lto_opt_gnu import (
+    _compiler_wrapper_passthrough_arg_index,
+    _compiler_wrapper_prefix_end,
+    _filter_flags,
+)
 
 
 class TestDistLtoOpt(unittest.TestCase):
@@ -46,6 +50,73 @@ class TestDistLtoOpt(unittest.TestCase):
                 "-fPIC",
             ],
         )
+
+    def test_compiler_wrapper_prefix_end_with_consumed_arg(self):
+        opt_args = [
+            "--",
+            "buck-out/compiler-wrapper",
+            "--cc=toolchain/clang++",
+            "--log-fbcc=False",
+            "--target=x86_64-redhat-linux-gnu",
+            "-nostdinc",
+        ]
+        self.assertEqual(_compiler_wrapper_prefix_end(opt_args), 4)
+
+    def test_compiler_wrapper_prefix_end_excludes_passthrough_args(self):
+        opt_args = [
+            "--",
+            "buck-out/compiler-wrapper",
+            "--cc=buck-out/toolchain/clang++",
+            "--target=x86_64-redhat-linux-gnu",
+            "-nostdinc",
+            "-nostdinc++",
+        ]
+        self.assertEqual(_compiler_wrapper_prefix_end(opt_args), 3)
+
+    def test_compiler_wrapper_prefix_end_minimal(self):
+        opt_args = [
+            "--",
+            "buck-out/compiler-wrapper",
+            "--cc=toolchain/clang++",
+        ]
+        self.assertEqual(_compiler_wrapper_prefix_end(opt_args), 3)
+
+    def test_compiler_wrapper_prefix_end_multitoken_command(self):
+        opt_args = [
+            "--",
+            "/usr/bin/python3",
+            "buck-out/compiler-wrapper.py",
+            "--cc=toolchain/clang++",
+            "--log-fbcc=False",
+            "--target=x86_64-redhat-linux-gnu",
+        ]
+        self.assertEqual(_compiler_wrapper_passthrough_arg_index(opt_args), 3)
+        self.assertEqual(_compiler_wrapper_prefix_end(opt_args), 5)
+
+    def test_compiler_wrapper_prefix_end_requires_passthrough_arg(self):
+        with self.assertRaisesRegex(ValueError, "missing a --cc argument"):
+            _compiler_wrapper_prefix_end(["--", "buck-out/compiler-wrapper"])
+
+    def test_compiler_wrapper_prefix_end_with_consumed_debug_arg(self):
+        opt_args = [
+            "--",
+            "buck-out/compiler-wrapper",
+            "--cc=toolchain/clang++",
+            "--fbcc-create-external-debug-info=/tmp/foo.dwo",
+            "--target=x86_64-redhat-linux-gnu",
+        ]
+        self.assertEqual(_compiler_wrapper_prefix_end(opt_args), 4)
+
+    def test_compiler_wrapper_prefix_end_multiple_consumed_args(self):
+        opt_args = [
+            "--",
+            "buck-out/compiler-wrapper",
+            "--cc=toolchain/clang++",
+            "--log-fbcc=True",
+            "--fbcc-create-external-debug-info=/tmp/foo.dwo",
+            "--target=x86_64-redhat-linux-gnu",
+        ]
+        self.assertEqual(_compiler_wrapper_prefix_end(opt_args), 5)
 
     def test_filter_flags_hhvm_case_rev_0f8618f31(self):
         inputs = [
@@ -90,7 +161,7 @@ class TestDistLtoOpt(unittest.TestCase):
             "-fwhole-program-vtables",
             "-Wl,--no-discard-section=.nv_fatbin",
             "-Wl,--no-discard-section=.nvFatBinSegment",
-            "fbcode/tools/build/move_gpu_sections_implicit_linker_script.txt",
+            "fbcode/tools/build/lib/move_gpu_sections_implicit_linker_script.txt",
             "-fuse-ld=lld",
             "--build-info=full",
             "--build-info-build-mode=opt-hhvm-lto",
@@ -266,3 +337,7 @@ class TestDistLtoOpt(unittest.TestCase):
                 "-enable-lto-ir-verification=false",
             ],
         )
+
+    def test_unterminated_xlinker_returns_none(self):
+        self.assertIsNone(_filter_flags(["-Xlinker"]))
+        self.assertIsNone(_filter_flags(["-Xlinker", "-mllvm"]))

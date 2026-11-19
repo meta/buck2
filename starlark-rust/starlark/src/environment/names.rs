@@ -18,37 +18,38 @@
 use std::cell::RefCell;
 
 use allocative::Allocative;
+use starlark_derive::StarlarkPagable;
 use starlark_syntax::syntax::ast::Visibility;
 
+use crate as starlark;
 use crate::collections::Hashed;
 use crate::collections::SmallMap;
 use crate::environment::slots::ModuleSlotId;
-use crate::values::FrozenStringValue;
+use crate::values::Freeze;
+use crate::values::FreezeResult;
+use crate::values::Freezer;
+use crate::values::ProvidesStaticType;
+use crate::values::StringValue;
 
-/// MutableNames are how we allocate slots (index-based) to variables
-/// (name-based). The slots field is the current active mapping of names to
-/// index.
+/// The module's mapping from variable name to slot index, see the `environment` module doc.
 ///
-/// In a statement context there are things that define variables, e.g. x=...,
-/// for x in ... Importantly, the expression x can refer to either a global x,
-/// or a local x that hasn't yet been defined, based on the future
-/// presence/absence of a statement defining x. Therefore, we first capture all
-/// the definitions with collect_defines_lvalue, allocate them slots,
-/// then replace variables with slot numbers when compiling.
+/// A statement can define a variable (`x = ...`, `for x in ...`) after an expression that uses
+/// it, and whether that expression means a global `x` or a not-yet-assigned module `x` depends on
+/// the definition being there. So the compiler collects the definitions of a scope first
+/// (`ModuleScopeBuilder` in `eval/compiler/scope.rs`), allocates them slots, and only then
+/// replaces variables with slot numbers. Comprehension variables never get a module slot: they
+/// are locals of the module's top-level frame, scoped by `ScopeNames::add_scoped` and `unscope`.
 ///
-/// Comprehensions are a bit different. Given [x for x in y] that defines x, but
-/// in a way that shadows any existing x, and the definition immediately binds
-/// x. We do that with add_scoped()/unscope(). On an add_scope, we allocate
-/// fresh slots at the end, and bind them to the names in the comprehension.
-/// On an unscope, we do the reverse, putting things back to how they were
-/// before (apart from the total) number of slots required.
+/// The names are strings at the module's brand: interned in the module's frozen heap, or in a
+/// heap it references for names imported from another module.
 #[derive(Debug)]
-pub(crate) struct MutableNames(RefCell<SmallMap<FrozenStringValue, (ModuleSlotId, Visibility)>>);
+pub(crate) struct MutableNames<'v>(RefCell<SmallMap<StringValue<'v>, (ModuleSlotId, Visibility)>>);
 
-#[derive(Debug, Allocative)]
-pub(crate) struct FrozenNames(SmallMap<FrozenStringValue, (ModuleSlotId, Visibility)>);
+/// The names of a frozen module, at the brand of the heap that holds them.
+#[derive(Debug, Allocative, ProvidesStaticType, StarlarkPagable)]
+pub(crate) struct FrozenNames<'v>(SmallMap<StringValue<'v>, (ModuleSlotId, Visibility)>);
 
-impl MutableNames {
+impl<'v> MutableNames<'v> {
     pub(crate) fn new() -> Self {
         Self(RefCell::new(SmallMap::new()))
     }
@@ -59,7 +60,7 @@ impl MutableNames {
 
     /// Try and go back from a slot to a name.
     /// Inefficient - only use in error paths.
-    pub(crate) fn get_slot(&self, slot: ModuleSlotId) -> Option<FrozenStringValue> {
+    pub(crate) fn get_slot(&self, slot: ModuleSlotId) -> Option<StringValue<'v>> {
         for (s, (i, _vis)) in &*self.0.borrow() {
             if *i == slot {
                 return Some(*s);
@@ -75,7 +76,7 @@ impl MutableNames {
     /// Add a name with explicit visibility to the module.
     pub(crate) fn add_name_visibility(
         &self,
-        name: FrozenStringValue,
+        name: StringValue<'v>,
         vis: Visibility,
     ) -> ModuleSlotId {
         let mut x = self.0.borrow_mut();
@@ -96,7 +97,7 @@ impl MutableNames {
     }
 
     // Add an exported name, or if it's already there, return the existing name
-    pub(crate) fn add_name(&self, name: FrozenStringValue) -> ModuleSlotId {
+    pub(crate) fn add_name(&self, name: StringValue<'v>) -> ModuleSlotId {
         self.add_name_visibility(name, Visibility::Public)
     }
 
@@ -104,7 +105,7 @@ impl MutableNames {
         self.0.borrow_mut().shift_remove(name);
     }
 
-    pub(crate) fn all_names_and_slots(&self) -> Vec<(FrozenStringValue, ModuleSlotId)> {
+    pub(crate) fn all_names_and_slots(&self) -> Vec<(StringValue<'v>, ModuleSlotId)> {
         self.0
             .borrow()
             .iter()
@@ -112,7 +113,7 @@ impl MutableNames {
             .collect()
     }
 
-    pub(crate) fn all_names_and_visibilities(&self) -> Vec<(FrozenStringValue, Visibility)> {
+    pub(crate) fn all_names_and_visibilities(&self) -> Vec<(StringValue<'v>, Visibility)> {
         self.0
             .borrow()
             .iter()
@@ -122,7 +123,7 @@ impl MutableNames {
 
     pub(crate) fn all_names_slots_and_visibilities(
         &self,
-    ) -> Vec<(FrozenStringValue, ModuleSlotId, Visibility)> {
+    ) -> Vec<(StringValue<'v>, ModuleSlotId, Visibility)> {
         self.0
             .borrow()
             .iter()
@@ -130,25 +131,31 @@ impl MutableNames {
             .collect()
     }
 
-    pub(crate) fn freeze(self) -> FrozenNames {
-        FrozenNames(self.0.into_inner())
+    pub(crate) fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<FrozenNames<'fv>> {
+        let names = self.0.into_inner();
+        let mut frozen = SmallMap::with_capacity(names.len());
+        for (name, slot) in names.into_iter_hashed() {
+            let hash = name.hash();
+            let name = name.into_key().freeze(freezer)?;
+            // Freezing keeps a string's hash.
+            frozen.insert_hashed_unique_unchecked(Hashed::new_unchecked(hash, name), slot);
+        }
+        Ok(FrozenNames(frozen))
     }
 }
 
-impl FrozenNames {
+impl<'v> FrozenNames<'v> {
     pub(crate) fn get_name(&self, name: &str) -> Option<(ModuleSlotId, Visibility)> {
         self.0.get(name).copied()
     }
 
     /// Symbols including private.
-    pub(crate) fn all_symbols(
-        &self,
-    ) -> impl Iterator<Item = (FrozenStringValue, ModuleSlotId)> + '_ {
+    pub(crate) fn all_symbols(&self) -> impl Iterator<Item = (StringValue<'v>, ModuleSlotId)> + '_ {
         self.0.iter().map(|(name, (slot, _vis))| (*name, *slot))
     }
 
     /// Exported symbols.
-    pub(crate) fn symbols(&self) -> impl Iterator<Item = (FrozenStringValue, ModuleSlotId)> + '_ {
+    pub(crate) fn symbols(&self) -> impl Iterator<Item = (StringValue<'v>, ModuleSlotId)> + '_ {
         self.0.iter().filter_map(|(name, (slot, vis))| match vis {
             Visibility::Private => None,
             Visibility::Public => Some((*name, *slot)),

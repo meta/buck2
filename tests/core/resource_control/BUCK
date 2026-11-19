@@ -13,6 +13,18 @@ buck2_core_tests(
                 "windows",
             ],
         },
+        "test_daemon_cgroup_fallback": {
+            "skip_for_os": [
+                "darwin",
+                "windows",
+            ],
+        },
+        "test_daemon_cgroup_version_gate": {
+            "skip_for_os": [
+                "darwin",
+                "windows",
+            ],
+        },
         "test_hybrid_execution_resource_control": {
             "env": {
                 "USE_SOME_MEMORY_BIN": "$(location //buck2/shed/cgroups/use_some_memory:use_some_memory)",
@@ -36,6 +48,19 @@ buck2_core_tests(
                 "windows",
             ],
             "use_compiled_buck2_client_and_tpx": True,
+        },
+        "test_network_isolation": {
+            "skip_for_os": [
+                "darwin",
+                "windows",
+            ],
+            "use_compiled_buck2_client_and_tpx": True,
+        },
+        "test_orphan_pids_killed": {
+            "skip_for_os": [
+                "darwin",
+                "windows",
+            ],
         },
     },
 )

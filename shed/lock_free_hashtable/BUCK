@@ -6,9 +6,37 @@ oncall("build_infra")
 rust_library(
     name = "lock_free_hashtable",
     srcs = glob(["src/**/*.rs"]),
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    # The published crate wants none of allocative's own
+                    # features, nor the ones fbsource enables on the others.
+                    "allocative": {"features": [], "optional": True, "workspace": False},
+                    "parking_lot": {"features": [], "workspace": False},
+                },
+            },
+            "extra_buck_dependencies": {
+                # For `examples/stress.rs`, which cargo discovers on its own.
+                "dev-dependencies": ["fbsource//third-party/rust:num_cpus"],
+            },
+            "features": {
+                "allocative": ["dep:allocative"],
+                "default": [],
+            },
+            "package": {
+                "description": "Lock-free (almost) insertion only hashtable",
+                # Gives the explicit path dependency above its version, which
+                # publishing requires.
+                "publish": True,
+                "version": "0.2.0",
+            },
+        },
+    },
     crate_root = "src/lib.rs",
+    features = ["allocative"],
+    unittests_miri = True,
     deps = [
-        "fbsource//third-party/rust:atomic",
         "fbsource//third-party/rust:parking_lot",
         "//buck2/allocative/allocative:allocative",
     ],
@@ -17,8 +45,18 @@ rust_library(
 rust_binary(
     name = "stress",
     srcs = ["examples/stress.rs"],
+    autocargo = {"ignore_rule": True},
     deps = [
         "fbsource//third-party/rust:num_cpus",
+        ":lock_free_hashtable",
+    ],
+)
+
+rust_binary(
+    name = "bench",
+    srcs = ["examples/bench.rs"],
+    autocargo = {"ignore_rule": True},
+    deps = [
         ":lock_free_hashtable",
     ],
 )

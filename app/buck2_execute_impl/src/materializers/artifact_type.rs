@@ -20,10 +20,16 @@ use rusqlite::types::FromSqlResult;
 use rusqlite::types::ToSqlOutput;
 use rusqlite::types::ValueRef;
 
-pub(crate) const ARTIFACT_TYPE_DIRECTORY: &str = "directory";
-pub(crate) const ARTIFACT_TYPE_FILE: &str = "file";
-pub(crate) const ARTIFACT_TYPE_SYMLINK: &str = "symlink";
-pub(crate) const ARTIFACT_TYPE_EXTERNAL_SYMLINK: &str = "external_symlink";
+// Use 'static here to avoid rust-analyzer crash when pattern matching
+// on these string literals. https://github.com/rust-lang/rust-analyzer/issues/20149
+#[allow(clippy::redundant_static_lifetimes)]
+pub(crate) const ARTIFACT_TYPE_DIRECTORY: &'static str = "directory";
+#[allow(clippy::redundant_static_lifetimes)]
+pub(crate) const ARTIFACT_TYPE_FILE: &'static str = "file";
+#[allow(clippy::redundant_static_lifetimes)]
+pub(crate) const ARTIFACT_TYPE_SYMLINK: &'static str = "symlink";
+#[allow(clippy::redundant_static_lifetimes)]
+pub(crate) const ARTIFACT_TYPE_EXTERNAL_SYMLINK: &'static str = "external_symlink";
 
 #[derive(Copy, Clone, Dupe, Debug, Eq, PartialEq)]
 pub(crate) enum ArtifactType {

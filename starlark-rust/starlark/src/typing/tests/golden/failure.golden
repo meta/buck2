@@ -14,7 +14,6 @@ error: Expected type `str` but got `int`
   |
 3 |     hash(1)
   |          ^
-  |
 
 Compiler typechecker (eval):
 error: Expected type `str` but got `int`
@@ -22,4 +21,3 @@ error: Expected type `str` but got `int`
   |
 3 |     hash(1)
   |          ^
-  |

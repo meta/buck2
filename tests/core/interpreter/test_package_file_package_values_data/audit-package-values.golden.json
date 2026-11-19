@@ -3,6 +3,41 @@
 {
   "root//": {
     "xxx.yyy": "zzz",
-    "aaa.bbb": "ccc"
+    "aaa.bbb": "ccc",
+    "sel.ector": {
+      "__type": "selector",
+      "entries": {
+        "//config:a": "val_a",
+        "DEFAULT": "default_val"
+      }
+    },
+    "sel.concat": {
+      "__type": "concat",
+      "items": [
+        {
+          "__type": "selector",
+          "entries": {
+            "DEFAULT": "x"
+          }
+        },
+        {
+          "__type": "selector",
+          "entries": {
+            "DEFAULT": "y"
+          }
+        }
+      ]
+    },
+    "visibility": [],
+    "within_view": [
+      "PUBLIC"
+    ],
+    "visibility_cap": [
+      "PUBLIC"
+    ],
+    "within_view_cap": [
+      "PUBLIC"
+    ],
+    "visibility_intersection": []
   }
 }

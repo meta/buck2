@@ -43,9 +43,11 @@ stub(
 
 stub(
     name = "the-test",
-    deps = [select({
-        ":c-clouds": ":t-clouds",
-        "DEFAULT": ":t-rain",
-    })],
+    deps = [
+        select({
+            ":c-clouds": ":t-clouds",
+            "DEFAULT": ":t-rain",
+        })
+    ],
     default_target_platform = ":p-rain",
 )

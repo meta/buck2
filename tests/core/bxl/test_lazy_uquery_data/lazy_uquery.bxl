@@ -26,3 +26,18 @@ tests_of_fail = bxl_main(
     impl = _tests_of_fail_impl,
     cli_args = {},
 )
+
+def _eval_conversion_error_impl(ctx: bxl.Context):
+    results = ctx.lazy.join_all([
+        ctx.lazy.uquery().eval("testsof(%s)", query_args = ["//:foo_lib", "//:bar_lib"]).catch(),
+        ctx.lazy.uquery().testsof("//:foo_lib").catch(),
+    ]).resolve()
+    asserts.false(results[0].is_ok())
+    asserts.true("bar_test_not_exist" in results[0].unwrap_err().message)
+    asserts.true(results[1].is_ok())
+    asserts.equals(ctx.unconfigured_targets(["//:foo_test0", "//:foo_test1"]), results[1].unwrap())
+
+eval_conversion_error = bxl_main(
+    impl = _eval_conversion_error_impl,
+    cli_args = {},
+)

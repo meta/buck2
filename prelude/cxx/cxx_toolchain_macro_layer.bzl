@@ -12,7 +12,7 @@ def cxx_toolchain_macro_impl(cxx_toolchain_rule = None, **kwargs):
     # - Constraint on the target platform
     # - `cxx.linker_map_enabled` buckconfig
     if "generate_linker_maps" not in kwargs:
-        linker_map_enabled = (read_root_config("cxx", "linker_map_enabled", "").lower() == "true")
+        linker_map_enabled = read_root_config("cxx", "linker_map_enabled", "").lower() == "true"
         kwargs["generate_linker_maps"] = select({
             "DEFAULT": linker_map_enabled,
             "config//linker/constraints:generate_linker_maps_disabled": False,
@@ -30,6 +30,4 @@ def cxx_toolchain_macro_impl(cxx_toolchain_rule = None, **kwargs):
         else:
             kwargs["object_format"] = "native"
 
-    cxx_toolchain_rule(
-        **kwargs
-    )
+    cxx_toolchain_rule(**kwargs)

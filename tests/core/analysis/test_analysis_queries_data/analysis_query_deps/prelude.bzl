@@ -8,10 +8,26 @@
 
 target = rule(
     impl = lambda ctx: [
-        DefaultInfo(default_output = ctx.actions.write("out", ctx.attrs.arg or "", allow_args = True)[0]),
+        DefaultInfo(default_output = ctx.actions.write("out", ctx.attrs.arg or "", allow_args = True, has_content_based_path = False)[0]),
         RunInfo(),
     ],
     attrs = {"arg": attrs.option(attrs.arg(), default = None)},
+)
+
+def _duplicate_queries_impl(ctx):
+    for query in [ctx.attrs.first, ctx.attrs.second]:
+        if [dep.label for dep in query] != [ctx.attrs.expected.label]:
+            fail("Unexpected query result: {}".format(query))
+    return [DefaultInfo(default_output = ctx.actions.write("out", ctx.attrs.arg, allow_args = True, has_content_based_path = False)[0])]
+
+duplicate_queries = rule(
+    impl = _duplicate_queries_impl,
+    attrs = {
+        "arg": attrs.arg(),
+        "expected": attrs.dep(),
+        "first": attrs.query(),
+        "second": attrs.query(),
+    },
 )
 
 def defs():
@@ -27,6 +43,13 @@ def defs():
     target(
         name = "target_deps",
         arg = "$(query_targets deps(:foo, 100000, target_deps()))",
+    )
+    duplicate_queries(
+        name = "duplicate_queries",
+        arg = "$(query_targets deps(:bar))|$(query_outputs deps(:bar))|$(query_targets deps(:bar))|$(query_outputs deps(:bar))",
+        expected = ":bar",
+        first = "deps(:bar)",
+        second = "deps(:bar)",
     )
 
     # Targets that are deps of targets we want to run deps queries from.

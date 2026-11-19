@@ -8,8 +8,7 @@
 
 def _execution_platform(ctx):
     configuration = ConfigurationInfo(
-        constraints = {
-        },
+        constraints = {},
         values = {},
     )
 
@@ -32,6 +31,9 @@ def _execution_platform(ctx):
         ExecutionPlatformRegistrationInfo(platforms = [platform]),
     ]
 
-execution_platforms = rule(attrs = {
-    "remote_execution_dependencies": attrs.list(attrs.dict(key = attrs.string(), value = attrs.string()), default = []),
-}, impl = _execution_platform)
+execution_platforms = rule(
+    attrs = {
+        "remote_execution_dependencies": attrs.list(attrs.dict(key = attrs.string(), value = attrs.string()), default = []),
+    },
+    impl = _execution_platform,
+)

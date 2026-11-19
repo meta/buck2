@@ -1,0 +1,9 @@
+load(":rules.bzl", "artifact_fails", "callback_fails", "metadata")
+
+metadata(name = "ok")
+
+metadata(name = "ok2")
+
+callback_fails(name = "callback_fails")
+
+artifact_fails(name = "artifact_fails")

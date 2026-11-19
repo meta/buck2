@@ -16,8 +16,13 @@ use std::hash::Hash;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::PagableDeserializeOwned;
+use pagable::PagableSerialize;
+use pagable::PagableTagged;
 
+use crate::ValueSerialize;
 use crate::api::data::DiceData;
+use crate::api::key::EqualityBehavior;
 use crate::api::key::Key;
 use crate::api::storage_type::StorageType;
 use crate::api::user_data::UserComputationData;
@@ -25,7 +30,19 @@ use crate::introspection::graph::short_type_name;
 
 /// Synchronously computed key from an "opaque" value.
 pub trait ProjectionKey:
-    Allocative + Clone + PartialEq + Eq + Hash + Display + Debug + Send + Sync + 'static
+    Allocative
+    + Clone
+    + PartialEq
+    + Eq
+    + Hash
+    + Display
+    + Debug
+    + Send
+    + Sync
+    + PagableSerialize
+    + PagableDeserializeOwned
+    + PagableTagged
+    + 'static
 {
     /// Key of the value that this projection key is computed from.
     type DeriveFromKey: Key;
@@ -46,7 +63,11 @@ pub trait ProjectionKey:
         ctx: &DiceProjectionComputations,
     ) -> Self::Value;
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool;
+    /// Defines how DICE determines whether a recomputed value equals the cached value.
+    ///
+    /// Returning equality for different values would produce inconsistent graph state. Projections
+    /// whose values can never be reused should return [`EqualityBehavior::AlwaysUnequal`].
+    fn equality_behavior() -> EqualityBehavior<Self::Value>;
 
     fn validity(x: &Self::Value) -> bool {
         let _ = x;
@@ -61,6 +82,8 @@ pub trait ProjectionKey:
     fn key_type_name() -> &'static str {
         short_type_name(std::any::type_name::<Self>())
     }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value>;
 }
 
 /// Context for projection key computation.
@@ -72,8 +95,7 @@ pub struct DiceProjectionComputations<'a> {
 }
 
 impl DiceProjectionComputations<'_> {
-    /// Data that is static per the entire lifetime of Dice. These data are initialized at the
-    /// time that Dice is initialized via the constructor.
+    /// Untracked data that is static for the lifetime of this branch tree.
     pub fn global_data(&self) -> &DiceData {
         self.data
     }

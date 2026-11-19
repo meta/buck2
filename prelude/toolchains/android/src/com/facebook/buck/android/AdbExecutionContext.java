@@ -10,22 +10,14 @@
 
 package com.facebook.buck.android;
 
-import com.facebook.buck.util.Console;
 import com.facebook.buck.util.environment.EnvVariablesProvider;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AdbExecutionContext {
-  private final Console console;
-
-  public AdbExecutionContext(Console console) {
-    this.console = console;
-  }
 
   public ImmutableMap<String, String> getEnvironment() {
     return EnvVariablesProvider.getSystemEnv();
-  }
-
-  public Console getConsole() {
-    return console;
   }
 }

@@ -18,12 +18,14 @@ import com.facebook.buck.jvm.java.CompilerOutputPaths;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 import java.nio.file.Path;
 import java.util.Optional;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KaptStep extends KotlincStep {
 
   private static final String VERBOSE = "-verbose";
@@ -58,7 +60,7 @@ public class KaptStep extends KotlincStep {
         configuredBuckOut,
         ImmutableMap.of(),
         null,
-        true,
+        ImmutableList.of(),
         ImmutableList.of(),
         false,
         ImmutableList.of(),
@@ -68,7 +70,23 @@ public class KaptStep extends KotlincStep {
         languageVersion,
         // Flag turning on/off K2 support for jvm-abi-gen actions
         // not part of KAPT, since jvm-abi-gen doesn't run on KAPT steps
+        false,
+        // Flag turning on/off shallow class usage for jvm-abi-gen dep files
+        // not part of KAPT, since jvm-abi-gen doesn't run on KAPT steps
+        false,
+        // ABI validation mode for jvm-abi-gen repairs
+        // not part of KAPT, since jvm-abi-gen doesn't run on KAPT steps
+        "off",
+        // jvm-abi-gen kill switch options
+        // not part of KAPT, since jvm-abi-gen doesn't run on KAPT steps
+        ImmutableList.of(),
+        // The kept-body check is part of jvm-abi-gen, which does not run here
         false);
+  }
+
+  @Override
+  protected boolean emitsClassToSourceMap() {
+    return false;
   }
 
   @Override

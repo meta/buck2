@@ -35,7 +35,7 @@ use crate::rtabort;
 /// - The `pack` and `unpack` implementations must roundtrip,
 ///   i.e. `unpack_len(pack_len(x))` must equal `x`.
 /// - `unpack_len(EMPTY)` must return zero.
-/// - `inner_empty()` must return `&ArcStrBaseInner::EMPTY`.
+/// - `inner_empty()` must return a `static` holding `ArcStrBaseInner::empty()`.
 pub(crate) unsafe trait ArcStrLenStrategy: Sized + 'static {
     /// Payload allocated with the string data.
     type AllocatedPayload: Copy + Allocative;
@@ -51,7 +51,7 @@ pub(crate) unsafe trait ArcStrLenStrategy: Sized + 'static {
 
     /// Empty string data. Must be statically allocated,
     /// and Rust does not allow static allocation in generic code.
-    fn inner_empty() -> &'static ArcStrBaseInnerConst<Self>;
+    fn inner_empty() -> &'static ArcStrBaseInner<Self>;
 }
 
 #[repr(C)]
@@ -63,31 +63,19 @@ pub(crate) struct ArcStrBaseInner<P: ArcStrLenStrategy> {
     // data: [u8],
 }
 
-/// Exactly the same layout as `ArcStrBaseInner`, but refcount is immutable,
-/// so this struct is statically allocated in immutable memory,
-/// and attempt to modify the counter will result in a segfault (which is good).
-#[repr(C)]
-pub(crate) struct ArcStrBaseInnerConst<P: ArcStrLenStrategy> {
-    pub(crate) refcount: u32,
-    pub(crate) allocated_payload: P::AllocatedPayload,
-    // data: [u8; 0],
-}
-
 impl<P: ArcStrLenStrategy> ArcStrBaseInner<P> {
     const OFFSET_OF_DATA: usize = mem::size_of::<Self>();
-    const ASSERT: () = {
-        assert!(Layout::new::<Self>().size() == Layout::new::<ArcStrBaseInnerConst<P>>().size());
-        assert!(Layout::new::<Self>().align() == Layout::new::<ArcStrBaseInnerConst<P>>().align());
-    };
 
-    pub(crate) const EMPTY: ArcStrBaseInnerConst<P> = ArcStrBaseInnerConst {
-        refcount: 0,
-        allocated_payload: P::EMPTY.0,
-    };
+    /// The header shared by all empty strings, so that they need no allocation. Its refcount
+    /// stays 0: `Clone` and `Drop` skip the count for empty strings.
+    pub(crate) const fn empty() -> Self {
+        ArcStrBaseInner {
+            refcount: AtomicU32::new(0),
+            allocated_payload: P::EMPTY.0,
+        }
+    }
 
     fn layout_for_len(len: usize) -> Layout {
-        let () = Self::ASSERT;
-
         let size = Self::OFFSET_OF_DATA.checked_add(len).unwrap();
         let align = mem::align_of::<Self>();
         Layout::from_size_align(size, align).unwrap()
@@ -116,6 +104,15 @@ impl<P: ArcStrLenStrategy> ArcStrBase<P> {
             let ptr = self.data.as_ptr().sub(ArcStrBaseInner::<P>::OFFSET_OF_DATA);
             &*(ptr as *const ArcStrBaseInner<P>)
         }
+    }
+
+    pub(crate) fn addr(&self) -> usize {
+        self.data.addr().get()
+    }
+
+    /// Static strings keep a refcount of 0 and never report unique.
+    pub(crate) fn is_unique(&self) -> bool {
+        self.inner().refcount.load(atomic::Ordering::Acquire) == 1
     }
 
     #[inline]
@@ -163,7 +160,7 @@ impl<P: ArcStrLenStrategy> StrongHash for ArcStrBase<P> {
 impl<P: ArcStrLenStrategy> PartialOrd for ArcStrBase<P> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.as_str().partial_cmp(other.as_str())
+        Some(self.cmp(other))
     }
 }
 
@@ -177,13 +174,10 @@ impl<P: ArcStrLenStrategy> Ord for ArcStrBase<P> {
 impl<P: ArcStrLenStrategy> Default for ArcStrBase<P> {
     #[inline]
     fn default() -> ArcStrBase<P> {
-        unsafe {
-            ArcStrBase {
-                data: NonNull::new_unchecked(
-                    (P::inner_empty() as *const ArcStrBaseInnerConst<P>).add(1) as *mut u8,
-                ),
-                value_payload: P::EMPTY.1,
-            }
+        ArcStrBase {
+            // SAFETY: One past the end of the static, which is where its (empty) data would be.
+            data: unsafe { NonNull::from(P::inner_empty()).add(1).cast::<u8>() },
+            value_payload: P::EMPTY.1,
         }
     }
 }
@@ -248,6 +242,9 @@ impl<'a, P: ArcStrLenStrategy> From<&'a str> for ArcStrBase<P> {
             let (allocated_payload, value_payload) = P::pack_len(len);
             unsafe {
                 let alloc = alloc::alloc(layout);
+                if alloc.is_null() {
+                    alloc::handle_alloc_error(layout);
+                }
                 ptr::write(
                     alloc.cast::<ArcStrBaseInner<P>>(),
                     ArcStrBaseInner {

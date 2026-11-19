@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _test_cleanup_impl(ctx):
-    out = ctx.actions.write("path/to/output", "")
+    out = ctx.actions.write("path/to/output", "", has_content_based_path = False)
     return [DefaultInfo(out)]
 
 test_cleanup = rule(impl = _test_cleanup_impl, attrs = {})

@@ -14,21 +14,29 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.anyBoolean;
 import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.facebook.buck.android.device.TargetDeviceOptions;
+import com.facebook.buck.android.exopackage.AdbCommandFailedException;
 import com.facebook.buck.android.exopackage.AdbUtils;
 import com.facebook.buck.android.exopackage.AndroidDevice;
 import com.facebook.buck.android.exopackage.AndroidDeviceImpl;
 import com.facebook.buck.android.exopackage.SetDebugAppMode;
+import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.installer.android.IsolatedAndroidInstallerPrinter;
 import com.facebook.buck.testutil.MoreAsserts;
+import com.facebook.buck.testutil.TemporaryPaths;
 import com.facebook.buck.testutil.TestLogSink;
-import com.facebook.buck.util.Console;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import java.io.File;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -54,8 +62,8 @@ public class AdbHelperTest {
 
   @Rule public ExpectedException exceptionRule = ExpectedException.none();
   @Rule public TestLogSink testLogSink = new TestLogSink(AdbHelperTest.class);
+  @Rule public final TemporaryPaths tmpDir = new TemporaryPaths();
 
-  private Console testConsole;
   private TestAdbExecutionContext adbExecutionContext;
   private AdbHelper basicAdbHelper;
 
@@ -63,8 +71,7 @@ public class AdbHelperTest {
 
   @Before
   public void setUp() {
-    adbExecutionContext = new TestAdbExecutionContext(Console.createNullConsole());
-    testConsole = adbExecutionContext.getConsole();
+    adbExecutionContext = new TestAdbExecutionContext();
     basicAdbHelper = createAdbHelper(createAdbOptions(), new TargetDeviceOptions());
   }
 
@@ -106,7 +113,6 @@ public class AdbHelperTest {
         adbExecutionContext,
         new IsolatedAndroidInstallerPrinter(LOGGER),
         /* restartAdbOnFailure */ true,
-        /* skipMetadataIfNoInstalls */ false,
         SetDebugAppMode.SET);
   }
 
@@ -230,7 +236,6 @@ public class AdbHelperTest {
       AdbHelper myAdbHelper =
           createAdbHelper(
               new TestAdbExecutionContext(
-                  testConsole,
                   ImmutableMap.of(AdbHelper.SERIAL_NUMBER_ENV, device.getSerialNumber())),
               createAdbOptions(),
               new TargetDeviceOptions());
@@ -380,6 +385,7 @@ public class AdbHelperTest {
   public void testAdbCallShouldFailForMultipleDevices() throws Exception {
     exceptionRule.expect(RuntimeException.class);
     exceptionRule.expectMessage("2 devices match specified device filter");
+    exceptionRule.expectMessage("Matching devices: one, two.");
 
     List<AndroidDevice> devices =
         Arrays.asList(createRealDevice("one", "device"), createRealDevice("two", "device"));
@@ -399,6 +405,74 @@ public class AdbHelperTest {
   }
 
   @Test
+  public void testAdbCallShouldSayAdbListsNoDevice() throws Exception {
+    exceptionRule.expect(RuntimeException.class);
+    exceptionRule.expectMessage(
+        "Didn't find any attached Android devices/emulators. adb lists no device.");
+
+    when(adbUtils.getDevices()).thenReturn(Collections.emptyList());
+    createAdbHelper().adbCall("test", d -> true, /* quiet= */ true);
+  }
+
+  @Test
+  public void testAdbCallShouldNameDevicesThatAreNotOnline() throws Exception {
+    exceptionRule.expect(RuntimeException.class);
+    exceptionRule.expectMessage("None of the devices adb lists is online: emulator-5554.");
+
+    List<AndroidDevice> devices =
+        Collections.singletonList(createEmulator("emulator-5554", "offline"));
+    when(adbUtils.getDevices()).thenReturn(devices);
+    createAdbHelper().adbCall("test", d -> true, /* quiet= */ true);
+  }
+
+  @Test
+  public void testAdbCallShouldNameOnlineDevicesAndTheSerialNoneMatches() throws Exception {
+    exceptionRule.expect(RuntimeException.class);
+    exceptionRule.expectMessage(
+        "Didn't find any attached Android devices/emulators. None of the online devices"
+            + " (emulator-5554, 127.0.0.1:15574) matches the device filter: serial emulator-5556.");
+
+    List<AndroidDevice> devices =
+        Arrays.asList(
+            createEmulator("emulator-5554", "device"), createEmulator("127.0.0.1:15574", "device"));
+    when(adbUtils.getDevices()).thenReturn(devices);
+    createAdbHelper(
+            createAdbOptions(), new TargetDeviceOptions(false, false, Optional.of("emulator-5556")))
+        .adbCall("test", d -> true, /* quiet= */ true);
+  }
+
+  @Test
+  public void testGetDevicesShouldNotRestartAdbWhenOnlineDevicesDoNotMatch() {
+    List<AndroidDevice> devices =
+        Collections.singletonList(createEmulator("127.0.0.1:15574", "device"));
+    when(adbUtils.getDevices()).thenReturn(devices);
+    AdbHelper helper =
+        createAdbHelper(
+            createAdbOptions(),
+            new TargetDeviceOptions(false, false, Optional.of("emulator-5556")));
+
+    assertTrue(helper.getDevices(true).isEmpty());
+    verify(adbUtils, never()).restart();
+  }
+
+  @Test
+  public void testAdbCallShouldNameTheEnvironmentAsTheSerialSource() throws Exception {
+    exceptionRule.expect(RuntimeException.class);
+    exceptionRule.expectMessage(
+        "matches the device filter: serial emulator-5556 from $ANDROID_SERIAL.");
+
+    List<AndroidDevice> devices =
+        Collections.singletonList(createEmulator("emulator-5554", "device"));
+    when(adbUtils.getDevices()).thenReturn(devices);
+    createAdbHelper(
+            new TestAdbExecutionContext(
+                ImmutableMap.of(AdbHelper.SERIAL_NUMBER_ENV, "emulator-5556")),
+            createAdbOptions(),
+            new TargetDeviceOptions())
+        .adbCall("test", d -> true, /* quiet= */ true);
+  }
+
+  @Test
   public void testAdbCallShouldSucceedForNoDevicesWithIgnoreMissingDeviceFlag() throws Exception {
     AdbOptions options = createAdbOptions(false, true);
     when(adbUtils.getDevices()).thenReturn(Collections.emptyList());
@@ -415,6 +489,312 @@ public class AdbHelperTest {
     helper.adbCall("test", d -> true, true);
   }
 
+  @Test
+  public void testPlainInstallSkipsAnApkTheDeviceAlreadyHas() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+
+    installPlainApk(/* restartApp= */ false);
+
+    verify(device, never())
+        .installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            anyBoolean());
+    verify(device, never()).stopPackage(anyString());
+  }
+
+  @Test
+  public void testPlainInstallRestartsAnUnchangedAppWhenAnActivityWillBeStarted() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+
+    installPlainApk(/* restartApp= */ true);
+
+    verify(device, never())
+        .installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            anyBoolean());
+    verify(device).stopPackage("com.example.app");
+  }
+
+  @Test
+  public void testPlainInstallInstallsAChangedApk() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ false);
+
+    installPlainApk(/* restartApp= */ true);
+
+    verify(device)
+        .installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            /* verifyTempWritable= */ eq(true),
+            /* stagedInstallMode= */ eq(false),
+            /* userId= */ eq(null),
+            /* allowFastDeploy= */ eq(true),
+            eq("com.example.app"),
+            eq(false));
+    verify(device, never()).stopPackage(anyString());
+  }
+
+  @Test
+  public void testPlainInstallInstallsWhenTheInstalledApkCannotBeRead() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+    when(device.compareInstalledApk(eq("com.example.app"), any(File.class)))
+        .thenThrow(new AdbCommandFailedException("md5sum: base.apk: Permission denied"));
+
+    installPlainApk(/* restartApp= */ false);
+
+    verify(device)
+        .installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            /* verifyTempWritable= */ eq(true),
+            /* stagedInstallMode= */ eq(false),
+            /* userId= */ eq(null),
+            /* allowFastDeploy= */ eq(true),
+            eq("com.example.app"),
+            eq(false));
+  }
+
+  @Test
+  public void testForceQueryableInstallsEvenWhenTheApkMatches() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+    when(device.isPackageQueryable("com.example.app")).thenReturn(false);
+    when(device.installApkOnDevice(
+            any(File.class),
+            eq(false),
+            eq(true),
+            eq(true),
+            eq(false),
+            eq(null),
+            eq(true),
+            eq("com.example.app"),
+            eq(true)))
+        .thenReturn(true);
+    AdbOptions options =
+        new AdbOptions("path_to_adb", 0, 0, false, false, false, false, "no", false, true);
+
+    try (AdbHelper helper = createAdbHelper(options)) {
+      installPlainApk(helper, /* restartApp= */ false);
+    }
+
+    verify(device)
+        .installApkOnDevice(
+            any(File.class),
+            eq(false),
+            eq(true),
+            eq(true),
+            eq(false),
+            eq(null),
+            eq(true),
+            eq("com.example.app"),
+            eq(true));
+    verify(device).isPackageQueryable("com.example.app");
+  }
+
+  @Test
+  public void testForceQueryableReusesAMatchingQueryableApkAndRestartsWhenRequested()
+      throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+    when(device.isPackageQueryable("com.example.app")).thenReturn(true);
+    when(device.installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            eq(true)))
+        .thenReturn(true);
+    AdbOptions options =
+        new AdbOptions("path_to_adb", 0, 0, false, false, false, false, "no", false, true);
+
+    try (AdbHelper helper = createAdbHelper(options)) {
+      installPlainApk(helper, /* restartApp= */ true);
+    }
+
+    verify(device).isPackageQueryable("com.example.app");
+    verify(device).stopPackage("com.example.app");
+    verify(device, never())
+        .installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            anyBoolean());
+  }
+
+  @Test
+  public void testForceQueryableStillInstallsChangedApkWithoutReadingVisibility() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ false);
+    when(device.installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            eq(true)))
+        .thenReturn(true);
+    AdbOptions options =
+        new AdbOptions("path_to_adb", 0, 0, false, false, false, false, "no", false, true);
+
+    try (AdbHelper helper = createAdbHelper(options)) {
+      installPlainApk(helper, /* restartApp= */ false);
+    }
+
+    verify(device, never()).isPackageQueryable(anyString());
+    verify(device)
+        .installApkOnDevice(
+            any(File.class),
+            eq(false),
+            eq(true),
+            eq(true),
+            eq(false),
+            eq(null),
+            eq(true),
+            eq("com.example.app"),
+            eq(true));
+  }
+
+  @Test
+  public void testForceQueryableInstallsWhenVisibilityCannotBeRead() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+    when(device.isPackageQueryable("com.example.app"))
+        .thenThrow(new AdbCommandFailedException("unreadable queryability"));
+    when(device.installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            eq(true)))
+        .thenReturn(true);
+    AdbOptions options =
+        new AdbOptions("path_to_adb", 0, 0, false, false, false, false, "no", false, true);
+
+    try (AdbHelper helper = createAdbHelper(options)) {
+      installPlainApk(helper, /* restartApp= */ false);
+    }
+
+    verify(device)
+        .installApkOnDevice(
+            any(File.class),
+            eq(false),
+            eq(true),
+            eq(true),
+            eq(false),
+            eq(null),
+            eq(true),
+            eq("com.example.app"),
+            eq(true));
+  }
+
+  @Test
+  public void testPlainInstallDoesNotReadQueryabilityWithoutOptIn() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+    installPlainApk(/* restartApp= */ false);
+    verify(device, never()).isPackageQueryable(anyString());
+  }
+
+  @Test
+  public void testPlainStagedInstallInstallsEvenWhenTheApkMatches() throws Exception {
+    AndroidDeviceImpl device = deviceWithInstalledApk(/* sameApk= */ true);
+
+    installPlainApk(
+        createAdbHelper(
+            createAdbOptions(
+                /* multiInstallMode= */ false,
+                /* stagedInstallMode= */ true,
+                /* ignoreMissingDevices= */ false)),
+        /* restartApp= */ false);
+
+    verify(device)
+        .installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            /* verifyTempWritable= */ eq(true),
+            /* stagedInstallMode= */ eq(true),
+            /* userId= */ eq(null),
+            /* allowFastDeploy= */ eq(true),
+            eq("com.example.app"),
+            eq(false));
+  }
+
+  private File plainApk() throws Exception {
+    File apk = tmpDir.getRoot().resolve("app.apk").toFile();
+    if (!apk.exists()) {
+      Files.write(apk.toPath(), new byte[] {1, 2, 3});
+    }
+    return apk;
+  }
+
+  /** A device whose installed apk for com.example.app is the local apk or a different one. */
+  private AndroidDeviceImpl deviceWithInstalledApk(boolean sameApk) throws Exception {
+    AndroidDeviceImpl device = createRealDevice("one", "device");
+    when(device.setDebugAppPackageName("com.example.app")).thenReturn(true);
+    when(device.compareInstalledApk(eq("com.example.app"), any(File.class)))
+        .thenReturn(
+            sameApk ? AndroidDevice.InstalledApk.SAME : AndroidDevice.InstalledApk.DIFFERENT);
+    when(device.installApkOnDevice(
+            any(File.class),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            anyBoolean(),
+            any(),
+            anyBoolean(),
+            anyString(),
+            anyBoolean()))
+        .thenReturn(true);
+    when(adbUtils.getDevices()).thenReturn(Collections.singletonList(device));
+    return device;
+  }
+
+  private void installPlainApk(boolean restartApp) throws Exception {
+    installPlainApk(createAdbHelper(), restartApp);
+  }
+
+  private void installPlainApk(AdbHelper adbHelper, boolean restartApp) throws Exception {
+    File apk = plainApk();
+    adbHelper.installApk(
+        new IsolatedApkInfo(
+            tmpDir.getRoot().resolve("AndroidManifest.xml"), AbsPath.of(apk.toPath())),
+        Optional.empty(),
+        tmpDir.getRoot(),
+        /* installViaSd= */ false,
+        /* quiet= */ true,
+        "//:app",
+        "com.example.app",
+        restartApp);
+  }
+
   private AdbHelper createAdbHelper() {
     return createAdbHelper(createAdbOptions());
   }
@@ -427,7 +807,6 @@ public class AdbHelperTest {
         adbExecutionContext,
         new IsolatedAndroidInstallerPrinter(LOGGER),
         /* restartAdbOnFailure */ true,
-        /* skipMetadataIfNoInstalls= */ false,
         SetDebugAppMode.SET) {};
   }
 
@@ -446,7 +825,6 @@ public class AdbHelperTest {
         adbExecutionContext,
         new IsolatedAndroidInstallerPrinter(LOGGER),
         /* restartAdbOnFailure */ true,
-        /* skipMetadataIfNoInstalls= */ false,
         SetDebugAppMode.SET);
   }
 
@@ -471,8 +849,9 @@ public class AdbHelperTest {
         0,
         multiInstallMode,
         stagedInstallMode,
-        5000,
         ignoreMissingDevices,
+        false,
+        "no",
         false);
   }
 }

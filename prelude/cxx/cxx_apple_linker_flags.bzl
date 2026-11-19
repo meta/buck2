@@ -54,10 +54,14 @@ def apple_format_metal_target_triple(platform: str, version: str) -> str:
     return metal_triple_format_str.format(version = version)
 
 def apple_target_triple_flags(target_triple: str | None) -> list[str]:
-    return [
-        "-target",
-        target_triple,
-    ] if target_triple else []
+    return (
+        [
+            "-target",
+            target_triple,
+        ]
+        if target_triple
+        else []
+    )
 
 def apple_extra_darwin_linker_flags(target_triple: str | None) -> list[str]:
     """

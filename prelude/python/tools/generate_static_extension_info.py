@@ -7,14 +7,12 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
 
 import argparse
 import sys
-from typing import List
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(fromfile_prefix_chars="@")
     parser.add_argument("--output", type=argparse.FileType("w"), default=sys.stdout)
     parser.add_argument("--extension", action="append", default=[])

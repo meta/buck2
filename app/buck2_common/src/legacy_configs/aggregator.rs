@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::fmt::Debug;
 
 use buck2_core::cells::CellAliasResolver;
@@ -21,7 +20,9 @@ use buck2_core::cells::instance;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::nested::NestedCells;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+use buck2_hash::BuckMutMap;
+use buck2_hash::IntentionallyStdHashMap;
 use instance::CellInstance;
 
 /// Errors from cell creation
@@ -46,8 +47,8 @@ enum CellError {
 /// generate a final 'CellResolver'
 #[derive(Debug)]
 pub(crate) struct CellsAggregator {
-    cell_infos: HashMap<CellName, CellAggregatorInfo>,
-    root_aliases: HashMap<NonEmptyCellAlias, CellName>,
+    cell_infos: BuckMutMap<CellName, CellAggregatorInfo>,
+    root_aliases: IntentionallyStdHashMap<NonEmptyCellAlias, CellName>,
     root_cell: CellName,
 }
 
@@ -61,11 +62,11 @@ impl CellsAggregator {
     pub(crate) fn new(
         // This is order sensitive
         cells: Vec<(CellName, CellRootPathBuf)>,
-        root_aliases: HashMap<NonEmptyCellAlias, NonEmptyCellAlias>,
+        root_aliases: BuckMutMap<NonEmptyCellAlias, NonEmptyCellAlias>,
     ) -> buck2_error::Result<Self> {
-        let mut path_rmap = HashMap::new();
-        let mut infos = HashMap::new();
-        let mut combined_aliases = HashMap::new();
+        let mut path_rmap = BuckMutMap::default();
+        let mut infos = BuckMutMap::default();
+        let mut combined_aliases = IntentionallyStdHashMap::new();
         for (cell, path) in cells {
             let real_cell = match path_rmap.try_insert(path.clone(), cell) {
                 Ok(_) => {
@@ -176,7 +177,7 @@ mod tests {
                 (other1, other_path.clone()),
                 (other2, other_path.clone()),
             ],
-            HashMap::new(),
+            BuckMutMap::default(),
         )
         .unwrap()
         .make_cell_resolver()
@@ -203,7 +204,7 @@ mod tests {
         assert!(
             CellsAggregator::new(
                 Vec::new(),
-                HashMap::from_iter([(
+                BuckMutMap::from_iter([(
                     NonEmptyCellAlias::testing_new("root"),
                     NonEmptyCellAlias::testing_new("does_not_exist")
                 )])

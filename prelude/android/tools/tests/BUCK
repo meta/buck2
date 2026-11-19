@@ -1,0 +1,55 @@
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("android_devxx")
+
+source_listing()
+
+prelude = native
+
+prelude.python_test(
+    name = "test_sort_pre_dexed_files",
+    srcs = [
+        "generate_mobileconfig_fixture.py",
+        "test_sort_pre_dexed_files.py",
+    ],
+    resources = [
+        "testdata/mobileconfig_definition_lib_ref_count.json",
+        "testdata/mobileconfig_definition_lib_ref_count.txt",
+    ],
+    deps = [
+        "prelude//android/tools:filter_dex_lib",
+        "prelude//android/tools:sort_pre_dexed_files_lib",
+    ],
+)
+
+prelude.python_test(
+    name = "test_filter_dex",
+    srcs = ["test_filter_dex.py"],
+    deps = [
+        "prelude//android/tools:filter_dex_lib",
+    ],
+)
+
+prelude.python_test(
+    name = "test_combine_apk_with_relinked_libs",
+    srcs = ["test_combine_apk_with_relinked_libs.py"],
+    deps = [
+        "prelude//android/tools:combine_apk_with_relinked_libs_lib",
+    ],
+)
+
+prelude.python_test(
+    name = "test_duplicate_class_checker",
+    srcs = ["test_duplicate_class_checker.py"],
+    deps = [
+        "prelude//android/tools:duplicate_class_checker_lib",
+    ],
+)
+
+prelude.python_test(
+    name = "test_merge_sequence",
+    srcs = ["test_merge_sequence.py"],
+    deps = [
+        "prelude//android/tools:merge_sequence_lib",
+    ],
+)

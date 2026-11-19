@@ -21,7 +21,7 @@ pub trait SetMergebase {
 }
 
 pub trait GetMergebase {
-    fn get_mergebase(&self) -> Mergebase;
+    fn get_mergebase(&self) -> &Mergebase;
 }
 
 impl SetMergebase for UserComputationData {
@@ -31,10 +31,9 @@ impl SetMergebase for UserComputationData {
 }
 
 impl GetMergebase for UserComputationData {
-    fn get_mergebase(&self) -> Mergebase {
+    fn get_mergebase(&self) -> &Mergebase {
         self.data
             .get::<Mergebase>()
             .expect("mergebase should be set")
-            .dupe()
     }
 }

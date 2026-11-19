@@ -16,7 +16,6 @@ use either::Either;
 use serde_json::to_value;
 
 use crate::attrs::attr_type::any_matches::AnyMatches;
-use crate::attrs::coerced_attr::CoercedAttr;
 use crate::attrs::coerced_path::CoercedPath;
 use crate::attrs::configured_attr::ConfiguredAttr;
 use crate::attrs::fmt_context::AttrFmtContext;
@@ -47,7 +46,7 @@ impl ToJsonWithContext for ConfiguredAttr {
             ConfiguredAttr::Query(e) => Ok(to_value(&e.query.query)?),
             ConfiguredAttr::SourceFile(e) => Ok(to_value(source_file_display(ctx, e).to_string())?),
             ConfiguredAttr::Metadata(m) => Ok(m.to_value()),
-            ConfiguredAttr::TargetModifiers(m) => Ok(m.to_value()),
+            ConfiguredAttr::TargetModifiers(m) => Ok(m.to_json()),
         }
     }
 }
@@ -82,21 +81,6 @@ impl AnyMatches for ConfiguredAttr {
             ConfiguredAttr::Metadata(e) => e.any_matches(filter),
             ConfiguredAttr::TargetModifiers(e) => e.any_matches(filter),
         }
-    }
-}
-
-impl ToJsonWithContext for CoercedAttr {
-    fn to_json(&self, ctx: &AttrFmtContext) -> buck2_error::Result<serde_json::Value> {
-        CoercedAttr::to_json(self, ctx)
-    }
-}
-
-impl AnyMatches for CoercedAttr {
-    fn any_matches(
-        &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
-        CoercedAttr::any_matches(self, filter)
     }
 }
 

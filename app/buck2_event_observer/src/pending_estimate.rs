@@ -20,7 +20,7 @@ pub fn pending_estimate<T: SpanTrackable>(roots: &Roots<T>, dice: &DiceState) ->
         let from_dice = dice
             .key_states()
             .get(*k)
-            .map_or(0, |v| v.started - v.finished);
+            .map_or(0, |v| v.started.saturating_sub(v.finished));
 
         let from_roots = roots.dice_counts().get(k).copied().unwrap_or(0);
 
@@ -49,17 +49,18 @@ pub fn estimate_completion_percentage<T: SpanTrackable>(roots: &Roots<T>, dice: 
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::UNIX_EPOCH;
 
     use buck2_data::SpanStartEvent;
     use buck2_events::BuckEvent;
     use buck2_events::span::SpanId;
+    use buck2_hash::IntentionallyStdHashMap;
     use buck2_wrapper_common::invocation_id::TraceId;
 
     use crate::dice_state::DiceState;
     use crate::pending_estimate::estimate_completion_percentage;
+    use crate::pending_estimate::pending_estimate;
     use crate::span_tracker::BuckEventSpanTracker;
 
     fn setup_roots(tracker: &mut BuckEventSpanTracker) {
@@ -104,7 +105,7 @@ mod tests {
     fn setup_dice_state(dice_state: &mut DiceState, finished: u32, total: u32) {
         dice_state.update(&buck2_data::DiceStateSnapshot {
             key_states: {
-                let mut map = HashMap::new();
+                let mut map = IntentionallyStdHashMap::new();
                 map.insert(
                     "BuildKey".to_owned(),
                     buck2_data::DiceKeyState {
@@ -118,6 +119,8 @@ mod tests {
                 );
                 map
             },
+            core_state_queue_depth: 0,
+            core_state_processed_requests: 0,
         });
     }
 
@@ -164,6 +167,17 @@ mod tests {
         setup_dice_state(&mut dice, 10, 0);
         assert_eq!(estimate_completion_percentage(tracker.roots(), &dice), 0);
         Ok(())
+    }
+
+    /// A snapshot with more finished than started keys counts as nothing pending, as the
+    /// percentage estimate next to it already assumes.
+    #[test]
+    fn test_pending_estimate_invalid_dice_state() {
+        let mut dice = DiceState::new();
+        let tracker = BuckEventSpanTracker::new();
+
+        setup_dice_state(&mut dice, 10, 0);
+        assert_eq!(0, pending_estimate(tracker.roots(), &dice));
     }
 
     #[test]

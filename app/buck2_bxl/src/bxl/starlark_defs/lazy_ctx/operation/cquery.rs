@@ -91,7 +91,7 @@ impl LazyCqueryOperation {
 }
 
 impl LazyCqueryResult {
-    pub(crate) fn into_value<'v>(self, heap: &'v Heap) -> buck2_error::Result<Value<'v>> {
+    pub(crate) fn into_value<'v>(self, heap: Heap<'v>) -> buck2_error::Result<Value<'v>> {
         match self {
             LazyCqueryResult::Eval(result) => parse_query_evaluation_result(result, heap),
         }

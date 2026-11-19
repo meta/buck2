@@ -1,0 +1,10 @@
+load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library")
+
+cpp_library(
+    name = "rt",
+    linker_flags = select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": ["-lrt"],
+    }),
+    visibility = ["PUBLIC"],
+)

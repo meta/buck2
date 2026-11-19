@@ -1,0 +1,41 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+{
+  "(target: `root//groups:any_tool (root//config:linux_local#<HASH>)`, id: `0`)": {
+    "category": "write",
+    "identifier": "tool.py"
+  },
+  "(target: `root//groups:any_tool (root//config:linux_remote#<HASH>)`, id: `0`)": {
+    "category": "write",
+    "identifier": "tool.py"
+  },
+  "(target: `root//groups:binary (<unspecified>)`, id: `0`)": {
+    "category": "compile",
+    "identifier": "",
+    "buck.exec_group": "DefaultExecGroup"
+  },
+  "(target: `root//groups:binary (<unspecified>)`, id: `1`)": {
+    "category": "explicit_default",
+    "identifier": "",
+    "buck.exec_group": "DefaultExecGroup"
+  },
+  "(target: `root//groups:binary (<unspecified>)`, id: `2`)": {
+    "category": "write",
+    "identifier": "link_args.txt",
+    "buck.exec_group": "Link"
+  },
+  "(target: `root//groups:binary (<unspecified>)`, id: `3`)": {
+    "category": "link",
+    "identifier": "",
+    "buck.exec_group": "Link"
+  },
+  "(target: `root//groups:binary (<unspecified>)`, id: `4`)": {
+    "category": "unused_group",
+    "identifier": "",
+    "buck.exec_group": "Unused"
+  },
+  "(target: `root//groups:remote_tool (root//config:linux_remote#<HASH>)`, id: `0`)": {
+    "category": "write",
+    "identifier": "tool.py"
+  }
+}

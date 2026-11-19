@@ -26,6 +26,7 @@ pub enum ExitCode {
     DaemonPreempted,
     Timeout,
     ConnectError,
+    FatalOom,
     SignalInterrupt,
     ClientIoBrokenPipe,
     /// Test runner explicitly requested that this exit code be returned
@@ -44,6 +45,7 @@ impl ExitCode {
             DaemonPreempted => 5,
             Timeout => 6,
             ConnectError => 11,
+            FatalOom => 12,
             // Exit codes after 129 should be reserved for exits caused by signals,
             // which should be 128 + signal number.
             // However, SIGINT and SIGPIPE are reversed..
@@ -64,6 +66,7 @@ impl ExitCode {
             DaemonPreempted => "DAEMON_PREEMPTED",
             Timeout => "TIMEOUT",
             ConnectError => "CONNECT_ERROR",
+            FatalOom => "FATAL_OOM",
             ClientIoBrokenPipe => "CLIENT_IO_BROKEN_PIPE",
             SignalInterrupt => "SIGNAL_INTERRUPT",
             TestRunner(_) => "TEST_RUNNER",

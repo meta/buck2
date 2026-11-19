@@ -1,0 +1,8 @@
+[buildfile]
+  name = TARGETS.fixture
+
+[select_root]
+  key = target-value
+
+[select_target]
+  key = target-value

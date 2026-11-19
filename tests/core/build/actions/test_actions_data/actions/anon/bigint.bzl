@@ -17,11 +17,14 @@ def _assert_eq(a, b):
 def _mirror_impl(ctx: AnalysisContext) -> list[Provider]:
     return [DefaultInfo(), MirrorInfo(info = ctx.attrs)]
 
-_mirror = rule(impl = _mirror_impl, attrs = {
-    "any": attrs.any(),
-    "int": attrs.int(),
-    "string": attrs.string(),
-})
+_mirror = rule(
+    impl = _mirror_impl,
+    attrs = {
+        "any": attrs.any(),
+        "int": attrs.int(),
+        "string": attrs.string(),
+    },
+)
 
 def _int8_num_impl(ctx: AnalysisContext) -> Promise:
     def f(providers):

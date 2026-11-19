@@ -13,6 +13,7 @@
 pub mod __macro_refs;
 pub(crate) mod iter;
 pub(crate) mod option;
+pub(crate) mod result;
 
 use std::cell::Cell;
 use std::mem::ManuallyDrop;
@@ -27,6 +28,8 @@ pub use dupe_derive::Dupe_;
 
 pub use crate::iter::IterDupedExt;
 pub use crate::option::OptionDupedExt;
+pub use crate::result::ResultDupedErrExt;
+pub use crate::result::ResultDupedExt;
 
 /// Like [`Clone`], but should only be available if [`Clone`] is
 /// constant time and zero allocation (e.g. a few [`Arc`] bumps).

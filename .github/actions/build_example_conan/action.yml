@@ -3,6 +3,9 @@ runs:
   using: composite
   steps:
   - name: Build examples/toolchains/conan_toolchain
+    env:
+      # zlib 1.2.13 asks for a CMake policy version that CMake 4 refuses.
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
     run: |-
       cd examples/toolchains/conan_toolchain
       $RUNNER_TEMP/artifacts/buck2 init

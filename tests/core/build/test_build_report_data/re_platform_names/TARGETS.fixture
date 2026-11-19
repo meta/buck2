@@ -1,0 +1,17 @@
+load(":rules.bzl", "run_action")
+
+platform(name = "p")
+
+execution_platform(
+    name = "exec_platform",
+    platform = ":p",
+    remote_enabled = True,
+    remote_cache_enabled = True,
+)
+
+execution_platforms(
+    name = "platforms",
+    platforms = [":exec_platform"],
+)
+
+run_action(name = "run_action")

@@ -84,7 +84,7 @@ impl<'a, T: WalkType<'a>> DirectoryIterator for Walk<'a, T> {
                     DirectoryEntry::Dir(dir) => {
                         self.stack.push(WalkFrame {
                             name: Some(name),
-                            entries: T::Entries::from(T::directory_entries(dir)),
+                            entries: T::directory_entries(dir),
                             _phantom: PhantomData,
                         });
                         None
@@ -233,11 +233,11 @@ mod tests {
 
     #[test]
     fn test_walk() -> buck2_error::Result<()> {
-        let mut b = TestDirectoryBuilder::empty();
+        let mut b = TestDirectoryBuilder::empty_non_exhaustive();
         b.insert(path("a/b"), DirectoryEntry::Leaf(NopEntry))?;
         b.insert(
             path("b"),
-            DirectoryEntry::Dir(TestDirectoryBuilder::empty()),
+            DirectoryEntry::Dir(TestDirectoryBuilder::empty_non_exhaustive()),
         )?;
 
         {
@@ -303,7 +303,8 @@ mod tests {
         }
 
         {
-            let e = DirectoryEntry::<_, NopEntry>::Dir(TestDirectoryBuilder::empty());
+            let e =
+                DirectoryEntry::<_, NopEntry>::Dir(TestDirectoryBuilder::empty_non_exhaustive());
             let mut it = ordered_entry_walk(e.as_ref().map_dir(|d| d.as_ref()));
 
             assert_matches!(it.next(), None);

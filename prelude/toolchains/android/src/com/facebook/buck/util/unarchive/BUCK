@@ -16,6 +16,7 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:platform",
         "prelude//toolchains/android/third-party:commons-compress",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         "prelude//toolchains/android/third-party:zstd-jni",
     ],
     exported_deps = [

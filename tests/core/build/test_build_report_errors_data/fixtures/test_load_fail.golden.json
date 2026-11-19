@@ -3,8 +3,8 @@
 {
   "error_category": "USER",
   "failures": {
-    "root//fail_load:first": "Error evaluating build file: `root//fail_load:TARGETS.fixture`\nCaused by:\n    Traceback (most recent call last):\n      * fail_load/TARGETS.fixture:1, in <module>\n          fail(\"Non-specific load failure\")\n    error: fail: Non-specific load failure\n     --> fail_load/TARGETS.fixture:1:1\n      |\n    1 | fail(\"Non-specific load failure\")\n      |\n      |\n    ",
-    "root//fail_load:second": "Error evaluating build file: `root//fail_load:TARGETS.fixture`\nCaused by:\n    Traceback (most recent call last):\n      * fail_load/TARGETS.fixture:1, in <module>\n          fail(\"Non-specific load failure\")\n    error: fail: Non-specific load failure\n     --> fail_load/TARGETS.fixture:1:1\n      |\n    1 | fail(\"Non-specific load failure\")\n      |\n      |\n    "
+    "root//fail_load:first": "Error evaluating build file: `root//fail_load:TARGETS.fixture`\nCaused by:\n    Traceback (most recent call last):\n      * fail_load/TARGETS.fixture:1, in <module>\n          fail(\"Non-specific load failure\")\n    error: fail: Non-specific load failure\n     --> fail_load/TARGETS.fixture:1:1\n      |\n    1 | fail(\"Non-specific load failure\")\n      |\n    ",
+    "root//fail_load:second": "Error evaluating build file: `root//fail_load:TARGETS.fixture`\nCaused by:\n    Traceback (most recent call last):\n      * fail_load/TARGETS.fixture:1, in <module>\n          fail(\"Non-specific load failure\")\n    error: fail: Non-specific load failure\n     --> fail_load/TARGETS.fixture:1:1\n      |\n    1 | fail(\"Non-specific load failure\")\n      |\n    "
   },
   "results": {
     "root//fail_load:first": {
@@ -13,7 +13,9 @@
       "errors": [
         {
           "action_error": null,
+          "category_key": "STARLARK_FAIL",
           "cause_index": 0,
+          "error_category": "USER",
           "error_tags": [
             "STARLARK_FAIL"
           ],
@@ -30,7 +32,9 @@
       "errors": [
         {
           "action_error": null,
+          "category_key": "STARLARK_FAIL",
           "cause_index": 0,
+          "error_category": "USER",
           "error_tags": [
             "STARLARK_FAIL"
           ],
@@ -43,7 +47,7 @@
     }
   },
   "strings": {
-    "<STRING_HASH>": "Error evaluating build file: `root//fail_load:TARGETS.fixture`\nCaused by:\n    Traceback (most recent call last):\n      * fail_load/TARGETS.fixture:1, in <module>\n          fail(\"Non-specific load failure\")\n    error: fail: Non-specific load failure\n     --> fail_load/TARGETS.fixture:1:1\n      |\n    1 | fail(\"Non-specific load failure\")\n      |\n      |\n    "
+    "<STRING_HASH>": "Error evaluating build file: `root//fail_load:TARGETS.fixture`\nCaused by:\n    Traceback (most recent call last):\n      * fail_load/TARGETS.fixture:1, in <module>\n          fail(\"Non-specific load failure\")\n    error: fail: Non-specific load failure\n     --> fail_load/TARGETS.fixture:1:1\n      |\n    1 | fail(\"Non-specific load failure\")\n      |\n    "
   },
   "success": false,
   "truncated": false

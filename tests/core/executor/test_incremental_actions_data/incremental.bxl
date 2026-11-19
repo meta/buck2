@@ -1,0 +1,36 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+def _incremental_impl(ctx):
+    actions = ctx.bxl_actions().actions
+    out = actions.declare_output("out", has_content_based_path = True)
+    script = actions.write(
+        "script.py",
+        [
+            "import os, sys",
+            "out = sys.argv[1]",
+            "content = open(out).read() + ' bar' if os.path.exists(out) else 'foo'",
+            "open(out, 'w').write(content)",
+        ],
+        has_content_based_path = False,
+    )
+    name = actions.write("name", ctx.cli_args.name, has_content_based_path = False)
+    actions.run(
+        cmd_args(["fbpython", script, out.as_output()], hidden = [name]),
+        category = "incremental",
+        no_outputs_cleanup = True,
+        local_only = True,
+        metadata_env_var = "METADATA_PATH",
+        metadata_path = "metadata.json",
+    )
+    ctx.output.print(ctx.output.ensure(out))
+
+incremental = bxl_main(
+    impl = _incremental_impl,
+    cli_args = {"name": cli_args.string()},
+)

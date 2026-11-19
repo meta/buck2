@@ -1,0 +1,138 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+x = = 1
+
+Error:
+error: Parse error: unexpected symbol '=', expected expression
+ --> error_unexpected_token:1:5
+  |
+1 | x = = 1
+  |     ^
+
+
+Program:
+_ = *x
+
+Error:
+error: Parse error: unexpected symbol '*', expected expression
+ --> error_unexpected_token:1:5
+  |
+1 | _ = *x
+  |     ^
+
+
+Program:
+def foo(,):
+  pass
+
+Error:
+error: Parse error: unexpected symbol ',', expected identifier
+ --> error_unexpected_token:1:9
+  |
+1 | def foo(,):
+  |         ^
+
+
+Program:
+f(a=1, *, b=2)
+
+Error:
+error: Parse error: unexpected symbol ',', expected expression
+ --> error_unexpected_token:1:9
+  |
+1 | f(a=1, *, b=2)
+  |         ^
+
+
+Program:
+x = [1, , 2]
+
+Error:
+error: Parse error: unexpected symbol ',', expected expression
+ --> error_unexpected_token:1:9
+  |
+1 | x = [1, , 2]
+  |         ^
+
+
+Program:
+_ = a + b not c
+
+Error:
+error: Parse error: unexpected identifier 'c', expected 'in' after 'not'
+ --> error_unexpected_token:1:15
+  |
+1 | _ = a + b not c
+  |               ^
+
+
+Program:
+f(1+2 = 3)
+
+Error:
+error: Parse error: unexpected symbol '=', expected symbol ')'
+ --> error_unexpected_token:1:7
+  |
+1 | f(1+2 = 3)
+  |       ^
+
+
+Program:
+x = {,}
+
+Error:
+error: Parse error: unexpected symbol ',', expected expression
+ --> error_unexpected_token:1:6
+  |
+1 | x = {,}
+  |      ^
+
+
+Program:
+print 1 2
+
+Error:
+error: Parse error: unexpected integer literal '1', expected new line
+ --> error_unexpected_token:1:7
+  |
+1 | print 1 2
+  |       ^
+
+
+Program:
+x[1, 2,:]
+
+Error:
+error: Parse error: unexpected symbol ',', expected symbol ']'
+ --> error_unexpected_token:1:7
+  |
+1 | x[1, 2,:]
+  |       ^
+
+
+Program:
+a = max(range(10)))
+
+Error:
+error: Parse error: unexpected symbol ')', expected new line
+ --> error_unexpected_token:1:19
+  |
+1 | a = max(range(10)))
+  |                   ^
+
+
+Program:
+def foo(x,,y):
+  pass
+
+Error:
+error: Parse error: unexpected symbol ',', expected identifier
+ --> error_unexpected_token:1:11
+  |
+1 | def foo(x,,y):
+  |           ^

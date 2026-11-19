@@ -1,10 +1,20 @@
-load(":defs.bzl", "execution_platforms", "target_platform")
+platform(
+    name = "p",
+)
+
+execution_platform(
+    name = "exec_platform",
+    platform = ":p",
+    remote_enabled = True,
+    remote_cache_enabled = True,
+)
 
 execution_platforms(
     name = "platforms",
+    platforms = [":exec_platform"],
 )
 
-target_platform(
+platform(
     name = "platform",
     visibility = ["PUBLIC"],
 )

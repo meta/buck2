@@ -1,0 +1,41 @@
+load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_java_binary", "buck_java_library")
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("android_devxx")
+
+source_listing()
+
+buck_java_library(
+    name = "desugar_classpath_view",
+    srcs = ["DesugarClasspathView.java"],
+    visibility = ["PUBLIC"],
+    deps = [
+        "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip_scrubber_lib",
+        "prelude//toolchains/android/third-party:asm",
+        "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
+    ],
+)
+
+buck_java_library(
+    name = "desugar_classpath_view_executable_main",
+    srcs = ["DesugarClasspathViewExecutableMain.java"],
+    visibility = ["PUBLIC"],
+    deps = [
+        "prelude//toolchains/android/third-party:args4j",
+        "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        ":desugar_classpath_view",
+    ],
+)
+
+buck_java_binary(
+    name = "desugar_classpath_view_binary",
+    main_class = "com.facebook.buck.android.dex.desugarclasspath.DesugarClasspathViewExecutableMain",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":desugar_classpath_view",
+        ":desugar_classpath_view_executable_main",
+    ],
+)

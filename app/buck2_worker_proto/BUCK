@@ -1,4 +1,4 @@
-load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library", "rust_protobuf_library_prost_0134")
+load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 load("@fbcode//grpc_fb/codegen:buck_macros.bzl", "grpc_library")
 load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
 
@@ -8,16 +8,6 @@ rust_protobuf_library(
     name = "buck2_worker_proto",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",
-    proto_srcs = ":buck2_worker_proto.proto",
-)
-
-# Have to maintain both of these in parallel so long as
-# fbcode//overqueued:overqueued_buck2_client is on older prost
-rust_protobuf_library_prost_0134(
-    name = "buck2_worker_proto_modern_prost",
-    srcs = glob(["src/**/*.rs"]),
-    build_script = "build.rs",
-    crate_name = "buck2_worker_proto",
     proto_srcs = ":buck2_worker_proto.proto",
 )
 

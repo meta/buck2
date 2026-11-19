@@ -26,17 +26,88 @@ use crate as starlark;
 use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::AllocValue;
-use crate::values::FrozenStringValue;
 use crate::values::Heap;
+use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::ValueLike;
+use crate::values::ValueOf;
 use crate::values::list::AllocList;
-use crate::values::tuple::UnpackTuple;
+use crate::values::tuple::TupleType;
 use crate::values::typing::StarlarkIter;
 use crate::values::typing::never::StarlarkNever;
 use crate::values::typing::ty::AbstractType;
-use crate::values::value_of_unchecked::ValueOfUnchecked;
+
+/// Below this length a sort is an insertion sort, as in the standard library.
+const INSERTION_SORT_LEN: usize = 20;
+
+/// Stable sort by a comparison that can fail, which `slice::sort_by` cannot
+/// be given: it requires a total order, and since Rust 1.81 it aborts the
+/// process on a comparator that does not provide one. Values of different
+/// types do not compare at all, so their comparison errors have to propagate.
+/// On an error the order of `v` is unspecified.
+fn try_sort_by<T: Copy, E>(
+    v: &mut [T],
+    cmp: &mut impl FnMut(T, T) -> Result<Ordering, E>,
+) -> Result<(), E> {
+    if v.len() <= INSERTION_SORT_LEN {
+        return try_insertion_sort(v, cmp);
+    }
+    let mut buf = v.to_vec();
+    try_merge_sort(v, &mut buf, cmp)
+}
+
+fn try_insertion_sort<T: Copy, E>(
+    v: &mut [T],
+    cmp: &mut impl FnMut(T, T) -> Result<Ordering, E>,
+) -> Result<(), E> {
+    for i in 1..v.len() {
+        let mut j = i;
+        while j > 0 && cmp(v[j - 1], v[j])? == Ordering::Greater {
+            v.swap(j - 1, j);
+            j -= 1;
+        }
+    }
+    Ok(())
+}
+
+/// `buf` is scratch space of the same length as `v`.
+fn try_merge_sort<T: Copy, E>(
+    v: &mut [T],
+    buf: &mut [T],
+    cmp: &mut impl FnMut(T, T) -> Result<Ordering, E>,
+) -> Result<(), E> {
+    if v.len() <= INSERTION_SORT_LEN {
+        return try_insertion_sort(v, cmp);
+    }
+    let mid = v.len() / 2;
+    {
+        let (v_left, v_right) = v.split_at_mut(mid);
+        let (buf_left, buf_right) = buf.split_at_mut(mid);
+        try_merge_sort(v_left, buf_left, cmp)?;
+        try_merge_sort(v_right, buf_right, cmp)?;
+    }
+    buf.copy_from_slice(v);
+    let (left, right) = buf.split_at(mid);
+    let (mut i, mut j) = (0, 0);
+    for slot in v.iter_mut() {
+        // Taking from the left on a tie keeps the sort stable.
+        let take_left = if i == left.len() {
+            false
+        } else if j == right.len() {
+            true
+        } else {
+            cmp(left[i], right[j])? != Ordering::Greater
+        };
+        if take_left {
+            *slot = left[i];
+            i += 1;
+        } else {
+            *slot = right[j];
+            j += 1;
+        }
+    }
+    Ok(())
+}
 
 #[starlark_module]
 pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
@@ -50,9 +121,11 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// fail("oops", 1, False)  # fail: oops 1 False
     /// # "#, "oops 1 False");
     /// ```
-    fn fail(#[starlark(args)] args: UnpackTuple<Value>) -> starlark::Result<StarlarkNever> {
+    fn fail<'v>(
+        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+    ) -> starlark::Result<StarlarkNever> {
         let mut s = String::new();
-        for x in args.items {
+        for x in args.items() {
             s.push(' ');
             match x.unpack_str() {
                 Some(x) => s.push_str(x),
@@ -80,10 +153,10 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn any<'v>(
-        #[starlark(require = pos)] x: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
-        heap: &'v Heap,
+        #[starlark(require = pos)] x: ValueOf<'v, StarlarkIter<Value<'v>>>,
+        heap: Heap<'v>,
     ) -> starlark::Result<bool> {
-        for i in x.get().iterate(heap)? {
+        for i in x.to_value().iterate(heap)? {
             if i.to_bool() {
                 return Ok(true);
             }
@@ -110,10 +183,10 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn all<'v>(
-        #[starlark(require = pos)] x: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
-        heap: &'v Heap,
+        #[starlark(require = pos)] x: ValueOf<'v, StarlarkIter<Value<'v>>>,
+        heap: Heap<'v>,
     ) -> starlark::Result<bool> {
-        for i in x.get().iterate(heap)? {
+        for i in x.to_value().iterate(heap)? {
             if !i.to_bool() {
                 return Ok(false);
             }
@@ -135,8 +208,8 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// # "#);
     /// ```
     #[starlark(speculative_exec_safe)]
-    fn dir(#[starlark(require = pos)] x: Value) -> anyhow::Result<Vec<String>> {
-        Ok(x.dir_attr())
+    fn dir(#[starlark(require = pos)] x: Value) -> anyhow::Result<AllocList<Vec<String>>> {
+        Ok(AllocList(x.dir_attr()))
     }
 
     /// [enumerate](
@@ -158,15 +231,15 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn enumerate<'v>(
-        #[starlark(require = pos)] it: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] it: ValueOf<'v, StarlarkIter<Value<'v>>>,
         #[starlark(default = 0)] start: i32,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> starlark::Result<impl AllocValue<'v>> {
         let v = it
-            .get()
+            .to_value()
             .iterate(heap)?
             .enumerate()
-            .map(move |(k, v)| (k as i32 + start, v));
+            .map(move |(k, v)| (k as i64 + start as i64, v));
         Ok(AllocList(v))
     }
 
@@ -192,7 +265,7 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
         #[starlark(require = pos)] a: Value<'v>,
         #[starlark(require = pos)] attr: &str,
         #[starlark(require = pos)] default: Option<Value<'v>>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
         // TODO(nga): this doesn't cache string hash, so it is suboptimal.
         match a.get_attr(attr, heap)? {
@@ -214,7 +287,7 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     fn hasattr<'v>(
         #[starlark(require = pos)] a: Value<'v>,
         #[starlark(require = pos)] attr: &str,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<bool> {
         Ok(a.has_attr(attr, heap))
     }
@@ -304,12 +377,12 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn reversed<'v>(
-        #[starlark(require = pos)] a: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
-        heap: &'v Heap,
-    ) -> starlark::Result<Vec<Value<'v>>> {
-        let mut v: Vec<Value> = a.get().iterate(heap)?.collect();
+        #[starlark(require = pos)] a: ValueOf<'v, StarlarkIter<Value<'v>>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<AllocList<Vec<Value<'v>>>> {
+        let mut v: Vec<Value> = a.to_value().iterate(heap)?.collect();
         v.reverse();
-        Ok(v)
+        Ok(AllocList(v))
     }
 
     /// [sorted](
@@ -337,13 +410,13 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     // This function is not spec-safe, because it may call `key` function
     // which might be not spec-safe.
     fn sorted<'v>(
-        #[starlark(require = pos)] x: ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>,
+        #[starlark(require = pos)] x: ValueOf<'v, StarlarkIter<Value<'v>>>,
         #[starlark(require = named)] key: Option<Value<'v>>,
         #[starlark(require = named, default = false)] reverse: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<AllocList<impl IntoIterator<Item = Value<'v>> + use<'v>>> {
-        let it = x.get().iterate(eval.heap())?;
-        let mut it = match key {
+        let it = x.to_value().iterate(eval.heap())?;
+        let mut it: Vec<(Value, Value)> = match key {
             None => it.map(|x| (x, x)).collect(),
             Some(key) => {
                 let mut v = Vec::new();
@@ -354,24 +427,13 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
             }
         };
 
-        let mut compare_ok = Ok(());
-
-        it.sort_by(|x: &(Value, Value), y: &(Value, Value)| {
-            let ord_or_err = if reverse {
-                x.1.compare(y.1).map(Ordering::reverse)
+        try_sort_by(&mut it, &mut |a: (Value, Value), b: (Value, Value)| {
+            if reverse {
+                b.1.compare(a.1)
             } else {
-                x.1.compare(y.1)
-            };
-            match ord_or_err {
-                Ok(r) => r,
-                Err(e) => {
-                    compare_ok = Err(e);
-                    Ordering::Equal // does not matter
-                }
+                a.1.compare(b.1)
             }
-        });
-
-        compare_ok?;
+        })?;
 
         Ok(AllocList(it.into_iter().map(|x| x.0)))
     }
@@ -390,8 +452,8 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// # "#);
     /// ```
     #[starlark(speculative_exec_safe, as_type = AbstractType)]
-    fn r#type<'v>(#[starlark(require = pos)] a: Value) -> anyhow::Result<FrozenStringValue> {
-        Ok(a.get_type_value())
+    fn r#type<'v>(#[starlark(require = pos)] a: Value) -> anyhow::Result<StringValue<'v>> {
+        Ok(a.get_type_value().at())
     }
 }
 
@@ -411,6 +473,14 @@ mod tests {
         assert::eq("1.23", "abs(-1.23)");
         assert::eq("2.3", "abs(2.3)");
         assert::is_true("isinstance(abs(1), int)");
+    }
+
+    #[test]
+    fn test_enumerate_start_overflow() {
+        assert::eq(
+            "enumerate(['a', 'b'], 2147483647)",
+            "[(2147483647, 'a'), (2147483648, 'b')]",
+        );
     }
 
     #[test]
@@ -474,11 +544,57 @@ noop(hash)(foo)
     }
 
     #[test]
+    fn test_int_base_zero_leading_zero() {
+        // With base 0 the string is read like an integer literal, which cannot have a leading 0.
+        assert::fail("int('0755', 0)", "cannot have leading 0");
+        assert::fail("int('-012', 0)", "cannot have leading 0");
+        assert::fail("int('+09', 0)", "cannot have leading 0");
+        assert::fail("int('00012', 0)", "cannot have leading 0");
+        assert::eq("0", "int('0', 0)");
+        assert::eq("0", "int('000', 0)");
+        assert::eq("0", "int('-00', 0)");
+        assert::eq("755", "int('755', 0)");
+        assert::eq("493", "int('0o755', 0)");
+        assert::eq("755", "int('0755')");
+        assert::eq("493", "int('0755', 8)");
+    }
+
+    #[test]
     fn test_tuple() {
         let mut a = Assert::new();
         // TODO(nga): fix and enable.
         a.disable_static_typechecking();
         a.eq("(1, 2)", "tuple((1, 2))");
         a.eq("(1, 2)", "tuple([1, 2])");
+    }
+
+    #[test]
+    fn test_sorted_incomparable_items() {
+        assert::fail(
+            "sorted([5, 4, 3, 2, 1, 0, len, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, len, 9, 8, 7, 6])",
+            "compare",
+        );
+    }
+
+    #[test]
+    fn test_sorted_non_transitive() {
+        assert::fail("sorted([(1,), (1, 'a'), (1, 2)])", "not supported");
+    }
+
+    #[test]
+    fn test_sorted_long_lists() {
+        // Longer than `INSERTION_SORT_LEN`, so the merge path runs.
+        let a = Assert::new();
+        a.eq("list(range(1, 101))", "sorted(list(range(100, 0, -1)))");
+        a.eq(
+            "[(0, 'a'), (0, 'b')] * 25 + [(1, 'a'), (1, 'b')] * 25",
+            "sorted([(1, 'a'), (0, 'a'), (1, 'b'), (0, 'b')] * 25, key = lambda x: x[0])",
+        );
+        a.eq(
+            "[(1, 'a'), (1, 'b')] * 25 + [(0, 'a'), (0, 'b')] * 25",
+            "sorted([(1, 'a'), (0, 'a'), (1, 'b'), (0, 'b')] * 25, key = lambda x: x[0], reverse = True)",
+        );
+        a.fail("sorted(list(range(100)) + [len])", "not supported");
+        a.fail("sorted([(1,), (1, 'a'), (1, 2)] * 20)", "not supported");
     }
 }

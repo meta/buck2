@@ -1,0 +1,5 @@
+load(":defs.bzl", "slow_subtarget")
+
+slow_subtarget(
+    name = "target",
+)

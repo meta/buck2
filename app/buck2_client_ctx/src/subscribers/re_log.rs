@@ -61,21 +61,19 @@ impl EventSubscriber for ReLog {
 
     async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
         for event in events {
-            match unpack_event(event)? {
-                UnpackedBuckEvent::Instant(
-                    _,
-                    _,
-                    buck2_data::instant_event::Data::ReSession(session),
-                ) => {
-                    self.re_session_id = Some(session.session_id.clone());
-                }
-                _ => {}
+            if let UnpackedBuckEvent::Instant(
+                _,
+                _,
+                buck2_data::instant_event::Data::ReSession(session),
+            ) = unpack_event(event)?
+            {
+                self.re_session_id = Some(session.session_id.clone());
             }
         }
         Ok(())
     }
 
-    async fn finalize(&mut self) -> buck2_error::Result<()> {
+    async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
         self.log_upload().await
     }
 }

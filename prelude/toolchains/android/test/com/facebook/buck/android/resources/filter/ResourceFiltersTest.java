@@ -133,8 +133,7 @@ public class ResourceFiltersTest {
 
   @Test
   public void testMdpiFilterRemovesUnneededResources() {
-    Set<Path> mdpi =
-        ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.MDPI), false);
+    Set<Path> mdpi = ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.MDPI));
     Iterable<Path> keepPaths =
         Iterables.concat(
             paths("dmhx.png", MDPI),
@@ -163,8 +162,7 @@ public class ResourceFiltersTest {
   @Test
   public void testLdpiMdpiFilterRemovesUnneededResources() {
     Set<Path> lmdpi =
-        ResourceFilters.filterByDensity(
-            candidates, ImmutableSet.of(Density.LDPI, Density.MDPI), false);
+        ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.LDPI, Density.MDPI));
     Iterable<Path> keepPaths =
         Iterables.concat(
             paths("dmhx.png", MDPI),
@@ -191,39 +189,8 @@ public class ResourceFiltersTest {
   }
 
   @Test
-  public void testLdpiMdpiFilterWithDownscale() {
-    Set<Path> lmdpi =
-        ResourceFilters.filterByDensity(
-            candidates, ImmutableSet.of(Density.LDPI, Density.MDPI), true);
-    Iterable<Path> keepPaths =
-        Iterables.concat(
-            paths("dmhx.png", MDPI),
-            paths("dmh.png", MDPI),
-            paths("dmx.png", MDPI),
-            paths("dhx.png", DRAWABLE),
-            paths("hx.png", XHDPI), // Downscale XHDPI
-            paths("md.png", MDPI),
-            paths("l.png", LDPI),
-            paths("d.png", DRAWABLE),
-            paths("h11.png", HDPI_11),
-            paths("2x.png", XXHDPI),
-            paths("x2x.png", XXHDPI),
-            paths("h3x.png", XXXHDPI), // Downscale XXXHDPI
-            paths("dlmhx2x.png", LDPI, MDPI),
-            paths("dmhx_rx.png", MDPI, XHDPI_RO),
-            paths("dmhx_fmhx.png", MDPI, MDPI_FR),
-            paths("lh2x_flh2x.png", LDPI, XXHDPI, LDPI_FR, XXHDPI_FR), // Downscale XXHDPI
-            paths("mth11_flth.png", MDPI, HDPI_11, LDPI_FR, HDPI_FR),
-            paths("fm3x.png", MDPI_FR),
-            paths("lx.png", LDPI, XHDPI),
-            paths("nine.9.png", LDPI, XHDPI) /* No downscale */);
-    MoreAsserts.assertSetEquals(pathsToRemove(candidates, Lists.newArrayList(keepPaths)), lmdpi);
-  }
-
-  @Test
   public void testHdpiFilterRemovesUnneededResources() {
-    Set<Path> hdpi =
-        ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.HDPI), false);
+    Set<Path> hdpi = ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.HDPI));
     Iterable<Path> keepPaths =
         Iterables.concat(
             paths("dmhx.png", HDPI),
@@ -251,8 +218,7 @@ public class ResourceFiltersTest {
 
   @Test
   public void testXhdpiFilterRemovesUnneededResources() {
-    Set<Path> xhdpi =
-        ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.XHDPI), false);
+    Set<Path> xhdpi = ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.XHDPI));
     Iterable<Path> keepPaths =
         Iterables.concat(
             paths("dmhx.png", XHDPI),
@@ -280,8 +246,7 @@ public class ResourceFiltersTest {
 
   @Test
   public void testXxhdpiFilterRemovesUnneededResources() {
-    Set<Path> xxhdpi =
-        ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.XXHDPI), false);
+    Set<Path> xxhdpi = ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.XXHDPI));
     Iterable<Path> keepPaths =
         Iterables.concat(
             paths("dmhx.png", XHDPI),
@@ -310,9 +275,9 @@ public class ResourceFiltersTest {
   @Test
   public void testImageDensityFilter() {
     Set<Path> filesToRemove =
-        ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.MDPI), false);
+        ResourceFilters.filterByDensity(candidates, ImmutableSet.of(Density.MDPI));
     Predicate<Path> predicate =
-        ResourceFilters.createImageDensityFilter(candidates, ImmutableSet.of(Density.MDPI), false);
+        ResourceFilters.createImageDensityFilter(candidates, ImmutableSet.of(Density.MDPI));
     assertFalse(candidates.isEmpty());
     for (Path candidate : candidates) {
       assertEquals(!filesToRemove.contains(candidate), predicate.test(candidate));

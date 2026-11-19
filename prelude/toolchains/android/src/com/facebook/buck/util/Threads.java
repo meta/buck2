@@ -11,8 +11,10 @@
 package com.facebook.buck.util;
 
 import com.facebook.buck.core.util.log.Logger;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Throwables;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class Threads {
 
   private static final Logger LOG = Logger.get(Threads.class);

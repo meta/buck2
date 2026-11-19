@@ -1,0 +1,60 @@
+load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "mini_map",
+    srcs = glob(["src/**/*.rs"]),
+    # `optional` has to be spelled out because autocargo only infers it for a feature named after
+    # the dependency, and `dep:` keeps cargo from auto-creating such a feature here. The published
+    # crate wants none of the features fbsource enables on pagable; its `tokio` one does not build
+    # on wasm.
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    "pagable": {
+                        "features": [],
+                        "optional": True,
+                        "workspace": False,
+                    },
+                },
+            },
+            "extra_check_cfgs": ["cfg(rust_nightly)"],
+            "features": {
+                "pagable_dep": ["dep:pagable"],
+            },
+        },
+    },
+    crate_root = "src/lib.rs",
+    # Controls whether to depend on the pagable crate. Off by default so cargo consumers outside
+    # the monorepo are not made to take the dependency.
+    features = ["pagable_dep"],
+    modifiers = [
+        # @oss-disable[end= ]: "ovr_config//rust:panic_unwind",
+    ],
+    rustc_flags = [
+        "--cfg=rust_nightly",
+    ],
+    test_deps = [
+        "fbsource//third-party/rust:rustc-hash",
+        "fbsource//third-party/rust:serde_json",
+    ],
+    deps = [
+        "fbsource//third-party/rust:equivalent",
+        "fbsource//third-party/rust:serde",
+        "//buck2/allocative/allocative:allocative",
+        "//buck2/gazebo/dupe:dupe",
+        "//buck2/gazebo/strong_hash:strong_hash",
+        "//buck2/pagable:pagable",
+        "//buck2/shed/mini_vec:mini_vec",
+    ],
+)
+
+rust_binary(
+    name = "mini_map_bench",
+    srcs = ["benchmarks/mini_map_bench.rs"],
+    unittests = False,
+    deps = [":mini_map"],
+)

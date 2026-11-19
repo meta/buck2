@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
 from contextlib import ExitStack
@@ -25,6 +26,12 @@ from typing import Any, cast, Dict, List, Optional, Union
 
 from apple.tools.plistlib_utils import detect_format_and_load
 
+# @oss-disable[end= ]: from ..meta_only.codesign_diagnostics_text import (
+    # @oss-disable[end= ]: CodesignDiagnosticsText,
+# @oss-disable[end= ]: )
+# @oss-disable[end= ]: from ..meta_only.entitlements_mismatch.check_entitlements import (
+    # @oss-disable[end= ]: verify_entitlements,
+# @oss-disable[end= ]: )
 from .apple_platform import ApplePlatform
 from .codesign_command_factory import (
     DefaultCodesignCommandFactory,
@@ -33,27 +40,35 @@ from .codesign_command_factory import (
     ICodesignCommandFactory,
     ManifestCodesignCommandFactory,
 )
+
+from .codesign_diagnostics_text import CodesignDiagnosticsText # @oss-enable
 from .fast_adhoc import is_fast_adhoc_codesign_allowed, should_skip_adhoc_signing_path
 from .identity import CodeSigningIdentity
 from .info_plist_metadata import InfoPlistMetadata
 from .list_codesign_identities import IListCodesignIdentities
-from .prepare_code_signing_entitlements import prepare_code_signing_entitlements
+from .prepare_code_signing_entitlements import (
+    postprocess_entitlements,
+    prepare_code_signing_entitlements,
+)
 from .prepare_info_plist import prepare_info_plist
 from .provisioning_profile_diagnostics import (
     interpret_provisioning_profile_diagnostics,
-    META_IOS_BUILD_AND_RUN_ON_DEVICE_LINK,
-    META_IOS_PROVISIONING_PROFILES_COMMAND,
-    META_IOS_PROVISIONING_PROFILES_LINK,
+    IProvisioningProfileDiagnostics,
 )
 from .provisioning_profile_metadata import ProvisioningProfileMetadata
 from .provisioning_profile_selection import (
     CodeSignProvisioningError,
-    select_best_provisioning_profile,
+    select_best_provisioning_profile_core,
     SelectedProvisioningProfileInfo,
 )
 from .read_provisioning_profile_command_factory import (
     DefaultReadProvisioningProfileCommandFactory,
     IReadProvisioningProfileCommandFactory,
+)
+from .signing_context_types import (
+    AdhocSigningContext,
+    selection_profile_context_from_signing_context,
+    SigningContextWithProfileSelection,
 )
 
 _default_read_provisioning_profile_command_factory = (
@@ -83,6 +98,20 @@ class CodesignedPath:
     """
 
 
+def _verify_entitlements(
+    entitlements_path: Optional[Path],
+    profile_path: Path,
+    platform: ApplePlatform,
+) -> None:
+    result = verify_entitlements(
+        entitlements_path,
+        profile_path,
+        platform=platform,
+    )
+    if result == 1:
+        sys.exit(1)
+
+
 def _log_codesign_identities(
     list_codesign_identities: IListCodesignIdentities,
     identities: List[CodeSigningIdentity],
@@ -100,50 +129,49 @@ def _log_codesign_identities(
             )
 
 
-def _select_provisioning_profile(
-    info_plist_metadata: InfoPlistMetadata,
-    provisioning_profiles_dir: Path,
-    entitlements_path: Optional[Path],
-    platform: ApplePlatform,
-    list_codesign_identities: IListCodesignIdentities,
+def _read_profiles_from_dir(
+    profiles_dir: Path,
     should_use_fast_provisioning_profile_parsing: bool,
-    strict_provisioning_profile_search: bool,
-    provisioning_profile_filter: Optional[str],
-    no_check_certificates: bool = False,
-    log_file_path: Optional[Path] = None,
-) -> SelectedProvisioningProfileInfo:
+) -> List[ProvisioningProfileMetadata]:
     read_provisioning_profile_command_factory = (
         _default_read_provisioning_profile_command_factory
     )
-    identities = list_codesign_identities.list_codesign_identities()
-    _log_codesign_identities(list_codesign_identities, identities)
-    _LOGGER.info(
-        f"Fast provisioning profile parsing enabled: {should_use_fast_provisioning_profile_parsing}"
-    )
-    provisioning_profiles = []
     if should_use_fast_provisioning_profile_parsing:
-        provisioning_profiles = asyncio.run(
+        return asyncio.run(
             _fast_read_provisioning_profiles_async(
-                provisioning_profiles_dir,
+                profiles_dir,
                 read_provisioning_profile_command_factory,
             )
         )
     else:
-        provisioning_profiles = _read_provisioning_profiles(
-            provisioning_profiles_dir,
+        return _read_provisioning_profiles(
+            profiles_dir,
             read_provisioning_profile_command_factory,
         )
+
+
+def _try_select_from_profiles_dir(
+    profiles_dir: Path,
+    info_plist_metadata: InfoPlistMetadata,
+    identities: List[CodeSigningIdentity],
+    entitlements: Optional[Dict[str, Any]],
+    platform: ApplePlatform,
+    should_use_fast_provisioning_profile_parsing: bool,
+    strict_provisioning_profile_search: bool,
+    provisioning_profile_filter: Optional[str],
+    no_check_certificates: bool,
+) -> tuple[
+    Optional[SelectedProvisioningProfileInfo],
+    Optional[List[ProvisioningProfileMetadata]],
+    Optional[List[IProvisioningProfileDiagnostics]],
+]:
+    provisioning_profiles = _read_profiles_from_dir(
+        profiles_dir,
+        should_use_fast_provisioning_profile_parsing,
+    )
     if not provisioning_profiles:
-        raise CodeSignProvisioningError(
-            (
-                f"\n\nFailed to find any provisioning profiles. Please make sure to install required provisioning profiles and make sure they are located at '{provisioning_profiles_dir}'.\n\n"
-                f"Execute `{META_IOS_PROVISIONING_PROFILES_COMMAND}` to download the profiles.\n"
-                f"Please follow the wiki to build & run on device: {META_IOS_BUILD_AND_RUN_ON_DEVICE_LINK}.\n"
-                f"Provisioning profiles for your app can also be downloaded from {META_IOS_PROVISIONING_PROFILES_LINK}.\n"
-            )
-        )
-    entitlements = _read_entitlements_file(entitlements_path)
-    selected_profile_info, mismatches = select_best_provisioning_profile(
+        return None, None, None
+    selected_profile_info, mismatches = select_best_provisioning_profile_core(
         info_plist_metadata,
         identities,
         provisioning_profiles,
@@ -153,49 +181,87 @@ def _select_provisioning_profile(
         provisioning_profile_filter,
         no_check_certificates,
     )
-    if selected_profile_info is None:
-        if not mismatches:
-            raise RuntimeError(
-                f"Expected diagnostics information for at least one mismatching provisioning profile when `{provisioning_profiles_dir}` directory is not empty."
-            )
-        raise CodeSignProvisioningError(
-            interpret_provisioning_profile_diagnostics(
-                diagnostics=mismatches,
-                bundle_id=info_plist_metadata.bundle_id,
-                provisioning_profiles_dir=provisioning_profiles_dir,
-                identities=identities,
-                log_file_path=log_file_path,
-            )
+    return selected_profile_info, provisioning_profiles, mismatches
+
+
+def _select_best_provisioning_profile(
+    info_plist_metadata: InfoPlistMetadata,
+    provisioning_profiles_dirs: List[Path],
+    entitlements_path: Optional[Path],
+    platform: ApplePlatform,
+    list_codesign_identities: IListCodesignIdentities,
+    should_use_fast_provisioning_profile_parsing: bool,
+    strict_provisioning_profile_search: bool,
+    provisioning_profile_filter: Optional[str],
+    no_check_certificates: bool = False,
+    log_file_path: Optional[Path] = None,
+) -> SelectedProvisioningProfileInfo:
+    if no_check_certificates:
+        identities = []
+        _LOGGER.info(
+            "no_check_certificates is set to True, so we will ignore codesign identities"
         )
-    return selected_profile_info
+    else:
+        identities = list_codesign_identities.list_codesign_identities()
+        _log_codesign_identities(list_codesign_identities, identities)
+    _LOGGER.info(
+        f"Fast provisioning profile parsing enabled: {should_use_fast_provisioning_profile_parsing}"
+    )
+    entitlements = _read_entitlements_file(entitlements_path)
 
+    # Try each profiles directory in order, returning as soon as a match is found
+    all_mismatches: List[IProvisioningProfileDiagnostics] = []
+    has_profiles = False
+    for profiles_dir in provisioning_profiles_dirs:
+        selected_profile_info, profiles, mismatches = _try_select_from_profiles_dir(
+            profiles_dir=profiles_dir,
+            info_plist_metadata=info_plist_metadata,
+            identities=identities,
+            entitlements=entitlements,
+            platform=platform,
+            should_use_fast_provisioning_profile_parsing=should_use_fast_provisioning_profile_parsing,
+            strict_provisioning_profile_search=strict_provisioning_profile_search,
+            provisioning_profile_filter=provisioning_profile_filter,
+            no_check_certificates=no_check_certificates,
+        )
+        if selected_profile_info is not None:
+            return selected_profile_info
+        if profiles is not None:
+            has_profiles = True
+            if mismatches:
+                all_mismatches.extend(mismatches)
+        _LOGGER.info(
+            f"No matching profile found in '{profiles_dir}', trying next source"
+        )
 
-@dataclass
-class SigningContextWithProfileSelection:
-    info_plist_source: Path
-    info_plist_destination: Path
-    info_plist_metadata: InfoPlistMetadata
-    selected_profile_info: SelectedProvisioningProfileInfo
+    # No profile found in any directory — generate diagnostics
+    if not has_profiles:
+        dirs_msg = ", ".join(f"'{d}'" for d in provisioning_profiles_dirs)
+        raise CodeSignProvisioningError(
+            f"\n\nFailed to find any provisioning profiles. Please make sure to install required provisioning profiles and make sure they are located at {dirs_msg}.\n\n"
+            + CodesignDiagnosticsText.NO_PROFILES_REMEDIATION
+        )
 
-
-@dataclass
-class AdhocSigningContext:
-    codesign_identity: str
-    profile_selection_context: Optional[SigningContextWithProfileSelection]
-
-    def __init__(
-        self,
-        codesign_identity: Optional[str] = None,
-        profile_selection_context: Optional[SigningContextWithProfileSelection] = None,
-    ) -> None:
-        self.codesign_identity = codesign_identity or "-"
-        self.profile_selection_context = profile_selection_context
+    if not all_mismatches:
+        dirs_msg = ", ".join(f"`{d}`" for d in provisioning_profiles_dirs)
+        raise RuntimeError(
+            f"Expected diagnostics information for at least one mismatching provisioning profile when {dirs_msg} directories are not empty."
+        )
+    raise CodeSignProvisioningError(
+        interpret_provisioning_profile_diagnostics(
+            diagnostics=all_mismatches,
+            bundle_id=info_plist_metadata.bundle_id,
+            provisioning_profiles_dirs=provisioning_profiles_dirs,
+            identities=identities,
+            log_file_path=log_file_path,
+        )
+    )
 
 
 def signing_context_with_profile_selection(
     info_plist_source: Path,
     info_plist_destination: Path,
-    provisioning_profiles_dir: Path,
+    provisioning_profiles_dirs: List[Path],
     entitlements_path: Optional[Path],
     platform: ApplePlatform,
     list_codesign_identities: IListCodesignIdentities,
@@ -204,12 +270,13 @@ def signing_context_with_profile_selection(
     strict_provisioning_profile_search: bool = False,
     provisioning_profile_filter: Optional[str] = None,
     no_check_certificates: bool = False,
+    should_verify_entitlements: bool = False,
 ) -> SigningContextWithProfileSelection:
     with open(info_plist_source, mode="rb") as info_plist_file:
         info_plist_metadata = InfoPlistMetadata.from_file(info_plist_file)
-    selected_profile_info = _select_provisioning_profile(
+    selected_profile_info = _select_best_provisioning_profile(
         info_plist_metadata=info_plist_metadata,
-        provisioning_profiles_dir=provisioning_profiles_dir,
+        provisioning_profiles_dirs=provisioning_profiles_dirs,
         entitlements_path=entitlements_path,
         platform=platform,
         list_codesign_identities=list_codesign_identities,
@@ -219,6 +286,10 @@ def signing_context_with_profile_selection(
         provisioning_profile_filter=provisioning_profile_filter,
         no_check_certificates=no_check_certificates,
     )
+
+    profile_path = selected_profile_info.profile.file_path
+    # @oss-disable[end= ]: if should_verify_entitlements:
+        # @oss-disable[end= ]: _verify_entitlements(entitlements_path, profile_path, platform)
 
     return SigningContextWithProfileSelection(
         info_plist_source,
@@ -243,21 +314,30 @@ def write_empty_codesign_manifest(codesign_manifest_path: Path, bundle_path: Pat
         json.dump(codesign_manifest, codesign_manifest_file, indent=4)
 
 
-def selection_profile_context_from_signing_context(
-    signing_context: Optional[
-        Union[AdhocSigningContext, SigningContextWithProfileSelection]
-    ],
-) -> Optional[SigningContextWithProfileSelection]:
-    if signing_context:
-        if isinstance(signing_context, SigningContextWithProfileSelection):
-            selection_profile_context = signing_context
-        elif isinstance(signing_context, AdhocSigningContext):
-            selection_profile_context = signing_context.profile_selection_context
-        else:
-            raise RuntimeError(
-                f"Unexpected type of signing context `{type(signing_context)}`"
-            )
-        return selection_profile_context
+def _postprocess_entitlements_if_needed_for_adhoc_signed_bundle(
+    bundle_path: CodesignedPath,
+    tmp_dir: str,
+    entitlements_suffixed_key_map: Optional[Dict[str, str]] = None,
+    entitlements_removed_keys: Optional[List[str]] = None,
+    entitlements_removed_values_map: Optional[Dict[str, List[str]]] = None,
+) -> CodesignedPath:
+    if bundle_path.entitlements:
+        fd, postprocessed_path = tempfile.mkstemp(dir=tmp_dir)
+        os.close(fd)
+        shutil.copy2(bundle_path.entitlements, postprocessed_path)
+        postprocess_entitlements(
+            postprocessed_path,
+            entitlements_suffixed_key_map=entitlements_suffixed_key_map,
+            entitlements_removed_keys=entitlements_removed_keys,
+            entitlements_removed_values_map=entitlements_removed_values_map,
+        )
+        return CodesignedPath(
+            path=bundle_path.path,
+            entitlements=Path(postprocessed_path),
+            flags=bundle_path.flags,
+            extra_file_paths=bundle_path.extra_file_paths,
+        )
+    return bundle_path
 
 
 def codesign_bundle(
@@ -267,7 +347,12 @@ def codesign_bundle(
     codesign_on_copy_paths: List[CodesignedPath],
     codesign_tool: Optional[Path] = None,
     codesign_configuration: Optional[CodesignConfiguration] = None,
+    fast_adhoc_signing_probe_enabled: bool = False,
     codesign_manifest_path: Optional[Path] = None,
+    entitlements_suffixed_key_map: Optional[Dict[str, str]] = None,
+    entitlements_removed_keys: Optional[List[str]] = None,
+    entitlements_removed_values_map: Optional[Dict[str, List[str]]] = None,
+    prepared_entitlements_output_path: Optional[Path] = None,
 ) -> None:
     codesign_on_copy_paths = sorted(
         codesign_on_copy_paths,
@@ -287,11 +372,12 @@ def codesign_bundle(
                     platform=platform,
                     signing_context=selection_profile_context,
                     tmp_dir=tmp_dir,
+                    entitlements_suffixed_key_map=entitlements_suffixed_key_map,
+                    entitlements_removed_keys=entitlements_removed_keys,
+                    entitlements_removed_values_map=entitlements_removed_values_map,
                 )
             )
-            selected_identity_fingerprint = (
-                selection_profile_context.selected_profile_info.identity.fingerprint
-            )
+            selected_identity = selection_profile_context.selected_profile_info.identity
         else:
             if not isinstance(signing_context, AdhocSigningContext):
                 raise AssertionError(
@@ -301,8 +387,16 @@ def codesign_bundle(
                 raise AssertionError(
                     "Expected no profile selection context in `AdhocSigningContext` when `selection_profile_context` is `None`."
                 )
-            bundle_path_with_prepared_entitlements = bundle_path
-            selected_identity_fingerprint = signing_context.codesign_identity
+            bundle_path_with_prepared_entitlements = (
+                _postprocess_entitlements_if_needed_for_adhoc_signed_bundle(
+                    bundle_path,
+                    tmp_dir,
+                    entitlements_suffixed_key_map,
+                    entitlements_removed_keys,
+                    entitlements_removed_values_map,
+                )
+            )
+            selected_identity = signing_context.identity()
 
         if codesign_configuration is CodesignConfiguration.dryRun:
             if codesign_tool is None:
@@ -310,12 +404,15 @@ def codesign_bundle(
                     "Expected codesign tool not to be the default one when dry run codesigning is requested."
                 )
             manifest_codesign_factory = ManifestCodesignCommandFactory(
-                DryRunCodesignCommandFactory(codesign_tool)
+                DryRunCodesignCommandFactory(
+                    codesign_tool,
+                    selected_identity.subject_common_name,
+                )
             )
             _dry_codesign_everything(
                 root=bundle_path_with_prepared_entitlements,
                 codesign_on_copy_paths=codesign_on_copy_paths,
-                identity_fingerprint=selected_identity_fingerprint,
+                identity=selected_identity,
                 tmp_dir=tmp_dir,
                 codesign_command_factory=manifest_codesign_factory,
                 platform=platform,
@@ -323,7 +420,7 @@ def codesign_bundle(
         else:
             fast_adhoc_signing_enabled = (
                 codesign_configuration is CodesignConfiguration.fastAdhoc
-                and is_fast_adhoc_codesign_allowed()
+                and is_fast_adhoc_codesign_allowed(fast_adhoc_signing_probe_enabled)
             )
             codesign_execution_bypass_enabled = (
                 codesign_configuration is CodesignConfiguration.executionBypass
@@ -339,7 +436,7 @@ def codesign_bundle(
             _codesign_everything(
                 root=bundle_path_with_prepared_entitlements,
                 codesign_on_copy_paths=codesign_on_copy_paths,
-                identity_fingerprint=selected_identity_fingerprint,
+                identity_fingerprint=selected_identity.fingerprint,
                 tmp_dir=tmp_dir,
                 codesign_command_factory=manifest_codesign_factory,
                 platform=platform,
@@ -355,12 +452,24 @@ def codesign_bundle(
                 )
                 json.dump(codesign_manifest, codesign_manifest_file, indent=4)
 
+        if (
+            prepared_entitlements_output_path
+            and bundle_path_with_prepared_entitlements.entitlements
+        ):
+            shutil.copy2(
+                bundle_path_with_prepared_entitlements.entitlements,
+                prepared_entitlements_output_path,
+            )
+
 
 def _prepare_entitlements_and_info_plist(
     bundle_path: CodesignedPath,
     platform: ApplePlatform,
     signing_context: SigningContextWithProfileSelection,
     tmp_dir: str,
+    entitlements_suffixed_key_map: Optional[Dict[str, str]] = None,
+    entitlements_removed_keys: Optional[List[str]] = None,
+    entitlements_removed_values_map: Optional[Dict[str, List[str]]] = None,
 ) -> CodesignedPath:
     info_plist_metadata = signing_context.info_plist_metadata
     selected_profile = signing_context.selected_profile_info.profile
@@ -369,6 +478,9 @@ def _prepare_entitlements_and_info_plist(
         info_plist_metadata.bundle_id,
         selected_profile,
         tmp_dir,
+        entitlements_suffixed_key_map=entitlements_suffixed_key_map,
+        entitlements_removed_keys=entitlements_removed_keys,
+        entitlements_removed_values_map=entitlements_removed_values_map,
     )
     prepared_info_plist_path = prepare_info_plist(
         signing_context.info_plist_source,
@@ -441,20 +553,26 @@ def _read_provisioning_profiles(
     ]
 
 
+def read_provisioning_profile_using_plist_marker(path: Path) -> Optional[bytes]:
+    # Provisioning profiles have a plist embedded in them that we can extract directly.
+    # This is much faster than calling an external command like openssl.
+    with open(path, "rb") as f:
+        content = f.read()
+    start_index = content.find(b"<plist")
+    end_index = content.find(b"</plist>", start_index) + len(b"</plist>")
+    if start_index >= 0 and end_index >= 0:
+        return content[start_index:end_index]
+    return None
+
+
 def _provisioning_profile_from_file_path(
     path: Path,
     read_provisioning_profile_command_factory: IReadProvisioningProfileCommandFactory,
     should_use_fast_provisioning_profile_parsing: bool,
 ) -> ProvisioningProfileMetadata:
     if should_use_fast_provisioning_profile_parsing:
-        # Provisioning profiles have a plist embedded in them that we can extract directly.
-        # This is much faster than calling an external command like openssl.
-        with open(path, "rb") as f:
-            content = f.read()
-        start_index = content.find(b"<plist")
-        end_index = content.find(b"</plist>", start_index) + len(b"</plist>")
-        if start_index >= 0 and end_index >= 0:
-            plist_data = content[start_index:end_index]
+        plist_data = read_provisioning_profile_using_plist_marker(path)
+        if plist_data is not None:
             return ProvisioningProfileMetadata.from_provisioning_profile_file_content(
                 path, plist_data
             )
@@ -494,7 +612,7 @@ def _read_entitlements_file(path: Optional[Path]) -> Optional[Dict[str, Any]]:
 def _dry_codesign_everything(
     root: CodesignedPath,
     codesign_on_copy_paths: List[CodesignedPath],
-    identity_fingerprint: str,
+    identity: CodeSigningIdentity,
     tmp_dir: str,
     codesign_command_factory: ICodesignCommandFactory,
     platform: ApplePlatform,
@@ -506,7 +624,7 @@ def _dry_codesign_everything(
     # First sign codesign-on-copy directory paths
     _codesign_paths(
         paths=codesign_on_copy_directory_paths,
-        identity_fingerprint=identity_fingerprint,
+        identity_fingerprint=identity.fingerprint,
         tmp_dir=tmp_dir,
         codesign_command_factory=codesign_command_factory,
         platform=platform,
@@ -535,7 +653,7 @@ def _dry_codesign_everything(
     # Lastly sign whole bundle
     _codesign_paths(
         paths=[root_with_extra_paths],
-        identity_fingerprint=identity_fingerprint,
+        identity_fingerprint=identity.fingerprint,
         tmp_dir=tmp_dir,
         codesign_command_factory=codesign_command_factory,
         platform=platform,
@@ -758,7 +876,10 @@ def _filter_out_fast_adhoc_paths(
         p
         for p in paths
         if not should_skip_adhoc_signing_path(
-            p.path, identity_fingerprint, p.entitlements, platform
+            p.path,
+            identity_fingerprint,
+            p.entitlements,
+            platform,
         )
     ]
 
@@ -768,9 +889,12 @@ def obtain_keychain_permissions(
     tmp_dir: str,
     codesign_command_factory: ICodesignCommandFactory,
 ) -> None:
-    with ExitStack() as stack, importlib.resources.path(
-        __package__, "dummy_binary_for_signing"
-    ) as dummy_binary_path:
+    with (
+        ExitStack() as stack,
+        importlib.resources.path(
+            __package__, "dummy_binary_for_signing"
+        ) as dummy_binary_path,
+    ):
         # Copy the binary to avoid races vs other bundling actions
         dummy_binary_copied = os.path.join(tmp_dir, "dummy_binary_for_signing")
         shutil.copyfile(dummy_binary_path, dummy_binary_copied, follow_symlinks=True)
@@ -778,7 +902,7 @@ def obtain_keychain_permissions(
             path=CodesignedPath(
                 path=Path(dummy_binary_copied),
                 entitlements=None,
-                flags=[],
+                flags=["--timestamp=none"],
                 extra_file_paths=None,
             ),
             identity_fingerprint=identity_fingerprint,

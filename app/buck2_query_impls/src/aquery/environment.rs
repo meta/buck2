@@ -14,15 +14,22 @@ use async_trait::async_trait;
 use buck2_artifact::actions::key::ActionKey;
 use buck2_build_api::actions::query::ActionQueryNode;
 use buck2_build_api::actions::query::ActionQueryNodeRef;
+use buck2_build_api::actions::query::SetProjectionInputs;
 use buck2_build_api::analysis::AnalysisResult;
 use buck2_build_api::artifact_groups::ArtifactGroup;
+use buck2_build_api::artifact_groups::TransitiveSetProjectionKey;
 use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_query::query::environment::QueryEnvironment;
+use buck2_query::query::environment::TraversalFilter;
+use buck2_query::query::environment::deps;
+use buck2_query::query::environment::rdeps;
+use buck2_query::query::environment::somepath;
 use buck2_query::query::graph::successors::AsyncChildVisitor;
 use buck2_query::query::syntax::simple::eval::error::QueryError;
 use buck2_query::query::syntax::simple::eval::file_set::FileSet;
 use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use buck2_query::query::syntax::simple::eval::values::QueryValueDepth;
 use buck2_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
 use buck2_query::query::syntax::simple::functions::HasModuleDescription;
 use buck2_query::query::syntax::simple::functions::docs::QueryEnvironmentDescription;
@@ -32,6 +39,10 @@ use buck2_query::query::traversal::async_depth_limited_traversal;
 use dice::DiceComputations;
 
 use crate::aquery::functions::AqueryFunctions;
+use crate::aquery::mixed_graph::aquery_deps_bounded_unfiltered;
+use crate::aquery::mixed_graph::aquery_deps_unbounded_unfiltered;
+use crate::aquery::mixed_graph::aquery_rdeps_unfiltered;
+use crate::aquery::mixed_graph::aquery_somepath_unfiltered;
 use crate::cquery::environment::CqueryDelegate;
 use crate::uquery::environment::QueryLiterals;
 
@@ -43,6 +54,11 @@ pub(crate) trait AqueryDelegate: Send + Sync {
     fn ctx(&self) -> DiceComputations<'_>;
 
     async fn get_node(&self, key: &ActionKey) -> buck2_error::Result<ActionQueryNode>;
+
+    async fn get_tset_node(
+        &self,
+        key: &TransitiveSetProjectionKey,
+    ) -> buck2_error::Result<SetProjectionInputs>;
 
     async fn expand_artifacts(
         &self,
@@ -120,18 +136,63 @@ impl QueryEnvironment for AqueryEnvironment<'_> {
             .await
     }
 
+    // Unfiltered `deps`/`rdeps`/`somepath` (and thereby `allpaths`) traverse the mixed
+    // action/tset graph in O(nodes + edges) instead of paying for the flattened tset
+    // structure (see the `mixed_graph` module). Filtered forms fall back to the flattened
+    // traversals, since filter expressions observe each node's flattened first-order deps.
+
+    async fn deps(
+        &self,
+        targets: &TargetSet<Self::Target>,
+        depth: QueryValueDepth,
+        filter: Option<&dyn TraversalFilter<Self::Target>>,
+    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+        match (depth, &filter) {
+            (QueryValueDepth::Unbounded, None) => {
+                aquery_deps_unbounded_unfiltered(self, targets).await
+            }
+            (QueryValueDepth::Bounded(depth), None) => {
+                aquery_deps_bounded_unfiltered(self, targets, depth).await
+            }
+            _ => deps(self, targets, depth, filter).await,
+        }
+    }
+
+    async fn rdeps(
+        &self,
+        universe: &TargetSet<Self::Target>,
+        from: &TargetSet<Self::Target>,
+        depth: QueryValueDepth,
+        filter: Option<&dyn TraversalFilter<Self::Target>>,
+    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+        match filter {
+            None => aquery_rdeps_unfiltered(self, universe, from, depth.bound()).await,
+            Some(_) => rdeps(self, universe, from, depth, filter).await,
+        }
+    }
+
+    async fn somepath(
+        &self,
+        from: &TargetSet<Self::Target>,
+        to: &TargetSet<Self::Target>,
+        filter: Option<&dyn TraversalFilter<Self::Target>>,
+    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+        match filter {
+            None => aquery_somepath_unfiltered(self, from, to).await,
+            Some(_) => somepath(self, from, to, filter).await,
+        }
+    }
+
     async fn dfs_postorder(
         &self,
         root: &TargetSet<Self::Target>,
         traversal_delegate: impl AsyncChildVisitor<Self::Target>,
         visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
     ) -> buck2_error::Result<()> {
-        // TODO(cjhopman): The query nodes deps are going to flatten the tset structure for its deps. In a typical
-        // build graph, a traversal over just the graph of ActionQueryNode ends up being an `O(n)` operation at each
-        // node and ends up with an `O(n^2)` cost. If instead we were to not flatten the structure and traverse the
-        // mixed graph of action nodes and tset nodes, we'd get closer to `O(n + e)` which in practice is much better
-        // (hence the whole point of tsets). While we can't change the ActionQueryNode deps() function to not flatten
-        // the tset, we aren't required to do these traversal's using that function.
+        // This is now reached only by filtered traversals, which are inherently bound to the
+        // flattened `deps()` view (the filter observes each node's flattened first-order deps)
+        // and therefore pay its O(n^2) cost; unfiltered traversals use the `mixed_graph`
+        // module's O(n + e) implementations instead.
         async_depth_first_postorder_traversal(
             &AqueryNodeLookup {
                 roots: root,
@@ -140,6 +201,7 @@ impl QueryEnvironment for AqueryEnvironment<'_> {
             root.iter_names(),
             traversal_delegate,
             visit,
+            self.allow_partial_graph(),
         )
         .await
     }
@@ -161,6 +223,7 @@ impl QueryEnvironment for AqueryEnvironment<'_> {
             delegate,
             visit,
             depth,
+            self.allow_partial_graph(),
         )
         .await
     }

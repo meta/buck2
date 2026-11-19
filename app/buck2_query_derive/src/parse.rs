@@ -11,6 +11,7 @@
 use itertools::Itertools;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
+use quote::ToTokens as _;
 use syn::Attribute;
 use syn::Error;
 use syn::Expr;
@@ -29,6 +30,7 @@ use syn::Pat;
 use syn::PatIdent;
 use syn::PatType;
 use syn::Path;
+use syn::Safety;
 use syn::Signature;
 use syn::Type;
 use syn::parse::Result;
@@ -138,7 +140,7 @@ impl syn::parse::Parse for Module {
         let ItemImpl {
             // Should we care if there are other attributes?
             attrs,
-            defaultness,
+            modifiers,
             unsafety,
             impl_token: _impl_token,
             generics,
@@ -148,7 +150,7 @@ impl syn::parse::Parse for Module {
             items,
         } = &mut item;
 
-        if let Some(v) = defaultness {
+        if let Some(v) = modifiers.defaultness {
             return Err(Error::new_spanned(
                 v,
                 "`#[query_module]` can't handle `default` in impl item",
@@ -166,6 +168,7 @@ impl syn::parse::Parse for Module {
                 "`#[query_module]` should only be used on an inherent impl, not a trait impl",
             ));
         }
+        modifiers.require_empty()?;
 
         let docs = DocString::parse(attrs);
 
@@ -205,12 +208,15 @@ struct ParseFunctionContext {
 fn parse_function(method: &mut ImplItemFn, context: &ParseFunctionContext) -> Result<Method> {
     let sig = &method.sig;
 
-    if let Some(v) = sig.unsafety {
+    let Safety::Default = sig.safety else {
         return Err(Error::new_spanned(
-            v,
-            "`#[query_module]` methods can't be unsafe.",
+            &sig.safety,
+            format!(
+                "`#[query_module]` methods can't be {}.",
+                sig.safety.to_token_stream(),
+            ),
         ));
-    }
+    };
 
     if sig.asyncness.is_none() {
         return Err(Error::new_spanned(
@@ -348,7 +354,7 @@ mod tests {
                     &self,
                     evaluator: &QueryEvaluator<'_, Env>,
                     targets: TargetSet<Env::Target>,
-                    depth: Option<u64>,
+                    depth: QueryValueDepth,
                     captured_expr: Option<CapturedExpr<'_>>,
                 ) -> QueryFuncResult<Env> {
                     DepsFunction::<Env> {
@@ -397,7 +403,7 @@ mod tests {
         assert_eq!(&expected, &args.first().unwrap().ty);
         let expected: Type = parse_quote!(TargetSet<Env::Target>);
         assert_eq!(&expected, &args.get(1).unwrap().ty);
-        let expected: Type = parse_quote!(Option<u64>);
+        let expected: Type = parse_quote!(QueryValueDepth);
         assert_eq!(&expected, &args.get(2).unwrap().ty);
         let expected: Type = parse_quote!(Option<CapturedExpr<'_>>);
         assert_eq!(&expected, &args.get(3).unwrap().ty);

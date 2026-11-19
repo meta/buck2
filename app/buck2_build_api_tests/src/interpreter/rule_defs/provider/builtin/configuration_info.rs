@@ -43,3 +43,55 @@ fn configuration_info_validates_buckconfigs() -> buck2_error::Result<()> {
         "#
     ))
 }
+
+#[test]
+fn configuration_info_validates_root_buckconfigs() -> buck2_error::Result<()> {
+    let mut tester = Tester::new().unwrap();
+    tester.additional_globals(register_rule_defs);
+    tester.run_starlark_bzl_test_expecting_error(
+        indoc!(
+            r#"
+        def test():
+            ConfigurationInfo(
+                constraints = {},
+                values = {},
+                root_values = {
+                    "applekey": "value",
+                },
+            )
+        "#
+        ),
+        "Could not find section separator (`.`) in pair `applekey`",
+    );
+
+    tester.run_starlark_bzl_test_expecting_error(
+        indoc!(
+            r#"
+        def test():
+            ConfigurationInfo(
+                constraints = {},
+                values = {
+                    "apple.key": "target",
+                },
+                root_values = {
+                    "apple.key": "root",
+                },
+            )
+        "#
+        ),
+        "key `apple.key` appears in both `values` and `root_values`",
+    );
+
+    tester.run_starlark_bzl_test(indoc!(
+        r#"
+        def test():
+            ConfigurationInfo(
+                constraints = {},
+                values = {},
+                root_values = {
+                    "apple.key": "value",
+                },
+            )
+        "#
+    ))
+}

@@ -7,9 +7,13 @@
 # above-listed licenses.
 
 def _impl(ctx):
-    return [DefaultInfo(sub_targets = {
-        "sub": ctx.attrs.actual.providers,
-    })]
+    return [
+        DefaultInfo(
+            sub_targets = {
+                "sub": ctx.attrs.actual.providers,
+            }
+        )
+    ]
 
 subtarget_alias = rule(
     impl = _impl,

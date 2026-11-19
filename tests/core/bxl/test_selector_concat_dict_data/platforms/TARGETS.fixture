@@ -1,5 +1,3 @@
-load(":defs.bzl", "execution_platforms")
-
 execution_platforms(
     name = "platforms",
 )

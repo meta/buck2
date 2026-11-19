@@ -11,5 +11,4 @@
 //! Common dice operations
 
 pub mod cells;
-pub mod cycles;
 pub mod data;

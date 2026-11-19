@@ -16,6 +16,7 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::time::Duration;
 
+use buck2_core::soft_error_or_panic;
 use buck2_error::BuckErrorContext;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use dupe::Dupe;
@@ -65,7 +66,10 @@ impl FileTailer {
             match res {
                 Ok(()) => {}
                 Err(e) => {
-                    tracing::warn!("Failed to read from `{}`: {:?}", file.display(), e);
+                    soft_error_or_panic!(
+                        "daemon_output_tailer_failed",
+                        e.context(format!("Failed to read from `{}`", file.display()))
+                    );
                 }
             }
         });

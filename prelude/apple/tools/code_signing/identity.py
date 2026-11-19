@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List
 
+from .serialization import expect_dict, expect_keys, expect_str
+
 
 @dataclass
 class CodeSigningIdentity:
@@ -41,3 +43,27 @@ class CodeSigningIdentity:
             )
             for match in re.finditer(cls._pattern, text)
         ]
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "fingerprint": self.fingerprint,
+            "subject_common_name": self.subject_common_name,
+        }
+
+    @staticmethod
+    def from_dict(value: object) -> CodeSigningIdentity:
+        data = expect_dict(value, "CodeSigningIdentity")
+        expect_keys(
+            data,
+            "CodeSigningIdentity",
+            frozenset({"fingerprint", "subject_common_name"}),
+        )
+        return CodeSigningIdentity(
+            fingerprint=expect_str(
+                data["fingerprint"], "CodeSigningIdentity.fingerprint"
+            ),
+            subject_common_name=expect_str(
+                data["subject_common_name"],
+                "CodeSigningIdentity.subject_common_name",
+            ),
+        )

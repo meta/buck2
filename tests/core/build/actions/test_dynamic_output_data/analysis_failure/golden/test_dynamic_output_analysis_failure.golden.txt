@@ -1,0 +1,19 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+BUILD FAILED
+Error running dynamic analysis for `prelude//:analysis_failure (<unspecified>)`
+
+Caused by:
+    Traceback (most recent call last):
+      File <builtin>, in <module>
+      * prelude.bzl:11, in _analysis_failure_f_impl
+          fail("Analysis failed: this is a test failure message")
+    error: fail: Analysis failed: this is a test failure message
+      --> prelude.bzl:11:5
+       |
+    11 |     fail("Analysis failed: this is a test failure message")
+       |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    

@@ -41,6 +41,6 @@ async def execute_generic_text_producing_command(
     stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
     if process.returncode != 0:
         raise RuntimeError(
-            f"Failed to {name} with command:\n```\n{shlex.join(cmd)}\n```\nstdout:\n```\n{stdout.decode(errors='ignore')}\n```\nstdout:\n```\n{stderr.decode(errors='ignore')}\n```\n"
+            f"Failed to {name} with command:\n```\n{shlex.join(cmd)}\n```\nstdout:\n```\n{stdout.decode(errors='ignore')}\n```\nstderr:\n```\n{stderr.decode(errors='ignore')}\n```\n"
         )
     return stdout.decode()

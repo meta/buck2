@@ -7,3 +7,11 @@ stub(
     ],
     default_target_platform = ":p",
 )
+
+stub(
+    name = "no_compatible_platform",
+    exec_compatible_with = [
+        "//config:plan9",
+    ],
+    default_target_platform = ":p",
+)

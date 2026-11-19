@@ -3,52 +3,33 @@ load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
 oncall("build_infra")
 
 buck2_e2e_test(
-    name = "test_starlark",
-    srcs = ["test_starlark.py"],
+    name = "test_git_fetch",
+    srcs = ["test_git_fetch.rs"],
+    data_dir = "test_git_fetch_data",
 )
 
 buck2_e2e_test(
-    name = "test_rust_project",
-    srcs = ["test_rust_project.py"],
+    name = "test_prelude_python_launcher",
+    srcs = ["test_prelude_python_launcher.rs"],
+    data_dir = "test_prelude_python_launcher_data",
+)
+
+buck2_e2e_test(
+    name = "test_prelude_rules",
+    srcs = ["test_prelude_rules.rs"],
+    data_dir = "test_prelude_rules_data",
+)
+
+buck2_e2e_test(
+    name = "test_prelude_tools",
+    srcs = ["test_prelude_tools.rs"],
+    data_dir = "test_prelude_tools_data",
+    # The clang of the fbcode platform, for the tests that compile with a real clang; they run
+    # on Linux only. Open source has none: the tests take clang from `PATH` there.
     env = {
-        "RUST_PROJECT_BIN": "$(location fbcode//buck2/integrations/rust-project:rust-project)",
+        # @oss-disable[end= ]: "CLANG": select({
+            # @oss-disable[end= ]: "DEFAULT": "",
+            # @oss-disable[end= ]: "ovr_config//os:linux": "$(location fbcode//third-party-buck/platform010/build/llvm-fb/21:bin/clang)",
+        # @oss-disable[end= ]: }),
     },
-)
-
-buck2_e2e_test(
-    name = "test_install",
-    srcs = ["test_install.py"],
-    deps = [
-        "fbcode//buck2/tests/e2e_util:utils",
-    ],
-)
-
-buck2_e2e_test(
-    name = "test_linker_argsfile",
-    srcs = ["test_linker_argsfile.py"],
-)
-
-buck2_e2e_test(
-    name = "test_lsp_fbsource",
-    srcs = ["test_lsp_fbsource.py"],
-)
-
-buck2_e2e_test(
-    name = "test_cpp_gen_cdb",
-    srcs = ["test_cpp_gen_cdb.py"],
-)
-
-buck2_e2e_test(
-    name = "test_tools",
-    srcs = ["test_tools.py"],
-    test_with_deployed_buck2 = True,
-    use_compiled_buck2_client_and_tpx = True,
-)
-
-buck2_e2e_test(
-    name = "test_install_modifiers",
-    srcs = ["test_install_modifiers.py"],
-    deps = [
-        "fbcode//buck2/tests/e2e_util:utils",
-    ],
 )

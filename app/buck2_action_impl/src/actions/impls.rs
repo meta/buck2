@@ -8,12 +8,18 @@
  * above-listed licenses.
  */
 
+pub(crate) mod assembled_dir;
 pub(crate) mod cas_artifact;
+pub(crate) mod cas_probe;
 pub(crate) mod copy;
+pub(crate) mod declare_writes;
+pub(crate) mod dep_file_fingerprint;
 pub(crate) mod download_file;
 pub(crate) mod offline;
+pub(crate) mod produce;
 pub(crate) mod run;
-pub(crate) mod symlinked_dir;
 pub(crate) mod write;
+pub(crate) mod write_cache;
+pub(crate) mod write_hmap;
 pub(crate) mod write_json;
 pub(crate) mod write_macros;

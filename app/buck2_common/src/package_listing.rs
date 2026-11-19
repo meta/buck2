@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-mod binary_search;
 pub mod dice;
 pub mod file_listing;
 pub(crate) mod interpreter;

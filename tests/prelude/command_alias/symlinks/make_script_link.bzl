@@ -10,7 +10,7 @@ def _impl(ctx):
     base = ctx.attrs.base[DefaultInfo].default_outputs[0]
     final_component = base.short_path.split("/")[-1]
     if ctx.attrs.via_parent:
-        to_parent = ctx.actions.declare_output("to_parent")
+        to_parent = ctx.actions.declare_output("to_parent", has_content_based_path = False)
         ctx.actions.run(
             cmd_args(
                 "fbpython",
@@ -35,7 +35,7 @@ def _impl(ctx):
         )
         out = cmd_args(to_parent, final_component, delimiter = ctx.attrs.path_sep)
     else:
-        out = ctx.actions.symlink_file(final_component, base)
+        out = ctx.actions.symlink_file(final_component, base, has_content_based_path = False)
     args = cmd_args(out, hidden = ctx.attrs.base[DefaultInfo].other_outputs)
     return [DefaultInfo(), RunInfo(args = args)]
 
@@ -43,10 +43,12 @@ make_script_link = rule(
     impl = _impl,
     attrs = {
         "base": attrs.dep(),
-        "path_sep": attrs.string(default = select({
-            "DEFAULT": "/",
-            "ovr_config//os:windows": "\\",
-        })),
+        "path_sep": attrs.string(
+            default = select({
+                "DEFAULT": "/",
+                "ovr_config//os:windows": "\\",
+            })
+        ),
         "via_parent": attrs.bool(),
     },
 )

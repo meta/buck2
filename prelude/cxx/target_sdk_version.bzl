@@ -28,25 +28,31 @@ def version_is_greater(left: str, right: str) -> bool:
 def get_target_sdk_version(ctx: AnalysisContext) -> [None, str]:
     if not (hasattr(ctx.attrs, "_cxx_toolchain") or hasattr(ctx.attrs, "_apple_toolchain")):
         return None
+
     toolchain_target_sdk_version = get_cxx_toolchain_info(ctx).minimum_os_version
     target_sdk_version = getattr(ctx.attrs, "target_sdk_version", None)
-    if toolchain_target_sdk_version == None and target_sdk_version == None:
-        return None
-    elif toolchain_target_sdk_version != None and target_sdk_version == None:
-        return toolchain_target_sdk_version
-    elif toolchain_target_sdk_version == None and target_sdk_version != None:
-        return target_sdk_version
-    elif version_is_greater(target_sdk_version, toolchain_target_sdk_version):
+    if toolchain_target_sdk_version == None:
+        if target_sdk_version == None:
+            return None
+        # There should never be cases where a target has `target_sdk_version`
+        # without the toolchain having a version as well.
+        fail(
+            "Found target which sets `target_sdk_version` for Apple platforms without the toolchain having a `minimum_os_version`, this results in undefined behavior at runtime"
+        )
+
+    if target_sdk_version and version_is_greater(target_sdk_version, toolchain_target_sdk_version):
         # The requested target_sdk_version on the toolchain must be >=
         # the version set on the target, which should be the minimum
         # allowed for this version to build.
-        fail("{} has target_sdk_version {}, which is larger than the toolchain target_sdk_version of {}".format(
-            ctx.label,
-            target_sdk_version,
-            toolchain_target_sdk_version,
-        ))
-    else:
-        return toolchain_target_sdk_version
+        fail(
+            "{} has target_sdk_version {}, which is larger than the toolchain target_sdk_version of {}".format(
+                ctx.label,
+                target_sdk_version,
+                toolchain_target_sdk_version,
+            )
+        )
+
+    return toolchain_target_sdk_version
 
 def _format_target_triple(ctx: AnalysisContext, version: str) -> str:
     platform_info = get_cxx_platform_info(ctx)

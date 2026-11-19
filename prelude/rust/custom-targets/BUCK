@@ -8,5 +8,6 @@ prelude = native
 
 prelude.export_file(
     name = "targets",
+    has_content_based_path = True,
     visibility = ["PUBLIC"],
 )

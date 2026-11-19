@@ -142,7 +142,7 @@ on disk that indicate which sibling object files should be present when
 optimizing a particular object file, for each object file in the linker
 command-line.
 
-The `opt` step runs in parallel for every object file. Each object file will be
+The `opt` step runs in parallel for every object file the indexer linked. Each object file will be
 optimized using the compiler's optimizer (e.g. `opt`, for LLVM). The optimizer
 will combine the objects that were referenced as part of the index step as
 potentially profitable to include and optimize them all together.
@@ -282,8 +282,9 @@ derives a number of artifacts:
 2. For each object file, an optimization plan (`plan`). The optimization plan is
    a JSON document indicating how to construct an `opt` action for this object
    file. This plan includes this object file's module imports, whether or not
-   this file contains bitcode at all, a location to place the optimized object
-   file, and a list of archives that this object file imported.
+   this file contains bitcode at all, whether the linker selected it for the
+   link (`skip_backend`), a location to place the optimized object file, and a
+   list of archives that this object file imported.
 3. For each archive, an optimization plan (`archive_plan`), which contains
    optimization plans for all of the object files contained within the archive.
 
@@ -291,14 +292,32 @@ This action is a dynamic action because, in the case that there are archives
 that needed to be preprocessed by `thin_lto_prepare`, this action must read the
 archive manifest.
 
+Objects between `-Wl,--start-lib` and `-Wl,--end-lib` are lazy: the indexer
+only links the ones that resolve an undefined symbol. For a lazy bitcode object
+it never links, `lld` still writes a `.thinlto.bc` whose summary carries the
+"skip module by distributed backend" flag and an empty `.imports` file, but it
+lists the object neither in its linked-objects index nor in `index.full`. The
+planner marks such objects `skip_backend` from the linked-objects index: a
+skipped direct object's outputs are bound to empty files instead of an `opt`
+action, archive plans leave skipped members out of `opt_objects` and `dwo`
+directories, and the final link names none of them. (Given the skip index,
+`clang` would parse the module and emit an object with no symbols; a third of
+the bitcode objects of a typical fbcode service link are skipped.) The planner
+fails if the linker's outputs contradict this model: a linked object without an
+index, a whole-archive member the linker skipped, a skipped object in
+`index.full`, or a linked bitcode object with a zero-byte index (bitcode without
+a ThinLTO summary, i.e. compiled with `-flto` rather than `-flto=thin`), which a
+distributed ThinLTO backend cannot compile.
+
 ### thin_lto_opt
 
 After `thin_lto_index` completes, Buck2 launches `thin_lto_opt` actions for
-every object file and for every archive. For each object file, Buck2 reads that
-object file's optimization plan. At this phase, it is Buck2's responsibility to
-declare dependencies on every object file referenced by that object's
-compilation plan; it does so here by adding `hidden` dependencies on every
-object file and archive that the archive plan says that this object depends on.
+every object file the indexer linked and for every archive. For each object
+file, Buck2 reads that object file's optimization plan. At this phase, it is
+Buck2's responsibility to declare dependencies on every object file referenced
+by that object's compilation plan; it does so here by adding `hidden`
+dependencies on every object file and archive that the archive plan says that
+this object depends on.
 
 `thin_lto_opt` uses a Python wrapper around LLVM because of a bug (T116695431)
 where LTO fatal errors don't prevent `clang` from returning an exit code of
@@ -306,10 +325,11 @@ zero. The Python script wraps `clang` and exits with a non-zero exit code if
 `clang` produced an empty object file.
 
 For each archive, Buck2 reads the archive's optimization plan and constructs
-additional `thin_lto_opt` actions for each object file contained in the archive.
-Buck2 creates a directory of symlinks (`opt_objects`) that either contains
-symlinks to optimized object files (if the object file contained bitcode) or the
-original object file (if it didn't). The purpose of this symlink directory is to
+additional `thin_lto_opt` actions for each object file contained in the archive
+that the indexer linked. Buck2 creates a directory of symlinks (`opt_objects`)
+that contains symlinks to optimized object files (if the object file contained
+bitcode) or the original object file (if it didn't); a bitcode member the
+indexer did not link is absent from it. The purpose of this symlink directory is to
 allow the final link to consume object files directly from this directory
 without having to know whether they were optimized or not. Paths to these files
 are passed to the link step via the optimization manifest (`opt_manifest`).

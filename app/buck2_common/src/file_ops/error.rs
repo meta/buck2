@@ -8,16 +8,21 @@
  * above-listed licenses.
  */
 
-use buck2_core::cells::cell_path::CellPathRef;
+use buck2_core::cells::CellResolver;
+use buck2_core::cells::cell_path::CellPath;
+use buck2_core::fs::i_project_rel_path::IProjectRelativePath;
+use buck2_error::internal_error;
 use dice::DiceComputations;
 use dupe::Dupe;
-use futures::FutureExt;
-use futures::future::BoxFuture;
 
 use crate::dice::cells::HasCellResolver;
 use crate::file_ops::dice::DiceFileComputations;
-use crate::file_ops::metadata::RawPathMetadata;
-use crate::ignores::file_ignores::FileIgnoreResult;
+use crate::file_ops::dice::ReadDirRefusal;
+use crate::file_ops::metadata::FileType;
+use crate::file_ops::path_check::PathCheck;
+use crate::file_ops::path_check::PathCheckError;
+use crate::ignores::file_ignores::FileIgnoreReason;
+use crate::ignores::ignore_set::HasIgnoreSet;
 use crate::io::DirectoryDoesNotExistSuggestion;
 use crate::io::ReadDirError;
 
@@ -29,10 +34,16 @@ pub(crate) enum FileOpsError {
     #[buck2(input)]
     #[buck2(tag = IoNotFound)]
     FileNotFound(String),
+    #[error("{0}")]
+    #[buck2(input)]
+    NoFileToRead(String),
 }
 
 pub enum FileReadError {
+    /// The cell's delegate found nothing at the path.
     NotFound(String),
+    /// The check found no file to read at the path, and says what it found instead.
+    Check(PathCheckError),
     Buck(buck2_error::Error),
 }
 
@@ -43,6 +54,10 @@ impl FileReadError {
                 "`{path}`.\n     Included in `{package_path}` but does not exist"
             ))
             .into(),
+            FileReadError::Check(err) => {
+                FileOpsError::NoFileToRead(format!("{err}.\n     Included in `{package_path}`"))
+                    .into()
+            }
             FileReadError::Buck(err) => err.dupe(),
         }
     }
@@ -50,6 +65,7 @@ impl FileReadError {
     pub fn without_package_context_information(self) -> buck2_error::Error {
         match self {
             FileReadError::NotFound(path) => FileOpsError::FileNotFound(path).into(),
+            FileReadError::Check(err) => err.into(),
             FileReadError::Buck(err) => err.dupe(),
         }
     }
@@ -85,89 +101,106 @@ fn did_you_mean<'a>(value: &str, variants: impl IntoIterator<Item = &'a str>) ->
         .map(|(v, _)| v)
 }
 
-pub(super) fn extended_ignore_error<'a>(
-    ctx: &'a mut DiceComputations<'_>,
-    path: CellPathRef<'a>,
-) -> BoxFuture<'a, Option<ReadDirError>> {
-    async move {
-        match path.parent() {
-            Some(parent) => match DiceFileComputations::read_dir_ext(ctx, parent).await {
-                Ok(v) => {
-                    // the parent can be read fine, check if this path is ignored first (if it's ignored it won't appear in the read_dir results).
-                    if let Ok(FileIgnoreResult::Ignored(reason)) =
-                        DiceFileComputations::is_ignored(ctx, path).await
-                    {
-                        return Some(ReadDirError::DirectoryIsIgnored(path.to_owned(), reason));
-                    }
-
-                    match path.path().file_name() {
-                        Some(file_name) if !v.contains(file_name) => {
-                            let mut cell_suggestion = vec![];
-                            if let Ok(cell_resolver) = ctx.get_cell_resolver().await {
-                                for (cell_name, _) in cell_resolver.cells() {
-                                    let cell_path = CellPathRef::new(cell_name, path.path());
-
-                                    if DiceFileComputations::read_path_metadata_if_exists(
-                                        ctx, cell_path,
-                                    )
-                                    .await
-                                    .is_ok_and(|result| result.is_some())
-                                    {
-                                        cell_suggestion.push(cell_path.to_string());
-                                    }
-                                }
-                            }
-
-                            if !cell_suggestion.is_empty() {
-                                return Some(ReadDirError::DirectoryDoesNotExist {
-                                    path: path.to_owned(),
-                                    suggestion: DirectoryDoesNotExistSuggestion::Cell(
-                                        cell_suggestion,
-                                    ),
-                                });
-                            } else if let Some(suggestion) = did_you_mean(
-                                file_name.as_str(),
-                                v.included.iter().map(|x| x.file_name.as_str()),
-                            ) {
-                                return Some(ReadDirError::DirectoryDoesNotExist {
-                                    path: path.to_owned(),
-                                    suggestion: DirectoryDoesNotExistSuggestion::Typo(
-                                        suggestion.to_owned(),
-                                    ),
-                                });
-                            }
-
-                            return Some(ReadDirError::DirectoryDoesNotExist {
-                                path: path.to_owned(),
-                                suggestion: DirectoryDoesNotExistSuggestion::NoSuggestion,
-                            });
-                        }
-                        _ => {}
-                    }
-
-                    match DiceFileComputations::read_path_metadata(ctx, path).await {
-                        Ok(RawPathMetadata::Directory) => {}
-                        Ok(RawPathMetadata::Symlink { .. }) => {
-                            // not sure how we should handle symlink here, if it's pointing to a dir is it potentially correct?
-                        }
-                        Err(_) => {
-                            // we ignore this, we don't know what the error is and so we can't be sure that
-                            // it's not missing important data that the original error would have.
-                        }
-                        Ok(RawPathMetadata::File(..)) => {
-                            return Some(ReadDirError::NotADirectory(
-                                path.to_owned(),
-                                "file".to_owned(),
-                            ));
-                        }
-                    }
-
-                    None
-                }
-                Err(e) => Some(e),
-            },
-            None => None,
+/// The error for a directory listing refused for `refusal`, with the suggestions the package
+/// listing errors show. The suggestions cost reads, which is fine on the error path.
+pub(super) async fn read_dir_error(
+    ctx: &mut DiceComputations<'_>,
+    path: CellPath,
+    refusal: ReadDirRefusal,
+) -> ReadDirError {
+    let cells = match ctx.get_cell_resolver().await {
+        Ok(cells) => cells,
+        Err(e) => return ReadDirError::Error(e),
+    };
+    let check = match refusal {
+        ReadDirRefusal::NestedCell { at, cell } => {
+            return ReadDirError::DirectoryIsIgnored(
+                at,
+                FileIgnoreReason::IgnoredByCell {
+                    path: at.path().as_str().to_owned(),
+                    cell_name: cell,
+                },
+            );
+        }
+        ReadDirRefusal::Check { check, .. } => check,
+    };
+    match check {
+        PathCheck::Present(FileType::Directory) => ReadDirError::Error(internal_error!(
+            "`{path}` was refused although it is a directory"
+        )),
+        PathCheck::Present(FileType::Symlink) => ReadDirError::Symlink { path, at: path },
+        PathCheck::Present(file_type) => {
+            ReadDirError::NotADirectory(path, file_type.describe().to_owned())
+        }
+        PathCheck::Missing { at } => {
+            let at_cell = cells.get_cell_path(&at);
+            let suggestion = suggestion_for_missing(ctx, cells, at, at_cell).await;
+            ReadDirError::DirectoryDoesNotExist {
+                path: at_cell,
+                suggestion,
+            }
+        }
+        PathCheck::Ignored { at } => {
+            let pattern = ctx
+                .global_data()
+                .get_ignore_set()
+                .matches_candidate(&at)
+                .unwrap_or("?")
+                .to_owned();
+            let at = cells.get_cell_path(&at);
+            ReadDirError::DirectoryIsIgnored(
+                at,
+                FileIgnoreReason::IgnoredByPattern {
+                    path: at.path().as_str().to_owned(),
+                    pattern,
+                },
+            )
+        }
+        PathCheck::ParentSymlink { at } => ReadDirError::Symlink {
+            path,
+            at: cells.get_cell_path(&at),
+        },
+        PathCheck::ParentNotDirectory { at, file_type } => {
+            ReadDirError::NotADirectory(cells.get_cell_path(&at), file_type.describe().to_owned())
         }
     }
-    .boxed()
+}
+
+/// What the user might have meant by the missing `at`: the same path in another cell, or a
+/// sibling with a similar name.
+async fn suggestion_for_missing(
+    ctx: &mut DiceComputations<'_>,
+    cells: &CellResolver,
+    at: IProjectRelativePath,
+    at_cell: CellPath,
+) -> DirectoryDoesNotExistSuggestion {
+    let mut in_other_cells = Vec::new();
+    for (cell, _) in cells.cells() {
+        if cell == at_cell.cell() {
+            continue;
+        }
+        let candidate = CellPath::new(cell, at_cell.path());
+        if DiceFileComputations::read_path_metadata_if_exists(ctx, candidate)
+            .await
+            .is_ok_and(|meta| meta.is_some())
+        {
+            in_other_cells.push(candidate.to_string());
+        }
+    }
+    if !in_other_cells.is_empty() {
+        return DirectoryDoesNotExistSuggestion::Cell(in_other_cells);
+    }
+
+    if let Some((parent, name)) = at.split_last() {
+        if let Ok(siblings) =
+            DiceFileComputations::read_dir(ctx, cells.get_cell_path(&parent)).await
+        {
+            if let Some(suggestion) =
+                did_you_mean(name.as_str(), siblings.included.iter().map(|n| n.as_str()))
+            {
+                return DirectoryDoesNotExistSuggestion::Typo(suggestion.to_owned());
+            }
+        }
+    }
+    DirectoryDoesNotExistSuggestion::NoSuggestion
 }

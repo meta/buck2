@@ -19,9 +19,11 @@ import com.facebook.buck.jvm.kotlin.cd.analytics.StepParam;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.ClasspathChanges;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlinSourceChanges;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinCDLoggingContextFactory {
 
   private KotlinCDLoggingContextFactory() {}
@@ -68,10 +70,10 @@ public class KotlinCDLoggingContextFactory {
   }
 
   private static StepParam create(KotlincStep kotlincStep) {
+    // KSP2 step is emitted by its own factory
+    // TODO asoshin: move all other steps to use KSP2 pattern for logging
     if (kotlincStep instanceof KosabiStubgenStep) {
       return StepParam.KOSABI_STUBGEN;
-    } else if (kotlincStep instanceof Ksp1Step) {
-      return StepParam.KSP1;
     } else if (kotlincStep instanceof KaptStep) {
       return StepParam.KAPT;
     } else {

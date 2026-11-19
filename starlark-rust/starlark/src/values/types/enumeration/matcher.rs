@@ -17,17 +17,24 @@
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
+use starlark_derive::type_matcher;
 
+use crate as starlark;
 use crate::values::Value;
-use crate::values::enumeration::EnumValue;
+use crate::values::enumeration::value::EnumValue;
 use crate::values::types::type_instance_id::TypeInstanceId;
 use crate::values::typing::type_compiled::matcher::TypeMatcher;
+use crate::values::typing::type_compiled::matcher::TypeMatcherDyn;
 
-#[derive(Hash, Debug, Eq, PartialEq, Clone, Dupe, Allocative)]
-pub(crate) struct EnumTypeMatcher {
-    pub(crate) id: TypeInstanceId,
+#[derive(Hash, Debug, Eq, PartialEq, Clone, Dupe, Allocative, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
+pub(super) struct EnumTypeMatcher {
+    pub(super) id: TypeInstanceId,
 }
 
+#[type_matcher]
 impl TypeMatcher for EnumTypeMatcher {
     fn matches(&self, value: Value) -> bool {
         match EnumValue::from_value(value) {

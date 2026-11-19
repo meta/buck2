@@ -6,6 +6,15 @@ oncall("android_devxx")
 
 source_listing()
 
+# Matches `-c kotlin.kotlincd_scribe_logging=false`. The scribe logger pulls a
+# source-built thrift compiler into the toolchain; this opts a build out of it.
+config_setting(
+    name = "scribe_logging_disabled",
+    values = {
+        "kotlin.kotlincd_scribe_logging": "false",
+    },
+)
+
 buck_java_library(
     name = "command_lib",
     srcs = [
@@ -15,11 +24,18 @@ buck_java_library(
         "prelude//toolchains/android/meta_only/src/com/facebook/buck/jvm/remote_worker/...",
     ],
     runtime_deps = select({
-        "DEFAULT": [
-            "prelude//toolchains/android/meta_only/src/com/facebook/buck/jvm/kotlin/cd/logger/scribe:scribe",
-        ] if is_full_meta_repo() else [
-            "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics/logger/noop:noop",
-        ],
+        "DEFAULT": select({
+            ":scribe_logging_disabled": [
+                "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics/logger/noop:noop",
+            ],
+            "DEFAULT": [
+                "prelude//toolchains/android/meta_only/src/com/facebook/buck/jvm/kotlin/cd/logger/scribe:scribe",
+            ]
+            if is_full_meta_repo()
+            else [
+                "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics/logger/noop:noop",
+            ],
+        }),
         "config//os/constraints:windows": [
             "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics/logger/noop:noop",
         ],
@@ -38,9 +54,11 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics:analytics",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics/logger:logger",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/workertool/postexecutors:postexecutors",
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/kotlinc/incremental:incremental",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
         "prelude//toolchains/android/third-party:protobuf-util",
     ],
 )
@@ -59,6 +77,7 @@ buck_java_library(
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:gson",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":command_lib",
     ],
 )
@@ -74,6 +93,7 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/workertool/resources/proto:worker-model",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":command_lib",
     ],
 )

@@ -9,6 +9,7 @@
  */
 
 use buck2_cli_proto::new_generic::DocsRequest;
+use buck2_cli_proto::new_generic::DocsResponse;
 use buck2_cli_proto::new_generic::DocsStarlarkBuiltinsRequest;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
@@ -63,7 +64,9 @@ impl StreamingCommand for StarlarkBuiltinsCommand {
             )
             .await??;
 
-        let buck2_cli_proto::new_generic::NewGenericResponse::Docs(_) = response else {
+        let buck2_cli_proto::new_generic::NewGenericResponse::Docs(DocsResponse::NoOutput) =
+            response
+        else {
             return ExitResult::bail("Unexpected response type from generic command");
         };
 

@@ -6,8 +6,12 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
 load("@prelude//android:android_providers.bzl", "AndroidPackageableInfo", "merge_android_packageable_info")
 load("@prelude//android:android_toolchain.bzl", "AndroidToolchainInfo")
+load("@prelude//android:build_only_native_code.bzl", "is_build_only_native_code")
+load("@prelude//decls:common.bzl", "buck")
+load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
 load("@prelude//java:java_providers.bzl", "get_all_java_packaging_deps")
 load(
     "@prelude//linking:shared_libraries.bzl",
@@ -53,7 +57,7 @@ def android_app_modularity_impl(ctx: AnalysisContext) -> list[Provider]:
     if ctx.attrs._build_only_native_code:
         return [
             # Add an unused default output in case this target is used as an attr.source() anywhere.
-            DefaultInfo(default_output = ctx.actions.write("{}/unused.txt".format(ctx.label.name), [])),
+            DefaultInfo(default_output = ctx.actions.write("{}/unused.txt".format(ctx.label.name), [], has_content_based_path = False)),
         ]
 
     all_deps = ctx.attrs.deps + flatten(ctx.attrs.application_module_configs.values())
@@ -78,7 +82,11 @@ def android_app_modularity_impl(ctx: AnalysisContext) -> list[Provider]:
 
     if ctx.attrs.should_include_classes:
         no_dx_target_labels = [no_dx_target.label.raw_target() for no_dx_target in ctx.attrs.no_dx]
-        java_packaging_deps = [packaging_dep for packaging_dep in get_all_java_packaging_deps(ctx, all_deps) if packaging_dep.dex and packaging_dep.dex.dex.owner.raw_target() not in no_dx_target_labels]
+        java_packaging_deps = [
+            packaging_dep
+            for packaging_dep in get_all_java_packaging_deps(ctx, all_deps)
+            if packaging_dep.dex and packaging_dep.dex.dex.owner.raw_target() not in no_dx_target_labels
+        ]
         targets_to_jars_args = [cmd_args([str(packaging_dep.label.raw_target()), packaging_dep.jar], delimiter = " ") for packaging_dep in java_packaging_deps]
         targets_to_jars = argfile(actions = ctx.actions, name = "targets_to_jars.txt", args = targets_to_jars_args)
         cmd.add([
@@ -87,14 +95,18 @@ def android_app_modularity_impl(ctx: AnalysisContext) -> list[Provider]:
         ])
 
     if ctx.attrs.should_include_libraries:
-        targets_to_so_names_args = [cmd_args([str(shared_lib.label.raw_target()), shared_lib.soname.ensure_str()], delimiter = " ") for shared_lib in traversed_shared_library_info]
+        targets_to_so_names_args = [
+            cmd_args([str(shared_lib.label.raw_target()), shared_lib.soname.ensure_str()], delimiter = " ") for shared_lib in traversed_shared_library_info
+        ]
         targets_to_so_names = argfile(actions = ctx.actions, name = "targets_to_so_names.txt", args = targets_to_so_names_args)
         cmd.add([
             "--targets-to-so-names",
             targets_to_so_names,
         ])
 
-        traversed_prebuilt_native_library_dirs = android_packageable_info.prebuilt_native_library_dirs.traverse() if android_packageable_info.prebuilt_native_library_dirs else []
+        traversed_prebuilt_native_library_dirs = (
+            android_packageable_info.prebuilt_native_library_dirs.traverse() if android_packageable_info.prebuilt_native_library_dirs else []
+        )
         targets_to_non_assets_prebuilt_native_library_dirs_args = [
             cmd_args(prebuilt_native_library_dir.raw_target, prebuilt_native_library_dir.dir, delimiter = " ")
             for prebuilt_native_library_dir in traversed_prebuilt_native_library_dirs
@@ -146,14 +158,15 @@ def get_target_to_module_mapping(ctx: AnalysisContext, deps_by_platform: dict[st
     return output
 
 def _get_base_cmd_and_output(
-        actions: AnalysisActions,
-        label: Label,
-        android_packageable_infos: list[AndroidPackageableInfo],
-        shared_libraries: list[SharedLibrary],
-        android_toolchain: AndroidToolchainInfo,
-        application_module_configs: dict[str, list[Dependency]],
-        application_module_dependencies: [dict[str, list[str]], None],
-        application_module_blocklist: [list[Dependency], None]) -> (cmd_args, Artifact):
+    actions: AnalysisActions,
+    label: Label,
+    android_packageable_infos: list[AndroidPackageableInfo],
+    shared_libraries: list[SharedLibrary],
+    android_toolchain: AndroidToolchainInfo,
+    application_module_configs: dict[str, list[Dependency]],
+    application_module_dependencies: [dict[str, list[str]], None],
+    application_module_blocklist: [list[Dependency], None],
+) -> (cmd_args, Artifact):
     deps_map = {}
     primary_apk_deps = set()
     for android_packageable_info in android_packageable_infos:
@@ -164,14 +177,16 @@ def _get_base_cmd_and_output(
                 if deps_info.for_primary_apk:
                     primary_apk_deps.add(deps_info.name)
 
-    target_graph_file = actions.write_json("target_graph.json", deps_map)
+    target_graph_file = actions.write_json("target_graph.json", deps_map, has_content_based_path = False)
     application_module_configs_map = {
         module_name: [seed.get(AndroidPackageableInfo).target_label for seed in seeds if seed.get(AndroidPackageableInfo)]
         for module_name, seeds in application_module_configs.items()
     }
-    application_module_configs_file = actions.write_json("application_module_configs.json", application_module_configs_map)
-    application_module_dependencies_file = actions.write_json("application_module_dependencies.json", application_module_dependencies or {})
-    output = actions.declare_output("apk_module_metadata.txt")
+    application_module_configs_file = actions.write_json("application_module_configs.json", application_module_configs_map, has_content_based_path = False)
+    application_module_dependencies_file = actions.write_json(
+        "application_module_dependencies.json", application_module_dependencies or {}, has_content_based_path = False
+    )
+    output = actions.declare_output("apk_module_metadata.txt", has_content_based_path = False)
 
     cmd = cmd_args([
         android_toolchain.apk_module_graph[RunInfo],
@@ -190,8 +205,13 @@ def _get_base_cmd_and_output(
     # Anything that is used by a wrap script needs to go into the primary APK, as do all
     # of their deps.
     used_by_wrap_script_libs = [str(shared_lib.label.raw_target()) for shared_lib in shared_libraries if shared_lib.for_primary_apk]
-    prebuilt_native_library_dirs = flatten([list(android_packageable_info.prebuilt_native_library_dirs.traverse()) if android_packageable_info.prebuilt_native_library_dirs else [] for android_packageable_info in android_packageable_infos])
-    prebuilt_native_library_targets_for_primary_apk = dedupe([str(native_lib_dir.raw_target) for native_lib_dir in prebuilt_native_library_dirs if native_lib_dir.for_primary_apk])
+    prebuilt_native_library_dirs = flatten([
+        list(android_packageable_info.prebuilt_native_library_dirs.traverse()) if android_packageable_info.prebuilt_native_library_dirs else []
+        for android_packageable_info in android_packageable_infos
+    ])
+    prebuilt_native_library_targets_for_primary_apk = dedupe(
+        [str(native_lib_dir.raw_target) for native_lib_dir in prebuilt_native_library_dirs if native_lib_dir.for_primary_apk]
+    )
     if application_module_blocklist or used_by_wrap_script_libs or prebuilt_native_library_targets_for_primary_apk or len(primary_apk_deps) > 0:
         all_blocklisted_deps = used_by_wrap_script_libs + prebuilt_native_library_targets_for_primary_apk + list(primary_apk_deps)
         if application_module_blocklist:
@@ -200,6 +220,7 @@ def _get_base_cmd_and_output(
         application_module_blocklist_file = actions.write(
             "application_module_blocklist.txt",
             all_blocklisted_deps,
+            has_content_based_path = False,
         )
         cmd.add([
             "--always-in-main-apk-seeds",
@@ -245,14 +266,11 @@ def get_root_module_only_apk_module_graph_info() -> APKModuleGraphInfo:
         get_deps_debug_data = root_module_deps,
     )
 
-def get_apk_module_graph_info(
-        ctx: AnalysisContext,
-        apk_module_graph_file: Artifact,
-        artifacts) -> APKModuleGraphInfo:
+def get_apk_module_graph_info(ctx: AnalysisContext, apk_module_graph_file: Artifact, artifacts) -> APKModuleGraphInfo:
     apk_module_graph_lines = artifacts[apk_module_graph_file].read_string().split("\n")
     module_count = int(apk_module_graph_lines[0])
-    module_infos = apk_module_graph_lines[1:module_count + 1]
-    target_to_module_lines = apk_module_graph_lines[module_count + 1:-1]
+    module_infos = apk_module_graph_lines[1 : module_count + 1]
+    target_to_module_lines = apk_module_graph_lines[module_count + 1 : -1]
     expect(apk_module_graph_lines[-1] == "", "Expect last line to be an empty string!")
 
     module_to_canary_class_name_map = {}
@@ -327,3 +345,45 @@ def get_apk_module_graph_info(
         calculated_deps_function = calculated_deps_function,
         get_deps_debug_data = get_deps_debug_data,
     )
+
+android_app_modularity = prelude_rule(
+    name = "android_app_modularity",
+    impl = android_app_modularity_impl,
+    docs = """
+        An `android_app_modularity()` rule is used to determine the modular
+        structure of an Android app. It defines how application modules are
+        configured and which dependencies belong to each module, enabling
+        dynamic delivery and on-demand loading of app features.
+    """,
+    examples = None,
+    further = None,
+    attrs = (
+        # @unsorted-dict-items
+        {
+            "application_module_blocklist": attrs.option(attrs.list(attrs.dep()), default = None, doc = ""),
+            "application_module_configs": attrs.dict(key = attrs.string(), value = attrs.list(attrs.dep()), sorted = False, default = {}, doc = ""),
+            "application_module_dependencies": attrs.option(
+                attrs.dict(key = attrs.string(), value = attrs.list(attrs.string()), sorted = False),
+                default = None,
+                doc = "",
+            ),
+            "deps": attrs.list(attrs.dep(), default = [], doc = ""),
+            "no_dx": attrs.list(
+                attrs.dep(),
+                default = [],
+                doc = """List of dependency targets whose Java code should be excluded from the DEX files in the final APK. \
+The classes from these targets will not be dexed, but their other resources will still be included. \
+This might be useful to resolve duplicate class errors when multiple dependencies provide the same class. \
+See [this document](https://www.internalfb.com/intern/staticdocs/confucius/docs/notes/dev/projects/android/resolving_duplicate_classes_with_no_dx/) \
+for how to resolve duplicate classes using this attribute.""",
+            ),
+            "should_include_classes": attrs.bool(default = True, doc = ""),
+            "should_include_libraries": attrs.bool(default = False, doc = ""),
+            "_android_toolchain": toolchains_common.android(),
+            "_build_only_native_code": attrs.default_only(attrs.bool(default = is_build_only_native_code())),
+        }
+        | buck.licenses_arg()
+        | buck.labels_arg()
+        | buck.contacts_arg()
+    ),
+)

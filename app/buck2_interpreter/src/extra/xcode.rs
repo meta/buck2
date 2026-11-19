@@ -17,6 +17,7 @@ use buck2_error::conversion::from_any_with_tag;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPath;
+use pagable::Pagable;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -42,7 +43,7 @@ struct XcodeVersionPlistSchema {
 }
 
 /// Versioning information for the currently selected Xcode on the host machine.
-#[derive(Debug, Default, PartialEq, Clone, Allocative)]
+#[derive(Debug, Default, PartialEq, Clone, Allocative, Pagable)]
 pub struct XcodeVersionInfo {
     /// e.g. "14.0.1"
     pub version_string: String,

@@ -74,6 +74,16 @@ pub struct CqueryUniverse {
     data: SelfRef<CqueryUniverseInnerType>,
 }
 
+// SAFETY: `_assert_send_sync` requires the only field to be `Send + Sync`. Spelled out
+// so that auto-trait proofs for query futures stop here; see `dice::DiceComputations`.
+unsafe impl Send for CqueryUniverse {}
+unsafe impl Sync for CqueryUniverse {}
+
+fn _assert_send_sync(CqueryUniverse { data }: &CqueryUniverse) {
+    fn assert<T: Send + Sync>(_: &T) {}
+    assert(data);
+}
+
 impl<'a> CqueryUniverseInner<'a> {
     pub fn new(
         targets: BTreeMap<
@@ -94,15 +104,11 @@ impl<'a> CqueryUniverseInner<'a> {
 
         configured_node_visit_all_deps(universe.iter().map(|t| t.as_ref()), |target| {
             let label = target.label();
-            let package_targets: &mut _ = targets
-                .entry(label.pkg().dupe())
-                .or_insert_with(BTreeMap::new);
+            let package_targets: &mut _ = targets.entry(label.pkg().dupe()).or_default();
 
             let nodes: &mut _ = match package_targets.get_mut(label.name()) {
                 Some(v) => v,
-                None => package_targets
-                    .entry(label.name())
-                    .or_insert_with(BTreeSet::new),
+                None => package_targets.entry(label.name()).or_default(),
             };
 
             let inserted = nodes.insert(LabelIndexed(target));
@@ -186,7 +192,6 @@ impl CqueryUniverse {
             label.pkg(),
             &PackageSpec::Targets(vec![(label.name().to_owned(), TargetPatternExtra)]),
         )
-        .into_iter()
         .map(|(node, _extra)| node.label().dupe())
         .collect()
     }
@@ -272,7 +277,7 @@ impl CqueryUniverse {
                 Some(package_data) => package_data,
             };
             for node in package_data.values().flatten() {
-                if node.0.inputs().contains(path) {
+                if node.0.body()?.inputs().contains(path) {
                     nodes.push(node.0.to_owned());
                 }
             }
@@ -300,7 +305,7 @@ mod tests {
     use buck2_core::provider::label::ProvidersName;
     use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
     use buck2_core::target::name::TargetName;
-    use buck2_query::__derive_refs::indexmap::IndexMap;
+    use buck2_hash::BuckMutInsertionMap;
     use buck2_query::query::syntax::simple::eval::set::TargetSet;
     use dupe::Dupe;
 
@@ -319,7 +324,7 @@ mod tests {
             cfg: ConfigurationPredicate,
         ) -> ResolvedPattern<ConfiguredProvidersPatternExtra> {
             ResolvedPattern {
-                specs: IndexMap::from_iter([(
+                specs: BuckMutInsertionMap::from_iter([(
                     PackageLabelWithModifiers {
                         package: PackageLabel::testing_parse("foo//bar"),
                         modifiers: Modifiers::new(None),
@@ -329,6 +334,7 @@ mod tests {
                         ConfiguredProvidersPatternExtra {
                             providers: providers_name(),
                             cfg,
+                            exec_cfg: ConfigurationPredicate::Any,
                         },
                     )])),
                 )]),
@@ -341,7 +347,7 @@ mod tests {
             CqueryUniverse::build(&TargetSet::from_iter([ConfiguredTargetNode::testing_new(
                 target_label.dupe(),
                 "idris_library",
-                ExecutionPlatformResolution::new(None, Vec::new()),
+                ExecutionPlatformResolution::new_for_testing(None, Vec::new()),
                 vec![],
                 None,
             )]))

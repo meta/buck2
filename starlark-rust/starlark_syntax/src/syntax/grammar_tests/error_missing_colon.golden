@@ -1,0 +1,46 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+if True
+  pass
+
+Error:
+error: Parse error: unexpected new line, expected symbol ':'
+ --> error_missing_colon:1:8
+  |
+1 |   if True
+  |  ________^
+2 | |   pass
+  | |_^
+
+
+Program:
+def foo()
+  pass
+
+Error:
+error: Parse error: unexpected new line, expected symbol ':'
+ --> error_missing_colon:1:10
+  |
+1 |   def foo()
+  |  __________^
+2 | |   pass
+  | |_^
+
+
+Program:
+for x in []
+  pass
+
+Error:
+error: Parse error: unexpected new line, expected symbol ':'
+ --> error_missing_colon:1:12
+  |
+1 |   for x in []
+  |  ____________^
+2 | |   pass
+  | |_^

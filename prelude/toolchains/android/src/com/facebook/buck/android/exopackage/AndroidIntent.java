@@ -10,7 +10,11 @@
 
 package com.facebook.buck.android.exopackage;
 
+import com.facebook.infer.annotation.Nullsafe;
+import org.jetbrains.annotations.Nullable;
+
 /** Data class for parameters to a `adb shell am start` command. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AndroidIntent {
 
   public static final String ACTION_MAIN = "android.intent.action.MAIN";
@@ -18,21 +22,24 @@ public class AndroidIntent {
   public static final String CATEGORY_LAUNCHER = "android.intent.category.LAUNCHER";
 
   public final String packageName;
-  public final String componentName;
-  public final String action;
-  public final String category;
-  public final String dataUri;
-  public final String flags;
+
+  // Each of these maps to an optional `am start` flag, omitted from the command when null.
+  @Nullable public final String componentName;
+  @Nullable public final String action;
+  @Nullable public final String category;
+  @Nullable public final String dataUri;
+  @Nullable public final String flags;
+
   public final boolean waitForDebugger;
   public final boolean skipSetDebugApp;
 
   public AndroidIntent(
       String packageName,
-      String componentName,
-      String action,
-      String category,
-      String dataUri,
-      String flags,
+      @Nullable String componentName,
+      @Nullable String action,
+      @Nullable String category,
+      @Nullable String dataUri,
+      @Nullable String flags,
       boolean waitForDebugger,
       boolean skipSetDebugApp) {
     this.packageName = packageName;

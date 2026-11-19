@@ -31,7 +31,7 @@ impl<T: Allocative> Allocative for HashTable<T> {
             {
                 let mut visitor = visitor.enter(
                     CAPACITY_NAME,
-                    hashbrown_util::raw_table_alloc_size_for_len::<T>(self.capacity()),
+                    hashbrown_util::raw_table_alloc_size_for_capacity::<T>(self.capacity()),
                 );
                 visitor.visit_iter::<T, _>(self.iter());
                 visitor.exit();

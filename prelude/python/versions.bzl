@@ -39,28 +39,30 @@ def gather_versioned_dependencies(raw_deps: list[Dependency]) -> VersionedDepend
             vdeps[name] = vdep
     return VersionedDependenciesInfo(dependencies = vdeps)
 
-def resolve_versions(
-        versioned_deps: VersionedDependenciesInfo,
-        version_selections: dict[LibraryName, LibraryVersion]) -> list[Dependency]:
+def resolve_versions(versioned_deps: VersionedDependenciesInfo, version_selections: dict[LibraryName, LibraryVersion]) -> list[Dependency]:
     deps = {}
     for name in versioned_deps.dependencies:
         vdep = versioned_deps.dependencies[name]
         ver = version_selections.get(name, vdep.default_version)
         if ver not in vdep.versions:
-            fail("No such version for dependency '{}': '{}'. Available versions: {}".format(
-                name,
-                ver.value,
-                vdep.versions.keys(),
-            ))
+            fail(
+                "No such version for dependency '{}': '{}'. Available versions: {}".format(
+                    name,
+                    ver.value,
+                    vdep.versions.keys(),
+                )
+            )
         deps[name] = vdep.versions[ver]
 
     # validate version_selections
     for name in version_selections:
         if name not in deps:
-            fail("No such versioned dependency: '{}'. Available choices: {}".format(
-                name,
-                [name.value for name in deps.keys()],
-            ))
+            fail(
+                "No such versioned dependency: '{}'. Available choices: {}".format(
+                    name,
+                    [name.value for name in deps.keys()],
+                )
+            )
 
     return deps.values()
 
@@ -69,23 +71,22 @@ def _versioned_library_impl(ctx: AnalysisContext) -> list[Provider]:
         fail("Versioned libraries are not supported for `dynamic_output`")
     name = LibraryName(value = ctx.label.name)
     default = LibraryVersion(value = ctx.attrs.default)
-    versions = {
-        LibraryVersion(value = key): ctx.attrs.versions[key]
-        for key in ctx.attrs.versions
-    }
+    versions = {LibraryVersion(value = key): ctx.attrs.versions[key] for key in ctx.attrs.versions}
 
     if default not in versions:
         fail("Default version ({}) is not present. Available versions: {}".format(default, versions.keys()))
 
     return [
         DefaultInfo(),
-        VersionedDependenciesInfo(dependencies = {
-            name: VersionedDependency(
-                name = name,
-                versions = versions,
-                default_version = default,
-            ),
-        }),
+        VersionedDependenciesInfo(
+            dependencies = {
+                name: VersionedDependency(
+                    name = name,
+                    versions = versions,
+                    default_version = default,
+                ),
+            }
+        ),
     ]
 
 versioned_library = rule(

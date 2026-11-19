@@ -39,16 +39,14 @@ We will only use a few basics of Rust.
 <FbInternalOnly>
 
 First, we need a place for our project files. We will put it in
-`fbcode/scripts/<unixname>/buck2_lab`
+`fbcode/scripts/$USER/buck2_lab`
 
 1. Create a new directory. In fbsource root
 
 ```bash
-mkdir -p fbcode/scripts/<unixname>/buck2_lab
-cd fbcode/scripts/<unixname>/buck2_lab
+mkdir -p fbcode/scripts/$USER/buck2_lab
+cd fbcode/scripts/$USER/buck2_lab
 ```
-
-Replace `<unixname>` with your unixname.
 
 </FbInternalOnly>
 
@@ -86,11 +84,25 @@ mkdir greeter_bin/src
 
 Our project structure should look like this:
 
+<FbInternalOnly>
+
+```
+fbcode/scripts/$USER/buck2_lab
+└── greeter_bin
+    └── src
+```
+
+</FbInternalOnly>
+
+<OssOnly>
+
 ```
 buck2_lab
 └── greeter_bin
     └── src
 ```
+
+</OssOnly>
 
 ## Step 2: Writing the "Hello, World!" Program
 
@@ -124,8 +136,10 @@ using a `BUCK` file.
 ```python
 load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
 
-rust_binary( name = "main", srcs = ["src/main.rs"], )
-
+rust_binary(
+    name = "main",
+    srcs = ["src/main.rs"],
+)
 ```
 
 </FbInternalOnly>
@@ -144,8 +158,10 @@ rust_binary(
 Let's briefly see what this does (we'll keep explanations minimal, just enough
 for this step! ):
 
+<FbInternalOnly>
 - `load(...)` is a load statement. It tells Buck2 to load the definition of the
   `rust_binary`.
+</FbInternalOnly>
 - `rust_binary` is a Buck2 rule that tells Buck2 how to build a Rust binary.
 - `name = "main"`: We're giving our build target a name, "main". This is how
   we'll refer to it in Buck2 commands.
@@ -166,12 +182,27 @@ buck2_lab
 
 With our Rust code and BUCK file in place, let's build the application!
 
+<FbInternalOnly>
+
+1. Open your terminal and make sure you are in the fbsource root directory.
+2. Run the following command:
+
+```bash
+buck2 build fbcode//scripts/$USER/buck2_lab/greeter_bin:main --show-output
+```
+
+</FbInternalOnly>
+
+<OssOnly>
+
 1. Open your terminal and make sure you are in the `greeter_bin` directory.
 2. Run the following command:
 
 ```bash
 buck2 build :main --show-output
 ```
+
+</OssOnly>
 
 - `buck2 build :main` tells Buck2 to build the target named main. The `:main`
   part means the target is defined in the BUCK file in the root of this package
@@ -185,7 +216,7 @@ buck2 build :main --show-output
 ```
 ...
 BUILD SUCCEEDED
-fbcode//scripts/<unixname>/buck2_lab/greeter_bin:main buck-out/v2/gen/fbcode/c32808b9d4f0fdd0/scripts/<unixname>/buck2_lab/greeter_bin/__main__/main
+fbcode//scripts/$USER/buck2_lab/greeter_bin:main buck-out/v2/gen/fbcode/c32808b9d4f0fdd0/scripts/$USER/buck2_lab/greeter_bin/__main__/main
 ```
 
 </FbInternalOnly>
@@ -201,7 +232,7 @@ root//buck2_lab/greeter_bin:main /.../buck2_lab/buck-out/v2/gen/root/200212f73ef
 </OssOnly>
 
 export const TARGET_NAME = isInternal() ?
-<code>fbcode//scripts/&lt;unixname&gt;/buck2_lab/greeter_bin:main</code> :
+<code>fbcode//scripts/$USER/buck2_lab/greeter_bin:main</code> :
 <code>root//buck2_lab/greeter_bin:main</code>;
 
 - `BUILD SUCCEEDED` indicates that Buck2 successfully built our target.
@@ -210,7 +241,7 @@ export const TARGET_NAME = isInternal() ?
   from within its package (`greeter_bin`).
 - The full name {TARGET_NAME} is like an absolute path, uniquely identifying the
   target within your entire project (fbsource).
-- `buck-out/.../__main__/main` is the path of our binary output. It is the path
+- `buck-out/.../__main__/main` is the path of our binary output. It is the
   relative path to fbsource. You can use `--show-full-output` instead of
   `--show-output` to get the absolute path.
 
@@ -218,11 +249,25 @@ export const TARGET_NAME = isInternal() ?
 
 Since our target is a runnable target, we can run it by `buck2 run`
 
+<FbInternalOnly>
+
+1. In your terminal (still in the fbsource root directory), execute:
+
+```bash
+buck2 run fbcode//scripts/$USER/buck2_lab/greeter_bin:main
+```
+
+</FbInternalOnly>
+
+<OssOnly>
+
 1. In your terminal (still in the `greeter_bin` directory), execute:
 
 ```bash
 buck2 run :main
 ```
+
+</OssOnly>
 
 This command tells Buck2 to run the `main` target. Buck2 will build it if it
 hasn't been built already, and then execute it. (i.e. We can do this without
@@ -241,6 +286,19 @@ There it is! Our program ran successfully and printed the message.
 This step is optional, but it's good to know how you can ask Buck2 about the
 targets you've defined.
 
+<FbInternalOnly>
+
+1. To see the target that we defined (still in the fbsource root directory),
+   run:
+
+```bash
+buck2 targets fbcode//scripts/$USER/buck2_lab/greeter_bin:
+```
+
+</FbInternalOnly>
+
+<OssOnly>
+
 1. To see the target that we defined (still in the `greeter_bin` directory),
    run:
 
@@ -248,11 +306,7 @@ targets you've defined.
 buck2 targets :
 ```
 
-or
-
-```bash
-buck2 targets fbcode//scripts/<unixname>/buck2_lab/greeter_bin:
-```
+</OssOnly>
 
 2. Expected Output:
 
@@ -261,7 +315,7 @@ This will show all the targets we defined,
 <FbInternalOnly>
 
 ```
-fbcode//scripts/<unixname>/buck2_lab/greeter_bin:main
+fbcode//scripts/$USER/buck2_lab/greeter_bin:main
 ... other targets might be listed here ...
 ```
 

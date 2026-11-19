@@ -19,12 +19,17 @@ use dice::DetectCycles;
 use dice::Dice;
 use dice::DiceComputations;
 use dice::DiceData;
+use dice::DiceKeyDyn;
 use dice::DiceProjectionComputations;
+use dice::DiceProjectionDyn;
+use dice::EqualityBehavior;
 use dice::Key;
 use dice::ProjectionKey;
 use dice::UserComputationData;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use parking_lot::Mutex;
 
 /// We have three keys in this test:
@@ -52,8 +57,18 @@ struct GlobalConfig {
 }
 
 /// "Evaluate" a file.
-#[derive(Debug, derive_more::Display, Clone, Hash, PartialEq, Eq, Allocative)]
+#[derive(
+    Debug,
+    derive_more::Display,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable
+)]
 #[display("{}", name)]
+#[pagable_typetag(DiceKeyDyn)]
 struct FileKey {
     name: String,
 }
@@ -61,6 +76,10 @@ struct FileKey {
 #[async_trait]
 impl Key for FileKey {
     type Value = Result<Arc<String>, Arc<anyhow::Error>>;
+
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
     async fn compute(
         &self,
@@ -94,8 +113,8 @@ impl Key for FileKey {
         Ok(Arc::new(format!("<{value}>")))
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        unreachable!("not used in test")
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|_x, _y| unreachable!("not used in test"))
     }
 }
 
@@ -108,14 +127,20 @@ impl Key for FileKey {
     Hash,
     PartialEq,
     Eq,
-    Allocative
+    Allocative,
+    Pagable
 )]
 #[display("{:?}", self)]
+#[pagable_typetag(DiceKeyDyn)]
 struct ConfigKey;
 
 #[async_trait]
 impl Key for ConfigKey {
     type Value = Arc<HashMap<String, String>>;
+
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
     async fn compute(
         &self,
@@ -140,14 +165,24 @@ impl Key for ConfigKey {
         )
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
     }
 }
 
 /// One "property" of the "configuration".
-#[derive(Debug, derive_more::Display, Clone, Hash, PartialEq, Eq, Allocative)]
+#[derive(
+    Debug,
+    derive_more::Display,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable
+)]
 #[display("{}", key)]
+#[pagable_typetag(DiceProjectionDyn)]
 struct ConfigPropertyKey {
     key: String,
 }
@@ -157,6 +192,10 @@ impl ProjectionKey for ConfigPropertyKey {
     type DeriveFromKey = ConfigKey;
     /// And produce a string.
     type Value = Arc<String>;
+
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
     fn compute(
         &self,
@@ -177,8 +216,8 @@ impl ProjectionKey for ConfigPropertyKey {
         Arc::new(value)
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
     }
 }
 
@@ -191,6 +230,7 @@ async fn smoke() -> anyhow::Result<()> {
     let mut dice = Dice::builder();
     dice.set(tracker.dupe());
     let dice = dice.build(DetectCycles::Enabled);
+    let root = dice.new_root().await;
 
     // Part 1: full evaluation. We request a file,
     // and dice evaluates: config -> config property -> file.
@@ -199,18 +239,22 @@ async fn smoke() -> anyhow::Result<()> {
     data.set(GlobalConfig {
         config: HashMap::from_iter([("x".to_owned(), "X".to_owned())]),
     });
-    let ctx = dice.updater_with_data(UserComputationData {
-        data,
-        ..Default::default()
-    });
+    let ctx = dice.updater_with_data(
+        root,
+        UserComputationData {
+            data,
+            ..Default::default()
+        },
+    );
 
-    let mut ctx = ctx.commit().await;
+    let ctx = ctx.commit().await;
 
     let file = ctx
         .compute(&FileKey {
             name: "file.fl".to_owned(),
         })
         .await?
+        .clone()
         .map_err(|e| anyhow::anyhow!(format!("{:#}", e)))?;
     assert_eq!("<X>", &*file);
 
@@ -224,7 +268,7 @@ async fn smoke() -> anyhow::Result<()> {
         tracker.lock().computations.as_slice()
     );
 
-    let mut ctx = ctx.into_updater();
+    let mut ctx = dice.updater(root);
     ctx.changed([ConfigKey])?;
     ctx.commit().await;
     tracker.lock().computations.clear();
@@ -237,13 +281,14 @@ async fn smoke() -> anyhow::Result<()> {
     data.data.set(GlobalConfig {
         config: HashMap::from_iter([("x".to_owned(), "X".to_owned())]),
     });
-    let mut ctx = dice.updater_with_data(data).commit().await;
+    let ctx = dice.updater_with_data(root, data).commit().await;
 
     let file = ctx
         .compute(&FileKey {
             name: "file.fl".to_owned(),
         })
         .await?
+        .clone()
         .map_err(|e| anyhow::anyhow!(format!("{:#}", e)))?;
     assert_eq!("<X>", &*file);
 
@@ -252,7 +297,7 @@ async fn smoke() -> anyhow::Result<()> {
         tracker.lock().computations.as_slice()
     );
 
-    let mut ctx = ctx.into_updater();
+    let mut ctx = dice.updater(root);
     ctx.changed([ConfigKey])?;
     ctx.commit().await;
     tracker.lock().computations.clear();
@@ -269,13 +314,14 @@ async fn smoke() -> anyhow::Result<()> {
             ("y".to_owned(), "Y".to_owned()),
         ]),
     });
-    let mut ctx = dice.updater_with_data(data).commit().await;
+    let ctx = dice.updater_with_data(root, data).commit().await;
 
     let file = ctx
         .compute(&FileKey {
             name: "file.fl".to_owned(),
         })
         .await?
+        .clone()
         .map_err(|e| anyhow::anyhow!(format!("{:#}", e)))?;
     assert_eq!("<X>", &*file);
 

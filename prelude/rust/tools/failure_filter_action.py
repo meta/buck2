@@ -82,4 +82,5 @@ def main() -> int:
     return 0
 
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())

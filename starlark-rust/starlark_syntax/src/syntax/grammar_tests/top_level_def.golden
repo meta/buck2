@@ -15,4 +15,3 @@ error: `def` is not allowed in this dialect
 1 | / def toto():
 2 | |   pass
   | |______^
-  |

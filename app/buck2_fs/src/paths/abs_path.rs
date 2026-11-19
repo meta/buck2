@@ -18,6 +18,7 @@ use std::str::FromStr;
 
 use allocative::Allocative;
 use derive_more::Display;
+use pagable::Pagable;
 use ref_cast::RefCast;
 
 use crate::cwd;
@@ -45,7 +46,8 @@ pub struct AbsPath(Path);
     Allocative,
     Display,
     serde::Serialize,
-    serde::Deserialize
+    serde::Deserialize,
+    Pagable
 )]
 #[display("{}", _0.display())]
 pub struct AbsPathBuf(PathBuf);
@@ -174,6 +176,66 @@ impl AbsPath {
         self.0.parent().map(|p| AbsPath::new(p).unwrap())
     }
 
+    /// ```
+    /// use buck2_fs::paths::abs_path::AbsPath;
+    ///
+    /// if cfg!(not(windows)) {
+    ///     assert_eq!(
+    ///         AbsPath::new("/foo").unwrap().with_extension("rs"),
+    ///         AbsPath::new("/foo.rs").unwrap()
+    ///     );
+    ///     assert_eq!(
+    ///         AbsPath::new("/foo.tar.gz").unwrap().with_extension("xz"),
+    ///         AbsPath::new("/foo.tar.xz").unwrap()
+    ///     );
+    ///     assert_eq!(
+    ///         AbsPath::new("/foo.tar.gz")
+    ///             .unwrap()
+    ///             .with_extension("")
+    ///             .with_extension("txt"),
+    ///         AbsPath::new("/foo.txt").unwrap()
+    ///     );
+    ///     assert_eq!(
+    ///         AbsPath::new("/foo").unwrap().with_extension("rs"),
+    ///         AbsPath::new("/foo.rs").unwrap()
+    ///     );
+    /// }
+    /// ```
+    pub fn with_extension<P: AsRef<str>>(&self, extension: P) -> AbsPathBuf {
+        let path = self.0.with_extension(extension.as_ref());
+        AbsPathBuf::new(path).unwrap()
+    }
+
+    /// ```
+    /// use buck2_fs::paths::abs_path::AbsPath;
+    ///
+    /// if cfg!(not(windows)) {
+    ///     let path = AbsPath::new("/foo.rs").unwrap();
+    ///     assert_eq!(
+    ///         path.with_added_extension("txt"),
+    ///         AbsPath::new("/foo.rs.txt").unwrap()
+    ///     );
+    ///
+    ///     let path = AbsPath::new("/foo.tar.gz").unwrap();
+    ///     assert_eq!(
+    ///         path.with_added_extension(""),
+    ///         AbsPath::new("/foo.tar.gz").unwrap()
+    ///     );
+    ///     assert_eq!(
+    ///         path.with_added_extension("xz"),
+    ///         AbsPath::new("/foo.tar.gz.xz").unwrap()
+    ///     );
+    ///     assert_eq!(
+    ///         path.with_added_extension("").with_added_extension("txt"),
+    ///         AbsPath::new("/foo.tar.gz.txt").unwrap()
+    ///     );
+    /// }
+    /// ```
+    pub fn with_added_extension<P: AsRef<str>>(&self, extension: P) -> AbsPathBuf {
+        let path = self.0.with_added_extension(extension.as_ref());
+        AbsPathBuf::new(path).unwrap()
+    }
+
     pub fn strip_prefix<P: AsRef<AbsPath>>(&self, prefix: P) -> buck2_error::Result<&Path> {
         Ok(self.0.strip_prefix(prefix.as_ref())?)
     }
@@ -240,8 +302,46 @@ impl AbsPathBuf {
         r
     }
 
+    /// ```
+    /// use buck2_fs::paths::abs_path::AbsPath;
+    /// use buck2_fs::paths::abs_path::AbsPathBuf;
+    ///
+    /// if cfg!(not(windows)) {
+    ///     let mut path = AbsPathBuf::new("/foo").unwrap();
+    ///     path.set_extension("rs");
+    ///     assert_eq!(path, AbsPath::new("/foo.rs").unwrap());
+    ///
+    ///     let mut path = AbsPathBuf::new("/foo.tar.gz").unwrap();
+    ///     path.set_extension("xz");
+    ///     assert_eq!(path, AbsPath::new("/foo.tar.xz").unwrap());
+    ///
+    ///     let mut path = AbsPathBuf::new("/foo.tar.gz").unwrap();
+    ///     path.set_extension("");
+    ///     path.set_extension("txt");
+    ///     assert_eq!(path, AbsPath::new("/foo.txt").unwrap());
+    /// }
+    /// ```
     pub fn set_extension<S: AsRef<str>>(&mut self, extension: S) {
         self.0.set_extension(extension.as_ref());
+        assert!(self.0.is_absolute());
+    }
+
+    /// ```
+    /// use buck2_fs::paths::abs_path::AbsPath;
+    /// use buck2_fs::paths::abs_path::AbsPathBuf;
+    ///
+    /// if cfg!(not(windows)) {
+    ///     let mut path = AbsPathBuf::new("/foo.rs").unwrap();
+    ///     path.add_extension("");
+    ///     assert_eq!(path, AbsPath::new("/foo.rs").unwrap());
+    ///
+    ///     let mut path = AbsPathBuf::new("/foo.rs").unwrap();
+    ///     path.add_extension("txt");
+    ///     assert_eq!(path, AbsPath::new("/foo.rs.txt").unwrap());
+    /// }
+    /// ```
+    pub fn add_extension<S: AsRef<str>>(&mut self, extension: S) {
+        self.0.add_extension(extension.as_ref());
         assert!(self.0.is_absolute());
     }
 }

@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.manifest;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -21,6 +22,7 @@ import org.kohsuke.args4j.Option;
  * Main entry point for executing {@link GenerateManifest#replaceApplicationIdPlaceholders(String,
  * boolean)} calls.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ReplaceApplicationIdPlaceholdersExecutableMain {
   @Option(name = "--manifest", required = true)
   private String manifest;
@@ -32,21 +34,25 @@ public class ReplaceApplicationIdPlaceholdersExecutableMain {
   private boolean runSanityCheck;
 
   public static void main(String[] args) throws IOException {
+    System.exit(runMain(args));
+  }
+
+  static int runMain(String[] args) throws IOException {
     ReplaceApplicationIdPlaceholdersExecutableMain main =
         new ReplaceApplicationIdPlaceholdersExecutableMain();
     CmdLineParser parser = new CmdLineParser(main);
     try {
       parser.parseArgument(args);
-      main.run();
-      System.exit(0);
+      main.execute();
+      return 0;
     } catch (CmdLineException e) {
-      System.err.println(e.getMessage());
+      System.err.println(String.valueOf(e.getMessage()));
       parser.printUsage(System.err);
-      System.exit(1);
+      return 1;
     }
   }
 
-  private void run() throws IOException {
+  private void execute() throws IOException {
     String currentManifest = Files.readString(Paths.get(manifest));
     String updatedManifest =
         GenerateManifest.replaceApplicationIdPlaceholders(currentManifest, runSanityCheck);

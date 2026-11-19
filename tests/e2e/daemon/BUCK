@@ -1,0 +1,14 @@
+load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
+
+oncall("build_infra")
+
+buck2_e2e_test(
+    name = "test_restart",
+    srcs = ["test_restart.py"],
+    data_dir = "test_restart_data",
+    require_nano_prelude = True,
+    serialize_test_cases = True,
+    test_with_compiled_buck2 = True,
+    test_with_deployed_buck2 = False,
+    deps = ["//later:lib"],
+)

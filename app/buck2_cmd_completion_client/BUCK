@@ -15,9 +15,11 @@ rust_library(
         "fbsource//third-party/rust:tokio",
         ":completion_wrapper_bash",
         ":completion_wrapper_fish",
+        ":completion_wrapper_powershell",
         ":completion_wrapper_zsh",
         ":options_wrapper_bash",
         ":options_wrapper_fish",
+        ":options_wrapper_powershell",
         ":options_wrapper_zsh",
         "//buck2/app/buck2_cli_proto:buck2_cli_proto",
         "//buck2/app/buck2_client_ctx:buck2_client_ctx",
@@ -25,6 +27,7 @@ rust_library(
         "//buck2/app/buck2_core:buck2_core",
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
     ],
 )
 
@@ -44,6 +47,11 @@ rust_linkable_symbol(
 )
 
 rust_linkable_symbol(
+    name = "completion_wrapper_powershell",
+    content_str = "src/completion/completion-wrapper.ps1",
+)
+
+rust_linkable_symbol(
     name = "options_wrapper_bash",
     content_str = "src/completion/options-wrapper.bash",
 )
@@ -56,4 +64,9 @@ rust_linkable_symbol(
 rust_linkable_symbol(
     name = "options_wrapper_zsh",
     content_str = "src/completion/options-wrapper.zsh",
+)
+
+rust_linkable_symbol(
+    name = "options_wrapper_powershell",
+    content_str = "src/completion/options-wrapper.ps1",
 )

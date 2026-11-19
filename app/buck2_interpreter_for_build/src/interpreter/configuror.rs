@@ -15,28 +15,31 @@ use allocative::Allocative;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
+use buck2_core::pattern::pattern::InferTargetNames;
 use buck2_interpreter::extra::InterpreterHostArchitecture;
 use buck2_interpreter::extra::InterpreterHostPlatform;
 use buck2_interpreter::extra::xcode::XcodeVersionInfo;
 use buck2_interpreter::file_loader::LoadedModules;
-use buck2_interpreter::package_imports::ImplicitImport;
-use buck2_interpreter::paths::module::StarlarkModulePath;
 use buck2_interpreter::prelude_path::PreludePath;
 use buck2_node::super_package::SuperPackage;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::PagableTagged;
+use pagable::pagable_typetag;
 use starlark::environment::GlobalsBuilder;
 
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
 use crate::interpreter::cell_info::InterpreterCellInfo;
 use crate::interpreter::functions::host_info::HostInfo;
 use crate::interpreter::module_internals::ModuleInternals;
-use crate::interpreter::module_internals::PackageImplicits;
 
-#[derive(Clone, Dupe, Allocative)]
-pub struct AdditionalGlobalsFn(
-    #[allocative(skip)] pub Arc<dyn Fn(&mut GlobalsBuilder) + Sync + Send>,
-);
+#[pagable_typetag]
+pub trait AdditionalGlobalsFnDyn: PagableTagged + Send + Sync + 'static {
+    fn apply(&self, globals: &mut GlobalsBuilder);
+}
+
+#[derive(Clone, Dupe, Allocative, Pagable)]
+pub struct AdditionalGlobalsFn(#[allocative(skip)] pub Arc<dyn AdditionalGlobalsFnDyn>);
 
 impl Debug for AdditionalGlobalsFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -56,7 +59,7 @@ impl PartialEq for AdditionalGlobalsFn {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Allocative)]
+#[derive(Clone, Debug, PartialEq, Allocative, Pagable)]
 pub struct BuildInterpreterConfiguror {
     /// Path to prelude import (typically `prelude//:prelude.bzl`).
     ///
@@ -69,7 +72,10 @@ pub struct BuildInterpreterConfiguror {
     host_info: HostInfo,
     record_target_call_stack: bool,
     skip_targets_with_duplicate_names: bool,
-    global_target_interner: Arc<ConcurrentTargetLabelInterner>,
+    /// Whether to infer a target name when a pattern in a build or bzl file does
+    /// not provide one, making `//foo/bar` equivalent to `//foo/bar:bar`.
+    /// Controlled by the `buck2.infer_target_names` buckconfig.
+    infer_target_names: InferTargetNames,
     /// For test.
     additional_globals: Option<AdditionalGlobalsFn>,
 }
@@ -82,17 +88,21 @@ impl BuildInterpreterConfiguror {
         host_xcode_version: Option<XcodeVersionInfo>,
         record_target_call_stack: bool,
         skip_targets_with_duplicate_names: bool,
+        infer_target_names: InferTargetNames,
         additional_globals: Option<AdditionalGlobalsFn>,
-        global_target_interner: Arc<ConcurrentTargetLabelInterner>,
     ) -> buck2_error::Result<Arc<Self>> {
         Ok(Arc::new(Self {
             prelude_import,
             host_info: HostInfo::new(host_platform, host_architecture, host_xcode_version),
             record_target_call_stack,
             skip_targets_with_duplicate_names,
+            infer_target_names,
             additional_globals,
-            global_target_interner,
         }))
+    }
+
+    pub(crate) fn infer_target_names(&self) -> InferTargetNames {
+        self.infer_target_names
     }
 
     pub(crate) fn additional_globals(&self) -> Option<&AdditionalGlobalsFn> {
@@ -109,36 +119,17 @@ impl BuildInterpreterConfiguror {
         buildfile_path: BuildFilePath,
         package_listing: PackageListing,
         super_package: SuperPackage,
-        package_boundary_exception: bool,
         loaded_modules: &LoadedModules,
-        implicit_import: Option<&Arc<ImplicitImport>>,
         current_dir_with_allowed_relative_dirs: CellPathWithAllowedRelativeDir,
     ) -> buck2_error::Result<ModuleInternals> {
         let record_target_call_stack = self.record_target_call_stack;
         let skip_targets_with_duplicate_names = self.skip_targets_with_duplicate_names;
-        let package_implicits = implicit_import.map(|spec| {
-            PackageImplicits::new(
-                spec.dupe(),
-                loaded_modules
-                    .map
-                    .get(&StarlarkModulePath::LoadFile(spec.import()))
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "Should've had an env for the package implicit import (`{}`).",
-                            spec.import(),
-                        )
-                    })
-                    .env()
-                    .dupe(),
-            )
-        });
         let attr_coercer = BuildAttrCoercionContext::new_with_package(
             cell_info.cell_resolver().dupe(),
             cell_info.cell_alias_resolver().dupe(),
             (buildfile_path.package().dupe(), package_listing.dupe()),
-            package_boundary_exception,
-            self.global_target_interner.dupe(),
             current_dir_with_allowed_relative_dirs,
+            self.infer_target_names,
         );
 
         let imports = loaded_modules.imports().cloned().collect();
@@ -147,7 +138,6 @@ impl BuildInterpreterConfiguror {
             attr_coercer,
             Arc::new(buildfile_path),
             imports,
-            package_implicits,
             record_target_call_stack,
             skip_targets_with_duplicate_names,
             package_listing,

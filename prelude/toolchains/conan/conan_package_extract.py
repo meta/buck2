@@ -73,9 +73,9 @@ def main():
     args = parser.parse_args()
 
     assert len(args.file_from) == len(args.file_to), "Mismatching file arguments."
-    assert len(args.directory_from) == len(
-        args.directory_to
-    ), "Mismatching directory arguments."
+    assert len(args.directory_from) == len(args.directory_to), (
+        "Mismatching directory arguments."
+    )
     for src, dst in zip(args.file_from, args.file_to):
         extract_file(args.package, src, dst)
     for src, dst in zip(args.directory_from, args.directory_to):

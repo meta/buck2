@@ -6,6 +6,9 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//decls:common.bzl", "buck")
+load("@prelude//decls:remote_common.bzl", "remote_common")
 load("@prelude//utils:expect.bzl", "expect")
 load("@prelude//utils:materialization_test.bzl", "materialization_test")
 load("@prelude//utils:utils.bzl", "value_or")
@@ -62,3 +65,58 @@ def http_archive_impl(ctx: AnalysisContext) -> list[Provider]:
         ),
         materialization_test([archive, output]),
     ]
+
+http_archive = prelude_rule(
+    name = "http_archive",
+    impl = http_archive_impl,
+    docs = """
+        An `http_archive()` rule is used to download and extract archives
+        from the Internet to be used as dependencies for other rules. These rules are
+        downloaded by running `fetch`, or can be downloaded as part of
+        `build` by setting `.buckconfig`
+    """,
+    examples = """
+        Using `http_archive()`, third party packages can be downloaded from
+         an `https` URL and used in other library types.
+
+        ```
+        http_archive(
+          name = 'thrift-archive',
+          urls = [
+            'https://internal-mirror.example.com/bin/thrift-compiler-0.1.tar.gz.badextension',
+          ],
+          sha256 = '7baa80df284117e5b945b19b98d367a85ea7b7801bd358ff657946c3bd1b6596',
+          type='tar.gz',
+          strip_prefix='thrift-compiler-0.1'
+        )
+
+        genrule(
+          name = 'thrift-compiler-bin',
+          out = 'thrift',
+          cmd = 'cp $(location :thrift-archive)/bin/thrift $OUT',
+          executable = True,
+        )
+
+        genrule(
+          name="my-thrift-lib-cpp2",
+          cmd="$(exe :thrift-compiler-bin) --gen cpp2 -o $OUT $(location //:thrift-file)",
+          out="gen-cpp2",
+        )
+        ```
+    """,
+    further = None,
+    attrs = (
+        # @unsorted-dict-items
+        remote_common.urls_arg()
+        | remote_common.sha256_arg()
+        | remote_common.unarchive_args()
+        | {
+            "sha1": attrs.option(attrs.string(), default = None),
+            "size_bytes": attrs.option(attrs.int(), default = None),
+        }
+        | buck.has_content_based_path_attr()
+        | buck.licenses_arg()
+        | buck.labels_arg()
+        | buck.contacts_arg()
+    ),
+)

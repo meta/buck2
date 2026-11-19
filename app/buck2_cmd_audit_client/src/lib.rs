@@ -8,9 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(try_blocks)]
-
 use async_trait::async_trait;
 use buck2_cli_proto::GenericRequest;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
@@ -34,6 +31,7 @@ use crate::configurations::AuditConfigurationsCommand;
 use crate::deferred_materializer::DeferredMaterializerCommand;
 use crate::dep_files::AuditDepFilesCommand;
 use crate::execution_platform_resolution::AuditExecutionPlatformResolutionCommand;
+use crate::file_package::AuditFilePackageCommand;
 use crate::includes::AuditIncludesCommand;
 use crate::output::command::AuditOutputCommand;
 use crate::output::parse::AuditParseCommand;
@@ -41,6 +39,7 @@ use crate::package_values::PackageValuesCommand;
 use crate::perf::AuditPerfCommand;
 use crate::prelude::AuditPreludeCommand;
 use crate::providers::AuditProvidersCommand;
+use crate::settings::AuditSettingsCommand;
 use crate::starlark::StarlarkCommand;
 use crate::subtargets::AuditSubtargetsCommand;
 use crate::visibility::AuditVisibilityCommand;
@@ -53,12 +52,14 @@ pub mod configurations;
 pub mod deferred_materializer;
 pub mod dep_files;
 pub mod execution_platform_resolution;
+pub mod file_package;
 pub mod includes;
 pub mod output;
 pub mod package_values;
 pub mod perf;
 pub mod prelude;
 pub mod providers;
+pub mod settings;
 pub mod starlark;
 pub mod subtargets;
 pub mod visibility;
@@ -67,6 +68,7 @@ pub mod visibility;
 #[clap(name = "audit", about = "Perform lower level queries")]
 pub enum AuditCommand {
     Cell(AuditCellCommand),
+    FilePackage(AuditFilePackageCommand),
     Classpath(AuditClasspathCommand),
     Config(AuditConfigCommand),
     Configurations(AuditConfigurationsCommand),
@@ -86,6 +88,7 @@ pub enum AuditCommand {
     PackageValues(PackageValuesCommand),
     #[clap(subcommand, hide = true)]
     Perf(AuditPerfCommand),
+    Settings(AuditSettingsCommand),
 }
 
 /// `buck2 audit` subcommands have a somewhat unique approach to make it really easy to
@@ -105,6 +108,7 @@ impl AuditCommand {
     fn as_subcommand(&self) -> &dyn AuditSubcommand {
         match self {
             AuditCommand::Cell(cmd) => cmd,
+            AuditCommand::FilePackage(cmd) => cmd,
             AuditCommand::Classpath(cmd) => cmd,
             AuditCommand::Config(cmd) => cmd,
             AuditCommand::Configurations(cmd) => cmd,
@@ -122,6 +126,7 @@ impl AuditCommand {
             AuditCommand::Parse(cmd) => cmd,
             AuditCommand::PackageValues(cmd) => cmd,
             AuditCommand::Perf(cmd) => cmd,
+            AuditCommand::Settings(cmd) => cmd,
         }
     }
 }

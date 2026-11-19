@@ -19,9 +19,9 @@ def main() -> None:
     )
 
     assert "METADATA_PATH" in os.environ, "METADATA_PATH is not set"
-    assert os.path.exists(
-        os.environ["METADATA_PATH"]
-    ), "specified METADATA_PATH does not exist"
+    assert os.path.exists(os.environ["METADATA_PATH"]), (
+        "specified METADATA_PATH does not exist"
+    )
 
     args = parser.parse_args()
 

@@ -8,9 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(try_blocks)]
-
 use async_trait::async_trait;
 use buck2_cli_proto::GenericRequest;
 use buck2_client_ctx::client_ctx::ClientCommandContext;

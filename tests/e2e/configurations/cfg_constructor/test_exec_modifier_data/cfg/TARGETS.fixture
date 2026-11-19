@@ -1,0 +1,162 @@
+load(":defs.bzl", "execution_platform", "execution_platforms")
+
+constraint(
+    name = "os",
+    values = [
+        "linux",
+        "macos",
+        "none",
+    ],
+    default = "none",
+    visibility = ["PUBLIC"],
+    execution_modifier = True,
+)
+
+constraint(
+    name = "cpu",
+    values = [
+        "x86_64",
+        "arm64",
+        "none",
+    ],
+    default = "none",
+    visibility = ["PUBLIC"],
+    execution_modifier = True,
+)
+
+# Build mode is not an execution modifier
+constraint(
+    name = "build_mode",
+    values = [
+        "debug",
+        "release",
+        "none",
+    ],
+    default = "none",
+    visibility = ["PUBLIC"],
+    execution_modifier = False,
+)
+
+# Compiler constraint
+constraint(
+    name = "compiler",
+    values = [
+        "gcc",
+        "clang",
+        "none",
+    ],
+    default = "none",
+    visibility = ["PUBLIC"],
+    execution_modifier = True,
+)
+
+# Buckconfig backed test constraint - used to test buckconfig_backed_modifiers exclusion from exec deps
+constraint(
+    name = "buckconfig_backed",
+    values = [
+        "enabled",
+        "none",
+    ],
+    default = "none",
+    visibility = ["PUBLIC"],
+    execution_modifier = False,
+)
+
+# Platform definitions
+platform(
+    name = "debug_platform",
+    constraint_values = [
+        "//cfg:build_mode[debug]",
+    ],
+)
+
+platform(
+    name = "release_platform",
+    constraint_values = [
+        "//cfg:build_mode[release]",
+    ],
+)
+
+# Platform with multiple constraints
+platform(
+    name = "release_clang_platform",
+    constraint_values = [
+        "//cfg:build_mode[release]",
+        ":compiler[clang]",
+    ],
+)
+
+platform(
+    name = "debug_gcc_platform",
+    constraint_values = [
+        "//cfg:build_mode[debug]",
+        ":compiler[gcc]",
+    ],
+)
+
+# OS + CPU platform combinations (excluding "none")
+# These platforms are execution platforms
+platform(
+    name = "linux_x86_64",
+    constraint_values = [
+        ":os[linux]",
+        ":cpu[x86_64]",
+    ],
+)
+
+platform(
+    name = "linux_arm64",
+    constraint_values = [
+        ":os[linux]",
+        ":cpu[arm64]",
+    ],
+)
+
+platform(
+    name = "macos_x86_64",
+    constraint_values = [
+        ":os[macos]",
+        ":cpu[x86_64]",
+    ],
+)
+
+platform(
+    name = "macos_arm64",
+    constraint_values = [
+        ":os[macos]",
+        ":cpu[arm64]",
+    ],
+)
+
+# Execution platform definitions
+# Execution platforms for OS + CPU combinations
+execution_platform(
+    name = "exec_linux_x86_64",
+    platform = ":linux_x86_64",
+)
+
+execution_platform(
+    name = "exec_linux_arm64",
+    platform = ":linux_arm64",
+)
+
+execution_platform(
+    name = "exec_macos_x86_64",
+    platform = ":macos_x86_64",
+)
+
+execution_platform(
+    name = "exec_macos_arm64",
+    platform = ":macos_arm64",
+)
+
+# Register execution platforms
+execution_platforms(
+    name = "execution_platforms",
+    platforms = [
+        ":exec_linux_x86_64",
+        ":exec_linux_arm64",
+        ":exec_macos_x86_64",
+        ":exec_macos_arm64",
+    ],
+)

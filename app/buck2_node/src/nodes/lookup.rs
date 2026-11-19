@@ -13,13 +13,14 @@ use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_query::query::traversal::AsyncNodeLookup;
 use dice::LinearRecomputeDiceComputations;
+use dupe::Dupe;
 
 use crate::nodes::configured::ConfiguredTargetNode;
 use crate::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
 use crate::nodes::frontend::TargetGraphCalculation;
 use crate::nodes::unconfigured::TargetNode;
 
-pub struct TargetNodeLookup<'c, 'd>(pub &'c LinearRecomputeDiceComputations<'d>);
+pub struct TargetNodeLookup<'c, 'd>(pub LinearRecomputeDiceComputations<'c, 'd>);
 
 #[async_trait]
 impl AsyncNodeLookup<TargetNode> for TargetNodeLookup<'_, '_> {
@@ -28,7 +29,7 @@ impl AsyncNodeLookup<TargetNode> for TargetNodeLookup<'_, '_> {
     }
 }
 
-pub struct ConfiguredTargetNodeLookup<'c, 'd>(pub &'c LinearRecomputeDiceComputations<'d>);
+pub struct ConfiguredTargetNodeLookup<'c, 'd>(pub LinearRecomputeDiceComputations<'c, 'd>);
 
 #[async_trait]
 impl AsyncNodeLookup<ConfiguredTargetNode> for ConfiguredTargetNodeLookup<'_, '_> {
@@ -36,11 +37,11 @@ impl AsyncNodeLookup<ConfiguredTargetNode> for ConfiguredTargetNodeLookup<'_, '_
         &self,
         label: &ConfiguredTargetLabel,
     ) -> buck2_error::Result<ConfiguredTargetNode> {
-        Ok(self
-            .0
+        self.0
             .get()
             .get_configured_target_node(label)
-            .await?
-            .require_compatible()?)
+            .await
+            .require_compatible()
+            .map(|n| n.dupe())
     }
 }

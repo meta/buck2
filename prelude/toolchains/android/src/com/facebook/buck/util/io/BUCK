@@ -10,5 +10,6 @@ buck_java_library(
     srcs = glob(["*.java"]),
     visibility = ["PUBLIC"],
     deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
     ],
 )

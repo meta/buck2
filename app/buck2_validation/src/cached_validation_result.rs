@@ -14,21 +14,22 @@ use allocative::Allocative;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::validator_api::ValidationResult;
 use crate::validator_api::ValidationStatus;
 
 /// Result of running a validation, cached in DICE.
-#[derive(Clone, Dupe, Allocative, PartialEq)]
+#[derive(Clone, Dupe, Allocative, PartialEq, Pagable)]
 pub(crate) struct CachedValidationResult(pub(crate) Arc<CachedValidationResultData>);
 
-#[derive(Allocative, PartialEq)]
+#[derive(Allocative, PartialEq, Pagable)]
 pub(crate) enum CachedValidationResultData {
     Success,
     Failure(ValidationFailedUserFacingError),
 }
 
-#[derive(buck2_error::Error, Debug, PartialEq, Allocative, Clone)]
+#[derive(buck2_error::Error, Debug, PartialEq, Allocative, Clone, Pagable)]
 #[buck2(input)]
 #[error(
     "Validation for `{target}` failed:\n\n{}\n\nFull validation result is located at: `{result_path}`", self.rendered_message()
@@ -140,7 +141,7 @@ mod tests {
                     path.clone(),
                 )
             ),
-            r#"Validation for `cell//pkg:foo (<testing>#e1e3240f3bd1fb2b)` failed:
+            r#"Validation for `cell//pkg:foo (<testing>#c617aa931f2642de)` failed:
 
 Diagnostic message is missing from validation result
 
@@ -155,7 +156,7 @@ Full validation result is located at: `/my/path/to/validation/result`"#
                     path,
                 )
             ),
-            r#"Validation for `cell//pkg:foo (<testing>#e1e3240f3bd1fb2b)` failed:
+            r#"Validation for `cell//pkg:foo (<testing>#c617aa931f2642de)` failed:
 
 Here is my diagnostic message
 

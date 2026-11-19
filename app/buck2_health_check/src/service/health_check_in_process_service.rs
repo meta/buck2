@@ -16,30 +16,25 @@ use crate::interface::HealthCheckContextEvent;
 use crate::interface::HealthCheckService;
 use crate::interface::HealthCheckSnapshotData;
 use crate::report::Report;
-use crate::service::health_check_executor::HealthCheckExecutor;
 
-pub struct HealthCheckInProcessService {
-    executor: HealthCheckExecutor,
-}
+pub struct HealthCheckInProcessService {}
 
 impl HealthCheckInProcessService {
     pub fn new(_health_check_dir: AbsNormPathBuf) -> Self {
-        Self {
-            executor: HealthCheckExecutor::new(),
-        }
+        Self {}
     }
 }
 
 #[async_trait::async_trait]
 impl HealthCheckService for HealthCheckInProcessService {
-    async fn update_context(&mut self, event: HealthCheckContextEvent) -> buck2_error::Result<()> {
-        self.executor.update_context(event).await
+    async fn update_context(&mut self, _event: HealthCheckContextEvent) -> buck2_error::Result<()> {
+        Ok(())
     }
 
     async fn run_checks(
         &mut self,
-        snapshot: HealthCheckSnapshotData,
+        _snapshot: HealthCheckSnapshotData,
     ) -> buck2_error::Result<Vec<Report>> {
-        self.executor.run_checks(snapshot).await
+        Ok(Vec::new())
     }
 }

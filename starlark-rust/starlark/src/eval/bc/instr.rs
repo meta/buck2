@@ -37,13 +37,16 @@ pub(crate) enum InstrControl<'v, 'b> {
     Err(crate::Error),
 }
 
-pub(crate) trait BcInstr: Sized + 'static {
+/// An instruction of bytecode at the brand `'v`: its operands are values there, and it runs
+/// against an evaluator there. Instruction types themselves carry no brand (they are `'static`,
+/// which lets the opcode be found by type), so each implements this for every `'v`.
+pub(crate) trait BcInstr<'v>: Sized + 'static {
     /// Fixed instruction argument (which may encode additional arguments
     /// pushed or popped from the stack by the instruction implementation).
-    type Arg: BcInstrArg;
+    type Arg: BcInstrArg<'v>;
 
     /// Execute the instruction.
-    fn run<'v, 'b>(
+    fn run<'b>(
         eval: &mut Evaluator<'v, '_, '_>,
         frame: BcFramePtr<'v>,
         ip: BcPtrAddr<'b>,

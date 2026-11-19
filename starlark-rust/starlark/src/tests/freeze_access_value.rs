@@ -18,24 +18,22 @@
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
-use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
-use crate::values::Heap;
 use crate::values::Value;
+use crate::values::list::AllocList;
 use crate::values::list::ListRef;
 
 struct Test<V> {
     field: V,
 }
 
-impl<'v> Freeze for Test<Value<'v>> {
-    type Frozen = Test<FrozenValue>;
+impl<'v> Freeze<'v> for Test<Value<'v>> {
+    type Frozen<'fv> = Test<Value<'fv>>;
 
-    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
         let test = Test {
             field: self.field.freeze(freezer)?,
         };
-        let members = ListRef::from_value(test.field.to_value()).unwrap();
+        let members = ListRef::from_value(test.field).unwrap();
         assert_eq!(members[0].unpack_num().unwrap().as_int().unwrap(), 1);
         assert_eq!(members[1].unpack_num().unwrap().as_int().unwrap(), 2);
         Ok(test)
@@ -44,15 +42,11 @@ impl<'v> Freeze for Test<Value<'v>> {
 
 #[test]
 fn test() -> anyhow::Result<()> {
-    let heap = Heap::new();
-    let list = heap.alloc(vec![1i32, 2i32]);
-
-    let t = Test { field: list };
-
-    let frozen_heap = FrozenHeap::new();
-    let freezer = Freezer::new(&frozen_heap);
-    list.freeze(&freezer)?;
-    t.freeze(&freezer)?;
-
-    Ok(())
+    Freezer::testing_temp(|heap, freezer| {
+        let list = heap.alloc(AllocList(vec![1i32, 2i32])).to_value();
+        let t = Test { field: list };
+        list.freeze(freezer)?;
+        t.freeze(freezer)?;
+        anyhow::Ok(())
+    })
 }

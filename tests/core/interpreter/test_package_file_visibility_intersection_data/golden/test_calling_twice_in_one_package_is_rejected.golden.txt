@@ -1,0 +1,18 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+evaluating Starlark PACKAGE file `root//at_most_once`
+
+Caused by:
+    error: `enforce_visibility_intersection()` function can be used at most once per `PACKAGE` file
+     --> at_most_once/PACKAGE:4:1
+      |
+    4 | enforce_visibility_intersection()
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    Traceback (most recent call last):
+      * at_most_once/PACKAGE:4, in <module>
+          enforce_visibility_intersection()
+    

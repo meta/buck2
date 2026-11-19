@@ -34,7 +34,6 @@ use buck2_client_ctx::query_args::CommonAttributeArgs;
 use buck2_client_ctx::streaming::StreamingCommand;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use dupe::Dupe;
-use gazebo::prelude::*;
 
 use crate::print::PrintOutputs;
 
@@ -165,7 +164,7 @@ pub struct TargetsCommand {
 
     /// When true, emit the hash or target node and all dependencies recursively.
     /// When false, hash only the target node.
-    #[clap(long, action = clap::ArgAction::Set, default_value = "true", conflicts_with = "streaming")]
+    #[clap(long, action = clap::ArgAction::Set, default_value = "false", conflicts_with = "streaming")]
     target_hash_recursive: bool,
 
     #[clap(flatten)]
@@ -328,7 +327,9 @@ impl StreamingCommand for TargetsCommand {
 
         let target_hash_modified_paths = self
             .target_hash_modified_paths
-            .into_try_map(|path| path.resolve(&ctx.working_dir).into_string())?;
+            .into_iter()
+            .map(|path| path.resolve(&ctx.working_dir).into_string())
+            .collect::<Result<Vec<_>, _>>()?;
 
         let target_request = TargetsRequest {
             context,
@@ -355,7 +356,8 @@ impl StreamingCommand for TargetsCommand {
             target_cfg: Some(self.target_cfg.target_cfg()),
             output: self
                 .output
-                .try_map(|x| x.resolve(&ctx.working_dir).into_string())?,
+                .map(|x| x.resolve(&ctx.working_dir).into_string())
+                .transpose()?,
             concurrency: self
                 .num_threads
                 .map(|num| buck2_cli_proto::Concurrency { concurrency: num }),

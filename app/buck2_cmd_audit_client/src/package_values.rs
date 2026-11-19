@@ -13,10 +13,14 @@ use buck2_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
 
 use crate::AuditSubcommand;
 
-/// Inspect package values.
+/// Inspect package values, visibility, within_view, visibility_cap, within_view_cap and
+/// visibility_intersection.
 ///
-/// Package values is the thing set with `write_package_value`
-/// function from `PACKAGE` files.
+/// Package values are set with `write_package_value` function from `PACKAGE` files.
+/// Visibility and within_view come from the `package()` function in `PACKAGE` files.
+/// Visibility_cap (legacy collapsed shape, without exemptions) and
+/// visibility_intersection (per-layer shape) come from `enforce_visibility_intersection()` and within_view_cap from
+/// `enforce_within_view_intersection()` in `PACKAGE` files.
 #[derive(Debug, clap::Parser, serde::Serialize, serde::Deserialize)]
 #[clap(name = "package-values")]
 pub struct PackageValuesCommand {

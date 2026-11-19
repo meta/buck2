@@ -1,0 +1,20 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Checking each target against execution platforms defined by root//config:platforms
+root//errors/default_diagnosis_error:t (<unspecified>):
+  Failed to configure: Error looking up configured node root//errors/default_diagnosis_error:t (<unspecified>): Error checking compatibility of `root//errors/default_diagnosis_error:missing` with `root//config:linux_local#<HASH>`: Unknown target `missing` from package `root//errors/default_diagnosis_error`.
+Did you mean one of the 1 targets in root//errors/default_diagnosis_error:TARGETS.fixture?
+
+Available targets:
+  root//errors/default_diagnosis_error:t
+    Could not reconstruct skipped platforms: Error checking compatibility of `root//errors/default_diagnosis_error:missing` with `root//config:linux_local#<HASH>`: Unknown target `missing` from package `root//errors/default_diagnosis_error`.
+Did you mean one of the 1 targets in root//errors/default_diagnosis_error:TARGETS.fixture?
+
+Available targets:
+  root//errors/default_diagnosis_error:t
+  Execution group `G`:
+    Compatible root//config:linux_local
+    Skipped root//config:linux_remote
+      root//groups:local_tool
+          is incompatible with root//config:linux_remote#<HASH> (root//config:local unsatisfied), check the target's compatibility attributes
+    Compatible root//config:macos_local

@@ -7,15 +7,34 @@
 # above-listed licenses.
 
 import argparse
+import os
+import shutil
 import subprocess
 import sys
 import time
 from enum import Enum
 from pathlib import Path
-from typing import List, NamedTuple
+from typing import List, NamedTuple, Optional
 
 
 MAX_RETRIES = 5
+
+_FALLBACK_GIT_PATHS = [
+    "/usr/bin/git",
+    "/usr/local/bin/git",
+]
+
+
+def _find_git(explicit: Optional[str] = None) -> str:
+    if explicit:
+        return explicit
+    found = shutil.which("git")
+    if found:
+        return found
+    for path in _FALLBACK_GIT_PATHS:
+        if Path(path).is_file():
+            return path
+    return "git"
 
 
 def run(cmd: List[str], check: bool, retries: int = MAX_RETRIES) -> str:
@@ -46,18 +65,22 @@ class ObjectFormat(str, Enum):
 
 
 class Args(NamedTuple):
+    git: Optional[str]
     git_dir: Path
     work_tree: Path
     object_format: ObjectFormat
     repo: str
     rev: str
+    update_submodules: bool
 
 
 def arg_parse() -> Args:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--git", type=str, required=False, default=None)
     parser.add_argument("--git-dir", type=Path, required=True)
     parser.add_argument("--work-tree", type=Path, required=True)
     parser.add_argument("--object-format", type=ObjectFormat, required=False)
+    parser.add_argument("--update-submodules", action="store_true", required=False)
     parser.add_argument("--repo", type=str, required=True)
     parser.add_argument("--rev", type=str, required=True)
     return Args(**vars(parser.parse_args()))
@@ -76,7 +99,8 @@ def main() -> None:
 
     args.work_tree.mkdir(exist_ok=True)
 
-    git = ["git", f"--git-dir={args.git_dir}", f"--work-tree={args.work_tree}"]
+    git_bin = _find_git(args.git)
+    git = [git_bin, f"--git-dir={args.git_dir}", f"--work-tree={args.work_tree}"]
     if args.object_format is None:
         object_format_args = []
     else:
@@ -96,6 +120,26 @@ def main() -> None:
         )
 
     run([*git, "checkout", "FETCH_HEAD"], check=True)
+
+    if args.update_submodules:
+        git_in_worktree = [
+            git_bin,
+            f"--git-dir={os.path.abspath(args.git_dir)}",
+            # `git submodule` does not accept `--work-tree`, so run it from the worktree.
+            "-C",
+            str(args.work_tree),
+        ]
+        run(
+            [
+                *git_in_worktree,
+                "submodule",
+                "update",
+                "--init",
+                "--recursive",
+                "--depth=1",
+            ],
+            check=True,
+        )
 
 
 if __name__ == "__main__":

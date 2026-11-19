@@ -9,15 +9,135 @@
  */
 
 use std::env;
+use std::io;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::LazyLock;
 
 use allocative::Allocative;
+use buck2_core::soft_error_or_panic;
 use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
+use buck2_error::BuckErrorOptionContext;
+use buck2_error::ErrorTag;
 use buck2_util::process::async_background_command;
+use regex::RegexSet;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
+
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Sapling)]
+pub(crate) enum SaplingError {
+    #[error("Failed to run `hg {subcommand}`")]
+    #[buck2(tag = command_error_tag(&error))]
+    CommandFailed {
+        subcommand: &'static str,
+        #[source]
+        error: io::Error,
+    },
+
+    #[error("Failed to obtain mergebase (exit code {}):\n{stderr}", exit_code_display(*exit_code))]
+    #[buck2(tag = sapling_error_tag(&stderr))]
+    Mergebase {
+        exit_code: Option<i32>,
+        stderr: String,
+    },
+
+    #[error("Warning while obtaining mergebase:\n{stderr}")]
+    #[buck2(tag = sapling_error_tag(&stderr))]
+    MergebaseWarning { stderr: String },
+
+    #[error("Failed to read stdout when invoking `hg {subcommand}`")]
+    #[buck2(tag = SaplingInvalidOutput)]
+    MissingStdout { subcommand: &'static str },
+
+    #[error("Invalid status line: {line}")]
+    #[buck2(tag = SaplingInvalidOutput)]
+    InvalidStatusLine { line: String },
+}
+
+fn exit_code_display(exit_code: Option<i32>) -> String {
+    exit_code.map_or_else(|| "unknown".to_owned(), |code| code.to_string())
+}
+
+/// Patterns matching the messages Sapling prints for root causes we can distinguish, each with an
+/// example of what it matches.
+///
+/// Exit codes are not usable for this: the great majority of failures exit with 1 or 255
+/// regardless of cause. Order is priority order, and matters where one message contains another -
+/// the missing binary is reported as an `Os { .. NotFound .. }` error, so it has to come before
+/// anything else that looks like a missing file.
+const SAPLING_ERROR_SIGNATURES: &[(&str, ErrorTag)] = &[
+    // Could not start command "hg.real", is it on your PATH? (error: Os { code: 2, kind: NotFound })
+    (
+        r#"Could not start command ".*", is it on your PATH\?"#,
+        ErrorTag::SaplingNotFound,
+    ),
+    // [BLOCKED] hg command blocked by Crucible VCS isolation: 'hg log' is not an allowed
+    // current-workspace query
+    (
+        r"\[BLOCKED\] hg command blocked by",
+        ErrorTag::BlockedByPolicy,
+    ),
+    // abort: Transport endpoint is not connected: bookmarks.current
+    // Eden is not serving the mount anymore
+    (
+        "Transport endpoint is not connected",
+        ErrorTag::IoNotConnected,
+    ),
+    // error.TlsError: [35] SSL connect error (OpenSSL/1.1.1zf: error:1408F10B:SSL
+    // routines:ssl3_get_record:wrong version number)
+    // tls error: [35] SSL connect error (Recv failure: Connection reset by peer)!
+    // The second form is what is printed without `--traceback`
+    (r"(?i)tls ?error", ErrorTag::Tls),
+    // abort: command failed due to network error (see /tmp/hg-network.log for details)
+    (
+        "command failed due to network error",
+        ErrorTag::SaplingNetwork,
+    ),
+    // error.HttpError: [7] Couldn't connect to server (Failed to connect to
+    // mononoke.internal.tfbnw.net port 443 after 8 ms)
+    (r"HttpError: \[\d+\]", ErrorTag::SaplingNetwork),
+    // abort: error getting current working directory: No such file or directory
+    (
+        "error getting current working directory",
+        ErrorTag::MissingWorkingDir,
+    ),
+    // abort: repository /data/sandcastle/boxes/trunk-hg-full-fbsource not found!
+    (r"repository .* not found!", ErrorTag::MissingRepo),
+    // abort: '/tmp/scratch' is not inside a repository, but this command requires a repository!
+    ("is not inside a repository", ErrorTag::MissingRepo),
+    // abort: cannot initialize working copy: repo /tmp/scratch missing dot dir
+    ("missing dot dir", ErrorTag::MissingRepo),
+    // abort: Permission denied (os error 13) at path "/data/users/build/fbsource"
+    (
+        r"Permission denied \(os error",
+        ErrorTag::IoPermissionDenied,
+    ),
+];
+
+static SAPLING_ERROR_SIGNATURE_SET: LazyLock<RegexSet> = LazyLock::new(|| {
+    RegexSet::new(SAPLING_ERROR_SIGNATURES.iter().map(|(pattern, _)| pattern))
+        .expect("should be valid regexes, they are a constant in this file")
+});
+
+/// Classifies a failure to run Sapling at all, which reports no stderr of its own.
+fn command_error_tag(error: &io::Error) -> ErrorTag {
+    match error.kind() {
+        io::ErrorKind::NotFound => ErrorTag::SaplingNotFound,
+        io::ErrorKind::PermissionDenied => ErrorTag::IoPermissionDenied,
+        _ => ErrorTag::Sapling,
+    }
+}
+
+/// Classifies a Sapling failure by the root cause it reported on stderr.
+fn sapling_error_tag(stderr: &str) -> ErrorTag {
+    // Matches are yielded in table order, so the earliest match wins.
+    SAPLING_ERROR_SIGNATURE_SET
+        .matches(stderr)
+        .into_iter()
+        .next()
+        .map_or(ErrorTag::Sapling, |i| SAPLING_ERROR_SIGNATURES[i].1)
+}
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum SaplingStatus {
@@ -68,18 +188,35 @@ pub(crate) async fn get_mergebase<D: AsRef<Path>, C: AsRef<str>, M: AsRef<str>>(
             "-T",
             "{node}\n{date}\n{get(extras, \"global_rev\")}",
             "-r",
-            format!("ancestor({}, {})", commit.as_ref(), mergegase_with.as_ref()).as_str(),
+            format!(
+                "present(ancestor({}, {}))",
+                commit.as_ref(),
+                mergegase_with.as_ref()
+            )
+            .as_str(),
         ])
         .output()
         .await
-        .buck_error_context("Failed to obtain mergebase")?;
+        .map_err(|error| SaplingError::CommandFailed {
+            subcommand: "log",
+            error,
+        })?;
 
-    if !output.status.success() || !output.stderr.is_empty() {
-        buck2_error!(
-            buck2_error::ErrorTag::Sapling,
-            "Failed to obtain mergebase:\n{}",
-            String::from_utf8(output.stderr)
-                .buck_error_context("Failed to stderr reported by get_mergebase.")?
+    if !output.status.success() {
+        return Err(SaplingError::Mergebase {
+            exit_code: output.status.code(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+        .into());
+    } else if !output.stderr.is_empty() {
+        // Sapling's stderr from a successful `sl log`. Nobody has characterized what it says in
+        // practice, so it is recorded for the oncall and not shown to the user.
+        soft_error_or_panic!(
+            "sapling_mergebase_warning",
+            SaplingError::MergebaseWarning {
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            }
+            .into()
         );
     }
 
@@ -94,7 +231,7 @@ fn parse_log_output(output: Vec<u8>) -> buck2_error::Result<Option<MergebaseDeta
     let v: Vec<&str> = output.trim().splitn(3, '\n').collect();
     let mergebase = v
         .first()
-        .buck_error_context("Failed to parse mergebase")?
+        .internal_error("Failed to parse mergebase")?
         .to_string();
     let timestamp = v
         .get(1)
@@ -126,40 +263,13 @@ pub(crate) async fn get_status<D: AsRef<Path>, F: AsRef<str>, S: AsRef<str>>(
     second: Option<S>,
     limit_results: usize,
 ) -> buck2_error::Result<SaplingGetStatusResult> {
-    let mut args = vec!["status", "--traceback", "-mardu", "--rev", first.as_ref()];
+    let mut args = vec!["--traceback", "-mardu", "--rev", first.as_ref()];
     if let Some(ref second) = second {
         args.push("--rev");
         args.push(second.as_ref());
     }
 
-    let mut output = async_background_command(get_sapling_exe_path())
-        .current_dir(current_dir)
-        .env("HGPLAIN", "1")
-        .args(args.as_slice())
-        .stdout(Stdio::piped())
-        .spawn()
-        .buck_error_context("Failed to obtain Sapling status")?;
-
-    let stdout = output.stdout.take().ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Sapling,
-            "Failed to read stdout when invoking 'hg status'."
-        )
-    })?;
-    let reader = BufReader::new(stdout);
-
-    let mut status = vec![];
-    let mut lines = reader.lines();
-    while let Some(line) = lines.next_line().await? {
-        if let Some(status_line) = process_one_status_line(&line)? {
-            if status.len() >= limit_results {
-                return Ok(SaplingGetStatusResult::TooManyChanges);
-            }
-            status.push(status_line);
-        }
-    }
-
-    Ok(SaplingGetStatusResult::Normal(status))
+    run_status_command(current_dir, "status", &args, limit_results).await
 }
 
 // Get directory differences between two revisions. If second is None, then it is the working copy.
@@ -171,26 +281,35 @@ pub(crate) async fn get_dir_diff<D: AsRef<Path>, F: AsRef<str>, S: AsRef<str>>(
     second: Option<S>,
     limit_results: usize,
 ) -> buck2_error::Result<SaplingGetStatusResult> {
-    let mut args = vec!["debugdiffdirs", "--rev", first.as_ref()];
+    let mut args = vec!["--rev", first.as_ref()];
     if let Some(ref second) = second {
         args.push("--rev");
         args.push(second.as_ref());
     }
 
+    run_status_command(current_dir, "debugdiffdirs", &args, limit_results).await
+}
+
+/// Runs a Sapling subcommand that emits status lines, and parses them.
+async fn run_status_command<D: AsRef<Path>>(
+    current_dir: D,
+    subcommand: &'static str,
+    args: &[&str],
+    limit_results: usize,
+) -> buck2_error::Result<SaplingGetStatusResult> {
     let mut output = async_background_command(get_sapling_exe_path())
         .current_dir(current_dir)
         .env("HGPLAIN", "1")
-        .args(args.as_slice())
+        .arg(subcommand)
+        .args(args)
         .stdout(Stdio::piped())
         .spawn()
-        .buck_error_context("Failed to obtain Sapling debugdiffdirs")?;
+        .map_err(|error| SaplingError::CommandFailed { subcommand, error })?;
 
-    let stdout = output.stdout.take().ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Sapling,
-            "Failed to read stdout when invoking 'hg debugdiffdirs'."
-        )
-    })?;
+    let stdout = output
+        .stdout
+        .take()
+        .ok_or(SaplingError::MissingStdout { subcommand })?;
     let reader = BufReader::new(stdout);
 
     let mut status = vec![];
@@ -240,16 +359,158 @@ fn process_one_status_line(line: &str) -> buck2_error::Result<Option<(SaplingSta
             _ => None, // Skip all others
         })
     } else {
-        Err(buck2_error!(
-            buck2_error::ErrorTag::Sapling,
-            "Invalid status line: {line}"
-        ))
+        Err(SaplingError::InvalidStatusLine {
+            line: line.to_owned(),
+        }
+        .into())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use buck2_error::Tier;
+
     use super::*;
+
+    // Stderr from real failures, reduced to the lines the classification depends on.
+    const SAPLING_ERROR_EXAMPLES: &[(&str, ErrorTag)] = &[
+        (
+            r#"Could not start command "hg.real", is it on your PATH? (error: Os { code: 2, kind: NotFound, message: "No such file or directory" })"#,
+            ErrorTag::SaplingNotFound,
+        ),
+        (
+            "abort: command failed due to network error (see /tmp/hg-network.log for details)",
+            ErrorTag::SaplingNetwork,
+        ),
+        (
+            "error.HttpError: [7] Couldn't connect to server (Failed to connect to mononoke.internal.tfbnw.net port 443 after 8 ms)",
+            ErrorTag::SaplingNetwork,
+        ),
+        (
+            "error.TlsError: [35] SSL connect error (OpenSSL/1.1.1zf: error:1408F10B:SSL routines:ssl3_get_record:wrong version number)",
+            ErrorTag::Tls,
+        ),
+        (
+            "tls error: [35] SSL connect error (Recv failure: Connection reset by peer)!",
+            ErrorTag::Tls,
+        ),
+        (
+            "abort: repository /data/sandcastle/boxes/trunk-hg-full-fbsource not found!",
+            ErrorTag::MissingRepo,
+        ),
+        (
+            "abort: '/tmp/scratch' is not inside a repository, but this command requires a repository!",
+            ErrorTag::MissingRepo,
+        ),
+        (
+            "abort: cannot initialize working copy: repo /tmp/scratch missing dot dir",
+            ErrorTag::MissingRepo,
+        ),
+        (
+            "abort: error getting current working directory: No such file or directory",
+            ErrorTag::MissingWorkingDir,
+        ),
+        (
+            "abort: Transport endpoint is not connected: bookmarks.current",
+            ErrorTag::IoNotConnected,
+        ),
+        (
+            r#"abort: Permission denied (os error 13) at path "/data/users/build/fbsource""#,
+            ErrorTag::IoPermissionDenied,
+        ),
+        (
+            "[BLOCKED] hg command blocked by Crucible VCS isolation: 'hg log' is not an allowed current-workspace query",
+            ErrorTag::BlockedByPolicy,
+        ),
+        // Mentions a repository, but is not a missing one
+        (
+            "abort: repository requires features unknown to this Mercurial: eden edensparse remotefilelog treestate",
+            ErrorTag::Sapling,
+        ),
+        // Something other than a repository was not found
+        ("abort: bookmark 'main' not found!", ErrorTag::Sapling),
+        ("abort: internal storage is corrupted", ErrorTag::Sapling),
+        ("", ErrorTag::Sapling),
+    ];
+
+    #[test]
+    fn test_sapling_error_tag() {
+        for (stderr, expected) in SAPLING_ERROR_EXAMPLES {
+            assert_eq!(&sapling_error_tag(stderr), expected, "stderr: {stderr}");
+        }
+    }
+
+    /// Keeps the examples above in step with the signatures they document.
+    #[test]
+    fn test_every_signature_has_an_example() {
+        for (index, (signature, _)) in SAPLING_ERROR_SIGNATURES.iter().enumerate() {
+            assert!(
+                SAPLING_ERROR_EXAMPLES
+                    .iter()
+                    .any(|(stderr, _)| SAPLING_ERROR_SIGNATURE_SET.matches(stderr).matched(index)),
+                "no example matches the signature `{signature}`"
+            );
+        }
+    }
+
+    /// The tag from the stderr has to outrank the `Sapling` tag on the enum, otherwise every
+    /// failure keeps being reported as an infra error. Tag rank is positional in
+    /// `buck2_error::classify`, so this is easy to break from a distance.
+    #[test]
+    fn test_categorized_mergebase_error_is_not_infra() {
+        let error: buck2_error::Error = SaplingError::Mergebase {
+            exit_code: Some(255),
+            stderr: "abort: Transport endpoint is not connected".to_owned(),
+        }
+        .into();
+
+        assert!(error.has_tag(ErrorTag::Sapling));
+        assert!(error.has_tag(ErrorTag::IoNotConnected));
+        assert_eq!(error.get_tier(), Some(Tier::Environment));
+        // The `Sapling` tag is generic, so the root cause alone identifies the error
+        assert_eq!(error.category_key(), "IO_NOT_CONNECTED");
+    }
+
+    /// Failing to spawn `hg` is the most common Sapling failure, and reports no stderr to
+    /// classify, so the tag has to come from the io error instead.
+    #[test]
+    fn test_missing_sapling_binary_is_environment() {
+        let error: buck2_error::Error = SaplingError::CommandFailed {
+            subcommand: "log",
+            error: io::Error::new(io::ErrorKind::NotFound, "program not found"),
+        }
+        .into();
+
+        assert!(error.has_tag(ErrorTag::Sapling));
+        assert!(error.has_tag(ErrorTag::SaplingNotFound));
+        assert_eq!(error.get_tier(), Some(Tier::Environment));
+    }
+
+    /// A failure we have no root cause for is tagged `Sapling` and nothing more specific, so it
+    /// stays identifiable without claiming a cause we did not establish.
+    #[test]
+    fn test_uncategorized_errors_have_no_root_cause_tag() {
+        for error in [
+            SaplingError::CommandFailed {
+                subcommand: "log",
+                error: io::Error::other("something else"),
+            },
+            SaplingError::Mergebase {
+                exit_code: None,
+                stderr: String::new(),
+            },
+        ] {
+            let error: buck2_error::Error = error.into();
+
+            assert!(error.has_tag(ErrorTag::Sapling));
+            assert!(!error.has_tag(ErrorTag::SaplingNotFound));
+            assert!(
+                error.category_key().contains("SAPLING"),
+                "{}",
+                error.category_key()
+            );
+        }
+    }
 
     #[test]
     fn test_hg_status_line() -> buck2_error::Result<()> {

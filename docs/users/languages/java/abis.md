@@ -178,22 +178,6 @@ java_library(
 )
 ```
 
-## Verification
-
-Buck2 supports verification modes to ensure source-only ABIs are generated
-correctly:
-
-```python
-java_library(
-    name = "mylib",
-    srcs = ["MyClass.java"],
-    source_abi_verification_mode = "fail",  # Fail build if ABI doesn't match
-)
-```
-
-This compares the source-only ABI with the ABI generated from the full
-compilation and can help identify when heuristics are incorrect.
-
 ## Performance Considerations
 
 The performance benefits of source-only ABI generation increase with:

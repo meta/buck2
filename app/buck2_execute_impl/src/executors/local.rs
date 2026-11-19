@@ -19,17 +19,19 @@ use std::time::SystemTime;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use buck2_build_signals::env::WaitingCategory;
 use buck2_common::file_ops::metadata::FileDigestConfig;
+use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::liveliness_observer::LivelinessObserver;
 use buck2_common::liveliness_observer::LivelinessObserverExt;
 use buck2_common::liveliness_observer::NoopLivelinessObserver;
 use buck2_common::local_resource_state::LocalResourceHolder;
 use buck2_core::content_hash::ContentBasedPathHash;
+use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::soft_error;
+use buck2_core::soft_error_or_panic;
 use buck2_core::tag_error;
 use buck2_core::tag_result;
 use buck2_error::BuckErrorContext;
@@ -62,13 +64,23 @@ use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionOutputRef;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::request::NetworkAccess;
 use buck2_execute::execute::result::CommandExecutionMetadata;
 use buck2_execute::execute::result::CommandExecutionResult;
+use buck2_execute::execute::result::ContentBasedOutputsAt;
+use buck2_execute::execute::result::HeldOutputs;
+use buck2_execute::incremental_state::IncrementalRecord;
+use buck2_execute::incremental_state::IncrementalStore;
+use buck2_execute::incremental_state::RecordedOutput;
+use buck2_execute::incremental_state::recorded_values;
 use buck2_execute::knobs::ExecutorGlobalKnobs;
-use buck2_execute::materialize::materializer::CopiedArtifact;
 use buck2_execute::materialize::materializer::DeclareArtifactPayload;
 use buck2_execute::materialize::materializer::MaterializationError;
+use buck2_execute::materialize::materializer::MaterializationPurpose;
+use buck2_execute::materialize::materializer::MaterializeRequest;
 use buck2_execute::materialize::materializer::Materializer;
+use buck2_execute::materialize::materializer::ReadLease;
+use buck2_execute::materialize::materializer::WriteLease;
 use buck2_execute_local::CommandResult;
 use buck2_execute_local::DefaultKillProcess;
 use buck2_execute_local::GatherOutputStatus;
@@ -76,39 +88,35 @@ use buck2_execute_local::decode_command_event_stream;
 use buck2_execute_local::maybe_absolutize_exe;
 use buck2_execute_local::spawn_command_and_stream_events;
 use buck2_execute_local::status_decoder::DefaultStatusDecoder;
+use buck2_fs::IoResultExt;
 use buck2_fs::async_fs_util;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPath;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_resource_control::ActionFreezeEvent;
 use buck2_resource_control::ActionFreezeEventReceiver;
 use buck2_resource_control::CommandType;
-use buck2_resource_control::action_cgroups::ActionCgroupSession;
+use buck2_resource_control::action_scene::ActionCgroupSession;
 use buck2_resource_control::memory_tracker::MemoryTrackerHandle;
 use buck2_resource_control::path::CgroupPathBuf;
 use buck2_util::process::background_command;
+use buck2_util::time_span::TimeSpan;
 use derive_more::From;
 use dice_futures::cancellation::CancellationContext;
 use dice_futures::cancellation::CancellationObserver;
 use dupe::Dupe;
-use futures::future;
 use futures::future::Either;
 use futures::future::FutureExt;
 use futures::future::Shared;
-use futures::future::join_all;
-use futures::stream::StreamExt;
-use gazebo::prelude::*;
 use host_sharing::HostSharingBroker;
 use host_sharing::HostSharingRequirements;
 use host_sharing::host_sharing::HostSharingGuard;
-use indexmap::IndexMap;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::info;
 
 use crate::executors::worker::WorkerHandle;
 use crate::executors::worker::WorkerPool;
-use crate::incremental_actions_helper::get_incremental_path_map;
-use crate::incremental_actions_helper::save_content_based_incremental_state;
 use crate::sqlite::incremental_state_db::IncrementalDbState;
 
 #[derive(Debug, buck2_error::Error)]
@@ -142,6 +150,10 @@ pub struct LocalExecutor {
     worker_pool: Option<Arc<WorkerPool>>,
     memory_tracker: Option<MemoryTrackerHandle>,
     daemon_id: DaemonId,
+    user_version: Option<String>,
+    /// Attributed with the CAS traffic that materializing this executor's inputs causes. The
+    /// buck2 invocation's, not that of any RE work the action's configuration involves.
+    invocation_re_use_case: RemoteExecutorUseCase,
 }
 
 impl LocalExecutor {
@@ -157,6 +169,8 @@ impl LocalExecutor {
         worker_pool: Option<Arc<WorkerPool>>,
         memory_tracker: Option<MemoryTrackerHandle>,
         daemon_id: DaemonId,
+        user_version: Option<String>,
+        invocation_re_use_case: RemoteExecutorUseCase,
     ) -> Self {
         Self {
             artifact_fs,
@@ -170,6 +184,28 @@ impl LocalExecutor {
             worker_pool,
             memory_tracker,
             daemon_id,
+            user_version,
+            invocation_re_use_case,
+        }
+    }
+
+    /// How to kill the command. Only tests get a grace period, and only when they time out. Tests
+    /// that do not run in an action cgroup also get their detached descendants killed; an action
+    /// cgroup's cleanup already covers those.
+    fn kill_process(
+        &self,
+        request: &CommandExecutionRequest,
+        has_cgroup: bool,
+    ) -> DefaultKillProcess {
+        let Some(policy) = request.test_kill_policy() else {
+            return DefaultKillProcess::default();
+        };
+        DefaultKillProcess {
+            graceful_shutdown_timeout_s: None,
+            timeout_grace_period_s: policy
+                .timeout_grace_period
+                .map(|d| d.as_secs().try_into().unwrap_or(u32::MAX)),
+            kill_detached_descendants: !has_cgroup && policy.kill_detached_processes,
         }
     }
 
@@ -182,16 +218,18 @@ impl LocalExecutor {
         env: impl IntoIterator<Item = (impl AsRef<OsStr> + Send, impl AsRef<OsStr> + Send)> + Send + 'a,
         working_directory: &'a ProjectRelativePath,
         timeout: Option<Duration>,
+        kill_process: DefaultKillProcess,
         env_inheritance: Option<&'a EnvironmentInheritance>,
         liveliness_observer: impl LivelinessObserver + 'static,
         disable_miniperf: bool,
         cgroup: Option<CgroupPathBuf>,
         freeze_rx: impl ActionFreezeEventReceiver,
+        network_access: Option<NetworkAccess>,
     ) -> impl futures::future::Future<Output = buck2_error::Result<CommandResult>> + Send + 'a {
         async move {
             let working_directory = self.root.join_cow(working_directory);
 
-            match &self.forkserver {
+            let result = match &self.forkserver {
                 #[cfg(unix)]
                 ForkserverAccess::Client(forkserver) => {
                     unix::exec_via_forkserver(
@@ -201,16 +239,19 @@ impl LocalExecutor {
                         env,
                         &working_directory,
                         timeout,
+                        kill_process,
                         env_inheritance,
                         liveliness_observer,
                         self.knobs.enable_miniperf && !disable_miniperf,
                         cgroup,
                         freeze_rx,
+                        network_access,
                     )
                     .await
                 }
                 ForkserverAccess::None => {
                     let _disable_miniperf = disable_miniperf;
+                    let _network_access = network_access;
                     let exe = maybe_absolutize_exe(exe, &working_directory)?;
                     let mut cmd = background_command(exe.as_ref());
                     cmd.current_dir(working_directory.as_path());
@@ -231,7 +272,7 @@ impl LocalExecutor {
                         timeout,
                         alive,
                         DefaultStatusDecoder,
-                        DefaultKillProcess::default(),
+                        kill_process,
                         None,
                         true,
                         cgroup,
@@ -241,10 +282,26 @@ impl LocalExecutor {
                     decode_command_event_stream(stream).await
                 }
                 .with_buck_error_context(|| format!("Failed to gather output from command: {exe}")),
+            }?;
+
+            if !result.orphan_processes.is_empty() {
+                buck2_events::dispatch::instant_event(buck2_data::OrphanProcessesKilled {
+                    orphan_processes: result
+                        .orphan_processes
+                        .iter()
+                        .map(|o| buck2_data::orphan_processes_killed::OrphanProcess {
+                            pid: o.pid,
+                            comm: o.comm.clone(),
+                        })
+                        .collect(),
+                });
             }
+
+            buck2_error::Ok(result)
         }
     }
 
+    #[allow(clippy::result_large_err)]
     async fn exec_once(
         &self,
         action_digest: &ActionDigest,
@@ -258,9 +315,10 @@ impl LocalExecutor {
         env: &[(&str, StrOrOsStr<'_>)],
         cgroup: Option<CgroupPathBuf>,
         freeze_rx: impl ActionFreezeEventReceiver,
+        network_access: Option<NetworkAccess>,
     ) -> Result<
         (
-            Duration,
+            TimeSpan,
             SystemTime,
             CommandResult,
             CommandExecutionManagerWithClaim,
@@ -276,11 +334,10 @@ impl LocalExecutor {
                     create_output_dirs(
                         &self.artifact_fs,
                         request,
-                        self.materializer.dupe(),
-                        self.blocking_executor.dupe(),
+                        &*self.blocking_executor,
                         cancellations,
                     ),
-                    prep_scratch_path(&scratch_path, &self.artifact_fs),
+                    prep_scratch_path(scratch_path, &self.artifact_fs),
                 )
                 .buck_error_context("Error creating output directories")?;
 
@@ -293,7 +350,7 @@ impl LocalExecutor {
             return Err(manager.error("prepare_output_dirs_failed", e));
         };
 
-        let (execution_time, start_time, res) = executor_stage_async(
+        let (time_span, start_time, res) = executor_stage_async(
             {
                 let env = env
                     .iter()
@@ -310,6 +367,7 @@ impl LocalExecutor {
                             action_digest: action_digest.to_string(),
                             argv: args.to_vec(),
                             env,
+                            ..Default::default()
                         }),
                     }
                     .into(),
@@ -326,8 +384,8 @@ impl LocalExecutor {
                 buck2_data::LocalStage { stage: Some(stage) }
             },
             async move {
-                let execution_start = Instant::now();
-                let start_time = SystemTime::now();
+                let execution_start = TimeSpan::start_now_with_wall_time();
+                let start_time = execution_start.start_time();
 
                 let env = env.iter().map(|(k, v)| (k, v.into_os_str()));
                 let r = if let Some(worker) = worker {
@@ -336,7 +394,7 @@ impl LocalExecutor {
                         .map(|(k, v)| (OsString::from(k), v.to_owned()))
                         .collect();
                     Ok(worker
-                        .exec_cmd(request.args(), env, request.timeout())
+                        .exec_cmd(request.args(), env, request.timeout(), &liveliness_observer)
                         .await)
                 } else {
                     self.exec(
@@ -345,29 +403,32 @@ impl LocalExecutor {
                         env,
                         request.working_directory(),
                         request.timeout(),
+                        self.kill_process(request, cgroup.is_some()),
                         request.local_environment_inheritance(),
                         liveliness_observer,
                         request.disable_miniperf(),
                         cgroup,
                         freeze_rx,
+                        network_access,
                     )
                     .await
                 };
 
-                let execution_time = Instant::now() - execution_start;
+                let time_span = execution_start.end_now();
 
-                (execution_time, start_time, r)
+                (time_span, start_time, r)
             },
         )
         .boxed()
         .await;
 
         match res {
-            Ok(res) => Ok((execution_time, start_time, res, manager)),
+            Ok(res) => Ok((time_span, start_time, res, manager)),
             Err(e) => Err(manager.error("exec_failed", e)),
         }
     }
 
+    #[allow(clippy::result_large_err)]
     async fn exec_with_resource_control(
         &self,
         action_digest: &ActionDigest,
@@ -379,37 +440,39 @@ impl LocalExecutor {
         args: &[String],
         worker: Option<&WorkerHandle>,
         env: &[(&str, StrOrOsStr<'_>)],
+        network_access: Option<NetworkAccess>,
     ) -> Result<
         (
-            Duration,
+            TimeSpan,
             SystemTime,
             CommandResult,
             CommandExecutionManagerWithClaim,
         ),
         CommandExecutionResult,
     > {
-        let (cgroup_session, mut start_future) = if worker.is_some() {
-            (None, None)
-        } else {
-            let command_type = if request.is_test() {
-                CommandType::Test
+        let (cgroup_session, mut start_future) =
+            if worker.is_some() || request.skip_resource_control() {
+                (None, None)
             } else {
-                CommandType::Build
+                let command_type = if request.is_test() {
+                    CommandType::Test
+                } else {
+                    CommandType::Build
+                };
+                let disable_kill_and_retry_suspend = !request.outputs_cleanup;
+                match ActionCgroupSession::maybe_create(
+                    self.memory_tracker.dupe(),
+                    command_type,
+                    Some(action_digest.to_string()),
+                    disable_kill_and_retry_suspend,
+                )
+                .await
+                {
+                    Ok(Some((session, start_future))) => (Some(session), Some(start_future)),
+                    Ok(None) => (None, None),
+                    Err(e) => return Err(manager.error("initializing_resource_control", e)),
+                }
             };
-            let disable_kill_and_retry_suspend = !request.outputs_cleanup;
-            match ActionCgroupSession::maybe_create(
-                &self.memory_tracker,
-                command_type,
-                Some(action_digest.to_string()),
-                disable_kill_and_retry_suspend,
-            )
-            .await
-            {
-                Ok(Some((session, start_future))) => (Some(session), Some(start_future)),
-                Ok(None) => (None, None),
-                Err(e) => return Err(manager.error("initializing_resource_control", e)),
-            }
-        };
 
         let liveliness_observer: Arc<dyn LivelinessObserver> = Arc::new(liveliness_observer);
 
@@ -466,11 +529,12 @@ impl LocalExecutor {
                     env,
                     cgroup_session.as_ref().map(|s| s.path.clone()),
                     freeze_rx,
+                    network_access,
                 )
                 .await;
 
             let res = match res {
-                Ok((duration, start_time, status, res_manager)) => {
+                Ok((time_span, start_time, status, res_manager)) => {
                     if matches!(status.status, GatherOutputStatus::Cancelled) {
                         let f = retry_future.lock().unwrap().take();
                         if let Some(retry_future) = f {
@@ -479,7 +543,7 @@ impl LocalExecutor {
                             continue;
                         }
                     }
-                    Ok((duration, start_time, status, res_manager))
+                    Ok((time_span, start_time, status, res_manager))
                 }
                 Err(e) => Err(e),
             };
@@ -487,7 +551,7 @@ impl LocalExecutor {
             break res;
         };
 
-        if let Some(mut cgroup_session) = cgroup_session {
+        if let Some(cgroup_session) = cgroup_session {
             let cgroup_res = cgroup_session.action_finished().await;
             if let Ok(res) = &mut res {
                 res.2.cgroup_result = Some(cgroup_res);
@@ -501,17 +565,19 @@ impl LocalExecutor {
         &self,
         action_digest: &ActionDigest,
         request: &CommandExecutionRequest,
-        manager: CommandExecutionManager,
+        mut manager: CommandExecutionManager,
         cancellation: CancellationObserver,
         cancellations: &CancellationContext,
         digest_config: DigestConfig,
         local_resource_holders: &[LocalResourceHolder],
+        network_access: Option<NetworkAccess>,
     ) -> CommandExecutionResult {
         let args = &request.all_args_vec();
         if args.is_empty() {
             return manager.error("no_args", LocalExecutionError::NoArgs);
         }
 
+        manager.start_waiting_category(WaitingCategory::MaterializingInputs);
         let executor_stage_result = executor_stage_async(
             buck2_data::LocalStage {
                 stage: Some(buck2_data::LocalMaterializeInputs {}.into()),
@@ -519,233 +585,296 @@ impl LocalExecutor {
             async {
                 let start = Instant::now();
 
-                let (r1, r2) = future::join(
-                    async {
-                        materialize_inputs(
-                            &self.artifact_fs,
-                            self.materializer.as_ref(),
-                            request,
-                            digest_config,
-                        )
-                        .await
-                    },
-                    async {
-                        if !request.outputs_cleanup {
-                            // When user requests to not perform a cleanup for a specific action
-                            // output from previous run of that action could actually be used as the
-                            // input during current run (e.g. extra output which is an incremental state describing the actual output).
-                            materialize_build_outputs(
-                                &self.artifact_fs,
-                                &self.incremental_db_state,
-                                self.materializer.as_ref(),
-                                request,
-                            )
-                            .await?;
+                // An incremental action starts from its record, resolved before the lease
+                // over its outputs is taken (`recorded_outputs`).
+                let incremental = if request.outputs_cleanup {
+                    None
+                } else {
+                    Some(self.recorded_outputs(request).await?)
+                };
 
-                            // TODO(minglunli): There might be a dedup opportunity here to save some copying/materialization
-                            // if the paths already exist on disk, should explore that
-                            self.prepare_content_based_incremental_actions(request, cancellations)
-                                .await?;
-
-                            buck2_error::Ok(())
-                        } else {
-                            Ok(())
-                        }
-                    },
+                // One request for the inputs' read lease and the outputs' write lease, held
+                // until the outputs have been reported. Everything this run deletes or writes
+                // under its output paths happens under the latter, including the per-attempt
+                // cleanup in `exec_once`, so a retry never acquires again.
+                let materialized_inputs = materialize_inputs(
+                    &self.artifact_fs,
+                    self.materializer.as_ref(),
+                    request,
+                    digest_config,
+                    self.invocation_re_use_case,
+                    output_paths(&self.artifact_fs, request)?,
                 )
-                .await;
+                .await?;
 
-                let scratch_path = r1?.scratch;
-                r2?;
-
-                buck2_error::Ok((scratch_path, Instant::now() - start))
+                buck2_error::Ok((materialized_inputs, incremental, Instant::now() - start))
             },
         )
         .boxed()
         .await;
 
-        let (scratch_path, input_materialization_duration) = match executor_stage_result {
-            Ok((scratch_path, input_materialization_duration)) => {
-                (scratch_path, input_materialization_duration)
-            }
-            Err(e) => return manager.error("materialize_inputs_failed", e),
-        };
+        let (materialized_inputs, incremental, mut input_materialization_duration) =
+            match executor_stage_result {
+                Ok(x) => x,
+                Err(e) => return manager.error("materialize_inputs_failed", e),
+            };
+        // The command reads its inputs until its outputs have been hashed, which is the end of
+        // this function; its hold on the outputs lasts as long.
+        let MaterializedInputPaths {
+            scratch: scratch_path,
+            lease: _inputs_lease,
+            outputs: outputs_lease,
+            ..
+        } = materialized_inputs;
+        // An action with neither outputs nor a scratch path has nothing to report under it.
+        let outputs_lease = outputs_lease.unwrap_or_else(WriteLease::noop);
+        // Set once the run's outputs have been collected: the leases `publish` returned over
+        // them, none under the disk-state core, which join the outputs lease for the result's
+        // readers.
+        let mut published = None;
 
-        // TODO: Release here.
-        let manager = manager.claim().boxed().await;
+        let mut result = async {
+            manager.start_waiting_category(WaitingCategory::Unknown);
 
-        info!(
-            "Local execution command line:\n```\n$ {}\n```",
-            args.join(" "),
-        );
+            // TODO: Release here.
+            let manager = manager.claim().boxed().await;
 
-        let dispatcher = match get_dispatcher_opt() {
-            Some(dispatcher) => dispatcher,
-            None => {
-                return manager.error(
-                    "no_dispatcher",
-                    buck2_error!(
-                        buck2_error::ErrorTag::DispatcherUnavailable,
-                        "No dispatcher available"
+            if let Some(incremental) = incremental {
+                let start = Instant::now();
+                let prepared = executor_stage_async(
+                    buck2_data::LocalStage {
+                        stage: Some(buck2_data::LocalMaterializeInputs {}.into()),
+                    },
+                    self.prepare_incremental_outputs(
+                        &manager,
+                        request,
+                        incremental,
+                        &outputs_lease,
+                        cancellations,
                     ),
-                );
+                )
+                .boxed()
+                .await;
+                if let Err(e) = prepared {
+                    return manager.error("prepare_incremental_outputs_failed", e);
+                }
+                input_materialization_duration += Instant::now() - start;
             }
-        };
-        let build_id: &str = &dispatcher.trace_id().to_string();
 
-        let mut env = vec![];
+            info!(
+                "Local execution command line:\n```\n$ {}\n```",
+                args.join(" "),
+            );
 
-        let scratch_path_abs;
-
-        if let Some(scratch_path) = &scratch_path.0 {
-            // For the $TMPDIR - important it is absolute
-            scratch_path_abs = self.artifact_fs.fs().resolve(scratch_path);
-
-            if cfg!(windows) {
-                const MAX_PATH: usize = 260;
-                if scratch_path_abs.as_os_str().len() > MAX_PATH {
+            let dispatcher = match get_dispatcher_opt() {
+                Some(dispatcher) => dispatcher,
+                None => {
                     return manager.error(
-                        "scratch_dir_too_long",
+                        "no_dispatcher",
                         buck2_error!(
-                            buck2_error::ErrorTag::Environment,
-                            "Scratch directory path is longer than MAX_PATH: {}",
-                            scratch_path_abs
+                            buck2_error::ErrorTag::DispatcherUnavailable,
+                            "No dispatcher available"
                         ),
                     );
                 }
-                env.push(("TEMP", StrOrOsStr::OsStr(scratch_path_abs.as_os_str())));
-                env.push(("TMP", StrOrOsStr::OsStr(scratch_path_abs.as_os_str())));
-            } else {
-                env.push(("TMPDIR", StrOrOsStr::OsStr(scratch_path_abs.as_os_str())));
-            }
-        }
-        env.extend(
-            request
-                .env()
-                .iter()
-                .map(|(k, v)| (k.as_str(), StrOrOsStr::from(v.as_str()))),
-        );
+            };
+            let build_id: &str = &dispatcher.trace_id().to_string();
 
-        env.extend(local_resource_holders.iter().flat_map(|h| {
-            h.as_ref().0.iter().map(|env_var| {
-                (
-                    env_var.key.as_str(),
-                    StrOrOsStr::from(env_var.value.as_str()),
-                )
-            })
-        }));
-        let daemon_id = self.daemon_id.to_string();
-        env.push(("BUCK2_DAEMON_UUID", StrOrOsStr::from(&*daemon_id)));
-        env.push(("BUCK_BUILD_ID", StrOrOsStr::from(build_id)));
+            let mut env = vec![];
 
-        let liveliness_observer = manager.inner.liveliness_observer.dupe().and(cancellation);
+            let scratch_path_abs;
 
-        let (worker, manager) = self
-            .initialize_worker(request, manager, dispatcher.dupe())
-            .boxed()
-            .await?;
+            if let Some(scratch_path) = &scratch_path.0 {
+                // For the $TMPDIR - important it is absolute
+                scratch_path_abs = self.artifact_fs.fs().resolve(scratch_path);
 
-        let execution_kind = match worker {
-            None => CommandExecutionKind::Local {
-                digest: action_digest.dupe(),
-                command: args.to_vec(),
-                env: request.env().clone(),
-            },
-            Some(_) => CommandExecutionKind::LocalWorker {
-                digest: action_digest.dupe(),
-                command: request.args().to_vec(),
-                env: request.env().clone(),
-                fallback_exe: request.exe().to_vec(),
-            },
-        };
-
-        let (execution_time, start_time, res, manager) = match self
-            .exec_with_resource_control(
-                action_digest,
-                request,
-                manager,
-                cancellations,
-                liveliness_observer,
-                &scratch_path,
-                args,
-                worker.as_deref(),
-                &env,
-            )
-            .await
-        {
-            Ok(x) => x,
-            Err(e) => return e,
-        };
-
-        let CommandResult {
-            status,
-            stdout,
-            stderr,
-            cgroup_result,
-        } = res;
-
-        let mut timing = Box::new(CommandExecutionMetadata {
-            wall_time: execution_time,
-            execution_time,
-            start_time,
-            execution_stats: None, // We fill this in later if available.
-            input_materialization_duration,
-            hashing_duration: Duration::ZERO, // We fill hashing info in later if available.
-            hashed_artifacts_count: 0,
-            queue_duration: None,
-            suspend_duration: None,
-            suspend_count: None,
-        });
-
-        let std_streams = CommandStdStreams::Local { stdout, stderr };
-
-        let result = match status {
-            GatherOutputStatus::Finished {
-                exit_code,
-                execution_stats,
-            } => {
-                let (outputs, hashing_time) = match self
-                    .calculate_and_declare_output_values(request, digest_config)
-                    .boxed()
-                    .await
-                {
-                    Ok((output_values, hashing_time)) => (output_values, hashing_time),
-                    Err(e) => {
-                        return manager.error("calculate_output_values_failed", e);
+                if cfg!(windows) {
+                    const MAX_PATH: usize = 260;
+                    if scratch_path_abs.as_os_str().len() > MAX_PATH {
+                        return manager.error(
+                            "scratch_dir_too_long",
+                            buck2_error!(
+                                buck2_error::ErrorTag::Environment,
+                                "Scratch directory path is longer than MAX_PATH: {}",
+                                scratch_path_abs
+                            ),
+                        );
                     }
-                };
-
-                let mut execution_stats =
-                    execution_stats.map(|s| buck2_data::CommandExecutionStats {
-                        cpu_instructions_user: s.cpu_instructions_user,
-                        cpu_instructions_kernel: s.cpu_instructions_kernel,
-                        userspace_events: s.userspace_events,
-                        kernel_events: s.kernel_events,
-                        memory_peak: None,
-                    });
-
-                if let Some(memory_peak) =
-                    cgroup_result.as_ref().and_then(|r| r.memory_peak.as_ref())
-                {
-                    execution_stats.get_or_insert_default().memory_peak = Some(*memory_peak);
-                }
-
-                timing.execution_stats = execution_stats;
-                if let Some(cgroup_result) = cgroup_result {
-                    if let Some(e) = cgroup_result.error {
-                        let _unused = soft_error!("action_cgroup_error", e);
-                    }
-                    timing.suspend_duration = cgroup_result.suspend_duration;
-                    timing.suspend_count = Some(cgroup_result.suspend_count);
-                }
-
-                timing.hashing_duration = hashing_time.hashing_duration;
-                timing.hashed_artifacts_count = hashing_time.hashed_artifacts_count;
-
-                if exit_code == 0 {
-                    manager.success(execution_kind, outputs, std_streams, *timing)
+                    env.push(("TEMP", StrOrOsStr::OsStr(scratch_path_abs.as_os_str())));
+                    env.push(("TMP", StrOrOsStr::OsStr(scratch_path_abs.as_os_str())));
                 } else {
-                    let manager = check_inputs(
+                    env.push(("TMPDIR", StrOrOsStr::OsStr(scratch_path_abs.as_os_str())));
+                }
+            }
+            env.extend(
+                request
+                    .env()
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), StrOrOsStr::from(v.as_str()))),
+            );
+
+            env.extend(local_resource_holders.iter().flat_map(|h| {
+                h.as_ref().0.iter().map(|env_var| {
+                    (
+                        env_var.key.as_str(),
+                        StrOrOsStr::from(env_var.value.as_str()),
+                    )
+                })
+            }));
+            let daemon_id = self.daemon_id.to_string();
+            env.push(("BUCK2_DAEMON_UUID", StrOrOsStr::from(&*daemon_id)));
+            if let Some(user_version) = &self.user_version {
+                env.push((
+                    "BUCK2_DAEMON_USER_VERSION",
+                    StrOrOsStr::from(user_version.as_str()),
+                ));
+            }
+            env.push(("BUCK_BUILD_ID", StrOrOsStr::from(build_id)));
+
+            let liveliness_observer = manager.inner.liveliness_observer.dupe().and(cancellation);
+
+            let (worker, manager) = self
+                .initialize_worker(request, manager, dispatcher.dupe())
+                .boxed()
+                .await?;
+
+            let execution_kind = match worker {
+                None => CommandExecutionKind::Local {
+                    digest: action_digest.dupe(),
+                    command: args.to_vec(),
+                    env: request.env().clone(),
+                    working_directory: request.working_directory().to_owned(),
+                    environment_rule: request.local_environment_rule(),
+                },
+                Some(_) => CommandExecutionKind::LocalWorker {
+                    digest: action_digest.dupe(),
+                    command: request.args().to_vec(),
+                    env: request.env().clone(),
+                    fallback_exe: request.exe().to_vec(),
+                },
+            };
+
+            let (time_span, start_time, res, manager) = match self
+                .exec_with_resource_control(
+                    action_digest,
+                    request,
+                    manager,
+                    cancellations,
+                    liveliness_observer,
+                    &scratch_path,
+                    args,
+                    worker.as_deref(),
+                    &env,
+                    network_access,
+                )
+                .await
+            {
+                Ok(x) => x,
+                Err(e) => return e,
+            };
+
+            let CommandResult {
+                status,
+                stdout,
+                stderr,
+                cgroup_result,
+                ..
+            } = res;
+
+            let std_streams = CommandStdStreams::Local { stdout, stderr };
+
+            let mut timing = Box::new(CommandExecutionMetadata {
+                time_span,
+                client_start_time: Some(start_time),
+                execution_time: time_span.duration(),
+                start_time,
+                execution_stats: None, // We fill this in later if available.
+                input_materialization_duration,
+                hashing_duration: Duration::ZERO, // We fill hashing info in later if available.
+                hashed_artifacts_count: 0,
+                queue_duration: None,
+                suspend_duration: None,
+                suspend_count: None,
+            });
+
+            match status {
+                GatherOutputStatus::Finished {
+                    exit_code,
+                    execution_stats,
+                } => {
+                    // N.B. calculate_and_declare_output_values ignores missing
+                    // output files in order to guarantee we run the accounting
+                    // checks below. If the output is missing because the action
+                    // failed, we'll run the `exit_code != 0` branch below, allowing
+                    // us to detect corrupted materializer state in check_inputs. If
+                    // the output is just missing because the action didn't produce
+                    // it, that's detected when BuckActionExecutor.execute validates
+                    // that all outputs were actually returned.
+                    let (outputs, hashing_time) = match self
+                        .finalize_outputs(request, digest_config, &outputs_lease)
+                        .await
+                    {
+                        Ok((output_values, hashing_time, leases)) => {
+                            published = Some(leases);
+                            (output_values, hashing_time)
+                        }
+                        Err(e) => {
+                            return manager.error("calculate_output_values_failed", e);
+                        }
+                    };
+
+                    let mut execution_stats =
+                        execution_stats.map(|s| buck2_data::CommandExecutionStats {
+                            cpu_instructions_user: s.cpu_instructions_user,
+                            cpu_instructions_kernel: s.cpu_instructions_kernel,
+                            userspace_events: s.userspace_events,
+                            kernel_events: s.kernel_events,
+                            memory_peak: None,
+                        });
+
+                    if let Some(memory_peak) =
+                        cgroup_result.as_ref().and_then(|r| r.memory_peak.as_ref())
+                    {
+                        execution_stats.get_or_insert_default().memory_peak = Some(*memory_peak);
+                    }
+
+                    timing.execution_stats = execution_stats;
+                    if let Some(cgroup_result) = cgroup_result {
+                        if let Some(e) = cgroup_result.error {
+                            soft_error_or_panic!("action_cgroup_error", e);
+                        }
+                        timing.suspend_duration = cgroup_result.suspend_duration;
+                        timing.suspend_count = Some(cgroup_result.suspend_count);
+                    }
+
+                    timing.hashing_duration = hashing_time.hashing_duration;
+                    timing.hashed_artifacts_count = hashing_time.hashed_artifacts_count;
+
+                    if exit_code == 0 {
+                        manager.success(execution_kind, outputs, std_streams, *timing)
+                    } else {
+                        let (manager, missing_materialized_inputs) = check_inputs(
+                            manager,
+                            &self.artifact_fs,
+                            self.blocking_executor.as_ref(),
+                            request,
+                        )
+                        .boxed()
+                        .await?;
+
+                        manager.failure(
+                            execution_kind,
+                            outputs,
+                            std_streams,
+                            Some(exit_code),
+                            *timing,
+                            None,
+                            missing_materialized_inputs,
+                        )
+                    }
+                }
+                GatherOutputStatus::SpawnFailed(reason) => {
+                    let (manager, missing_materialized_inputs) = check_inputs(
                         manager,
                         &self.artifact_fs,
                         self.blocking_executor.as_ref(),
@@ -754,101 +883,111 @@ impl LocalExecutor {
                     .boxed()
                     .await?;
 
-                    manager.failure(
+                    // We are lying about the std streams here because we don't have a good mechanism
+                    // to report that the command does not exist, and because that's exactly what RE
+                    // also does when this happens.
+                    if matches!(execution_kind, CommandExecutionKind::Local { .. }) {
+                        manager.failure(
+                            execution_kind,
+                            Default::default(),
+                            CommandStdStreams::Local {
+                                stdout: Default::default(),
+                                stderr: format!(
+                                    "Spawning executable `{}` failed: {}",
+                                    args[0], reason
+                                )
+                                .into_bytes(),
+                            },
+                            None,
+                            *timing,
+                            None,
+                            missing_materialized_inputs,
+                        )
+                    } else {
+                        // Workers executing tests often employ a health check to avoid producing
+                        // invalid test results. Differentiating a worker spawn failure from a normal
+                        // spawn or execution failure allows the test runner to handle this case
+                        // accordingly.
+                        manager.worker_failure(
+                            execution_kind,
+                            // Could probably use a better error message.
+                            format!("Spawning executable `{}` failed: {}", args[0], reason),
+                            *timing,
+                        )
+                    }
+                }
+                GatherOutputStatus::TimedOut(duration) => {
+                    let (outputs, hashing_time) = match self
+                        .finalize_outputs(request, digest_config, &outputs_lease)
+                        .await
+                    {
+                        Ok((output_values, hashing_time, leases)) => {
+                            published = Some(leases);
+                            (output_values, hashing_time)
+                        }
+                        Err(e) => {
+                            return manager.error("calculate_output_values_failed", e);
+                        }
+                    };
+
+                    timing.hashing_duration = hashing_time.hashing_duration;
+                    timing.hashed_artifacts_count = hashing_time.hashed_artifacts_count;
+
+                    manager.timeout(
                         execution_kind,
                         outputs,
+                        duration,
                         std_streams,
-                        Some(exit_code),
                         *timing,
                         None,
                     )
                 }
+                GatherOutputStatus::Cancelled => manager.cancel_claim(execution_kind, *timing),
             }
-            GatherOutputStatus::SpawnFailed(reason) => {
-                let manager = check_inputs(
-                    manager,
-                    &self.artifact_fs,
-                    self.blocking_executor.as_ref(),
-                    request,
-                )
-                .boxed()
-                .await?;
-
-                // We are lying about the std streams here because we don't have a good mechanism
-                // to report that the command does not exist, and because that's exactly what RE
-                // also does when this happens.
-                if matches!(execution_kind, CommandExecutionKind::Local { .. }) {
-                    manager.failure(
-                        execution_kind,
-                        Default::default(),
-                        CommandStdStreams::Local {
-                            stdout: Default::default(),
-                            stderr: format!("Spawning executable `{}` failed: {}", args[0], reason)
-                                .into_bytes(),
-                        },
-                        None,
-                        *timing,
-                        None,
-                    )
-                } else {
-                    // Workers executing tests often employ a health check to avoid producing
-                    // invalid test results. Differentiating a worker spawn failure from a normal
-                    // spawn or execution failure allows the test runner to handle this case
-                    // accordingly.
-                    manager.worker_failure(
-                        execution_kind,
-                        // Could probably use a better error message.
-                        format!("Spawning executable `{}` failed: {}", args[0], reason),
-                        *timing,
-                    )
-                }
-            }
-            GatherOutputStatus::TimedOut(duration) => {
-                let (outputs, hashing_time) = match self
-                    .calculate_and_declare_output_values(request, digest_config)
-                    .boxed()
-                    .await
-                {
-                    Ok((output_values, hashing_time)) => (output_values, hashing_time),
-                    Err(e) => {
-                        return manager.error("calculate_output_values_failed", e);
-                    }
-                };
-
-                timing.hashing_duration = hashing_time.hashing_duration;
-                timing.hashed_artifacts_count = hashing_time.hashed_artifacts_count;
-
-                manager.timeout(
-                    execution_kind,
-                    outputs,
-                    duration,
-                    std_streams,
-                    *timing,
-                    None,
-                )
-            }
-            GatherOutputStatus::Cancelled => manager.cancel_claim(execution_kind, *timing),
-        };
-
-        if let Some(run_action_key) = request.run_action_key()
-            && !request.outputs_cleanup
-        {
-            save_content_based_incremental_state(
-                run_action_key.clone(),
-                &self.incremental_db_state,
-                &self.artifact_fs,
-                &result,
-            );
+        }
+        .await;
+        if let Some(mut published) = published {
+            published.push(outputs_lease.into_read_lease());
+            result.held_outputs = Some(HeldOutputs {
+                lease: ReadLease::join(published),
+                content_based_at: self.content_based_outputs_at(),
+            });
         }
 
         result
+    }
+
+    /// [`Self::calculate_and_declare_output_values`], as the action's `LocalFinalizeOutputs` stage.
+    async fn finalize_outputs(
+        &self,
+        request: &CommandExecutionRequest,
+        digest_config: DigestConfig,
+        outputs_lease: &WriteLease,
+    ) -> buck2_error::Result<(
+        BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
+        HashingInfo,
+        Vec<ReadLease>,
+    )> {
+        executor_stage_async(
+            buck2_data::LocalStage {
+                stage: Some(buck2_data::LocalFinalizeOutputs {}.into()),
+            },
+            self.calculate_and_declare_output_values(request, digest_config, outputs_lease)
+                .boxed(),
+        )
+        .await
     }
 
     async fn calculate_and_declare_output_values(
         &self,
         request: &CommandExecutionRequest,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<(IndexMap<CommandExecutionOutput, ArtifactValue>, HashingInfo)> {
+        outputs_lease: &WriteLease,
+    ) -> buck2_error::Result<(
+        BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
+        HashingInfo,
+        Vec<ReadLease>,
+    )> {
         let mut builder = inputs_directory(request.inputs(), digest_config, &self.artifact_fs)?;
 
         // Read outputs from disk and add them to the builder
@@ -880,109 +1019,49 @@ impl LocalExecutor {
         }
 
         let mut to_declare = vec![];
-        let mut mapped_outputs = IndexMap::with_capacity(entries.len());
-        let mut configuration_path_to_content_based_path_symlinks = vec![];
-        let mut output_path_to_content_based_path_copies = vec![];
+        let mut to_publish = vec![];
+        let mut mapped_outputs = BuckMutInsertionMap::with_capacity(entries.len());
 
+        // Test outputs are reported like build outputs: the test orchestrator asks the
+        // materializer for them by value before it hands them to the test runner.
         for (output, output_path) in entries {
             let value = extract_artifact_value(&builder, &output_path, digest_config)?;
             if let Some(value) = value {
-                match output {
-                    CommandExecutionOutput::BuildArtifact {
-                        supports_incremental_remote,
-                        ..
-                    } => {
-                        // For content-based paths, things are a bit complicated here, because (a) the action
-                        // wrote outputs at "placeholder" paths, not the final content-based paths (because
-                        // they are not know until the output is produced), and (b) other actions can declare
-                        // outputs at the same content-based path. Note that only remote actions can do that
-                        // concurrently (with this local action), as we prevent any local actions with any of
-                        // the same placeholder output paths from running at the same time.
-                        // We do the following:
-                        // (1) We create a symlink from the configuration-based path to the content-based path
-                        //     (for any users/tooling that only has access to the configuration-based path)
-                        // (2) Declare an existing artifact at the "placeholder" output path that the action wrote to.
-                        // (3) Then we declare a copy from the "placeholder" output path to the content-based path.
-                        // (4) Finally, we ensure everything is materialized.
-                        // (5) Note that we don't need to invalidate the "placeholder" output path, as that is
-                        //     the responsibility of any action that subsequently uses it.
-                        if output.as_ref().has_content_based_path() {
-                            let hashed_path = output
-                                .as_ref()
-                                .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
-                                .into_path();
-
-                            let configuration_hash_path = output
-                                .as_ref()
-                                .resolve_configuration_hash_path(&self.artifact_fs)?
-                                .into_path();
-                            let mut builder =
-                                ArtifactValueBuilder::new(self.artifact_fs.fs(), digest_config);
-                            builder.add_symlinked(
-                                &value,
-                                hashed_path.clone(),
-                                &configuration_hash_path,
-                            )?;
-                            let symlink_value = builder.build(&configuration_hash_path)?;
-                            configuration_path_to_content_based_path_symlinks
-                                .push((configuration_hash_path, symlink_value));
-
-                            to_declare.push(DeclareArtifactPayload {
-                                path: output_path.clone(),
-                                artifact: value.dupe(),
-                                persist_full_directory_structure: supports_incremental_remote,
-                            });
-                            output_path_to_content_based_path_copies.push((
-                                hashed_path.clone(),
-                                value.dupe(),
-                                vec![CopiedArtifact {
-                                    src: output_path.clone(),
-                                    dest: hashed_path,
-                                    dest_entry: value.entry().dupe().map_dir(|d| d.as_immutable()),
-                                    executable_bit_override: None,
-                                }],
-                            ));
-                        } else {
-                            to_declare.push(DeclareArtifactPayload {
-                                path: output_path,
-                                artifact: value.dupe(),
-                                persist_full_directory_structure: supports_incremental_remote,
-                            });
-                        }
-                    }
-                    CommandExecutionOutput::TestPath { .. } => {
-                        // Don't declare those as we don't currently have any form of GC so this
-                        // would take up space for nothing, and most importantly, we will never
-                        // need them to be in materializer state for e.g. matching as nothing
-                        // should depend on them.
-                    }
+                // A content-based output is produced at a placeholder path, since its real path
+                // is only known once the content is hashed. The placeholder is scratch shared by
+                // every configuration of this action, which `HostSharingRequirements` keeps from
+                // running at once; this run still holds that permit. The deferred core's
+                // consumers copy from the declared path, and the permit is all that keeps the
+                // next configuration out of the placeholder, so there the output moves to its
+                // content path now. The disk-state core's consumers find content by digest, so
+                // there it is reported where it is, and the lease the result carries keeps the
+                // next configuration out until the result's readers are done.
+                if output.as_ref().has_content_based_path()
+                    && self.content_based_outputs_at() == ContentBasedOutputsAt::ContentPath
+                {
+                    let content_path = output
+                        .as_ref()
+                        .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                        .into_path();
+                    to_publish.push((output_path, content_path, value.dupe()));
+                } else {
+                    to_declare.push(DeclareArtifactPayload {
+                        path: output_path,
+                        artifact: value.dupe(),
+                    });
                 }
 
                 mapped_outputs.insert(output, value);
             }
         }
 
-        let configuration_paths = configuration_path_to_content_based_path_symlinks
-            .iter()
-            .map(|(p, _)| p.clone())
-            .collect();
-        self.materializer.declare_existing(to_declare).await?;
-        buck2_util::future::try_join_all(output_path_to_content_based_path_copies.into_iter().map(
-            |(path, value, copied_artifacts)| {
-                self.materializer
-                    .declare_copy(path, value, copied_artifacts)
-            },
-        ))
-        .await?;
-        buck2_util::future::try_join_all(
-            configuration_path_to_content_based_path_symlinks
-                .into_iter()
-                .map(|(path, value)| self.materializer.declare_copy(path, value, vec![])),
-        )
-        .await?;
-
         self.materializer
-            .ensure_materialized(configuration_paths)
+            .declare_existing(outputs_lease, to_declare)
+            .await?;
+        let published =
+            buck2_util::future::try_join_all(to_publish.into_iter().map(|(src, dest, value)| {
+                self.materializer.publish(outputs_lease, src, dest, value)
+            }))
             .await?;
 
         Ok((
@@ -991,7 +1070,17 @@ impl LocalExecutor {
                 hashing_duration: total_hashing_time,
                 hashed_artifacts_count: total_hashed_outputs,
             },
+            published,
         ))
+    }
+
+    /// Where this executor leaves a content-based output once it has hashed it.
+    fn content_based_outputs_at(&self) -> ContentBasedOutputsAt {
+        if self.materializer.is_disk_state() {
+            ContentBasedOutputsAt::WrittenPath
+        } else {
+            ContentBasedOutputsAt::ContentPath
+        }
     }
 
     async fn acquire_worker_permit(
@@ -1090,7 +1179,7 @@ impl LocalExecutor {
                 Ok(worker) => ControlFlow::Continue((Some(worker), manager)),
                 Err(e) => {
                     let res = {
-                        let manager = check_inputs(
+                        let (manager, _missing_materialized_inputs) = check_inputs(
                             manager,
                             &self.artifact_fs,
                             self.blocking_executor.as_ref(),
@@ -1108,78 +1197,187 @@ impl LocalExecutor {
         }
     }
 
-    async fn prepare_content_based_incremental_actions(
+    /// Resolves an incremental action's record into what its run starts from. Asked before the
+    /// lease over the outputs is taken: a directory the record knows by its fingerprint alone,
+    /// reloaded from sqlite, is asked of the materializer at the path it was left at, which the
+    /// lease displaces, and one the materializer no longer tracks whole makes the run a clean one.
+    async fn recorded_outputs(
+        &self,
+        request: &CommandExecutionRequest,
+    ) -> buck2_error::Result<IncrementalStart> {
+        let record = request
+            .run_action_key()
+            .as_deref()
+            .and_then(|key| self.incremental_db_state.get(key));
+        let recorded = match record.as_deref() {
+            None => return Ok(IncrementalStart::Clean),
+            Some(IncrementalRecord::Leftovers) => return Ok(IncrementalStart::Leftovers),
+            Some(IncrementalRecord::Outputs(recorded)) => recorded,
+        };
+        let mut outputs = Vec::new();
+        // The recorded outputs, each with where the run that made the record left it.
+        let mut left: Vec<(usize, &RecordedOutput, ProjectRelativePathBuf)> = Vec::new();
+        for output in request.outputs() {
+            let path = output
+                .resolve(
+                    &self.artifact_fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?
+                .into_path();
+            let CommandExecutionOutputRef::BuildArtifact { path: artifact, .. } = output else {
+                // Not the record's: `IncrementalRecord::of_result` names build artifacts only,
+                // and no test command runs without `outputs_cleanup`. A test's path is left as
+                // it is.
+                continue;
+            };
+            if let Some(recorded) = recorded.get(artifact.path()) {
+                let left_at = if artifact.is_content_based_path()
+                    && self.content_based_outputs_at() == ContentBasedOutputsAt::ContentPath
+                {
+                    self.artifact_fs
+                        .resolve_build(artifact, Some(&recorded.content_based_path_hash()?))?
+                } else {
+                    path.clone()
+                };
+                left.push((outputs.len(), recorded, left_at));
+            }
+            outputs.push(IncrementalOutput {
+                path,
+                recorded: None,
+            });
+        }
+        let Some(values) = recorded_values(
+            left.iter()
+                .map(|(_, recorded, left_at)| (*recorded, left_at.clone()))
+                .collect(),
+            self.materializer.as_ref(),
+        )
+        .await?
+        else {
+            return Ok(IncrementalStart::Clean);
+        };
+        for ((index, _, left_at), value) in left.into_iter().zip(values) {
+            let output = &mut outputs[index];
+            let from = (left_at != output.path).then_some(left_at);
+            output.recorded = Some((value, from));
+        }
+        Ok(IncrementalStart::Outputs(outputs))
+    }
+
+    /// Puts an incremental action's previous outputs at its output paths, under the write lease
+    /// the run holds over them, all of them or none: a fill that fails, content the CAS no
+    /// longer has, say, makes the run a clean one. It writes at the output paths, so it takes
+    /// the run's claim: until then another executor may still win the action and declare its
+    /// own outputs there.
+    async fn prepare_incremental_outputs(
+        &self,
+        _claimed: &CommandExecutionManagerWithClaim,
+        request: &CommandExecutionRequest,
+        start: IncrementalStart,
+        lease: &WriteLease,
+        cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()> {
+        let outputs = match start {
+            // The tool's own writes: writable already, and linked to nothing.
+            IncrementalStart::Leftovers => return Ok(()),
+            IncrementalStart::Clean => return self.clean_outputs(request, cancellations).await,
+            IncrementalStart::Outputs(outputs) => outputs,
+        };
+        let mut recorded = Vec::new();
+        let mut unrecorded = Vec::new();
+        for output in outputs {
+            match output.recorded {
+                Some((value, from)) => recorded.push((output.path, value, from)),
+                None => unrecorded.push(output.path),
+            }
+        }
+        let filled = fill_each(recorded, |(path, value, from)| async move {
+            self.materializer
+                .fill(
+                    lease,
+                    path.clone(),
+                    value,
+                    from,
+                    self.invocation_re_use_case,
+                    cancellations,
+                )
+                .await
+                .with_buck_error_context(|| {
+                    format!(
+                        "Filling `{path}` with the action's previous output, so the run starts clean"
+                    )
+                })
+        })
+        .await;
+        if let Err(e) = filled {
+            buck2_core::soft_error!("incremental_fill_failed", e);
+            return self.clean_outputs(request, cancellations).await;
+        }
+        if !unrecorded.is_empty() {
+            self.clean_paths(unrecorded, cancellations).await?;
+        }
+        // The run writes its previous outputs in place, which the store may hold by hardlink
+        // and the core may have made read-only.
+        self.materializer
+            .make_outputs_writable(output_paths(&self.artifact_fs, request)?)
+            .await
+    }
+
+    async fn clean_outputs(
         &self,
         request: &CommandExecutionRequest,
         cancellations: &CancellationContext,
     ) -> buck2_error::Result<()> {
-        let declared_content_based_outputs: Vec<BuildArtifactPath> = request
-            .outputs()
-            .filter_map(|output| match output {
-                CommandExecutionOutputRef::BuildArtifact { path, .. }
-                    if path.is_content_based_path() =>
-                {
-                    Some(path.clone())
-                }
-                _ => None,
-            })
-            .collect();
-
-        let outputs_to_delete = declared_content_based_outputs
-            .iter()
-            .map(|path| {
-                self.artifact_fs
-                    .resolve_build(&path, Some(&ContentBasedPathHash::OutputArtifact))
-            })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
-
-        self.materializer
-            .invalidate_many(outputs_to_delete.clone())
-            .await?;
-
-        // Need to clean the placeholder paths before execution as there could be stale outputs that can cause unexpected behavior
-        self.blocking_executor
-            .execute_io(
-                Box::new(CleanOutputPaths {
-                    paths: outputs_to_delete,
-                }),
-                cancellations,
-            )
+        self.clean_paths(output_paths(&self.artifact_fs, request)?, cancellations)
             .await
-            .buck_error_context("Failed to cleanup output directory")?;
-
-        if let Some(state) =
-            get_incremental_path_map(&self.incremental_db_state, &request.run_action_key())
-        {
-            let mut copy_futs = Vec::new();
-
-            for output in declared_content_based_outputs {
-                let p = output.path().to_buf();
-
-                if let Some(content_path) = state.get(&p) {
-                    copy_futs.push(async move {
-                        self.blocking_executor
-                            .execute_io_inline(|| {
-                                self.artifact_fs.fs().copy(
-                                    content_path.clone(),
-                                    self.artifact_fs.resolve_build(
-                                        &output,
-                                        Some(&ContentBasedPathHash::OutputArtifact),
-                                    )?,
-                                )
-                            })
-                            .await
-                    })
-                }
-            }
-
-            // The materialization we do for incremental action outputs is best-effort. The copy
-            // will fail if the materialization failed, and that's okay.
-            join_all(copy_futs).await;
-        }
-
-        Ok(())
     }
+
+    async fn clean_paths(
+        &self,
+        paths: Vec<ProjectRelativePathBuf>,
+        cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()> {
+        self.blocking_executor
+            .execute_io(Box::new(CleanOutputPaths { paths }), cancellations)
+            .await
+            .buck_error_context("Failed to cleanup output directory")
+    }
+}
+
+/// Fills every output at once, as input materialization fetches its roots, and answers with
+/// the first error once every fill has ended. None is abandoned over another's failure: a fill
+/// dropped part-way may go on writing under the lease.
+async fn fill_each<T, F>(
+    outputs: impl IntoIterator<Item = T, IntoIter: ExactSizeIterator>,
+    fill: impl Fn(T) -> F,
+) -> buck2_error::Result<()>
+where
+    F: Future<Output = buck2_error::Result<()>>,
+{
+    buck2_util::future::join_all(outputs.into_iter().map(fill))
+        .await
+        .into_iter()
+        .collect()
+}
+
+/// What an incremental action's run starts from, as its record says.
+enum IncrementalStart {
+    /// Its output paths cleared, as a run with `outputs_cleanup` starts: the action has no
+    /// record, or one that cannot be made good.
+    Clean,
+    /// Whatever is at its output paths, as its last local run left it.
+    Leftovers,
+    /// Each output path holding the value the record has for it, kept where it does already and
+    /// filled where it does not; paths the record lacks cleared.
+    Outputs(Vec<IncrementalOutput>),
+}
+
+/// One output path of an incremental action and what its record has for it.
+struct IncrementalOutput {
+    path: ProjectRelativePathBuf,
+    /// The recorded value and, for a content-based output, the content path it was left at;
+    /// `None` for an output the record lacks.
+    recorded: Option<(ArtifactValue, Option<ProjectRelativePathBuf>)>,
 }
 
 #[async_trait]
@@ -1190,10 +1388,12 @@ impl PreparedCommandExecutor for LocalExecutor {
         manager: CommandExecutionManager,
         cancellations: &CancellationContext,
     ) -> CommandExecutionResult {
-        let manager = manager.with_execution_kind(CommandExecutionKind::Local {
+        let mut manager = manager.with_execution_kind(CommandExecutionKind::Local {
             digest: command.prepared_action.digest(),
             command: command.request.all_args_vec(),
             env: command.request.env().clone(),
+            working_directory: command.request.working_directory().to_owned(),
+            environment_rule: command.request.local_environment_rule(),
         });
         if command.request.executor_preference().requires_remote() {
             return manager.error("local_prepare", LocalExecutionError::RemoteOnlyAction);
@@ -1206,6 +1406,15 @@ impl PreparedCommandExecutor for LocalExecutor {
             digest_config,
         } = command;
 
+        // `All` makes the forkserver skip the network namespace; see
+        // `CommandExecutionRequest::disable_local_network_isolation`.
+        let network_access = if request.disable_local_network_isolation() {
+            Some(NetworkAccess::All)
+        } else {
+            prepared_action.network_access
+        };
+
+        manager.start_waiting_category(WaitingCategory::LocalQueued);
         let local_resource_holders = executor_stage_async(
             buck2_data::LocalStage {
                 stage: Some(buck2_data::AcquireLocalResource {}.into()),
@@ -1235,6 +1444,7 @@ impl PreparedCommandExecutor for LocalExecutor {
                 .acquire(request.host_sharing_requirements()),
         )
         .await;
+        manager.start_waiting_category(WaitingCategory::Unknown);
 
         // If we start running something, we don't want this task to get dropped, because if we do
         // we might interfere with e.g. clean up.
@@ -1249,6 +1459,7 @@ impl PreparedCommandExecutor for LocalExecutor {
                     cancellations,
                     *digest_config,
                     &local_resource_holders,
+                    network_access,
                 )
             })
             .await
@@ -1286,10 +1497,16 @@ impl<'a> StrOrOsStr<'a> {
 pub struct MaterializedInputPaths {
     pub scratch: ScratchPath,
     pub paths: Vec<ProjectRelativePathBuf>,
+    /// Held for as long as the inputs are needed.
+    pub lease: ReadLease,
+    /// Held while the command produces its outputs and scratch content, up to and including
+    /// their report; `None` when there were no such paths.
+    pub outputs: Option<WriteLease>,
 }
 
 /// Materialize all inputs artifact for CommandExecutionRequest so the command can be executed
-/// locally.
+/// locally, and take the write lease over `outputs` and the request's scratch path in the same
+/// request.
 ///
 /// This also discovers the scratch directory if any was passed, but does not yet do anything with
 /// it - call `prep_scratch_path`.
@@ -1298,8 +1515,10 @@ pub async fn materialize_inputs(
     materializer: &dyn Materializer,
     request: &CommandExecutionRequest,
     digest_config: DigestConfig,
+    re_use_case: RemoteExecutorUseCase,
+    mut outputs: Vec<ProjectRelativePathBuf>,
 ) -> buck2_error::Result<MaterializedInputPaths> {
-    let mut paths = vec![];
+    let mut artifacts = vec![];
     let mut scratch = ScratchPath(None);
     let mut configuration_path_to_content_based_path_symlinks = vec![];
 
@@ -1325,7 +1544,7 @@ pub async fn materialize_inputs(
 
                             // TODO(ianc) We want to also create symlinks here for projected artifacts.
                             if artifact.is_projected() {
-                                paths.push(content_based_path);
+                                artifacts.push((content_based_path, artifact_value.dupe()));
                             } else {
                                 let mut builder =
                                     ArtifactValueBuilder::new(artifact_fs.fs(), digest_config);
@@ -1336,11 +1555,11 @@ pub async fn materialize_inputs(
                                 )?;
                                 let symlink_value = builder.build(&configuration_hash_path)?;
                                 configuration_path_to_content_based_path_symlinks
-                                    .push((configuration_hash_path.clone(), symlink_value));
-                                paths.push(configuration_hash_path);
+                                    .push((configuration_hash_path.clone(), symlink_value.dupe()));
+                                artifacts.push((configuration_hash_path, symlink_value));
                             }
                         } else {
-                            paths.push(configuration_hash_path);
+                            artifacts.push((configuration_hash_path, artifact_value.dupe()));
                         }
                     }
                 }
@@ -1349,9 +1568,16 @@ pub async fn materialize_inputs(
                 let path = artifact_fs
                     .buck_out_path_resolver()
                     .resolve_gen(&metadata.path, Some(&metadata.content_hash))?;
-                paths.push(path);
+                artifacts.push((
+                    path,
+                    ArtifactValue::file(FileMetadata {
+                        digest: metadata.digest.dupe(),
+                        is_executable: false,
+                    }),
+                ));
             }
             CommandExecutionInput::ScratchPath(path) => {
+                // The action writes into its scratch path, so it is an output for leasing.
                 let path = artifact_fs.buck_out_path_resolver().resolve_scratch(path)?;
 
                 if scratch.0.is_some() {
@@ -1359,6 +1585,7 @@ pub async fn materialize_inputs(
                         "Multiple scratch paths for one action"
                     ));
                 }
+                outputs.push(path.clone());
                 scratch.0 = Some(path);
             }
             CommandExecutionInput::IncrementalRemoteOutput(..) => {
@@ -1367,6 +1594,9 @@ pub async fn materialize_inputs(
         }
     }
 
+    // No producer declares these symlinks, so the consumer does, as it always has. A
+    // materializer that takes the requested values as the truth about disk ignores this
+    // declaration and creates the symlink from the pair in the request instead.
     buck2_util::future::try_join_all(
         configuration_path_to_content_based_path_symlinks
             .into_iter()
@@ -1374,30 +1604,37 @@ pub async fn materialize_inputs(
     )
     .await?;
 
-    let mut stream = materializer.materialize_many(paths.clone()).await?;
-    while let Some(res) = stream.next().await {
-        match res {
-            Ok(()) => {}
-            Err(MaterializationError::NotFound { source }) => {
-                let corrupted = source.info.origin.guaranteed_by_action_cache();
+    let paths = artifacts.iter().map(|(path, _)| path.clone()).collect();
+    let response = materializer
+        .materialize(MaterializeRequest {
+            artifacts,
+            outputs,
+            purpose: MaterializationPurpose::IntermediateOnly,
+            re_use_case,
+        })
+        .await?;
+    let (lease, outputs) = match response.into_leases() {
+        Ok(leases) => leases,
+        Err(MaterializationError::NotFound { source }) => {
+            let corrupted = source.info.origin.guaranteed_by_action_cache();
 
-                return Err(tag_error!(
-                    "cas_missing_fatal",
-                    MaterializationError::NotFound { source }.into(),
-                    quiet: true,
-                    task: false,
-                    daemon_in_memory_state_is_corrupted: true,
-                    action_cache_is_corrupted: corrupted
-                )
-                .into());
-            }
-            Err(e) => {
-                return Err(e.into());
-            }
+            return Err(tag_error!(
+                "cas_missing_fatal",
+                MaterializationError::NotFound { source }.into(),
+                task: false,
+                daemon_in_memory_state_is_corrupted: true,
+                action_cache_is_corrupted: corrupted
+            ));
         }
-    }
+        Err(e) => return Err(e.into()),
+    };
 
-    Ok(MaterializedInputPaths { scratch, paths })
+    Ok(MaterializedInputPaths {
+        scratch,
+        paths,
+        lease,
+        outputs,
+    })
 }
 
 /// A scratch path discovered during `materialize_inputs`.
@@ -1419,9 +1656,10 @@ async fn check_inputs(
     artifact_fs: &ArtifactFs,
     blocking_executor: &dyn BlockingExecutor,
     request: &CommandExecutionRequest,
-) -> ControlFlow<CommandExecutionResult, CommandExecutionManagerWithClaim> {
+) -> ControlFlow<CommandExecutionResult, (CommandExecutionManagerWithClaim, bool)> {
     let res = blocking_executor
         .execute_io_inline(|| {
+            let mut missing_materialized_inputs = false;
             for input in request.inputs() {
                 match input {
                     CommandExecutionInput::Artifact(group) => {
@@ -1435,13 +1673,19 @@ async fn check_inputs(
                                     }.as_ref())?;
                                 let abs_path = artifact_fs.fs().resolve(&path);
 
+                                let metadata = fs_util::symlink_metadata(&abs_path);
+                                missing_materialized_inputs |= metadata
+                                    .as_ref()
+                                    .is_err_and(|error| {
+                                        error.io_error_kind() == Some(std::io::ErrorKind::NotFound)
+                                    });
+
                                 // We ignore the result here because while we want to tag it, we'd
                                 // prefer to just show the normal error to the user, so we don't
                                 // want to propagate it.
                                 let _ignored = tag_result!(
                                     "missing_local_inputs",
-                                    fs_util::symlink_metadata(&abs_path).buck_error_context("Missing input").map_err(|e| e.into()),
-                                    quiet: true,
+                                    metadata.categorize_internal().buck_error_context("Missing input"),
                                     task: false,
                                     daemon_materializer_state_is_corrupted: true
                                 );
@@ -1460,61 +1704,45 @@ async fn check_inputs(
                 }
             }
 
-            Ok(())
+            Ok(missing_materialized_inputs)
         })
         .await;
 
     match res {
-        Ok(()) => ControlFlow::Continue(manager),
+        Ok(missing_materialized_inputs) => {
+            ControlFlow::Continue((manager, missing_materialized_inputs))
+        }
         Err(err) => ControlFlow::Break(manager.error("local_check_inputs", err)),
     }
 }
 
-/// Materialize all output artifact for CommandExecutionRequest.
-///
-/// Note that the outputs could be from the previous run of the same command if cleanup on the action was not performed.
-/// The above is useful when executing incremental actions first remotely and then locally.
-/// In that case output from remote execution which is incremental state should be materialized prior to local execution.
-/// Such incremental state in fact serves as the input while being output as well.
-async fn materialize_build_outputs(
+/// The command's output paths as `create_output_dirs` prepares them, for the write lease that
+/// covers the run.
+pub fn output_paths(
     artifact_fs: &ArtifactFs,
-    incremental_db_state: &Arc<IncrementalDbState>,
-    materializer: &dyn Materializer,
     request: &CommandExecutionRequest,
 ) -> buck2_error::Result<Vec<ProjectRelativePathBuf>> {
-    let mut paths = vec![];
-    let path_map = get_incremental_path_map(incremental_db_state, request.run_action_key());
-    for output in request.outputs() {
-        match output {
-            CommandExecutionOutputRef::BuildArtifact { path, .. } => {
-                if path.is_content_based_path() {
-                    if let Some(ref state) = path_map {
-                        let p = path.path().to_buf();
-                        if let Some(content_path) = state.get(&p) {
-                            paths.push(content_path.clone());
-                        }
-                    }
-                } else {
-                    paths.push(artifact_fs.resolve_build(path, None)?);
-                }
-            }
-            CommandExecutionOutputRef::TestPath { .. } => {}
-        }
-    }
-
-    materializer.ensure_materialized(paths.clone()).await?;
-
-    Ok(paths)
+    request
+        .outputs()
+        .map(|output| {
+            Ok(output
+                .resolve(
+                    artifact_fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?
+                .path
+                .to_owned())
+        })
+        .collect()
 }
 
-/// Create any output dirs requested by the command. Note that this makes no effort to delete
-/// the output paths first. Eventually it should, but right now this happens earlier. This
-/// would be a separate refactor.
+/// Clears the command's output paths when the command asks for it and creates the directories
+/// its outputs need. Runs once per attempt, under the write lease the caller holds over those
+/// paths (`Materializer::prepare_outputs`).
 pub async fn create_output_dirs(
     artifact_fs: &ArtifactFs,
     request: &CommandExecutionRequest,
-    materializer: Arc<dyn Materializer>,
-    blocking_executor: Arc<dyn BlockingExecutor>,
+    blocking_executor: &dyn BlockingExecutor,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<()> {
     let outputs: Vec<_> = request
@@ -1527,16 +1755,11 @@ pub async fn create_output_dirs(
         })
         .collect::<buck2_error::Result<Vec<_>>>()?;
 
-    // Invalidate all the output paths this action might provide. Note that this is a bit
-    // approximative: we might have previous instances of this action that declared
-    // different outputs with a different materialization method that will become invalid
-    // now. However, nothing should reference those stale outputs, so while this does not
-    // do a good job of cleaning up garbage, it prevents using invalid artifacts.
-    let output_paths = outputs.map(|output| output.path.to_owned());
-    materializer.invalidate_many(output_paths.clone()).await?;
-
     if request.outputs_cleanup {
-        // TODO(scottcao): Move this deletion logic into materializer itself.
+        let output_paths = outputs
+            .iter()
+            .map(|output| output.path.to_owned())
+            .collect::<Vec<_>>();
         blocking_executor
             .execute_io(
                 Box::new(CleanOutputPaths {
@@ -1630,11 +1853,13 @@ mod unix {
         env: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
         working_directory: &AbsPath,
         command_timeout: Option<Duration>,
+        kill_process: DefaultKillProcess,
         env_inheritance: Option<&EnvironmentInheritance>,
         liveliness_observer: impl LivelinessObserver + 'static,
         enable_miniperf: bool,
         cgroup_path: Option<CgroupPathBuf>,
         freeze_rx: impl ActionFreezeEventReceiver,
+        network_access: Option<NetworkAccess>,
     ) -> buck2_error::Result<CommandResult> {
         let exe = exe.as_ref();
 
@@ -1648,11 +1873,14 @@ mod unix {
                 path: working_directory.as_path().as_os_str().as_bytes().to_vec(),
             }),
             env: vec![],
-            timeout: command_timeout.try_map(|d| d.try_into())?,
+            timeout: command_timeout.map(|d| d.try_into()).transpose()?,
             enable_miniperf,
             std_redirects: None,
-            graceful_shutdown_timeout_s: None,
+            graceful_shutdown_timeout_s: kill_process.graceful_shutdown_timeout_s,
             command_cgroup: cgroup_path.map(|p| p.to_string()),
+            network_access: network_access.map(|n| n.into()),
+            timeout_grace_period_s: kill_process.timeout_grace_period_s,
+            kill_detached_descendants: Some(kill_process.kill_detached_descendants),
         };
         apply_local_execution_environment(&mut req, working_directory, env, env_inheritance);
         forkserver
@@ -1710,7 +1938,7 @@ mod unix {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::cell::Cell;
     use std::str;
 
     use assert_matches::assert_matches;
@@ -1721,11 +1949,14 @@ mod tests {
     use buck2_core::fs::buck_out_path::BuckOutPathResolver;
     use buck2_core::fs::project::ProjectRoot;
     use buck2_core::fs::project::ProjectRootTemp;
+    use buck2_error::internal_error;
     use buck2_execute::execute::blocking::testing::DummyBlockingExecutor;
-    use buck2_execute::materialize::nodisk::NoDiskMaterializer;
+    use buck2_hash::BuckMutMap;
     use host_sharing::HostSharingStrategy;
+    use tokio::sync::Semaphore;
 
     use super::*;
+    use crate::materializers::deferred::NoDiskDeferredMaterializer;
 
     fn artifact_fs(project_fs: ProjectRoot) -> ArtifactFs {
         ArtifactFs::new(
@@ -1745,7 +1976,9 @@ mod tests {
 
         let executor = LocalExecutor::new(
             artifact_fs,
-            Arc::new(NoDiskMaterializer),
+            Arc::new(NoDiskDeferredMaterializer::testing_new_no_disk(
+                project_fs.dupe(),
+            )?),
             Arc::new(IncrementalDbState::db_disabled()),
             Arc::new(DummyBlockingExecutor {
                 fs: project_fs.dupe(),
@@ -1760,6 +1993,8 @@ mod tests {
             None,
             None,
             DaemonId::new(),
+            None,
+            RemoteExecutorUseCase::buck2_default(),
         );
 
         Ok((executor, temp.path().root().to_buf(), temp))
@@ -1774,14 +2009,16 @@ mod tests {
             .exec(
                 interpreter,
                 ["-c", "echo $PWD; pwd"],
-                &HashMap::<String, String>::default(),
+                &BuckMutMap::<String, String>::default(),
                 ProjectRelativePath::empty(),
                 None,
+                DefaultKillProcess::default(),
                 None,
                 NoopLivelinessObserver::create(),
                 false,
                 None,
                 futures::stream::pending(),
+                None,
             )
             .await?;
         assert_matches!(status, GatherOutputStatus::Finished { exit_code, .. } if exit_code == 0);
@@ -1807,18 +2044,25 @@ mod tests {
         let (executor, _, _tmpdir) = test_executor()?;
 
         let interpreter = if cfg!(windows) { "powershell" } else { "sh" };
+        let command = if cfg!(windows) {
+            "Start-Sleep -Seconds 2"
+        } else {
+            "sleep 2"
+        };
         let CommandResult { status, .. } = executor
             .exec(
                 interpreter,
-                ["-c", "sleep 2s"],
-                &HashMap::<String, String>::default(),
+                ["-c", command],
+                &BuckMutMap::<String, String>::default(),
                 ProjectRelativePath::empty(),
                 Some(Duration::from_secs(1)),
+                DefaultKillProcess::default(),
                 None,
                 NoopLivelinessObserver::create(),
                 false,
                 None,
                 futures::stream::pending(),
+                None,
             )
             .await?;
         assert_matches!(status, GatherOutputStatus::TimedOut ( duration ) if duration == Duration::from_secs(1));
@@ -1837,19 +2081,81 @@ mod tests {
             .exec(
                 "sh",
                 ["-c", "echo $USER"],
-                &HashMap::<String, String>::default(),
+                &BuckMutMap::<String, String>::default(),
                 ProjectRelativePath::empty(),
                 None,
+                DefaultKillProcess::default(),
                 Some(&EnvironmentInheritance::empty()),
                 NoopLivelinessObserver::create(),
                 false,
                 None,
                 futures::stream::pending(),
+                None,
             )
             .await?;
         assert_matches!(status, GatherOutputStatus::Finished { exit_code, .. } if exit_code == 0);
         assert_eq!(stdout, b"\n");
 
         Ok(())
+    }
+
+    /// Fills that wait at a gate, which counts the ones that got to it.
+    struct Gate {
+        started: Cell<usize>,
+        open: Semaphore,
+    }
+
+    impl Gate {
+        fn new() -> Self {
+            Self {
+                started: Cell::new(0),
+                open: Semaphore::new(0),
+            }
+        }
+
+        async fn fill(&self) -> buck2_error::Result<()> {
+            self.started.set(self.started.get() + 1);
+            self.open.acquire().await.expect("never closed").forget();
+            Ok(())
+        }
+
+        fn let_through(&self, fills: usize) {
+            self.open.add_permits(fills);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fills_are_made_at_once() {
+        let gate = Gate::new();
+        let fills = fill_each(0..3, |_| gate.fill());
+        futures::pin_mut!(fills);
+
+        assert!(futures::poll!(&mut fills).is_pending());
+        assert_eq!(gate.started.get(), 3);
+
+        gate.let_through(3);
+        assert!(fills.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_a_failed_fill_waits_for_the_others() {
+        let gate = Gate::new();
+        let fills = fill_each(0..3, |output| {
+            let gate = &gate;
+            async move {
+                if output == 0 {
+                    Err(internal_error!("The fill of `{output}` failed"))
+                } else {
+                    gate.fill().await
+                }
+            }
+        });
+        futures::pin_mut!(fills);
+
+        assert!(futures::poll!(&mut fills).is_pending());
+        assert_eq!(gate.started.get(), 2);
+
+        gate.let_through(2);
+        assert!(fills.await.is_err());
     }
 }

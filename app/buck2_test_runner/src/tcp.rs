@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use buck2_error::BuckErrorContext;
 use buck2_grpc::DuplexChannel;
 use clap::Parser;
+use futures::future::BoxFuture;
 use tokio::net::TcpStream;
 
 #[derive(Debug, Parser)]
@@ -27,39 +28,42 @@ pub struct Buck2TestRunnerTcp {
 }
 
 impl Buck2TestRunnerTcp {
-    pub async fn run(self) -> buck2_error::Result<()> {
-        // NOTE: We can remove this code once Tokio supports UNIX domain socket or Named pipe
-        // https://github.com/tokio-rs/tokio/issues/2201
+    /// See `Buck2TestRunnerUnix::run` for why this is boxed and not inlinable.
+    #[inline(never)]
+    pub fn run(self) -> BoxFuture<'static, buck2_error::Result<()>> {
+        Box::pin(async move {
+            // NOTE: We can remove this code once Tokio supports UNIX domain socket or Named pipe
+            // https://github.com/tokio-rs/tokio/issues/2201
 
-        // NOTE: We assume the parameters we received from the caller are correct here. If
-        // they're not, things are probably going to go wrong but that's on our caller.
-        //
-        // There are a few ways in which the params could be incorrect:
-        // - The TCP socket addresses aren't valid
-        // - The TCP socket don't exist
-        // - The TCP socket aren't alive
-        let orchestrator_addr: SocketAddr = self
-            .orchestrator_addr
-            .parse()
-            .map_err(|e| buck2_error::internal_error!("Invalid orchestrator address {:#}", e))?;
-        let executor_addr: SocketAddr = self
-            .executor_addr
-            .parse()
-            .map_err(|e| buck2_error::internal_error!("Invalid executor address {:#}", e))?;
+            // NOTE: We assume the parameters we received from the caller are correct here. If
+            // they're not, things are probably going to go wrong but that's on our caller.
+            //
+            // There are a few ways in which the params could be incorrect:
+            // - The TCP socket addresses aren't valid
+            // - The TCP socket don't exist
+            // - The TCP socket aren't alive
+            let orchestrator_addr: SocketAddr = self.orchestrator_addr.parse().map_err(|e| {
+                buck2_error::internal_error!("Invalid orchestrator address {:#}", e)
+            })?;
+            let executor_addr: SocketAddr = self
+                .executor_addr
+                .parse()
+                .map_err(|e| buck2_error::internal_error!("Invalid executor address {:#}", e))?;
 
-        let orchestrator_io = TcpStream::connect(&orchestrator_addr)
-            .await
-            .buck_error_context("Failed to create orchestrator_io")?;
+            let orchestrator_io = TcpStream::connect(&orchestrator_addr)
+                .await
+                .buck_error_context("Failed to create orchestrator_io")?;
 
-        let executor_io = TcpStream::connect(&executor_addr)
-            .await
-            .buck_error_context("Failed to create executor_io")?;
+            let executor_io = TcpStream::connect(&executor_addr)
+                .await
+                .buck_error_context("Failed to create executor_io")?;
 
-        let executor_io = {
-            let (read, write) = tokio::io::split(executor_io);
-            DuplexChannel::new(read, write)
-        };
+            let executor_io = {
+                let (read, write) = tokio::io::split(executor_io);
+                DuplexChannel::new(read, write)
+            };
 
-        crate::service::run(orchestrator_io, executor_io, self.args).await
+            crate::service::run(orchestrator_io, executor_io, self.args).await
+        })
     }
 }

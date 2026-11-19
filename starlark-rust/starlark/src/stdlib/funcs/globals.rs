@@ -26,11 +26,13 @@ use crate::values::none::globals::register_none;
 use crate::values::range::globals::register_range;
 use crate::values::string::globals::register_str;
 use crate::values::tuple::globals::register_tuple;
+use crate::values::types::bytes::globals::register_bytes;
 use crate::values::types::dict::globals::register_dict;
 use crate::values::types::list::globals::register_list;
 use crate::values::types::num::globals::register_num;
 
 pub(crate) fn register_globals(globals: &mut GlobalsBuilder) {
+    register_bytes(globals);
     register_list(globals);
     register_tuple(globals);
     register_dict(globals);

@@ -30,3 +30,43 @@ impl SoftErrorHandler for HardErrorSoftErrorHandler {
         Err(error)
     }
 }
+
+static GLOBAL_SOFT_ERROR_HANDLER: std::sync::OnceLock<&'static (dyn SoftErrorHandler + Sync)> =
+    std::sync::OnceLock::new();
+
+/// Installs a process-global fallback handler, used to report recoverable
+/// internal errors from places where no [`Evaluator`](crate::eval::Evaluator)
+/// is in reach, such as value freezing or span resolution. Without one, such
+/// reports go to stderr.
+///
+/// The first installation wins; later calls are ignored, so a process with two
+/// initialization sites keeps reporting through the handler installed first.
+pub fn set_global_soft_error_handler(handler: &'static (dyn SoftErrorHandler + Sync)) {
+    let _first_installation_wins = GLOBAL_SOFT_ERROR_HANDLER.set(handler);
+
+    // `starlark_syntax` cannot reach this handler directly, so bridge its
+    // corrupt-span reports through here.
+    starlark_syntax::codemap::set_corrupt_span_reporter(|message| {
+        global_soft_error(
+            "corrupt_codemap_span",
+            crate::Error::new_other(std::io::Error::other(message.to_owned())),
+        );
+    });
+}
+
+/// Reports through the global handler; the report is advisory, so a handler
+/// that chooses to fail cannot propagate from here.
+pub(crate) fn global_soft_error(category: &str, error: crate::Error) {
+    match GLOBAL_SOFT_ERROR_HANDLER.get() {
+        Some(handler) => {
+            let _cannot_propagate = handler.soft_error(category, error);
+        }
+        None => {
+            static REPORTED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                eprintln!("starlark: {category}: {error}");
+            }
+        }
+    }
+}

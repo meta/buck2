@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import java.net.URI;
@@ -18,10 +19,12 @@ import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 
 /** Take URI input for class usage data, and output the total class usage as map */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ClassUsageURIParser {
 
   private static final String FILE_SCHEME = "file";
@@ -62,9 +65,10 @@ public class ClassUsageURIParser {
     }
 
     URI jarFileUri = URI.create(split[0]);
+    String jarFileUriScheme = Objects.requireNonNull(jarFileUri.getScheme());
     Preconditions.checkState(
-        jarFileUri.getScheme().equals(FILE_SCHEME)
-            || jarFileUri.getScheme().equals(JIMFS_SCHEME)); // jimfs is used in tests
+        jarFileUriScheme.equals(FILE_SCHEME)
+            || jarFileUriScheme.equals(JIMFS_SCHEME)); // jimfs is used in tests
     Path jarFilePath = Paths.get(jarFileUri);
 
     // Using URI.create here for de-escaping

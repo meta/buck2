@@ -13,4 +13,3 @@ error: `lambda` is not allowed in this dialect
   |
 1 | x = lambda y: y + 1
   |     ^^^^^^^^^^^^^^^
-  |

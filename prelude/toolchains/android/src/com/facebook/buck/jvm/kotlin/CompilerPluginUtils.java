@@ -11,12 +11,16 @@
 package com.facebook.buck.jvm.kotlin;
 
 import com.facebook.buck.core.filesystems.AbsPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.BiPredicate;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CompilerPluginUtils {
 
   public static final String X_PLUGIN_ARG = "-Xplugin=";
@@ -51,7 +55,7 @@ public class CompilerPluginUtils {
   // I'll add unit tests to this here
   public static ImmutableList<String> getKotlinCompilerPluginsArgs(
       AbsPath pluginPath,
-      ImmutableMap<String, String> kotlinCompilerPluginParams,
+      @Nullable ImmutableMap<String, String> kotlinCompilerPluginParams,
       String outputDir) {
     ImmutableList.Builder<String> pluginArgs = ImmutableList.builder();
 
@@ -64,7 +68,8 @@ public class CompilerPluginUtils {
       ImmutableList.Builder<String> pluginOptionStrings = ImmutableList.builder();
 
       for (String pluginOptionKey : kotlinCompilerPluginParams.keySet()) {
-        String pluginOptionValue = kotlinCompilerPluginParams.get(pluginOptionKey);
+        String pluginOptionValue =
+            Objects.requireNonNull(kotlinCompilerPluginParams.get(pluginOptionKey));
 
         if (pluginOptionValue.equals(KOTLIN_PLUGIN_OUT_PLACEHOLDER)) {
           pluginOptionValue = outputDir;

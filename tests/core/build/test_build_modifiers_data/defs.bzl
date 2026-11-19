@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _dummy_impl(ctx: AnalysisContext) -> list[Provider]:
-    output = ctx.actions.write("{}.txt".format(ctx.label.name), "{}\n{}".format(ctx.attrs.os, ctx.attrs.cpu))
+    output = ctx.actions.write("{}.txt".format(ctx.label.name), "{}\n{}".format(ctx.attrs.os, ctx.attrs.cpu), has_content_based_path = False)
     return [DefaultInfo(default_outputs = [output])]
 
 def _impl(_ctx: AnalysisContext) -> list[Provider]:

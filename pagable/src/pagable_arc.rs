@@ -100,6 +100,7 @@
 
 #![allow(unused)]
 
+use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::future::Future;
 use std::num::NonZeroU128;
@@ -113,7 +114,6 @@ use std::sync::atomic::Ordering;
 
 use allocative::Allocative;
 use allocative::Visitor;
-use blake3::traits::digest::const_oid::db::rfc4519::O;
 use dupe::Clone_;
 use dupe::Copy_;
 use dupe::Dupe;
@@ -132,11 +132,14 @@ use crate::PagableSerializer;
 use crate::arc_erase::ArcErase;
 use crate::arc_erase::ArcEraseDyn;
 use crate::arc_erase::ArcEraseType;
+use crate::arc_erase::ArcSerializeOutcome;
 use crate::arc_erase::StdArcEraseType;
-use crate::storage::DataKey;
-use crate::storage::PagableEraseDyn;
-use crate::storage::PagableStorage;
-use crate::storage::PagableStorageHandle;
+use crate::arc_erase::StrongAsWeak;
+use crate::arc_erase::WeakErase;
+use crate::arc_erase::deserialize_arc;
+use crate::storage::data::DataKey;
+use crate::storage::handle::PagableStorageHandle;
+use crate::storage::traits::PagableStorage;
 
 /// A reference-counted smart pointer that supports paging data to/from storage.
 ///
@@ -189,8 +192,14 @@ struct PagableArcStateHolder(AtomicUsize);
 impl PagableArcStateHolder {
     fn get(&self) -> PagableArcState {
         match self.0.load(Ordering::Relaxed) {
-            0 => PagableArcState::Unpinned,
-            1 => PagableArcState::Pinned,
+            0 => {
+                static_assertions::const_assert_eq!(0, PagableArcState::Unpinned as usize);
+                PagableArcState::Unpinned
+            }
+            1 => {
+                static_assertions::const_assert_eq!(1, PagableArcState::Pinned as usize);
+                PagableArcState::Pinned
+            }
             _ => unreachable!(),
         }
     }
@@ -224,10 +233,10 @@ impl PagableArcStateHolder {
 /// is contributing to the pinned_count.
 #[derive(Eq, PartialEq)]
 enum PagableArcState {
-    /// This instance is keeping the data pinned (contributes to pinned_count).
-    Pinned,
     /// This instance is not keeping the data pinned (does not contribute to pinned_count).
     Unpinned,
+    /// This instance is keeping the data pinned (contributes to pinned_count).
+    Pinned,
 }
 
 impl From<PagableArcState> for PagableArcStateHolder {
@@ -332,7 +341,7 @@ impl<T: Pagable> PagableArc<T> {
     ///
     /// * `v` - The value to store
     /// * `storage` - The storage backend for paging operations
-    pub fn new(v: T, storage: std::sync::Arc<dyn PagableStorageHandle>) -> Self {
+    pub fn new(v: T, storage: PagableStorageHandle) -> Self {
         let pointer = triomphe::Arc::new(PagableArcInner::new(v, storage));
         Self {
             state: PagableArcStateHolder(AtomicUsize::new(1)),
@@ -340,10 +349,7 @@ impl<T: Pagable> PagableArc<T> {
         }
     }
 
-    pub(crate) fn new_paged_out(
-        key: &DataKey,
-        storage: std::sync::Arc<dyn PagableStorageHandle>,
-    ) -> Self {
+    pub(crate) fn new_paged_out(key: &DataKey, storage: PagableStorageHandle) -> Self {
         let pointer = triomphe::Arc::new(PagableArcInner::new_paged_out(key, storage));
         Self {
             state: PagableArcStateHolder(AtomicUsize::new(0)),
@@ -369,6 +375,7 @@ impl<T: Pagable> PagableArc<T> {
     /// # Errors
     ///
     /// Returns an error if deserialization from storage fails.
+    #[cfg(any(feature = "tokio", test))]
     pub fn pin_sync(&self) -> crate::Result<PinnedPagableArc<T>>
     where
         T: Pagable,
@@ -436,8 +443,26 @@ impl<T: Pagable> PagableArc<T> {
         self.pointer.get_data_key()
     }
 
+    pub(crate) fn set_data_key(&self, key: DataKey) {
+        self.pointer.set_data_key(key);
+    }
+
+    /// Returns the number of pinned references to the underlying data.
+    /// This is the count of `PagableArc` instances in the `Pinned` state,
+    /// plus any `PinnedPagableArc` instances. Used for testing and debugging.
+    pub(crate) fn pinned_count(&self) -> usize {
+        self.pointer.pinned_count()
+    }
+
+    /// Returns true if this `PagableArc` is in the pinned state.
+    /// Asserts that the underlying pointer's state is consistent with the local state.
     pub(crate) fn is_pinned(&self) -> bool {
-        self.state.get() == PagableArcState::Pinned
+        if self.state.get() == PagableArcState::Pinned {
+            assert!(self.pointer.is_pinned());
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -485,11 +510,19 @@ impl<T: Pagable> Drop for PagableArc<T> {
 /// let pagable = pinned.into_pagable();
 /// pagable.unpin();  // Data may now be evicted
 /// ```
+///
+/// # Before paging a field of this type
+///
+/// Nothing in buck2 deserializes a `PinnedPagableArc` yet, and the
+/// deserialized-arc cache is not ready for one: `PinnedPagableArcWeak` cannot
+/// upgrade a paged-out allocation, so a page-in binds a fresh allocation while
+/// the handles still referring to the first keep their own copy. The fix is to
+/// pin the existing allocation with the freshly deserialized value instead.
 pub struct PinnedPagableArc<T: Pagable> {
     pointer: triomphe::Arc<PagableArcInner<T>>,
 }
 
-impl<T: Pagable> std::fmt::Debug for PinnedPagableArc<T> {
+impl<T: Pagable + std::fmt::Debug> std::fmt::Debug for PinnedPagableArc<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Arc")
             .field("pointer", &self.pointer)
@@ -521,7 +554,7 @@ impl<T: Pagable> PinnedPagableArc<T> {
     ///
     /// * `v` - The value to store
     /// * `storage` - The storage backend for paging operations
-    pub fn new(v: T, storage: std::sync::Arc<dyn PagableStorageHandle>) -> Self {
+    pub fn new(v: T, storage: PagableStorageHandle) -> Self {
         let pointer = triomphe::Arc::new(PagableArcInner::new(v, storage));
         Self { pointer }
     }
@@ -546,6 +579,13 @@ impl<T: Pagable> PinnedPagableArc<T> {
 
     fn new_from_ptr(pointer: triomphe::Arc<PagableArcInner<T>>) -> Self {
         Self { pointer }
+    }
+
+    /// Tests whether two `PinnedPagableArc`s point to the same allocation.
+    ///
+    /// Returns `true` if both arcs point to the same underlying data.
+    pub fn ptr_eq(left: &Self, right: &Self) -> bool {
+        triomphe::Arc::ptr_eq(&left.pointer, &right.pointer)
     }
 
     /// Converts this pinned reference into a `PagableArc`.
@@ -607,17 +647,7 @@ struct PagableArcInner<T> {
     /// the lock, but transitions when count reaches 0 require it.
     lock: Mutex<()>,
     data: UnsafeCell<PagableArcInnerData<T>>,
-    storage: std::sync::Arc<dyn PagableStorageHandle>,
-}
-
-impl<T: Pagable> PagableEraseDyn for PagableArc<T> {
-    fn as_arc_erase_dyn(&self) -> &dyn ArcEraseDyn {
-        self
-    }
-
-    fn write_to_storage(&self, serializer: &mut dyn PagableStorage) -> anyhow::Result<()> {
-        Ok(())
-    }
+    storage: PagableStorageHandle,
 }
 
 unsafe impl<T> Sync for PagableArcInner<T> {}
@@ -641,7 +671,7 @@ struct PagableArcInnerData<T> {
 impl<T> PagableArcInnerData<T> {
     fn new_paged_out(key: &DataKey) -> Self {
         Self {
-            key: Some(*key),
+            key: (*key).into(),
             value: PagableArcInnerState::PagedOut,
         }
     }
@@ -695,25 +725,32 @@ enum PagableArcInnerState<T> {
 impl<T> PagableArcInnerState<T> {
     fn unwrap_ready(&self) -> &T {
         match self {
-            PagableArcInnerState::Pinned(t) => &t,
-            PagableArcInnerState::Unpinned(_) => panic!(),
-            PagableArcInnerState::PagedOut => panic!(),
+            PagableArcInnerState::Pinned(t) => t,
+            PagableArcInnerState::Unpinned(_) => panic!("Unpinned state is not ready"),
+            PagableArcInnerState::PagedOut => panic!("PagedOut state is not ready"),
         }
     }
 
     fn unwrap_into_ready(self) -> std::sync::Arc<T> {
         match self {
             PagableArcInnerState::Pinned(t) => t,
-            PagableArcInnerState::Unpinned(_) => panic!(),
-            PagableArcInnerState::PagedOut => panic!(),
+            PagableArcInnerState::Unpinned(_) => panic!("Unpinned state is not ready"),
+            PagableArcInnerState::PagedOut => panic!("PagedOut state is not ready"),
         }
     }
 }
 
+// On 64-bit platforms, the struct packs into 8 usizes. On 32-bit wasm32,
+// fixed-size fields like DataKey stay 16 bytes while pointers shrink to 4,
+// so the struct occupies 10 usizes instead. Other 32-bit targets like armv7 have different
+// Mutex layout and pack tighter, so we do not assert a fixed size there.
+#[cfg(target_pointer_width = "64")]
 static_assertions::assert_eq_size!(PagableArcInner<[usize; 4]>, [usize; 8]);
+#[cfg(target_arch = "wasm32")]
+static_assertions::assert_eq_size!(PagableArcInner<[usize; 4]>, [usize; 10]);
 
 impl<T: Pagable> PagableArcInner<T> {
-    pub fn new_paged_out(key: &DataKey, storage: std::sync::Arc<dyn PagableStorageHandle>) -> Self {
+    pub fn new_paged_out(key: &DataKey, storage: PagableStorageHandle) -> Self {
         Self {
             pinned_count: AtomicUsize::new(0),
             lock: Mutex::new(()),
@@ -722,7 +759,7 @@ impl<T: Pagable> PagableArcInner<T> {
         }
     }
 
-    fn new(value: T, storage: std::sync::Arc<dyn PagableStorageHandle>) -> Self {
+    fn new(value: T, storage: PagableStorageHandle) -> Self {
         Self {
             pinned_count: AtomicUsize::new(1),
             lock: Mutex::new(()),
@@ -776,21 +813,15 @@ impl<T: Pagable> PagableArcInner<T> {
                 let key = data.key.unwrap();
                 drop((data, lock));
 
-                let value: std::sync::Arc<T> = self
-                    .storage
-                    .deserialize_pagable(&key)
-                    .await?
-                    .as_arc_any()
-                    .downcast_ref::<std::sync::Arc<T>>()
-                    .unwrap()
-                    .dupe();
+                let value: std::sync::Arc<T> =
+                    std::sync::Arc::new(self.storage.deserialize_pagable_data(&key).await?);
 
                 let _lock = self.lock.lock();
                 let data = unsafe { &mut *self.data.get() };
                 data.pin(value);
             }
 
-            self.pinned_count.fetch_add(1, Ordering::Relaxed);
+            self.pinned_count.fetch_add(1, Ordering::Release);
 
             Ok(())
         }
@@ -798,6 +829,7 @@ impl<T: Pagable> PagableArcInner<T> {
 
     /// Ensures data is pinned, blocking if deserialization is needed.
     /// Adds one to pinned_count on success.
+    #[cfg(any(feature = "tokio", test))]
     fn alloc_pinned_blocking(&self) -> anyhow::Result<()>
     where
         T: Pagable,
@@ -815,7 +847,7 @@ impl<T: Pagable> PagableArcInner<T> {
     fn try_alloc_pinned(&self) -> bool {
         if self
             .pinned_count
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+            .try_update(Ordering::Acquire, Ordering::Relaxed, |v| {
                 if v == 0 { None } else { Some(v + 1) }
             })
             .is_ok()
@@ -826,9 +858,8 @@ impl<T: Pagable> PagableArcInner<T> {
         {
             let _lock = self.lock.lock();
             let data = unsafe { &mut *self.data.get() };
-            let needs_paging_in = data.try_pin();
-            if !needs_paging_in {
-                self.pinned_count.fetch_add(1, Ordering::Relaxed);
+            if data.try_pin() {
+                self.pinned_count.fetch_add(1, Ordering::Release);
                 return true;
             }
         }
@@ -851,16 +882,17 @@ impl<T: Pagable> PagableArcInner<T> {
     /// - Thread B: try_alloc_pinned slow path, acquires lock, increments count to 1
     /// - Thread A: acquires lock, but count is now 1, so we must NOT transition
     fn release_pin(ptr: &triomphe::Arc<Self>) {
-        if ptr.pinned_count.fetch_sub(1, Ordering::Relaxed) == 1 {
+        if ptr.pinned_count.fetch_sub(1, Ordering::Release) == 1 {
+            std::sync::atomic::fence(Ordering::Acquire);
             let _lock = ptr.lock.lock();
             if ptr.pinned_count.load(Ordering::Relaxed) == 0 {
                 let data: &mut _ = unsafe { &mut *ptr.data.get() };
                 if data.unpin() {
-                    let d: Box<PagableArc<_>> = Box::new(PagableArc {
+                    let d = PagableArc {
                         state: PagableArcState::Unpinned.into(),
                         pointer: ptr.clone(),
-                    });
-                    ptr.storage.schedule_for_paging(d as _);
+                    };
+                    ptr.storage.schedule_for_paging(d);
                 }
             }
         }
@@ -878,31 +910,62 @@ impl<T: Pagable> PagableArcInner<T> {
         let _lock = self.lock.lock();
         unsafe { &*self.data.get() }.key
     }
+
+    pub(crate) fn set_data_key(&self, key: DataKey) {
+        let _lock = self.lock.lock();
+        let mut data = unsafe { &mut *self.data.get() };
+        data.key = key.into();
+        take_mut::take(&mut data.value, |v| match v {
+            PagableArcInnerState::Unpinned(_) | PagableArcInnerState::PagedOut => {
+                PagableArcInnerState::PagedOut
+            }
+            v => v,
+        });
+    }
+
+    /// Returns the current pinned reference count. This count represents the number
+    /// of `PagableArc` instances in `Pinned` state plus any `PinnedPagableArc` instances.
+    pub(crate) fn pinned_count(&self) -> usize {
+        self.pinned_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns true if the pinned count is greater than zero.
+    /// Asserts that when pinned_count > 0, the inner state is actually `Pinned`,
+    /// ensuring consistency between the atomic counter and the state machine.
+    pub(crate) fn is_pinned(&self) -> bool {
+        if self.pinned_count.load(Ordering::Relaxed) > 0 {
+            let _lock = self.lock.lock();
+            if self.pinned_count.load(Ordering::Relaxed) > 0 {
+                assert!(matches!(
+                    unsafe { &*self.data.get() }.value,
+                    PagableArcInnerState::Pinned(_)
+                ));
+                return true;
+            }
+        }
+        false
+    }
 }
 
 impl<T: Pagable> PagableSerialize for PagableArc<T> {
-    fn pagable_serialize<S: PagableSerializer>(&self, serializer: &mut S) -> anyhow::Result<()> {
-        serializer.serialize_arc(self.dupe())
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> anyhow::Result<()> {
+        serializer.serialize_arc(self)
     }
 }
 
 impl<'de, T: Pagable> PagableDeserialize<'de> for PagableArc<T> {
-    fn pagable_deserialize<D: PagableDeserializer<'de>>(
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
         deserializer: &mut D,
     ) -> crate::Result<Self> {
-        deserializer.deserialize_arc::<Self>()
+        deserialize_arc::<Self, _>(deserializer)
     }
 }
 
 impl<T: Pagable> ArcErase for PagableArc<T> {
-    type Weak = ();
+    type Weak = StrongAsWeak<Self>;
 
     fn dupe_strong(&self) -> Self {
         self.dupe()
-    }
-
-    fn upgrade_weak(weak: &Self::Weak) -> Option<Self> {
-        None
     }
 
     fn erase_type() -> impl ArcEraseType {
@@ -914,15 +977,130 @@ impl<T: Pagable> ArcErase for PagableArc<T> {
     }
 
     fn downgrade(&self) -> Option<Self::Weak> {
-        None
+        // An unpinned handle preserves identity without holding the value in
+        // memory, which is all a weak reference would do.
+        Some(StrongAsWeak::new(Self {
+            state: PagableArcState::Unpinned.into(),
+            pointer: self.pointer.clone(),
+        }))
     }
 
-    fn serialize_inner<S: PagableSerializer>(&self, ser: &mut S) -> anyhow::Result<()> {
-        let strong = self.pin_sync()?;
-        <T as PagableSerialize>::pagable_serialize(&strong, ser)
+    fn is_unique(&self) -> bool {
+        self.pointer.is_unique()
     }
 
-    fn deserialize_inner<'de, D: PagableDeserializer<'de>>(deser: &mut D) -> anyhow::Result<Self> {
+    fn set_data_key(&self, k: DataKey) {
+        self.set_data_key(k);
+    }
+
+    fn data_key(&self) -> Option<DataKey> {
+        self.get_data_key()
+    }
+
+    fn needs_paging_out(&self) -> bool {
+        self.get_data_key().is_none()
+    }
+
+    fn serialize_inner(
+        &self,
+        ser: &mut dyn PagableSerializer,
+    ) -> anyhow::Result<ArcSerializeOutcome> {
+        #[cfg(any(feature = "tokio", test))]
+        {
+            let strong = self.pin_sync()?;
+            <T as PagableSerialize>::pagable_serialize(&strong, ser)?;
+            Ok(ArcSerializeOutcome::Serialized)
+        }
+        #[cfg(not(any(feature = "tokio", test)))]
+        {
+            Err(anyhow::anyhow!(
+                "Cannot serialize PagableArc without tokio feature"
+            ))
+        }
+    }
+
+    fn deserialize_inner<'de, D: PagableDeserializer<'de> + ?Sized>(
+        deser: &mut D,
+    ) -> anyhow::Result<Self> {
+        Ok(Self::new(
+            <T as PagableDeserialize>::pagable_deserialize(deser)?,
+            deser.storage().dupe(),
+        ))
+    }
+}
+
+impl<T: Pagable> PagableSerialize for PinnedPagableArc<T> {
+    fn pagable_serialize(&self, serializer: &mut dyn PagableSerializer) -> anyhow::Result<()> {
+        serializer.serialize_arc(self)
+    }
+}
+
+impl<'de, T: Pagable> PagableDeserialize<'de> for PinnedPagableArc<T> {
+    fn pagable_deserialize<D: PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> crate::Result<Self> {
+        deserialize_arc::<Self, _>(deserializer)
+    }
+}
+
+/// Weak form of a [`PinnedPagableArc`]: an unpinned handle, so a cache holding
+/// it leaves the value free to page out.
+pub struct PinnedPagableArcWeak<T: Pagable>(PagableArc<T>);
+
+impl<T: Pagable> WeakErase for PinnedPagableArcWeak<T> {
+    fn is_expired(&self) -> bool {
+        self.0.pointer.is_unique()
+    }
+
+    /// Pins the value if it is resident. A paged-out value is not read back;
+    /// the caller deserializes afresh instead.
+    fn upgrade_weak(&self) -> Option<Box<dyn ArcEraseDyn>> {
+        if !self.0.pointer.try_alloc_pinned() {
+            return None;
+        }
+        Some(Box::new(PinnedPagableArc::new_from_ptr(
+            self.0.pointer.clone(),
+        )))
+    }
+}
+
+impl<T: Pagable> ArcErase for PinnedPagableArc<T> {
+    type Weak = PinnedPagableArcWeak<T>;
+
+    fn dupe_strong(&self) -> Self {
+        self.dupe()
+    }
+
+    fn erase_type() -> impl ArcEraseType {
+        StdArcEraseType::<Self>::new()
+    }
+
+    fn identity(&self) -> usize {
+        self.pointer.as_ptr() as usize
+    }
+
+    fn downgrade(&self) -> Option<Self::Weak> {
+        Some(PinnedPagableArcWeak(PagableArc {
+            state: PagableArcState::Unpinned.into(),
+            pointer: self.pointer.clone(),
+        }))
+    }
+
+    fn is_unique(&self) -> bool {
+        self.pointer.is_unique()
+    }
+
+    fn serialize_inner(
+        &self,
+        ser: &mut dyn PagableSerializer,
+    ) -> anyhow::Result<ArcSerializeOutcome> {
+        <T as PagableSerialize>::pagable_serialize(self, ser)?;
+        Ok(ArcSerializeOutcome::Serialized)
+    }
+
+    fn deserialize_inner<'de, D: PagableDeserializer<'de> + ?Sized>(
+        deser: &mut D,
+    ) -> anyhow::Result<Self> {
         Ok(Self::new(
             <T as PagableDeserialize>::pagable_deserialize(deser)?,
             deser.storage().dupe(),

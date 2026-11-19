@@ -33,9 +33,8 @@ use crate::eval::compiler::scope::payload::CstStmt;
 use crate::eval::compiler::scope::payload::CstTypeExpr;
 use crate::eval::compiler::span::IrSpanned;
 use crate::eval::runtime::frame_span::FrameSpan;
-use crate::eval::runtime::frozen_file_span::FrozenFileSpan;
+use crate::eval::runtime::heap_file_span::HeapFileSpan;
 use crate::typing::Ty;
-use crate::values::FrozenValue;
 use crate::values::Value;
 use crate::values::types::ellipsis::Ellipsis;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
@@ -50,23 +49,21 @@ enum TypesError {
     ModuleVariableNotSet(String),
     #[error("Type payload not set (internal error)")]
     TypePayloadNotSet,
-    #[error("[] can only be applied to list function in type expression")]
-    TypeIndexOnNonList,
     #[error("[,] can only be applied to dict or tuple functions in type expression")]
     TypeIndexOnNonDictOrTuple,
 }
 
-impl<'v> Compiler<'v, '_, '_, '_> {
+impl<'v, 'fm> Compiler<'v, '_, '_, '_, 'fm> {
     /// Compile expression when it is expected to be interpreted as type.
     pub(crate) fn expr_for_type(
         &mut self,
-        expr: Option<&CstTypeExpr>,
-    ) -> Option<IrSpanned<TypeCompiled<FrozenValue>>> {
+        expr: Option<&CstTypeExpr<'fm>>,
+    ) -> Option<IrSpanned<'fm, TypeCompiled<'fm>>> {
         if !self.check_types {
             return None;
         }
         let expr = expr?;
-        let span = FrameSpan::new(FrozenFileSpan::new(self.codemap, expr.span));
+        let span = FrameSpan::new(HeapFileSpan::new(self.codemap, expr.span));
         let Some(ty) = &expr.payload.compiler_ty else {
             // This is unreachable. But unfortunately we do not return error here.
             // Still make an error in panic to produce nice panic message.
@@ -83,24 +80,27 @@ impl<'v> Compiler<'v, '_, '_, '_> {
         if type_value.is_runtime_wildcard() {
             return None;
         }
-        let type_value = type_value.to_frozen(self.eval.frozen_heap());
+        let type_value = type_value.to_frozen(self.fh);
         Some(IrSpanned {
             span,
             node: type_value,
         })
     }
 
-    /// We evaluated type expression to `Value`, now convert it to `FrozenValue`.
+    /// Compile the value a type expression evaluated to.
     fn alloc_value_for_type(
         &mut self,
         value: Value<'v>,
         span: Span,
-    ) -> Result<TypeCompiled<Value<'v>>, EvalException> {
+    ) -> Result<TypeCompiled<'v>, EvalException> {
         let ty = TypeCompiled::new(value, self.eval.heap());
         ty.map_err(|e| EvalException::new_anyhow(e, span, &self.codemap))
     }
 
-    fn eval_ident_in_type_expr(&mut self, ident: &CstIdent) -> Result<Value<'v>, EvalException> {
+    fn eval_ident_in_type_expr(
+        &mut self,
+        ident: &CstIdent<'fm>,
+    ) -> Result<Value<'v>, EvalException> {
         let Some(ident_payload) = &ident.node.payload else {
             return Err(EvalException::new_anyhow(
                 TypesError::UnresolvedIdentifier.into(),
@@ -124,13 +124,13 @@ impl<'v> Compiler<'v, '_, '_, '_> {
                     )),
                 }
             }
-            ResolvedIdent::Global(v) => Ok(v.to_value()),
+            ResolvedIdent::Global(v) => Ok(self.edge.rebrand(*v)),
         }
     }
 
     /// We may use non-frozen values as types, so we don't reuse `expr_ident` function
     /// which is used in normal compilation.
-    fn eval_path(&mut self, path: TypePathP<CstPayload>) -> Result<Value<'v>, EvalException> {
+    fn eval_path(&mut self, path: TypePathP<CstPayload<'fm>>) -> Result<Value<'v>, EvalException> {
         let TypePathP { first, rem } = path;
         let mut value = self.eval_ident_in_type_expr(first)?;
         for step in rem {
@@ -143,8 +143,8 @@ impl<'v> Compiler<'v, '_, '_, '_> {
 
     fn eval_expr_as_type(
         &mut self,
-        expr: Spanned<TypeExprUnpackP<CstPayload>>,
-    ) -> Result<TypeCompiled<Value<'v>>, EvalException> {
+        expr: Spanned<TypeExprUnpackP<CstPayload<'fm>>>,
+    ) -> Result<TypeCompiled<'v>, EvalException> {
         let span = expr.span;
         let value = self.eval_expr(expr)?;
         self.alloc_value_for_type(value, span)
@@ -154,29 +154,20 @@ impl<'v> Compiler<'v, '_, '_, '_> {
     /// It is very restricted in what it can do.
     fn eval_expr(
         &mut self,
-        expr: Spanned<TypeExprUnpackP<CstPayload>>,
+        expr: Spanned<TypeExprUnpackP<CstPayload<'fm>>>,
     ) -> Result<Value<'v>, EvalException> {
         match expr.node {
-            TypeExprUnpackP::Ellipsis => Ok(Ellipsis::new_value().to_value()),
+            TypeExprUnpackP::Ellipsis => Ok(Ellipsis::new_value()),
             TypeExprUnpackP::List(items) => {
                 let values: Vec<_> = items
                     .into_iter()
                     .map(|item| self.eval_expr(item))
                     .collect::<Result<_, _>>()?;
-                Ok(self.eval.heap().alloc_list(&values))
+                Ok(self.eval.heap().alloc_list(&values).to_value())
             }
             TypeExprUnpackP::Path(path) => self.eval_path(path),
             TypeExprUnpackP::Index(a, i) => {
-                let a = self.eval_ident_in_type_expr(a)?;
-                if !a.ptr_eq(Constants::get().fn_list.0.to_value())
-                    && !a.ptr_eq(Constants::get().fn_set.0.to_value())
-                {
-                    return Err(EvalException::new_anyhow(
-                        TypesError::TypeIndexOnNonList.into(),
-                        expr.span,
-                        &self.codemap,
-                    ));
-                }
+                let a = self.eval_path(a.node)?;
                 let i = self.eval_expr_as_type(*i)?;
                 a.get_ref()
                     .at(i.to_inner(), self.eval.heap())
@@ -184,9 +175,9 @@ impl<'v> Compiler<'v, '_, '_, '_> {
             }
             TypeExprUnpackP::Index2(a, i0, i1) => {
                 let a = self.eval_path(a.node)?;
-                if a.ptr_eq(Constants::get().fn_dict.0.to_value())
-                    || a.ptr_eq(Constants::get().fn_tuple.0.to_value())
-                    || a.ptr_eq(Constants::get().typing_callable.0.to_value())
+                if Constants::get().fn_dict.is(a)
+                    || Constants::get().fn_tuple.is(a)
+                    || Constants::get().typing_callable.is(a)
                 {
                     let i0 = self.eval_expr(*i0)?;
                     let i1 = self.eval_expr(*i1)?;
@@ -217,7 +208,7 @@ impl<'v> Compiler<'v, '_, '_, '_> {
 
     fn populate_types_in_type_expr(
         &mut self,
-        type_expr: &mut CstTypeExpr,
+        type_expr: &mut CstTypeExpr<'fm>,
     ) -> Result<(), EvalException> {
         if type_expr.payload.compiler_ty.is_some() {
             return Err(EvalException::new(
@@ -235,7 +226,7 @@ impl<'v> Compiler<'v, '_, '_, '_> {
 
     pub(crate) fn populate_types_in_stmt(
         &mut self,
-        stmt: &mut CstStmt,
+        stmt: &mut CstStmt<'fm>,
     ) -> Result<(), EvalException> {
         stmt.visit_type_expr_err_mut(&mut |type_expr| self.populate_types_in_type_expr(type_expr))
     }

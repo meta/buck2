@@ -22,6 +22,7 @@ use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::internal_error;
 use buck2_node::attrs::display::AttrDisplayWithContext;
 use buck2_node::attrs::display::AttrDisplayWithContextExt;
@@ -39,6 +40,7 @@ use buck2_util::truncate::truncate;
 use dice::DiceTransaction;
 use dice::LinearRecomputeDiceComputations;
 use dupe::Dupe;
+use futures::FutureExt;
 
 use crate::query::printer::ProviderLookUp;
 use crate::query::printer::QueryResultPrinter;
@@ -47,8 +49,8 @@ use crate::query::query_target_ext::QueryCommandTarget;
 use crate::query::starlark_profile::write_query_profile_for_targets;
 
 impl QueryCommandTarget for ConfiguredTargetNode {
-    fn call_stack(&self) -> Option<String> {
-        ConfiguredTargetNode::call_stack(self)
+    fn call_stack(&self) -> buck2_error::Result<Option<String>> {
+        Ok(self.body()?.call_stack())
     }
 
     fn attr_to_string_alternate(&self, options: AttrFmtOptions, attr: &Self::Attr<'_>) -> String {
@@ -137,11 +139,11 @@ impl ServerCommandTemplate for CqueryServerCommand {
 
 async fn cquery(
     server_ctx: &dyn ServerCommandContextTrait,
-    mut stdout: impl Write,
-    mut ctx: DiceTransaction,
+    mut stdout: impl Write + Send,
+    ctx: DiceTransaction,
     request: &CqueryRequest,
 ) -> buck2_error::Result<CqueryResponse> {
-    let cell_resolver = ctx.get_cell_resolver().await?;
+    let cell_resolver = ctx.ctx().get_cell_resolver().await?;
     let output_configuration = QueryResultPrinter::from_request_options(
         &cell_resolver,
         &request.output_attributes,
@@ -174,7 +176,7 @@ async fn cquery(
             .as_ref()
             .internal_error("target_cfg must be set")?,
         server_ctx,
-        &mut ctx,
+        &mut ctx.ctx(),
     )
     .await?;
 
@@ -186,7 +188,7 @@ async fn cquery(
     let (query_result, universes) = QUERY_FRONTEND
         .get()?
         .eval_cquery(
-            &mut ctx,
+            &mut ctx.ctx(),
             server_ctx.working_dir(),
             query,
             query_args,
@@ -204,7 +206,7 @@ async fn cquery(
         }
 
         write_query_profile_for_targets(
-            &mut ctx,
+            &mut ctx.ctx(),
             profile_mode,
             request.profile_output.as_deref(),
             universes.iter().flat_map(|u| {
@@ -215,50 +217,52 @@ async fn cquery(
             }),
         )
         .await?;
-    } else {
-        if universes.is_some() {
-            return Err(internal_error!("We did not request universes"));
-        }
+    } else if universes.is_some() {
+        return Err(internal_error!("We did not request universes"));
     }
 
-    ctx.with_linear_recompute(|ctx| async move {
-        let should_print_providers = if *show_providers {
-            ShouldPrintProviders::Yes(&ctx as &dyn ProviderLookUp<ConfiguredTargetNode>)
-        } else {
-            ShouldPrintProviders::No
-        };
+    ctx.ctx()
+        .with_linear_recompute(|ctx| {
+            async move {
+                let should_print_providers = if *show_providers {
+                    ShouldPrintProviders::Yes(&ctx as &dyn ProviderLookUp<ConfiguredTargetNode>)
+                } else {
+                    ShouldPrintProviders::No
+                };
 
-        match query_result {
-            QueryEvaluationResult::Single(targets) => {
-                output_configuration
-                    .print_single_output(
-                        &mut stdout,
-                        targets,
-                        target_call_stacks,
-                        should_print_providers,
-                    )
-                    .await?
+                match query_result {
+                    QueryEvaluationResult::Single(targets) => {
+                        output_configuration
+                            .print_single_output(
+                                &mut stdout,
+                                targets,
+                                target_call_stacks,
+                                should_print_providers,
+                            )
+                            .await?
+                    }
+                    QueryEvaluationResult::Multiple(results) => {
+                        output_configuration
+                            .print_multi_output(
+                                &mut stdout,
+                                results,
+                                target_call_stacks,
+                                should_print_providers,
+                            )
+                            .await?
+                    }
+                };
+                buck2_error::Ok(())
             }
-            QueryEvaluationResult::Multiple(results) => {
-                output_configuration
-                    .print_multi_output(
-                        &mut stdout,
-                        results,
-                        target_call_stacks,
-                        should_print_providers,
-                    )
-                    .await?
-            }
-        };
-        buck2_error::Ok(())
-    })
-    .await?;
+            .boxed()
+        })
+        .await?;
 
     Ok(CqueryResponse {})
 }
 
 #[async_trait]
-impl ProviderLookUp<ConfiguredTargetNode> for LinearRecomputeDiceComputations<'_> {
+impl ProviderLookUp<ConfiguredTargetNode> for LinearRecomputeDiceComputations<'_, '_> {
     async fn lookup(
         &self,
         t: &ConfiguredTargetNode,

@@ -1,0 +1,23 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error evaluating build file: `root//within_view_preserve/child_bad/bad_dep:TARGETS.fixture`
+
+Caused by:
+    0: error: checking `within_view` for attribute `deps` of `root//within_view_preserve/child_bad/bad_dep:c`
+         --> within_view_preserve/child_bad/bad_dep/TARGETS.fixture:9:1
+          |
+        9 | / stub(
+       10 | |     name = "c",
+       11 | |     visibility = ["PUBLIC"],
+       12 | |     deps = ["root//some_other:t"],
+       13 | | )
+          | |_^
+       Traceback (most recent call last):
+         * within_view_preserve/child_bad/bad_dep/TARGETS.fixture:9, in <module>
+             stub(
+       
+    1: Target's `within_view` attribute does not allow dependency `root//some_other:t`. Allowed dependencies:
+         root//within_view_preserve/...
+       

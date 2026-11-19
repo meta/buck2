@@ -1,0 +1,7 @@
+# @oss-disable[end= ]: load(":retrace.fb.bzl", "retrace_targets")
+
+oncall("build_infra")
+
+# The targets are in a Meta-only file. The open-source build compiles retrace with Cargo, because
+# its GUI crates aren't in the open-source Buck third-party shim.
+# @oss-disable[end= ]: retrace_targets()

@@ -1,0 +1,29 @@
+constraint(
+    name = "singleton",
+    default = "unspecified",
+    values = [
+        "schedule-at-exit-disabled",
+        "unspecified",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+constraint(
+    name = "f14-fallback",
+    default = "unspecified",
+    values = [
+        "disabled",
+        "unspecified",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+constraint(
+    name = "gflags",
+    default = "unspecified",
+    values = [
+        "enabled",
+        "unspecified",
+    ],
+    visibility = ["PUBLIC"],
+)

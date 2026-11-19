@@ -7,8 +7,8 @@
 # above-listed licenses.
 
 def _artifacts(ctx):
-    fast = ctx.actions.write("fast", "")
-    slow = ctx.actions.declare_output("slow")
+    fast = ctx.actions.write("fast", "", has_content_based_path = False)
+    slow = ctx.actions.declare_output("slow", has_content_based_path = False)
 
     ctx.actions.run(
         [

@@ -1,0 +1,54 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under both the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree and the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree.
+
+configuration_alias(
+    name = "android",
+    actual = "prelude//os/constraints:os[android]",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "appletvos",
+    actual = "prelude//os/constraints:os[tvos]",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "iphoneos",
+    actual = "prelude//os/constraints:os[iphoneos]",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "linux",
+    actual = "prelude//os/constraints:os[linux]",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "macos",
+    actual = "prelude//os/constraints:os[macos]",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "os",
+    actual = "prelude//os/constraints:os",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "watchos",
+    actual = "prelude//os/constraints:os[watchos]",
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "windows",
+    actual = "prelude//os/constraints:os[windows]",
+    visibility = ["PUBLIC"],
+)

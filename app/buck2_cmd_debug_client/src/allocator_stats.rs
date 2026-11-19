@@ -29,6 +29,10 @@ pub struct AllocatorStatsCommand {
     #[clap(short, long, default_value = "Jmdablxg", value_name = "OPTION")]
     options: String,
 
+    /// If jemalloc is in use, force it to return dirty and muzzy pages to the OS before reading stats. Nop otherwise.
+    #[clap(long)]
+    purge: bool,
+
     #[clap(flatten)]
     common_event_opts: CommonEventLogOptions,
 }
@@ -53,6 +57,7 @@ impl StreamingCommand for AllocatorStatsCommand {
             .unstable_allocator_stats(
                 UnstableAllocatorStatsRequest {
                     options: self.options,
+                    purge: self.purge,
                 },
                 events_ctx,
             )

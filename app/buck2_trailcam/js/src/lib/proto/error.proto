@@ -1,0 +1,438 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is dual-licensed under either the MIT license found in the
+ * LICENSE-MIT file in the root directory of this source tree or the Apache
+ * License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+ * of this source tree. You may select, at your option, one of the
+ * above-listed licenses.
+ */
+
+syntax = "proto3";
+
+// In protobuf, enum values are not namespaced in their type. That means that in
+// any protbuf file, you can only have one enum variant with any given name. The
+// only reason this file exists is to work around that limitation, especially
+// for error types, which may often have a name that might also make sense
+// elsewhere.
+package buck.data.error;
+
+// Error types are - by design - restricted to being set exactly once at the
+// error definition site. While they are useful, that means that they are enough
+// on their own to represent all the error metadata we want. Until we figure out
+// what exactly a more complete model looks like, error tags a mechanism that
+// offers maximum flexibility - they can be added to any error anywhere.
+//
+// Feel free to continue using error types if you like.
+enum ErrorTag {
+  reserved 2001, 11, 19, 6001;
+
+  // Same as above
+  UNUSED_DEFAULT_TAG = 0;
+
+  INPUT = 900;
+  TIER0 = 901;
+  ENVIRONMENT = 902;
+
+  STARLARK_FAIL = 1;
+  STARLARK_ERROR = 100;
+  STARLARK_STACK_OVERFLOW = 102;
+  STARLARK_INTERNAL = 103;
+  STARLARK_VALUE = 104;
+  STARLARK_FUNCTION = 105;
+  STARLARK_SCOPE = 106;
+  STARLARK_PARSER = 107;
+  STARLARK_NATIVE_INPUT = 108;
+
+  WATCHMAN_TIMEOUT = 2;
+  WATCHMAN_REQUEST_ERROR = 201;
+  // Taken from watchman_client::Error
+  WATCHMAN_CONNECTION_ERROR = 202;
+  WATCHMAN_CONNECTION_LOST = 203;
+  WATCHMAN_CONNECTION_DISCOVERY = 204;
+  WATCHMAN_SERVER_ERROR = 205;
+  WATCHMAN_RESPONSE_ERROR = 206;
+  WATCHMAN_MISSING_FIELD = 207;
+  WATCHMAN_DESERIALIZE = 208;
+  WATCHMAN_SERIALIZE = 209;
+  WATCHMAN_CONNECT = 210;
+  WATCHMAN_ROOT_NOT_CONNECTED_ERROR = 211;
+  WATCHMAN_CHECKOUT_IN_PROGRESS = 212;
+  WATCHMAN_CLIENT = 213;
+
+  NOTIFY_WATCHER = 250;
+
+  HTTP = 3;
+  // Client error (4xx).
+  HTTP_CLIENT = 301;
+  HTTP_UNAUTHORIZED = 3401;
+  HTTP_FORBIDDEN = 3403;
+  // Server error (5xx).
+  HTTP_SERVER = 302;
+  HTTP_SERVICE_UNAVAILABLE = 3503;
+  // gRPC protocol error between client and server from the client side.
+  // - Protocol error (e.g. malformed frame, or too large frame)
+  // - Transport error (e.g. connection closed)
+  // - Not application error (e.g. bzl file not found)
+  CLIENT_GRPC = 4;
+  CLIENT_STARTUP_TIMEOUT = 40;
+  CLIENT_GRPC_STREAM = 41;
+  // Connect to buckd failed.
+  DAEMON_CONNECT = 5;
+  // Daemon is running another command.
+  DAEMON_IS_BUSY = 501;
+  // Daemon was preempted during preemptible command by another command.
+  DAEMON_PREEMPTED = 502;
+  // Daemon start up failed while initializing DaemonStateData.
+  DAEMON_STATE_INIT_FAILED = 503;
+  DAEMON_STATUS = 504;
+  DAEMON_REDIRECT = 505;
+  DAEMON_STARTUP_FAILED = 507;
+  EXIT_STATUS = 517;
+  EXIT_STATUS_UNKNOWN = 519;
+  DAEMON_LAUNCH_FAILED = 508;
+  DAEMON_NESTED_CONSTRAINTS_MISMATCH = 509;
+  DAEMON_CONSTRAINTS_WRONG_AFTER_START = 510;
+  DAEMON_DIR_CLEANUP_FAILED = 511;
+  DAEMON_KILL_FAILED = 512;
+  BUCKD_LIFECYCLE_LOCK = 513;
+  BUCKD_INFO_MISSING = 514;
+  BUCKD_INFO_PARSE_ERROR = 515;
+  DAEMON_DISCONNECT = 516;
+  // Too large gRPC message.
+  GRPC_RESPONSE_MESSAGE_TOO_LARGE = 6;
+  // `visibility`, `within_view`.
+  VISIBILITY = 8;
+  // Server stderr indicates that the server panicked.
+  SERVER_PANICKED = 12;
+  // Server stack overflow.
+  SERVER_STACK_OVERFLOW = 13;
+  // SEGV.
+  SERVER_SEGV = 14;
+  // Server received SIGTERM
+  SERVER_SIGTERM = 400;
+  // Server received SIGABRT
+  SERVER_SIGABRT = 402;
+  // Server received SIGBUS
+  SERVER_SIGBUS = 403;
+  // Server disconnect with no error but memory pressure was detected.
+  SERVER_MEMORY_PRESSURE = 401;
+  DAEMON_OOM_KILLED = 404;
+  // Jemalloc assertion failure.
+  SERVER_JEMALLOC_ASSERT = 15;
+  // Server transport errors. Eg. Channel not open
+  SERVER_TRANSPORT_ERROR = 16;
+  // Internal error in buck2. This is a bug.
+  INTERNAL_ERROR = 21;
+  // Artifact projection to a path that does not exist
+  PROJECT_MISSING_PATH = 22;
+  // The daemon reported that it was shutting down during the execution of this
+  // command
+  INTERRUPTED_BY_DAEMON_SHUTDOWN = 23;
+  // The daemon couldn't be killed
+  DAEMON_WONT_DIE_FROM_KILL = 24;
+  // A process couldn't be killed
+  FAILED_TO_KILL = 8027;
+
+  // Build failed during materialization
+  MATERIALIZATION_ERROR = 26;
+  // Materialization was cancelled
+  MATERIALIZATION_CANCELLED = 2600;
+  // Could not find buck project root
+  NO_BUCK_ROOT = 27;
+
+  // Functionality not implemented in Buck2
+  UNIMPLEMENTED = 29;
+  // Target specified is not found in the package/build file
+  MISSING_TARGET = 30;
+  // Artifact is missing a filename
+  ARTIFACT_MISSING_FILENAME = 31;
+
+  // Path not found for path found in input or source
+  MISSING_INPUT_PATH = 32;
+  // Path not found for buck or system path not provided by user
+  MISSING_INTERNAL_PATH = 33;
+  // NotADirectory for path found in input or source
+  INPUT_PATH_NOT_A_DIRECTORY = 34;
+
+  ACTION_MISMATCHED_OUTPUTS = 601;
+  ACTION_MISSING_OUTPUTS = 602;
+  ACTION_WRONG_OUTPUT_TYPE = 603;
+  ACTION_COMMAND_FAILURE = 604;
+  ACTION_COMMAND_INFRA_FAILURE = 605;
+
+  // Errors during buck2 install.
+  INSTALL = 200;
+  INSTALL_ID_MISMATCH = 2110;
+  INSTALLER_UNKNOWN = 2101;
+  INSTALLER_TIER0 = 2102;
+  INSTALLER_ENVIRONMENT = 2103;
+  INSTALLER_INPUT = 2104;
+
+  //// High level descriptions of the "phase" of the build during which the
+  // error occurred
+  ANALYSIS = 7;
+  ANY_ACTION_EXECUTION = 2000;
+
+  ///// IO SECTION
+  //
+  // Indicates that the IO operation went through the standard system
+  // interfaces, and not through EdenIO - note that the operation may still have
+  // been accessing an Eden mount though
+  IO_SYSTEM = 1000;
+  // IO done on a source file in the repo
+  IO_SOURCE = 1010;
+  // The nature of the failure, designed after (but not identical to) Rust's
+  // `io::ErrorKind`
+  IO_NOT_FOUND = 1020;
+  IO_NOT_A_DIRECTORY = 1031;
+  IO_PERMISSION_DENIED = 1021;
+  IO_BROKEN_PIPE = 1022;
+  IO_STORAGE_FULL = 1023;
+  IO_EXECUTABLE_FILE_BUSY = 1024;
+  IO_CONNECTION_ABORTED = 1025;
+  IO_NOT_CONNECTED = 1026;
+  IO_TIMEOUT = 1027;
+  IO_READ_ONLY_FILESYSTEM = 1029;
+  IO_INPUT_OUTPUT_ERROR = 1030;
+  IO_BAD_ADDRESS = 1033;
+  IO_STALE_NFS_HANDLE = 1034;
+  IO_BLOCKING_EXECUTOR = 8033;
+
+  IO_WINDOWS_SHARING_VIOLATION = 1028;
+  IO_WINDOWS_VIRTUALIZATION_UNAVAILABLE = 1501;
+  IO_WINDOWS_INTERNAL_ERROR = 1502;
+  IO_WINDOWS_PRIVILEGE_NOT_HELD = 1503;
+  IO_WINDOWS_NO_SYSTEM_RESOURCES = 1504;
+
+  //
+  // Eden IO Section
+  // Indicates that the IO operation went through Eden
+  IO_EDEN = 1100;
+  // IO Error encountered in Eden that we do not correspond to a specific error
+  IO_EDEN_UNCATEGORIZED = 1101;
+  // Failures indicating that Eden Failed to Connect or Mount
+  IO_EDEN_CONNECTION_ERROR = 1110;
+  IO_EDEN_REQUEST_ERROR = 1111;
+  IO_EDEN_MOUNT_DOES_NOT_EXIST = 1112;
+  IO_EDEN_MOUNT_NOT_READY = 1113;
+  // The underlying cause of request failures, copied from `edenfs::EdenError`
+  IO_EDEN_WIN32_ERROR = 1150;
+  IO_EDEN_HRESULT_ERROR = 1151;
+  IO_EDEN_ARGUMENT_ERROR = 1152;
+  IO_EDEN_GENERIC_ERROR = 1153;
+  IO_EDEN_MOUNT_GENERATION_CHANGED = 1154;
+  IO_EDEN_JOURNAL_TRUNCATED = 1155;
+  IO_EDEN_CHECKOUT_IN_PROGRESS = 1156;
+  IO_EDEN_OUT_OF_DATE_PARENT = 1157;
+  IO_EDEN_ATTRIBUTE_UNAVAILABLE = 1158;
+  IO_EDEN_UNKNOWN_FIELD = 1160;
+  IO_MATERIALIZER_FILE_BUSY = 1161;
+  IO_EDEN_FILE_NOT_FOUND = 1162;
+  IO_EDEN_LIST_MOUNTS = 1163;
+  IO_EDEN_CONFIG_ERROR = 1164;
+  IO_EDEN_VERSION_ERROR = 1165;
+  IO_EDEN_THRIFT_ERROR = 1166;
+  IO_EDEN_DATA_CORRUPTION = 1167;
+
+  IO_EDEN_NETWORK_UNCATEGORIZED = 1170;
+  IO_EDEN_NETWORK_TLS = 1171;
+  IO_EDEN_NETWORK_CURL_TIMEDOUT = 11728;
+
+  SAPLING = 12000;
+
+  // Client IO
+  // Broken pipe specifically from client stdio streams
+  IO_CLIENT_BROKEN_PIPE = 1201;
+
+  ///// Remote Execution
+  RE_UNKNOWN_TCODE = 1300;
+  // RE TCode values: https://fburl.com/code/1ael5pmz
+  RE_CANCELLED = 1301;
+  RE_UNKNOWN = 1302;
+  RE_INVALID_ARGUMENT = 1303;
+  RE_DEADLINE_EXCEEDED = 1304;
+  RE_NOT_FOUND = 1305;
+  RE_ALREADY_EXISTS = 1306;
+  RE_PERMISSION_DENIED = 1307;
+  RE_RESOURCE_EXHAUSTED = 1308;
+  RE_FAILED_PRECONDITION = 1309;
+  RE_ABORTED = 1310;
+  RE_OUT_OF_RANGE = 1311;
+  RE_UNIMPLEMENTED = 1312;
+  RE_INTERNAL = 1313;
+  RE_UNAVAILABLE = 1314;
+  RE_DATA_LOSS = 1315;
+  RE_UNAUTHENTICATED = 1316;
+  RE_EXPERIMENT_NAME = 1317;
+
+  RE_CLIENT_CRASH = 1320;
+
+  RE_CAS_ARTIFACT_WRONG_NUMBER_OF_INPUTS = 1321;
+  RE_CAS_ARTIFACT_WRONG_NUMBER_OF_OUTPUTS = 1322;
+  RE_CAS_ARTIFACT_GET_DIGEST_EXPIRATION_ERROR = 1323;
+  RE_CAS_ARTIFACT_INVALID_EXPIRATION = 1324;
+  RE_CAS_ARTIFACT_EXPIRED = 1325;
+  RE_INVALID_GET_CAS_RESPONSE = 1326;
+
+  // TCodeReasonGroup values: https://fburl.com/code/pvsy2jgv
+  RE_CONNECTION = 1340;
+  RE_USER_QUOTA = 1341;
+  RE_USER_BAD_CERTS = 1342;
+
+  // Dice Errors
+  // Value: https://fburl.com/code/5dxzaw41
+  DICE_DUPLICATED_CHANGE = 1400;
+  DICE_CHANGED_TO_INVALID = 1401;
+  DICE_INJECTED_KEY_GOT_INVALIDATION = 1402;
+  DICE_CANCELLED = 1403;
+  DICE_UNEXPECTED_CYCLE_GUARD_TYPE = 1404;
+  DICE_DUPLICATE_ACTIVATION_DATA = 1405;
+  DICE_REJECTED = 1406;
+
+  // Error during attribute configuration during target configuration.
+  CONFIGURE_ATTR = 3001;
+
+  // Dep only incompatible error
+  DEP_ONLY_INCOMPATIBLE = 3002;
+  // Generic compatibility error tag
+  COMPATIBILITY_ERROR = 3003;
+  // target configuration is incompatible error
+  TARGET_INCOMPATIBLE = 3004;
+
+  // Action execution
+  DOWNLOAD_FILE_HEAD_REQUEST = 4001;
+  DOWNLOAD_SIZE_MISMATCH = 4002;
+  DIGEST_TTL_MISMATCH = 4103;
+  DIGEST_TTL_INVALID_RESPONSE = 4104;
+
+  // Tests
+  TEST_DEADLINE_EXPIRED = 5001;
+  TEST_ORCHESTRATOR = 5002;
+  TEST_STATUS = 5003;
+  TEST_STATUS_INVALID = 5004;
+  LOCAL_RESOURCE_SETUP = 5005;
+  TEST_FAILED = 5006;
+  TEST_LISTING_FAILED = 5007;
+  TEST_FATAL = 5008;
+  TEST_INFRA_FAILURE = 5009;
+  TEST_STATUS_UNKNOWN = 5010;
+  TEST_TIMEOUT = 5011;
+
+  // Error from TestExecutor
+  TPX = 5500;
+  TestExecutor = 5501;
+
+  TEST_RUNNER_INTERNAL = 5502;
+  TEST_RUNNER_UNKNOWN_EXIT_CODE = 5504;
+
+  // Errors while cleaning stale artifacts
+  CLEAN_STALE = 280;
+  // Clean stale command was interrupted
+  CLEAN_INTERRUPT = 28;
+
+  INVALID_ERROR_REPORT = 6002;
+  INVALID_EVENT = 6003;
+  INVALID_AUTH_TOKEN = 6004;
+  INVALID_DIGEST = 6005;
+  INVALID_DURATION = 6006;
+  INVALID_USERNAME = 6007;
+  INVALID_ABS_PATH = 6008;
+  INVALID_BUCK_OUT_PATH = 6009;
+
+  // Build errors.
+  BUILD_DEADLINE_EXPIRED = 7001;
+  BUILD_SKETCH_ERROR = 7002;
+
+  SUPER_CONSOLE = 8000;
+  SUPER_CONSOLE_INVALID_WHITESPACE = 8001;
+
+  // Misc external error conversions
+  WORKER_INIT = 8500;
+  WORKER_DIRECTORY_EXISTS = 8501;
+  WORKER_CANCELLED = 8502;
+
+  EVENT_LOG_UPLOAD = 8035;
+  EVENT_LOG_NOT_OPEN = 8037;
+  EVENT_LOG_EOF = 8039;
+  EVENT_LOG_INDEX_OUT_OF_BOUNDS = 8040;
+
+  CACHE_UPLOAD_FAILED = 906;
+  SYMLINK_PARENT_MISSING = 909;
+
+  DISPATCHER_UNAVAILABLE = 912;
+  CSV_PARSE = 917;
+  CAS_BLOB_COUNT_MISMATCH = 918;
+
+  CLEAN_OUTPUTS = 8017;
+  COPY_OUTPUTS = 8029;
+  LOG_FILTER = 8030;
+
+  WINDOWS_UNSUPPORTED = 8007;
+  MALLOC_STATS = 8008;
+  MALLCTL = 8038;
+  CPU_STATS = 8026;
+
+  // Cert related tags
+  CERTS = 22000;
+  // No valid internal or VPNless certs could be found
+  NO_VALID_CERTS = 25;
+  CERT_EXPIRED = 22001;
+
+  // Misc phases/subsystem tags
+  BXL = 11000;
+  LOG_CMD = 13000;
+  OFFLINE_ARCHIVE = 14000;
+  PROFILE = 15000;
+  LSP = 16000;
+  HEALTH_CHECK = 17000;
+  EXPLAIN = 18000;
+  STARLARK_SERVER = 19000;
+  INTERPRETER = 20000;
+  KILL_ALL = 21000;
+  BUILD_REPORT = 11100;
+
+  // Misc error conversions
+  CLAP = 9001;
+  CLAP_MATCH = 90011;
+  HEX = 9002;
+  HYPER = 9003;
+  NIX = 9004;
+  PROST = 9005;
+  REGEX = 9006;
+  RELATIVE_PATH = 9007;
+  RUSQLITE = 9008;
+  TOKIO = 9018;
+  TONIC = 9019;
+  UUID = 9020;
+  SERDE_JSON = 9021;
+  STD_SLICE = 9009;
+  STD_TIME = 9010;
+  STD_INFALLIBLE = 9011;
+  STD_STRIP_PREFIX = 9012;
+  PARSE_NUM = 9013;
+  PARSE_BOOL = 9017;
+  INT_CONVERSION = 9014;
+  STRING_UTF8 = 9015;
+  STRING_CONVERSION = 9016;
+  CSTRING_NUL = 9023;
+
+  THRIFT = 10000;
+  THRIFT_TIMEOUT = 10001;
+  THRIFT_LOADSHEDDING = 10002;
+
+  // errno.h values 9100 + errno
+  // codes from: https://en.wikipedia.org/wiki/Errno.h
+  // (underscore in names is to not break C codegen)
+  E_PERM = 9101;
+  E_AGAIN = 9111;
+
+  // From `buck2 debug crash`
+  CRASH_REQUESTED = 8022;
+
+  // From ExitResult::bail
+  BAIL = 8023;
+
+  // Only used by tests, should not occur outside test execution.
+  TEST_ONLY = 8031;
+}

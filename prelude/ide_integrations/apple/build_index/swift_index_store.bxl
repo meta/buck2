@@ -33,8 +33,9 @@ def _main(ctx: bxl.Context):
     analysis_results = batch_apply_lazy(ctx, ctx.lazy.analysis, configured_nodes)
 
     index_stores = []
-    for analysis_res in analysis_results:
+    for node, analysis_res in zip(configured_nodes, analysis_results):
         if IndexStoreInfo not in analysis_res.providers():
+            print("{} has no IndexStoreInfo, skipping".format(node.label.raw_target()))  # buildifier: disable=print
             continue
         index_store_info = analysis_res.providers()[IndexStoreInfo]
         if subtarget == "swift-index-store":

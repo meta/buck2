@@ -58,10 +58,11 @@ impl ServerCommandTemplate for ExpandExternalCellsServerCommand {
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
-        mut ctx: DiceTransaction,
+        ctx: DiceTransaction,
     ) -> buck2_error::Result<Self::Response> {
-        let cell_resolver = ctx.get_cell_resolver().await?;
+        let cell_resolver = ctx.ctx().get_cell_resolver().await?;
         let cell_alias_resolver = ctx
+            .ctx()
             .get_cell_alias_resolver_for_dir(server_ctx.working_dir())
             .await?;
 
@@ -95,7 +96,7 @@ impl ServerCommandTemplate for ExpandExternalCellsServerCommand {
             };
             EXTERNAL_CELLS_IMPL
                 .get()?
-                .expand(&mut ctx, cell, origin.dupe(), instance.path())
+                .expand(&mut ctx.ctx(), cell, origin.dupe(), instance.path())
                 .await?;
 
             let path = instance.path().to_string();

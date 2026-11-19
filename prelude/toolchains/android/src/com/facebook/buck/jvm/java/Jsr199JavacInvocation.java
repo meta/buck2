@@ -10,7 +10,6 @@
 
 package com.facebook.buck.jvm.java;
 
-import static com.facebook.buck.jvm.java.abi.AbiGenerationModeUtils.checkForSourceOnlyAbiCompatibility;
 import static com.facebook.buck.jvm.java.abi.AbiGenerationModeUtils.getDiagnosticKindForSourceOnlyAbiCompatibility;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 
@@ -27,11 +26,11 @@ import com.facebook.buck.jvm.java.abi.source.api.FrontendOnlyJavacTaskProxy;
 import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory;
 import com.facebook.buck.jvm.java.abi.source.api.StopCompilation;
 import com.facebook.buck.jvm.java.plugin.PluginLoader;
-import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskListener;
 import com.facebook.buck.jvm.java.plugin.api.BuckJavacTaskProxy;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoader;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoaderFactory;
 import com.facebook.buck.util.zip.JarBuilder;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
@@ -58,15 +57,16 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import javax.annotation.Nullable;
 import javax.lang.model.SourceVersion;
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
+import org.jspecify.annotations.Nullable;
 
 /** Jsr199Javac invocation object created during java compilation. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
 
   private static final Logger LOG = Logger.get(Jsr199JavacInvocation.class);
@@ -95,6 +95,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
   @Nullable private final JarParameters abiJarParameters;
   @Nullable private final JarParameters libraryJarParameters;
   @Nullable private final SourceOnlyAbiRuleInfoFactory ruleInfoFactory;
+  private final ImmutableList<RelPath> localClassDirectories;
   private final boolean trackClassUsage;
 
   @Nullable private CompilerWorker worker;
@@ -114,7 +115,8 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
       @Nullable JarParameters libraryJarParameters,
       AbiGenerationMode abiGenerationMode,
       AbiGenerationMode abiCompatibilityMode,
-      @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory) {
+      @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory,
+      ImmutableList<RelPath> localClassDirectories) {
     this.compilerConstructor = compilerConstructor;
     this.context = context;
     this.invokingRule = invokingRule;
@@ -130,6 +132,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
     this.libraryJarParameters = libraryJarParameters;
     this.abiGenerationMode = abiGenerationMode;
     this.ruleInfoFactory = ruleInfoFactory;
+    this.localClassDirectories = localClassDirectories;
   }
 
   @Override
@@ -201,10 +204,19 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
     @Nullable private String compilerThreadName;
     @Nullable private JavaInMemoryFileManager inMemoryFileManager;
     @Nullable private final ClassUsageTracker classUsageTracker;
+    @Nullable private final CompilerClassToSourceMap classToSourceMap;
 
     private CompilerWorker(ListeningExecutorService executor) {
       this.executor = executor;
       this.classUsageTracker = trackClassUsage ? new ClassUsageTracker() : null;
+      this.classToSourceMap =
+          invokingRule.isLibraryJar()
+                  && compilerOutputPathsValue
+                          .getLibraryCompilerOutputPath()
+                          .getCompilerClassToSourceMap()
+                      != null
+              ? new CompilerClassToSourceMap()
+              : null;
     }
 
     public int buildSourceOnlyAbiJar(RelPath outputJarDirPath, boolean isMixedModule)
@@ -239,6 +251,17 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
 
       JarParameters jarParameters = Objects.requireNonNull(abiJarParameters);
       BuckJavacTaskProxy javacTask = getJavacTask(buildSourceOnlyAbi);
+      if (buildSourceOnlyAbi) {
+        javacTask
+            .getElements()
+            .setLocalClassDirectories(
+                localClassDirectories.stream()
+                    .map(
+                        directory ->
+                            ProjectFilesystemUtils.getPathForRelativePath(
+                                context.getRuleCellRoot(), directory))
+                    .collect(ImmutableList.toImmutableList()));
+      }
       // abi could be ready when compiler phase finished
       javacTask.addPostEnterCallback(
           topLevelTypes -> {
@@ -264,14 +287,18 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
                         options.contains("-parameters"),
                         false,
                         isMixedModule
-                            ? abiJarParameters.getEntriesToJar().first().toAbsolutePath()
+                            ? Objects.requireNonNull(abiJarParameters)
+                                .getEntriesToJar()
+                                .first()
+                                .toAbsolutePath()
                             : null);
                 stubGenerator.generate(topLevelTypes);
 
                 if (!isMixedModule) {
-                  jarBuilder.createJarFile(
-                      ProjectFilesystemUtils.getPathForRelativePath(
-                          ruleCellRoot, jarParameters.getJarPath()));
+                  Objects.requireNonNull(jarBuilder)
+                      .createJarFile(
+                          ProjectFilesystemUtils.getPathForRelativePath(
+                              ruleCellRoot, jarParameters.getJarPath()));
                 }
               }
 
@@ -312,9 +339,9 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
 
       try {
         String threadName = startCompiler(javacTask);
-        return abiResult.get();
+        return Objects.requireNonNull(abiResult.get());
       } catch (ExecutionException e) {
-        Throwables.throwIfUnchecked(e.getCause());
+        Throwables.throwIfUnchecked(Objects.requireNonNull(e.getCause()));
         throw new RuntimeException("Failed to generate abi: %s", e.getCause());
       }
     }
@@ -324,7 +351,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
     }
 
     private void switchToFullJarIfRequested() throws InterruptedException, ExecutionException {
-      if (!shouldCompileFullJar.get()) {
+      if (!Objects.requireNonNull(shouldCompileFullJar.get())) {
         throw new StopCompilation();
       }
     }
@@ -333,15 +360,25 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
       shouldCompileFullJar.set(true);
       try {
         String threadName = startCompiler(getJavacTask(false));
-        return compilerResult.get();
+        return Objects.requireNonNull(compilerResult.get());
       } catch (ExecutionException e) {
-        Throwables.throwIfUnchecked(e.getCause());
+        Throwables.throwIfUnchecked(Objects.requireNonNull(e.getCause()));
         throw new RuntimeException("Failed to compile", e.getCause());
       }
     }
 
+    /**
+     * Returns a snapshot of the diagnostics gathered so far. Formatting a diagnostic can make javac
+     * lazily complete an annotation type and report a new diagnostic into the collector, so
+     * iterating the collector's live view directly risks a ConcurrentModificationException on the
+     * compiler thread. Iterate this copy instead.
+     */
+    private List<Diagnostic<? extends JavaFileObject>> diagnosticsSnapshot() {
+      return new ArrayList<>(diagnostics.getDiagnostics());
+    }
+
     private void debugLogDiagnostics() {
-      for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
+      for (Diagnostic<? extends JavaFileObject> diagnostic : diagnosticsSnapshot()) {
         LOG.debug("javac: %s", DiagnosticPrettyPrinter.format(diagnostic));
       }
     }
@@ -349,7 +386,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
     private void reportDiagnosticsToUser() {
       if (context.getVerbosity().shouldPrintStandardInformation()) {
         List<Diagnostic<? extends JavaFileObject>> cleanDiagnostics =
-            DiagnosticCleaner.clean(diagnostics.getDiagnostics());
+            DiagnosticCleaner.clean(diagnosticsSnapshot());
 
         int numErrors = 0;
         int numWarnings = 0;
@@ -375,7 +412,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
     }
 
     private boolean buildSuccessful() {
-      return diagnostics.getDiagnostics().stream()
+      return diagnosticsSnapshot().stream()
           .noneMatch(diag -> diag.getKind() == Diagnostic.Kind.ERROR);
     }
 
@@ -408,7 +445,7 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
       if (compilerThreadName == null) {
         SettableFuture<String> threadName = SettableFuture.create();
         compilerResult.setFuture(executor.submit(() -> runCompilerTask(javacTask, threadName)));
-        compilerThreadName = threadName.get();
+        compilerThreadName = Objects.requireNonNull(threadName.get());
       }
       return compilerThreadName;
     }
@@ -422,8 +459,8 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
         try {
           success = javacTask.call();
         } catch (IllegalStateException ex) {
-          if (ex.getLocalizedMessage().equals("no source files")
-              || ex.getLocalizedMessage().equals("error: no source files")) {
+          String message = Objects.requireNonNull(ex.getLocalizedMessage());
+          if (message.equals("no source files") || message.equals("error: no source files")) {
             success = true;
           }
         }
@@ -441,6 +478,11 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
 
         AbsPath ruleCellRoot = context.getRuleCellRoot();
         if (success && buildSuccessful()) {
+          if (abiGenerationMode == AbiGenerationMode.MIGRATING_TO_SOURCE_ONLY
+              && ruleInfoFactory != null
+              && ruleInfoFactory.shouldValidateInheritedMemberTypes()) {
+            reportDiagnosticsToUser();
+          }
           if (classUsageTracker != null) {
             new DefaultClassUsageFileWriter()
                 .writeFile(
@@ -455,6 +497,20 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
         } else {
           reportDiagnosticsToUser();
           return ERROR_EXIT_CODE;
+        }
+
+        if (classToSourceMap != null) {
+          Path mapPath =
+              ruleCellRoot
+                  .resolve(
+                      compilerOutputPathsValue.getLibraryCompilerOutputPath().getWorkingDirectory())
+                  .getPath()
+                  .resolve(CompilerClassToSourceMap.JAVA_FILE_NAME);
+          try {
+            classToSourceMap.write(mapPath);
+          } catch (IOException e) {
+            throw new IOException("Failed to write compiler class-to-source map: " + mapPath, e);
+          }
         }
 
         if (libraryJarParameters == null) {
@@ -541,12 +597,12 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
           }
 
           List<String> classNamesForAnnotationProcessing = ImmutableList.of();
-          Writer compilerOutputWriter =
-              new java.io.PrintWriter(context.getStdErr()); // NOPMD required by API
+          Writer compilerOutputWriter = new java.io.PrintWriter(context.getStdErr());
           PluginClassLoaderFactory loaderFactory =
               PluginLoader.newFactory(context.getClassLoaderCache());
 
-          ListenableFileManager wrappedFileManager = new ListenableFileManager(fileManager);
+          ListenableFileManager wrappedFileManager =
+              new ListenableFileManager(fileManager, classToSourceMap, ruleCellRoot.getPath());
           if (classUsageTracker != null) {
             wrappedFileManager.addListener(classUsageTracker);
           }
@@ -577,19 +633,21 @@ class Jsr199JavacInvocation implements ResolvedJavac.Invocation {
 
           PluginClassLoader pluginLoader = loaderFactory.getPluginClassLoader(javacTask);
 
-          BuckJavacTaskListener taskListener = null;
-          if (checkForSourceOnlyAbiCompatibility(abiGenerationMode)
+          Diagnostic.Kind diagnosticKind =
+              getDiagnosticKindForSourceOnlyAbiCompatibility(abiGenerationMode);
+          if (diagnosticKind != null
               && !generatingSourceOnlyAbi
-              && ruleInfoFactory != null) {
-            taskListener =
-                SourceBasedAbiStubber.newValidatingTaskListener(
+              && ruleInfoFactory != null
+              && ruleInfoFactory.shouldValidateInheritedMemberTypes()) {
+            javacTask.addTaskListener(
+                SourceBasedAbiStubber.newInheritedMemberTypeValidatingTaskListener(
                     pluginLoader,
                     javacTask,
                     ruleInfoFactory.create(fileManager),
                     () ->
-                        diagnostics.getDiagnostics().stream()
+                        diagnosticsSnapshot().stream()
                             .anyMatch(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR),
-                    getDiagnosticKindForSourceOnlyAbiCompatibility(abiGenerationMode));
+                    diagnosticKind));
           }
 
           // Ensure annotation processors are loaded from their own classloader. If we don't do

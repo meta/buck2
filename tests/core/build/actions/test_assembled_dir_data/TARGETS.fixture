@@ -1,0 +1,30 @@
+load(
+    ":defs.bzl",
+    "consumed",
+    "empty_path_fail",
+    "mixed",
+    "overlap_fail",
+    "untyped_entry_fail",
+)
+
+mixed(
+    name = "mixed",
+    src = "source_file.txt",
+)
+
+consumed(
+    name = "consumed",
+    dep = ":mixed",
+)
+
+overlap_fail(
+    name = "overlap_fail",
+)
+
+empty_path_fail(
+    name = "empty_path_fail",
+)
+
+untyped_entry_fail(
+    name = "untyped_entry_fail",
+)

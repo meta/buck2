@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -19,16 +18,20 @@ use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::validation::transitive_validations::TransitiveValidations;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use derivative::Derivative;
 use derive_more::Display;
 use dice::CancellationContext;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dice_error::DiceError;
 use dupe::Dupe;
 use dupe::IterDupedExt;
-use either::Either;
-use futures::future::FutureExt;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
 use crate::cached_validation_result::CachedValidationResult;
 use crate::cached_validation_result::CachedValidationResultData;
@@ -38,9 +41,10 @@ use crate::single_validation_key::SingleValidationKey;
 
 /// DICE key that corresponds to a validation of a whole target subgraph rooted at the given node.
 #[derive(
-    Clone, Display, Dupe, Allocative, Derivative, Hash, Eq, PartialEq, Debug
+    Clone, Display, Dupe, Allocative, Derivative, Hash, Eq, PartialEq, Debug, Pagable
 )]
 #[repr(transparent)]
+#[pagable_typetag(dice::DiceKeyDyn)]
 pub(crate) struct TransitiveValidationKey(pub ConfiguredTargetLabel);
 
 impl TransitiveValidationKey {
@@ -50,28 +54,50 @@ impl TransitiveValidationKey {
         ctx: &mut DiceComputations<'_>,
         transitive_validations: TransitiveValidations,
     ) -> Result<(), TreatValidationFailureAsError> {
-        let info = match &transitive_validations.0.info {
-            Some(info) => info,
+        // Extracted eagerly so that no branded provider values are held across the awaits
+        // below: `ValidationInfo<'v>` views are correctly not `Send` (the type doesn't say
+        // whether they're the frozen instantiation), and the owned handle hits
+        // rust-lang/rust#102211.
+        struct Validation {
+            name: String,
+            optional: bool,
+            artifact: Artifact,
+        }
+        let validations = match &transitive_validations.0.info {
+            Some(info) => info
+                .as_ref()
+                .value()
+                .as_ref()
+                .validations()
+                .map(|spec| {
+                    let spec = spec?;
+                    Ok(Validation {
+                        name: spec.name().to_owned(),
+                        optional: spec.optional(),
+                        artifact: spec.validation_result().get_bound_artifact()?,
+                    })
+                })
+                .collect::<buck2_error::Result<Vec<_>>>()?,
             None => return Ok(()),
         };
 
-        let enabled_optional_validations = if info.validations().any(|spec| spec.optional()) {
-            Either::Left(ctx.compute(&EnabledOptionalValidationsKey).await?)
-        } else {
-            Either::Right(Cow::Owned(BTreeSet::new()))
-        };
-
+        let empty = BTreeSet::new();
         let enabled_optional_validations: &BTreeSet<String> =
-            AsRef::as_ref(&enabled_optional_validations);
+            if validations.iter().any(|validation| validation.optional) {
+                ctx.compute(&EnabledOptionalValidationsKey).await?
+            } else {
+                &empty
+            };
 
-        let artifacts = info
-            .validations()
-            .filter(|spec| !spec.optional() || enabled_optional_validations.contains(spec.name()))
-            .map(|spec| spec.validation_result().get_bound_artifact())
-            .map(|r| r.map_err(buck2_error::Error::from))
-            .collect::<buck2_error::Result<Vec<Artifact>>>()?;
-        ctx.try_compute_join(artifacts, |ctx, output| {
-            async move { compute_single_validation(ctx, output).await }.boxed()
+        let artifacts = validations
+            .into_iter()
+            .filter(|validation| {
+                !validation.optional || enabled_optional_validations.contains(&validation.name)
+            })
+            .map(|validation| validation.artifact)
+            .collect::<Vec<Artifact>>();
+        ctx.try_compute_join(artifacts, async |ctx, output| {
+            compute_single_validation(ctx, output).await
         })
         .await
         .map(|_| ())
@@ -84,13 +110,9 @@ impl TransitiveValidationKey {
     ) -> Result<(), TreatValidationFailureAsError> {
         ctx.try_compute_join(
             transitive_validations.0.children.iter().duped(),
-            |ctx, label| {
-                let key = TransitiveValidationKey(label);
-                async move {
-                    let result = ctx.compute(&key).await?;
-                    tighten_cached_validation_result(result)
-                }
-                .boxed()
+            async |ctx, label| {
+                let result = ctx.compute(&TransitiveValidationKey(label)).await?;
+                tighten_cached_validation_result(result)
             },
         )
         .await
@@ -123,14 +145,14 @@ impl Key for TransitiveValidationKey {
         };
         let result = ctx
             .try_compute2(
-                {
-                    let transitive_validations = transitive_validations.dupe();
-                    move |ctx| {
-                        self.validate_current_node(ctx, transitive_validations)
-                            .boxed()
-                    }
+                async |ctx| {
+                    self.validate_current_node(ctx, transitive_validations.dupe())
+                        .await
                 },
-                move |ctx| self.validate_children(ctx, transitive_validations).boxed(),
+                async |ctx| {
+                    self.validate_children(ctx, transitive_validations.dupe())
+                        .await
+                },
             )
             .await;
         match result {
@@ -144,15 +166,19 @@ impl Key for TransitiveValidationKey {
         }
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
             (Ok(x), Ok(y)) => x == y,
             _ => false,
-        }
+        })
     }
 
     fn validity(x: &Self::Value) -> bool {
         x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
     }
 }
 
@@ -195,7 +221,7 @@ async fn compute_single_validation(
 }
 
 fn tighten_cached_validation_result(
-    result: buck2_error::Result<CachedValidationResult>,
+    result: &buck2_error::Result<CachedValidationResult>,
 ) -> Result<(), TreatValidationFailureAsError> {
     match result {
         Ok(result) => match result.0.as_ref() {
@@ -204,6 +230,6 @@ fn tighten_cached_validation_result(
                 Err(user_facing_error.clone().into())
             }
         },
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e.dupe().into()),
     }
 }

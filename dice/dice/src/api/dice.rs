@@ -26,26 +26,38 @@
 //!     use std::sync::Arc;
 //!     use allocative::Allocative;
 //!     use dice_futures::cancellation::CancellationContext;
+//!     use dice::DiceKeyDyn;
+//!     use dice::EqualityBehavior;
+//!     use dice::ValueSerialize;
+//!     use dice::NoValueSerialize;
+//!     use dupe::Dupe;
+//!     use pagable::Pagable;
+//!     use pagable::pagable_typetag;
 //!
 //!     /// A configuration computation that consists of values that are pre-computed outside of DICE
 //!     pub struct InjectConfigs<'compute, 'd>(&'compute mut DiceComputations<'d>);
 //!
 //!     impl<'compute, 'd> InjectConfigs<'compute, 'd> {
 //!         pub async fn get_config(&mut self) -> usize {
-//!             self.0.compute(&ConfigKey).await.unwrap()
+//!             *self.0.compute(&ConfigKey).await.unwrap()
 //!         }
 //!     }
 //!
-//!     #[derive(Clone, Debug, Display, Eq, Hash, PartialEq, Allocative)]
+//!     #[derive(Clone, Debug, Display, Eq, Hash, PartialEq, Allocative, Pagable)]
 //!     #[display("{:?}", self)]
+//!     #[pagable_typetag(DiceKeyDyn)]
 //!     struct ConfigKey;
 //!
 //!     #[async_trait]
 //!     impl InjectedKey for ConfigKey {
 //!         type Value = usize;
 //!
-//!         fn equality(x: &Self::Value,y: &Self::Value) -> bool {
-//!             x == y
+//!         fn equality_behavior() -> EqualityBehavior<Self::Value> {
+//!             EqualityBehavior::Compare(|x, y| x == y)
+//!         }
+//!         
+//!         fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+//!             NoValueSerialize::<Self::Value>::new()
 //!         }
 //!     }
 //!
@@ -54,8 +66,9 @@
 //!     impl<'compute, 'd> MyComputation<'compute, 'd> {
 //!         // declaring a computation function
 //!         pub async fn compute_a(&mut self, a: usize, s: String) -> Arc<String> {
-//!             #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+//!             #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 //!             #[display("{:?}", self)]
+//!             #[pagable_typetag(DiceKeyDyn)]
 //!             struct ComputeA(usize, String);
 //!
 //!             #[async_trait]
@@ -68,22 +81,27 @@
 //!                     Arc::new(self.1.repeat(n))
 //!                 }
 //!
-//!                 fn equality(x: &Self::Value,y: &Self::Value) -> bool {
-//!                     x == y
+//!                 fn equality_behavior() -> EqualityBehavior<Self::Value> {
+//!                     EqualityBehavior::Compare(|x, y| x == y)
+//!                 }
+//!
+//!                 fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+//!                     NoValueSerialize::<Self::Value>::new()
 //!                 }
 //!             }
 //!
-//!             self.0.compute(&ComputeA(a, s)).await.unwrap()
+//!             self.0.compute(&ComputeA(a, s)).await.unwrap().dupe()
 //!         }
 //!
 //!         // second computation function
 //!         pub async fn compute_b(&mut self, a: usize) -> usize {
-//!                 self.0.compute(&ComputeB(a)).await.unwrap()
+//!                 *self.0.compute(&ComputeB(a)).await.unwrap()
 //!         }
 //!     }
 //!
-//!     #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+//!     #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 //!     #[display("{:?}", self)]
+//!     #[pagable_typetag(DiceKeyDyn)]
 //!     struct ComputeB(usize);
 //!
 //!     #[async_trait]
@@ -94,8 +112,12 @@
 //!             self.0 + InjectConfigs(ctx).get_config().await + ctx.global_data().static_data().len()
 //!         }
 //!
-//!         fn equality(x: &Self::Value,y: &Self::Value) -> bool {
-//!             x == y
+//!         fn equality_behavior() -> EqualityBehavior<Self::Value> {
+//!             EqualityBehavior::Compare(|x, y| x == y)
+//!         }
+//!
+//!         fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+//!             NoValueSerialize::<Self::Value>::new()
 //!         }
 //!     }
 //!
@@ -140,118 +162,29 @@
 //! let mut builder = Dice::builder();
 //! builder.set_static("len4".into());
 //! let engine = builder.build(DetectCycles::Disabled);
+//! let root = rt.block_on(engine.new_root());
 //!
 //! // inject config
-//! let mut ctx = engine.updater();
+//! let mut ctx = engine.updater(root);
 //! ctx.inject_config(0);
 //!
 //! let mut ctx = rt.block_on(ctx.commit());
 //!
 //! // request the computation from DICE
 //! rt.block_on(async {
-//!     assert_eq!("aaaaaaaa", &*MyComputation(&mut ctx).compute_a(4, "a".into()).await);
+//!     assert_eq!("aaaaaaaa", &*MyComputation(&mut ctx.ctx()).compute_a(4, "a".into()).await);
 //! });
 //!
-//! let mut ctx = engine.updater();
+//! let mut ctx = engine.updater(root);
 //! ctx.inject_config(2);
 //!
 //! let mut ctx = rt.block_on(ctx.commit());
 //!
 //! // request the computation from DICE
 //! rt.block_on(async {
-//!     assert_eq!("aaaaaaaaaa", &*MyComputation(&mut ctx).compute_a(4, "a".into()).await);
+//!     assert_eq!("aaaaaaaaaa", &*MyComputation(&mut ctx.ctx()).compute_a(4, "a".into()).await);
 //! });
 //! ```
-
-use std::fmt::Debug;
-use std::io::Write;
-use std::sync::Arc;
-
-use allocative::Allocative;
-use futures::future::Future;
-use serde::Serializer;
-
-use crate::DiceDataBuilderImpl;
-use crate::DiceImplementation;
-use crate::api::cycles::DetectCycles;
-use crate::api::transaction::DiceTransactionUpdater;
-use crate::api::user_data::UserComputationData;
-use crate::metrics::Metrics;
-
-/// An incremental computation engine that executes arbitrary computations that
-/// maps `Key`s to values.
-#[derive(Allocative, Debug)]
-pub struct Dice {
-    pub(crate) implementation: DiceImplementation,
-}
-
-impl Dice {
-    pub fn builder() -> DiceDataBuilder {
-        DiceDataBuilder(DiceDataBuilderImpl::new_modern())
-    }
-
-    pub(crate) fn new(implementation: DiceImplementation) -> Arc<Self> {
-        Arc::new(Self { implementation })
-    }
-
-    pub fn updater(self: &Arc<Dice>) -> DiceTransactionUpdater {
-        self.implementation.updater()
-    }
-
-    pub fn updater_with_data(
-        self: &Arc<Dice>,
-        extra: UserComputationData,
-    ) -> DiceTransactionUpdater {
-        self.implementation.updater_with_data(extra)
-    }
-
-    pub fn serialize_tsv(
-        &self,
-        nodes: impl Write,
-        edges: impl Write,
-        nodes_currently_running: impl Write,
-    ) -> anyhow::Result<()> {
-        self.implementation
-            .serialize_tsv(nodes, edges, nodes_currently_running)
-    }
-
-    pub fn serialize_serde<S>(&self, serializer: S) -> Result<(), S::Error>
-    where
-        S: Serializer,
-    {
-        self.implementation.serialize_serde(serializer)
-    }
-
-    pub fn detect_cycles(&self) -> &DetectCycles {
-        self.implementation.detect_cycles()
-    }
-
-    pub fn metrics(&self) -> Metrics {
-        self.implementation.metrics()
-    }
-
-    /// Wait until all active versions have exited.
-    pub fn wait_for_idle(&self) -> impl Future<Output = ()> + 'static + use<> {
-        self.implementation.wait_for_idle()
-    }
-
-    /// true when there are no active tasks nor transactions alive
-    pub async fn is_idle(&self) -> bool {
-        self.implementation.is_idle().await
-    }
-}
-
-pub struct DiceDataBuilder(DiceDataBuilderImpl);
-
-impl DiceDataBuilder {
-    pub fn set<K: Send + Sync + 'static>(&mut self, val: K) {
-        self.0.set(val);
-    }
-
-    pub fn build(self, detect_cycles: DetectCycles) -> Arc<Dice> {
-        self.0.build(detect_cycles)
-    }
-}
 
 pub mod testing {
     use crate::Dice;
@@ -297,9 +230,13 @@ pub mod testing {
             self
         }
 
-        pub fn build(self, extra: UserComputationData) -> anyhow::Result<DiceTransactionUpdater> {
+        pub async fn build(
+            self,
+            extra: UserComputationData,
+        ) -> anyhow::Result<DiceTransactionUpdater> {
             let dice = self.builder.build(DetectCycles::Enabled);
-            let mut ctx = dice.updater_with_data(extra);
+            let root = dice.new_root().await;
+            let mut ctx = dice.updater_with_data(root, extra);
 
             self.mocked.into_iter().try_for_each(|f| f(&mut ctx))?;
             Ok(ctx)

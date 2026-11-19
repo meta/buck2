@@ -24,22 +24,3 @@ toolchain = rule(
         "exec_deps": attrs.list(attrs.exec_dep()),
     },
 )
-
-def exec_platforms_impl(ctx):
-    return [
-        DefaultInfo(),
-        ExecutionPlatformRegistrationInfo(
-            platforms = [
-                ExecutionPlatformInfo(
-                    label = ctx.label.raw_target(),
-                    configuration = ConfigurationInfo(constraints = {}, values = {}),
-                    executor_config = CommandExecutorConfig(local_enabled = True, remote_enabled = False),
-                ),
-            ],
-        ),
-    ]
-
-execution_platforms = rule(
-    impl = exec_platforms_impl,
-    attrs = {},
-)

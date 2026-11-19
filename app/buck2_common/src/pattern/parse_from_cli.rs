@@ -17,7 +17,6 @@ use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
 use buck2_core::pattern::pattern_type::PatternType;
 use buck2_core::pattern::unparsed::UnparsedPatterns;
 use dice::DiceComputations;
-use gazebo::prelude::*;
 
 use crate::dice::cells::HasCellResolver;
 use crate::pattern::resolve::ResolveTargetPatterns;
@@ -25,16 +24,16 @@ use crate::pattern::resolve::ResolvedPattern;
 use crate::target_aliases::BuckConfigTargetAliasResolver;
 use crate::target_aliases::HasTargetAliasResolver;
 
-struct PatternParser {
-    cell_resolver: CellResolver,
-    cell_alias_resolver: CellAliasResolver,
+struct PatternParser<'d> {
+    cell_resolver: &'d CellResolver,
+    cell_alias_resolver: &'d CellAliasResolver,
     cwd: CellPath,
-    target_alias_resolver: BuckConfigTargetAliasResolver,
+    target_alias_resolver: &'d BuckConfigTargetAliasResolver,
 }
 
-impl PatternParser {
+impl<'d> PatternParser<'d> {
     async fn new(
-        ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'d>,
         cwd: &ProjectRelativePath,
     ) -> buck2_error::Result<Self> {
         let cell_resolver = ctx.get_cell_resolver().await?;
@@ -58,8 +57,8 @@ impl PatternParser {
         pattern: &str,
     ) -> buck2_error::Result<ParsedPattern<T>> {
         ParsedPattern::parse_relaxed(
-            &self.target_alias_resolver,
-            self.cwd.as_ref(),
+            self.target_alias_resolver,
+            self.cwd,
             pattern,
             &self.cell_resolver,
             &self.cell_alias_resolver,
@@ -71,8 +70,8 @@ impl PatternParser {
         pattern: &str,
     ) -> buck2_error::Result<ParsedPatternWithModifiers<T>> {
         ParsedPatternWithModifiers::parse_relaxed(
-            &self.target_alias_resolver,
-            self.cwd.as_ref(),
+            self.target_alias_resolver,
+            self.cwd,
             pattern,
             &self.cell_resolver,
             &self.cell_alias_resolver,
@@ -92,7 +91,10 @@ pub async fn parse_patterns_from_cli_args<T: PatternType>(
 ) -> buck2_error::Result<Vec<ParsedPattern<T>>> {
     let parser = PatternParser::new(ctx, cwd).await?;
 
-    target_patterns.try_map(|value| parser.parse_pattern(&value))
+    target_patterns
+        .iter()
+        .map(|value| parser.parse_pattern(value))
+        .collect::<Result<Vec<_>, _>>()
 }
 
 pub async fn parse_patterns_with_modifiers_from_cli_args<T: PatternType>(
@@ -102,7 +104,10 @@ pub async fn parse_patterns_with_modifiers_from_cli_args<T: PatternType>(
 ) -> buck2_error::Result<Vec<ParsedPatternWithModifiers<T>>> {
     let parser = PatternParser::new(ctx, cwd).await?;
 
-    target_patterns.try_map(|value| parser.parse_pattern_with_modifiers(&value))
+    target_patterns
+        .iter()
+        .map(|value| parser.parse_pattern_with_modifiers(value))
+        .collect::<Result<Vec<_>, _>>()
 }
 
 pub async fn parse_patterns_from_cli_args_typed<T: PatternType>(

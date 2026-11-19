@@ -12,7 +12,7 @@ package com.facebook.buck.jvm.kotlin;
 
 import static com.facebook.buck.jvm.kotlin.CompilerPluginUtils.KOTLIN_PLUGIN_OUT_PLACEHOLDER;
 import static com.facebook.buck.jvm.kotlin.CompilerPluginUtils.getKotlinCompilerPluginsArgs;
-import static com.facebook.buck.jvm.kotlin.DaemonKotlincToJarStepFactory.buildSourceOnlyAbiClasspath;
+import static com.facebook.buck.jvm.kotlin.DaemonKotlincToJarStepFactory.buildCompilationClasspath;
 import static com.facebook.buck.jvm.kotlin.DaemonKotlincToJarStepFactory.getRunsOnJavaOnlyProcessors;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -106,7 +106,7 @@ public class DaemonKotlincToJarStepFactoryTest {
   }
 
   @Test
-  public void test_buildSourceOnlyAbiClasspath_includesBootclasspath() {
+  public void test_buildCompilationClasspath_includesBootclasspath() {
     // Create parameters with regular classpath entries
     CompilerParameters parameters =
         createCompilerParameters(ImmutableList.of(RelPath.get("some/lib.jar")));
@@ -117,7 +117,7 @@ public class DaemonKotlincToJarStepFactoryTest {
             ImmutableList.of(RelPath.get("path/to/android.jar"), RelPath.get("path/to/core.jar")));
 
     // Build the classpath
-    ImmutableList<AbsPath> classpath = buildSourceOnlyAbiClasspath(parameters, extraParams).build();
+    ImmutableList<AbsPath> classpath = buildCompilationClasspath(parameters, extraParams).build();
 
     // Verify both regular classpath and bootclasspath entries are included
     assertEquals(3, classpath.size());
@@ -133,12 +133,12 @@ public class DaemonKotlincToJarStepFactoryTest {
   }
 
   @Test
-  public void test_buildSourceOnlyAbiClasspath_emptyBootclasspath() {
+  public void test_buildCompilationClasspath_emptyBootclasspath() {
     CompilerParameters parameters =
         createCompilerParameters(ImmutableList.of(RelPath.get("some/lib.jar")));
     KotlinExtraParams extraParams = createKotlinExtraParams(ImmutableList.of());
 
-    ImmutableList<AbsPath> classpath = buildSourceOnlyAbiClasspath(parameters, extraParams).build();
+    ImmutableList<AbsPath> classpath = buildCompilationClasspath(parameters, extraParams).build();
 
     // Should only contain regular classpath entries
     assertEquals(1, classpath.size());
@@ -146,12 +146,12 @@ public class DaemonKotlincToJarStepFactoryTest {
   }
 
   @Test
-  public void test_buildSourceOnlyAbiClasspath_emptyRegularClasspath() {
+  public void test_buildCompilationClasspath_emptyRegularClasspath() {
     CompilerParameters parameters = createCompilerParameters(ImmutableList.of());
     KotlinExtraParams extraParams =
         createKotlinExtraParams(ImmutableList.of(RelPath.get("path/to/android.jar")));
 
-    ImmutableList<AbsPath> classpath = buildSourceOnlyAbiClasspath(parameters, extraParams).build();
+    ImmutableList<AbsPath> classpath = buildCompilationClasspath(parameters, extraParams).build();
 
     // Should only contain bootclasspath entries
     assertEquals(1, classpath.size());
@@ -159,7 +159,7 @@ public class DaemonKotlincToJarStepFactoryTest {
   }
 
   @Test
-  public void test_buildSourceOnlyAbiClasspath_multipleAndroidJars() {
+  public void test_buildCompilationClasspath_multipleAndroidJars() {
     // Simulate a scenario with multiple SDK versions or configurations
     CompilerParameters parameters =
         createCompilerParameters(ImmutableList.of(RelPath.get("build/classes.jar")));
@@ -169,7 +169,7 @@ public class DaemonKotlincToJarStepFactoryTest {
                 RelPath.get("sdk/android-30/android.jar"),
                 RelPath.get("sdk/android-libs/extras.jar")));
 
-    ImmutableList<AbsPath> classpath = buildSourceOnlyAbiClasspath(parameters, extraParams).build();
+    ImmutableList<AbsPath> classpath = buildCompilationClasspath(parameters, extraParams).build();
 
     // Verify all entries are included
     assertEquals(3, classpath.size());

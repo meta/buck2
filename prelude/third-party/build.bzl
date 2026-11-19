@@ -1,6 +1,7 @@
 load("@prelude//:artifacts.bzl", "ArtifactExt", "artifact_ext")
 load("@prelude//:paths.bzl", path_utils = "paths")
 load("@prelude//cxx:cxx_context.bzl", "get_opt_cxx_toolchain_info")
+load("@prelude//cxx:headers.bzl", "as_headers")
 load("@prelude//cxx:preprocessor.bzl", "CPreprocessorInfo")
 load(
     "@prelude//linking:shared_libraries.bzl",
@@ -30,15 +31,18 @@ def is_empty(cxx_headers: list[CPreprocessorInfo]):
         for pp in pps.set.value:
             for _ in pp.headers:
                 return False
+            for _ in pp.raw_headers:
+                return False
     return True
 
 def create_third_party_build_root(
-        ctx: AnalysisContext,
-        out: str = "__third_party_build__",
-        manifests: list[(str, ManifestInfo)] = [],
-        shared_libs: list[SharedLibrary] = [],
-        cxx_headers: list[CPreprocessorInfo] = [],
-        paths: list[(str, Artifact)] = []) -> ArtifactExt:
+    ctx: AnalysisContext,
+    out: str = "__third_party_build__",
+    manifests: list[(str, ManifestInfo)] = [],
+    shared_libs: list[SharedLibrary] = [],
+    cxx_headers: list[CPreprocessorInfo] = [],
+    paths: list[(str, Artifact)] = [],
+) -> ArtifactExt:
     """
     Installs components into a unix-y install dir which can by used by other
     third-party builds.
@@ -59,6 +63,13 @@ def create_third_party_build_root(
             for hdr in pp.headers:
                 cmd.add("--path", path_utils.join("include", hdr.namespace, hdr.name), hdr.artifact)
 
+            # Convert raw_headers to proper header paths using as_headers.
+            if pp.raw_headers:
+                raw_dirs = pp.raw_include_dirs + pp.raw_system_include_dirs
+                if raw_dirs:
+                    for hdr in as_headers(ctx, pp.raw_headers, raw_dirs):
+                        cmd.add("--path", path_utils.join("include", hdr.namespace, hdr.name), hdr.artifact)
+
     for dst, path in paths:
         cmd.add("--path", dst, path)
 
@@ -75,7 +86,7 @@ def create_third_party_build_root(
                 # if it doesn't already.
                 if sh_ext in soname and not soname.endswith(sh_ext):
                     idx = soname.index(sh_ext)
-                    link_name = soname[:idx + 3]
+                    link_name = soname[: idx + 3]
                     lines.append(cmd_args("--symlink", path_utils.join("lib", link_name), soname))
         return actions.write(output.as_output(), lines)
 
@@ -88,7 +99,7 @@ def create_third_party_build_root(
     )
     cmd.add(cmd_args(argsfile, format = "@{}", hidden = [s.lib.output for s in shared_libs]))
 
-    out = ctx.actions.declare_output(out, dir = True)
+    out = ctx.actions.declare_output(out, dir = True, has_content_based_path = False)
     cmd.add(out.as_output())
 
     ctx.actions.run(cmd, category = "third_party_build_root")
@@ -96,17 +107,18 @@ def create_third_party_build_root(
     return artifact_ext(out)
 
 def create_third_party_build_info(
-        ctx: AnalysisContext,
-        project: str | None = None,
-        prefix: str | None = None,
-        out: str = "__third_party_build__",
-        manifests: list[(str, ManifestInfo)] = [],
-        shared_libs: list[SharedLibrary] = [],
-        cxx_headers: list[CPreprocessorInfo] = [],
-        cxx_header_dirs: list[str] = [],
-        paths: list[(str, Artifact)] = [],
-        children: list[ThirdPartyBuildInfo] = [],
-        deps: list[Dependency] = []) -> ThirdPartyBuildInfo:
+    ctx: AnalysisContext,
+    project: str | None = None,
+    prefix: str | None = None,
+    out: str = "__third_party_build__",
+    manifests: list[(str, ManifestInfo)] = [],
+    shared_libs: list[SharedLibrary] = [],
+    cxx_headers: list[CPreprocessorInfo] = [],
+    cxx_header_dirs: list[str] = [],
+    paths: list[(str, Artifact)] = [],
+    children: list[ThirdPartyBuildInfo] = [],
+    deps: list[Dependency] = [],
+) -> ThirdPartyBuildInfo:
     if prefix == None:
         prefix = prefix_from_label(ctx.label)
 

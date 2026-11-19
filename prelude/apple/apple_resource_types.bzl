@@ -10,11 +10,18 @@ load("@prelude//:artifacts.bzl", "ArtifactOutputs")
 load(":apple_asset_catalog_types.bzl", "AppleAssetCatalogSpec")
 load(":apple_core_data_types.bzl", "AppleCoreDataSpec")
 load(":scene_kit_assets_types.bzl", "SceneKitAssetsSpec")
+load(":xcassets_asset_symbols.bzl", "MetaXcassetsAssetSymbolSpec")
 
 # Represents the values for the `destination` field of `apple_resource`
+#
+# Not every destination is meaningful for every bundle kind: like `loginitems`, `launchagents`
+# only has a path in macOS application bundles, and resolves to the bundle root elsewhere.
 AppleResourceDestination = enum(
     "executables",
+    "extensionkit_extensions",
     "frameworks",
+    "launchagents",
+    "launchdaemons",
     "loginitems",
     "plugins",
     "resources",
@@ -47,9 +54,25 @@ CxxResourceSpec = record(
     resources = field(dict[str, ArtifactOutputs], {}),
 )
 
+# A selected asset catalog with the resource-graph target that provided it.
+SelectedAppleAssetCatalogSpec = record(
+    asset_catalog_spec = field(AppleAssetCatalogSpec),
+    xcassets_symbol_spec = field([MetaXcassetsAssetSymbolSpec, None], None),
+    target = field(Label),
+)
+
+# An asset symbol spec on a node of the bundle's resource graph, and whether
+# the bundle's resource group selects that node.
+ReachableXcassetsSymbolSpec = record(
+    spec = field(MetaXcassetsAssetSymbolSpec),
+    selected = field(bool),
+)
+
 AppleResourceSelectionOutput = record(
     resource_specs = field(list[AppleResourceSpec]),
     asset_catalog_specs = field(list[AppleAssetCatalogSpec]),
+    selected_asset_catalog_specs = field(list[SelectedAppleAssetCatalogSpec], []),
+    reachable_xcassets_symbol_specs = field(list[ReachableXcassetsSymbolSpec], []),
     core_data_specs = field(list[AppleCoreDataSpec]),
     scene_kit_assets_spec = field(list[SceneKitAssetsSpec]),
     cxx_resource_specs = field(list[CxxResourceSpec]),

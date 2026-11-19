@@ -19,7 +19,7 @@ write_string = rule(
 )
 
 def _copy_file_impl(ctx):
-    out = ctx.actions.copy_file(ctx.attrs.out, ctx.attrs.src)
+    out = ctx.actions.copy_file(ctx.attrs.out, ctx.attrs.src, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 copy_file = rule(

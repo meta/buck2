@@ -1,15 +1,19 @@
-load(":defs.bzl", "copy", "copy_to_dir", "download", "symlink_files", "write_json", "write_string")
+load(":defs.bzl", "consume", "copy", "copy_to_dir", "remote_write", "slow_write", "symlink_files", "write_json", "write_string")
 
 copy(name = "copy", src = "src")
 copy(name = "copy_2", src = "src")
+slow_write(name = "slow_write")
 
 copy_to_dir(name = "copy_dir", src = "src")
 
 write_string(name = "write", out = "out.txt", content = "HELLO")
 copy(name = "copy_dep", src = "src", dep = ":write")
 
-download(name = "download_deferred", deferrable = True)
-download(name = "download_immediate", deferrable = False)
+remote_write(name = "remote_write")
+consume(name = "consume_remote", src = ":remote_write")
+consume(name = "consume_local", src = ":write")
+consume(name = "consume_copy", src = ":consume_local")
+consume(name = "consume_action", src = ":copy_dir")
 
 symlink_files(
     name = "out",

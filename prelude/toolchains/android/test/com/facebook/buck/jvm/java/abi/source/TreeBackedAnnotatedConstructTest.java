@@ -135,8 +135,8 @@ public class TreeBackedAnnotatedConstructTest extends CompilerTreeApiParameteriz
                 (a) -> {
                   try {
                     a.single();
-                  } catch (MirroredTypeException e) { // NOPMD: Expected.
-                    // NOPMD: No problem.
+                  } catch (MirroredTypeException e) { // Expected.
+                    // No problem.
                   }
                 })));
 
@@ -171,7 +171,7 @@ public class TreeBackedAnnotatedConstructTest extends CompilerTreeApiParameteriz
                 (a) -> {
                   try {
                     a.multi();
-                  } catch (MirroredTypesException e) { // NOPMD: Expected.
+                  } catch (MirroredTypesException e) { // Expected.
                     // No problem.
                   }
                 })));

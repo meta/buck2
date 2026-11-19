@@ -13,6 +13,7 @@ package com.facebook.buck.android.dex;
 import com.android.tools.r8.CompilationFailedException;
 import com.facebook.buck.android.apkmodule.APKModule;
 import com.facebook.buck.android.proguard.ProguardTranslatorFactory;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -21,35 +22,50 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import org.jetbrains.annotations.Nullable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 /** Executable for creating multiple DEX files from library jars. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class MultiDexExecutableMain {
   /** name suffix that identifies it as a Java class file. */
   private static final String CLASS_NAME_SUFFIX = ".class";
 
+  /** Thread count for main D8 compilation (capped to avoid diminishing returns). */
+  private static final OptionalInt D8_THREAD_COUNT =
+      OptionalInt.of(Math.min(Runtime.getRuntime().availableProcessors(), 48));
+
   @Option(name = "--primary-dex")
-  private String primaryDexString;
+  @Nullable
+  private String primaryDexString = null;
 
   @Option(name = "--secondary-dex-output-dir", required = true)
   private String secondaryDexOutputDirString;
 
   @Option(name = "--primary-dex-files-to-dex-list")
-  private String primaryDexFilesToDexList;
+  @Nullable
+  private String primaryDexFilesToDexList = null;
 
-  @Option(name = "--files-to-dex-list")
+  @Option(name = "--files-to-dex-list", required = true)
   private String filesToDexList;
 
   @Option(name = "--module", required = true)
@@ -58,23 +74,28 @@ public class MultiDexExecutableMain {
   @Option(name = "--canary-class-name", required = true)
   private String canaryClassName;
 
-  @Option(name = "--android-jar")
+  @Option(name = "--android-jar", required = true)
   private String androidJar;
 
   @Option(name = "--primary-dex-patterns-path")
-  private String primaryDexPatternsPathString;
+  @Nullable
+  private String primaryDexPatternsPathString = null;
 
   @Option(name = "--primary-dex-class-names")
-  private String deobfuscatedPrimaryDexClassNamesPathString;
+  @Nullable
+  private String deobfuscatedPrimaryDexClassNamesPathString = null;
 
   @Option(name = "--proguard-configuration-file")
-  private String proguardConfigurationFileString;
+  @Nullable
+  private String proguardConfigurationFileString = null;
 
   @Option(name = "--proguard-mapping-file")
-  private String proguardMappingFileString;
+  @Nullable
+  private String proguardMappingFileString = null;
 
   @Option(name = "--min-sdk-version")
-  private String minSdkVersionString;
+  @Nullable
+  private String minSdkVersionString = null;
 
   @Option(name = "--no-optimize")
   private boolean noOptimize = false;
@@ -86,10 +107,15 @@ public class MultiDexExecutableMain {
   private boolean enableBootstrapDexes = false;
 
   @Option(name = "--bootstrap-dex-output-dir")
-  private String bootstrapDexOutputDirString;
+  @Nullable
+  private String bootstrapDexOutputDirString = null;
 
   @Option(name = "--classpath-files")
-  private Path classpathFilesList;
+  @Nullable
+  private Path classpathFilesList = null;
+
+  @Option(name = "--pre-dexed-inputs")
+  private boolean preDexedInputs = false;
 
   public static void main(String[] args) throws IOException {
     MultiDexExecutableMain main = new MultiDexExecutableMain();
@@ -99,7 +125,7 @@ public class MultiDexExecutableMain {
       main.run();
       System.exit(0);
     } catch (CmdLineException e) {
-      System.err.println(e.getMessage());
+      System.err.println(e.toString());
       parser.printUsage(System.err);
       System.exit(1);
     }
@@ -132,29 +158,34 @@ public class MultiDexExecutableMain {
   private void run() throws IOException {
     Optional<Integer> minSdkVersion =
         Optional.ofNullable(minSdkVersionString).map(Integer::parseInt);
-    Path d8OutputDir = Files.createTempDirectory("d8_output_dir");
-    Path canaryClassDirectory = Files.createTempDirectory("canary_classes");
-    ImmutableList<Path> filesToDex =
-        Files.readAllLines(Paths.get(filesToDexList)).stream()
-            .map(Paths::get)
-            .collect(ImmutableList.toImmutableList());
+    Path d8OutputDir = Files.createTempDirectory(getScratchPath(), "d8_output_dir");
+    Path canaryClassDirectory = Files.createTempDirectory(getScratchPath(), "canary_classes");
+    ImmutableList<Path> filesToDex = readInputPaths(Paths.get(filesToDexList));
     ImmutableSet<Path> classpathFiles =
         classpathFilesList == null
             ? ImmutableSet.of()
-            : Files.readAllLines(classpathFilesList).stream()
-                .map(Paths::get)
-                .collect(ImmutableSet.toImmutableSet());
+            : ImmutableSet.copyOf(readInputPaths(classpathFilesList));
     ImmutableSet<Path> classpath =
         ImmutableSet.copyOf(Sets.difference(classpathFiles, ImmutableSet.copyOf(filesToDex)));
 
     boolean deliberatelySculptingPrimaryDex = minimizePrimaryDex || enableBootstrapDexes;
-    Path primaryDexClassNamesPath = Files.createTempFile("primary_dex_class_names", "txt");
+    if (preDexedInputs) {
+      Preconditions.checkState(
+          minSdkVersion.orElse(0) > 21,
+          "Pre-dexed native multidex inputs require a min SDK greater than 21");
+      Preconditions.checkState(
+          !deliberatelySculptingPrimaryDex,
+          "Pre-dexed native multidex inputs do not support primary dex sculpting");
+    }
+    Path primaryDexClassNamesPath =
+        Files.createTempFile(getScratchPath(), "primary_dex_class_names", "txt");
     Path bootstrapDexOutputDir = null;
     if (bootstrapDexOutputDirString != null) {
       bootstrapDexOutputDir = Paths.get(bootstrapDexOutputDirString);
       Files.createDirectories(bootstrapDexOutputDir);
     }
 
+    Function<String, String> deobfuscateFunction = Function.identity();
     int moduleDexFilesEmitted = 0;
     if (!APKModule.isRootModule(module)) {
       Preconditions.checkState(primaryDexPatternsPathString == null);
@@ -169,25 +200,28 @@ public class MultiDexExecutableMain {
               Optional.ofNullable(proguardConfigurationFileString).map(Paths::get),
               Optional.ofNullable(proguardMappingFileString).map(Paths::get),
               false);
-      Function<String, String> deobfuscateFunction =
-          proguardTranslatorFactory.createDeobfuscationFunction();
+      deobfuscateFunction = proguardTranslatorFactory.createDeobfuscationFunction();
       if (deliberatelySculptingPrimaryDex) {
         Preconditions.checkState(primaryDexFilesToDexList != null);
         Preconditions.checkState(primaryDexPatternsPathString == null);
         ImmutableList<Path> primaryDexFilesToDex =
-            Files.readAllLines(Paths.get(primaryDexFilesToDexList)).stream()
-                .map(Paths::get)
-                .collect(ImmutableList.toImmutableList());
+            readInputPaths(Paths.get(primaryDexFilesToDexList));
         Predicate<String> matchesAllFiles = f -> true;
         PrimaryDexClassNamesHolder primaryDexClassNamesHolder =
             getPrimaryDexClassNames(primaryDexFilesToDex, matchesAllFiles, deobfuscateFunction);
-        Preconditions.checkState(classpath.isEmpty());
-        classpath = ImmutableSet.copyOf(primaryDexFilesToDex);
+        ImmutableSet<Path> primaryDexClasspath =
+            ImmutableSet.copyOf(
+                Sets.difference(
+                    ImmutableSet.<Path>builder().addAll(filesToDex).addAll(classpath).build(),
+                    ImmutableSet.copyOf(primaryDexFilesToDex)));
+        classpath =
+            ImmutableSet.<Path>builder().addAll(primaryDexFilesToDex).addAll(classpath).build();
         if (enableBootstrapDexes) {
           Preconditions.checkNotNull(
               bootstrapDexOutputDir,
               "Need to supply --bootstrap-dex-output-dir with --enable-bootstrap-dexes");
-          Path d8OutputDirInitial = Files.createTempDirectory("d8_output_dir_bootstrap");
+          Path d8OutputDirInitial =
+              Files.createTempDirectory(getScratchPath(), "d8_output_dir_bootstrap");
           // Similar as the below minimizePrimaryDex case, but generate potentially many dex files
           // for the base.apk file using the split up primary pattern matching jars (output path to
           // d8 is a dir instead of single file as above). However many .dex files created beyond
@@ -202,15 +236,19 @@ public class MultiDexExecutableMain {
                 noOptimize ? EnumSet.of(D8Options.NO_OPTIMIZE) : EnumSet.noneOf(D8Options.class),
                 Optional.of(hackMainDexListForBootstrapRun),
                 Paths.get(androidJar),
-                filesToDex,
-                minSdkVersion);
+                primaryDexClasspath,
+                minSdkVersion,
+                D8_THREAD_COUNT);
           } catch (CompilationFailedException e) {
             throw new IOException(e);
           }
           // Since d8 is outputting to directory, copy individual files over.
           Path createdClassesDotDex = d8OutputDirInitial.resolve("classes.dex");
           Preconditions.checkState(Files.exists(createdClassesDotDex));
-          moduleDexFilesEmitted = (int) Files.list(d8OutputDirInitial).count();
+          try (var stream = Files.list(d8OutputDirInitial)) {
+            moduleDexFilesEmitted = (int) stream.count();
+          }
+
           Path primaryDexPath = Paths.get(primaryDexString);
           Files.move(createdClassesDotDex, primaryDexPath);
           // Create and fill the bootstrap dex dir. Perhaps it would be nicer if primary dex was
@@ -234,8 +272,9 @@ public class MultiDexExecutableMain {
                 noOptimize ? EnumSet.of(D8Options.NO_OPTIMIZE) : EnumSet.noneOf(D8Options.class),
                 Optional.empty(),
                 Paths.get(androidJar),
-                filesToDex,
-                minSdkVersion);
+                primaryDexClasspath,
+                minSdkVersion,
+                D8_THREAD_COUNT);
           } catch (CompilationFailedException e) {
             throw new IOException(e);
           }
@@ -243,11 +282,11 @@ public class MultiDexExecutableMain {
         }
         // Common case for both minimize primary, and bootstrap primaries.
         Files.write(
-            Paths.get(deobfuscatedPrimaryDexClassNamesPathString),
+            Paths.get(Objects.requireNonNull(deobfuscatedPrimaryDexClassNamesPathString)),
             primaryDexClassNamesHolder.deobfuscatedPrimaryDexClassNames);
-      } else {
+      } else if (!preDexedInputs) {
         List<String> primaryDexPatterns =
-            Files.readAllLines(Paths.get(primaryDexPatternsPathString));
+            Files.readAllLines(Paths.get(Objects.requireNonNull(primaryDexPatternsPathString)));
         ClassNameFilter primaryDexClassNameFilter =
             ClassNameFilter.fromConfiguration(primaryDexPatterns);
         Predicate<String> primaryDexPatternMatcher = primaryDexClassNameFilter::matches;
@@ -260,13 +299,13 @@ public class MultiDexExecutableMain {
                 + "to ensure that at least one class exists in the primary dex.");
         Files.write(primaryDexClassNamesPath, primaryDexClassNamesHolder.primaryDexClassNames);
         Files.write(
-            Paths.get(deobfuscatedPrimaryDexClassNamesPathString),
+            Paths.get(Objects.requireNonNull(deobfuscatedPrimaryDexClassNamesPathString)),
             primaryDexClassNamesHolder.deobfuscatedPrimaryDexClassNames);
       }
     }
 
     int canariesCreated = 0;
-    if (!APKModule.isRootModule(module) || deliberatelySculptingPrimaryDex) {
+    if ((!APKModule.isRootModule(module) || deliberatelySculptingPrimaryDex) && !preDexedInputs) {
       // We're just creating secondary dexes, and if we don't pass a main-dex-list then d8
       // will try to put everything into a single dex. Create our first "canary class" and
       // put it in the main-dex-list.
@@ -283,16 +322,19 @@ public class MultiDexExecutableMain {
               canaryClassDirectory.relativize(firstSecondaryDexCanaryClass).toString()));
     }
 
+    D8Output d8Output;
     try {
-      D8Utils.runD8Command(
-          new D8Utils.D8DiagnosticsHandler(),
-          d8OutputDir,
-          filesToDex,
-          getD8Options(),
-          Optional.ofNullable(primaryDexClassNamesPath),
-          Paths.get(androidJar),
-          classpath,
-          minSdkVersion);
+      d8Output =
+          D8Utils.runD8CommandWithOutputClassDescriptors(
+              new D8Utils.D8DiagnosticsHandler(),
+              d8OutputDir,
+              filesToDex,
+              getD8Options(),
+              preDexedInputs ? Optional.empty() : Optional.of(primaryDexClassNamesPath),
+              Paths.get(androidJar),
+              classpath,
+              minSdkVersion,
+              D8_THREAD_COUNT);
     } catch (CompilationFailedException e) {
       throw new IOException(e);
     }
@@ -303,17 +345,33 @@ public class MultiDexExecutableMain {
     Path createdClassesDotDex = d8OutputDir.resolve("classes.dex");
     Preconditions.checkState(Files.exists(createdClassesDotDex));
     if (APKModule.isRootModule(module) && !deliberatelySculptingPrimaryDex) {
-      Path primaryDexPath = Paths.get(primaryDexString);
+      Path primaryDexPath = Paths.get(Objects.requireNonNull(primaryDexString));
       Files.move(createdClassesDotDex, primaryDexPath);
       moduleDexFilesEmitted = 1;
+      if (preDexedInputs) {
+        // DexIndexedConsumer assigns index 0 to classes.dex, which is the primary dex moved above.
+        ImmutableList<String> primaryDexClassNames =
+            getDeobfuscatedClassNames(d8Output.getClassDescriptors(0), deobfuscateFunction);
+        Files.write(
+            Paths.get(Objects.requireNonNull(deobfuscatedPrimaryDexClassNamesPathString)),
+            primaryDexClassNames);
+      }
     } else {
-      // This is either a non-root module (with a canary prepended), or the root module for whom
-      // primary dex classes have already been taken care of. In either case, classes.dex is
-      // actually the first secondary dex, so just copy it over.
-      Files.move(
-          createdClassesDotDex,
+      Path firstSecondaryDexPath =
           secondaryDexesWithCanaries.resolve(
-              getRawSecondaryDexName(module, moduleDexFilesEmitted, 0)));
+              getRawSecondaryDexName(module, moduleDexFilesEmitted, 0));
+      if (preDexedInputs) {
+        mergeCanaryIntoDex(
+            createdClassesDotDex,
+            firstSecondaryDexPath,
+            canaryClassDirectory,
+            canariesCreated,
+            minSdkVersion);
+        Files.delete(createdClassesDotDex);
+        canariesCreated += 1;
+      } else {
+        Files.move(createdClassesDotDex, firstSecondaryDexPath);
+      }
       moduleDexFilesEmitted += 1;
     }
 
@@ -325,6 +383,51 @@ public class MultiDexExecutableMain {
     // existing .dex file to overflow.
     createSecondaryDexOutputWithCanaries(
         d8OutputDir, moduleDexFilesEmitted, canariesCreated, minSdkVersion);
+  }
+
+  private static Path getScratchPath() {
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    return Paths.get(scratchPath);
+  }
+
+  static ImmutableList<Path> readInputPaths(Path inputList) throws IOException {
+    ImmutableList.Builder<Path> inputs = ImmutableList.builder();
+    for (String line : Files.readAllLines(inputList)) {
+      Path path = Paths.get(line);
+      String name = path.getFileName().toString();
+      // JarSplitter emits an empty, comment-free ZIP for the unused side of a split. Avoid
+      // passing these to D8: its classpath lookup scans every provider for each requested class.
+      // A valid ZIP this small has no entries, so use its size without opening it.
+      if ((name.endsWith(".jar") || name.endsWith(".zip")) && Files.size(path) == ZipFile.ENDHDR) {
+        continue;
+      }
+      inputs.add(path);
+    }
+    return inputs.build();
+  }
+
+  private static ImmutableList<String> getDeobfuscatedClassNames(
+      Set<String> descriptors, Function<String, String> deobfuscateFunction) {
+    Preconditions.checkState(
+        !descriptors.isEmpty(), "D8 did not report any classes for output index 0 (classes.dex)");
+    ImmutableList.Builder<String> classNames = ImmutableList.builder();
+    for (String descriptor : descriptors) {
+      Preconditions.checkState(
+          descriptor.startsWith("L") && descriptor.endsWith(";"),
+          "Invalid class descriptor: %s",
+          descriptor);
+      String className = descriptor.substring(1, descriptor.length() - 1);
+      String deobfuscatedClassName =
+          Objects.requireNonNull(
+              deobfuscateFunction.apply(className),
+              "No deobfuscated class name for descriptor " + descriptor);
+      classNames.add(deobfuscatedClassName + ".class");
+    }
+    return ImmutableList.sortedCopyOf(classNames.build());
   }
 
   /**
@@ -349,33 +452,102 @@ public class MultiDexExecutableMain {
       throws IOException {
     Path secondaryDexesWithCanaries = Paths.get(secondaryDexOutputDirString);
     Files.createDirectories(secondaryDexesWithCanaries);
-    Path canaryClassDirectory = Files.createTempDirectory("canary_classes");
+    Path canaryClassDirectory = Files.createTempDirectory(getScratchPath(), "canary_classes");
     // Check if a previous step has already consumed the classes.dex file from this output dir. If
     // so, count beyond it.
-    long secondaryDexCount = Files.list(d8OutputDir).count();
-    for (int rawIndex = 0; rawIndex < secondaryDexCount; rawIndex++) {
-      String secondaryDexName = getRawSecondaryDexName(module, moduleDexFilesEmitted, rawIndex);
-      Path secondaryDexPath = secondaryDexesWithCanaries.resolve(secondaryDexName);
-      Preconditions.checkState(
-          !Files.exists(secondaryDexPath), "Path should not already exist: " + secondaryDexPath);
+    long secondaryDexCount;
+    try (var stream = Files.list(d8OutputDir)) {
+      secondaryDexCount = stream.count();
+    }
 
-      Path rawSecondaryDexPath = d8OutputDir.resolve(String.format("classes%d.dex", rawIndex + 2));
-      Preconditions.checkState(
-          Files.exists(rawSecondaryDexPath), "Expected file to exist at: " + rawSecondaryDexPath);
-      Path canaryClass = createCanaryClass(canaryClassDirectory, rawIndex + canariesCreated);
-      try {
-        D8Utils.runD8Command(
-            new D8Utils.D8DiagnosticsHandler(),
-            secondaryDexPath,
-            ImmutableList.of(rawSecondaryDexPath, canaryClass),
-            getD8Options(),
-            Optional.empty(),
-            Paths.get(androidJar),
-            ImmutableList.of(),
-            minSdkVersion);
-      } catch (CompilationFailedException e) {
-        throw new IOException(e);
+    List<Callable<Void>> tasks = new ArrayList<>();
+    for (int rawIndex = 0; rawIndex < secondaryDexCount; rawIndex++) {
+      final int idx = rawIndex;
+      tasks.add(
+          () -> {
+            mergeCanaryIntoDex(
+                d8OutputDir,
+                secondaryDexesWithCanaries,
+                canaryClassDirectory,
+                moduleDexFilesEmitted,
+                idx,
+                canariesCreated,
+                minSdkVersion);
+            return null;
+          });
+    }
+
+    runInParallel(tasks, "Canary merging");
+  }
+
+  /** Merge a single canary class into a single secondary dex. Thread-safe. */
+  private void mergeCanaryIntoDex(
+      Path d8OutputDir,
+      Path secondaryDexesWithCanaries,
+      Path canaryClassDirectory,
+      int moduleDexFilesEmitted,
+      int rawIndex,
+      int canariesCreated,
+      Optional<Integer> minSdkVersion)
+      throws IOException {
+    String secondaryDexName = getRawSecondaryDexName(module, moduleDexFilesEmitted, rawIndex);
+    Path secondaryDexPath = secondaryDexesWithCanaries.resolve(secondaryDexName);
+    Path rawSecondaryDexPath = d8OutputDir.resolve(String.format("classes%d.dex", rawIndex + 2));
+    mergeCanaryIntoDex(
+        rawSecondaryDexPath,
+        secondaryDexPath,
+        canaryClassDirectory,
+        rawIndex + canariesCreated,
+        minSdkVersion);
+  }
+
+  private void mergeCanaryIntoDex(
+      Path rawSecondaryDexPath,
+      Path secondaryDexPath,
+      Path canaryClassDirectory,
+      int canaryIndex,
+      Optional<Integer> minSdkVersion)
+      throws IOException {
+    Preconditions.checkState(
+        !Files.exists(secondaryDexPath), "Path should not already exist: " + secondaryDexPath);
+    Preconditions.checkState(
+        Files.exists(rawSecondaryDexPath), "Expected file to exist at: " + rawSecondaryDexPath);
+    Path canaryClass = createCanaryClass(canaryClassDirectory, canaryIndex);
+    try {
+      D8Utils.runD8Command(
+          new D8Utils.D8DiagnosticsHandler(),
+          secondaryDexPath,
+          ImmutableList.of(rawSecondaryDexPath, canaryClass),
+          getD8Options(),
+          Optional.empty(),
+          Paths.get(androidJar),
+          ImmutableList.of(),
+          minSdkVersion);
+    } catch (CompilationFailedException e) {
+      throw new IOException(e);
+    }
+  }
+
+  private static void runInParallel(List<Callable<Void>> tasks, String label) throws IOException {
+    if (tasks.isEmpty()) {
+      return;
+    }
+    int threadCount = Math.min(tasks.size(), Runtime.getRuntime().availableProcessors());
+    ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+    try {
+      for (Future<Void> future : executor.invokeAll(tasks)) {
+        future.get();
       }
+    } catch (ExecutionException e) {
+      Throwable cause = e.getCause();
+      throw (cause instanceof IOException)
+          ? (IOException) cause
+          : new IOException(label + " failed", cause);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IOException(label + " interrupted", e);
+    } finally {
+      executor.shutdownNow();
     }
   }
 
@@ -385,7 +557,7 @@ public class MultiDexExecutableMain {
     byte[] canaryClassBytes = CanaryUtils.createCanaryClassByteCode(className);
 
     Path canaryClassPath = directory.resolve(className + ".class");
-    Files.createDirectories(canaryClassPath.getParent());
+    Files.createDirectories(Objects.requireNonNull(canaryClassPath.getParent()));
     Files.write(canaryClassPath, canaryClassBytes);
 
     return canaryClassPath;
@@ -489,7 +661,8 @@ public class MultiDexExecutableMain {
    */
   Path synthesizePrimaryDexClassNamesFileForDexes(ImmutableList<Path> filesToDex, String desc)
       throws IOException {
-    Path primaryDexClassNamesPath = Files.createTempFile("primary_dex_class_names_" + desc, "txt");
+    Path primaryDexClassNamesPath =
+        Files.createTempFile(getScratchPath(), "primary_dex_class_names_" + desc, "txt");
     String className = extractFirstClassNameFromInputs(filesToDex);
     Files.write(primaryDexClassNamesPath, ImmutableList.of(className));
     return primaryDexClassNamesPath;

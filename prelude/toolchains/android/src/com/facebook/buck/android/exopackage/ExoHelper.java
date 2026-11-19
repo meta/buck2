@@ -10,11 +10,13 @@
 
 package com.facebook.buck.android.exopackage;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.nio.file.Path;
 
 /** An exo installer helper. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface ExoHelper {
   /** Returns the files to install. */
   ImmutableMap<Path, Path> getFilesToInstall() throws IOException;

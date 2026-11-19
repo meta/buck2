@@ -8,9 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(assert_matches)]
-
 use std::sync::Once;
 
 mod cached_validation_result;

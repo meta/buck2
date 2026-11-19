@@ -38,6 +38,8 @@ pub enum Message {
         header: String,
         body: String,
         footer: Option<String>,
+        /// When true, render without section padding between header/body/footer.
+        compact: bool,
     },
 }
 
@@ -83,6 +85,7 @@ impl std::fmt::Display for Message {
                 header,
                 body,
                 footer,
+                compact: _,
             } => {
                 write!(f, "{}\n{}", header, body)?;
                 if let Some(footer_text) = footer {
@@ -161,6 +164,7 @@ mod tests {
                 header: "Build Warning".to_owned(),
                 body: "Your build is taking longer than expected.".to_owned(),
                 footer: Some("Consider using buildmate for analysis.".to_owned()),
+                compact: false,
             },
             remediation: None,
         };
@@ -179,6 +183,7 @@ mod tests {
                 header: "Information".to_owned(),
                 body: "This is the main message.".to_owned(),
                 footer: None,
+                compact: false,
             },
             remediation: None,
         };

@@ -68,7 +68,7 @@ func query(ctx context.Context, req *packages.DriverRequest, bucker Bucker, plat
 		return nil, err
 	}
 
-	resp, err = queryBXL(ctx, req, bucker, platform, targetsByType.buckPatterns, targetsByType.buckFiles)
+	resp, err = queryBXL(ctx, req, bucker, targetsByType.buckPatterns, targetsByType.buckFiles)
 	if err != nil {
 		slog.Error("error when query BXL", "args", os.Args, "err", err)
 		return nil, err

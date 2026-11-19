@@ -1,0 +1,22 @@
+# Coverage for TOML types handled by toml_value_to_json:
+# String, Integer, Float, Boolean, Array, Table
+# (Datetime is tested in test_load_toml but omitted here because
+# Buck2's Rust TOML parser doesn't support bare datetime values.)
+
+title = "toml type coverage"
+
+[types]
+bool_array = [true, false]
+bool_false = false
+bool_true = true
+float_val = 3.14
+int_array = [1, 2, 3]
+int_val = 42
+negative_float = -0.5
+negative_int = -7
+string_array = ["a", "b", "c"]
+string_val = "hello"
+
+[types.nested]
+key = "value"
+number = 99

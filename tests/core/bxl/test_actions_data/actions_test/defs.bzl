@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _fail_impl(ctx):
-    out = ctx.actions.declare_output("output1")
+    out = ctx.actions.declare_output("output1", has_content_based_path = False)
     ctx.actions.run(cmd_args("false", hidden = out.as_output()), category = "fail")
     return [DefaultInfo(default_outputs = [out])]
 

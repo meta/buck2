@@ -1,0 +1,12 @@
+# The outside dep sits in a `select()` arm; arms are checked at load time
+# like plain deps, so the cap refuses it. The select key (`root//config:x`)
+# is also outside the cap but is not a dependency and is skipped, as it is
+# for `within_view` generally.
+stub(
+    name = "c",
+    within_view = ["PUBLIC"],
+    deps = select({
+        "DEFAULT": [],
+        "root//config:x": ["root//outside:t"],
+    }),
+)

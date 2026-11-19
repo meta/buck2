@@ -17,10 +17,13 @@ def _cas_artifact_impl(ctx: AnalysisContext):
     )
     return [DefaultInfo(default_output = out)]
 
-cas_artifact = rule(impl = _cas_artifact_impl, attrs = {
-    "digest": attrs.string(),
-    "expires_after_timestamp": attrs.int(),
-    "is_directory": attrs.bool(default = False),
-    "is_tree": attrs.bool(default = False),
-    "use_case": attrs.string(),
-})
+cas_artifact = rule(
+    impl = _cas_artifact_impl,
+    attrs = {
+        "digest": attrs.string(),
+        "expires_after_timestamp": attrs.int(),
+        "is_directory": attrs.bool(default = False),
+        "is_tree": attrs.bool(default = False),
+        "use_case": attrs.string(),
+    },
+)

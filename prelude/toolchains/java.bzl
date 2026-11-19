@@ -7,7 +7,16 @@
 # above-listed licenses.
 
 load("@prelude//:paths.bzl", "paths")
-load("@prelude//java:java_toolchain.bzl", "AbiGenerationMode", "JavaPlatformInfo", "JavaTestToolchainInfo", "JavaToolchainInfo", "JavacProtocol", "PrebuiltJarToolchainInfo")
+load(
+    "@prelude//java:java_toolchain.bzl",
+    "AbiGenerationMode",
+    "JavaPlatformInfo",
+    "JavaTestToolchainInfo",
+    "JavaToolchainInfo",
+    "JavacProtocol",
+    "PrebuiltJarToolchainInfo",
+)
+load("@prelude//tests:test_listing.bzl", "TestListingInfo")
 
 def _system_java_tool_impl(ctx):
     return [
@@ -23,7 +32,7 @@ system_java_tool = rule(
 )
 
 def _system_java_lib_impl(ctx):
-    output = ctx.actions.declare_output(paths.basename(ctx.attrs.jar))
+    output = ctx.actions.declare_output(paths.basename(ctx.attrs.jar), has_content_based_path = False)
     ctx.actions.run(cmd_args(["ln", "-s", ctx.attrs.jar, output.as_output()]), category = "{}_symlink".format(ctx.attrs.name))
     return [DefaultInfo(default_output = output)]
 
@@ -34,10 +43,7 @@ system_java_lib = rule(
     },
 )
 
-def system_prebuilt_jar_bootstrap_toolchain(
-        name,
-        java,
-        visibility = None):
+def system_prebuilt_jar_bootstrap_toolchain(name, java, visibility = None):
     kwargs = {}
 
     _prebuilt_jar_toolchain_rule(name = name, java = java, visibility = visibility, **kwargs)
@@ -56,22 +62,14 @@ def _prebuilt_jar_toolchain_rule_impl(ctx):
 
 _prebuilt_jar_toolchain_rule = rule(
     attrs = {
-        "java": attrs.dep(),
+        # this just goes into the RunInfo of the result, so it's target, not exec
+        "java": attrs.dep(providers = [RunInfo]),
     },
     impl = _prebuilt_jar_toolchain_rule_impl,
     is_toolchain_rule = True,
 )
 
-def javacd_toolchain(
-        name,
-        java,
-        javac,
-        jar,
-        jlink,
-        jmod,
-        jrt_fs_jar,
-        java_for_tests = None,
-        visibility = None):
+def javacd_toolchain(name, java, javac, jar, jlink, jmod, jrt_fs_jar, java_for_tests = None, visibility = None):
     _java_toolchain(
         name = name,
         visibility = visibility,
@@ -91,14 +89,7 @@ def javacd_toolchain(
         jrt_fs_jar = jrt_fs_jar,
     )
 
-def system_java_bootstrap_toolchain(
-        name,
-        java,
-        javac,
-        jlink,
-        jmod,
-        jrt_fs_jar,
-        visibility = None):
+def system_java_bootstrap_toolchain(name, java, javac, jlink, jmod, jrt_fs_jar, visibility = None):
     _java_toolchain(
         name = name,
         visibility = visibility,
@@ -126,6 +117,7 @@ def _java_toolchain_impl(ctx):
             cp_snapshot_generator = None,
             dep_files = None,
             fat_jar_main_class_lib = ctx.attrs.fat_jar_main_class_lib,
+            compiler_class_to_source_map = ctx.attrs.compiler_class_to_source_map,
             gen_class_to_source_map = ctx.attrs.gen_class_to_source_map,
             gen_class_to_source_map_include_sourceless_compiled_packages = ctx.attrs.gen_class_to_source_map_include_sourceless_compiled_packages,
             gen_class_to_source_map_debuginfo = None,
@@ -164,29 +156,42 @@ _java_toolchain = rule(
     impl = _java_toolchain_impl,
     is_toolchain_rule = True,
     attrs = {
-        "class_abi_generator": attrs.option(attrs.dep(providers = [RunInfo]), default = None),
+        "class_abi_generator": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "class_loader_bootstrapper": attrs.option(attrs.source(), default = None),
-        "compile_and_package": attrs.dep(default = "prelude//java/tools:compile_and_package"),
-        "fat_jar": attrs.dep(default = "prelude//java/tools:fat_jar"),
+        "compile_and_package": attrs.exec_dep(
+            default = "prelude//java/tools:compile_and_package",
+            providers = [RunInfo],
+        ),
+        "compiler_class_to_source_map": attrs.exec_dep(
+            default = "prelude//java/tools:compiler_class_to_source_map",
+            providers = [RunInfo],
+        ),
+        "fat_jar": attrs.exec_dep(
+            default = "prelude//java/tools:fat_jar",
+            providers = [RunInfo],
+        ),
         "fat_jar_main_class_lib": attrs.option(attrs.source(), default = None),
         "gen_class_to_source_map": attrs.exec_dep(
             default = "prelude//java/tools:gen_class_to_source_map",
             providers = [RunInfo],
         ),
-        "gen_class_to_source_map_include_sourceless_compiled_packages": attrs.list(attrs.string(), default = [
-            "androidx.databinding",
-        ]),
+        "gen_class_to_source_map_include_sourceless_compiled_packages": attrs.list(
+            attrs.string(),
+            default = [
+                "androidx.databinding",
+            ],
+        ),
         "is_bootstrap_toolchain": attrs.bool(default = False),
-        "jar": attrs.option(attrs.dep(providers = [RunInfo]), default = None),
+        "jar": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "jar_builder": attrs.source(default = "prelude//toolchains/android/src/com/facebook/buck/util/zip:jar_builder"),
-        "java": attrs.exec_dep(),
-        "java_for_tests": attrs.option(attrs.dep(providers = [RunInfo]), default = None),
-        "javac": attrs.option(attrs.one_of(attrs.dep(), attrs.source(), attrs.string()), default = None),
+        "java": attrs.exec_dep(providers = [RunInfo]),
+        "java_for_tests": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
+        "javac": attrs.option(attrs.one_of(attrs.exec_dep(), attrs.source(), attrs.string()), default = None),
         "javac_protocol": attrs.enum(JavacProtocol.values()),
         "javacd": attrs.option(attrs.source(), default = None),
         "javacd_main_class": attrs.option(attrs.string(), default = None),
-        "jlink": attrs.exec_dep(),
-        "jmod": attrs.exec_dep(),
+        "jlink": attrs.exec_dep(providers = [RunInfo]),
+        "jmod": attrs.exec_dep(providers = [RunInfo]),
         "jrt_fs_jar": attrs.source(),
         "merge_class_to_source_maps": attrs.exec_dep(
             default = "prelude//java/tools:merge_class_to_source_maps",
@@ -215,9 +220,11 @@ def _java_test_toolchain_rule_impl(ctx):
             junit_test_runner_main_class_args = ctx.attrs.junit_test_runner_main_class_args,
             jvm_args = ctx.attrs.jvm_args,
             list_class_names = ctx.attrs.list_class_names,
-            list_tests = None,
             test_runner_library_jar = ctx.attrs.test_runner_library_jar,
             testng_test_runner_main_class_args = ctx.attrs.testng_test_runner_main_class_args,
+        ),
+        TestListingInfo(
+            list_tests = ctx.attrs.list_tests,
         ),
     ]
 
@@ -230,7 +237,8 @@ _java_test_toolchain_rule = rule(
             attrs.string(),
             default = [],
         ),
-        "list_class_names": attrs.dep(providers = [RunInfo]),
+        "list_class_names": attrs.exec_dep(providers = [RunInfo]),
+        "list_tests": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         "test_runner_library_jar": attrs.source(),
         "testng_test_runner_main_class_args": attrs.list(attrs.string()),
     },

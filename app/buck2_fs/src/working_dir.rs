@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use std::env;
 use std::path::Path;
 
+use crate::IoResultExt;
 use crate::fs_util;
 use crate::paths::abs_norm_path::AbsNormPath;
 use crate::paths::abs_norm_path::AbsNormPathBuf;
@@ -32,7 +32,7 @@ impl AbsWorkingDir {
     }
 
     pub fn current_dir() -> buck2_error::Result<AbsWorkingDir> {
-        let current_dir = AbsPathBuf::new(env::current_dir()?)?;
+        let current_dir = fs_util::current_dir()?;
 
         #[derive(Debug, buck2_error::Error)]
         #[buck2(tier0)]
@@ -44,7 +44,7 @@ impl AbsWorkingDir {
         // `current_dir` seems to return canonical path everywhere except Windows,
         // but may return non-canonical path on Windows:
         // https://fb.workplace.com/groups/buck2windows/posts/754618429743405
-        let current_dir_canonical = fs_util::canonicalize(&current_dir)?;
+        let current_dir_canonical = fs_util::canonicalize(&current_dir).categorize_internal()?;
 
         if current_dir.as_path() != current_dir_canonical.as_path() {
             if !cfg!(windows) {

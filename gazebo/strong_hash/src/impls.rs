@@ -8,5 +8,6 @@
  * above-listed licenses.
  */
 
+mod compact_str;
 mod num_bigint;
 mod triomphe;

@@ -8,13 +8,15 @@
  * above-listed licenses.
  */
 
+use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr_type::AttrType;
 use buck2_node::attrs::attr_type::visibility::VisibilityAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
+use buck2_node::visibility::StarlarkTargetNameGlob;
 use buck2_node::visibility::VisibilityPattern;
 use buck2_node::visibility::VisibilityWithinViewBuilder;
+use starlark::typing::Ty;
 use starlark::values::Value;
 
 use crate::attrs::coerce::AttrTypeCoerce;
@@ -28,7 +30,7 @@ enum VisibilityAttrTypeCoerceError {
     #[error("Visibility attribute is not configurable (internal error)")]
     #[buck2(tag = Tier0)]
     AttrTypeNotConfigurable,
-    #[error("Visibility must be a list of string, got `{0}`")]
+    #[error("Visibility must be a list of strings or target_name_glob values, got `{0}`")]
     #[buck2(tag = Input)]
     WrongType(String),
     #[error("Visibility attribute is not configurable (i.e. cannot use `select()`): `{0}`")]
@@ -37,27 +39,29 @@ enum VisibilityAttrTypeCoerceError {
 }
 
 impl AttrTypeCoerce for VisibilityAttrType {
-    fn coerce_item(
+    fn coerce_item<'v>(
         &self,
         configurable: AttrIsConfigurable,
-        ctx: &dyn AttrCoercionContext,
-        value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+        ctx: &dyn AttrCoercionContext<'v>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<AttrToken> {
         if configurable == AttrIsConfigurable::Yes {
             return Err(VisibilityAttrTypeCoerceError::AttrTypeNotConfigurable.into());
         }
-        Ok(CoercedAttr::Visibility(
-            parse_visibility_with_view(ctx, value)?.build_visibility(),
-        ))
+        let v = parse_visibility_with_view(ctx, value)?.build_visibility();
+        ctx.attr_arena().encode_visibility(&v)
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {
-        AttrType::list(AttrType::string()).starlark_type()
+        TyMaybeSelect::List(Box::new(TyMaybeSelect::Union(vec![
+            AttrType::string().starlark_type(),
+            TyMaybeSelect::Basic(Ty::starlark_value::<StarlarkTargetNameGlob>()),
+        ])))
     }
 }
 
-pub(crate) fn parse_visibility_with_view(
-    ctx: &dyn AttrCoercionContext,
+pub(crate) fn parse_visibility_with_view<'v>(
+    ctx: &dyn AttrCoercionContext<'v>,
     attr: Value,
 ) -> buck2_error::Result<VisibilityWithinViewBuilder> {
     let list = match coerce_list(attr) {
@@ -72,18 +76,20 @@ pub(crate) fn parse_visibility_with_view(
 
     let mut builder = VisibilityWithinViewBuilder::with_capacity(list.len());
     for item in list {
-        let Some(item) = item.unpack_str() else {
-            if StarlarkSelector::from_value(*item).is_some() {
-                return Err(VisibilityAttrTypeCoerceError::NotConfigurable(attr.to_repr()).into());
+        if let Some(s) = item.unpack_str() {
+            if s == VisibilityPattern::PUBLIC {
+                builder.add_public();
+            } else {
+                builder.add(VisibilityPattern::Parsed(ctx.coerce_target_pattern(s)?));
             }
-            return Err(VisibilityAttrTypeCoerceError::WrongType(attr.to_repr()).into());
-        };
-
-        if item == VisibilityPattern::PUBLIC {
-            // TODO(cjhopman): We should probably enforce that this is the only entry.
-            builder.add_public();
+        } else if let Some(target_name_glob) = item.downcast_ref::<StarlarkTargetNameGlob>() {
+            let record = target_name_glob.coerce(|s| ctx.coerce_target_pattern(s))?;
+            builder.add(VisibilityPattern::TargetNameGlob(record));
         } else {
-            builder.add(VisibilityPattern(ctx.coerce_target_pattern(item)?));
+            if StarlarkSelector::from_value(*item).is_some() {
+                return Err(VisibilityAttrTypeCoerceError::NotConfigurable(item.to_repr()).into());
+            }
+            return Err(VisibilityAttrTypeCoerceError::WrongType(item.to_repr()).into());
         }
     }
     Ok(builder)

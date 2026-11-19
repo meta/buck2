@@ -44,11 +44,7 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
     # Extract graphs from the roots via the raw attrs, as `parse_groups_definitions`
     # parses them as labels.
 
-    deps = flatten([
-        get_roots_from_mapping(mapping)
-        for entry in ctx.attrs.map
-        for mapping in entry[1]
-    ])
+    deps = flatten([get_roots_from_mapping(mapping) for entry in ctx.attrs.map for mapping in entry[1]])
     linkable_graph = create_linkable_graph(
         ctx,
         deps = [dep[LinkableGraph] for dep in deps],
@@ -56,9 +52,11 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
     link_groups = parse_groups_definitions(ctx.attrs.map, lambda root: root.label)
     link_group_info = build_link_group_info(linkable_graph, link_groups)
     return [
-        DefaultInfo(sub_targets = {
-            "info": make_info_subtarget_providers(ctx, link_group_info.groups.values(), link_group_info.mappings),
-        }),
+        DefaultInfo(
+            sub_targets = {
+                "info": make_info_subtarget_providers(ctx, link_group_info.groups.values(), link_group_info.mappings),
+            }
+        ),
         link_group_info,
     ]
 

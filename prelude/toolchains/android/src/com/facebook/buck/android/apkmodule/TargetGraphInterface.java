@@ -10,10 +10,13 @@
 
 package com.facebook.buck.android.apkmodule;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * Interface for a directed graph of targets that can be traversed by getting the dependencies of
  * each node.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface TargetGraphInterface<BuildTarget> {
   boolean isEmpty();
 

@@ -19,7 +19,6 @@ error: Expected type `int | str` but got `list[typing.Never]`
   |
 8 |         return []
   |         ^^^^^^^^^
-  |
 
 Compiler typechecker (eval):
 error: Expected type `int | str` but got `list[typing.Never]`
@@ -27,4 +26,3 @@ error: Expected type `int | str` but got `list[typing.Never]`
   |
 8 |         return []
   |         ^^^^^^^^^
-  |

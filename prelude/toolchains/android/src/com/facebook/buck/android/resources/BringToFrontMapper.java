@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.resources;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.IntBuffer;
 import java.util.Map;
 import java.util.SortedSet;
@@ -19,6 +20,7 @@ import java.util.stream.IntStream;
  * BringToFrontMapper supports "bring-to-front" reassignment of reference ids. Given a set of ids,
  * it will construct an assignment that ensures that those ids are the first ones for each type.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BringToFrontMapper implements ReferenceMapper {
   private final int packageId;
   private final int[][] mapping;

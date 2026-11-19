@@ -1,0 +1,2 @@
+Marker file to keep this directory in source control. Intentionally missing a
+`TARGETS.fixture` to exercise the "missing build file" error.

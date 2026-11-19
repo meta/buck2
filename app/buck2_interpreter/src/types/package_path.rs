@@ -21,15 +21,11 @@ use starlark::collections::StarlarkHasher;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
-use starlark::values::ValueError;
-use starlark::values::ValueLike;
 use starlark::values::starlark_value;
-use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 
 #[derive(
     Clone,
@@ -42,10 +38,12 @@ use starlark::values::starlark_value_as_type::StarlarkValueAsType;
     From,
     ProvidesStaticType,
     Serialize,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[serde(transparent)]
 pub struct StarlarkPackagePath {
+    #[starlark_pagable(pagable)]
     pkg: PackageLabel,
 }
 
@@ -61,32 +59,24 @@ impl StarlarkPackagePath {
     }
 }
 
+starlark::methods_static!(PACKAGE_PATH_METHODS = package_path_methods);
+
 #[starlark_value(type = "PackagePath")]
 impl<'v> StarlarkValue<'v> for StarlarkPackagePath {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(package_path_methods)
+        Some(PACKAGE_PATH_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         self.hash(hasher);
-        Ok(())
     }
 
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.pkg == other.pkg)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> bool {
+        self.pkg == other.pkg
     }
 
-    fn compare(&self, other: Value<'v>) -> starlark::Result<std::cmp::Ordering> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            Ok(self.pkg.cmp(&other.pkg))
-        } else {
-            ValueError::unsupported_with(self, "compare", other)
-        }
+    fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.pkg.cmp(&other.pkg)
     }
 }
 
@@ -108,6 +98,5 @@ fn package_path_methods(builder: &mut MethodsBuilder) {
 }
 
 #[starlark_module]
-pub fn register_package_path(globals: &mut GlobalsBuilder) {
-    const PackagePath: StarlarkValueAsType<StarlarkPackagePath> = StarlarkValueAsType::new();
-}
+#[starlark_types(StarlarkPackagePath as PackagePath)]
+pub fn register_package_path(globals: &mut GlobalsBuilder) {}

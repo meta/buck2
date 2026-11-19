@@ -13,6 +13,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use allocative::Allocative;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_node::cfg_constructor::CfgConstructorImpl;
 use buck2_node::metadata::key::MetadataKey;
 use buck2_util::late_binding::LateBinding;
@@ -23,20 +24,22 @@ use starlark::values::Freeze;
 use starlark::values::FreezeErrorContext;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::FrozenValue;
 use starlark::values::NoSerialize;
-use starlark::values::OwnedFrozenRef;
-use starlark::values::OwnedFrozenValue;
+use starlark::values::OwnedFrozen;
+use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkRepresentations;
+use starlark::values::StarlarkType;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Tracer;
 use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark_map::small_map::SmallMap;
 
 use crate::interpreter::extra_value::FrozenInterpreterExtraValue;
 use crate::interpreter::extra_value::InterpreterExtraValue;
-use crate::super_package::package_value::FrozenStarlarkPackageValue;
+use crate::interpreter::extra_value::OwnedFrozenInterpreterExtraValue;
+use crate::super_package::package_value::OwnedFrozenStarlarkPackageValue;
 use crate::super_package::package_value::StarlarkPackageValue;
 
 /// `Module.extra_value` when evaluating `PACKAGE` file.
@@ -51,7 +54,7 @@ use crate::super_package::package_value::StarlarkPackageValue;
 #[display("{:?}", self)]
 pub struct PackageFileExtra<'v> {
     pub cfg_constructor: OnceCell<Value<'v>>,
-    pub(crate) package_values: RefCell<SmallMap<MetadataKey, StarlarkPackageValue<'v>>>,
+    pub(crate) package_values: RefCell<BuckMutInsertionMap<MetadataKey, StarlarkPackageValue<'v>>>,
 }
 
 unsafe impl<'v> Trace<'v> for PackageFileExtra<'v> {
@@ -74,51 +77,62 @@ unsafe impl<'v> Trace<'v> for PackageFileExtra<'v> {
     NoSerialize,
     derive_more::Display,
     ProvidesStaticType,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[display("{:?}", self)]
-pub struct FrozenPackageFileExtra {
-    pub(crate) cfg_constructor: Option<FrozenValue>,
-    pub(crate) package_values: SmallMap<MetadataKey, FrozenStarlarkPackageValue>,
+pub struct FrozenPackageFileExtra<'v> {
+    pub(crate) cfg_constructor: Option<Value<'v>>,
+    pub(crate) package_values: BuckMutInsertionMap<MetadataKey, StarlarkPackageValue<'v>>,
 }
 
 /// Resolve `FrozenPackageFileExtra.cfg_constructor` to a `CfgConstructorImpl`.
 pub static MAKE_CFG_CONSTRUCTOR: LateBinding<
-    fn(OwnedFrozenValue) -> buck2_error::Result<Arc<dyn CfgConstructorImpl>>,
+    fn(OwnedFrozen<Value<'static>>) -> buck2_error::Result<Arc<dyn CfgConstructorImpl>>,
 > = LateBinding::new("MAKE_CFG_CONSTRUCTOR");
 
 // TODO(nga): this does not need to be fully starlark_value,
 // but we don't have lighter machinery for that.
-#[starlark_value(type = "PackageFileExtra")]
-impl<'v> StarlarkValue<'v> for PackageFileExtra<'v> {}
-
-#[starlark_value(type = "PackageFileExtra")]
-impl<'v> StarlarkValue<'v> for FrozenPackageFileExtra {
-    type Canonical = FrozenPackageFileExtra;
+/// A `PackageFileExtra` in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub enum PackageFileExtraView<'v> {
+    Unfrozen(ValueTyped<'v, PackageFileExtra<'v>>),
+    Frozen(ValueTyped<'v, FrozenPackageFileExtra<'v>>),
 }
 
-impl<'v> Freeze for PackageFileExtra<'v> {
-    type Frozen = FrozenPackageFileExtra;
+#[starlark_value(type = "PackageFileExtra")]
+impl<'v> StarlarkType<'v> for PackageFileExtraView<'v> {}
 
-    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for PackageFileExtra<'v> {
+    type Type = PackageFileExtraView<'v>;
+}
+
+#[starlark_value(frozen_vtable)]
+impl<'v> StarlarkValue<'v> for FrozenPackageFileExtra<'v> {
+    type Type = PackageFileExtraView<'v>;
+}
+
+impl<'v> Freeze<'v> for PackageFileExtra<'v> {
+    type Frozen<'fv> = FrozenPackageFileExtra<'fv>;
+
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
         let PackageFileExtra {
             cfg_constructor,
             package_values,
         } = self;
-        let cfg_constructor = cfg_constructor.into_inner().freeze(freezer)?;
-        let package_values = package_values
-            .into_inner()
-            .into_iter_hashed()
-            .map(|(k, v)| {
-                let v = v
-                    .freeze(freezer)
-                    .freeze_error_context(&format!("freezing `{k}`"))?;
-                Ok((k, v))
-            })
-            .collect::<FreezeResult<SmallMap<MetadataKey, FrozenStarlarkPackageValue>>>()?;
+        let cfg_constructor = Freeze::freeze(cfg_constructor, freezer)?;
+        let package_values = package_values.into_inner();
+        // N.B. collect::<Result<_>> sets the lower bound to zero,
+        // which can cause over-allocations in frozen containers.
+        let mut frozen_package_values = BuckMutInsertionMap::with_capacity(package_values.len());
+        for (k, v) in package_values.into_iter_hashed() {
+            let v = Freeze::freeze(v, freezer).freeze_error_context(&format!("freezing `{k}`"))?;
+            frozen_package_values.insert_hashed(k, v);
+        }
         Ok(FrozenPackageFileExtra {
             cfg_constructor,
-            package_values,
+            package_values: frozen_package_values,
         })
     }
 }
@@ -133,12 +147,56 @@ impl<'v> PackageFileExtra<'v> {
     }
 }
 
-impl FrozenPackageFileExtra {
+impl FrozenPackageFileExtra<'_> {
     pub(crate) fn get(
         module: &FrozenModule,
-    ) -> buck2_error::Result<Option<OwnedFrozenRef<FrozenPackageFileExtra>>> {
-        Ok(FrozenInterpreterExtraValue::get(module)?
-            .into_owned_frozen_ref()
-            .try_map_option(|x| x.value.package_extra.as_ref()))
+    ) -> buck2_error::Result<Option<OwnedFrozenPackageFileExtra>> {
+        Ok(OwnedFrozenPackageFileExtra::new(
+            FrozenInterpreterExtraValue::get(module)?,
+        ))
     }
+}
+
+/// A frozen module's interpreter extra value, known to have a `package_extra`.
+pub(crate) struct OwnedFrozenPackageFileExtra(OwnedFrozenInterpreterExtraValue);
+
+impl OwnedFrozenPackageFileExtra {
+    fn new(extra: OwnedFrozenInterpreterExtraValue) -> Option<Self> {
+        extra
+            .by_ref(|v| v.as_ref().value.package_extra.is_some())
+            .then(|| OwnedFrozenPackageFileExtra(extra))
+    }
+
+    /// The value stored by `set_cfg_constructor()`, if any.
+    pub(crate) fn cfg_constructor(&self) -> Option<OwnedFrozen<Value<'static>>> {
+        self.0
+            .as_ref()
+            .maybe_map::<Value<'static>, _>(|v| package_extra(&v.as_ref().value).cfg_constructor)
+            .map(|v| v.to_owned())
+    }
+
+    /// The package values written by this `PACKAGE` file.
+    pub(crate) fn package_values(
+        &self,
+    ) -> BuckMutInsertionMap<MetadataKey, OwnedFrozenStarlarkPackageValue> {
+        self.0.by_ref_with_reconstructor(|extra, reconstructor| {
+            let package_values = &package_extra(&extra.as_ref().value).package_values;
+            let mut values = BuckMutInsertionMap::with_capacity(package_values.len());
+            for (name, value) in package_values {
+                values.insert(
+                    name.clone(),
+                    OwnedFrozenStarlarkPackageValue::new(reconstructor.reconstruct(value.value())),
+                );
+            }
+            values
+        })
+    }
+}
+
+/// Unwraps the invariant that [`OwnedFrozenPackageFileExtra`]'s constructor establishes.
+fn package_extra<'v>(extra: &'v FrozenInterpreterExtraValue<'v>) -> &'v FrozenPackageFileExtra<'v> {
+    extra
+        .package_extra
+        .as_ref()
+        .expect("checked by `OwnedFrozenPackageFileExtra::new`")
 }

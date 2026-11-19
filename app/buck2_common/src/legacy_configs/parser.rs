@@ -10,19 +10,20 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use allocative::Allocative;
 use buck2_core::cells::cell_root_path::CellRootPath;
 use buck2_error::BuckErrorContext;
 use buck2_fs::paths::RelativePath;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_hash::BuckFixedSortedMap;
 use dupe::Dupe;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use itertools::Itertools;
-use once_cell::sync::Lazy;
+use pagable::Pagable;
 use regex::Regex;
-use starlark_map::sorted_map::SortedMap;
 
 use super::cells::ExternalPathBuckconfigData;
 use crate::legacy_configs::args::ResolvedConfigFlag;
@@ -52,6 +53,8 @@ enum ConfigError {
     SectionMissingTrailingBracket(String),
     #[error("Improperly include directive path. Got {0}")]
     BadIncludePath(String),
+    #[error("Detected a cycle in buckconfig includes: `{0}` is already being parsed")]
+    IncludeCycle(String),
     #[error(
         "Couldn't parse line. Expected include directive (`<file:/file.bcfg>`), section(`[some_section]`), or key assignment (`some_key = some_value`). Got `{0}`"
     )]
@@ -67,7 +70,7 @@ fn format_cycle(cycle: &[(String, String)]) -> String {
         .join(" -> ")
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Allocative)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Allocative, Pagable)]
 struct SectionBuilder {
     values: BTreeMap<String, ConfigValue>,
 }
@@ -75,7 +78,7 @@ struct SectionBuilder {
 impl SectionBuilder {
     fn finish(self) -> LegacyBuckConfigSection {
         LegacyBuckConfigSection {
-            values: SortedMap::from_iter(self.values),
+            values: BuckFixedSortedMap::from_iter(self.values),
         }
     }
 }
@@ -83,7 +86,7 @@ impl SectionBuilder {
 /// Represents the state associated with a buckconfig that is being parsed right now.
 ///
 /// A buckconfig will generally be parsed by combining multiple command args and files
-#[derive(Debug, Clone, PartialEq, Eq, Allocative)]
+#[derive(Debug, Clone, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) struct LegacyConfigParser {
     values: BTreeMap<String, SectionBuilder>,
 }
@@ -102,8 +105,8 @@ struct LegacyConfigFileParser<'p> {
 ///   <?file:/optional/absolute>
 ///   <file:relative/to/current>
 ///   <file:../../doesnt/need/to/be/forward/relative>
-static FILE_INCLUDE: Lazy<Regex> =
-    Lazy::new(|| Regex::new("<(?P<optional>\\?)?file:(?P<include>..*)>").unwrap());
+static FILE_INCLUDE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new("<(?P<optional>\\?)?file:(?P<include>..*)>").unwrap());
 
 impl LegacyConfigParser {
     pub(crate) fn new() -> Self {
@@ -145,10 +148,7 @@ impl LegacyConfigParser {
         let pair = config_pair.to_owned();
         let cell_matches = pair.cell.as_deref() == Some(current_cell) || pair.cell.is_none();
         if cell_matches {
-            let config_section = self
-                .values
-                .entry(pair.section)
-                .or_insert_with(SectionBuilder::default);
+            let config_section = self.values.entry(pair.section).or_default();
 
             match pair.value {
                 Some(raw_value) => {
@@ -174,7 +174,7 @@ impl LegacyConfigParser {
             for (key, value) in section_builder.values.iter() {
                 self.values
                     .entry(section.to_owned())
-                    .or_insert_with(SectionBuilder::default)
+                    .or_default()
                     .values
                     .insert(key.to_owned(), value.clone());
             }
@@ -202,7 +202,7 @@ impl LegacyConfigParser {
     ) -> Vec<buck2_data::ConfigValue> {
         self.values
             .iter()
-            .map(|(k, v)| {
+            .flat_map(|(k, v)| {
                 v.values.iter().map(|(key, value)| buck2_data::ConfigValue {
                     section: k.to_owned(),
                     key: key.to_owned(),
@@ -211,7 +211,6 @@ impl LegacyConfigParser {
                     is_cli,
                 })
             })
-            .flatten()
             .collect()
     }
     pub(crate) fn combine(external_path_configs: Vec<ExternalPathBuckconfigData>) -> Self {
@@ -238,10 +237,20 @@ impl<'p> LegacyConfigFileParser<'p> {
     }
 
     fn push_file(&mut self, line: usize, path: &ConfigPath) -> buck2_error::Result<()> {
+        let current_file = self.current_file.dupe().unwrap_or_else(|| panic!("push_file() called without any files on the include stack. top-level files should use start_file()"));
+        let path_string = path.to_string();
+        if current_file.path == path_string
+            || self
+                .include_stack
+                .iter()
+                .any(|included_from| included_from.source_file.path == path_string)
+        {
+            return Err(ConfigError::IncludeCycle(path_string).into());
+        }
         let include_source = ConfigFileLocationWithLine {
-                source_file: self.current_file.dupe().unwrap_or_else(|| panic!("push_file() called without any files on the include stack. top-level files should use start_file()")),
-                line,
-            };
+            source_file: current_file,
+            line,
+        };
 
         self.include_stack.push(include_source.clone());
 
@@ -306,6 +315,10 @@ impl<'p> LegacyConfigFileParser<'p> {
         .boxed()
     }
 
+    fn is_comment_line(line: &str) -> bool {
+        line.starts_with('#') || line.starts_with(';')
+    }
+
     fn strip_line_comment(line: &str) -> &str {
         match line.split_once(" #") {
             Some((before, _)) => before,
@@ -340,9 +353,11 @@ impl<'p> LegacyConfigFileParser<'p> {
             .enumerate()
             // Coalesce escaped newlines.
             .coalesce(|(i, mut prev), (j, next)| {
-                if prev.ends_with('\\') {
+                if prev.ends_with('\\') && !Self::is_comment_line(&prev) {
                     prev.truncate(prev.len() - 1);
-                    prev.push_str(&next);
+                    if !Self::is_comment_line(&next) {
+                        prev.push_str(&next);
+                    }
                     Ok((i, prev))
                 } else {
                     Err(((i, prev), (j, next)))
@@ -351,7 +366,7 @@ impl<'p> LegacyConfigFileParser<'p> {
             // Remove commented lines.
             // This needs to come after the coalesce in case someone has an empty line after an escaped newline
             // Remove empty lines and comment lines (support both '#' and ';' for comment lines)
-            .filter(|(_, l)| !l.is_empty() && !l.starts_with('#') && !l.starts_with(';'));
+            .filter(|(_, l)| !l.is_empty() && !Self::is_comment_line(l));
 
         for (i, line) in lines {
             if let Some(section) = Self::parse_section_marker(&line)? {
@@ -387,7 +402,7 @@ impl<'p> LegacyConfigFileParser<'p> {
                     let include_file = if let Ok(absolute) = AbsNormPath::new(include) {
                         ConfigPath::Global(absolute.to_owned().into_abs_path_buf())
                     } else {
-                        let relative = RelativePath::new(include);
+                        let relative = RelativePath::unchecked_new(include);
                         match config_path.join_to_parent_normalized(relative) {
                             Ok(d) => d,
                             Err(_) => {
@@ -416,11 +431,7 @@ impl<'p> LegacyConfigFileParser<'p> {
     fn commit_section(&mut self, section: (String, BTreeMap<String, ConfigValue>)) {
         let (section, values) = section;
         // Commit the previous section.
-        let committed = self
-            .values
-            .values
-            .entry(section)
-            .or_insert_with(SectionBuilder::default);
+        let committed = self.values.values.entry(section).or_default();
         values.into_iter().for_each(|(k, v)| {
             committed.values.insert(k, v);
         });

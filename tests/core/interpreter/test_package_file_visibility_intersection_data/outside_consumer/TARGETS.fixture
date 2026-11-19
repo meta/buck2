@@ -1,0 +1,7 @@
+# Consumer OUTSIDE the intersection. Even though `intersect/public_target:t`
+# declares `visibility=["PUBLIC"]`, the intersection clips it to
+# `root//intersect/...` -- so this consumer cannot depend.
+stub(
+    name = "c",
+    deps = ["root//intersect/public_target:t"],
+)

@@ -38,6 +38,7 @@ impl RemoteExecutionMetadataExt for RemoteExecutorUseCase {
                 disable_retry_on_oom: false,
                 ..Default::default()
             }),
+            disable_cancel_on_disconnect: true,
             ..Default::default()
         }
     }

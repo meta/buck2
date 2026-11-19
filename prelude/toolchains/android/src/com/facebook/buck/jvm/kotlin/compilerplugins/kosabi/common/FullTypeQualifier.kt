@@ -43,7 +43,7 @@ class FullTypeQualifier : Comparable<FullTypeQualifier> {
     } else {
       pkg = segments.take(firstUpperCaseIndex)
       val lastSegment = segments.last()
-      if (NonConventionalImports.interfaces.contains(segments)) {
+      if (NonConventionalImports.classLikeDeclarations.contains(segments)) {
         names = listOf(lastSegment)
         member = null
       } else if (lastSegment.isStaticConstQualifier() || lastSegment.isStaticMethodQualifier()) {
@@ -56,7 +56,7 @@ class FullTypeQualifier : Comparable<FullTypeQualifier> {
     }
     if (names.isEmpty() && member == null) {
       Logger.log(
-          "Topic: [FullTypeQualifier] Invalid segments: $segments caused empty names and null member in FullTypeQualifier"
+          "Topic: [FullTypeQualifier] Invalid segments: $segments caused empty names and null member in FullTypeQualifier",
       )
     }
   }
@@ -78,6 +78,13 @@ class FullTypeQualifier : Comparable<FullTypeQualifier> {
   // TopLevelDeclaration:
   // - com.some.package.method
   fun isTopLevelDeclaration(): Boolean = names.isEmpty()
+
+  /**
+   * Call only with segments from a type slot: there the trailing segment names a type by position,
+   * whatever its case.
+   */
+  fun withMemberAsNestedName(): FullTypeQualifier =
+      if (member == null) this else unsafeBuildQualifier(segments, pkg, names + member)
 
   override fun compareTo(other: FullTypeQualifier): Int {
     val thisSize = this.segments.size
@@ -123,7 +130,7 @@ class FullTypeQualifier : Comparable<FullTypeQualifier> {
  * @param qualifiersToFilter set of [FullTypeQualifier] to filter from current set
  */
 fun Collection<FullTypeQualifier>.filterDifferentOuterClassIn(
-    qualifiersToFilter: Collection<FullTypeQualifier>
+    qualifiersToFilter: Collection<FullTypeQualifier>,
 ): List<FullTypeQualifier> = filterNot { qualifier ->
   qualifiersToFilter.contains(qualifier.outerClassOnlyQualifier())
 }

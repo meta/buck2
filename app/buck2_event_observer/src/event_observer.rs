@@ -10,7 +10,8 @@
 
 use std::sync::Arc;
 
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+use buck2_error::internal_error;
 use buck2_events::BuckEvent;
 use buck2_wrapper_common::invocation_id::TraceId;
 
@@ -73,16 +74,12 @@ where
                 SpanEnd(end) => {
                     use buck2_data::span_end_event::Data::*;
 
-                    match end
+                    if let ActionExecution(action_execution_end) = end
                         .data
                         .as_ref()
-                        .buck_error_context("Missing `data` in SpanEnd")?
+                        .internal_error("Missing `data` in SpanEnd")?
                     {
-                        ActionExecution(action_execution_end) => {
-                            self.action_stats.update(action_execution_end);
-                        }
-
-                        _ => {}
+                        self.action_stats.update(action_execution_end);
                     }
                 }
                 Instant(instant) => {
@@ -91,7 +88,7 @@ where
                     match instant
                         .data
                         .as_ref()
-                        .buck_error_context("Missing `data` in `Instant`")?
+                        .internal_error("Missing `data` in `Instant`")?
                     {
                         ReSession(re_session) => {
                             self.re_state.add_re_session(re_session);
@@ -103,11 +100,9 @@ where
                         TestDiscovery(discovery) => {
                             use buck2_data::test_discovery::Data::*;
 
-                            match discovery
-                                .data
-                                .as_ref()
-                                .buck_error_context("Missing `data` in `TestDiscovery`")?
-                            {
+                            match discovery.data.as_ref().ok_or_else(|| {
+                                internal_error!("Missing `data` in `TestDiscovery`")
+                            })? {
                                 Session(session) => {
                                     self.session_info.test_session = Some(session.clone());
                                 }
@@ -130,6 +125,9 @@ where
                         }
                         DiceStateSnapshot(dice) => {
                             self.dice_state.update(dice);
+                        }
+                        SystemInfo(system_info) => {
+                            self.system_info = system_info.clone();
                         }
                         _ => {}
                     }

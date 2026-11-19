@@ -253,10 +253,6 @@ impl Deref for DataEnumUtil<'_> {
 }
 
 impl<'a> DataEnumUtil<'a> {
-    pub(crate) fn span(self) -> Span {
-        self.derive_input.span()
-    }
-
     pub(crate) fn match_self(
         self,
         variant: impl Fn(VariantUtil<'a>, Vec<(syn::Ident, &'a Field)>) -> syn::Result<syn::Expr>,
@@ -337,13 +333,6 @@ impl<'a> DeriveInputUtil<'a> {
         }
     }
 
-    pub(crate) fn span(self) -> Span {
-        match self {
-            DeriveInputUtil::Struct(data) => data.span(),
-            DeriveInputUtil::Enum(data) => data.span(),
-        }
-    }
-
     /// Generate expressions with callback for a struct or for each enum variant.
     pub(crate) fn match_self(
         self,
@@ -410,22 +399,6 @@ impl<'a> GenericsUtil<'a> {
             }
         }
         Ok(lifetimes)
-    }
-
-    pub(crate) fn assert_only_type_params(self) -> syn::Result<Vec<&'a syn::TypeParam>> {
-        let mut type_params = Vec::new();
-        for param in &self.generics.params {
-            match param {
-                syn::GenericParam::Type(param) => type_params.push(param),
-                _ => {
-                    return Err(syn::Error::new_spanned(
-                        param,
-                        "only type parameters are supported (no lifetime or const parameters)",
-                    ));
-                }
-            }
-        }
-        Ok(type_params)
     }
 
     pub(crate) fn assert_at_most_one_lifetime_param(

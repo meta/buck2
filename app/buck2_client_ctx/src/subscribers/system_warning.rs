@@ -44,7 +44,11 @@ pub(crate) fn system_memory_exceeded_msg(memory_pressure: &MemoryPressureHigh) -
 pub(crate) fn low_disk_space_msg(low_disk_space: &LowDiskSpace) -> String {
     format!(
         "Low disk space: only {} remaining out of {}{}",
-        HumanizedBytes::new(low_disk_space.total_disk_space - low_disk_space.used_disk_space),
+        HumanizedBytes::new(
+            low_disk_space
+                .total_disk_space
+                .saturating_sub(low_disk_space.used_disk_space)
+        ),
         HumanizedBytes::new(low_disk_space.total_disk_space),
         if is_open_source() {
             ""
@@ -90,7 +94,7 @@ pub(crate) fn check_remaining_disk_space(
     let remaining_disk_space_threshold =
         system_info.remaining_disk_space_threshold_gb? * BYTES_PER_GIGABYTE;
 
-    if total_disk_space - used_disk_space <= remaining_disk_space_threshold {
+    if total_disk_space.saturating_sub(used_disk_space) <= remaining_disk_space_threshold {
         Some(LowDiskSpace {
             total_disk_space,
             used_disk_space,
@@ -98,6 +102,12 @@ pub(crate) fn check_remaining_disk_space(
     } else {
         None
     }
+}
+
+/// Whether less than 1% of the disk is free. Unlike `check_remaining_disk_space`, this is not
+/// configurable: it identifies a disk that is effectively full, where writes may fail.
+pub(crate) fn is_disk_near_full(free_disk_space: u64, total_disk_space: u64) -> bool {
+    free_disk_space < total_disk_space / 100
 }
 
 pub(crate) fn check_remaining_disk_space_snapshot(

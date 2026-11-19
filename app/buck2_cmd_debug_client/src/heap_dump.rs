@@ -29,7 +29,9 @@ use buck2_core::is_open_source;
 /// `mallctl prof.dump`. It is a profile of currently allocated memory,
 /// not profile of allocations.
 ///
-/// To use this command, restart buckd with env variable `MALLOC_CONF=prof:true,prof_final:false`.
+/// To use this command, restart buckd with env variable
+/// `MALLOC_CONF=prof:true,prof_final:false` -- or `JE_MALLOC_CONF=...` on macOS, where the
+/// jemalloc build is `je_`-prefixed and plain `MALLOC_CONF` is ignored.
 #[derive(Debug, clap::Parser)]
 pub struct HeapDumpCommand {
     /// The path to write the heap dump to.

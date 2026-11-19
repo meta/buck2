@@ -14,25 +14,28 @@ import com.facebook.buck.cd.model.java.AbiGenerationMode;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
 import com.facebook.buck.util.zip.JarBuilder;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
+import java.util.Objects;
 import java.util.Set;
-import javax.annotation.Nullable;
 import javax.annotation.processing.Messager;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
 import javax.lang.model.util.Types;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class StubGenerator {
   private final SourceVersion version;
   private final ElementsExtended elements;
   private final Types types;
   private final Messager messager;
-  private final JarBuilder jarBuilder;
+  @Nullable private final JarBuilder jarBuilder;
   private final AbiGenerationMode abiCompatibilityMode;
   private final boolean includeParameterMetadata;
   private final boolean keepSynthetic;
 
-  private final AbsPath classOutputPath;
+  @Nullable private final AbsPath classOutputPath;
 
   public StubGenerator(
       SourceVersion version,
@@ -43,7 +46,7 @@ public class StubGenerator {
       AbiGenerationMode abiCompatibilityMode,
       boolean includeParameterMetadata,
       boolean keepSynthetic,
-      AbsPath classOutputPath) {
+      @Nullable AbsPath classOutputPath) {
     this.version = version;
     this.elements = elements;
     this.types = types;
@@ -71,7 +74,7 @@ public class StubGenerator {
       if (classOutputPath != null) {
         stubJar.writeClasses(classOutputPath);
       } else {
-        stubJar.writeTo(jarBuilder);
+        stubJar.writeTo(Objects.requireNonNull(jarBuilder));
       }
     } catch (IOException e) {
       throw new RuntimeException(String.format("Failed to generate abi: %s", e.getMessage()));

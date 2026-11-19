@@ -11,7 +11,6 @@
 // This code is adapted from https://github.com/dtolnay/thiserror licensed under Apache-2.0 or MIT.
 
 use std::collections::BTreeSet as Set;
-use std::collections::HashMap as Map;
 
 use proc_macro2::TokenTree;
 use quote::format_ident;
@@ -29,6 +28,11 @@ use syn::parse::Parser;
 use crate::ast::Field;
 use crate::attr::Display;
 use crate::attr::Trait;
+
+// Scratch map inside a proc macro; `buck2_hash` is a runtime dependency this crate should not
+// pull into the compiler.
+#[allow(clippy::disallowed_types)]
+type Map<K, V> = std::collections::HashMap<K, V>;
 
 impl Display<'_> {
     // Transform `"error {var}"` to `"error {}", var`.

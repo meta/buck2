@@ -57,7 +57,7 @@ pub async fn run_forkserver(
     let service = UnixForkserverService::new(log_reload_handle, &state_dir)
         .buck_error_context("Failed to create UnixForkserverService")?;
 
-    let router = tonic::transport::Server::builder().add_service(
+    let router = buck2_grpc::server_builder().add_service(
         forkserver_server::ForkserverServer::new(service)
             .max_encoding_message_size(usize::MAX)
             .max_decoding_message_size(usize::MAX),

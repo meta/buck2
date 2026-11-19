@@ -1,0 +1,4 @@
+write(name = "leaf", visibility = ["PUBLIC"])
+cp(name = "pkg_cycle_mid", dep = "//:pkg_cycle_leaf", visibility = ["PUBLIC"])
+write(name = "preloaded_dep", visibility = ["PUBLIC"])
+write(name = "preloaded_literal", visibility = ["PUBLIC"])

@@ -20,6 +20,8 @@ use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::streaming::StreamingCommand;
 
+use crate::commands::status::process_status;
+
 #[derive(Debug, clap::Parser)]
 #[clap(
     about = "Start, query, and control the http server",
@@ -29,7 +31,19 @@ Using this command can ensure the daemon is running.
 To stop a specific server, use `buck2 kill` and add `--isolation-dir` for a specific instance.
 To stop all instances, use `buck2 killall`."
 )]
-pub struct ServerCommand {}
+pub struct ServerCommand {
+    #[clap(
+        long,
+        help = "Print buckd status as JSON after ensuring the server is running."
+    )]
+    status: bool,
+    #[clap(
+        long,
+        requires = "status",
+        help = "Whether to include a state snapshot in the JSON status output."
+    )]
+    snapshot: bool,
+}
 
 #[async_trait(?Send)]
 impl StreamingCommand for ServerCommand {
@@ -44,9 +58,14 @@ impl StreamingCommand for ServerCommand {
     ) -> ExitResult {
         let status = buckd
             .with_flushing()
-            .status(events_ctx, false, false)
+            .status(events_ctx, self.snapshot, false)
             .await?;
-        buck2_client_ctx::println!("buckd.endpoint={}", status.process_info.unwrap().endpoint)?;
+        if self.status {
+            let json_status = process_status(status)?;
+            buck2_client_ctx::println!("{}", serde_json::to_string_pretty(&json_status)?)?;
+        } else {
+            buck2_client_ctx::println!("buckd.endpoint={}", status.process_info.unwrap().endpoint)?;
+        }
         ExitResult::success()
     }
 

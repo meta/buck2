@@ -11,8 +11,10 @@
 package com.facebook.buck.testrunner;
 
 import com.facebook.buck.test.selectors.TestSelectorList;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Optional;
 import java.util.logging.Level;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Model representing parsed execution arguments.
@@ -23,6 +25,7 @@ import java.util.logging.Level;
  * @see #STD_ERR_LOG_LEVEL_PROPERTY
  * @see System#getProperty(String)
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JUnitOptions {
 
   static final String STD_OUT_LOG_LEVEL_PROPERTY = "com.facebook.buck.stdOutLogLevel";
@@ -31,7 +34,7 @@ public class JUnitOptions {
   private boolean dryRun;
   private boolean shouldExplainTestSelectors;
   private long defaultTestTimeoutMillis;
-  private TestSelectorList testSelectorList;
+  private @Nullable TestSelectorList testSelectorList;
   private Optional<Level> stdOutLogLevel = Optional.empty();
   private Optional<Level> stdErrLogLevel = Optional.empty();
 
@@ -48,7 +51,7 @@ public class JUnitOptions {
         Optional.ofNullable(System.getProperty(STD_ERR_LOG_LEVEL_PROPERTY)).map(Level::parse);
   }
 
-  public TestSelectorList getTestSelectorList() {
+  public @Nullable TestSelectorList getTestSelectorList() {
     return testSelectorList;
   }
 

@@ -8,14 +8,15 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_common::file_ops::metadata::FileDigest;
+use buck2_common::file_ops::metadata::FileMetadata;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::buck2_env;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -25,9 +26,11 @@ use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::walk::unordered_entry_walk;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_events::dispatch::EventDispatcher;
+use buck2_events::dispatch::get_dispatcher_opt;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest::CasDigestFromReExt;
 use buck2_execute::digest::CasDigestToReExt;
@@ -38,27 +41,31 @@ use buck2_execute::directory::ActionSharedDirectory;
 use buck2_execute::execute::blocking::BlockingExecutor;
 use buck2_execute::execute::blocking::IoRequest;
 use buck2_execute::execute::clean_output_paths::cleanup_path;
-use buck2_execute::materialize::http::http_download;
+use buck2_execute::execute::readonly_outputs::make_output_paths_writable;
+use buck2_execute::execute::readonly_outputs::seal_files;
+use buck2_execute::materialize::materializer::CasDownloadInfo;
 use buck2_execute::materialize::materializer::CasNotFoundError;
 use buck2_execute::materialize::materializer::WriteRequest;
+use buck2_execute::materialize::write::write_to_disk;
 use buck2_execute::output_size::OutputSize;
 use buck2_execute::re::error::RemoteExecutionError;
 use buck2_execute::re::manager::ReConnectionManager;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
-use buck2_fs::fs_util::IoError;
+use buck2_fs::fs_util::DiskSpaceStats;
 use buck2_fs::fs_util::ReadDir;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_http::HttpClient;
-use chrono::Duration;
-use chrono::Utc;
+use buck2_fs::paths::abs_path::AbsPathBuf;
+use buck2_hash::BuckMutMap;
+use buck2_hash::BuckMutSet;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::future::BoxFuture;
 use futures::future::Future;
 use futures::future::FutureExt;
-use futures::future::TryFutureExt;
-use gazebo::prelude::VecExt;
-use once_cell::sync::Lazy;
+use jiff::SignedDuration;
+use jiff::Timestamp;
+use parking_lot::Mutex;
 use remote_execution::NamedDigest;
 use remote_execution::NamedDigestWithPermissions;
 use remote_execution::TCode;
@@ -73,10 +80,8 @@ use crate::materializers::deferred::MaterializeEntryError;
 use crate::materializers::deferred::MaterializerSender;
 use crate::materializers::deferred::SharedMaterializingError;
 use crate::materializers::deferred::Version;
-use crate::materializers::deferred::WriteFile;
 use crate::materializers::deferred::artifact_tree::MaterializationMethodToProto;
 use crate::materializers::deferred::clean_stale::CleanInvalidatedPathRequest;
-use crate::materializers::immediate;
 use crate::materializers::io::MaterializeTreeStructure;
 use crate::materializers::io::materialize_files;
 
@@ -88,7 +93,30 @@ pub struct DefaultIoHandler {
     re_client_manager: Arc<ReConnectionManager>,
     /// Executor for blocking IO operations
     io_executor: Arc<dyn BlockingExecutor>,
-    http_client: HttpClient,
+    /// Whether the files this handler puts on disk, and those it is told are there, are made
+    /// read-only (`buck2.readonly_outputs`).
+    readonly_outputs: bool,
+}
+
+#[derive(Allocative)]
+pub struct NoDiskIoHandler {
+    fs: ProjectRoot,
+    digest_config: DigestConfig,
+    buck_out_path: ProjectRelativePathBuf,
+}
+
+impl NoDiskIoHandler {
+    pub fn new(
+        fs: ProjectRoot,
+        digest_config: DigestConfig,
+        buck_out_path: ProjectRelativePathBuf,
+    ) -> Self {
+        Self {
+            fs,
+            digest_config,
+            buck_out_path,
+        }
+    }
 }
 
 struct MaterializationStat {
@@ -98,15 +126,6 @@ struct MaterializationStat {
 
 #[async_trait]
 pub trait IoHandler: Sized + Sync + Send + 'static {
-    fn write<'a>(
-        self: &Arc<Self>,
-        path: ProjectRelativePathBuf,
-        write: Arc<WriteFile>,
-        version: Version,
-        command_sender: Arc<MaterializerSender<Self>>,
-        cancellations: &'a CancellationContext,
-    ) -> BoxFuture<'a, Result<(), SharedMaterializingError>>;
-
     async fn immediate_write<'a>(
         self: &Arc<Self>,
         generate: Box<dyn FnOnce() -> buck2_error::Result<Vec<WriteRequest>> + Send + 'a>,
@@ -135,13 +154,42 @@ pub trait IoHandler: Sized + Sync + Send + 'static {
         cancellations: &CancellationContext,
     ) -> Result<(), MaterializeEntryError>;
 
+    /// Makes the files of `entry`, which got to `path` without this handler, read-only when the
+    /// handler's own materializations are (`buck2.readonly_outputs`).
+    async fn seal(
+        self: &Arc<Self>,
+        path: ProjectRelativePathBuf,
+        entry: ActionDirectoryEntry<ActionSharedDirectory>,
+    ) -> buck2_error::Result<()>;
+
+    /// Gives an incremental action's previous outputs back to it, undoing what `seal` and the
+    /// handler's materializations did to them; nothing when they did nothing.
+    async fn make_outputs_writable(
+        self: &Arc<Self>,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> buck2_error::Result<()>;
+
     fn create_ttl_refresh(
         self: &Arc<Self>,
         tree: &ArtifactTree,
-        min_ttl: Duration,
+        min_ttl: SignedDuration,
     ) -> Option<BoxFuture<'static, buck2_error::Result<()>>>;
 
-    fn read_dir(&self, path: &AbsNormPathBuf) -> Result<ReadDir, IoError>;
+    async fn upload_materialized_artifact(
+        self: &Arc<Self>,
+        path: ProjectRelativePathBuf,
+        entry: ActionDirectoryEntry<ActionSharedDirectory>,
+        info: Arc<CasDownloadInfo>,
+    ) -> buck2_error::Result<()>;
+
+    /// Free and total space on the filesystem holding `path`, counting what deletions on it
+    /// freed.
+    async fn synced_disk_space_stats(
+        self: &Arc<Self>,
+        path: Arc<AbsPathBuf>,
+    ) -> buck2_error::Result<DiskSpaceStats>;
+
+    fn read_dir(&self, path: &AbsNormPathBuf) -> buck2_error::Result<ReadDir>;
     fn buck_out_path(&self) -> &ProjectRelativePathBuf;
     fn re_client_manager(&self) -> &Arc<ReConnectionManager>;
     fn fs(&self) -> &ProjectRoot;
@@ -155,7 +203,7 @@ impl DefaultIoHandler {
         buck_out_path: ProjectRelativePathBuf,
         re_client_manager: Arc<ReConnectionManager>,
         io_executor: Arc<dyn BlockingExecutor>,
-        http_client: HttpClient,
+        readonly_outputs: bool,
     ) -> Self {
         Self {
             fs,
@@ -163,7 +211,7 @@ impl DefaultIoHandler {
             buck_out_path,
             re_client_manager,
             io_executor,
-            http_client,
+            readonly_outputs,
         }
     }
     /// Materializes an `entry` at `path`, using the materialization `method`
@@ -176,6 +224,7 @@ impl DefaultIoHandler {
         stat: &mut MaterializationStat,
         cancellations: &CancellationContext,
     ) -> Result<(), MaterializeEntryError> {
+        let sealed = self.readonly_outputs.then(|| (path.clone(), entry.dupe()));
         // Materialize the dir structure, and symlinks
         self.io_executor
             .execute_io(
@@ -225,14 +274,20 @@ impl DefaultIoHandler {
                     .map(|x| u64::try_from(x.named_digest.digest.size_in_bytes).unwrap_or_default())
                     .sum();
 
+                if files.is_empty() {
+                    // Only directories and symlinks, all created above; there is nothing to ask
+                    // the CAS for, and a daemon without RE must not be asked to connect.
+                    return Ok(());
+                }
+
                 let connection = self.re_client_manager.get_re_connection();
                 let re_client = connection.get_client().with_use_case(info.re_use_case);
 
-                re_client.materialize_files(files).await.map_err(|e| {
-                    let e: buck2_error::Error = e.into();
-                    match e.find_typed_context::<RemoteExecutionError>() {
+                re_client
+                    .materialize_files(files, info)
+                    .await
+                    .map_err(|e| match e.find_typed_context::<RemoteExecutionError>() {
                         Some(re_error) if re_error.code == TCode::NOT_FOUND => {
-                            let e: buck2_error::Error = e.into();
                             MaterializeEntryError::NotFound(CasNotFoundError {
                                 path: Arc::from(path),
                                 info: info.dupe(),
@@ -243,52 +298,13 @@ impl DefaultIoHandler {
                         _ => MaterializeEntryError::Error(e.context({
                             format!("Error materializing files declared by action: {info}")
                         })),
-                    }
-                })?;
-            }
-            ArtifactMaterializationMethod::HttpDownload { info } => {
-                async {
-                    let downloaded = http_download(
-                        &self.http_client,
-                        &self.fs,
-                        self.digest_config,
-                        &path,
-                        &info.url,
-                        &info.checksum,
-                        info.metadata.is_executable,
-                    )
-                    .await?;
-
-                    // Check that the size we got was the one that we expected. This isn't strictly
-                    // speaking necessary here, but since an invalid size would break actions
-                    // running on RE, it's a good idea to catch it here when materializing so that
-                    // our test suite can surface bugs when downloading things locally.
-                    if downloaded.size() != info.metadata.digest.size() {
-                        return Err(buck2_error::buck2_error!(
-                            ErrorTag::DownloadSizeMismatch,
-                            "Downloaded size ({}) does not match expected size ({})",
-                            downloaded.size(),
-                            info.metadata.digest.size(),
-                        ));
-                    }
-                    stat.file_count = 1;
-                    stat.total_bytes = info.metadata.digest.size();
-                    Ok(())
-                }
-                .boxed()
-                .await
-                .with_buck_error_context(|| {
-                    format!(
-                        "Error materializing HTTP resource declared by target `{}`",
-                        info.owner
-                    )
-                })?;
+                    })?;
             }
             ArtifactMaterializationMethod::LocalCopy(_, copied_artifacts) => {
                 self.io_executor
                     .execute_io_inline(|| {
                         for a in copied_artifacts {
-                            let count_and_bytes = a.dest_entry.calc_output_count_and_bytes();
+                            let count_and_bytes = a.dest_entry.calc_output_count_and_bytes(false);
                             stat.file_count += count_and_bytes.count;
                             stat.total_bytes += count_and_bytes.bytes;
 
@@ -318,43 +334,40 @@ impl DefaultIoHandler {
             #[cfg(test)]
             ArtifactMaterializationMethod::Test => unimplemented!(),
         };
+        if let Some((path, entry)) = sealed {
+            self.io_executor
+                .execute_io_inline(|| seal_files(&self.fs, &path, &entry))
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+struct SyncedDiskSpaceStatsRequest {
+    path: Arc<AbsPathBuf>,
+    stats: Arc<Mutex<Option<DiskSpaceStats>>>,
+}
+
+impl IoRequest for SyncedDiskSpaceStatsRequest {
+    fn execute(self: Box<Self>, _project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+        fs_util::sync_filesystem(&*self.path)?;
+        *self.stats.lock() = Some(fs_util::disk_space_stats(&*self.path)?);
         Ok(())
     }
 }
 
 #[async_trait]
 impl IoHandler for DefaultIoHandler {
-    fn write<'a>(
-        self: &Arc<Self>,
-        path: ProjectRelativePathBuf,
-        write: Arc<WriteFile>,
-        version: Version,
-        command_sender: Arc<MaterializerSender<Self>>,
-        cancellations: &'a CancellationContext,
-    ) -> BoxFuture<'a, Result<(), SharedMaterializingError>> {
-        self.io_executor
-            .execute_io(
-                Box::new(WriteIoRequest {
-                    path,
-                    write,
-                    version,
-                    command_sender,
-                }),
-                cancellations,
-            )
-            .map_err(|e| SharedMaterializingError::Error(e.into()))
-            .boxed()
-    }
-
     async fn immediate_write<'a>(
         self: &Arc<Self>,
         generate: Box<dyn FnOnce() -> buck2_error::Result<Vec<WriteRequest>> + Send + 'a>,
     ) -> buck2_error::Result<Vec<ArtifactValue>> {
-        immediate::write_to_disk(
+        write_to_disk(
             self.fs(),
             self.io_executor.as_ref(),
             self.digest_config(),
             generate,
+            self.readonly_outputs,
         )
         .await
     }
@@ -375,7 +388,7 @@ impl IoHandler for DefaultIoHandler {
                 }),
                 cancellations,
             )
-            .map(|r| r.map_err(buck2_error::Error::from))
+            .map(|r| r)
             .boxed()
     }
 
@@ -441,14 +454,67 @@ impl IoHandler for DefaultIoHandler {
     fn create_ttl_refresh(
         self: &Arc<Self>,
         tree: &ArtifactTree,
-        min_ttl: Duration,
+        min_ttl: SignedDuration,
     ) -> Option<BoxFuture<'static, buck2_error::Result<()>>> {
         create_ttl_refresh(tree, &self.re_client_manager, min_ttl, self.digest_config)
             .map(|f| f.boxed())
     }
 
-    fn read_dir(&self, path: &AbsNormPathBuf) -> Result<ReadDir, IoError> {
-        fs_util::read_dir(path)
+    async fn upload_materialized_artifact(
+        self: &Arc<Self>,
+        path: ProjectRelativePathBuf,
+        entry: ActionDirectoryEntry<ActionSharedDirectory>,
+        info: Arc<CasDownloadInfo>,
+    ) -> buck2_error::Result<()> {
+        let files = {
+            let mut files = Vec::new();
+            let mut walk = unordered_entry_walk(entry.as_ref().map_dir(Directory::as_ref));
+            while let Some((entry_path, entry)) = walk.next() {
+                if let DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) = entry {
+                    let path = self.fs.resolve(path.join(entry_path.get()));
+                    files.push(NamedDigest {
+                        name: path.as_maybe_relativized_str()?.to_owned(),
+                        digest: file.digest.to_re(),
+                        ..Default::default()
+                    });
+                }
+            }
+            files
+        };
+
+        let connection = self.re_client_manager.get_re_connection();
+        let re_client = connection.get_client().with_use_case(info.re_use_case);
+        re_client
+            .upload_files_and_directories(files, vec![], vec![])
+            .await?;
+
+        Ok(())
+    }
+
+    async fn synced_disk_space_stats(
+        self: &Arc<Self>,
+        path: Arc<AbsPathBuf>,
+    ) -> buck2_error::Result<DiskSpaceStats> {
+        // Not `execute_io_inline`: the deferred materializer's clean runs on its command thread,
+        // a current-thread runtime that cannot block in place.
+        let stats = Arc::new(Mutex::new(None));
+        self.io_executor
+            .execute_io(
+                Box::new(SyncedDiskSpaceStatsRequest {
+                    path,
+                    stats: stats.dupe(),
+                }),
+                CancellationContext::never_cancelled(),
+            )
+            .await?;
+        stats
+            .lock()
+            .take()
+            .internal_error("Synced disk space stats request finished without stats")
+    }
+
+    fn read_dir(&self, path: &AbsNormPathBuf) -> buck2_error::Result<ReadDir> {
+        fs_util::read_dir(path).categorize_internal()
     }
 
     fn buck_out_path(&self) -> &ProjectRelativePathBuf {
@@ -466,15 +532,164 @@ impl IoHandler for DefaultIoHandler {
     fn digest_config(&self) -> DigestConfig {
         self.digest_config
     }
+
+    async fn seal(
+        self: &Arc<Self>,
+        path: ProjectRelativePathBuf,
+        entry: ActionDirectoryEntry<ActionSharedDirectory>,
+    ) -> buck2_error::Result<()> {
+        if !self.readonly_outputs {
+            return Ok(());
+        }
+        self.io_executor
+            .execute_io_inline(|| seal_files(&self.fs, &path, &entry))
+            .await
+    }
+
+    async fn make_outputs_writable(
+        self: &Arc<Self>,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> buck2_error::Result<()> {
+        if !self.readonly_outputs {
+            return Ok(());
+        }
+        self.io_executor
+            .execute_io_inline(|| make_output_paths_writable(&self.fs, &paths))
+            .await
+    }
+}
+
+#[async_trait]
+impl IoHandler for NoDiskIoHandler {
+    async fn immediate_write<'a>(
+        self: &Arc<Self>,
+        generate: Box<dyn FnOnce() -> buck2_error::Result<Vec<WriteRequest>> + Send + 'a>,
+    ) -> buck2_error::Result<Vec<ArtifactValue>> {
+        generate()?
+            .into_iter()
+            .map(|request| {
+                let digest = TrackedFileDigest::from_content(
+                    &request.content,
+                    self.digest_config.cas_digest_config(),
+                );
+                Ok(ArtifactValue::file(FileMetadata {
+                    digest,
+                    is_executable: request.is_executable,
+                }))
+            })
+            .collect()
+    }
+
+    fn clean_path<'a>(
+        self: &Arc<Self>,
+        path: ProjectRelativePathBuf,
+        version: Version,
+        command_sender: Arc<MaterializerSender<Self>>,
+        _cancellations: &'a CancellationContext,
+    ) -> BoxFuture<'a, buck2_error::Result<()>> {
+        async move {
+            let _ignored =
+                command_sender.send_low_priority(LowPriorityMaterializerCommand::CleanupFinished {
+                    path,
+                    version,
+                    result: Ok(()),
+                    dispatcher: get_dispatcher_opt(),
+                });
+            Ok(())
+        }
+        .boxed()
+    }
+
+    async fn clean_invalidated_path<'a>(
+        self: &Arc<Self>,
+        _request: CleanInvalidatedPathRequest,
+        _cancellations: &'a CancellationContext,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
+    async fn materialize_entry(
+        self: &Arc<Self>,
+        _path: ProjectRelativePathBuf,
+        _method: Arc<ArtifactMaterializationMethod>,
+        _entry: ActionDirectoryEntry<ActionSharedDirectory>,
+        _event_dispatcher: EventDispatcher,
+        _cancellations: &CancellationContext,
+    ) -> Result<(), MaterializeEntryError> {
+        Ok(())
+    }
+
+    fn create_ttl_refresh(
+        self: &Arc<Self>,
+        _tree: &ArtifactTree,
+        _min_ttl: SignedDuration,
+    ) -> Option<BoxFuture<'static, buck2_error::Result<()>>> {
+        None
+    }
+
+    async fn upload_materialized_artifact(
+        self: &Arc<Self>,
+        _path: ProjectRelativePathBuf,
+        _entry: ActionDirectoryEntry<ActionSharedDirectory>,
+        _info: Arc<CasDownloadInfo>,
+    ) -> buck2_error::Result<()> {
+        Err(buck2_error::buck2_error!(
+            ErrorTag::Tier0,
+            "No-disk materializers cannot upload artifacts"
+        ))
+    }
+
+    async fn synced_disk_space_stats(
+        self: &Arc<Self>,
+        path: Arc<AbsPathBuf>,
+    ) -> buck2_error::Result<DiskSpaceStats> {
+        fs_util::disk_space_stats(&*path)
+    }
+
+    fn read_dir(&self, path: &AbsNormPathBuf) -> buck2_error::Result<ReadDir> {
+        fs_util::read_dir(path).categorize_internal()
+    }
+
+    fn buck_out_path(&self) -> &ProjectRelativePathBuf {
+        &self.buck_out_path
+    }
+
+    fn re_client_manager(&self) -> &Arc<ReConnectionManager> {
+        panic!("No-disk materializers do not have an RE client")
+    }
+
+    fn fs(&self) -> &ProjectRoot {
+        &self.fs
+    }
+
+    fn digest_config(&self) -> DigestConfig {
+        self.digest_config
+    }
+
+    async fn seal(
+        self: &Arc<Self>,
+        _path: ProjectRelativePathBuf,
+        _entry: ActionDirectoryEntry<ActionSharedDirectory>,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
+    async fn make_outputs_writable(
+        self: &Arc<Self>,
+        _paths: Vec<ProjectRelativePathBuf>,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
 }
 
 /// This is used for testing to ingest digests (via BUCK2_TEST_TOMBSTONED_DIGESTS).
 fn maybe_tombstone_digest(digest: &FileDigest) -> buck2_error::Result<&FileDigest> {
     // This has to be of size 1 since size 0 will result in the RE client just producing an empty
     // instead of a not-found error.
-    static TOMBSTONE_DIGEST: Lazy<FileDigest> = Lazy::new(|| FileDigest::new_sha1([0; 20], 1));
+    static TOMBSTONE_DIGEST: LazyLock<FileDigest> =
+        LazyLock::new(|| FileDigest::new_sha1([0; 20], 1));
 
-    fn convert_digests(val: &str) -> buck2_error::Result<HashSet<FileDigest>> {
+    fn convert_digests(val: &str) -> buck2_error::Result<BuckMutSet<FileDigest>> {
         val.split(' ')
             .map(|digest| {
                 let digest = TDigest::from_str(digest)
@@ -490,7 +705,7 @@ fn maybe_tombstone_digest(digest: &FileDigest) -> buck2_error::Result<&FileDiges
 
     let tombstoned_digests = buck2_env!(
         "BUCK2_TEST_TOMBSTONED_DIGESTS",
-        type=HashSet<FileDigest>,
+        type=BuckMutSet<FileDigest>,
         converter=convert_digests,
         applicability=testing,
     )?;
@@ -507,39 +722,36 @@ fn maybe_tombstone_digest(digest: &FileDigest) -> buck2_error::Result<&FileDiges
 pub(super) fn create_ttl_refresh(
     tree: &ArtifactTree,
     re_manager: &Arc<ReConnectionManager>,
-    min_ttl: Duration,
+    min_ttl: SignedDuration,
     digest_config: DigestConfig,
 ) -> Option<impl Future<Output = buck2_error::Result<()>> + use<>> {
-    let mut digests_to_refresh = HashMap::<_, HashSet<_>>::new();
+    let mut digests_to_refresh =
+        BuckMutMap::<usize, (Arc<CasDownloadInfo>, BuckMutSet<_>)>::default();
 
-    let ttl_deadline = Utc::now() + min_ttl;
+    let ttl_deadline = Timestamp::now()
+        .checked_add(min_ttl)
+        .unwrap_or(Timestamp::MAX);
 
     for data in tree.iter_without_paths() {
-        match &data.stage {
-            ArtifactMaterializationStage::Declared {
-                entry,
-                method,
-                persist_full_directory_structure: _,
-            } => match method.as_ref() {
-                ArtifactMaterializationMethod::CasDownload { info } => {
-                    let mut walk = unordered_entry_walk(entry.as_ref().map_dir(Directory::as_ref));
-                    while let Some((_entry_path, entry)) = walk.next() {
-                        if let DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) = entry {
-                            let needs_refresh =
-                                file.digest.expires().unwrap_or_default() < ttl_deadline;
-                            tracing::trace!("{} needs_refresh: {}", file, needs_refresh);
-                            if needs_refresh {
-                                digests_to_refresh
-                                    .entry(info.re_use_case)
-                                    .or_default()
-                                    .insert(file.digest.dupe());
-                            }
-                        }
+        if let ArtifactMaterializationStage::Declared { entry, method } = &data.stage
+            && let ArtifactMaterializationMethod::CasDownload { info } = method.as_ref()
+        {
+            let mut walk = unordered_entry_walk(entry.as_ref().map_dir(Directory::as_ref));
+            while let Some((_entry_path, entry)) = walk.next() {
+                if let DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) = entry {
+                    let needs_refresh = file.digest.expires().unwrap_or_default() < ttl_deadline;
+                    tracing::trace!("{} needs_refresh: {}", file, needs_refresh);
+                    if needs_refresh {
+                        // Preserve the exact provenance for every batched RE request.
+                        let info_key = Arc::as_ptr(info) as usize;
+                        digests_to_refresh
+                            .entry(info_key)
+                            .or_insert_with(|| (info.dupe(), BuckMutSet::default()))
+                            .1
+                            .insert(file.digest.dupe());
                     }
                 }
-                _ => {}
-            },
-            _ => {}
+            }
         }
     }
 
@@ -557,7 +769,7 @@ pub(super) fn create_ttl_refresh(
         let re_connection = re_manager.get_re_connection();
         let re_client = re_connection.get_client();
 
-        for (use_case, digests_to_refresh) in digests_to_refresh {
+        for (_, (info, digests_to_refresh)) in digests_to_refresh {
             let mut digests_to_refresh = digests_to_refresh.into_iter().collect::<Vec<_>>();
             digests_to_refresh.sort();
 
@@ -566,13 +778,19 @@ pub(super) fn create_ttl_refresh(
 
                 let digests_expires = re_client
                     .dupe()
-                    .with_use_case(use_case)
-                    .get_digest_expirations(chunk.iter().map(|d| d.to_re()).collect())
+                    .with_use_case(info.re_use_case)
+                    .get_digest_expirations(
+                        chunk.iter().map(|d| d.to_re()).collect(),
+                        info.as_ref(),
+                    )
                     .await?;
 
-                let mut digests_expires = digests_expires.into_try_map(|(digest, expires)| {
-                    buck2_error::Ok((FileDigest::from_re(&digest, digest_config)?, expires))
-                })?;
+                let mut digests_expires = digests_expires
+                    .into_iter()
+                    .map(|(digest, expires)| {
+                        buck2_error::Ok((FileDigest::from_re(&digest, digest_config)?, expires))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 digests_expires.sort();
 
                 if chunk.len() != digests_expires.len() {
@@ -610,46 +828,6 @@ pub(super) fn create_ttl_refresh(
     Some(fut)
 }
 
-struct WriteIoRequest {
-    path: ProjectRelativePathBuf,
-    write: Arc<WriteFile>,
-    version: Version,
-    command_sender: Arc<MaterializerSender<DefaultIoHandler>>,
-}
-
-impl WriteIoRequest {
-    fn execute_inner(&self, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
-        cleanup_path(project_fs, &self.path)?;
-        let data =
-            zstd::bulk::decompress(&self.write.compressed_data, self.write.decompressed_size)
-                .buck_error_context("Error decompressing data")?;
-        project_fs.write_file(&self.path, data, self.write.is_executable)?;
-        Ok(())
-    }
-}
-
-impl IoRequest for WriteIoRequest {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
-        // NOTE: No spans here! We should perhaps add one, but this needs to be considered
-        // carefully as it's a lot of spans, and we haven't historically emitted those for writes.
-        let res = self
-            .execute_inner(project_fs)
-            .map_err(buck2_error::Error::from);
-
-        // If the materializer has shut down, we ignore this.
-        let _ignored = self.command_sender.send_low_priority(
-            LowPriorityMaterializerCommand::MaterializationFinished {
-                path: self.path,
-                timestamp: Utc::now(),
-                version: self.version,
-                result: res.dupe().map_err(SharedMaterializingError::Error),
-            },
-        );
-
-        res
-    }
-}
-
 struct CleanIoRequest {
     path: ProjectRelativePathBuf,
     version: Version,
@@ -660,7 +838,7 @@ impl IoRequest for CleanIoRequest {
     fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
         // NOTE: No spans here! We should perhaps add one, but this needs to be considered
         // carefully as it's a lot of spans, and we haven't historically emitted those for writes.
-        let res = cleanup_path(project_fs, &self.path).map_err(buck2_error::Error::from);
+        let res = cleanup_path(project_fs, &self.path);
 
         // If the materializer has shut down, we ignore this.
         let _ignored = self.command_sender.send_low_priority(
@@ -668,6 +846,7 @@ impl IoRequest for CleanIoRequest {
                 path: self.path,
                 version: self.version,
                 result: res.dupe().map_err(SharedMaterializingError::Error),
+                dispatcher: get_dispatcher_opt(),
             },
         );
 

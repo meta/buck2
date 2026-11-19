@@ -10,16 +10,6 @@
 
 use std::sync::Arc;
 
-use crate::any::CrateAsStdError;
-
-impl From<crate::Error> for anyhow::Error {
-    #[cold]
-    #[track_caller]
-    fn from(value: crate::Error) -> Self {
-        Into::into(CrateAsStdError(value))
-    }
-}
-
 impl From<Arc<crate::Error>> for crate::Error {
     #[cold]
     #[track_caller]

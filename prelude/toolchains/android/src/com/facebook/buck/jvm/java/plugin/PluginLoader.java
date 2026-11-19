@@ -13,6 +13,7 @@ package com.facebook.buck.jvm.java.plugin;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoader;
 import com.facebook.buck.jvm.java.plugin.api.PluginClassLoaderFactory;
 import com.facebook.buck.util.ClassLoaderCache;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.ByteStreams;
 import java.io.File;
@@ -21,8 +22,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URL;
-import javax.annotation.Nullable;
+import java.util.Objects;
 import javax.tools.JavaCompiler;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Loads the Buck javac plugin JAR using the {@link ClassLoader} of a particular compiler instance.
@@ -32,6 +34,7 @@ import javax.tools.JavaCompiler;
  * work with these must be loaded using the same {@link ClassLoader} as the instance of javac with
  * which it will be working.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class PluginLoader implements PluginClassLoader {
   private static final String JAVAC_PLUGIN_JAR_RESOURCE_PATH = "javac-plugin.jar";
   private static final URL JAVAC_PLUGIN_JAR_URL = extractJavacPluginJar();
@@ -57,7 +60,7 @@ public final class PluginLoader implements PluginClassLoader {
         File tempFile = File.createTempFile("javac-plugin", ".jar");
         tempFile.deleteOnExit();
         try (OutputStream tempFileStream = new FileOutputStream(tempFile)) {
-          ByteStreams.copy(resourceStream, tempFileStream);
+          ByteStreams.copy(Objects.requireNonNull(resourceStream), tempFileStream);
           return tempFile.toURI().toURL();
         }
       } catch (IOException e) {
@@ -88,6 +91,7 @@ public final class PluginLoader implements PluginClassLoader {
   }
 
   @Override
+  @Nullable
   public <T> Class<? extends T> loadClass(String name, Class<T> superclass) {
     if (classLoader == null) {
       // No log here because we logged when the plugin itself failed to load

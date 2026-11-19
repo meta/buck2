@@ -15,6 +15,7 @@ import com.facebook.buck.android.apk.sdk.ApkCreationException;
 import com.facebook.buck.android.apk.sdk.DuplicateFileException;
 import com.facebook.buck.android.apk.sdk.SealedApkException;
 import com.facebook.buck.util.zip.ZipScrubber;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -28,17 +29,20 @@ import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import org.jetbrains.annotations.Nullable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 /** Main entry point for building an Android bundle. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AndroidBundleBuilderExecutableMain {
   @Option(name = "--output-bundle", required = true)
   private String outputBundle;
 
   @Option(name = "--path-to-bundle-config-file")
-  private String pathToBundleConfigFile;
+  @Nullable
+  private String pathToBundleConfigFile = null;
 
   @Option(name = "--resource-apk", required = true)
   private String resourceApk;
@@ -68,10 +72,12 @@ public class AndroidBundleBuilderExecutableMain {
   private boolean packageMetaInfVersionFiles;
 
   @Option(name = "--module-assets-dir")
-  private Path moduleAssetsDir;
+  @Nullable
+  private Path moduleAssetsDir = null;
 
   @Option(name = "--excluded-resources")
-  private String excludedResourcesList;
+  @Nullable
+  private String excludedResourcesList = null;
 
   public static void main(String[] args) throws IOException {
     AndroidBundleBuilderExecutableMain main = new AndroidBundleBuilderExecutableMain();
@@ -81,7 +87,7 @@ public class AndroidBundleBuilderExecutableMain {
       main.run();
       System.exit(0);
     } catch (CmdLineException e) {
-      System.err.println(e.getMessage());
+      System.err.println(e.toString());
       parser.printUsage(System.err);
       System.exit(1);
     }
@@ -115,7 +121,13 @@ public class AndroidBundleBuilderExecutableMain {
 
     ImmutableList.Builder<Path> modulePaths = ImmutableList.builder();
 
-    Path tempDir = Files.createTempDirectory("bundleTempDir");
+    String scratchPath = System.getenv("BUCK_SCRATCH_PATH");
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    Path scratchDir = Paths.get(scratchPath);
+    Path tempDir = Files.createTempDirectory(scratchDir, "bundleTempDir");
     Path rootModuleZip = tempDir.resolve("base.zip");
     modulePaths.add(rootModuleZip);
     Path fakeResourcesApk = Files.createFile(tempDir.resolve("fake.txt"));

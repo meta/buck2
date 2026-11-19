@@ -9,6 +9,7 @@
  */
 
 use std::io;
+use std::path::PathBuf;
 use std::process::Command;
 
 use clap::Parser;
@@ -30,24 +31,24 @@ enum Shell {
     Zsh,
 }
 
+/// The install directory of a shell that Meta's Linux build bundles with this binary. Elsewhere,
+/// and in open source, there is none, and the shell on `PATH` runs.
+pub(crate) fn bundled_shell(shell: &str) -> Option<PathBuf> {
+    buck_resources::get(format!("buck2/shed/completion_verify/{shell}")).ok()
+}
+
 impl Shell {
     fn find(self) -> io::Result<Command> {
         match self {
             Self::Bash => Ok(Command::new("bash")),
-            Self::Fish => {
-                let mut path = buck_resources::get("buck2/shed/completion_verify/fish").unwrap();
-                path.push("bin/fish");
-                Ok(Command::new(path))
-            }
-            Self::Zsh => {
-                if cfg!(target_os = "macos") {
-                    Ok(Command::new("zsh"))
-                } else {
-                    let mut path = buck_resources::get("buck2/shed/completion_verify/zsh").unwrap();
-                    path.push("usr/bin/zsh");
-                    Ok(Command::new(path))
-                }
-            }
+            Self::Fish => Ok(match bundled_shell("fish") {
+                Some(dir) => Command::new(dir.join("bin/fish")),
+                None => Command::new("fish"),
+            }),
+            Self::Zsh => Ok(match bundled_shell("zsh") {
+                Some(dir) => Command::new(dir.join("usr/bin/zsh")),
+                None => Command::new("zsh"),
+            }),
         }
     }
 }
@@ -72,7 +73,11 @@ fn extract_from_single_output(input: &str, raw_out: &str) -> Option<Vec<String>>
         // the output by whitespace is unfortunate wrong in hypothetical cases of completions with
         // spaces, but those should be uncommon so this is fine.
         Some(
-            rest.split_ascii_whitespace()
+            rest.lines()
+                // Fish can redraw the command line on another terminal row while rendering the
+                // completion menu. Do not treat redrawn prompt lines as completion candidates.
+                .filter(|line| !line.starts_with("% "))
+                .flat_map(str::split_ascii_whitespace)
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned)
                 .collect(),
@@ -151,9 +156,9 @@ fn run(
 /// Other than the args, it accepts a single line of input containing a partial command invocation
 /// to be completed and outputs the possible completions, newline delimited.
 ///
-/// Completion checking from shells are fundamentally racey - to help guard against this, when the
-/// completion script is invoked, the test environment sets `COMPLETION_VERIFY_LOCKFILE` to a path.
-/// A backing completion impl can create a file at this path to indicate that it is still executing.
+/// PTY-based completion checking for Bash and Zsh is fundamentally racey. To help guard against
+/// this, the test environment sets `COMPLETION_VERIFY_LOCKFILE` to a path when invoking the
+/// completion script. A backing completion impl can create the file while it is still executing.
 #[derive(Debug, clap::Parser)]
 #[clap(name = "completion-verify")]
 struct CompletionVerify {
@@ -187,6 +192,7 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::Shell;
+    use crate::extract_from_single_output;
     use crate::run;
 
     const BASH_SCRIPT: &str = "complete -W 'car1 cat2' find";
@@ -251,6 +257,22 @@ compdef _impl find
         assert!(
             output.status.success(),
             "checking that `{shell:?}` is available",
+        );
+    }
+
+    #[test]
+    fn test_extract_from_single_output_with_redrawn_prompt() {
+        let input = "buck2 abcdefghijkl";
+        let output = "\
+% buck2 abcdefghijkl
+% buck2 abcdefghijkl
+% buck2 abcdefghijkl0
+abcdefghijkl0  abcdefghijkl1
+";
+
+        assert_eq!(
+            extract_from_single_output(input, output),
+            Some(vec!["abcdefghijkl0".to_owned(), "abcdefghijkl1".to_owned(),])
         );
     }
 

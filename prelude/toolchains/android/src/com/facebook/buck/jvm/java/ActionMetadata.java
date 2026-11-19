@@ -10,12 +10,18 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ActionMetadata {
+  // Buck2 names a content-based output directory after the first 8 bytes of the content digest.
+  private static final int CONTENT_HASH_LENGTH = 16;
 
   private final Map<Path, String> previousDigest;
   private final Map<Path, String> currentDigest;
@@ -40,7 +46,23 @@ public class ActionMetadata {
 
   @Nullable
   public String getPreviousIncrementalConfigDigest() {
-    return previousDigest.get(incrementalConfigFilePath);
+    @Nullable String digest = previousDigest.get(incrementalConfigFilePath);
+    if (digest != null) {
+      return digest;
+    }
+    // A content-based path changes with the content, so a changed config sits at a new path: find
+    // the previous one by its path without the content hash.
+    @Nullable String identity =
+        withoutContentHash(incrementalConfigFilePath, getCurrentIncrementalConfigDigest());
+    if (identity == null) {
+      return null;
+    }
+    for (Map.Entry<Path, String> entry : previousDigest.entrySet()) {
+      if (identity.equals(withoutContentHash(entry.getKey(), entry.getValue()))) {
+        return entry.getValue();
+      }
+    }
+    return null;
   }
 
   @Nullable
@@ -48,8 +70,29 @@ public class ActionMetadata {
     return currentDigest.get(incrementalConfigFilePath);
   }
 
+  /**
+   * {@code path} without the segment that a content-based path takes from the start of its
+   * content's {@code digest}, or null when the path has no such segment.
+   */
+  private static @Nullable String withoutContentHash(Path path, @Nullable String digest) {
+    if (digest == null || digest.length() < CONTENT_HASH_LENGTH) {
+      return null;
+    }
+    String contentHash = digest.substring(0, CONTENT_HASH_LENGTH);
+    List<String> segments = new ArrayList<>();
+    boolean found = false;
+    for (Path segment : path) {
+      if (!found && segment.toString().equals(contentHash)) {
+        found = true;
+      } else {
+        segments.add(segment.toString());
+      }
+    }
+    return found ? String.join("/", segments) : null;
+  }
+
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(@Nullable Object o) {
     if (this == o) return true;
     if (o == null || getClass() != o.getClass()) return false;
     ActionMetadata that = (ActionMetadata) o;

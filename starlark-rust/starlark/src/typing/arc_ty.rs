@@ -23,11 +23,14 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::typing::Ty;
 use crate::typing::ty::TypeRenderConfig;
 
-#[derive(Dupe, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Allocative)]
+#[derive(
+    Dupe, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Allocative, Pagable
+)]
 enum ArcTyInner {
     // These are shortcuts to avoid allocations for common cases.
     Any,
@@ -67,6 +70,7 @@ impl Display for ArcTyInner {
     Debug,
     Allocative
 )]
+#[derive(Pagable)]
 pub struct ArcTy(ArcTyInner);
 
 impl ArcTy {

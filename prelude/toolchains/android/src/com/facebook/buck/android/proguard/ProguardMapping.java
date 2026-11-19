@@ -10,11 +10,14 @@
 
 package com.facebook.buck.android.proguard;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMap;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Parser for ProGuard-generated mapping files. Currently only handles class mapping. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ProguardMapping {
 
   /** Utility class: do not instantiate. */
@@ -36,7 +39,8 @@ public class ProguardMapping {
         throw new IllegalArgumentException("Invalid line in proguard mapping: " + line);
       }
 
-      classMappingBuilder.put(matcher.group(1), matcher.group(2));
+      classMappingBuilder.put(
+          Objects.requireNonNull(matcher.group(1)), Objects.requireNonNull(matcher.group(2)));
     }
 
     return classMappingBuilder.build();

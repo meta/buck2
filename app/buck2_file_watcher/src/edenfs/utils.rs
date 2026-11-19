@@ -31,9 +31,8 @@ pub(crate) fn find_first_valid_parent(mut path: &Path) -> Option<&ForwardRelativ
     loop {
         path = path.parent()?;
 
-        match ForwardRelativePath::new(path) {
-            Ok(path) => return Some(path),
-            Err(_) => {}
+        if let Ok(path) = ForwardRelativePath::new(path) {
+            return Some(path);
         }
     }
 }

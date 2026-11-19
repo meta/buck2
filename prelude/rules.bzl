@@ -6,176 +6,102 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
+# The rules the prelude provides, as `rule` objects. `native.bzl` exposes them as
+# `native.<name>`, and they can also be loaded from this module by name.
+#
+# See `prelude_rule.bzl` for how rules are declared and why the `rule` objects
+# are created in the per-language registries rather than here.
 
-# Combine the attributes we generate, we the custom implementations we have.
-load("@prelude//:rules_impl.bzl", "categorized_extra_attributes", "categorized_rule_decl_records", "extra_implemented_rules", "toolchain_rule_names")
-load("@prelude//apple:apple_platforms.bzl", "APPLE_PLATFORMS_KEY")
-load("@prelude//configurations:rules.bzl", _config_implemented_rules = "implemented_rules")
-load("@prelude//decls:common.bzl", "prelude_rule")
+load("@prelude//:core_rules.bzl", _core_rules = "rules", _core_specs = "specs", _shell_rules = "shell_rules", _shell_specs = "shell_specs")
+load("@prelude//:prelude_rule.bzl", "make_rule")
+load("@prelude//android:rules.bzl", _android_rules = "rules", _android_specs = "specs")
+load("@prelude//apple:rules.bzl", _apple_rules = "rules", _apple_specs = "specs")
+load("@prelude//configurations:rules.bzl", _configuration_rules = "rules", _configuration_specs = "specs")
+load("@prelude//csharp:rules.bzl", _dotnet_rules = "rules", _dotnet_specs = "specs")
+load("@prelude//cxx:rules.bzl", _cxx_rules = "rules", _cxx_specs = "specs")
+load("@prelude//erlang:rules.bzl", _erlang_rules = "rules", _erlang_specs = "specs")
+load("@prelude//git:rules.bzl", _git_rules = "rules", _git_specs = "specs")
+load("@prelude//go:rules.bzl", _go_rules = "rules", _go_specs = "specs")
+load("@prelude//haskell:rules.bzl", _haskell_rules = "rules", _haskell_specs = "specs")
+load("@prelude//java:rules.bzl", _java_rules = "rules", _java_specs = "specs")
+load("@prelude//js:rules.bzl", _js_rules = "rules", _js_specs = "specs")
+load("@prelude//julia:rules.bzl", _julia_rules = "rules", _julia_specs = "specs")
+load("@prelude//kotlin:rules.bzl", _kotlin_rules = "rules", _kotlin_specs = "specs")
+load("@prelude//lua:rules.bzl", _lua_rules = "rules", _lua_specs = "specs")
+load("@prelude//matlab:rules.bzl", _matlab_rules = "rules", _matlab_specs = "specs")
+load("@prelude//nodejs:rules.bzl", _nodejs_rules = "rules", _nodejs_specs = "specs")
+load("@prelude//ocaml:rules.bzl", _ocaml_rules = "rules", _ocaml_specs = "specs")
+load("@prelude//python:rules.bzl", _python_rules = "rules", _python_specs = "specs")
+load("@prelude//python/cython:rules.bzl", _cython_rules = "rules", _cython_specs = "specs")
+load("@prelude//rust:rules.bzl", _rust_rules = "rules", _rust_specs = "specs")
 
-def _unimplemented(name, ctx):
-    fail("Unimplemented rule type `{}` for target `{}`.".format(name, ctx.label))
-
-def _unimplemented_impl(name):
-    # We could use a lambda here, but then it means every single parse evaluates a lambda.
-    # Lambda's have tricky semantics, so using partial lets us test Starlark prototypes with
-    # some features disabled.
-    return partial(_unimplemented, name)
-
-def _mk_rule(rule_spec: typing.Any, extra_attrs: dict[str, typing.Any] = dict(), impl_override: [typing.Callable, None] = None, **kwargs):
-    name = rule_spec.name
-    attributes = rule_spec.attrs
-
-    # We want native code-containing rules to be marked incompatible with fat
-    # platforms. Getting the ones that use cxx/apple toolchains is a little
-    # overly broad as it includes things like python that don't themselves have
-    # native code but need the toolchains if they depend on native code and in
-    # that case incompatibility is transitive and they'll get it.
-    fat_platform_compatible = True
-    if name not in ("python_library", "python_binary", "python_test"):
-        for toolchain_attr in ("_apple_toolchain", "_cxx_toolchain", "_go_toolchain"):
-            if toolchain_attr in attributes:
-                fat_platform_compatible = False
-
-    # Fat platforms is an idea specific to our toolchains, so doesn't apply to
-    # open source. Ideally this restriction would be done at the toolchain level.
-    if not is_full_meta_repo():
-        fat_platform_compatible = True
-
-    attributes = dict(attributes)
-    attributes.update(extra_attrs)
-    if not fat_platform_compatible:
-        # copy so we don't try change the passed in object
-        attributes["_cxx_toolchain_target_configuration"] = attrs.dep(default = "prelude//platforms:fat_platform_incompatible")
-
-    # Add _apple_platforms to all rules so that we may query the target platform to use until we support configuration
-    # modifiers and can use them to set the configuration to use for operations.
-    # Map of string identifier to platform.
-    attributes[APPLE_PLATFORMS_KEY] = attrs.dict(key = attrs.string(), value = attrs.dep(), sorted = False, default = {})
-
-    cfg = rule_spec.cfg
-
-    extra_args = dict(kwargs)
-    if cfg != None:
-        extra_args["cfg"] = cfg
-
-    if rule_spec.docs:
-        doc = rule_spec.docs
-
-        # This is awkward. When generating documentation, we'll strip leading whitespace
-        # like it's a python docstring. For that to work here, we need the "Examples:" line
-        # to match the other lines for leading whitespace. We've just hardcoded this to
-        # be what its expected to be in prelude.
-        # TODO(cjhopman): Figure out something better here.
-        if rule_spec.examples:
-            # NOTE: DocString needs 'Examples:' to render the sections properly, that code should be updated along with this
-            doc += "\n{}Examples:\n{}".format(" " * 8, rule_spec.examples)
-        if rule_spec.further:
-            doc += "\n{}Additional notes:\n{}".format(" " * 8, rule_spec.further)
-
-        extra_args["doc"] = doc
-
-    impl = rule_spec.impl
-    extra_impl = getattr(extra_implemented_rules, name, None)
-    if extra_impl:
-        if impl:
-            fail("{} had an impl in the declaration and in the extra_implemented_rules overrides".format(name))
-        impl = extra_impl
-    if not impl:
-        impl = _unimplemented_impl(name)
-    if impl_override != None:
-        impl = impl_override
-    if rule_spec.uses_plugins != None:
-        extra_args["uses_plugins"] = rule_spec.uses_plugins
-    if rule_spec.supports_incoming_transition != None:
-        extra_args["supports_incoming_transition"] = rule_spec.supports_incoming_transition
-
-    is_toolchain_rule = rule_spec.is_toolchain_rule
-    is_toolchain_rule_via_rule_name = name in toolchain_rule_names
-    if is_toolchain_rule == None:
-        is_toolchain_rule = is_toolchain_rule_via_rule_name
-    elif is_toolchain_rule_via_rule_name:
-        fail("Cannot set `is_toolchain_rule` on `prelude_rule` and also via `toolchain_rule_names`")
-
-    extra_args.setdefault("is_configuration_rule", name in _config_implemented_rules)
-    extra_args.setdefault("is_toolchain_rule", is_toolchain_rule)
-    return rule(
-        impl = impl,
-        attrs = attributes,
-        **extra_args
-    )
-
-def _categorized_decls():
-    grouped_decls = {}
-    for group_name, decl_set in categorized_rule_decl_records.items():
-        group_rules = {}
-        for rule in dir(decl_set):
-            group_rules[rule] = getattr(decl_set, rule)
-        grouped_decls[group_name] = group_rules
-    return grouped_decls
-
-Attributes = dict[str, Attr]
-
-def _update_categorized_rules(categorized_rules: dict[str, dict[str, prelude_rule]], categorized_extra_attributes: dict[str, dict[str, Attributes]]):
-    flatten_rules = {}
-    for category, rules in categorized_rules.items():
-        for rule_name, rule_spec in rules.items():
-            flatten_rules[rule_name] = (category, rule_spec)
-    for attr_category, extra_attributes_dict in categorized_extra_attributes.items():
-        for rule_name, extra_attributes in extra_attributes_dict.items():
-            if rule_name in flatten_rules:
-                category, rule_spec = flatten_rules[rule_name]
-                d = dict(rule_spec.attrs)
-                d.update(extra_attributes)
-
-                # Use the category from the categorized_rules not categorized_extra_attributes
-                categorized_rules[category][rule_name] = prelude_rule(
-                    name = rule_spec.name,
-                    impl = rule_spec.impl,
-                    attrs = d,
-                    docs = rule_spec.docs,
-                    examples = rule_spec.examples,
-                    further = rule_spec.further,
-                    uses_plugins = rule_spec.uses_plugins,
-                    supports_incoming_transition = rule_spec.supports_incoming_transition,
-                    is_toolchain_rule = rule_spec.is_toolchain_rule,
-                    cfg = rule_spec.cfg,
-                )
-            else:
-                if attr_category not in categorized_rules:
-                    categorized_rules[attr_category] = {}
-                categorized_rules[attr_category][rule_name] = prelude_rule(
-                    name = rule_name,
-                    impl = None,
-                    attrs = extra_attributes,
-                    docs = None,
-                    examples = None,
-                    further = None,
-                    uses_plugins = None,
-                    supports_incoming_transition = None,
-                )
-
-_categorized_declared_rules = _categorized_decls()
-_update_categorized_rules(_categorized_declared_rules, categorized_extra_attributes)
-
-_declared_rules = {
-    rule_name: rule
-    for category in _categorized_declared_rules.values()
-    for rule_name, rule in category.items()
-}
-
+# Rules grouped by the category they are documented under.
 categorized_rules = {
-    group_name: {rule_name: _mk_rule(rule_decl) for rule_name, rule_decl in group_rules.items()}
-    for group_name, group_rules in _categorized_declared_rules.items()
+    ".NET": _dotnet_rules,
+    "android": _android_rules,
+    "apple": _apple_rules,
+    "core": _core_rules | _configuration_rules,
+    "cxx": _cxx_rules,
+    "cython": _cython_rules,
+    "erlang": _erlang_rules,
+    "git": _git_rules,
+    "go": _go_rules,
+    "haskell": _haskell_rules,
+    "java": _java_rules,
+    "js": _js_rules,
+    "julia": _julia_rules,
+    "kotlin": _kotlin_rules,
+    "lua": _lua_rules,
+    "matlab": _matlab_rules,
+    "nodejs": _nodejs_rules,
+    "ocaml": _ocaml_rules,
+    "python": _python_rules,
+    "rust": _rust_rules,
+    "shell": _shell_rules,
 }
-rules = {rule_name: rule for category in categorized_rules.values() for rule_name, rule in category.items()}
+
+_categorized_rule_specs = {
+    ".NET": _dotnet_specs,
+    "android": _android_specs,
+    "apple": _apple_specs,
+    "core": _core_specs | _configuration_specs,
+    "cxx": _cxx_specs,
+    "cython": _cython_specs,
+    "erlang": _erlang_specs,
+    "git": _git_specs,
+    "go": _go_specs,
+    "haskell": _haskell_specs,
+    "java": _java_specs,
+    "js": _js_specs,
+    "julia": _julia_specs,
+    "kotlin": _kotlin_specs,
+    "lua": _lua_specs,
+    "matlab": _matlab_specs,
+    "nodejs": _nodejs_specs,
+    "ocaml": _ocaml_specs,
+    "python": _python_specs,
+    "rust": _rust_specs,
+    "shell": _shell_specs,
+}
+
+def _flatten(categorized: dict[str, dict[str, typing.Any]]) -> dict[str, typing.Any]:
+    flat = {}
+    for category, by_name in categorized.items():
+        for name, value in by_name.items():
+            if name in flat:
+                fail("Rule `{}` is declared in more than one category (`{}`)".format(name, category))
+            flat[name] = value
+    return flat
+
+rules = _flatten(categorized_rules)
+
+_rule_specs = _flatten(_categorized_rule_specs)
 
 # The rules are accessed by doing module.name, so we have to put them on the correct module.
 load_symbols(rules)
 
 # TODO(akrieger): Remove this and instead refactor to allow impl bzl files to export attrs.
 def clone_rule(rule: str, extra_attrs: dict[str, typing.Any] = dict(), impl_override = None, **kwargs):
-    if not rule in _declared_rules:
+    if not rule in _rule_specs:
         fail("Tried clone rule {} which does not exist".format(rule))
-    return _mk_rule(_declared_rules[rule], extra_attrs, impl_override, **kwargs)
+    return make_rule(_rule_specs[rule], extra_attrs, impl_override, **kwargs)

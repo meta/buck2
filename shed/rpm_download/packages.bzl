@@ -10,7 +10,7 @@
 load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
 
 def _impl(ctx: AnalysisContext) -> list[Provider]:
-    out = ctx.actions.declare_output(ctx.attrs.name, dir = True)
+    out = ctx.actions.declare_output(ctx.attrs.name, dir = True, has_content_based_path = False)
     ctx.actions.run(
         cmd_args(
             ctx.attrs.download_tool[DefaultInfo].default_outputs[0],
@@ -45,5 +45,5 @@ def download_rpm(**kwargs):
             ci.windows(),
             ci.mac(ci.aarch64()),
         ),
-        **kwargs
+        **kwargs,
     )

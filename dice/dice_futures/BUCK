@@ -10,14 +10,15 @@ rust_library(
     test_deps = [
         "fbsource//third-party/rust:assert_matches",
     ],
+    unittests_miri = True,
     deps = [
         "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:once_cell",
         "fbsource//third-party/rust:parking_lot",
         "fbsource//third-party/rust:pin-project",
-        "fbsource//third-party/rust:slab",
+        "fbsource//third-party/rust:smallvec",
         "fbsource//third-party/rust:thiserror",
         "fbsource//third-party/rust:tokio",
         "//buck2/gazebo/dupe:dupe",
+        "//buck2/shed/mini_vec:mini_vec",
     ],
 )

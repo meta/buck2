@@ -9,15 +9,14 @@ Error evaluating expression:
 Caused by:
     0: From load at TARGETS.fixture:1
     1: Error evaluating module: `root//error_rule.bzl`
-    2: Traceback (most recent call last):
-         * error_rule.bzl:23, in <module>
-             "someattr": attrs.transition_dep(default = "notaproperlabel", cfg = _transiti...
-       
-       error: Error coercing "notaproperlabel"
+    2: error: Error coercing "notaproperlabel"
          --> error_rule.bzl:23:21
           |
        23 |         "someattr": attrs.transition_dep(default = "notaproperlabel", cfg = _transition),
           |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-          |
-    3: Invalid target pattern `notaproperlabel` is not allowed
+       Traceback (most recent call last):
+         * error_rule.bzl:23, in <module>
+             "someattr": attrs.transition_dep(default = "notaproperlabel", cfg = _transiti...
+       
+    3: Error parsing target pattern `notaproperlabel`
     4: Expected pattern to contain `:`, trailing `/...` or literal `...`.

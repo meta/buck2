@@ -1,0 +1,13 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "variant_name_derive",
+    srcs = glob(["src/**/*.rs"]),
+    proc_macro = True,
+    deps = [
+        "fbsource//third-party/rust:quote",
+        "fbsource//third-party/rust:syn",
+    ],
+)

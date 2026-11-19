@@ -1,0 +1,23 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Command failed: 
+Error evaluating expression:
+    root//bzl_default:
+    ^----------------^
+
+
+Caused by:
+    0: From load at bzl_default/TARGETS.fixture:1
+    1: Error evaluating module: `root//bzl_default/defs.bzl`
+    2: error: Error coercing attribute default
+         --> bzl_default/defs.bzl:12:16
+          |
+       12 |         "dep": attrs.dep(default = "//lib/greeting"),
+          |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+       Traceback (most recent call last):
+         * bzl_default/defs.bzl:12, in <module>
+             "dep": attrs.dep(default = "//lib/greeting"),
+       
+    3: Error coercing "//lib/greeting"
+    4: Error parsing target pattern `//lib/greeting`
+    5: Expected pattern to contain `:`, trailing `/...` or literal `...`.

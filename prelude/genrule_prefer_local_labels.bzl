@@ -16,7 +16,7 @@ _GENRULE_PREFER_LOCAL_LABELS = set([
     "large_copy",
 ])
 
-def genrule_labels_prefer_local(labels):
+def resolved_genrule_labels_prefer_local(labels: list[str]) -> bool:
     for label in labels:
         if label in _GENRULE_PREFER_LOCAL_LABELS:
             return True

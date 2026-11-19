@@ -1,0 +1,27 @@
+mock_python_library(
+    name = "good_types_validated",
+    typing = True,
+    typing_validation = True,
+    has_type_errors = False,
+)
+
+mock_python_library(
+    name = "bad_types_validated",
+    typing = True,
+    typing_validation = True,
+    has_type_errors = True,
+)
+
+mock_python_library(
+    name = "bad_types_no_validation",
+    typing = True,
+    typing_validation = False,
+    has_type_errors = True,
+)
+
+mock_python_library(
+    name = "typing_disabled",
+    typing = False,
+    typing_validation = True,
+    has_type_errors = True,
+)

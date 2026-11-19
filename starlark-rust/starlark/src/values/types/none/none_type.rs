@@ -23,6 +23,7 @@ use derive_more::Display;
 use dupe::Dupe;
 use serde::Serialize;
 use serde::Serializer;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
@@ -30,22 +31,27 @@ use crate::any::ProvidesStaticType;
 use crate::collections::StarlarkHashValue;
 use crate::collections::StarlarkHasher;
 use crate::private::Private;
+use crate::static_starlark_value;
 use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
-use crate::values::Value;
-use crate::values::layout::avalue::AValueBasic;
-use crate::values::layout::avalue::AValueImpl;
-use crate::values::layout::avalue::alloc_static;
-use crate::values::layout::heap::repr::AValueRepr;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
 
 /// Define the None type, use [`NoneType`] in Rust.
-#[derive(Debug, Clone, Dupe, ProvidesStaticType, Display, Allocative)]
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    ProvidesStaticType,
+    Display,
+    Allocative,
+    StarlarkPagable
+)]
 #[display("None")]
 pub struct NoneType;
 
@@ -67,10 +73,9 @@ impl<'v> StarlarkValue<'v> for NoneType {
     fn to_bool(&self) -> bool {
         false
     }
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
         // just took the result of hash(None) in macos python 2.7.10 interpreter.
         hasher.write_u64(9_223_380_832_852_120_682);
-        Ok(())
     }
 
     fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {
@@ -82,18 +87,25 @@ impl<'v> StarlarkValue<'v> for NoneType {
         Ty::none()
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::none())
-    }
-
     fn eval_type(&self) -> Option<Ty> {
         Some(Ty::none())
     }
 }
 
+impl<'v> ValueOf<'v, NoneType> {
+    /// `None`, which is a static.
+    #[inline]
+    pub(crate) fn new_none() -> Self {
+        ValueOf::from_representation(VALUE_NONE.at())
+    }
+}
+
 impl<'v> AllocValue<'v> for NoneType {
-    fn alloc_value(self, _heap: &'v Heap) -> Value<'v> {
-        Value::new_none()
+    type Type = NoneType;
+
+    #[inline]
+    fn alloc_value(self, _heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::new_none()
     }
 }
 
@@ -106,23 +118,26 @@ impl Serialize for NoneType {
     }
 }
 
-pub(crate) static VALUE_NONE: AValueRepr<AValueImpl<'static, AValueBasic<NoneType>>> =
-    alloc_static(NoneType);
+static_starlark_value!(pub(crate) VALUE_NONE: NoneType = NoneType);
 
-impl AllocFrozenValue for NoneType {
-    fn alloc_frozen_value(self, _heap: &FrozenHeap) -> FrozenValue {
-        FrozenValue::new_none()
+impl<'fv> AllocFrozenValue<'fv> for NoneType {
+    type Type = NoneType;
+
+    #[inline]
+    fn alloc_frozen_value(self, _heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::new_none()
     }
 }
 
 impl<'v> UnpackValue<'v> for NoneType {
+    type Type = NoneType;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        if value.is_none() {
-            Ok(Some(NoneType))
-        } else {
-            Ok(None)
-        }
+    #[inline]
+    fn unpack(
+        _value: ValueOf<'v, NoneType>,
+        _get: ValueTyped<'v, NoneType>,
+    ) -> Result<Self, Infallible> {
+        Ok(NoneType)
     }
 }

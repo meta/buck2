@@ -7,7 +7,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
 
 """
 Creates a Python Source DB JSON file from Python manifest JSON file (e.g. for use with Pyre).

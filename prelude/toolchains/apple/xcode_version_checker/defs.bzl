@@ -36,10 +36,5 @@ def xcode_command_alias(name, xcode_version = None, xcode_product_build = None, 
     # if it matches, it will then execute `ORIGINAL_COMMAND`
     # passing `ORIGINAL_COMMAND_ARGS`.
     _native.command_alias(
-        name = name,
-        exe = "prelude//toolchains/apple/xcode_version_checker:xcode_version_checker",
-        args = all_args,
-        env = env,
-        visibility = ["PUBLIC"],
-        **kwargs
+        name = name, exe = "prelude//toolchains/apple/xcode_version_checker:xcode_version_checker", args = all_args, env = env, visibility = ["PUBLIC"], **kwargs
     )

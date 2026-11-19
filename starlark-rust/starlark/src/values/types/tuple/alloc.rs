@@ -17,15 +17,13 @@
 
 use std::iter;
 
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
 use crate::values::Heap;
 use crate::values::Value;
-use crate::values::tuple::UnpackTuple;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
+use crate::values::tuple::TupleType;
 
 /// Utility to allocate a tuple.
 ///
@@ -36,28 +34,16 @@ use crate::values::type_repr::StarlarkTypeRepr;
 /// ```
 /// # use starlark::values::{FrozenHeap, Heap};
 /// # use starlark::values::tuple::AllocTuple;
-/// # fn alloc(heap: &Heap, frozen_heap: &FrozenHeap) {
+/// # fn alloc(heap: Heap<'_>, frozen_heap: FrozenHeap<'_>) {
 /// let l = heap.alloc(AllocTuple([1, 2, 3]));
 /// let ls = frozen_heap.alloc(AllocTuple([1, 2, 3]));
 /// # }
 /// ```
 pub struct AllocTuple<T>(pub T);
 
-impl AllocTuple<iter::Empty<FrozenValue>> {
+impl<'v> AllocTuple<iter::Empty<Value<'v>>> {
     /// Allocate an empty tuple.
-    pub const EMPTY: AllocTuple<iter::Empty<FrozenValue>> = AllocTuple(iter::empty());
-}
-
-impl<T> StarlarkTypeRepr for AllocTuple<T>
-where
-    T: IntoIterator,
-    T::Item: StarlarkTypeRepr,
-{
-    type Canonical = <UnpackTuple<T::Item> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::tuple_of(T::Item::starlark_type_repr())
-    }
+    pub const EMPTY: AllocTuple<iter::Empty<Value<'v>>> = AllocTuple(iter::empty());
 }
 
 impl<'v, T> AllocValue<'v> for AllocTuple<T>
@@ -65,18 +51,22 @@ where
     T: IntoIterator,
     T::Item: AllocValue<'v>,
 {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_tuple_iter(self.0.into_iter().map(|x| x.alloc_value(heap)))
+    type Type = TupleType<<T::Item as AllocValue<'v>>::Type>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        heap.alloc_tuple_iter(self.0.into_iter().map(|x| heap.alloc(x)))
     }
 }
 
-impl<T> AllocFrozenValue for AllocTuple<T>
+impl<'fv, T> AllocFrozenValue<'fv> for AllocTuple<T>
 where
     T: IntoIterator,
-    T::Item: AllocFrozenValue,
+    T::Item: AllocFrozenValue<'fv>,
 {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        heap.alloc_tuple_iter(self.0.into_iter().map(|x| x.alloc_frozen_value(heap)))
+    type Type = TupleType<<T::Item as AllocFrozenValue<'fv>>::Type>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        heap.alloc_tuple_iter(self.0.into_iter().map(|x| heap.alloc(x)))
     }
 }
 
@@ -84,55 +74,50 @@ where
 mod tests {
     use crate::values::FrozenHeap;
     use crate::values::Heap;
-    use crate::values::tuple::FrozenTupleRef;
     use crate::values::tuple::TupleRef;
     use crate::values::tuple::alloc::AllocTuple;
 
     #[test]
     fn test_alloc_tuple() {
-        let heap = Heap::new();
+        Heap::temp(|heap| {
+            let a = heap.alloc(AllocTuple([""; 0])).to_value();
+            let b = heap
+                .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|_| false)))
+                .to_value();
+            assert_eq!(0, TupleRef::from_value(a).unwrap().content().len());
+            assert!(a.ptr_eq(b));
 
-        let a = heap.alloc(AllocTuple([""; 0]));
-        let b = heap.alloc(AllocTuple([1, 2, 3].iter().copied().filter(|_| false)));
-        assert_eq!(0, TupleRef::from_value(a).unwrap().content().len());
-        assert!(a.ptr_eq(b));
+            // Fixed length iterator.
+            let c = heap.alloc(AllocTuple([1, 2])).to_value();
+            assert_eq!(2, TupleRef::from_value(c).unwrap().content().len());
 
-        // Fixed length iterator.
-        let c = heap.alloc(AllocTuple([1, 2]));
-        assert_eq!(2, TupleRef::from_value(c).unwrap().content().len());
-
-        // Iterator of unknown length.
-        let d = heap.alloc(AllocTuple([1, 2, 3].iter().copied().filter(|c| *c > 1)));
-        assert_eq!(2, TupleRef::from_value(d).unwrap().content().len());
+            // Iterator of unknown length.
+            let d = heap
+                .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|c| *c > 1)))
+                .to_value();
+            assert_eq!(2, TupleRef::from_value(d).unwrap().content().len());
+        });
     }
 
     #[test]
     fn test_alloc_frozen_tuple() {
-        let heap = FrozenHeap::new();
+        FrozenHeap::temp(|heap| {
+            let a = heap.alloc(AllocTuple([""; 0])).to_value();
+            let b = heap
+                .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|_| false)))
+                .to_value();
+            assert_eq!(0, TupleRef::from_value(a).unwrap().content().len());
+            assert!(a.ptr_eq(b));
 
-        let a = heap.alloc(AllocTuple([""; 0]));
-        let b = heap.alloc(AllocTuple([1, 2, 3].iter().copied().filter(|_| false)));
-        assert_eq!(0, TupleRef::from_frozen_value(a).unwrap().content().len());
-        assert!(a.to_value().ptr_eq(b.to_value()));
+            // Fixed length iterator.
+            let c = heap.alloc(AllocTuple([1, 2])).to_value();
+            assert_eq!(2, TupleRef::from_value(c).unwrap().content().len());
 
-        // Fixed length iterator.
-        let c = heap.alloc(AllocTuple([1, 2]));
-        assert_eq!(
-            2,
-            FrozenTupleRef::from_frozen_value(c)
-                .unwrap()
-                .content()
-                .len()
-        );
-
-        // Iterator of unknown length.
-        let d = heap.alloc(AllocTuple([1, 2, 3].iter().copied().filter(|c| *c > 1)));
-        assert_eq!(
-            2,
-            FrozenTupleRef::from_frozen_value(d)
-                .unwrap()
-                .content()
-                .len()
-        );
+            // Iterator of unknown length.
+            let d = heap
+                .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|c| *c > 1)))
+                .to_value();
+            assert_eq!(2, TupleRef::from_value(d).unwrap().content().len());
+        });
     }
 }

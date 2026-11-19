@@ -25,7 +25,9 @@ use std::ops::Sub;
 
 use derive_more::Display;
 use dupe::Dupe;
+use starlark_derive::StarlarkPagable;
 
+use crate as starlark;
 use crate::eval::bc::if_debug::IfDebug;
 use crate::eval::bc::instr::BcInstr;
 use crate::eval::bc::opcode::BcOpcode;
@@ -35,7 +37,18 @@ use crate::eval::bc::repr::BcInstrRepr;
 
 /// Address relative to bytecode start.
 #[derive(
-    Eq, PartialEq, Copy, Clone, Dupe, Debug, PartialOrd, Ord, Display, Hash, Default
+    Eq,
+    PartialEq,
+    Copy,
+    Clone,
+    Dupe,
+    Debug,
+    PartialOrd,
+    Ord,
+    Display,
+    Hash,
+    Default,
+    StarlarkPagable
 )]
 #[display("@{}", _0)]
 pub(crate) struct BcAddr(pub(crate) u32);
@@ -155,7 +168,9 @@ impl<'b> BcPtrAddr<'b> {
         unsafe { self.range.get_ref_if_debug().end().offset_from(self.ptr) as usize }
     }
 
-    pub(crate) fn get_instr<I: BcInstr>(self) -> &'b BcInstrRepr<I> {
+    /// The instruction at this address, whose operands are at the brand `'v` of the `Bc` the
+    /// address was taken from; `Bc::run` ties that brand to the evaluator's.
+    pub(crate) fn get_instr<'v, I: BcInstr<'v>>(self) -> &'b BcInstrRepr<'v, I> {
         debug_assert!(self.remaining_if_debug() >= mem::size_of::<BcInstrRepr<I>>());
         let ptr = self.ptr as *const BcInstrRepr<I>;
         let repr = unsafe { &*ptr };
@@ -163,7 +178,7 @@ impl<'b> BcPtrAddr<'b> {
         repr
     }
 
-    pub(crate) fn get_instr_checked<I: BcInstr>(self) -> Option<&'b BcInstrRepr<I>> {
+    pub(crate) fn get_instr_checked<'v, I: BcInstr<'v>>(self) -> Option<&'b BcInstrRepr<'v, I>> {
         if self.get_opcode() == BcOpcode::for_instr::<I>() {
             Some(self.get_instr())
         } else {
@@ -171,7 +186,7 @@ impl<'b> BcPtrAddr<'b> {
         }
     }
 
-    pub(crate) fn get_instr_mut<I: BcInstr>(self) -> *mut BcInstrRepr<I> {
+    pub(crate) fn get_instr_mut<'v, I: BcInstr<'v>>(self) -> *mut BcInstrRepr<'v, I> {
         debug_assert!(
             self.remaining_if_debug() >= mem::size_of::<BcInstrRepr<I>>(),
             "remaining: {}, instr size: {}",
@@ -225,13 +240,24 @@ impl<'b> BcPtrAddr<'b> {
         unsafe { BcPtrAddr::new(self.ptr.add(offset), self.range) }
     }
 
-    pub(crate) fn add_instr<I: BcInstr>(self) -> BcPtrAddr<'b> {
+    pub(crate) fn add_instr<'v, I: BcInstr<'v>>(self) -> BcPtrAddr<'b> {
         self.add_rel(BcAddrOffset::for_instr::<I>())
     }
 }
 
 /// Difference between addresses.
-#[derive(Eq, PartialEq, Copy, Clone, Dupe, Debug, PartialOrd, Ord, Display)]
+#[derive(
+    Eq,
+    PartialEq,
+    Copy,
+    Clone,
+    Dupe,
+    Debug,
+    PartialOrd,
+    Ord,
+    Display,
+    StarlarkPagable
+)]
 pub(crate) struct BcAddrOffset(pub(crate) u32);
 
 impl BcAddrOffset {
@@ -239,7 +265,7 @@ impl BcAddrOffset {
     pub(crate) const FORWARD: BcAddrOffset = BcAddrOffset(0xdeadbeef);
 
     /// Size of an instruction.
-    fn for_instr<I: BcInstr>() -> BcAddrOffset {
+    fn for_instr<'v, I: BcInstr<'v>>() -> BcAddrOffset {
         <BcInstrRepr<I>>::assert_align();
         BcAddrOffset(mem::size_of::<BcInstrRepr<I>>() as u32)
     }
@@ -251,5 +277,16 @@ impl BcAddrOffset {
 }
 
 /// Negative difference between addresses.
-#[derive(Eq, PartialEq, Copy, Clone, Dupe, Debug, PartialOrd, Ord, Display)]
+#[derive(
+    Eq,
+    PartialEq,
+    Copy,
+    Clone,
+    Dupe,
+    Debug,
+    PartialOrd,
+    Ord,
+    Display,
+    StarlarkPagable
+)]
 pub(crate) struct BcAddrOffsetNeg(pub(crate) u32);

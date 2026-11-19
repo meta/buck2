@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.kotlin;
 
 import com.facebook.buck.jvm.java.JavacPluginParams;
 import com.facebook.buck.jvm.java.ResolvedJavacPluginProperties;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import java.io.ByteArrayOutputStream;
@@ -22,7 +23,9 @@ import java.net.URL;
 import java.nio.file.Paths;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Objects;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AnnotationProcessorUtils {
   public static final String KSP_PROCESSOR_NAME_PREFIX = "KSP:";
 
@@ -69,7 +72,8 @@ public class AnnotationProcessorUtils {
    */
   public static boolean isKSPProcessor(ResolvedJavacPluginProperties prop) {
     return !prop.getProcessorNames().isEmpty()
-        && Iterables.getFirst(prop.getProcessorNames(), "").startsWith(KSP_PROCESSOR_NAME_PREFIX);
+        && Objects.requireNonNull(Iterables.getFirst(prop.getProcessorNames(), ""))
+            .startsWith(KSP_PROCESSOR_NAME_PREFIX);
   }
 
   /** Java only processors that run on Javac instead of KotlinC for java files in mix modules */

@@ -9,6 +9,9 @@
 def _impl(_ctx):
     return [DefaultInfo()]
 
-my_rule = rule(impl = _impl, attrs = {
-    "bar": attrs.bool(default = True),
-})
+my_rule = rule(
+    impl = _impl,
+    attrs = {
+        "bar": attrs.bool(default = True),
+    },
+)

@@ -8,7 +8,7 @@
 
 load("utils.bxl", "flatten_lists", "log_debug")
 
-def get_deps(bxl_ctx, targets: bxl.ConfiguredTargetSet) -> typing.Iterable:
+def get_deps(bxl_ctx, targets: bxl.TargetSet[bxl.ConfiguredTargetNode]) -> typing.Iterable:
     log_debug("# Getting dependencies for {}", targets, bxl_ctx = bxl_ctx)
 
     # -1 or large value for unbounded traversal https://fburl.com/code/7vtwh6bu

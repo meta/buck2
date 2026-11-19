@@ -1,0 +1,7 @@
+# The inherited default `within_view` (`root//intersect/...`) refuses this
+# dep by itself; being inside an opted-in subtree, the error names the cap
+# (`root//intersect/...`, inherited unchanged) next to it.
+stub(
+    name = "c",
+    deps = ["root//outside:t"],
+)

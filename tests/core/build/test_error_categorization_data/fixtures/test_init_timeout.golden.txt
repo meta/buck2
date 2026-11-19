@@ -1,0 +1,38 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+Command failed: Failed to connect to buck daemon.
+    Daemon process info from <BUCKD_INFO>
+    daemon dir: <DAEMON_DIR>
+    pid: <PID>
+    endpoint: tcp:<PORT>
+    version: <VERSION>
+    pid present on system: yes
+
+    Try running `buck2 kill` and your command afterwards.
+    Alternatively, try running `rm -rf ~/.buck/buckd` and your command afterwards
+
+Caused by:
+    0: Error connecting to the daemon, daemon stderr follows:
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_daemon::daemon: Daemonized.
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_daemon::daemon: Starting Buck2 daemon
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_daemon::daemon: Version: <VERSION> <build-id>
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_daemon::daemon: PID: <PID>
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_daemon::daemon: ID: <UUID>
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_daemon::daemon: Endpoint: tcp:<PORT>
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_daemon::daemon: Starting tokio runtime...
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_daemon::daemon: Listening.
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::state: Reading config...
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::state: Starting...
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::state: Initializing scribe sink...
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::state: Creating memory tracker...
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::state: Launching forkserver...
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::state: Creating materializer...
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::state: Creating tenting ACL provider...
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::state: Constructing DICE...
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::state: Creating file watcher...
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::state: Daemon state is ready.
+       <DAEMON_TIMESTAMP>  INFO daemon_listener: buck2_server::daemon::server: Starting server
+
+    1: establishing connection to Buck daemon or start a daemon
+    2: starting new buck2 daemon for reason: No buckd.info timed out after <DURATION>

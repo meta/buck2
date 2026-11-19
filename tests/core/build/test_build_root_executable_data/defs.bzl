@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _top(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
 
     ctx.actions.run(
         [ctx.attrs.src, out.as_output()],

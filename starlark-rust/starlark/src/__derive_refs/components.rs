@@ -29,6 +29,7 @@ use crate::docs::DocStringKind;
 use crate::docs::DocType;
 use crate::eval::runtime::params::display::PARAM_FMT_OPTIONAL;
 use crate::typing::Ty;
+use crate::values::FrozenHeap;
 
 /// A wrapper for the parameters to `GlobalsBuilder::set_function` and `MethodBuilder::set_method`
 pub struct NativeCallableComponents {
@@ -39,11 +40,17 @@ pub struct NativeCallableComponents {
 }
 
 impl NativeCallableComponents {
-    fn doc_params(&self) -> DocParams {
-        fn doc_param(p: &NativeCallableParam) -> DocParam {
-            let NativeCallableParam { name, ty, required } = p;
+    /// `heap` is the builder's, for the default values to render.
+    fn doc_params(&self, heap: FrozenHeap<'_>) -> DocParams {
+        let doc_param = |p: &NativeCallableParam| {
+            let NativeCallableParam {
+                name,
+                ty,
+                required,
+                doc_hidden: _,
+            } = p;
             DocParam {
-                name: (*name).to_owned(),
+                name: name.as_str().to_owned(),
                 docs: None,
                 typ: ty.dupe(),
                 default_value: match required {
@@ -51,24 +58,52 @@ impl NativeCallableComponents {
                     Some(NativeCallableParamDefaultValue::Optional) => {
                         Some(PARAM_FMT_OPTIONAL.to_owned())
                     }
-                    Some(NativeCallableParamDefaultValue::Value(v)) => Some(v.to_value().to_repr()),
+                    Some(NativeCallableParamDefaultValue::Value(default)) => {
+                        Some(default(heap).to_repr())
+                    }
                 },
             }
-        }
+        };
+
+        let visible = |p: &&NativeCallableParam| !p.doc_hidden;
 
         DocParams {
-            pos_only: self.param_spec.pos_only.iter().map(doc_param).collect(),
-            pos_or_named: self.param_spec.pos_or_named.iter().map(doc_param).collect(),
-            args: self.param_spec.args.as_ref().map(doc_param),
-            named_only: self.param_spec.named_only.iter().map(doc_param).collect(),
-            kwargs: self.param_spec.kwargs.as_ref().map(doc_param),
+            pos_only: self
+                .param_spec
+                .pos_only
+                .iter()
+                .filter(visible)
+                .map(doc_param)
+                .collect(),
+            pos_or_named: self
+                .param_spec
+                .pos_or_named
+                .iter()
+                .filter(visible)
+                .map(doc_param)
+                .collect(),
+            args: self.param_spec.args.as_ref().filter(visible).map(doc_param),
+            named_only: self
+                .param_spec
+                .named_only
+                .iter()
+                .filter(visible)
+                .map(doc_param)
+                .collect(),
+            kwargs: self
+                .param_spec
+                .kwargs
+                .as_ref()
+                .filter(visible)
+                .map(doc_param),
         }
     }
 
-    pub(crate) fn into_docs(self, as_type: Option<(Ty, DocType)>) -> DocItem {
+    /// `heap` is the builder's, for the default values to render.
+    pub(crate) fn into_docs(self, as_type: Option<(Ty, DocType)>, heap: FrozenHeap<'_>) -> DocItem {
         let func_docs = DocFunction::from_docstring(
             DocStringKind::Rust,
-            self.doc_params(),
+            self.doc_params(heap),
             self.return_type.clone(),
             self.rust_docstring,
         );
@@ -78,6 +113,17 @@ impl NativeCallableComponents {
                 ..ty_docs
             }),
             None => DocItem::Member(DocMember::Function(func_docs)),
+        }
+    }
+
+    pub(crate) fn make_type(&self, as_type: Option<Ty>) -> Ty {
+        let result = self.return_type.clone();
+
+        let params = self.param_spec.param_spec();
+
+        match as_type {
+            None => Ty::function(params, result),
+            Some(type_attr) => Ty::ctor_function(type_attr, params, result),
         }
     }
 }

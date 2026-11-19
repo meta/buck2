@@ -19,7 +19,7 @@
 # buck2 bxl prelude//debugging/fdb.bxl:inspect_target -- --target=//some:target
 # This outputs file containing JSON serialized `ExecInfo` (see types.bzl)
 
-load("@prelude//debugging:common.bzl", "rule_type")
+load("@prelude//debugging:common.bzl", "rule_name")
 load("@prelude//debugging:inspect_dbg_exec.bzl", "inspect_dbg_exec")
 load("@prelude//debugging:inspect_default.bzl", "inspect_default")
 load("@prelude//debugging:inspect_java.bzl", "inspect_java_rule")
@@ -33,20 +33,20 @@ def inspect_alias_rule(ctx: bxl.Context, actions: AnalysisActions, target: bxl.C
     return inspect_any_target(ctx, actions, actual_target_label, settings)
 
 INSPECT_BY_RULE = {
-    "prelude//rules.bzl:alias": inspect_alias_rule,
-    "prelude//rules.bzl:android_binary": inspect_java_rule,
-    "prelude//rules.bzl:android_instrumentation_apk": inspect_java_rule,
-    "prelude//rules.bzl:android_instrumentation_test": inspect_java_rule,
-    "prelude//rules.bzl:android_library": inspect_java_rule,
-    "prelude//rules.bzl:apk_genrule": inspect_java_rule,
-    "prelude//rules.bzl:configured_alias": inspect_alias_rule,
-    "prelude//rules.bzl:java_binary": inspect_java_rule,
-    "prelude//rules.bzl:java_library": inspect_java_rule,
-    "prelude//rules.bzl:java_test": inspect_java_rule,
-    "prelude//rules.bzl:kotlin_binary": inspect_java_rule,
-    "prelude//rules.bzl:kotlin_library": inspect_java_rule,
-    "prelude//rules.bzl:kotlin_test": inspect_java_rule,
-    "prelude//rules.bzl:robolectric_test": inspect_java_rule,
+    "alias": inspect_alias_rule,
+    "android_binary": inspect_java_rule,
+    "android_instrumentation_apk": inspect_java_rule,
+    "android_instrumentation_test": inspect_java_rule,
+    "android_library": inspect_java_rule,
+    "apk_genrule": inspect_java_rule,
+    "configured_alias": inspect_alias_rule,
+    "java_binary": inspect_java_rule,
+    "java_library": inspect_java_rule,
+    "java_test": inspect_java_rule,
+    "kotlin_binary": inspect_java_rule,
+    "kotlin_library": inspect_java_rule,
+    "kotlin_test": inspect_java_rule,
+    "robolectric_test": inspect_java_rule,
 }
 
 def inspect_info_ref_rule(ctx: bxl.Context, actions: AnalysisActions, target: bxl.ConfiguredTargetNode, settings: ScriptSettings):
@@ -75,7 +75,7 @@ INSPECT_BY_LABEL = {
 def inspect_any_target(ctx: bxl.Context, actions: AnalysisActions, target: bxl.ConfiguredTargetNode, settings: ScriptSettings):
     attrs = target.attrs_lazy()
     labels = attrs.get("labels").value() if attrs.get("labels") else []
-    inspect_func = INSPECT_BY_RULE.get(rule_type(target), inspect_default)
+    inspect_func = INSPECT_BY_RULE.get(rule_name(target), inspect_default)
     for label in labels:
         inspect_func = INSPECT_BY_LABEL.get(get_label_or_mark(label), inspect_func)
 
@@ -88,7 +88,7 @@ def inspect(ctx: bxl.Context, actions: AnalysisActions, target: bxl.ConfiguredTa
     # in this case we'll return the artifact which is assumed to have ExecInfo serialized in it
     if isinstance(result, Artifact):
         return result
-    return actions.write_json("out.json", result)
+    return actions.write_json("out.json", result, has_content_based_path = False)
 
 def inspect_target_impl(ctx: bxl.Context):
     actions = ctx.bxl_actions().actions
@@ -98,10 +98,19 @@ def inspect_target_impl(ctx: bxl.Context):
     # correct configuration.
     node = node.unwrap_forward()
 
-    ctx.output.print(ctx.output.ensure(inspect(ctx, actions, node, ScriptSettings(
-        target = node,
-        args = ctx.cli_args.args if ctx.cli_args.args else [],
-    ))).abs_path())
+    ctx.output.print(
+        ctx.output.ensure(
+            inspect(
+                ctx,
+                actions,
+                node,
+                ScriptSettings(
+                    target = node,
+                    args = ctx.cli_args.args if ctx.cli_args.args else [],
+                ),
+            )
+        ).abs_path()
+    )
 
 inspect_target = bxl_main(
     impl = inspect_target_impl,

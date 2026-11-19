@@ -44,50 +44,10 @@ pub macro impl_cmp($lhs:ty, $rhs:ty, $ty:ty) {
     }
 }
 
-#[inline]
-pub fn eq_as_ref(a: impl AsRef<str>, b: impl AsRef<str>) -> bool {
-    a.as_ref() == b.as_ref()
-}
-
-#[inline]
-pub fn partial_cmp_as_ref(a: impl AsRef<str>, b: impl AsRef<str>) -> Option<cmp::Ordering> {
-    a.as_ref().partial_cmp(b.as_ref())
-}
-
-/// Generates ['cmp::PartialEq'] and ['cmp::PartialOrd'] for the `lhs` and `rhs`
-/// string types, where `ty` is the unowned, reference path type.
-pub macro impl_cmp_str($lhs:ty, $rhs:ty, $ty:ty) {
-    impl cmp::PartialEq<$rhs> for $lhs {
-        #[inline]
-        fn eq(&self, other: &$rhs) -> bool {
-            $crate::paths::cmp_impls::eq_as_ref(self, other)
-        }
-    }
-
-    impl cmp::PartialEq<$lhs> for $rhs {
-        #[inline]
-        fn eq(&self, other: &$lhs) -> bool {
-            $crate::paths::cmp_impls::eq_as_ref(self, other)
-        }
-    }
-
-    impl cmp::PartialOrd<$rhs> for $lhs {
-        #[inline]
-        fn partial_cmp(&self, other: &$rhs) -> Option<cmp::Ordering> {
-            $crate::paths::cmp_impls::partial_cmp_as_ref(self, other)
-        }
-    }
-
-    impl cmp::PartialOrd<$lhs> for $rhs {
-        #[inline]
-        fn partial_cmp(&self, other: &$lhs) -> Option<cmp::Ordering> {
-            $crate::paths::cmp_impls::partial_cmp_as_ref(self, other)
-        }
-    }
-}
-
 use crate::paths::forward_rel_path::ForwardRelativePath;
 use crate::paths::forward_rel_path::ForwardRelativePathBuf;
+use crate::paths::relative_path::RelativePath;
+use crate::paths::relative_path::RelativePathBuf;
 
 impl_cmp!(
     ForwardRelativePathBuf,
@@ -100,11 +60,5 @@ impl_cmp!(
     ForwardRelativePath
 );
 
-impl_cmp_str!(ForwardRelativePathBuf, str, ForwardRelativePath);
-impl_cmp_str!(ForwardRelativePathBuf, &'_ str, ForwardRelativePath);
-impl_cmp_str!(ForwardRelativePathBuf, String, ForwardRelativePath);
-impl_cmp_str!(ForwardRelativePath, str, ForwardRelativePath);
-impl_cmp_str!(ForwardRelativePath, &'_ str, ForwardRelativePath);
-impl_cmp_str!(ForwardRelativePath, String, ForwardRelativePath);
-impl_cmp_str!(&'_ ForwardRelativePath, str, ForwardRelativePath);
-impl_cmp_str!(&'_ ForwardRelativePath, String, ForwardRelativePath);
+impl_cmp!(RelativePathBuf, RelativePath, RelativePath);
+impl_cmp!(RelativePathBuf, &'_ RelativePath, RelativePath);

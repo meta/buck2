@@ -1,0 +1,126 @@
+load(":defs.bzl", "dummy", "split_consumer", "transitioned")
+
+constraint_setting(
+    name = "os",
+    visibility = ["PUBLIC"],
+)
+
+constraint_value(
+    name = "linux",
+    constraint_setting = ":os",
+    visibility = ["PUBLIC"],
+)
+
+constraint_value(
+    name = "macos",
+    constraint_setting = ":os",
+    visibility = ["PUBLIC"],
+)
+
+platform(
+    name = "platform",
+    constraint_values = [],
+)
+
+dummy(
+    name = "same",
+    default_target_platform = ":platform",
+    value = "same",
+)
+
+dummy(
+    name = "selected",
+    default_target_platform = ":platform",
+    value = select({
+        ":linux": "linux",
+        ":macos": "macos",
+    }),
+)
+
+dummy(
+    name = "dep",
+    default_target_platform = ":platform",
+    value = "dep-before",
+)
+
+dummy(
+    name = "parent",
+    default_target_platform = ":platform",
+    deps = [":dep"],
+)
+
+dummy(
+    name = "unrelated",
+    default_target_platform = ":platform",
+    value = "unrelated-before",
+)
+
+dummy(
+    name = "grandparent",
+    default_target_platform = ":platform",
+    deps = [":parent"],
+)
+
+dummy(
+    name = "great_grandparent",
+    default_target_platform = ":platform",
+    deps = [":grandparent"],
+)
+
+dummy(
+    name = "with_src",
+    default_target_platform = ":platform",
+    srcs = ["source.txt"],
+)
+
+platform(
+    name = "linux_platform",
+    constraint_values = [":linux"],
+)
+
+platform(
+    name = "macos_platform",
+    constraint_values = [":macos"],
+)
+
+ordered_platforms = (
+    [":macos_platform", ":linux_platform"] if read_config("test", "swap_platforms", "false") == "true" else [":linux_platform", ":macos_platform"]
+)
+
+dummy(
+    name = "attribute_order",
+    default_target_platform = ":platform",
+    left = (":selected", ordered_platforms[0]),
+    right = (":selected", ordered_platforms[1]),
+)
+
+dummy(
+    name = "list_order",
+    configured_deps = [(":selected", p) for p in ordered_platforms],
+    default_target_platform = ":platform",
+)
+
+dummy(
+    name = "equal_deps",
+    default_target_platform = ":platform",
+    left = (":same", ordered_platforms[0]),
+    right = (":same", ordered_platforms[1]),
+)
+
+split_consumer(
+    name = "split_order",
+    default_target_platform = ":platform",
+    dep = ":selected",
+)
+
+transitioned(
+    name = "transitioned",
+    default_target_platform = ":platform",
+    value = read_config("test", "transitioned_value", "before"),
+)
+
+dummy(
+    name = "transition_parent",
+    default_target_platform = ":platform",
+    deps = [":transitioned"],
+)

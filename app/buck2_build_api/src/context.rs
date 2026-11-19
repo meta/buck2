@@ -10,8 +10,6 @@
 
 //! Injects data used for build onto dice
 
-use std::sync::Arc;
-
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::fs::buck_out_path::BuckOutPathResolver;
@@ -19,12 +17,17 @@ use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::DiceTransactionUpdater;
+use dice::EqualityBehavior;
 use dice::InjectedKey;
+use dice::PagableValueSerialize;
+use dice::ValueSerialize;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
 #[async_trait]
-pub trait HasBuildContextData {
-    async fn get_buck_out_path(&mut self) -> buck2_error::Result<BuckOutPathResolver>;
+pub trait HasBuildContextData<'d> {
+    async fn get_buck_out_path(&mut self) -> buck2_error::Result<&'d BuckOutPathResolver>;
 }
 
 pub trait SetBuildContextData {
@@ -34,28 +37,33 @@ pub trait SetBuildContextData {
     ) -> buck2_error::Result<()>;
 }
 
-#[derive(PartialEq, Eq, Allocative)]
+#[derive(PartialEq, Eq, Allocative, Pagable)]
 pub struct BuildData {
-    buck_out_path: ProjectRelativePathBuf,
+    buck_out_path_resolver: BuckOutPathResolver,
 }
 
-#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("{:?}", self)]
+#[pagable_typetag(dice::DiceKeyDyn)]
 struct BuildDataKey;
 
 impl InjectedKey for BuildDataKey {
-    type Value = Arc<BuildData>;
+    type Value = BuildData;
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        PagableValueSerialize::<Self::Value>::new()
     }
 }
 
 #[async_trait]
-impl HasBuildContextData for DiceComputations<'_> {
-    async fn get_buck_out_path(&mut self) -> buck2_error::Result<BuckOutPathResolver> {
+impl<'d> HasBuildContextData<'d> for DiceComputations<'d> {
+    async fn get_buck_out_path(&mut self) -> buck2_error::Result<&'d BuckOutPathResolver> {
         let data = self.compute(&BuildDataKey).await?;
-        Ok(BuckOutPathResolver::new(data.buck_out_path.to_buf()))
+        Ok(&data.buck_out_path_resolver)
     }
 }
 
@@ -66,11 +74,11 @@ impl SetBuildContextData for DiceTransactionUpdater {
     ) -> buck2_error::Result<()> {
         Ok(self.changed_to(vec![(
             BuildDataKey,
-            Arc::new(BuildData {
-                buck_out_path: path.unwrap_or_else(|| {
+            BuildData {
+                buck_out_path_resolver: BuckOutPathResolver::new(path.unwrap_or_else(|| {
                     ProjectRelativePathBuf::unchecked_new("buck-out/v2".to_owned())
-                }),
-            }),
+                })),
+            },
         )])?)
     }
 }

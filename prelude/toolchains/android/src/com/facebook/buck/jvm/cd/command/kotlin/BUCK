@@ -15,7 +15,6 @@ buck_kotlin_library(
 buck_kotlin_library(
     name = "support",
     srcs = [
-        "AnnotationProcessingTool.kt",
         "KotlinExtraParams.kt",
     ],
     labels = ["codegen_rule"],

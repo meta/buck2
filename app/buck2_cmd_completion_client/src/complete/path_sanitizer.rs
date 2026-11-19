@@ -48,7 +48,7 @@ impl SanitizedPath {
     }
 
     pub(crate) fn is_ready_for_next_dir(&self) -> bool {
-        let is_root_dir = self.given == "";
+        let is_root_dir = self.given.is_empty();
         let is_slash_terminated_dir = fs_util::metadata(&self.abs_path).is_ok_and(|m| m.is_dir())
             && self.given.ends_with('/');
         is_root_dir || is_slash_terminated_dir
@@ -137,7 +137,7 @@ impl PathSanitizer {
         given_cell_str: &str,
         cell_path: &str,
     ) -> Result<SanitizedPath, buck2_error::Error> {
-        let given_cell = if given_cell_str == "" {
+        let given_cell = if given_cell_str.is_empty() {
             self.cell_resolver.find(&self.cwd_roots.cwd)
         } else {
             self.resolve_alias(given_cell_str)?
@@ -188,7 +188,7 @@ impl PathSanitizer {
         proper_cell_path: &CellRelativePath,
     ) -> bool {
         let path = Path::new(given_fragment);
-        match ForwardRelativePath::new(path) {
+        match ForwardRelativePath::new_trim_trailing_slashes(path) {
             Ok(forward_rel_path) => proper_cell_path.ends_with(forward_rel_path),
             Err(_) => false,
         }
@@ -216,7 +216,7 @@ impl PathSanitizer {
     fn relative_to_cell(&self, dir: &AbsNormPath) -> buck2_error::Result<CellRelativePathBuf> {
         Ok(self
             .cell_resolver
-            .get_cell_path_from_abs_path(dir, &self.project_root())?
+            .get_cell_path_from_abs_path(dir, self.project_root())?
             .path()
             .to_owned())
     }

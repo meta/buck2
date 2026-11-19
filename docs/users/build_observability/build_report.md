@@ -12,6 +12,23 @@ successful outcomes are well served by direct usage of the CLI.
 To request a build report, pass `--build-report <path>` to `buck build` on the
 CLI.
 
+You can also pass `--build-report-options` with a comma-separated list of
+options to customize the build report:
+
+- `fill-out-failures`: Fill out the `failures` field in the build report (for
+  Buck1 backwards compatibility).
+- `package-project-relative-paths`: Include the project-relative path of
+  packages for built targets.
+- `include-artifact-hash-information`: Include artifact hash information in the
+  output.
+- `exclude-action-error-diagnostics`: Exclude the `error_diagnostics` field from
+  action errors in the build report. This can reduce the size of build reports
+  when detailed error diagnostic information from action error handlers is not
+  needed.
+- `truncate-error-content`: Truncate error message content in the build report
+  to reduce size. This applies the same truncation limits used for error logging
+  (20KB per error message).
+
 At a high level, the build report outputs information for each of the targets
 that you requested to have built on the CLI. As a result, it may report
 information for more than one configuration or subtarget of a target. For
@@ -26,7 +43,11 @@ BuildReport {
     # that may change in the future.
     trace_id: str,
 
-    # True if all requested targets built successfully
+    # True if all requested targets built successfully.
+    #
+    # In a streaming build report each line carries one target, so this only
+    # covers that target and any errors not associated with a target, and it
+    # only means that no error has been recorded for them yet.
     success: bool,
 
     # The error category for the build, in case it failed. One of "USER", "INFRA", "ENVIRONMENT".
@@ -57,19 +78,8 @@ BuildReport {
     build_metrics: AllTargetsBuildMetrics,
 
     # Set sketch of configured target graph stored in a hex string.
-    # Enabeld by setting `-c buck2.log_total_configured_graph_sketch=true`.
+    # Enabled by setting `-c buck2.log_total_configured_graph_sketch=true`.
     total_configured_graph_sketch: Optional[str],
-
-    # Set sketch of unconfigured target labels in configured target graph
-    # stored in a hex string.
-    # Enabeld by setting
-    # `-c buck2.log_total_configured_graph_unconfigured_sketch=true`.
-    total_configured_graph_unconfigured_sketch: Optional[str],
-
-    # Reports data about each configuration encountered as part of the build,
-    # if requested. Currently shows total unconfigured sketch per configuration
-    # if `-c buck2.log_total_per_configuration_sketch=true` is set.
-    per_configuration_data: dict[str, PerConfigurationData],
 }
 
 BuildReportEntry {
@@ -90,7 +100,10 @@ BuildReportEntry {
     # The two fields below are included for buck1 backwards compatibility only.
     # They are both computed by aggregating across all the configured targets in
     # the way you might expect.
-    success: "FAIL" | "SUCCESS,
+    #
+    # `IN_PROGRESS` only appears in a streaming build report. See "Streaming
+    # build report" below.
+    success: "FAIL" | "SUCCESS" | "IN_PROGRESS",
     outputs: dict[str, list[Path]],
 
     # The path to the package containing this target, relative to the project
@@ -100,7 +113,10 @@ BuildReportEntry {
 
 ConfiguredBuildReportEntry {
     # Did this target build successfully or not?
-    success: "FAIL" | "SUCCESS,
+    #
+    # `IN_PROGRESS` only appears in a streaming build report. See "Streaming
+    # build report" below.
+    success: "FAIL" | "SUCCESS" | "IN_PROGRESS",
 
     # A map of subtargets that were built to a list of the successfully built
     # outputs for that subtarget.
@@ -121,17 +137,54 @@ ConfiguredBuildReportEntry {
     artifact_info: dict[str, ArtifactInfoFile | ArtifactInfoSymlink | ArtifactInfoExternalSymlink],
 
     # Set sketch of configured target graph stored in a hex string.
-    # Enabeld by setting `-c buck2.log_configured_graph_sketch=true`.
+    # Enabled by setting `-c buck2.log_configured_graph_sketch=true`.
     configured_graph_sketch: Optional[str],
+
+    # Set sketch of retained analysis memory utilization stored in a hex string.
+    #
+    # Computing the cardinality of this sketch returns an (approximate) number of bytes.
+    #
+    # Enabled by setting `-c buck2.log_retained_analysis_memory_sketch=true`
+    retained_analysis_memory_sketch: Optional[str],
+
+    # Set sketch of peak analysis memory utilization stored in a hex string.
+    #
+    # Computing the cardinality of this sketch returns an (approximate) number of bytes.
+    #
+    # Enabled by setting `-c buck2.log_peak_analysis_memory_sketch=true`
+    peak_analysis_memory_sketch: Optional[str],
+
+    # Set sketch of distinct artifact paths stored in a hex string.
+    #
+    # Computing the cardinality of this sketch returns an (approximate) count
+    # of distinct artifact file paths.
+    #
+    # Enabled by setting `-c buck2.log_artifact_count_sketch=true`.
+    artifact_count_sketch: Optional[str],
+
+    # Set sketch of artifact path sizes stored in a hex string. Each path is
+    # weighted by its file size in bytes; computing the cardinality returns an
+    # (approximate) total artifact size in bytes.
+    #
+    # Enabled by setting `-c buck2.log_artifact_size_sketch=true`.
+    artifact_size_sketch: Optional[str],
+
+    # Estimated cardinality of `artifact_count_sketch`. Populated only when
+    # `-c buck2.log_sketch_cardinalities=true` is set; the corresponding sketch
+    # field is left intact in both cases.
+    artifact_count_sketch_cardinality: Optional[float],
+
+    # Estimated cardinality of `artifact_size_sketch`. Populated only when
+    # `-c buck2.log_sketch_cardinalities=true` is set; the corresponding sketch
+    # field is left intact in both cases.
+    artifact_size_sketch_cardinality: Optional[float],
+
+    # Build metrics for this target. Represents the aggregated metrics for
+    # top-level targets. Omitted from the JSON when None.
+    build_metrics: Optional[TargetBuildMetrics],
 
     # Metrics for this target. Represents the aggregated metrics for top level targets.
     metrics: TargetBuildMetrics,
-
-    # Set sketch of unconfigured taret labels in configured target graph
-    # stored in a hex string.
-    # Enabeld by setting
-    # `-c buck2.log_configured_graph_unconfigured_sketch=true`.
-    configured_graph_unconfigured_sketch: Optional[str],
 }
 
 AllTargetsBuildMetrics {
@@ -162,6 +215,18 @@ TargetBuildMetrics {
 
     # Max value for peak memory usage across all local actions.
     local_max_memory_peak_bytes: Optional[u64]
+
+    # The distinct set of RE platform identifiers used by actions for this
+    # target. Each value is the worker's `platform` property, optionally
+    # suffixed with `.subplatform` (e.g. "linux-remote-execution",
+    # "gpu-remote-execution.H100"). Omitted when empty (no remote actions).
+    re_platform_names: Optional[List[str]]
+
+    # Wall-clock time in milliseconds from the start of the build at which
+    # this top-level target succeeded, failed, or timed out.
+    # Use this to compare durations but don't add it to a start timestamp
+    # to produce an end timestamp.
+    wall_clock_completion_ms: Optional[u64]
 }
 
 AggregatedBuildMetrics {
@@ -177,13 +242,6 @@ AggregatedBuildMetrics {
 
     analysis_retained_memory: float
     declared_actions: float
-}
-
-PerConfigurationData {
-    # Unique hash of the configuration. This is same hash used in buck-out.
-    hash: str,
-    # Sketch of unconfigured target labels for all targets of that configuration
-    total_unconfigured_sketch: str,
 }
 
 Error {
@@ -203,6 +261,15 @@ Error {
     # that the error is associated to as determined by Buck2 internally. This is meant to classify errors
     # more precisely, helping developers better understand the nature of the error.
     error_tags: list[str],
+
+
+    # Error category for the error. One of "USER", "INFRA", "ENVIRONMENT".
+    error_category: str,
+
+    # A finer-grained key identifying the category of this error, derived from the
+    # error's tags and source location. Matches the `category_key` buck2 logs to
+    # its error telemetry, so it can be used to join build report errors with it.
+    category_key: str,
 }
 
 ActionError {
@@ -215,14 +282,14 @@ ActionError {
     # Digest of the action
     digest: str,
 
+    # Stringified hash of the same stringified error message that is provided by the action
+    error_content: str,
+
     # Stringified hash of the stderr of the action
-    stderr: str,
+    stderr_content: str,
 
     # Stringified hash of the stdout of the action
-    stdout: str,
-
-    # Stringified hash of the same stringified error message that is provided by the action
-    error: str,
+    stdout_content: str,
 
     # Optional list of error categorizations provided by an error handler which is invoked
     # in the event of a failed action, or an error message if the error handler failed.
@@ -260,18 +327,34 @@ ActionSubError {
     category: str,
 
     # The stringified hash of the extra message provided for the specific sub-error category.
-    message_content: str,
+    message_content: Optional[str],
 
-    # List of error locations, if any
-    locations: Optional[list[ActionErrorLocation]],
-}
-
-ActionErrorLocation {
     # File path where the error appeared, preferably either project-relative or absolute.
-    file: str,
+    file: Optional[str],
 
-    # Optional line number
-    line: Optional[u64]
+    # Line number
+    lnum: Optional[u64],
+
+    # End line (for multi-line spans)
+    end_lnum: Optional[u64],
+
+    # Column number
+    col: Optional[u64],
+
+    # End column (for ranges)
+    end_col: Optional[u64],
+
+    # Type of error (error, warning, info, etc.)
+    error_type: Optional[str],
+
+    # Numeric error code (e.g., 404, 500)
+    error_number: Optional[u64],
+
+    # Subcategory for finer-grained categorization
+    subcategory: Optional[str],
+
+    # Remediation steps for the error
+    remediation: Optional[str],
 }
 
 ArtifactInfoFile {
@@ -329,11 +412,9 @@ The build report currently has at least the following limitations:
     passed, this is a bug.
 1.  It is currently not generated when a non-existent package is specified on
     the command line. This is also a bug.
-1.  It cannot be requested for any buck2 command other than `build`
-1.  Errors do not contain any additional metadata outside of the error message.
-    This will be made available as such metadata is available in buck2.
-1.  The "failures" field is always empty. This will be changed under a
-    backcompat opt-in flag in the future.
+1.  The "failures" field is empty by default. To populate it, pass the
+    `fill-out-failures` option via `--build-report-options` (this exists for
+    buck1 backwards compatibility only; new code should not rely on it).
 
 Finally, it's worth raising that the concept of error deduplication has some
 fundamental limitations; if two targets both refer to the same non-existent
@@ -341,3 +422,80 @@ dependency, do those errors have the same cause (the dependency doesn't exist)
 or different causes (each target is individually broken)? As a result, the exact
 details of when two errors are considered to have the same cause are not
 generally stable, and may not always be what you expect.
+
+## Streaming build report
+
+Pass `--streaming-build-report <path>` to have buck write build reports to
+`<path>` while the build runs, one JSON object per line, in the schema above.
+
+- A line is written each time a requested output is built or fails to build,
+  each time a configured target finishes building, and each time a requested
+  target does. This includes targets with no outputs and targets that fail
+  before they are configured.
+- Each line carries one target. A target that is requested with several sets of
+  `?modifier` modifiers can have an entry for each of them on the line.
+- `success` reads `IN_PROGRESS` on an entry, and on a configured entry, until it
+  has finished building. `IN_PROGRESS` only replaces `SUCCESS`: an entry reads
+  `FAIL` as soon as an error is recorded for it, which can be before it
+  finishes. The final `--build-report` never contains `IN_PROGRESS`.
+- With `--fail-fast`, the error that stops the build is on a line for its
+  target. If other targets were still building, that line is the last one, and
+  their entries can still read `IN_PROGRESS` on their last lines. The same goes
+  for the remaining entries when the build is cancelled.
+- With `-c build_report.print_unconfigured_section=false`, entries have no
+  top-level `success`. Entries that hold only errors, or whose configurations
+  were all skipped as incompatible, then have no `success` at all.
+- When one target is requested with two sets of modifiers that resolve to the
+  same configuration, as in `//:a?macos+arm //:a[sub]?arm+macos`, each entry's
+  configured entry finishes when that entry's own request has finished building
+  it, whatever the other request is doing. `buck test` differs when the two
+  requests also name the same provider label, as in
+  `//:a?macos+arm //:a?arm+macos`: it builds that label once, and only one of
+  the two entries appears on streaming lines. The other is only in the final
+  build report.
+- `buck test` writes a line for one provider label at a time, and the line
+  carries only that label's build. A target that is tested under several
+  provider labels is therefore reported finished once per label, the first time
+  possibly while another of its labels is still building.
+- Errors that stop `buck test` from building or testing a provider label, such
+  as analysis errors, are written on lines of their own. Each of these lines
+  carries one target's errors and no builds.
+- In `buck test`, an entry that has finished building can still read `FAIL` on
+  a later line, if setting up its test fails.
+- In `buck test`, treat `FAIL` as final across lines: a later line for another
+  provider label of the same target can read `SUCCESS`. An error that stops one
+  `?modifier` request before it is configured is written under the target
+  without modifiers, and the other request's entry can end the stream reading
+  `SUCCESS`. The final build report files both correctly.
+
+### Final-only streaming build reports
+
+`buck build` accepts `--streaming-build-report-final-only` together with
+`--streaming-build-report`. In this mode, output and configured-target updates
+do not write lines. A line is written when a requested target finishes, so the
+entry for the request that caused it has a terminal `SUCCESS` or `FAIL` status.
+Another `?modifier` request for the same target can still read `IN_PROGRESS` on
+that line. With `--fail-fast`, the error that stops the build is written once
+even when its target did not finish.
+
+If a build is cancelled or killed before a request finishes, final-only mode
+writes no completion line for that request. Previously written lines for
+completed requests remain available; another request's line can still carry an
+unfinished `?modifier` entry for the same target. This mode does not recover
+partially built targets, and a process killed during a write can leave a partial
+last line that readers must ignore.
+
+`buck test` does not support final-only streaming reports. It builds provider
+labels independently and currently has no event that says all provider labels
+for one requested target have finished. Its streaming report therefore keeps
+the incremental behavior described above.
+
+### Lines from older buck2 versions
+
+No field on a line says which buck2 wrote it. On a buck2 that predates the
+behavior above, `SUCCESS` only means that no error has been recorded yet, not
+that the target has finished building, and a line can carry every target seen
+so far rather than one. A target with no outputs, or one that fails before
+building any output, may not appear on any line. Readers that can get lines
+from such a buck2 and need a final verdict before buck exits should therefore
+treat only `FAIL` as final, or use the final `--build-report`.

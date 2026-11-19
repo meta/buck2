@@ -19,6 +19,7 @@ pub mod testing {
     use starlark::environment::GlobalsBuilder;
     use starlark::eval::Evaluator;
     use starlark::starlark_module;
+    use starlark::values::ValueOf;
 
     use crate::interpreter::build_context::BuildContext;
 
@@ -36,7 +37,7 @@ pub mod testing {
         fn label<'v>(
             s: &str,
             eval: &mut Evaluator<'v, '_, '_>,
-        ) -> starlark::Result<StarlarkConfiguredProvidersLabel> {
+        ) -> starlark::Result<ValueOf<'v, StarlarkConfiguredProvidersLabel>> {
             let c = BuildContext::from_context(eval)?;
             let target = match ParsedPattern::<ProvidersPatternExtra>::parse_precise(
                 s,
@@ -54,15 +55,18 @@ pub mod testing {
                     );
                 }
             };
-            Ok(StarlarkConfiguredProvidersLabel::new(
-                target.configure(ConfigurationData::testing_new()),
+            Ok(ValueOf::alloc(
+                eval.heap(),
+                StarlarkConfiguredProvidersLabel::new(
+                    target.configure(ConfigurationData::testing_new()),
+                ),
             ))
         }
 
         fn target_label<'v>(
             s: &str,
             eval: &mut Evaluator<'v, '_, '_>,
-        ) -> starlark::Result<StarlarkTargetLabel> {
+        ) -> starlark::Result<ValueOf<'v, StarlarkTargetLabel>> {
             let c = BuildContext::from_context(eval)?;
             let target = match ParsedPattern::<TargetPatternExtra>::parse_precise(
                 s,
@@ -80,7 +84,10 @@ pub mod testing {
                     .into());
                 }
             };
-            Ok(StarlarkTargetLabel::new(target))
+            Ok(ValueOf::alloc(
+                eval.heap(),
+                StarlarkTargetLabel::new(target),
+            ))
         }
     }
 }

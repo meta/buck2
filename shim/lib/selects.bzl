@@ -64,7 +64,7 @@ def _with_or_dict(input_dict):
       A dictionary usable by a native `select()`.
     """
     output_dict = {}
-    for (key, value) in input_dict.items():
+    for key, value in input_dict.items():
         if type(key) == type(()):
             for config_setting in key:
                 if config_setting in output_dict.keys():

@@ -6,6 +6,9 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//decls:common.bzl", "buck")
+load("@prelude//julia:julia_toolchain.bzl", "julia_toolchain")
 load("@prelude//linking:shared_libraries.bzl", "SharedLibraryInfo")
 load(":julia_info.bzl", "JllInfo", "JuliaLibraryInfo", "create_julia_library_info")
 
@@ -123,3 +126,30 @@ def julia_jll_library_impl(ctx: AnalysisContext) -> list[Provider]:
     providers.append(library_info)
 
     return providers
+
+julia_jll_library = prelude_rule(
+    name = "julia_jll_library",
+    impl = julia_jll_library_impl,
+    attrs = {
+        "jll_name": attrs.string(),
+        "lib_mapping": attrs.named_set(attrs.dep()),
+        "uuid": attrs.string(),
+        "_julia_toolchain": julia_toolchain(),
+    }
+    | buck.labels_arg()
+    | buck.contacts_arg(),
+)
+
+julia_library = prelude_rule(
+    name = "julia_library",
+    impl = julia_library_impl,
+    attrs = {
+        "deps": attrs.list(attrs.dep(), default = []),
+        "project_toml": attrs.source(),
+        "resources": attrs.list(attrs.source(allow_directory = True), default = []),
+        "srcs": attrs.list(attrs.source(), default = []),
+        "_julia_toolchain": julia_toolchain(),
+    }
+    | buck.labels_arg()
+    | buck.contacts_arg(),
+)

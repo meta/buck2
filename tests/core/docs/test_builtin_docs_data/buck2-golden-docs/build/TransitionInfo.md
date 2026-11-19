@@ -2,4 +2,4 @@
 
 # TransitionInfo
 ## TransitionInfo.attrs
-## TransitionInfo.r#impl
+## TransitionInfo.impl

@@ -9,6 +9,7 @@
 DEVSERVER_PLATFORM_REGEX = "UNUSED"
 ANDROID = "Android"
 APPLE = "Apple"
+APPLETVOS = "appletvos"
 CXX = "Default"
 FBCODE = "Fbcode"
 IOS = "ios"

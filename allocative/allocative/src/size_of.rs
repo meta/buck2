@@ -9,10 +9,22 @@
  */
 
 use crate::Allocative;
+use crate::FlameGraphBuilder;
 use crate::Key;
 use crate::Visitor;
 use crate::visitor::NodeKind;
 use crate::visitor::VisitorImpl;
+
+/// Size of a value and all allocations reachable from it.
+///
+/// Shared allocations are counted once per pointer identity, even when they are reachable through
+/// multiple fields. This has the same accounting semantics as [`FlameGraphBuilder`], without
+/// exposing the generated flamegraph to the caller.
+pub fn size_of_reachable(root: &dyn Allocative) -> usize {
+    let mut builder = FlameGraphBuilder::default();
+    builder.visit_root(root);
+    builder.finish().flamegraph().total_size()
+}
 
 /// Size of data allocated in unique pointers in the struct.
 ///
@@ -114,12 +126,57 @@ where
 #[cfg(test)]
 mod tests {
     use std::mem;
+    use std::sync::Arc;
 
     use allocative_derive::Allocative;
 
     use crate as allocative;
+    use crate::size_of_reachable;
     use crate::size_of_unique;
     use crate::size_of_unique_allocated_data;
+
+    #[test]
+    fn test_size_of_reachable_counts_shared_allocation_once() {
+        #[derive(Allocative)]
+        #[expect(dead_code)]
+        struct SingleArc {
+            value: Arc<Vec<u8>>,
+        }
+
+        #[derive(Allocative)]
+        #[expect(dead_code)]
+        struct DuplicateArc {
+            first: Arc<Vec<u8>>,
+            second: Arc<Vec<u8>>,
+        }
+
+        let value = Arc::new(vec![0; 128]);
+        let shared_allocation_bytes =
+            2 * mem::size_of::<usize>() + mem::size_of::<Vec<u8>>() + value.capacity();
+        let single = SingleArc {
+            value: value.clone(),
+        };
+        let duplicate = DuplicateArc {
+            first: value.clone(),
+            second: value,
+        };
+
+        let single_bytes = size_of_reachable(&single);
+        let duplicate_bytes = size_of_reachable(&duplicate);
+
+        assert_eq!(
+            mem::size_of::<SingleArc>() + shared_allocation_bytes,
+            single_bytes,
+        );
+        assert_eq!(
+            mem::size_of::<DuplicateArc>() + shared_allocation_bytes,
+            duplicate_bytes,
+        );
+        assert_eq!(
+            single_bytes - mem::size_of::<SingleArc>(),
+            duplicate_bytes - mem::size_of::<DuplicateArc>(),
+        );
+    }
 
     #[test]
     fn test_box() {

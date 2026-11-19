@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.cd.serialization;
 
 import com.facebook.buck.cd.model.common.RelPathMapEntry;
 import com.facebook.buck.core.filesystems.RelPath;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 /** {@link RelPath} to protobuf serializer */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class RelPathSerializer {
 
   private RelPathSerializer() {}

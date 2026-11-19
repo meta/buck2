@@ -18,7 +18,9 @@ pub struct DaemonDirCommand {}
 
 impl DaemonDirCommand {
     pub fn exec(self, _matches: BuckArgMatches<'_>, ctx: ClientCommandContext<'_>) -> ExitResult {
-        buck2_client_ctx::println!("{}", ctx.paths()?.daemon_dir()?.path.display())?;
+        let daemon_dir =
+            ctx.with_runtime(|ctx| async move { ctx.resolve_tenant_daemon_dir().await })?;
+        buck2_client_ctx::println!("{}", daemon_dir.path.display())?;
         ExitResult::success()
     }
 }

@@ -4,9 +4,9 @@
   "error_category": "USER",
   "failures": {
     "root//fail_action:fail_one": "Action failed: root//fail_action:fail_one (root//config:dog_platform#<HASH>) (failname)\nRemote command returned non-zero exit code 1\nRemote action, reproduce with: `frecli cas download-action <DIGEST>`\nStdout: <empty>\nStderr: <empty>\n",
-    "root//fail_analysis:fail_analysis": "Error running analysis for `root//fail_analysis:fail_analysis (<unspecified>)`\nCaused by:\n    Traceback (most recent call last):\n      File <builtin>, in <module>\n      * fail_analysis/fail_analysis.bzl:10, in _impl\n          fail(\"Failure during analysis\")\n    error: fail: Failure during analysis\n      --> fail_analysis/fail_analysis.bzl:10:5\n       |\n    10 |     fail(\"Failure during analysis\")\n       |\n       |\n    ",
+    "root//fail_analysis:fail_analysis": "Error running analysis for `root//fail_analysis:fail_analysis (<unspecified>)`\nCaused by:\n    Traceback (most recent call last):\n      File <builtin>, in <module>\n      * fail_analysis/fail_analysis.bzl:10, in _impl\n          fail(\"Failure during analysis\")\n    error: fail: Failure during analysis\n      --> fail_analysis/fail_analysis.bzl:10:5\n       |\n    10 |     fail(\"Failure during analysis\")\n       |\n    ",
     "root//fail_config:cat_only": "Error running analysis for `root//config:not_a_target_platform (<unbound>)`\nCaused by:\n    0: Error looking up configured node root//config:not_a_target_platform (<unbound>)\n    1: looking up unconfigured target node `root//config:not_a_target_platform`\n    2: Unknown target `not_a_target_platform` from package `root//config`.\n       Did you mean one of the 5 targets in root//config:TARGETS.fixture?\n       \n       Available targets:\n         root//config:animal\n         root//config:cat\n         root//config:cat_platform\n         root//config:dog\n         root//config:dog_platform",
-    "root//fail_load:first": "Error evaluating build file: `root//fail_load:TARGETS.fixture`\nCaused by:\n    Traceback (most recent call last):\n      * fail_load/TARGETS.fixture:1, in <module>\n          fail(\"Non-specific load failure\")\n    error: fail: Non-specific load failure\n     --> fail_load/TARGETS.fixture:1:1\n      |\n    1 | fail(\"Non-specific load failure\")\n      |\n      |\n    ",
+    "root//fail_load:first": "Error evaluating build file: `root//fail_load:TARGETS.fixture`\nCaused by:\n    Traceback (most recent call last):\n      * fail_load/TARGETS.fixture:1, in <module>\n          fail(\"Non-specific load failure\")\n    error: fail: Non-specific load failure\n     --> fail_load/TARGETS.fixture:1:1\n      |\n    1 | fail(\"Non-specific load failure\")\n      |\n    ",
     "root//missing:missing": "Unknown target `missing` from package `root//missing`.\nDid you mean one of the 1 targets in root//missing:TARGETS.fixture?\nAvailable targets:\n  root//missing:available"
   },
   "results": {
@@ -30,7 +30,9 @@
                 "stderr_content": "<STRING_HASH>",
                 "stdout_content": "<STRING_HASH>"
               },
+              "category_key": "ACTION_COMMAND_FAILURE",
               "cause_index": 0,
+              "error_category": "USER",
               "error_tags": [
                 "ACTION_COMMAND_FAILURE",
                 "ANY_ACTION_EXECUTION"
@@ -56,7 +58,9 @@
           "errors": [
             {
               "action_error": null,
+              "category_key": "STARLARK_FAIL",
               "cause_index": 1,
+              "error_category": "USER",
               "error_tags": [
                 "ANALYSIS",
                 "STARLARK_FAIL"
@@ -81,7 +85,9 @@
       "errors": [
         {
           "action_error": null,
+          "category_key": "MISSING_TARGET",
           "cause_index": 2,
+          "error_category": "USER",
           "error_tags": [
             "ANALYSIS",
             "MISSING_TARGET"
@@ -99,7 +105,9 @@
       "errors": [
         {
           "action_error": null,
+          "category_key": "STARLARK_FAIL",
           "cause_index": 3,
+          "error_category": "USER",
           "error_tags": [
             "STARLARK_FAIL"
           ],
@@ -116,7 +124,9 @@
       "errors": [
         {
           "action_error": null,
+          "category_key": "MISSING_TARGET",
           "cause_index": 4,
+          "error_category": "USER",
           "error_tags": [
             "MISSING_TARGET"
           ],
@@ -147,9 +157,9 @@
   "strings": {
     "<STRING_HASH>": "",
     "<STRING_HASH>": "Action failed: root//fail_action:fail_one (root//config:dog_platform#<HASH>) (failname)\nRemote command returned non-zero exit code 1\nRemote action, reproduce with: `frecli cas download-action <DIGEST>`\nStdout: <empty>\nStderr: <empty>\n",
-    "<STRING_HASH>": "Error evaluating build file: `root//fail_load:TARGETS.fixture`\nCaused by:\n    Traceback (most recent call last):\n      * fail_load/TARGETS.fixture:1, in <module>\n          fail(\"Non-specific load failure\")\n    error: fail: Non-specific load failure\n     --> fail_load/TARGETS.fixture:1:1\n      |\n    1 | fail(\"Non-specific load failure\")\n      |\n      |\n    ",
+    "<STRING_HASH>": "Error evaluating build file: `root//fail_load:TARGETS.fixture`\nCaused by:\n    Traceback (most recent call last):\n      * fail_load/TARGETS.fixture:1, in <module>\n          fail(\"Non-specific load failure\")\n    error: fail: Non-specific load failure\n     --> fail_load/TARGETS.fixture:1:1\n      |\n    1 | fail(\"Non-specific load failure\")\n      |\n    ",
     "<STRING_HASH>": "Error running analysis for `root//config:not_a_target_platform (<unbound>)`\nCaused by:\n    0: Error looking up configured node root//config:not_a_target_platform (<unbound>)\n    1: looking up unconfigured target node `root//config:not_a_target_platform`\n    2: Unknown target `not_a_target_platform` from package `root//config`.\n       Did you mean one of the 5 targets in root//config:TARGETS.fixture?\n       \n       Available targets:\n         root//config:animal\n         root//config:cat\n         root//config:cat_platform\n         root//config:dog\n         root//config:dog_platform",
-    "<STRING_HASH>": "Error running analysis for `root//fail_analysis:fail_analysis (<unspecified>)`\nCaused by:\n    Traceback (most recent call last):\n      File <builtin>, in <module>\n      * fail_analysis/fail_analysis.bzl:10, in _impl\n          fail(\"Failure during analysis\")\n    error: fail: Failure during analysis\n      --> fail_analysis/fail_analysis.bzl:10:5\n       |\n    10 |     fail(\"Failure during analysis\")\n       |\n       |\n    ",
+    "<STRING_HASH>": "Error running analysis for `root//fail_analysis:fail_analysis (<unspecified>)`\nCaused by:\n    Traceback (most recent call last):\n      File <builtin>, in <module>\n      * fail_analysis/fail_analysis.bzl:10, in _impl\n          fail(\"Failure during analysis\")\n    error: fail: Failure during analysis\n      --> fail_analysis/fail_analysis.bzl:10:5\n       |\n    10 |     fail(\"Failure during analysis\")\n       |\n    ",
     "<STRING_HASH>": "Remote command returned non-zero exit code 1",
     "<STRING_HASH>": "Unknown target `missing` from package `root//missing`.\nDid you mean one of the 1 targets in root//missing:TARGETS.fixture?\nAvailable targets:\n  root//missing:available"
   },

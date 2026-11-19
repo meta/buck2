@@ -1,0 +1,26 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+buildscript.run = false
+
+# On Windows, src/backends/windows.rs links a library named stacker, which the
+# build script compiles from src/arch/windows.c. Run it there.
+['cfg(target_os = "windows")'.buildscript.run]
+rustc_link_lib = true
+rustc_link_search = true
+
+# cc-rs reads the profile Cargo would have set. With CC and AR empty it finds
+# MSVC's cl.exe and lib.exe itself, as under Cargo. Through the prelude's
+# compiler and archiver wrappers the object and the archive land where cc-rs
+# does not look for them.
+['cfg(target_os = "windows")'.buildscript.run.env]
+AR = ""
+CC = ""
+OPT_LEVEL = "3"
+PROFILE = "release"
+DEBUG = "false"

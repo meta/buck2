@@ -17,6 +17,8 @@
 
 pub(crate) use crate::dap::library::events::Client;
 pub(crate) use crate::dap::library::requests::DebugServer;
+#[cfg(test)]
+pub(crate) use crate::dap::library::requests::dispatch;
 pub(crate) use crate::dap::library::server::DapService;
 
 mod events;

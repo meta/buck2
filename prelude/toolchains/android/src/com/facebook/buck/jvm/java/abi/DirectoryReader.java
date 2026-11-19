@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,6 +23,7 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 
 /** A {@link LibraryReader} that reads from a directory (recursively). */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class DirectoryReader implements LibraryReader {
   private final Path root;
 

@@ -11,6 +11,8 @@
 use allocative::Allocative;
 use buck2_core::bxl::BxlFilePath;
 use buck2_core::bzl::ImportPath;
+use pagable::Pagable;
+use strong_hash::StrongHash;
 
 #[derive(
     Debug,
@@ -19,8 +21,9 @@ use buck2_core::bzl::ImportPath;
     Eq,
     PartialEq,
     Hash,
-    Allocative,
-    strong_hash::StrongHash
+    StrongHash,
+    Pagable,
+    Allocative
 )]
 #[display("{}", _0)]
 pub enum BzlOrBxlPath {

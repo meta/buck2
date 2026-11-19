@@ -10,10 +10,12 @@
 
 package com.facebook.buck.android.dex;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.primitives.Bytes;
 import java.nio.charset.StandardCharsets;
 
 /** Helper for creating a "canary" class for the secondary DEX. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CanaryUtils {
 
   /**

@@ -1,2 +1,9 @@
 [build.env]
 passthrough = ["JEMALLOC_SYS_WITH_LG_PAGE"]
+
+# See the Dockerfile for why these two targets do not use cross's own images.
+[target.aarch64-unknown-linux-gnu]
+dockerfile = ".github/cross/Dockerfile.linux-gnu"
+
+[target.riscv64gc-unknown-linux-gnu]
+dockerfile = ".github/cross/Dockerfile.linux-gnu"

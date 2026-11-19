@@ -48,24 +48,24 @@ use crate::eval::compiler::stmt::AssignModifyLhs;
 use crate::eval::runtime::frame_span::FrameSpan;
 
 trait AssignOnWriteBc {
-    fn write_bc(
+    fn write_bc<'f>(
         self,
         v0: BcSlotIn,
         v1: BcSlotIn,
         target: BcSlotOut,
-        span: FrameSpan,
-        bc: &mut BcWriter,
+        span: FrameSpan<'f>,
+        bc: &mut BcWriter<'f>,
     );
 }
 
 impl AssignOnWriteBc for AssignOp {
-    fn write_bc(
+    fn write_bc<'f>(
         self,
         v0: BcSlotIn,
         v1: BcSlotIn,
         target: BcSlotOut,
-        span: FrameSpan,
-        bc: &mut BcWriter,
+        span: FrameSpan<'f>,
+        bc: &mut BcWriter<'f>,
     ) {
         let arg = (v0, v1, target);
         match self {
@@ -84,9 +84,9 @@ impl AssignOnWriteBc for AssignOp {
     }
 }
 
-impl AssignModifyLhs {
+impl<'f> AssignModifyLhs<'f> {
     /// After evaluation of `x[y] += ...`, variables `x` and `y` are definitely assigned.
-    pub(crate) fn mark_definitely_assigned_after(&self, bc: &mut BcWriter) {
+    pub(crate) fn mark_definitely_assigned_after(&self, bc: &mut BcWriter<'f>) {
         match self {
             AssignModifyLhs::Dot(object, _field) => object.mark_definitely_assigned_after(bc),
             AssignModifyLhs::Array(array, index) => {
@@ -101,10 +101,10 @@ impl AssignModifyLhs {
 
     pub(crate) fn write_bc(
         &self,
-        span: FrameSpan,
+        span: FrameSpan<'f>,
         op: AssignOp,
-        rhs: &IrSpanned<ExprCompiled>,
-        bc: &mut BcWriter,
+        rhs: &IrSpanned<'f, ExprCompiled<'f>>,
+        bc: &mut BcWriter<'f>,
     ) {
         match *self {
             AssignModifyLhs::Dot(ref object, ref field) => {

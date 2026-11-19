@@ -6,10 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-_SELECT_TYPE = type(select({"DEFAULT": []}))
-
-def _is_select(thing):
-    return type(thing) == _SELECT_TYPE
+load("@prelude//utils:type_defs.bzl", "type_utils")
 
 def _apply(obj, function):
     """
@@ -60,5 +57,5 @@ def _apply_n(objs, func):
 selects = struct(
     apply = _apply,
     apply_n = _apply_n,
-    is_select = _is_select,
+    is_select = type_utils.is_select,
 )

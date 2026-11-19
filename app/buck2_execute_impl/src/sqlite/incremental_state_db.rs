@@ -8,7 +8,10 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
+//! The incremental records (`buck2_execute::incremental_state`) in memory, mirrored into the
+//! sqlite database at `buck-out/v2/cache/incremental_state` so that a daemon starts with the
+//! last one's.
+
 use std::sync::Arc;
 
 use buck2_common::sqlite::sqlite_db::SqliteDb;
@@ -17,19 +20,17 @@ use buck2_common::sqlite::sqlite_db::SqliteTable;
 use buck2_common::sqlite::sqlite_db::SqliteTables;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::soft_error;
+use buck2_core::soft_error_or_panic;
+use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::execute::blocking::BlockingExecutor;
+use buck2_execute::incremental_state::IncrementalRecord;
+use buck2_execute::incremental_state::IncrementalStore;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use chrono::DateTime;
-use chrono::Utc;
-use dashmap::DashMap;
-use derive_more::From;
+use buck2_hash::BuckDashMap;
+use buck2_hash::IntentionallyStdHashMap;
 use dupe::Dupe;
 
-use crate::incremental_actions_helper::IncrementalPathMap;
-use crate::materializers::deferred::artifact_tree::ArtifactMetadata;
 use crate::sqlite::tables::incremental_state_table::IncrementalStateSqliteTable;
 
 /// Hand-maintained schema version for the incremental state sqlite db.
@@ -39,9 +40,9 @@ use crate::sqlite::tables::incremental_state_table::IncrementalStateSqliteTable;
 /// If you forget to bump this version,
 /// then you can fix forward by bumping the `buck2.sqlite_incremental_state_version`
 /// buckconfig in the project root's .buckconfig.
-pub const INCREMENTAL_DB_SCHEMA_VERSION: u64 = 0;
+pub const INCREMENTAL_DB_SCHEMA_VERSION: u64 = 1;
 
-pub(crate) type IncrementalState = DashMap<String, Arc<IncrementalPathMap>>;
+pub(crate) type IncrementalState = BuckDashMap<String, Arc<IncrementalRecord>>;
 
 pub struct IncrementalDbState {
     pub db: Option<IncrementalStateSqliteDb>,
@@ -52,71 +53,33 @@ impl IncrementalDbState {
     pub fn db_disabled() -> Self {
         Self {
             db: None,
-            state: DashMap::new(),
+            state: BuckDashMap::default(),
         }
     }
 }
 
-impl IncrementalDbState {
-    pub(crate) fn get(&self, key: &str) -> Option<Arc<IncrementalPathMap>> {
-        self.state.get(key).map(|s| s.dupe())
+impl IncrementalStore for IncrementalDbState {
+    fn get(&self, key: &str) -> Option<Arc<IncrementalRecord>> {
+        self.state.get(key).map(|record| record.dupe())
     }
 
-    pub(crate) fn insert(&self, key: &str, value: IncrementalPathMap) {
-        match &self.db {
-            Some(db) => {
-                // (run_action_key, short_path) combination is the primary key so it should replace the current entry,
-                // but let's delete it beforehand just in case so it doesn't keep on inserting more entries. We don't need
-                // to do this without db because a map will automatically rewrite the current entry
-                self.delete(key);
-
-                self.state.insert(key.to_owned(), value.clone().into());
-                if let Err(e) = db.incremental_state_table().insert(key.to_owned(), value) {
-                    soft_error!(
-                        "insert_to_incremental_db",
-                        buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Tier0,
-                            "Failed to insert {} into sqlite db. {}",
-                            key, e
-                        ),
-                        quiet: true
-                    )
-                    .unwrap();
-                };
-            }
-            None => {
-                self.state.insert(key.to_owned(), value.clone().into());
-            }
-        }
-    }
-
-    pub(crate) fn delete(&self, key: &str) {
+    fn insert(&self, key: &str, record: IncrementalRecord) {
+        let record = Arc::new(record);
+        self.state.insert(key.to_owned(), record.dupe());
         if let Some(db) = &self.db
-            && let Err(e) = db.incremental_state_table().delete(key.to_owned())
+            && let Err(e) = db.incremental_state_table().insert(key, &record)
         {
-            // This should be converted into a real error later, marking as a soft error for now as the row not existing
-            // might show up as an error but doesn't actually matter in reality.
-            soft_error!(
-                "delete_from_incremental_db",
+            soft_error_or_panic!(
+                "insert_to_incremental_db",
                 buck2_error::buck2_error!(
                     buck2_error::ErrorTag::Tier0,
-                    "Failed to remove incremental path map from sqlite db. {}",
+                    "Failed to insert `{}` into the incremental state db. {}",
+                    key,
                     e
-                ),
-                quiet: true
-            )
-            .unwrap();
+                )
+            );
         }
-
-        self.state.remove(key);
     }
-}
-
-#[derive(Debug)]
-pub struct IncrementalStateEntry {
-    pub path: ProjectRelativePathBuf,
-    pub metadata: ArtifactMetadata,
-    pub last_access_time: DateTime<Utc>,
 }
 
 /// Concrete implementation of SqliteTable for IncrementalStateSqliteTable
@@ -133,6 +96,7 @@ pub struct IncrementalStateSqliteDb {
     /// A unique ID identifying this particular instance of the database. This will reset when we
     /// recreate it.
     identity: SqliteIdentity,
+    lifetime_guard: Option<Arc<dyn Send + Sync>>,
 }
 
 impl SqliteDb for IncrementalStateSqliteDb {
@@ -141,7 +105,11 @@ impl SqliteDb for IncrementalStateSqliteDb {
 
     fn new(tables: SqliteTables<Self::TableType>) -> buck2_error::Result<Self> {
         let identity = tables.get_identity()?;
-        Ok(Self { tables, identity })
+        Ok(Self {
+            tables,
+            identity,
+            lifetime_guard: None,
+        })
     }
 
     fn open_tables(path: &AbsNormPath) -> buck2_error::Result<SqliteTables<Self::TableType>> {
@@ -163,30 +131,38 @@ impl IncrementalStateSqliteDb {
     /// (2) the `IncrementalState` if loading was successful or the load error.
     pub async fn initialize(
         incremental_state_dir: AbsNormPathBuf,
-        versions: HashMap<String, String>,
-        current_instance_metadata: HashMap<String, String>,
+        versions: IntentionallyStdHashMap<String, String>,
+        current_instance_metadata: IntentionallyStdHashMap<String, String>,
         io_executor: Arc<dyn BlockingExecutor>,
         reject_identity: Option<&SqliteIdentity>,
+        digest_config: DigestConfig,
     ) -> buck2_error::Result<IncrementalDbState> {
-        io_executor
+        let guard = io_executor.lifetime_guard();
+        let mut state = io_executor
             .execute_io_inline(|| {
                 Self::initialize_incremental_sqlite_db(
                     incremental_state_dir,
                     versions,
                     current_instance_metadata,
                     reject_identity,
+                    digest_config,
                 )
             })
-            .await
+            .await?;
+        if let Some(db) = &mut state.db {
+            db.lifetime_guard = guard;
+        }
+        Ok(state)
     }
 
     fn initialize_incremental_sqlite_db(
         incremental_state_dir: AbsNormPathBuf,
-        versions: HashMap<String, String>,
-        current_instance_metadata: HashMap<String, String>,
+        versions: IntentionallyStdHashMap<String, String>,
+        current_instance_metadata: IntentionallyStdHashMap<String, String>,
         reject_identity: Option<&SqliteIdentity>,
+        digest_config: DigestConfig,
     ) -> buck2_error::Result<IncrementalDbState> {
-        let reject_identity = reject_identity.map(|id| SqliteIdentity::from(id.clone()));
+        let reject_identity = reject_identity.cloned();
 
         let (db, state) = match Self::get_sqlite_db(
             &incremental_state_dir,
@@ -194,7 +170,7 @@ impl IncrementalStateSqliteDb {
             current_instance_metadata.clone(),
             reject_identity.as_ref(),
         ) {
-            Ok(db) => match db.tables.domain_table.read_incremental_state() {
+            Ok(db) => match db.tables.domain_table.read_incremental_state(digest_config) {
                 Ok(state) => (db, Ok(state)),
                 Err(e) => {
                     let db = Self::create_sqlite_db(
@@ -228,7 +204,7 @@ impl IncrementalStateSqliteDb {
 
                 Ok(IncrementalDbState {
                     db: Some(db),
-                    state: DashMap::new(),
+                    state: BuckDashMap::default(),
                 })
             }
         }
@@ -242,8 +218,8 @@ impl IncrementalStateSqliteDb {
 #[allow(unused)] // Used by test modules
 pub(crate) fn testing_incremental_state_sqlite_db(
     fs: &ProjectRoot,
-    versions: HashMap<String, String>,
-    metadata: HashMap<String, String>,
+    versions: IntentionallyStdHashMap<String, String>,
+    metadata: IntentionallyStdHashMap<String, String>,
     reject_identity: Option<&SqliteIdentity>,
 ) -> buck2_error::Result<IncrementalDbState> {
     IncrementalStateSqliteDb::initialize_incremental_sqlite_db(
@@ -253,21 +229,41 @@ pub(crate) fn testing_incremental_state_sqlite_db(
         versions,
         metadata,
         reject_identity,
+        DigestConfig::testing_default(),
     )
 }
 
 #[cfg(test)]
 mod tests {
+    use buck2_common::file_ops::metadata::FileMetadata;
+    use buck2_common::file_ops::metadata::TrackedFileDigest;
     use buck2_core::fs::project::ProjectRootTemp;
     use buck2_events::daemon_id::DaemonId;
-    use starlark_map::small_map::SmallMap;
+    use buck2_execute::artifact_value::ArtifactValue;
+    use buck2_execute::incremental_state::RecordedOutput;
+    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 
     use super::*;
-    use crate::incremental_actions_helper::IncrementalPathMap;
+
+    fn record() -> IncrementalRecord {
+        let digest_config = DigestConfig::testing_default();
+        let value = ArtifactValue::file(FileMetadata {
+            digest: TrackedFileDigest::from_content(b"out", digest_config.cas_digest_config()),
+            is_executable: false,
+        });
+        IncrementalRecord::Outputs(
+            [(
+                ForwardRelativePathBuf::unchecked_new("test_file".to_owned()),
+                RecordedOutput::Value(value),
+            )]
+            .into_iter()
+            .collect(),
+        )
+    }
 
     #[test]
     fn test_initialize_incremental_sqlite_db() -> buck2_error::Result<()> {
-        fn testing_metadatas() -> Vec<HashMap<String, String>> {
+        fn testing_metadatas() -> Vec<IntentionallyStdHashMap<String, String>> {
             let metadata = buck2_events::metadata::collect(&DaemonId::new());
             let mut metadatas = vec![metadata; 5];
             for (i, metadata) in metadatas.iter_mut().enumerate() {
@@ -277,8 +273,8 @@ mod tests {
         }
 
         fn assert_metadata_matches(
-            mut have: HashMap<String, String>,
-            want: &HashMap<String, String>,
+            mut have: IntentionallyStdHashMap<String, String>,
+            want: &IntentionallyStdHashMap<String, String>,
         ) {
             // Remove the key we inject (and check it's there).
             have.remove("timestamp_on_initialization").unwrap();
@@ -287,19 +283,11 @@ mod tests {
 
         let fs = ProjectRootTemp::new()?;
 
-        let run_action_key = "test_action".to_owned();
-        let mut mapping = SmallMap::new();
-        mapping.insert(
-            buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf::unchecked_new(
-                "test_file".to_owned(),
-            ),
-            ProjectRelativePathBuf::unchecked_new("buck-out/content_hash/test_file".to_owned()),
-        );
-        let incremental_path_map = IncrementalPathMap::new(mapping);
+        let run_action_key = "test_action";
         let metadatas = testing_metadatas();
 
-        let v0 = HashMap::from([("version".to_owned(), "0".to_owned())]);
-        let v1 = HashMap::from([("version".to_owned(), "1".to_owned())]);
+        let v0 = IntentionallyStdHashMap::from([("version".to_owned(), "0".to_owned())]);
+        let v1 = IntentionallyStdHashMap::from([("version".to_owned(), "1".to_owned())]);
 
         // Initialize with non-existent DB (should create new DB)
         {
@@ -315,7 +303,7 @@ mod tests {
             assert_metadata_matches(db.tables.created_by_table.read_all()?, &metadatas[0]);
 
             db.incremental_state_table()
-                .insert(run_action_key.clone(), incremental_path_map.clone())
+                .insert(run_action_key, &record())
                 .unwrap();
         }
 
@@ -325,9 +313,10 @@ mod tests {
                 testing_incremental_state_sqlite_db(fs.path(), v0, metadatas[1].clone(), None)
                     .unwrap();
             assert_eq!(state.len(), 1);
-            assert!(state.contains_key(&run_action_key));
-            let action_state = state.get(&run_action_key).unwrap();
-            assert_eq!(action_state.iter().count(), 1);
+            let IncrementalRecord::Outputs(outputs) = &**state.get(run_action_key).unwrap() else {
+                panic!("expected outputs");
+            };
+            assert_eq!(outputs.len(), 1);
             assert_metadata_matches(
                 db.unwrap().tables.created_by_table.read_all()?,
                 &metadatas[0],
@@ -348,7 +337,7 @@ mod tests {
             assert_metadata_matches(db.tables.created_by_table.read_all()?, &metadatas[2]);
 
             db.incremental_state_table()
-                .insert(run_action_key.clone(), incremental_path_map.clone())
+                .insert(run_action_key, &record())
                 .unwrap();
         }
 
@@ -363,7 +352,7 @@ mod tests {
             .unwrap();
             let db = db.unwrap();
             assert_eq!(state.len(), 1);
-            assert!(state.contains_key(&run_action_key));
+            assert!(state.contains_key(run_action_key));
             assert_metadata_matches(db.tables.created_by_table.read_all()?, &metadatas[2]);
 
             db.identity().clone()

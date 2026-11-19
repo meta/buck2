@@ -22,6 +22,7 @@ use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_fs::working_dir::AbsWorkingDir;
 use buck2_wrapper_common::invocation_id::TraceId;
+use futures::TryStreamExt;
 use futures::future::Future;
 use prost::Message;
 use serde::Serialize;
@@ -33,6 +34,7 @@ use crate::file_names::remove_old_logs;
 use crate::read::EventLogPathBuf;
 use crate::should_block_on_log_upload;
 use crate::should_upload_log;
+use crate::stream_value::StreamValue;
 use crate::user_event_types::try_get_user_event;
 use crate::utils::Encoding;
 use crate::utils::EventLogErrors;
@@ -188,7 +190,7 @@ impl WriteEventLog {
         if let Some(extra_path) = maybe_extra_path {
             writers.push(
                 open_event_log_for_writing(
-                    EventLogPathBuf::infer_opt(&extra_path)?.unwrap_or_else(|| EventLogPathBuf {
+                    EventLogPathBuf::infer_opt(extra_path)?.unwrap_or_else(|| EventLogPathBuf {
                         path: extra_path.clone(),
                         encoding: Encoding::JSON_GZIP,
                     }),
@@ -203,7 +205,7 @@ impl WriteEventLog {
         if let Some(extra_user_event_log_path) = maybe_extra_user_event_log_path {
             writers.push(
                 open_event_log_for_writing(
-                    EventLogPathBuf::infer_opt(&extra_user_event_log_path)?.unwrap_or_else(|| {
+                    EventLogPathBuf::infer_opt(extra_user_event_log_path)?.unwrap_or_else(|| {
                         EventLogPathBuf {
                             path: extra_user_event_log_path.clone(),
                             encoding: Encoding::JSON,
@@ -246,7 +248,7 @@ impl WriteEventLog {
                 .filter_map(|w| w.child())
                 .map(|proc| wait_for_child_and_log(proc, "Event Log"));
 
-            futures::future::join_all(futs).await;
+            buck2_util::future::join_all(futs.collect::<Vec<_>>()).await;
         }
     }
 }
@@ -448,8 +450,110 @@ impl SerializeForLog for StreamValueForWrite<'_> {
     }
 }
 
+/// Read every event from `input`, drop those for which `keep` returns false, and write the
+/// survivors to `output_path`. The output file is written using the same encoding (mode +
+/// compression) as the input — the caller is expected to choose `output_path`'s extension
+/// accordingly. Errors if `output_path`'s extension does not resolve to an encoding that is
+/// equivalent to the input's.
+///
+/// `keep` is only consulted for `StreamValue::Event` items. The invocation header,
+/// `StreamValue::Result`, and `StreamValue::PartialResult` are always passed through.
+pub async fn rewrite_event_log<F>(
+    input: &EventLogPathBuf,
+    output_path: AbsPathBuf,
+    mut keep: F,
+) -> buck2_error::Result<()>
+where
+    F: FnMut(&buck2_data::BuckEvent) -> bool,
+{
+    let output_log = EventLogPathBuf::infer(output_path)?;
+    if !input.encoding.equivalent_to(&output_log.encoding) {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Output path encoding does not match input. Expected an extension matching `{}`",
+            input.extension(),
+        ));
+    }
+
+    let (invocation, mut events) = input.unpack_stream().await?;
+
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&output_log.path)
+        .await
+        .with_buck_error_context(|| {
+            format!(
+                "Failed to open event log for writing at `{}`",
+                output_log.path.display()
+            )
+        })?;
+
+    let mut writer = NamedEventLogWriter::new(output_log, file, None, EventLogType::System, None);
+
+    let mut buf = Vec::new();
+    writer.write_events(&mut buf, &[&invocation]).await?;
+
+    while let Some(stream_value) = events.try_next().await? {
+        if let StreamValue::Event(e) = &stream_value {
+            if !keep(e) {
+                continue;
+            }
+        }
+        buf.clear();
+        let value = OwnedStreamValueForWrite(stream_value);
+        writer.write_events(&mut buf, &[&value]).await?;
+    }
+
+    writer.flush().await?;
+    writer.shutdown().await;
+    Ok(())
+}
+
+/// Owned counterpart to `StreamValueForWrite` that also supports `PartialResult`. Used by
+/// `rewrite_event_log` to round-trip every variant the reader can produce.
+struct OwnedStreamValueForWrite(StreamValue);
+
+impl SerializeForLog for OwnedStreamValueForWrite {
+    fn serialize_to_json(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()> {
+        serde_json::to_writer(buf, &self.0).buck_error_context("Failed to serialize event")
+    }
+
+    fn serialize_to_protobuf_length_delimited(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()> {
+        match &self.0 {
+            StreamValue::Event(e) => {
+                buck2_cli_proto::CommandProgressForWrite {
+                    progress: Some(command_progress_for_write::Progress::Event(
+                        e.encode_to_vec(),
+                    )),
+                }
+                .encode_length_delimited(buf)?;
+            }
+            StreamValue::Result(r) => {
+                CommandProgress {
+                    progress: Some(command_progress::Progress::Result(r.clone())),
+                }
+                .encode_length_delimited(buf)?;
+            }
+            StreamValue::PartialResult(p) => {
+                CommandProgress {
+                    progress: Some(command_progress::Progress::PartialResult(p.clone())),
+                }
+                .encode_length_delimited(buf)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn maybe_serialize_user_event(&self, _buf: &mut Vec<u8>) -> buck2_error::Result<bool> {
+        Ok(false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
     use std::time::SystemTime;
 
     use buck2_common::argv::Argv;
@@ -461,7 +565,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::stream_value::StreamValue;
+    use crate::tail::TailOptions;
+    use crate::tail::WriterState;
     use crate::utils::Compression;
 
     impl WriteEventLog {
@@ -612,20 +717,164 @@ mod tests {
         assert_eq!(retrieved_event.data(), event.data());
 
         match encoding.compression {
-            Compression::Gzip => {
-                // TODO(nga): `tick` does not write gzip footer, so even after `tick`
-                //   generated file is not a valid gzip file.
-                // assert!(events.try_next().await.unwrap().is_none(), "expecting no more events");
-                assert!(events.try_next().await.is_err());
-            }
-            Compression::Zstd => {
+            Compression::Gzip | Compression::Zstd => {
+                // `tick` does not write compression footer, so even
+                // after `tick` the generated file is not a valid
+                // compressed file. However, the reader now gracefully
+                // handles truncated streams by treating them as
+                // end-of-stream.
                 assert!(
                     events.try_next().await.unwrap().is_none(),
                     "expecting no more events"
                 );
+                let (_invocation, frames) = log.unpack_protobuf_frames().await?;
+                let frames: Vec<_> = frames.try_collect().await?;
+                assert_eq!(
+                    frames.len(),
+                    1,
+                    "the undecoded records also end at the cut-off, without an error"
+                );
             }
             Compression::None => unreachable!(),
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tail_reads_growing_log() -> buck2_error::Result<()> {
+        if cfg!(windows) {
+            // Do not want to deal with exclusivity issues on Windows.
+            return Ok(());
+        }
+
+        let tmp_dir = TempDir::new()?;
+
+        let log = EventLogPathBuf {
+            path: AbsPathBuf::try_from(tmp_dir.path().join("test_tail_reads_growing_log.pb.zst"))
+                .unwrap(),
+            encoding: Encoding::PROTO_ZSTD,
+        };
+
+        let mut write_event_log = WriteEventLog::new_test(log.clone()).await?;
+
+        let event1 = make_event();
+        write_event_log.log_invocation(event1.trace_id()?).await?;
+        write_event_log
+            .write_ln(&[StreamValueForWrite::Event(event1.event())])
+            .await?;
+        write_event_log.flush_files().await?;
+
+        let (_invocation, mut events) = log
+            .unpack_stream_tailing(TailOptions {
+                poll_interval: Duration::from_millis(10),
+                idle_timeout: Some(Duration::from_secs(10)),
+                writer_state: None,
+            })
+            .await?;
+
+        let retrieved_event = match events.try_next().await?.expect("Failed getting log") {
+            StreamValue::Event(e) => BuckEvent::try_from(e).unwrap(),
+            _ => panic!("expecting event"),
+        };
+        assert_eq!(
+            retrieved_event.timestamp(),
+            event1.timestamp(),
+            "Tailing reader should see the event written before it started"
+        );
+
+        // The reader is at the end of the file now; write more and check it comes through.
+        let event2 = make_event();
+        write_event_log
+            .write_ln(&[StreamValueForWrite::Event(event2.event())])
+            .await?;
+        write_event_log.flush_files().await?;
+
+        let retrieved_event = match events.try_next().await?.expect("Failed getting log") {
+            StreamValue::Event(e) => BuckEvent::try_from(e).unwrap(),
+            _ => panic!("expecting event"),
+        };
+        assert_eq!(
+            retrieved_event.timestamp(),
+            event2.timestamp(),
+            "Tailing reader should see an event written after it caught up"
+        );
+
+        // Closing the log writes the compression footer, which ends the tail without
+        // waiting for the idle timeout.
+        write_event_log.exit().await;
+        assert!(
+            events.try_next().await.unwrap().is_none(),
+            "expecting no more events after the log is closed"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tail_ends_when_writer_reported_finished() -> buck2_error::Result<()> {
+        if cfg!(windows) {
+            // Do not want to deal with exclusivity issues on Windows.
+            return Ok(());
+        }
+
+        let tmp_dir = TempDir::new()?;
+
+        let log = EventLogPathBuf {
+            path: AbsPathBuf::try_from(
+                tmp_dir
+                    .path()
+                    .join("test_tail_ends_when_writer_reported_finished.pb.zst"),
+            )
+            .unwrap(),
+            encoding: Encoding::PROTO_ZSTD,
+        };
+
+        let mut write_event_log = WriteEventLog::new_test(log.clone()).await?;
+
+        let event = make_event();
+        write_event_log.log_invocation(event.trace_id()?).await?;
+        write_event_log
+            .write_ln(&[StreamValueForWrite::Event(event.event())])
+            .await?;
+        write_event_log.flush_files().await?;
+
+        // A short idle timeout that the running-writer hint must override: a quiet but
+        // known-live writer is not end-of-file.
+        let (writer_state_tx, writer_state_rx) = tokio::sync::watch::channel(WriterState::Running);
+        let (_invocation, mut events) = log
+            .unpack_stream_tailing(TailOptions {
+                poll_interval: Duration::from_millis(10),
+                idle_timeout: Some(Duration::from_millis(50)),
+                writer_state: Some(writer_state_rx),
+            })
+            .await?;
+
+        let retrieved_event = match events.try_next().await?.expect("Failed getting log") {
+            StreamValue::Event(e) => BuckEvent::try_from(e).unwrap(),
+            _ => panic!("expecting event"),
+        };
+        assert_eq!(
+            retrieved_event.timestamp(),
+            event.timestamp(),
+            "Tailing reader should catch up on the already-written event"
+        );
+
+        // The writer never closes the log and the idle timeout has long passed, but the
+        // writer is reported running: the stream must keep waiting rather than end.
+        let quiet = tokio::time::timeout(Duration::from_millis(300), events.try_next()).await;
+        assert!(
+            quiet.is_err(),
+            "a quiet but running writer should not end the stream at the idle timeout"
+        );
+
+        // Reporting the writer finished must end the stream after the grace period
+        // instead of tailing forever.
+        writer_state_tx.send(WriterState::Finished).unwrap();
+        assert!(
+            events.try_next().await.unwrap().is_none(),
+            "expecting the stream to end after the writer is reported finished"
+        );
 
         Ok(())
     }

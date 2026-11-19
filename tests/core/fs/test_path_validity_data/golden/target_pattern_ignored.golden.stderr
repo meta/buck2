@@ -1,0 +1,11 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+[<TIMESTAMP>] Error parsing root//ignored/inside
+[<TIMESTAMP>] package `root//ignored/inside:` does not exist
+[<TIMESTAMP>]          ^-----------^
+[<TIMESTAMP>]     dir `root//ignored` does not exist (project.ignore contains `ignored*`)
+Command failed: 
+Failed to parse 1 package

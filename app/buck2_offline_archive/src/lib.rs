@@ -8,14 +8,13 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::Path;
 
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPathBuf;
@@ -24,19 +23,37 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 // archiver program
 use buck2_util::process::background_command;
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize
+)]
 pub struct RelativeSymlink {
     pub link: ProjectRelativePathBuf,
     pub target: ProjectRelativePathBuf,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AbsoluteSymlink {
     pub link: AbsPathBuf,
     pub target: AbsNormPathBuf,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize
+)]
 pub struct ExternalSymlink {
     pub link: ProjectRelativePathBuf,
     pub target: AbsPathBuf,
@@ -62,7 +79,7 @@ impl ExternalSymlink {
                 let path = self.target.join(ancestor);
                 if let Some(meta) = fs_util::symlink_metadata_if_exists(&path)? {
                     if meta.file_type().is_symlink() {
-                        let target = fs_util::canonicalize(&path)?;
+                        let target = fs_util::canonicalize(&path).categorize_internal()?;
                         targets.push(AbsoluteSymlink { link: path, target });
                     }
                 }
@@ -104,9 +121,7 @@ pub struct RepositoryMetadata {
 
 impl RepositoryMetadata {
     pub fn from_cwd() -> buck2_error::Result<Self> {
-        Self::from_path(
-            std::env::current_dir().buck_error_context("Error getting current directory")?,
-        )
+        Self::from_path(fs_util::current_dir()?)
     }
 
     pub fn from_path<P: AsRef<Path>>(path: P) -> buck2_error::Result<Self> {
@@ -127,7 +142,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    hg_in(std::env::current_dir()?, args)
+    hg_in(fs_util::current_dir()?, args)
 }
 
 fn hg_in<I, S, P>(path: P, args: I) -> buck2_error::Result<String>
@@ -197,19 +212,21 @@ mod tests {
         for entry in entries {
             match entry {
                 Entry::File(path) => {
-                    fs_util::create_file(abs.join(path))?;
+                    fs_util::create_file(abs.join(path)).categorize_internal()?;
                 }
                 Entry::Dir(dir) => {
                     fs_util::create_dir_all(abs.join(dir))?;
                 }
                 Entry::RelativeSymlink(symlink) => {
-                    fs_util::symlink(symlink.target, abs.join(symlink.link))?;
+                    fs_util::symlink(symlink.target, abs.join(symlink.link))
+                        .categorize_internal()?;
                 }
                 Entry::AbsoluteSymlink(symlink) => {
                     fs_util::symlink(
                         working_dir.path().join(symlink.target),
                         abs.join(symlink.link),
-                    )?;
+                    )
+                    .categorize_internal()?;
                 }
             }
         }

@@ -1,0 +1,10 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error looking up configured node root//inherit_test/other/consumer:c (<unspecified>)
+
+Caused by:
+    `root//inherit_test/restricted_child/target:t` is not visible to `root//inherit_test/other/consumer:c` (visibility = ["root//inherit_test/...", "root//inherit_test/restricted_child/inside/..."]). Restricted to ["root//inherit_test/..."] AND ["root//inherit_test/restricted_child/inside/..."] by an ancestor PACKAGE's visibility.

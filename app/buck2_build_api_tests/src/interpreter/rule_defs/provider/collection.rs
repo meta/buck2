@@ -129,6 +129,26 @@ fn provider_collection_fails_to_construct_on_bad_data() -> buck2_error::Result<(
 }
 
 #[test]
+fn provider_collection_at_reports_the_missing_provider() -> buck2_error::Result<()> {
+    let mut tester = provider_collection_tester()?;
+    let missing_provider = indoc!(
+        r#"
+            load("//provider:defs1.bzl", "BazInfo")
+            load("//provider:defs2.bzl", "foo1", "bar1")
+            def test():
+                col = create_collection([foo1, bar1, DefaultInfo()])
+                col[BazInfo]
+            "#
+    );
+    expect_error(
+        tester.run_starlark_bzl_test(missing_provider),
+        missing_provider,
+        "does not have a key `BazInfo`",
+    );
+    Ok(())
+}
+
+#[test]
 fn returns_default_info() -> buck2_error::Result<()> {
     let mut tester = provider_collection_tester()?;
     tester.run_starlark_bzl_test(indoc!(

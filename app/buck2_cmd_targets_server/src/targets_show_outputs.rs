@@ -8,9 +8,8 @@
  * above-listed licenses.
  */
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
+use buck2_artifact::artifact::artifact_dyn::ArtifactDyn;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
@@ -28,8 +27,7 @@ use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::target::label::label::TargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
+use buck2_error::BuckErrorOptionContext;
 use buck2_node::nodes::eval_result::EvaluationResult;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::target_calculation::ConfiguredTargetCalculation;
@@ -42,8 +40,6 @@ use buck2_server_ctx::template::run_server_command;
 use dice::DiceComputations;
 use dice::DiceTransaction;
 use dupe::Dupe;
-use futures::future::FutureExt;
-use gazebo::prelude::VecExt;
 
 struct TargetsArtifacts {
     providers_label: ConfiguredProvidersLabel,
@@ -86,7 +82,7 @@ impl ServerCommandTemplate for TargetsShowOutputsServerCommand {
 
 async fn targets_show_outputs(
     server_ctx: &dyn ServerCommandContextTrait,
-    mut ctx: DiceTransaction,
+    ctx: DiceTransaction,
     request: &TargetsRequest,
 ) -> buck2_error::Result<TargetsShowOutputsResponse> {
     let cwd = server_ctx.working_dir();
@@ -97,28 +93,31 @@ async fn targets_show_outputs(
             .as_ref()
             .internal_error("target_cfg must be set")?,
         server_ctx,
-        &mut ctx,
+        &mut ctx.ctx(),
     )
     .await?;
 
     let parsed_patterns = parse_patterns_from_cli_args::<ProvidersPatternExtra>(
-        &mut ctx,
+        &mut ctx.ctx(),
         &request.target_patterns,
         cwd,
     )
     .await?;
 
-    let artifact_fs = ctx.get_artifact_fs().await?;
+    let artifact_fs = ctx.ctx().get_artifact_fs().await?;
 
     let mut targets_paths = Vec::new();
 
-    for targets_artifacts in
-        retrieve_targets_artifacts_from_patterns(&mut ctx, &global_cfg_options, &parsed_patterns)
-            .await?
+    for targets_artifacts in retrieve_targets_artifacts_from_patterns(
+        &mut ctx.ctx(),
+        &global_cfg_options,
+        &parsed_patterns,
+    )
+    .await?
     {
         let mut paths = Vec::new();
         for artifact in targets_artifacts.artifacts {
-            let path = artifact.resolve_configuration_hash_path(&artifact_fs)?;
+            let path = artifact.resolve_configuration_hash_path(artifact_fs)?;
             paths.push(path.to_string());
         }
         targets_paths.push(TargetPaths {
@@ -146,23 +145,18 @@ async fn retrieve_artifacts_for_targets(
     global_cfg_options: &GlobalCfgOptions,
 ) -> buck2_error::Result<Vec<TargetsArtifacts>> {
     let artifacts_for_specs = ctx
-        .try_compute_join(spec.specs, |ctx, (package_with_modifiers, spec)| {
-            async move {
-                {
-                    let res = ctx
-                        .get_interpreter_results(package_with_modifiers.package.dupe())
-                        .await?;
-                    retrieve_artifacts_for_spec(
-                        ctx,
-                        package_with_modifiers.package.dupe(),
-                        spec,
-                        global_cfg_options,
-                        res,
-                    )
-                    .await
-                }
-            }
-            .boxed()
+        .try_compute_join(spec.specs, async |ctx, (package_with_modifiers, spec)| {
+            let res = ctx
+                .get_interpreter_results(package_with_modifiers.package.dupe())
+                .await?;
+            retrieve_artifacts_for_spec(
+                ctx,
+                package_with_modifiers.package.dupe(),
+                spec,
+                global_cfg_options,
+                res,
+            )
+            .await
         })
         .await?;
 
@@ -179,7 +173,7 @@ async fn retrieve_artifacts_for_spec(
     package: PackageLabel,
     spec: PackageSpec<ProvidersPatternExtra>,
     global_cfg_options: &GlobalCfgOptions,
-    res: Arc<EvaluationResult>,
+    res: &EvaluationResult,
 ) -> buck2_error::Result<Vec<TargetsArtifacts>> {
     let available_targets = res.targets();
 
@@ -197,19 +191,23 @@ async fn retrieve_artifacts_for_spec(
             for (target_name, _) in &targets {
                 res.resolve_target(target_name)?;
             }
-            targets.into_map(|(target_name, providers)| {
-                (
-                    providers.into_providers_label(package.dupe(), target_name.as_ref()),
-                    global_cfg_options,
-                )
-            })
+            targets
+                .into_iter()
+                .map(|(target_name, providers)| {
+                    (
+                        providers.into_providers_label(package.dupe(), target_name.as_ref()),
+                        global_cfg_options,
+                    )
+                })
+                .collect::<Vec<_>>()
         }
     };
 
-    let outputs = ctx.try_compute_join(todo_targets, |ctx, (providers_label, cfg_flags)| {
-        async move { retrieve_artifacts_for_provider_label(ctx, providers_label, cfg_flags).await }
-            .boxed()
-    }).await?;
+    let outputs = ctx
+        .try_compute_join(todo_targets, async |ctx, (providers_label, cfg_flags)| {
+            retrieve_artifacts_for_provider_label(ctx, providers_label, cfg_flags).await
+        })
+        .await?;
     Ok(outputs)
 }
 

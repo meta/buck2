@@ -21,6 +21,8 @@ use superconsole::Dimensions;
 use superconsole::DrawMode;
 use superconsole::Line;
 use superconsole::Lines;
+use superconsole::Span;
+use superconsole::style::Stylize;
 
 use crate::subscribers::superconsole::SuperConsoleState;
 use crate::subscribers::superconsole::common::HeaderLineComponent;
@@ -202,11 +204,54 @@ enum Style {
     ExtraCompact,
 }
 
+const PHASE_WIDTH: usize = 19;
+
 impl Style {
+    fn remaining_width(&self) -> usize {
+        match self {
+            Style::Normal(num_width) | Style::Compact(num_width) => 2 * *num_width + 1,
+            Style::ExtraCompact => 0,
+        }
+    }
+
+    fn running_width(&self) -> usize {
+        match self {
+            Style::Normal(num_width) | Style::Compact(num_width) => {
+                std::cmp::max(*num_width, "Running".len())
+            }
+            Style::ExtraCompact => 0,
+        }
+    }
+
+    fn render_table_header(&self, mode: DrawMode) -> Option<String> {
+        match self {
+            Style::Normal(_) | Style::Compact(_) => {
+                let mut line = format!(
+                    "{:<PHASE_WIDTH$} {:>remaining_width$}",
+                    "Phase",
+                    "Remaining",
+                    remaining_width = self.remaining_width()
+                );
+                match mode {
+                    DrawMode::Normal => {
+                        line += &format!(
+                            "   {:>running_width$}",
+                            "Running",
+                            running_width = self.running_width()
+                        );
+                    }
+                    DrawMode::Final => {}
+                }
+                Some(line)
+            }
+            Style::ExtraCompact => None,
+        }
+    }
+
     fn render(
         &self,
         mode: DrawMode,
-        header: &str,
+        phase: &str,
         mut pending: u64,
         total: u64,
         running_str: &str,
@@ -217,34 +262,34 @@ impl Style {
         }
         let mut line = match self {
             Style::Normal(num_width) | Style::Compact(num_width) => format!(
-                "{header} Remaining {pending:>num_width$}/{total:<num_width$}",
-                header = header,
+                "{phase:<PHASE_WIDTH$} {pending:>num_width$}/{total:>num_width$}",
+                phase = phase,
                 pending = pending,
                 total = total,
                 num_width = *num_width
             ),
             Style::ExtraCompact => {
-                format!("{header} Remaining {pending}/{total}",)
+                format!("{phase} {pending}/{total}",)
             }
         };
 
         if let DrawMode::Normal = mode {
             line += &match self {
                 Style::Normal(_) | Style::Compact(_) => {
-                    format!(" (running: {running_str})",)
+                    format!("   {running_str}",)
                 }
                 Style::ExtraCompact => {
-                    format!(" ({running_num})",)
+                    format!("   running {running_num}",)
                 }
             };
         }
         line
     }
 
-    fn display_num(&self, num: u64) -> String {
+    fn display_running_num(&self, num: u64) -> String {
         match self {
-            Style::Normal(num_width) | Style::Compact(num_width) => {
-                format!("{num:num_width$}")
+            Style::Normal(_) | Style::Compact(_) => {
+                format!("{num:running_width$}", running_width = self.running_width())
             }
             Style::ExtraCompact => format!("{num}"),
         }
@@ -255,48 +300,23 @@ impl ProgressHeader<'_> {
     fn render_loads(&self, style: Style, mode: DrawMode) -> String {
         style.render(
             mode,
-            "Loading targets.  ",
+            "Loading targets",
             self.phase_stats.loads.pending(),
             self.phase_stats.loads.started,
-            &style.display_num(self.phase_stats.loads.running),
+            &style.display_running_num(self.phase_stats.loads.running),
             self.phase_stats.loads.running,
         )
-    }
-
-    fn render_loads_extra(&self) -> String {
-        let mut msgs = Vec::new();
-        if self.progress_stats.dirs_read > 0 {
-            msgs.push(format!("{} dirs read", self.progress_stats.dirs_read));
-        }
-        if self.progress_stats.targets > 0 {
-            msgs.push(format!("{} targets declared", self.progress_stats.targets));
-        }
-        msgs.join(", ")
     }
 
     fn render_analyses(&self, style: Style, mode: DrawMode) -> String {
         style.render(
             mode,
-            "Analyzing targets.",
+            "Analyzing targets",
             self.phase_stats.analyses.pending(),
             self.phase_stats.analyses.started,
-            &style.display_num(self.phase_stats.analyses.running),
+            &style.display_running_num(self.phase_stats.analyses.running),
             self.phase_stats.analyses.running,
         )
-    }
-
-    fn render_analyses_extra(&self) -> String {
-        let mut msgs = Vec::new();
-        if self.progress_stats.actions_declared > 0 {
-            msgs.push(format!("{} actions", self.progress_stats.actions_declared));
-        }
-        if self.progress_stats.artifacts_declared > 0 {
-            msgs.push(format!(
-                "{} artifacts declared",
-                self.progress_stats.artifacts_declared
-            ));
-        }
-        msgs.join(", ")
     }
 
     fn render_actions(&self, style: Style, mode: DrawMode) -> String {
@@ -306,42 +326,30 @@ impl ProgressHeader<'_> {
         if self.progress_stats.running_local > 0 || self.action_stats.local_actions > 0 {
             running.push(format!(
                 "{} local",
-                style.display_num(self.progress_stats.running_local),
+                style.display_running_num(self.progress_stats.running_local),
             ));
         }
         if self.progress_stats.running_remote > 0 || self.action_stats.remote_actions > 0 {
             running.push(format!(
                 "{} remote",
-                style.display_num(self.progress_stats.running_remote),
+                style.display_running_num(self.progress_stats.running_remote),
             ));
         }
 
         let running_str = if running.is_empty() {
-            style.display_num(0)
+            style.display_running_num(0)
         } else {
             running.join(", ")
         };
 
         style.render(
             mode,
-            "Executing actions.",
+            "Executing actions",
             phase_stats.pending(),
             phase_stats.started,
             &running_str,
             phase_stats.running,
         )
-    }
-
-    fn render_actions_extra(&self) -> String {
-        let exec_time_ms = self.progress_stats.exec_time_ms;
-        if exec_time_ms > 0 {
-            format!(
-                "{} exec time total",
-                fmt_duration::fmt_duration(Duration::from_millis(exec_time_ms)),
-            )
-        } else {
-            String::new()
-        }
     }
 
     fn render_actions_stats(&self, style: Style) -> String {
@@ -389,19 +397,15 @@ impl ProgressHeader<'_> {
         }
     }
 
-    fn render_actions_stats_extra(&self) -> String {
-        let exec_time_ms = self.progress_stats.exec_time_ms;
-        let cached_exec_time_ms = self.progress_stats.cached_exec_time_ms;
-
-        if cached_exec_time_ms > 0 {
-            format!(
-                "{} exec time cached ({}%)",
-                fmt_duration::fmt_duration(Duration::from_millis(cached_exec_time_ms)),
-                cached_exec_time_ms * 100 / std::cmp::max(exec_time_ms, 1)
-            )
-        } else {
-            String::new()
-        }
+    fn render_validations(&self, style: Style, mode: DrawMode) -> String {
+        style.render(
+            mode,
+            "Running validations",
+            self.phase_stats.validations.pending(),
+            self.phase_stats.validations.started,
+            &style.display_running_num(self.phase_stats.validations.running),
+            self.phase_stats.validations.running,
+        )
     }
 }
 
@@ -409,6 +413,23 @@ impl Component for ProgressHeader<'_> {
     type Error = buck2_error::Error;
 
     fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+        fn truncate_to_char_boundary(line: &mut String, max_len: usize) {
+            if line.len() <= max_len {
+                return;
+            }
+
+            let new_len = match line
+                .char_indices()
+                .map(|(idx, _)| idx)
+                .take_while(|idx| *idx <= max_len)
+                .last()
+            {
+                Some(idx) => idx,
+                None => return line.clear(),
+            };
+            line.truncate(new_len);
+        }
+
         fn digits_len(v: u64) -> usize {
             (v.checked_ilog10().unwrap_or(0) + 1) as usize
         }
@@ -416,18 +437,22 @@ impl Component for ProgressHeader<'_> {
         let loads = &self.phase_stats.loads;
         let analysis = &self.phase_stats.analyses;
         let actions = &self.phase_stats.actions;
+        let validations = &self.phase_stats.validations;
 
         let max_total = std::cmp::max(
-            std::cmp::max(loads.started, analysis.started),
-            actions.started,
+            std::cmp::max(
+                std::cmp::max(loads.started, analysis.started),
+                actions.started,
+            ),
+            validations.started,
         );
 
         let num_width = std::cmp::max(5, digits_len(max_total));
 
-        let header_width = "Executing actions. Remaining _/_ (running: _ local, _ remote)  ".len()
-            + 4 * (num_width - 1);
+        let header_width =
+            "Executing actions   _/_         _ local,   _ remote  ".len() + 4 * (num_width - 1);
 
-        let elapsed = format!("Time elapsed: {}", &self.time_elapsed);
+        let elapsed = format!("elapsed {}", self.time_elapsed);
 
         // During normal drawing, the elapsed time is in the last row at the end. In the final rendering it gets its own line and is on the left.
         let inline_elapsed = match mode {
@@ -445,49 +470,101 @@ impl Component for ProgressHeader<'_> {
             Style::ExtraCompact
         };
 
-        let mut main = Vec::new();
+        let mut main: Vec<(String, bool)> = Vec::new();
         let mut extra = Vec::new();
 
+        if let Some(table_header) = style.render_table_header(mode) {
+            main.push((table_header, true));
+            match style {
+                Style::Normal(_) => extra.push("Details".to_owned()),
+                Style::Compact(_) | Style::ExtraCompact => extra.push(String::new()),
+            }
+        }
+
         if loads.started > 0 {
-            main.push(self.render_loads(style, mode));
+            main.push((self.render_loads(style, mode), false));
             if let Style::Normal(..) = style {
-                extra.push(self.render_loads_extra());
+                let mut msgs = Vec::new();
+                if self.progress_stats.dirs_read > 0 {
+                    msgs.push(format!("{} dirs read", self.progress_stats.dirs_read));
+                }
+                if self.progress_stats.targets > 0 {
+                    msgs.push(format!("{} targets declared", self.progress_stats.targets));
+                }
+                extra.push(msgs.join(", "));
             } else {
                 extra.push(String::new());
             }
         }
 
         if analysis.started > 0 {
-            main.push(self.render_analyses(style, mode));
+            main.push((self.render_analyses(style, mode), false));
             if let Style::Normal(..) = style {
-                extra.push(self.render_analyses_extra());
+                let mut msgs = Vec::new();
+                if self.progress_stats.actions_declared > 0 {
+                    msgs.push(format!("{} actions", self.progress_stats.actions_declared));
+                }
+                if self.progress_stats.artifacts_declared > 0 {
+                    msgs.push(format!(
+                        "{} artifacts declared",
+                        self.progress_stats.artifacts_declared
+                    ));
+                }
+                extra.push(msgs.join(", "));
             } else {
                 extra.push(String::new());
             }
         }
 
         if actions.started == 0 {
-            main.push(self.header.to_owned());
+            main.push((self.header.to_owned(), false));
             extra.push(String::new());
         } else {
-            main.push(self.render_actions(style, mode));
-            main.push(format!(
-                // typically aligns this with "Remaining:" in the line above, but a long header would push it over, which is okay
-                "{:<18} {}",
-                self.header,
-                self.render_actions_stats(if dimensions.width > 90 {
-                    Style::Normal(num_width)
-                } else {
-                    style
-                })
-            ));
+            main.push((self.render_actions(style, mode), false));
             if let Style::Normal(..) = style {
-                extra.push(self.render_actions_extra());
-                extra.push(self.render_actions_stats_extra());
+                let exec_time_ms = self.progress_stats.exec_time_ms;
+                if exec_time_ms > 0 {
+                    extra.push(format!(
+                        "{} exec time total",
+                        fmt_duration::fmt_duration(Duration::from_millis(exec_time_ms)),
+                    ));
+                } else {
+                    extra.push(String::new());
+                }
             } else {
                 extra.push(String::new());
+            }
+
+            // Show validation progress if validation has started (before the header/stats line)
+            if validations.started > 0 {
+                main.push((self.render_validations(style, mode), false));
                 extra.push(String::new());
             }
+
+            main.push((self.header.to_owned(), false));
+            let mut stats = self.render_actions_stats(if dimensions.width > 90 {
+                Style::Normal(num_width)
+            } else {
+                style
+            });
+            if let Style::Normal(..) = style {
+                let exec_time_ms = self.progress_stats.exec_time_ms;
+                let cached_exec_time_ms = self.progress_stats.cached_exec_time_ms;
+                let stats_extra = if cached_exec_time_ms > 0 {
+                    format!(
+                        "{} exec time cached ({}%)",
+                        fmt_duration::fmt_duration(Duration::from_millis(cached_exec_time_ms)),
+                        cached_exec_time_ms * 100 / std::cmp::max(exec_time_ms, 1)
+                    )
+                } else {
+                    String::new()
+                };
+                if !stats.is_empty() && !stats_extra.is_empty() {
+                    stats.push_str("  ");
+                }
+                stats.push_str(&stats_extra);
+            }
+            extra.push(stats);
         }
 
         assert!(!extra.is_empty());
@@ -500,7 +577,7 @@ impl Component for ProgressHeader<'_> {
         // As long as there is less than `extra_preferred_width` space, the extra column will go immediately after the main column,
         // once it's wider than that we'll right align it.
 
-        let main_width = main.iter().map(String::len).max().unwrap();
+        let main_width = main.iter().map(|(line, _)| line.len()).max().unwrap();
 
         let extra_preferred_width = long_middle_len + 20;
         let extra_width = extra.iter().map(String::len).max().unwrap();
@@ -524,25 +601,44 @@ impl Component for ProgressHeader<'_> {
 
         let mut lines = Vec::new();
         for i in 0..main.len() {
-            let mut line = format!("{:<pad_to$}{}", main[i], extra[i], pad_to = pad_to);
+            let (main_line, is_table_header) = &main[i];
+            let mut line = if extra[i].is_empty() {
+                main_line.to_owned()
+            } else {
+                format!("{:<pad_to$}{}", main_line, extra[i], pad_to = pad_to)
+            };
 
-            if i == main.len() - 1 {
+            if i == main.len() - 1 && !inline_elapsed.is_empty() {
                 let wanted_len = dimensions.width.saturating_sub(inline_elapsed.len() + 2);
                 if line.len() > wanted_len {
-                    // If we're going to have to truncate the extra column for the elapsed time, just drop it in this row.
-                    line = main[i].to_owned();
+                    let compact_line = match extra[i].is_empty() {
+                        true => main_line.to_owned(),
+                        false => format!("{main_line}  {}", extra[i]),
+                    };
+                    if compact_line.len() <= wanted_len {
+                        line = compact_line;
+                    } else {
+                        // If we're going to have to truncate the extra column for the elapsed time, just drop it in this row.
+                        line = main_line.to_owned();
+                    }
                 }
 
                 if line.len() < wanted_len {
                     line += &" ".repeat(wanted_len - line.len());
                 } else {
-                    line.truncate(wanted_len);
+                    truncate_to_char_boundary(&mut line, wanted_len);
                 }
                 line += "  ";
                 line += inline_elapsed;
             }
 
-            lines.push(Line::unstyled(&line)?);
+            let line = line.trim_end().to_owned();
+
+            if *is_table_header {
+                lines.push(Line::from_iter([Span::new_styled_lossy(line.bold())]));
+            } else {
+                lines.push(Line::unstyled(&line)?);
+            }
         }
 
         if let DrawMode::Final = mode {
@@ -559,7 +655,6 @@ mod tests {
 
     use buck2_error::conversion::from_any_with_tag;
     use buck2_event_observer::progress::BuildProgressPhaseStatsItem;
-    use itertools::Itertools;
 
     use super::*;
 
@@ -579,6 +674,11 @@ mod tests {
                 started: 33333,
                 finished: 333,
                 running: 100,
+            },
+            validations: BuildProgressPhaseStatsItem {
+                started: 44444,
+                finished: 444,
+                running: 44,
             },
         }
     }
@@ -603,6 +703,8 @@ mod tests {
             cached_actions: 133,
             fallback_actions: 0,
             remote_dep_file_cached_actions: 0,
+            remote_served_from_cache_actions: 0,
+            remote_deduplicated_actions: 0,
             excess_cache_misses: 0,
         }
     }
@@ -686,74 +788,121 @@ mod tests {
 
         let expected = indoc::indoc!(
             r#"
-                Loading targets.   Remaining 1
-                Analyzing targets. Remaining 2
-                Executing actions. Remaining 3
-                header     Time elapsed: 1234s
+                Loading targets 11000/11111   
+                Analyzing targets 22000/22222 
+                Executing actions 33000/33333 
+                Running validations 44000/4444
+                header           elapsed 1234s
 
-                Loading targets.   Remaining 11000/11111
-                Analyzing targets. Remaining 22000/22222
-                Executing actions. Remaining 33000/33333
-                header               Time elapsed: 1234s
+                Loading targets 11000/11111   running 11
+                Analyzing targets 22000/22222   running 
+                Executing actions 33000/33333   running 
+                Running validations 44000/44444   runnin
+                header  Cache hits 37%     elapsed 1234s
 
-                Loading targets.   Remaining 11000/11111 (11)
-                Analyzing targets. Remaining 22000/22222 (22)
-                Executing actions. Remaining 33000/33333 (100)
-                header             Cache hits 37%        Time elapsed: 1234s
+                Loading targets 11000/11111   running 11
+                Analyzing targets 22000/22222   running 22
+                Executing actions 33000/33333   running 100
+                Running validations 44000/44444   running 44
+                header  Cache hits 37%                         elapsed 1234s
 
-                Loading targets.   Remaining 11000/11111 (running:    11)
-                Analyzing targets. Remaining 22000/22222 (running:    22)
-                Executing actions. Remaining 33000/33333 (running:    55 local,    66 remote)
-                header             100 local, 122 remote, 133 cache (37%)    Time elapsed: 1234s
+                <span bold>Phase                 Remaining   Running</span>
+                Loading targets     11000/11111        11
+                Analyzing targets   22000/22222        22
+                Executing actions   33000/33333        55 local,      66 remote
+                Running validations 44000/44444        44
+                header  100 local, 122 remote, 133 cache (37%)                     elapsed 1234s
 
-                Loading targets.   Remaining 11000/11111 (running:    11)
-                Analyzing targets. Remaining 22000/22222 (running:    22)
-                Executing actions. Remaining 33000/33333 (running:    55 local,    66 remote)
-                header             Finished 100 local, 122 remote, 133 cache (37% hit)           Time elapsed: 1234s
+                <span bold>Phase                 Remaining   Running</span>
+                Loading targets     11000/11111        11
+                Analyzing targets   22000/22222        22
+                Executing actions   33000/33333        55 local,      66 remote
+                Running validations 44000/44444        44
+                header  Finished 100 local, 122 remote, 133 cache (37% hit)                            elapsed 1234s
 
-                Loading targets.   Remaining 11000/11111 (running:    11)                      111 dirs read, 22222 targets declared
-                Analyzing targets. Remaining 22000/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
-                Executing actions. Remaining 33000/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
-                header             Finished 100 local, 122 remote, 133 cache (37% hit)                                        Time elapsed: 1234s
+                <span bold>Phase                 Remaining   Running                        Details</span>
+                Loading targets     11000/11111        11                        111 dirs read, 22222 targets declared
+                Analyzing targets   22000/22222        22                        3333333 actions, 4444444 artifacts declared
+                Executing actions   33000/33333        55 local,      66 remote  2:09:37.0s exec time total
+                Running validations 44000/44444        44
+                header  Finished 100 local, 122 remote, 133 cache (37% hit)  11:06.0s exec time cached (8%)                         elapsed 1234s
 
-                Loading targets.   Remaining 11000/11111 (running:    11)                      111 dirs read, 22222 targets declared
-                Analyzing targets. Remaining 22000/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
-                Executing actions. Remaining 33000/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
-                header             Finished 100 local, 122 remote, 133 cache (37% hit)         11:06.0s exec time cached (8%)  Time elapsed: 1234s
+                <span bold>Phase                 Remaining   Running                        Details</span>
+                Loading targets     11000/11111        11                        111 dirs read, 22222 targets declared
+                Analyzing targets   22000/22222        22                        3333333 actions, 4444444 artifacts declared
+                Executing actions   33000/33333        55 local,      66 remote  2:09:37.0s exec time total
+                Running validations 44000/44444        44
+                header  Finished 100 local, 122 remote, 133 cache (37% hit)  11:06.0s exec time cached (8%)                          elapsed 1234s
 
-                Loading targets.   Remaining 11000/11111 (running:    11)                      111 dirs read, 22222 targets declared
-                Analyzing targets. Remaining 22000/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
-                Executing actions. Remaining 33000/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
-                header             Finished 100 local, 122 remote, 133 cache (37% hit)         11:06.0s exec time cached (8%)            Time elapsed: 1234s
+                <span bold>Phase                 Remaining   Running                        Details</span>
+                Loading targets     11000/11111        11                        111 dirs read, 22222 targets declared
+                Analyzing targets   22000/22222        22                        3333333 actions, 4444444 artifacts declared
+                Executing actions   33000/33333        55 local,      66 remote  2:09:37.0s exec time total
+                Running validations 44000/44444        44
+                header  Finished 100 local, 122 remote, 133 cache (37% hit)  11:06.0s exec time cached (8%)                                    elapsed 1234s
 
-                Loading targets.   Remaining 11000/11111 (running:    11)                                  111 dirs read, 22222 targets declared
-                Analyzing targets. Remaining 22000/22222 (running:    22)                                  3333333 actions, 4444444 artifacts declared
-                Executing actions. Remaining 33000/33333 (running:    55 local,    66 remote)              2:09:37.0s exec time total
-                header             Finished 100 local, 122 remote, 133 cache (37% hit)                     11:06.0s exec time cached (8%)                    Time elapsed: 1234s
+                <span bold>Phase                 Remaining   Running                        Details</span>
+                Loading targets     11000/11111        11                        111 dirs read, 22222 targets declared
+                Analyzing targets   22000/22222        22                        3333333 actions, 4444444 artifacts declared
+                Executing actions   33000/33333        55 local,      66 remote  2:09:37.0s exec time total
+                Running validations 44000/44444        44
+                header  Finished 100 local, 122 remote, 133 cache (37% hit)  11:06.0s exec time cached (8%)                                                        elapsed 1234s
 
-                Loading targets.   Remaining 0/11111
-                Analyzing targets. Remaining 0/22222
-                Executing actions. Remaining 0/33333
-                header             Cache hits 37%
-                Time elapsed: 1234s
+                Loading targets 0/11111
+                Analyzing targets 0/22222
+                Executing actions 0/33333
+                Running validations 0/44444
+                header                       Cache hits 37%
+                elapsed 1234s
 
-                Loading targets.   Remaining     0/11111                                111 dirs read, 22222 targets declared
-                Analyzing targets. Remaining     0/22222                                3333333 actions, 4444444 artifacts declared
-                Executing actions. Remaining     0/33333                                2:09:37.0s exec time total
-                header             Finished 100 local, 122 remote, 133 cache (37% hit)  11:06.0s exec time cached (8%)
-                Time elapsed: 1234s
+                <span bold>Phase                 Remaining                      Details</span>
+                Loading targets         0/11111                      111 dirs read, 22222 targets declared
+                Analyzing targets       0/22222                      3333333 actions, 4444444 artifacts declared
+                Executing actions       0/33333                      2:09:37.0s exec time total
+                Running validations     0/44444
+                header                                               Finished 100 local, 122 remote, 133 cache (37% hit)  11:06.0s exec time cached (8%)
+                elapsed 1234s
 
         "#
         );
-
-        // copy-paste is easier if we don't need to worry about getting trailing spaces right
-        let expected = expected.lines().map(str::trim_end).join("\n");
-        let all_output = all_output.lines().map(str::trim_end).join("\n");
 
         // don't use pretty_assertions here because we mostly just want to copy-paste the golden
         assert!(
             all_output == expected,
             "GOLDEN:\n{all_output}\nEND_GOLDEN\nEXPECTED:\n{expected}\nEND_EXPECTED"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validation_line_not_shown_when_not_started() -> buck2_error::Result<()> {
+        let mut stats = phase_stats();
+        stats.validations = BuildProgressPhaseStatsItem {
+            started: 0,
+            finished: 0,
+            running: 0,
+        };
+
+        let output = ProgressHeader {
+            header: "header",
+            phase_stats: &stats,
+            progress_stats: &progress_stats(),
+            action_stats: &action_stats(),
+            time_elapsed: "1234s".to_owned(),
+        }
+        .draw(
+            Dimensions {
+                width: 140,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?;
+
+        let output_str = output.fmt_for_test().to_string();
+        assert!(
+            !output_str.contains("Running validations."),
+            "Validation line should not appear when validations haven't started:\n{output_str}"
         );
 
         Ok(())
@@ -767,6 +916,8 @@ mod tests {
             cached_actions: 1,
             fallback_actions: 0,
             remote_dep_file_cached_actions: 0,
+            remote_served_from_cache_actions: 0,
+            remote_deduplicated_actions: 0,
             excess_cache_misses: 0,
         };
         let output = SimpleHeader::new_for_data(HeaderData {
@@ -798,6 +949,8 @@ mod tests {
             cached_actions: 0,
             fallback_actions: 0,
             remote_dep_file_cached_actions: 0,
+            remote_served_from_cache_actions: 0,
+            remote_deduplicated_actions: 0,
             excess_cache_misses: 0,
         };
         let output = SimpleHeader::new_for_data(HeaderData {
@@ -830,6 +983,8 @@ mod tests {
             cached_actions: 1,
             fallback_actions: 0,
             remote_dep_file_cached_actions: 0,
+            remote_served_from_cache_actions: 0,
+            remote_deduplicated_actions: 0,
             excess_cache_misses: 0,
         };
         let output = SimpleHeader::new_for_data(HeaderData {
@@ -863,6 +1018,8 @@ mod tests {
             cached_actions: 1,
             fallback_actions: 0,
             remote_dep_file_cached_actions: 0,
+            remote_served_from_cache_actions: 0,
+            remote_deduplicated_actions: 0,
             excess_cache_misses: 0,
         };
         let output = SimpleHeader::new_for_data(HeaderData {

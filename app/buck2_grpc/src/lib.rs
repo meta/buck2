@@ -8,14 +8,16 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 mod channel;
+mod flow_control;
 mod server;
 mod util;
 
 pub use channel::DuplexChannel;
 pub use channel::make_channel;
+pub use flow_control::CONNECTION_WINDOW_SIZE;
+pub use flow_control::configure_endpoint;
+pub use flow_control::server_builder;
 pub use server::ServerHandle;
 pub use server::spawn_oneshot;
 pub use util::to_tonic;

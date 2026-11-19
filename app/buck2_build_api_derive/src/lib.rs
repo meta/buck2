@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 #[allow(unused_extern_crates)] // proc_macro is very special
 extern crate proc_macro;
 
@@ -17,8 +15,12 @@ mod provider;
 
 /// Generates the starlark implementation for an internal provider.
 ///
-/// Implements StarlarkValue, ComplexValue, ProviderLike for the provider type and
-/// adds a ProviderCallable that's used in starlark as the constructor.
+/// Implements `StarlarkValue` and `ProviderLike` for the provider type and
+/// adds a `ProviderCallable` that's used in starlark as the constructor.
+///
+/// The struct must have one lifetime parameter, `ValueOf<'v, _>`/`ValueTyped<'v, _>`/`StringValue<'v>`
+/// fields (any of them in an `Option`) and `#[derive(Freeze)]`; its frozen form is the `'static`
+/// alias.
 ///
 /// # Arguments
 ///
@@ -29,8 +31,8 @@ mod provider;
 /// # Field Types
 ///
 /// Return types can be specified directly by adding `#[provider(field_type=SomeIdentifier)]`
-/// to a field. The type `SomeIdentifier` must be one that implements
-/// `starlark::values::type_repr::StarlarkTypeRepr`
+/// to a field. The type `SomeIdentifier` must be a parameter binding (`UnpackValue`), whose
+/// `Type` is documented.
 ///
 /// # Behavior
 ///
@@ -41,9 +43,9 @@ mod provider;
 /// In rust, a utility is added for getting the provider from a provider collection like
 /// Foo::from_providers(collection).
 ///
-/// You can customize the freeze implementation (for example if you want to do validation
-/// at that point) by passing it to the attribute like:
-/// `#[internal_provider(creator, freeze=my_freeze)]`
+/// To run validation at freeze time, put `#[freeze(validator = my_validate)]`
+/// on the struct; that is an option of the `Freeze` derive, not of this
+/// attribute.
 ///
 /// # Examples
 ///
@@ -51,9 +53,10 @@ mod provider;
 ///
 /// ```ignore
 /// #[internal_provider(my_provider_creator)]
-/// #[derive(Clone, Debug, Trace, Coerce, Freeze, ProvidesStaticType, Allocative)]
-/// struct MyProviderGen<V: ValueLifetimeless> {
-///     field1: ValueOfUncheckedGeneric<V, String>,
+/// #[derive(Clone, Debug, Trace, Freeze, ProvidesStaticType, Allocative, StarlarkPagable)]
+/// #[repr(C)]
+/// struct MyProvider<'v> {
+///     field1: StringValue<'v>,
 /// }
 /// ```
 ///
@@ -61,28 +64,13 @@ mod provider;
 ///
 /// ## Use custom methods
 ///
+/// `methods = some_module` replaces the generated attribute lookup with a
+/// `#[starlark_module]` of methods, which must then define the attributes itself:
+///
 /// ```ignore
 /// #[internal_provider(my_provider_creator, methods = my_custom_methods)]
-/// #[derive(Clone, Debug, Trace, Coerce, Freeze, ProvidesStaticType, Allocative)]
-/// struct MyProviderGen<V: ValueLifetimeless> {
-///     field1: ValueOfUncheckedGeneric<V, String>,
-/// }
-///
-/// #[starlark_module]
-/// fn my_custom_methods(builder: &mut MethodsBuilder) {
-///     // Custom attribute accessor
-///     #[starlark(attribute)]
-///     fn field1<'v>(this: &MyProvider<'v>) -> starlark::Result<&'v str> {
-///         // Custom logic here
-///         Ok(this.field1.get().unpack_str().unwrap())
-///     }
-///
-///     // Additional method
-///     fn my_method<'v>(this: &MyProvider<'v>, s: &str) -> starlark::Result<String> {
-///         Ok(format!("custom: {} {}", this.field1.get(), s))
-///     }
-/// }
 /// ```
+///
 ///
 /// In Starlark: `provider.field1` (custom attribute) and `provider.my_method("hello world")` (custom method)
 #[proc_macro_attribute]

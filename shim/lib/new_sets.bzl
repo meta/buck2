@@ -14,10 +14,10 @@
 
 """Skylib module containing common hash-set algorithms.
 
-  An empty set can be created using: `sets.make()`, or it can be created with some starting values
-  if you pass it an sequence: `sets.make([1, 2, 3])`. This returns a struct containing all of the
-  values as keys in a dictionary - this means that all passed in values must be hashable.  The
-  values in the set can be retrieved using `sets.to_list(my_set)`.
+An empty set can be created using: `sets.make()`, or it can be created with some starting values
+if you pass it an sequence: `sets.make([1, 2, 3])`. This returns a struct containing all of the
+values as keys in a dictionary - this means that all passed in values must be hashable.  The
+values in the set can be retrieved using `sets.to_list(my_set)`.
 """
 
 load(":dicts.bzl", "dicts")

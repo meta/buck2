@@ -38,12 +38,18 @@ use std::mem;
 
 use allocative::Allocative;
 use hashbrown::HashTable;
+use pagable::PagableDeserialize;
+use pagable::PagableSerialize;
 use starlark_derive::Trace;
 use starlark_map::Hashed;
 
 use crate as starlark;
 use crate::collections::symbol::symbol::Symbol;
-use crate::values::StringValue;
+use crate::pagable::StarlarkDeserialize;
+use crate::pagable::StarlarkDeserializeContext;
+use crate::pagable::StarlarkSerialize;
+use crate::pagable::StarlarkSerializeContext;
+use crate::values::string::StarlarkStr;
 
 // We use a RawTable (the thing that underlies HashMap) so we can look up efficiently
 // and easily by Symbol and str, without being limited by `Borrow` traits.
@@ -93,7 +99,7 @@ impl<T> SymbolMap<T> {
             .map(|x| &x.1)
     }
 
-    pub(crate) fn get_hashed_string_value(&self, key: Hashed<StringValue>) -> Option<&T> {
+    pub(crate) fn get_hashed_starlark_str(&self, key: Hashed<&StarlarkStr>) -> Option<&T> {
         self.0
             .find(key.hash().promote(), |x| {
                 x.0.as_aligned_padded_str() == key.key().as_aligned_padded_str()
@@ -103,6 +109,16 @@ impl<T> SymbolMap<T> {
 
     pub(crate) fn len(&self) -> usize {
         self.0.len()
+    }
+
+    /// Transform the values, keeping the keys.
+    pub(crate) fn map_values<U>(self, mut f: impl FnMut(T) -> U) -> SymbolMap<U> {
+        let mut r = SymbolMap::with_capacity(self.len());
+        for (k, v) in self.0 {
+            let hash = k.hash();
+            r.0.insert_unique(hash, (k, f(v)), |x| x.0.hash());
+        }
+        r
     }
 
     pub(crate) fn iter<'a>(&'a self) -> impl ExactSizeIterator<Item = &'a (Symbol, T)> + 'a {
@@ -115,5 +131,60 @@ impl<T> SymbolMap<T> {
 
     pub(crate) fn values<'a>(&'a self) -> impl ExactSizeIterator<Item = &'a T> + 'a {
         self.iter().map(|x| &x.1)
+    }
+}
+
+impl<T: PagableSerialize> PagableSerialize for SymbolMap<T> {
+    fn pagable_serialize(
+        &self,
+        serializer: &mut dyn pagable::PagableSerializer,
+    ) -> pagable::Result<()> {
+        self.len().pagable_serialize(serializer)?;
+        for (symbol, value) in self.iter() {
+            symbol.pagable_serialize(serializer)?;
+            value.pagable_serialize(serializer)?;
+        }
+        Ok(())
+    }
+}
+
+impl<'de, T: PagableDeserialize<'de>> PagableDeserialize<'de> for SymbolMap<T> {
+    fn pagable_deserialize<D: pagable::PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        let len = usize::pagable_deserialize(deserializer)?;
+        let mut map = SymbolMap::with_capacity(len);
+        for _ in 0..len {
+            let symbol = Symbol::pagable_deserialize(deserializer)?;
+            let value = T::pagable_deserialize(deserializer)?;
+            map.insert(symbol.as_str(), value);
+        }
+        Ok(map)
+    }
+}
+
+impl<T: StarlarkSerialize> StarlarkSerialize for SymbolMap<T> {
+    fn starlark_serialize(&self, ctx: &mut dyn StarlarkSerializeContext) -> crate::Result<()> {
+        self.len().pagable_serialize(ctx.pagable())?;
+        for (symbol, value) in self.iter() {
+            symbol.pagable_serialize(ctx.pagable())?;
+            value.starlark_serialize(ctx)?;
+        }
+        Ok(())
+    }
+}
+
+impl<'fv, T: StarlarkDeserialize<'fv>> StarlarkDeserialize<'fv> for SymbolMap<T> {
+    fn starlark_deserialize(
+        ctx: &mut dyn StarlarkDeserializeContext<'_, 'fv>,
+    ) -> crate::Result<Self> {
+        let len = usize::pagable_deserialize(ctx.pagable())?;
+        let mut map = SymbolMap::with_capacity(len);
+        for _ in 0..len {
+            let symbol = Symbol::pagable_deserialize(ctx.pagable())?;
+            let value = T::starlark_deserialize(ctx)?;
+            map.insert(symbol.as_str(), value);
+        }
+        Ok(map)
     }
 }

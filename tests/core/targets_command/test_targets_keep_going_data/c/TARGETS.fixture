@@ -1,1 +1,2 @@
-# Needed so that this package exists when specifying a target that doesn't exist
+# This package must keep existing for the tests that ask it for a target it does not have.
+a_target(name = "target6")

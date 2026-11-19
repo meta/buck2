@@ -1,0 +1,7 @@
+[cells]
+  root = .
+
+[buildfile]
+  name = TARGETS.fixture
+
+<file:grace_period.bcfg>

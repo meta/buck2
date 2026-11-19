@@ -12,8 +12,6 @@ gen_server holding state between test runs
 """.
 -compile(warn_missing_spec_all).
 
--include_lib("kernel/include/logger.hrl").
-
 -behavior(gen_server).
 
 %% gen_server API
@@ -21,6 +19,10 @@ gen_server holding state between test runs
 
 %% Public API
 -export([start_monitor/2, name/1]).
+
+-export_type([discover_error/0]).
+
+-include_lib("kernel/include/logger.hrl").
 
 -type state() :: #{
     enumerated_tests => #{test_id() => string()},
@@ -38,8 +40,6 @@ gen_server holding state between test runs
     | not_listed_yet
     | invalid_regex
     | {invalid_regex, {string(), non_neg_integer()}}.
-
--export_type([discover_error/0]).
 
 -spec start_monitor(Node, OutputDir) -> gen_server:start_mon_ret() when
     Node :: node(),
@@ -219,7 +219,7 @@ flatten_enumerated_tests(Tests) ->
 -spec run_test(string(), state()) -> {ct_daemon_core:run_result(), state()}.
 run_test(Test, State = #{output_dir := OutputDir, setup := InSetupState}) ->
     #{suite := Suite, name := Name} = ct_daemon_core:from_qualified(Test),
-    Spec = test_runner:parse_test_name(Name, Suite),
+    Spec = common_util:parse_test_name(Name, Suite),
 
     ?LOG_INFO("discovered test ~tp with spec ~tp", [Name, Spec]),
 

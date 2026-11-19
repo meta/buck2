@@ -27,6 +27,7 @@ use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::internal_error;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
@@ -189,14 +190,14 @@ async fn targets(
 
 async fn targets_with_output(
     server_ctx: &dyn ServerCommandContextTrait,
-    mut dice: DiceTransaction,
+    dice: DiceTransaction,
     request: &TargetsRequest,
     output: &mut (impl Write + Send),
 ) -> buck2_error::Result<TargetsResponse> {
     let cwd = server_ctx.working_dir();
-    let cell_resolver = dice.get_cell_resolver().await?;
+    let cell_resolver = dice.ctx().get_cell_resolver().await?;
     let parsed_target_patterns = parse_patterns_from_cli_args::<TargetPatternExtra>(
-        &mut dice,
+        &mut dice.ctx(),
         &request.target_patterns,
         cwd,
     )
@@ -204,7 +205,7 @@ async fn targets_with_output(
 
     match &request.targets {
         Some(targets_request::Targets::ResolveAlias(_)) => {
-            targets_resolve_aliases(dice, request, parsed_target_patterns).await
+            targets_resolve_aliases(&dice, request, parsed_target_patterns).await
         }
         Some(targets_request::Targets::Other(other)) => {
             if other.streaming {
@@ -241,13 +242,13 @@ async fn targets_with_output(
                         .as_ref()
                         .internal_error("target_cfg must be set")?,
                     server_ctx,
-                    &mut dice,
+                    &mut dice.ctx(),
                 )
                 .await?;
                 let fs = server_ctx.project_root();
                 targets_batch(
                     server_ctx,
-                    dice,
+                    &dice,
                     &*formatter,
                     parsed_target_patterns,
                     &global_cfg_options,

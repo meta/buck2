@@ -7,7 +7,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
 
 """
 Creates a Python Source DB JSON file containing both a rule's immediate sources
@@ -18,8 +17,7 @@ merged by this script:
 
 $ ./make_source_db.py \
       --sources my_rule.manifest.json \
-      --dependency dep1.manifest.json \
-      --dependency dep2.manifest.json
+      --dependency_manifests manifest_paths.txt
 
 The output format of the source DB is:
 
@@ -47,11 +45,16 @@ def _load(path: str) -> list[tuple[str, str, str]]:
         return json.load(f)
 
 
+def _read_dependency_paths(manifest_file: str) -> list[str]:
+    with open(manifest_file) as f:
+        return [line.strip() for line in f if line.strip()]
+
+
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(fromfile_prefix_chars="@")
     parser.add_argument("--output", type=argparse.FileType("w"), default=sys.stdout)
     parser.add_argument("--sources")
-    parser.add_argument("--dependency", action="append", default=[])
+    parser.add_argument("--dependency_manifests")
     args = parser.parse_args(argv[1:])
 
     db = {}
@@ -65,7 +68,12 @@ def main(argv: list[str]) -> None:
 
     # Add dependencies.
     dependencies = {}
-    for dep in args.dependency:
+    deps_paths = (
+        _read_dependency_paths(args.dependency_manifests)
+        if args.dependency_manifests
+        else []
+    )
+    for dep in deps_paths:
         for name, path, origin in _load(dep):
             prev = dependencies.get(name)
             if prev is not None and prev[0] != path:

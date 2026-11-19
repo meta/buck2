@@ -1,11 +1,39 @@
 name: setup_reindeer
+description: Install Reindeer from the tip of its `main` and buckify the shim's third-party crates
 runs:
   using: composite
   steps:
-  - name: Install Reindeer
+  # A Reindeer change that breaks this repository should break CI right away,
+  # so track `main`; cache the binary per commit of it instead of compiling it
+  # on every run.
+  - name: Find the current Reindeer commit
+    id: reindeer_rev
     run: |-
-      cargo install --locked --git https://github.com/facebookincubator/reindeer reindeer
+      rev=$(git ls-remote https://github.com/facebookincubator/reindeer refs/heads/main | cut -f1)
+      test -n "$rev"
+      echo "rev=$rev" >> "$GITHUB_OUTPUT"
+    shell: bash
+  - uses: actions/cache/restore@v4
+    id: reindeer_cache
+    with:
+      path: ${{ runner.temp }}/reindeer
+      key: reindeer-${{ runner.os }}-${{ runner.arch }}-${{ steps.reindeer_rev.outputs.rev }}
+  - name: Install Reindeer
+    if: steps.reindeer_cache.outputs.cache-hit != 'true'
+    run: |-
+      cargo install --locked --git https://github.com/facebookincubator/reindeer --rev "${{ steps.reindeer_rev.outputs.rev }}" --root "$RUNNER_TEMP/reindeer" reindeer
+    shell: bash
+  # Only `main` writes the cache (see build_debug); a pull request that built
+  # Reindeer gets it from `main` once a run there has cached the same commit.
+  - uses: actions/cache/save@v4
+    if: steps.reindeer_cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+    with:
+      path: ${{ runner.temp }}/reindeer
+      key: ${{ steps.reindeer_cache.outputs.cache-primary-key }}
+  - name: Buckify the third-party crates
+    run: |-
+      echo "$RUNNER_TEMP/reindeer/bin" >> "$GITHUB_PATH"
       # Remove any dirty BUCK and Cargo.lock files
       rm -f shim/third-party/rust/Cargo.lock shim/third-party/rust/BUCK
-      reindeer --third-party-dir shim/third-party/rust buckify
+      "$RUNNER_TEMP/reindeer/bin/reindeer" --third-party-dir shim/third-party/rust buckify
     shell: bash

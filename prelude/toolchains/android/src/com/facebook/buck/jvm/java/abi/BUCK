@@ -1,3 +1,4 @@
+load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_java_binary", "buck_java_library", "buck_prebuilt_artifact", "buck_prebuilt_jar")
 load("@prelude//toolchains/android/tools/build_rules:fb_native.bzl", "fb_native")
 load("@prelude//utils:source_listing.bzl", "source_listing")
@@ -42,7 +43,7 @@ buck_java_library(
         "prelude//toolchains/android/third-party:asm",
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:infer-annotations",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
     exported_deps = [
         "prelude//toolchains/android/src/com/facebook/buck/util/zip:zip",
@@ -51,7 +52,7 @@ buck_java_library(
 
 fb_native.alias(
     name = "api-stubber",
-    actual = ":api-stubber_prebuilt",
+    actual = ":api-stubber_prebuilt" if is_full_meta_repo() else ":api-stubber-main",
     visibility = ["PUBLIC"],
 )
 
@@ -77,7 +78,7 @@ buck_prebuilt_jar(
 # buck build prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi:api-stubber-main --show-simple-output | xargs frecli --use-case android_build_infra_tools cas upload-blob
 buck_prebuilt_artifact(
     name = "api-stubber-main_jar.jar",
-    # @oss-disable[end= ]: cas_digest = "1a339fa48bfbb9c7cabee9f5294f5e3120870f0b7a95c48b48331d2aeafbfd57:25666249",
+    # @oss-disable[end= ]: cas_digest = "8cb9b4a02e8c00405483ec8a215fbd0dc88b9bb2197b1737362d87ba6c78fc15:26831395",
     oss_sha1 = "59b1fcca9ec544a86df64fb544fce3bfcee7eaa8",
     oss_url = "https://github.com/facebook/buck2/releases/download/androidToolchain%2F2025-04-03/api-stubber-main_jar.jar",
 )
@@ -87,6 +88,7 @@ buck_java_library(
     srcs = ["ApiStubber.java"],
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
+        "prelude//toolchains/android/third-party:infer-annotations",
         ":abi",
     ],
 )

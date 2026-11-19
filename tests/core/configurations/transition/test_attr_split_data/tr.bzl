@@ -12,16 +12,32 @@ def _impl(platform, refs):
     arm64 = refs.arm64
     arm32 = refs.arm32
     return {
-        "arm32": PlatformInfo(label = "arm32", configuration = ConfigurationInfo(constraints = {
-            cpu[ConstraintSettingInfo].label: arm32[ConstraintValueInfo],
-        }, values = {})),
-        "arm64": PlatformInfo(label = "arm64", configuration = ConfigurationInfo(constraints = {
-            cpu[ConstraintSettingInfo].label: arm64[ConstraintValueInfo],
-        }, values = {})),
+        "arm32": PlatformInfo(
+            label = "arm32",
+            configuration = ConfigurationInfo(
+                constraints = {
+                    cpu[ConstraintSettingInfo].label: arm32[ConstraintValueInfo],
+                },
+                values = {},
+            ),
+        ),
+        "arm64": PlatformInfo(
+            label = "arm64",
+            configuration = ConfigurationInfo(
+                constraints = {
+                    cpu[ConstraintSettingInfo].label: arm64[ConstraintValueInfo],
+                },
+                values = {},
+            ),
+        ),
     }
 
-cpu_split_transition = transition(impl = _impl, refs = {
-    "arm32": "root//:arm32",
-    "arm64": "root//:arm64",
-    "cpu": "root//:cpu",
-}, split = True)
+cpu_split_transition = transition(
+    impl = _impl,
+    refs = {
+        "arm32": "root//:arm32",
+        "arm64": "root//:arm64",
+        "cpu": "root//:cpu",
+    },
+    split = True,
+)

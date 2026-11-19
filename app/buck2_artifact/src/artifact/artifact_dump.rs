@@ -14,8 +14,8 @@ use std::fmt::Display;
 use std::path::PathBuf;
 
 use buck2_common::cas_digest::CasDigest;
-use buck2_common::cas_digest::TrackedCasDigest;
 use buck2_common::file_ops::metadata::FileDigestKind;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_fs::paths::RelativePathBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use serde::Serialize;
@@ -32,7 +32,7 @@ where
 #[derive(Serialize, Debug)]
 pub struct DirectoryInfo {
     #[serde(serialize_with = "stringify")]
-    pub digest: TrackedCasDigest<FileDigestKind>,
+    pub digest: TrackedFileDigest,
 }
 
 #[derive(Serialize, Debug)]
@@ -89,7 +89,7 @@ mod tests {
         let metadata = ArtifactMetadataJson {
             path,
             info: ArtifactInfo::Directory(DirectoryInfo {
-                digest: TrackedCasDigest::new(digest, CasDigestConfig::testing_default()),
+                digest: TrackedFileDigest::new(digest, CasDigestConfig::testing_default()),
             }),
         };
         let json = serde_json::to_string(&metadata).expect("failed to serialize");

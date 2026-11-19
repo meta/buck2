@@ -19,8 +19,8 @@ use crate::TargetCfg;
 
 #[derive(Serialize, Deserialize)]
 pub enum NewGenericRequest {
-    Materialize(MaterializeRequest),
     DebugEval(DebugEvalRequest),
+    DebugAnonTargets(AnonTargetsRequest),
     Explain(ExplainRequest),
     ExpandExternalCells(ExpandExternalCellsRequest),
     Complete(CompleteRequest),
@@ -29,22 +29,13 @@ pub enum NewGenericRequest {
 
 #[derive(Serialize, Deserialize)]
 pub enum NewGenericResponse {
-    Materialize(MaterializeResponse),
     DebugEval(DebugEvalResponse),
+    DebugAnonTargets(AnonTargetsResponse),
     Explain(ExplainResponse),
     ExpandExternalCells(ExpandExternalCellsResponse),
     Complete(CompleteResponse),
     Docs(DocsResponse),
 }
-
-#[derive(Serialize, Deserialize)]
-pub struct MaterializeRequest {
-    /// The paths we want to materialize.
-    pub paths: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct MaterializeResponse {}
 
 #[derive(Serialize, Deserialize)]
 pub struct DebugEvalRequest {
@@ -53,6 +44,24 @@ pub struct DebugEvalRequest {
 
 #[derive(Serialize, Deserialize)]
 pub struct DebugEvalResponse {}
+
+#[derive(Serialize, Deserialize)]
+pub struct AnonTargetsRequest {
+    pub patterns: Vec<String>,
+    pub target_cfg: TargetCfg,
+    /// Also report which analyses requested each anon target.
+    pub with_requesters: bool,
+    pub json: bool,
+    /// Regexes selecting the attributes to output (cquery `--output-attribute` semantics:
+    /// search mode, `buck.`-prefixed special attributes included). Non-empty implies JSON.
+    pub output_attributes: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AnonTargetsResponse {
+    /// The rendered output, printed by the client.
+    pub serialized: String,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct ExplainRequest {
@@ -118,7 +127,9 @@ pub enum DocsRequest {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct DocsResponse {
-    // Set when requested format is JSON.
-    pub json_output: Option<String>,
+pub enum DocsResponse {
+    /// The command wrote its documentation directly to files.
+    NoOutput,
+    /// JSON documentation to print on stdout.
+    Json(String),
 }

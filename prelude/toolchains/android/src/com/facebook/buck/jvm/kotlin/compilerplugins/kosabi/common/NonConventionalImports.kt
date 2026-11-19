@@ -11,14 +11,14 @@
 package com.facebook.kotlin.compilerplugins.kosabi.common
 
 object NonConventionalImports {
-  /** [interfaces] is exclude list from Constant Value Naming convention in kosabi. */
-  val interfaces: Set<List<String>> =
-      setOf(
-          listOf("javax", "microedition", "khronos", "egl", "EGL"),
-          listOf("javax", "microedition", "khronos", "egl", "EGL10"),
-          listOf("javax", "microedition", "khronos", "egl", "EGL11"),
-          listOf("javax", "microedition", "khronos", "opengles", "GL"),
-          listOf("javax", "microedition", "khronos", "opengles", "GL10"),
-          listOf("javax", "microedition", "khronos", "opengles", "GL11"),
-      )
+  /** Exact FQNs parsed as class-like declarations despite their non-conventional names. */
+  val classLikeDeclarations: Set<List<String>> = setOf(
+      listOf("javax", "microedition", "khronos", "egl", "EGL"),
+      listOf("javax", "microedition", "khronos", "egl", "EGL10"),
+      listOf("javax", "microedition", "khronos", "egl", "EGL11"),
+      listOf("javax", "microedition", "khronos", "opengles", "GL"),
+      listOf("javax", "microedition", "khronos", "opengles", "GL10"),
+      listOf("javax", "microedition", "khronos", "opengles", "GL11"),
+      listOf("com", "whatsapp", "infra", "smax", "common", "RPC"),
+  )
 }

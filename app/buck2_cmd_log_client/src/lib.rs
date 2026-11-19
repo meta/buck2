@@ -17,16 +17,22 @@ use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_common::argv::Argv;
 use buck2_common::argv::SanitizedArgv;
+use buck2_log_common::chrome_trace::ChromeTraceCommand;
 use dupe::Dupe;
 
 mod critical_path;
 mod diff;
 mod external_configs;
+mod graph;
 pub(crate) mod path_log;
 mod replay;
+mod shed;
 mod show_log;
 mod show_user_log;
+mod snoop;
 mod summary;
+#[cfg(fbcode_build)]
+mod trailcam;
 mod what_cmd;
 mod what_failed;
 mod what_materialized;
@@ -34,6 +40,9 @@ pub(crate) mod what_ran;
 mod what_up;
 mod what_uploaded;
 
+/// Output format options for log commands.
+///
+/// Determines how the command output is formatted and displayed.
 #[derive(
     Debug,
     serde::Serialize,
@@ -43,15 +52,45 @@ mod what_uploaded;
     clap::ValueEnum
 )]
 #[clap(rename_all = "snake_case")]
-pub(crate) enum LogCommandOutputFormat {
+pub(crate) enum LogCommandOutputFormatOptions {
+    /// Human-readable output (default).
+    Readable,
+    /// Tab-delimited output. Deprecated in favor of `readable`.
     Tabulated,
+    /// JSON format, one object per line.
     Json,
+    /// Comma-separated values (CSV) format.
     Csv,
 }
 
+/// Clap parser for output format command-line option.
+///
+/// This struct can be flattened into command structs to provide a consistent
+/// `--format` flag across all log commands.
+#[derive(Debug, Clone, clap::Parser)]
+pub(crate) struct LogCommandOutputFormat {
+    #[clap(
+        long,
+        help = "Which output format to use for this command",
+        default_value = "readable",
+        ignore_case = true,
+        value_enum
+    )]
+    format: LogCommandOutputFormatOptions,
+}
+
+/// Writer wrapper that combines the output format with a writer.
+///
+/// This enum pairs each output format option with its corresponding writer,
+/// allowing commands to write output in the selected format.
 pub(crate) enum LogCommandOutputFormatWithWriter<'a> {
+    /// Human-readable output writer.
+    Readable(&'a mut dyn std::io::Write),
+    /// Tab-delimited output writer.
     Tabulated(&'a mut dyn std::io::Write),
+    /// JSON output writer.
     Json(&'a mut dyn std::io::Write),
+    /// CSV output writer.
     Csv(Box<csv::Writer<&'a mut dyn std::io::Write>>),
 }
 
@@ -65,10 +104,11 @@ pub(crate) fn transform_format(
     format: LogCommandOutputFormat,
     w: &mut dyn std::io::Write,
 ) -> LogCommandOutputFormatWithWriter<'_> {
-    match format {
-        LogCommandOutputFormat::Tabulated => LogCommandOutputFormatWithWriter::Tabulated(w),
-        LogCommandOutputFormat::Json => LogCommandOutputFormatWithWriter::Json(w),
-        LogCommandOutputFormat::Csv => LogCommandOutputFormatWithWriter::Csv(Box::new(
+    match format.format {
+        LogCommandOutputFormatOptions::Readable => LogCommandOutputFormatWithWriter::Readable(w),
+        LogCommandOutputFormatOptions::Tabulated => LogCommandOutputFormatWithWriter::Tabulated(w),
+        LogCommandOutputFormatOptions::Json => LogCommandOutputFormatWithWriter::Json(w),
+        LogCommandOutputFormatOptions::Csv => LogCommandOutputFormatWithWriter::Csv(Box::new(
             csv::WriterBuilder::new().from_writer(w),
         )),
     }
@@ -91,15 +131,28 @@ pub enum LogCommand {
     WhatMaterialized(what_materialized::WhatMaterializedCommand),
     WhatUploaded(what_uploaded::WhatUploadedCommand),
     CriticalPath(critical_path::CriticalPathCommand),
+    #[clap(hide = true)]
+    Graph(graph::GraphCommand),
+    SlowestPath(critical_path::SlowestPathCommand),
     Replay(replay::ReplayCommand),
+    Snoop(snoop::SnoopCommand),
     ShowUser(show_user_log::ShowUserLogCommand),
     Summary(summary::SummaryCommand),
     #[clap(subcommand)]
     Diff(diff::DiffCommand),
     ExternalConfigs(external_configs::ExternalConfigsCommand),
+    ChromeTrace(ChromeTraceCommand),
+    #[clap(subcommand, hide = true)]
+    Shed(shed::ShedCommand),
+    #[cfg(fbcode_build)]
+    Trailcam(trailcam::TrailcamCommand),
 }
 
 impl LogCommand {
+    pub fn connects_to_daemon(&self) -> bool {
+        matches!(self, Self::Snoop(_))
+    }
+
     pub fn exec(
         self,
         matches: BuckArgMatches<'_>,
@@ -116,11 +169,18 @@ impl LogCommand {
             Self::WhatMaterialized(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::WhatUploaded(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::CriticalPath(cmd) => ctx.exec(cmd, matches, events_ctx),
+            Self::Graph(cmd) => ctx.exec(cmd, matches, events_ctx),
+            Self::SlowestPath(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::Replay(cmd) => ctx.exec(cmd, matches, events_ctx),
+            Self::Snoop(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::ShowUser(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::Summary(cmd) => ctx.exec(cmd, matches, events_ctx),
             Self::Diff(cmd) => cmd.exec(matches, ctx, events_ctx),
             Self::ExternalConfigs(cmd) => ctx.exec(cmd, matches, events_ctx),
+            Self::ChromeTrace(cmd) => ctx.exec(cmd, matches, events_ctx),
+            Self::Shed(cmd) => cmd.exec(matches, ctx, events_ctx),
+            #[cfg(fbcode_build)]
+            Self::Trailcam(cmd) => ctx.exec(cmd, matches, events_ctx),
         }
     }
 
@@ -139,11 +199,18 @@ impl LogCommand {
             Self::WhatMaterialized(cmd) => cmd.logging_name(),
             Self::WhatUploaded(cmd) => cmd.logging_name(),
             Self::CriticalPath(cmd) => cmd.logging_name(),
+            Self::Graph(cmd) => cmd.logging_name(),
+            Self::SlowestPath(cmd) => cmd.logging_name(),
             Self::Replay(cmd) => cmd.logging_name(),
+            Self::Snoop(cmd) => cmd.logging_name(),
             Self::ShowUser(cmd) => cmd.logging_name(),
             Self::Summary(cmd) => cmd.logging_name(),
             Self::Diff(_) => "log-diff",
             Self::ExternalConfigs(cmd) => cmd.logging_name(),
+            Self::ChromeTrace(cmd) => cmd.logging_name(),
+            Self::Shed(_) => "log-shed",
+            #[cfg(fbcode_build)]
+            Self::Trailcam(cmd) => cmd.logging_name(),
         }
     }
 }

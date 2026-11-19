@@ -1,0 +1,13 @@
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("build_infra")
+
+source_listing()
+
+python_test(
+    name = "test_make_modulemap",
+    srcs = ["test_make_modulemap.py"],
+    deps = [
+        "prelude//apple/tools:make_modulemap_lib",
+    ],
+)

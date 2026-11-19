@@ -18,22 +18,41 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
-use starlark::typing::Ty;
+use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
+use starlark::values::ValueOf;
+use starlark::values::list::ListType;
 use starlark::values::starlark_value;
-use starlark::values::starlark_value_as_type::StarlarkValueAsType;
+use starlark::values::string::StarlarkStr;
 
 /// Wrapper for `regex::Regex`.
-#[derive(ProvidesStaticType, Debug, NoSerialize, Allocative)]
+#[derive(
+    ProvidesStaticType,
+    Debug,
+    Freeze,
+    NoSerialize,
+    Allocative,
+    starlark::StarlarkPagable
+)]
 pub enum StarlarkBuckRegex {
     // TODO(nga): do not skip.
     //   And this is important because regex can have a lot of cache.
-    Regular(#[allocative(skip)] regex::Regex),
-    Fancy(#[allocative(skip)] fancy_regex::Regex),
+    Regular(
+        #[allocative(skip)]
+        #[freeze(identity)]
+        #[starlark_pagable(pagable)]
+        regex::Regex,
+    ),
+    Fancy(
+        #[allocative(skip)]
+        #[freeze(identity)]
+        #[starlark_pagable(pagable)]
+        fancy_regex::Regex,
+    ),
 }
 
 impl StarlarkBuckRegex {
@@ -51,6 +70,22 @@ impl StarlarkBuckRegex {
         }
     }
 
+    /// Matches the regex against each element of `strings`, combining results with OR
+    /// (`any = true`) or AND (`any = false`). Returns as soon as the result is decided,
+    /// without matching the remaining elements.
+    fn multi_match<'v>(
+        &self,
+        strings: ValueOf<'v, ListType<StarlarkStr>>,
+        any: bool,
+    ) -> starlark::Result<bool> {
+        for string in strings.iter() {
+            if self.is_match(string?.as_str())? == any {
+                return Ok(any);
+            }
+        }
+        Ok(!any)
+    }
+
     pub fn replace_all<'a>(&self, haystack: &'a str, rep: &str) -> Cow<'a, str> {
         match self {
             StarlarkBuckRegex::Regular(r) => r.replace_all(haystack, rep),
@@ -59,15 +94,12 @@ impl StarlarkBuckRegex {
     }
 }
 
+starlark::methods_static!(REGEX_METHODS = regex_methods);
+
 #[starlark_value(type = "BuckRegex")] // "regex" is used for "experimental_regex" in starlark-rust.
 impl<'v> StarlarkValue<'v> for StarlarkBuckRegex {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(regex_methods)
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(Ty::starlark_value::<Self>())
+        Some(REGEX_METHODS.methods())
     }
 }
 
@@ -89,6 +121,32 @@ fn regex_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] str: &str,
     ) -> starlark::Result<bool> {
         Ok(this.is_match(str)?)
+    }
+
+    /// Determine if the regex matches a substring of any of the given strings.
+    /// Returns `False` for an empty list. Returns as soon as a match is found,
+    /// without matching the remaining elements.
+    ///
+    /// Behaves like calling `match` on each element, but is significantly faster on large
+    /// lists because it crosses from Starlark into native code only once.
+    fn any_match<'v>(
+        this: &StarlarkBuckRegex,
+        #[starlark(require = pos)] strings: ValueOf<'v, ListType<StarlarkStr>>,
+    ) -> starlark::Result<bool> {
+        this.multi_match(strings, true)
+    }
+
+    /// Determine if the regex matches a substring of every one of the given strings.
+    /// Returns `True` for an empty list. Returns as soon as a non-matching element is
+    /// found, without matching the remaining elements.
+    ///
+    /// Behaves like calling `match` on each element, but is significantly faster on large
+    /// lists because it crosses from Starlark into native code only once.
+    fn all_match<'v>(
+        this: &StarlarkBuckRegex,
+        #[starlark(require = pos)] strings: ValueOf<'v, ListType<StarlarkStr>>,
+    ) -> starlark::Result<bool> {
+        this.multi_match(strings, false)
     }
 
     /// Replace all matches of the regex in the given string with the replacement string.
@@ -114,6 +172,7 @@ fn regex_methods(builder: &mut MethodsBuilder) {
 }
 
 #[starlark_module]
+#[starlark_types(StarlarkBuckRegex as BuckRegex)]
 pub fn register_buck_regex(builder: &mut GlobalsBuilder) {
     /// Compile a regular expression from a string.
     ///
@@ -134,18 +193,18 @@ pub fn register_buck_regex(builder: &mut GlobalsBuilder) {
     fn regex<'v>(
         #[starlark(require = pos)] regex: &str,
         #[starlark(require = named, default = false)] fancy: bool,
-    ) -> starlark::Result<StarlarkBuckRegex> {
-        match fancy {
-            false => Ok(StarlarkBuckRegex::Regular(
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkBuckRegex>> {
+        let regex = match fancy {
+            false => StarlarkBuckRegex::Regular(
                 regex::Regex::new(regex).map_err(buck2_error::Error::from)?,
-            )),
-            true => Ok(StarlarkBuckRegex::Fancy(
+            ),
+            true => StarlarkBuckRegex::Fancy(
                 fancy_regex::Regex::new(regex).map_err(buck2_error::Error::from)?,
-            )),
-        }
+            ),
+        };
+        Ok(ValueOf::alloc(heap, regex))
     }
-
-    const BuckRegex: StarlarkValueAsType<StarlarkBuckRegex> = StarlarkValueAsType::new();
 }
 
 #[cfg(test)]
@@ -161,6 +220,39 @@ mod tests {
 
         a.is_true("regex('abc|def|ghi').match('abc')");
         a.is_true("regex('x').match('aaaxbbb')");
+    }
+
+    #[test]
+    fn test_any_match() {
+        let mut a = Assert::new();
+        a.globals_add(register_buck_regex);
+
+        a.is_true("regex('abc|def|ghi').any_match(['none', 'def'])");
+        a.is_false("regex('abc|def|ghi').any_match(['none', 'other'])");
+        a.is_false("regex('x').any_match([])");
+        a.fail("regex('x').any_match('x')", "expected `list[str]`");
+        a.fail("regex('x').any_match([1])", "expected `list[str]`");
+        // The list is checked as a whole before any matching, so a non-string anywhere is an
+        // error even when an earlier element decides the result.
+        a.fail("regex('x').any_match(['x', 1])", "expected `list[str]`");
+    }
+
+    #[test]
+    fn test_all_match() {
+        let mut a = Assert::new();
+        a.globals_add(register_buck_regex);
+
+        a.is_true("regex('abc|def|ghi').all_match(['xdefy', 'abc'])");
+        a.is_false("regex('abc|def|ghi').all_match(['def', 'other'])");
+        a.is_true("regex('x').all_match([])");
+        a.fail("regex('x').all_match('x')", "expected `list[str]`");
+        a.fail("regex('x').all_match([1])", "expected `list[str]`");
+        // The list is checked as a whole before any matching, so a non-string anywhere is an
+        // error even when an earlier element decides the result.
+        a.fail(
+            "regex('x').all_match(['nomatch', 1])",
+            "expected `list[str]`",
+        );
     }
 
     #[test]
@@ -183,6 +275,8 @@ str(regex("foo")) == 'regex("foo")'
         a.pass(r"regex('(?=x)', fancy=True)");
 
         a.is_true(r"regex('^(?=x)x$', fancy=True).match('x')");
+        a.is_true(r"regex('(?=x)', fancy=True).any_match(['y', 'x'])");
+        a.is_false(r"regex('(?=x)', fancy=True).all_match(['y', 'x'])");
     }
 
     #[test]

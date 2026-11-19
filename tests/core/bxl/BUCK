@@ -2,4 +2,16 @@ load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_core_tests")
 
 oncall("build_infra")
 
-buck2_core_tests()
+buck2_core_tests(
+    target_extra_attrs = {
+        "test_cli": {
+            "deps": ["fbsource//third-party/rust:regex"],
+        },
+        "test_dynamic": {
+            "deps": ["fbsource//third-party/rust:indexmap"],
+        },
+        "test_lazy_dynamic_value": {
+            "deps": ["fbsource//third-party/rust:indexmap"],
+        },
+    },
+)

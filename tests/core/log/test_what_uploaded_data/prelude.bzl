@@ -6,10 +6,12 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+_TEST_CONTENT = read_config("test", "content", "")
+
 def _upload_action(ctx):
-    val = read_config("test", "content", "")
-    tmp = ctx.actions.write("tmp.txt", val)
-    out = ctx.actions.declare_output("out")
+    val = _TEST_CONTENT
+    tmp = ctx.actions.write("tmp.txt", val, has_content_based_path = False)
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(["sh", "-c", 'echo > "$1"', "--", out.as_output()], hidden = [tmp]),
         category = "run",

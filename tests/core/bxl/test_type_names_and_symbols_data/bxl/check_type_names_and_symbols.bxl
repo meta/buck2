@@ -22,3 +22,56 @@ cquery_ctx = bxl_main(
     impl = _check_cquery_context,
     cli_args = {},
 )
+
+def _all_nodes(targets: bxl.ConfiguredTargetSet) -> list[bxl.ConfiguredTargetNode]:
+    return [t for t in targets + targets]
+
+def _check_target_set(_ctx: bxl.Context):
+    configured = bxl.ctarget_set()
+    _assert_eq(type(configured), "target_set")
+    _assert_eq(str(bxl.ConfiguredTargetSet), "bxl.TargetSet[bxl.ConfiguredTargetNode]")
+    _assert_eq(str(bxl.UnconfiguredTargetSet), "bxl.TargetSet[bxl.UnconfiguredTargetNode]")
+    _assert_eq(isinstance(configured, bxl.ConfiguredTargetSet), True)
+    _assert_eq(isinstance(bxl.utarget_set(), bxl.ConfiguredTargetSet), False)
+    _assert_eq(_all_nodes(configured), [])
+
+target_set = bxl_main(
+    impl = _check_target_set,
+    cli_args = {},
+)
+
+# The prebuilt starlark linter rejects a dotted subscript directly in an annotation until it is
+# rebuilt with starlark-rust's support for it, so annotate through an alias.
+ConfiguredTargets = bxl.TargetSet[bxl.ConfiguredTargetNode]
+
+def _configured_nodes(targets: ConfiguredTargets) -> list[bxl.ConfiguredTargetNode]:
+    return [t for t in targets]
+
+# A bare `bxl.TargetSet` may be any kind, so combining two of them is allowed statically.
+def _union_of_any_kind(a: bxl.TargetSet, b: bxl.TargetSet) -> bxl.TargetSet:
+    return a + b
+
+def _check_target_set_syntax(_ctx: bxl.Context):
+    configured = bxl.ctarget_set()
+    _assert_eq(str(bxl.TargetSet[bxl.ConfiguredTargetNode]), "bxl.TargetSet[bxl.ConfiguredTargetNode]")
+    _assert_eq(isinstance(configured, bxl.TargetSet[bxl.ConfiguredTargetNode]), True)
+    _assert_eq(isinstance(configured, bxl.TargetSet[bxl.UnconfiguredTargetNode]), False)
+    _assert_eq(isinstance(bxl.atarget_set(), bxl.TargetSet[bxl.ActionQueryNode]), True)
+    for targets in [configured, bxl.utarget_set(), bxl.atarget_set()]:
+        _assert_eq(isinstance(targets, bxl.TargetSet), True)
+    _assert_eq(isinstance([], bxl.TargetSet), False)
+    _assert_eq(_configured_nodes(configured), [])
+    _assert_eq(len(_union_of_any_kind(configured, configured)), 0)
+
+target_set_syntax = bxl_main(
+    impl = _check_target_set_syntax,
+    cli_args = {},
+)
+
+def _target_set_of_int(ctx: bxl.Context):
+    ctx.output.print(bxl.TargetSet[int])
+
+target_set_unsupported_node_type = bxl_main(
+    impl = _target_set_of_int,
+    cli_args = {},
+)

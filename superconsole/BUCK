@@ -8,26 +8,82 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    # What the crate uses, not what fbsource enables.
+                    "bytes": {"features": []},
+                    "crossterm": {"features": ["serde"]},
+                    "futures": {"features": []},
+                    "tokio": {"features": ["io-util", "rt", "sync"]},
+                    "tokio-stream": {"features": []},
+                    "tokio-util": {"features": ["io"]},
+                    "tracing": {"features": []},
+                },
+                "dev-dependencies": {
+                    "tokio": {"features": ["macros", "rt-multi-thread", "time"]},
+                },
+                "target": {
+                    "'cfg(target_os = \"linux\")'": {"dependencies": {"nix": {"features": ["fs"]}}},
+                    "'cfg(target_os = \"macos\")'": {"dependencies": {"nix": {"features": ["fs"]}}},
+                },
+            },
+            "extra_buck_dependencies": {
+                # For the examples, which cargo discovers on its own.
+                "dev-dependencies": ["fbsource//third-party/rust:tokio"],
+            },
+            "package": {
+                "authors": ["Meta"],
+                "categories": ["command-line-interface"],
+                "description": "A simple but powerful Text-based User Interface (TUI) framework",
+                "documentation": "https://docs.rs/superconsole",
+                "keywords": ["TUI"],
+                "license": "MIT OR Apache-2.0",
+                "repository": "https://github.com/facebookincubator/superconsole",
+                "version": "0.3.0",
+            },
+        },
+    },
     crate_root = "src/lib.rs",
     test_deps = [
         "fbsource//third-party/rust:anyhow",
         "fbsource//third-party/rust:derive_more",
     ],
     deps = [
+        "fbsource//third-party/rust:anstyle-parse",
+        "fbsource//third-party/rust:bytes",
         "fbsource//third-party/rust:crossbeam-channel",
         "fbsource//third-party/rust:crossterm",
+        "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:itertools",
-        "fbsource//third-party/rust:termwiz",
+        "fbsource//third-party/rust:pin-project",
+        "fbsource//third-party/rust:take_mut",
         "fbsource//third-party/rust:thiserror",
+        "fbsource//third-party/rust:tokio",
+        "fbsource//third-party/rust:tokio-stream",
+        "fbsource//third-party/rust:tokio-util",
+        "fbsource//third-party/rust:tracing",
         "fbsource//third-party/rust:unicode-segmentation",
-    ],
+        "fbsource//third-party/rust:unicode-width",
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:nix",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:nix",
+        ],
+    }),
 )
 
 rust_binary(
     name = "cargo",
-    srcs = ["examples/cargo.rs"] + glob([
+    srcs = ["examples/cargo.rs"]
+    + glob([
         "examples/cargo/**",
     ]),
+    autocargo = {"ignore_rule": True},
     crate_root = "examples/cargo.rs",
     deps = [
         ":superconsole",
@@ -37,6 +93,7 @@ rust_binary(
 rust_binary(
     name = "finalization",
     srcs = ["examples/finalization.rs"],
+    autocargo = {"ignore_rule": True},
     deps = [
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:tokio",
@@ -47,6 +104,7 @@ rust_binary(
 rust_binary(
     name = "hello_world",
     srcs = ["examples/hello_world.rs"],
+    autocargo = {"ignore_rule": True},
     deps = [
         "fbsource//third-party/rust:tokio",
         ":superconsole",
@@ -56,6 +114,7 @@ rust_binary(
 rust_binary(
     name = "readme",
     srcs = ["examples/readme.rs"],
+    autocargo = {"ignore_rule": True},
     deps = [
         "fbsource//third-party/rust:anyhow",
         ":superconsole",
@@ -65,6 +124,7 @@ rust_binary(
 rust_binary(
     name = "stylized",
     srcs = ["examples/stylized.rs"],
+    autocargo = {"ignore_rule": True},
     deps = [
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:tokio",

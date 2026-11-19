@@ -1,0 +1,20 @@
+load("@prelude//toolchains/android/tools:protobuf.bzl", "protobuf_src_gen")
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("product_os_devx")
+
+source_listing()
+
+protobuf_src_gen(
+    name = "apex_manifest",
+    srcs = [
+        "apex_manifest.proto",
+    ],
+    proto_path = [],
+    deps = [
+        "prelude//toolchains/android/third-party:jakarta.annotation-api",
+    ],
+    exported_deps = [
+        "prelude//toolchains/android/third-party:protobuf",
+    ],
+)

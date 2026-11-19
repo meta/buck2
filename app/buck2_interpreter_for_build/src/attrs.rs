@@ -24,6 +24,7 @@ use crate::attrs::coerce::error::CoercionError;
 pub(crate) mod attrs_global;
 pub mod coerce;
 pub(crate) mod starlark_attribute;
+pub(crate) mod visibility_record;
 pub use starlark_attribute::StarlarkAttribute;
 
 #[derive(Debug, buck2_error::Error)]
@@ -38,7 +39,7 @@ pub trait AttributeCoerceExt {
         &self,
         param_name: &str,
         configurable: AttrIsConfigurable,
-        coercer_ctx: &dyn AttrCoercionContext,
+        coercer_ctx: &dyn AttrCoercionContext<'v>,
         value: Value<'v>,
     ) -> buck2_error::Result<CoercedValue>;
 
@@ -54,7 +55,7 @@ impl AttributeCoerceExt for Attribute {
         &self,
         param_name: &str,
         configurable: AttrIsConfigurable,
-        coercer_ctx: &dyn AttrCoercionContext,
+        coercer_ctx: &dyn AttrCoercionContext<'v>,
         value: Value<'v>,
     ) -> buck2_error::Result<CoercedValue> {
         if self.is_default_only() {
@@ -65,10 +66,10 @@ impl AttributeCoerceExt for Attribute {
             }
         }
 
-        match self.default() {
+        match self.default_as_ref() {
             default if !value.is_none() => self
                 .coercer()
-                .coerce_with_default(configurable, coercer_ctx, value, default.map(|x| &**x))
+                .coerce_with_default(configurable, coercer_ctx, value, default)
                 .map(CoercedValue::Custom)
                 .with_buck_error_context(|| {
                     format!("Error coercing attribute `{param_name}` of type `{self}`")

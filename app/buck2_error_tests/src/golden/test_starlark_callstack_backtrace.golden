@@ -1,6 +1,11 @@
 # @generated
 # To regenerate, append -- --env BUCK2_RUST_REGENERATE_GOLDEN_TESTS=1 and re-run the test
 
+error: rust failure
+ --> imported.bzl:9:6
+  |
+9 |      rust_failure()
+  |      ^^^^^^^^^^^^^^
 Traceback (most recent call last):
   * assert.bzl:3, in <module>
       outer_fail()
@@ -12,12 +17,6 @@ Traceback (most recent call last):
   * imported.bzl:9, in should_fail
       rust_failure()
 
-error: rust failure
- --> imported.bzl:9:6
-  |
-9 |      rust_failure()
-  |      ^^^^^^^^^^^^^^
-  |
 
 Caused by:
     0: fail 2

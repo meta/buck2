@@ -21,15 +21,16 @@ use itertools::Itertools;
 use serde::Serialize;
 use starlark::starlark_simple_value;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
-use starlark_map::small_map::SmallMap;
 use starlark_syntax::golden_test_template::golden_test_template;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::assert;
 use crate::docs::DocItem;
+use crate::docs::DocMember;
 use crate::docs::DocType;
 use crate::docs::markdown::render_doc_item_no_link;
 use crate::docs::multipage::DocModuleInfo;
@@ -38,13 +39,16 @@ use crate::environment::Globals;
 use crate::environment::GlobalsBuilder;
 use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
-use crate::environment::MethodsStatic;
+use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::list::UnpackList;
+use crate::values::ValueOf;
+use crate::values::dict::DictType;
+use crate::values::list::ListType;
 use crate::values::none::NoneType;
-use crate::values::starlark_value_as_type::StarlarkValueAsType;
-use crate::values::tuple::UnpackTuple;
+use crate::values::string::StarlarkStr;
+use crate::values::tuple::TupleType;
+use crate::values::types::int::view::IntView;
 
 fn docs_golden_test(test_file_name: &str, doc: DocItem) -> String {
     assert!(test_file_name.ends_with(".golden.md"));
@@ -107,7 +111,8 @@ def _do_not_export():
     derive_more::Display,
     ProvidesStaticType,
     Allocative,
-    NoSerialize
+    NoSerialize,
+    StarlarkPagable
 )]
 #[display("magic")]
 struct Magic;
@@ -119,10 +124,9 @@ impl<'v> StarlarkValue<'v> for Magic {}
 
 /// These are where the module docs go
 #[starlark_module]
+#[starlark_types(Obj as Obj)]
 fn module(builder: &mut GlobalsBuilder) {
     const MAGIC: i32 = 42;
-
-    const Obj: StarlarkValueAsType<Obj> = StarlarkValueAsType::new();
 
     /// Docs for func1
     ///
@@ -131,7 +135,7 @@ fn module(builder: &mut GlobalsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1(foo: String) -> anyhow::Result<String> {
+    fn func1(foo: &str) -> anyhow::Result<String> {
         let _ignore = foo;
         Ok("func1".to_owned())
     }
@@ -166,21 +170,26 @@ fn module(builder: &mut GlobalsBuilder) {
     }
 
     fn with_defaults<'v>(
-        #[starlark(default=UnpackList::default())] explicit_default: UnpackList<String>,
-        hidden_default: Option<UnpackList<String>>,
+        #[starlark(default = ValueOf::empty_list())] explicit_default: ValueOf<
+            'v,
+            ListType<StarlarkStr>,
+        >,
+        hidden_default: Option<ValueOf<'v, ListType<StarlarkStr>>>,
         #[starlark(default = "my_default")] string_default: &str,
     ) -> anyhow::Result<NoneType> {
         let _unused = (explicit_default, hidden_default, string_default);
         Ok(NoneType)
     }
 
-    fn pos_either_named(
+    fn pos_either_named<'v>(
         #[starlark(require = pos)] a: i32,
         b: i32,
         #[starlark(require = named)] c: i32,
-    ) -> anyhow::Result<Magic> {
-        let _unused = (a, b, c);
-        Ok(Magic)
+        #[starlark(require = named, default = 0, doc_hidden)] undocumented: i32,
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, Magic>> {
+        let _unused = (a, b, c, undocumented);
+        Ok(ValueOf::alloc(heap, Magic))
     }
 }
 
@@ -190,20 +199,22 @@ fn submodule(builder: &mut GlobalsBuilder) {
         Ok(a)
     }
 
-    fn starlark_args(#[starlark(args)] args: UnpackTuple<String>) -> anyhow::Result<NoneType> {
+    fn starlark_args<'v>(
+        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkStr>>,
+    ) -> anyhow::Result<NoneType> {
         let _ignore = args;
         Ok(NoneType)
     }
 
-    fn starlark_kwargs(
-        #[starlark(kwargs)] kwargs: SmallMap<String, u32>,
+    fn starlark_kwargs<'v>(
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<StarlarkStr, IntView<'v>>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = kwargs;
         Ok(NoneType)
     }
 
-    fn new_obj() -> anyhow::Result<Obj> {
-        Ok(Obj)
+    fn new_obj<'v>(heap: Heap<'v>) -> anyhow::Result<ValueOf<'v, Obj>> {
+        Ok(ValueOf::alloc(heap, Obj))
     }
 }
 
@@ -214,17 +225,25 @@ fn get_globals() -> Globals {
         .build()
 }
 
-#[derive(ProvidesStaticType, Debug, Display, Allocative, Serialize)]
+#[derive(
+    ProvidesStaticType,
+    Debug,
+    Display,
+    Allocative,
+    Serialize,
+    StarlarkPagable
+)]
 #[display("obj")]
 struct Obj;
 
 starlark_simple_value!(Obj);
 
+starlark::methods_static!(OBJ_METHODS = object);
+
 #[starlark_value(type = "obj")]
 impl<'v> StarlarkValue<'v> for Obj {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(object)
+        Some(OBJ_METHODS.methods())
     }
 }
 
@@ -249,7 +268,7 @@ fn object(builder: &mut MethodsBuilder) {
     ///
     /// # Returns
     /// The string 'func1'
-    fn func1<'v>(this: Value<'v>, foo: String) -> anyhow::Result<String> {
+    fn func1<'v>(this: Value<'v>, foo: &str) -> anyhow::Result<String> {
         let _ignore = (this, foo);
         Ok("func1".to_owned())
     }
@@ -283,6 +302,19 @@ fn native_docs_module() {
     );
     assert!(!res.contains("starlark::assert::all_true"));
     assert!(res.contains(r#"string_default: str = "my_default"#));
+}
+
+#[test]
+fn doc_hidden_param_is_accepted_but_undocumented() {
+    let mut a = assert::Assert::new();
+    a.globals(get_globals());
+    a.pass("pos_either_named(1, 2, c = 3, undocumented = 4)");
+
+    let docs = get_globals().documentation();
+    let Some(DocItem::Member(DocMember::Function(f))) = docs.members.get("pos_either_named") else {
+        panic!("`pos_either_named` should be documented as a function");
+    };
+    assert!(f.params.doc_params().all(|p| p.name != "undocumented"));
 }
 
 fn test_globals_docs_render(with_linked_type: bool, render_signature_at_bottom: bool) {

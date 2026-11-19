@@ -28,7 +28,9 @@
                 "stderr_content": "<STRING_HASH>",
                 "stdout_content": "<STRING_HASH>"
               },
+              "category_key": "ACTION_COMMAND_FAILURE",
               "cause_index": 0,
+              "error_category": "USER",
               "error_tags": [
                 "ACTION_COMMAND_FAILURE",
                 "ANY_ACTION_EXECUTION"

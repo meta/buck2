@@ -33,6 +33,7 @@ use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_error::BuckErrorContext;
+use pagable::Pagable;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -51,7 +52,7 @@ enum DetectorSpecParseError {
     UnsupportedKind(String),
 }
 
-#[derive(Debug, Eq, PartialEq, Allocative)]
+#[derive(Debug, Eq, PartialEq, Allocative, Pagable)]
 pub struct TargetPlatformDetector {
     detectors: Vec<(CellPath, TargetLabel)>,
 }
@@ -133,10 +134,9 @@ impl TargetPlatformDetector {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use buck2_core::cells::alias::NonEmptyCellAlias;
     use buck2_core::cells::cell_root_path::CellRootPathBuf;
+    use buck2_hash::IntentionallyStdHashMap;
 
     use super::*;
 
@@ -153,7 +153,7 @@ mod tests {
                     CellRootPathBuf::testing_new("cell1"),
                 ),
             ],
-            HashMap::from_iter([(
+            IntentionallyStdHashMap::from([(
                 NonEmptyCellAlias::testing_new("alias1"),
                 CellName::testing_new("cell1"),
             )]),
@@ -165,7 +165,7 @@ mod tests {
                 spec,
                 CellName::testing_new("root"),
                 &cell_resolver,
-                &cell_alias_resolver,
+                cell_alias_resolver,
             )
             .is_ok()
             {
@@ -178,7 +178,7 @@ mod tests {
                 spec,
                 CellName::testing_new("root"),
                 &cell_resolver,
-                &cell_alias_resolver,
+                cell_alias_resolver,
             )
             .unwrap_or_else(|_| panic!("Expected parsing `{spec}` to succeed."))
         };
@@ -217,7 +217,7 @@ mod tests {
                     CellRootPathBuf::testing_new("cell1"),
                 ),
             ],
-            HashMap::from_iter([(
+            IntentionallyStdHashMap::from([(
                 NonEmptyCellAlias::testing_new("alias1"),
                 CellName::testing_new("cell1"),
             )]),
@@ -228,7 +228,7 @@ mod tests {
             "target://lib/...->//:p1 target://lib2/foo/...->//:p2 target:alias1//map/...->alias1//:alias",
             CellName::testing_new("root"),
             &cell_resolver,
-            &cell_alias_resolver,
+            cell_alias_resolver,
         )?;
 
         let p1 = TargetLabel::testing_parse("root//:p1");

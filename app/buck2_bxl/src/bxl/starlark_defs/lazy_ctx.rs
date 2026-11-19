@@ -9,6 +9,9 @@
  */
 
 use allocative::Allocative;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
+use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_dynamic_actions::dynamic_value::StarlarkDynamicValue;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;
@@ -17,19 +20,17 @@ use operation::StarlarkLazy;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::starlark_module;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::UnpackList;
+use starlark::values::list::ListType;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
-use crate::bxl::starlark_defs::artifacts::ArtifactArg;
 use crate::bxl::starlark_defs::artifacts::LazyBuildArtifact;
 use crate::bxl::starlark_defs::context::BxlContext;
 use crate::bxl::starlark_defs::lazy_ctx::lazy_uquery_ctx::StarlarkLazyUqueryCtx;
@@ -51,6 +52,19 @@ enum BxlBuildArtifactError {
         "`ctx.lazy.build_artifact()` does not accept declared artifact {0}. Use `ctx.output.ensure()` instead."
     )]
     NotSupportDeclaredArtifact(String),
+    #[error("`ctx.lazy.build_artifact()` does not accept promise artifact {0}")]
+    NotSupportPromiseArtifact(String),
+}
+
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum BxlResolveDynamicValueError {
+    #[error(
+        "`ctx.lazy.resolve_dynamic_value()` does not accept dynamic value `{0}` \
+         owned by a BXL invocation. Pass a value owned by a regular target or an \
+         anonymous target instead. Anonymous targets created within BXL are also allowed."
+    )]
+    NotSupportBxlDynamicValue(String),
 }
 
 #[derive(
@@ -69,23 +83,18 @@ pub(crate) struct StarlarkLazyCtx<'v> {
     ctx: ValueTyped<'v, BxlContext<'v>>,
 }
 
-impl<'v> AllocValue<'v> for StarlarkLazyCtx<'v> {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
-    }
-}
-
 impl<'v> StarlarkLazyCtx<'v> {
     pub(crate) fn new(ctx: ValueTyped<'v, BxlContext<'v>>) -> Self {
         Self { ctx }
     }
 }
 
-#[starlark_value(type = "bxl.LazyContext", StarlarkTypeRepr, UnpackValue)]
+starlark::methods_static!(LAZY_CTX_METHODS = lazy_ctx_methods);
+
+#[starlark_value(type = "bxl.LazyContext", no_freeze)]
 impl<'v> StarlarkValue<'v> for StarlarkLazyCtx<'v> {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(lazy_ctx_methods)
+        Some(LAZY_CTX_METHODS.methods())
     }
 }
 
@@ -107,10 +116,14 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn join<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx,
-        #[starlark(require = pos)] lazy0: &'v StarlarkLazy,
-        #[starlark(require = pos)] lazy1: &'v StarlarkLazy,
-    ) -> starlark::Result<StarlarkLazy> {
-        Ok(StarlarkLazy::new_join(lazy0.dupe(), lazy1.dupe()))
+        #[starlark(require = pos)] lazy0: ValueOf<'v, StarlarkLazy>,
+        #[starlark(require = pos)] lazy1: ValueOf<'v, StarlarkLazy>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_join(lazy0.as_ref().dupe(), lazy1.as_ref().dupe()),
+        ))
     }
 
     /// Join a list of lazy operations into a single operation that can be evaluated.
@@ -127,10 +140,52 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn join_all<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx,
-        #[starlark(require = pos)] operations: UnpackList<&StarlarkLazy>,
-    ) -> starlark::Result<StarlarkLazy> {
-        Ok(StarlarkLazy::new_batch(
-            operations.into_iter().map(|o| o.dupe()),
+        #[starlark(require = pos)] operations: ValueOf<'v, ListType<StarlarkLazy>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
+        let operations = operations
+            .iter()
+            .map(|o| starlark::Result::Ok(o?.as_ref().dupe()))
+            .collect::<starlark::Result<Vec<_>>>()?;
+        Ok(ValueOf::alloc(heap, StarlarkLazy::new_batch(operations)))
+    }
+
+    /// Resolve a `DynamicValue` to a [`ResolvedDynamicValue`](../../build/ResolvedDynamicValue) lazily.
+    ///
+    /// Resolving evaluates the dynamic action that produces the value, which includes building
+    /// the artifacts it reads and resolving the dynamic values it depends on. Use `.catch()` to get
+    /// a failure of any of these as a [`bxl.Result`](../Result) error instead of failing the script.
+    ///
+    /// Only dynamic values owned by a regular or anonymous target are accepted, including anonymous
+    /// targets created within BXL. Dynamic values owned by the BXL invocation itself, i.e. created
+    /// directly by BXL actions, are rejected.
+    ///
+    /// Example:
+    /// ```python
+    /// def _impl(ctx):
+    ///     target = ctx.configured_targets("cell//path/to:target")
+    ///     value = ctx.analysis(target).providers()[MyInfo].dynamic_value
+    ///     result = ctx.lazy.resolve_dynamic_value(value).catch().resolve()
+    ///     if result.is_ok():
+    ///         metadata = result.unwrap().providers[MetadataInfo]
+    ///     else:
+    ///         err = result.unwrap_err()
+    /// ```
+    fn resolve_dynamic_value<'v>(
+        #[starlark(this)] _this: &'v StarlarkLazyCtx<'v>,
+        #[starlark(require = pos)] value: ValueOf<'v, StarlarkDynamicValue>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
+        let value = &value.dynamic_value;
+        if let BaseDeferredKey::BxlLabel(_) = value.dynamic_lambda_results_key.owner() {
+            return Err(buck2_error::Error::from(
+                BxlResolveDynamicValueError::NotSupportBxlDynamicValue(value.to_string()),
+            )
+            .into());
+        }
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_dynamic_value(value.dupe()),
         ))
     }
 
@@ -153,9 +208,13 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     fn analysis<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx,
         #[starlark(require = pos)] label: ConfiguredProvidersLabelArg<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let configured_providers_label = label.configured_providers_label();
-        Ok(StarlarkLazy::new_analysis(configured_providers_label))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_analysis(configured_providers_label),
+        ))
     }
 
     /// Gets the configured target node for the `expr`.
@@ -193,15 +252,23 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] expr: ConfiguredTargetNodeArg<'v>,
         #[starlark(require = named, default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-        #[starlark(require = named, default = UnpackList::default())] modifiers: UnpackList<String>,
-    ) -> starlark::Result<StarlarkLazy> {
+        #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
+            'v,
+            ListType<StarlarkStr>,
+        >,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
+        let modifiers = modifiers
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
         let global_cfg_options = this
             .ctx
-            .resolve_global_cfg_options(target_platform, modifiers.items);
+            .resolve_global_cfg_options(target_platform, modifiers);
         let owned = OwnedConfiguredTargetNodeArg::from_ref(expr);
-        Ok(StarlarkLazy::new_configured_target_node(
-            owned,
-            Ok(global_cfg_options?),
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_configured_target_node(owned, Ok(global_cfg_options?)),
         ))
     }
 
@@ -216,9 +283,13 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     fn unconfigured_target_node<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx,
         #[starlark(require = pos)] expr: TargetNodeOrTargetLabelOrStr<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let expr = OwnedTargetNodeArg::from_ref(&expr);
-        Ok(StarlarkLazy::new_unconfigured_target_node(expr))
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_unconfigured_target_node(expr),
+        ))
     }
 
     /// Gets the unconfigured target nodes for the given target pattern with keep-going behavior.
@@ -256,17 +327,31 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     fn unconfigured_target_nodes_keep_going<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx,
         #[starlark(require = pos)] pattern: &str,
-    ) -> starlark::Result<StarlarkLazy> {
-        Ok(StarlarkLazy::new_unconfigured_target_node_keep_going(
-            pattern.to_owned(),
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazy::new_unconfigured_target_node_keep_going(pattern.to_owned()),
         ))
     }
 
     /// Gets the lazy uquery context.
+    ///
+    /// `allow_partial_graph` behaves as `buck2 uquery --allow-partial-graph`.
+    ///
+    /// Current limitation: package load errors while expanding recursive patterns
+    /// passed directly to query methods still fail the query. For example,
+    /// `deps("//foo/...")` still fails if a package in that pattern cannot load.
+    /// Use `eval("deps(//foo/...)")` to tolerate those errors.
     fn uquery<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx,
-    ) -> starlark::Result<StarlarkLazyUqueryCtx> {
-        Ok(StarlarkLazyUqueryCtx::new())
+        #[starlark(require = named, default = false)] allow_partial_graph: bool,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazyUqueryCtx>> {
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazyUqueryCtx::new(allow_partial_graph),
+        ))
     }
 
     /// Gets the lazy cquery context.
@@ -274,12 +359,23 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
         this: &'v StarlarkLazyCtx,
         #[starlark(require = named, default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
-        #[starlark(require = named, default = UnpackList::default())] modifiers: UnpackList<String>,
-    ) -> starlark::Result<StarlarkLazyCqueryCtx> {
+        #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
+            'v,
+            ListType<StarlarkStr>,
+        >,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazyCqueryCtx>> {
+        let modifiers = modifiers
+            .try_items::<&str>()
+            .map(|s| s.map(str::to_owned))
+            .collect::<starlark::Result<Vec<_>>>()?;
         let global_cfg_options = this
             .ctx
-            .resolve_global_cfg_options(target_platform, modifiers.items)?;
-        Ok(StarlarkLazyCqueryCtx::new(global_cfg_options))
+            .resolve_global_cfg_options(target_platform, modifiers)?;
+        Ok(ValueOf::alloc(
+            heap,
+            StarlarkLazyCqueryCtx::new(global_cfg_options),
+        ))
     }
 
     /// Build the given artifact, but it will not materialize the artifact. If the artifact need to be materialized,
@@ -288,20 +384,25 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     /// **Attention**: This api does not accept declared artifact. If you want to materialize a declared artifact, use `ctx.output.ensure`.
     fn build_artifact<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx<'v>,
-        // Use `ArtifactArg` instead of `StarlarkArtifact` to avoid the confused type mismatch error "Type of parameter 'artifact' doesn't match, expected 'artifact', actual 'artifact'" when given declared artifacts.
-        #[starlark(require = pos)] artifact: ArtifactArg<'v>,
-    ) -> starlark::Result<StarlarkLazy> {
+        #[starlark(require = pos)] artifact: StarlarkArtifactView<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         match artifact {
-            ArtifactArg::DeclaredArtifact(_) => {
-                return Err(buck2_error::Error::from(
-                    BxlBuildArtifactError::NotSupportDeclaredArtifact(artifact.to_string()),
-                )
-                .into());
+            StarlarkArtifactView::Artifact(artifact) => {
+                let artifact = LazyBuildArtifact::new(artifact.as_ref());
+                Ok(ValueOf::alloc(
+                    heap,
+                    StarlarkLazy::new_build_artifact(artifact),
+                ))
             }
-            ArtifactArg::Artifact(artifact) => {
-                let artifact = LazyBuildArtifact::new(artifact);
-                Ok(StarlarkLazy::new_build_artifact(artifact))
-            }
+            StarlarkArtifactView::DeclaredArtifact(_) => Err(buck2_error::Error::from(
+                BxlBuildArtifactError::NotSupportDeclaredArtifact(artifact.to_string()),
+            )
+            .into()),
+            StarlarkArtifactView::PromiseArtifact(_) => Err(buck2_error::Error::from(
+                BxlBuildArtifactError::NotSupportPromiseArtifact(artifact.to_string()),
+            )
+            .into()),
         }
     }
 }

@@ -10,7 +10,6 @@ def f(y): pass
 def g():
     # Extra parameter.
     f(1, 2)
-
     # Not enough parameters.
     f()
 
@@ -20,15 +19,13 @@ error: Too many positional arguments
   |
 6 |     f(1, 2)
   |          ^
-  |
 
 Error:
 error: Missing required parameter `y`
- --> filename:9:5
+ --> filename:8:5
   |
-9 |     f()
+8 |     f()
   |     ^^^
-  |
 
 Compiler typechecker (eval):
 error: Too many positional arguments
@@ -36,4 +33,3 @@ error: Too many positional arguments
   |
 6 |     f(1, 2)
   |          ^
-  |

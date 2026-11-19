@@ -1,0 +1,25 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error evaluating expression:
+    root//exec_dep/toolchain:c
+    ^------------------------^
+
+
+Caused by:
+    0: Error evaluating build file: `root//exec_dep/toolchain:TARGETS.fixture`
+    1: error: checking `within_view` for attribute `toolchain_deps` of `root//exec_dep/toolchain:c`
+        --> exec_dep/toolchain/TARGETS.fixture:2:1
+         |
+       2 | / stub(
+       3 | |     name = "c",
+       4 | |     within_view = ["PUBLIC"],
+       5 | |     toolchain_deps = ["root//outside:tc"],
+       6 | | )
+         | |_^
+       Traceback (most recent call last):
+         * exec_dep/toolchain/TARGETS.fixture:2, in <module>
+             stub(
+       
+    2: Target's effective `within_view` does not allow dependency `root//outside:tc` (within_view = ["PUBLIC"]). Capped to ["root//exec_dep/..."] by `enforce_within_view_intersection()` in an ancestor PACKAGE

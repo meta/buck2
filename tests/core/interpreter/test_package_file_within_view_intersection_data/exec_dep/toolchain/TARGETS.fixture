@@ -1,0 +1,6 @@
+# Same for a `toolchain_dep`-typed attribute.
+stub(
+    name = "c",
+    within_view = ["PUBLIC"],
+    toolchain_deps = ["root//outside:tc"],
+)

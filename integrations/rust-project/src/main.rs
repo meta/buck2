@@ -20,6 +20,7 @@ mod target;
 
 use std::io;
 use std::io::IsTerminal as _;
+use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -33,6 +34,7 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
 use crate::buck::Buck;
+use crate::buck::select_isolation_dir;
 use crate::cli::ProjectKind;
 use crate::project_json::Crate;
 use crate::project_json::Dep;
@@ -44,6 +46,10 @@ struct Opt {
     /// Print the current version.
     #[arg(short = 'V', long)]
     version: bool,
+    /// Buck isolation directory to run in. If omitted, Buck chooses, except in fbcode builds, which
+    /// use `.rust-analyzer`.
+    #[arg(long, global = true)]
+    isolation_dir: Option<String>,
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -120,6 +126,9 @@ enum Command {
         /// Include a `build` section for every crate, including dependencies. Otherwise, `build` is only included for crates in the workspace.
         #[clap(long)]
         include_all_buildfiles: bool,
+
+        #[clap(long)]
+        rustc_target: Option<String>,
     },
     /// `DevelopJson` is a more limited, stripped down [`Command::Develop`].
     ///
@@ -149,6 +158,9 @@ enum Command {
 
         #[clap(long, default_value = "50", env = "RUST_PROJECT_EXTRA_TARGETS")]
         max_extra_targets: Option<usize>,
+
+        #[clap(long)]
+        rustc_target: Option<String>,
 
         args: JsonArguments,
     },
@@ -235,6 +247,45 @@ impl FromStr for JsonArguments {
     }
 }
 
+/// Given a file path, walk up parent directories to find the parentmost
+/// directory containing `.projectid`, which indicates the project root.
+fn find_project_root_from_file(file: &Path) -> Option<PathBuf> {
+    let start_dir = if file.is_dir() {
+        file.to_owned()
+    } else {
+        file.parent()?.to_owned()
+    };
+
+    // Canonicalize to resolve symlinks and relative paths.
+    let canonical = std::fs::canonicalize(&start_dir).ok()?;
+
+    let mut result = None;
+    let mut dir = canonical.as_path();
+    loop {
+        if dir.join(".projectid").exists() {
+            result = Some(dir.to_owned());
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => break,
+        }
+    }
+    result
+}
+
+/// Extract a representative file path from the command, if one is available.
+fn file_from_command(command: &Command) -> Option<&Path> {
+    match command {
+        Command::Develop { files, .. } => files.first().map(|p| p.as_path()),
+        Command::DevelopJson { args, .. } => match args {
+            JsonArguments::Path(p) | JsonArguments::Buildfile(p) => Some(p.as_path()),
+            JsonArguments::Label(_) => None,
+        },
+        Command::Check { saved_file, .. } => Some(saved_file.as_path()),
+        Command::New { .. } => None,
+    }
+}
+
 fn main() -> Result<(), anyhow::Error> {
     #[cfg(fbcode_build)]
     {
@@ -262,12 +313,15 @@ fn main() -> Result<(), anyhow::Error> {
         .with_ansi(io::stderr().is_terminal())
         .with_writer(io::stderr);
 
+    let project_root = file_from_command(&command).and_then(find_project_root_from_file);
+    let isolation_dir = select_isolation_dir(opt.isolation_dir);
+
     match command {
         c @ Command::Develop { .. } => {
             let subscriber = tracing_subscriber::registry().with(fmt.with_filter(filter));
             tracing::subscriber::set_global_default(subscriber)?;
 
-            let (develop, input, out) = cli::Develop::from_command(c);
+            let (develop, input, out) = cli::Develop::from_command(c, project_root, isolation_dir);
             match develop.run(input.clone(), out) {
                 Ok(_) => Ok(()),
                 Err(e) => {
@@ -288,7 +342,7 @@ fn main() -> Result<(), anyhow::Error> {
                 .with(progress::ProgressLayer::new(std::io::stdout).with_filter(filter));
             tracing::subscriber::set_global_default(subscriber)?;
 
-            let (develop, input, out) = cli::Develop::from_command(c);
+            let (develop, input, out) = cli::Develop::from_command(c, project_root, isolation_dir);
             match develop.run(input.clone(), out) {
                 Ok(_) => Ok(()),
                 Err(e) => {
@@ -320,11 +374,11 @@ fn main() -> Result<(), anyhow::Error> {
             let subscriber = tracing_subscriber::registry().with(fmt.with_filter(filter));
             tracing::subscriber::set_global_default(subscriber)?;
 
-            let buck = Buck::new(buck2_command, mode);
+            let buck = Buck::new(buck2_command, mode, project_root, isolation_dir);
 
             cli::Check::new(buck, use_clippy, saved_file.clone())
                 .run()
-                .inspect_err(|e| crate::scuba::log_check_error(&e, &saved_file, use_clippy))
+                .inspect_err(|e| crate::scuba::log_check_error(e, &saved_file, use_clippy))
         }
     }
 }
@@ -355,11 +409,43 @@ fn fb_build_info_from_elf() -> Result<String, anyhow::Error> {
     let (section_bytes, _) = elf_file.section_data(&elf_section)?;
     let section_cstr = std::ffi::CStr::from_bytes_with_nul(section_bytes)?;
 
-    let build_info: serde_json::Value = serde_json::from_str(&section_cstr.to_str()?)?;
+    let build_info: serde_json::Value = serde_json::from_str(section_cstr.to_str()?)?;
     let revision = build_info["revision"].as_str().unwrap_or("(unknown)");
     let build_time = build_info["time"].as_str().unwrap_or("(unknown)");
 
     Ok(format!("revision: {revision}, build time: {build_time}"))
+}
+
+#[test]
+fn isolation_inherited_by_default() {
+    let opt = Opt::try_parse_from(["rust-project", "check", "foo.rs"]).unwrap();
+    assert_eq!(opt.isolation_dir, None);
+}
+
+#[test]
+fn isolation_directory_before_subcommand() {
+    let opt = Opt::try_parse_from([
+        "rust-project",
+        "--isolation-dir",
+        ".rust-analyzer",
+        "develop",
+        "//foo:foo",
+    ])
+    .unwrap();
+    assert_eq!(opt.isolation_dir.as_deref(), Some(".rust-analyzer"));
+}
+
+#[test]
+fn isolation_directory_after_subcommand() {
+    let opt = Opt::try_parse_from([
+        "rust-project",
+        "develop-json",
+        "--isolation-dir",
+        "custom",
+        r#"{"path":"foo.rs"}"#,
+    ])
+    .unwrap();
+    assert_eq!(opt.isolation_dir.as_deref(), Some("custom"));
 }
 
 #[test]
@@ -397,20 +483,22 @@ fn test_parse_use_clippy() {
     ));
 }
 
+#[cfg(fbcode_build)]
 #[test]
-#[ignore]
 fn json_args_pass() {
     let args = JsonArguments::Path(PathBuf::from("buck2/integrations/rust-project/src/main.rs"));
     let expected = Opt {
         command: Some(Command::DevelopJson {
             args,
-            sysroot_mode: SysrootMode::Rustc,
+            sysroot_mode: SysrootMode::BuckConfig,
             client: None,
             buck2_command: None,
-            max_extra_targets: None,
+            max_extra_targets: Some(50),
             mode: None,
+            rustc_target: None,
         }),
         version: false,
+        isolation_dir: None,
     };
     let actual = Opt::try_parse_from([
         "rust-project",
@@ -424,13 +512,15 @@ fn json_args_pass() {
     let expected = Opt {
         command: Some(Command::DevelopJson {
             args,
-            sysroot_mode: SysrootMode::Rustc,
+            sysroot_mode: SysrootMode::BuckConfig,
             client: None,
             buck2_command: None,
-            max_extra_targets: None,
+            max_extra_targets: Some(50),
             mode: None,
+            rustc_target: None,
         }),
         version: false,
+        isolation_dir: None,
     };
     let actual = Opt::try_parse_from([
         "rust-project",
@@ -444,13 +534,15 @@ fn json_args_pass() {
     let expected = Opt {
         command: Some(Command::DevelopJson {
             args,
-            sysroot_mode: SysrootMode::Rustc,
+            sysroot_mode: SysrootMode::BuckConfig,
             client: None,
             buck2_command: None,
-            max_extra_targets: None,
+            max_extra_targets: Some(50),
             mode: None,
+            rustc_target: None,
         }),
         version: false,
+        isolation_dir: None,
     };
     let actual = Opt::try_parse_from([
         "rust-project",

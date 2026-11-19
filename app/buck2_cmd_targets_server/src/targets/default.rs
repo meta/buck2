@@ -34,6 +34,7 @@ use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use dice::DiceTransaction;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
+use futures::FutureExt;
 
 use crate::target_hash::TargetHashes;
 use crate::target_hash::TargetHashesFileMode;
@@ -84,45 +85,53 @@ impl TargetHashOptions {
 
 pub(crate) async fn targets_batch(
     server_ctx: &dyn ServerCommandContextTrait,
-    mut dice: DiceTransaction,
+    dice: &DiceTransaction,
     formatter: &dyn TargetFormatter,
     parsed_patterns: Vec<ParsedPattern<TargetPatternExtra>>,
     global_cfg_options: &GlobalCfgOptions,
     hash_options: TargetHashOptions,
     keep_going: bool,
 ) -> buck2_error::Result<TargetsResponse> {
-    let results = &load_patterns(&mut dice, parsed_patterns, MissingTargetBehavior::Fail).await?;
+    let results = &load_patterns(
+        &mut dice.ctx(),
+        parsed_patterns,
+        MissingTargetBehavior::Fail,
+    )
+    .await?;
 
     let target_hashes = dice
-        .dupe()
-        .with_linear_recompute(|linear_ctx| async move {
-            match hash_options.graph_type {
-                TargetHashGraphType::Configured => buck2_error::Ok(Some(
-                    TargetHashes::compute::<ConfiguredTargetNode, _>(
-                        dice.dupe(),
-                        ConfiguredTargetNodeLookup(&linear_ctx),
-                        results.iter_loaded_targets_by_package().collect(),
-                        global_cfg_options,
-                        hash_options.file_mode,
-                        hash_options.fast_hash,
-                        hash_options.recursive,
-                    )
-                    .await?,
-                )),
-                TargetHashGraphType::Unconfigured => Ok(Some(
-                    TargetHashes::compute::<TargetNode, _>(
-                        dice.dupe(),
-                        TargetNodeLookup(&linear_ctx),
-                        results.iter_loaded_targets_by_package().collect(),
-                        global_cfg_options,
-                        hash_options.file_mode,
-                        hash_options.fast_hash,
-                        hash_options.recursive,
-                    )
-                    .await?,
-                )),
-                _ => Ok(None),
+        .ctx()
+        .with_linear_recompute(|linear_ctx| {
+            async move {
+                match hash_options.graph_type {
+                    TargetHashGraphType::Configured => buck2_error::Ok(Some(
+                        TargetHashes::compute::<ConfiguredTargetNode, _>(
+                            dice.dupe(),
+                            ConfiguredTargetNodeLookup(linear_ctx),
+                            results.iter_loaded_targets_by_package().collect(),
+                            global_cfg_options,
+                            hash_options.file_mode,
+                            hash_options.fast_hash,
+                            hash_options.recursive,
+                        )
+                        .await?,
+                    )),
+                    TargetHashGraphType::Unconfigured => Ok(Some(
+                        TargetHashes::compute::<TargetNode, _>(
+                            dice.dupe(),
+                            TargetNodeLookup(linear_ctx),
+                            results.iter_loaded_targets_by_package().collect(),
+                            global_cfg_options,
+                            hash_options.file_mode,
+                            hash_options.fast_hash,
+                            hash_options.recursive,
+                        )
+                        .await?,
+                    )),
+                    _ => Ok(None),
+                }
             }
+            .boxed()
         })
         .await?;
 

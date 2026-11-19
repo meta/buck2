@@ -79,7 +79,7 @@ check_mutually_exclusive_dependencies_test(
     ],
     labels = ci.labels(
         [
-            ci.mode("fbsource//arvr/mode/fb-linux-nh/cuda12_5/opt"),
+            ci.mode("fbsource//arvr/mode/fb-linux-nh/cuda13_3/opt"),
         ],
         overwrite = True,
     ),

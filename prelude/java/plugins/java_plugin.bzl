@@ -6,6 +6,9 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//android:build_only_native_code.bzl", "is_build_only_native_code")
+load("@prelude//decls:common.bzl", "buck")
 load("@prelude//java:java_providers.bzl", "JavaPackagingDepTSet")
 load(
     "@prelude//java/plugins:java_annotation_processor.bzl",
@@ -64,3 +67,29 @@ def java_plugin_impl(ctx: AnalysisContext) -> list[Provider]:
         ),
         DefaultInfo(default_output = None),
     ]
+
+java_plugin = prelude_rule(
+    name = "java_plugin",
+    impl = java_plugin_impl,
+    docs = """
+        A `java_plugin()` rule declares a `javac` plugin (identified by
+        `plugin_name`) that can be referenced from `java_library()` and
+        `kotlin_library()` rules to run during compilation.
+    """,
+    examples = None,
+    further = None,
+    attrs = (
+        # @unsorted-dict-items
+        {
+            "deps": attrs.list(attrs.dep(), default = []),
+            "does_not_affect_abi": attrs.bool(default = False),
+            "isolate_class_loader": attrs.bool(default = False),
+            "plugin_name": attrs.string(default = ""),
+            "supports_abi_generation_from_source": attrs.bool(default = False),
+            "_build_only_native_code": attrs.default_only(attrs.bool(default = is_build_only_native_code())),
+        }
+        | buck.licenses_arg()
+        | buck.labels_arg()
+        | buck.contacts_arg()
+    ),
+)

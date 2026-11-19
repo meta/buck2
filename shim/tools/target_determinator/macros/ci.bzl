@@ -12,9 +12,10 @@ def _lbl(*_args):
     return ""
 
 def _package(
-        _values,
-        # starlark-lint-disable unused-argument
-        overwrite = False):  # @unused
+    *_values,
+    # starlark-lint-disable unused-argument
+    overwrite = False,
+):  # @unused
     pass
 
 def _labels(*args):
@@ -27,7 +28,10 @@ ci = struct(
     windows = _lbl,
     skip_test = _lbl,
     aarch64 = _lbl,
+    x86_64 = _lbl,
     mode = _lbl,
     opt = _lbl,
+    remove = _lbl,
     labels = _labels,
+    modifiers = _lbl,
 )

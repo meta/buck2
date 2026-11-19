@@ -20,7 +20,7 @@ pub(crate) mod parse;
 mod render;
 pub(crate) mod simple_param;
 mod typ;
-mod util;
+pub(crate) mod util;
 
 use proc_macro::TokenStream;
 use syn::ItemFn;

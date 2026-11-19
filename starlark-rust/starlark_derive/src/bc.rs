@@ -74,7 +74,7 @@ impl BcOpcodeEnum {
             self.span=>
             impl BcOpcode {
                 #[inline(always)]
-                fn do_dispatch<R>(self, handler: impl BcOpcodeHandler<R>) -> R {
+                fn do_dispatch<'v, R>(self, handler: impl BcOpcodeHandler<'v, R>) -> R {
                     match self {
                         #(#variants)*
                     }
@@ -100,7 +100,7 @@ impl BcOpcodeEnum {
             self.span=>
             impl BcOpcode {
                 #[inline(always)]
-                fn do_dispatch_all(handler: &mut impl BcOpcodeAllHandler) {
+                fn do_dispatch_all<'v>(handler: &mut impl BcOpcodeAllHandler<'v>) {
                     #(#variants)*
                 }
             }

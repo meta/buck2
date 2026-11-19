@@ -22,6 +22,7 @@ use buck2_common::argv::SanitizedArgv;
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_path::AbsPath;
 use buck2_util::process::background_command;
@@ -77,7 +78,7 @@ fn exec_impl(
 ) -> buck2_error::Result<()> {
     let path = cmd.path.resolve(&ctx.working_dir);
     fs_util::create_dir_all(&path)?;
-    let absolute = fs_util::canonicalize(&path)?;
+    let absolute = fs_util::canonicalize(&path).categorize_internal()?;
     let git = cmd.git;
 
     if absolute.is_file() {
@@ -211,14 +212,14 @@ fn initialize_root_buck(repo_root: &AbsPath, prelude: bool) -> buck2_error::Resu
 fn set_up_gitignore(repo_root: &AbsPath) -> buck2_error::Result<()> {
     let gitignore = repo_root.join(".gitignore");
     // If .gitignore is empty or doesn't exist, add in buck-out
-    if !gitignore.exists() || fs_util::metadata(&gitignore)?.len() == 0 {
-        fs_util::write(gitignore, "/buck-out\n")?;
+    if !gitignore.exists() || fs_util::metadata(&gitignore).categorize_internal()?.len() == 0 {
+        fs_util::write(gitignore, "/buck-out\n").categorize_internal()?;
     }
     Ok(())
 }
 
 fn set_up_buckroot(repo_root: &AbsPath) -> buck2_error::Result<()> {
-    fs_util::write(repo_root.join(".buckroot"), "")?;
+    fs_util::write(repo_root.join(".buckroot"), "").categorize_internal()?;
     Ok(())
 }
 
@@ -252,7 +253,7 @@ fn set_up_project(repo_root: &AbsPath, git: bool, prelude: bool) -> buck2_error:
     if prelude {
         let toolchains = repo_root.join("toolchains");
         if !toolchains.exists() {
-            fs_util::create_dir(&toolchains)?;
+            fs_util::create_dir(&toolchains).categorize_internal()?;
             initialize_toolchains_buck(&toolchains)?;
         }
     }
@@ -264,7 +265,7 @@ fn set_up_project(repo_root: &AbsPath, git: bool, prelude: bool) -> buck2_error:
 
 #[cfg(test)]
 mod tests {
-    use buck2_fs::fs_util;
+    use buck2_fs::fs_util::uncategorized as fs_util;
     use buck2_fs::paths::abs_path::AbsPath;
 
     use crate::commands::init::initialize_buckconfig;

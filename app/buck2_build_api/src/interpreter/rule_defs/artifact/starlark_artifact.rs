@@ -11,10 +11,10 @@
 use std::fmt::Display;
 
 use allocative::Allocative;
+use buck2_artifact::artifact::artifact_path::ArtifactPath;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_execute::path::artifact_path::ArtifactPath;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use dupe::Dupe;
@@ -22,39 +22,45 @@ use dupe::OptionDupedExt;
 use serde::Serialize;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
-use starlark::collections::StarlarkHasher;
-use starlark::environment::Methods;
-use starlark::environment::MethodsStatic;
 use starlark::values::Demand;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Value;
-use starlark::values::list::UnpackList;
+use starlark::values::ValueOf;
+use starlark::values::list::ListType;
 use starlark::values::starlark_value;
-use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::ArtifactError;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::methods::EitherStarlarkInputArtifact;
-use crate::interpreter::rule_defs::artifact::methods::artifact_methods;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFingerprint;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
-use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
+use crate::interpreter::rule_defs::cmd_args::InputProperties;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 /// A wrapper for an `Artifact` that is guaranteed to be bound, such as outputs
 /// from dependencies, or source files.
-#[derive(Debug, Dupe, Clone, PartialEq, ProvidesStaticType, Allocative)]
+#[derive(
+    Debug,
+    Dupe,
+    Clone,
+    PartialEq,
+    ProvidesStaticType,
+    Allocative,
+    StarlarkPagable
+)]
 pub struct StarlarkArtifact {
+    #[starlark_pagable(pagable)]
     pub(crate) artifact: Artifact,
     // A set of ArtifactGroups that should be materialized along with the main artifact
     pub(crate) associated_artifacts: AssociatedArtifacts,
@@ -86,7 +92,7 @@ impl Display for StarlarkArtifact {
             f,
             "<{} ",
             if self.artifact.is_source() {
-                "source"
+                "source artifact"
             } else {
                 "build artifact"
             }
@@ -220,13 +226,12 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkArtifact {
 
     fn with_associated_artifacts(
         &'v self,
-        artifacts: UnpackList<ValueAsInputArtifactLike<'v>>,
+        artifacts: ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
     ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
         let artifacts = artifacts
-            .items
-            .iter()
-            .map(|a| a.0.get_artifact_group())
-            .collect::<Result<Vec<_>, _>>()?;
+            .try_items::<StarlarkArtifactView>()
+            .map(|a| a?.as_input_artifact_like().get_artifact_group())
+            .collect::<buck2_error::Result<Vec<_>>>()?;
 
         let artifacts = AssociatedArtifacts::from(artifacts);
 
@@ -239,16 +244,11 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkArtifact {
 
 impl<'v> CommandLineArgLike<'v> for StarlarkArtifact {
     fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkArtifact::starlark_type_repr());
+        command_line_arg_like_impl!(StarlarkArtifact::get_type_starlark_repr());
     }
 
-    fn add_to_command_line(
-        &self,
-        cli: &mut dyn CommandLineBuilder,
-        ctx: &mut dyn CommandLineContext,
-        artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
-        cli.push_location(ctx.resolve_artifact(&self.artifact, artifact_path_mapping)?);
+    fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
+        fmt.push_artifact(&self.artifact)?;
         Ok(())
     }
 
@@ -256,10 +256,16 @@ impl<'v> CommandLineArgLike<'v> for StarlarkArtifact {
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
     ) -> buck2_error::Result<()> {
-        visitor.visit_input(ArtifactGroup::Artifact(self.artifact.dupe()), vec![]);
-        self.associated_artifacts
-            .iter()
-            .for_each(|ag| visitor.visit_input(ag.dupe(), vec![]));
+        visitor.visit_input(
+            ArtifactGroup::Artifact(self.artifact.dupe()),
+            InputProperties::default(),
+            vec![],
+        );
+        if !visitor.inputs_for_path_resolution() {
+            self.associated_artifacts
+                .iter()
+                .for_each(|ag| visitor.visit_input(ag.dupe(), InputProperties::default(), vec![]));
+        }
         Ok(())
     }
 
@@ -276,20 +282,9 @@ impl<'v> CommandLineArgLike<'v> for StarlarkArtifact {
     }
 }
 
-#[starlark_value(type = "Artifact")]
+#[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkArtifact {
-    fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(artifact_methods)
-    }
-
-    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
-        StarlarkArtifactLike::equals(self, other)
-    }
-
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        StarlarkArtifactLike::write_hash(self, hasher)
-    }
+    type Type = StarlarkArtifactView<'v>;
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike>(self);

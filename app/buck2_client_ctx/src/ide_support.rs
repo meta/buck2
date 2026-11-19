@@ -9,6 +9,7 @@
  */
 
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::conversion::from_any_with_tag;
 use bytes::BytesMut;
 use futures::Stream;
@@ -67,7 +68,7 @@ impl<T: for<'a> Deserialize<'a>> Decoder for LspMessageLikeDecoder<T> {
             }
         }
 
-        let content_length = content_length.buck_error_context("Content-Length is missing")?;
+        let content_length = content_length.internal_error("Content-Length is missing")?;
 
         if src.len() < headers_length + content_length {
             return Ok(None);

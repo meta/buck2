@@ -25,6 +25,5 @@ def _ensure_impl(ctx):
 
 ensure = bxl_main(
     impl = _ensure_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )

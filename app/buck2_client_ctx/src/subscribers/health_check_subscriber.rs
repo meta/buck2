@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use buck2_common::invocation_paths::InvocationPaths;
-use buck2_core::soft_error;
+use buck2_core::soft_error_or_panic;
 use buck2_data::buck_event::Data::*;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_events::BuckEvent;
 use buck2_health_check::health_check_client::HealthCheckClient;
 use buck2_health_check::health_check_client::StreamingHealthCheckClient;
@@ -111,7 +111,7 @@ impl HealthCheckSubscriber {
                 match end
                     .data
                     .as_ref()
-                    .buck_error_context("Missing `data` in SpanEnd")?
+                    .internal_error("Missing `data` in SpanEnd")?
                 {
                     FileWatcher(file_watcher) => file_watcher
                         .stats
@@ -147,7 +147,7 @@ impl HealthCheckSubscriber {
                 match instant
                     .data
                     .as_ref()
-                    .buck_error_context("Missing `data` in `Instant`")?
+                    .internal_error("Missing `data` in `Instant`")?
                 {
                     SystemInfo(system_info) => Some(HealthCheckEvent::HealthCheckContextEvent(
                         HealthCheckContextEvent::ExperimentConfigurations(system_info.clone()),
@@ -174,6 +174,13 @@ impl HealthCheckSubscriber {
         if let (Some(health_check_event), Some(event_sender)) =
             (health_check_event, &mut self.event_sender)
         {
+            // If this is a CommandStart and the test override env var is set,
+            // also send the threshold so the health check CLI process can use it
+            // (the CLI is a separate process that doesn't inherit client env vars).
+            let send_test_threshold = matches!(
+                &health_check_event,
+                HealthCheckEvent::HealthCheckContextEvent(HealthCheckContextEvent::CommandStart(_))
+            );
             match event_sender.try_send(health_check_event) {
                 Ok(_) => {}
                 Err(TrySendError::Full(_)) => {
@@ -185,6 +192,15 @@ impl HealthCheckSubscriber {
                     self.close_client_connection_with_error_report(
                         "Health check event receiver closed. Disabling health checks.",
                     );
+                }
+            }
+            if send_test_threshold {
+                if let Ok(val) = std::env::var("BUCK2_TEST_SLOW_BUILD_CHECK") {
+                    if let (Ok(secs), Some(sender)) = (val.parse::<u64>(), &mut self.event_sender) {
+                        drop(sender.try_send(HealthCheckEvent::HealthCheckContextEvent(
+                            HealthCheckContextEvent::TestSlowBuildThreshold(secs),
+                        )));
+                    }
                 }
             }
             self.event_stats.total_event_count += 1;
@@ -203,7 +219,7 @@ impl HealthCheckSubscriber {
     pub fn close_client_connection_with_error_report(&mut self, error: &str) {
         self.event_sender.take();
         self.health_check_client.take();
-        let _ignored = soft_error!(
+        soft_error_or_panic!(
             "health_check_subscriber_error",
             buck2_error::buck2_error!(buck2_error::ErrorTag::HealthCheck, "{}", error)
         );
@@ -304,9 +320,9 @@ mod tests {
             ..Default::default()
         };
         buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
-            data: Some(buck2_data::span_end_event::Data::ActionExecution(
-                Box::new(action_end).into(),
-            )),
+            data: Some(buck2_data::span_end_event::Data::ActionExecution(Box::new(
+                action_end,
+            ))),
             ..buck2_data::SpanEndEvent::default()
         })
     }
@@ -359,8 +375,8 @@ mod tests {
             events_tx,
         );
 
-        let event1 = test_event(event_for_excess_cache_miss().into());
-        let event2 = test_event(event_for_excess_cache_miss().into());
+        let event1 = test_event(event_for_excess_cache_miss());
+        let event2 = test_event(event_for_excess_cache_miss());
 
         subscriber.handle_event(&event1).await.unwrap();
         subscriber.handle_event(&event2).await.unwrap();

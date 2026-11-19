@@ -38,7 +38,11 @@ configure_logger(LogFile) ->
         level => all,
         filter_default => log
     }),
-    ok = logger:add_handler(
+    configure_logger_handler(LogFile, 3).
+
+-spec configure_logger_handler(file:filename_all(), non_neg_integer()) -> ok.
+configure_logger_handler(LogFile, Retries) ->
+    Result = logger:add_handler(
         file_handler, logger_std_h, #{
             config => #{
                 file => LogFile,
@@ -61,7 +65,23 @@ configure_logger(LogFile) ->
                     ]
                 }}
         }
-    ).
+    ),
+    case Result of
+        ok ->
+            ok;
+        {error, {handler_not_added, file_ctrl_process_not_started}} when Retries > 0 ->
+            %% Under host memory/IO pressure the OTP logger's hardcoded 5s
+            %% file-ctrl spawn timeout can fire before I/O completes.
+            io:format(
+                standard_error,
+                "Warning: logger file_ctrl_process not started, "
+                "retrying (~b attempts left)~n",
+                [Retries - 1]
+            ),
+            configure_logger_handler(LogFile, Retries - 1);
+        {error, _Reason} = Error ->
+            erlang:error(Error)
+    end.
 
 -spec flush() -> ok | {error, term()}.
 flush() ->

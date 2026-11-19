@@ -1,0 +1,17 @@
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("build_infra")
+
+source_listing()
+
+prelude = native  # Avoid warnings and auto-formatters
+
+# Lists the modules of a target, its source files and the `.lean` files of
+# its source directories, and runs `lean --deps-json` on them, with the file
+# names on stdin. Buck actions have no stdout redirection, and a shell is not
+# on every host.
+prelude.python_bootstrap_binary(
+    name = "lean_deps",
+    main = "lean_deps.py",
+    visibility = ["PUBLIC"],
+)

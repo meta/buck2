@@ -47,7 +47,11 @@ def derive_javac(javac_attribute: [str, Dependency, Artifact]) -> [str, RunInfo,
     if javac_attr_type == type(""):
         return javac_attribute
 
-    fail("Type of attribute javac {} that equals to {} is not supported.\n Supported types are \"dependency\", \"artifact\" and \"string\".".format(javac_attr_type, javac_attribute))
+    fail(
+        'Type of attribute javac {} that equals to {} is not supported.\n Supported types are "dependency", "artifact" and "string".'.format(
+            javac_attr_type, javac_attribute
+        )
+    )
 
 def get_java_version_attributes(ctx: AnalysisContext) -> (int, int):
     java_toolchain = ctx.attrs._java_toolchain[JavaToolchainInfo]
@@ -81,10 +85,22 @@ def to_java_version(java_version: str) -> int:
     if java_version.startswith("1."):
         expect(len(java_version) == 3, "Supported java version number format is 1.X, where X is a single digit number, but it was set to {}", java_version)
         java_version_number = int(java_version[2:])
-        expect(java_version_number < 9, "Supported java version number format is 1.X, where X is a single digit number that is less than 9, but it was set to {}", java_version)
+        expect(
+            java_version_number < 9,
+            "Supported java version number format is 1.X, where X is a single digit number that is less than 9, but it was set to {}",
+            java_version,
+        )
         return java_version_number
     else:
         return int(java_version)
+
+def get_string_concat_inline_javac_args(source_level: int) -> list[str]:
+    # Android build tools before SDK 36 lack java.lang.invoke.StringConcatFactory, which javac
+    # targets for invokedynamic string concatenation at -source 9+ (JEP 280). Force javac to emit
+    # classic StringBuilder concatenation instead so the bytecode compiles and runs against those SDKs.
+    if source_level >= 9:
+        return ["-XDstringConcat=inline"]
+    return []
 
 def get_abi_generation_mode(abi_generation_mode):
     return {
@@ -97,22 +113,27 @@ def get_abi_generation_mode(abi_generation_mode):
     }[abi_generation_mode]
 
 def get_default_info(
-        actions: AnalysisActions,
-        java_toolchain: JavaToolchainInfo,
-        outputs: [JavaCompileOutputs, None],
-        packaging_info: JavaPackagingInfo,
-        extra_sub_targets: dict = {}) -> DefaultInfo:
+    actions: AnalysisActions,
+    java_toolchain: JavaToolchainInfo,
+    outputs: [JavaCompileOutputs, None],
+    packaging_info: JavaPackagingInfo,
+    extra_sub_targets: dict = {},
+) -> DefaultInfo:
     sub_targets = get_classpath_subtargets(actions, packaging_info)
-    default_info = DefaultInfo()
+    default_info = DefaultInfo(
+        sub_targets = extra_sub_targets | sub_targets,
+    )
     if outputs:
         abis = [
             ("class-abi", outputs.class_abi),
             ("source-abi", outputs.source_abi),
             ("source-only-abi", outputs.source_only_abi),
         ]
-        for (name, artifact) in abis:
+        for name, artifact in abis:
             if artifact != None:
                 sub_targets[name] = [DefaultInfo(default_output = artifact)]
+        if outputs.command_proto_json != None:
+            sub_targets["jar_command_proto_json"] = [DefaultInfo(default_output = outputs.command_proto_json)]
         other_outputs = []
         if not java_toolchain.is_bootstrap_toolchain and outputs.annotation_processor_output:
             other_outputs.append(outputs.annotation_processor_output)
@@ -130,39 +151,50 @@ def declare_prefixed_name(name: str, prefix: [str, None]) -> str:
     return "{}_{}".format(prefix, name)
 
 def get_class_to_source_map_info(
-        ctx: AnalysisContext,
-        outputs: [JavaCompileOutputs, None],
-        deps: list[Dependency],
-        generate_sources_jar: bool = False) -> (JavaClassToSourceMapInfo, Artifact | None, dict):
+    ctx: AnalysisContext,
+    outputs: [JavaCompileOutputs, None],
+    deps: list[Dependency],
+    generate_sources_jar: bool = False,
+    class_to_src_map_deps: list[Dependency] = [],
+) -> (JavaClassToSourceMapInfo, Artifact | None, dict):
     sub_targets = {}
     class_to_srcs = None
-    class_to_srcs_debuginfo = None
+    mapping_debuginfo = None
     sources_jar = None
     if outputs != None:
         name = ctx.label.name
-        class_to_srcs, sources_jar = create_class_to_source_map_from_jar(
+        java_toolchain = ctx.attrs._java_toolchain[JavaToolchainInfo]
+        mapping_debuginfo = maybe_create_class_to_source_map_debuginfo(
             actions = ctx.actions,
-            java_toolchain = ctx.attrs._java_toolchain[JavaToolchainInfo],
-            name = name + ".class_to_srcs.json",
-            jar = outputs.classpath_entry.full_library,
-            srcs = ctx.attrs.srcs,
-            sources_jar_name = "{}-sources.jar".format(name) if generate_sources_jar else None,
-        )
-        class_to_srcs_debuginfo = maybe_create_class_to_source_map_debuginfo(
-            actions = ctx.actions,
-            java_toolchain = ctx.attrs._java_toolchain[JavaToolchainInfo],
+            java_toolchain = java_toolchain,
             name = name + ".debuginfo.json",
             srcs = ctx.attrs.srcs,
         )
+        class_to_srcs, sources_jar = create_class_to_source_map_from_jar(
+            actions = ctx.actions,
+            java_toolchain = java_toolchain,
+            name = name + ".class_to_srcs.json",
+            jar = outputs.classpath_entry.full_library,
+            srcs = ctx.attrs.srcs,
+            owner_target = str(ctx.label.raw_target()),
+            sources_jar_name = "{}-sources.jar".format(name) if generate_sources_jar else None,
+            debuginfo = mapping_debuginfo,
+            compiler_map = outputs.compiler_class_to_source_map,
+        )
         sub_targets["class-to-srcs"] = [DefaultInfo(default_output = class_to_srcs)]
+        if outputs.compiler_class_to_source_map != None:
+            sub_targets["compiler-class-to-srcs"] = [DefaultInfo(default_output = outputs.compiler_class_to_source_map)]
         if sources_jar:
             sub_targets["sources.jar"] = [DefaultInfo(default_output = sources_jar)]
 
+    # Include class_to_src_map_deps for classmap collection. These are deps that
+    # only contribute to the class-to-source map (for debugging) but not to compilation.
+    all_classmap_deps = deps + class_to_src_map_deps
     class_to_src_map_info = create_class_to_source_map_info(
         ctx = ctx,
         mapping = class_to_srcs,
-        mapping_debuginfo = class_to_srcs_debuginfo,
-        deps = deps,
+        mapping_debuginfo = mapping_debuginfo,
+        deps = all_classmap_deps,
     )
     if outputs != None:
         sub_targets["debuginfo"] = [DefaultInfo(default_output = class_to_src_map_info.debuginfo)]
@@ -170,10 +202,10 @@ def get_class_to_source_map_info(
 
 def get_classpath_subtargets(actions: AnalysisActions, packaging_info: JavaPackagingInfo) -> dict[str, list[Provider]]:
     proj = packaging_info.packaging_deps.project_as_args("full_jar_args")
-    output = actions.write("classpath", proj)
+    output = actions.write("classpath", proj, has_content_based_path = False)
 
     classpath_targets_proj = packaging_info.packaging_deps.project_as_args("full_jar_owner_args")
-    classpath_targets_output = actions.write("classpath_targets", classpath_targets_proj)
+    classpath_targets_output = actions.write("classpath_targets", classpath_targets_proj, has_content_based_path = False)
 
     return {
         "classpath": [DefaultInfo(output, other_outputs = [proj])],

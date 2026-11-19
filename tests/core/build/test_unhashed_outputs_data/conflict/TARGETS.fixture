@@ -1,0 +1,9 @@
+load("@root//:defs.bzl", "simple_build")
+
+simple_build(
+    name = "shared_name",
+    filename = "shared_name",
+    deps = [
+        "root//conflict/shared_name:subtarget",
+    ],
+)

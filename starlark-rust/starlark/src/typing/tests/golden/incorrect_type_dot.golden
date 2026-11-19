@@ -14,7 +14,6 @@ error: Operation `.foo` not supported on type `function`
   |
 2 | def foo(x: list.foo.bar):
   |            ^^^^^^^^
-  |
 
 Approximations:
 Approximation: Unknown type = "Span { begin: Pos(12), end: Pos(24) }"
@@ -25,4 +24,3 @@ error: Operation `.foo` not supported on type `function`
   |
 2 | def foo(x: list.foo.bar):
   |                 ^^^
-  |

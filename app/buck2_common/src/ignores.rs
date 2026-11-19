@@ -8,6 +8,5 @@
  * above-listed licenses.
  */
 
-pub(crate) mod all_cells;
 pub mod file_ignores;
 pub mod ignore_set;

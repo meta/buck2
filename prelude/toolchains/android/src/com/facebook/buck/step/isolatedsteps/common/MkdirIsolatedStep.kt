@@ -25,7 +25,7 @@ data class MkdirIsolatedStep(val dirPath: RelPath) : IsolatedStep {
   @Throws(IOException::class)
   override fun executeIsolatedStep(context: IsolatedExecutionContext): StepExecutionResult {
     Files.createDirectories(
-        ProjectFilesystemUtils.getPathForRelativePath(context.ruleCellRoot, dirPath.path)
+        ProjectFilesystemUtils.getPathForRelativePath(context.ruleCellRoot, dirPath.path),
     )
     return StepExecutionResults.SUCCESS
   }

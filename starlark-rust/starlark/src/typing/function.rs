@@ -20,6 +20,9 @@ use std::hash::Hash;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::PagableStableName;
+use pagable::pagable_typetag;
 
 use crate::codemap::Span;
 use crate::typing::ParamSpec;
@@ -29,6 +32,7 @@ use crate::typing::TypingBinOp;
 use crate::typing::TypingOracleCtx;
 use crate::typing::call_args::TyCallArgs;
 use crate::typing::callable::TyCallable;
+use crate::typing::custom::TyCustomDyn;
 use crate::typing::custom::TyCustomImpl;
 use crate::typing::error::TypingNoContextError;
 use crate::typing::error::TypingNoContextOrInternalError;
@@ -36,13 +40,19 @@ use crate::typing::error::TypingOrInternalError;
 use crate::values::typing::type_compiled::alloc::TypeMatcherAlloc;
 
 /// Custom function typechecker.
+///
+/// `PagableStableName` is a supertrait so that `TyCustomFunction<F>` can
+/// compose its persisted typetag from `F`'s stable name; any `F` deriving
+/// `Pagable` gets it automatically.
 pub trait TyCustomFunctionImpl:
-    Debug + Eq + Ord + Hash + Allocative + Send + Sync + 'static
+    Debug + Eq + Ord + Hash + Allocative + Send + Sync + Pagable + PagableStableName + 'static
 {
+    /// Whether this function acts as a type constructor (e.g., for `|` syntax).
     fn is_type(&self) -> bool {
         false
     }
 
+    /// Type-check a call expression, returning the result type.
     fn validate_call(
         &self,
         span: Span,
@@ -50,8 +60,10 @@ pub trait TyCustomFunctionImpl:
         oracle: TypingOracleCtx,
     ) -> Result<Ty, TypingOrInternalError>;
 
+    /// The callable signature (parameter types and return type).
     fn as_callable(&self) -> TyCallable;
 
+    /// Underlying `TyFunction`, if this is a regular function.
     fn as_function(&self) -> Option<&TyFunction> {
         None
     }
@@ -65,13 +77,15 @@ pub trait TyCustomFunctionImpl:
     Ord,
     PartialOrd,
     Debug,
-    derive_more::Display
+    derive_more::Display,
+    Pagable
 )]
 #[display(
     "def({}) -> {}",
     self.0.as_callable().params(),
     self.0.as_callable().result(),
 )]
+#[pagable_typetag(TyCustomDyn)]
 pub struct TyCustomFunction<F: TyCustomFunctionImpl>(pub F);
 
 impl<F: TyCustomFunctionImpl> TyCustomImpl for TyCustomFunction<F> {
@@ -119,7 +133,13 @@ impl<F: TyCustomFunctionImpl> TyCustomImpl for TyCustomFunction<F> {
         Ok(Ty::any())
     }
 
-    fn attribute(&self, _attr: &str) -> Result<Ty, TypingNoContextError> {
+    fn attribute(&self, attr: &str) -> Result<Ty, TypingNoContextError> {
+        // Native "type constructor" functions (declared with `#[starlark(as_type = ...)]`)
+        // expose a legacy `.type` attribute holding the name of the type they construct.
+        // See `NativeFunction::get_attr`.
+        if attr == "type" && self.0.is_type() {
+            return Ok(Ty::string());
+        }
         Err(TypingNoContextError)
     }
 
@@ -129,7 +149,9 @@ impl<F: TyCustomFunctionImpl> TyCustomImpl for TyCustomFunction<F> {
 }
 
 /// A function.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative, Pagable
+)]
 pub struct TyFunction {
     /// The `.type` property of the function, often `""`.
     pub(crate) type_attr: Option<Ty>,

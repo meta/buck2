@@ -1,0 +1,174 @@
+load(
+    ":rules.bzl",
+    "anon_arg",
+    "anon_in_group",
+    "anon_toolchain_arg",
+    "arg_toolchain",
+    "arg_tools",
+    "binary",
+    "bundle",
+    "constrained_link",
+    "copying_test",
+    "default_constrained",
+    "default_constrained_no_groups",
+    "dynamic_binary",
+    "forwarding_test",
+    "group_test",
+    "plain",
+    "plugin_user",
+    "same_platform",
+    "same_platform_toolchain",
+    "tool",
+    "toolchain",
+)
+
+tool(
+    name = "macos_tool",
+    target_compatible_with = ["//config:macos"],
+)
+
+tool(
+    name = "remote_tool",
+    target_compatible_with = ["//config:remote"],
+)
+
+tool(
+    name = "local_tool",
+    target_compatible_with = ["//config:local"],
+)
+
+tool(name = "any_tool")
+
+toolchain(
+    name = "resource_toolchain",
+    tool = ":macos_tool",
+)
+
+toolchain(
+    name = "package_toolchain",
+    tool = ":remote_tool",
+)
+
+bundle(name = "bundle")
+
+binary(name = "binary")
+
+same_platform(name = "same_platform")
+
+toolchain(
+    name = "any_toolchain",
+    tool = ":any_tool",
+)
+
+same_platform_toolchain(name = "same_platform_toolchain")
+
+dynamic_binary(name = "dynamic_binary")
+
+plain(name = "plain")
+
+plugin_user(name = "plugin_user")
+
+constrained_link(
+    name = "link_on_macos",
+    link_constraints = ["//config:macos"],
+)
+
+default_constrained(
+    name = "default_on_macos",
+    default_constraints = ["//config:macos"],
+)
+
+default_constrained_no_groups(
+    name = "no_groups_on_remote",
+    default_constraints = ["//config:remote"],
+)
+
+# No platform is both macOS and remote.
+constrained_link(
+    name = "link_on_macos_remote",
+    link_constraints = [
+        "//config:macos",
+        "//config:remote",
+    ],
+)
+
+constrained_link(
+    name = "link_on_macos_via_select",
+    link_constraints = select({
+        "//config:linux": ["//config:macos"],
+        "DEFAULT": [],
+    }),
+)
+
+arg_tools(
+    name = "arg_exe",
+    cmd = "$(exe //groups:local_tool)",
+)
+
+arg_tools(
+    name = "arg_location",
+    cmd = "$(location_exec //groups:macos_tool) $(location_toolchain //groups:resource_toolchain)",
+)
+
+group_test(name = "group_test")
+
+forwarding_test(
+    name = "forwarded_group_test",
+    test = ":group_test",
+)
+
+constrained_link(
+    name = "link_follows_target_os",
+    link_constraints = select({
+        "//config:macos": ["//config:macos"],
+        "DEFAULT": ["//config:linux"],
+    }),
+)
+
+copying_test(
+    name = "copied_group_test",
+    test = ":group_test",
+)
+
+anon_in_group(name = "anon_in_group")
+
+anon_in_group(
+    name = "anon_targets_in_group",
+    plural = True,
+)
+
+anon_in_group(
+    name = "anon_without_group",
+    in_group = False,
+)
+
+# The default group runs on `linux_remote` (`remote_tool`), `Link` on `linux_local` (`local_tool`).
+[
+    anon_arg(
+        name = name,
+        default_cmd = "$(exe :remote_tool)",
+        in_link = in_link,
+        link_cmd = "$(exe :local_tool)",
+        use_link_cmd = use_link_cmd,
+    )
+    for name, use_link_cmd, in_link in [
+        ("anon_default_arg_in_link", False, True),
+        ("anon_link_arg_in_link", True, True),
+        ("anon_link_arg_in_default", True, False),
+    ]
+]
+
+arg_toolchain(
+    name = "local_arg_toolchain",
+    cmd = "$(exe :local_tool)",
+)
+
+anon_toolchain_arg(
+    name = "anon_toolchain_arg_in_link",
+    in_link = True,
+)
+
+anon_toolchain_arg(
+    name = "anon_toolchain_arg_in_default",
+    in_link = False,
+)

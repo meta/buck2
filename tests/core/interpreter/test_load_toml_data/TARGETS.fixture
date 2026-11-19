@@ -1,4 +1,4 @@
 load(":example.toml", toml = "value")
 
 # buildifier: disable=print
-print(toml)
+print("DATA_LOAD_TEST_OUTPUT: " + repr(toml))

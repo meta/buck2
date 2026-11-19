@@ -12,6 +12,7 @@ use allocative::Allocative;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::cells::build_file_cell::BuildFileCell;
 use crate::cells::cell_path::CellPath;
@@ -19,7 +20,16 @@ use crate::cells::name::CellName;
 use crate::package::PackageLabel;
 
 /// Path of a build file (e.g. `BUCK`) only. (`bzl` files are not included).
-#[derive(Clone, Hash, Eq, PartialEq, Debug, derive_more::Display, Allocative)]
+#[derive(
+    Clone,
+    Hash,
+    Eq,
+    PartialEq,
+    Debug,
+    derive_more::Display,
+    Allocative,
+    Pagable
+)]
 #[display("{}:{}", package, filename)]
 pub struct BuildFilePath {
     /// The package of this build file

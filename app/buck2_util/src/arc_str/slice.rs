@@ -14,17 +14,39 @@ use std::ops::Deref;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
+use serde::Deserialize;
+use serde::Serialize;
 use strong_hash::StrongHash;
 use triomphe::Arc;
 
-use crate::arc_str::iterator_as_exact_size_iterator::IteratorAsExactSizeIterator;
+use crate::exact_size_iter::IterExactSize;
 
 /// `Arc<[T]>` but more efficient.
-#[derive(Debug, Allocative)]
+#[derive(Debug, Allocative, Pagable)]
 pub struct ArcSlice<T> {
     // This can be `NonNull<[T]>` when `Arc::from_raw` is available:
     // https://github.com/Manishearth/triomphe/pull/57/files
     slice: Option<Arc<[T]>>,
+}
+
+impl<T: Serialize> Serialize for ArcSlice<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.deref().serialize(serializer)
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for ArcSlice<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let v: Vec<_> = Vec::deserialize(deserializer)?;
+        Ok(v.into())
+    }
 }
 
 impl<T> ArcSlice<T> {
@@ -122,7 +144,7 @@ impl<T> FromIterator<T> for ArcSlice<T> {
         if upper == Some(0) {
             ArcSlice::default()
         } else if Some(lower) == upper {
-            let arc = Arc::from_header_and_iter((), IteratorAsExactSizeIterator(iter));
+            let arc = Arc::from_header_and_iter((), iter.with_exact_size(lower));
             let arc: Arc<[T]> = arc.into();
             if arc.is_empty() {
                 ArcSlice::default()

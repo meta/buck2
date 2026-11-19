@@ -21,14 +21,14 @@ use buck2_cmd_audit_client::deferred_materializer::DeferredMaterializerCommand;
 use buck2_cmd_audit_client::deferred_materializer::DeferredMaterializerSubcommand;
 use buck2_common::manifold::ManifoldClient;
 use buck2_error::buck2_error;
-use futures::future::BoxFuture;
+use futures::future::LocalBoxFuture;
 use futures::future::Shared;
 
 use crate::manifold::buf_to_manifold;
 use crate::rage::MaterializerRageUploadData;
 
 pub async fn upload_materializer_data(
-    buckd: Shared<BoxFuture<'_, buck2_error::Result<BootstrapBuckdClient>>>,
+    buckd: Shared<LocalBoxFuture<'_, buck2_error::Result<BootstrapBuckdClient>>>,
     client_context: &ClientContext,
     manifold: &ManifoldClient,
     manifold_id: &String,

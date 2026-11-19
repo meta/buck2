@@ -1,6 +1,5 @@
 # Starlark in Rust
 
-[![Support Ukraine](https://img.shields.io/badge/Support-Ukraine-FFD500?style=flat&labelColor=005BBB)](https://opensource.fb.com/support-ukraine)
 [![GitHub link](https://img.shields.io/badge/GitHub-facebook%2Fstarlark--rust-blue.svg)](https://github.com/facebook/starlark-rust)
 [![crates.io version](https://img.shields.io/crates/v/starlark.svg)](https://crates.io/crates/starlark)
 [![docs.rs availability](https://img.shields.io/docsrs/starlark?label=docs.rs)](https://docs.rs/starlark/)
@@ -36,7 +35,7 @@ $> 1+2
 This project was started by
 [Damien Martin-Guillerez](https://github.com/damienmg). Version 0.4.0 of this
 library changed ownership [from Google](https://github.com/google/starlark-rust)
-to Facebook.
+to Meta (formerly Facebook).
 
 ## Learn More
 
@@ -53,7 +52,7 @@ This project features:
 - Easy interoperability between Rust types and Starlark.
 - Rust-friendly types, so frozen values are `Send`/`Sync`, while non-frozen
   values aren't.
-- [Garbage collected](docs/gc.md) values allocated on [a heap](docs/heaps.md).
+- [Garbage collected](docs/gc.md) values allocated on a heap.
 - Optional runtime-checked [types](docs/types.md).
 - A linter, to detect code issues in Starlark.
 - IDE integration in the form of
@@ -62,7 +61,7 @@ This project features:
   [fuzz testing](https://github.com/google/oss-fuzz/tree/master/projects/starlark-rust).
 - [DAP](https://microsoft.github.io/debug-adapter-protocol/) support.
 
-This project also has three non-goals:
+This project also has two non-goals:
 
 - We do _not_ aim for API stability between releases, preferring to iterate
   quickly and refine the API as much as possible. But we do

@@ -1,1 +1,1 @@
-soft_error("starlark_no_stack_soft_error", "Blah", stack = False)
+deprecation("starlark_no_stack_deprecation", "Blah", owner = "jakobdegen", started = "2026-11-02", stack = False)

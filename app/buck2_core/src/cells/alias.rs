@@ -11,6 +11,7 @@
 use std::borrow::Borrow;
 
 use allocative::Allocative;
+use pagable::Pagable;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -64,7 +65,8 @@ impl Borrow<str> for CellAlias {
     Hash,
     Ord,
     PartialOrd,
-    Allocative
+    Allocative,
+    Pagable
 )]
 pub struct NonEmptyCellAlias(String);
 

@@ -10,24 +10,39 @@
 
 use std::cell::RefCell;
 use std::fmt;
-use std::ops::DerefMut;
 use std::sync::Arc;
 
+use allocative::Allocative;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::dice::OpaqueLegacyBuckConfigOnDice;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::soft_error;
 use dice::DiceComputations;
 use hashbrown::HashTable;
+use starlark::any::ProvidesStaticType;
 use starlark::collections::Hashed;
 use starlark::eval::Evaluator;
-use starlark::values::FrozenStringValue;
 use starlark::values::StringValue;
+use starlark::values::Trace;
 
-struct BuckConfigEntry {
+use crate::interpreter::extra_value::InterpreterExtraValue;
+
+#[derive(Debug, Trace, Allocative)]
+struct BuckConfigEntry<'v> {
     section: Hashed<String>,
     key: Hashed<String>,
-    value: Option<FrozenStringValue>,
+    value: Option<StringValue<'v>>,
+}
+
+/// The `read_config` results of one module by `(section, key)`: a repeated read costs one table
+/// lookup and hands out the same string. Kept in the module's extra value because the strings
+/// are values of the module.
+#[derive(Default, Debug, ProvidesStaticType, Trace, Allocative)]
+pub(crate) struct BuckConfigsCache<'v> {
+    /// Hash map by `(section, key)` pair, so we do one table lookup per request.
+    /// So we hash the `key` even if the section does not exist,
+    /// but this is practically not an issue, because keys usually come with cached hash.
+    current_cell: RefCell<HashTable<BuckConfigEntry<'v>>>,
+    root_cell: RefCell<HashTable<BuckConfigEntry<'v>>>,
 }
 
 pub trait BuckConfigsViewForStarlark {
@@ -42,18 +57,9 @@ pub trait BuckConfigsViewForStarlark {
     ) -> buck2_error::Result<Option<Arc<str>>>;
 }
 
-struct BuckConfigsInner<'a> {
-    configs_view: &'a mut (dyn BuckConfigsViewForStarlark + 'a),
-    /// Hash map by `(section, key)` pair, so we do one table lookup per request.
-    /// So we hash the `key` even if the section does not exist,
-    /// but this is practically not an issue, because keys usually come with cached hash.
-    current_cell_cache: HashTable<BuckConfigEntry>,
-    root_cell_cache: HashTable<BuckConfigEntry>,
-}
-
 /// Version of cell buckconfig optimized for fast query from `read_config` Starlark function.
 pub(crate) struct LegacyBuckConfigsForStarlark<'a> {
-    inner: RefCell<BuckConfigsInner<'a>>,
+    configs_view: RefCell<&'a mut (dyn BuckConfigsViewForStarlark + 'a)>,
 }
 
 impl<'a> fmt::Debug for LegacyBuckConfigsForStarlark<'a> {
@@ -85,34 +91,24 @@ impl<'a> LegacyBuckConfigsForStarlark<'a> {
         configs_view: &'a mut (dyn BuckConfigsViewForStarlark + 'a),
     ) -> LegacyBuckConfigsForStarlark<'a> {
         LegacyBuckConfigsForStarlark {
-            inner: RefCell::new(BuckConfigsInner {
-                configs_view,
-                current_cell_cache: HashTable::new(),
-                root_cell_cache: HashTable::new(),
-            }),
+            configs_view: RefCell::new(configs_view),
         }
     }
 
-    fn get_impl(
+    fn get_impl<'v>(
         &self,
         section: Hashed<&str>,
         key: Hashed<&str>,
         from_root_cell: bool,
-        eval: &mut Evaluator<'_, '_, '_>,
-    ) -> buck2_error::Result<Option<FrozenStringValue>> {
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> buck2_error::Result<Option<StringValue<'v>>> {
         let hash = Self::mix_hashes(section.hash().get(), key.hash().get());
 
-        let mut inner = self.inner.borrow_mut();
-        let BuckConfigsInner {
-            configs_view,
-            current_cell_cache,
-            root_cell_cache,
-        } = inner.deref_mut();
-
-        let cache = if from_root_cell {
-            root_cell_cache
+        let cache = &InterpreterExtraValue::get(eval.module())?.buckconfigs;
+        let mut cache = if from_root_cell {
+            cache.root_cell.borrow_mut()
         } else {
-            current_cell_cache
+            cache.current_cell.borrow_mut()
         };
         if let Some(e) = cache.find(hash, |e| {
             e.section.key() == section.key() && e.key.as_str() == *key.key()
@@ -120,18 +116,21 @@ impl<'a> LegacyBuckConfigsForStarlark<'a> {
             return Ok(e.value);
         }
 
-        let value = if from_root_cell {
-            configs_view.read_root_cell_config(BuckconfigKeyRef {
-                section: section.key(),
-                property: key.key(),
-            })?
-        } else {
-            configs_view.read_current_cell_config(BuckconfigKeyRef {
-                section: section.key(),
-                property: key.key(),
-            })?
+        let key_ref = BuckconfigKeyRef {
+            section: section.key(),
+            property: key.key(),
+        };
+        let value = {
+            let mut configs_view = self.configs_view.borrow_mut();
+            if from_root_cell {
+                configs_view.read_root_cell_config(key_ref)?
+            } else {
+                configs_view.read_current_cell_config(key_ref)?
+            }
         }
-        .map(|v| eval.frozen_heap().alloc_str(&v));
+        // The frozen heap, so that freezing the module does not copy the strings; the module
+        // keeps them either way.
+        .map(|v| eval.frozen_heap(|fh, edge| edge.rebrand(fh.alloc(&*v))));
 
         cache.insert_unique(
             hash,
@@ -147,24 +146,24 @@ impl<'a> LegacyBuckConfigsForStarlark<'a> {
     }
 
     /// Find the buckconfig entry.
-    pub(crate) fn current_cell_get(
+    pub(crate) fn current_cell_get<'v>(
         &self,
         section: StringValue,
         key: StringValue,
-        eval: &mut Evaluator<'_, '_, '_>,
-    ) -> buck2_error::Result<Option<FrozenStringValue>> {
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> buck2_error::Result<Option<StringValue<'v>>> {
         // Note here we reuse the hashes of `section` and `key`,
         // if `read_config` is called repeatedly with the same constant arguments:
         // `StringValue` caches the hashes.
         self.get_impl(section.get_hashed_str(), key.get_hashed_str(), false, eval)
     }
 
-    pub(crate) fn root_cell_get(
+    pub(crate) fn root_cell_get<'v>(
         &self,
         section: StringValue,
         key: StringValue,
-        eval: &mut Evaluator<'_, '_, '_>,
-    ) -> buck2_error::Result<Option<FrozenStringValue>> {
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> buck2_error::Result<Option<StringValue<'v>>> {
         // Note here we reuse the hashes of `section` and `key`,
         // if `read_config` is called repeatedly with the same constant arguments:
         // `StringValue` caches the hashes.
@@ -174,15 +173,15 @@ impl<'a> LegacyBuckConfigsForStarlark<'a> {
 
 pub(crate) struct ConfigsOnDiceViewForStarlark<'a, 'd> {
     ctx: &'a mut DiceComputations<'d>,
-    buckconfig: OpaqueLegacyBuckConfigOnDice,
-    root_buckconfig: OpaqueLegacyBuckConfigOnDice,
+    buckconfig: OpaqueLegacyBuckConfigOnDice<'d>,
+    root_buckconfig: OpaqueLegacyBuckConfigOnDice<'d>,
 }
 
 impl<'a, 'd> ConfigsOnDiceViewForStarlark<'a, 'd> {
     pub(crate) fn new(
         ctx: &'a mut DiceComputations<'d>,
-        buckconfig: OpaqueLegacyBuckConfigOnDice,
-        root_buckconfig: OpaqueLegacyBuckConfigOnDice,
+        buckconfig: OpaqueLegacyBuckConfigOnDice<'d>,
+        root_buckconfig: OpaqueLegacyBuckConfigOnDice<'d>,
     ) -> Self {
         Self {
             ctx,
@@ -197,53 +196,15 @@ impl BuckConfigsViewForStarlark for ConfigsOnDiceViewForStarlark<'_, '_> {
         &mut self,
         key: BuckconfigKeyRef,
     ) -> buck2_error::Result<Option<Arc<str>>> {
-        read_config_and_report_deprecated(self.ctx, &self.buckconfig, key)
+        self.buckconfig.lookup(self.ctx, key)
     }
 
     fn read_root_cell_config(
         &mut self,
         key: BuckconfigKeyRef,
     ) -> buck2_error::Result<Option<Arc<str>>> {
-        read_config_and_report_deprecated(self.ctx, &self.root_buckconfig, key)
+        self.root_buckconfig.lookup(self.ctx, key)
     }
-}
-
-#[derive(Debug, buck2_error::Error)]
-#[error("{} is no longer used. {}", .0, .1)]
-#[buck2(tag = Input)]
-struct DeprecatedConfigError(String, Arc<str>);
-
-fn read_config_and_report_deprecated(
-    ctx: &mut DiceComputations,
-    config: &OpaqueLegacyBuckConfigOnDice,
-    key: BuckconfigKeyRef,
-) -> buck2_error::Result<Option<Arc<str>>> {
-    let result = config.lookup(ctx, key)?;
-    let property = format!("{}.{}", key.section, key.property);
-
-    let key = BuckconfigKeyRef {
-        section: "deprecated_config",
-        property: &property,
-    };
-    let msg = config.lookup(ctx, key)?;
-    if let Some(msg) = msg {
-        // soft error category can only contain ascii lowercese characters
-        let section = transform_logview_category(key.section);
-        let prop = transform_logview_category(key.property);
-
-        soft_error!(
-            format!("deprecated_config_{section}_{prop}").as_str(),
-            DeprecatedConfigError(property, msg).into(),
-            quiet: true
-        )?;
-    }
-    Ok(result)
-}
-
-fn transform_logview_category(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_ascii_lowercase() || *c == '_')
-        .collect::<String>()
 }
 
 pub struct LegacyConfigsViewForStarlark {

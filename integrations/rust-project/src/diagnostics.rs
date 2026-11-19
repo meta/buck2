@@ -13,7 +13,8 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// This is the same as rustfix::Diagnostic, but with a more complete schema.
+/// Diagnostics from rustc, see
+/// <https://doc.rust-lang.org/beta/rustc/json.html#diagnostics>.
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct Message {
     pub(crate) message: String,

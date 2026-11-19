@@ -10,6 +10,5 @@ error: fail: failing with no stacktrace
    |
 10 |     fail_no_stacktrace("failing with no stacktrace")
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
 
 BXL FAILED

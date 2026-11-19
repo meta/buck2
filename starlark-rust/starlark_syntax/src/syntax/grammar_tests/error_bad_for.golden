@@ -1,0 +1,16 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+for x + y in []:
+  pass
+
+Error:
+error: left-hand-side of assignment must take the form `a`, `a.b` or `a[b]`
+ --> error_bad_for:1:5
+  |
+1 | for x + y in []:
+  |     ^^^^^

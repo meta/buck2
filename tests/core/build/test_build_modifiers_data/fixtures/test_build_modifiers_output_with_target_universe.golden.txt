@@ -1,24 +1,24 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
 --show-output
-root//:dummy buck-out/v2/gen/root/0de6023c2fd9741c/__dummy__/dummy.txt
+root//:dummy buck-out/v2/art/root/4f277ffab3157bd6/__dummy__/dummy.txt
 
 
 --show-full-output
-root//:dummy /abs/project/root/buck-out/v2/gen/root/0de6023c2fd9741c/__dummy__/dummy.txt
+root//:dummy /abs/project/root/buck-out/v2/art/root/4f277ffab3157bd6/__dummy__/dummy.txt
 
 
 --show-simple-output
-buck-out/v2/gen/root/0de6023c2fd9741c/__dummy__/dummy.txt
+buck-out/v2/art/root/4f277ffab3157bd6/__dummy__/dummy.txt
 
 
 --show-full-simple-output
-/abs/project/root/buck-out/v2/gen/root/0de6023c2fd9741c/__dummy__/dummy.txt
+/abs/project/root/buck-out/v2/art/root/4f277ffab3157bd6/__dummy__/dummy.txt
 
 
 --show-json-output
-{"root//:dummy":"buck-out/v2/gen/root/0de6023c2fd9741c/__dummy__/dummy.txt"}
+{"root//:dummy":"buck-out/v2/art/root/4f277ffab3157bd6/__dummy__/dummy.txt"}
 
 
 --show-full-json-output
-{"root//:dummy":"/abs/project/root/buck-out/v2/gen/root/0de6023c2fd9741c/__dummy__/dummy.txt"}
+{"root//:dummy":"/abs/project/root/buck-out/v2/art/root/4f277ffab3157bd6/__dummy__/dummy.txt"}

@@ -6,18 +6,6 @@ source_listing()
 
 prelude = native
 
-prelude.python_bootstrap_binary(
-    name = "gen_stdlib_importcfg",
-    main = "gen_stdlib_importcfg.py",
-    visibility = ["PUBLIC"],
-)
-
-prelude.python_bootstrap_binary(
-    name = "go_wrapper_py",
-    main = "go_wrapper.py",
-    visibility = ["PUBLIC"],
-)
-
 prelude.go_stdlib(
     name = "stdlib",
     visibility = ["PUBLIC"],
@@ -29,4 +17,101 @@ prelude.go_bootstrap_binary(
         "cmd/pack",
     ],
     visibility = ["PUBLIC"],
+)
+
+prelude.go_bootstrap_binary(
+    name = "go_wrapper",
+    srcs = [
+        "buildid.go",
+        "go_wrapper.go",
+    ],
+    build_args = [
+        "buildid.go",
+        "go_wrapper.go",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+prelude.go_bootstrap_binary(
+    name = "testmaingen",
+    srcs = ["testmaingen.go"],
+    build_args = [
+        "testmaingen.go",
+    ],
+    visibility = [
+        "PUBLIC",
+    ],
+)
+
+prelude.go_bootstrap_binary(
+    name = "list_tests",
+    srcs = ["list_tests.go"],
+    build_args = [
+        "list_tests.go",
+    ],
+    visibility = [
+        "PUBLIC",
+    ],
+)
+
+prelude.go_bootstrap_binary(
+    name = "pkg_analyzer",
+    srcs = ["pkg_analyzer.go"],
+    build_args = [
+        "pkg_analyzer.go",
+    ],
+    visibility = [
+        "PUBLIC",
+    ],
+)
+
+prelude.go_bootstrap_binary(
+    name = "gen_embedcfg",
+    srcs = ["gen_embedcfg.go"],
+    build_args = [
+        "gen_embedcfg.go",
+    ],
+    visibility = [
+        "PUBLIC",
+    ],
+)
+
+prelude.go_bootstrap_binary(
+    name = "copy_goroot",
+    srcs = ["copy_goroot.go"],
+    build_args = [
+        "copy_goroot.go",
+    ],
+    visibility = [
+        "PUBLIC",
+    ],
+)
+
+prelude.go_test(
+    name = "gen_embedcfg_test",
+    srcs = [
+        "gen_embedcfg.go",
+        "gen_embedcfg_test.go",
+    ],
+)
+
+prelude.go_test(
+    name = "buildid_test",
+    srcs = ["buildid.go", "buildid_test.go"],
+)
+
+prelude.go_test(
+    name = "testmaingen_test",
+    srcs = [
+        "testmaingen.go",
+        "testmaingen_test.go",
+    ],
+)
+
+prelude.go_test(
+    name = "pkg_analyzer_test",
+    srcs = [
+        "pkg_analyzer.go",
+        "pkg_analyzer_test.go",
+    ],
 )

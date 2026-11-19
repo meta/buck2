@@ -18,15 +18,18 @@ use buck2_common::target_aliases::HasTargetAliasResolver;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
+use buck2_hash::BuckMutSet;
 use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_query::query::syntax::simple::eval::file_set::FileSet;
 use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use buck2_query::query::syntax::simple::eval::values::QueryValueDepth;
 use buck2_query::query::syntax::simple::functions::DefaultQueryFunctions;
 use buck2_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
 use buck2_query::query::syntax::simple::functions::helpers::CapturedExpr;
 use dice::DiceComputations;
 use dice::LinearRecomputeDiceComputations;
 use dupe::Dupe;
+use futures::FutureExt;
 
 use crate::dice::DiceQueryData;
 use crate::dice::DiceQueryDelegate;
@@ -37,6 +40,7 @@ fn uquery_functions<'v>() -> DefaultQueryFunctions<UqueryEnvironment<'v>> {
 }
 
 struct BxlUqueryFunctionsImpl {
+    allow_partial_graph: bool,
     project_root: ProjectRoot,
     working_dir: ProjectRelativePathBuf,
 }
@@ -44,14 +48,15 @@ struct BxlUqueryFunctionsImpl {
 impl BxlUqueryFunctionsImpl {
     async fn uquery_delegate<'c, 'd>(
         &self,
-        dice: &'c LinearRecomputeDiceComputations<'d>,
+        dice: LinearRecomputeDiceComputations<'c, 'd>,
     ) -> buck2_error::Result<DiceQueryDelegate<'c, 'd>> {
         let cell_resolver = dice.get().get_cell_resolver().await?;
         let cell_alias_resolver = dice
             .get()
             .get_cell_alias_resolver_for_dir(&self.working_dir)
-            .await?;
-        let target_alias_resolver = dice.get().target_alias_resolver().await?;
+            .await?
+            .dupe();
+        let target_alias_resolver = dice.get().target_alias_resolver().await?.dupe();
 
         let query_data = Arc::new(DiceQueryData::new(
             GlobalCfgOptions::default(),
@@ -60,6 +65,7 @@ impl BxlUqueryFunctionsImpl {
             &self.working_dir,
             self.project_root.dupe(),
             target_alias_resolver,
+            self.allow_partial_graph,
         ));
         Ok(DiceQueryDelegate::new(dice, query_data))
     }
@@ -69,7 +75,12 @@ impl BxlUqueryFunctionsImpl {
         delegate: &'c DiceQueryDelegate<'c, 'd>,
     ) -> buck2_error::Result<UqueryEnvironment<'c>> {
         let literals = delegate.query_data().dupe();
-        Ok(UqueryEnvironment::new(delegate, literals))
+        Ok(UqueryEnvironment::new(
+            delegate,
+            literals,
+            BuckMutSet::default(),
+            self.allow_partial_graph,
+        ))
     }
 }
 
@@ -82,16 +93,19 @@ impl BxlUqueryFunctions for BxlUqueryFunctionsImpl {
         to: &TargetSet<TargetNode>,
         captured_expr: Option<&CapturedExpr>,
     ) -> buck2_error::Result<TargetSet<TargetNode>> {
-        dice.with_linear_recompute(|dice| async move {
-            Ok(uquery_functions()
-                .allpaths(
-                    &self.uquery_env(&self.uquery_delegate(&dice).await?).await?,
-                    &DefaultQueryFunctionsModule::new(),
-                    from,
-                    to,
-                    captured_expr,
-                )
-                .await?)
+        dice.with_linear_recompute(|dice| {
+            async move {
+                Ok(uquery_functions()
+                    .allpaths(
+                        &self.uquery_env(&self.uquery_delegate(dice).await?).await?,
+                        &DefaultQueryFunctionsModule::new(),
+                        from,
+                        to,
+                        captured_expr,
+                    )
+                    .await?)
+            }
+            .boxed()
         })
         .await
     }
@@ -102,16 +116,19 @@ impl BxlUqueryFunctions for BxlUqueryFunctionsImpl {
         to: &TargetSet<TargetNode>,
         captured_expr: Option<&CapturedExpr>,
     ) -> buck2_error::Result<TargetSet<TargetNode>> {
-        dice.with_linear_recompute(|dice| async move {
-            Ok(uquery_functions()
-                .somepath(
-                    &self.uquery_env(&self.uquery_delegate(&dice).await?).await?,
-                    &DefaultQueryFunctionsModule::new(),
-                    from,
-                    to,
-                    captured_expr,
-                )
-                .await?)
+        dice.with_linear_recompute(|dice| {
+            async move {
+                Ok(uquery_functions()
+                    .somepath(
+                        &self.uquery_env(&self.uquery_delegate(dice).await?).await?,
+                        &DefaultQueryFunctionsModule::new(),
+                        from,
+                        to,
+                        captured_expr,
+                    )
+                    .await?)
+            }
+            .boxed()
         })
         .await
     }
@@ -119,20 +136,23 @@ impl BxlUqueryFunctions for BxlUqueryFunctionsImpl {
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<TargetNode>,
-        deps: Option<i32>,
+        depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr>,
     ) -> buck2_error::Result<TargetSet<TargetNode>> {
         Ok(dice
-            .with_linear_recompute(|dice| async move {
-                uquery_functions()
-                    .deps(
-                        &self.uquery_env(&self.uquery_delegate(&dice).await?).await?,
-                        &DefaultQueryFunctionsModule::new(),
-                        targets,
-                        deps,
-                        captured_expr,
-                    )
-                    .await
+            .with_linear_recompute(|dice| {
+                async move {
+                    uquery_functions()
+                        .deps(
+                            &self.uquery_env(&self.uquery_delegate(dice).await?).await?,
+                            &DefaultQueryFunctionsModule::new(),
+                            targets,
+                            depth,
+                            captured_expr,
+                        )
+                        .await
+                }
+                .boxed()
             })
             .await?)
     }
@@ -141,21 +161,24 @@ impl BxlUqueryFunctions for BxlUqueryFunctionsImpl {
         dice: &mut DiceComputations<'_>,
         universe: &TargetSet<TargetNode>,
         targets: &TargetSet<TargetNode>,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr>,
     ) -> buck2_error::Result<TargetSet<TargetNode>> {
         Ok(dice
-            .with_linear_recompute(|dice| async move {
-                uquery_functions()
-                    .rdeps(
-                        &self.uquery_env(&self.uquery_delegate(&dice).await?).await?,
-                        &DefaultQueryFunctionsModule::new(),
-                        universe,
-                        targets,
-                        depth,
-                        captured_expr,
-                    )
-                    .await
+            .with_linear_recompute(|dice| {
+                async move {
+                    uquery_functions()
+                        .rdeps(
+                            &self.uquery_env(&self.uquery_delegate(dice).await?).await?,
+                            &DefaultQueryFunctionsModule::new(),
+                            universe,
+                            targets,
+                            depth,
+                            captured_expr,
+                        )
+                        .await
+                }
+                .boxed()
             })
             .await?)
     }
@@ -165,13 +188,16 @@ impl BxlUqueryFunctions for BxlUqueryFunctionsImpl {
         targets: &TargetSet<TargetNode>,
     ) -> buck2_error::Result<TargetSet<TargetNode>> {
         Ok(dice
-            .with_linear_recompute(|dice| async move {
-                uquery_functions()
-                    .testsof(
-                        &self.uquery_env(&self.uquery_delegate(&dice).await?).await?,
-                        targets,
-                    )
-                    .await
+            .with_linear_recompute(|dice| {
+                async move {
+                    uquery_functions()
+                        .testsof(
+                            &self.uquery_env(&self.uquery_delegate(dice).await?).await?,
+                            targets,
+                        )
+                        .await
+                }
+                .boxed()
             })
             .await?)
     }
@@ -181,13 +207,16 @@ impl BxlUqueryFunctions for BxlUqueryFunctionsImpl {
         file_set: &FileSet,
     ) -> buck2_error::Result<TargetSet<TargetNode>> {
         Ok(dice
-            .with_linear_recompute(|dice| async move {
-                uquery_functions()
-                    .owner(
-                        &self.uquery_env(&self.uquery_delegate(&dice).await?).await?,
-                        file_set,
-                    )
-                    .await
+            .with_linear_recompute(|dice| {
+                async move {
+                    uquery_functions()
+                        .owner(
+                            &self.uquery_env(&self.uquery_delegate(dice).await?).await?,
+                            file_set,
+                        )
+                        .await
+                }
+                .boxed()
             })
             .await?)
     }
@@ -197,30 +226,76 @@ impl BxlUqueryFunctions for BxlUqueryFunctionsImpl {
         file_set: &FileSet,
     ) -> buck2_error::Result<TargetSet<TargetNode>> {
         Ok(dice
-            .with_linear_recompute(|dice| async move {
-                uquery_functions()
-                    .targets_in_buildfile(
-                        &self.uquery_env(&self.uquery_delegate(&dice).await?).await?,
-                        file_set,
-                    )
-                    .await
+            .with_linear_recompute(|dice| {
+                async move {
+                    uquery_functions()
+                        .targets_in_buildfile(
+                            &self.uquery_env(&self.uquery_delegate(dice).await?).await?,
+                            file_set,
+                        )
+                        .await
+                }
+                .boxed()
+            })
+            .await?)
+    }
+    async fn allbuildfiles(
+        &self,
+        dice: &mut DiceComputations<'_>,
+        universe: &TargetSet<TargetNode>,
+    ) -> buck2_error::Result<FileSet> {
+        Ok(dice
+            .with_linear_recompute(|dice| {
+                async move {
+                    uquery_functions()
+                        .allbuildfiles(
+                            &self.uquery_env(&self.uquery_delegate(dice).await?).await?,
+                            universe,
+                        )
+                        .await
+                }
+                .boxed()
+            })
+            .await?)
+    }
+    async fn rbuildfiles(
+        &self,
+        dice: &mut DiceComputations<'_>,
+        universe: &FileSet,
+        argset: &FileSet,
+    ) -> buck2_error::Result<FileSet> {
+        Ok(dice
+            .with_linear_recompute(|dice| {
+                async move {
+                    uquery_functions()
+                        .rbuildfiles(
+                            &self.uquery_env(&self.uquery_delegate(dice).await?).await?,
+                            universe,
+                            argset,
+                        )
+                        .await
+                }
+                .boxed()
             })
             .await?)
     }
 }
 
 pub(crate) fn init_new_bxl_uquery_functions() {
-    NEW_BXL_UQUERY_FUNCTIONS.init(|project_root, cell_name, cell_resolver| {
-        Box::pin(async move {
-            let cell = cell_resolver.get(cell_name)?;
-            // TODO(nga): working as as cell root is not right.
-            //   Should be either the project root or user's current working directory.
-            let working_dir = cell.path().as_project_relative_path().to_buf();
+    NEW_BXL_UQUERY_FUNCTIONS.init(
+        |allow_partial_graph, project_root, cell_name, cell_resolver| {
+            Box::pin(async move {
+                let cell = cell_resolver.get(cell_name)?;
+                // TODO(nga): working as as cell root is not right.
+                //   Should be either the project root or user's current working directory.
+                let working_dir = cell.path().as_project_relative_path().to_buf();
 
-            Result::<Box<dyn BxlUqueryFunctions>, _>::Ok(Box::new(BxlUqueryFunctionsImpl {
-                project_root,
-                working_dir,
-            }))
-        })
-    })
+                Result::<Box<dyn BxlUqueryFunctions>, _>::Ok(Box::new(BxlUqueryFunctionsImpl {
+                    allow_partial_graph,
+                    project_root,
+                    working_dir,
+                }))
+            })
+        },
+    )
 }

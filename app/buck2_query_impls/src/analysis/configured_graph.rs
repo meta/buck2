@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -16,26 +15,33 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutMap;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
 use buck2_node::nodes::configured_ref::ConfiguredGraphNodeRef;
 use buck2_query::query::syntax::simple::eval::set::TargetSet;
 use derive_more::Display;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
 use dice::LinearRecomputeDiceComputations;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use dupe::IterDupedExt;
 use dupe::OptionDupedExt;
-use futures::FutureExt;
-use indexmap::IndexMap;
+use dupe::ResultDupedErrExt;
+use pagable::Pagable;
+use pagable::StaticStr;
+use pagable::pagable_typetag;
 
 use crate::analysis::environment::ConfiguredGraphQueryEnvironmentDelegate;
 use crate::analysis::environment::get_from_template_placeholder_info;
 
 pub(crate) struct AnalysisDiceQueryDelegate<'c, 'd> {
-    pub(crate) ctx: &'c LinearRecomputeDiceComputations<'d>,
+    pub(crate) ctx: LinearRecomputeDiceComputations<'c, 'd>,
 }
 
 impl AnalysisDiceQueryDelegate<'_, '_> {
@@ -46,7 +52,7 @@ impl AnalysisDiceQueryDelegate<'_, '_> {
 
 pub(crate) struct AnalysisConfiguredGraphQueryDelegate<'a, 'd> {
     pub(crate) dice_query_delegate: Arc<AnalysisDiceQueryDelegate<'a, 'd>>,
-    pub(crate) resolved_literals: HashMap<String, ConfiguredTargetNode>,
+    pub(crate) resolved_literals: BuckMutMap<String, ConfiguredTargetNode>,
 }
 
 #[async_trait]
@@ -60,13 +66,14 @@ impl ConfiguredGraphQueryEnvironmentDelegate for AnalysisConfiguredGraphQueryDel
 
     async fn get_targets_from_template_placeholder_info(
         &self,
-        template_name: &'static str,
+        template_name: StaticStr,
         targets: TargetSet<ConfiguredGraphNodeRef>,
     ) -> buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
-        #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+        #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
         #[display("template_placeholder_info_query({})", template_name)]
+        #[pagable_typetag(dice::DiceKeyDyn)]
         struct TemplatePlaceholderInfoQueryKey {
-            template_name: &'static str,
+            template_name: StaticStr,
             // Use `ConfiguredTargetLabel` instead of `ConfiguredGraphNodeRef` here because `ConfiguredGraphNodeRef`
             // only computes Hash and PartialEq based on the label. If we use `ConfiguredGraphNodeRef` directly we
             // may cache stale ConfiguredTargetNodes and end up with a bug like T133069783.
@@ -75,7 +82,7 @@ impl ConfiguredGraphQueryEnvironmentDelegate for AnalysisConfiguredGraphQueryDel
 
         #[async_trait]
         impl Key for TemplatePlaceholderInfoQueryKey {
-            type Value = buck2_error::Result<Arc<TargetSet<ConfiguredGraphNodeRef>>>;
+            type Value = buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>>;
 
             async fn compute(
                 &self,
@@ -84,30 +91,22 @@ impl ConfiguredGraphQueryEnvironmentDelegate for AnalysisConfiguredGraphQueryDel
             ) -> Self::Value {
                 let (targets, label_to_artifact) = {
                     ctx.try_compute2(
-                        |ctx| {
-                            async move {
-                                ctx.try_compute_join(self.targets.iter(), |ctx, target| {
-                                    async move {
-                                        ctx.get_configured_target_node(target)
-                                            .await?
-                                            .require_compatible()
-                                    }
-                                    .boxed()
-                                })
-                                .await
-                            }
-                            .boxed()
+                        async |ctx| {
+                            ctx.try_compute_join(self.targets.iter(), async |ctx, target| {
+                                ctx.get_configured_target_node(target)
+                                    .await
+                                    .require_compatible()
+                                    .map(|n| n.dupe())
+                            })
+                            .await
                         },
-                        |ctx| {
-                            async move {
-                                get_from_template_placeholder_info(
-                                    ctx,
-                                    self.template_name,
-                                    self.targets.iter().duped(),
-                                )
-                                .await
-                            }
-                            .boxed()
+                        async |ctx| {
+                            get_from_template_placeholder_info(
+                                ctx,
+                                self.template_name,
+                                self.targets.iter().duped(),
+                            )
+                            .await
                         },
                     )
                     .await?
@@ -118,12 +117,18 @@ impl ConfiguredGraphQueryEnvironmentDelegate for AnalysisConfiguredGraphQueryDel
                     .map(ConfiguredGraphNodeRef::new)
                     .collect();
                 let targets = find_target_nodes(targets, label_to_artifact)?;
-                Ok(Arc::new(targets))
+                Ok(targets)
             }
 
-            fn equality(_: &Self::Value, _: &Self::Value) -> bool {
-                // result is not comparable
-                false
+            fn equality_behavior() -> EqualityBehavior<Self::Value> {
+                EqualityBehavior::Compare(|_, _| {
+                    // result is not comparable
+                    false
+                })
+            }
+
+            fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+                OkPagableValueSerialize::<Self::Value>::new()
             }
         }
 
@@ -131,18 +136,17 @@ impl ConfiguredGraphQueryEnvironmentDelegate for AnalysisConfiguredGraphQueryDel
             .into_iter()
             .map(|target| target.label().dupe())
             .collect();
-        let targets = self
+        Ok(self
             .dice_query_delegate
             .ctx()
             .compute(&TemplatePlaceholderInfoQueryKey {
                 template_name,
                 targets: Arc::new(targets),
             })
-            .await??;
-
-        // TODO(scottcao): Make all query functions return an Arc as an output so we can avoid making an unnecessary
-        // clone here
-        Ok(targets.as_ref().clone())
+            .await?
+            .as_ref()
+            .duped_err()?
+            .clone())
     }
 }
 
@@ -155,7 +159,7 @@ impl ConfiguredGraphQueryEnvironmentDelegate for AnalysisConfiguredGraphQueryDel
 /// don't inadvertently cause flattening of those sets.
 fn find_target_nodes(
     targets: TargetSet<ConfiguredGraphNodeRef>,
-    label_to_artifact: IndexMap<ConfiguredTargetLabel, Artifact>,
+    label_to_artifact: BuckMutInsertionMap<ConfiguredTargetLabel, Artifact>,
 ) -> buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
     let mut queue: VecDeque<_> = targets.iter().duped().collect();
     let mut seen = targets;

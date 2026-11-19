@@ -3,15 +3,45 @@ load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_core_tests")
 oncall("build_infra")
 
 buck2_core_tests(
+    materializer_variants = [
+        "test_defer_write_actions",
+        "test_write_action_cache",
+        "test_write_cas_probe",
+    ],
     target_extra_attrs = {
         "test_actions": {
             "deps": [
-                "fbsource//third-party/pypi/aiohttp:aiohttp",
+                "fbsource//third-party/rust:hostname",
+                "fbsource//third-party/rust:pathdiff",
+            ],
+        },
+        "test_download_file": {
+            "deps": [
+                "fbsource//third-party/rust:hex",
+                "fbsource//third-party/rust:sha2",
             ],
             "env": {
-                # `cpe::x2p` resolves `localhost` incorrectly, and test fails.
+                # `cpe::x2p` resolves `localhost` incorrectly, and the downloads fail.
                 "CPE_RUST_X2P_SUPPORTS_VPNLESS": "0",
             },
+        },
+        "test_http_proxy_env": {
+            "deps": [
+                "fbsource//third-party/rust:hex",
+                "fbsource//third-party/rust:sha2",
+                "fbsource//third-party/rust:uuid",
+            ],
+            "env": {
+                "CPE_RUST_X2P_SUPPORTS_VPNLESS": "0",
+            },
+            "require_nano_prelude": False,
+            "skip_for_os": ["windows"],
+        },
+        "test_run_action_timeout": {
+            "compatible_with": [
+                "ovr_config//os:linux",
+                "ovr_config//os:macos",
+            ],
         },
     },
 )

@@ -14,10 +14,11 @@ use std::io;
 fn main() -> io::Result<()> {
     let proto_files = &["subscription.proto"];
 
-    let includes = if let Ok(path) = env::var("BUCK_PROTO_SRCS") {
-        vec![path]
+    let buck_proto_srcs = env::var("BUCK_PROTO_SRCS");
+    let includes = if let Ok(path) = &buck_proto_srcs {
+        vec![path.as_str()]
     } else {
-        vec![".".to_owned()]
+        vec!["."]
     };
 
     let builder = buck2_protoc_dev::configure();

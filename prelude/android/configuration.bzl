@@ -28,7 +28,7 @@ load("@prelude//utils:expect.bzl", "expect")
 _REFS = {
     "arm64": "config//cpu/constraints:arm64",
     "armv7": "config//cpu/constraints:arm32",
-    "build_only_native_code": "prelude//android/constraints:build_only_native_code",
+    "build_only_native_code": "prelude//android/constraints:maybe_build_only_native_code[build_only_native_code]",
     "building_android_binary": "prelude//os:building_android_binary",
     "cpu": "config//cpu/constraints:cpu",
     "maybe_build_only_native_code": "prelude//android/constraints:maybe_build_only_native_code",
@@ -46,10 +46,7 @@ for min_sdk in get_min_sdk_version_range():
     constraint_value_name = get_min_sdk_version_constraint_value_name(min_sdk)
     _REFS[constraint_value_name] = "prelude//android/constraints:{}".format(constraint_value_name)
 
-def _cpu_split_transition_impl(
-        platform: PlatformInfo,
-        refs: struct,
-        attrs: struct) -> dict[str, PlatformInfo]:
+def _cpu_split_transition_impl(platform: PlatformInfo, refs: struct, attrs: struct) -> dict[str, PlatformInfo]:
     cpu_filters = attrs.cpu_filters or ALL_CPU_FILTERS
     if attrs._is_force_single_cpu:
         cpu_filters = [CPU_FILTER_FOR_PRIMARY_PLATFORM]
@@ -63,11 +60,7 @@ def _cpu_split_transition_impl(
         attrs.min_sdk_version,
     )
 
-def _cpu_split_transition(
-        platform: PlatformInfo,
-        refs: struct,
-        cpu_filters: list[str],
-        min_sdk_version: [int, None]) -> dict[str, PlatformInfo]:
+def _cpu_split_transition(platform: PlatformInfo, refs: struct, cpu_filters: list[str], min_sdk_version: [int, None]) -> dict[str, PlatformInfo]:
     cpu = refs.cpu
     x86 = refs.x86[ConstraintValueInfo]
     x86_64 = refs.x86_64[ConstraintValueInfo]
@@ -109,7 +102,8 @@ def _cpu_split_transition(
     base_constraints = {
         constraint_setting_label: constraint_setting_value
         for (constraint_setting_label, constraint_setting_value) in platform.configuration.constraints.items()
-        if constraint_setting_label != cpu[ConstraintSettingInfo].label and constraint_setting_label != refs.maybe_build_only_native_code[ConstraintSettingInfo].label
+        if constraint_setting_label != cpu[ConstraintSettingInfo].label
+        and constraint_setting_label != refs.maybe_build_only_native_code[ConstraintSettingInfo].label
     }
 
     base_constraints[refs.maybe_building_android_binary[ConstraintSettingInfo].label] = refs.building_android_binary[ConstraintValueInfo]
@@ -138,10 +132,7 @@ def _cpu_split_transition(
 
     return new_configs
 
-def _cpu_transition_impl(
-        platform: PlatformInfo,
-        refs: struct,
-        attrs: struct) -> PlatformInfo:
+def _cpu_transition_impl(platform: PlatformInfo, refs: struct, attrs: struct) -> PlatformInfo:
     return _cpu_split_transition_impl(platform, refs, attrs).values()[0]
 
 cpu_split_transition = transition(
@@ -173,6 +164,15 @@ cpu_transition = transition(
         "_is_force_single_default_cpu",
     ],
 )
+
+FORCE_SINGLE_CPU = read_root_config("buck2", "android_force_single_cpu") in ("True", "true")
+FORCE_SINGLE_DEFAULT_CPU = read_root_config("buck2", "android_force_single_default_cpu") in ("True", "true")
+
+# Common attributes required by any rule that uses cpu_transition or cpu_split_transition.
+CPU_TRANSITION_ATTRS = {
+    "_is_force_single_cpu": attrs.default_only(attrs.bool(default = FORCE_SINGLE_CPU)),
+    "_is_force_single_default_cpu": attrs.default_only(attrs.bool(default = FORCE_SINGLE_DEFAULT_CPU)),
+}
 
 def get_deps_by_platform(ctx: AnalysisContext) -> dict[str, list[Dependency]]:
     deps_by_platform = {}

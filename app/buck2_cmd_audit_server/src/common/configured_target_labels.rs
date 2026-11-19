@@ -26,7 +26,7 @@ pub(crate) async fn audit_command_configured_target_labels(
     let targets =
         parse_and_resolve_patterns_to_targets_from_cli_args::<ConfiguredTargetPatternExtra>(
             ctx,
-            &patterns,
+            patterns,
             server_ctx.working_dir(),
         )
         .await?;

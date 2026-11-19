@@ -1,0 +1,31 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "mini_vec",
+    srcs = glob(["src/**/*.rs"]),
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    # The published crate wants none of the features fbsource
+                    # enables on pagable; its `tokio` one does not build on wasm.
+                    "pagable": {"features": [], "workspace": False},
+                },
+            },
+            "extra_check_cfgs": ["cfg(rust_nightly)"],
+        },
+    },
+    crate_root = "src/lib.rs",
+    rustc_flags = [
+        "--cfg=rust_nightly",
+    ],
+    unittests_miri = True,
+    deps = [
+        "//buck2/allocative/allocative:allocative",
+        "//buck2/gazebo/dupe:dupe",
+        "//buck2/gazebo/strong_hash:strong_hash",
+        "//buck2/pagable:pagable",
+    ],
+)

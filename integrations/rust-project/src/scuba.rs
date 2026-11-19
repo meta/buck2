@@ -88,10 +88,13 @@ fn new_sample(kind: &str) -> scuba::ScubaSampleBuilder {
     let fb = fbinit::expect_init();
     let mut sample = scuba::ScubaSampleBuilder::new(fb, "rust_project");
     sample.add("root_span", kind);
-    sample.add("unixname", whoami::username());
+    sample.add(
+        "unixname",
+        whoami::username().unwrap_or_else(|_| "unknown".to_owned()),
+    );
     sample.add(
         "hostname",
-        whoami::fallible::hostname()
+        whoami::hostname()
             .unwrap_or("unknown hostname".to_owned())
             .to_ascii_lowercase(),
     );

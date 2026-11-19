@@ -49,11 +49,6 @@ prelude.python_bootstrap_binary(
 )
 
 prelude.export_file(
-    name = "run_inplace_lite.py.in",
-    src = "run_inplace_lite.py.in",
-)
-
-prelude.export_file(
     name = "run_inplace.py.in",
     src = "run_inplace.py.in",
 )
@@ -63,8 +58,6 @@ prelude.command_alias(
     args = [
         "--template",
         "$(location :run_inplace.py.in)",
-        "--template-lite",
-        "$(location :run_inplace_lite.py.in)",
     ],
     exe = ":make_py_package_inplace.py",
     visibility = ["PUBLIC"],
@@ -85,6 +78,12 @@ prelude.export_file(
 prelude.python_bootstrap_binary(
     name = "generate_static_extension_info",
     main = "generate_static_extension_info.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.export_file(
+    name = "gen_bytecode_bundle.py",
+    src = "gen_bytecode_bundle.py",
     visibility = ["PUBLIC"],
 )
 
@@ -121,9 +120,40 @@ prelude.python_bootstrap_binary(
 )
 
 prelude.python_bootstrap_binary(
+    name = "type_check_result_to_validation",
+    main = "type_check_result_to_validation.py",
+    visibility = ["PUBLIC"],
+)
+
+# Shared by every target whose typing is disabled, in place of writing the
+# same empty result per target.
+prelude.export_file(
+    name = "empty_typing_result.json",
+    src = "empty_typing_result.json",
+    mode = "reference",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
     name = "wheel",
     main = "wheel.py",
     visibility = ["PUBLIC"],
+)
+
+# Run the test suite with this command:
+# buck2 run prelude//python/tools:tool_tests --target-platforms prelude//platforms:default
+prelude.sh_binary(
+    name = "tool_tests",
+    main = "tests/main.sh",
+    resources = [
+        "gen_bytecode_bundle.py",
+        "make_py_package_inplace.py",
+        "make_py_package_manifest_module.py",
+        "run_inplace.py.in",
+        "type_check_result_to_validation.py",
+        "wheel.py",
+    ]
+    + glob(["tests/**/*.py"]),
 )
 
 prelude.export_file(
@@ -153,4 +183,81 @@ prelude.python_bootstrap_binary(
     name = "gather_libpython_symbols",
     main = "gather_libpython_symbols.py",
     visibility = ["PUBLIC"],
+)
+
+# Type checking target for Python tool scripts.
+prelude.python_library(
+    name = "scripts-typing",
+    srcs = [
+        "__test_main__.py",
+        "compile.py",
+        "create_link_tree.py",
+        "create_manifest_for_source_dir.py",
+        "extract.py",
+        "fail_with_message.py",
+        "gather_libpython_symbols.py",
+        "gen_bytecode_bundle.py",
+        "generate_static_extension_info.py",
+        "make_py_package_inplace.py",
+        "make_py_package_manifest_module.py",
+        "make_py_package_modules.py",
+        "make_source_db.py",
+        "make_source_db_no_deps.py",
+        "patchelf.py",
+        "static_extension_finder.py",
+        "type_check_result_to_validation.py",
+        "wheel.py",
+    ]
+    + glob(
+        ["tests/**/*.py"],
+        # Imports `__test_main__.py` under the name its test target gives it.
+        exclude = ["tests/test_main_test.py"],
+    ),
+    base_module = "",
+    typing = True,
+    deps = [
+        "fbsource//third-party/pypi/colorama:colorama",
+    ],
+)
+
+prelude.python_test(
+    name = "test_main_test",
+    srcs = {
+        "buck_test_main.py": "__test_main__.py",
+        "tests/test_main_test.py": "tests/test_main_test.py",
+    },
+    base_module = "",
+)
+
+prelude.python_test(
+    name = "compile_test",
+    srcs = ["tests/compile_test.py"],
+    base_module = "",
+    resources = ["compile.py"],
+)
+
+prelude.python_test(
+    name = "create_link_tree_test",
+    srcs = ["tests/create_link_tree_test.py"],
+    base_module = "",
+    resources = ["create_link_tree.py"],
+)
+
+prelude.python_test(
+    name = "make_py_package_manifest_module_test",
+    srcs = [
+        "make_py_package_manifest_module.py",
+        "tests/make_py_package_manifest_module_test.py",
+    ],
+    base_module = "",
+)
+
+prelude.python_test(
+    name = "make_py_package_inplace_test",
+    srcs = [
+        "make_py_package_inplace.py",
+        "tests/make_py_package_inplace_test.py",
+    ],
+    base_module = "",
+    resources = ["run_inplace.py.in"],
 )

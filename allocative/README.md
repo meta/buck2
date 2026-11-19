@@ -41,8 +41,8 @@ when it is enabled but not used.
 ## Source code
 
 Note there are several copies of this project on GitHub due to how Meta monorepo
-is synchronized to GitHub. The main copy is
-[facebookexperimental/allocative](https://github.com/facebookexperimental/allocative).
+is synchronized to GitHub. The main copy is in
+[facebook/buck2](https://github.com/facebook/buck2).
 
 ## License
 

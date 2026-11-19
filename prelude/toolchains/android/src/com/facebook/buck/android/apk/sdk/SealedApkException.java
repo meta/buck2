@@ -10,7 +10,10 @@
 
 package com.facebook.buck.android.apk.sdk;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** An exception thrown when trying to add files to a sealed APK. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class SealedApkException extends Exception {
   private static final long serialVersionUID = 1L;
 

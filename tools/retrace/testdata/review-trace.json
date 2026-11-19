@@ -1,0 +1,4 @@
+[
+{"ph":"X","cat":"recipe","name":"a","ts":0,"dur":10,"args":{"run":"trace-run"}},
+{"ph":"X","cat":"recipe","name":"b","ts":10,"dur":5,"args":{"run":"trace-run"}}
+]

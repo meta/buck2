@@ -1,0 +1,6 @@
+# Top opt-in -- broad intersection covering the whole `inherit_test/` subtree.
+package(
+    visibility = ["root//inherit_test/..."],
+)
+
+enforce_visibility_intersection()

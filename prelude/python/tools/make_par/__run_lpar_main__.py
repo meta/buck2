@@ -6,8 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
-
 
 def __invoke_main() -> None:
     import os
@@ -24,6 +22,13 @@ def __invoke_main() -> None:
     main_function = os.getenv("FB_PAR_MAIN_FUNCTION")
 
     sys.argv[0] = os.getenv("FB_LPAR_INVOKED_NAME", sys.argv[0])
+
+    if os.environ.get("FB_PAR_FIX_OS_ARGV"):
+        # pyre-fixme[21]: Could not find module `__par__.meta_only.process_title`.
+        from __par__.meta_only.process_title import set_os_argv
+
+        set_os_argv(sys.argv)
+
     del sys.path[0]
 
     main_runner_module = os.environ["FB_PAR_MAIN_RUNNER_MODULE"]

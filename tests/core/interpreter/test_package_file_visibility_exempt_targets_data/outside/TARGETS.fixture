@@ -1,0 +1,24 @@
+stub(
+    name = "uses_legacy",
+    deps = ["root//boundary/legacy:t"],
+)
+
+stub(
+    name = "uses_strict",
+    deps = ["root//boundary/strict:t"],
+)
+
+stub(
+    name = "uses_marked_legacy",
+    deps = ["root//marked/inner/legacy:t"],
+)
+
+stub(
+    name = "uses_legacy_inherits_default",
+    deps = ["root//boundary/legacy:inherits_default"],
+)
+
+stub(
+    name = "uses_nested_cell",
+    deps = ["nested//:t"],
+)

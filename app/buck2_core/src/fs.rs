@@ -11,6 +11,7 @@
 pub mod artifact_path_resolver;
 pub mod buck_out_path;
 pub mod dynamic_actions_action_key;
+pub mod i_project_rel_path;
 mod paths_cmp_ext;
 pub mod project;
 pub mod project_rel_path;

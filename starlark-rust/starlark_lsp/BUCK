@@ -5,16 +5,41 @@ oncall("build_infra")
 rust_library(
     name = "starlark_lsp",
     srcs = glob(["src/**/*.rs"]),
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    # The `pagable` feature of starlark needs nightly; only
+                    # buck2 enables it.
+                    "starlark": {"features": []},
+                },
+            },
+            "extra_check_cfgs": ["cfg(rust_nightly)"],
+            "package": {
+                "authors": [
+                    "Damien Martin-Guillerez <dmarting@google.com>",
+                    "Facebook",
+                ],
+                "categories": ["parser-implementations", "development-tools"],
+                "description": "LSP bindings for starlark",
+                "documentation": "https://docs.rs/starlark",
+                "keywords": ["starlark", "skylark", "language", "interpreter"],
+                "license": "Apache-2.0",
+                "repository": "https://github.com/facebook/starlark-rust",
+                "version": "0.14.2",
+            },
+        },
+    },
     rustc_flags = [
         "--cfg=rust_nightly",
     ],
     test_deps = [
+        "fbsource//third-party/rust:anyhow",
         "fbsource//third-party/rust:maplit",
         "fbsource//third-party/rust:regex",
         "fbsource//third-party/rust:textwrap",
     ],
     deps = [
-        "fbsource//third-party/rust:anyhow",
         "fbsource//third-party/rust:derivative",
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:itertools",
@@ -23,6 +48,7 @@ rust_library(
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:serde_json",
         "fbsource//third-party/rust:thiserror",
+        "fbsource//third-party/rust:tower-lsp-server",
         "//buck2/gazebo/dupe:dupe",
         "//buck2/starlark-rust/starlark:starlark",
         "//buck2/starlark-rust/starlark_syntax:starlark_syntax",

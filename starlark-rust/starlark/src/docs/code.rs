@@ -282,9 +282,9 @@ impl DocItem {
     pub fn render_as_code(&self, name: &str) -> String {
         match self {
             DocItem::Module(m) => m.render_as_code(),
-            DocItem::Type(o) => o.render_as_code(&name),
-            DocItem::Member(DocMember::Function(f)) => f.render_as_code(&name),
-            DocItem::Member(DocMember::Property(p)) => p.render_as_code(&name),
+            DocItem::Type(o) => o.render_as_code(name),
+            DocItem::Member(DocMember::Function(f)) => f.render_as_code(name),
+            DocItem::Member(DocMember::Property(p)) => p.render_as_code(name),
         }
     }
 }

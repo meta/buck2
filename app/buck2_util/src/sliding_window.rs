@@ -54,8 +54,10 @@ impl SlidingWindow {
         let (_, first_val) = self.queue.front()?;
         let (_, last_val) = self.queue.back()?;
         let delta_value = last_val.checked_sub(*first_val)?;
+        // Non-zero by construction, so the division is safe even below a microsecond.
         let duration = self.window_duration()?;
-        Some(delta_value * 1_000_000 / duration.as_micros() as u64)
+        let per_second = u128::from(delta_value) * 1_000_000_000 / duration.as_nanos();
+        Some(u64::try_from(per_second).unwrap_or(u64::MAX))
     }
 
     fn window_duration(&self) -> Option<Duration> {
@@ -100,6 +102,16 @@ mod tests {
         windows.update(t0.add(Duration::from_secs(3)), 450);
         assert_eq!(Some(125), windows.current_per_second());
         assert_eq!(Some(150), windows.max_per_second());
+    }
+
+    #[test]
+    fn test_sub_microsecond_window() {
+        let t0 = SystemTime::UNIX_EPOCH.add(Duration::from_secs(100000));
+
+        let mut windows = SlidingWindow::new(Duration::from_secs(1));
+        windows.update(t0, 100);
+        windows.update(t0.add(Duration::from_nanos(500)), 200);
+        assert_eq!(Some(200_000_000), windows.max_per_second());
     }
 
     #[test]

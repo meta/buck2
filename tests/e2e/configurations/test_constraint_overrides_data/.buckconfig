@@ -1,0 +1,26 @@
+[cells]
+  root = .
+  prelude = prelude
+
+[cell_aliases]
+  alias = root
+  config = prelude
+  ovr_config = prelude
+  toolchains = root
+  fbsource = root
+  fbcode = root
+  buck = root
+
+[external_cells]
+  prelude = bundled
+
+[buildfile]
+  name = TARGETS.fixture
+
+[parser]
+  target_platform_detector_spec = target:root//...->root//:original
+
+[buck2]
+  platforms = root//:replacement
+  constraints = root//:red, root//:colors, alias//:blue, alias//:colors[blue]
+  passthrough_constraints = root//:retained

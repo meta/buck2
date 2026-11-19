@@ -7,22 +7,20 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
-    os_deps = [
-        (
-            "windows",
-            ["fbsource//third-party/rust:winver"],
-        ),
-        (
-            "linux",
-            ["fbsource//third-party/rust:sys-info"],
-        ),
-        (
-            "macos",
-            ["fbsource//third-party/rust:sys-info"],
-        ),
-    ],
+    autocargo = {
+        "cargo_toml_config": {
+            "extra_buck_dependencies": {
+                "dependencies": [
+                    (None, "//common/rust/shed/fbinit:fbinit"),
+                    (None, "//common/rust/shed/hostcaps:hostcaps"),
+                    "fbsource//third-party/rust:fbinit",
+                ],
+            },
+        },
+    },
     test_deps = ["fbsource//third-party/rust:tokio"],
     deps = [
+        "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:console",
         "fbsource//third-party/rust:crossbeam-channel",
         "fbsource//third-party/rust:derive_more",
@@ -30,7 +28,7 @@ rust_library(
         "fbsource//third-party/rust:hostname",
         "fbsource//third-party/rust:is_proc_translated",
         "fbsource//third-party/rust:pin-project",
-        # @oss-disable[end= ]: "fbsource//third-party/rust:prost-0-13-4",
+        # @oss-disable[end= ]: "fbsource//third-party/rust:prost",
         "fbsource//third-party/rust:serde",
         # @oss-disable[end= ]: "fbsource//third-party/rust:serde_json",
         "fbsource//third-party/rust:smallvec",
@@ -42,10 +40,10 @@ rust_library(
         "//buck2/app/buck2_core:buck2_core",
         "//buck2/app/buck2_data:buck2_data",
         "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
         # @oss-disable[end= ]: "//buck2/shed/scribe_client:scribe_client",
         # @oss-disable[end= ]: "//common/rust/devserver_fingerprint/devserver_fingerprint:devserver_fingerprint",
         "//common/rust/shed/fbinit:fbinit",
@@ -53,5 +51,16 @@ rust_library(
         # @oss-disable[end= ]: "//common/rust/user:user",
         # @oss-disable[end= ]: "//devx_www/cross_env_session_id:cross_env_session_id",
         # @oss-disable[end= ]: "//devx_www/devx_session_id_rust:devx_session_id",
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:sys-info",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:sys-info",
+        ],
+        "ovr_config//os:windows": [
+            "fbsource//third-party/rust:winver",
+        ],
+    }),
 )

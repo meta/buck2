@@ -1,0 +1,45 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+load("@prelude//cfg/modifier:buckconfig_backed_modifiers.bzl", "BuckconfigBackedModifier", "buckconfig_backed_modifiers")
+load("//:defs.bzl", "labeled_dummy")
+
+# The buckconfig-backed modifier rule that injects buckconfig_backed:enabled
+# as a post_platform_modifier. This modifier should apply to target configurations
+# but NOT to exec dep configurations.
+buckconfig_backed_modifiers(
+    name = "buckconfig_modifiers",
+    pre_platform = [],
+    post_platform = [
+        BuckconfigBackedModifier(
+            section = "test",
+            property = "enable_buckconfig_backed",
+            value = True,
+            modifiers = ["//cfg:buckconfig_backed[enabled]"],
+            oncall = "build_infra",
+        ),
+    ],
+    pre_cli = [],
+)
+
+# A simple tool - this is used as an exec_dep
+# When configured as exec_dep, it should NOT get buckconfig_backed:enabled from buckconfig-backed modifiers
+labeled_dummy(
+    name = "simple_tool",
+)
+
+# A binary that uses the tool as exec_dep
+# The binary SHOULD get buckconfig_backed:enabled from buckconfig-backed modifiers
+# The tool (exec_dep) should NOT get buckconfig_backed:enabled
+labeled_dummy(
+    name = "binary_with_buckconfig_modifier",
+    # set a modifier to ensure that the buckconfig-backed modifier is applied
+    modifiers = ["root//cfg:compiler[clang]"],
+    exec_deps = [":simple_tool"],
+    default_target_platform = "root//cfg:debug_platform",
+)

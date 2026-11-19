@@ -20,6 +20,7 @@ use std::fmt::Display;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::typing::Ty;
 use crate::typing::TyFunction;
@@ -27,6 +28,7 @@ use crate::typing::arc_ty::ArcTy;
 use crate::typing::callable::TyCallable;
 use crate::typing::custom::TyCustom;
 use crate::typing::custom::TyCustomImpl;
+use crate::typing::starlark_value::HasTyVTable;
 use crate::typing::starlark_value::TyStarlarkValue;
 use crate::typing::tuple::TyTuple;
 use crate::typing::ty::TypeRenderConfig;
@@ -36,7 +38,9 @@ use crate::values::string::str_type::StarlarkStr;
 use crate::values::typing::any::TypingAny;
 
 /// Type that is not a union.
-#[derive(Eq, PartialEq, Hash, Clone, Dupe, Debug, Ord, PartialOrd, Allocative)]
+#[derive(
+    Eq, PartialEq, Hash, Clone, Dupe, Debug, Ord, PartialOrd, Allocative, Pagable
+)]
 pub enum TyBasic {
     /// Type that contain anything
     Any,
@@ -66,7 +70,7 @@ impl TyBasic {
         TyBasic::starlark_value::<NoneType>()
     }
 
-    pub(crate) const fn starlark_value<'v, T: StarlarkValue<'v>>() -> TyBasic {
+    pub(crate) const fn starlark_value<'v, T: StarlarkValue<'v> + HasTyVTable>() -> TyBasic {
         TyBasic::StarlarkValue(TyStarlarkValue::new::<T>())
     }
 

@@ -13,12 +13,11 @@
 use std::future::Future;
 use std::mem::ManuallyDrop;
 use std::pin::Pin;
+use std::sync::LazyLock;
 use std::task::Context;
 use std::task::Poll;
 
 use dupe::Dupe;
-use futures::FutureExt;
-use once_cell::sync::Lazy;
 use thiserror::Error;
 
 use crate::details::cancellation_context::CancellationContextInner;
@@ -28,8 +27,8 @@ use crate::details::shared_state::CancellationContextSharedStateView;
 use crate::details::shared_state::CancellationHandleSharedStateView;
 use crate::details::shared_state::CancellationObserverFuture;
 
-static NEVER_CANCELLED: Lazy<CancellationContext> =
-    Lazy::new(|| CancellationContext(CancellationContextInner::NeverCancelled));
+static NEVER_CANCELLED: LazyLock<CancellationContext> =
+    LazyLock::new(|| CancellationContext(CancellationContextInner::NeverCancelled));
 
 /// Context available to the function running inside the future to control and manage it's own
 /// cancellation
@@ -152,8 +151,19 @@ impl<'a> CriticalSectionGuard<'a> {
 }
 
 /// A Future that resolves only when the associated task has been canceled.
+#[pin_project::pin_project]
 #[derive(Clone, Dupe)]
-pub struct CancellationObserver(pub(crate) CancellationObserverInner);
+pub struct CancellationObserver(#[pin] pub(crate) CancellationObserverInner);
+
+/// Similar to a CancellationObserver, but meant for use in synchronous code for
+/// detecting and exiting early from work when it's been cancelled.
+/// CancellationPoller may be created inside or outside structured cancellation,
+/// it offers no guarantees that asynchronous callers will be able to clean up
+/// state on a cancellation. Asynchronous code that needs to guarantee being
+/// able to cleanup state before honoring a cancellation must hold a
+/// CancellationObserver, via `CancellationContext::with_structured_cancellation`
+#[derive(Clone, Dupe)]
+pub struct CancellationPoller(pub(crate) CancellationObserverInner);
 
 impl CancellationObserver {
     pub(crate) fn never_cancelled() -> Self {
@@ -169,19 +179,52 @@ impl CancellationObserver {
     }
 }
 
+impl CancellationPoller {
+    pub(crate) fn never_cancelled() -> Self {
+        CancellationPoller(CancellationObserverInner::NeverCancelled)
+    }
+
+    #[inline(always)]
+    pub fn is_cancelled(&self) -> bool {
+        match &self.0 {
+            CancellationObserverInner::Explicit(fut) => fut.is_cancelled(),
+            CancellationObserverInner::NeverCancelled => false,
+        }
+    }
+}
+
+impl From<CancellationObserver> for CancellationPoller {
+    fn from(observer: CancellationObserver) -> Self {
+        CancellationPoller(observer.0)
+    }
+}
+
+impl From<&CancellationObserver> for CancellationPoller {
+    fn from(observer: &CancellationObserver) -> Self {
+        CancellationPoller(observer.0.clone())
+    }
+}
+
+impl From<&CancellationContext> for CancellationPoller {
+    fn from(context: &CancellationContext) -> Self {
+        context.0.poller()
+    }
+}
+
+#[pin_project::pin_project(project = CancellationObserverInnerProj)]
 #[derive(Clone, Dupe)]
 pub(crate) enum CancellationObserverInner {
     NeverCancelled,
-    Explicit(CancellationObserverFuture),
+    Explicit(#[pin] CancellationObserverFuture),
 }
 
 impl Future for CancellationObserver {
     type Output = ();
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match &mut self.0 {
-            CancellationObserverInner::Explicit(fut) => fut.poll_unpin(cx),
-            CancellationObserverInner::NeverCancelled => Poll::Pending,
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.project().0.project() {
+            CancellationObserverInnerProj::Explicit(fut) => fut.poll(cx),
+            CancellationObserverInnerProj::NeverCancelled => Poll::Pending,
         }
     }
 }
@@ -220,6 +263,10 @@ impl DropcancelHandle {
         Self {
             view: ManuallyDrop::new(view),
         }
+    }
+
+    pub fn cancel(&self) {
+        self.view.cancel();
     }
 
     pub fn into_cancellable(mut self) -> CancellationHandle {

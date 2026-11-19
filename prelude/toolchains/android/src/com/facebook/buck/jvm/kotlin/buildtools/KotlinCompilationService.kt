@@ -18,6 +18,8 @@ import org.jetbrains.kotlin.buildtools.api.ExperimentalBuildToolsApi
 import org.jetbrains.kotlin.buildtools.api.KotlinLogger
 import org.jetbrains.kotlin.buildtools.api.ProjectId
 
+// Legacy BTA API is DEPRECATION_ERROR from Kotlin 2.4; KotlinToolchains replaces it.
+@Suppress("DEPRECATION_ERROR")
 @OptIn(ExperimentalBuildToolsApi::class)
 internal class KotlinCompilationService(
     private val compilationService: CompilationService,
@@ -32,23 +34,32 @@ internal class KotlinCompilationService(
       arguments: List<String>,
       mode: KotlincMode,
       logger: KotlinLogger? = null,
+      classToSourceMap: KotlinClassToSourceMap? = null,
   ): CompilationResult {
     val compilerExecutionStrategyConfiguration =
         compilationService.makeCompilerExecutionStrategyConfiguration()
 
     val jvmCompilationConfiguration =
-        jvmCompilationConfigurationFactory.create(mode).apply {
-          if (logger != null) {
-            useLogger(logger)
-          }
-        }
+        jvmCompilationConfigurationFactory
+            .create(mode, classToSourceMap?.requiresRebuild ?: false)
+            .apply {
+              if (logger != null) {
+                useLogger(logger)
+              }
+              if (classToSourceMap != null) {
+                useLogger(classToSourceMap.logger(this.logger))
+              }
+            }
 
-    return compilationService.compileJvm(
-        projectId,
-        compilerExecutionStrategyConfiguration,
-        jvmCompilationConfiguration,
-        emptyList(),
-        arguments,
-    )
+    val result =
+        compilationService.compileJvm(
+            projectId,
+            compilerExecutionStrategyConfiguration,
+            jvmCompilationConfiguration,
+            emptyList(),
+            if (classToSourceMap != null) arguments + "-Xreport-output-files" else arguments,
+        )
+    if (result == CompilationResult.COMPILATION_SUCCESS) classToSourceMap?.write()
+    return result
   }
 }

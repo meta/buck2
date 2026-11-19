@@ -15,6 +15,7 @@ HELPERS_SRCS = [
     "AdbOptions.java",
     "AdbExecutionContext.java",
     "AndroidInstallPrinter.java",
+    "ContentDigests.java",
     "exopackage/ExoHelper.java",
     "exopackage/DexExoHelper.java",
     "exopackage/ExopackageInstaller.java",
@@ -31,11 +32,13 @@ buck_kotlin_library(
     srcs = HELPERS_SRCS,
     tests = [
         "prelude//toolchains/android/test/com/facebook/buck/android:unit",
+        "prelude//toolchains/android/test/com/facebook/buck/android/exopackage:unit",
     ],
     visibility = [
         "PUBLIC",
     ],
     deps = [
+        "prelude//toolchains/android/src/com/facebook/buck/android/apex:apex_manifest",
         "prelude//toolchains/android/src/com/facebook/buck/android/device:device",
         "prelude//toolchains/android/src/com/facebook/buck/core/util/log:log",
         "prelude//toolchains/android/src/com/facebook/buck/installer/android:exceptions",
@@ -45,13 +48,15 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/util:util",
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:environment",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
         "prelude//toolchains/android/third-party:kotlinx-coroutines-core-jvm",
         "prelude//toolchains/android/third-party:zstd-jni",
         ":manifest_utils",
         ":utils_api",
     ],
-    exported_deps = [
-    ],
+    exported_deps = [],
 )
 
 MANIFEST_UTILS_SRCS = [
@@ -83,6 +88,8 @@ buck_java_library(
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/util/xml:xml",
         "prelude//toolchains/android/third-party:args4j",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
     ],
 )
 
@@ -92,8 +99,8 @@ UTILS_API_SRCS = [
     "exopackage/AndroidDeviceInfo.kt",
     "exopackage/AndroidDevice.java",
     "exopackage/AndroidIntent.java",
+    "exopackage/InstallTimings.java",
     "IsolatedApkInfo.java",
-    "exopackage/PackageInfo.java",
 ]
 
 buck_kotlin_library(
@@ -108,5 +115,7 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:platform",
         "prelude//toolchains/android/src/com/facebook/buck/util/xml:xml",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
     ],
 )

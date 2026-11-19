@@ -9,7 +9,15 @@
 # Helper rule which introduces proc macros into the dependency graph
 
 load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
-load(":link_info.bzl", "RustProcMacroMarker", "RustProcMacroPlugin")
+load(
+    ":link_info.bzl",
+    "RustProcMacroArchInfo",
+    "RustProcMacroArchVariant",
+    "RustProcMacroInfo",
+    "RustProcMacroMarker",
+    "RustProcMacroPlugin",
+)
+load(":rust_toolchain.bzl", "require_rust_arch_variants")
 
 def _impl(ctx):
     # FIXME(JakobDegen): The rules themselves do not need any of the exec configured providers.
@@ -40,5 +48,37 @@ rust_proc_macro_alias = rule(
         "actual_exec": attrs.exec_dep(),
         "actual_plugin": attrs.plugin_dep(kind = RustProcMacroPlugin),
         "_rust_toolchain": toolchains_common.rust(),
+    },
+)
+
+def _arch_aggregate_impl(ctx: AnalysisContext) -> list[Provider]:
+    variants = require_rust_arch_variants(ctx.attrs.arch_variants, ctx.label)
+    crate = None
+    arch_info = {}
+    outputs = []
+    for arch, dep in variants.items():
+        info = dep[RustProcMacroInfo]
+        if info.crate.dynamic != None:
+            fail("{} dual-arch proc-macro aggregate does not support dynamic crate names".format(ctx.label))
+        if crate != None and crate.simple != info.crate.simple:
+            fail("{} proc-macro arch variants have different crate identities".format(ctx.label))
+        crate = info.crate
+        outputs.append(info.dylib)
+        arch_info[arch] = RustProcMacroArchVariant(
+            dylib = info.dylib,
+            singleton_tset = info.singleton_tset,
+        )
+    return [
+        DefaultInfo(default_outputs = outputs),
+        RustProcMacroArchInfo(crate = crate, arch_variants = arch_info),
+    ]
+
+rust_proc_macro_arch_aggregate = rule(
+    impl = _arch_aggregate_impl,
+    attrs = {
+        "arch_variants": attrs.dict(
+            key = attrs.string(),
+            value = attrs.dep(providers = [RustProcMacroInfo]),
+        ),
     },
 )

@@ -37,16 +37,18 @@ use std::ops::DerefMut;
 use std::ops::Sub;
 use std::ptr;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use allocative::Allocative;
 use dupe::Dupe;
-use once_cell::sync::Lazy;
+use pagable::Pagable;
+use pagable::StaticValue;
 
 use crate::fast_string;
 
 /// A small, `Copy`, value representing a position in a `CodeMap`'s file.
 #[derive(
-    Copy, Clone, Dupe, Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Default, Allocative
+    Copy, Clone, Dupe, Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Default, Allocative, Pagable
 )]
 pub struct Pos(u32);
 
@@ -84,7 +86,7 @@ impl AddAssign<u32> for Pos {
 
 /// A range of text within a CodeMap.
 #[derive(
-    Copy, Dupe, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Debug, Default, Allocative
+    Copy, Dupe, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Debug, Default, Allocative, Pagable
 )]
 pub struct Span {
     /// The position in the codemap representing the first byte of the span.
@@ -201,15 +203,15 @@ impl CodeMapId {
     pub const EMPTY: CodeMapId = CodeMapId(ptr::null());
 }
 
-#[derive(Clone, Dupe, Allocative)]
+#[derive(Clone, Dupe, Allocative, Pagable)]
 enum CodeMapImpl {
     Real(Arc<CodeMapData>),
     #[allocative(skip)]
-    Native(&'static NativeCodeMap),
+    Native(StaticValue<NativeCodeMap>),
 }
 
 /// A data structure recording a source code file for position lookup.
-#[derive(Clone, Dupe, Allocative)]
+#[derive(Clone, Dupe, Allocative, Pagable)]
 pub struct CodeMap(CodeMapImpl);
 
 /// Multiple [`CodeMap`].
@@ -243,7 +245,7 @@ impl CodeMaps {
 }
 
 /// A `CodeMap`'s record of a source file.
-#[derive(Allocative)]
+#[derive(Allocative, Pagable)]
 struct CodeMapData {
     /// The filename as it would be displayed in an error message.
     filename: String,
@@ -254,6 +256,7 @@ struct CodeMapData {
 }
 
 /// "Codemap" for `.rs` files.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct NativeCodeMap {
     filename: &'static str,
     start: ResolvedPos,
@@ -277,10 +280,12 @@ impl NativeCodeMap {
         }
     }
 
-    pub const fn to_codemap(&'static self) -> CodeMap {
-        CodeMap(CodeMapImpl::Native(self))
+    pub const fn to_codemap(self_: StaticValue<NativeCodeMap>) -> CodeMap {
+        CodeMap(CodeMapImpl::Native(self_))
     }
 }
+
+pagable::declare_static_value_type!(NativeCodeMap, NativeCodeMapStaticEntry);
 
 impl Default for CodeMap {
     fn default() -> Self {
@@ -309,6 +314,81 @@ impl Hash for CodeMap {
     }
 }
 
+// TODO(jtbraun): when the invalid spans are root caused, back out D115579787:
+// this reporting machinery, the clamping in `find_line`/`find_line_col`/
+// `source_span`, the `HeapFileSpan::new` check, and the frame-formatting
+// early exit are a mitigation, not a feature.
+static CORRUPT_SPAN_REPORTER: std::sync::OnceLock<fn(&str)> = std::sync::OnceLock::new();
+
+/// Installs the reporter used when a span is resolved against a `CodeMap` it
+/// does not lie within. `starlark` bridges this to its soft-error handler;
+/// without a reporter the first occurrence goes to stderr.
+pub fn set_corrupt_span_reporter(reporter: fn(&str)) {
+    let _first_installation_wins = CORRUPT_SPAN_REPORTER.set(reporter);
+}
+
+/// Number of corrupt spans reported before reporting stops. Resolution sits on
+/// hot paths and one corrupt span is typically resolved many times, so this is
+/// bounded — but not to one, so several distinct corruptions in a process are
+/// all visible.
+const CORRUPT_SPAN_REPORT_LIMIT: usize = 8;
+
+pub(crate) fn report_corrupt_span(message: std::fmt::Arguments<'_>) {
+    static REPORTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    // Incrementing before dispatch also bounds recursion: a reporter that
+    // itself formats spans re-enters here at most `CORRUPT_SPAN_REPORT_LIMIT`
+    // times before reports become no-ops.
+    let seen = REPORTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if seen >= CORRUPT_SPAN_REPORT_LIMIT {
+        return;
+    }
+    let last = seen + 1 == CORRUPT_SPAN_REPORT_LIMIT;
+    let message = format!(
+        "corrupt span (occurrence {}{}): {message}",
+        seen + 1,
+        if last {
+            ", further reports suppressed"
+        } else {
+            ""
+        },
+    );
+    match CORRUPT_SPAN_REPORTER.get() {
+        Some(reporter) => reporter(&message),
+        None => eprintln!("starlark: {message}"),
+    }
+}
+
+/// Smallest index no less than `index` that lies on a char boundary of `s`.
+///
+/// Only reached once a span is already known not to be a character range.
+#[cold]
+fn ceil_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut index = index;
+    while !s.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
+/// Largest index no greater than `index` that lies on a char boundary of `s`.
+///
+/// Ordinary column resolution calls this with an index that is already a
+/// boundary, so the loop does not run.
+#[inline]
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut index = index;
+    while !s.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
 impl CodeMap {
     /// Creates an new `CodeMap`.
     pub fn new(filename: String, source: String) -> CodeMap {
@@ -323,7 +403,7 @@ impl CodeMap {
     }
 
     pub fn empty_static() -> &'static CodeMap {
-        static EMPTY_CODEMAP: Lazy<CodeMap> = Lazy::new(CodeMap::default);
+        static EMPTY_CODEMAP: LazyLock<CodeMap> = LazyLock::new(CodeMap::default);
         &EMPTY_CODEMAP
     }
 
@@ -331,7 +411,9 @@ impl CodeMap {
     pub fn id(&self) -> CodeMapId {
         match &self.0 {
             CodeMapImpl::Real(data) => CodeMapId(Arc::as_ptr(data) as *const ()),
-            CodeMapImpl::Native(data) => CodeMapId(*data as *const NativeCodeMap as *const ()),
+            CodeMapImpl::Native(data) => {
+                CodeMapId(data.value() as *const NativeCodeMap as *const ())
+            }
         }
     }
 
@@ -365,11 +447,14 @@ impl CodeMap {
 
     /// Gets the line number of a Pos.
     ///
-    /// The lines are 0-indexed (first line is numbered 0)
+    /// The lines are 0-indexed (first line is numbered 0).
     ///
-    /// Panics if `pos` is not within this file's span.
+    /// A position past the end of the file resolves to the last line: spans
+    /// that do not belong to their codemap have been observed in production,
+    /// and both compilation and error reporting must degrade rather than
+    /// panic when they resolve one.
     pub fn find_line(&self, pos: Pos) -> usize {
-        assert!(pos <= self.full_span().end());
+        let pos = self.clamp_pos(pos, "find_line");
         match &self.0 {
             CodeMapImpl::Real(data) => match data.lines.binary_search(&pos) {
                 Ok(i) => i,
@@ -381,16 +466,19 @@ impl CodeMap {
 
     /// Gets the line and column of a Pos.
     ///
-    /// Panics if `pos` is not with this file's span or
-    /// if `pos` points to a byte in the middle of a UTF-8 character.
+    /// A position past the end of the file, or inside a UTF-8 character,
+    /// resolves to the nearest valid location instead of panicking; see
+    /// [`CodeMap::find_line`].
     fn find_line_col(&self, pos: Pos) -> ResolvedPos {
-        assert!(pos <= self.full_span().end());
+        let pos = self.clamp_pos(pos, "find_line_col");
         match &self.0 {
             CodeMapImpl::Real(_) => {
                 let line = self.find_line(pos);
                 let line_span = self.line_span(line);
-                let byte_col = pos.0 - line_span.begin.0;
-                let column = fast_string::len(&self.source_span(line_span)[..byte_col as usize]).0;
+                let byte_col = (pos.0.saturating_sub(line_span.begin.0)) as usize;
+                let line_text = self.source_span(line_span);
+                let byte_col = floor_char_boundary(line_text, byte_col);
+                let column = fast_string::len(&line_text[..byte_col]).0;
 
                 ResolvedPos { line, column }
             }
@@ -409,11 +497,77 @@ impl CodeMap {
         }
     }
 
+    /// Clamps a position to this file, reporting the first position that
+    /// needed it: a position outside the file means the span it came from
+    /// does not belong to this `CodeMap`.
+    ///
+    /// Ordinary resolution goes through here, so the in-range case is a
+    /// comparison and the reporting is kept out of line.
+    #[inline]
+    fn clamp_pos(&self, pos: Pos, context: &str) -> Pos {
+        let end = self.full_span().end();
+        if pos > end {
+            self.report_pos_outside_file(pos, end, context);
+            return end;
+        }
+        pos
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_pos_outside_file(&self, pos: Pos, end: Pos, context: &str) {
+        report_corrupt_span(format_args!(
+            "{context}: position {} lies outside {} ({} bytes); resolution clamped",
+            pos.get(),
+            self.describe_for_diagnostic(),
+            end.get(),
+        ));
+    }
+
+    /// Identifies this `CodeMap` in a corrupt-span report. The variant matters:
+    /// a span resolved against a native codemap it cannot belong to is what a
+    /// pointer landing on unrelated memory looks like, because `<native>` is a
+    /// fixed 8-byte source.
+    #[cold]
+    pub(crate) fn describe_for_diagnostic(&self) -> String {
+        match &self.0 {
+            CodeMapImpl::Real(data) => format!("source file `{}`", data.filename),
+            CodeMapImpl::Native(data) => {
+                format!(
+                    "native codemap `{}` (source is always `<native>`)",
+                    data.filename
+                )
+            }
+        }
+    }
+
     /// Gets the source text of a Span.
     ///
-    /// Panics if `span` is not entirely within this file.
+    /// A span that does not lie on character boundaries within this file does
+    /// not belong to it. Corrupt spans have been observed in production, and
+    /// this is reached from both compilation and error reporting, so such a
+    /// span degrades to the nearest valid snippet instead of panicking.
     pub fn source_span(&self, span: Span) -> &str {
-        &self.source()[(span.begin.0 as usize)..(span.end.0 as usize)]
+        let source = self.source();
+        let begin = span.begin.0 as usize;
+        let end = span.end.0 as usize;
+        if let Some(snippet) = source.get(begin..end) {
+            return snippet;
+        }
+        report_corrupt_span(format_args!(
+            "source_span: span {}..{} is not a character range of {} ({} bytes); \
+             snippet clamped",
+            begin,
+            end,
+            self.describe_for_diagnostic(),
+            source.len(),
+        ));
+        // Grow to the enclosing character boundaries rather than shrinking:
+        // a snippet that keeps the character a corrupt span landed inside is
+        // more use in a diagnostic than an empty one.
+        let end = ceil_char_boundary(source, end);
+        let begin = floor_char_boundary(source, begin.min(end));
+        &source[begin..end]
     }
 
     /// Like `line_span_opt` but panics if the line number is out of range.
@@ -511,7 +665,7 @@ pub struct FileSpanRef<'a> {
 }
 
 /// A file, and a line and column range within it.
-#[derive(Clone, Dupe, Eq, PartialEq, Debug, Hash, Allocative)]
+#[derive(Clone, Dupe, Eq, PartialEq, Debug, Hash, Allocative, Pagable)]
 pub struct FileSpan {
     pub file: CodeMap,
     pub span: Span,
@@ -856,7 +1010,8 @@ mod tests {
     #[test]
     fn test_native_code_map() {
         static NATIVE_CODEMAP: NativeCodeMap = NativeCodeMap::new("test.rs", 100, 200);
-        static CODEMAP: CodeMap = NATIVE_CODEMAP.to_codemap();
+        pagable::static_value!(NATIVE_CODEMAP_STATIC: NativeCodeMap = &NATIVE_CODEMAP, NativeCodeMapStaticEntry);
+        static CODEMAP: CodeMap = NativeCodeMap::to_codemap(NATIVE_CODEMAP_STATIC);
         assert_eq!(NativeCodeMap::SOURCE, CODEMAP.source());
         assert_eq!(NativeCodeMap::SOURCE, CODEMAP.source_line(100));
         assert_eq!(
@@ -970,5 +1125,38 @@ mod tests {
             },
         };
         assert_eq!("test.rs:3", span.begin_file_line().to_string());
+    }
+
+    #[test]
+    fn test_corrupt_span_resolution_degrades() {
+        let file = CodeMap::new("t.star".to_owned(), "ab\ncd\n".to_owned());
+        let huge = Span::new(Pos::new(90), Pos::new(94));
+
+        // Out-of-range spans clamp instead of panicking.
+        assert_eq!("", file.source_span(huge));
+        assert_eq!(
+            file.find_line(file.full_span().end()),
+            file.find_line(Pos::new(94))
+        );
+        let resolved = file.resolve_span(huge);
+        assert_eq!(resolved.begin.line, resolved.end.line);
+
+        // Straddling the end of the file clamps to the file.
+        let partial = Span::new(Pos::new(3), Pos::new(94));
+        assert_eq!("cd\n", file.source_span(partial));
+
+        // A span landing inside a UTF-8 character grows to the enclosing
+        // boundaries: within the 4-byte emoji at bytes 5..9, begin floors to
+        // 5 and end ceils to 9, keeping the character the span landed inside.
+        let uni = CodeMap::new("u.star".to_owned(), "x = \"\u{1F600}\"\n".to_owned());
+        assert_eq!(
+            "\u{1F600}",
+            uni.source_span(Span::new(Pos::new(6), Pos::new(7)))
+        );
+        // Likewise for a span starting on a boundary and ending inside it.
+        assert_eq!(
+            "\u{1F600}",
+            uni.source_span(Span::new(Pos::new(5), Pos::new(7)))
+        );
     }
 }

@@ -1,8 +1,12 @@
 load(":example_list.json", example_list = "value")
 load(":example_object.json", example_object = "value")
+load(":example_types.json", example_types = "value")
 
 # buildifier: disable=print
 print(example_list)
 
 # buildifier: disable=print
 print(example_object)
+
+# buildifier: disable=print
+print("DATA_LOAD_TEST_OUTPUT: " + repr(example_types))

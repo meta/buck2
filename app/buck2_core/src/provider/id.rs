@@ -14,6 +14,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use allocative::Allocative;
+use pagable::Pagable;
 
 use crate::cells::cell_path::CellPath;
 
@@ -38,7 +39,8 @@ use crate::cells::cell_path::CellPath;
     Ord,
     PartialOrd,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 pub struct ProviderId {
     /// This is present for all user-specified providers. This is only None if it is a

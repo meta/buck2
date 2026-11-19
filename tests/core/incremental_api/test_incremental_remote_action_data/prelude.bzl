@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _china_impl(ctx) -> list[Provider]:
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(["fbpython", ctx.attrs.increment] + (["--dir"] if ctx.attrs.dir else []) + ["--out", out.as_output()]),
         category = "increment",
@@ -21,14 +21,17 @@ def _china_impl(ctx) -> list[Provider]:
         RunInfo(args = ["cat", cmd_args(out, format = "{}/MYFILE") if ctx.attrs.dir else out]),
     ]
 
-china = rule(impl = _china_impl, attrs = {
-    "dir": attrs.bool(default = False),
-    "increment": attrs.source(),
-    "invalidate": attrs.string(),
-})
+china = rule(
+    impl = _china_impl,
+    attrs = {
+        "dir": attrs.bool(default = False),
+        "increment": attrs.source(),
+        "invalidate": attrs.string(),
+    },
+)
 
 def _whistle_impl(ctx) -> list[Provider]:
-    intermediate = ctx.actions.declare_output("intermediate")
+    intermediate = ctx.actions.declare_output("intermediate", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(["fbpython", ctx.attrs.increment] + (["--dir"] if ctx.attrs.dir else []) + ["--out", intermediate.as_output()]),
         category = "increment",
@@ -37,7 +40,7 @@ def _whistle_impl(ctx) -> list[Provider]:
         prefer_remote = True,
         env = {"INVALIDATE_ACTION": ctx.attrs.invalidate},
     )
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(["sh", "-c", 'cp -rf "$1" "$2"', "--", intermediate, out.as_output()]),
         category = "copy",
@@ -49,8 +52,11 @@ def _whistle_impl(ctx) -> list[Provider]:
         RunInfo(args = ["cat", cmd_args(out, format = "{}/MYFILE") if ctx.attrs.dir else out]),
     ]
 
-whistle = rule(impl = _whistle_impl, attrs = {
-    "dir": attrs.bool(default = False),
-    "increment": attrs.source(),
-    "invalidate": attrs.string(),
-})
+whistle = rule(
+    impl = _whistle_impl,
+    attrs = {
+        "dir": attrs.bool(default = False),
+        "increment": attrs.source(),
+        "invalidate": attrs.string(),
+    },
+)

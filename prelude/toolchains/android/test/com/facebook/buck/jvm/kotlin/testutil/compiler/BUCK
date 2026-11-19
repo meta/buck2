@@ -17,6 +17,7 @@ buck_java_library(
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:junit",
         "prelude//toolchains/android/third-party:kotlin-compiler-embeddable",
+        "prelude//toolchains/android/third-party:kotlin-reflect",
         "prelude//toolchains/android/third-party:kotlin-stdlib",
         "prelude//toolchains/android/third-party:trove",
     ],

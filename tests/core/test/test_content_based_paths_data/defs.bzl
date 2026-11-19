@@ -20,15 +20,17 @@ def _run_test_with_content_based_path_impl(ctx):
 
 run_test_with_content_based_path = rule(
     impl = _run_test_with_content_based_path_impl,
-    attrs = {
-    },
+    attrs = {},
 )
 
 def _broker_impl(ctx):
     json = ctx.actions.declare_output("resources.json", has_content_based_path = True)
-    json = ctx.actions.write_json(json, {
-        "resources": [{"my_alias": "42"}],
-    })
+    json = ctx.actions.write_json(
+        json,
+        {
+            "resources": [{"my_alias": "42"}],
+        },
+    )
     return [
         DefaultInfo(),
         LocalResourceInfo(
@@ -45,16 +47,19 @@ _broker_attrs = {}
 broker = rule(impl = _broker_impl, attrs = _broker_attrs)
 
 def _local_resources_test_impl(ctx):
-    return [DefaultInfo(), ExternalRunnerTestInfo(
-        type = "custom",
-        command = ["true"],
-        local_resources = {
-            "my_resource_type": ctx.attrs.broker.label,
-        },
-        required_local_resources = [
-            RequiredTestLocalResource("my_resource_type"),
-        ],
-    )]
+    return [
+        DefaultInfo(),
+        ExternalRunnerTestInfo(
+            type = "custom",
+            command = ["true"],
+            local_resources = {
+                "my_resource_type": ctx.attrs.broker.label,
+            },
+            required_local_resources = [
+                RequiredTestLocalResource("my_resource_type"),
+            ],
+        ),
+    ]
 
 local_resources_test = rule(
     impl = _local_resources_test_impl,

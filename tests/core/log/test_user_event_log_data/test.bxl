@@ -36,7 +36,7 @@ instant_event = bxl_main(
 
 def _impl_action(ctx):
     actions = ctx.bxl_actions().actions
-    output = actions.write("my_output", "my_content")
+    output = actions.write("my_output", "my_content", has_content_based_path = False)
     ensured = ctx.output.ensure(output)
     ctx.output.print(ensured)
 

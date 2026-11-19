@@ -1,0 +1,1 @@
+deprecation("starlark_deprecation_example", "Going away", owner = "jakobdegen", started = "2026-10-26")

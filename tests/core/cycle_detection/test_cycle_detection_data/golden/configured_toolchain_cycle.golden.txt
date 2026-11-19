@@ -1,0 +1,21 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error in configured node dependency, dependency chain follows (-> indicates depends on, ^ indicates same configuration as previous):
+       root//:top (<unspecified>)
+    -> root//:toolchain_cycle_top (^)
+    -> root//:toolchain_cycle_mid (^)
+
+
+Caused by:
+    0: Error checking compatibility of `root//:toolchain_cycle_bot` with `root//:execution_platforms#<HASH>`
+    1: Error looking up configured node root//:toolchain_cycle_bot (root//:execution_platforms#<HASH>)
+    2: Dependency cycle detected (`->` means "depends on"):
+         root//:toolchain_cycle_bot (root//:execution_platforms#<HASH>) ->
+         root//:toolchain_cycle_top (root//:execution_platforms#<HASH>) ->
+         Resolving execution platform: cell:root, toolchain_deps=[root//:toolchain_cycle_mid (root//:execution_platforms#<HASH>)] ->
+         ToolchainExecutionPlatformCompatibilityKey(root//:toolchain_cycle_mid (root//:execution_platforms#<HASH>), root//:execution_platforms) ->
+         root//:toolchain_cycle_bot (root//:execution_platforms#<HASH>)

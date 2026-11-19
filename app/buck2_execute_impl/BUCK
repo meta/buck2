@@ -7,51 +7,66 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
-    os_deps = [
-        (
-            "linux",
-            [
-                "//buck2/app/buck2_forkserver_proto:buck2_forkserver_proto",
-                "//buck2/app/buck2_forkserver:buck2_forkserver",
-                # @oss-disable[end= ]: "//common/rust/shed/hostcaps:hostcaps",
-                # @oss-disable[end= ]: "//justknobs/rust:justknobs",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "//buck2/app/buck2_forkserver_proto:buck2_forkserver_proto",
-                "//buck2/app/buck2_forkserver:buck2_forkserver",
-            ],
-        ),
-    ],
+    # `//buck2/remote_execution:remote_execution` is an alias selecting between
+    # the internal and OSS impls; autocargo doesn't follow aliases, so point at
+    # the OSS rust_library directly for cargo's sake.
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    "rusqlite": {
+                        "features": [
+                            "backup",
+                            "blob",
+                            "bundled",
+                            "column_decltype",
+                            "fallible_uint",
+                            "functions",
+                            "limits",
+                            "modern_sqlite",
+                            "serde_json",
+                            "vtab",
+                        ],
+                    },
+                },
+            },
+            "extra_buck_dependencies": {
+                "dependencies": [
+                    "fbcode//buck2/remote_execution/oss/re_grpc:remote_execution",
+                ],
+                "target": {
+                    "'cfg(target_os = \"linux\")'": {"dependencies": [(None, "//common/rust/shed/hostcaps:hostcaps")]},
+                },
+            },
+        },
+    },
     test_deps = [
         "fbsource//third-party/rust:assert_matches",
+        "fbsource//third-party/rust:tempfile",
     ],
     deps = [
-        "fbsource//third-party/rust:async-condvar-fair",
         "fbsource//third-party/rust:async-trait",
-        "fbsource//third-party/rust:chrono",
-        "fbsource//third-party/rust:dashmap",
+        "fbsource//third-party/rust:crossbeam-channel",
         "fbsource//third-party/rust:derivative",
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:hostname",
-        "fbsource//third-party/rust:indexmap",
         "fbsource//third-party/rust:itertools",
-        "fbsource//third-party/rust:once_cell",
+        "fbsource//third-party/rust:jiff",
         "fbsource//third-party/rust:parking_lot",
         "fbsource//third-party/rust:pin-project",
-        "fbsource//third-party/rust:prost-0-13-4",
+        "fbsource//third-party/rust:prost",
         "fbsource//third-party/rust:regex",
         "fbsource//third-party/rust:rusqlite",
         "fbsource//third-party/rust:tokio",
+        "fbsource//third-party/rust:tokio-retry",
         "fbsource//third-party/rust:tokio-stream",
-        "fbsource//third-party/rust:tonic-0-12-3",
+        "fbsource//third-party/rust:tonic",
         "fbsource//third-party/rust:tracing",
         "fbsource//third-party/rust:zstd",
         "//buck2/allocative/allocative:allocative",
         "//buck2/app/buck2_action_metadata_proto:buck2_action_metadata_proto",
+        "//buck2/app/buck2_build_signals:buck2_build_signals",
         "//buck2/app/buck2_cli_proto:buck2_cli_proto",
         "//buck2/app/buck2_common:buck2_common",
         "//buck2/app/buck2_core:buck2_core",
@@ -62,16 +77,27 @@ rust_library(
         "//buck2/app/buck2_execute:buck2_execute",
         "//buck2/app/buck2_execute_local:buck2_execute_local",
         "//buck2/app/buck2_fs:buck2_fs",
-        "//buck2/app/buck2_http:buck2_http",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_resource_control:buck2_resource_control",
         "//buck2/app/buck2_util:buck2_util",
-        "//buck2/app/buck2_worker_proto:buck2_worker_proto_modern_prost",
+        "//buck2/app/buck2_worker_proto:buck2_worker_proto",
         "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",
         "//buck2/dice/dice_futures:dice_futures",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
         "//buck2/host_sharing:host_sharing",
         "//buck2/remote_execution:remote_execution",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
-    ],
+        "//buck2/shed/mini_vec:mini_vec",
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "//buck2/app/buck2_forkserver:buck2_forkserver",
+            "//buck2/app/buck2_forkserver_proto:buck2_forkserver_proto",
+            # @oss-disable[end= ]: "//common/rust/shed/hostcaps:hostcaps",
+            # @oss-disable[end= ]: "//justknobs/rust:justknobs",
+        ],
+        "ovr_config//os:macos": [
+            "//buck2/app/buck2_forkserver:buck2_forkserver",
+            "//buck2/app/buck2_forkserver_proto:buck2_forkserver_proto",
+        ],
+    }),
 )

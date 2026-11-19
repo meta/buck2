@@ -8,17 +8,12 @@
  * above-listed licenses.
  */
 
-use std::borrow::Borrow;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::time::Duration;
+use std::time::Instant;
 
-use buck2_common::cas_digest::TrackedCasDigest;
 use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileDigestKind;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::buck2_env;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
@@ -26,6 +21,7 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::soft_error;
 use buck2_data::ReUploadMetrics;
+use buck2_data::timing::Micros;
 use buck2_directory::directory::directory::Directory;
 use buck2_directory::directory::directory_iterator::DirectoryIterator;
 use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
@@ -34,23 +30,17 @@ use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
-use chrono::Duration;
-use chrono::Utc;
+use buck2_hash::BuckMutSet;
+use buck2_hash::IntentionallyStdHashMap;
 use dupe::Dupe;
-use either::Either;
-use futures::FutureExt;
-use futures::TryStreamExt;
-use futures::future::BoxFuture;
-use futures::future::Shared;
-use futures::stream::FuturesUnordered;
-use gazebo::prelude::*;
-use once_cell::sync::Lazy;
-use remote_execution::GetDigestsTtlResponse;
+use itertools::Itertools;
+use jiff::SignedDuration;
 use remote_execution::InlinedBlobWithDigest;
 use remote_execution::NamedDigest;
 use remote_execution::TDigest;
 use remote_execution::UploadRequest;
 
+use crate::artifact_value::ArtifactValue;
 use crate::digest::CasDigestFromReExt;
 use crate::digest::CasDigestToReExt;
 use crate::digest_config::DigestConfig;
@@ -61,16 +51,65 @@ use crate::directory::ReDirectorySerializer;
 use crate::execute::blobs::ActionBlobs;
 use crate::materialize::materializer::ArtifactNotMaterializedReason;
 use crate::materialize::materializer::CasDownloadInfo;
+use crate::materialize::materializer::MaterializationPurpose;
+use crate::materialize::materializer::MaterializeRequest;
 use crate::materialize::materializer::Materializer;
 use crate::re::action_identity::ReActionIdentity;
 use crate::re::client::RemoteExecutionClient;
 use crate::re::error::with_error_handler;
 use crate::re::metadata::RemoteExecutionMetadataExt;
+use crate::re::presence::NegativeCache;
 
 #[derive(Clone, Debug, Default)]
 pub struct UploadStats {
     pub total: ReUploadMetrics,
-    pub by_extension: HashMap<String, ReUploadMetrics>,
+    pub by_extension: IntentionallyStdHashMap<String, ReUploadMetrics>,
+    pub(crate) phases: UploadPhases,
+}
+
+/// Where a successful upload's time went, and what the presence check reported about its input
+/// digests.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct UploadPhases {
+    pub(crate) slot_wait: Duration,
+    pub(crate) find_missing: Duration,
+    pub(crate) materializer_query: Duration,
+    pub(crate) materialize: Duration,
+    pub(crate) cas_write: Duration,
+    pub(crate) digests_queried: u64,
+    pub(crate) digests_missing: u64,
+}
+
+impl UploadStats {
+    pub fn to_proto(self) -> buck2_data::ReUploadEnd {
+        buck2_data::ReUploadEnd {
+            digests_uploaded: Some(self.total.digests_uploaded),
+            bytes_uploaded: Some(self.total.bytes_uploaded),
+            stats_by_extension: self.by_extension,
+            stats: Some(self.phases.to_proto()),
+        }
+    }
+}
+
+impl UploadPhases {
+    fn to_proto(self) -> buck2_data::ReUploadStats {
+        buck2_data::ReUploadStats {
+            slot_wait_us: Micros::from(self.slot_wait).into(),
+            find_missing_us: Micros::from(self.find_missing).into(),
+            materializer_query_us: Micros::from(self.materializer_query).into(),
+            materialize_us: Micros::from(self.materialize).into(),
+            cas_write_us: Micros::from(self.cas_write).into(),
+            digests_queried: self.digests_queried,
+            digests_missing: self.digests_missing,
+        }
+    }
+}
+
+struct FindMissing<'a> {
+    upload_blobs: Vec<InlinedBlobWithDigest>,
+    missing_digests: BuckMutSet<&'a TrackedFileDigest>,
+    digests_queried: u64,
+    digests_missing: u64,
 }
 
 pub struct Uploader {}
@@ -80,180 +119,117 @@ impl Uploader {
         client: &RemoteExecutionClient,
         input_dir: &'a ActionImmutableDirectory,
         blobs: &'a ActionBlobs,
-        use_case: &RemoteExecutorUseCase,
-        identity: Option<&ReActionIdentity<'_>>,
-        digest_config: DigestConfig,
-        deduplicate_get_digests_ttl_calls: bool,
-    ) -> buck2_error::Result<(
-        Vec<InlinedBlobWithDigest>,
-        HashSet<&'a TrackedCasDigest<FileDigestKind>>,
-    )> {
-        // RE mentions they usually take 5-10 minutes of leeway so we mirror this here.
-        let now = Utc::now();
-        let ttl_wanted = if buck2_core::is_open_source() {
-            1
-        } else {
-            600i64
-        };
-        let ttl_deadline = now + Duration::seconds(ttl_wanted);
-
-        // See if anything needs uploading
-        let mut input_digests = blobs.keys().collect::<HashSet<_>>();
-        {
-            // Collect the digests we need to upload
-            for entry in input_dir.unordered_walk().without_paths() {
-                let digest = match entry {
-                    DirectoryEntry::Dir(d) => d.as_fingerprinted_dyn().fingerprint(),
-                    DirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => &f.digest,
-                    DirectoryEntry::Leaf(..) => continue,
-                };
-
-                if digest.expires()? <= ttl_deadline {
-                    input_digests.insert(digest);
-                }
-            }
-
-            let root_dir_digest = input_dir.fingerprint();
-            if root_dir_digest.expires()? <= ttl_deadline {
-                input_digests.insert(root_dir_digest);
-            }
-        };
+        use_case: RemoteExecutorUseCase,
+    ) -> buck2_error::Result<FindMissing<'a>> {
+        // Everything the action refers to; the presence check answers from the digest for
+        // whatever is known to be in the CAS with time to spare.
+        let mut input_digests = blobs.keys().collect::<BuckMutSet<_>>();
+        for entry in input_dir.unordered_walk().without_paths() {
+            let digest = match entry {
+                DirectoryEntry::Dir(d) => d.as_fingerprinted_dyn().fingerprint(),
+                DirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => &f.digest,
+                DirectoryEntry::Leaf(..) => continue,
+            };
+            input_digests.insert(digest);
+        }
+        input_digests.insert(input_dir.fingerprint());
 
         let mut upload_blobs = Vec::new();
-        let mut missing_digests = HashSet::new();
+        let mut missing_digests = BuckMutSet::default();
         add_injected_missing_digests(&input_digests, &mut missing_digests)?;
+        let input_digests = input_digests.into_iter().collect::<Vec<_>>();
+        let digests_queried = input_digests.len() as u64;
+        let mut digests_missing = 0;
 
-        let digests_and_ttls_iterator = if deduplicate_get_digests_ttl_calls {
-            let (fut, reqs, new) = {
-                static GET_DIGESTS_TTL_DEDUP: Lazy<Mutex<GetDigestsTtlDeduper>> =
-                    Lazy::new(|| Mutex::new(GetDigestsTtlDeduper::default()));
-
-                GetDigestsTtlDeduper::get_ttls(
-                    &GET_DIGESTS_TTL_DEDUP,
-                    client,
-                    *use_case,
-                    identity,
-                    digest_config,
-                    input_digests.iter().copied(),
-                )
-            };
-
-            tracing::debug!(
-                "Requested digests for {}: {:#?}: {} futures, {} newly dispatched digests",
-                input_dir.fingerprint(),
-                input_digests.len(),
-                reqs,
-                new
-            );
-
-            let input_digests_ttls = fut.await?;
-
-            struct DigestsWithTtlIterator<I> {
-                ttls: HashMap<TrackedFileDigest, i64>,
-                inner: I,
-            }
-
-            impl<'a, I> Iterator for DigestsWithTtlIterator<I>
-            where
-                I: Iterator<Item = &'a TrackedFileDigest>,
-            {
-                type Item = buck2_error::Result<(&'a TrackedFileDigest, i64)>;
-
-                fn next(&mut self) -> Option<buck2_error::Result<(&'a TrackedFileDigest, i64)>> {
-                    let digest = self.inner.next()?;
-                    let digest_ttl = self.ttls.get(digest).with_buck_error_context(|| {
-                        format!("Did not get a TTL for digest: {}", digest)
-                    });
-                    Some(digest_ttl.map(|ttl| (digest, *ttl)))
-                }
-            }
-
-            Either::Left(DigestsWithTtlIterator {
-                ttls: input_digests_ttls,
-                inner: input_digests.into_iter(),
-            })
-        } else {
-            let client = client.clone();
-            let metadata = use_case.metadata(identity);
-            let digests = input_digests.iter().map(|d| d.to_re()).collect();
-            let digests_ttl = client.get_digests_ttl(digests, metadata).await;
-
-            let input_digests = input_digests.iter().copied().collect();
-
-            Either::Right(process_get_digest_ttls_response(
-                input_digests,
-                digests_ttl?,
-                digest_config,
-            )?)
-        };
+        // Whatever is missing gets uploaded below, so a stale miss costs one redundant upload.
+        let presence = client
+            .check_presence(
+                use_case,
+                input_digests
+                    .iter()
+                    .map(|digest| (*digest).dupe())
+                    .collect(),
+                NegativeCache::Allowed,
+            )
+            .await?;
 
         tracing::debug!("Got digests for {}", input_dir.fingerprint());
 
         // Now find the blobs that need to be uploaded
-        for digest_with_ttl in digests_and_ttls_iterator {
-            let (digest, digest_ttl) = digest_with_ttl?;
+        for (digest, presence) in input_digests.into_iter().zip_eq(presence) {
+            match presence {
+                Some(expiration) => {
+                    tracing::debug!(digest=%digest, %expiration, "Not uploading");
+                }
+                _ => {
+                    tracing::debug!(digest=%digest, "Mark for upload");
+                    digests_missing += 1;
 
-            if digest_ttl <= ttl_wanted {
-                tracing::debug!(digest=%digest, ttl=digest_ttl, "Mark for upload");
-
-                match blobs.get(digest) {
-                    Some(blob) => {
-                        upload_blobs.push(InlinedBlobWithDigest {
-                            blob: blob.clone().0,
-                            digest: digest.to_re(),
-                            ..Default::default()
-                        });
-                    }
-                    None => {
-                        missing_digests.insert(digest);
+                    match blobs.get(digest) {
+                        Some(blob) => {
+                            upload_blobs.push(InlinedBlobWithDigest {
+                                blob: blob.clone().0,
+                                digest: digest.to_re(),
+                                ..Default::default()
+                            });
+                        }
+                        None => {
+                            missing_digests.insert(digest);
+                        }
                     }
                 }
-            } else {
-                tracing::debug!(digest=%digest, ttl=digest_ttl, "Not uploading");
-                let ttl = Duration::seconds(digest_ttl);
-                digest.update_expires(now + ttl);
             }
         }
 
-        Ok((upload_blobs, missing_digests))
+        Ok(FindMissing {
+            upload_blobs,
+            missing_digests,
+            digests_queried,
+            digests_missing,
+        })
     }
 
     pub async fn upload(
         fs: &ProjectRoot,
         client: &RemoteExecutionClient,
-        materializer: &Arc<dyn Materializer>,
+        materializer: &dyn Materializer,
         dir_path: &ProjectRelativePath,
         input_dir: &ActionImmutableDirectory,
         blobs: &ActionBlobs,
         use_case: RemoteExecutorUseCase,
         identity: Option<&ReActionIdentity<'_>>,
-        digest_config: DigestConfig,
-        deduplicate_get_digests_ttl_calls: bool,
     ) -> buck2_error::Result<UploadStats> {
-        let (mut upload_blobs, mut missing_digests) = Self::find_missing(
-            client,
-            input_dir,
-            blobs,
-            &use_case,
-            identity,
-            digest_config,
-            deduplicate_get_digests_ttl_calls,
-        )
-        .await?;
+        let mut start = Instant::now();
+        let FindMissing {
+            mut upload_blobs,
+            mut missing_digests,
+            digests_queried,
+            digests_missing,
+        } = Self::find_missing(client, input_dir, blobs, use_case).await?;
+        let mut phases = UploadPhases {
+            find_missing: Instant::now() - start,
+            digests_queried,
+            digests_missing,
+            ..Default::default()
+        };
 
         if upload_blobs.is_empty() && missing_digests.is_empty() {
-            return Ok(UploadStats::default());
+            return Ok(UploadStats {
+                phases,
+                ..Default::default()
+            });
         }
 
         // Find the file paths and directory blobs that need to be uploaded
         let mut upload_files = Vec::new();
 
         // Track what files should be materialized before we upload.
-        let mut paths_to_materialize = Vec::new();
+        let mut artifacts_to_materialize = Vec::new();
 
         if !missing_digests.is_empty() {
             let mut upload_file_paths = Vec::new();
             let mut upload_file_digests = Vec::new();
+            let mut upload_file_metadata = Vec::new();
 
             {
                 let mut walk = input_dir.unordered_walk();
@@ -272,9 +248,11 @@ impl Uploader {
                         DirectoryEntry::Dir(d) => {
                             upload_blobs.push(directory_to_blob(d));
                         }
-                        DirectoryEntry::Leaf(ActionDirectoryMember::File(..)) => {
-                            upload_file_paths.push(dir_path.join(path.get()));
+                        DirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => {
+                            upload_file_paths
+                                .push((dir_path.join(path.get()), f.digest.data().dupe()));
                             upload_file_digests.push(digest.to_re());
+                            upload_file_metadata.push(f.dupe());
                         }
                         DirectoryEntry::Leaf(..) => unreachable!(), // TODO: Better representation of this.
                     };
@@ -295,11 +273,17 @@ impl Uploader {
             // we are asked to upload B. But since we defer local copies until
             // it's actually needed for a local run, B might not have been
             // copied yet (or ever), so we should upload A directly instead.
+            start = Instant::now();
             let upload_file_paths = materializer
                 .get_materialized_file_paths(upload_file_paths)
                 .await?;
+            phases.materializer_query = Instant::now() - start;
 
-            for (name, digest) in upload_file_paths.into_iter().zip(upload_file_digests) {
+            for ((name, digest), metadata) in upload_file_paths
+                .into_iter()
+                .zip(upload_file_digests)
+                .zip(upload_file_metadata)
+            {
                 match name {
                     Ok(name) => {
                         upload_files.push(NamedDigest {
@@ -310,9 +294,9 @@ impl Uploader {
                     }
                     Err(
                         ref err @ ArtifactNotMaterializedReason::RequiresCasDownload {
+                            ref path,
                             ref entry,
                             ref info,
-                            ..
                         },
                     ) => {
                         if let DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) =
@@ -334,7 +318,7 @@ impl Uploader {
                                         ),
                                         daemon_in_memory_state_is_corrupted: true,
                                         action_cache_is_corrupted: info.origin.guaranteed_by_action_cache()
-                                    )?;
+                                    );
 
                                     return Err(buck2_error::buck2_error!(
                                         buck2_error::ErrorTag::ReCasArtifactExpired,
@@ -355,10 +339,23 @@ impl Uploader {
                                         file.digest,
                                         file.digest.expires()?,
                                         err
-                                    ),
-                                    quiet: true
-                                )?;
+                                    )
+                                );
 
+                                // Materialize the file locally from CAS and add it to
+                                // the upload list. Silently skipping this file (the old
+                                // behavior) leaves the downstream action with incomplete
+                                // inputs, causing confusing failures. Materializing
+                                // bypasses FindMissingCache and talks directly to CAS;
+                                // if the blob truly is gone, we fail here with a clear
+                                // error rather than later with a mysterious one.
+                                artifacts_to_materialize
+                                    .push((path.clone(), ArtifactValue::file(metadata)));
+                                upload_files.push(NamedDigest {
+                                    name: fs.resolve(path).as_maybe_relativized_str()?.to_owned(),
+                                    digest,
+                                    ..Default::default()
+                                });
                                 continue;
                             }
                         }
@@ -371,7 +368,7 @@ impl Uploader {
                             digest,
                             ..Default::default()
                         });
-                        paths_to_materialize.push(path);
+                        artifacts_to_materialize.push((path, ArtifactValue::file(metadata)));
                     }
                     Err(
                         ref err @ ArtifactNotMaterializedReason::DeferredMaterializerCorruption {
@@ -384,17 +381,31 @@ impl Uploader {
             }
         }
 
-        if !paths_to_materialize.is_empty() {
-            materializer
-                .ensure_materialized(paths_to_materialize)
+        // The upload reads these files; the lease covers it.
+        start = Instant::now();
+        let _materialized_lease = if artifacts_to_materialize.is_empty() {
+            None
+        } else {
+            let response = materializer
+                .materialize(MaterializeRequest {
+                    artifacts: artifacts_to_materialize,
+                    outputs: Vec::new(),
+                    purpose: MaterializationPurpose::IntermediateOnly,
+                    re_use_case: use_case,
+                })
                 .await
                 .buck_error_context("Error materializing paths for upload")?;
-        }
+            for result in response.results {
+                result.buck_error_context("Error materializing paths for upload")?;
+            }
+            Some(response.lease)
+        };
+        phases.materialize = Instant::now() - start;
 
         // Compute stats of digests we're about to upload so we can report them
         // to the span end event of this stage of execution.
         let stats = {
-            let mut stats_by_extension = HashMap::new();
+            let mut stats_by_extension = IntentionallyStdHashMap::new();
             let mut named_digest_byte_count: u64 = 0;
             for nd in &upload_files {
                 // Aggregate metrics by file extension.
@@ -420,46 +431,117 @@ impl Uploader {
                     bytes_uploaded: named_digest_byte_count + blob_byte_count,
                 },
                 by_extension: stats_by_extension,
+                phases: UploadPhases::default(),
             }
         };
 
         // Upload
+        start = Instant::now();
         if !upload_files.is_empty() || !upload_blobs.is_empty() {
-            with_error_handler(
-                "upload",
-                client.get_session_id(),
-                client.get_raw_re_client()
-                    .upload(
-                        use_case.metadata(identity),
-                        UploadRequest {
-                            files_with_digest: Some(upload_files),
-                            inlined_blobs_with_digest: Some(upload_blobs),
-                            // all find missing checks are done previously
-                            // and we can skip them and upload all digests
-                            upload_only_missing: false,
-                            ..Default::default()
-                        },
-                    )
-                    .await,
-            )
-            .await
-            .map_err(|e| {
-                if e.tags().contains(&buck2_error::ErrorTag::ReInvalidArgument) {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::ReInvalidArgument,
-                        "RE Upload failed. It looks like you might have modified files while the build \
-                        was in progress. Retry your build to proceed. Debug information: {:#}",
-                        e
-                    )
-                } else {
-                    e
-                }
-            })?;
+            Self::send(client, use_case, identity, upload_files, upload_blobs).await?;
         };
+        phases.cas_write = Instant::now() - start;
 
+        Ok(UploadStats { phases, ..stats })
+    }
+
+    /// Uploads whichever of `blobs` the CAS does not hold: the check and the upload `upload`
+    /// makes, for content that is in memory and under no directory.
+    pub async fn upload_blobs(
+        client: &RemoteExecutionClient,
+        blobs: &ActionBlobs,
+        use_case: RemoteExecutorUseCase,
+    ) -> buck2_error::Result<UploadStats> {
+        let digests: Vec<TrackedFileDigest> = blobs.keys().map(|digest| digest.dupe()).collect();
+        // Whatever is missing gets uploaded below, so a stale miss costs one redundant upload.
+        let presence = client
+            .check_presence(use_case, digests.clone(), NegativeCache::Allowed)
+            .await?;
+        let upload_blobs: Vec<InlinedBlobWithDigest> = digests
+            .iter()
+            .zip_eq(presence)
+            .filter(|(_, presence)| presence.is_none())
+            .map(|(digest, _)| InlinedBlobWithDigest {
+                blob: blobs
+                    .get(digest)
+                    .expect("the digests are the blobs' keys")
+                    .0
+                    .clone(),
+                digest: digest.to_re(),
+                ..Default::default()
+            })
+            .collect();
+        if upload_blobs.is_empty() {
+            return Ok(UploadStats::default());
+        }
+        let stats = UploadStats {
+            total: ReUploadMetrics {
+                digests_uploaded: upload_blobs.len() as u64,
+                bytes_uploaded: upload_blobs
+                    .iter()
+                    .map(|blob| u64::try_from(blob.digest.size_in_bytes).unwrap_or_default())
+                    .sum(),
+            },
+            by_extension: IntentionallyStdHashMap::new(),
+            phases: UploadPhases::default(),
+        };
+        Self::send(client, use_case, None, Vec::new(), upload_blobs).await?;
         Ok(stats)
     }
+
+    /// Uploads `files` and `blobs`, every one of them: the caller has asked the CAS what it
+    /// holds already.
+    async fn send(
+        client: &RemoteExecutionClient,
+        use_case: RemoteExecutorUseCase,
+        identity: Option<&ReActionIdentity<'_>>,
+        files: Vec<NamedDigest>,
+        blobs: Vec<InlinedBlobWithDigest>,
+    ) -> buck2_error::Result<()> {
+        with_error_handler(
+            "upload",
+            client.get_session_id(),
+            client
+                .get_raw_re_client()
+                .upload(
+                    &use_case.metadata(identity),
+                    UploadRequest {
+                        files_with_digest: Some(files),
+                        inlined_blobs_with_digest: Some(blobs),
+                        upload_only_missing: false,
+                        ..Default::default()
+                    },
+                )
+                .await,
+        )
+        .map_err(|e| {
+            if e.tags().contains(&buck2_error::ErrorTag::ReInvalidArgument) {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::ReInvalidArgument,
+                    "RE Upload failed. It looks like you might have modified files while the build \
+                    was in progress. Retry your build to proceed. Debug information: {:#}",
+                    e
+                )
+            } else {
+                e
+            }
+        })?;
+        Ok(())
+    }
 }
+
+#[cfg(fbcode_build)] // Relies on fbcode future sizes
+buck2_util::size_assert::words_of_async_fn_future!(
+    Uploader::upload,
+    (_, _, _, _, _, _, _, _),
+    ~324
+);
+#[cfg(fbcode_build)] // Relies on fbcode future sizes
+buck2_util::size_assert::words_of_async_fn_future!(
+    Uploader::find_missing,
+    (_, _, _, _),
+    ~65
+);
 
 fn should_error_for_missing_digest(info: &CasDownloadInfo) -> bool {
     // RE sometimes reports things that exist as missing. We don't fully understand why at this
@@ -472,7 +554,7 @@ fn should_error_for_missing_digest(info: &CasDownloadInfo) -> bool {
     // tells us a digest doesn't exist even though it does) in order to provide better UX when we
     // hit a true positive.
     if let Some(age) = info.action_age() {
-        age >= Duration::seconds(3600 * 5)
+        age >= SignedDuration::from_hours(5)
     } else {
         true
     }
@@ -506,8 +588,8 @@ fn error_for_missing_file(
 /// This is used for tests. We allow an environment variable to be set to report that some digests
 /// are _always_ missing if they are required. This lets us test our upload paths more easily.
 fn add_injected_missing_digests<'a>(
-    input_digests: &HashSet<&'a TrackedFileDigest>,
-    missing_digests: &mut HashSet<&'a TrackedFileDigest>,
+    input_digests: &BuckMutSet<&'a TrackedFileDigest>,
+    missing_digests: &mut BuckMutSet<&'a TrackedFileDigest>,
 ) -> buck2_error::Result<()> {
     fn convert_digests(val: &str) -> buck2_error::Result<Vec<FileDigest>> {
         val.split(' ')
@@ -547,187 +629,45 @@ fn extract_file_extension(path: &str) -> String {
     }
 }
 
-#[derive(
-    allocative::Allocative,
-    Copy,
-    Clone,
-    Debug,
-    dupe::Dupe,
-    PartialEq,
-    Eq,
-    Hash
-)]
-struct RequestId(u64);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Tracks digests that have in-flight calls to RE and dedupes them.
-#[derive(Default)]
-struct GetDigestsTtlDeduper<'s> {
-    /// Used to allow `digests` to index into `queries`.
-    next_request_id: u64,
-    /// Maps a given digest to a request that will produce this digest (and
-    /// possibly / likely others). The request is referenced as an ID that
-    /// can be used to lookup in `queries`.
-    digests: HashMap<TrackedFileDigest, RequestId>,
-    /// Maps a request to the actual future that will contain its results.
-    queries: HashMap<
-        RequestId,
-        Shared<BoxFuture<'s, buck2_error::Result<HashMap<TrackedFileDigest, i64>>>>,
-    >,
-}
-
-impl<'s> GetDigestsTtlDeduper<'s> {
-    /// Obtain a future that will return the TTLs for the digests that are
-    /// queried (and possibly more TTLs).
-    fn get_ttls<'a>(
-        deduper: &'s Mutex<Self>,
-        client: &'a RemoteExecutionClient,
-        use_case: RemoteExecutorUseCase,
-        identity: Option<&'a ReActionIdentity<'a>>,
-        digest_config: DigestConfig,
-        digests: impl IntoIterator<Item = &'a TrackedFileDigest>,
-    ) -> (
-        impl Future<Output = buck2_error::Result<HashMap<TrackedFileDigest, i64>>> + 's,
-        usize,
-        usize,
-    ) {
-        let mut guard = deduper.lock().expect("Poisoned lock");
-
-        let mut reqs = HashSet::new();
-
-        let mut to_schedule = Vec::new();
-
-        for digest in digests {
-            if let Some(req_id) = guard.digests.get(digest) {
-                reqs.insert(*req_id);
-            } else {
-                to_schedule.push(digest.dupe());
-            }
-        }
-
-        let to_schedule_len = to_schedule.len();
-
-        if !to_schedule.is_empty() {
-            let request_id = RequestId(guard.next_request_id);
-            guard.next_request_id += 1;
-
-            reqs.insert(request_id);
-
-            for digest in &to_schedule {
-                guard.digests.insert(digest.dupe(), request_id);
-            }
-
-            guard.queries.insert(
-                request_id,
-                query_digest_ttls(
-                    deduper,
-                    request_id,
-                    client,
-                    use_case,
-                    identity,
-                    digest_config,
-                    to_schedule,
-                )
-                .shared(),
-            );
-        }
-
-        let reqs_len = reqs.len();
-
-        let futs = reqs
-            .into_iter()
-            .map(|req| guard.queries.get(&req).unwrap().clone())
-            .collect::<FuturesUnordered<_>>();
-
-        let fut = async move {
-            let results: Vec<_> = futs.try_collect().await?;
-            Ok(results.into_iter().flatten().collect())
+    #[test]
+    fn test_upload_stats_to_proto() {
+        let stats = UploadStats {
+            total: ReUploadMetrics {
+                digests_uploaded: 3,
+                bytes_uploaded: 300,
+            },
+            by_extension: IntentionallyStdHashMap::new(),
+            phases: UploadPhases {
+                slot_wait: Duration::from_micros(1),
+                find_missing: Duration::from_micros(2),
+                materializer_query: Duration::from_micros(3),
+                materialize: Duration::from_micros(4),
+                cas_write: Duration::from_micros(5),
+                digests_queried: 10,
+                digests_missing: 2,
+            },
         };
-
-        (fut, reqs_len, to_schedule_len)
+        let event = stats.to_proto();
+        assert_eq!(
+            event.stats,
+            Some(buck2_data::ReUploadStats {
+                slot_wait_us: 1,
+                find_missing_us: 2,
+                materializer_query_us: 3,
+                materialize_us: 4,
+                cas_write_us: 5,
+                digests_queried: 10,
+                digests_missing: 2,
+            }),
+            "each phase goes to its own field"
+        );
+        assert_eq!(
+            (event.digests_uploaded, event.bytes_uploaded),
+            (Some(3), Some(300))
+        );
     }
-}
-
-/// Call RE, get  the TTLs, then match them back to our inputs. Also deregister
-/// this request once it finishes so we don't cache it forever.
-fn query_digest_ttls<'s>(
-    deduper: &'s Mutex<GetDigestsTtlDeduper>,
-    request_id: RequestId,
-    client: &RemoteExecutionClient,
-    use_case: RemoteExecutorUseCase,
-    identity: Option<&ReActionIdentity<'_>>,
-    digest_config: DigestConfig,
-    input_digests: Vec<TrackedFileDigest>,
-) -> BoxFuture<'s, buck2_error::Result<HashMap<TrackedFileDigest, i64>>> {
-    let client = client.dupe();
-    let metadata = use_case.metadata(identity);
-    let digests = input_digests.iter().map(|d| d.to_re()).collect();
-
-    async move {
-        let digests_ttl = client.get_digests_ttl(digests, metadata).await;
-
-        {
-            let mut guard = deduper.lock().expect("Poisoned lock");
-            guard.queries.remove(&request_id);
-            for digest in &input_digests {
-                guard.digests.remove(digest);
-            }
-        }
-
-        // It's possibly a bit of a shame that we deregister this response
-        // before we process it here, but in practice we need to draw a line at
-        // some point and no matter where we draw it, races where we "just miss"
-        // the deduped request will exist, unless we have synchronization
-        // between checking and setting digest TTLs, unless we cache digests
-        // forever (which right now we don't do because we track TTLs on the
-        // digest object itself and not all actions are guaranteed to hold the
-        // same instance, but maybe that's something that should be revisited),
-        // AND figure out invalidation (because the TTL will change when we
-        // upload).
-        process_get_digest_ttls_response(input_digests, digests_ttl?, digest_config)?.collect()
-    }
-    .boxed()
-}
-
-fn process_get_digest_ttls_response<T>(
-    mut req: Vec<T>,
-    res: GetDigestsTtlResponse,
-    digest_config: DigestConfig,
-) -> buck2_error::Result<impl Iterator<Item = buck2_error::Result<(T, i64)>>>
-where
-    T: Borrow<TrackedFileDigest> + Ord,
-{
-    let digest_ttls = res.digests_with_ttl;
-
-    if req.len() != digest_ttls.len() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::ReInvalidGetCasResponse,
-            "Invalid response from get_digests_ttl: expected {}, got {} digests",
-            req.len(),
-            digest_ttls.len()
-        ));
-    }
-
-    req.sort();
-
-    let mut digest_ttls = digest_ttls.into_try_map(|d| {
-        buck2_error::Ok((
-            FileDigest::from_re(&d.digest, digest_config).map_err(buck2_error::Error::from)?,
-            d.ttl,
-        ))
-    })?;
-    digest_ttls.sort();
-
-    Ok(req
-        .into_iter()
-        .zip(digest_ttls)
-        .map(|(digest, (matching_digest, digest_ttl))| {
-            if *digest.borrow().data() != matching_digest {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::ReInvalidGetCasResponse,
-                    "Invalid response from get_digests_ttl"
-                ));
-            }
-
-            Ok((digest, digest_ttl))
-        }))
 }

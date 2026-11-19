@@ -25,6 +25,7 @@ use std::hash::Hasher;
 use allocative::Allocative;
 use dupe::Dupe;
 use serde::Serialize;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_value;
 use starlark_map::StarlarkHashValue;
 
@@ -32,22 +33,20 @@ use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::collections::StarlarkHasher;
 use crate::private::Private;
-use crate::typing::Ty;
-use crate::typing::TyBasic;
+use crate::typing::OperatorSignature;
 use crate::typing::TypingBinOp;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::ValueLike;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::types::num::typecheck::NumTy;
-use crate::values::types::num::typecheck::typecheck_num_bin_op;
+use crate::values::types::num::typecheck::num_bin_op_signatures;
 use crate::values::types::num::value::NumRef;
 
 const WRITE_PRECISION: usize = 6;
@@ -83,27 +82,41 @@ pub(crate) fn write_scientific<W: fmt::Write>(
         write_non_finite(output, f)
     } else {
         let abs = f.abs();
-        let exponent = if f == 0.0 {
+        let mut exponent = if f == 0.0 {
             0
         } else {
             abs.log10().floor() as i32
         };
         let normal = if f == 0.0 {
             0.0
+        } else if exponent >= 0 {
+            abs / 10f64.powi(exponent)
         } else {
-            abs / 10f64.powf(exponent as f64)
+            let mut normal = abs;
+            let mut remaining = -exponent;
+            while remaining != 0 {
+                let step = remaining.min(308);
+                normal *= 10f64.powi(step);
+                remaining -= step;
+            }
+            normal
         };
+        let scale = 10u64.pow(WRITE_PRECISION as u32);
+        let mut scaled = (normal * scale as f64).round() as u64;
+        if scaled >= 10 * scale {
+            scaled /= 10;
+            exponent += 1;
+        }
 
         // start with "-" for a negative number
         if f.is_sign_negative() {
             output.write_char('-')?
         }
 
-        // use the whole integral part of normal (a single digit)
-        output.write_fmt(format_args!("{}", normal.trunc()))?;
+        output.write_fmt(format_args!("{}", scaled / scale))?;
 
         // calculate the fractional tail for given precision
-        let mut tail = (normal.fract() * 10f64.powf(WRITE_PRECISION as f64)).round() as u64;
+        let mut tail = scaled % scale;
         let mut rev_tail = [0u8; WRITE_PRECISION];
         let mut rev_tail_len = 0;
         let mut removing_trailing_zeros = strip_trailing_zeros;
@@ -131,6 +144,24 @@ pub(crate) fn write_scientific<W: fmt::Write>(
     }
 }
 
+/// Scientific notation with the shortest mantissa that round trips, as `str` and `%g` in
+/// starlark-go print it.
+fn write_compact_scientific<W: fmt::Write>(
+    output: &mut W,
+    f: f64,
+    exponent_char: char,
+) -> fmt::Result {
+    debug_assert!(f.is_finite());
+    // Rust's `{:e}` is the shortest round-trip representation, e.g. `1.2345678e7`; only the
+    // exponent needs the `+07` form.
+    let rust = format!("{f:e}");
+    let (mantissa, exponent) = rust.split_once('e').expect("`{:e}` always has an exponent");
+    let exponent: i32 = exponent.parse().expect("`{:e}` writes a decimal exponent");
+    output.write_str(mantissa)?;
+    output.write_char(exponent_char)?;
+    output.write_fmt(format_args!("{exponent:+03}"))
+}
+
 pub(crate) fn write_compact<W: fmt::Write>(
     output: &mut W,
     f: f64,
@@ -145,10 +176,10 @@ pub(crate) fn write_compact<W: fmt::Write>(
         } else {
             abs.log10().floor() as i32
         };
+        let scientific_upper = 10f64.powi(WRITE_PRECISION as i32);
 
-        if exponent.abs() >= WRITE_PRECISION as i32 {
-            // use scientific notation if exponent is outside of our precision (but strip 0s)
-            write_scientific(output, f, exponent_char, true)
+        if exponent.abs() >= WRITE_PRECISION as i32 || abs >= scientific_upper {
+            write_compact_scientific(output, f, exponent_char)
         } else if f.fract() == 0.0 {
             // make sure there's a fractional part even if the number doesn't have it
             output.write_fmt(format_args!("{f:.1}"))
@@ -160,7 +191,16 @@ pub(crate) fn write_compact<W: fmt::Write>(
 }
 
 /// Runtime representation of Starlark `float` type.
-#[derive(Clone, Dupe, Copy, Debug, ProvidesStaticType, Serialize, Allocative)]
+#[derive(
+    Clone,
+    Dupe,
+    Copy,
+    Debug,
+    ProvidesStaticType,
+    Serialize,
+    Allocative,
+    StarlarkPagable
+)]
 #[serde(transparent)]
 pub struct StarlarkFloat(pub f64);
 
@@ -200,47 +240,30 @@ impl StarlarkFloat {
     }
 }
 
-impl StarlarkTypeRepr for f64 {
-    type Canonical = <StarlarkFloat as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        StarlarkFloat::starlark_type_repr()
-    }
-}
-
-impl<'v> AllocValue<'v> for StarlarkFloat {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_simple(self)
-    }
-}
-
-impl AllocFrozenValue for StarlarkFloat {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        heap.alloc_simple(self)
-    }
-}
-
 impl<'v> AllocValue<'v> for f64 {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc(StarlarkFloat(self))
+    type Type = StarlarkFloat;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::alloc(heap, StarlarkFloat(self))
     }
 }
 
-impl AllocFrozenValue for f64 {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        heap.alloc(StarlarkFloat(self))
+impl<'fv> AllocFrozenValue<'fv> for f64 {
+    type Type = StarlarkFloat;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::alloc_frozen(heap, StarlarkFloat(self))
     }
 }
 
 /// Allows only a float - an int will not be accepted.
 impl<'v> UnpackValue<'v> for StarlarkFloat {
+    type Type = Self;
     type Error = Infallible;
 
-    fn unpack_value_impl(value: Value<'v>) -> Result<Option<Self>, Self::Error> {
-        let Some(value) = value.downcast_ref::<StarlarkFloat>() else {
-            return Ok(None);
-        };
-        Ok(Some(*value))
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: ValueTyped<'v, Self>) -> Result<Self, Infallible> {
+        Ok(*get.as_ref())
     }
 }
 
@@ -273,52 +296,62 @@ impl<'v> StarlarkValue<'v> for StarlarkFloat {
         Ok(NumRef::Float(*self).get_hash())
     }
 
-    fn plus(&self, heap: &'v Heap) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(*self))
+    fn plus(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(heap.alloc(*self).to_value())
     }
 
-    fn minus(&self, heap: &'v Heap) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(StarlarkFloat(-self.0)))
+    fn minus(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(heap.alloc(StarlarkFloat(-self.0)).to_value())
     }
 
-    fn add(&self, other: Value, heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
-        Some(Ok(heap.alloc(NumRef::Float(*self) + other.unpack_num()?)))
+    fn add(&self, other: Value, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        Some(
+            (NumRef::Float(*self) + other.unpack_num()?)
+                .map(|x| heap.alloc(x).to_value())
+                .map_err(Into::into),
+        )
     }
 
-    fn sub(&self, other: Value, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    fn sub(&self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
             None => ValueError::unsupported_with(self, "-", other),
-            Some(other) => Ok(heap.alloc(NumRef::Float(*self) - other)),
+            Some(other) => Ok(heap.alloc((NumRef::Float(*self) - other)?).to_value()),
         }
     }
 
-    fn mul(&self, other: Value<'v>, heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
-        Some(Ok(heap.alloc(NumRef::Float(*self) * other.unpack_num()?)))
+    fn mul(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        Some(
+            (NumRef::Float(*self) * other.unpack_num()?)
+                .map(|x| heap.alloc(x).to_value())
+                .map_err(Into::into),
+        )
     }
 
-    fn div(&self, other: Value, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    fn div(&self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
             None => ValueError::unsupported_with(self, "/", other),
-            Some(other) => Ok(heap.alloc(NumRef::Float(*self).div(other)?)),
+            Some(other) => Ok(heap.alloc(NumRef::Float(*self).div(other)?).to_value()),
         }
     }
 
-    fn percent(&self, other: Value, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    fn percent(&self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
-            Some(other) => Ok(heap.alloc(NumRef::Float(*self).percent(other)?)),
+            Some(other) => Ok(heap.alloc(NumRef::Float(*self).percent(other)?).to_value()),
             None => ValueError::unsupported_with(self, "%", other),
         }
     }
 
-    fn floor_div(&self, other: Value, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    fn floor_div(&self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
             None => ValueError::unsupported_with(self, "//", other),
-            Some(other) => Ok(heap.alloc(NumRef::Float(*self).floor_div(other)?)),
+            Some(other) => Ok(heap
+                .alloc(NumRef::Float(*self).floor_div(other)?)
+                .to_value()),
         }
     }
 
-    fn bin_op_ty(op: TypingBinOp, rhs: &TyBasic) -> Option<Ty> {
-        typecheck_num_bin_op(NumTy::Float, op, rhs)
+    fn bin_op_signatures(op: TypingBinOp) -> Vec<OperatorSignature> {
+        num_bin_op_signatures(NumTy::Float, op)
     }
 
     fn compare(&self, other: Value) -> crate::Result<Ordering> {
@@ -383,6 +416,8 @@ mod tests {
         assert_eq!(scientific(1.23e45), "1.230000e+45");
         assert_eq!(scientific(-3.14e-145), "-3.140000e-145");
         assert_eq!(scientific(1e300), "1.000000e+300");
+        assert_eq!(scientific(9.9999999e10), "1.000000e+11");
+        assert_eq!(scientific(f64::from_bits(1)), "4.940656e-324");
     }
 
     fn compact(f: f64) -> String {
@@ -400,10 +435,31 @@ mod tests {
         assert_eq!(compact(0f64), "0.0");
         assert_eq!(compact(std::f64::consts::PI), "3.141592653589793");
         assert_eq!(compact(-std::f64::consts::E), "-2.718281828459045");
+        assert_eq!(compact(1e-5), "0.00001");
+        assert_eq!(compact(9e-6), "9e-06");
+        assert_eq!(compact(1e6), "1e+06");
         assert_eq!(compact(1e10), "1e+10");
         assert_eq!(compact(1.23e45), "1.23e+45");
         assert_eq!(compact(-3.14e-145), "-3.14e-145");
         assert_eq!(compact(1e300), "1e+300");
+    }
+
+    /// In scientific notation `write_compact` prints the shortest mantissa that round trips
+    /// through `str`, `repr` and `%g`.
+    #[test]
+    fn test_write_compact_scientific_round_trips() {
+        assert_eq!(compact(12345678.0), "1.2345678e+07");
+        assert_eq!(compact(-12345678.0), "-1.2345678e+07");
+        assert_eq!(compact(9007199254740992.0), "9.007199254740992e+15");
+        assert_eq!(compact(1.2345678901234567e-30), "1.2345678901234567e-30");
+        assert_eq!(compact(f64::from_bits(1)), "5e-324");
+        assert_eq!(compact(f64::MAX), "1.7976931348623157e+308");
+        assert::eq("str(12345678.0)", "'1.2345678e+07'");
+        assert::eq("repr(float(1 << 53))", "'9.007199254740992e+15'");
+        assert::eq("'%g' % 12345678.0", "'1.2345678e+07'");
+        assert::eq("'%G' % 12345678.0", "'1.2345678E+07'");
+        assert::is_true("float(str(12345678.0)) == 12345678.0");
+        assert::is_true("float(repr(1.2345678901234567e-30)) == 1.2345678901234567e-30");
     }
 
     #[test]

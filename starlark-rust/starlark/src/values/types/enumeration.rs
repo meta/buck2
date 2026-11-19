@@ -17,7 +17,7 @@
 
 //! Fixed set enumerations, with runtime checking of validity.
 //!
-//! Calling `enum()` produces an [`EnumType`]. Calling the [`EnumType`] creates an [`EnumValue`].
+//! Calling `enum()` produces an enum type. Calling that enum type creates an [`EnumValue`].
 //!
 //! The implementation ensures that each value of the enumeration is only stored once,
 //! so they may also provide (modest) memory savings. Created in starlark with the
@@ -35,13 +35,11 @@
 //! # "#);
 //! ```
 
-pub(crate) mod enum_type;
+mod enum_type;
 pub(crate) mod globals;
-pub(crate) mod matcher;
-pub(crate) mod ty_enum_type;
-pub(crate) mod value;
+mod matcher;
+mod ty_enum_type;
+mod value;
 
-pub use enum_type::EnumType;
-pub use enum_type::FrozenEnumType;
+pub(crate) use enum_type::EnumTypeView;
 pub use value::EnumValue;
-pub use value::FrozenEnumValue;

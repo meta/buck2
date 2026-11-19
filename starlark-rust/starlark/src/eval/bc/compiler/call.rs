@@ -44,20 +44,20 @@ use crate::eval::bc::stack_ptr::BcSlotOut;
 use crate::eval::bc::writer::BcWriter;
 use crate::eval::compiler::args::ArgsCompiledValue;
 use crate::eval::compiler::call::CallCompiled;
-use crate::eval::compiler::def::FrozenDef;
+use crate::eval::compiler::def::Def;
 use crate::eval::compiler::expr::ExprCompiled;
 use crate::eval::compiler::span::IrSpanned;
 use crate::eval::runtime::frame_span::FrameSpan;
-use crate::values::FrozenValue;
-use crate::values::FrozenValueTyped;
+use crate::values::Value;
+use crate::values::ValueTyped;
 use crate::values::function::NativeFunction;
 use crate::values::types::known_methods::get_known_method;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 
-impl ArgsCompiledValue {
+impl<'f> ArgsCompiledValue<'f> {
     /// After evaluation of function arguments like `foo(a, b=c[d], **e)`,
     /// variables `a`, `b`, `c`, `d`, and `e` are definitely assigned.
-    fn mark_definitely_assigned_after(&self, bc: &mut BcWriter) {
+    fn mark_definitely_assigned_after(&self, bc: &mut BcWriter<'f>) {
         let ArgsCompiledValue {
             pos_named,
             names,
@@ -76,7 +76,11 @@ impl ArgsCompiledValue {
         }
     }
 
-    fn write_bc(&self, bc: &mut BcWriter, k: impl FnOnce(BcCallArgsFull<Symbol>, &mut BcWriter)) {
+    fn write_bc(
+        &self,
+        bc: &mut BcWriter<'f>,
+        k: impl FnOnce(BcCallArgsFull<'f, Symbol>, &mut BcWriter<'f>),
+    ) {
         write_exprs(&self.pos_named, bc, |pos_named, bc| {
             write_expr_opt(&self.args, bc, |args, bc| {
                 write_expr_opt(&self.kwargs, bc, |kwargs, bc| {
@@ -93,21 +97,21 @@ impl ArgsCompiledValue {
     }
 }
 
-impl CallCompiled {
+impl<'f> CallCompiled<'f> {
     /// After evaluation of call like `a[b](c.d)`,
     /// variables `a`, `b`, and `c` are definitely assigned.
-    pub(crate) fn mark_definitely_assigned_after(&self, bc: &mut BcWriter) {
+    pub(crate) fn mark_definitely_assigned_after(&self, bc: &mut BcWriter<'f>) {
         let CallCompiled { fun, args } = self;
         fun.mark_definitely_assigned_after(bc);
         args.mark_definitely_assigned_after(bc);
     }
 }
 
-impl IrSpanned<CallCompiled> {
+impl<'f> IrSpanned<'f, CallCompiled<'f>> {
     fn write_args(
-        args: &ArgsCompiledValue,
-        bc: &mut BcWriter,
-        k: impl FnOnce(Either<BcCallArgsPos, BcCallArgsFull<Symbol>>, &mut BcWriter),
+        args: &ArgsCompiledValue<'f>,
+        bc: &mut BcWriter<'f>,
+        k: impl FnOnce(Either<BcCallArgsPos, BcCallArgsFull<'f, Symbol>>, &mut BcWriter<'f>),
     ) {
         if let Some(pos) = args.pos_only() {
             write_exprs(pos, bc, |pos, bc| {
@@ -123,14 +127,14 @@ impl IrSpanned<CallCompiled> {
     }
 
     fn write_call_frozen(
-        span: FrameSpan,
-        fun: FrozenValue,
-        args: &ArgsCompiledValue,
+        span: FrameSpan<'f>,
+        fun: Value<'f>,
+        args: &ArgsCompiledValue<'f>,
         target: BcSlotOut,
-        bc: &mut BcWriter,
+        bc: &mut BcWriter<'f>,
     ) {
         let file_span = bc.alloc_file_span(span);
-        if let Some(fun) = FrozenValueTyped::<FrozenDef>::new(fun) {
+        if let Some(fun) = ValueTyped::<Def>::new(fun) {
             Self::write_args(args, bc, |args, bc| match args {
                 Either::Left(npops) => {
                     bc.write_instr::<InstrCallFrozenDefPos>(span, (fun, npops, file_span, target))
@@ -140,7 +144,7 @@ impl IrSpanned<CallCompiled> {
                     (fun, args.resolve(fun.as_ref()), file_span, target),
                 ),
             })
-        } else if let Some(fun) = FrozenValueTyped::<NativeFunction>::new(fun) {
+        } else if let Some(fun) = ValueTyped::<NativeFunction>::new(fun) {
             let fun = BcNativeFunction::new(fun);
             Self::write_args(args, bc, |args, bc| match args {
                 Either::Left(npops) => {
@@ -167,11 +171,11 @@ impl IrSpanned<CallCompiled> {
 
     fn write_call_method(
         target: BcSlotOut,
-        span: FrameSpan,
-        this: &IrSpanned<ExprCompiled>,
+        span: FrameSpan<'f>,
+        this: &IrSpanned<'f, ExprCompiled<'f>>,
         symbol: &Symbol,
-        args: &ArgsCompiledValue,
-        bc: &mut BcWriter,
+        args: &ArgsCompiledValue<'f>,
+        bc: &mut BcWriter<'f>,
     ) {
         this.write_bc_cb(bc, |this, bc| {
             let file_span = bc.alloc_file_span(span);
@@ -221,7 +225,7 @@ impl IrSpanned<CallCompiled> {
         })
     }
 
-    pub(crate) fn write_bc(&self, target: BcSlotOut, bc: &mut BcWriter) {
+    pub(crate) fn write_bc(&self, target: BcSlotOut, bc: &mut BcWriter<'f>) {
         if let Some(arg) = self.as_len() {
             return arg.write_bc_cb(bc, |arg, bc| {
                 bc.write_instr::<InstrLen>(self.span, (arg, target));

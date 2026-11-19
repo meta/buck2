@@ -16,7 +16,8 @@ worker(
         "jvm_args",
         delimiter = " ",
         required = False,
-    ) or [],
+    )
+    or [],
     main_class = "com.facebook.buck.jvm.kotlin.cd.workertool.KotlinCDGrpcWorkerToolMain",
     visibility = [
         "PUBLIC",

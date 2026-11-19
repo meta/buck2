@@ -27,20 +27,27 @@ pub fn initialize() -> buck2_error::Result<()> {
         the_panic_hook(fb, info);
         hook(info);
     }));
-    buck2_core::error::initialize(Box::new(move |category, err, loc, options| {
-        let fb = buck2_common::fbinit::get_or_init_fbcode_globals();
-        imp::write_soft_error(
-            fb,
-            category,
-            err,
-            buck2_data::Location {
-                file: loc.0.to_owned(),
-                line: loc.1,
-                column: loc.2,
-            },
-            options,
-        );
-    }))
+    buck2_core::error::initialize(
+        Box::new(move |category, err, loc, context, options| {
+            let fb = buck2_common::fbinit::get_or_init_fbcode_globals();
+            imp::write_soft_error(
+                fb,
+                category,
+                err,
+                buck2_data::Location {
+                    file: loc.0.to_owned(),
+                    line: loc.1,
+                    column: loc.2,
+                },
+                context,
+                options,
+            );
+        }),
+        Box::new(|| {
+            buck2_events::dispatch::get_dispatcher_opt()
+                .and_then(|dispatcher| dispatcher.soft_error_context())
+        }),
+    )
     .buck_error_context("Error initializing soft errors")?;
     Ok(())
 }
@@ -55,10 +62,12 @@ fn the_panic_hook(fb: FacebookInit, info: &PanicHookInfo) {
 }
 
 mod imp {
-    use std::collections::HashMap;
     use std::panic::PanicHookInfo;
+    use std::sync::Arc;
 
     use backtrace::Backtrace;
+    use buck2_core::error::SoftErrorContext;
+    use buck2_core::error::SoftErrorKind;
     use buck2_core::error::StructuredErrorOptions;
     use buck2_data::Location;
     use buck2_events::BuckEvent;
@@ -66,6 +75,7 @@ mod imp {
     use buck2_events::metadata;
     use buck2_events::sink::remote::ScribeConfig;
     use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
+    use buck2_hash::IntentionallyStdHashMap;
     use buck2_util::threads::thread_spawn;
     use fbinit::FacebookInit;
     use tokio::runtime::Builder;
@@ -126,7 +136,9 @@ mod imp {
     }
 
     /// Collects metadata from the current environment for use in LogView.
-    fn get_metadata_for_panic(options: &StructuredErrorOptions) -> HashMap<String, String> {
+    fn get_metadata_for_panic(
+        options: &StructuredErrorOptions,
+    ) -> IntentionallyStdHashMap<String, String> {
         #[cfg_attr(client_only, allow(unused_mut))]
         let mut map = metadata::collect(&get_daemon_id_for_panics());
         #[cfg(not(client_only))]
@@ -142,6 +154,10 @@ mod imp {
                 "low_cardinality_key_for_additional_logview_samples".to_owned(),
                 logview_key.to_string(),
             );
+        }
+        if let SoftErrorKind::Deprecation { owner, started } = &options.kind {
+            map.insert("deprecation_owner".to_owned(), owner.to_string());
+            map.insert("deprecation_started".to_owned(), started.to_string());
         }
         map
     }
@@ -165,39 +181,70 @@ mod imp {
         category: &str,
         err: &buck2_error::Error,
         location: Location,
+        context: &Arc<SoftErrorContext>,
         options: StructuredErrorOptions,
     ) {
-        let event = panic_payload(
+        let mut event = panic_payload(
             Some(location),
             format!("Soft Error: {category}: {err:#}"),
             Vec::new(),
             &options,
             Some(buck2_data::SoftError {
                 category: category.to_owned(),
-                is_quiet: options.quiet,
+                is_quiet: !options.user_facing,
+                is_deprecation: matches!(&options.kind, SoftErrorKind::Deprecation { .. }),
             }),
         );
-
-        // If the soft error was fired in a context with an ambient dispatcher, then we only send
-        // it there, but some contexts don't have one, and in that case, we notify all running
-        // commands.
-        match buck2_events::dispatch::get_dispatcher_opt() {
-            Some(dispatcher) => {
-                dispatcher.instant_event(event.clone());
-            }
-            None => {
-                #[cfg(client_only)]
-                let warn = !options.quiet;
-                #[cfg(not(client_only))]
-                let warn = !buck2_server::active_commands::broadcast_instant_event(&event)
-                    && !options.quiet;
-                if warn {
-                    tracing::warn!("Warning \"{}\": {:#}", category, err);
-                }
-            }
+        if options.daemon_in_memory_state_is_corrupted || options.daemon_restart_requested {
+            event.error = Some(Box::new(err.into()));
         }
 
-        write_to_scribe(fb, event);
+        // Every command hears that the daemon is restarting, not only the one that reports it:
+        // each one's client runs it again on the new daemon.
+        #[cfg(not(client_only))]
+        if options.daemon_restart_requested {
+            if !buck2_server::active_commands::broadcast_instant_event(&event) {
+                write_to_scribe(fb, event);
+            }
+            buck2_server::daemon::server::restart_daemon(err);
+            return;
+        }
+
+        // The report goes out once. A command's event stream reaches Scribe on its own; only a
+        // report with no command behind it is written directly.
+        let delivered = match buck2_events::dispatch::get_dispatcher_opt() {
+            Some(dispatcher) => {
+                dispatcher.instant_event(event.clone());
+                true
+            }
+            None => {
+                // The client has no event stream of its own: the record picks the report up
+                // directly, and a user-facing one goes to stderr right here.
+                #[cfg(client_only)]
+                let sent = {
+                    if let Some(soft_error) = event.soft_error_category.clone() {
+                        buck2_client_ctx::subscribers::recorder::note_client_soft_error(soft_error);
+                    }
+                    if options.user_facing {
+                        let _ignored =
+                            buck2_client_ctx::eprintln!("Warning \"{}\": {:#}", category, err);
+                    }
+                    false
+                };
+                // A user-facing report with no command behind it has nobody to show it to.
+                #[cfg(not(client_only))]
+                let sent = if context.is_command_scoped() {
+                    buck2_server::active_commands::dispatch_soft_error_for_context(context, &event)
+                } else {
+                    buck2_server::active_commands::broadcast_instant_event(&event)
+                };
+                sent
+            }
+        };
+
+        if !delivered {
+            write_to_scribe(fb, event);
+        }
     }
 
     fn panic_payload(
@@ -213,14 +260,15 @@ mod imp {
             payload: message,
             metadata,
             backtrace,
-            quiet: options.quiet,
+            quiet: !options.user_facing,
             task: Some(options.task),
             soft_error_category: soft_error_category
                 .map(|arg0: buck2_data::SoftError| ToOwned::to_owned(&arg0)),
             daemon_in_memory_state_is_corrupted: options.daemon_in_memory_state_is_corrupted,
             daemon_materializer_state_is_corrupted: options.daemon_materializer_state_is_corrupted,
             action_cache_is_corrupted: options.action_cache_is_corrupted,
-            deprecation: options.deprecation,
+            error: None,
+            daemon_restart_requested: options.daemon_restart_requested,
         }
     }
 

@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
+use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
@@ -19,15 +19,15 @@ use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
 impl AttrTypeCoerce for SplitTransitionDepAttrType {
-    fn coerce_item(
+    fn coerce_item<'v>(
         &self,
         _configurable: AttrIsConfigurable,
-        ctx: &dyn AttrCoercionContext,
-        value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+        ctx: &dyn AttrCoercionContext<'v>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<AttrToken> {
         let label = ctx.coerce_providers_label(value.unpack_str_err()?)?;
 
-        Ok(CoercedAttr::SplitTransitionDep(label))
+        ctx.attr_arena().encode_split_transition_dep(&label)
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {

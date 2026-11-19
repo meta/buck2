@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _impl_cp(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(["cp", ctx.attrs.src, out.as_output()], category = "cp")
     return [DefaultInfo(out)]
 

@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
@@ -22,6 +21,7 @@ use crossterm::cursor::MoveToColumn;
 use crossterm::terminal::Clear;
 use crossterm::terminal::ClearType;
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::Span;
 use crate::SpanError;
@@ -67,8 +67,9 @@ impl Line {
         self.push_front(Span::padding(amount));
     }
 
-    /// Truncates the right side of the line until it is no longer than `max_width`.
-    /// This will delete words entirely if they cannot fit.
+    /// Truncates the right side of the line until it is no wider than `max_width` columns.
+    /// This will delete words entirely if they cannot fit. A grapheme that straddles the limit
+    /// is dropped, so the result may be narrower than `max_width` but is never wider.
     /// If the line is padded to 0, then it will become an empty line.
     pub fn truncate_line(&mut self, max_width: usize) {
         let mut cur_width = 0;
@@ -78,25 +79,34 @@ impl Line {
                 self.0.truncate(index);
                 break;
             }
-            let word = span.content.graphemes(true);
-            let word_len = word.clone().count();
+            let word_width = span.len();
             // if the line is going to overflow
-            if word_len + cur_width > max_width {
-                let word = word
-                    // cut off the extra graphemes
-                    .take(max_width.saturating_sub(cur_width))
+            if word_width + cur_width > max_width {
+                let mut kept_width = cur_width;
+                let word: String = span
+                    .content
+                    .graphemes(true)
+                    // keep whole graphemes while they fit in the remaining columns
+                    .take_while(|grapheme| {
+                        let width = grapheme.width();
+                        let fits = kept_width + width <= max_width;
+                        if fits {
+                            kept_width += width;
+                        }
+                        fits
+                    })
                     .collect();
 
-                // overwrite the current word
-                // unfortunately, there is no way to mutably update the word, seemingly.
-                span.content = word;
+                // overwrite the current word, or drop it when nothing of it fits
+                let keep = !word.is_empty();
+                span.content = word.into();
 
                 // drop the remaining words
-                self.0.truncate(index + 1);
+                self.0.truncate(if keep { index + 1 } else { index });
 
                 break;
             }
-            cur_width += word_len;
+            cur_width += word_width;
         }
     }
 
@@ -138,15 +148,13 @@ impl Line {
     /// Either calls [`pad_right`](Line::pad_right) or [`truncate_line`](Line::truncate_line) until the line is the exact width specified.
     /// This call acts on the right side of the `Line`.
     pub fn to_exact_width(&mut self, exact_width: usize) {
+        if self.len() > exact_width {
+            self.truncate_line(exact_width);
+        }
+        // Truncation drops a straddling grapheme, so the line may now need padding.
         let len = self.len();
-        match len.cmp(&exact_width) {
-            Ordering::Less => {
-                self.pad_right(exact_width - len);
-            }
-            Ordering::Equal => {}
-            Ordering::Greater => {
-                self.truncate_line(exact_width);
-            }
+        if len < exact_width {
+            self.pad_right(exact_width - len);
         }
     }
 
@@ -420,5 +428,44 @@ mod tests {
             "<span fg=blue>abra</span><span fg=red>cadabra</span>",
             format!("{}", line.fmt_for_test())
         );
+    }
+    #[test]
+    fn test_truncate_line_wide_chars() {
+        let mut line = Line::unstyled("\u{6771}\u{6771}\u{6771}").unwrap();
+        assert_eq!(line.len(), 6);
+        line.truncate_line(2);
+        assert_eq!(line.to_unstyled(), "\u{6771}");
+        assert_eq!(line.len(), 2);
+
+        // A wide character that straddles the limit is dropped.
+        let mut line = Line::unstyled("a\u{6771}").unwrap();
+        line.truncate_line(2);
+        assert_eq!(line.to_unstyled(), "a");
+        assert_eq!(line.len(), 1);
+
+        let mut line = Line::from_iter([
+            Span::new_colored("a", Color::Red).unwrap(),
+            Span::new_unstyled("\u{6771}\u{6771}").unwrap(),
+        ]);
+        line.truncate_line(2);
+        assert_eq!(line.to_unstyled(), "a");
+        assert_eq!(line.len(), 1);
+    }
+
+    #[test]
+    fn test_truncate_line_zero_width_chars() {
+        let mut line = Line::unstyled("a\u{200b}bc").unwrap();
+        assert_eq!(line.len(), 3);
+        line.truncate_line(2);
+        assert_eq!(line.to_unstyled(), "a\u{200b}b");
+        assert_eq!(line.len(), 2);
+    }
+
+    #[test]
+    fn test_to_exact_width_wide_chars() {
+        let mut line = Line::unstyled("\u{6771}\u{6771}").unwrap();
+        line.to_exact_width(3);
+        assert_eq!(line.to_unstyled(), "\u{6771} ");
+        assert_eq!(line.len(), 3);
     }
 }

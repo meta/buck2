@@ -12,4 +12,3 @@ Error: error: Parameter after kwargs
   |
 1 | def test(**kwargs, y=1): pass
   |                    ^^^
-  |

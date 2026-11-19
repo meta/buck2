@@ -19,20 +19,21 @@ class IReadProvisioningProfileCommandFactory(metaclass=ABCMeta):
         raise NotImplementedError
 
 
+# See `DEFAULT_READ_COMMAND` in `AppleConfig.java` in Buck v1
+OPENSSL_PROV_PROFILE_READ_COMMAND = [
+    "openssl",
+    "smime",
+    "-inform",
+    "der",
+    "-verify",
+    "-noverify",
+    "-nosigs",
+    "-in",
+]
+
+
 class DefaultReadProvisioningProfileCommandFactory(
     IReadProvisioningProfileCommandFactory
 ):
-    # See `DEFAULT_READ_COMMAND` in `AppleConfig.java` in Buck v1
-    _command = [
-        "openssl",
-        "smime",
-        "-inform",
-        "der",
-        "-verify",
-        "-noverify",
-        "-nosigs",
-        "-in",
-    ]
-
     def read_provisioning_profile_command(self, path: Path) -> list[Union[str, Path]]:
-        return DefaultReadProvisioningProfileCommandFactory._command + [path]
+        return OPENSSL_PROV_PROFILE_READ_COMMAND + [path]

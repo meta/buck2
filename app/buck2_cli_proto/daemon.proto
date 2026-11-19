@@ -24,6 +24,13 @@ message DaemonProcessInfo {
   // can't be removed.
   string version = 3;
   string auth_token = 4;
+  // Start time of the daemon process, in seconds since the unix epoch, as
+  // reported by `buck2_wrapper_common::kill::process_start_time`. Lets
+  // readers tell the recorded daemon apart from an unrelated process that
+  // ended up with its pid: `pid` alone is ambiguous both through ordinary
+  // pid reuse and when it was recorded inside a pid namespace. 0 when
+  // unknown (files written by older daemons).
+  uint64 pid_start_time = 5;
 }
 
 // Controls whether we will use a given daemon or not.
@@ -57,6 +64,12 @@ message KillRequest {
   repeated string callers = 4;
 }
 
+message RestartRequest {
+  string reason = 1;
+}
+
+message RestartResponse {}
+
 message KillResponse {}
 
 message StatusRequest {
@@ -82,6 +95,10 @@ message StatusResponse {
   optional bool valid_buck_out_mount = 15;
   optional string io_provider = 16;
   optional TokioRuntimeMetrics tokio_runtime_metrics = 17;
+  optional string allprocs_cgroup_path = 18;
+  repeated buck.subscription.ActiveCommand active_commands = 19;
+  // Set by a tenant proxy: the generation of the tenant it represents.
+  optional uint64 tenant_generation = 20;
 }
 
 message TokioRuntimeMetrics {
@@ -113,10 +130,19 @@ message RepresentativeConfigFlag {
     string mode_file = 3;
     string modifier = 4;
     string target_platforms = 5;
+    string target_universe = 6;
   }
 }
 
+message TenantIdentity {
+  // Absolute normalized path to the repository root.
+  string project_root = 1;
+  // Name of the isolation directory within the repository.
+  string isolation = 2;
+}
+
 message ClientContext {
+  optional uint64 tenant_generation = 1001;
   reserved 5, 21;
   // `AbsNormPath`.
   string working_dir = 1;
@@ -136,6 +162,7 @@ message ClientContext {
   bool skip_targets_with_duplicate_names = 82;
   string trace_id = 9;
   bool reuse_current_config = 10;
+  bool reuse_current_config_implicitly = 85;
   optional string daemon_uuid = 11;
   repeated string sanitized_argv = 12;
   enum HostArchOverride {
@@ -153,6 +180,9 @@ message ClientContext {
 
   /// Contents of `BUCK2_HARD_ERROR` environment variable.
   string buck2_hard_error = 20;
+
+  /// Contents of `BUCK2_SHOW_SOFT_ERRORS` environment variable.
+  string buck2_show_soft_errors = 26;
 
   enum PreemptibleWhen {
     /// Default
@@ -185,6 +215,23 @@ message ClientContext {
   /// Options for starlark profiling via --profile-patterns and related
   /// arguments.
   optional ProfilePatternOptions profile_pattern_opts = 25;
+
+  // Agent context key=value pairs passed via --agent-context.
+  repeated buck.data.AgentContextEntry agent_context = 27;
+
+  // Stable address of the repository state selected by this client.
+  optional TenantIdentity tenant_identity = 28;
+
+  // JSON containing only InvocationBuckSettings. Missing overrides use the
+  // setting's defaults for this command.
+  optional string invocation_settings = 29;
+
+  // JSON containing only DiceBuckSettings, the per-invocation sections the
+  // daemon injects into DICE. Missing overrides use the setting's defaults.
+  optional string dice_settings = 30;
+
+  // The client's `CODING_AGENT_METADATA`, inherited by its local tests.
+  optional string coding_agent_metadata = 31;
 }
 
 message TargetsRequest {
@@ -282,6 +329,10 @@ message ConfiguredTargetsRequest {
   OutputFormat output_format = 13;
   repeated string output_attributes = 14;
   bool keep_going = 15;
+  bool show_target_hash = 16;
+  bool target_hash_recursive = 17;
+  bool target_hash_use_strong_hash = 18;
+  repeated string require_hash_change_deps = 19;
 }
 
 message ConfiguredTargetsResponse {
@@ -321,6 +372,9 @@ message UqueryRequest {
   repeated string output_attributes = 3;
   // The literals for a repeated query (one containing `%s`).
   repeated string query_args = 4;
+  // Skip nodes/edges that fail to load and return a best-effort partial
+  // result.
+  bool allow_partial_graph = 7;
 
   // These should possibly be deleted and never become real options. Let's not
   // pollute the low ids (and then forever need a comment about them).
@@ -436,6 +490,9 @@ message CommonBuildOptions {
   /// Materializes outputs for failed actions which ran on RE.
   bool materialize_failed_outputs = 20;
 
+  /// Record the action graph in the event log (`--log-action-graph`).
+  bool log_action_graph = 21;
+
   // These should possibly be deleted and never become real options. Let's not
   // pollute the low ids (and then forever need a comment about them). The only
   // one of these that might stick around is print_build_report, it's unclear if
@@ -446,6 +503,8 @@ message CommonBuildOptions {
   bool unstable_include_package_project_relative_paths = 4242005;
   bool unstable_include_artifact_hash_information = 4242006;
   string unstable_streaming_build_report_filename = 4242007;
+  bool unstable_exclude_action_error_diagnostics = 4242008;
+  bool unstable_truncate_error_content = 4242009;
 }
 
 message BuildRequest {
@@ -471,11 +530,13 @@ message BuildRequest {
   BuildProviders build_providers = 3;
 
   message ResponseOptions {
+    reserved 2;
     // Include target outputs? [default: false]
     bool return_outputs = 1;
-    bool return_default_other_outputs = 2;
+    // Include the target's resolved run command line? Set only by
+    // `buck run`. [default: false]
+    bool return_run_args = 3;
     // TODO(rafaelc): bool return_targets_without_data
-    // TODO(rafaelc): bool return_run_args
   }
   // Options regarding which data to include in the response.
   ResponseOptions response_options = 4;
@@ -502,6 +563,13 @@ message BuildRequest {
   // quickly as possible and drop in-flight builds. The exit code will be a
   // user failure.
   optional google.protobuf.Duration timeout = 12;
+
+  // Set by `buck2 run` when extra args are passed without `--` separator.
+  bool run_args_missing_separator = 13;
+
+  // Emit streaming build report snapshots only when a requested target
+  // finishes, except for the error that stops a fail-fast build.
+  bool streaming_build_report_final_only = 14;
 }
 
 message TestSessionOptions {
@@ -551,12 +619,14 @@ message TestRequest {
   bool ignore_tests_attribute = 13;
 
   // Whether `DefaultInfo` providers for targets matching `target_patterns`
-  // should be built instead of only `ExternalTestInfo` providers.
-  bool build_default_info = 15;
+  // should be built instead of only test providers. When unset, this defaults
+  // to the `buck2.test_builds_targets` buckconfig.
+  optional bool build_default_info = 15;
 
   // Whether `RunInfo` providers for targets matching `target_patterns`
-  // should be built instead of only `ExternalTestInfo` providers.
-  bool build_run_info = 16;
+  // should be built instead of only test providers. When unset, this defaults
+  // to the `buck2.test_builds_targets` buckconfig.
+  optional bool build_run_info = 16;
 }
 
 message BxlRequest {
@@ -637,21 +707,28 @@ message CounterWithExamples {
 }
 
 message TestResponse {
-  reserved 101;
-  optional int32 exit_code = 1;
+  reserved 101, 102;
+  int32 executor_exit_code = 1;
   optional string serialized_build_report = 100;
-  repeated buck.data.ErrorReport errors = 102;
+  // Errors from building the test targets. These take precedence over
+  // `executor_exit_code` when producing the exit code.
+  repeated buck.data.ErrorReport build_errors = 103;
+  // Errors from the test run itself, such as an expired `--overall-timeout`.
+  // The test executor stays in charge of the exit code when these are the only
+  // errors, so keep them apart from `build_errors` rather than filtering them
+  // back out downstream.
+  repeated buck.data.ErrorReport test_errors = 104;
   message TestStatuses {
-    reserved 1 to 6;
+    reserved 1 to 6, 16;
     CounterWithExamples passed = 10;
     CounterWithExamples skipped = 11;
     CounterWithExamples failed = 12;
     CounterWithExamples fatals = 13;
     CounterWithExamples listing_success = 14;
     CounterWithExamples listing_failed = 15;
-    uint64 build_errors = 16;
     CounterWithExamples infra_failure = 17;
     CounterWithExamples omitted = 18;
+    CounterWithExamples timed_out = 19;
   }
   TestStatuses test_statuses = 3;
   string executor_stdout = 4;
@@ -662,7 +739,9 @@ message TestResponse {
   repeated string target_rule_type_names = 7;
 }
 
-message InstallResponse {}
+message InstallResponse {
+  repeated string target_rule_type_names = 1;
+}
 
 message GenericRequest {
   ClientContext context = 1;
@@ -686,11 +765,13 @@ message UnstableCrashRequest {
   enum CrashType {
     PANIC = 0;
     ABORT = 2;
+    OOM = 3;
   }
   CrashType crash_type = 1;
+  // Number of bytes to allocate to trigger OOM killing (only used with OOM
+  // crash type).
+  uint64 bytes = 2;
 }
-
-message UnstableCrashResponse {}
 
 message CommandResult {
   reserved 10;
@@ -718,6 +799,7 @@ message CommandResult {
     TraceIoResponse trace_io_response = 22;
     ConfiguredTargetsResponse configured_targets_response = 23;
     DapResponse dap_response = 24;
+    HydrationResponse hydration_response = 25;
     GenericResponse generic_response = 100;
     NewGenericResponseMessage new_generic_response_message = 101;
   }
@@ -789,15 +871,80 @@ message UnstableHeapDumpRequest {
 
 message UnstableHeapDumpResponse {}
 
+message UnstableRecentAllocDumpRequest {
+  // The path to write the recent-allocations JSON dump to. If relative, it is
+  // made absolute relative to the working directory of the daemon.
+  string destination_path = 1;
+}
+
+message UnstableRecentAllocDumpResponse {}
+
+message UnstableFlushPgoProfileRequest {}
+
+message UnstableFlushPgoProfileResponse {
+  bool pgo_active = 1;
+}
+
 message UnstableAllocatorStatsRequest {
   // Options to pass to the allocator stats backend (JEMalloc's
   // malloc_stats_print, see <https://linux.die.net/man/3/jemalloc>).
   string options = 1;
+  // If jemalloc is in use, force it to return dirty and muzzy pages to the OS
+  // before reading stats. Nop otherwise.
+  bool purge = 2;
 }
 
 message UnstableAllocatorStatsResponse {
   // The returned stats
   string response = 1;
+}
+
+message UnstableListTenantsRequest {}
+
+message UnstableTenantInfo {
+  string project_root = 1;
+  string isolation = 2;
+  uint64 generation = 3;
+  bool initialized = 4;
+  // Registrations of the generation that have not completed.
+  uint64 pending_registrations = 5;
+}
+
+message UnstableListTenantsResponse {
+  repeated UnstableTenantInfo tenants = 1;
+}
+
+message UnstableRegisterTenantRequest {
+  ClientContext context = 1;
+  optional string reject_materializer_state = 2;
+}
+
+message UnstableRegisterTenantResponse {
+  uint64 generation = 1;
+  optional string materializer_state_identity = 2;
+}
+
+message EvictTenantRequest {
+  ClientContext context = 1;
+  optional uint64 expected_generation = 2;
+  optional uint64 eviction_timeout_ms = 3;
+  optional bool wait_for_completion = 4;
+}
+
+message EvictTenantResponse {
+  bool evicted = 1;
+  uint64 generation = 2;
+  bool shutting_down = 3;
+}
+
+message EvictProjectTenantsRequest {
+  ClientContext context = 1;
+  optional string isolation = 2;
+}
+
+message EvictProjectTenantsResponse {
+  repeated uint64 generations = 1;
+  bool shutting_down = 2;
 }
 
 message UnstableDiceDumpRequest {
@@ -811,6 +958,7 @@ message UnstableDiceDumpRequest {
   string destination_path = 1;
   // Which format the dumpfile should be in.
   DiceDumpFormat format = 2;
+  ClientContext context = 3;
 }
 
 message UnstableDiceDumpResponse {}
@@ -905,6 +1053,22 @@ message CleanStaleRequest {
   int64 keep_since_time = 2;
   bool dry_run = 3;
   bool tracked_only = 4;
+  // When set, after the keep_since_time scan, promote retained, non-active
+  // artifacts (oldest-access first) to stale until projected free disk %
+  // rises above this threshold. Presence enables adaptive promotion.
+  optional double adaptive_low_disk_threshold = 5;
+  // Adaptive min-TTL floor in seconds. Retained artifacts younger than this
+  // are protected even under disk pressure. Ignored unless
+  // adaptive_low_disk_threshold is set.
+  optional int64 adaptive_min_ttl_seconds = 6;
+  // Allow active remote-backed intermediate artifacts to be unmaterialized
+  // after the earlier adaptive cleanup passes are insufficient.
+  bool adaptive_unmaterialize_active = 7;
+  // Resolve the cleanup TTL and low-disk behavior from the daemon's clean-stale
+  // buckconfig. Explicit cleanup policy fields above are ignored when set.
+  bool use_configured_policy = 8;
+  // What issued the request; logged on the resulting `CleanStaleResult`.
+  buck.data.CleanStaleResult.Origin origin = 9;
 }
 
 message CleanStaleResponse {
@@ -922,6 +1086,33 @@ message FileStatusRequest {
 
 message FlushDepFilesRequest {
   bool retain_locally_produced_dep_files = 1;
+  ClientContext context = 2;
+}
+
+enum HydrationSubcommand {
+  PAGE_OUT = 0;
+  PAGE_IN = 1;
+  STATUS = 2;
+  // Drop all resident values whose rows already hold them.
+  EVICT = 3;
+  // Drop cold backed values; requires LRU access tracking.
+  EVICT_LRU = 4;
+}
+
+message HydrationRequest {
+  ClientContext context = 1;
+  HydrationSubcommand subcommand = 2;
+  // `status --wait`: block until any in-progress idle page-out finishes.
+  bool wait = 3;
+}
+
+message HydrationResponse {
+  // Human-readable report. Set for `status` and `evict`;
+  // absent for page-out / page-in.
+  optional string summary = 1;
+  // What the page-out moved. Set only for `page-out`, and only on success —
+  // failures surface as a command error.
+  optional buck.data.PageOutSummary page_out_summary = 2;
 }
 
 message SetLogFilterRequest {
@@ -980,10 +1171,10 @@ message TraceIoResponse {
 // src/lib.rs need to be updated to derive common things for buck's cli package.
 service DaemonApi {
   rpc Kill(KillRequest) returns (CommandResult);
+  rpc Restart(RestartRequest) returns (RestartResponse);
   rpc Status(StatusRequest) returns (CommandResult);
   rpc Ping(PingRequest) returns (CommandResult);
   rpc FlushDepFiles(FlushDepFilesRequest) returns (CommandResult);
-
   // All streaming request types should have a ClientContext.
   rpc Build(BuildRequest) returns (stream MultiCommandProgress);
   rpc Bxl(BxlRequest) returns (stream MultiCommandProgress);
@@ -999,6 +1190,7 @@ service DaemonApi {
   rpc Install(InstallRequest) returns (stream MultiCommandProgress);
   rpc CleanStale(CleanStaleRequest) returns (stream MultiCommandProgress);
   rpc FileStatus(FileStatusRequest) returns (stream MultiCommandProgress);
+  rpc Hydration(HydrationRequest) returns (stream MultiCommandProgress);
   rpc Profile2(ProfileRequest) returns (stream MultiCommandProgress);
 
   rpc NewGenericImpl(NewGenericRequestMessage)
@@ -1012,9 +1204,25 @@ service DaemonApi {
   rpc Unstable_HeapDump(UnstableHeapDumpRequest)
       returns (UnstableHeapDumpResponse);
 
+  // Requests the daemon to dump jemalloc's recent-allocations ring to a file.
+  rpc Unstable_RecentAllocDump(UnstableRecentAllocDumpRequest)
+      returns (UnstableRecentAllocDumpResponse);
+
+  // Flushes PGO profile data to disk. Only useful when the daemon was built
+  // with -Cprofile-generate.
+  rpc Unstable_FlushPgoProfile(UnstableFlushPgoProfileRequest)
+      returns (UnstableFlushPgoProfileResponse);
+
   // Requests allocator stats from the daemon.
   rpc Unstable_AllocatorStats(UnstableAllocatorStatsRequest)
       returns (UnstableAllocatorStatsResponse);
+  rpc Unstable_ListTenants(UnstableListTenantsRequest)
+      returns (UnstableListTenantsResponse);
+  rpc Unstable_RegisterTenant(UnstableRegisterTenantRequest)
+      returns (UnstableRegisterTenantResponse);
+  rpc EvictTenant(EvictTenantRequest) returns (EvictTenantResponse);
+  rpc EvictProjectTenants(EvictProjectTenantsRequest)
+      returns (EvictProjectTenantsResponse);
 
   /// Requests the daemon dump the DICE graph to a directory.
   rpc Unstable_DiceDump(UnstableDiceDumpRequest)

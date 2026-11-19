@@ -12,6 +12,7 @@ package com.facebook.buck.android.resources.filter;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.io.pathformat.PathFormatter;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableMap;
@@ -28,6 +29,7 @@ import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class FilteringPredicate {
 
   /** Utility class: do not instantiate. */
@@ -43,7 +45,6 @@ public class FilteringPredicate {
       ImmutableBiMap<Path, Path> inResDirToOutResDirMap,
       boolean filterByDensity,
       Set<ResourceFilters.Density> targetDensities,
-      boolean canDownscale,
       ImmutableSet<String> locales,
       ImmutableSet<String> packagedLocales,
       boolean enableStringWhitelisting,
@@ -60,8 +61,7 @@ public class FilteringPredicate {
 
       Set<Path> drawables =
           DrawableFinder.findDrawables(projectRoot, rootResourceDirs, ignoreFilter);
-      pathPredicates.add(
-          ResourceFilters.createImageDensityFilter(drawables, targetDensities, canDownscale));
+      pathPredicates.add(ResourceFilters.createImageDensityFilter(drawables, targetDensities));
     }
 
     boolean localeFilterEnabled = !locales.isEmpty();
@@ -73,7 +73,7 @@ public class FilteringPredicate {
             if (!matcher.matches()) {
               return true;
             }
-            String locale = matcher.group(1);
+            String locale = Objects.requireNonNull(matcher.group(1));
             if (matcher.group(2) != null) {
               locale += "_" + matcher.group(2);
             }

@@ -8,7 +8,7 @@
   "results": {
     "root//:fail?root//:linux": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},
@@ -24,12 +24,14 @@
     },
     "root//:fail_build?root//:arm": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [
             {
               "action_error": null,
+              "category_key": "RunActionError::NoOutputsSpecified:ANALYSIS",
               "cause_index": 0,
+              "error_category": "USER",
               "error_tags": [
                 "ANALYSIS",
                 "INPUT"
@@ -50,7 +52,7 @@
     },
     "root//:ok?root//:macos": {
       "configured": {
-        "cfg:<empty>#<HASH>": {
+        "<modifiers>#<HASH>": {
           "configured_graph_size": null,
           "errors": [],
           "other_outputs": {},

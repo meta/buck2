@@ -20,11 +20,11 @@ rust_unittest(
         "//buck2/app/buck2_interpreter:buck2_interpreter",
         "//buck2/app/buck2_interpreter_for_build:buck2_interpreter_for_build",
         "//buck2/app/buck2_node:buck2_node",
+        "//buck2/app/buck2_settings:buck2_settings",
         "//buck2/app/buck2_transition:buck2_transition",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/dice/dice:dice",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
         "//buck2/starlark-rust/starlark:starlark",
     ],
 )

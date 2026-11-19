@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
+// prost represents proto `map` fields as `std::collections::HashMap`.
+#![allow(clippy::disallowed_types)]
 
 tonic::include_proto!("buck.test");

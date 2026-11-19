@@ -12,8 +12,9 @@ pub mod xcode;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
 
-#[derive(Copy, Clone, Dupe, Debug, PartialEq, Allocative)]
+#[derive(Copy, Clone, Dupe, Debug, PartialEq, Allocative, Pagable)]
 pub enum InterpreterHostPlatform {
     Linux,
     MacOS,
@@ -22,7 +23,7 @@ pub enum InterpreterHostPlatform {
     Unknown,
 }
 
-#[derive(Copy, Clone, Dupe, Debug, PartialEq, Allocative)]
+#[derive(Copy, Clone, Dupe, Debug, PartialEq, Allocative, Pagable)]
 pub enum InterpreterHostArchitecture {
     AArch64,
     X86_64,

@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _impl(ctx):
-    out = ctx.actions.copy_file("out.txt", ctx.attrs.src)
+    out = ctx.actions.copy_file("out.txt", ctx.attrs.src, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 copy_file = rule(

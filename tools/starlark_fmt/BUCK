@@ -1,0 +1,96 @@
+load("@fbsource//tools/build_defs:cram_test.bzl", "cram_test")
+load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("ios_app_infra")
+
+rust_library(
+    name = "starlark_fmt_lib",
+    srcs = glob(["lib/**/*.rs"]),
+    autocargo = {
+        "cargo_toml_config": {
+            "extra_buck_dependencies": {
+                # `quickcheck_arbitrary_derive` is a Meta-internal crate used only
+                # by the fbcode_build-gated fuzz tests; drop it from the generated
+                # Cargo.toml so the OSS cargo build doesn't reference an unexported
+                # path.
+                "dev-dependencies": [
+                    # @oss-disable[end= ]: (None, "//common/rust/shed/quickcheck_arbitrary_derive:quickcheck_arbitrary_derive"),
+                ],
+            },
+        },
+    },
+    crate_root = "lib/lib.rs",
+    test_deps = [
+        "fbsource//third-party/rust:indoc",
+        "fbsource//third-party/rust:quickcheck",
+        "fbsource//third-party/rust:quickcheck_macros",
+        # @oss-disable[end= ]: "//common/rust/shed/quickcheck_arbitrary_derive:quickcheck_arbitrary_derive",
+    ],
+    visibility = [
+        "fbcode//autodeps2/...",
+        "fbcode//buck2/tools/starlark_fmt/...",
+    ],
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:globset",
+        "fbsource//third-party/rust:ruff_formatter",
+        "fbsource//third-party/rust:ruff_python_ast",
+        "fbsource//third-party/rust:ruff_python_formatter",
+        "fbsource//third-party/rust:ruff_python_parser",
+        "fbsource//third-party/rust:ruff_python_trivia",
+        "fbsource//third-party/rust:ruff_source_file",
+        "fbsource//third-party/rust:ruff_text_size",
+        "fbsource//third-party/rust:serde",
+        "fbsource//third-party/rust:serde_json",
+        "fbsource//third-party/rust:tracing",
+        "fbsource//third-party/rust:vec1",
+    ],
+)
+
+rust_binary(
+    name = "starlark_fmt",
+    srcs = glob([
+        "bin/**/*.rs",
+    ]),
+    crate_root = "bin/main.rs",
+    nodefaultlibs = True,
+    tests = [
+        ":tests",
+    ],
+    visibility = [
+        # Temporary: the forwarding alias at fbcode//starlark_fmt keeps the
+        # generated DotSlash manifest (tools/lint/starlark/starlark_fmt) resolving
+        # until it is regenerated to point at this target.
+        "fbcode//starlark_fmt/...",
+    ],
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:argfile",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:either",
+        "fbsource//third-party/rust:rayon",
+        "fbsource//third-party/rust:serde_json",
+        "fbsource//third-party/rust:similar",
+        "fbsource//third-party/rust:termcolor",
+        "fbsource//third-party/rust:tracing",
+        "fbsource//third-party/rust:tracing-subscriber",
+        ":starlark_fmt_lib",
+        "//buck2/starlark-rust/starlark_map:starlark_map",
+        # @oss-disable[end= ]: "//common/rust/lint_message:lint_message",
+    ],
+)
+
+# buck2 run fbcode//buck2/tools/starlark_fmt:tests-cram
+cram_test(
+    name = "tests",
+    srcs = glob([
+        "tests/test_*.t",
+    ])
+    + [
+        "tests/setup.sh",
+    ],
+    env = {
+        "STARLARK_FMT_PATH": "$(exe_target :starlark_fmt)",
+    },
+)

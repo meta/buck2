@@ -3,7 +3,6 @@ name=TARGETS.fixture
 
 [project]
 ignore=ignored,bin/ignored,bin/ignored.txt
-package_boundary_exceptions=.
 
 [cells]
 root = .

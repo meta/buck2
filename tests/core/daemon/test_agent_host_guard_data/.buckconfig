@@ -1,0 +1,8 @@
+[repositories]
+    root = .
+[repository_aliases]
+    prelude = root
+[buildfile]
+    name = TARGETS.fixture
+[buck2]
+  materializations = deferred

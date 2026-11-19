@@ -1,7 +1,13 @@
 name: build_bootstrap
+inputs:
+  targets:
+    description: Target patterns to build with the freshly built `buck2`
+    default: ":buck2"
 runs:
   using: composite
   steps:
-  - name: Build `buck2` with `buck2`
-    run: "$RUNNER_TEMP/artifacts/buck2 build :buck2 -v 2"
+  - name: Build with the freshly built `buck2`
+    run: |-
+      bash .github/scripts/report_failure.sh "buck2 build ${{ inputs.targets }}" \
+        "$RUNNER_TEMP/artifacts/buck2" build ${{ inputs.targets }} -v 2
     shell: bash

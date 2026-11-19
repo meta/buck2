@@ -8,16 +8,4 @@
  * above-listed licenses.
  */
 
-use allocative::Allocative;
-use buck2_cli_proto::CommandResult;
-use buck2_cli_proto::PartialResult;
-use serde::Deserialize;
-use serde::Serialize;
-
-#[derive(Allocative, Deserialize, Serialize)]
-#[allow(clippy::large_enum_variant)]
-pub enum StreamValue {
-    Result(Box<CommandResult>),
-    PartialResult(Box<PartialResult>),
-    Event(Box<buck2_data::BuckEvent>),
-}
+pub use buck2_event_log_format::stream_value::StreamValue;

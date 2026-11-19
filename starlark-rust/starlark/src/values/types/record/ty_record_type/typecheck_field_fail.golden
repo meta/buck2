@@ -18,4 +18,3 @@ error: The attribute `z` is not available on the type `MyRec`
   |
 4 |     return rec.z
   |                ^
-  |

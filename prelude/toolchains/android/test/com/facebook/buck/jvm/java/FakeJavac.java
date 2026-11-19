@@ -16,7 +16,7 @@ import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.jvm.java.abi.source.api.SourceOnlyAbiRuleInfoFactory;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Fake implementation of {@link ResolvedJavac} for tests. */
 public class FakeJavac implements ResolvedJavac {
@@ -44,7 +44,8 @@ public class FakeJavac implements ResolvedJavac {
       @Nullable JarParameters libraryJarParameters,
       AbiGenerationMode abiGenerationMode,
       AbiGenerationMode abiCompatibilityMode,
-      @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory) {
+      @Nullable SourceOnlyAbiRuleInfoFactory ruleInfoFactory,
+      ImmutableList<RelPath> localClassDirectories) {
     return new ResolvedJavac.Invocation() {
       @Override
       public int buildSourceOnlyAbiJar(boolean isMixedModule) {

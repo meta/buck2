@@ -13,3 +13,6 @@
 
 [buck2]
   create_unhashed_links = true
+
+[build]
+  execution_platforms = root//platforms:platforms

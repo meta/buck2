@@ -1,0 +1,8 @@
+# Declares `within_view = ["PUBLIC"]`, which without the cap would replace
+# the PACKAGE default and allow any dep. The cap still refuses the outside
+# dep, and the error names the cap.
+stub(
+    name = "c",
+    within_view = ["PUBLIC"],
+    deps = ["root//outside:t"],
+)

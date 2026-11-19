@@ -10,7 +10,22 @@ load("constants.bxl", "ADDITIONAL_TARGETS", "BY_MODES", "DEBUG_ARGS", "DEBUG_CMD
 load("get_attrs.bxl", "get_attrs", "get_cxx_toolchain", "get_unified_value")
 load("get_compiler_settings.bxl", "get_compiler_settings", "get_exported_compiler_settings")
 load("get_linker_settings.bxl", "get_exported_linker_settings", "get_linker_settings")
-load("utils.bxl", "dedupe_by_value", "dirname", "flatten_lists", "gen_guid", "get_output_path", "get_project_file_path", "get_vs_configuration", "infer_settings_by_modes", "log_debug", "log_warn", "merge", "suffix", "translate_content_based_path")
+load(
+    "utils.bxl",
+    "dedupe_by_value",
+    "dirname",
+    "flatten_lists",
+    "gen_guid",
+    "get_output_path",
+    "get_project_file_path",
+    "get_vs_configuration",
+    "infer_settings_by_modes",
+    "log_debug",
+    "log_warn",
+    "merge",
+    "suffix",
+    "translate_content_based_path",
+)
 
 def _get_application_type_and_platform(mode_file):
     if "android" in mode_file:
@@ -59,10 +74,7 @@ def _get_debug_settings(target: bxl.ConfiguredTargetNode, attrs: dict, attrs_laz
         DEBUG_CMD: get_output_path(target, bxl_ctx),
         DEBUG_ARGS: flatten_lists(attrs["args"]),
         DEBUG_PWD: "",
-        DEBUG_ENV: {
-            key: ";".join(value_list)
-            for (key, value_list) in attrs["env"].items()
-        },
+        DEBUG_ENV: {key: ";".join(value_list) for (key, value_list) in attrs["env"].items()},
         # When dependency is referenced in [exe] subtarget form, PDB is not automatically materialized and debugging will not be able to load symbols nor stop at breakpoints.
         # See T197712426 and D56372580. Add additional full buck targets to force buck to build/materialize PDBs to make debugging work.
         ADDITIONAL_TARGETS: [],
@@ -191,9 +203,9 @@ def get_vs_settings(target: bxl.ConfiguredTargetNode, toolchain, attrs: dict, vs
     attrs_lazy = target.resolved_attrs_lazy(bxl_ctx)
 
     # NB: We want to keep dep label as a label type to find rel path, instead of using strings like the rest of attrs
-    deps = get_unified_value(attrs_lazy, "deps", "platform_deps")
+    deps = get_unified_value(attrs_lazy, "deps")
     deps = flatten_lists([d.values() if isinstance(d, dict) else d for d in deps])
-    exported_deps = get_unified_value(attrs_lazy, "exported_deps", "exported_platform_deps")
+    exported_deps = get_unified_value(attrs_lazy, "exported_deps")
     exported_deps = flatten_lists([d.values() if isinstance(d, dict) else d for d in exported_deps])
     if attrs["buck_type"] == "alias":
         exported_deps.append(attrs_lazy.get("actual"))
@@ -203,8 +215,14 @@ def get_vs_settings(target: bxl.ConfiguredTargetNode, toolchain, attrs: dict, vs
         # e.g., fbsource//arvr/projects/hsr/libraries/common/tooling/code_gen:idl_serializer
         exported_deps.extend(deps)
         deps = []
-    deps = [d.label.configured_target() for d in deps]  # list[configured_target_label]
-    exported_deps = [d.label.configured_target() for d in exported_deps]  # list[configured_target_label]
+
+    # NB: Some rules (e.g., xplugins_binary_direct_deps in
+    # tools/build_defs/xplugins/rules/binary_direct_deps.bzl) define `deps` as
+    # `attrs.list(attrs.label())` rather than `attrs.list(attrs.dep())`. In that
+    # case, items in `deps`/`exported_deps` are already `Label`s instead of
+    # `Dependency` objects (which have `.label`). Normalize both shapes here.
+    deps = [(d.label if isinstance(d, Dependency) else d).configured_target() for d in deps]  # list[configured_target_label]
+    exported_deps = [(d.label if isinstance(d, Dependency) else d).configured_target() for d in exported_deps]  # list[configured_target_label]
 
     # NB: We can safely assume that dependencies have been processed before this loop as cquery_ctx.deps return dependencies tree in post-order.
     aggregated_exported_compiler_settings = {}
@@ -266,8 +284,8 @@ def _main(bxl_ctx):
 
     attrs = get_attrs(target_node, bxl_ctx)
     toolchain = get_cxx_toolchain(target_node, bxl_ctx)
-    attrs_artifact = actions.write_json(get_project_file_path(target_node.label, ".attrs.json"), attrs, pretty = True)
-    vs_settings_artifact = actions.declare_output(get_project_file_path(target_node.label, ".vs_settings.json"))
+    attrs_artifact = actions.write_json(get_project_file_path(target_node.label, ".attrs.json"), attrs, pretty = True, has_content_based_path = False)
+    vs_settings_artifact = actions.declare_output(get_project_file_path(target_node.label, ".vs_settings.json"), has_content_based_path = False)
 
     def f(ctx, artifacts, outputs, cli_args = bxl_ctx.cli_args, root = bxl_ctx.root()):
         attrs = artifacts[attrs_artifact].read_json()

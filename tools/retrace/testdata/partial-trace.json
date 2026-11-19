@@ -1,0 +1,6 @@
+[
+{"ph":"M","cat":"run","name":"run_start","ts":100000000,"args":{"run":"r"}},
+{"ph":"X","cat":"recipe","name":"a (compile)","ts":100000000,"dur":10000000,"args":{"run":"r","src":"compile","target":"cell//p:a (compile)","stages":{"execute_us":10000000}}},
+{"ph":"X","cat":"recipe","name":"b (compile)","ts":110000000,"dur":20000000,"args":{"run":"r","src":"compile","target":"cell//p:b (compile)","stages":{"execute_us":20000000}}},
+{"ph":"M","cat":"run","name":"run_end","ts":130000000,"args":{"run":"r"}}
+]

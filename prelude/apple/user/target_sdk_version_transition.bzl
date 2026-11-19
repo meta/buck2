@@ -14,7 +14,7 @@ This overrides any existing target_sdk_version select.
 load("@prelude//apple:versions.bzl", "TARGET_SDK_VERSIONS")
 load("@prelude//apple/user:enable_testing_transition.bzl", "enable_testing_transition_impl", "enable_testing_transition_refs")
 
-def _target_sdk_version_transition_impl(platform: PlatformInfo, refs: struct, attrs: struct) -> PlatformInfo:
+def target_sdk_version_transition_impl(platform: PlatformInfo, refs: struct, attrs: struct) -> PlatformInfo:
     target_sdk_version = attrs.minimum_os_version
     if not target_sdk_version:
         return platform
@@ -41,21 +41,20 @@ def _target_sdk_version_transition_impl(platform: PlatformInfo, refs: struct, at
     )
 
 def _target_sdk_version_and_enable_testing_impl(platform: PlatformInfo, refs: struct, attrs: struct) -> PlatformInfo:
-    platform_info = _target_sdk_version_transition_impl(platform, refs, attrs)
+    platform_info = target_sdk_version_transition_impl(platform, refs, attrs)
     platform_info = enable_testing_transition_impl(platform_info, refs)
     return platform_info
 
-_target_sdk_version_transition_refs = {
-    version: "@config//version:constraint-value-target-sdk-version-" + version
-    for version in TARGET_SDK_VERSIONS
-} | {"version": "@config//version:constraint-setting-target-sdk-version"}
+target_sdk_version_transition_refs = {version: "@config//version:constraint-value-target-sdk-version-" + version for version in TARGET_SDK_VERSIONS} | {
+    "version": "@config//version:constraint-setting-target-sdk-version"
+}
 
-_target_sdk_version_attrs = ["minimum_os_version"]
+target_sdk_version_transition_attrs = ["minimum_os_version"]
 
 target_sdk_version_transition = transition(
-    impl = _target_sdk_version_transition_impl,
-    refs = _target_sdk_version_transition_refs,
-    attrs = _target_sdk_version_attrs,
+    impl = target_sdk_version_transition_impl,
+    refs = target_sdk_version_transition_refs,
+    attrs = target_sdk_version_transition_attrs,
 )
 
 # apple_test requires both enable_testing and target_sdk_version
@@ -63,6 +62,6 @@ target_sdk_version_transition = transition(
 # in this implementation.
 apple_test_target_sdk_version_transition = transition(
     impl = _target_sdk_version_and_enable_testing_impl,
-    refs = enable_testing_transition_refs | _target_sdk_version_transition_refs,
-    attrs = _target_sdk_version_attrs,
+    refs = enable_testing_transition_refs | target_sdk_version_transition_refs,
+    attrs = target_sdk_version_transition_attrs,
 )

@@ -15,6 +15,7 @@ is defined in erlang_escript.bzl
 usage:
   escript_builder.escript escript_build_spec.term
 """.
+-compile(warn_missing_spec_all).
 
 -export([main/1]).
 
@@ -120,7 +121,7 @@ load_parallel(Files) ->
     Self = self(),
     F = fun() -> worker(Self) end,
     Jobs = min(length(Files), erlang:system_info(schedulers)),
-    Refs = #{element(2,spawn_monitor(F)) => [] || _I <- lists:seq(1, Jobs)},
+    Refs = #{element(2, spawn_monitor(F)) => [] || _I <- lists:seq(1, Jobs)},
     queue(Files, Refs, maps:size(Refs), []).
 
 -spec worker(pid()) -> ok.
@@ -141,7 +142,8 @@ file_contents(Filename) ->
         Error -> error({read_file, Filename, Error})
     end.
 
--spec queue(escript_load_spec(), #{reference() => []}, non_neg_integer(), escript_archive_spec()) -> escript_archive_spec().
+-spec queue(escript_load_spec(), #{reference() => []}, non_neg_integer(), escript_archive_spec()) ->
+    escript_archive_spec().
 queue([], _JobRefs, 0, Acc) ->
     Acc;
 queue(Files, JobRefs, NumLeft, Acc) ->
@@ -152,7 +154,7 @@ queue(Files, JobRefs, NumLeft, Acc) ->
         {'DOWN', Mref, _, _Pid, Info} ->
             case Info of
                 normal when is_map_key(Mref, JobRefs) ->
-                    queue(Files, JobRefs, NumLeft-1, Acc);
+                    queue(Files, JobRefs, NumLeft - 1, Acc);
                 _ ->
                     io:format("ERROR: Compilation failed: ~tp", [Info]),
                     erlang:halt(1)
@@ -162,9 +164,9 @@ queue(Files, JobRefs, NumLeft, Acc) ->
                 [] ->
                     Worker ! empty,
                     queue(Files, JobRefs, NumLeft, Acc);
-                [_|_] ->
+                [_ | _] ->
                     [NextFile | MoreFiles] = Files,
                     Worker ! {load, NextFile},
-                    queue(MoreFiles,JobRefs,  NumLeft, Acc)
+                    queue(MoreFiles, JobRefs, NumLeft, Acc)
             end
     end.

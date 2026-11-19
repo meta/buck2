@@ -12,12 +12,15 @@ use allocative::Allocative;
 use derive_more::Display;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
-use starlark::values::AllocStaticSimple;
-use starlark::values::AllocValue;
-use starlark::values::Heap;
+use starlark::static_starlark_value;
+use starlark::values::AllocFrozenRepresentation;
+use starlark::values::AllocRepresentation;
+use starlark::values::Allocator;
+use starlark::values::FrozenAllocator;
 use starlark::values::NoSerialize;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
-use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 /// We do not make metadata available to rules, so instead we expose this opaque value when trying
@@ -30,18 +33,29 @@ use starlark::values::starlark_value;
     ProvidesStaticType,
     Allocative,
     NoSerialize,
-    Display
+    Display,
+    StarlarkPagable
 )]
 #[display("{:?}", self)]
 pub struct OpaqueMetadata;
 
-#[starlark_value(type = "OpaqueMetadata")]
+#[starlark_value(type = "OpaqueMetadata", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for OpaqueMetadata {}
 
-impl<'v> AllocValue<'v> for OpaqueMetadata {
-    fn alloc_value(self, _heap: &'v Heap) -> Value<'v> {
-        static INSTANCE: AllocStaticSimple<OpaqueMetadata> =
-            AllocStaticSimple::alloc(OpaqueMetadata);
-        INSTANCE.to_frozen_value().to_value()
+static_starlark_value!(OPAQUE_METADATA: OpaqueMetadata = OpaqueMetadata);
+
+impl<'v> AllocRepresentation<'v> for OpaqueMetadata {
+    type Repr = Self;
+
+    fn alloc(self, _allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        OPAQUE_METADATA.at()
+    }
+}
+
+impl<'fv> AllocFrozenRepresentation<'fv> for OpaqueMetadata {
+    type Repr = Self;
+
+    fn alloc_frozen(self, _allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        OPAQUE_METADATA.at()
     }
 }

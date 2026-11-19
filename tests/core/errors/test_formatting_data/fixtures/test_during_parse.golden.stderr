@@ -4,10 +4,9 @@ BUILD FAILED
 Error parsing: `root//during_parse:TARGETS.fixture`
 
 Caused by:
-    error: Parse error: unexpected identifier 'code' here, expected one of "\n", "!=", "%", "%=", "&", "&=", "(", ")", "*", "*=", "+", "+=", ",", "-", "-=", ".", "/", "//", "//=", "/=", ":", ";", "<", "<<", "<<=", "<=", "=", "==", ">", ">=", ">>", ">>=", "[", "]", "^", "^=", "and", "else", "for", "if", "in", "not", "or", "|", "|=" or "}"
+    error: Parse error: unexpected identifier 'code', expected new line
      --> during_parse/TARGETS.fixture:2:14
       |
     2 | not starlark code
       |              ^^^^
-      |
     

@@ -10,11 +10,13 @@
 
 package com.facebook.buck.installer;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 /** Represents a result from an install attempt */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class InstallResult {
 
   private static final InstallResult SUCCESS = new InstallResult(List.of(), Optional.empty());

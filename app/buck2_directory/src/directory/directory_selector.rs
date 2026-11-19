@@ -14,8 +14,8 @@ use buck2_core::directory_digest::DirectoryDigest;
 use buck2_fs::paths::IntoFileNameBufIterator;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
+use buck2_hash::BuckMutInsertionMap;
 use either::Either;
-use starlark_map::small_map::SmallMap;
 
 use crate::directory::builder::DirectoryBuilder;
 use crate::directory::directory::Directory;
@@ -53,7 +53,7 @@ pub enum DirectoryFilterError {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum DirectorySelector {
     /// Traverse only the netries that match this filename.
-    Traverse(SmallMap<FileNameBuf, DirectorySelector>),
+    Traverse(BuckMutInsertionMap<FileNameBuf, DirectorySelector>),
     /// Take this entire tree.
     Take,
 }
@@ -114,7 +114,7 @@ impl DirectorySelector {
 
 fn filter_inner<L, H>(
     dir: &mut DirectoryBuilder<L, H>,
-    filter: &SmallMap<FileNameBuf, DirectorySelector>,
+    filter: &BuckMutInsertionMap<FileNameBuf, DirectorySelector>,
     res: &mut Result<(), DirectoryFilterError>,
 ) where
     L: Clone,
@@ -146,7 +146,7 @@ fn filter_inner<L, H>(
 
 /// Continue the search.
 struct SearchFrame<'a, 'b, T: WalkType<'b>> {
-    search: &'a SmallMap<FileNameBuf, DirectorySelector>,
+    search: &'a BuckMutInsertionMap<FileNameBuf, DirectorySelector>,
     name: Option<&'b FileName>,
     entries: T::Entries,
 }
@@ -167,7 +167,7 @@ impl<'a, 'b, T: WalkType<'b>> Search<'a, 'b, T> {
                 inner: SearchInner::Stack(vec![SearchFrame {
                     search,
                     name: None,
-                    entries: T::directory_entries(root).into(),
+                    entries: T::directory_entries(root),
                 }]),
             },
             DirectorySelector::Take => Search {
@@ -215,7 +215,7 @@ impl<'b, T: WalkType<'b>> DirectoryIterator for Search<'_, 'b, T> {
                                     stack.push(SearchFrame {
                                         name: Some(name),
                                         search: t,
-                                        entries: T::directory_entries(d).into(),
+                                        entries: T::directory_entries(d),
                                     });
                                     continue;
                                 }
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_search() -> buck2_error::Result<()> {
-        let mut b = TestDirectoryBuilder::empty();
+        let mut b = TestDirectoryBuilder::empty_non_exhaustive();
         b.insert(path("a/b"), DirectoryEntry::Leaf(NopEntry))?;
         b.insert(path("b/c"), DirectoryEntry::Leaf(NopEntry))?;
         let d = b.fingerprint(&TestHasher);
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_filter() -> buck2_error::Result<()> {
-        let mut b = TestDirectoryBuilder::empty();
+        let mut b = TestDirectoryBuilder::empty_non_exhaustive();
         b.insert(path("a/aa"), DirectoryEntry::Leaf(NopEntry))?;
         b.insert(path("a/a"), DirectoryEntry::Leaf(NopEntry))?;
         b.insert(path("b/b"), DirectoryEntry::Leaf(NopEntry))?;
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_filter_continues_on_error() -> buck2_error::Result<()> {
-        let mut b = TestDirectoryBuilder::empty();
+        let mut b = TestDirectoryBuilder::empty_non_exhaustive();
         b.insert(path("a/aa/aaa"), DirectoryEntry::Leaf(NopEntry))?;
         b.insert(path("a/aa/bbb"), DirectoryEntry::Leaf(NopEntry))?;
         b.insert(path("a/bb"), DirectoryEntry::Leaf(NopEntry))?;

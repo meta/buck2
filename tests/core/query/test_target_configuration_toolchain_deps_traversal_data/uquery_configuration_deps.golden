@@ -2,3 +2,4 @@
 
 root//tests:python_and_asic
 root//tests:python_only
+root//config:platform_windows

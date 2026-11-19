@@ -1,10 +1,13 @@
-#!<PYTHON> <PYTHON_INTERPRETER_FLAGS>
+#!<PYTHON>
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under both the MIT license found in the
 # LICENSE-MIT file in the root directory of this source tree and the Apache
 # License, Version 2.0 found in the LICENSE-APACHE file in the root directory
 # of this source tree.
+
+# N.B. When the interpreter is a build artifact, the `#!` line above expands to several
+# lines of shell/Python polyglot that resolve it relative to this file.
 
 # LINKTREEDIR=<MODULES_DIR>
 
@@ -32,6 +35,66 @@ dirpath = os.path.dirname(os.path.realpath(__file__))
 # Enable long path support on Windows
 if platform.system() == "Windows" and not dirpath.startswith(unc_prefix):
     dirpath = unc_prefix + dirpath
+
+if platform.system() == "Windows":
+    # Read-only open still blocks deletion (no delete sharing), so this
+    # holds the version until the launcher and the app it waits for exit.
+    # Any open failure reads as "no pin".
+    _pin_path = os.path.join(dirpath, os.path.basename(__file__) + ".pin")
+    try:
+        _version_pin = open(_pin_path, "rb")
+    except OSError:
+        if not os.path.isdir(dirpath):
+            sys.exit("error: this version was retired during launch; retry the command")
+        _tree_here = os.path.isdir(os.path.join(dirpath, modules_dir))
+        _stage_roots = [] if _tree_here else [dirpath]
+        if os.path.basename(dirpath) == "deps":
+            _pkg_id = os.path.basename(os.path.dirname(dirpath))
+            _stage_roots.append(os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(dirpath))),
+                "p",
+                _pkg_id,
+            ))
+
+        def _newest_marker():
+            _best = None
+            for _root in _stage_roots:
+                try:
+                    _names = os.listdir(_root)
+                except OSError:
+                    continue
+                for _n in _names:
+                    if not _n.startswith("current."):
+                        continue
+                    _ticks, _sep, _ver = _n[len("current."):].partition(".")
+                    if _sep and _ticks.isdigit() and _ver:
+                        _cand = (int(_ticks), _n, _root, _ver)
+                        if _best is None or _cand > _best:
+                            _best = _cand
+            return _best
+
+        # A Chocolatey lib copy forwards to the staged versions once any
+        # exist, even beside a tree: choco rewrites that tree in place
+        # during an upgrade.
+        if not _tree_here or _newest_marker() is not None:
+            # Run the newest version marker's launcher in-process (__name__
+            # propagates for spawn). Never fall through: without a version
+            # there is no tree to run.
+            import runpy
+
+            for _attempt in range(6):
+                _best = _newest_marker()
+                if _best is not None and os.path.isdir(os.path.join(_best[2], _best[3])):
+                    _vpar = os.path.join(_best[2], _best[3], os.path.basename(__file__))
+                    sys.argv[0:1] = [_vpar]
+                    sys.path[0:1] = [os.path.dirname(_vpar)]
+                    runpy.run_path(_vpar, run_name=__name__)
+                    # A normally-returning launcher must still terminate
+                    # here, never fall through to the tree-less body below.
+                    sys.exit(0)
+                time.sleep(0.1)
+            sys.exit("error: no usable version marker; the package may be mid-install or mid-uninstall, retry the command")
+        # else: no pin but tree present (dev/unstaged layout): run unpinned.
 
 env_vals_to_restore = {}
 # Update the environment variable for the dynamic loader to the native
@@ -102,9 +165,9 @@ def __run():
     assert sys.argv[0] == '-c'
     sys.argv[0] = {sys.argv[0]!r}
 
-    # Remove the working directory.
-    assert sys.path[0] == ''
-    del sys.path[0]
+    # Remove the working directory, which PYTHONSAFEPATH may already have left out.
+    if sys.path[0] == '':
+        del sys.path[0]
 
     import os
     import runpy
@@ -125,13 +188,20 @@ def __run():
     # so that native libraries can be found by the dynamic linker or ctypes
     if sys.platform.startswith("win"):
         path = os.environ.get("PATH", "")
+        dll_dirs = []
         for native_libs_dir in {native_libs_dirs!r}:
             d = os.path.join({dirpath!r}, native_libs_dir)
             os.add_dll_directory(d)
+            dll_dirs.append(d)
             if path and not path.endswith(os.pathsep):
                 path += os.pathsep
             path += d
         setenv("PATH", path)
+        # Persist DLL directories for child processes. sitecustomize.py will
+        # read this and call os.add_dll_directory() in each child, since
+        # those calls are process-local and don't propagate across spawns.
+        if dll_dirs:
+            os.environ["FB_PAR_WIN_DLL_DIRS"] = os.pathsep.join(dll_dirs)
 
     from <MAIN_RUNNER_MODULE> import <MAIN_RUNNER_FUNCTION> as run_as_main
     run_as_main({main_module!r}, {main_function!r})
@@ -142,7 +212,7 @@ __run()
 
 args = [sys.executable]
 if interpreter_flags:
-    args.append(interpreter_flags)
+    args.extend(interpreter_flags.split())
 args.extend(["-c", STARTUP])
 
 # Default to 'd' warnings, but allow users to control this via PYTHONWARNINGS
@@ -157,15 +227,10 @@ for item in reversed(warnings):
 if "PYTHONDONTWRITEBYTECODE" in os.environ:
     args.insert(1, "-B")
 
-# Python 3.7 allows benchmarking import time with this variable. Similar issues to
-# PYTHONDONTWRITEBYTECODE above. If using an earlier version of python... dont set this
-# Make sure we only run this on cpython where it's supported (python2 will fail
-# if given an unknown -X)
-if (
-    "PYTHONPROFILEIMPORTTIME" in os.environ
-    and platform.python_implementation() == "CPython"
-    and (sys.version_info[0], sys.version_info[1]) >= (3, 7)
-):
+# Pass through PYTHONPROFILEIMPORTTIME as -X importtime. Similar issues to
+# PYTHONDONTWRITEBYTECODE above — because of -E we have to pass this via the
+# command line. Only supported on CPython.
+if "PYTHONPROFILEIMPORTTIME" in os.environ and platform.python_implementation() == "CPython":
     args[1:1] = ["-X", "importtime"]
 
 # Save the variables that will be restored back into the environment by

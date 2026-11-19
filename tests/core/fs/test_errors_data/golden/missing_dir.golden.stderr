@@ -1,0 +1,12 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Command failed: 
+Error evaluating expression:
+    //completely_missing/foo/x/y/lmnop:target
+    ^---------------------------------------^
+
+
+Caused by:
+    package `root//completely_missing/foo/x/y/lmnop:` does not exist
+             ^----------------------^
+        dir `root//completely_missing` does not exist. 

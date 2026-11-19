@@ -28,6 +28,7 @@ message HealthCheckContextEvent {
     string branched_from_revision = 3;
     bool has_excess_cache_misses = 4;
     buck.data.SystemInfo experiment_configurations = 5;
+    uint64 test_slow_build_threshold_secs = 6;
   }
 }
 
@@ -72,6 +73,7 @@ message RichMessage {
   string header = 1;
   string body = 2;
   optional string footer = 3;
+  bool compact = 4;
 }
 
 message HealthIssue {

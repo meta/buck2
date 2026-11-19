@@ -23,3 +23,11 @@ constraint_value(
     constraint_setting = ":os",
     visibility = ["PUBLIC"],
 )
+
+# Deliberately not part of any execution platform, so that requiring it makes
+# every candidate platform get skipped.
+constraint_value(
+    name = "plan9",
+    constraint_setting = ":os",
+    visibility = ["PUBLIC"],
+)

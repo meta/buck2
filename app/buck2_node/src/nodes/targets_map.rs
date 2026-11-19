@@ -11,17 +11,21 @@
 use std::borrow::Borrow;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::sync::Arc;
 
 use allocative::Allocative;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::name::TargetNameRef;
+use buck2_hash::BuckFixedInsertionSet;
+use buck2_hash::BuckMutInsertionSet;
 use buck2_util::indent::indent;
 use dupe::Dupe;
-use starlark_map::ordered_set;
-use starlark_map::ordered_set::OrderedSet;
+use pagable::Pagable;
 
+use crate::attrs::arena::CoercedAttrArena;
 use crate::nodes::unconfigured::TargetNode;
 use crate::nodes::unconfigured::TargetNodeRef;
+use crate::nodes::unconfigured::UnsealedTargetNode;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -47,7 +51,7 @@ impl TargetsMapRecordError {
     }
 }
 
-#[derive(Debug, Clone, Dupe, Allocative)]
+#[derive(Debug, Clone, Dupe, Allocative, Pagable)]
 struct NameIndexed(TargetNode);
 
 impl PartialEq for NameIndexed {
@@ -71,19 +75,14 @@ impl Borrow<TargetNameRef> for NameIndexed {
 }
 
 /// Map of target -> details of those targets within a build file.
-#[derive(Debug, Clone, Allocative)]
+///
+/// Iterates in declaration order.
+#[derive(Debug, Clone, Allocative, Pagable)]
 pub struct TargetsMap {
-    map: OrderedSet<NameIndexed>,
+    map: BuckFixedInsertionSet<NameIndexed>,
 }
 
 impl TargetsMap {
-    #[inline]
-    pub fn new() -> TargetsMap {
-        TargetsMap {
-            map: OrderedSet::new(),
-        }
-    }
-
     #[inline]
     pub fn get<'a>(&'a self, name: &TargetNameRef) -> Option<TargetNodeRef<'a>> {
         self.map.get(name).map(|NameIndexed(n)| n.as_ref())
@@ -120,29 +119,117 @@ impl TargetsMap {
     pub fn values(&self) -> impl ExactSizeIterator<Item = TargetNodeRef<'_>> {
         self.iter().map(|(_, v)| v)
     }
+}
+
+/// Collects the targets a build file declares, in declaration order, into a [`TargetsMap`].
+#[derive(Debug, Default)]
+pub struct TargetsMapBuilder {
+    map: BuckMutInsertionSet<NameIndexed>,
+}
+
+impl TargetsMapBuilder {
+    #[inline]
+    pub fn new() -> TargetsMapBuilder {
+        TargetsMapBuilder::default()
+    }
+
+    #[inline]
+    pub fn contains_key(&self, name: &TargetNameRef) -> bool {
+        self.map.contains(name)
+    }
 
     #[inline]
     pub fn record(&mut self, target_node: TargetNode) -> Result<(), TargetsMapRecordError> {
-        match self.map.try_insert(NameIndexed(target_node)) {
-            Err(ordered_set::OccupiedError {
-                value: NameIndexed(target_node),
-                occupied,
-            }) => Err(TargetsMapRecordError::RegisteredTargetTwice(
-                target_node.label().dupe(),
-                occupied.0.call_stack(),
-            )),
-            Ok(()) => Ok(()),
+        let label = target_node.label().dupe();
+        if self.map.insert(NameIndexed(target_node)) {
+            return Ok(());
+        }
+        let NameIndexed(first) = self.map.get(label.name()).unwrap();
+        Err(TargetsMapRecordError::RegisteredTargetTwice(
+            label,
+            first.call_stack(),
+        ))
+    }
+
+    #[inline]
+    pub fn build(self) -> TargetsMap {
+        TargetsMap {
+            map: self.map.freeze(),
         }
     }
 }
 
-/// For tests.
+/// For tests. Panics on a repeated target name.
 impl FromIterator<TargetNode> for TargetsMap {
     fn from_iter<T: IntoIterator<Item = TargetNode>>(iter: T) -> Self {
-        let mut map = TargetsMap::new();
+        let mut builder = TargetsMapBuilder::new();
         for target_node in iter {
-            map.record(target_node).unwrap();
+            builder.record(target_node).unwrap();
         }
-        map
+        builder.build()
+    }
+}
+
+#[derive(Debug)]
+struct UnsealedNameIndexed(UnsealedTargetNode);
+
+impl PartialEq for UnsealedNameIndexed {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.label.name() == other.0.label.name()
+    }
+}
+
+impl Eq for UnsealedNameIndexed {}
+
+impl Hash for UnsealedNameIndexed {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.label.name().hash(state);
+    }
+}
+
+impl Borrow<TargetNameRef> for UnsealedNameIndexed {
+    fn borrow(&self) -> &TargetNameRef {
+        self.0.label.name()
+    }
+}
+
+/// The targets of a build file as they are declared, before the package's
+/// attr arena is sealed; [`Self::seal`] turns it into the [`TargetsMap`].
+#[derive(Debug, Default)]
+pub struct UnsealedTargetsMap {
+    map: BuckMutInsertionSet<UnsealedNameIndexed>,
+}
+
+impl UnsealedTargetsMap {
+    pub fn new() -> UnsealedTargetsMap {
+        UnsealedTargetsMap::default()
+    }
+
+    pub fn contains_key(&self, name: &TargetNameRef) -> bool {
+        self.map.contains(name)
+    }
+
+    pub fn record(&mut self, target_node: UnsealedTargetNode) -> Result<(), TargetsMapRecordError> {
+        let label = target_node.label.dupe();
+        if self.map.insert(UnsealedNameIndexed(target_node)) {
+            return Ok(());
+        }
+        let UnsealedNameIndexed(first) = self.map.get(label.name()).unwrap();
+        Err(TargetsMapRecordError::RegisteredTargetTwice(
+            label,
+            first.call_stack.as_ref().map(|s| s.to_string()),
+        ))
+    }
+
+    /// The targets as nodes over `arena`, which must be the sealed form of
+    /// the builder their attribute values were encoded into.
+    pub fn seal(self, arena: &Arc<CoercedAttrArena>) -> TargetsMap {
+        TargetsMap {
+            map: self
+                .map
+                .into_iter()
+                .map(|UnsealedNameIndexed(node)| NameIndexed(node.seal(arena)))
+                .collect(),
+        }
     }
 }

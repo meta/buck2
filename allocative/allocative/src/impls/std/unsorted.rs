@@ -17,11 +17,13 @@ use std::num::NonZeroI8;
 use std::num::NonZeroI16;
 use std::num::NonZeroI32;
 use std::num::NonZeroI64;
+use std::num::NonZeroI128;
 use std::num::NonZeroIsize;
 use std::num::NonZeroU8;
 use std::num::NonZeroU16;
 use std::num::NonZeroU32;
 use std::num::NonZeroU64;
+use std::num::NonZeroU128;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
@@ -29,6 +31,7 @@ use crate::allocative_trait::Allocative;
 use crate::impls::common::DATA_NAME;
 use crate::impls::common::PTR_NAME;
 use crate::impls::common::UNUSED_CAPACITY_NAME;
+use crate::key;
 use crate::key::Key;
 use crate::visitor::Visitor;
 
@@ -40,13 +43,13 @@ impl<T: Allocative + ?Sized> Allocative for &'static T {
 
 impl Allocative for str {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
-        visitor.visit_simple(Key::new("str"), self.len());
+        visitor.visit_simple(key!("str"), self.len());
     }
 }
 
 impl Allocative for OsStr {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
-        visitor.visit_simple(Key::new("OsStr"), self.len());
+        visitor.visit_simple(key!("OsStr"), self.len());
     }
 }
 
@@ -65,8 +68,8 @@ impl<T: Allocative, E: Allocative> Allocative for Result<T, E> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         match self {
-            Ok(v) => visitor.visit_field(Key::new("Ok"), v),
-            Err(e) => visitor.visit_field(Key::new("Err"), e),
+            Ok(v) => visitor.visit_field(key!("Ok"), v),
+            Err(e) => visitor.visit_field(key!("Err"), e),
         }
     }
 }
@@ -75,7 +78,7 @@ impl<T: Allocative> Allocative for Option<T> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         if let Some(value) = self {
-            visitor.visit_field(Key::new("Some"), value);
+            visitor.visit_field(key!("Some"), value);
         }
     }
 }
@@ -128,13 +131,19 @@ impl Allocative for PathBuf {
         let mut visitor = visitor.enter_self_sized::<Self>();
         if self.capacity() != 0 {
             let mut visitor = visitor.enter_unique(PTR_NAME, mem::size_of::<*const u8>());
-            visitor.visit_simple(Key::new("path"), self.as_os_str().len());
+            visitor.visit_simple(key!("path"), self.as_os_str().len());
             visitor.visit_simple(
                 UNUSED_CAPACITY_NAME,
                 self.capacity() - self.as_os_str().len(),
             );
         }
         visitor.exit();
+    }
+}
+
+impl Allocative for NonZeroU128 {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+        visitor.visit_simple_sized::<Self>();
     }
 }
 
@@ -157,6 +166,12 @@ impl Allocative for NonZeroU16 {
 }
 
 impl Allocative for NonZeroU8 {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+        visitor.visit_simple_sized::<Self>();
+    }
+}
+
+impl Allocative for NonZeroI128 {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         visitor.visit_simple_sized::<Self>();
     }
@@ -205,13 +220,6 @@ impl<T: ?Sized> Allocative for PhantomData<T> {
 }
 
 impl Allocative for Infallible {
-    fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut Visitor<'b>) {
-        match *self {}
-    }
-}
-
-#[cfg(rust_nightly)]
-impl Allocative for ! {
     fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut Visitor<'b>) {
         match *self {}
     }

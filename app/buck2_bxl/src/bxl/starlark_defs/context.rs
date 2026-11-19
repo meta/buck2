@@ -11,6 +11,7 @@
 //! The context containing the available buck commands and query operations for `bxl` functions.
 
 use std::cell::RefCell;
+use std::fmt::Display;
 use std::io::Write;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -20,7 +21,6 @@ use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_build_api::analysis::registry::AnalysisRegistry;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
 use buck2_common::target_aliases::BuckConfigTargetAliasResolver;
 use buck2_common::target_aliases::HasTargetAliasResolver;
 use buck2_core::cells::CellAliasResolver;
@@ -46,18 +46,15 @@ use dice::DiceComputations;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
-use starlark::environment::MethodsStatic;
 use starlark::eval::Evaluator;
-use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
+use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark::values::structs::StructRef;
+use starlark::values::structs::Struct;
 
 use crate::bxl::key::BxlKey;
 use crate::bxl::starlark_defs::context::actions::BxlExecutionResolution;
@@ -101,11 +98,18 @@ struct NotATargetLabelString;
 #[buck2(tag = Input)]
 struct UnconfiguredTargetInAnalysis;
 
+#[derive(buck2_error::Error, Debug)]
+#[error(
+    "`target_platform` was passed into analysis. `target_platform` is no longer used in analysis and is actively being deprecated as targets passed into analysis are already configured."
+)]
+#[buck2(tag = Input)]
+struct TargetPlatformInAnalysis;
+
 /// Data object for `BxlContextType::Root`.
 #[derive(ProvidesStaticType, Trace, NoSerialize, Allocative, Debug, Derivative)]
 pub(crate) struct RootBxlContextData<'v> {
     output_stream: ValueTyped<'v, StarlarkOutputStream>,
-    cli_args: ValueOfUnchecked<'v, StructRef<'v>>,
+    cli_args: ValueOf<'v, Struct<'v>>,
 }
 
 /// Data object for `BxlContextType::Dynamic`.
@@ -205,17 +209,17 @@ impl BxlContextCoreData {
         dice: &mut DiceComputations<'_>,
     ) -> buck2_error::Result<Self> {
         let label = key.label();
-        let cell_resolver = dice.get_cell_resolver().await?;
+        let cell_resolver = dice.get_cell_resolver().await?.dupe();
         let cell = label.bxl_path.cell();
         let bxl_cell = cell_resolver
             .get(cell)
             .with_buck_error_context(|| format!("Cell does not exist: `{cell}`"))?
             .dupe();
         let cell_name = bxl_cell.name();
-        let target_alias_resolver = dice.target_alias_resolver().await?;
-        let cell_alias_resolver = dice.get_cell_alias_resolver(cell).await?;
+        let target_alias_resolver = dice.target_alias_resolver().await?.dupe();
+        let cell_alias_resolver = dice.get_cell_alias_resolver(cell).await?.dupe();
         let artifact_fs = dice.get_artifact_fs().await?;
-        let project_fs = dice.global_data().get_io_provider().project_root().dupe();
+        let project_fs = artifact_fs.fs().dupe();
 
         let cell_root_abs = project_fs.root().join(
             cell_resolver
@@ -232,7 +236,7 @@ impl BxlContextCoreData {
             cell_resolver,
             cell_alias_resolver,
             project_fs,
-            artifact_fs,
+            artifact_fs: artifact_fs.dupe(),
         })
     }
 
@@ -311,7 +315,7 @@ impl BxlContextCoreData {
             self.cell_resolver(),
             self.cell_alias_resolver(),
             self.cell_name(),
-            &self.global_cfg_options().target_platform,
+            self.global_cfg_options().target_platform,
         )
     }
 
@@ -331,67 +335,75 @@ impl BxlContextCoreData {
 
 impl<'v> BxlContext<'v> {
     pub(crate) fn new(
-        heap: &'v Heap,
+        heap: Heap<'v>,
         core: Arc<BxlContextCoreData>,
         stream_state: OutputStreamState,
-        cli_args: ValueOfUnchecked<'v, StructRef<'v>>,
+        cli_args: ValueOf<'v, Struct<'v>>,
         digest_config: DigestConfig,
     ) -> buck2_error::Result<Self> {
         let root_data = RootBxlContextData {
             cli_args,
-            output_stream: heap.alloc_typed(StarlarkOutputStream::new(
-                core.project_fs.clone(),
-                core.artifact_fs.clone(),
-                stream_state,
-            )),
+            output_stream: heap
+                .alloc(StarlarkOutputStream::new(
+                    core.project_fs.dupe(),
+                    core.artifact_fs.dupe(),
+                    stream_state,
+                ))
+                .get(),
         };
         let context_type = BxlContextType::Root(root_data);
 
         Ok(Self {
-            state: heap.alloc_typed(AnalysisActions {
-                state: RefCell::new(None),
-                attributes: None,
-                plugins: None,
-                digest_config,
-            }),
+            state: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(None),
+                    attributes: None,
+                    plugins: None,
+                    digest_config,
+                })
+                .get(),
             context_type,
             core,
         })
     }
 
     pub(crate) fn new_dynamic(
-        heap: &'v Heap,
+        heap: Heap<'v>,
         core: Arc<BxlContextCoreData>,
         digest_config: DigestConfig,
         analysis_registry: AnalysisRegistry<'v>,
         dynamic_data: DynamicBxlContextData,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
-            state: heap.alloc_typed(AnalysisActions {
-                state: RefCell::new(Some(analysis_registry)),
-                attributes: None,
-                plugins: None,
-                digest_config,
-            }),
+            state: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(Some(analysis_registry)),
+                    attributes: None,
+                    plugins: None,
+                    digest_config,
+                })
+                .get(),
             context_type: BxlContextType::Dynamic(dynamic_data),
             core,
         })
     }
 
     pub(crate) fn new_anon(
-        heap: &'v Heap,
+        heap: Heap<'v>,
         core: Arc<BxlContextCoreData>,
         digest_config: DigestConfig,
         analysis_registry: AnalysisRegistry<'v>,
-        attributes: ValueOfUnchecked<'v, StructRef<'static>>,
+        attributes: ValueOf<'v, Struct<'v>>,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
-            state: heap.alloc_typed(AnalysisActions {
-                state: RefCell::new(Some(analysis_registry)),
-                attributes: Some(attributes),
-                plugins: None,
-                digest_config,
-            }),
+            state: heap
+                .alloc(AnalysisActions {
+                    state: RefCell::new(Some(analysis_registry)),
+                    attributes: Some(attributes),
+                    plugins: None,
+                    digest_config,
+                })
+                .get(),
             context_type: BxlContextType::AnonTarget,
             core,
         })
@@ -421,14 +433,8 @@ impl<'v> BxlContext<'v> {
         let root_data = this.context_type.unpack_root()?;
         let output_stream = &root_data.output_stream;
 
-        let analysis_registry = this
-            .state
-            .as_ref()
-            .state
-            .borrow_mut()
-            .take()
-            .map(Ok)
-            .unwrap_or_else(|| {
+        let analysis_registry = this.state.as_ref().state.borrow_mut().take().map_or_else(
+            || {
                 // BXL did not request actions, so we don't know execution platform.
                 // It doesn't matter what owner/platform we put here because
                 // the registry is empty, nothing will be fetched from it.
@@ -439,7 +445,9 @@ impl<'v> BxlContext<'v> {
                         .into_base_deferred_key(BxlExecutionResolution::unspecified()),
                     ExecutionPlatformResolution::unspecified(),
                 )
-            })?;
+            },
+            Ok,
+        )?;
 
         // artifacts should be bound by now as the bxl has finished running
         let state = output_stream.as_ref().take_state()?;
@@ -488,16 +496,11 @@ impl<'v> ErrorPrinter for BxlContext<'v> {
     }
 }
 
-#[starlark_value(type = "bxl.Context", StarlarkTypeRepr, UnpackValue)]
+starlark::methods_static!(BXL_CONTEXT_METHODS = methods::bxl_context_methods);
+
+#[starlark_value(type = "bxl.Context", no_freeze)]
 impl<'v> StarlarkValue<'v> for BxlContext<'v> {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(methods::bxl_context_methods)
-    }
-}
-
-impl<'v> AllocValue<'v> for BxlContext<'v> {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_complex_no_freeze(self)
+        Some(BXL_CONTEXT_METHODS.methods())
     }
 }

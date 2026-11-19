@@ -29,9 +29,13 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Optional;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Rule;
@@ -77,6 +81,7 @@ public class JavacStepTest {
             configuredBuckOut,
             getCompilerOutputPathsValue(),
             compilerParameters,
+            /* skipIfNoCompilationUnits */ false,
             null,
             null,
             false);
@@ -101,6 +106,7 @@ public class JavacStepTest {
             configuredBuckOut,
             getCompilerOutputPathsValue(),
             compilerParameters,
+            /* skipIfNoCompilationUnits */ false,
             null,
             null,
             false);
@@ -131,6 +137,7 @@ public class JavacStepTest {
             configuredBuckOut,
             getCompilerOutputPathsValue(),
             compilerParameters,
+            /* skipIfNoCompilationUnits */ false,
             null,
             null,
             false);
@@ -155,6 +162,7 @@ public class JavacStepTest {
             configuredBuckOut,
             getCompilerOutputPathsValue(),
             compilerParameters,
+            /* skipIfNoCompilationUnits */ false,
             null,
             null,
             false);
@@ -174,6 +182,68 @@ public class JavacStepTest {
     for (String path : Splitter.on(File.pathSeparator).split(bootclasspath)) {
       assertTrue(Paths.get(path).isAbsolute());
     }
+  }
+
+  @Test
+  public void sourceZipWithoutJavaEntriesSkipsCompilation() throws Exception {
+    JavacStep step = skippableJavacStep(writeSourceZip("com/facebook/resource.txt"));
+
+    StepExecutionResult result =
+        step.executeIsolatedStep(TestExecutionContext.newInstance(tmp.getRoot()));
+
+    // FakeJavac would have reported exit code 3 had javac been invoked.
+    assertThat(result, equalTo(StepExecutionResults.SUCCESS));
+  }
+
+  @Test
+  public void sourceZipWithJavaEntriesRunsCompilation() throws Exception {
+    JavacStep step = skippableJavacStep(writeSourceZip("com/facebook/Dummy.java"));
+
+    StepExecutionResult result =
+        step.executeIsolatedStep(TestExecutionContext.newInstance(tmp.getRoot()));
+
+    assertThat(
+        result,
+        equalTo(
+            new StepExecutionResult(
+                StepExecutionResults.ERROR_EXIT_CODE, Optional.of("javac stderr\n"))));
+  }
+
+  private RelPath writeSourceZip(String... entryNames) throws IOException {
+    RelPath zipPath = RelPath.get("generated.src.zip");
+    try (ZipOutputStream out =
+        new ZipOutputStream(Files.newOutputStream(tmp.getRoot().resolve(zipPath).getPath()))) {
+      for (String entryName : entryNames) {
+        out.putNextEntry(new ZipEntry(entryName));
+        out.closeEntry();
+      }
+    }
+    return zipPath;
+  }
+
+  private JavacStep skippableJavacStep(RelPath sourceFilePath) {
+    CompilerParameters parameters =
+        new CompilerParameters(
+            ImmutableSortedSet.orderedBy(RelPath.comparator()).add(sourceFilePath).build(),
+            ImmutableList.of(),
+            ImmutableList.of(),
+            getCompilerOutputPaths(),
+            AbiGenerationMode.CLASS,
+            AbiGenerationMode.CLASS,
+            false,
+            null);
+
+    return new JavacStep(
+        new FakeJavac(3, "javac stderr\n"),
+        getResolvedJavacOptions(),
+        buildTargetValue,
+        configuredBuckOut,
+        getCompilerOutputPathsValue(),
+        parameters,
+        /* skipIfNoCompilationUnits */ true,
+        null,
+        null,
+        false);
   }
 
   private static ResolvedJavacOptions getResolvedJavacOptions() {

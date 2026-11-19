@@ -21,11 +21,11 @@ use crate as starlark;
 use crate::environment::GlobalsBuilder;
 use crate::values::Heap;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
 use crate::values::function::SpecialBuiltinFunction;
 use crate::values::tuple::AllocTuple;
-use crate::values::tuple::TupleRef;
-use crate::values::tuple::value::FrozenTuple;
+use crate::values::tuple::TupleType;
+use crate::values::tuple::value::Tuple;
 use crate::values::typing::StarlarkIter;
 
 #[starlark_module]
@@ -43,23 +43,23 @@ pub(crate) fn register_tuple(globals: &mut GlobalsBuilder) {
     /// # "#);
     /// ```
     #[starlark(
-        as_type = FrozenTuple,
+        as_type = Tuple<'static>,
         speculative_exec_safe,
         special_builtin_function = SpecialBuiltinFunction::Tuple,
     )]
     fn tuple<'v>(
-        #[starlark(require = pos)] a: Option<ValueOfUnchecked<'v, StarlarkIter<Value<'v>>>>,
-        heap: &'v Heap,
-    ) -> starlark::Result<ValueOfUnchecked<'v, &'v TupleRef<'v>>> {
+        #[starlark(require = pos)] a: Option<ValueOf<'v, StarlarkIter<Value<'v>>>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, TupleType<Value<'v>>>> {
         if let Some(a) = a {
-            if TupleRef::from_value(a.get()).is_some() {
-                return Ok(ValueOfUnchecked::new(a.get()));
+            if let Some(tuple) = ValueOf::new(a.to_value()) {
+                return Ok(tuple);
             }
 
-            let it = a.get().iterate(heap)?;
-            Ok(ValueOfUnchecked::new(heap.alloc_tuple_iter(it)))
+            let it = a.to_value().iterate(heap)?;
+            Ok(heap.alloc_tuple_iter(it.map(ValueOf::from)))
         } else {
-            Ok(ValueOfUnchecked::new(heap.alloc(AllocTuple::EMPTY)))
+            Ok(heap.alloc(AllocTuple::EMPTY))
         }
     }
 }

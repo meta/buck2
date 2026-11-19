@@ -8,8 +8,7 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-
+use buck2_hash::BuckMutMap;
 use starlark::debug::VariablePath;
 
 /// Maps variable IDs to their access paths for tree-structured DAP protocol variables.
@@ -25,7 +24,7 @@ use starlark::debug::VariablePath;
 /// upon a variable request against the child's ID.
 #[derive(Default, Debug)]
 pub(crate) struct VariablesKnownPaths {
-    path_by_id: HashMap<u32, VariablePath>,
+    path_by_id: BuckMutMap<u32, VariablePath>,
 }
 
 impl VariablesKnownPaths {

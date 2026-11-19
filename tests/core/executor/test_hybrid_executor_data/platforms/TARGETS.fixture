@@ -40,6 +40,13 @@ platform(
 )
 
 platform(
+    name = "fallback_with_uploads",
+    setting = ":setting",
+    allow_hybrid_fallbacks_on_failure = True,
+    allow_cache_uploads = True,
+)
+
+platform(
     name = "full_hybrid_with_failure_fallbacks",
     setting = ":setting",
     use_limited_hybrid = False,
@@ -64,6 +71,7 @@ platforms(
     platforms = [
         ":default",
         ":no_fallback",
+        ":fallback_with_uploads",
         ":fallback_only",
         ":full_hybrid",
         ":full_hybrid_with_failure_fallbacks",

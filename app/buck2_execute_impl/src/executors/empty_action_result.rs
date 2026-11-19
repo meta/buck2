@@ -49,10 +49,10 @@ pub(crate) fn empty_action_result(
         stdout_raw: Some(Vec::new()),
         stderr_raw: Some(Vec::new()),
         exit_code: 0,
-        execution_metadata: TExecutedActionMetadata {
+        execution_metadata: Box::new(TExecutedActionMetadata {
             execution_attempts: 0,
             ..Default::default()
-        },
+        }),
         ..Default::default()
     };
 

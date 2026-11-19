@@ -15,6 +15,7 @@ use crate::response::TActionResult2;
 #[derive(Default)]
 pub struct ActionResultRequest {
     pub digest: TDigest,
+    pub platform: Option<TPlatform>,
     pub _dot_dot: (),
 }
 
@@ -72,6 +73,7 @@ pub struct FindMissingBlobsRequest {
 #[derive(Default)]
 pub struct GetDigestsTtlRequest {
     pub digests: Vec<TDigest>,
+    pub is_for_upload: Option<bool>,
     pub _dot_dot: (),
 }
 
@@ -88,6 +90,36 @@ pub struct ExecuteRequest {
     pub skip_cache_lookup: bool,
     pub execution_policy: Option<TExecutionPolicy>,
     pub host_runtime_requirements: THostRuntimeRequirements,
+    pub gang: Option<GangSpecification>,
+    pub _dot_dot: (),
+}
+
+#[derive(Clone)]
+pub struct GangSpecification {
+    pub workers_spec: GangWorkersSpec,
+    pub _dot_dot: (),
+}
+
+#[derive(Clone)]
+pub enum GangWorkersSpec {
+    EnumeratedSpec(EnumeratedGangSpec),
+}
+
+impl GangWorkersSpec {
+    pub fn enumerated_spec(spec: EnumeratedGangSpec) -> Self {
+        GangWorkersSpec::EnumeratedSpec(spec)
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct EnumeratedGangSpec {
+    pub workers: Vec<GangMember>,
+    pub _dot_dot: (),
+}
+
+#[derive(Clone, Default)]
+pub struct GangMember {
+    pub host_runtime_requirements: THostRuntimeRequirements,
     pub _dot_dot: (),
 }
 
@@ -99,11 +131,19 @@ pub struct TDependency {
 }
 
 #[derive(Clone, Default)]
+pub struct TDuration {
+    pub seconds: i64,
+    pub nanos: i32,
+    pub _dot_dot: (),
+}
+
+#[derive(Clone, Default)]
 pub struct TExecutionPolicy {
     pub priority: i32,
     pub affinity_keys: Vec<String>,
     pub region_preference: String,
     pub setup_preference_key: String,
+    pub queue_timeout: Option<TDuration>,
     pub _dot_dot: (),
 }
 
@@ -128,5 +168,6 @@ pub struct THostRuntimeRequirements {
 pub struct WriteActionResultRequest {
     pub action_digest: TDigest,
     pub action_result: TActionResult2,
+    pub platform: Option<TPlatform>,
     pub _dot_dot: (),
 }

@@ -8,18 +8,20 @@
  * above-listed licenses.
  */
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use buck2_core::configuration::transition::id::TransitionId;
 use starlark::any::ProvidesStaticType;
+use starlark::typing::Ty;
+use starlark::values::StarlarkTypeExpr;
+use starlark::values::StarlarkTypeExprStable;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
+use starlark::values::type_expr::UnionPayload;
 
-#[derive(Debug, buck2_error::Error)]
-#[buck2(tag = Input)]
-enum TransitionError {
-    #[error("cfg parameter is not a transition object: {}", _0)]
-    WrongType(String),
-}
+use crate::late_binding_ty::TransitionReprLate;
 
 /// Implemented by starlark transition objects.
 pub trait TransitionValue {
@@ -30,9 +32,45 @@ unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn TransitionValue {
     type StaticType = &'static dyn TransitionValue;
 }
 
-pub fn transition_id_from_value(value: Value) -> buck2_error::Result<Arc<TransitionId>> {
-    match value.request_value::<&dyn TransitionValue>() {
-        Some(has) => has.transition_id(),
-        None => Err(TransitionError::WrongType(value.to_repr()).into()),
+/// A value that is a transition, in whichever representation the transition crate gives it.
+pub struct ValueAsTransition<'v>(pub &'v dyn TransitionValue);
+
+impl<'v> StarlarkTypeExpr<'v> for ValueAsTransition<'v> {
+    type Get = Self;
+
+    fn starlark_type_repr() -> Ty {
+        TransitionReprLate::ty()
+    }
+
+    fn get(value: Value<'v>) -> Option<Self> {
+        value
+            .request_value::<&dyn TransitionValue>()
+            .map(ValueAsTransition)
+    }
+}
+
+impl<'v> StarlarkTypeExprStable<'v> for ValueAsTransition<'v> {}
+
+impl<'v> UnionPayload<'v> for ValueAsTransition<'v> {
+    type Expr = Self;
+
+    fn from_value(value: Value<'v>) -> Option<Self> {
+        <Self as StarlarkTypeExpr<'v>>::get(value)
+    }
+}
+
+impl<'v> UnpackValue<'v> for ValueAsTransition<'v> {
+    type Type = Self;
+    type Error = Infallible;
+
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
+        Ok(get)
+    }
+}
+
+impl ValueAsTransition<'_> {
+    pub fn transition_id(&self) -> buck2_error::Result<Arc<TransitionId>> {
+        self.0.transition_id()
     }
 }

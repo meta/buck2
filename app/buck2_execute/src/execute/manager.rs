@@ -12,12 +12,15 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use buck2_build_signals::env::WaitingCategory;
+use buck2_build_signals::env::WaitingData;
 use buck2_common::liveliness_observer::LivelinessObserver;
 use buck2_core::buck2_env;
 use buck2_events::dispatch::EventDispatcher;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_util::time_span::TimeSpan;
 use futures::future::Future;
 use futures::future::FutureExt;
-use indexmap::IndexMap;
 
 use crate::artifact_value::ArtifactValue;
 use crate::execute::claim::Claim;
@@ -37,7 +40,7 @@ trait CommandExecutionManagerLike: Sized {
     fn result(
         self,
         status: CommandExecutionStatus,
-        outputs: IndexMap<CommandExecutionOutput, ArtifactValue>,
+        outputs: BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
         std_streams: CommandStdStreams,
         exit_code: Option<i32>,
         timing: CommandExecutionMetadata,
@@ -54,6 +57,7 @@ pub struct CommandExecutionManagerInner {
     pub intend_to_fallback_on_failure: bool,
     pub execution_kind: Option<CommandExecutionKind>,
     pub was_result_delayed: Arc<AtomicBool>,
+    pub waiting_data: WaitingData,
 }
 
 /// This tracker helps track the information that will go into the BuckCommandExecutionMetadata
@@ -66,6 +70,7 @@ impl CommandExecutionManager {
         claim_manager: Box<dyn ClaimManager>,
         events: EventDispatcher,
         liveliness_observer: Arc<dyn LivelinessObserver>,
+        waiting_data: WaitingData,
     ) -> Self {
         Self {
             inner: Box::new(CommandExecutionManagerInner {
@@ -75,24 +80,31 @@ impl CommandExecutionManager {
                 intend_to_fallback_on_failure: false,
                 execution_kind: None,
                 was_result_delayed: Arc::new(AtomicBool::new(false)),
+                waiting_data,
             }),
         }
     }
 
     /// Acquire a claim. This might never return if the claim has been taken.
     pub fn claim(self) -> impl Future<Output = CommandExecutionManagerWithClaim> {
-        let events = self.inner.events;
-        let liveliness_observer = self.inner.liveliness_observer;
-        let execution_kind = self.inner.execution_kind;
-        self.inner
-            .claim_manager
+        let CommandExecutionManagerInner {
+            claim_manager,
+            events,
+            liveliness_observer,
+            intend_to_fallback_on_failure: _,
+            execution_kind,
+            was_result_delayed: _,
+            waiting_data,
+        } = *self.inner;
+        claim_manager
             .claim()
             .map(|claim| CommandExecutionManagerWithClaim {
                 inner: Box::new(CommandExecutionManagerWithClaimInner {
-                    claim,
                     events,
                     liveliness_observer,
                     execution_kind,
+                    claim,
+                    waiting_data,
                 }),
             })
     }
@@ -115,7 +127,7 @@ impl CommandExecutionManager {
                 execution_kind,
                 reason: Some(reason),
             },
-            IndexMap::new(),
+            BuckMutInsertionMap::default(),
             Default::default(),
             None,
             metadata,
@@ -135,13 +147,19 @@ impl CommandExecutionManager {
         self.inner.execution_kind = Some(execution_kind);
         self
     }
+
+    pub fn start_waiting_category(&mut self, waiting_category: WaitingCategory) {
+        self.inner
+            .waiting_data
+            .start_waiting_category_now(waiting_category);
+    }
 }
 
 impl CommandExecutionManagerLike for CommandExecutionManager {
     fn result(
         self,
         status: CommandExecutionStatus,
-        outputs: IndexMap<CommandExecutionOutput, ArtifactValue>,
+        outputs: BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
         std_streams: CommandStdStreams,
         exit_code: Option<i32>,
         timing: CommandExecutionMetadata,
@@ -159,13 +177,15 @@ impl CommandExecutionManagerLike for CommandExecutionManager {
                 inline_environment_metadata: inline_environment_metadata(),
             },
             rejected_execution: None,
-            did_cache_upload: false,
-            did_dep_file_cache_upload: false,
+            cache_upload_result: buck2_data::UploadResult::DidNotUploadUnspecified,
+            dep_file_cache_upload_result: buck2_data::UploadResult::DidNotUploadUnspecified,
             dep_file_key: None,
             eligible_for_full_hybrid: false,
             dep_file_metadata: None,
             action_result: None,
             scheduling_mode: None,
+            waiting_data: self.inner.waiting_data,
+            held_outputs: None,
         }
     }
 
@@ -179,6 +199,7 @@ pub struct CommandExecutionManagerWithClaimInner {
     pub liveliness_observer: Arc<dyn LivelinessObserver>,
     pub execution_kind: Option<CommandExecutionKind>,
     claim: Box<dyn Claim>,
+    waiting_data: WaitingData,
 }
 
 pub struct CommandExecutionManagerWithClaim {
@@ -192,7 +213,7 @@ impl CommandExecutionManagerWithClaim {
     pub fn success(
         self,
         execution_kind: CommandExecutionKind,
-        outputs: IndexMap<CommandExecutionOutput, ArtifactValue>,
+        outputs: BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
         std_streams: CommandStdStreams,
         timing: CommandExecutionMetadata,
     ) -> CommandExecutionResult {
@@ -216,7 +237,7 @@ impl CommandExecutionManagerWithClaim {
                 execution_kind,
                 reason: None,
             },
-            IndexMap::new(),
+            BuckMutInsertionMap::default(),
             Default::default(),
             None,
             timing,
@@ -234,7 +255,7 @@ impl CommandExecutionManagerLike for CommandExecutionManagerWithClaim {
     fn result(
         self,
         status: CommandExecutionStatus,
-        outputs: IndexMap<CommandExecutionOutput, ArtifactValue>,
+        outputs: BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
         std_streams: CommandStdStreams,
         exit_code: Option<i32>,
         timing: CommandExecutionMetadata,
@@ -252,13 +273,15 @@ impl CommandExecutionManagerLike for CommandExecutionManagerWithClaim {
                 inline_environment_metadata: inline_environment_metadata(),
             },
             rejected_execution: None,
-            did_cache_upload: false,
-            did_dep_file_cache_upload: false,
+            cache_upload_result: buck2_data::UploadResult::DidNotUploadUnspecified,
+            dep_file_cache_upload_result: buck2_data::UploadResult::DidNotUploadUnspecified,
             dep_file_key: None,
             eligible_for_full_hybrid: false,
             dep_file_metadata: None,
             action_result: None,
             scheduling_mode: None,
+            waiting_data: self.inner.waiting_data,
+            held_outputs: None,
         }
     }
 
@@ -271,11 +294,12 @@ pub trait CommandExecutionManagerExt: Sized {
     fn failure(
         self,
         execution_kind: CommandExecutionKind,
-        outputs: IndexMap<CommandExecutionOutput, ArtifactValue>,
+        outputs: BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
         std_streams: CommandStdStreams,
         exit_code: Option<i32>,
         timing: CommandExecutionMetadata,
         additional_message: Option<String>,
+        missing_materialized_inputs: bool,
     ) -> CommandExecutionResult;
 
     fn worker_failure(
@@ -288,7 +312,7 @@ pub trait CommandExecutionManagerExt: Sized {
     fn timeout(
         self,
         execution_kind: CommandExecutionKind,
-        outputs: IndexMap<CommandExecutionOutput, ArtifactValue>,
+        outputs: BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
         duration: Duration,
         std_streams: CommandStdStreams,
         timing: CommandExecutionMetadata,
@@ -318,14 +342,18 @@ where
     fn failure(
         self,
         execution_kind: CommandExecutionKind,
-        outputs: IndexMap<CommandExecutionOutput, ArtifactValue>,
+        outputs: BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
         std_streams: CommandStdStreams,
         exit_code: Option<i32>,
         timing: CommandExecutionMetadata,
         additional_message: Option<String>,
+        missing_materialized_inputs: bool,
     ) -> CommandExecutionResult {
         self.result(
-            CommandExecutionStatus::Failure { execution_kind },
+            CommandExecutionStatus::Failure {
+                execution_kind,
+                missing_materialized_inputs,
+            },
             outputs,
             std_streams,
             exit_code,
@@ -356,7 +384,7 @@ where
     fn timeout(
         self,
         execution_kind: CommandExecutionKind,
-        outputs: IndexMap<CommandExecutionOutput, ArtifactValue>,
+        outputs: BuckMutInsertionMap<CommandExecutionOutput, ArtifactValue>,
         duration: Duration,
         std_streams: CommandStdStreams,
         timing: CommandExecutionMetadata,
@@ -389,10 +417,10 @@ where
                 execution_kind,
                 typ: error_type,
             },
-            IndexMap::new(),
+            BuckMutInsertionMap::default(),
             Default::default(),
             None,
-            CommandExecutionMetadata::default(),
+            CommandExecutionMetadata::empty(TimeSpan::empty_now()),
             None,
         )
     }

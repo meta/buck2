@@ -19,7 +19,7 @@ use buck2_query_derive::query_module;
 use buck2_query_parser::BinaryOp;
 use buck2_query_parser::Expr;
 use buck2_query_parser::spanned::Spanned;
-use gazebo::variants::VariantName;
+use variant_name::VariantName;
 
 use crate::query::environment::QueryEnvironment;
 use crate::query::syntax::simple::eval::error::QueryError;
@@ -28,6 +28,7 @@ use crate::query::syntax::simple::eval::file_set::FileSet;
 use crate::query::syntax::simple::eval::set::TargetSet;
 use crate::query::syntax::simple::eval::values::QueryResult;
 use crate::query::syntax::simple::eval::values::QueryValue;
+use crate::query::syntax::simple::eval::values::QueryValueDepth;
 use crate::query::syntax::simple::eval::values::QueryValueSet;
 use crate::query::syntax::simple::functions::deps::DepsFunction;
 use crate::query::syntax::simple::functions::docs::ModuleDescription;
@@ -78,6 +79,7 @@ impl<F: QueryFunctions> QueryFunctionsVisitLiterals for F {
             expr: &Expr<'q>,
         ) -> Result<(), QueryError> {
             match expr {
+                Expr::None => Ok(()),
                 Expr::Function {
                     function_name,
                     args,
@@ -364,7 +366,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// ```
     /// both return `buck2/app/buck2_action_impl_tests/TARGETS`.
     async fn buildfile(&self, targets: TargetSet<Env::Target>) -> QueryFuncResult<Env> {
-        Ok(self.implementation.buildfile(&targets).into())
+        Ok(self.implementation.buildfile(&targets)?.into())
     }
 
     /// Build file reverse dependencies.
@@ -417,11 +419,34 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
             .into())
     }
 
+    /// Find the dependencies of the targets in the given target universe.
+    ///
+    /// The first parameter `targets` is a specific target or target pattern. It specifies the targets to find dependencies for.
+    /// The second argument `depth` is an optional integer literal specifying an upper bound on the depth of the search. A value of one (1) specifies that buck query should return only direct dependencies. If the depth parameter is omitted, the search is unbounded.
+    /// The third argument `captured_expr` is an optional filter expression that controls the
+    /// traversal. The expression is evaluated for each node and returns the child nodes to recurse
+    /// on when collecting transitive dependencies. Available filters are `configuration_deps()`,
+    /// `exec_deps()`, `first_order_deps()`, `target_deps()`, and `toolchain_deps()`.
+    ///
+    /// The `first_order_deps()` operator returns a set that contains the first-order dependencies
+    /// of the current node. It can be combined with other filter functions, for example,
+    /// `kind(java_library, first_order_deps())` to make the `deps` traversal only traverse
+    /// `java_library` targets. The `first_order_deps()` operator can only be used as an argument
+    /// passed to `deps()`.
+    ///
+    /// The returned values include the nodes from the `targets` argument itself.
+    ///
+    /// For example following uquery:
+    ///
+    /// ```text
+    /// $ buck2 uquery "deps(//buck2:buck2, 1)"
+    /// ```
+    /// returns all targets that `//buck2:buck2` depends on directly.
     async fn deps(
         &self,
         evaluator: &QueryEvaluator<'_, Env>,
         targets: TargetSet<Env::Target>,
-        depth: Option<u64>,
+        depth: QueryValueDepth,
         captured_expr: Option<CapturedExpr<'_>>,
     ) -> QueryFuncResult<Env> {
         Ok(self
@@ -430,7 +455,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
                 evaluator.env(),
                 evaluator.functions(),
                 &targets,
-                depth.map(|v| v as i32),
+                depth,
                 captured_expr.as_ref(),
             )
             .await?
@@ -564,7 +589,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
         evaluator: &QueryEvaluator<'_, Env>,
         universe: TargetSet<Env::Target>,
         targets: TargetSet<Env::Target>,
-        depth: Option<u64>,
+        depth: QueryValueDepth,
         captured_expr: Option<CapturedExpr<'_>>,
     ) -> QueryFuncResult<Env> {
         Ok(self
@@ -574,7 +599,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
                 evaluator.functions(),
                 &universe,
                 &targets,
-                depth.map(|v| v as i32),
+                depth,
                 captured_expr.as_ref(),
             )
             .await?
@@ -613,6 +638,8 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
 
     /// A filter function that can be used in the query expression of `deps` query function.
     /// Returns the output of deps function for the immediate dependencies of the given targets. Output is equivalent to `deps(<targets>, 1)`.
+    ///
+    /// See `deps()` for more information on how filter expressions work.
     ///
     /// Example:
     /// `buck2 cquery "deps('//foo:bar', 1, first_order_deps())"` is equivalent to `buck2 cquery "deps('//foo:bar', 1)"`
@@ -654,7 +681,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// Example:
     /// `buck2 cquery "deps('//foo:bar', 1, toolchain_deps())"`
     async fn toolchain_deps(&self) -> QueryFuncResult<Env> {
-        Err(QueryError::NotAvailableInContext("configuration_deps"))
+        Err(QueryError::NotAvailableInContext("toolchain_deps"))
     }
     /// Computes the set intersection over the given arguments.
     /// Can be used with the `^` symbol. This operator is commutative.
@@ -792,7 +819,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         targets.attrregexfilter(attr, value)
     }
 
-    pub fn buildfile(&self, targets: &TargetSet<Env::Target>) -> FileSet {
+    pub fn buildfile(&self, targets: &TargetSet<Env::Target>) -> buck2_error::Result<FileSet> {
         targets.buildfile()
     }
 
@@ -818,7 +845,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         env: &Env,
         functions: &dyn QueryFunctions<Env = Env>,
         targets: &TargetSet<Env::Target>,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr<'_>>,
     ) -> buck2_error::Result<TargetSet<Env::Target>> {
         DepsFunction::<Env> {
@@ -875,7 +902,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         functions: &dyn QueryFunctions<Env = Env>,
         universe: &TargetSet<Env::Target>,
         targets: &TargetSet<Env::Target>,
-        depth: Option<i32>,
+        depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr<'_>>,
     ) -> buck2_error::Result<TargetSet<Env::Target>> {
         DepsFunction::<Env> {
@@ -941,11 +968,8 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
     ) -> Result<QueryValue<Env::Target>, QueryError> {
         // Special-case String + String to match buck1 behavior:
         // treat both strings as target literals in a single evaluation.
-        match (&left, &right) {
-            (QueryValue::String(l), QueryValue::String(r)) => {
-                return Ok(QueryValue::TargetSet(env.eval_literals(&[l, r]).await?));
-            }
-            _ => {}
+        if let (QueryValue::String(l), QueryValue::String(r)) = (&left, &right) {
+            return Ok(QueryValue::TargetSet(env.eval_literals(&[l, r]).await?));
         }
 
         self.apply_set_op(

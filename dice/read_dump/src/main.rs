@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use clap::CommandFactory;
 use clap::FromArgMatches;
-use dice::introspection::graph::SerializedGraphNodesForKey;
+use dice::introspection::graph::SerializedGraphNodeForKey;
 
 #[derive(Debug, clap::Parser)]
 #[clap(name = "read_dump", about = "dice dump reader")]
@@ -29,9 +29,10 @@ fn main() -> anyhow::Result<()> {
     let matches = clap.get_matches_from(std::env::args().collect::<Vec<String>>());
     let opt = Opt::from_arg_matches(&matches)?;
 
-    let file = File::open(opt.file)?;
+    let mut file = File::open(opt.file)?;
 
-    let out: Vec<SerializedGraphNodesForKey> = bincode::deserialize_from(&file)?;
+    let out: Vec<SerializedGraphNodeForKey> =
+        bincode::serde::decode_from_std_read(&mut file, bincode::config::legacy())?;
 
     match opt.out {
         Some(path) => {

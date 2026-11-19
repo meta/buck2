@@ -12,11 +12,7 @@ load(":dependencies_test_util.bzl", "rule_list_regex")
 
 _MAX_DEPTH = 2147483647
 
-def _impl_check_mutually_exclusive_dependencies_test(
-        ctx: bxl.Context,
-        mutually_exclusive_group: list[str],
-        target: TargetLabel,
-        target_deps: bool):
+def _impl_check_mutually_exclusive_dependencies_test(ctx: bxl.Context, mutually_exclusive_group: list[str], target: TargetLabel, target_deps: bool):
     """Test that only one dependency from a mutually exclusive group is present.
 
     Verifies that the target's transitive dependencies contain at most one pattern
@@ -36,11 +32,7 @@ def _impl_check_mutually_exclusive_dependencies_test(
     if target_deps:
         cquery_kwargs["filter"] = "target_deps()"
 
-    transitive_deps = cquery.deps(
-        ctx.target_universe(target, modifiers = ctx.modifiers).target_set(),
-        _MAX_DEPTH,
-        **cquery_kwargs
-    )
+    transitive_deps = cquery.deps(ctx.target_universe(target, modifiers = ctx.modifiers).target_set(), _MAX_DEPTH, **cquery_kwargs)
 
     # Find which patterns from the group have matches
     patterns_with_matches = []

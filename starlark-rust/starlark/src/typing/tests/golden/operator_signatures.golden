@@ -1,0 +1,61 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Code:
+def test(x: WithSignatures, i: int, f: float, n: int | float, a, s: str):
+    # The operand matches one signature.
+    one_int = x + i
+    one_float = x + f
+    # The operand matches both.
+    both = x + n
+    unknown = x + a
+    # The operand matches none.
+    none = x + s
+    # The reflected operator, for a left operand whose type does not have the operator.
+    reflected = f * x
+    reflected_none = None * x
+    # The unary operators.
+    unary = -x
+    unary_none = ~x
+
+Error:
+error: Binary operator `+` is not available on the types `with_signatures` and `str`
+  --> filename:10:12
+   |
+10 |     none = x + s
+   |            ^^^^^
+
+Error:
+error: Binary operator `*` is not available on the types `None` and `with_signatures`
+  --> filename:13:22
+   |
+13 |     reflected_none = None * x
+   |                      ^^^^^^^^
+
+Error:
+error: Unary operator `~` is not available on the type `with_signatures`
+  --> filename:16:18
+   |
+16 |     unary_none = ~x
+   |                  ^^
+
+Types:
+one_int: str
+one_float: bool
+both: bool | str
+unknown: bool | str
+none: typing.Never
+reflected: str
+reflected_none: typing.Never
+unary: int
+unary_none: typing.Never
+
+Compiler typechecker (eval):
+error: Binary operator `+` is not available on the types `with_signatures` and `str`
+  --> filename:10:12
+   |
+10 |     none = x + s
+   |            ^^^^^

@@ -1,1 +1,0 @@
-soft_error("starlark_quiet_soft_error", "Blah", quiet = True)

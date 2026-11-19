@@ -1,5 +1,15 @@
 load(":fail_action.bzl", "action_alias", "fail_one", "fail_script", "fail_shared_dep", "fail_two", "fail_two_deps")
-load(":fail_action_with_error_handler.bzl", "error_handler_failed", "error_handler_produced_multiple_categories", "error_handler_wrong_return_type", "fail_error_handler_with_output", "fail_many_with_error_handler", "fail_one_with_error_handler", "fail_one_with_error_handler_no_op")
+load(":fail_action_infra.bzl", "fail_infra")
+load(
+    ":fail_action_with_error_handler.bzl",
+    "error_handler_failed",
+    "error_handler_produced_multiple_categories",
+    "error_handler_wrong_return_type",
+    "fail_error_handler_with_output",
+    "fail_many_with_error_handler",
+    "fail_one_with_error_handler",
+    "fail_one_with_error_handler_no_op",
+)
 
 fail_one(
     name = "fail_one",
@@ -70,4 +80,13 @@ fail_error_handler_with_output(
 fail_error_handler_with_output(
     name = "fail_error_handler_output_not_written",
     src = "fail_compile.py",
+)
+
+fail_one_with_error_handler(
+    name = "fail_large_error",
+    src = "fail_large_error.py",
+)
+
+fail_infra(
+    name = "fail_infra",
 )

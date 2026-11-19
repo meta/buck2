@@ -1,0 +1,19 @@
+load(":util.bzl", "write")
+
+write()
+
+write_package_value("aaa.bbb", "ccc")  # buildifier: disable=positional-args
+
+# Test select() values in package values
+write_package_value(
+    "sel.ector",
+    select({
+        "//config:a": "val_a",
+        "DEFAULT": "default_val",
+    }),
+)  # buildifier: disable=positional-args
+
+write_package_value(
+    "sel.concat",
+    select({"DEFAULT": "x"}) + select({"DEFAULT": "y"}),
+)  # buildifier: disable=positional-args

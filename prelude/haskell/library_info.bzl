@@ -29,7 +29,6 @@ HaskellLibraryInfo = record(
     # Import dirs indexed by profiling enabled/disabled
     import_dirs = dict[bool, Artifact],
     stub_dirs = list[Artifact],
-
     # This field is only used as hidden inputs to compilation, to
     # support Template Haskell which may need access to the libraries
     # at compile time.  The real library flags are propagated up the

@@ -9,6 +9,9 @@
 def _impl(_ctx):
     return [DefaultInfo()]
 
-test_target = rule(impl = _impl, attrs = {
-    "srcs": attrs.list(attrs.source(), default = []),
-})
+test_target = rule(
+    impl = _impl,
+    attrs = {
+        "srcs": attrs.list(attrs.source(), default = []),
+    },
+)

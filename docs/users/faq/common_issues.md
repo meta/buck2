@@ -41,8 +41,8 @@ by running Buck1, which will report cycles properly.
 
 ## How do I get the commands Buck2 executed so I can reproduce them in isolation?
 
-For information, see
-[Finding Commands that Buck2 Ran](../../developers/what-ran.md).
+Run `buck2 log what-ran` after your build to see all the commands that were
+executed.
 
 ## Are multiple concurrent commands supported?
 

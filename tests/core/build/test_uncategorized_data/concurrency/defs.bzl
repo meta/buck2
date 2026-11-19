@@ -9,7 +9,7 @@
 def _test_impl(ctx: AnalysisContext) -> list[Provider]:
     outs = {}
     for i in range(10):
-        o = ctx.actions.declare_output("out/{}".format(i))
+        o = ctx.actions.declare_output("out/{}".format(i), has_content_based_path = False)
         ctx.actions.run(
             ["fbpython", "-c", "import time, sys; time.sleep(2); open(sys.argv[1],'w')", o.as_output()],
             category = "test",
@@ -18,7 +18,7 @@ def _test_impl(ctx: AnalysisContext) -> list[Provider]:
         )
         outs[str(i)] = o
 
-    out = ctx.actions.symlinked_dir("outs", outs)
+    out = ctx.actions.symlinked_dir("outs", outs, has_content_based_path = False)
 
     return [DefaultInfo(out)]
 

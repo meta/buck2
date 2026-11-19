@@ -8,21 +8,20 @@
  * above-listed licenses.
  */
 
-use std::iter;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use buck2_core::bzl::ImportPath;
 use buck2_error::conversion::from_any_with_tag;
+use buck2_hash::BuckFixedInsertionMap;
 use derivative::Derivative;
 use dupe::Dupe;
-use either::Either;
 use starlark::codemap::FileSpan;
 use starlark::environment::FrozenModule;
 use starlark::eval::FileLoader;
-use starlark::values::FrozenValue;
-use starlark::values::structs::FrozenStructRef;
-use starlark_map::ordered_map::OrderedMap;
+use starlark::values::OwnedFrozenRef;
+use starlark::values::ValueOf;
+use starlark::values::structs::Struct;
 
 use crate::paths::module::OwnedStarlarkModulePath;
 use crate::paths::module::StarlarkModulePath;
@@ -34,9 +33,11 @@ enum FileLoaderError {
     NativeMustBeStruct,
 }
 
-#[derive(Default, Clone, Allocative, Debug)]
+#[derive(Default, Clone, Allocative, Debug, pagable::Pagable)]
 pub struct LoadedModules {
-    pub map: OrderedMap<OwnedStarlarkModulePath, LoadedModule>,
+    /// In the order of the file's `load` statements, which `targets --imports` and the `audit`
+    /// commands print.
+    pub map: BuckFixedInsertionMap<OwnedStarlarkModulePath, LoadedModule>,
 }
 
 impl LoadedModules {
@@ -62,18 +63,20 @@ pub struct ModuleDeps(pub Vec<LoadedModule>);
 
 impl ModuleDeps {
     pub fn get_loaded_modules(&self) -> LoadedModules {
-        let mut map = OrderedMap::with_capacity(self.0.len());
-        for dep in &*self.0 {
-            map.insert(dep.path().to_owned(), dep.dupe());
+        LoadedModules {
+            map: self
+                .0
+                .iter()
+                .map(|dep| (dep.path().to_owned(), dep.dupe()))
+                .collect(),
         }
-        LoadedModules { map }
     }
 }
 
-#[derive(Clone, Dupe, Allocative, Debug)]
+#[derive(Clone, Dupe, Allocative, Debug, pagable::Pagable)]
 pub struct LoadedModule(Arc<LoadedModuleData>);
 
-#[derive(Derivative, Allocative)]
+#[derive(Derivative, Allocative, pagable::Pagable)]
 #[derivative(Debug)]
 struct LoadedModuleData {
     path: OwnedStarlarkModulePath,
@@ -112,25 +115,27 @@ impl LoadedModule {
         &self.0.env
     }
 
-    /// Returned `FrozenValue` is owned by `self.0.env`.
-    pub fn extra_globals_from_prelude_for_buck_files(
+    /// The prelude's `native` struct, whose members are exposed as extra globals when evaluating
+    /// `BUCK` files.
+    ///
+    /// The result borrows this module; use [`OwnedFrozenRef::add_to_heap`] to read the members on
+    /// another heap.
+    pub fn native_globals_for_buck_files(
         &self,
-    ) -> buck2_error::Result<impl Iterator<Item = (&str, FrozenValue)> + '_> {
-        if let Some(native) = self
+    ) -> buck2_error::Result<Option<OwnedFrozenRef<'_, ValueOf<'static, Struct<'static>>>>> {
+        let Some(native) = self
             .0
             .env
-            .get_option("native")
+            .get_option_ref("native")
             .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?
-        {
-            unsafe {
-                match FrozenStructRef::<'static>::from_value(native.unchecked_frozen_value()) {
-                    Some(native) => Ok(Either::Left(native.iter().map(|(n, v)| (n.as_str(), v)))),
-                    None => Err(FileLoaderError::NativeMustBeStruct.into()),
-                }
-            }
-        } else {
-            Ok(Either::Right(iter::empty()))
-        }
+        else {
+            return Ok(None);
+        };
+        let native = native.try_map(|v| {
+            ValueOf::new(v)
+                .ok_or_else(|| buck2_error::Error::from(FileLoaderError::NativeMustBeStruct))
+        })?;
+        Ok(Some(native))
     }
 }
 
@@ -192,6 +197,7 @@ mod tests {
     use starlark::environment::Module;
 
     use super::*;
+    use crate::testing::Buck2TestHeapName;
 
     struct TestLoadResolver {}
 
@@ -221,31 +227,40 @@ mod tests {
     }
 
     fn env(name: StarlarkModulePath) -> FrozenModule {
-        let m = Module::new();
-        m.set("name", m.heap().alloc(name.to_string()));
-        m.freeze().unwrap()
+        // Test
+        // ast-grep-ignore: rust/buck2-no-starlark-module
+        Module::with_temp_heap(|m| {
+            m.set("name", m.heap().alloc(name.to_string()).to_value());
+            m.freeze_named(Buck2TestHeapName::frozen_heap_name())
+        })
+        .unwrap()
     }
 
-    fn loaded_modules() -> LoadedModules {
-        let mut loaded_modules = LoadedModules::default();
+    fn loaded_modules_for(paths: &[&str]) -> LoadedModules {
         let resolver = resolver();
+        LoadedModules {
+            map: paths
+                .iter()
+                .map(|path| {
+                    let import_path = resolver.resolve_load(path, None).unwrap();
+                    let module = LoadedModule::new(
+                        import_path.clone(),
+                        LoadedModules::default(),
+                        env(import_path.borrow()),
+                    );
+                    (import_path, module)
+                })
+                .collect(),
+        }
+    }
 
-        let mut insert = |path| {
-            let import_path = resolver.resolve_load(path, None).unwrap();
-            let module = LoadedModule::new(
-                import_path.clone(),
-                LoadedModules::default(),
-                env(import_path.borrow()),
-            );
-            loaded_modules.map.insert(import_path, module);
-        };
-
-        // Insert the same things that the TestLoadResolver supports.
-        insert("//some/package:import.bzl");
-        insert("cell1//next/package:import.bzl");
-        insert("alias2//last/package:import.bzl");
-
-        loaded_modules
+    /// The same things that the `TestLoadResolver` supports.
+    fn loaded_modules() -> LoadedModules {
+        loaded_modules_for(&[
+            "//some/package:import.bzl",
+            "cell1//next/package:import.bzl",
+            "alias2//last/package:import.bzl",
+        ])
     }
 
     #[test]
@@ -254,8 +269,12 @@ mod tests {
         let loader = InterpreterFileLoader::new(loaded_modules(), resolver());
         match loader.load(&path) {
             Ok(_) => panic!("Expected load failure for {path}"),
-            Err(_) => {
-                // TODO: verify the error is correct
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains(&path),
+                    "Error should reference the failed path: {msg}"
+                );
             }
         }
         Ok(())
@@ -267,13 +286,24 @@ mod tests {
         let resolver = resolver();
         let id = resolver.resolve_load(&path, None)?;
 
-        let mut loaded_modules = loaded_modules();
-        loaded_modules.map.remove(&id);
+        let loaded_modules = loaded_modules_for(&[
+            "//some/package:import.bzl",
+            "alias2//last/package:import.bzl",
+        ]);
         let loader = InterpreterFileLoader::new(loaded_modules, resolver);
         match loader.load(&path) {
             Ok(_) => panic!("Expected load failure for {path}"),
-            Err(_) => {
-                // TODO: verify the error is correct
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("Should have had an env"),
+                    "Error should indicate missing module: {msg}"
+                );
+                let id_str = id.to_string();
+                assert!(
+                    msg.contains(&id_str),
+                    "Error should reference the missing module {id_str}: {msg}"
+                );
             }
         }
         Ok(())
@@ -289,7 +319,7 @@ mod tests {
         let loaded = loader.load(&path)?;
 
         let v = loaded.get("name").unwrap();
-        assert_eq!(v.value().unpack_str(), Some(id.as_str()));
+        assert_eq!(v.as_ref().value().unpack_str(), Some(id.as_str()));
 
         Ok(())
     }
@@ -305,7 +335,10 @@ mod tests {
         let found = loader.find_module(borrow)?;
 
         let v = found.get("name").unwrap();
-        assert_eq!(v.value().unpack_str(), Some(borrow.to_string().as_str()));
+        assert_eq!(
+            v.as_ref().value().unpack_str(),
+            Some(borrow.to_string().as_str())
+        );
 
         Ok(())
     }

@@ -14,21 +14,85 @@ buck_java_library(
         "TestResult.java",
         "TestXmlEscaper.java",
     ],
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
+    ],
     # @oss-disable[end= ]: source = "8",
     # @oss-disable[end= ]: target = "8",
     source = "11", # @oss-enable
     target = "11", # @oss-enable
     tests = [
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:junit_runner_test",
         "prelude//toolchains/android/test/com/facebook/buck/testrunner:testrunner",
     ],
     visibility = [
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:junit_runner_test",
         "prelude//toolchains/android/test/com/facebook/buck/testrunner:testrunner",
     ],
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/test/result/type:type",
         "prelude//toolchains/android/src/com/facebook/buck/test/selectors:selectors",
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:platform",
-        "prelude//toolchains/android/third-party:jsr305",
+    ],
+)
+
+buck_kotlin_library(
+    name = "timeout",
+    srcs = [
+        "ThreadDumpUtils.kt",
+        "TpxTimeoutBufferManager.kt",
+    ],
+    # @oss-disable[end= ]: source = "8",
+    # @oss-disable[end= ]: target = "8",
+    source = "11", # @oss-enable
+    target = "11", # @oss-enable
+    tests = [
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:tpx_timeout_buffer_manager_test",
+    ],
+    visibility = [
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:tpx_timeout_buffer_manager_test",
+    ],
+    deps = [
+        "prelude//toolchains/android/src/com/facebook/buck/testresultsoutput:testresultsoutput",
+    ],
+)
+
+fb_native.kotlin_library(
+    name = "per_test_coverage_base",
+    srcs = [
+        "BasePerTestCoverageRunListener.kt",
+        "PerTestCoverageExtension.kt",
+        "PerTestCoverageExtensionManager.kt",
+    ],
+    # Uses fb_native.kotlin_library (not buck_kotlin_library) with kotlin-stdlib in provided_deps:
+    # both consumers (prelude :junit, fbandroid :instrumentation) already package kotlin-stdlib at
+    # different Buck target paths, and shipping ours too breaks Android APK D8 dexing with
+    # duplicate types. Keep the bootstrap Kotlin toolchain in sync with buck_kotlin_library so tests
+    # that override the Java compiler mode don't analyze this target with mismatched Kotlin/Java
+    # compiler modes. The source also hand-rolls JSON instead of using jackson-core for the same
+    # reason.
+    _kotlin_toolchain = "toolchains//:kotlin_bootstrap",
+    provided_deps = [
+        "prelude//toolchains/android/third-party:kotlin-stdlib",
+    ],
+    # @oss-disable[end= ]: source = "8",
+    # @oss-disable[end= ]: target = "8",
+    source = "11", # @oss-enable
+    target = "11", # @oss-enable
+    tests = [
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:per_test_coverage_base_test",
+    ],
+    visibility = [
+        "fbsource//fbandroid/java/com/facebook/testing/instrumentation/...",
+        "fbsource//fbandroid/java/com/facebook/testing/robolectric/resourceusage:resourceusage",
+        "fbsource//fbandroid/javatests/com/facebook/testing/instrumentation/...",
+        "prelude//toolchains/android/src/com/facebook/buck/testrunner:junit",
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:per_test_coverage_base_test",
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:per_test_coverage_listener_test",
+    ],
+    deps = [
+        "prelude//toolchains/android/third-party:junit",
     ],
 )
 
@@ -45,12 +109,17 @@ buck_kotlin_library(
         "JulLogFormatter.java",
         "JupiterMain.java",
         "JupiterRunner.java",
+        "PerTestJUnitCoverageRunListener.kt",
         "RobolectricTimeoutEnforcingRunListener.kt",
         "SameThreadFailOnTimeout.java",
         "SkipTestCondition.java",
         "StandardOutputRecorder.java",
         "TestRecorder.java",
         "TpxStandardOutputTestListener.java",
+    ],
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
     resources = glob(["META-INF/**/*"]),
     resources_root = ".",
@@ -59,30 +128,39 @@ buck_kotlin_library(
     source = "11", # @oss-enable
     target = "11", # @oss-enable
     tests = [
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:junit_runner_test",
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:per_test_coverage_listener_test",
         "prelude//toolchains/android/test/com/facebook/buck/testrunner:testrunner",
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:tpx_timeout_buffer_manager_test",
     ],
     visibility = [
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:junit_runner_test",
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:per_test_coverage_listener_test",
         "prelude//toolchains/android/test/com/facebook/buck/testrunner:testrunner",
+        "prelude//toolchains/android/test/com/facebook/buck/testrunner:tpx_timeout_buffer_manager_test",
     ],
     # IMPORTANT! This library limits itself to types that are available in both the JDK and Android
     # Java API. The objective is to limit the set of files added to the ClassLoader that runs the
     # test, as not to interfere with the results of the test.
     deps = [
         ":base",
+        ":per_test_coverage_base",
+        ":timeout",
         # This is loaded by reflection. Joy.
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/runner:runner",
         "prelude//toolchains/android/src/com/facebook/buck/core/util/log/appendablelogrecord:appendablelogrecord",
         "prelude//toolchains/android/src/com/facebook/buck/test/result/type:type",
         "prelude//toolchains/android/src/com/facebook/buck/test/selectors:selectors",
         "prelude//toolchains/android/src/com/facebook/buck/testresultsoutput:testresultsoutput",
-        "prelude//toolchains/android/third-party:jsr305",
+        "prelude//toolchains/android/third-party:jackson-core",
         "prelude//toolchains/android/third-party:junit",
         "prelude//toolchains/android/third-party:junit-jupiter-engine",
         "prelude//toolchains/android/third-party:junit-platform-launcher",
+        "prelude//toolchains/android/third-party:kotlin-stdlib",
     ],
 )
 
-buck_java_library(
+buck_kotlin_library(
     name = "instrumentation",
     srcs = [
         "BuckXmlTestRunListener.java",
@@ -91,15 +169,20 @@ buck_java_library(
         "DeviceRunner.java",
         "InstrumentationMain.java",
         "InstrumentationTestRunner.java",
+        "InstrumentationTimeoutEnforcingRunListener.kt",
         "InstrumentationTpxStandardOutputTestListener.java",
         "RunShellCommand.java",
         "TpxStandardOutputTestListener.java",
         "reportlayer/LogExtractorReportLayer.java",
+        "reportlayer/PerfettoReportLayer.java",
         "reportlayer/ReportLayer.java",
         "reportlayer/TombstonesReportLayer.java",
         "reportlayer/VideoRecordingReportLayer.java",
     ],
-    required_for_source_only_abi = True,
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
+    ],
     # @oss-disable[end= ]: source = "8",
     # @oss-disable[end= ]: target = "8",
     source = "11", # @oss-enable
@@ -117,6 +200,7 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/testresultsoutput:testresultsoutput",
         "prelude//toolchains/android/src/com/facebook/buck/util/escaper:bash",
         "prelude//toolchains/android/third-party:ddmlib",
+        ":timeout",
     ],
 )
 
@@ -127,16 +211,18 @@ buck_java_library(
         "InstrumentationTestRunnerForClout.java",
         "RunShellCommand.java",
     ],
-    required_for_source_only_abi = True,
-    # @oss-disable[end= ]: source = "8",
-    # @oss-disable[end= ]: target = "8",
     source = "11", # @oss-enable
     target = "11", # @oss-enable
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
+    ],
+    # @oss-disable[end= ]: source = "8",
+    # @oss-disable[end= ]: target = "8",
     visibility = [
         "prelude//toolchains/android/test/com/facebook/buck/testrunner:testrunner",
     ],
     deps = [
-        "prelude//toolchains/android/third-party:ddmlib",
         ":instrumentation",
     ],
 )
@@ -147,17 +233,19 @@ buck_java_library(
         "TestNGMain.java",
         "TestNGRunner.java",
     ],
-    # @oss-disable[end= ]: source = "8",
-    # @oss-disable[end= ]: target = "8",
     source = "11", # @oss-enable
     target = "11", # @oss-enable
-    visibility = [
+    provided_deps = [
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:jspecify",
     ],
+    # @oss-disable[end= ]: source = "8",
+    # @oss-disable[end= ]: target = "8",
+    visibility = [],
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/test/result/type:type",
         "prelude//toolchains/android/src/com/facebook/buck/test/selectors:selectors",
         "prelude//toolchains/android/third-party:guice",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:testng",
         ":base",
     ],
@@ -200,7 +288,7 @@ fb_native.zip_file(
     name = "testrunner-bin-fixed",
     out = "testrunner-bin-fixed.jar",
     entries_to_exclude = [
-        "^(?!com/facebook/buck/|META-INF/services/org.junit.jupiter|com/fasterxml/jackson/core).*",
+        "^(?!com/facebook/buck/|META-INF/services/org.junit.jupiter|com/fasterxml/jackson/core|kotlin/).*",
     ],
     visibility = [
         "PUBLIC",

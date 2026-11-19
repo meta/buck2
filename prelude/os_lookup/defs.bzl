@@ -6,25 +6,22 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//decls:core_rules.bzl", "PlatformExePlatform", "TargetCpuType")
+load("@prelude//decls:common.bzl", "PlatformExePlatform", "TargetCpuType")
 
-Os = enum(
-    "fat_mac_linux",
-    "freebsd",
-    "unknown",
-    *PlatformExePlatform
-)
+Os = enum("fat_mac_linux", "fat_linux", "freebsd", "unknown", *PlatformExePlatform)
 
 ScriptLanguage = enum(
     "sh",  # Unix shell script
     "bat",  # Windows batch file
 )
 
-OsLookup = provider(fields = {
-    "cpu": str | None,
-    "os": Os,
-    "script": ScriptLanguage,
-})
+OsLookup = provider(
+    fields = {
+        "cpu": str | None,
+        "os": Os,
+        "script": ScriptLanguage,
+    }
+)
 
 def _os_lookup_impl(ctx: AnalysisContext):
     return [
@@ -36,8 +33,11 @@ def _os_lookup_impl(ctx: AnalysisContext):
         ),
     ]
 
-os_lookup = rule(impl = _os_lookup_impl, attrs = {
-    "cpu": attrs.option(attrs.enum(TargetCpuType), default = None),
-    "os": attrs.enum(Os.values()),
-    "script": attrs.enum(ScriptLanguage.values()),
-})
+os_lookup = rule(
+    impl = _os_lookup_impl,
+    attrs = {
+        "cpu": attrs.option(attrs.enum(TargetCpuType), default = None),
+        "os": attrs.enum(Os.values()),
+        "script": attrs.enum(ScriptLanguage.values()),
+    },
+)

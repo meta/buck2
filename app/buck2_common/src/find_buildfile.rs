@@ -10,18 +10,17 @@
 
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
+use buck2_util::arc_str::PackedStringSlice;
 
-use crate::file_ops::metadata::SimpleDirEntry;
+use crate::file_ops::metadata::FileType;
 
 pub fn find_buildfile<'a>(
     buildfile_candidates: &'a [FileNameBuf],
-    dir_listing: &[SimpleDirEntry],
+    dir_listing: &PackedStringSlice<FileName, FileType>,
 ) -> Option<&'a FileName> {
     for candidate in buildfile_candidates {
-        for entry in dir_listing {
-            if entry.file_name == *candidate {
-                return Some(candidate.as_ref());
-            }
+        if dir_listing.contains(candidate) {
+            return Some(candidate.as_ref());
         }
     }
     None

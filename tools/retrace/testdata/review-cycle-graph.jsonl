@@ -1,0 +1,3 @@
+{"graph":{"enc":2,"run":"trace-run","coverage":{"nodes":2,"edges":2}}}
+{"t":"a","d":["b"]}
+{"t":"b","d":["a"]}

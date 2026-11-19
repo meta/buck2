@@ -19,8 +19,8 @@ use std::str::FromStr;
 
 use allocative::Allocative;
 use derive_more::Display;
+use pagable::Pagable;
 use ref_cast::RefCast;
-use relative_path::RelativePath;
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::Error;
@@ -29,6 +29,8 @@ use crate::paths::abs_path::AbsPath;
 use crate::paths::abs_path::AbsPathBuf;
 use crate::paths::forward_rel_path::ForwardRelativePath;
 use crate::paths::forward_rel_path::ForwardRelativePathNormalizer;
+use crate::paths::relative_path::Component;
+use crate::paths::relative_path::RelativePath;
 
 /// An absolute path. This path is not platform agnostic.
 ///
@@ -46,7 +48,7 @@ pub struct AbsNormPath(AbsPath);
 
 /// The owned version of [`AbsNormPath`].
 #[derive(
-    Clone, Display, Debug, Hash, PartialEq, Eq, Ord, PartialOrd, Allocative
+    Clone, Display, Debug, Hash, PartialEq, Eq, Ord, PartialOrd, Allocative, Pagable
 )]
 #[display("{}", _0.display())]
 pub struct AbsNormPathBuf(AbsPathBuf);
@@ -405,9 +407,9 @@ impl AbsNormPath {
             .0
             .components()
             .chain(path.as_ref().components().map(|c| match c {
-                relative_path::Component::Normal(s) => std::path::Component::Normal(OsStr::new(s)),
-                relative_path::Component::CurDir => std::path::Component::CurDir,
-                relative_path::Component::ParentDir => std::path::Component::ParentDir,
+                Component::Normal(s) => std::path::Component::Normal(OsStr::new(s.as_str())),
+                Component::CurDir => std::path::Component::CurDir,
+                Component::ParentDir => std::path::Component::ParentDir,
             }))
         {
             match c {
@@ -648,79 +650,6 @@ impl AbsNormPathBuf {
         }
     }
 
-    /// Pushes a `RelativePath` to the existing buffer, normalizing it.
-    /// Note that this does not visit the filesystem to resolve `..`s. Instead, it cancels out the
-    /// components directly, similar to `join_normalized`.
-    /// ```
-    /// use buck2_fs::paths::RelativePath;
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    ///
-    /// let prefix = if cfg!(windows) { "C:" } else { "" };
-    ///
-    /// let mut path = AbsNormPathBuf::try_from(format!("{prefix}/foo")).unwrap();
-    /// path.push_normalized(RelativePath::new("bar"))?;
-    ///
-    /// assert_eq!(
-    ///     AbsNormPathBuf::try_from(format!("{prefix}/foo/bar")).unwrap(),
-    ///     path
-    /// );
-    ///
-    /// path.push_normalized(RelativePath::new("more/file.rs"))?;
-    /// assert_eq!(
-    ///     AbsNormPathBuf::try_from(format!("{prefix}/foo/bar/more/file.rs")).unwrap(),
-    ///     path
-    /// );
-    ///
-    /// path.push_normalized(RelativePath::new("../other.rs"))?;
-    /// assert_eq!(
-    ///     AbsNormPathBuf::try_from(format!("{prefix}/foo/bar/more/other.rs")).unwrap(),
-    ///     path
-    /// );
-    ///
-    /// path.push_normalized(RelativePath::new(".."))?;
-    /// assert_eq!(
-    ///     AbsNormPathBuf::try_from(format!("{prefix}/foo/bar/more")).unwrap(),
-    ///     path
-    /// );
-    ///
-    /// path.push_normalized(RelativePath::new("../.."))?;
-    /// assert_eq!(
-    ///     AbsNormPathBuf::try_from(format!("{prefix}/foo")).unwrap(),
-    ///     path
-    /// );
-    ///
-    /// path.push_normalized(RelativePath::new(".."))?;
-    /// assert_eq!(
-    ///     AbsNormPathBuf::try_from(format!("{prefix}/")).unwrap(),
-    ///     path
-    /// );
-    ///
-    /// assert!(path.push_normalized(RelativePath::new("..")).is_err());
-    ///
-    /// # buck2_error::Ok(())
-    /// ```
-    pub fn push_normalized<P: AsRef<RelativePath>>(&mut self, path: P) -> buck2_error::Result<()> {
-        for c in path.as_ref().components() {
-            match c {
-                relative_path::Component::Normal(s) => {
-                    self.0.push(s);
-                }
-                relative_path::Component::CurDir => {}
-                relative_path::Component::ParentDir => {
-                    if !self.0.pop() {
-                        return Err(PathNormalizationError::OutOfBounds(
-                            self.as_os_str().into(),
-                            path.as_ref().as_str().into(),
-                        )
-                        .into());
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     pub fn pop(&mut self) -> bool {
         self.0.pop()
     }
@@ -928,9 +857,10 @@ enum PathNormalizationError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::path::Path;
     use std::path::PathBuf;
+
+    use buck2_hash::BuckMutMap;
 
     use crate::paths::abs_norm_path::AbsNormPath;
     use crate::paths::abs_norm_path::AbsNormPathBuf;
@@ -951,7 +881,7 @@ mod tests {
 
     #[test]
     fn abs_paths_work_in_maps() -> buck2_error::Result<()> {
-        let mut map = HashMap::new();
+        let mut map = BuckMutMap::default();
         let foo_string = make_absolute("/foo");
         let bar_string = make_absolute("/bar");
 

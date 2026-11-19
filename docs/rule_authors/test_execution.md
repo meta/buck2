@@ -224,6 +224,12 @@ ExternalRunnerTestInfo(
 )
 ```
 
+Instead of `default_executor`, a rule with
+[execution groups](execution_groups.md) can pass `exec_group` to
+`ExternalRunnerTestInfo` or `InternalRunnerTestInfo` to run the test on the
+executor of that group. If both are set, `default_executor` wins. An executor
+override that the test runner picks still takes precedence over either.
+
 ## Working Directory
 
 <OssOnly>
@@ -236,3 +242,72 @@ As noted above, tests run from the cell root unless `run_from_project_root` is s
 
 To produce paths relative to the cell root for use by tests, use
 `relative_to(ctx.label.cell_root)` on `cmd_args`.
+
+<FbInternalOnly>
+
+## Caching Test Listings
+
+Running tests typically starts with a **listing** step: the test binary is
+invoked to discover what test cases exist. For large test suites this can be
+time-consuming. Buck2 caches listing results at two levels so that repeated test
+runs can skip the listing step entirely.
+
+### How it works
+
+When the test runner (Tpx) requests a listing execution, it marks the listing as
+**cacheable** unless the test target opts out. Cacheable listings benefit from
+two layers of caching:
+
+1. **DICE (in-memory) caching** — Within a single Buck2 daemon session,
+   cacheable listing results are stored in the DICE computation graph. If you run
+   `buck2 test` on the same target again without changes, the listing is skipped
+   entirely (it won't appear in `buck2 log what-ran` output).
+
+2. **Remote Execution action cache** — Listing results are also stored in the RE
+   action cache. This means caching survives daemon restarts: after a `buck2
+   kill`, the next test run can fetch the listing result from the remote cache
+   instead of re-executing the test binary. This is especially effective on CI,
+   where many tests are re-run frequently without changes.
+
+Only **successful** listings (exit code 0) are cached. Failed listings are
+always re-executed so that transient failures don't get stuck in the cache.
+
+### Local listing cache uploads
+
+When tests run locally (not on RE), listing results can still be uploaded to the
+remote action cache for other builds to benefit from. This is controlled by the
+`test.allow_cache_uploads` buckconfig:
+
+```ini
+[test]
+allow_cache_uploads = true
+```
+
+### Opting out of listing caching
+
+If a test target produces non-deterministic listings (for example, tests that are
+dynamically generated at listing time), caching would return stale results. To
+opt out, add the `tpx:listing_uncacheable` label to the target's
+`ExternalRunnerTestInfo`:
+
+```python
+ExternalRunnerTestInfo(
+    command = ["my_test_binary"],
+    type = "my_test_type",
+    labels = ["tpx:listing_uncacheable"],
+)
+```
+
+When this label is present, the listing is executed every time and results are
+never uploaded to the action cache.
+
+### Configuration
+
+The following buckconfigs affect listing caching behavior:
+
+| Buckconfig | Effect |
+|---|---|
+| `test.remote_cache_enabled` | Controls whether the RE action cache is checked for listing results. |
+| `test.allow_cache_uploads` | Controls whether locally-executed listing results are uploaded to the RE action cache. |
+
+</FbInternalOnly>

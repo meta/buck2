@@ -14,9 +14,11 @@ import com.facebook.buck.cd.model.java.OutputPathsValue;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.java.CompilerOutputPaths;
 import com.facebook.buck.jvm.java.CompilerOutputPathsValue;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Optional;
 
 /** {@link CompilerOutputPathsValue} to protobuf serializer */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CompilerOutputPathsValueSerializer {
 
   private CompilerOutputPathsValueSerializer() {}

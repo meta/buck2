@@ -12,5 +12,5 @@ runs:
     run: |-
       cd examples/persistent_worker
       export PATH="$RUNNER_TEMP/artifacts:$PATH"
-      ./test.sh
+      bash ../../.github/scripts/report_failure.sh examples/persistent_worker ./test.sh
     shell: bash

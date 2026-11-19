@@ -13,10 +13,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use buck2_certs::certs::find_internal_cert;
+#[cfg(fbcode_build)]
+use buck2_certs::certs::set_internal_and_system_roots;
 use buck2_certs::certs::supports_vpnless;
 use buck2_certs::certs::tls_config_with_single_cert;
 use buck2_certs::certs::tls_config_with_system_roots;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+#[cfg(fbcode_build)]
+use http::uri::Scheme;
 use hyper::Uri;
 use hyper_http_proxy::Proxy;
 use hyper_http_proxy::ProxyConnector;
@@ -33,6 +37,7 @@ use tower_service::Service as TowerService;
 
 use super::HttpClient;
 use super::RequestClient;
+use crate::client::dns::DnsResolver;
 use crate::proxy;
 use crate::stats::HttpNetworkStats;
 use crate::x2p;
@@ -65,6 +70,7 @@ pub struct HttpClientBuilder {
     proxies: Vec<Proxy>,
     max_redirects: Option<usize>,
     supports_vpnless: bool,
+    absolute_dns_names: bool,
     http2: bool,
     timeout_config: Option<TimeoutConfig>,
     max_concurrent_requests: Option<usize>,
@@ -84,7 +90,7 @@ impl HttpClientBuilder {
         let mut builder = Self::https_with_system_roots().await?;
         if supports_vpnless() {
             tracing::debug!("Using vpnless client");
-            let proxy = x2p::find_proxy()?.buck_error_context("Expected unix domain socket or http proxy port for x2p client but did not find either")?;
+            let proxy = x2p::find_proxy()?.internal_error("Expected unix domain socket or http proxy port for x2p client but did not find either")?;
             builder.with_x2p_proxy(proxy);
         } else if let Some(cert_path) = find_internal_cert() {
             tracing::debug!("Using internal https client");
@@ -104,6 +110,7 @@ impl HttpClientBuilder {
             proxies: Vec::new(),
             max_redirects: None,
             supports_vpnless: false,
+            absolute_dns_names: false,
             http2: true,
             timeout_config: None,
             max_concurrent_requests: None,
@@ -113,6 +120,28 @@ impl HttpClientBuilder {
     pub fn with_tls_config(&mut self, tls_config: ClientConfig) -> &mut Self {
         self.tls_config = tls_config;
         self
+    }
+
+    /// Configure environment proxies only for allowed destination hosts, trusting
+    /// internal and native system roots when an environment proxy is added.
+    #[cfg(fbcode_build)]
+    pub async fn with_internal_proxy_from_env(
+        &mut self,
+        allowlist: &proxy::ProxyHostAllowlist,
+    ) -> buck2_error::Result<&mut Self> {
+        if allowlist.is_empty() {
+            return Ok(self);
+        }
+        let previous_proxy_count = self.proxies.len();
+        for (name, scheme) in [("HTTPS_PROXY", Scheme::HTTPS), ("HTTP_PROXY", Scheme::HTTP)] {
+            if let Some(proxy) = proxy::proxy_from_env(name, scheme, Some(allowlist.clone()))? {
+                self.with_proxy(proxy);
+            }
+        }
+        if self.proxies.len() > previous_proxy_count {
+            set_internal_and_system_roots(&mut self.tls_config).await?;
+        }
+        Ok(self)
     }
 
     pub async fn with_client_auth_cert<P: AsRef<Path>>(
@@ -208,6 +237,13 @@ impl HttpClientBuilder {
         self
     }
 
+    /// Resolve local DNS lookups as absolute names without changing HTTP or TLS hostnames.
+    /// Destination lookup through a proxy remains the proxy's responsibility.
+    pub fn with_absolute_dns_names(&mut self) -> &mut Self {
+        self.absolute_dns_names = true;
+        self
+    }
+
     pub fn with_http2(&mut self, http2: bool) -> &mut Self {
         self.http2 = http2;
         self
@@ -229,48 +265,32 @@ impl HttpClientBuilder {
         match (self.proxies.as_slice(), &self.timeout_config) {
             // Construct x2p unix socket client.
             // Note: This ignores (and does not require) the TLS config.
-            #[cfg(unix)]
-            (proxies @ [_, ..], Some(timeout_config))
-                if let Some(unix_socket) = find_unix_proxy(proxies) =>
-            {
-                let timeout_connector = timeout_config.to_connector(hyperlocal::UnixConnector);
-                let proxy_connector = build_proxy_connector(
-                    std::slice::from_ref(unix_socket),
-                    timeout_connector,
-                    None,
-                );
-                Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector))
-            }
-            #[cfg(unix)]
-            (proxies @ [_, ..], None) if let Some(unix_socket) = find_unix_proxy(proxies) => {
-                let proxy_connector = build_proxy_connector(
-                    std::slice::from_ref(unix_socket),
-                    hyperlocal::UnixConnector,
-                    None,
-                );
-                Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector))
-            }
-
-            // Construct x2p http proxy client.
-            (proxies @ [_, ..], Some(timeout_config)) if self.supports_vpnless => {
-                let mut http_connector = HttpConnector::new();
-                // When talking to local x2pagent proxy, only http is supported.
-                http_connector.enforce_http(true);
-                let timeout_connector = timeout_config.to_connector(http_connector);
-                let proxy_connector = build_proxy_connector(proxies, timeout_connector, None);
-                Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector))
-            }
-            (proxies @ [_, ..], None) if self.supports_vpnless => {
-                let mut http_connector = HttpConnector::new();
-                // When talking to local x2pagent proxy, only http is supported.
-                http_connector.enforce_http(true);
-                let proxy_connector = build_proxy_connector(proxies, http_connector, None);
-                Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector))
-            }
-
-            // Proxied http client with TLS.
             (proxies @ [_, ..], Some(timeout_config)) => {
-                let https_connector = build_https_connector(self.tls_config.clone(), self.http2);
+                #[cfg(unix)]
+                if let Some(unix_socket) = find_unix_proxy(proxies) {
+                    let timeout_connector = timeout_config.to_connector(hyperlocal::UnixConnector);
+                    let proxy_connector = build_proxy_connector(
+                        std::slice::from_ref(unix_socket),
+                        timeout_connector,
+                        None,
+                    );
+                    return Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector));
+                }
+                if self.supports_vpnless {
+                    let mut http_connector = HttpConnector::new();
+                    // When talking to local x2pagent proxy, only http is supported.
+                    http_connector.enforce_http(true);
+                    let timeout_connector = timeout_config.to_connector(http_connector);
+                    let proxy_connector = build_proxy_connector(proxies, timeout_connector, None);
+                    return Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector));
+                }
+
+                // Proxied http client with TLS.
+                let https_connector = build_https_connector(
+                    self.tls_config.clone(),
+                    self.http2,
+                    self.absolute_dns_names,
+                );
                 let timeout_connector = timeout_config.to_connector(https_connector);
                 // Re-use TLS config from https connection for communication with proxies.
                 let proxy_connector = build_proxy_connector(
@@ -281,7 +301,28 @@ impl HttpClientBuilder {
                 Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector))
             }
             (proxies @ [_, ..], None) => {
-                let https_connector = build_https_connector(self.tls_config.clone(), self.http2);
+                #[cfg(unix)]
+                if let Some(unix_socket) = find_unix_proxy(proxies) {
+                    let proxy_connector = build_proxy_connector(
+                        std::slice::from_ref(unix_socket),
+                        hyperlocal::UnixConnector,
+                        None,
+                    );
+                    return Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector));
+                }
+                if self.supports_vpnless {
+                    let mut http_connector = HttpConnector::new();
+                    // When talking to local x2pagent proxy, only http is supported.
+                    http_connector.enforce_http(true);
+                    let proxy_connector = build_proxy_connector(proxies, http_connector, None);
+                    return Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector));
+                }
+
+                let https_connector = build_https_connector(
+                    self.tls_config.clone(),
+                    self.http2,
+                    self.absolute_dns_names,
+                );
                 let proxy_connector =
                     build_proxy_connector(proxies, https_connector, Some(self.tls_config.clone()));
                 Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector))
@@ -289,12 +330,20 @@ impl HttpClientBuilder {
 
             // Client with TLS only.
             ([], Some(timeout_config)) => {
-                let https_connector = build_https_connector(self.tls_config.clone(), self.http2);
+                let https_connector = build_https_connector(
+                    self.tls_config.clone(),
+                    self.http2,
+                    self.absolute_dns_names,
+                );
                 let timeout_connector = timeout_config.to_connector(https_connector);
                 Arc::new(Client::builder(TokioExecutor::new()).build(timeout_connector))
             }
             ([], None) => {
-                let https_connector = build_https_connector(self.tls_config.clone(), self.http2);
+                let https_connector = build_https_connector(
+                    self.tls_config.clone(),
+                    self.http2,
+                    self.absolute_dns_names,
+                );
                 Arc::new(Client::builder(TokioExecutor::new()).build(https_connector))
             }
         }
@@ -314,16 +363,22 @@ impl HttpClientBuilder {
     }
 }
 
-fn build_https_connector(tls_config: ClientConfig, http2: bool) -> HttpsConnector<HttpConnector> {
+fn build_https_connector(
+    tls_config: ClientConfig,
+    http2: bool,
+    absolute_dns_names: bool,
+) -> HttpsConnector<HttpConnector<DnsResolver>> {
+    let mut http_connector = HttpConnector::new_with_resolver(DnsResolver::new(absolute_dns_names));
+    http_connector.enforce_http(false);
     let builder = HttpsConnectorBuilder::new()
         .with_tls_config(tls_config)
         .https_or_http()
         .enable_http1();
 
     if http2 {
-        builder.enable_http2().build()
+        builder.enable_http2().wrap_connector(http_connector)
     } else {
-        builder.build()
+        builder.wrap_connector(http_connector)
     }
 }
 

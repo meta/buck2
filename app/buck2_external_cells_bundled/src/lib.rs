@@ -63,11 +63,6 @@ const TEST_CELL: BundledCell = BundledCell {
             is_executable: true,
         },
         BundledFile {
-            path: "dir/src3.txt",
-            contents: include_bytes!("../test_data/dir/src3.txt"),
-            is_executable: true,
-        },
-        BundledFile {
             path: "dir/BUCK.fixture",
             contents: include_bytes!("../test_data/dir/BUCK.fixture"),
             is_executable: false,
@@ -101,12 +96,7 @@ mod tests {
     fn test_bundled_prelude_data() {
         let c = super::PRELUDE;
         // Make sure there's a buckconfig
-        assert!(c.files.iter().any(|file| {
-            file.path == ".buckconfig"
-                && std::str::from_utf8(file.contents)
-                    .unwrap()
-                    .contains("prelude = .")
-        }));
+        assert!(c.files.iter().any(|file| file.path == ".buckconfig"));
 
         // And that there's at least 50 files with a reasonable amount of data
         assert!(

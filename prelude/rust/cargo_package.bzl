@@ -14,7 +14,6 @@ These should not be used for first-party code where lints are desired.
 """
 
 load("@prelude//:prelude.bzl", "native")
-load("@prelude//rust/tools:buildscript_platform.bzl", "buildscript_platform_constraints")
 load("@prelude//utils:selects.bzl", "selects")
 load("@prelude//utils:type_defs.bzl", "is_dict", "is_list")
 
@@ -33,7 +32,7 @@ def set_reindeer_platforms(platforms) -> None:
 
     native.write_package_value(
         "rust.reindeer_platforms",
-        _convert_select_to_dict(platforms),
+        platforms,
         overwrite = True,
     )
     native.write_package_value(
@@ -45,7 +44,7 @@ def set_reindeer_platforms(platforms) -> None:
 def get_reindeer_platforms():
     platforms = native.read_package_value("rust.reindeer_platforms")
     if platforms != None:
-        return _convert_dict_to_select(platforms)
+        return platforms
     return DEFAULT_REINDEER_PLATFORMS
 
 def get_reindeer_platform_names() -> set[str]:
@@ -92,64 +91,6 @@ def _reindeer_platform_names(platform_select) -> set[str]:
 
 _DEFAULT_REINDEER_PLATFORM_NAMES = _reindeer_platform_names(DEFAULT_REINDEER_PLATFORMS)
 
-# Disect the `repr` representation of a `select`, which looks like this:
-#   select({"DEFAULT": None, "config//os:linux": "linux-arm64", ...})
-#
-# [WORKAROUND] This will be unnecessary once `write_package_value` allows
-# selects, which seems to have consensus and just needs to be implemented.
-def _convert_select_to_dict(select_value):
-    string = repr(select_value)
-    result = None
-    key = None
-    stack = []
-
-    for _ in string.elems():
-        # Parse a value (non-key)
-        if string.startswith('"'):
-            value, string = string[1:].split('"', 1)
-        elif string.startswith("None"):
-            value, string = None, string.removeprefix("None")
-        elif string.startswith("select({"):
-            value, string = {}, string.removeprefix("select({")
-        else:
-            fail()
-
-        # Insert the parsed value into the surrounding collection
-        if key == None:
-            result = value
-        else:
-            stack[-1][key] = value
-
-        # Parse a key
-        if value == {}:
-            stack.append(value)
-            if string.startswith('"'):
-                key, string = string.removeprefix('"').split('": ', 1)
-                continue  # Back to parsing a value
-
-        # Pop the stack while there are selects ending
-        for _ in range(len(stack)):
-            if string.startswith("})"):
-                string = string.removeprefix("})")
-                stack.pop()
-            else:
-                break
-
-        # Parse separator and next key
-        if string == "":
-            return result
-        elif string.startswith(', "'):
-            key, string = string.removeprefix(', "').split('": ', 1)
-        else:
-            fail()
-    fail()
-
-def _convert_dict_to_select(value):
-    return value if not is_dict(value) else select({
-        k: _convert_dict_to_select(v)
-        for k, v in value.items()
-    })
-
 def apply_platform_attrs(platform_attrs, universal_attrs, platform_select = None):
     if platform_select == None:
         platform_select = get_reindeer_platforms()
@@ -182,21 +123,15 @@ def apply_platform_attrs(platform_attrs, universal_attrs, platform_select = None
 # configured for (which is the execution platform of the build-script-run
 # target).
 def apply_platform_attrs_for_buildscript_build(platform_attrs, universal_attrs):
-    if not rule_exists("buildscript_for_platform="):
-        buildscript_platform_constraints(
-            name = "buildscript_for_platform=",
-            reindeer_platforms = get_reindeer_platform_names(),
-        )
-
     return apply_platform_attrs(
         platform_attrs,
         universal_attrs,
-        select({
-            "DEFAULT": get_reindeer_platforms(),
-        } | {
-            ":buildscript_for_platform=[{}]".format(plat): plat
-            for plat in get_reindeer_platform_names()
-        }),
+        select(
+            {
+                "DEFAULT": get_reindeer_platforms(),
+            }
+            | {"prelude//rust/buildscript:buildscript_for_platform[{}]".format(i): plat for i, plat in enumerate(get_reindeer_platform_names())}
+        ),
     )
 
 def _cargo_rust_binary(name, crate = None, platform = {}, **kwargs):
@@ -212,11 +147,7 @@ def _cargo_rust_binary(name, crate = None, platform = {}, **kwargs):
     rustc_flags = kwargs.get("rustc_flags", [])
     kwargs["rustc_flags"] = ["--cap-lints=allow"] + rustc_flags
 
-    native.rust_binary(
-        name = name,
-        crate = crate,
-        **kwargs
-    )
+    native.rust_binary(name = name, crate = crate, **kwargs)
 
 def _cargo_rust_library(name, platform = {}, **kwargs):
     """

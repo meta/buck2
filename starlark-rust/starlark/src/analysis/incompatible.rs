@@ -17,9 +17,9 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 use maplit::hashmap;
-use once_cell::sync::Lazy;
 use starlark_syntax::syntax::ast::AssignTarget;
 use starlark_syntax::syntax::ast::AstAssignIdent;
 use starlark_syntax::syntax::ast::AstExpr;
@@ -61,7 +61,7 @@ impl LintWarning for Incompatibility {
     }
 }
 
-static TYPES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
+static TYPES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     hashmap![
         "bool" => "True",
         "tuple" => "()",
@@ -116,7 +116,7 @@ fn match_bad_type_equality(
 }
 
 fn bad_type_equality(module: &AstModule, res: &mut Vec<LintT<Incompatibility>>) {
-    let types = Lazy::force(&TYPES);
+    let types = LazyLock::force(&TYPES);
     fn check(
         codemap: &CodeMap,
         x: &AstExpr,

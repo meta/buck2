@@ -21,6 +21,10 @@ pub struct StarlarkLintCommand {
 
     #[clap(value_name = "PATH", required = true)]
     pub paths: Vec<PathArg>,
+
+    /// Skip this path and everything under it. May be repeated
+    #[clap(long = "exclude", short = 'X', value_name = "PATH")]
+    pub exclude: Vec<PathArg>,
 }
 
 impl StarlarkClientSubcommand for StarlarkLintCommand {

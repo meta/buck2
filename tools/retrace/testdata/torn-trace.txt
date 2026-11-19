@@ -1,0 +1,4 @@
+[
+{"ph":"M","cat":"run","name":"run_start","ts":1000000,"pid":1,"args":{"v":1,"run":"cccc-dddd","tool":"buck2","cwd":"/repo","argv":["buck2","build","fbcode//x:y"],"version":"buck2","host":"buck2"}},
+{"ph":"X","cat":"recipe","name":"y (rustc emit)","ts":1000100,"dur":500,"pid":1,"tid":0,"args":{"target":"fbcode//x:y (rustc emit)","src":"rustc","kind":"local","exit":0,"sig":0,"dir":"/repo","run":"cccc-dddd","v":1}},
+{"ph":"X","cat":"recipe","name":"torn mid-wri

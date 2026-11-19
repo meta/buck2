@@ -8,27 +8,31 @@
 load("@prelude//http_archive/exec_deps.bzl", "HttpArchiveExecDeps")
 load(":releases.bzl", "releases")
 
-ProtocReleaseInfo = provider(fields = [
-    "version",
-    "url",
-    "sha256",
-])
+ProtocReleaseInfo = provider(
+    fields = [
+        "version",
+        "url",
+        "sha256",
+    ]
+)
 
-def _get_protoc_release(
-        version: str,
-        platform: str) -> ProtocReleaseInfo:
+def _get_protoc_release(version: str, platform: str) -> ProtocReleaseInfo:
     if not version in releases:
-        fail("Unknown protoc release version '{}'. Available versions: {}".format(
-            version,
-            ", ".join(releases.keys()),
-        ))
+        fail(
+            "Unknown protoc release version '{}'. Available versions: {}".format(
+                version,
+                ", ".join(releases.keys()),
+            )
+        )
     protoc_version = releases[version]
     artifact = "protoc-{}-{}.zip".format(version, platform)
     if not artifact in protoc_version:
-        fail("Unsupported platform '{}'. Available artifacts: {}".format(
-            platform,
-            ", ".join(protoc_version.keys()),
-        ))
+        fail(
+            "Unsupported platform '{}'. Available artifacts: {}".format(
+                platform,
+                ", ".join(protoc_version.keys()),
+            )
+        )
     protoc_artifact = protoc_version[artifact]
     return ProtocReleaseInfo(
         version = version,
@@ -36,39 +40,45 @@ def _get_protoc_release(
         sha256 = protoc_artifact["sha256"],
     )
 
-def _turn_http_archive_into_protoc_distribution(
-        providers: ProviderCollection,
-        protoc_filename: str) -> list[Provider]:
+def _turn_http_archive_into_protoc_distribution(providers: ProviderCollection, protoc_filename: str) -> list[Provider]:
     downloads = providers[DefaultInfo].sub_targets
     include = downloads["include"][DefaultInfo]
     protoc = downloads[protoc_filename][DefaultInfo]
 
-    return [DefaultInfo(
-        sub_targets = {
-            "google_protobuf": [include],
-            "protoc": [
-                protoc,
-                RunInfo(args = protoc.default_outputs[0]),
-            ],
-        },
-    )]
+    return [
+        DefaultInfo(
+            sub_targets = {
+                "google_protobuf": [include],
+                "protoc": [
+                    protoc,
+                    RunInfo(args = protoc.default_outputs[0]),
+                ],
+            },
+        )
+    ]
 
 def _download_protoc_distribution_impl(ctx: AnalysisContext) -> Promise:
     protoc_filename = "bin/protoc" + ctx.attrs.exe_extension
 
     # @lint-ignore BUCKLINT: avoid "Direct usage of native rules is not allowed."
-    return ctx.actions.anon_target(native.http_archive, {
-        "exec_deps": ctx.attrs._http_archive_exec_deps,
-        "sha256": ctx.attrs.sha256,
-        "sub_targets": [
-            protoc_filename,
-            "include",
-        ],
-        "urls": [ctx.attrs.url],
-    }).promise.map(lambda providers: _turn_http_archive_into_protoc_distribution(
-        providers = providers,
-        protoc_filename = protoc_filename,
-    ))
+    return ctx.actions.anon_target(
+        native.http_archive,
+        {
+            "exec_deps": ctx.attrs._http_archive_exec_deps,
+            "has_content_based_path": False,
+            "sha256": ctx.attrs.sha256,
+            "sub_targets": [
+                protoc_filename,
+                "include",
+            ],
+            "urls": [ctx.attrs.url],
+        },
+    ).promise.map(
+        lambda providers: _turn_http_archive_into_protoc_distribution(
+            providers = providers,
+            protoc_filename = protoc_filename,
+        )
+    )
 
 download_protoc_distribution = rule(
     impl = _download_protoc_distribution_impl,
@@ -96,10 +106,7 @@ def _host_platform():
     else:
         fail("Unknown platform: os={}, arch={}".format(os, arch))
 
-def protoc_distribution(
-        name: str,
-        version: str,
-        platform: [None, str] = None):
+def protoc_distribution(name: str, version: str, platform: [None, str] = None):
     if platform == None:
         platform = _host_platform()
     exe_extension = ".exe" if platform.startswith("win") else ""

@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+mod exit_status;
 pub(crate) mod io;
 mod string;
 

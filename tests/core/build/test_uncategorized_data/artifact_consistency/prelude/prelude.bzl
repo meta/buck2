@@ -8,9 +8,9 @@
 
 def _gen_files(ctx):
     for i in range(0, ctx.attrs.action_index):
-        ctx.actions.write("action-{}".format(i), "nonsense data")
+        ctx.actions.write("action-{}".format(i), "nonsense data", has_content_based_path = False)
 
-    output = ctx.actions.declare_output("out_dir", dir = True)
+    output = ctx.actions.declare_output("out_dir", dir = True, has_content_based_path = False)
     subouts = []
     subtargets = {}
     for f in ctx.attrs.files:

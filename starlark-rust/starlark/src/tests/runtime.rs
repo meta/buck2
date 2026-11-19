@@ -19,11 +19,11 @@
 
 use std::fmt::Write;
 use std::mem;
+use std::sync::LazyLock;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use derive_more::Display;
-use once_cell::sync::Lazy;
 use starlark_derive::starlark_module;
 
 use crate as starlark;
@@ -33,7 +33,9 @@ use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
+use crate::values::ValueOf;
 use crate::values::any::StarlarkAny;
+use crate::values::list::AllocList;
 
 #[test]
 fn test_garbage_collect() {
@@ -47,28 +49,35 @@ assert_eq(y, str(x))
     );
 }
 
+#[derive(
+    Default,
+    Debug,
+    Display,
+    starlark::any::ProvidesStaticType,
+    starlark_derive::StarlarkPagablePanic
+)]
+struct Dealloc;
+
+impl Drop for Dealloc {
+    fn drop(&mut self) {
+        DEALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+crate::register_starlark_any!(Dealloc);
+
+static DEALLOC_COUNT: LazyLock<AtomicUsize> = LazyLock::new(|| AtomicUsize::new(0));
+
 #[test]
 fn test_deallocation() {
-    // Check that we really do deallocate values we create
-    static COUNT: Lazy<AtomicUsize> = Lazy::new(|| AtomicUsize::new(0));
-
-    #[derive(Default, Debug, Display)]
-    struct Dealloc;
-
-    impl Drop for Dealloc {
-        fn drop(&mut self) {
-            COUNT.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
     #[starlark_module]
     fn globals(builder: &mut GlobalsBuilder) {
-        fn mk() -> anyhow::Result<StarlarkAny<Dealloc>> {
-            Ok(StarlarkAny::new(Dealloc))
+        fn mk<'v>(heap: Heap<'v>) -> anyhow::Result<ValueOf<'v, StarlarkAny<Dealloc>>> {
+            Ok(ValueOf::alloc(heap, StarlarkAny::new(Dealloc)))
         }
     }
 
-    COUNT.store(0, Ordering::SeqCst);
+    DEALLOC_COUNT.store(0, Ordering::SeqCst);
     let mut a = Assert::new();
     a.disable_gc();
     a.globals_add(globals);
@@ -82,10 +91,10 @@ r = [y(), mk()]
 "#,
     );
     // The three that were run in pass should have gone
-    assert_eq!(COUNT.load(Ordering::SeqCst), 3);
+    assert_eq!(DEALLOC_COUNT.load(Ordering::SeqCst), 3);
     mem::drop(a);
     // Now the frozen ones should have gone too
-    assert_eq!(COUNT.load(Ordering::SeqCst), 5);
+    assert_eq!(DEALLOC_COUNT.load(Ordering::SeqCst), 5);
 }
 
 // This test relies on stack behavior which does not hold when
@@ -118,7 +127,7 @@ for i in range(1001):
 v1 + " " + v100 + " " + v1000
 "#,
     );
-    let s = s.unpack_str().unwrap();
+    let s = s.by_ref(|v| v.unpack_str().unwrap().to_owned());
     let words = s
         .split(' ')
         .map(|x| x.parse::<isize>().unwrap())
@@ -145,7 +154,7 @@ fn test_garbage_collect_happens() {
     // GC is meant to be "not observable", but if we break it, we want this test to fail
     #[starlark_module]
     fn helpers(builder: &mut GlobalsBuilder) {
-        fn current_usage(heap: &Heap) -> anyhow::Result<i32> {
+        fn current_usage(heap: Heap<'_>) -> anyhow::Result<i32> {
             Ok(heap.allocated_bytes() as i32)
         }
 
@@ -189,7 +198,7 @@ def expensive(n):
     code.push_str("assert_eq(success[0], True)\nis_gc_disabled()");
     // I expect to run with GC disabled some of the time, but not on the last run
     // so make sure at least once GC was enabled
-    assert!(!a.pass(&code).unpack_bool().unwrap());
+    assert!(!a.pass(&code).by_ref(|v| v.unpack_bool().unwrap()));
 }
 
 #[test]
@@ -209,27 +218,30 @@ f()
 
 #[test]
 fn test_display_debug() {
-    let heap = Heap::new();
-    let val = heap.alloc((vec![1, 2], "test", true));
-    assert_eq!(format!("{val}"), "([1, 2], \"test\", True)");
-    assert_eq!(val.to_repr(), "([1, 2], \"test\", True)");
-    assert_eq!(val.to_str(), "([1, 2], \"test\", True)");
-    assert_eq!(
-        format!("{val:?}"),
-        "Value(TupleGen { content: [Value(ListGen(ListData { content: Cell { value: ValueTyped(Value(Array { len: 2, capacity: 4, iter_count: 0, content: [Value(1), Value(2)] })) } })), Value(\"test\"), Value(StarlarkBool(true))] })"
-    );
-    let v = heap.alloc("test");
-    assert_eq!(format!("{v}"), "\"test\"");
-    assert_eq!(v.to_repr(), "\"test\"");
-    assert_eq!(v.to_str(), "test");
-    assert_eq!(format!("{v:?}"), "Value(\"test\")");
-    assert_eq!(format!("{v:#?}"), "Value(\n    \"test\",\n)");
+    Heap::temp(|heap| {
+        let val = heap.alloc((AllocList([1, 2]), "test", true)).to_value();
+        assert_eq!(format!("{val}"), "([1, 2], \"test\", True)");
+        assert_eq!(val.to_repr(), "([1, 2], \"test\", True)");
+        assert_eq!(val.to_str(), "([1, 2], \"test\", True)");
+        assert_eq!(
+            format!("{val:?}"),
+            "Value(TupleGen { content: [Value(ListGen(ListData { content: Cell { value: ValueTyped(Value(Array { len: 2, capacity: 4, iter_count: 0, content: [Value(1), Value(2)] })) } })), Value(\"test\"), Value(StarlarkBool(true))] })"
+        );
+        let v = heap.alloc("test").to_value();
+        assert_eq!(format!("{v}"), "\"test\"");
+        assert_eq!(v.to_repr(), "\"test\"");
+        assert_eq!(v.to_str(), "test");
+        assert_eq!(format!("{v:?}"), "Value(\"test\")");
+        assert_eq!(format!("{v:#?}"), "Value(\n    \"test\",\n)");
+    });
 
-    let frozen_heap = FrozenHeap::new();
-    let v = frozen_heap.alloc("test");
-    assert_eq!(format!("{v}"), "\"test\"");
-    assert_eq!(v.to_value().to_repr(), "\"test\"");
-    assert_eq!(v.to_value().to_str(), "test");
-    assert_eq!(format!("{v:?}"), "FrozenValue(\"test\")");
-    assert_eq!(format!("{v:#?}"), "FrozenValue(\n    \"test\",\n)");
+    FrozenHeap::temp(|frozen_heap| {
+        let v = frozen_heap.alloc("test").to_value();
+        assert!(v.is_frozen());
+        assert_eq!(format!("{v}"), "\"test\"");
+        assert_eq!(v.to_repr(), "\"test\"");
+        assert_eq!(v.to_str(), "test");
+        assert_eq!(format!("{v:?}"), "Value(\"test\")");
+        assert_eq!(format!("{v:#?}"), "Value(\n    \"test\",\n)");
+    });
 }

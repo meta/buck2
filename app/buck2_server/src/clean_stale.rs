@@ -10,13 +10,13 @@
 
 use async_trait::async_trait;
 use buck2_error::BuckErrorContext;
+use buck2_error::internal_error;
+use buck2_execute::materialize::materializer::CleanStaleArtifactsArgs;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
 use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use buck2_server_ctx::template::ServerCommandTemplate;
 use buck2_server_ctx::template::run_server_command;
-use chrono::TimeZone;
-use chrono::Utc;
 use dice::DiceTransaction;
 
 use crate::ctx::ServerCommandContext;
@@ -41,7 +41,7 @@ struct CleanStaleServerCommand {
 #[async_trait]
 impl ServerCommandTemplate for CleanStaleServerCommand {
     type StartEvent = buck2_data::CleanCommandStart;
-    type EndEvent = buck2_data::CleanCommandEnd;
+    type EndEvent = Box<buck2_data::CleanCommandEnd>;
     type Response = buck2_cli_proto::CleanStaleResponse;
     type PartialResult = NoPartialResult;
 
@@ -54,19 +54,31 @@ impl ServerCommandTemplate for CleanStaleServerCommand {
         server_ctx
             .cancellation_context()
             .critical_section(|| async move {
-                let deferred_materializer = server_ctx.materializer();
+                let materializer = server_ctx.materializer();
 
-                let extension = deferred_materializer
-                    .as_deferred_materializer_extension()
-                    .buck_error_context("Deferred materializer is not in use")?;
-
-                let keep_since_time = Utc
-                    .timestamp_opt(self.req.keep_since_time, 0)
-                    .single()
-                    .buck_error_context("Invalid timestamp")?;
-
-                extension
-                    .clean_stale_artifacts(keep_since_time, self.req.dry_run, self.req.tracked_only)
+                let policy = if self.req.use_configured_policy {
+                    buck2_execute::materialize::materializer::CleanStaleArtifactsPolicy::Configured
+                } else {
+                    let keep_since_time = jiff::Timestamp::from_second(self.req.keep_since_time)
+                        .map_err(|_| internal_error!("Invalid timestamp"))?;
+                    let adaptive_min_ttl = self
+                        .req
+                        .adaptive_min_ttl_seconds
+                        .map(|s| std::time::Duration::from_secs(s.max(0) as u64));
+                    buck2_execute::materialize::materializer::CleanStaleArtifactsPolicy::Explicit {
+                        keep_since_time,
+                        adaptive_low_disk_threshold: self.req.adaptive_low_disk_threshold,
+                        adaptive_min_ttl,
+                        adaptive_unmaterialize_active: self.req.adaptive_unmaterialize_active,
+                    }
+                };
+                materializer
+                    .clean_stale_artifacts(CleanStaleArtifactsArgs {
+                        policy,
+                        dry_run: self.req.dry_run,
+                        tracked_only: self.req.tracked_only,
+                        origin: self.req.origin(),
+                    })
                     .await
                     .buck_error_context("Failed to clean stale artifacts.")
             })
@@ -79,6 +91,6 @@ impl ServerCommandTemplate for CleanStaleServerCommand {
         } else {
             None
         };
-        buck2_data::CleanCommandEnd { clean_stale_stats }
+        Box::new(buck2_data::CleanCommandEnd { clean_stale_stats })
     }
 }

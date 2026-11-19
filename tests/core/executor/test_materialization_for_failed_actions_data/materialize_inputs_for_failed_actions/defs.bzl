@@ -30,7 +30,7 @@ dep = rule(
 
 def _action_fail(ctx):
     dep = ctx.attrs.dep[DefaultInfo].default_outputs[0]
-    out = ctx.actions.declare_output("failed_action")
+    out = ctx.actions.declare_output("failed_action", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(
             "fbpython",

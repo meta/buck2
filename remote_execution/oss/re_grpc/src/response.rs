@@ -68,6 +68,10 @@ pub struct TExecutedActionMetadata {
     pub instruction_counts: TPerfCount,
     pub auxiliary_metadata: Vec<TAny>,
     pub max_used_mem: i64,
+    pub cpu_stat_user_usec: i64,
+    pub cpu_stat_system_usec: i64,
+    pub executed_on_elastic_capacity: bool,
+    pub storage_stats: Box<ExecutedActionStorageStats>,
     // Compatibility with the Thrift structs
     pub _dot_dot_default: (),
 }
@@ -98,7 +102,7 @@ pub struct TActionResult2 {
     pub stdout_digest: Option<TDigest>,
     pub stderr_raw: Option<Vec<u8>>,
     pub stderr_digest: Option<TDigest>,
-    pub execution_metadata: TExecutedActionMetadata,
+    pub execution_metadata: Box<TExecutedActionMetadata>,
     pub auxiliary_metadata: Vec<TAny>,
     pub output_symlinks: Vec<TSymlink>,
     // Compatibility with the Thrift structs
@@ -254,7 +258,16 @@ pub struct NoAgentAvailableTaskState {}
 pub struct CancelledTaskState {}
 
 #[derive(Clone, Default)]
-pub struct OverQuotaTaskState {}
+pub struct OverQuotaTaskState {
+    pub exceeded_quotas: Vec<ExceededQuota>,
+}
+
+#[derive(Clone, Default)]
+pub struct ExceededQuota {
+    pub name: String,
+    pub limit: i64,
+    pub used: i64,
+}
 
 #[derive(Clone, Default)]
 pub struct WaitingOnReservationTaskState {}
@@ -340,6 +353,7 @@ pub struct NetworkStatisticsResponse {
 
 #[derive(Clone, Default)]
 pub struct TStorageStats {
+    pub total_bytes: i64,
     // Compatibility with the Thrift structs
     pub _dot_dot_default: (),
 }

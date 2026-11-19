@@ -12,8 +12,8 @@ use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BUILD_API_
 use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BUILD_API_INTERNALS;
 use starlark::environment::GlobalsBuilder;
 
-use crate::actions::error_handler::register_action_error_handler_for_testing;
-use crate::actions::error_handler::register_action_error_types;
+use crate::actions::errors::error_handler::register_action_error_handler_for_testing;
+use crate::actions::errors::error_handler::register_action_error_types;
 use crate::interpreter::rule_defs::artifact::artifact_type::register_artifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_value::register_artifact_value;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::register_output_artifact;

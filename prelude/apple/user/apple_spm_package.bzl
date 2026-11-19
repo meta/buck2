@@ -15,18 +15,21 @@ def apple_spm_package_impl(ctx: AnalysisContext) -> list[Provider]:
 
     spm_packager = apple_tools.spm_packager
 
-    output_dir = ctx.actions.declare_output(ctx.attrs.name, dir = True)
+    output_dir = ctx.actions.declare_output(ctx.attrs.name, dir = True, has_content_based_path = False)
 
     xcframework_binaries = [dep for dep in ctx.attrs.deps if dep.get(XCFrameworkInfo)]
     binary_args = flatten([["--xcframework", dep[XCFrameworkInfo].name, dep[DefaultInfo].default_outputs[0]] for dep in xcframework_binaries])
 
-    spm_command = cmd_args([
-        spm_packager,
-        "--output-path",
-        output_dir.as_output(),
-        "--package-name",
-        ctx.attrs.package_name,
-    ] + binary_args)
+    spm_command = cmd_args(
+        [
+            spm_packager,
+            "--output-path",
+            output_dir.as_output(),
+            "--package-name",
+            ctx.attrs.package_name,
+        ]
+        + binary_args
+    )
 
     ctx.actions.run(spm_command, category = "assemble_spm_package")
 

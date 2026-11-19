@@ -13,9 +13,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use buck2_events::BuckEvent;
 
-use crate::console_interaction_stream::SuperConsoleToggle;
+use crate::console_interaction_stream::ConsoleInteraction;
 use crate::exit_result::ExitResult;
-use crate::subscribers::observer::ErrorObserver;
 use crate::ticker::Tick;
 
 /// Visitor trait.  Implement this to subscribe to the event streams.
@@ -38,7 +37,7 @@ pub trait EventSubscriber: Send {
     }
     async fn handle_console_interaction(
         &mut self,
-        _c: &Option<SuperConsoleToggle>,
+        _c: &ConsoleInteraction,
     ) -> buck2_error::Result<()> {
         Ok(())
     }
@@ -63,18 +62,28 @@ pub trait EventSubscriber: Send {
         Ok(())
     }
 
-    fn as_error_observer(&self) -> Option<&dyn ErrorObserver> {
+    /// Remove any interactive display (e.g. a superconsole canvas) from the terminal
+    /// instead of leaving it behind, for when the display is being replaced rather
+    /// than concluded. Subscribers without an interactive display do nothing.
+    async fn erase_interactive_output(&mut self) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
+    /// Return a desired tick rate override. The event loop will adjust its
+    /// ticker when this differs from the current rate. Return `None` to keep
+    /// the default rate.
+    fn desired_ticks_per_second(&self) -> Option<u32> {
         None
     }
+
     fn handle_stream_end(&mut self) {}
     fn handle_daemon_connection_failure(&mut self) {}
     fn handle_daemon_started(&mut self, _reason: buck2_data::DaemonWasStartedReason) {}
-    fn handle_should_restart(&mut self) {}
 
     fn handle_exit_result(&mut self, _result: &ExitResult) {}
 
     /// Perform final clean up before exiting, upload logs etc.
-    async fn finalize(&mut self) -> buck2_error::Result<()> {
+    async fn finalize(self: Box<Self>) -> buck2_error::Result<()> {
         Ok(())
     }
 }

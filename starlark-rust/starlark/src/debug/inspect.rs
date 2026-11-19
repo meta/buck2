@@ -18,19 +18,13 @@
 use crate::collections::SmallMap;
 use crate::eval::Evaluator;
 use crate::eval::compiler::def::Def;
-use crate::eval::compiler::def::FrozenDef;
 use crate::eval::runtime::slots::LocalSlotIdCapturedOrNot;
-use crate::values::FrozenStringValue;
+use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueLike;
 
-pub(crate) fn to_scope_names_by_local_slot_id<'v>(x: Value<'v>) -> Option<&'v [FrozenStringValue]> {
-    if x.unpack_frozen().is_some() {
-        x.downcast_ref::<FrozenDef>()
-            .map(|x| x.def_info.used.as_ref())
-    } else {
-        x.downcast_ref::<Def>().map(|x| x.def_info.used.as_ref())
-    }
+pub(crate) fn to_scope_names_by_local_slot_id<'v>(x: Value<'v>) -> Option<&'v [StringValue<'v>]> {
+    x.downcast_ref::<Def>()
+        .map(|x| &x.def_info.as_ref().value.used[..])
 }
 
 impl<'v> Evaluator<'v, '_, '_> {
@@ -39,6 +33,15 @@ impl<'v> Evaluator<'v, '_, '_> {
     /// may change over time due to optimisation. The only legitimate use of this function is for debugging.
     pub fn local_variables(&self) -> SmallMap<String, Value<'v>> {
         inspect_local_variables(self).unwrap_or_else(|| inspect_module_variables(self))
+    }
+
+    /// Obtain variables for a specific stack frame.
+    /// `frame_index` 0 = top frame, 1 = parent, etc.
+    pub fn local_variables_at_frame(&self, frame_index: usize) -> SmallMap<String, Value<'v>> {
+        if frame_index == 0 {
+            return self.local_variables();
+        }
+        inspect_frame_variables(self, frame_index).unwrap_or_else(|| inspect_module_variables(self))
     }
 }
 
@@ -64,6 +67,36 @@ fn inspect_local_variables<'v>(
     Some(res)
 }
 
+fn inspect_frame_variables<'v>(
+    eval: &Evaluator<'v, '_, '_>,
+    frame_index: usize,
+) -> Option<SmallMap<String, Value<'v>>> {
+    // frame_stack is pushed in alloca_frame: last element = most recent parent.
+    // frame_index 1 = parent frame = frame_stack[len - 1], etc.
+    let stack_idx = eval.frame_stack.len().checked_sub(frame_index)?;
+    let frame_ptr = eval.frame_stack[stack_idx];
+    if !frame_ptr.is_inititalized() {
+        // Module-level frame (null ptr) — return module variables.
+        return None;
+    }
+
+    // The call_stack has function values. The top of call_stack (count-1) is the
+    // current function. For frame_index N, we want call_stack entry at count-1-N.
+    // But call_stack entry 0 is typically the module, and entries 1..count are functions.
+    // top_nth_function(0) = call_stack[count-1] = current function.
+    // For frame_index N > 0, we want top_nth_function(N).
+    let function = eval.call_stack.top_nth_function_opt(frame_index)?;
+    let names = to_scope_names_by_local_slot_id(function)?;
+
+    let mut res = SmallMap::with_capacity(names.len());
+    for (slot, name) in names.iter().enumerate() {
+        if let Some(v) = frame_ptr.get_slot_slow(LocalSlotIdCapturedOrNot(slot as u32)) {
+            res.insert(name.as_str().to_owned(), v);
+        }
+    }
+    Some(res)
+}
+
 fn inspect_module_variables<'v>(eval: &Evaluator<'v, '_, '_>) -> SmallMap<String, Value<'v>> {
     let mut res = SmallMap::new();
     for (name, slot) in eval.module_env.mutable_names().all_names_and_slots() {
@@ -81,16 +114,18 @@ mod tests {
 
     use crate as starlark;
     use crate::assert;
-    use crate::coerce::coerce;
     use crate::collections::SmallMap;
     use crate::environment::GlobalsBuilder;
     use crate::eval::Evaluator;
     use crate::values::dict::Dict;
+    use crate::values::list::AllocList;
 
     #[starlark_module]
     fn debugger(builder: &mut GlobalsBuilder) {
-        fn debug_inspect_stack(eval: &mut Evaluator) -> anyhow::Result<Vec<String>> {
-            Ok(eval.call_stack().into_frames().map(ToString::to_string))
+        fn debug_inspect_stack(eval: &mut Evaluator) -> anyhow::Result<AllocList<Vec<String>>> {
+            Ok(AllocList(
+                eval.call_stack().into_frames().map(ToString::to_string),
+            ))
         }
 
         fn debug_inspect_variables<'v>(
@@ -98,9 +133,9 @@ mod tests {
         ) -> anyhow::Result<Dict<'v>> {
             let mut sm = SmallMap::new();
             for (k, v) in eval.local_variables() {
-                sm.insert_hashed(eval.heap().alloc_str(&k).get_hashed(), v);
+                sm.insert_hashed(eval.heap().alloc(&k).get_hashed_value(), v);
             }
-            Ok(Dict::new(coerce(sm)))
+            Ok(Dict::new(sm))
         }
     }
 

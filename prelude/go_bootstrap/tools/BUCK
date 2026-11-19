@@ -6,31 +6,17 @@ source_listing()
 
 prelude = native
 
-prelude.go_bootstrap_binary(
-    name = "go_concat_files",
-    srcs = prelude.glob(["**/*"]),
-    build_args = [
-        "go/concat_files.go",
-    ],
+prelude.python_bootstrap_binary(
+    name = "go_wrapper_py",
+    main = "go_wrapper.py",
     visibility = ["PUBLIC"],
 )
 
-prelude.go_bootstrap_binary(
-    name = "go_go_wrapper",
-    srcs = prelude.glob(["**/*"]),
-    build_args = [
-        "go/go_wrapper.go",
+# Type checking target for Python tool scripts
+prelude.python_library(
+    name = "scripts-typing",
+    srcs = [
+        "go_wrapper.py",
     ],
-    visibility = ["PUBLIC"],
-)
-
-prelude.go_bootstrap_binary(
-    name = "go_testmaingen",
-    srcs = prelude.glob(["**/*"]),
-    build_args = [
-        "go/testmaingen.go",
-    ],
-    visibility = [
-        "PUBLIC",
-    ],
+    typing = True,
 )

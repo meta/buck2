@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
 use std::io::BufRead;
@@ -18,8 +17,10 @@ use allocative::Allocative;
 use buck2_cli_proto::ConfigOverride;
 use buck2_core::cells::cell_root_path::CellRootPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_hash::BuckMutMap;
 use dupe::Dupe;
-use starlark_map::sorted_map::SortedMap;
+use pagable::Pagable;
 
 use super::cells::ExternalPathBuckconfigData;
 use crate::legacy_configs::args::ResolvedConfigFile;
@@ -29,15 +30,15 @@ use crate::legacy_configs::file_ops::ConfigPath;
 use crate::legacy_configs::key::BuckconfigKeyRef;
 use crate::legacy_configs::parser::LegacyConfigParser;
 
-#[derive(Clone, Dupe, Debug, Allocative)]
+#[derive(Clone, Dupe, Debug, Allocative, Pagable)]
 pub struct LegacyBuckConfig(pub(crate) Arc<ConfigData>);
 
-#[derive(Debug, Allocative)]
+#[derive(Debug, Allocative, Pagable)]
 pub(crate) struct ConfigData {
-    pub(crate) values: SortedMap<String, LegacyBuckConfigSection>,
+    pub(crate) values: BuckFixedSortedMap<String, LegacyBuckConfigSection>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Allocative)]
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) enum ResolvedValue {
     // A placeholder used before we do resolution.
     Unknown,
@@ -47,19 +48,19 @@ pub(crate) enum ResolvedValue {
     Resolved(String),
 }
 
-#[derive(Debug, PartialEq, Eq, Allocative)]
+#[derive(Debug, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) struct ConfigFileLocation {
     pub(crate) path: String,
     pub(crate) include_source: Option<Location>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Allocative)]
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) struct ConfigFileLocationWithLine {
     pub(crate) source_file: Arc<ConfigFileLocation>,
     pub(crate) line: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Allocative)]
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) enum Location {
     File(ConfigFileLocationWithLine),
     CommandLineArgument,
@@ -129,16 +130,16 @@ pub fn parse_config_section_and_key(
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Allocative)]
+#[derive(Debug, Clone, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) struct ConfigValue {
     raw_value: String,
     pub(crate) resolved_value: ResolvedValue,
     pub(crate) source: Location,
 }
 
-#[derive(Debug, Default, Allocative)]
+#[derive(Debug, Default, Allocative, Pagable)]
 pub struct LegacyBuckConfigSection {
-    pub(crate) values: SortedMap<String, ConfigValue>,
+    pub(crate) values: BuckFixedSortedMap<String, ConfigValue>,
 }
 
 impl ConfigValue {
@@ -239,7 +240,7 @@ impl<'a> LegacyBuckConfigValue<'a> {
 impl LegacyBuckConfig {
     pub fn empty() -> Self {
         Self(Arc::new(ConfigData {
-            values: SortedMap::new(),
+            values: BuckFixedSortedMap::new(),
         }))
     }
 
@@ -252,7 +253,7 @@ impl LegacyBuckConfig {
             .values
             .iter()
             .filter_map(|(section, section_data)| {
-                let values: SortedMap<_, _> = section_data
+                let values: BuckFixedSortedMap<_, _> = section_data
                     .values
                     .iter()
                     .filter(|(property, _)| filter(&BuckconfigKeyRef { section, property }))
@@ -277,7 +278,7 @@ impl LegacyBuckConfig {
         for main_config_file in config_paths {
             let mut parser = LegacyConfigParser::new();
             parser
-                .parse_file(&main_config_file, None, follow_includes, file_ops)
+                .parse_file(main_config_file, None, follow_includes, file_ops)
                 .await?;
             external_path_configs.push(ExternalPathBuckconfigData {
                 origin_path: main_config_file.clone(),
@@ -298,7 +299,7 @@ impl LegacyBuckConfig {
         let mut parser = LegacyConfigParser::combine(external_path_configs);
         for main_config_file in main_config_files {
             parser
-                .parse_file(&main_config_file, None, follow_includes, file_ops)
+                .parse_file(main_config_file, None, follow_includes, file_ops)
                 .await?;
         }
 
@@ -363,12 +364,12 @@ pub mod testing {
     }
 
     pub struct TestConfigParserFileOps {
-        data: HashMap<ProjectRelativePathBuf, String>,
+        data: BuckMutMap<ProjectRelativePathBuf, String>,
     }
 
     impl TestConfigParserFileOps {
         pub fn new(data: &[(&str, &str)]) -> buck2_error::Result<Self> {
-            let mut holder_data = HashMap::new();
+            let mut holder_data = BuckMutMap::default();
             for (file, content) in data {
                 holder_data.insert(
                     ProjectRelativePath::new(*file)?.to_owned(),
@@ -407,7 +408,6 @@ pub mod testing {
 
             Ok(Some(
                 file.lines()
-                    .into_iter()
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(buck2_error::Error::from)?,
             ))
@@ -432,6 +432,7 @@ pub(crate) mod tests {
 
     use super::testing::*;
     use super::*;
+    use crate::legacy_configs::args::ConfigOverrideExt;
     use crate::legacy_configs::key::BuckconfigKeyRef;
 
     pub(crate) fn assert_config_value(
@@ -470,20 +471,16 @@ pub(crate) mod tests {
     }
 
     fn assert_config_value_is_empty(config: &LegacyBuckConfig, section: &str, key: &str) {
-        match config.get_section(section) {
-            Some(values) => match values.get(key) {
-                Some(v) => {
-                    panic!(
-                        "Expected `{}.{}` to not exist. Got `{}` for value.",
-                        section,
-                        key,
-                        v.as_str()
-                    );
-                }
-                _ => {}
-            },
-            _ => {}
-        };
+        if let Some(values) = config.get_section(section)
+            && let Some(v) = values.get(key)
+        {
+            panic!(
+                "Expected `{}.{}` to not exist. Got `{}` for value.",
+                section,
+                key,
+                v.as_str()
+            );
+        }
     }
 
     #[test]
@@ -817,7 +814,7 @@ pub(crate) mod tests {
                         r#"
                             [cells]
                               root = .
-                            
+
                             [apple]
                               key = value1
                         "#
@@ -853,6 +850,82 @@ pub(crate) mod tests {
         let config = parse_with_config_args(&[("config", indoc!(r#""#))], "config", &config_args)?;
         assert_config_value(&config, "apple", "key", "foo//value1");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_continuation_joins_comment_lines() -> buck2_error::Result<()> {
+        let text = [
+            "[s]",
+            "a = x \\",
+            "# comment",
+            "b = y",
+            "# disabled \\",
+            "c = z",
+            "d = w\\\\",
+            "e = v",
+            "g = t \\",
+            "[other]",
+            "h = q",
+            "f = u \\",
+        ]
+        .join("\n");
+        let config = parse(&[("config", text.as_str())], "config")?;
+        assert_config_value(&config, "s", "a", "x");
+        assert_config_value(&config, "s", "b", "y");
+        assert_config_value(&config, "s", "c", "z");
+        assert_config_value(&config, "s", "d", "w\\e = v");
+        assert_config_value_is_empty(&config, "s", "e");
+        assert_config_value(&config, "s", "g", "t [other]");
+        assert_config_value(&config, "s", "h", "q");
+        assert!(config.get_section("other").is_none());
+        assert_config_value(&config, "s", "f", "u \\");
+        Ok(())
+    }
+
+    #[test]
+    fn test_include_cycle_is_not_detected() -> buck2_error::Result<()> {
+        struct Counting(TestConfigParserFileOps, usize);
+        #[async_trait::async_trait]
+        impl ConfigParserFileOps for Counting {
+            async fn read_file_lines_if_exists(
+                &mut self,
+                path: &ConfigPath,
+            ) -> buck2_error::Result<Option<Vec<String>>> {
+                self.1 += 1;
+                if self.1 > 50 {
+                    return Err(std::io::Error::other("read limit hit").into());
+                }
+                self.0.read_file_lines_if_exists(path).await
+            }
+            async fn read_dir(
+                &mut self,
+                path: &ConfigPath,
+            ) -> buck2_error::Result<Vec<crate::legacy_configs::file_ops::ConfigDirEntry>>
+            {
+                self.0.read_dir(path).await
+            }
+        }
+        let mut ops = Counting(
+            TestConfigParserFileOps::new(&[("config", "<file:config>\n")])?,
+            0,
+        );
+        let res = futures::executor::block_on(LegacyBuckConfig::finish_parse(
+            Vec::new(),
+            &[ConfigPath::Project(
+                ProjectRelativePath::new("config")?.to_owned(),
+            )],
+            CellRootPath::new(ProjectRelativePath::empty()),
+            &mut ops,
+            &[],
+            true,
+        ));
+        let err = format!("{:#}", res.err().unwrap());
+        assert!(
+            err.contains("Detected a cycle in buckconfig includes"),
+            "{err}"
+        );
+        assert_eq!(ops.1, 1);
         Ok(())
     }
 }

@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::async_once_cell::AsyncOnceCell;
 use buck2_core::buck2_env;
 use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
@@ -27,11 +28,11 @@ use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_re_configuration::RemoteExecutionStaticMetadata;
-use chrono::DateTime;
-use chrono::Utc;
+use buck2_re_configuration::RemoteExecutionStaticMetadataImpl;
 use dupe::Dupe;
 use fbinit::FacebookInit;
 use futures::FutureExt;
@@ -41,22 +42,26 @@ use remote_execution::ActionResultResponse;
 use remote_execution::InlinedBlobWithDigest;
 use remote_execution::NamedDigest;
 use remote_execution::NamedDigestWithPermissions;
+use remote_execution::RemoteExecutionMetadata;
 use remote_execution::TActionResult2;
 use remote_execution::TDigest;
 use remote_execution::WriteActionResultResponse;
 
-use crate::digest_config::DigestConfig;
 use crate::directory::ActionImmutableDirectory;
 use crate::execute::action_digest::ActionDigest;
 use crate::execute::blobs::ActionBlobs;
 use crate::execute::manager::CommandExecutionManager;
 use crate::knobs::ExecutorGlobalKnobs;
+use crate::materialize::materializer::CasDownloadInfo;
 use crate::materialize::materializer::Materializer;
 use crate::re::action_identity::ReActionIdentity;
 use crate::re::client::ActionCacheWriteType;
 use crate::re::client::ExecuteResponseOrCancelled;
 use crate::re::client::RemoteExecutionClient;
 use crate::re::metadata::RemoteExecutionMetadataExt;
+use crate::re::presence::CasPresence;
+use crate::re::presence::NegativeCache;
+use crate::re::presence::Presence;
 use crate::re::re_get_session_id::ReGetSessionId;
 use crate::re::stats::RemoteExecutionClientStats;
 use crate::re::uploader::UploadStats;
@@ -102,7 +107,7 @@ pub struct RemoteExecutionConfig {
 
 impl RemoteExecutionConfig {
     async fn connect_now(&self) -> buck2_error::Result<RemoteExecutionClient> {
-        RemoteExecutionClient::new_retry(&self).await
+        RemoteExecutionClient::new_retry(self).await
     }
 }
 
@@ -148,7 +153,7 @@ impl LazyRemoteExecutionClient {
         let init_fut = async move { self.init().boxed().await };
         match self.client.get_or_init(init_fut).await {
             Ok(v) => Ok(v),
-            Err(e) => Err(e.dupe().into()),
+            Err(e) => Err(e.dupe()),
         }
     }
 
@@ -218,6 +223,11 @@ impl ReConnectionManager {
         }
     }
 
+    /// Whether there is a CAS to talk to at all; see `RemoteExecutionStaticMetadataImpl`.
+    pub fn cas_configured(&self) -> bool {
+        self.config.static_metadata.cas_configured()
+    }
+
     /// Gets a new guard that holds a RE connection open
     pub fn get_re_connection(&self) -> ReConnectionHandle {
         ReConnectionHandle::new(self.get_client_handle())
@@ -255,6 +265,8 @@ impl ReConnectionManager {
             .fill_from_re_client_metrics(&client_stats.upload_storage_stats);
         res.download_stats
             .fill_from_re_client_metrics(&client_stats.download_storage_stats);
+        // Process-wide, so it is available whether or not a connection is open.
+        res.presence = CasPresence::global_stats().unwrap_or_default();
 
         // The rest of the fields are known to be their default value if we don't have a client, so
         // we ask the client to fill them iff we have one.
@@ -311,6 +323,16 @@ impl ReConnectionHandle {
             data: Arc::downgrade(&self.connection),
         }
     }
+
+    pub fn release_temporary_memory(&self) -> buck2_error::Result<()> {
+        if let Some(result) = self
+            .connection
+            .with_client(RemoteExecutionClient::release_temporary_memory)
+        {
+            result?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Dupe)]
@@ -322,6 +344,8 @@ pub struct UnconfiguredRemoteExecutionClient {
 pub struct ManagedRemoteExecutionClient {
     inner: UnconfiguredRemoteExecutionClient,
     pub use_case: RemoteExecutorUseCase,
+    /// Built once per client; calls borrow it if they aren't associated with an action.
+    no_action_metadata: Arc<RemoteExecutionMetadata>,
 }
 
 impl UnconfiguredRemoteExecutionClient {
@@ -329,13 +353,14 @@ impl UnconfiguredRemoteExecutionClient {
         ManagedRemoteExecutionClient {
             inner: self,
             use_case,
+            no_action_metadata: Arc::new(use_case.metadata(None)),
         }
     }
 
     fn lock(&self) -> buck2_error::Result<Arc<Arc<LazyRemoteExecutionClient>>> {
         self.data
             .upgrade()
-            .buck_error_context("Internal error: the underlying RE connection has terminated because the corresponding guard has been dropped.")
+            .internal_error("Internal error: the underlying RE connection has terminated because the corresponding guard has been dropped.")
     }
 
     pub async fn get_session_id(&self) -> buck2_error::Result<String> {
@@ -362,27 +387,32 @@ impl ManagedRemoteExecutionClient {
     pub async fn action_cache(
         &self,
         action_digest: ActionDigest,
+        platform: &RE::Platform,
+        timings: &mut buck2_data::CacheQueryTimings,
     ) -> buck2_error::Result<Option<ActionResultResponse>> {
-        Ok(self
-            .lock()?
+        // `Ok(None)` is an outright miss; `Err` is a real failure. The caller
+        // decides whether to degrade failures into misses.
+        self.lock()?
             .get()
             .await?
-            .action_cache(action_digest, self.use_case)
+            .action_cache(
+                action_digest,
+                &self.no_action_metadata,
+                self.use_case,
+                platform,
+                timings,
+            )
             .await
-            .ok()
-            .flatten())
     }
 
     pub async fn upload(
         &self,
         fs: &ProjectRoot,
-        materializer: &Arc<dyn Materializer>,
+        materializer: &dyn Materializer,
         blobs: &ActionBlobs,
         dir_path: &ProjectRelativePath,
         input_dir: &ActionImmutableDirectory,
         identity: Option<&ReActionIdentity<'_>>,
-        digest_config: DigestConfig,
-        deduplicate_get_digests_ttl_calls: bool,
     ) -> buck2_error::Result<UploadStats> {
         self.lock()?
             .get()
@@ -395,9 +425,15 @@ impl ManagedRemoteExecutionClient {
                 input_dir,
                 self.use_case,
                 identity,
-                digest_config,
-                deduplicate_get_digests_ttl_calls,
             )
+            .await
+    }
+
+    pub async fn upload_blobs(&self, blobs: &ActionBlobs) -> buck2_error::Result<UploadStats> {
+        self.lock()?
+            .get()
+            .await?
+            .upload_blobs(blobs, self.use_case)
             .await
     }
 
@@ -414,7 +450,7 @@ impl ManagedRemoteExecutionClient {
                 files_with_digest,
                 directories,
                 inlined_blobs_with_digest,
-                self.use_case,
+                &self.no_action_metadata,
             )
             .await
     }
@@ -424,6 +460,7 @@ impl ManagedRemoteExecutionClient {
         action_digest: ActionDigest,
         platform: &RE::Platform,
         dependencies: impl IntoIterator<Item = &'a RemoteExecutorDependency>,
+        re_gang_workers: &[buck2_core::execution_types::executor_config::ReGangWorker],
         identity: &ReActionIdentity<'_>,
         manager: &mut CommandExecutionManager,
         skip_cache_read: bool,
@@ -433,6 +470,7 @@ impl ManagedRemoteExecutionClient {
         knobs: &ExecutorGlobalKnobs,
         meta_internal_extra_params: &MetaInternalExtraParams,
         worker_tool_action_digest: Option<ActionDigest>,
+        priority: Option<i32>,
     ) -> buck2_error::Result<ExecuteResponseOrCancelled> {
         self.lock()?
             .get()
@@ -441,6 +479,7 @@ impl ManagedRemoteExecutionClient {
                 action_digest,
                 platform,
                 dependencies,
+                re_gang_workers,
                 self.use_case,
                 identity,
                 manager,
@@ -451,6 +490,7 @@ impl ManagedRemoteExecutionClient {
                 knobs,
                 meta_internal_extra_params,
                 worker_tool_action_digest,
+                priority,
             )
             .await
     }
@@ -458,31 +498,37 @@ impl ManagedRemoteExecutionClient {
     pub async fn materialize_files(
         &self,
         files: Vec<NamedDigestWithPermissions>,
+        info: &CasDownloadInfo,
     ) -> buck2_error::Result<()> {
-        self.lock()?
+        let result = self
+            .lock()?
             .get()
             .await?
-            .materialize_files(files, self.use_case)
-            .await
+            .materialize_files(files, &self.no_action_metadata)
+            .await;
+        self.classify_cas_result(info, result)
     }
 
     pub async fn download_typed_blobs<T: Message + Default>(
         &self,
         identity: Option<&ReActionIdentity<'_>>,
         digests: Vec<TDigest>,
+        info: &CasDownloadInfo,
     ) -> buck2_error::Result<Vec<T>> {
-        self.lock()?
+        let result = self
+            .lock()?
             .get()
             .await?
             .download_typed_blobs(identity, digests, self.use_case)
-            .await
+            .await;
+        self.classify_cas_result(info, result)
     }
 
     pub async fn download_blob(&self, digest: &TDigest) -> buck2_error::Result<Vec<u8>> {
         self.lock()?
             .get()
             .await?
-            .download_blob(digest, self.use_case)
+            .download_blob(digest, &self.no_action_metadata)
             .await
     }
 
@@ -490,37 +536,60 @@ impl ManagedRemoteExecutionClient {
         self.lock()?
             .get()
             .await?
-            .upload_blob(blob, self.use_case)
+            .upload_blob(blob, &self.no_action_metadata)
             .await
+    }
+
+    /// See [`RemoteExecutionClient::check_presence`]; misses and failures are classified per
+    /// `info`, whose use case must be this client's.
+    pub async fn check_presence(
+        &self,
+        digests: Vec<TrackedFileDigest>,
+        negative_cache: NegativeCache,
+        info: &CasDownloadInfo,
+    ) -> buck2_error::Result<Vec<Presence>> {
+        let result = self
+            .lock()?
+            .get()
+            .await?
+            .check_presence(self.use_case, digests, negative_cache)
+            .await;
+        self.classify_cas_result(info, result)
     }
 
     pub async fn get_digest_expirations(
         &self,
         digests: Vec<TDigest>,
-    ) -> buck2_error::Result<Vec<(TDigest, DateTime<Utc>)>> {
-        self.lock()?
+        info: &CasDownloadInfo,
+    ) -> buck2_error::Result<Vec<(TDigest, jiff::Timestamp)>> {
+        let result = self
+            .lock()?
             .get()
             .await?
-            .get_digest_expirations(digests, self.use_case.metadata(None))
-            .await
+            .get_digest_expirations(digests, &self.no_action_metadata)
+            .await;
+        self.classify_cas_result(info, result)
     }
 
     pub async fn extend_digest_ttl(
         &self,
         digests: Vec<TDigest>,
         ttl: Duration,
+        info: &CasDownloadInfo,
     ) -> buck2_error::Result<()> {
-        self.lock()?
+        let result = self
+            .lock()?
             .get()
             .await?
-            .extend_digest_ttl(digests, ttl, self.use_case)
-            .await
+            .extend_digest_ttl(digests, ttl, &self.no_action_metadata)
+            .await;
+        self.classify_cas_result(info, result)
     }
 
     pub async fn write_action_result(
         &self,
         digest: ActionDigest,
-        result: TActionResult2,
+        result: &mut TActionResult2,
         platform: &RE::Platform,
         write_type: ActionCacheWriteType,
     ) -> buck2_error::Result<WriteActionResultResponse> {
@@ -530,7 +599,7 @@ impl ManagedRemoteExecutionClient {
             applicability = testing
         )? {
             Ok(WriteActionResultResponse {
-                actual_action_result: result,
+                actual_action_result: result.clone(),
                 ..Default::default()
             })
         } else {
@@ -540,5 +609,14 @@ impl ManagedRemoteExecutionClient {
                 .write_action_result(digest, result, self.use_case, platform, write_type)
                 .await
         }
+    }
+
+    fn classify_cas_result<T>(
+        &self,
+        info: &CasDownloadInfo,
+        result: buck2_error::Result<T>,
+    ) -> buck2_error::Result<T> {
+        debug_assert_eq!(self.use_case, info.re_use_case);
+        info.classify_result(result)
     }
 }

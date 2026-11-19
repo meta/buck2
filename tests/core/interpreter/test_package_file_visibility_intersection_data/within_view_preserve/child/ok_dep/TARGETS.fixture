@@ -1,0 +1,8 @@
+# Allowed: the dep is under `within_view_preserve/...`, matching the
+# inherited within_view. Visibility is PUBLIC -- silently clipped to
+# the intersection (no rejection).
+stub(
+    name = "c",
+    visibility = ["PUBLIC"],
+    deps = ["root//within_view_preserve/dep_target:ok"],
+)

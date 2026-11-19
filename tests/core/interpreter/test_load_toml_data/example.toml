@@ -1,16 +1,45 @@
+# Test coverage for all TOML types mapped by toml_value_to_json:
+# String, Integer, Float, Boolean, Datetime, Array, Table
+
+title = "TOML type coverage test"
+
+[types]
+# String
+string_val = "hello"
+# Integer
+int_val = 42
+negative_int = -7
+# Float
+float_val = 3.14
+negative_float = -0.5
+# Boolean
+bool_false = false
+bool_true = true
+# Datetime (converted to string by toml_value_to_json)
+datetime_val = 2026-01-15T10:30:00Z
+# Array (of mixed types to test recursive conversion)
+bool_array = [true, false, true]
+int_array = [1, 2, 3]
+string_array = ["a", "b", "c"]
+
+# Table (nested)
+[types.nested_table]
+key = "value"
+number = 99
+
+# Array of tables
 [[fruits]]
 name = "apple"
 
-[fruits.physical] # subtable
+[fruits.physical]
 color = "red"
 shape = "round"
 
-[[fruits.varieties]] # nested array of tables
+[[fruits.varieties]]
 name = "red delicious"
 
 [[fruits.varieties]]
 name = "granny smith"
-
 
 [[fruits]]
 name = "banana"

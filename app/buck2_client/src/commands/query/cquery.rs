@@ -75,6 +75,8 @@ require quotes):
     name = "cquery",
     about = "Perform queries on the configured target graph",
     long_about = help(),
+    after_help = "Run `buck2 docs cquery` for detailed information about query functions such as allbuildfiles, allpaths, attrfilter, and more.",
+    after_long_help = "",
     verbatim_doc_comment,
 )]
 pub struct CqueryCommand {

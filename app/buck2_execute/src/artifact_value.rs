@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::any::Any;
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -15,15 +16,27 @@ use allocative::Allocative;
 use buck2_common::external_symlink::ExternalSymlink;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileMetadata;
+use buck2_common::io::trace::TracedBuckOutValue;
 use buck2_core::content_hash::ContentBasedPathHash;
+use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_util::strong_hasher::Blake3StrongHasher;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::directory::ActionDirectoryEntry;
 use crate::directory::ActionDirectoryMember;
 use crate::directory::ActionSharedDirectory;
 
-#[derive(Clone, Dupe, Debug, PartialEq, Eq, Allocative)]
+#[derive(
+    Clone,
+    Dupe,
+    Debug,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable,
+    strong_hash::StrongHash
+)]
 pub enum UnderlyingContentBasedPathHash {
     Inferred,
     Explicit(Arc<ContentBasedPathHash>),
@@ -39,7 +52,16 @@ pub enum UnderlyingContentBasedPathHash {
 /// to available. Therefore, when this represents a symlink, or a directory
 /// with symlinks pointing outside such directory, we must also store the value
 /// of the artifacts pointed to by those symlinks. That's the `deps` attribute.
-#[derive(Clone, Debug, Dupe, PartialEq, Eq, Allocative)]
+#[derive(
+    Clone,
+    Debug,
+    Dupe,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable,
+    strong_hash::StrongHash
+)]
 pub struct ArtifactValue {
     /// The information about the artifact i.e. digest + is_executable if this
     /// is a file, the file tree if this is a directory, and so on.
@@ -110,6 +132,14 @@ impl ArtifactValue {
         }
     }
 
+    /// Size of this artifact (and its dependencies) in bytes.
+    pub fn size(&self) -> u64 {
+        (match &self.entry {
+            DirectoryEntry::Dir(d) => d.size(),
+            DirectoryEntry::Leaf(m) => m.size(),
+        } + self.deps.as_ref().map_or(0, |d| d.size()))
+    }
+
     pub fn with_content_based_path_hash(
         self,
         content_based_path_hash: ContentBasedPathHash,
@@ -146,5 +176,11 @@ impl ArtifactValue {
             }
         }
         .expect("Constructed valid content-based path hash")
+    }
+}
+
+impl TracedBuckOutValue for ArtifactValue {
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

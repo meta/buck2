@@ -8,18 +8,82 @@
  * above-listed licenses.
  */
 
+use std::fmt;
+
 use buck2_data::Snapshot;
 use superconsole::DrawMode;
 use superconsole::Line;
 use superconsole::Lines;
+use superconsole::Span;
+use superconsole::style::Stylize;
 
 use crate::humanized::HumanizedBytes;
 use crate::humanized::HumanizedBytesPerSecond;
 use crate::two_snapshots::TwoSnapshots;
 
 pub struct ReState {
-    session_id: Option<String>,
+    pub session_id: Option<String>,
     first_snapshot: Option<buck2_data::Snapshot>,
+}
+
+/// Traffic the command has moved, measured against its first snapshot.
+///
+/// Downloads aggregate RE and HTTP; uploads are RE only.
+pub struct NetworkStats {
+    pub re_upload_bytes: u64,
+    pub re_upload_bytes_per_second: u64,
+    pub download_bytes: u64,
+    pub download_bytes_per_second: u64,
+}
+
+pub struct ReHeaderLine<'a> {
+    stats: Option<NetworkStats>,
+    session_id: Option<&'a str>,
+    draw_mode: DrawMode,
+}
+
+impl fmt::Display for ReHeaderLine<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Network:")?;
+        let mut separator = " ";
+        if let Some(stats) = &self.stats {
+            match self.draw_mode {
+                DrawMode::Normal => write!(
+                    f,
+                    "{separator}up {} {}  down {} {}",
+                    HumanizedBytes::new(stats.re_upload_bytes),
+                    BytesPerSecond(stats.re_upload_bytes_per_second),
+                    HumanizedBytes::new(stats.download_bytes),
+                    BytesPerSecond(stats.download_bytes_per_second),
+                )?,
+                DrawMode::Final => write!(
+                    f,
+                    "{separator}up {}  down {}",
+                    HumanizedBytes::new(stats.re_upload_bytes),
+                    HumanizedBytes::new(stats.download_bytes),
+                )?,
+            }
+            separator = "  ";
+        }
+        if let Some(session_id) = self.session_id {
+            write!(f, "{separator}session {session_id}")?;
+        }
+        Ok(())
+    }
+}
+
+/// A transfer rate that renders as empty when zero, so idle directions stay blank
+/// in the header instead of showing `0 B/s`.
+struct BytesPerSecond(u64);
+
+impl fmt::Display for BytesPerSecond {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0 == 0 {
+            Ok(())
+        } else {
+            write!(f, "{}", HumanizedBytesPerSecond::new(self.0))
+        }
+    }
 }
 
 impl ReState {
@@ -44,88 +108,72 @@ impl ReState {
         &self.first_snapshot
     }
 
+    /// Returns [`None`] until snapshots exist, and for commands that have moved no bytes.
+    pub fn network_stats(&self, two_snapshots: &TwoSnapshots) -> Option<NetworkStats> {
+        let (Some(first), Some((_, last))) = (&self.first_snapshot, &two_snapshots.last) else {
+            return None;
+        };
+
+        if last.re_upload_bytes == 0 && last.re_download_bytes == 0 && last.http_download_bytes == 0
+        {
+            return None;
+        }
+
+        let re_upload_bytes = last.re_upload_bytes.checked_sub(first.re_upload_bytes)?;
+        let re_download_bytes = last
+            .re_download_bytes
+            .checked_sub(first.re_download_bytes)?;
+        let http_download_bytes = last
+            .http_download_bytes
+            .checked_sub(first.http_download_bytes)?;
+
+        Some(NetworkStats {
+            re_upload_bytes,
+            re_upload_bytes_per_second: two_snapshots
+                .re_upload_bytes_per_second()
+                .unwrap_or_default(),
+            download_bytes: re_download_bytes + http_download_bytes,
+            download_bytes_per_second: two_snapshots
+                .re_download_bytes_per_second()
+                .unwrap_or_default()
+                + two_snapshots
+                    .http_download_bytes_per_second()
+                    .unwrap_or_default(),
+        })
+    }
+
     pub fn render_header(
         &self,
         two_snapshots: &TwoSnapshots,
         draw_mode: DrawMode,
-    ) -> Option<String> {
-        let mut parts = Vec::new();
-
-        if let (Some(first), Some((_, last))) = (&self.first_snapshot, &two_snapshots.last) {
-            if last.re_upload_bytes > 0
-                || last.re_download_bytes > 0
-                || last.http_download_bytes > 0
-            {
-                let re_upload_bytes = last.re_upload_bytes.checked_sub(first.re_upload_bytes)?;
-                let re_download_bytes = last
-                    .re_download_bytes
-                    .checked_sub(first.re_download_bytes)?;
-                let http_download_bytes = last
-                    .http_download_bytes
-                    .checked_sub(first.http_download_bytes)?;
-
-                let part = match draw_mode {
-                    DrawMode::Normal => {
-                        fn format_byte_per_second(bytes_per_second: u64) -> String {
-                            if bytes_per_second == 0 {
-                                " ".repeat(HumanizedBytesPerSecond::FIXED_WIDTH_WIDTH)
-                            } else {
-                                HumanizedBytesPerSecond::fixed_width(bytes_per_second).to_string()
-                            }
-                        }
-
-                        let re_upload_bytes_per_second = two_snapshots
-                            .re_upload_bytes_per_second()
-                            .unwrap_or_default();
-                        let re_download_bytes_per_second = two_snapshots
-                            .re_download_bytes_per_second()
-                            .unwrap_or_default();
-                        let http_download_bytes_per_second = two_snapshots
-                            .http_download_bytes_per_second()
-                            .unwrap_or_default();
-                        format!(
-                            "Up: {} {}  Down: {} {}",
-                            HumanizedBytes::fixed_width(re_upload_bytes),
-                            format_byte_per_second(re_upload_bytes_per_second),
-                            HumanizedBytes::fixed_width(re_download_bytes + http_download_bytes),
-                            format_byte_per_second(
-                                re_download_bytes_per_second + http_download_bytes_per_second
-                            ),
-                        )
-                    }
-                    DrawMode::Final => {
-                        format!(
-                            "Up: {}  Down: {}",
-                            HumanizedBytes::new(re_upload_bytes),
-                            HumanizedBytes::new(re_download_bytes + http_download_bytes),
-                        )
-                    }
-                };
-                parts.push(part);
-            }
-        }
-
-        if let Some(session_id) = self.session_id.as_ref() {
-            parts.push(format!("({})", session_id.to_owned()));
-        }
-
-        if parts.is_empty() {
+    ) -> Option<ReHeaderLine<'_>> {
+        let stats = self.network_stats(two_snapshots);
+        let session_id = self.session_id.as_deref();
+        if stats.is_none() && session_id.is_none() {
             return None;
         }
-
-        Some(format!("Network: {}", parts.join("  ")))
+        Some(ReHeaderLine {
+            stats,
+            session_id,
+            draw_mode,
+        })
     }
 
-    fn render_detailed_item_no_progress_stats(
+    fn render_network_stat(
         &self,
         name: &str,
-        stat: u64,
-    ) -> buck2_error::Result<Option<Line>> {
-        let line = format!(
-            "{name:<20}: \
-            {stat:>5} bytes"
-        );
-        Ok(Some(Line::unstyled(&line)?))
+        bytes: u64,
+        bytes_per_second: u64,
+        draw_mode: DrawMode,
+    ) -> buck2_error::Result<Line> {
+        let mut stat = HumanizedBytes::new(bytes).to_string();
+        if let DrawMode::Normal = draw_mode {
+            if bytes_per_second > 0 {
+                stat.push(' ');
+                stat.push_str(&HumanizedBytesPerSecond::new(bytes_per_second).to_string());
+            }
+        }
+        Ok(Line::unstyled(&format!("{name:<20}: {stat:>5}"))?)
     }
 
     fn render_detailed_items(
@@ -171,8 +219,34 @@ impl ReState {
         Ok(Some(Line::unstyled(&line)?))
     }
 
-    fn render_detailed(&self, two_snapshots: &TwoSnapshots) -> buck2_error::Result<Vec<Line>> {
+    fn render_detailed(
+        &self,
+        two_snapshots: &TwoSnapshots,
+        draw_mode: DrawMode,
+    ) -> buck2_error::Result<Vec<Line>> {
         let mut r = Vec::new();
+        if self.session_id.is_some() || self.network_stats(two_snapshots).is_some() {
+            r.push(Line::from_iter([Span::new_styled_lossy(
+                "Network".to_owned().bold(),
+            )]));
+        }
+        if let Some(session_id) = self.session_id.as_ref() {
+            r.push(Line::unstyled(&format!("{:<20}: {session_id}", "session"))?);
+        }
+        if let Some(stats) = self.network_stats(two_snapshots) {
+            r.push(self.render_network_stat(
+                "up",
+                stats.re_upload_bytes,
+                stats.re_upload_bytes_per_second,
+                draw_mode,
+            )?);
+            r.push(self.render_network_stat(
+                "down",
+                stats.download_bytes,
+                stats.download_bytes_per_second,
+                draw_mode,
+            )?);
+        }
         if let (Some(first), Some((_, last))) = (&self.first_snapshot, &two_snapshots.last) {
             r.extend(self.render_detailed_items(
                 "re_uploads",
@@ -217,10 +291,12 @@ impl ReState {
                 last.re_get_digest_expirations_finished_with_error,
             )?);
             // TODO(raulgarcia4): Add some in-progress-stats for http metrics as well.
-            r.extend(self.render_detailed_item_no_progress_stats(
-                "http_download_bytes",
-                last.http_download_bytes - first.http_download_bytes,
-            )?);
+            let http_download_bytes = last.http_download_bytes - first.http_download_bytes;
+            r.push(Line::unstyled(&format!(
+                "{:<20}: \
+                {:>5} bytes",
+                "http_download_bytes", http_download_bytes
+            ))?);
 
             r.extend(self.render_local_cache_stat(
                 "local_artifact_cache",
@@ -239,14 +315,9 @@ impl ReState {
         detailed: bool,
         draw_mode: DrawMode,
     ) -> buck2_error::Result<Lines> {
-        let header = match self.render_header(two_snapshots, draw_mode) {
-            Some(header) => header,
-            None => return Ok(Lines::new()),
-        };
-        let mut lines = vec![Line::unstyled(&header)?];
         if detailed {
-            lines.extend(self.render_detailed(two_snapshots)?);
+            return Ok(Lines(self.render_detailed(two_snapshots, draw_mode)?));
         }
-        Ok(Lines(lines))
+        Ok(Lines::new())
     }
 }

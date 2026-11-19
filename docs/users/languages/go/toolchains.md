@@ -59,6 +59,7 @@ go_distr(
         "config//os:linux": select({"config//cpu:x86_64": "path/to/go-linux-amd64"}),
         "config//os:macos": select({"config//cpu:arm64": "path/to/go-darwin-arm64"}),
     }),
+    version = "1.X.Y",
 )
 
 # Note: selects are resolved against target-platform
@@ -100,7 +101,7 @@ See the example for a Go distribution supporting two execution platforms:
 linux/amd64 and darwin/arm64.
 
 ```
-third-party/go/1.25.1
+third-party/go-toolchain/1.27.2
 ├── api
 ├── bin
 │   ├── darwin_arm64

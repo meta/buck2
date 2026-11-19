@@ -34,7 +34,7 @@ alt='justifyContent'/>
 
 In the targets build graph, Buck2 operates with two main perspectives on build
 targets: unconfigured and configured. You can refer
-[execution model](../../../developers/architecture/buck2/#execution-model) to
+[execution model](../../concepts/architecture.md#execution-model) to
 see these two phase in a buck2 build.
 
 **Unconfigured** components are configuration independent representations. Think

@@ -9,7 +9,7 @@
 def _impl(ctx):
     if ctx.attrs.fail:
         fail("fail")
-    out = ctx.actions.write("out.txt", "hi")
+    out = ctx.actions.write("out.txt", "hi", has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 write = rule(

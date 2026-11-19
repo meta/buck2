@@ -9,7 +9,8 @@
  */
 
 use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
-use buck2_client_ctx::daemon::client::connect::buckd_startup_timeout;
+use buck2_client_ctx::daemon::client::connect::buckd_connect_timeout;
+use buck2_client_ctx::daemon::client::connect::buckd_startup_init_timeout;
 use buck2_client_ctx::daemon::client::kill::kill_command_impl;
 use buck2_client_ctx::startup_deadline::StartupDeadline;
 use buck2_common::init::DaemonStartupConfig;
@@ -25,24 +26,35 @@ pub fn start_in_process_daemon(
     paths: InvocationPaths,
     runtime: &tokio::runtime::Runtime,
 ) -> buck2_error::Result<Option<Box<dyn FnOnce() -> buck2_error::Result<()> + Send + Sync>>> {
-    let daemon_dir = paths.daemon_dir()?;
-    // Using --no-buckd must kill the existing daemon if there is one running.
-    // This adds a few extra prints to stderr for killing the daemon, but that should be
-    // OK given that --no-buckd should only be used for testing purposes.
-    runtime.block_on(async move {
-        let lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
-            daemon_dir,
-            StartupDeadline::duration_from_now(buckd_startup_timeout()?)?,
-        )
-        .await?;
-
-        kill_command_impl(&lifecycle_lock, "A command with `--no-buckd` is invoked").await
-    })?;
-
+    let handle = runtime.handle().clone();
     let daemon_startup_config = daemon_startup_config.clone();
-    // Create a function which spawns an in-process daemon.
+    // Create a function which kills an existing daemon, and then spawns an in-process one.
     Ok(Some(Box::new(move || {
-        let (tx, rx) = std::sync::mpsc::channel();
+        // The in-process daemon replaces any resident one, so the first command that actually
+        // connects kills it, right before starting its own. For a command that never connects
+        // to a daemon `--no-buckd` is a no-op.
+        //
+        // With no daemon recorded there is nothing to replace, and `kill` would only report
+        // that on every invocation.
+        let daemon_dir = paths.daemon_dir()?;
+        tokio::task::block_in_place(|| {
+            handle.block_on(async {
+                let lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
+                    daemon_dir,
+                    StartupDeadline::duration_from_now(buckd_connect_timeout()?)?,
+                )
+                .await?;
+
+                kill_command_impl(
+                    &lifecycle_lock,
+                    "A command with `--no-buckd` is invoked",
+                    true,
+                )
+                .await
+            })
+        })?;
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         // Spawn a thread which runs the daemon.
         thread_spawn("buck2-no-buckd", move || {
             let tx_clone = tx.clone();
@@ -50,7 +62,7 @@ pub fn start_in_process_daemon(
                 <dyn LogConfigurationReloadHandle>::noop(),
                 paths,
                 true,
-                move || drop(tx_clone.send(Ok(()))),
+                Box::new(move || drop(tx_clone.send(Ok(())))),
             );
             // Since `tx` is unbounded, there's race here: it is possible
             // that error message will be lost in the channel and not reported anywhere.
@@ -68,13 +80,23 @@ pub fn start_in_process_daemon(
                 }
             }
         })?;
-        // Wait for listener to start (or to fail).
-        match rx.recv() {
-            Ok(r) => r,
-            Err(_) => Err(buck2_error!(
-                buck2_error::ErrorTag::Tier0,
-                "In-process daemon failed to start and we don't know why"
-            )),
-        }
+        // Wait for the daemon to serve (or to fail). Like a spawned daemon, it gets the
+        // initialization timeout for that: the client connects with the much shorter timeout
+        // for an existing daemon.
+        tokio::task::block_in_place(|| {
+            handle.block_on(async {
+                StartupDeadline::duration_from_now(buckd_startup_init_timeout()?)?
+                    .run("starting in-process daemon", async {
+                        match rx.recv().await {
+                            Some(r) => r,
+                            None => Err(buck2_error!(
+                                buck2_error::ErrorTag::Tier0,
+                                "In-process daemon failed to start and we don't know why"
+                            )),
+                        }
+                    })
+                    .await
+            })
+        })
     })))
 }

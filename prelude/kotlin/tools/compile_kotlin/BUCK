@@ -14,3 +14,15 @@ prelude.python_bootstrap_binary(
         "prelude//java/tools:utils_lib",
     ],
 )
+
+prelude.python_test(
+    name = "test_compile_kotlin",
+    srcs = [
+        "compile_kotlin.py",
+        "tests/test_compile_kotlin.py",
+    ],
+    base_module = "",
+    deps = [
+        "prelude//java/tools:utils",
+    ],
+)

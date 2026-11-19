@@ -11,6 +11,7 @@
 package com.facebook.buck.android.exopackage;
 
 import com.facebook.buck.android.IsolatedApkInfo;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import java.io.Closeable;
@@ -24,6 +25,7 @@ import java.util.Set;
  * AndroidDevice making it easy to provide different implementations in tests.
  */
 @VisibleForTesting
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface AndroidDevicesHelper extends Closeable {
   /**
    * This is basically the same as AdbHelper.AdbCallable except that it takes an AndroidDevice

@@ -13,7 +13,6 @@ error: Parse error: invalid input `$`
   |
 1 | unknown $&%+ operator
   |         ^
-  |
 
 
 Program:
@@ -26,7 +25,6 @@ error: Parse error: unfinished string literal
   |
 1 | an 'incomplete string
   |    ^^^^^^^^^^^^^^^^^^
-  |
 
 
 Program:
@@ -38,7 +36,6 @@ error: Parse error: invalid string escape sequence `x3 `
   |
 1 | an + 'invalid escape \x3  character'
   |                      ^^^^
-  |
 
 
 Program:
@@ -50,7 +47,6 @@ error: Parse error: integer cannot have leading 0, got `003`
   |
 1 | leading_zero = 003 + 8
   |                ^^^
-  |
 
 
 Program:
@@ -62,4 +58,3 @@ error: Parse error: cannot use reserved keyword `raise`
   |
 1 | reserved_word = raise + 1
   |                 ^^^^^
-  |

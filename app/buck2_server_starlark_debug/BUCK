@@ -5,8 +5,7 @@ oncall("build_infra")
 rust_library(
     name = "buck2_server_starlark_debug",
     srcs = glob(["src/**/*.rs"]),
-    test_deps = [
-    ],
+    test_deps = [],
     deps = [
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:debugserver-types",
@@ -24,6 +23,7 @@ rust_library(
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_events:buck2_events",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_interpreter:buck2_interpreter",
         "//buck2/app/buck2_server_ctx:buck2_server_ctx",
         "//buck2/app/buck2_util:buck2_util",

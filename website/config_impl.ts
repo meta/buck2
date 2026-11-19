@@ -22,6 +22,7 @@ const darkCodeTheme = themes.dracula;
 const presetOptions: ClassicPresetOptions = ({
   docs: {
     path: '../docs',
+    exclude: ['developers/**'],
     sidebarPath: require.resolve('./sidebars_generated.ts'),
     async sidebarItemsGenerator({ defaultSidebarItemsGenerator, ...args }) {
       const items = await defaultSidebarItemsGenerator({
@@ -109,6 +110,10 @@ const themeConfig: ClassicPresetConfig = ({
           {
             label: 'GitHub issues',
             href: 'https://github.com/facebook/buck2/issues',
+          },
+          {
+            label: 'Community Discord server',
+            href: 'https://discord.gg/N6NtcYQXU8',
           },
         ],
       },

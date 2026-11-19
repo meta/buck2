@@ -1,13 +1,17 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
 [
+  "buckd_command_init",
   "file-watcher-wait",
   "other-command-start-overhead",
   "listing root//",
   "load root//",
+  "configure_target",
   "analysis root//:step_0",
   "action root//:step_1",
+  "dynamic_analysis root//:check_dynamic_input",
   "action root//:check_dynamic_input",
+  "build_key",
   "materialization root//:check_dynamic_input",
   "compute-critical-path"
 ]

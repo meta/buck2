@@ -10,8 +10,6 @@
 
 package com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util
 
-import com.facebook.kotlin.compilerplugins.kosabi.common.FullTypeQualifier
-
 // Kotlin type alias that's not from java.lang
 // https://github.com/JetBrains/kotlin/blob/master/libraries/stdlib/jvm/runtime/kotlin/TypeAliases.kt
 object PlainKTJavaTypeAlias : FTQCollection {
@@ -33,71 +31,4 @@ object PlainKTJavaTypeAlias : FTQCollection {
         "HashSet",
     )
   }
-}
-
-object KTJavaTypeAlias {
-  val KTAlias_NoSuchElementException: FullTypeQualifier =
-      FullTypeQualifier.unsafeBuildQualifier(
-          listOf(
-              "kotlin",
-              "NoSuchElementException",
-          )
-      )
-  val KTAlias_ConcurrentModificationException: FullTypeQualifier =
-      FullTypeQualifier.unsafeBuildQualifier(
-          listOf(
-              "kotlin",
-              "ConcurrentModificationException",
-          )
-      )
-  val KTAlias_Comparator: FullTypeQualifier =
-      FullTypeQualifier.unsafeBuildQualifier(
-          listOf(
-              "kotlin",
-              "Comparator",
-          )
-      )
-  val KTAlias_RandomAccess: FullTypeQualifier =
-      FullTypeQualifier.unsafeBuildQualifier(
-          listOf(
-              "kotlin",
-              "RandomAccess",
-          )
-      )
-  val KTAlias_ArrayList: FullTypeQualifier =
-      FullTypeQualifier.unsafeBuildQualifier(
-          listOf(
-              "kotlin",
-              "ArrayList",
-          )
-      )
-  val KTAlias_LinkedHashMap: FullTypeQualifier =
-      FullTypeQualifier.unsafeBuildQualifier(
-          listOf(
-              "kotlin",
-              "LinkedHashMap",
-          )
-      )
-  val KTAlias_HashMap: FullTypeQualifier =
-      FullTypeQualifier.unsafeBuildQualifier(
-          listOf(
-              "kotlin",
-              "HashMap",
-          )
-      )
-
-  val KTAlias_LinkedHashSet: FullTypeQualifier =
-      FullTypeQualifier.unsafeBuildQualifier(
-          listOf(
-              "kotlin",
-              "LinkedHashSet",
-          )
-      )
-  val KTAlias_HashSet: FullTypeQualifier =
-      FullTypeQualifier.unsafeBuildQualifier(
-          listOf(
-              "kotlin",
-              "HashSet",
-          )
-      )
 }

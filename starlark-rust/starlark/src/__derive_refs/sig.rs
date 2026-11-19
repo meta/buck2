@@ -17,16 +17,16 @@
 
 use crate::eval::ParametersSpec;
 use crate::eval::ParametersSpecParam;
-use crate::values::FrozenValue;
+use crate::values::Value;
 
-pub enum NativeSigArg {
+pub enum NativeSigArg<'v> {
     Required(&'static str),
     Optional(&'static str),
-    Defaulted(&'static str, FrozenValue),
+    Defaulted(&'static str, Value<'v>),
 }
 
-impl NativeSigArg {
-    fn param(&self) -> (&str, ParametersSpecParam<FrozenValue>) {
+impl<'v> NativeSigArg<'v> {
+    fn param(&self) -> (&str, ParametersSpecParam<Value<'v>>) {
         match self {
             NativeSigArg::Required(name) => (name, ParametersSpecParam::Required),
             NativeSigArg::Optional(name) => (name, ParametersSpecParam::Optional),
@@ -35,14 +35,14 @@ impl NativeSigArg {
     }
 }
 
-pub fn parameter_spec(
+pub fn parameter_spec<'v>(
     name: &'static str,
-    pos_only: &[NativeSigArg],
-    pos_or_named: &[NativeSigArg],
+    pos_only: &[NativeSigArg<'v>],
+    pos_or_named: &[NativeSigArg<'v>],
     args: bool,
-    named_only: &[NativeSigArg],
+    named_only: &[NativeSigArg<'v>],
     kwargs: bool,
-) -> ParametersSpec<FrozenValue> {
+) -> ParametersSpec<Value<'v>> {
     ParametersSpec::new_parts(
         name,
         pos_only.iter().map(NativeSigArg::param),
@@ -54,6 +54,6 @@ pub fn parameter_spec(
 }
 
 /// `ParametersSpec` for a function which accepts `&Arguments`.
-pub fn parameter_spec_for_arguments(name: &'static str) -> ParametersSpec<FrozenValue> {
+pub fn parameter_spec_for_arguments<'v>(name: &'static str) -> ParametersSpec<Value<'v>> {
     parameter_spec(name, &[], &[], true, &[], true)
 }

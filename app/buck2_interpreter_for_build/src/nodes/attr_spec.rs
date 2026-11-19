@@ -8,18 +8,19 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use buck2_core::target::label::label::TargetLabelRef;
 use buck2_core::target::name::TargetNameRef;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
+use buck2_hash::BuckMutMap;
+use buck2_hash::IntentionallyStdHashMap;
+use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr::Attribute;
 use buck2_node::attrs::attr::CoercedValue;
-use buck2_node::attrs::attr_type::string::StringLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
+use buck2_node::attrs::coerced::kinds;
+use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
+use buck2_node::attrs::display::AttrDisplayWithContextExt;
 use buck2_node::attrs::inspect_options::AttrInspectOptions;
 use buck2_node::attrs::spec::AttributeId;
 use buck2_node::attrs::spec::AttributeSpec;
@@ -27,9 +28,7 @@ use buck2_node::attrs::spec::internal::NAME_ATTRIBUTE;
 use buck2_node::attrs::spec::internal::VISIBILITY_ATTRIBUTE;
 use buck2_node::attrs::spec::internal::WITHIN_VIEW_ATTRIBUTE;
 use buck2_node::attrs::spec::internal::attr_is_configurable;
-use buck2_node::attrs::values::AttrValues;
-use buck2_util::arc_str::ArcStr;
-use dupe::Dupe;
+use buck2_node::attrs::values::UnsealedAttrValues;
 use starlark::docs::DocString;
 use starlark::eval::ParametersParser;
 use starlark::eval::ParametersSpec;
@@ -49,13 +48,14 @@ pub trait AttributeSpecExt {
         &'a self,
         param_parser: &mut ParametersParser<'v, '_>,
         size_hint: usize,
+        internals: &ModuleInternals,
     ) -> buck2_error::Result<(
         // "name" attribute value.
         &'v TargetNameRef,
         // Remaining attributes.
         impl ExactSizeIterator<Item = (&'a str, AttributeId, &'a Attribute)> + 'a,
-        // Populated with name.
-        AttrValues,
+        // Attribute values, populated with name.
+        UnsealedAttrValues,
     )>;
 
     fn parse_params<'v>(
@@ -63,18 +63,42 @@ pub trait AttributeSpecExt {
         param_parser: &mut ParametersParser<'v, '_>,
         arg_count: usize,
         internals: &ModuleInternals,
-    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)>;
+        coercion_ctx: &dyn AttrCoercionContext<'v>,
+    ) -> buck2_error::Result<(&'v TargetNameRef, UnsealedAttrValues)>;
 
     /// Returns a starlark Parameters for the rule callable, but not default values.
-    fn signature(&self, rule_name: String) -> ParametersSpec<Value<'_>>;
+    fn signature<'v>(&self, rule_name: String) -> ParametersSpec<Value<'v>>;
 
-    /// Returns a starlark Parameters for the rule callable, with default values.
-    fn signature_with_default_value(&self, rule_name: String) -> ParametersSpec<Arc<CoercedAttr>>;
+    /// Returns a starlark Parameters for the rule callable, with default
+    /// values pre-rendered for documentation.
+    fn signature_with_default_value(&self, rule_name: String) -> ParametersSpec<String>;
 
     fn ty_function(&self) -> TyFunction;
 
     fn starlark_types(&self) -> Vec<Ty>;
-    fn docstrings(&self) -> HashMap<String, Option<DocString>>;
+    fn docstrings(&self) -> IntentionallyStdHashMap<String, Option<DocString>>;
+}
+
+/// The value an attribute takes when the target does not set it and the
+/// attribute's own default does not apply: `visibility` and `within_view`
+/// default to what the enclosing `PACKAGE` files declare.
+fn package_default(
+    attr_name: &str,
+    internals: &ModuleInternals,
+) -> Option<buck2_error::Result<AttrToken>> {
+    if attr_name == VISIBILITY_ATTRIBUTE.name {
+        Some(
+            internals.with_attr_arena_builder(|b| {
+                b.encode_visibility(internals.super_package.visibility())
+            }),
+        )
+    } else if attr_name == WITHIN_VIEW_ATTRIBUTE.name {
+        Some(internals.with_attr_arena_builder(|b| {
+            b.encode_within_view(internals.super_package.within_view())
+        }))
+    } else {
+        None
+    }
 }
 
 impl AttributeSpecExt for AttributeSpec {
@@ -82,21 +106,23 @@ impl AttributeSpecExt for AttributeSpec {
         &'a self,
         param_parser: &mut ParametersParser<'v, '_>,
         size_hint: usize,
+        internals: &ModuleInternals,
     ) -> buck2_error::Result<(
         &'v TargetNameRef,
         impl ExactSizeIterator<Item = (&'a str, AttributeId, &'a Attribute)> + 'a,
-        AttrValues,
+        UnsealedAttrValues,
     )> {
-        let mut attr_values = AttrValues::with_capacity(size_hint);
+        let mut attr_values = UnsealedAttrValues::with_capacity(size_hint);
 
         let mut indices = self.attr_specs();
         let name = match indices.next() {
             Some((name_name, attr_idx, _attr)) if name_name == NAME_ATTRIBUTE.name => {
                 let name = param_parser.next()?;
-                attr_values.push_sorted(
-                    attr_idx,
-                    CoercedAttr::String(StringLiteral(ArcStr::from(name))),
-                );
+                internals.with_attr_arena_builder(|builder| {
+                    let name = builder.encode_string(name)?;
+                    attr_values.push(builder, attr_idx, name);
+                    buck2_error::Ok(())
+                })?;
                 name
             }
             _ => {
@@ -113,99 +139,87 @@ impl AttributeSpecExt for AttributeSpec {
         param_parser: &mut ParametersParser<'v, '_>,
         arg_count: usize,
         internals: &ModuleInternals,
-    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)> {
-        let (name, indices, mut attr_values) = self.start_parse(param_parser, arg_count)?;
+        coercion_ctx: &dyn AttrCoercionContext<'v>,
+    ) -> buck2_error::Result<(&'v TargetNameRef, UnsealedAttrValues)> {
+        let (name, indices, mut attr_values) =
+            self.start_parse(param_parser, arg_count, internals)?;
 
         let target_label = TargetLabelRef::new(internals.buildfile_path().package(), name);
+
+        let mut default_allowed_deps = BuckMutMap::default();
 
         for (attr_name, attr_idx, attribute) in indices {
             let configurable = attr_is_configurable(attr_name);
 
-            let user_value: Option<Value> = match attribute.default() {
+            let user_value: Option<Value> = match attribute.default_as_ref() {
                 Some(_) => param_parser.next_opt()?,
                 None => Some(param_parser.next()?),
             };
 
-            let attr_is_visibility = attr_name == VISIBILITY_ATTRIBUTE.name;
-            let attr_is_within_view = attr_name == WITHIN_VIEW_ATTRIBUTE.name;
-            if let Some(v) = user_value {
-                let mut coerced = attribute
-                    .coerce(
-                        attr_name,
-                        configurable,
-                        internals.attr_coercion_context(),
-                        v,
-                    )
+            let mut coerced = match user_value {
+                Some(v) => attribute
+                    .coerce(attr_name, configurable, coercion_ctx, v)
                     .with_buck_error_context(|| {
                         format!("Error coercing attribute `{attr_name}` of `{target_label}`",)
-                    })?;
+                    })?,
+                None => CoercedValue::Default,
+            };
+            if coerced == CoercedValue::Default
+                && let Some(value) = package_default(attr_name, internals)
+            {
+                coerced = CoercedValue::Custom(value?);
+            }
 
-                if attr_is_visibility {
-                    if coerced == CoercedValue::Default {
-                        coerced = CoercedValue::Custom(CoercedAttr::Visibility(
-                            internals.super_package.visibility().dupe(),
-                        ));
-                    }
-                } else if attr_is_within_view {
-                    if coerced == CoercedValue::Default {
-                        coerced = CoercedValue::Custom(CoercedAttr::WithinView(
-                            internals.super_package.within_view().dupe(),
-                        ));
-                    }
-                }
-
-                match coerced {
-                    CoercedValue::Custom(v) => {
-                        attr_values.push_sorted(attr_idx, v);
-                    }
-                    CoercedValue::Default => {}
-                }
-            } else if attr_is_visibility {
-                attr_values.push_sorted(
-                    attr_idx,
-                    CoercedAttr::Visibility(internals.super_package.visibility().dupe()),
-                );
-            } else if attr_is_within_view {
-                attr_values.push_sorted(
-                    attr_idx,
-                    CoercedAttr::WithinView(internals.super_package.within_view().dupe()),
-                );
+            if let CoercedValue::Custom(v) = coerced {
+                internals.with_attr_arena_builder(|builder| attr_values.push(builder, attr_idx, v));
+                default_allowed_deps.insert(attr_name, attribute.default_allowed_deps());
             }
         }
 
-        attr_values.shrink_to_fit();
-
         // For now `within_view` is always set, but let's make code more robust.
-        if let Some(within_view) = attr_values.get(WITHIN_VIEW_ATTRIBUTE.id) {
-            let within_view = match within_view {
-                CoercedAttr::WithinView(within_view) => within_view,
-                _ => return Err(internal_error!("`within_view` coerced incorrectly")),
-            };
-            for a in self.attrs(&attr_values, AttrInspectOptions::DefinedOnly) {
-                check_within_view(
-                    a.value,
-                    internals.buildfile_path().package(),
-                    a.attr.coercer(),
-                    within_view,
-                )
-                .with_buck_error_context(|| {
-                    format!(
-                        "checking `within_view` for attribute `{}` of `{}`",
-                        a.name, target_label,
+        if let Some(within_view_word) = attr_values.get(WITHIN_VIEW_ATTRIBUTE.id) {
+            internals.with_attr_arena_ref(|arena_builder| -> buck2_error::Result<()> {
+                let within_view = match arena_builder
+                    .view(within_view_word)
+                    .downcast::<kinds::WithinView>()
+                {
+                    Some(within_view) => within_view,
+                    _ => return Err(internal_error!("`within_view` coerced incorrectly")),
+                };
+                for a in self.unsealed_attrs(
+                    arena_builder,
+                    &attr_values,
+                    AttrInspectOptions::DefinedOnly,
+                ) {
+                    let default_deps = default_allowed_deps.get(&a.name).copied().flatten();
+                    check_within_view(
+                        a.value,
+                        internals.buildfile_path().package(),
+                        a.attr.coercer(),
+                        within_view,
+                        internals.super_package.within_view_cap(),
+                        default_deps,
                     )
-                })?;
-            }
+                    .with_buck_error_context(|| {
+                        format!(
+                            "checking `within_view` for attribute `{}` of `{}`",
+                            a.name, target_label,
+                        )
+                    })?;
+                }
+                Ok(())
+            })?;
         }
 
         Ok((name, attr_values))
     }
 
     /// Returns a starlark Parameters for the rule callable, but not default values.
-    fn signature(&self, rule_name: String) -> ParametersSpec<Value<'_>> {
+    fn signature<'v>(&self, rule_name: String) -> ParametersSpec<Value<'v>> {
         ParametersSpec::new_named_only(
             &rule_name,
             self.attr_specs().map(|(name, _idx, attribute)| {
-                let default = attribute.default();
+                let default = attribute.default_as_ref();
                 (
                     name,
                     match default {
@@ -217,16 +231,19 @@ impl AttributeSpecExt for AttributeSpec {
         )
     }
 
-    /// Returns a starlark Parameters for the rule callable, with default values.
-    fn signature_with_default_value(&self, rule_name: String) -> ParametersSpec<Arc<CoercedAttr>> {
+    /// Returns a starlark Parameters for the rule callable, with default
+    /// values pre-rendered for documentation.
+    fn signature_with_default_value(&self, rule_name: String) -> ParametersSpec<String> {
         ParametersSpec::new_named_only(
             &rule_name,
             self.attr_specs().map(|(name, _idx, attribute)| {
-                let default = attribute.default();
+                let default = attribute.default_as_ref();
                 (
                     name,
                     match default {
-                        Some(default) => ParametersSpecParam::Defaulted(default.dupe()),
+                        Some(default) => {
+                            ParametersSpecParam::Defaulted(default.as_display_no_ctx().to_string())
+                        }
                         None => ParametersSpecParam::Required,
                     },
                 )
@@ -241,7 +258,7 @@ impl AttributeSpecExt for AttributeSpec {
                 AttrIsConfigurable::Yes => attribute.starlark_type().to_ty_with_select(),
                 AttrIsConfigurable::No => attribute.starlark_type().to_ty(),
             };
-            let required = match attribute.default() {
+            let required = match attribute.default_as_ref() {
                 Some(_) => ParamIsRequired::No,
                 None => ParamIsRequired::Yes,
             };
@@ -257,7 +274,7 @@ impl AttributeSpecExt for AttributeSpec {
             .collect()
     }
 
-    fn docstrings(&self) -> HashMap<String, Option<DocString>> {
+    fn docstrings(&self) -> IntentionallyStdHashMap<String, Option<DocString>> {
         self.attr_specs()
             .map(|(name, _idx, attr)| (name.to_owned(), attr.docstring()))
             .collect()

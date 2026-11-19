@@ -8,16 +8,11 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 //! Implementation of several server commands.
-
-#![feature(box_patterns)]
-#![feature(try_blocks)]
-#![feature(used_with_arg)]
 
 pub(crate) mod build;
 pub(crate) mod complete;
+pub(crate) mod debug_anon_targets;
 pub(crate) mod debug_eval;
 pub(crate) mod expand_external_cells;
 pub(crate) mod explain;

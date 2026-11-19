@@ -22,7 +22,6 @@ error: Expected type `str` but got `int`
    |
 10 |     foo(1)
    |         ^
-   |
 
 Error:
 error: Expected type `int` but got `str`
@@ -30,7 +29,6 @@ error: Expected type `int` but got `str`
    |
 11 |     foo(c="x")
    |         ^^^^^
-   |
 
 Types:
 args: tuple[str, ...]
@@ -42,4 +40,3 @@ error: Expected type `str` but got `int`
    |
 10 |     foo(1)
    |         ^
-   |

@@ -16,21 +16,18 @@
  */
 
 use std::collections::HashMap;
-use std::fmt::Write;
 use std::fs;
 use std::mem;
 use std::path::Path;
 
 use derivative::Derivative;
 use dupe::Dupe;
-use lalrpop_util as lu;
 
 use crate::codemap::CodeMap;
 use crate::codemap::FileSpan;
 use crate::codemap::Pos;
 use crate::codemap::Span;
 use crate::codemap::Spanned;
-use crate::eval_exception::EvalException;
 use crate::lexer::Lexer;
 use crate::lexer::Token;
 use crate::syntax::AstLoad;
@@ -43,68 +40,11 @@ use crate::syntax::ast::ExprP;
 use crate::syntax::ast::IdentP;
 use crate::syntax::ast::LoadArgP;
 use crate::syntax::ast::Stmt;
-use crate::syntax::grammar::StarlarkParser;
 use crate::syntax::lint_suppressions::LintSuppressions;
 use crate::syntax::lint_suppressions::LintSuppressionsBuilder;
+use crate::syntax::parser_rd;
 use crate::syntax::state::ParserState;
 use crate::syntax::validate::validate_module;
-
-fn one_of(expected: &[String]) -> String {
-    let mut result = String::new();
-    for (i, e) in expected.iter().enumerate() {
-        let sep = match i {
-            0 => "one of",
-            _ if i < expected.len() - 1 => ",",
-            // Last expected message to be written
-            _ => " or",
-        };
-        write!(result, "{sep} {e}").unwrap();
-    }
-    result
-}
-
-/// Convert the error to a codemap diagnostic.
-///
-/// To build this diagnostic, the method needs the file span corresponding
-/// to the parsed file.
-fn parse_error_add_span(
-    err: lu::ParseError<usize, Token, EvalException>,
-    pos: usize,
-    codemap: &CodeMap,
-) -> crate::Error {
-    let (message, span) = match err {
-        lu::ParseError::InvalidToken { location } => (
-            "Parse error: invalid token".to_owned(),
-            Span::new(Pos::new(location as u32), Pos::new(location as u32)),
-        ),
-        lu::ParseError::UnrecognizedToken {
-            token: (x, t, y),
-            expected,
-        } => (
-            format!(
-                "Parse error: unexpected {} here, expected {}",
-                t,
-                one_of(&expected)
-            ),
-            Span::new(Pos::new(x as u32), Pos::new(y as u32)),
-        ),
-        lu::ParseError::UnrecognizedEOF { .. } => (
-            "Parse error: unexpected end of file".to_owned(),
-            Span::new(Pos::new(pos as u32), Pos::new(pos as u32)),
-        ),
-        lu::ParseError::ExtraToken { token: (x, t, y) } => (
-            format!("Parse error: extraneous token {t}"),
-            Span::new(Pos::new(x as u32), Pos::new(y as u32)),
-        ),
-        lu::ParseError::User { error } => return error.into_error(),
-    };
-
-    crate::Error::new_spanned(
-        crate::ErrorKind::Parser(anyhow::anyhow!(message)),
-        span,
-        codemap,
-    )
-}
 
 /// A representation of a Starlark module abstract syntax tree.
 ///
@@ -126,6 +66,9 @@ pub struct AstModule {
     /// Lint issues suppressed in this module using inline comments of shape
     /// # starlark-lint-disable <ISSUE_NAME>, <ISSUE_NAME>, ...
     lint_suppressions: LintSuppressions,
+    /// Spans of all comments found in the source, in source order.
+    /// Each span includes the leading `#`.
+    comment_spans: Vec<Span>,
 }
 
 /// This trait is not exported as public API of starlark.
@@ -164,6 +107,7 @@ impl AstModule {
         dialect: &Dialect,
         typecheck: bool,
         lint_suppressions: LintSuppressions,
+        comment_spans: Vec<Span>,
     ) -> crate::Result<AstModule> {
         let mut errors = Vec::new();
         validate_module(
@@ -184,6 +128,7 @@ impl AstModule {
             dialect: dialect.clone(),
             typecheck,
             lint_suppressions,
+            comment_spans,
         })
     }
 
@@ -217,29 +162,32 @@ impl AstModule {
         let mut lint_suppressions_builder = LintSuppressionsBuilder::new();
         // Keep track of block of comments, used for accumulating lint suppressions
         let mut in_comment_block = false;
+        let mut comment_spans = Vec::new();
         let mut errors = Vec::new();
-        match StarlarkParser::new().parse(
-            &mut ParserState {
-                codemap: &codemap,
-                dialect,
-                errors: &mut errors,
-            },
-            lexer.filter(|token| match token {
-                // Filter out comment tokens and accumulate lint suppressions
-                Ok((start, Token::Comment(comment), end)) => {
-                    lint_suppressions_builder.parse_comment(&codemap, comment, *start, *end);
-                    in_comment_block = true;
-                    false
+
+        let filtered = lexer.filter(|token| match token {
+            Ok((start, Token::Comment(comment), end)) => {
+                lint_suppressions_builder.parse_comment(&codemap, comment, *start, *end);
+                comment_spans.push(Span::new(Pos::new(*start as u32), Pos::new(*end as u32)));
+                in_comment_block = true;
+                false
+            }
+            _ => {
+                if in_comment_block {
+                    lint_suppressions_builder.end_of_comment_block(&codemap);
+                    in_comment_block = false;
                 }
-                _ => {
-                    if in_comment_block {
-                        lint_suppressions_builder.end_of_comment_block(&codemap);
-                        in_comment_block = false;
-                    }
-                    true
-                }
-            }),
-        ) {
+                true
+            }
+        });
+
+        let mut state = ParserState {
+            codemap: &codemap,
+            dialect,
+            errors: &mut errors,
+        };
+
+        match parser_rd::parse_module(&mut state, filtered) {
             Ok(v) => {
                 if let Some(err) = errors.into_iter().next() {
                     return Err(err.into_error());
@@ -250,9 +198,10 @@ impl AstModule {
                     dialect,
                     typecheck,
                     lint_suppressions_builder.build(),
+                    comment_spans,
                 )?)
             }
-            Err(p) => Err(parse_error_add_span(p, codemap.source().len(), &codemap)),
+            Err(e) => Err(e.into_error()),
         }
     }
 
@@ -370,6 +319,13 @@ impl AstModule {
         self.lint_suppressions
             .is_suppressed(issue_short_name, issue_span)
     }
+
+    /// Returns the spans of all comments in source order. Each span includes
+    /// the leading `#`. Use [`file_span`](AstModule::file_span) to obtain a
+    /// [`FileSpan`], then [`FileSpan::source_span`] to get the source text.
+    pub fn comments(&self) -> &[Span] {
+        &self.comment_spans
+    }
 }
 
 #[cfg(test)]
@@ -388,5 +344,57 @@ mod tests {
 
         assert_eq!(&get("foo"), "1:1-4");
         assert_eq!(&get("foo\ndef x():\n   pass"), "1:1-4 2:1-3:8 3:4-8");
+    }
+
+    #[test]
+    fn test_comments_empty() {
+        let module = grammar_tests::parse_ast("x = 1");
+        assert!(module.comments().is_empty());
+    }
+
+    #[test]
+    fn test_comments_single() {
+        let module = grammar_tests::parse_ast("# hello\nx = 1");
+        let comments = module.comments();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(module.file_span(comments[0]).source_span(), "# hello");
+    }
+
+    #[test]
+    fn test_comments_multiple() {
+        let module = grammar_tests::parse_ast("# first\nx = 1\n# second");
+        let comments = module.comments();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(module.file_span(comments[0]).source_span(), "# first");
+        assert_eq!(module.file_span(comments[1]).source_span(), "# second");
+    }
+
+    #[test]
+    fn test_comments_inline() {
+        let module = grammar_tests::parse_ast("x = 1 # inline");
+        let comments = module.comments();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(module.file_span(comments[0]).source_span(), "# inline");
+    }
+
+    #[test]
+    fn test_comments_span() {
+        let module = grammar_tests::parse_ast("# hi\nx = 1");
+        let comments = module.comments();
+        assert_eq!(comments.len(), 1);
+        let resolved = module.file_span(comments[0]).resolve_span();
+        assert_eq!(resolved.to_string(), "1:1-5");
+    }
+
+    #[test]
+    fn test_comments_source_order() {
+        let module = grammar_tests::parse_ast("# a\n# b\nx = 1\n# c");
+        let file_spans: Vec<_> = module
+            .comments()
+            .iter()
+            .map(|s| module.file_span(*s))
+            .collect();
+        let texts: Vec<&str> = file_spans.iter().map(|fs| fs.source_span()).collect();
+        assert_eq!(texts, vec!["# a", "# b", "# c"]);
     }
 }

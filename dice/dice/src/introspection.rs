@@ -11,9 +11,7 @@
 //!
 //! Interfaces for introspection of the DICE graph
 
-use crate::Dice;
 use crate::introspection::graph::AnyKey;
-use crate::introspection::graph::GraphIntrospectable;
 
 pub mod graph;
 pub(crate) mod introspect;
@@ -21,10 +19,16 @@ pub(crate) mod introspect;
 pub use crate::introspection::introspect::serialize_dense_graph;
 pub use crate::introspection::introspect::serialize_graph;
 
-impl Dice {
-    pub fn to_introspectable(&self) -> GraphIntrospectable {
-        self.implementation.to_introspectable()
-    }
+/// A point-in-time snapshot of a `DiceTask`'s state, surfaced for graph introspection (e.g.
+/// `graph::GraphIntrospectable::keys_currently_running`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiceTaskState {
+    /// Task is in progress (not yet completed)
+    InProgress,
+    /// Value is ready to be used
+    Ready,
+    /// Task will never become Ready
+    Terminated,
 }
 
 #[cfg(test)]
@@ -35,17 +39,23 @@ mod tests {
     use derive_more::Display;
     use dice_futures::cancellation::CancellationContext;
     use dupe::Dupe;
+    use pagable::Pagable;
+    use pagable::pagable_typetag;
 
+    use crate::DiceKeyDyn;
     use crate::HashMap;
     use crate::api::computations::DiceComputations;
     use crate::api::cycles::DetectCycles;
     use crate::api::key::Key;
-    use crate::impls::dice::DiceModern;
-    use crate::introspection::graph::SerializedGraphNodesForKey;
+    use crate::api::key::NoValueSerialize;
+    use crate::api::key::ValueSerialize;
+    use crate::dice::Dice;
+    use crate::introspection::graph::SerializedGraphNodeForKey;
     use crate::introspection::serialize_graph;
 
-    #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+    #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
     #[display("{:?}", self)]
+    #[pagable_typetag(DiceKeyDyn)]
     struct KeyA(usize);
 
     #[async_trait]
@@ -64,13 +74,18 @@ mod tests {
             }
         }
 
-        fn equality(_: &Self::Value, _: &Self::Value) -> bool {
-            unimplemented!()
+        fn equality_behavior() -> crate::EqualityBehavior<Self::Value> {
+            crate::EqualityBehavior::Compare(|_, _| unimplemented!())
+        }
+
+        fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+            NoValueSerialize::<Self::Value>::new()
         }
     }
 
-    #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+    #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
     #[display("{:?}", self)]
+    #[pagable_typetag(DiceKeyDyn)]
     struct KeyB;
 
     #[async_trait]
@@ -85,15 +100,20 @@ mod tests {
             // Noop
         }
 
-        fn equality(_: &Self::Value, _: &Self::Value) -> bool {
-            unimplemented!()
+        fn equality_behavior() -> crate::EqualityBehavior<Self::Value> {
+            crate::EqualityBehavior::Compare(|_, _| unimplemented!())
+        }
+
+        fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+            NoValueSerialize::<Self::Value>::new()
         }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_serialization() -> anyhow::Result<()> {
-        let dice = DiceModern::builder().build(DetectCycles::Disabled);
-        let mut ctx = dice.updater().commit().await;
+        let dice = Dice::builder().build(DetectCycles::Disabled);
+        let root = dice.new_root().await;
+        let ctx = dice.updater(root).commit().await;
         ctx.compute(&KeyA(3)).await?;
 
         let mut nodes = Vec::new();
@@ -147,13 +167,16 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_serialization_dense() -> anyhow::Result<()> {
-        let dice = DiceModern::builder().build(DetectCycles::Disabled);
-        let mut ctx = dice.updater().commit().await;
+        let dice = Dice::builder().build(DetectCycles::Disabled);
+        let root = dice.new_root().await;
+        let ctx = dice.updater(root).commit().await;
         ctx.compute(&KeyA(3)).await?;
 
-        let node = bincode::serialize(&dice.to_introspectable())?;
+        let node =
+            bincode::serde::encode_to_vec(dice.to_introspectable(), bincode::config::legacy())?;
 
-        let _out: Vec<SerializedGraphNodesForKey> = bincode::deserialize(&node)?;
+        let (_out, _): (Vec<SerializedGraphNodeForKey>, _) =
+            bincode::serde::decode_from_slice(&node, bincode::config::legacy())?;
         Ok(())
     }
 }

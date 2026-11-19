@@ -20,9 +20,9 @@ pub enum InvocationPathsResult {
 impl InvocationPathsResult {
     pub fn get_result(self) -> buck2_error::Result<InvocationPaths> {
         match self {
-            InvocationPathsResult::OtherError(e) => Err(e.into()),
+            InvocationPathsResult::OtherError(e) => Err(e),
             InvocationPathsResult::Paths(paths) => Ok(paths),
-            InvocationPathsResult::OutsideOfRepo(e) => Err(e.into()),
+            InvocationPathsResult::OutsideOfRepo(e) => Err(e),
         }
     }
 }

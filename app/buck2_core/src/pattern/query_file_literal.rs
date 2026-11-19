@@ -15,9 +15,8 @@ use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use crate::cells::CellAliasResolver;
 use crate::cells::CellResolver;
 use crate::cells::cell_path::CellPath;
-use crate::cells::paths::CellRelativePath;
 use crate::fs::project::ProjectRoot;
-use crate::pattern::pattern::maybe_split_cell_alias_and_relative_path;
+use crate::pattern::parse_package::maybe_parse_cell_path;
 
 pub fn parse_query_file_literal(
     literal: &str,
@@ -26,14 +25,8 @@ pub fn parse_query_file_literal(
     working_dir_abs: &AbsNormPath,
     project_root: &ProjectRoot,
 ) -> buck2_error::Result<CellPath> {
-    match maybe_split_cell_alias_and_relative_path(literal)? {
-        Some((alias, path)) => {
-            let cell_name = cell_alias_resolver.resolve(alias.as_str())?;
-
-            let cell_relative_path = CellRelativePath::new(path);
-
-            Ok(CellPath::new(cell_name, cell_relative_path.to_buf()))
-        }
+    match maybe_parse_cell_path(literal, cell_alias_resolver)? {
+        Some(cell_path) => Ok(cell_path),
         None => {
             let path = Path::new(literal);
             // Note if the path is absolute, this `join` is a no-op.

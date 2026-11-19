@@ -10,8 +10,6 @@
 
 //! Parse some inputs to a `[`StarlarkUserEvent`].
 
-use std::collections::HashMap;
-
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_data::StarlarkUserEvent;
@@ -23,11 +21,15 @@ use buck2_data::starlark_user_metadata_value::Value::DictValue;
 use buck2_data::starlark_user_metadata_value::Value::IntValue;
 use buck2_data::starlark_user_metadata_value::Value::ListValue;
 use buck2_data::starlark_user_metadata_value::Value::StringValue;
+use buck2_hash::IntentionallyStdHashMap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
+use starlark::values::dict::DictType;
 use starlark::values::float::UnpackFloat;
 use starlark::values::list::ListRef;
+use starlark::values::string::StarlarkStr;
 
 use super::artifacts::EnsuredArtifact;
 use super::context::output::get_artifact_path_display;
@@ -35,10 +37,6 @@ use super::context::output::get_artifact_path_display;
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum StarlarkUserEventUnpack {
-    #[error(
-        "Metadata should be a dict where keys are strings, and values are strings, ints, bools, or dicts/lists of the mentioned types. Got type: `{0}`"
-    )]
-    InvalidMetadata(String),
     #[error("Metadata keys should be strings. Got type: `{0}`")]
     InvalidKey(String),
     #[error(
@@ -56,28 +54,18 @@ impl<'v> StarlarkUserEventParser<'v> {
     pub(crate) fn parse(
         &self,
         id: &str,
-        metadata: Value<'v>,
+        metadata: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
     ) -> buck2_error::Result<StarlarkUserEvent> {
         Ok(StarlarkUserEvent {
             id: id.to_owned(),
-            metadata: self.unpack_metadata_map(metadata)?,
+            metadata: self.unpack_metadata_map(metadata.dict())?,
         })
     }
 
     fn unpack_metadata_map(
         &self,
-        metadata: Value<'v>,
-    ) -> buck2_error::Result<HashMap<String, StarlarkUserMetadataValue>> {
-        let metadata = match DictRef::from_value(metadata) {
-            Some(metadata) => metadata,
-            None => {
-                return Err(StarlarkUserEventUnpack::InvalidMetadata(
-                    metadata.get_type().to_owned(),
-                )
-                .into());
-            }
-        };
-
+        metadata: DictRef<'v>,
+    ) -> buck2_error::Result<IntentionallyStdHashMap<String, StarlarkUserMetadataValue>> {
         metadata
             .iter()
             .map(|(k, v)| {
@@ -93,7 +81,7 @@ impl<'v> StarlarkUserEventParser<'v> {
                 let v = self.get_metadata_value(&k, v)?;
                 Ok((k, v))
             })
-            .collect::<buck2_error::Result<HashMap<_, _>>>()
+            .collect::<buck2_error::Result<IntentionallyStdHashMap<_, _>>>()
     }
 
     fn get_metadata_value(
@@ -128,8 +116,8 @@ impl<'v> StarlarkUserEventParser<'v> {
             Ok(StarlarkUserMetadataValue {
                 value: Some(StringValue(path)),
             })
-        } else if DictRef::from_value(v).is_some() {
-            let dict = self.unpack_metadata_map(v)?;
+        } else if let Some(dict) = DictRef::from_value(v) {
+            let dict = self.unpack_metadata_map(dict)?;
             let dict = StarlarkUserMetadataDictValue { value: dict };
             Ok(StarlarkUserMetadataValue {
                 value: Some(DictValue(dict)),

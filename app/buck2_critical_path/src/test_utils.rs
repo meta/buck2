@@ -42,7 +42,7 @@ pub fn make_dag(nodes: usize, rng: &mut impl Rng) -> TestDag {
         let edges_count = edges_count.min(candidate_count);
 
         keys.push(format!("k{i}"));
-        weights.push(rng.gen_range(0..10_000));
+        weights.push(rng.random_range(0..10_000));
         vertices.push(GraphVertex {
             edges_idx: edges.len().try_into().unwrap(),
             edges_count: edges_count.try_into().unwrap(),

@@ -13,11 +13,13 @@ package com.facebook.buck.jvm.cd.serialization.java;
 import com.facebook.buck.cd.model.java.ResolvedJavacOptions;
 import com.facebook.buck.jvm.java.JavacPluginParams;
 import com.facebook.buck.jvm.java.ResolvedJavacPluginProperties;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedSet;
 import java.util.List;
 
 /** {@link JavacPluginParams} to protobuf serializer */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class JavacPluginParamsSerializer {
 
   private JavacPluginParamsSerializer() {}

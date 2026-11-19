@@ -33,5 +33,5 @@ data class IsolatedExopackageInfo(
   data class IsolatedResourcesInfo(val resourcesPaths: ImmutableList<IsolatedExopackagePathAndHash>)
 
   /** Isolated ExopackagePathAndHash */
-  data class IsolatedExopackagePathAndHash(val path: AbsPath, val hashPath: AbsPath)
+  data class IsolatedExopackagePathAndHash(val file: AbsPath, val hashFile: AbsPath)
 }

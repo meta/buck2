@@ -19,6 +19,9 @@
 //! it becomes a 'BuildArtifact' that can be available.
 
 pub mod artifact_dump;
+pub mod artifact_dyn;
+pub mod artifact_path;
 pub mod artifact_type;
 pub mod build_artifact;
+pub mod output_type;
 pub mod source_artifact;

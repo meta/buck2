@@ -23,15 +23,18 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
 
-#[derive(Clone, Dupe, Eq, PartialEq, Allocative)]
+#[derive(Clone, Dupe, Eq, PartialEq, Allocative, Pagable)]
+#[pagable(bound = "T: Pagable")]
 enum SmallArcVec1Impl<T> {
     Zero,
     One(T),
     Arc(Arc<[T]>),
 }
 
-#[derive(Clone, Dupe, Eq, PartialEq, Allocative)]
+#[derive(Clone, Dupe, Eq, PartialEq, Allocative, Pagable)]
+#[pagable(bound = "T: Pagable")]
 pub(crate) struct SmallArcVec1<T>(SmallArcVec1Impl<T>);
 
 impl<T> SmallArcVec1<T> {

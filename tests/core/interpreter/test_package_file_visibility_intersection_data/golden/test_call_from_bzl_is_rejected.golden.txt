@@ -1,0 +1,20 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+evaluating Starlark PACKAGE file `root//indirect_call`
+
+Caused by:
+    error: `enforce_visibility_intersection()` can only be called from a `PACKAGE` file
+      --> indirect_call/helper.bzl:10:5
+       |
+    10 |     enforce_visibility_intersection()
+       |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    Traceback (most recent call last):
+      * indirect_call/PACKAGE:7, in <module>
+          setup_intersection()
+      * indirect_call/helper.bzl:10, in setup_intersection
+          enforce_visibility_intersection()
+    

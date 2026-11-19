@@ -10,9 +10,11 @@
 
 package com.facebook.buck.util;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BuckConstant {
 
   public static final String DEFAULT_BUCK_OUT_DIR_NAME = "buck-out";

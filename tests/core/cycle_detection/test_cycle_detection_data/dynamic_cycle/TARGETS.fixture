@@ -1,0 +1,5 @@
+load(":defs.bzl", "self_cycle", "through_lambda_cycle")
+
+self_cycle(name = "self")
+
+through_lambda_cycle(name = "through_lambda")

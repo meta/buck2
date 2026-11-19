@@ -43,26 +43,37 @@ use crate::eval::compiler::scope::scope_resolver_globals::ScopeResolverGlobals;
 use crate::syntax::AstModule;
 use crate::syntax::Dialect;
 use crate::values::FrozenHeap;
-use crate::values::FrozenRef;
+use crate::values::HeapEdge;
+use crate::values::any::StarlarkAny;
 
-fn test_with_module(program: &str, expected: &str, module: &MutableNames) {
+fn test_with_module<'f>(
+    program: &str,
+    expected: &str,
+    module: &MutableNames<'f>,
+    frozen_heap: FrozenHeap<'f>,
+) {
     let ast = AstModule::parse("t.star", program.to_owned(), &Dialect::AllOptionsInternal).unwrap();
-    let frozen_heap = FrozenHeap::new();
-    let codemap = frozen_heap.alloc_any(ast.codemap().dupe());
+    let codemap = frozen_heap.alloc_simple_typed(StarlarkAny::new(ast.codemap().dupe()));
+    let globals = Globals::new();
     let ModuleScopes {
         cst, scope_data, ..
-    } = ModuleScopes::check_module_err(
-        module,
-        &frozen_heap,
-        &HashMap::new(),
-        ast.into_parts().1,
-        ScopeResolverGlobals {
-            globals: Some(FrozenRef::new(Globals::empty())),
-        },
-        codemap,
-        &Dialect::AllOptionsInternal,
-    )
-    .unwrap();
+    } = globals
+        .data()
+        .by_ref_with_reconstructor(|globals, r| {
+            ModuleScopes::check_module_err(
+                module,
+                frozen_heap,
+                HeapEdge::identity(),
+                &HashMap::new(),
+                ast.into_parts().1,
+                ScopeResolverGlobals {
+                    globals: Some((globals, r.frozen_edge(frozen_heap))),
+                },
+                codemap,
+                &Dialect::AllOptionsInternal,
+            )
+        })
+        .unwrap();
     let mut r = String::new();
     for (i, binding) in scope_data.bindings.iter().enumerate() {
         if i != 0 {
@@ -96,20 +107,20 @@ fn test_with_module(program: &str, expected: &str, module: &MutableNames) {
                     ResolvedIdent::Slot(_slot, binding_id) => binding_id.0.to_string(),
                     ResolvedIdent::Global(_) => "G".to_owned(),
                 };
-                write!(&mut self.r, " {}:{}", ident.node.ident, resolved).unwrap();
+                write!(self.r, " {}:{}", ident.node.ident, resolved).unwrap();
             }
 
             expr.visit_expr(|expr| self.visit_expr(expr));
         }
 
-        fn visit_exprs<'a>(&mut self, exprs: impl IntoIterator<Item = &'a CstExpr>) {
+        fn visit_exprs<'a, 'f: 'a>(&mut self, exprs: impl IntoIterator<Item = &'a CstExpr<'f>>) {
             for expr in exprs {
                 self.visit_expr(expr);
             }
         }
 
         fn visit_lvalue(&mut self, ident: &CstAssignIdent) {
-            write!(&mut self.r, " {}:{}", ident.ident, ident.payload.unwrap().0).unwrap();
+            write!(self.r, " {}:{}", ident.ident, ident.payload.unwrap().0).unwrap();
         }
 
         fn visit_stmt_children(&mut self, stmt: &CstStmt) {
@@ -151,8 +162,10 @@ fn test_with_module(program: &str, expected: &str, module: &MutableNames) {
 }
 
 fn t(program: &str, expected: &str) {
-    let module = MutableNames::new();
-    test_with_module(program, expected, &module);
+    FrozenHeap::temp(|frozen_heap| {
+        let module = MutableNames::new();
+        test_with_module(program, expected, &module, frozen_heap);
+    })
 }
 
 // Expected test output (second parameter to `t` function) is:
@@ -202,9 +215,10 @@ def f():
 
 #[test]
 fn existing_module_with_names() {
-    let frozen_heap = FrozenHeap::new();
-    let module = MutableNames::new();
-    module.add_name(frozen_heap.alloc_str_intern("x"));
-    module.add_name(frozen_heap.alloc_str_intern("y"));
-    test_with_module("x = y", "0:m=0+ 1:m=1 | x:0 y:1", &module);
+    FrozenHeap::temp(|frozen_heap| {
+        let module = MutableNames::new();
+        module.add_name(frozen_heap.alloc("x"));
+        module.add_name(frozen_heap.alloc("y"));
+        test_with_module("x = y", "0:m=0+ 1:m=1 | x:0 y:1", &module, frozen_heap);
+    });
 }

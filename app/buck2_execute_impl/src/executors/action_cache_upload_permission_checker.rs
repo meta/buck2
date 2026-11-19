@@ -19,8 +19,9 @@ use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::re::client::ActionCacheWriteType;
 use buck2_execute::re::error::RemoteExecutionError;
 use buck2_execute::re::manager::ManagedRemoteExecutionClient;
-use dashmap::DashMap;
+use buck2_hash::BuckDashMap;
 use dupe::Dupe;
+use futures::FutureExt;
 use remote_execution::TCode;
 
 use crate::executors::empty_action_result::empty_action_result;
@@ -40,13 +41,13 @@ struct CacheValue {
 pub struct ActionCacheUploadPermissionChecker {
     /// Permission check does not depend on RE use case,
     /// but since we use these to upload, it is safer to cache the result by them.
-    has_permission_to_upload_to_cache: DashMap<CacheKey, Arc<CacheValue>>,
+    has_permission_to_upload_to_cache: BuckDashMap<CacheKey, Arc<CacheValue>>,
 }
 
 impl ActionCacheUploadPermissionChecker {
     pub fn new() -> ActionCacheUploadPermissionChecker {
         ActionCacheUploadPermissionChecker {
-            has_permission_to_upload_to_cache: DashMap::new(),
+            has_permission_to_upload_to_cache: BuckDashMap::default(),
         }
     }
 
@@ -56,7 +57,7 @@ impl ActionCacheUploadPermissionChecker {
         platform: &RePlatformFields,
         digest_config: DigestConfig,
     ) -> buck2_error::Result<Result<(), String>> {
-        let (action, action_result) = empty_action_result(platform, digest_config)?;
+        let (action, mut action_result) = empty_action_result(platform, digest_config)?;
 
         // This is CAS upload, if it fails, something is very broken.
         re_client
@@ -67,7 +68,7 @@ impl ActionCacheUploadPermissionChecker {
         let result = re_client
             .write_action_result(
                 action.action,
-                action_result.clone(),
+                &mut action_result,
                 &platform.to_re_platform(),
                 ActionCacheWriteType::PermissionCheck,
             )
@@ -108,13 +109,21 @@ impl ActionCacheUploadPermissionChecker {
         let cache_value = self.cache_value(re_client.use_case, platform);
         cache_value
             .has_permission_to_upload_to_cache
-            .get_or_try_init(self.do_has_permission_to_upload_to_cache(
-                re_client,
-                platform,
-                digest_config,
-            ))
+            .get_or_try_init(async move {
+                // Boxed so that the calling/containing future only needs room for the Box pointer, not the entire future.
+                self.do_has_permission_to_upload_to_cache(re_client, platform, digest_config)
+                    .boxed()
+                    .await
+            })
             .await
             .cloned()
             .buck_error_context("Upload for permission check")
     }
 }
+
+#[cfg(fbcode_build)] // Relies on fbcode future sizes
+buck2_util::size_assert::words_of_async_fn_future!(
+    ActionCacheUploadPermissionChecker::has_permission_to_upload_to_cache,
+    (_, _, _, _),
+    ~77
+);

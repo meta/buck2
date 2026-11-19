@@ -8,21 +8,23 @@
  * above-listed licenses.
  */
 
-use std::any::Any;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use dice_futures::spawner::Spawner;
 use dice_futures::spawner::TokioSpawner;
 
-use crate::DynKey;
 use crate::api::activation_tracker::ActivationTracker;
 use crate::api::data::DiceData;
 use crate::api::events::DiceEvent;
 use crate::api::events::DiceEventListener;
 
 /// Includes all user related computation-specific data.
+///
+/// Lives in an `Arc` that every spawned computation dupes, so the alignment keeps the `Arc`'s
+/// counts off the cache line of the data every computation reads.
 #[derive(Allocative)]
+#[repr(align(128))]
 pub struct UserComputationData {
     /// The DiceData provides a spot for users to attach whatever extra things they want.
     ///
@@ -34,42 +36,10 @@ pub struct UserComputationData {
     pub spawner: Arc<dyn Spawner<Self>>,
 
     #[allocative(skip)]
-    pub cycle_detector: Option<Arc<dyn UserCycleDetector>>,
-
-    #[allocative(skip)]
     pub activation_tracker: Option<Arc<dyn ActivationTracker>>,
 
     /// We require that UserComputationData always be constructed with `..Default::default()`
     pub _requires_default: RequireDefault,
-}
-
-/// A UserCycleDetector can be used for custom cycle detection in the DICE computation.
-pub trait UserCycleDetector: Send + Sync + 'static {
-    /// Called by DICE when it starts computing a key. `key` will be a user Key type (and so user can reliably downcast it to known types).
-    fn start_computing_key(&self, key: &DynKey) -> Option<Arc<dyn UserCycleDetectorGuard>>;
-
-    /// Called by DICE when the key finished computing.
-    fn finished_computing_key(&self, key: &DynKey);
-}
-
-/// A UserCycleDetectorGuard is used to track the currently computing key. User code can access this through
-/// ComputationData::cycle_guard() (and then downcast it with as_any to potentially access custom cycle behavior).
-pub trait UserCycleDetectorGuard: AsAnyArc + Send + Sync + 'static {
-    /// Called by dice when a dependency edge is encountered.
-    fn add_edge(&self, key: &DynKey);
-
-    /// Used in error messages.
-    fn type_name(&self) -> &'static str;
-}
-
-pub trait AsAnyArc {
-    fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
-}
-
-impl<T: Send + Sync + 'static> AsAnyArc for T {
-    fn as_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
 }
 
 #[derive(Allocative)]
@@ -87,7 +57,6 @@ impl Default for UserComputationData {
             data: DiceData::new(),
             tracker: Arc::new(NoOpTracker),
             spawner: Arc::new(TokioSpawner),
-            cycle_detector: None,
             activation_tracker: None,
             _requires_default: RequireDefault(()),
         }

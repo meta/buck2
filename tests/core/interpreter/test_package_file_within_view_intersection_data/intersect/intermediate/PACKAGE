@@ -1,0 +1,8 @@
+# Nested PACKAGE that replaces the inherited `within_view` DEFAULT with
+# PUBLIC (`inherit = False` is the default, spelled out here) and does NOT
+# opt in itself. Without the cap this would let every target below depend
+# on anything; the cap from `root//intersect/PACKAGE` still applies.
+package(
+    inherit = False,
+    within_view = ["PUBLIC"],
+)

@@ -54,14 +54,14 @@ pub trait HttpErrorForRetry {
     fn is_retryable(&self) -> bool;
 }
 
-pub trait AsBuck2Error {
-    fn as_buck2_error(self) -> buck2_error::Error;
+pub trait IntoBuck2Error {
+    fn into_buck2_error(self) -> buck2_error::Error;
 }
 
 pub async fn http_retry<Exec, F, T, E>(exec: Exec, mut intervals: Vec<Duration>) -> Result<T, E>
 where
     Exec: Fn() -> F,
-    E: AsBuck2Error + HttpErrorForRetry + std::fmt::Display + Send + Sync + 'static,
+    E: IntoBuck2Error + HttpErrorForRetry + std::fmt::Display + Send + Sync + 'static,
     F: Future<Output = Result<T, E>>,
 {
     intervals.insert(0, Duration::from_secs(0));
@@ -77,14 +77,11 @@ where
 
         if err.is_retryable() {
             if let Some(b) = backoff.peek() {
-                // This message is a bit inaccurate, but at this point it's hardcoded in error
-                // matching, no point in trying to change it. The error is not necessarily a "HTTP
-                // Error".
-                tracing::warn!(
+                tracing::debug!(
                     "Retrying a HTTP error after {} seconds: {:#}",
                     b.as_secs(),
                     // Print as a buck2_error to make sure we get the source
-                    err.as_buck2_error()
+                    err.into_buck2_error()
                 );
                 continue;
             }
@@ -140,8 +137,8 @@ mod tests {
         }
     }
 
-    impl AsBuck2Error for HttpTestError {
-        fn as_buck2_error(self) -> buck2_error::Error {
+    impl IntoBuck2Error for HttpTestError {
+        fn into_buck2_error(self) -> buck2_error::Error {
             buck2_error::Error::from(self)
         }
     }

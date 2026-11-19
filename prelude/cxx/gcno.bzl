@@ -7,6 +7,8 @@
 # above-listed licenses.
 
 # Provider that exposes the .gcno files produced during compilation
-GcnoFilesInfo = provider(fields = {
-    "gcno_files": provider_field(list[Artifact]),
-})
+GcnoFilesInfo = provider(
+    fields = {
+        "gcno_files": provider_field(list[Artifact]),
+    }
+)

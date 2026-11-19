@@ -15,6 +15,14 @@ from typing import IO, Optional
 
 from apple.tools.plistlib_utils import detect_format_and_load
 
+from .serialization import (
+    expect_bool,
+    expect_dict,
+    expect_keys,
+    expect_optional_str,
+    expect_str,
+)
+
 
 @dataclass
 class InfoPlistMetadata:
@@ -29,4 +37,29 @@ class InfoPlistMetadata:
             root["CFBundleIdentifier"],
             root.get("CFBundlePackageType"),
             root.get("WKApplication", False),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "bundle_id": self.bundle_id,
+            "bundle_type": self.bundle_type,
+            "is_watchos_app": self.is_watchos_app,
+        }
+
+    @staticmethod
+    def from_dict(value: object) -> InfoPlistMetadata:
+        data = expect_dict(value, "InfoPlistMetadata")
+        expect_keys(
+            data,
+            "InfoPlistMetadata",
+            frozenset({"bundle_id", "bundle_type", "is_watchos_app"}),
+        )
+        return InfoPlistMetadata(
+            bundle_id=expect_str(data["bundle_id"], "InfoPlistMetadata.bundle_id"),
+            bundle_type=expect_optional_str(
+                data["bundle_type"], "InfoPlistMetadata.bundle_type"
+            ),
+            is_watchos_app=expect_bool(
+                data["is_watchos_app"], "InfoPlistMetadata.is_watchos_app"
+            ),
         )

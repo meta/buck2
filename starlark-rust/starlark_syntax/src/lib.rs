@@ -26,6 +26,7 @@
 
 pub use crate::error::Error;
 pub use crate::error::ErrorKind;
+pub use crate::error::RuntimeTypeErrorKind;
 pub use crate::error::StarlarkResultExt;
 
 pub type Result<T> = std::result::Result<T, Error>;

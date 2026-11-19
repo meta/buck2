@@ -60,6 +60,9 @@ struct TagMetadata {
     // reported externally.
     // These should be removed/avoided if possible.
     hidden: bool,
+    // Root cause tags explain all other tags on an error, e.g. a full disk or an unmounted
+    // filesystem. If an error has any, its category key is only the best-ranked one of them.
+    root_cause: bool,
     // Allows overriding the exit code derived from the error tier.
     exit_code: ExitCode,
 }
@@ -72,6 +75,13 @@ impl TagMetadata {
     fn hidden(self) -> Self {
         Self {
             hidden: true,
+            ..self
+        }
+    }
+
+    fn root_cause(self) -> Self {
+        Self {
+            root_cause: true,
             ..self
         }
     }
@@ -89,6 +99,7 @@ macro_rules! rank {
                 rank: line!(),
                 generic: false,
                 hidden: false,
+                root_cause: false,
                 exit_code: ExitCode::InfraError,
             },
             "tier0" => TagMetadata {
@@ -96,6 +107,7 @@ macro_rules! rank {
                 rank: line!(),
                 generic: false,
                 hidden: false,
+                root_cause: false,
                 exit_code: ExitCode::InfraError,
             },
             "input" => TagMetadata {
@@ -103,6 +115,7 @@ macro_rules! rank {
                 rank: line!(),
                 generic: false,
                 hidden: false,
+                root_cause: false,
                 exit_code: ExitCode::UserError,
             },
             "unspecified" => TagMetadata {
@@ -110,6 +123,7 @@ macro_rules! rank {
                 rank: line!(),
                 generic: true,
                 hidden: false,
+                root_cause: false,
                 exit_code: ExitCode::UnknownFailure,
             },
             _ => unreachable!(),
@@ -123,6 +137,7 @@ pub enum ErrorSourceArea {
     Eden,
     Re,
     Watchman,
+    Sapling,
     TestExecutor,
     Installer,
 }
@@ -141,7 +156,16 @@ impl ErrorTagExtra for ErrorTag {
             ErrorSourceArea::Re
         } else if tag_name.starts_with("WATCHMAN") {
             ErrorSourceArea::Watchman
-        } else if *self == crate::ErrorTag::Tpx || *self == crate::ErrorTag::TestExecutor {
+        } else if tag_name.starts_with("SAPLING") {
+            ErrorSourceArea::Sapling
+        } else if matches!(
+            self,
+            crate::ErrorTag::Tpx
+                | crate::ErrorTag::TestExecutor
+                | crate::ErrorTag::TestExecutorSignaled
+                | crate::ErrorTag::TestExecutorNonZeroExit
+                | crate::ErrorTag::TestExecutorNoEndOfTests
+        ) {
             ErrorSourceArea::TestExecutor
         } else if tag_name.starts_with("INSTALLER") {
             ErrorSourceArea::Installer
@@ -160,18 +184,25 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
     match tag {
         // Environment errors
         ErrorTag::NoValidCerts => rank!(environment),
+        ErrorTag::CertExpired => rank!(environment),
         ErrorTag::ServerSigterm => rank!(environment),
         ErrorTag::IoMaterializerFileBusy => rank!(environment),
-        ErrorTag::IoClientBrokenPipe => rank!(environment).exit_code(ExitCode::ClientIoBrokenPipe),
-        ErrorTag::IoReadOnlyFilesystem => rank!(environment),
+        ErrorTag::IoEdenDaemonRestarted => rank!(environment),
+        ErrorTag::IoClientBrokenPipe => rank!(environment)
+            .exit_code(ExitCode::ClientIoBrokenPipe)
+            .root_cause(),
+        ErrorTag::IoReadOnlyFilesystem => rank!(environment).root_cause(),
         ErrorTag::WatchmanRootNotConnectedError => rank!(environment),
         ErrorTag::WatchmanCheckoutInProgress => rank!(environment),
         ErrorTag::ServerTransportError => rank!(environment),
         ErrorTag::ServerMemoryPressure => rank!(environment),
+        ErrorTag::DaemonOomKilled => rank!(environment)
+            .exit_code(ExitCode::FatalOom)
+            .root_cause(),
         // Note: This is only true internally due to buckwrapper
         ErrorTag::NoBuckRoot => rank!(environment),
         ErrorTag::InstallerEnvironment => rank!(environment).hidden(),
-        ErrorTag::IoNotConnected => rank!(environment), // This typically means eden is not mounted
+        ErrorTag::IoNotConnected => rank!(environment).root_cause(), // This typically means eden is not mounted
         // Typically due to poor network performance and large artifacts.
         ErrorTag::ReDeadlineExceeded => rank!(environment),
         // Typically due to network configuration/x2p
@@ -185,17 +216,57 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::HttpClient => rank!(environment).exit_code(ExitCode::UserError),
         // Mostly caused by network related operation being too slow/timeout.
         ErrorTag::IoEdenNetworkCurlTimedout => rank!(environment),
+        ErrorTag::IoWindowsSharingViolation => rank!(environment),
+        ErrorTag::IoWindowsVirtualizationUnavailable => rank!(environment),
+        ErrorTag::IoWindowsInternalError => rank!(environment),
+        ErrorTag::IoWindowsPrivilegeNotHeld => rank!(environment),
+        ErrorTag::IoWindowsNoSystemResources => rank!(environment),
+        ErrorTag::RePermissionDenied => rank!(environment),
+        ErrorTag::ReUserBadCerts => rank!(environment),
+        ErrorTag::EPerm => rank!(environment),
+        ErrorTag::IoPermissionDenied => rank!(environment),
+        ErrorTag::IoStorageFull => rank!(environment).root_cause(),
+        // Test runner reported test failure exit code and no test failures.
+        ErrorTag::TestStatusUnknown => rank!(environment),
+        // Test runner returned exit code 1. This can include input errors (CLI arg parse errors)
+        ErrorTag::TestRunnerInternal => rank!(environment),
+        // Test runner hit infra errors during test execution
+        ErrorTag::TestInfraFailure => rank!(environment),
+        ErrorTag::ThriftTimeout => rank!(environment),
+        ErrorTag::ThriftLoadshedding => rank!(environment),
+        // Often caused by eden loadshedding
+        ErrorTag::IoInputOutputError => rank!(environment).root_cause(),
+        ErrorTag::IoBadAddress => rank!(environment),
+        ErrorTag::IoStaleNfsHandle => rank!(environment),
+        ErrorTag::InvalidBuckOut => rank!(environment),
+        ErrorTag::BuckdExeDeleted => rank!(environment),
+        ErrorTag::MissingProjectRoot => rank!(environment),
+        ErrorTag::MissingHomeDir => rank!(environment),
+        // Typically a checkout replaced the directory the daemon was started in.
+        ErrorTag::DaemonStaleWorkingDir => rank!(environment),
+        ErrorTag::ActionOom => rank!(environment).root_cause(),
+        ErrorTag::DotslashError => rank!(environment),
+        ErrorTag::SaplingNotFound => rank!(environment),
+        ErrorTag::SaplingNetwork => rank!(environment),
+        ErrorTag::Tls => rank!(environment),
+        // Typically CI tearing down the workspace out from under a running command.
+        ErrorTag::MissingRepo => rank!(environment),
+        ErrorTag::MissingWorkingDir => rank!(environment),
+        ErrorTag::BlockedByPolicy => rank!(environment),
 
         // Tier 0 errors
         ErrorTag::ServerJemallocAssert => rank!(tier0),
         ErrorTag::ServerStackOverflow => rank!(tier0),
         ErrorTag::ServerPanicked => rank!(tier0),
         ErrorTag::ServerSegv => rank!(tier0),
+        ErrorTag::ServerSigbusExecutable => rank!(tier0),
         ErrorTag::ServerSigbus => rank!(tier0),
         ErrorTag::ServerSigabrt => rank!(tier0),
         ErrorTag::ClientStartupTimeout => rank!(tier0),
         ErrorTag::DaemonLaunchFailed => rank!(tier0),
+        ErrorTag::DaemonLaunchTimeout => rank!(tier0),
         ErrorTag::DaemonStartupFailed => rank!(tier0),
+        ErrorTag::ExitStatusUnknown => rank!(tier0),
         ErrorTag::DaemonNestedConstraintsMismatch => rank!(tier0),
         ErrorTag::DaemonConstraintsWrongAfterStart => rank!(tier0),
         ErrorTag::DaemonDirCleanupFailed => rank!(tier0),
@@ -203,6 +274,7 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::BuckdLifecycleLock => rank!(tier0),
         ErrorTag::BuckdInfoMissing => rank!(tier0),
         ErrorTag::BuckdInfoParseError => rank!(tier0),
+        ErrorTag::MissingCommandResult => rank!(tier0),
         ErrorTag::DaemonWontDieFromKill => rank!(tier0),
         ErrorTag::GrpcResponseMessageTooLarge => rank!(tier0),
         ErrorTag::ReClientCrash => rank!(tier0),
@@ -210,10 +282,10 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::ReCancelled => rank!(tier0),
         ErrorTag::ReUnknown => rank!(tier0),
         ErrorTag::ReInvalidArgument => rank!(tier0),
+        // This must outrank ReNotFound, which is otherwise always an infra error.
+        ErrorTag::DeclaredArtifactNotFound => rank!(input),
         ErrorTag::ReNotFound => rank!(tier0),
         ErrorTag::ReAlreadyExists => rank!(tier0),
-        ErrorTag::RePermissionDenied => rank!(tier0),
-        ErrorTag::ReResourceExhausted => rank!(tier0),
         ErrorTag::ReAborted => rank!(tier0),
         ErrorTag::ReOutOfRange => rank!(tier0),
         ErrorTag::ReUnimplemented => rank!(tier0),
@@ -280,6 +352,7 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::Interpreter => rank!(tier0),
         ErrorTag::StarlarkServer => rank!(tier0),
         ErrorTag::KillAll => rank!(tier0),
+        ErrorTag::BuildReport => rank!(tier0), // build report generation should never be an input error
 
         ErrorTag::InvalidEvent => rank!(tier0),
         ErrorTag::InvalidDigest => rank!(tier0),
@@ -296,13 +369,13 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::TestOrchestrator => rank!(tier0),
         ErrorTag::TestStatusInvalid => rank!(tier0),
         ErrorTag::TestStatus => rank!(tier0),
+        ErrorTag::TestRunnerUnknownExitCode => rank!(tier0),
 
         ErrorTag::CleanOutputs => rank!(tier0),
-        ErrorTag::Sapling => rank!(tier0),
+        ErrorTag::SaplingInvalidOutput => rank!(tier0),
         ErrorTag::CrashRequested => rank!(tier0),
         ErrorTag::CpuStats => rank!(tier0),
         ErrorTag::FailedToKill => rank!(tier0),
-        ErrorTag::CopyOutputs => rank!(tier0),
         ErrorTag::LogFilter => rank!(tier0),
         ErrorTag::TestOnly => rank!(tier0),
         ErrorTag::Bail => rank!(tier0),
@@ -310,6 +383,17 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::EventLogUpload => rank!(tier0),
         ErrorTag::EventLogEof => rank!(tier0),
         ErrorTag::EventLogNotOpen => rank!(tier0),
+        ErrorTag::EventLogDownload => rank!(tier0),
+
+        ErrorTag::UnhashedOutputSymlink => rank!(tier0),
+        // Validations declare their result as an output, so buck2 having materialized it and
+        // then not finding it is a buck2 bug.
+        ErrorTag::ValidationResultRead => rank!(tier0),
+        // buck-out is also removed by concurrent `buck2 clean` invocations, which buck2 could
+        // serialize.
+        ErrorTag::CleanBuckOut => rank!(tier0),
+        // These files are not tracked by the file watcher, so they can change mid-command.
+        ErrorTag::BuckconfigRead => rank!(tier0),
 
         ErrorTag::MallocStats => rank!(tier0),
         ErrorTag::Mallctl => rank!(tier0),
@@ -339,7 +423,6 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::IoEdenNetworkTls => rank!(tier0),
         ErrorTag::IoEdenNetworkUncategorized => rank!(tier0),
         ErrorTag::IoEdenUncategorized => rank!(tier0),
-        ErrorTag::IoBlockingExecutor => rank!(tier0),
         ErrorTag::WatchmanClient => rank!(tier0),
         ErrorTag::WatchmanTimeout => rank!(tier0),
         ErrorTag::WatchmanConnectionError => rank!(tier0),
@@ -356,28 +439,39 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::HttpServiceUnavailable => rank!(tier0),
         ErrorTag::HttpServer => rank!(tier0),
         ErrorTag::StarlarkInternal => rank!(tier0),
+        ErrorTag::DeferredFieldRead => rank!(tier0),
         ErrorTag::ActionMismatchedOutputs => rank!(tier0),
         ErrorTag::DiceDuplicatedChange => rank!(tier0),
         ErrorTag::DiceChangedToInvalid => rank!(tier0),
         ErrorTag::DiceInjectedKeyGotInvalidation => rank!(tier0),
-        ErrorTag::DiceCancelled => rank!(tier0),
-        ErrorTag::DiceUnexpectedCycleGuardType => rank!(tier0),
         ErrorTag::DiceDuplicateActivationData => rank!(tier0),
+        // A dependency cycle between the user's keys.
+        ErrorTag::DiceCycle => rank!(input),
+        // "Resource temporarily unavailable"
+        ErrorTag::EAgain => rank!(tier0),
         ErrorTag::InstallerUnknown => rank!(tier0),
         ErrorTag::InstallerTier0 => rank!(tier0).hidden(),
         ErrorTag::InternalError => rank!(tier0),
+        ErrorTag::SubscriptionEmptyRequest => rank!(tier0),
+        ErrorTag::CriticalPathError => rank!(tier0),
         ErrorTag::Environment => rank!(environment).hidden(),
         ErrorTag::Tier0 => rank!(tier0).hidden(),
         // Daemon disconnected with nothing in stderr, likely SIGKILLed.
         ErrorTag::DaemonDisconnect => rank!(environment),
+        // Could not determine the BuckVersion
+        ErrorTag::BuckVersionError => rank!(tier0),
+        ErrorTag::MaterializeCopyMissingFile => rank!(tier0),
 
         // Input errors
+        ErrorTag::AgentAdviceBlocked => rank!(input),
         ErrorTag::ClapMatch => rank!(input),
+        ErrorTag::CopyOutputs => rank!(input),
         ErrorTag::ReFailedPrecondition => rank!(input),
         // FIXME(JakobDegen): Make this bad experience once that's available. Usually when this
         // happens, it's probably because the user tried to shut down with Ctrl+C and something
         // about that didn't work
         ErrorTag::InterruptedByDaemonShutdown => rank!(input),
+        ErrorTag::DaemonInactivityTimeout => rank!(input),
         ErrorTag::DaemonIsBusy => rank!(input).exit_code(ExitCode::DaemonIsBusy),
         ErrorTag::DaemonPreempted => rank!(input).exit_code(ExitCode::DaemonPreempted),
         ErrorTag::ConfigureAttr => rank!(input),
@@ -385,8 +479,6 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::TargetIncompatible => rank!(input),
         ErrorTag::IoEdenCheckoutInProgress => rank!(input), // User switching branches during Eden operation
         ErrorTag::IoExecutableFileBusy => rank!(input),
-        ErrorTag::IoStorageFull => rank!(input),
-        ErrorTag::IoPermissionDenied => rank!(input),
         ErrorTag::IoEdenMountDoesNotExist => rank!(input),
         ErrorTag::IoEdenFileNotFound => rank!(input), // user likely specified non-existing path
         ErrorTag::MissingTarget => rank!(input),
@@ -395,6 +487,8 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::ActionCommandFailure => rank!(input),
         ErrorTag::ProjectMissingPath => rank!(input),
         ErrorTag::ArtifactMissingFilename => rank!(input),
+        ErrorTag::MissingInputPath => rank!(input),
+        ErrorTag::InputPathNotADirectory => rank!(input),
         ErrorTag::StarlarkFail => rank!(input),
         ErrorTag::StarlarkStackOverflow => rank!(input),
         ErrorTag::StarlarkValue => rank!(input),
@@ -402,13 +496,28 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::StarlarkScope => rank!(input),
         ErrorTag::StarlarkParser => rank!(input),
         ErrorTag::StarlarkNativeInput => rank!(input),
+        ErrorTag::StarlarkRuntimeTypeError => rank!(input),
         ErrorTag::Visibility => rank!(input),
         ErrorTag::TestDeadlineExpired => rank!(input),
+        ErrorTag::TestListingFailed => rank!(input),
+        ErrorTag::TestFailed => rank!(input),
+        ErrorTag::TestTimeout => rank!(input),
         ErrorTag::Unimplemented => rank!(input),
         ErrorTag::InstallerInput => rank!(input).hidden(),
         ErrorTag::BuildDeadlineExpired => rank!(input),
         ErrorTag::EventLogIndexOutOfBounds => rank!(input),
-        ErrorTag::ReUserQuota => rank!(input),
+        ErrorTag::EventLogNotFound => rank!(input),
+        // RE quota exhaustion is actionable by the quota-pool owner, not the build author.
+        // Input category keeps these out of buck2's non-user-error alerting; infra exit code
+        // so CI can regex-on-stderr detect RE resource exhaustion, prevent retries on an already
+        // exhausted resource, and set the signal to yellow, not red.
+        ErrorTag::ReResourceExhausted => rank!(input).exit_code(ExitCode::InfraError),
+        ErrorTag::ReUserQuota => rank!(input).exit_code(ExitCode::InfraError),
+        // The action kept taking down the RE worker running it; the platform
+        // attributes that to the action.
+        ErrorTag::ReActionLostWorkers => rank!(input),
+        // Test runner hit fatal errors during test execution
+        ErrorTag::TestFatal => rank!(input),
 
         ErrorTag::Input => rank!(input).hidden(),
 
@@ -422,25 +531,34 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::ClientGrpcStream => rank!(unspecified),
         ErrorTag::CompatibilityError => rank!(unspecified),
         ErrorTag::IoBrokenPipe => rank!(unspecified),
-        ErrorTag::IoWindowsSharingViolation => rank!(unspecified),
         ErrorTag::IoNotFound => rank!(unspecified),
-        ErrorTag::IoInputOutputError => rank!(unspecified),
+        ErrorTag::IoNotADirectory => rank!(unspecified),
         ErrorTag::IoSource => rank!(unspecified),
         ErrorTag::IoSystem => rank!(unspecified),
         ErrorTag::IoEden => rank!(unspecified).generic(false),
+        // Only says which subsystem failed, so unlike IoEden above it is left out of the
+        // category key whenever a root cause tag is also present.
+        ErrorTag::Sapling => rank!(unspecified),
         ErrorTag::IoEdenConnectionError => rank!(unspecified),
         ErrorTag::MaterializationError => rank!(unspecified),
         ErrorTag::CleanInterrupt => rank!(unspecified),
         ErrorTag::Tpx => rank!(unspecified),
         ErrorTag::TestExecutor => rank!(unspecified),
+        ErrorTag::TestExecutorSignaled => rank!(unspecified),
+        ErrorTag::TestExecutorNonZeroExit => rank!(unspecified),
+        ErrorTag::TestExecutorNoEndOfTests => rank!(unspecified),
+        ErrorTag::IoBlockingExecutor => rank!(unspecified),
         ErrorTag::Http => rank!(unspecified),
         ErrorTag::DownloadFileHeadRequest => rank!(unspecified),
         ErrorTag::StarlarkError => rank!(unspecified),
-        ErrorTag::UnexpectedNone => rank!(unspecified),
         ErrorTag::UnusedDefaultTag => rank!(unspecified),
         ErrorTag::BuildSketchError => rank!(unspecified),
         ErrorTag::Tokio => rank!(unspecified),
         ErrorTag::Tonic => rank!(unspecified),
+        ErrorTag::Thrift => rank!(unspecified),
+        ErrorTag::MissingInternalPath => rank!(unspecified),
+        ErrorTag::ExitStatus => rank!(unspecified),
+        ErrorTag::ActionCommandInfraFailure => rank!(unspecified),
         // Build phases
         ErrorTag::DaemonStateInitFailed => rank!(unspecified),
         ErrorTag::DaemonConnect => rank!(unspecified),
@@ -454,6 +572,11 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
 pub fn tag_is_generic(tag: &ErrorTag) -> bool {
     let metadata = tag_metadata(*tag);
     metadata.generic || metadata.hidden
+}
+
+/// Tags that explain all other tags on an error; see `TagMetadata::root_cause`.
+pub fn tag_is_root_cause(tag: &ErrorTag) -> bool {
+    tag_metadata(*tag).root_cause
 }
 
 /// Hidden tags only used internally, for categorization.
@@ -479,13 +602,12 @@ impl ErrorLike for buck2_data::ErrorReport {
     }
 
     fn error_rank(self: &buck2_data::ErrorReport) -> u32 {
-        self.best_tag().map(tag_rank).unwrap_or(u32::MAX)
+        self.best_tag().map_or(u32::MAX, tag_rank)
     }
 
     fn category(&self) -> Tier {
         self.best_tag()
-            .map(|t| tag_metadata(t).category)
-            .flatten()
+            .and_then(|t| tag_metadata(t).category)
             .unwrap_or(Tier::Tier0)
     }
 }
@@ -548,6 +670,22 @@ mod tests {
             super::tag_rank(ErrorTag::ServerJemallocAssert)
                 < super::tag_rank(ErrorTag::UnusedDefaultTag)
         )
+    }
+
+    #[test]
+    fn test_re_quota_user_category_infra_exit_code() {
+        for tag in [ErrorTag::ReResourceExhausted, ErrorTag::ReUserQuota] {
+            assert_eq!(
+                error_tag_category(tag),
+                Some(Tier::Input),
+                "RE quota errors must stay USER so they are excluded from non-user-error alerting"
+            );
+            assert_eq!(
+                tag.exit_code().exit_code(),
+                ExitCode::InfraError.exit_code(),
+                "RE quota errors must exit as infra so CI does not blame the diff"
+            );
+        }
     }
 
     #[test]

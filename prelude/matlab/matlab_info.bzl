@@ -6,6 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-MatlabToolchainInfo = provider(fields = {
-    "matlab_exe": RunInfo,
-})
+MatlabToolchainInfo = provider(
+    fields = {
+        "matlab_exe": RunInfo,
+    }
+)

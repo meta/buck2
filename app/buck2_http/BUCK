@@ -5,52 +5,33 @@ oncall("build_infra")
 rust_library(
     name = "buck2_http",
     srcs = glob(["src/**/*.rs"]),
-    os_deps = [
-        (
-            "linux",
-            [
-                "fbsource//third-party/rust:hyperlocal-0-9",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "fbsource//third-party/rust:hyperlocal-0-9",
-            ],
-        ),
-    ],
     test_deps = [
-        "fbsource//third-party/rust:httptest-0-16",
-    ],
-    test_os_deps = [
-        (
-            "linux",
-            [
-                "fbsource//third-party/rust:tempfile",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "fbsource//third-party/rust:tempfile",
-            ],
-        ),
-    ],
+        "fbsource//third-party/rust:httptest",
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:tempfile",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:tempfile",
+        ],
+    }),
     deps = [
         "fbsource//third-party/rust:bytes",
         "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:http-1",
+        "fbsource//third-party/rust:http",
         "fbsource//third-party/rust:http-body-util",
-        "fbsource//third-party/rust:hyper-1-5-1",
+        "fbsource//third-party/rust:hyper",
         "fbsource//third-party/rust:hyper-http-proxy",
-        "fbsource//third-party/rust:hyper-rustls-0-27",
-        "fbsource//third-party/rust:hyper-timeout-0-5",
+        "fbsource//third-party/rust:hyper-rustls",
+        "fbsource//third-party/rust:hyper-timeout",
         "fbsource//third-party/rust:hyper-util",
         "fbsource//third-party/rust:ipnetwork",
         "fbsource//third-party/rust:pin-project",
-        "fbsource//third-party/rust:rustls-0-23",
+        "fbsource//third-party/rust:rustls",
+        "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:tokio",
-        "fbsource//third-party/rust:tokio-rustls-026",
+        "fbsource//third-party/rust:tokio-rustls",
         "fbsource//third-party/rust:tokio-util",
         "fbsource//third-party/rust:tower-service",
         "fbsource//third-party/rust:tracing",
@@ -59,5 +40,13 @@ rust_library(
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/gazebo/dupe:dupe",
         # @oss-disable[end= ]: "//common/rust/cpe:cpe",
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:hyperlocal",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:hyperlocal",
+        ],
+    }),
 )

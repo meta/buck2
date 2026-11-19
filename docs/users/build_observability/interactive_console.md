@@ -66,16 +66,20 @@ up pasted commands to not get swallowed, you can set the
 
 We support the following toggles:
 
-- `c` - toggle commands (shown in superconsole by default)
+- `c` - toggle commands (hidden in superconsole by default)
 - `d` - toggle DICE key states
 - `e` - toggle debugging events, such as spans and instant event counts
 - `2` - toggle two lines mode when showing events
 - `r` - toggle detailed remote execution info, such as uploads, downloads, and
   action cache calls
-- `i` - toggle I/O counters
+- `i` - toggle I/O counters and memory stats
 - `p` - display target configurations
+- `x` - toggle expanded progress display
 - `+` - show more lines
 - `-` - show fewer lines
+- `k` - increase replay speed (when replaying an event log)
+- `j` - decrease replay speed (when replaying an event log)
+- `y` - pause replay (when replaying an event log)
 - `h` - show help
 
 ## No console

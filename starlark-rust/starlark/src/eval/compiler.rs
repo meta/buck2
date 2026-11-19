@@ -38,18 +38,23 @@ use starlark_syntax::eval_exception::EvalException;
 use crate::codemap::CodeMap;
 use crate::environment::Globals;
 use crate::eval::Evaluator;
+use crate::eval::compiler::def_inline::local_as_value::LocalAsValue;
 use crate::eval::compiler::scope::ModuleScopeData;
 use crate::eval::compiler::scope::ScopeId;
 use crate::eval::compiler::scope::ScopeNames;
 use crate::eval::runtime::frame_span::FrameSpan;
-use crate::values::FrozenRef;
+use crate::values::FrozenHeap;
+use crate::values::HeapEdge;
+use crate::values::SealEdge;
+use crate::values::ValueTyped;
+use crate::values::any::StarlarkAny;
 
 #[cold]
 #[inline(never)]
-pub(crate) fn add_span_to_expr_error(
+pub(crate) fn add_span_to_expr_error<'v>(
     e: crate::Error,
-    span: FrameSpan,
-    eval: &Evaluator,
+    span: FrameSpan<'v>,
+    eval: &Evaluator<'v, '_, '_>,
 ) -> EvalException {
     EvalException::new_with_callstack(e, span.span.span(), &span.span.file(), || {
         eval.call_stack.to_diagnostic_frames(span.inlined_frames)
@@ -60,20 +65,7 @@ pub(crate) fn add_span_to_expr_error(
 #[inline(always)]
 pub(crate) fn expr_throw<'v, T>(
     r: crate::Result<T>,
-    span: FrameSpan,
-    eval: &Evaluator<'v, '_, '_>,
-) -> Result<T, EvalException> {
-    match r {
-        Ok(v) => Ok(v),
-        Err(e) => Err(add_span_to_expr_error(e.into(), span, eval)),
-    }
-}
-
-/// Convert syntax error to spanned evaluation exception
-#[inline(always)]
-pub(crate) fn expr_throw_starlark_result<'v, T>(
-    r: crate::Result<T>,
-    span: FrameSpan,
+    span: FrameSpan<'v>,
     eval: &Evaluator<'v, '_, '_>,
 ) -> Result<T, EvalException> {
     match r {
@@ -82,19 +74,45 @@ pub(crate) fn expr_throw_starlark_result<'v, T>(
     }
 }
 
-pub(crate) struct Compiler<'v, 'a, 'e, 'x> {
+/// Convert syntax error to spanned evaluation exception
+#[inline(always)]
+pub(crate) fn expr_throw_starlark_result<'v, T>(
+    r: crate::Result<T>,
+    span: FrameSpan<'v>,
+    eval: &Evaluator<'v, '_, '_>,
+) -> Result<T, EvalException> {
+    match r {
+        Ok(v) => Ok(v),
+        Err(e) => Err(add_span_to_expr_error(e, span, eval)),
+    }
+}
+
+/// The compiler of one module: it compiles the module's statements one at a time and executes
+/// each before compiling the next.
+///
+/// Its products - the IR, the bytecode, constants, names - are allocated on the module's frozen
+/// heap at its brand `'fm`; the evaluator runs at the value heap's brand `'v`. `edge` brings a
+/// product to `'v` when it is handed to execution, which happens once per top-level statement,
+/// see `eval_regular_top_level_stmt`; `seal_edge` brings frozen values the optimizer observes at
+/// `'v` into the IR, see [`OptCtx::demote`](crate::eval::compiler::opt_ctx::OptCtx::demote).
+pub(crate) struct Compiler<'v, 'a, 'e, 'x, 'fm> {
     pub(crate) eval: &'x mut Evaluator<'v, 'a, 'e>,
-    pub(crate) scope_data: ModuleScopeData<'v>,
+    pub(crate) fh: FrozenHeap<'fm>,
+    pub(crate) edge: HeapEdge<'v, 'fm>,
+    pub(crate) seal_edge: SealEdge<'fm, 'v>,
+    pub(crate) scope_data: ModuleScopeData<'fm>,
     pub(crate) locals: Vec<ScopeId>,
-    pub(crate) globals: FrozenRef<'static, Globals>,
-    pub(crate) codemap: FrozenRef<'static, CodeMap>,
+    pub(crate) globals: ValueTyped<'fm, StarlarkAny<Globals>>,
+    pub(crate) codemap: ValueTyped<'fm, StarlarkAny<CodeMap>>,
     pub(crate) check_types: bool,
     pub(crate) top_level_stmt_count: usize,
     /// Set with `@starlark-rust: typecheck`.
     pub(crate) typecheck: bool,
+    /// See [`OptCtx::local_as_values`](crate::eval::compiler::opt_ctx::OptCtx::local_as_values).
+    pub(crate) local_as_values: Vec<ValueTyped<'fm, LocalAsValue>>,
 }
 
-impl Compiler<'_, '_, '_, '_> {
+impl<'fm> Compiler<'_, '_, '_, '_, 'fm> {
     pub(crate) fn enter_scope(&mut self, scope_id: ScopeId) {
         self.locals.push(scope_id);
     }
@@ -103,7 +121,7 @@ impl Compiler<'_, '_, '_, '_> {
         self.locals.pop().unwrap()
     }
 
-    pub(crate) fn current_scope(&self) -> &ScopeNames<'_> {
+    pub(crate) fn current_scope(&self) -> &ScopeNames<'fm> {
         self.scope_data.get_scope(*self.locals.last().unwrap())
     }
 }

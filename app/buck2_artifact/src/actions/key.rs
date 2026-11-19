@@ -14,8 +14,11 @@ use allocative::Allocative;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_data::ToProtoMessage;
+use buck2_util::size_assert;
 use dupe::Dupe;
-use static_assertions::assert_eq_size;
+use pagable::Pagable;
+use starlark::values::StarlarkPagableViaPagable;
+use starlark_map::Hashed;
 
 /// A key to look up an 'Action' from the 'ActionAnalysisResult'.
 /// Since 'Action's are registered as 'Deferred's
@@ -29,7 +32,8 @@ use static_assertions::assert_eq_size;
     derive_more::Display,
     starlark::values::Trace,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 #[display("(target: `{parent}`, id: `{id}`)")]
 pub struct ActionKey {
@@ -37,7 +41,7 @@ pub struct ActionKey {
     id: ActionIndex,
 }
 
-assert_eq_size!(ActionKey, [usize; 4]);
+size_assert::words_of_type!(ActionKey, 4);
 
 /// An unique identifier for different actions with the same parent.
 #[derive(
@@ -50,12 +54,23 @@ assert_eq_size!(ActionKey, [usize; 4]);
     Copy,
     derive_more::Display,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable,
+    StarlarkPagableViaPagable
 )]
 pub struct ActionIndex(pub u32);
 impl ActionIndex {
     pub fn new(v: u32) -> ActionIndex {
         Self(v)
+    }
+}
+
+impl<'fv> starlark::pagable::SmallMapKeyDeserialize<'fv> for ActionIndex {
+    fn starlark_deserialize_hashed(
+        ctx: &mut dyn starlark::pagable::StarlarkDeserializeContext<'_, 'fv>,
+    ) -> starlark::Result<Hashed<Self>> {
+        let k = <Self as starlark::pagable::StarlarkDeserialize<'fv>>::starlark_deserialize(ctx)?;
+        Ok(Hashed::new(k))
     }
 }
 

@@ -1,0 +1,17 @@
+load("@prelude//cfg/modifier:cfg_constructor.bzl", "cfg_constructor_post_constraint_analysis", "cfg_constructor_pre_constraint_analysis")
+load("@prelude//cfg/modifier:common.bzl", "MODIFIER_METADATA_KEY")
+load("@prelude//cfg/modifier:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+
+set_cfg_constructor(
+    aliases = struct(),
+    extra_data = struct(),
+    key = MODIFIER_METADATA_KEY,
+    stage0 = cfg_constructor_pre_constraint_analysis,
+    stage1 = cfg_constructor_post_constraint_analysis,
+)
+
+set_cfg_modifiers(
+    cfg_modifiers = [
+        "root//:cpu[x86_64]",
+    ]
+)

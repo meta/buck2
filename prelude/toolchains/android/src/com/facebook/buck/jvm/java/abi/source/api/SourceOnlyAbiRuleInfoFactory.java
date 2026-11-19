@@ -10,20 +10,26 @@
 
 package com.facebook.buck.jvm.java.abi.source.api;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import javax.lang.model.element.Element;
 import javax.lang.model.util.Elements;
 import javax.tools.JavaFileManager;
+import org.jspecify.annotations.Nullable;
 
 /** Used to create the SourceOnlyAbiRuleInfo for a target given a JavaFileManager. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface SourceOnlyAbiRuleInfoFactory {
   SourceOnlyAbiRuleInfo create(JavaFileManager fileManager);
+
+  /** Opt in only when the actual reduced dependency classpath is available. */
+  default boolean shouldValidateInheritedMemberTypes() {
+    return false;
+  }
 
   /** Provides information related to source-only abi support. */
   interface SourceOnlyAbiRuleInfo {
 
-    @Nullable
-    String getOwningTarget(Elements elements, Element element);
+    @Nullable String getOwningTarget(Elements elements, Element element);
 
     boolean elementIsAvailableForSourceOnlyAbi(Elements elements, Element element);
 

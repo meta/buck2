@@ -1,0 +1,23 @@
+name: setup_cargo_env
+description: What a `cargo` build or test of this repository needs on the runner
+inputs:
+  components:
+    description: Comma-separated rustup components to install alongside the toolchain
+    default: ""
+runs:
+  using: composite
+  steps:
+  - name: Write Visual Studio path
+    if: ${{ runner.os == 'Windows' }}
+    run: |-
+      $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Llvm.Clang -property installationPath
+      Join-Path $vsPath "VC\Tools\Llvm\x64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+    shell: pwsh
+  - name: Create python3 symlink
+    if: ${{ runner.os == 'Windows' }}
+    run: |
+      New-Item -ItemType SymbolicLink -Path C:\ProgramData\chocolatey\bin\python3.exe -Target $(Get-Command python).Source
+    shell: pwsh
+  - uses: ./.github/actions/setup_rust_toolchain
+    with:
+      components: ${{ inputs.components }}

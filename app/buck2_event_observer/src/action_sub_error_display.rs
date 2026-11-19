@@ -21,7 +21,7 @@ impl ActionSubErrorDisplay for ActionSubError {
             match &error.file {
                 Some(file) => {
                     let mut res = String::new();
-                    res.push_str(&file);
+                    res.push_str(file);
                     if let Some(lnum) = error.lnum {
                         res.push_str(&format!(":{}", lnum));
                         if let Some(end_lnum) = error.end_lnum {

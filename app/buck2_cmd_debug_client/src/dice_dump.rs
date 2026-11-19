@@ -56,12 +56,14 @@ impl StreamingCommand for DiceDumpCommand {
         } else {
             DiceDumpFormat::Tsv
         };
+        let context = ctx.empty_client_context("debug-dice-dump")?;
         buckd
             .with_flushing()
             .unstable_dice_dump(
                 UnstableDiceDumpRequest {
                     destination_path: self.path.resolve(&ctx.working_dir).into_string()?,
                     format: format.into(),
+                    context: Some(context),
                 },
                 events_ctx,
             )

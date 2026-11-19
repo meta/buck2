@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _buildable_impl(ctx):
-    out = ctx.actions.write(ctx.attrs.out, ctx.attrs.content)
+    out = ctx.actions.write(ctx.attrs.out, ctx.attrs.content, has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 foo_buildable = rule(

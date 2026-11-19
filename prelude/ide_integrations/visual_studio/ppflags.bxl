@@ -145,12 +145,10 @@ LANGUAGE_STANDARD_MAP = {
     "/std:c++17": "stdcpp17",
     "/std=gnu++17": "stdcpp17",
     "/std=c++17": "stdcpp17",
-
     # stdcpp20
     "/std:c++20": "stdcpp20",
     "/std=gnu++20": "stdcpp20",
     "/std=c++20": "stdcpp20",
-
     # stdcpplatest
     "/std:c++latest": "stdcpplatest",
     "/std=gnu++latest": "stdcpplatest",

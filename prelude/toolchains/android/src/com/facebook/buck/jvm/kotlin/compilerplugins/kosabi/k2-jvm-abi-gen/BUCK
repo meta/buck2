@@ -1,3 +1,4 @@
+# @oss-disable[end= ]: load("@fbsource//tools/build_defs:kotlin_version.bzl", "toolchain_kotlin_version")
 load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_java_binary", "buck_kotlin_library")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
@@ -5,28 +6,118 @@ oncall("android_devxx")
 
 source_listing()
 
+# compilercompat shims match the compiler actually run: key off the version the kotlincd
+# toolchain selects the compiler jar from. 2.3 uses the minor-version bucket
+# (compilercompat/2.3.0); newer compilers use full-version buckets.
+# @oss-disable[end= ]: _KOTLIN_FULL_VERSION = toolchain_kotlin_version()
+_KOTLIN_FULL_VERSION = read_root_config("kotlin", "kotlin_version", "2.3.21") # @oss-enable
+
+_KOTLIN_VERSION_PARTS = _KOTLIN_FULL_VERSION.split(".")
+
+_COMPAT_VERSION_MAP = {
+    "2.5.0-Beta2": "2.5.0",
+    "2.5.0-RC": "2.5.0",
+}
+KOTLIN_VERSION = _COMPAT_VERSION_MAP.get(
+    _KOTLIN_FULL_VERSION,
+    _KOTLIN_FULL_VERSION
+    if (int(_KOTLIN_VERSION_PARTS[0]), int(_KOTLIN_VERSION_PARTS[1])) >= (2, 4)
+    else _KOTLIN_VERSION_PARTS[0] + "." + _KOTLIN_VERSION_PARTS[1] + ".0",
+)
+
+# These adapters retain the same APIs on the selected Beta2; only the classpath seam differs.
+_KOTLIN_25_SHARED_COMPAT_SRCS = [
+    "src/main/kotlin/compilercompat/2.4.21/" + filename
+    for filename in [
+        "DependencyListCompat.kt",
+        "ErrorTypeMetadataCompat.kt",
+        "FirCollectionLiteralCompat.kt",
+        "FirDefaultVisitorVoidCompat.kt",
+        "FirNamedFunctionCopyCompat.kt",
+        "FirProvidedDeclarationsCompat.kt",
+        "FirResultCompat.kt",
+        "FirSourceModuleDataCompat.kt",
+        "FrontendPipelineCompat.kt",
+        "InlineBodyCodegenCompat.kt",
+        "IrAnnotationCompat.kt",
+        "IrGenerationExtensionsCompat.kt",
+        "IrNonAbiStripper.kt",
+        "IrVisitorCompat.kt",
+        "JavaClassResolverCompat.kt",
+        "MetadataVersionCompat.kt",
+        "OptInAnnotationsCompat.kt",
+        "PipelineCompat.kt",
+        "ReturnValueStatusCompat.kt",
+    ]
+]
+
+# The Compose compiler's applier inference (androidx.compose.compiler.plugins.kotlin.inference), cut
+# out of the toolchain's Compose compiler plugin jar. The whole jar would also register the Compose
+# compiler plugin in every compilation that loads abi-gen.
+zip_file(
+    name = "compose-applier-inference",
+    out = "compose-applier-inference.jar",
+    entries_to_exclude = ["^(?!androidx/compose/compiler/plugins/kotlin/inference/).*$"],
+    zip_srcs = ["prelude//toolchains/android/third-party:kotlin-compose-compiler-plugin-embeddable"],
+)
+
+prebuilt_jar(
+    name = "compose-applier-inference-jar",
+    binary_jar = ":compose-applier-inference",
+)
+
 buck_kotlin_library(
     name = "k2-jvm-abi-gen-lib",
     srcs = glob(
-        [
-            "**/*.kt",
-        ],
-    ),
+        ["**/*.kt"],
+        exclude = ["src/main/kotlin/compilercompat/*/*.kt"],
+    )
+    + (
+        glob(["src/main/kotlin/compilercompat/" + KOTLIN_VERSION + "/*.kt"])
+        or fail("No k2-jvm-abi-gen compilercompat bucket for Kotlin " + _KOTLIN_FULL_VERSION)
+    )
+    + (_KOTLIN_25_SHARED_COMPAT_SRCS if KOTLIN_VERSION == "2.5.0" else []),
     labels = ["codegen_rule"],
     provided_deps = [
         "prelude//toolchains/android/third-party:kotlin-compiler-embeddable",
     ],
     resources = glob(["resources/**"]),
     resources_root = "resources",
+    tests = [
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_compose_protected_stability:default_class",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_compose_protected_stability:default_source_only",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_compose_stable_marker:default_class",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_compose_stable_marker:default_source_only",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected_custom",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected_legacy",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected_legacy_sealed",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_selected_sealed",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_creator_selection:pipeline_unselected",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_default_method_forwarders:runtime_enabled_class",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_default_method_forwarders:runtime_enabled_edge",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_default_method_forwarders:runtime_enabled_gap",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_default_method_forwarders:runtime_kotlin_legacy_gap",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_default_method_forwarders:runtime_legacy_class",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_default_method_forwarders:runtime_legacy_edge",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_default_method_forwarders:runtime_no_compatibility_class",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_default_method_forwarders:runtime_no_compatibility_edge",
+        "fbcode//buck2/tests/targets/rules/kotlin/kosabi_default_method_forwarders:runtime_no_compatibility_gap",
+        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/integrationtest:integration-test",
+        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/kosabi-jvm-abi-gen:kosabi-jvm-abi-gen",
+        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/testkit/compareAbi:compareAbi",
+    ],
     visibility = [
         "PUBLIC",
     ],
     deps = [
+        "fbsource//fbandroid/java/com/facebook/kotlin/compilercompat:compilercompat",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/common:common",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/kosabi/common/stub:stub",
         "prelude//toolchains/android/third-party:kotlin-metadata-jvm",
         "prelude//toolchains/android/third-party:kotlin-stdlib",
         "prelude//toolchains/android/third-party:kotlinx-coroutines-core-jvm",
+        ":compose-applier-inference-jar",
     ],
 )
 

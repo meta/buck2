@@ -15,6 +15,8 @@ use allocative::Allocative;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_util::late_binding::LateBinding;
 use starlark::any::AnyLifetime;
+use starlark::values::DynStarlark;
+use starlark::values::HeapSendable;
 use starlark::values::Trace;
 use starlark::values::Value;
 
@@ -25,11 +27,11 @@ pub static ANON_TARGET_REGISTRY_NEW: LateBinding<
     for<'v> fn(
         PhantomData<Value<'v>>,
         ExecutionPlatformResolution,
-    ) -> Box<dyn AnonTargetsRegistryDyn<'v> + 'v>,
+    ) -> Box<DynStarlark<'v, dyn AnonTargetsRegistryDyn<'v> + 'v>>,
 > = LateBinding::new("ANON_TARGET_REGISTRY_NEW");
 
 pub trait AnonTargetsRegistryDyn<'v>:
-    Debug + Allocative + Trace<'v> + AnyLifetime<'v> + 'v
+    Debug + Allocative + Trace<'v> + HeapSendable<'v> + AnyLifetime<'v> + 'v
 {
     fn as_any_mut(&mut self) -> &mut dyn AnyLifetime<'v>;
     fn take_promises(&mut self) -> Option<Box<dyn AnonPromisesDyn<'v>>>;

@@ -1,4 +1,4 @@
-load("@prelude//toolchains/android/tools:build_rules.bzl", "OPEN_JDK_COMPILER_ARGS", "buck_java_library", "standard_java_test")
+load("@prelude//toolchains/android/tools:build_rules.bzl", "OPEN_JDK_COMPILER_ARGS", "buck_java_library", "buck_kotlin_test", "standard_java_test")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("android_devxx")
@@ -43,7 +43,6 @@ buck_java_library(
         "prelude//toolchains/android/third-party:jackson-annotations",
         "prelude//toolchains/android/third-party:jackson-core",
         "prelude//toolchains/android/third-party:jackson-databind",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:junit",
         "prelude//toolchains/android/third-party:okhttp",
         "prelude//toolchains/android/third-party:okio",
@@ -67,10 +66,12 @@ standard_java_test(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java:steps",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java:support",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi:abi",
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi/kotlin:kotlin",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi/source:source",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi/source/api:api",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/classes:classes",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/lang/model:model",
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/java/plugin/api:api",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java/version/utils:utils",
         "prelude//toolchains/android/src/com/facebook/buck/step:step",
         "prelude//toolchains/android/src/com/facebook/buck/test/result/type:type",
@@ -96,7 +97,6 @@ standard_java_test(
         "prelude//toolchains/android/third-party:jackson-annotations",
         "prelude//toolchains/android/third-party:jackson-core",
         "prelude//toolchains/android/third-party:jackson-databind",
-        "prelude//toolchains/android/third-party:jsr305",
         "prelude//toolchains/android/third-party:junit",
         "prelude//toolchains/android/third-party:kotlin-annotations",
         "prelude//toolchains/android/third-party:kotlin-stdlib",
@@ -105,5 +105,21 @@ standard_java_test(
         "prelude//toolchains/android/third-party:okhttp",
         "prelude//toolchains/android/third-party:okio",
         "prelude//toolchains/android/third-party:tools-sdk-common",
+    ],
+)
+
+buck_kotlin_test(
+    name = "abi-kotlin",
+    srcs = glob(["*Test.kt"]),
+    env = {
+        "KOTLIN_VERSION": read_config("kotlin", "kotlin_version"),
+    },
+    deps = [
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/java/abi/kotlin:kotlin",
+        "prelude//toolchains/android/test/com/facebook/buck/jvm/java/testutil/compiler:compiler",
+        "prelude//toolchains/android/test/com/facebook/buck/jvm/kotlin/testutil/compiler:compiler",
+        "prelude//toolchains/android/third-party:asm",
+        "prelude//toolchains/android/third-party:junit",
+        "prelude//toolchains/android/third-party:kotlinx-coroutines-core-jvm",
     ],
 )

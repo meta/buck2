@@ -3,6 +3,7 @@ root = .
 prelude = prelude
 toolchains = toolchains
 none = none
+fbcode_macros = fbcode_macros
 
 [cell_aliases]
 config = prelude

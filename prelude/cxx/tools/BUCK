@@ -1,3 +1,5 @@
+# @oss-disable[end= ]: load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
+load("@prelude//python:typing.bzl", "DEFAULT_PY_VERSION") # @oss-enable
 load("@prelude//utils:source_listing.bzl", "source_listing")
 load(":defs.bzl", "cxx_hacks", "cxx_internal_tools")
 
@@ -9,6 +11,67 @@ prelude = native
 
 cxx_internal_tools(
     name = "internal_tools",
+    visibility = ["PUBLIC"],
+)
+
+CONSTRUCTION_INTERPRETER = "fbcode//buck2/platform/python:interpreter-linux-stage0-{}".format(DEFAULT_PY_VERSION)
+
+[
+    prelude.python_bootstrap_binary_stage0(
+        name = name + "-construction",
+        interpreter = CONSTRUCTION_INTERPRETER,
+        main = name + ".py",
+    )
+    for name in [
+        "check_nonempty_output",
+        "clang_tidy_wrapper",
+        "concatenate_diagnostics",
+        "filter_argsfile",
+        "make_comp_db",
+        "remap_cwd",
+        "shlib_interface_link_wrapper",
+        "stderr_to_file",
+        "stub_header_unit",
+    ]
+]
+
+prelude.python_bootstrap_binary_stage0(
+    name = "dep_file_processor-construction",
+    interpreter = CONSTRUCTION_INTERPRETER,
+    main = "dep_file_processor.py",
+    deps = [":dep_file_processors"],
+)
+
+prelude.python_bootstrap_binary_stage0(
+    name = "hmap_wrapper.py-construction",
+    interpreter = CONSTRUCTION_INTERPRETER,
+    main = "hmap_wrapper.py",
+)
+
+prelude.command_alias(
+    name = "hmap_wrapper-construction",
+    args = [
+        "--hmap-tool=$(location prelude//third-party/hmaptool:hmaptool)",
+    ],
+    exe = ":hmap_wrapper.py-construction",
+    labels = ["buck2-only"],
+)
+
+cxx_internal_tools(
+    name = "internal_tools-construction",
+    check_nonempty_output = ":check_nonempty_output-construction",
+    clang_tidy_wrapper = ":clang_tidy_wrapper-construction",
+    concatenate_diagnostics = ":concatenate_diagnostics-construction",
+    dep_file_processor = ":dep_file_processor-construction",
+    dist_lto = "prelude//cxx/dist_lto/tools:dist_lto_tools-construction",
+    filter_argsfile = ":filter_argsfile-construction",
+    hmap_wrapper = ":hmap_wrapper-construction",
+    make_comp_db = ":make_comp_db-construction",
+    remap_cwd = ":remap_cwd-construction",
+    serialized_diagnostics_to_json_wrapper = ":serialized_diagnostics_to_json_wrapper",
+    shlib_interface_link_wrapper = ":shlib_interface_link_wrapper-construction",
+    stderr_to_file = ":stderr_to_file-construction",
+    stub_header_unit = ":stub_header_unit-construction",
     visibility = ["PUBLIC"],
 )
 
@@ -58,6 +121,18 @@ prelude.python_bootstrap_library(
     ],
 )
 
+# The processors import each other as top-level modules.
+prelude.python_library(
+    name = "dep_file_processors_lib",
+    srcs = [
+        "dep_file_utils.py",
+        "makefile_to_dep_file.py",
+        "show_headers_to_dep_file.py",
+    ],
+    base_module = "",
+    visibility = ["prelude//cxx/tools/..."],
+)
+
 prelude.python_bootstrap_binary(
     name = "linker_wrapper",
     main = "linker_wrapper.py",
@@ -71,8 +146,26 @@ prelude.python_bootstrap_binary(
 )
 
 prelude.python_bootstrap_binary(
+    name = "shlib_interface_link_wrapper",
+    main = "shlib_interface_link_wrapper.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
+    name = "stub_header_unit",
+    main = "stub_header_unit.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
     name = "simple_ar",
     main = "simple_ar.py",
+    visibility = ["PUBLIC"],
+)
+
+prelude.python_bootstrap_binary(
+    name = "clang_tidy_wrapper",
+    main = "clang_tidy_wrapper.py",
     visibility = ["PUBLIC"],
 )
 
@@ -104,4 +197,29 @@ prelude.python_bootstrap_binary(
 cxx_hacks(
     name = "cxx_hacks",
     visibility = ["PUBLIC"],
+)
+
+# Type checking target for Python tool scripts
+prelude.python_library(
+    name = "scripts-typing",
+    srcs = [
+        "check_nonempty_output.py",
+        "clang_tidy_wrapper.py",
+        "concatenate_diagnostics.py",
+        "dep_file_processor.py",
+        "dep_file_utils.py",
+        "filter_argsfile.py",
+        "hmap_wrapper.py",
+        "linker_wrapper.py",
+        "make_comp_db.py",
+        "makefile_to_dep_file.py",
+        "remap_cwd.py",
+        "shlib_interface_link_wrapper.py",
+        "show_headers_to_dep_file.py",
+        "show_includes_to_dep_file.py",
+        "simple_ar.py",
+        "stderr_to_file.py",
+        "stub_header_unit.py",
+    ],
+    typing = True,
 )

@@ -18,12 +18,13 @@ use crate::last_command_execution_kind::LastCommandExecutionKind;
 use crate::last_command_execution_kind::get_last_command_execution_kind;
 
 /// Records the number of actions depending on how they executed.
-/// There's no overlap between the actions - summing them all up
-/// gives the total number of actions. `local_actions` + `remote_actions`
-/// provides the total number of actually executed actions while
-/// `cached_actions` provides number of actions which we found
-/// in the action cache.  `fallback_actions` provides the number of actions
-/// that had its command run more than once (hence, using fallback to run).
+/// `local_actions` + `remote_actions` is the number of actually executed
+/// actions; `cached_actions` is the number found in buck2's own action cache
+/// and `remote_served_from_cache_actions` the number submitted for remote
+/// execution but answered from the service's action cache. These buckets do
+/// not overlap. `fallback_actions` counts actions whose command ran more than
+/// once (hence, using fallback to run), and `remote_deduplicated_actions` the
+/// `remote_actions` the service ran as an execution shared with another build.
 ///
 /// These stats only track executions/commands.
 #[derive(Default, Clone, Dupe)]
@@ -33,6 +34,8 @@ pub struct ActionStats {
     pub cached_actions: u64,
     pub fallback_actions: u64,
     pub remote_dep_file_cached_actions: u64,
+    pub remote_served_from_cache_actions: u64,
+    pub remote_deduplicated_actions: u64,
     pub excess_cache_misses: u64,
 }
 
@@ -48,7 +51,7 @@ impl ActionStats {
         let rate = total_cache_hit_rate(
             self.local_actions,
             self.remote_actions,
-            self.cached_actions,
+            self.cached_actions + self.remote_served_from_cache_actions,
             self.remote_dep_file_cached_actions,
         ) * 100f64;
         let rate = if rate == 100.0 || rate == 0.0 {
@@ -61,7 +64,9 @@ impl ActionStats {
     }
 
     pub fn total_cached_actions(&self) -> u64 {
-        self.cached_actions + self.remote_dep_file_cached_actions
+        self.cached_actions
+            + self.remote_dep_file_cached_actions
+            + self.remote_served_from_cache_actions
     }
 
     pub fn total_executed_actions(&self) -> u64 {
@@ -69,10 +74,7 @@ impl ActionStats {
     }
 
     pub fn total_executed_and_cached_actions(&self) -> u64 {
-        self.local_actions
-            + self.remote_actions
-            + self.cached_actions
-            + self.remote_dep_file_cached_actions
+        self.total_executed_actions() + self.total_cached_actions()
     }
 
     pub fn update(&mut self, action: &buck2_data::ActionExecutionEnd) {
@@ -92,6 +94,13 @@ impl ActionStats {
             }
             LastCommandExecutionKind::Remote => {
                 self.remote_actions += 1;
+            }
+            LastCommandExecutionKind::RemoteServedFromCache => {
+                self.remote_served_from_cache_actions += 1;
+            }
+            LastCommandExecutionKind::RemoteDeduplicated => {
+                self.remote_actions += 1;
+                self.remote_deduplicated_actions += 1;
             }
             LastCommandExecutionKind::RemoteDepFileCached => {
                 self.remote_dep_file_cached_actions += 1;
@@ -125,6 +134,13 @@ impl fmt::Display for ActionStats {
                 ". Fallback: {}/{}",
                 self.fallback_actions,
                 self.total_executed_actions()
+            )
+            .as_str();
+        }
+        if self.remote_deduplicated_actions > 0 {
+            action_stats_message += format!(
+                ". Deduplicated by RE: {}/{}",
+                self.remote_deduplicated_actions, self.remote_actions
             )
             .as_str();
         }
@@ -198,5 +214,43 @@ mod tests {
 
         action_stats.update(&action_execution_end);
         assert_eq!(action_stats.excess_cache_misses, 2);
+    }
+
+    fn remote_action(origin: buck2_data::RemoteCommandOrigin) -> ActionExecutionEnd {
+        use buck2_data::command_execution_kind::Command;
+        ActionExecutionEnd {
+            kind: ActionKind::Run as i32,
+            commands: vec![buck2_data::CommandExecution {
+                details: Some(buck2_data::CommandExecutionDetails {
+                    command_kind: Some(buck2_data::CommandExecutionKind {
+                        command: Some(Command::RemoteCommand(buck2_data::RemoteCommand {
+                            cache_hit_type: origin.into(),
+                            ..Default::default()
+                        })),
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_remote_origin_classification() {
+        use buck2_data::RemoteCommandOrigin;
+        let mut action_stats = ActionStats::default();
+        action_stats.update(&remote_action(RemoteCommandOrigin::Executed));
+        action_stats.update(&remote_action(RemoteCommandOrigin::ReServedFromCache));
+        action_stats.update(&remote_action(RemoteCommandOrigin::ReDeduplicated));
+
+        // Served from the service's cache is a cache hit, not a remote execution.
+        assert_eq!(action_stats.remote_served_from_cache_actions, 1);
+        assert_eq!(action_stats.total_cached_actions(), 1);
+        // Deduplicated is a remote execution, additionally counted as deduplicated.
+        assert_eq!(action_stats.remote_actions, 2);
+        assert_eq!(action_stats.remote_deduplicated_actions, 1);
+        assert_eq!(action_stats.total_executed_actions(), 2);
+        assert_eq!(action_stats.total_executed_and_cached_actions(), 3);
     }
 }

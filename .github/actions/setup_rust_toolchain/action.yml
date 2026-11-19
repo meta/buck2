@@ -1,0 +1,18 @@
+name: setup_rust_toolchain
+description: Install the Rust toolchain named in rust-toolchain.toml
+inputs:
+  components:
+    description: Comma-separated rustup components to install alongside it
+    default: ""
+runs:
+  using: composite
+  steps:
+  - uses: SebRollen/toml-action@v1.2.0
+    id: read_rust_toolchain
+    with:
+      file: rust-toolchain.toml
+      field: toolchain.channel
+  - uses: dtolnay/rust-toolchain@v1
+    with:
+      toolchain: ${{ steps.read_rust_toolchain.outputs.value }}
+      components: ${{ inputs.components }}

@@ -19,12 +19,13 @@ import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.kotlinc.Kotlinc;
 import com.facebook.buck.jvm.kotlin.kotlinc.incremental.KotlincMode;
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 import java.nio.file.Path;
 import java.util.Optional;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Kosabi Stubgen Step A step to run Kosabi's stubgen (generate stubs & run source modifier to
@@ -33,9 +34,11 @@ import javax.annotation.Nullable;
  * steps Later we could move away from KotlinC and explore possibility to use Kotlin Analysis API
  * for output stripped srcs
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KosabiStubgenStep extends KotlincStep {
   private final RelPath stubgenDir;
-  private final RelPath stubClassOutputDir;
+  @Nullable private final RelPath stubClassOutputDir;
+  private final boolean skipJavaImports;
 
   private final String pluginPath;
 
@@ -55,15 +58,15 @@ public class KosabiStubgenStep extends KotlincStep {
       RelPath configuredBuckOut,
       ImmutableMap<String, AbsPath> resolvedKosabiPluginOptionPath,
       @Nullable String kosabiJvmAbiGenEarlyTerminationMessagePrefix,
-      boolean kosabiShouldEnableMixedCompilation,
-      ImmutableList<AbsPath> sourceOnlyAbiClasspath,
+      ImmutableList<AbsPath> compilationClasspath,
       boolean verifySourceOnlyAbiConstraints,
       ImmutableList<IsolatedStep> postKotlinCompilationFailureSteps,
       Optional<AbsPath> depTrackerPath,
       RelPath stubgenDir,
       @Nullable RelPath stubClassOutputDir,
       KotlinCDAnalytics kotlinCDAnalytics,
-      LanguageVersion languageVersion) {
+      LanguageVersion languageVersion,
+      boolean skipJavaImports) {
 
     super(
         invokingRule,
@@ -81,8 +84,8 @@ public class KosabiStubgenStep extends KotlincStep {
         configuredBuckOut,
         resolvedKosabiPluginOptionPath,
         kosabiJvmAbiGenEarlyTerminationMessagePrefix,
-        kosabiShouldEnableMixedCompilation,
-        sourceOnlyAbiClasspath,
+        compilationClasspath,
+        ImmutableList.of(),
         verifySourceOnlyAbiConstraints,
         postKotlinCompilationFailureSteps,
         depTrackerPath,
@@ -91,14 +94,27 @@ public class KosabiStubgenStep extends KotlincStep {
         languageVersion,
         // Flag turning on/off K2 support for jvm-abi-gen actions
         // not part of stubsgen, since jvm-abi-gen doesn't run on stubsgen steps
+        false,
+        // Flag turning on/off shallow class usage for jvm-abi-gen dep files
+        // not part of stubsgen, since jvm-abi-gen doesn't run on stubsgen steps
+        false,
+        // ABI validation mode for jvm-abi-gen repairs
+        // not part of stubsgen, since jvm-abi-gen doesn't run on stubsgen steps
+        "off",
+        // jvm-abi-gen kill switch options
+        // not part of stubsgen, since jvm-abi-gen doesn't run on stubsgen steps
+        ImmutableList.of(),
+        // The kept-body check is part of jvm-abi-gen, which does not run here
         false);
     this.stubgenDir = stubgenDir;
     this.stubClassOutputDir = stubClassOutputDir;
-    this.pluginPath =
-        "plugin:"
-            + (languageVersion.getSupportsK2()
-                ? "com.facebook.kotlin.compilerplugins.kosabi.stubsgen_k2"
-                : "com.facebook.kotlin.compilerplugins.kosabi.stubsgen");
+    this.skipJavaImports = skipJavaImports;
+    this.pluginPath = "plugin:com.facebook.kotlin.compilerplugins.kosabi.stubsgen_k2";
+  }
+
+  @Override
+  protected boolean emitsClassToSourceMap() {
+    return false;
   }
 
   @Override
@@ -108,14 +124,21 @@ public class KosabiStubgenStep extends KotlincStep {
 
   @Override
   protected void configureSourceOnlyOptions(
-      ImmutableList.Builder<String> builder, LanguageVersion languageVersion) {
-    super.configureSourceOnlyOptions(builder, languageVersion);
+      ImmutableList.Builder<String> builder,
+      LanguageVersion languageVersion,
+      AbsPath ruleCellRoot) {
+    super.configureSourceOnlyOptions(builder, languageVersion, ruleCellRoot);
     builder.add("-P");
     builder.add(pluginPath + ":stubsgen-dir=" + stubgenDir.toString());
 
     if (stubClassOutputDir != null) {
       builder.add("-P");
       builder.add(pluginPath + ":stubs-class-dir=" + stubClassOutputDir.toString());
+    }
+
+    if (skipJavaImports) {
+      builder.add("-P");
+      builder.add(pluginPath + ":skip-java-imports=true");
     }
   }
 }

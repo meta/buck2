@@ -1,7 +1,7 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
 Command failed: 
-Error looking up configured node root//:configured_dep_platform_error_in_dead_branch (root//:p-cat#7275fbcf1b8d83cf)
+Error looking up configured node root//:configured_dep_platform_error_in_dead_branch (root//:p-cat#80a6d043e3330ec7)
 
 Caused by:
     0: Error running analysis for `root//:doesnotexist (<unbound>)`

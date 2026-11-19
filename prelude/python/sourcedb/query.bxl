@@ -10,8 +10,7 @@ load("@prelude//python:python.bzl", "PythonLibraryManifestsTSet")
 load("@prelude//python:source_db.bzl", "PythonSourceDBInfo")
 load("@prelude//python/sourcedb:filter.bxl", "filter_root_targets")
 
-def _get_python_library_manifests_from_analysis_result(
-        analysis_result: bxl.AnalysisResult) -> [PythonLibraryManifestsTSet, None]:
+def _get_python_library_manifests_from_analysis_result(analysis_result: bxl.AnalysisResult) -> [PythonLibraryManifestsTSet, None]:
     sub_target = analysis_result.providers()[DefaultInfo].sub_targets.get("source-db-no-deps")
     if sub_target == None:
         return None
@@ -20,50 +19,38 @@ def _get_python_library_manifests_from_analysis_result(
         return None
     return python_source_db_info.manifests
 
-def _get_python_library_manifests_from_targets(
-        ctx: bxl.Context,
-        targets: bxl.UnconfiguredTargetSet) -> list[PythonLibraryManifestsTSet]:
+def _get_python_library_manifests_from_targets(ctx: bxl.Context, targets: bxl.TargetSet[bxl.UnconfiguredTargetNode]) -> list[PythonLibraryManifestsTSet]:
     configured_targets = ctx.configured_targets(targets, modifiers = ctx.modifiers)
-    return filter(None, [
-        _get_python_library_manifests_from_analysis_result(analysis_result)
-        for analysis_result in ctx.analysis(configured_targets).values()
-    ])
+    return filter(None, [_get_python_library_manifests_from_analysis_result(analysis_result) for analysis_result in ctx.analysis(configured_targets).values()])
 
 def get_python_library_manifests_tset_from_targets(
-        ctx: bxl.Context,
-        actions: AnalysisActions,
-        root_targets: bxl.UnconfiguredTargetSet) -> PythonLibraryManifestsTSet:
+    ctx: bxl.Context, actions: AnalysisActions, root_targets: bxl.TargetSet[bxl.UnconfiguredTargetNode]
+) -> PythonLibraryManifestsTSet:
     return actions.tset(
         PythonLibraryManifestsTSet,
         children = _get_python_library_manifests_from_targets(ctx, root_targets),
     )
 
 def get_python_library_manifests_tset_from_target_patterns(
-        ctx: bxl.Context,
-        query: bxl.UqueryContext,
-        actions: AnalysisActions,
-        target_patterns: typing.Any) -> PythonLibraryManifestsTSet:
+    ctx: bxl.Context, query: bxl.UqueryContext, actions: AnalysisActions, target_patterns: typing.Any
+) -> PythonLibraryManifestsTSet:
     root_targets = filter_root_targets(query, target_patterns)
     return get_python_library_manifests_tset_from_targets(ctx, actions, root_targets)
 
-def do_query(
-        ctx: bxl.Context,
-        query: bxl.UqueryContext,
-        actions: AnalysisActions,
-        target_patterns: typing.Any) -> list[ConfiguredTargetLabel]:
-    manifests_of_transitive_dependencies = (
-        get_python_library_manifests_tset_from_target_patterns(
-            ctx,
-            query,
-            actions,
-            target_patterns,
-        )
+def do_query(ctx: bxl.Context, query: bxl.UqueryContext, actions: AnalysisActions, target_patterns: typing.Any) -> list[ConfiguredTargetLabel]:
+    manifests_of_transitive_dependencies = get_python_library_manifests_tset_from_target_patterns(
+        ctx,
+        query,
+        actions,
+        target_patterns,
     )
-    return [
-        manifest.label.configured_target()
-        for manifest in manifests_of_transitive_dependencies.traverse()
-        if manifest.src_types != None
-    ]
+
+    # Invariant: every target whose manifest has non-None src_types must also
+    # provide a "source-db-no-deps" subtarget, since build.bxl will attempt to
+    # build that subtarget for each target returned here.
+    # Rule types that currently satisfy this: python_library,
+    # prebuilt_python_library, and cxx_python_extension.
+    return [manifest.label.configured_target() for manifest in manifests_of_transitive_dependencies.traverse() if manifest.src_types != None]
 
 def _do_query_entry_point(ctx: bxl.Context) -> None:
     query = ctx.uquery()
@@ -77,10 +64,7 @@ def _do_query_entry_point(ctx: bxl.Context) -> None:
     ctx.output.print_json([target.raw_target() for target in targets])
 
 query = bxl_main(
-    doc = (
-        "Expand target patterns and look for all targets in their transitive" +
-        "dependencies that will be built by Pyre."
-    ),
+    doc = ("Expand target patterns and look for all targets in their transitive" + "dependencies that will be built by Pyre."),
     impl = _do_query_entry_point,
     cli_args = {
         "target": cli_args.list(cli_args.string()),

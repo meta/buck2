@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableList;
@@ -17,7 +18,9 @@ import com.google.common.collect.ImmutableSet;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class RemoveClassesPatternsMatcher implements Predicate<Object> {
   public static final RemoveClassesPatternsMatcher EMPTY =
       new RemoveClassesPatternsMatcher(ImmutableSet.of());
@@ -78,7 +81,7 @@ public class RemoveClassesPatternsMatcher implements Predicate<Object> {
   }
 
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(@Nullable Object o) {
     if (this == o) {
       return true;
     }

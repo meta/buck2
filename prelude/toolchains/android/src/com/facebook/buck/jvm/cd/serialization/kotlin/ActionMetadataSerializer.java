@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.cd.serialization.kotlin;
 
 import com.facebook.buck.jvm.cd.serialization.PathSerializer;
 import com.facebook.buck.jvm.java.ActionMetadata;
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -26,6 +27,7 @@ import java.util.stream.Collectors;
  *       model).
  * </ul>
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ActionMetadataSerializer {
 
   private ActionMetadataSerializer() {}

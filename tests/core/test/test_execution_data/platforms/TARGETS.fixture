@@ -1,0 +1,18 @@
+local_enabled = read_config("test", "local_enabled", "true")
+remote_enabled = read_config("test", "remote_enabled", "false")
+
+platform(
+    name = "platform",
+)
+
+execution_platform(
+    name = "exec_platform",
+    platform = ":platform",
+    local_enabled = local_enabled == "true",
+    remote_enabled = remote_enabled == "true",
+)
+
+execution_platforms(
+    name = "platforms",
+    platforms = [":exec_platform"],
+)

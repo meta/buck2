@@ -10,7 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -23,11 +23,13 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Simulates {@code javac}'s symbol completion logic for a given type under the source-only ABI
  * classpath to determine what would be required for it to succeed.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class CompletionSimulator {
 
   private final FileManagerSimulator fileManager;
@@ -73,7 +75,7 @@ class CompletionSimulator {
 
     private CompletedType(TypeElement element, boolean transitive) {
       this.element = element;
-      enclosingType = complete(element.getEnclosingElement(), transitive);
+      enclosingType = complete(Objects.requireNonNull(element.getEnclosingElement()), transitive);
 
       if (transitive) {
         superclass = complete(element.getSuperclass(), transitive);

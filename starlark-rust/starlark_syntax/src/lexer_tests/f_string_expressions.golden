@@ -1,0 +1,857 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+# Simple expressions
+f"{x}"
+f"{x + y}"
+f"{x * 2}"
+f"{a + b + c}"
+
+# Function calls
+f"{foo()}"
+f"{foo(x)}"
+f"{foo(x, y)}"
+f"{foo(x, y, z=1)}"
+f"{obj.method()}"
+f"{obj.method(arg)}"
+
+# Indexing and slicing
+f"{arr[0]}"
+f"{arr[i]}"
+f"{arr[i + 1]}"
+f"{d['key']}"
+f"{d["key"]}"
+f"{arr[1:3]}"
+f"{arr[::2]}"
+f"{arr[1:10:2]}"
+
+# Attribute access
+f"{obj.attr}"
+f"{obj.attr.nested}"
+f"{obj.method().attr}"
+
+# Nested expressions
+f"{(x + y) * z}"
+f"{foo(bar(x))}"
+f"{arr[func()]}"
+f"{d[key1][key2]}"
+
+# Comparison and boolean
+f"{x > 0}"
+f"{x == y}"
+f"{x and y}"
+f"{x or y}"
+f"{not x}"
+f"{x if cond else y}"
+
+# Multiple expressions
+f"{a} and {b}"
+f"start {x} middle {y} end"
+f"{a}{b}{c}"
+
+# Expressions with text
+f"value: {x}"
+f"result = {x + y}!"
+f"[{item}]"
+
+# Conversion specifiers
+f"{x!s}"
+f"{x!r}"
+f"{obj.attr!s}"
+f"{func()!r}"
+
+# Comprehensions inside f-strings
+f"{[x for x in items]}"
+f"{[x*2 for x in range(5)]}"
+f"{{x: y for x, y in pairs}}"
+
+# Dict and list literals
+f"{[1, 2, 3]}"
+f"{{'a': 1}}"
+
+# Escaped braces
+f"{{}}"
+f"{{literal}}"
+f"{x} {{escaped}} {y}"
+
+# Lambda (in parens)
+f"{(lambda x: x + 1)(5)}"
+
+# Nested strings in expressions
+f"{d['key']}"
+f'{d["key"]}'
+f"outer {inner_f} string"
+
+# Complex real-world examples
+f"Hello, {name}!"
+f"Item {i+1} of {total}: {items[i]}"
+f"Error at line {line}: {msg!r}"
+f"{'yes' if flag else 'no'}"
+
+# Empty f-strings
+f""
+f''
+
+# Only text, no expressions
+f"just text"
+f'no expressions here'
+
+# Whitespace in expressions
+f"{ x }"
+f"{  x + y  }"
+f"{ foo( x , y ) }"
+
+# Unary operators
+f"{-x}"
+f"{+x}"
+f"{~bits}"
+f"{not flag}"
+
+# Bitwise operators
+f"{a | b}"
+f"{a & b}"
+f"{a ^ b}"
+f"{a << 2}"
+f"{a >> 2}"
+
+# Triple-quoted f-strings
+f"""multiline {expr}"""
+f'''another {one}'''
+f"""line1
+{expr}
+line3"""
+
+Tokens:
+comment ' Simple expressions'               # # Simple expressions
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+symbol '+'                                  # +
+identifier 'y'                              # y
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+symbol '*'                                  # *
+integer literal '2'                         # 2
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'a'                              # a
+symbol '+'                                  # +
+identifier 'b'                              # b
+symbol '+'                                  # +
+identifier 'c'                              # c
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Function calls'                   # # Function calls
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'foo'                            # foo
+symbol '('                                  # (
+symbol ')'                                  # )
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'foo'                            # foo
+symbol '('                                  # (
+identifier 'x'                              # x
+symbol ')'                                  # )
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'foo'                            # foo
+symbol '('                                  # (
+identifier 'x'                              # x
+symbol ','                                  # ,
+identifier 'y'                              # y
+symbol ')'                                  # )
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'foo'                            # foo
+symbol '('                                  # (
+identifier 'x'                              # x
+symbol ','                                  # ,
+identifier 'y'                              # y
+symbol ','                                  # ,
+identifier 'z'                              # z
+symbol '='                                  # =
+integer literal '1'                         # 1
+symbol ')'                                  # )
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'obj'                            # obj
+symbol '.'                                  # .
+identifier 'method'                         # method
+symbol '('                                  # (
+symbol ')'                                  # )
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'obj'                            # obj
+symbol '.'                                  # .
+identifier 'method'                         # method
+symbol '('                                  # (
+identifier 'arg'                            # arg
+symbol ')'                                  # )
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Indexing and slicing'             # # Indexing and slicing
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'arr'                            # arr
+symbol '['                                  # [
+integer literal '0'                         # 0
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'arr'                            # arr
+symbol '['                                  # [
+identifier 'i'                              # i
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'arr'                            # arr
+symbol '['                                  # [
+identifier 'i'                              # i
+symbol '+'                                  # +
+integer literal '1'                         # 1
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'd'                              # d
+symbol '['                                  # [
+string literal "key"                        # 'key'
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'd'                              # d
+symbol '['                                  # [
+string literal "key"                        # "key"
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'arr'                            # arr
+symbol '['                                  # [
+integer literal '1'                         # 1
+symbol ':'                                  # :
+integer literal '3'                         # 3
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'arr'                            # arr
+symbol '['                                  # [
+symbol ':'                                  # :
+symbol ':'                                  # :
+integer literal '2'                         # 2
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'arr'                            # arr
+symbol '['                                  # [
+integer literal '1'                         # 1
+symbol ':'                                  # :
+integer literal '10'                        # 10
+symbol ':'                                  # :
+integer literal '2'                         # 2
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Attribute access'                 # # Attribute access
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'obj'                            # obj
+symbol '.'                                  # .
+identifier 'attr'                           # attr
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'obj'                            # obj
+symbol '.'                                  # .
+identifier 'attr'                           # attr
+symbol '.'                                  # .
+identifier 'nested'                         # nested
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'obj'                            # obj
+symbol '.'                                  # .
+identifier 'method'                         # method
+symbol '('                                  # (
+symbol ')'                                  # )
+symbol '.'                                  # .
+identifier 'attr'                           # attr
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Nested expressions'               # # Nested expressions
+f-string start                              # f"
+f-string expression start '{'               # {
+symbol '('                                  # (
+identifier 'x'                              # x
+symbol '+'                                  # +
+identifier 'y'                              # y
+symbol ')'                                  # )
+symbol '*'                                  # *
+identifier 'z'                              # z
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'foo'                            # foo
+symbol '('                                  # (
+identifier 'bar'                            # bar
+symbol '('                                  # (
+identifier 'x'                              # x
+symbol ')'                                  # )
+symbol ')'                                  # )
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'arr'                            # arr
+symbol '['                                  # [
+identifier 'func'                           # func
+symbol '('                                  # (
+symbol ')'                                  # )
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'd'                              # d
+symbol '['                                  # [
+identifier 'key1'                           # key1
+symbol ']'                                  # ]
+symbol '['                                  # [
+identifier 'key2'                           # key2
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Comparison and boolean'           # # Comparison and boolean
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+symbol '>'                                  # >
+integer literal '0'                         # 0
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+symbol '=='                                 # ==
+identifier 'y'                              # y
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+keyword 'and'                               # and
+identifier 'y'                              # y
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+keyword 'or'                                # or
+identifier 'y'                              # y
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+keyword 'not'                               # not
+identifier 'x'                              # x
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+keyword 'if'                                # if
+identifier 'cond'                           # cond
+keyword 'else'                              # else
+identifier 'y'                              # y
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Multiple expressions'             # # Multiple expressions
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'a'                              # a
+f-string expression end '}'                 # }
+f-string text " and "                       #  and 
+f-string expression start '{'               # {
+identifier 'b'                              # b
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string text "start "                      # start 
+f-string expression start '{'               # {
+identifier 'x'                              # x
+f-string expression end '}'                 # }
+f-string text " middle "                    #  middle 
+f-string expression start '{'               # {
+identifier 'y'                              # y
+f-string expression end '}'                 # }
+f-string text " end"                        #  end
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'a'                              # a
+f-string expression end '}'                 # }
+f-string expression start '{'               # {
+identifier 'b'                              # b
+f-string expression end '}'                 # }
+f-string expression start '{'               # {
+identifier 'c'                              # c
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Expressions with text'            # # Expressions with text
+f-string start                              # f"
+f-string text "value: "                     # value: 
+f-string expression start '{'               # {
+identifier 'x'                              # x
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string text "result = "                   # result = 
+f-string expression start '{'               # {
+identifier 'x'                              # x
+symbol '+'                                  # +
+identifier 'y'                              # y
+f-string expression end '}'                 # }
+f-string text "!"                           # !
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string text "["                           # [
+f-string expression start '{'               # {
+identifier 'item'                           # item
+f-string expression end '}'                 # }
+f-string text "]"                           # ]
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Conversion specifiers'            # # Conversion specifiers
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+f-string bang '!'                           # !
+identifier 's'                              # s
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+f-string bang '!'                           # !
+identifier 'r'                              # r
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'obj'                            # obj
+symbol '.'                                  # .
+identifier 'attr'                           # attr
+f-string bang '!'                           # !
+identifier 's'                              # s
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'func'                           # func
+symbol '('                                  # (
+symbol ')'                                  # )
+f-string bang '!'                           # !
+identifier 'r'                              # r
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Comprehensions inside f-strings'  # # Comprehensions inside f-strings
+f-string start                              # f"
+f-string expression start '{'               # {
+symbol '['                                  # [
+identifier 'x'                              # x
+keyword 'for'                               # for
+identifier 'x'                              # x
+keyword 'in'                                # in
+identifier 'items'                          # items
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+symbol '['                                  # [
+identifier 'x'                              # x
+symbol '*'                                  # *
+integer literal '2'                         # 2
+keyword 'for'                               # for
+identifier 'x'                              # x
+keyword 'in'                                # in
+identifier 'range'                          # range
+symbol '('                                  # (
+integer literal '5'                         # 5
+symbol ')'                                  # )
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string text "{x: y for x, y in pairs}"    # {{x: y for x, y in pairs}}
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Dict and list literals'           # # Dict and list literals
+f-string start                              # f"
+f-string expression start '{'               # {
+symbol '['                                  # [
+integer literal '1'                         # 1
+symbol ','                                  # ,
+integer literal '2'                         # 2
+symbol ','                                  # ,
+integer literal '3'                         # 3
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string text "{'a': 1}"                    # {{'a': 1}}
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Escaped braces'                   # # Escaped braces
+f-string start                              # f"
+f-string text "{}"                          # {{}}
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string text "{literal}"                   # {{literal}}
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+f-string expression end '}'                 # }
+f-string text " {escaped} "                 #  {{escaped}} 
+f-string expression start '{'               # {
+identifier 'y'                              # y
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Lambda (in parens)'               # # Lambda (in parens)
+f-string start                              # f"
+f-string expression start '{'               # {
+symbol '('                                  # (
+keyword 'lambda'                            # lambda
+identifier 'x'                              # x
+symbol ':'                                  # :
+identifier 'x'                              # x
+symbol '+'                                  # +
+integer literal '1'                         # 1
+symbol ')'                                  # )
+symbol '('                                  # (
+integer literal '5'                         # 5
+symbol ')'                                  # )
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Nested strings in expressions'    # # Nested strings in expressions
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'd'                              # d
+symbol '['                                  # [
+string literal "key"                        # 'key'
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f'
+f-string expression start '{'               # {
+identifier 'd'                              # d
+symbol '['                                  # [
+string literal "key"                        # "key"
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # '
+new line                                    # \n
+f-string start                              # f"
+f-string text "outer "                      # outer 
+f-string expression start '{'               # {
+identifier 'inner_f'                        # inner_f
+f-string expression end '}'                 # }
+f-string text " string"                     #  string
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Complex real-world examples'      # # Complex real-world examples
+f-string start                              # f"
+f-string text "Hello, "                     # Hello, 
+f-string expression start '{'               # {
+identifier 'name'                           # name
+f-string expression end '}'                 # }
+f-string text "!"                           # !
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string text "Item "                       # Item 
+f-string expression start '{'               # {
+identifier 'i'                              # i
+symbol '+'                                  # +
+integer literal '1'                         # 1
+f-string expression end '}'                 # }
+f-string text " of "                        #  of 
+f-string expression start '{'               # {
+identifier 'total'                          # total
+f-string expression end '}'                 # }
+f-string text ": "                          # : 
+f-string expression start '{'               # {
+identifier 'items'                          # items
+symbol '['                                  # [
+identifier 'i'                              # i
+symbol ']'                                  # ]
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string text "Error at line "              # Error at line 
+f-string expression start '{'               # {
+identifier 'line'                           # line
+f-string expression end '}'                 # }
+f-string text ": "                          # : 
+f-string expression start '{'               # {
+identifier 'msg'                            # msg
+f-string bang '!'                           # !
+identifier 'r'                              # r
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+string literal "yes"                        # 'yes'
+keyword 'if'                                # if
+identifier 'flag'                           # flag
+keyword 'else'                              # else
+string literal "no"                         # 'no'
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Empty f-strings'                  # # Empty f-strings
+f-string start                              # f"
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f'
+f-string end                                # '
+new line                                    # \n
+new line                                    # \n
+comment ' Only text, no expressions'        # # Only text, no expressions
+f-string start                              # f"
+f-string text "just text"                   # just text
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f'
+f-string text "no expressions here"         # no expressions here
+f-string end                                # '
+new line                                    # \n
+new line                                    # \n
+comment ' Whitespace in expressions'        # # Whitespace in expressions
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'x'                              # x
+symbol '+'                                  # +
+identifier 'y'                              # y
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'foo'                            # foo
+symbol '('                                  # (
+identifier 'x'                              # x
+symbol ','                                  # ,
+identifier 'y'                              # y
+symbol ')'                                  # )
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Unary operators'                  # # Unary operators
+f-string start                              # f"
+f-string expression start '{'               # {
+symbol '-'                                  # -
+identifier 'x'                              # x
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+symbol '+'                                  # +
+identifier 'x'                              # x
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+symbol '~'                                  # ~
+identifier 'bits'                           # bits
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+keyword 'not'                               # not
+identifier 'flag'                           # flag
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Bitwise operators'                # # Bitwise operators
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'a'                              # a
+symbol '|'                                  # |
+identifier 'b'                              # b
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'a'                              # a
+symbol '&'                                  # &
+identifier 'b'                              # b
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'a'                              # a
+symbol '^'                                  # ^
+identifier 'b'                              # b
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'a'                              # a
+symbol '<<'                                 # <<
+integer literal '2'                         # 2
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+f-string start                              # f"
+f-string expression start '{'               # {
+identifier 'a'                              # a
+symbol '>>'                                 # >>
+integer literal '2'                         # 2
+f-string expression end '}'                 # }
+f-string end                                # "
+new line                                    # \n
+new line                                    # \n
+comment ' Triple-quoted f-strings'          # # Triple-quoted f-strings
+f-string start                              # f"""
+f-string text "multiline "                  # multiline 
+f-string expression start '{'               # {
+identifier 'expr'                           # expr
+f-string expression end '}'                 # }
+f-string end                                # """
+new line                                    # \n
+f-string start                              # f'''
+f-string text "another "                    # another 
+f-string expression start '{'               # {
+identifier 'one'                            # one
+f-string expression end '}'                 # }
+f-string end                                # '''
+new line                                    # \n
+f-string start                              # f"""
+f-string text "line1\n"                     # line1\n
+f-string expression start '{'               # {
+identifier 'expr'                           # expr
+f-string expression end '}'                 # }
+f-string text "\nline3"                     # \nline3
+f-string end                                # """
+new line                                    #

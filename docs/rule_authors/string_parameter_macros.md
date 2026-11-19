@@ -37,11 +37,19 @@ filegroup(
 )
 ```
 
+The target being referenced must expose a `DefaultInfo` (i.e. it must be
+`buck2 build`able).
+
 ## `$(location_exec //path/to:target)`
 
 Identical to `$(location //path/to:target)`, but the configuration is
-transitioned to the execution platform. This can be useful when using `genrule`
-to wrap another build system with buck.
+transitioned to the execution platform (see the [page about
+configuration](../concepts/configurations.md) for more information). This
+can be useful when using `genrule` to wrap another build system with
+buck.
+
+The target being referenced must expose a `DefaultInfo` (i.e. it must be
+`buck2 build`able).
 
 ## `$(source relative/path/to/source)`
 
@@ -75,10 +83,14 @@ If the `$(exe my_dependency)` dependency should actually be built with the
 target platform, use `$(exe_target my_dependency)` instead, which will stick to
 the same platform as the target.
 
+The target being referenced must expose a `RunInfo` (i.e. it must be
+`buck2 run`able).
+
 ## `$(exe_target //path/to:target)`
 
 Identical to `$(exe //path/to:target)`, except that the target is built using
-the target platform, rather than the execution platform.
+the target platform, rather than the execution platform (see the [page
+about configuration](../concepts/configurations.md) for more information).
 
 This is for example useful to get the paths to executables to be run as part of
 tests. For example:
@@ -95,6 +107,9 @@ sh_test(
     visibility = ["//risk/tap_enricher/..."],
 )
 ```
+
+The target being referenced must expose a `RunInfo` (i.e. it must be
+`buck2 run`able).
 
 ## `$(query_targets queryfunction(//path/to:target))`
 

@@ -35,60 +35,88 @@
 use allocative::Allocative;
 use starlark_derive::NoSerialize;
 use starlark_derive::ProvidesStaticType;
+use starlark_derive::StarlarkPagable;
 
 use crate as starlark;
+use crate::docs::DocItem;
+use crate::docs::DocString;
+use crate::docs::DocType;
+use crate::static_starlark_value;
 use crate::typing::Ty;
-use crate::values::AllocFrozenValue;
+use crate::values::AllocFrozenRepresentation;
+use crate::values::AllocRepresentation;
 use crate::values::AllocValue;
-use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
+use crate::values::Allocator;
+use crate::values::FrozenAllocator;
 use crate::values::StarlarkValue;
-use crate::values::layout::avalue::AValueBasic;
-use crate::values::layout::avalue::AValueImpl;
-use crate::values::layout::avalue::alloc_static;
-use crate::values::layout::heap::repr::AValueRepr;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::starlark_value;
-use crate::values::type_repr::StarlarkTypeRepr;
 
 #[derive(
     Debug,
     derive_more::Display,
     Allocative,
     ProvidesStaticType,
-    NoSerialize
+    NoSerialize,
+    StarlarkPagable
 )]
 #[display("{}", Self::TYPE)]
 pub(crate) struct TypingNever;
 
-#[starlark_value(type = "typing.Never")]
+#[starlark_value(type = "typing.Never", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for TypingNever {
+    fn documentation(&self) -> DocItem {
+        DocItem::Type(DocType {
+            docs: DocString::from_docstring(
+                crate::docs::DocStringKind::Rust,
+                "\
+This type can never be constructed.
+
+Equivalent to [Python's `typing.Never`][1], it is Starlark's representation
+of the [bottom type][2]. A function returning `typing.Never` will never
+return. A function taking an argument of `typing.Never` can never be called.
+
+See also [`typing.Never` in the Python documentation][1].
+
+[1]: https://docs.python.org/3/library/typing.html#typing.Never
+[2]: https://en.wikipedia.org/wiki/Bottom_type",
+            ),
+            ..DocType::from_starlark_value::<Self>()
+        })
+    }
+
     fn eval_type(&self) -> Option<Ty> {
         Some(Ty::never())
     }
 }
 
-impl AllocFrozenValue for TypingNever {
-    fn alloc_frozen_value(self, _heap: &FrozenHeap) -> FrozenValue {
-        static NEVER: AValueRepr<AValueImpl<'static, AValueBasic<TypingNever>>> =
-            alloc_static(TypingNever);
+static_starlark_value!(NEVER: TypingNever = TypingNever);
 
-        FrozenValue::new_repr(&NEVER)
+/// The one static, which is immortal: nothing is allocated.
+impl<'v> AllocRepresentation<'v> for TypingNever {
+    type Repr = Self;
+
+    fn alloc(self, _allocator: Allocator<'v>) -> ValueTyped<'v, Self> {
+        NEVER.at()
+    }
+}
+
+impl<'fv> AllocFrozenRepresentation<'fv> for TypingNever {
+    type Repr = Self;
+
+    fn alloc_frozen(self, _allocator: FrozenAllocator<'fv>) -> ValueTyped<'fv, Self> {
+        NEVER.at()
     }
 }
 
 /// Never type, can be used as native function return type.
 pub enum StarlarkNever {}
 
-impl StarlarkTypeRepr for StarlarkNever {
-    type Canonical = Self;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::never()
-    }
-}
-
 impl<'v> AllocValue<'v> for StarlarkNever {
-    fn alloc_value(self, _heap: &'v crate::values::Heap) -> crate::values::Value<'v> {
+    type Type = Self;
+
+    fn alloc_value(self, _heap: crate::values::Heap<'v>) -> ValueOf<'v, Self::Type> {
         match self {}
     }
 }

@@ -34,10 +34,8 @@ JavaClassToSourceMapInfo = provider(
 )
 
 def create_class_to_source_map_info(
-        ctx: AnalysisContext,
-        mapping: Artifact | None = None,
-        mapping_debuginfo: Artifact | None = None,
-        deps = [Dependency]) -> JavaClassToSourceMapInfo:
+    ctx: AnalysisContext, mapping: Artifact | None = None, mapping_debuginfo: Artifact | None = None, deps = [Dependency]
+) -> JavaClassToSourceMapInfo:
     # Only generate debuginfo if the debug info tool is available.
     java_toolchain = ctx.attrs._java_toolchain[JavaToolchainInfo]
     tset_debuginfo = None
@@ -70,32 +68,38 @@ def create_class_to_source_map_info(
     )
 
 def create_class_to_source_map_from_jar(
-        actions: AnalysisActions,
-        name: str,
-        java_toolchain: JavaToolchainInfo,
-        jar: Artifact,
-        srcs: list[Artifact],
-        sources_jar_name: [str, None] = None) -> (Artifact, Artifact | None):
+    actions: AnalysisActions,
+    name: str,
+    java_toolchain: JavaToolchainInfo,
+    jar: Artifact,
+    srcs: list[Artifact],
+    owner_target: str,
+    sources_jar_name: [str, None] = None,
+    debuginfo: Artifact | None = None,
+    compiler_map: Artifact | None = None,
+) -> (Artifact, Artifact | None):
     output = actions.declare_output(name, has_content_based_path = True)
-    cmd = cmd_args(java_toolchain.gen_class_to_source_map[RunInfo])
+    tool = java_toolchain.compiler_class_to_source_map if compiler_map != None else java_toolchain.gen_class_to_source_map
+    cmd = cmd_args(tool[RunInfo])
     if java_toolchain.gen_class_to_source_map_include_sourceless_compiled_packages != None:
         for item in java_toolchain.gen_class_to_source_map_include_sourceless_compiled_packages:
             cmd.add("-i", item)
     cmd.add("-o", output.as_output())
+    if compiler_map != None:
+        cmd.add("--compiler-map", compiler_map)
+    elif debuginfo != None:
+        cmd.add("--debuginfo", debuginfo)
+    cmd.add("--owner-target", owner_target)
     cmd.add(jar)
-    cmd.add(at_argfile(actions = actions, name = "class_to_srcs_map_argsfile.txt", args = srcs))
+    cmd.add(at_argfile(actions = actions, name = "class_to_srcs_map_argsfile.txt", args = srcs, has_content_based_path = True))
     sources_jar = None
     if sources_jar_name:
         sources_jar = actions.declare_output(sources_jar_name, has_content_based_path = True)
         cmd.add("--sources_jar", sources_jar.as_output())
-    actions.run(cmd, category = "class_to_srcs_map")
+    actions.run(cmd, category = "class_to_srcs_map_from_compiler" if compiler_map != None else "class_to_srcs_map")
     return (output, sources_jar)
 
-def maybe_create_class_to_source_map_debuginfo(
-        actions: AnalysisActions,
-        name: str,
-        java_toolchain: JavaToolchainInfo,
-        srcs: list[Artifact]) -> Artifact | None:
+def maybe_create_class_to_source_map_debuginfo(actions: AnalysisActions, name: str, java_toolchain: JavaToolchainInfo, srcs: list[Artifact]) -> Artifact | None:
     # Only generate debuginfo if the debug info tool is available.
     if java_toolchain.gen_class_to_source_map_debuginfo == None:
         return None
@@ -104,16 +108,13 @@ def maybe_create_class_to_source_map_debuginfo(
     cmd = cmd_args(java_toolchain.gen_class_to_source_map_debuginfo[RunInfo])
     cmd.add("gen")
     cmd.add("-o", output.as_output())
-    cmd.add(at_argfile(actions = actions, name = "sourcefiles.txt", args = srcs))
+    cmd.add(at_argfile(actions = actions, name = "sourcefiles.txt", args = srcs, has_content_based_path = True))
     actions.run(cmd, category = "class_to_srcs_map_debuginfo")
     return output
 
 def merge_class_to_source_map_from_jar(
-        actions: AnalysisActions,
-        name: str,
-        java_toolchain: JavaToolchainInfo,
-        relative_to: [CellRoot, None],
-        deps: list[JavaClassToSourceMapInfo]) -> Artifact:
+    actions: AnalysisActions, name: str, java_toolchain: JavaToolchainInfo, relative_to: [CellRoot, None], deps: list[JavaClassToSourceMapInfo]
+) -> Artifact:
     output = actions.declare_output(name, has_content_based_path = True)
 
     tset = actions.tset(
@@ -127,18 +128,14 @@ def merge_class_to_source_map_from_jar(
     cmd = cmd_args(
         java_toolchain.merge_class_to_source_maps[RunInfo],
         cmd_args(output.as_output(), format = "--output={}"),
-        cmd_args(str(relative_to), format = "--relative-to={}") if relative_to != None else [],
+        cmd_args(relative_to, format = "--relative-to={}") if relative_to != None else [],
         ["--mappings", mappings_file],
         hidden = class_to_source_files,
     )
     actions.run(cmd, category = "merge_class_to_srcs_map")
     return output
 
-def _create_merged_debug_info(
-        actions: AnalysisActions,
-        java_toolchain: JavaToolchainInfo,
-        tset_debuginfo: TransitiveSet,
-        name: str):
+def _create_merged_debug_info(actions: AnalysisActions, java_toolchain: JavaToolchainInfo, tset_debuginfo: TransitiveSet, name: str):
     output = actions.declare_output(name, has_content_based_path = True)
     cmd = cmd_args(java_toolchain.gen_class_to_source_map_debuginfo[RunInfo])
     cmd.add("merge")
@@ -149,7 +146,7 @@ def _create_merged_debug_info(
         children = [tset_debuginfo],
     )
     input_files = tset.project_as_args("class_to_src_map")
-    cmd.add(at_argfile(actions = actions, name = "debuginfo_list.txt", args = input_files))
+    cmd.add(at_argfile(actions = actions, name = "debuginfo_list.txt", args = input_files, has_content_based_path = True))
 
     actions.run(cmd, category = "merged_debuginfo")
     return output

@@ -13,10 +13,12 @@ package com.facebook.buck.jvm.cd.serialization;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.util.environment.EnvVariablesProvider;
+import com.facebook.infer.annotation.Nullsafe;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /** {@link AbsPath} to protobuf serializer */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class AbsPathSerializer {
   private static final String EXPECT_RELATIVE_PATHS_ENV_VAR =
       "JAVACD_ABSOLUTE_PATHS_ARE_RELATIVE_TO_CWD";

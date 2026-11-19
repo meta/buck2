@@ -73,9 +73,9 @@ where
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let mut this = self.project();
+        let this = self.project();
 
-        match &mut this.state {
+        match this.state {
             InterruptibleAsyncReadState::Reading(reader) => Pin::new(reader).poll_read(cx, buf),
             InterruptibleAsyncReadState::Draining(drainer) => Pin::new(drainer).poll_read(cx, buf),
         }
@@ -184,10 +184,10 @@ impl<R> AsyncRead for TimeoutDrainer<R> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let mut this = self.project();
+        let this = self.project();
 
         loop {
-            match &mut this.state {
+            match &mut *this.state {
                 TimeoutDrainerState::Waiting(fut) => {
                     let bytes = futures::ready!(Pin::new(fut).poll(cx))?;
                     *this.state = TimeoutDrainerState::Draining(Cursor::new(bytes));

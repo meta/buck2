@@ -16,11 +16,7 @@ load(
 )
 load("@prelude//ide_integrations/xcode:data.bzl", "XcodeDataInfoKeys")
 
-def cxx_populate_xcode_attributes(
-        ctx,
-        srcs: list[CxxSrcWithFlags],
-        argsfiles: dict[str, CompileArgsfile],
-        product_name: str) -> dict[str, typing.Any]:
+def cxx_populate_xcode_attributes(ctx, srcs: list[CxxSrcWithFlags], argsfiles: dict[str, CompileArgsfile], product_name: str) -> dict[str, typing.Any]:
     converted_srcs = {}
     for src in srcs:
         file_properties = _get_artifact_owner(src.file)
@@ -30,14 +26,11 @@ def cxx_populate_xcode_attributes(
             #
             # Convert it to a string and rip-out the quotes
             # so it appears as ["-some-flag", "-another-flag"]
-            file_properties["flags"] = [str(flag).replace('\"', "") for flag in src.flags]
+            file_properties["flags"] = [str(flag).replace('"', "") for flag in src.flags]
         converted_srcs[src.file] = file_properties
 
     data = {
-        XcodeDataInfoKeys.ARGSFILES_BY_EXT: {
-            ext: argsfile.file
-            for ext, argsfile in argsfiles.items()
-        },
+        XcodeDataInfoKeys.ARGSFILES_BY_EXT: {ext: argsfile.file for ext, argsfile in argsfiles.items()},
         XcodeDataInfoKeys.HEADERS: _get_artifacts_with_owners(ctx.attrs.headers),
         XcodeDataInfoKeys.PRODUCT_NAME: product_name,
         XcodeDataInfoKeys.SRCS: converted_srcs,

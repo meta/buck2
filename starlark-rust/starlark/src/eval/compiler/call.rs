@@ -17,14 +17,15 @@
 
 //! Compile function calls.
 
+use starlark_derive::StarlarkPagable;
 use starlark_derive::VisitSpanMut;
 use starlark_syntax::slice_vec_ext::VecExt;
 
+use crate as starlark;
 use crate::collections::symbol::symbol::Symbol;
 use crate::eval::compiler::args::ArgsCompiledValue;
 use crate::eval::compiler::def_inline::InlineDefBody;
 use crate::eval::compiler::def_inline::InlineDefCallSite;
-use crate::eval::compiler::def_inline::local_as_value::local_as_value;
 use crate::eval::compiler::expr::Builtin1;
 use crate::eval::compiler::expr::ExprCompiled;
 use crate::eval::compiler::opt_ctx::OptCtx;
@@ -32,27 +33,26 @@ use crate::eval::compiler::span::IrSpanned;
 use crate::eval::runtime::frame_span::FrameSpan;
 use crate::eval::runtime::inlined_frame::InlinedFrameAlloc;
 use crate::eval::runtime::visit_span::VisitSpanMut;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValue;
+use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::enumeration::FrozenEnumType;
+use crate::values::enumeration::EnumTypeView;
 use crate::values::string::dot_format::parse_format_one;
 
-#[derive(Clone, Debug, VisitSpanMut)]
-pub(crate) struct CallCompiled {
-    pub(crate) fun: IrSpanned<ExprCompiled>,
-    pub(crate) args: ArgsCompiledValue,
+#[derive(Clone, Debug, VisitSpanMut, StarlarkPagable)]
+pub(crate) struct CallCompiled<'f> {
+    pub(crate) fun: IrSpanned<'f, ExprCompiled<'f>>,
+    pub(crate) args: ArgsCompiledValue<'f>,
 }
 
-impl CallCompiled {
+impl<'f> CallCompiled<'f> {
     pub(crate) fn new_method(
-        span: FrameSpan,
-        this: IrSpanned<ExprCompiled>,
+        span: FrameSpan<'f>,
+        this: IrSpanned<'f, ExprCompiled<'f>>,
         field: &Symbol,
-        getattr_span: FrameSpan,
-        args: ArgsCompiledValue,
-        ctx: &mut OptCtx,
-    ) -> ExprCompiled {
+        getattr_span: FrameSpan<'f>,
+        args: ArgsCompiledValue<'f>,
+        ctx: &mut OptCtx<'_, '_, '_, '_, 'f>,
+    ) -> ExprCompiled<'f> {
         if let Some(this) = this.as_value() {
             if let Some(v) = ExprCompiled::compile_time_getattr(this, field, ctx) {
                 let v = ExprCompiled::Value(v);
@@ -77,7 +77,7 @@ impl CallCompiled {
     }
 
     /// If this call expression is `len(x)`, return `x`.
-    pub(crate) fn as_len(&self) -> Option<&IrSpanned<ExprCompiled>> {
+    pub(crate) fn as_len(&self) -> Option<&IrSpanned<'f, ExprCompiled<'f>>> {
         if !self.fun.is_fn_len() {
             return None;
         }
@@ -85,7 +85,7 @@ impl CallCompiled {
     }
 
     /// If this call expression is `type(x)`, return `x`.
-    pub(crate) fn as_type(&self) -> Option<&IrSpanned<ExprCompiled>> {
+    pub(crate) fn as_type(&self) -> Option<&IrSpanned<'f, ExprCompiled<'f>>> {
         if !self.fun.is_fn_type() {
             return None;
         }
@@ -93,7 +93,7 @@ impl CallCompiled {
     }
 
     /// If this call expression is `isinstance(x, t)`, return `(x, t)`.
-    pub(crate) fn as_isinstance(&self) -> Option<(&IrSpanned<ExprCompiled>, FrozenValue)> {
+    pub(crate) fn as_isinstance(&self) -> Option<(&IrSpanned<'f, ExprCompiled<'f>>, Value<'f>)> {
         if !self.fun.is_fn_isinstance() {
             return None;
         }
@@ -111,7 +111,13 @@ impl CallCompiled {
     }
 
     /// This call is a method call.
-    pub(crate) fn method(&self) -> Option<(&IrSpanned<ExprCompiled>, &Symbol, &ArgsCompiledValue)> {
+    pub(crate) fn method(
+        &self,
+    ) -> Option<(
+        &IrSpanned<'f, ExprCompiled<'f>>,
+        &Symbol,
+        &ArgsCompiledValue<'f>,
+    )> {
         match &self.fun.node {
             ExprCompiled::Builtin1(Builtin1::Dot(name), expr) => Some((expr, name, &self.args)),
             _ => None,
@@ -119,10 +125,13 @@ impl CallCompiled {
     }
 
     /// Try to inline a function like `lambda x: type(x) == "y"`.
-    fn try_type_is(fun: &ExprCompiled, args: &ArgsCompiledValue) -> Option<ExprCompiled> {
-        let fun = fun.as_frozen_def()?;
+    fn try_type_is(
+        fun: &ExprCompiled<'f>,
+        args: &ArgsCompiledValue<'f>,
+    ) -> Option<ExprCompiled<'f>> {
+        let fun = fun.as_def()?;
         let pos = args.one_pos()?;
-        if let Some(InlineDefBody::ReturnTypeIs(t)) = &fun.def_info.inline_def_body {
+        if let Some(InlineDefBody::ReturnTypeIs(t)) = &fun.def_info.value.inline_def_body {
             Some(ExprCompiled::type_is(pos.clone(), *t))
         } else {
             None
@@ -130,13 +139,13 @@ impl CallCompiled {
     }
 
     /// Inline calls to functions which are safe to inline.
-    fn try_inline(
-        span: FrameSpan,
-        fun: &ExprCompiled,
-        args: &ArgsCompiledValue,
-        ctx: &mut OptCtx,
-    ) -> Option<IrSpanned<ExprCompiled>> {
-        let fun = fun.as_frozen_def()?;
+    fn try_inline<'v>(
+        span: FrameSpan<'f>,
+        fun: &ExprCompiled<'f>,
+        args: &ArgsCompiledValue<'f>,
+        ctx: &mut OptCtx<'v, '_, '_, '_, 'f>,
+    ) -> Option<IrSpanned<'f, ExprCompiled<'f>>> {
+        let fun = fun.as_def()?;
 
         if fun.parameters.has_args_or_kwargs() {
             // Functions with `*args` or `**kwargs` are not marked safe to inline,
@@ -145,125 +154,135 @@ impl CallCompiled {
         }
 
         let expr = if let Some(InlineDefBody::ReturnSafeToInlineExpr(expr)) =
-            &fun.def_info.inline_def_body
+            &fun.def_info.value.inline_def_body
         {
             expr
         } else {
             return None;
         };
 
+        // The arguments are bound to the parameters on the value heap, and the bound values are
+        // demoted back to the IR.
         let param_count = ctx.param_count;
-        let expr_to_value = |expr: &ExprCompiled| -> Option<Value> {
-            match expr {
-                ExprCompiled::Value(v) => Some(v.to_value()),
-                ExprCompiled::Local(local) if local.0 < param_count => {
-                    // Definitely assigned local variable.
-                    //
-                    // Consider this example:
-                    // ```
-                    // def foo(x): bar() + x
-                    // ```
-                    // We can inline calls like `foo(x)` when `x` is definitely assigned,
-                    // but if `x` is not we cannot do that, because
-                    // we should emit `x` is not assigned error before call to `bar()`
-                    // which may fail. We can implement inlining of variables which
-                    // may be not assigned, or inlining of any expression arguments,
-                    // but more work is needed for that.
-                    Some(local_as_value(*local)?.to_value())
+        let edge = ctx.edge();
+        let heap = ctx.heap();
+        ctx.local_as_values(param_count);
+        let slots: Vec<Value<'f>> = {
+            let ctx = &*ctx;
+            let locals = ctx.eval.local_as_values();
+            let expr_to_value = |expr: &ExprCompiled<'f>| -> Option<Value<'v>> {
+                match expr {
+                    ExprCompiled::Value(v) => Some(edge.rebrand(*v)),
+                    ExprCompiled::Local(local) if local.0 < param_count => {
+                        // Definitely assigned local variable.
+                        //
+                        // Consider this example:
+                        // ```
+                        // def foo(x): bar() + x
+                        // ```
+                        // We can inline calls like `foo(x)` when `x` is definitely assigned,
+                        // but if `x` is not we cannot do that, because
+                        // we should emit `x` is not assigned error before call to `bar()`
+                        // which may fail. We can implement inlining of variables which
+                        // may be not assigned, or inlining of any expression arguments,
+                        // but more work is needed for that.
+                        Some(edge.rebrand(locals[local.0 as usize]).to_value())
+                    }
+                    _ => None,
                 }
-                _ => None,
-            }
+            };
+
+            args.all_values_generic(edge, expr_to_value, |arguments| {
+                let parameters = &edge.rebrand(fun).as_ref().parameters;
+                let mut slots = vec![None; parameters.len()];
+                parameters.collect(arguments, &mut slots, heap).ok()?;
+
+                slots
+                    .into_try_map(|value| {
+                        // Value must be set, but better ignore optimization here than panic.
+                        let value = value.ok_or(())?;
+                        // Everything should be frozen here, but if not,
+                        // it is safer to abandon optimization.
+                        ctx.demote(value).ok_or(())
+                    })
+                    .ok()
+            })??
         };
 
-        args.all_values_generic(expr_to_value, |arguments| {
-            let mut slots = vec![None; fun.parameters.len()];
-            fun.parameters
-                .collect(arguments.frozen_to_v(), &mut slots, ctx.heap())
-                .ok()?;
-
-            let slots = slots
-                .into_try_map(|value| {
-                    // Value must be set, but better ignore optimization here than panic.
-                    let value = value.ok_or(())?;
-                    // Everything should be frozen here, but if not,
-                    // it is safer to abandon optimization.
-                    value.unpack_frozen().ok_or(())
-                })
-                .ok()?;
-
-            let mut expr = IrSpanned {
-                span,
-                node: expr.node.clone(),
-            };
-            let mut span_alloc = InlinedFrameAlloc::new(ctx.frozen_heap());
-            expr.visit_spans(&mut |expr_span: &mut FrameSpan| {
-                expr_span
-                    .inlined_frames
-                    .inline_into(span, fun.to_frozen_value(), &mut span_alloc);
-            });
-            InlineDefCallSite { ctx, slots: &slots }.inline(&expr).ok()
-        })?
+        let mut expr = IrSpanned {
+            span,
+            node: expr.node.clone(),
+        };
+        let mut span_alloc = InlinedFrameAlloc::new(ctx.frozen_heap());
+        expr.visit_spans(&mut |expr_span: &mut FrameSpan<'f>| {
+            expr_span
+                .inlined_frames
+                .inline_into(span, fun.to_value(), &mut span_alloc);
+        });
+        InlineDefCallSite { ctx, slots: &slots }.inline(&expr).ok()
     }
 
-    fn try_spec_exec(
-        span: FrameSpan,
-        fun: &ExprCompiled,
-        args: &ArgsCompiledValue,
-        ctx: &mut OptCtx,
-    ) -> Option<ExprCompiled> {
+    fn try_spec_exec<'v>(
+        span: FrameSpan<'f>,
+        fun: &ExprCompiled<'f>,
+        args: &ArgsCompiledValue<'f>,
+        ctx: &mut OptCtx<'v, '_, '_, '_, 'f>,
+    ) -> Option<ExprCompiled<'f>> {
         let fun = fun.as_value()?;
 
         if !fun.speculative_exec_safe() {
             return None;
         }
 
-        let eval = ctx.eval()?;
-
-        // Only if all call arguments are frozen values.
-        args.all_values(|arguments| {
-            let v = fun.to_value().invoke(arguments.frozen_to_v(), eval).ok()?;
-            ExprCompiled::try_value(span, v, eval.module_env.frozen_heap())
-        })?
+        let v = {
+            let edge = ctx.edge();
+            let eval = ctx.eval()?;
+            // Only if all call arguments are frozen values.
+            args.all_values(edge, |arguments| {
+                edge.rebrand(fun).invoke(arguments, eval).ok()
+            })??
+        };
+        ExprCompiled::try_value(span, v, ctx)
     }
 
     // Optimize `MyEnum(arg)`.
     fn try_enum_value(
-        fun: &IrSpanned<ExprCompiled>,
-        args: &ArgsCompiledValue,
-    ) -> Option<ExprCompiled> {
-        let fun = fun.as_value()?.downcast_frozen_ref::<FrozenEnumType>()?;
+        fun: &IrSpanned<'f, ExprCompiled<'f>>,
+        args: &ArgsCompiledValue<'f>,
+    ) -> Option<ExprCompiled<'f>> {
+        // The enum type, the argument and the variant it selects are all IR constants, so the
+        // lookup happens at the IR's brand and nothing is demoted from the value heap.
+        let fun = EnumTypeView::unpack_value_opt(fun.as_value()?)?.as_dyn();
         let arg = args.one_pos()?.as_value()?;
-        Some(ExprCompiled::Value(
-            fun.value.construct(arg.to_value()).ok()?,
-        ))
+        Some(ExprCompiled::Value(fun.construct(arg).ok()?))
     }
 
     // Optimize `"aaa{}bbb".format(arg)`.
     fn try_format(
-        fun: &IrSpanned<ExprCompiled>,
-        args: &ArgsCompiledValue,
-        ctx: &mut OptCtx,
-    ) -> Option<ExprCompiled> {
-        let fun = fun.as_frozen_bound_method()?;
-        let format = FrozenStringValue::new(fun.this)?;
+        fun: &IrSpanned<'f, ExprCompiled<'f>>,
+        args: &ArgsCompiledValue<'f>,
+        ctx: &mut OptCtx<'_, '_, '_, '_, 'f>,
+    ) -> Option<ExprCompiled<'f>> {
+        let fun = fun.as_bound_method()?;
+        let format = fun.this.unpack_str()?;
         if fun.method.name != "format" {
             return None;
         }
         let arg = args.one_pos()?;
 
-        let (before, after) = parse_format_one(&format)?;
+        let (before, after) = parse_format_one(format)?;
 
-        let before = ctx.frozen_heap().alloc_str_intern(&before);
-        let after = ctx.frozen_heap().alloc_str_intern(&after);
+        let before = ctx.frozen_heap().alloc(before.as_str());
+        let after = ctx.frozen_heap().alloc(after.as_str());
         Some(ExprCompiled::format_one(before, arg.clone(), after, ctx))
     }
 
     pub(crate) fn call(
-        span: FrameSpan,
-        fun: IrSpanned<ExprCompiled>,
-        args: ArgsCompiledValue,
-        ctx: &mut OptCtx,
-    ) -> ExprCompiled {
+        span: FrameSpan<'f>,
+        fun: IrSpanned<'f, ExprCompiled<'f>>,
+        args: ArgsCompiledValue<'f>,
+        ctx: &mut OptCtx<'_, '_, '_, '_, 'f>,
+    ) -> ExprCompiled<'f> {
         if let Some(type_is) = CallCompiled::try_type_is(&fun, &args) {
             return type_is;
         }
@@ -307,8 +326,8 @@ impl CallCompiled {
     }
 }
 
-impl IrSpanned<CallCompiled> {
-    pub(crate) fn optimize(&self, ctx: &mut OptCtx) -> ExprCompiled {
+impl<'f> IrSpanned<'f, CallCompiled<'f>> {
+    pub(crate) fn optimize(&self, ctx: &mut OptCtx<'_, '_, '_, '_, 'f>) -> ExprCompiled<'f> {
         let CallCompiled { fun: expr, args } = &self.node;
         let expr = expr.optimize(ctx);
         let args = args.optimize(ctx);

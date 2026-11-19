@@ -15,7 +15,6 @@ import com.facebook.buck.core.filesystems.AbsPath
 enum class StepParam(val value: String) {
   KOTLINC("kotlinc"),
   KOSABI_STUBGEN("kosabi_stubgen"),
-  KSP1("ksp1"),
   KSP2("ksp2"),
   KAPT("kapt"),
 }

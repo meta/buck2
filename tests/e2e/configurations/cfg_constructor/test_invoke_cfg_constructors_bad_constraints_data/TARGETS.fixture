@@ -7,7 +7,7 @@ test_platform(
 test_rule(
     name = "test",
     default_target_platform = ":platform",
-    metadata = {"buck.cfg_modifiers": {}},
+    modifiers = ["root//:not_a_constraint"],
 )
 
 test_rule(

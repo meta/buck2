@@ -14,19 +14,23 @@ use buck2_fs::paths::file_name::FileNameBuf;
 use derivative::Derivative;
 use derive_more::Display;
 use either::Either;
+use pagable::Pagable;
 
 use crate::directory::builder::DirectoryBuilder;
 use crate::directory::dashmap_directory_interner::DashMapDirectoryInterner;
 use crate::directory::directory::Directory;
 use crate::directory::entry::DirectoryEntry;
 use crate::directory::exclusive_directory::ExclusiveDirectory;
+use crate::directory::exhaustiveness::ExhaustivenessHash;
 use crate::directory::fingerprinted_directory::FingerprintedDirectory;
 use crate::directory::immutable_or_exclusive::ImmutableOrExclusiveDirectoryRef;
 use crate::directory::shared_directory::SharedDirectory;
+use crate::directory::shared_directory::SharedDirectoryInternable;
 
-#[derive(Derivative, Display, Allocative)]
+#[derive(Derivative, Display, Allocative, Pagable)]
 #[derivative(Debug(bound = "L: ::std::fmt::Debug"))]
 #[derivative(Clone(bound = "L: ::std::clone::Clone"))]
+#[pagable(bound = "L: Pagable + SharedDirectoryInternable<H>, H: Pagable")]
 pub enum ImmutableDirectory<L, H>
 where
     H: DirectoryDigest,
@@ -58,6 +62,10 @@ where
             Self::Exclusive(dir) => dir.data.entries.len(),
             Self::Shared(dir) => dir.inner.data.entries.len(),
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -135,6 +143,13 @@ where
         }
     }
 
+    fn exhaustiveness_hash(&self) -> ExhaustivenessHash {
+        match self {
+            Self::Exclusive(dir) => FingerprintedDirectory::exhaustiveness_hash(dir),
+            Self::Shared(dir) => FingerprintedDirectory::exhaustiveness_hash(dir),
+        }
+    }
+
     fn size(&self) -> u64 {
         match self {
             Self::Exclusive(dir) => FingerprintedDirectory::size(dir),
@@ -149,6 +164,7 @@ where
 {
     fn eq(&self, other: &Self) -> bool {
         self.fingerprint() == other.fingerprint()
+            && self.exhaustiveness_hash() == other.exhaustiveness_hash()
     }
 }
 

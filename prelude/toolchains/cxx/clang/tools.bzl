@@ -9,7 +9,7 @@
 load("@prelude//cxx:cxx_toolchain_types.bzl", "LinkerType")
 load("@prelude//toolchains:cxx.bzl", "CxxToolsInfo")
 
-def _path_clang_tools_impl(_ctx) -> list[Provider]:
+def _path_clang_tools_impl(ctx) -> list[Provider]:
     return [
         DefaultInfo(),
         CxxToolsInfo(
@@ -23,11 +23,18 @@ def _path_clang_tools_impl(_ctx) -> list[Provider]:
             archiver = "ar",
             archiver_type = "gnu",
             linker = "clang++",
-            linker_type = LinkerType("gnu"),
+            linker_type = LinkerType(ctx.attrs.linker_type),
         ),
     ]
 
 path_clang_tools = rule(
     impl = _path_clang_tools_impl,
-    attrs = {},
+    attrs = {
+        "linker_type": attrs.string(
+            default = select({
+                "DEFAULT": "gnu",
+                "config//os:macos": "darwin",
+            })
+        ),
+    },
 )

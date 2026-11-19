@@ -19,7 +19,7 @@
 
 use thiserror::Error;
 
-use crate::values::StarlarkValue;
+use crate::values::StarlarkType;
 use crate::values::Value;
 
 /// Common errors returned by Starlark evaluation.
@@ -64,7 +64,25 @@ pub enum ValueError {
 
 impl From<ValueError> for crate::Error {
     fn from(e: ValueError) -> Self {
-        crate::Error::new_kind(crate::ErrorKind::Value(anyhow::Error::new(e)))
+        let runtime_type_kind = match &e {
+            ValueError::OperationNotSupported { .. }
+            | ValueError::OperationNotSupportedBinary { .. } => {
+                Some(crate::RuntimeTypeErrorKind::Operation)
+            }
+            ValueError::IncorrectParameterType
+            | ValueError::IncorrectParameterTypeNamed(_)
+            | ValueError::MissingThis
+            | ValueError::MissingRequired(_) => Some(crate::RuntimeTypeErrorKind::Parameter),
+            ValueError::NoAttr(..) | ValueError::NoAttrDidYouMean(..) => {
+                Some(crate::RuntimeTypeErrorKind::Attribute)
+            }
+            _ => None,
+        };
+
+        match runtime_type_kind {
+            Some(kind) => crate::Error::new_runtime_type(kind, anyhow::Error::new(e)),
+            None => crate::Error::new_value(e),
+        }
     }
 }
 
@@ -100,7 +118,7 @@ impl ValueError {
 
     /// Helper to create an [`OperationNotSupported`](ValueError::OperationNotSupported) error.
     #[cold]
-    pub fn unsupported<'v, T, V: StarlarkValue<'v>>(_left: &V, op: &str) -> crate::Result<T> {
+    pub fn unsupported<'v, T, V: StarlarkType<'v>>(_left: &V, op: &str) -> crate::Result<T> {
         Self::unsupported_owned(V::TYPE, op, None)
     }
 
@@ -111,11 +129,39 @@ impl ValueError {
 
     /// Helper to create an [`OperationNotSupported`](ValueError::OperationNotSupportedBinary) error.
     #[cold]
-    pub fn unsupported_with<'v, T, V: StarlarkValue<'v>>(
+    pub fn unsupported_with<'v, T, V: StarlarkType<'v>>(
         _left: &V,
         op: &str,
         right: Value,
     ) -> crate::Result<T> {
         Self::unsupported_owned(V::TYPE, op, Some(right.get_type()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_type_errors_are_distinguished_from_other_value_errors() {
+        let operation: crate::Error = ValueError::OperationNotSupported {
+            op: "+".to_owned(),
+            typ: "string".to_owned(),
+        }
+        .into();
+        assert!(matches!(
+            operation.kind(),
+            crate::ErrorKind::RuntimeType(crate::RuntimeTypeErrorKind::Operation, _)
+        ));
+
+        let attribute: crate::Error =
+            ValueError::NoAttr("struct".to_owned(), "field".to_owned()).into();
+        assert!(matches!(
+            attribute.kind(),
+            crate::ErrorKind::RuntimeType(crate::RuntimeTypeErrorKind::Attribute, _)
+        ));
+
+        let non_type_error: crate::Error = ValueError::DivisionByZero.into();
+        assert!(matches!(non_type_error.kind(), crate::ErrorKind::Value(_)));
     }
 }

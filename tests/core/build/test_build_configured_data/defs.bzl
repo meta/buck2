@@ -33,11 +33,10 @@ universe = rule(
 )
 
 def _simple_impl(ctx):
-    out = ctx.actions.write("out", cmd_args(str(ctx.label), format = "$$${}$$$"))
+    out = ctx.actions.write("out", cmd_args(str(ctx.label), format = "$$${}$$$"), has_content_based_path = False)
     return [DefaultInfo(default_output = out)]
 
 simple = rule(
     impl = _simple_impl,
-    attrs = {
-    },
+    attrs = {},
 )

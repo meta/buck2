@@ -1,0 +1,5 @@
+load(":slow.bzl", "slow")
+
+slow(
+    name = "slow",
+)

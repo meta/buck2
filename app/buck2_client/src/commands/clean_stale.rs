@@ -20,15 +20,17 @@ use buck2_client_ctx::common::CommonStarlarkOptions;
 use buck2_client_ctx::common::ui::CommonConsoleOptions;
 use buck2_client_ctx::daemon::client::BuckdClientConnector;
 use buck2_client_ctx::daemon::client::NoPartialResultHandler;
+use buck2_client_ctx::daemon::client::connect::DaemonStartupMode;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::streaming::StreamingCommand;
+use buck2_data::clean_stale_result::Origin;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
-use chrono::DateTime;
-use chrono::Duration;
-use chrono::TimeZone;
-use chrono::Utc;
+use buck2_error::internal_error;
+use buck2_wrapper_common::BUCK2_CLEANALL_ENV_VAR;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 
 /// Clean only old artifacts from a running buck daemon without killing the daemon.
 /// This can be interrupted by other commands that run in parallel and request materialization.
@@ -41,11 +43,17 @@ pub struct CleanStaleCommand {
     pub keep_since_arg: KeepSinceArg,
     pub dry_run: bool,
     pub tracked_only: bool,
+    /// Free-disk % threshold for adaptive low-disk promotion. None disables it.
+    pub adaptive_low_disk_threshold: Option<f64>,
+    /// Adaptive min-TTL floor. None means use the daemon-side default (12h).
+    pub adaptive_min_ttl: Option<std::time::Duration>,
+    pub adaptive_unmaterialize_active: bool,
 }
 
 /// Specifies the maximum age of artifacts to keep
 pub enum KeepSinceArg {
-    Duration(Duration),
+    Configured,
+    Duration(SignedDuration),
     Time(i64),
 }
 
@@ -55,16 +63,24 @@ pub fn parse_clean_stale_args(
 ) -> buck2_error::Result<Option<KeepSinceArg>> {
     let arg = match (stale, keep_since_time) {
         (Some(Some(human_duration)), None) => {
-            let duration = chrono::Duration::from_std(human_duration.into())
+            let duration = SignedDuration::try_from(std::time::Duration::from(human_duration))
                 .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::InvalidDuration))?;
             Some(KeepSinceArg::Duration(duration))
         }
-        (Some(None), None) => Some(KeepSinceArg::Duration(chrono::Duration::weeks(1))),
+        (Some(None), None) => Some(KeepSinceArg::Configured),
         (None, Some(time)) => Some(KeepSinceArg::Time(time)),
         (Some(_), Some(_)) => unreachable!("keep-since-time conflicts_with stale"),
         (None, None) => None,
     };
     Ok(arg)
+}
+
+fn origin() -> Origin {
+    if std::env::var_os(BUCK2_CLEANALL_ENV_VAR).is_some_and(|value| value == "1") {
+        Origin::CleanallCommand
+    } else {
+        Origin::CleanCommand
+    }
 }
 
 fn format_result_stats(stats: buck2_data::CleanStaleStats) -> String {
@@ -84,12 +100,27 @@ fn format_result_stats(stats: buck2_data::CleanStaleStats) -> String {
         stats.untracked_artifact_count,
         bytesize::ByteSize::b(stats.untracked_bytes).display().iec(),
     );
+    if stats.skipped_unreadable_count > 0 {
+        output += &format!(
+            "Skipped {} paths that could not be read or deleted (permission denied)\n",
+            stats.skipped_unreadable_count,
+        );
+    }
     if stats.cleaned_artifact_count > 0 || stats.cleaned_bytes > 0 {
         output += &format!("Cleaned {} paths\n", stats.cleaned_artifact_count,);
         output += &format!(
             "{} bytes cleaned ({})\n",
             stats.cleaned_bytes,
             bytesize::ByteSize::b(stats.cleaned_bytes).display().iec(),
+        );
+    }
+    if stats.unmaterialized_only_artifact_count > 0 || stats.unmaterialized_only_bytes > 0 {
+        output += &format!(
+            "Unmaterialized {} artifacts ({})\n",
+            stats.unmaterialized_only_artifact_count,
+            bytesize::ByteSize::b(stats.unmaterialized_only_bytes)
+                .display()
+                .iec(),
         );
     }
     output
@@ -99,6 +130,10 @@ fn format_result_stats(stats: buck2_data::CleanStaleStats) -> String {
 impl StreamingCommand for CleanStaleCommand {
     const COMMAND_NAME: &'static str = "clean-stale";
 
+    fn daemon_startup_mode() -> DaemonStartupMode {
+        DaemonStartupMode::CleanStale
+    }
+
     async fn exec_impl(
         self,
         buckd: &mut BuckdClientConnector,
@@ -106,16 +141,21 @@ impl StreamingCommand for CleanStaleCommand {
         ctx: &mut ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
-        let keep_since_time = match self.keep_since_arg {
+        let (keep_since_time, use_configured_policy) = match self.keep_since_arg {
+            KeepSinceArg::Configured => {
+                buck2_client_ctx::eprintln!(
+                    "Cleaning artifacts using the configured clean-stale policy"
+                )?;
+                (Timestamp::UNIX_EPOCH, true)
+            }
             KeepSinceArg::Duration(duration) => {
-                let keep_since_time: DateTime<Utc> = Utc::now()
-                    .checked_sub_signed(duration)
-                    .buck_error_context("Duration underflow")?;
+                let keep_since_time = Timestamp::now()
+                    .checked_sub(duration)
+                    .map_err(|_| internal_error!("Duration underflow"))?;
                 buck2_client_ctx::eprintln!(
                     "Cleaning artifacts more than {} old",
                     humantime::format_duration(
-                        duration
-                            .to_std()
+                        std::time::Duration::try_from(duration)
                             .map_err(|e| from_any_with_tag(
                                 e,
                                 buck2_error::ErrorTag::InvalidDuration
@@ -125,13 +165,29 @@ impl StreamingCommand for CleanStaleCommand {
                 )?;
                 // Round up to next second since timestamp below is rounded down
                 // (this way clean --stale=0s immediately after a build deletes the result)
-                keep_since_time + chrono::Duration::seconds(1)
+                let keep_since_time = keep_since_time
+                    .checked_add(SignedDuration::from_secs(1))
+                    .map_err(|_| internal_error!("Timestamp overflow"))?;
+                (keep_since_time, false)
             }
-            KeepSinceArg::Time(timestamp) => Utc
-                .timestamp_opt(timestamp, 0)
-                .single()
-                .buck_error_context("Invalid timestamp")?,
+            KeepSinceArg::Time(timestamp) => (
+                Timestamp::from_second(timestamp)
+                    .map_err(|_| internal_error!("Invalid timestamp"))?,
+                false,
+            ),
         };
+
+        if let Some(threshold) = self.adaptive_low_disk_threshold {
+            let min_ttl_msg = match self.adaptive_min_ttl {
+                Some(d) => humantime::format_duration(d).to_string(),
+                None => "daemon default".to_owned(),
+            };
+            buck2_client_ctx::eprintln!(
+                "Adaptive low-disk promotion enabled at {}% (min TTL: {})",
+                threshold,
+                min_ttl_msg,
+            )?;
+        }
 
         let context = ctx.client_context(matches, &self)?;
         let response: CleanStaleResponse = buckd
@@ -139,9 +195,14 @@ impl StreamingCommand for CleanStaleCommand {
             .clean_stale(
                 CleanStaleRequest {
                     context: Some(context),
-                    keep_since_time: keep_since_time.timestamp(),
+                    keep_since_time: keep_since_time.as_second(),
                     dry_run: self.dry_run,
                     tracked_only: self.tracked_only,
+                    adaptive_low_disk_threshold: self.adaptive_low_disk_threshold,
+                    adaptive_min_ttl_seconds: self.adaptive_min_ttl.map(|d| d.as_secs() as i64),
+                    adaptive_unmaterialize_active: self.adaptive_unmaterialize_active,
+                    use_configured_policy,
+                    origin: origin().into(),
                 },
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),

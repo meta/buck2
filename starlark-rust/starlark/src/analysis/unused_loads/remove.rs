@@ -64,10 +64,10 @@ pub fn remove_unused_loads(name: &str, program: &str) -> crate::Result<Option<St
 
     for load in unused_loads {
         if load.all_unused() {
-            out.skip_span(load.load.span);
+            out.skip_span(load.span);
         } else {
             for arg in load.unused_args {
-                out.skip_span(arg.span_with_trailing_comma());
+                out.skip_span(arg.span_with_trailing_comma);
             }
         }
     }

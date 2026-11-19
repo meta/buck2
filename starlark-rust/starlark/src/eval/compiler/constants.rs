@@ -15,31 +15,48 @@
  * limitations under the License.
  */
 
+use std::sync::LazyLock;
+
 use dupe::Dupe;
-use once_cell::sync::Lazy;
 
 use crate::environment::Globals;
-use crate::values::FrozenValue;
-use crate::values::namespace::FrozenNamespace;
+use crate::values::HeapEdge;
+use crate::values::OwnedFrozen;
+use crate::values::Value;
+use crate::values::ValueTyped;
+use crate::values::namespace::Namespace;
 
-#[derive(Copy, Clone, Dupe, Debug)]
-pub(crate) struct BuiltinFn(pub(crate) FrozenValue);
+#[derive(Clone, Dupe, Debug)]
+pub(crate) struct BuiltinFn(OwnedFrozen<Value<'static>>);
 
-impl PartialEq<FrozenValue> for BuiltinFn {
-    fn eq(&self, other: &FrozenValue) -> bool {
-        // Pointer equality works because `#[starlark_module]` proc macro
-        // generates a singleton which allocates the function only once
-        // even if builder function is called multiple times.
-        self.0.to_value().ptr_eq(other.to_value())
+impl BuiltinFn {
+    /// The function, for use with any heap.
+    ///
+    /// [`Constants`] is a process-wide static, so the heap it holds is immortal and the value can
+    /// be brought to any brand, see [`HeapEdge::immortal`]; `&'static self` is the proof.
+    pub(crate) fn at<'v>(&'static self) -> Value<'v> {
+        HeapEdge::immortal().rebrand(self.0.as_ref().value())
+    }
+
+    /// Whether `v` is this function.
+    pub(crate) fn is(&self, v: Value) -> bool {
+        // Pointer equality works because `#[starlark_module]` allocates each native once, in a
+        // static heap that every `GlobalsBuilder` populated from that module references
+        // (`GlobalsStatic::populate`), so the `len` of any `Globals` built on the standard
+        // library, buck2's included, is this value. A globals set that defines its own `len`
+        // has a different function, and the optimizations keyed on these do not apply to it.
+        self.0.by_ref(|f| f.ptr_eq(v))
     }
 }
 
-impl PartialEq<BuiltinFn> for FrozenValue {
-    fn eq(&self, other: &BuiltinFn) -> bool {
-        other == self
-    }
-}
-
+/// The builtins the optimizer recognizes and synthesizes calls to.
+///
+/// Each is a registered static (see the test): the six functions are `#[starlark_module]`
+/// natives, allocated once in the static heaps that `globals_static!` registers, and
+/// `typing.Callable` is a `static_starlark_value!`; none lives in the heap this type builds. They
+/// reach the IR through [`HeapEdge::immortal`] rather than through a heap the module references,
+/// so the pagable serializer can write them out only because it finds them in the static
+/// registry.
 pub(crate) struct Constants {
     pub(crate) fn_len: BuiltinFn,
     pub(crate) fn_type: BuiltinFn,
@@ -47,34 +64,33 @@ pub(crate) struct Constants {
     pub(crate) fn_dict: BuiltinFn,
     pub(crate) fn_tuple: BuiltinFn,
     pub(crate) fn_isinstance: BuiltinFn,
-    pub(crate) fn_set: BuiltinFn,
     // Technically, this is not a function.
     pub(crate) typing_callable: BuiltinFn,
 }
 
 impl Constants {
     pub fn get() -> &'static Constants {
-        static RES: Lazy<Constants> = Lazy::new(|| {
+        static RES: LazyLock<Constants> = LazyLock::new(|| {
             let g = Globals::extended_internal();
+            let builtin = |name| BuiltinFn(g.get_owned(name).unwrap());
             Constants {
-                fn_len: BuiltinFn(g.get_frozen("len").unwrap()),
-                fn_type: BuiltinFn(g.get_frozen("type").unwrap()),
-                fn_list: BuiltinFn(g.get_frozen("list").unwrap()),
-                fn_dict: BuiltinFn(g.get_frozen("dict").unwrap()),
-                fn_tuple: BuiltinFn(g.get_frozen("tuple").unwrap()),
-                fn_isinstance: BuiltinFn(g.get_frozen("isinstance").unwrap()),
-                fn_set: BuiltinFn(g.get_frozen("set").unwrap()),
-                typing_callable: {
-                    let typing = g
-                        .get_frozen("typing")
+                fn_len: builtin("len"),
+                fn_type: builtin("type"),
+                fn_list: builtin("list"),
+                fn_dict: builtin("dict"),
+                fn_tuple: builtin("tuple"),
+                fn_isinstance: builtin("isinstance"),
+                typing_callable: BuiltinFn(
+                    g.get_owned("typing")
                         .unwrap()
-                        .downcast_frozen_ref::<FrozenNamespace>()
-                        .unwrap();
-                    BuiltinFn(typing.as_ref().get("Callable").unwrap())
-                },
+                        .by_ref_with_reconstructor(|typing, r| {
+                            let typing = ValueTyped::<Namespace>::new(*typing).unwrap();
+                            r.reconstruct(typing.as_ref().get("Callable").unwrap())
+                        }),
+                ),
             }
         });
-        Lazy::force(&RES)
+        LazyLock::force(&RES)
     }
 }
 
@@ -82,16 +98,33 @@ impl Constants {
 mod tests {
     use crate::environment::Globals;
     use crate::eval::compiler::constants::Constants;
+    use crate::pagable::get_static_value_id;
 
     #[test]
     fn test_constants() {
-        assert_eq!(
-            Globals::standard().get_frozen("len").unwrap(),
-            Constants::get().fn_len
-        );
-        assert_eq!(
-            Globals::extended_internal().get_frozen("len").unwrap(),
-            Constants::get().fn_len
-        );
+        for globals in [Globals::standard(), Globals::extended_internal()] {
+            let len = globals.get_owned("len").unwrap();
+            assert!(len.by_ref(|len| Constants::get().fn_len.is(*len)));
+        }
+    }
+
+    /// See the type doc: the pagable serializer relies on this.
+    #[test]
+    fn test_constants_are_registered_statics() {
+        let c = Constants::get();
+        for (name, f) in [
+            ("len", &c.fn_len),
+            ("type", &c.fn_type),
+            ("list", &c.fn_list),
+            ("dict", &c.fn_dict),
+            ("tuple", &c.fn_tuple),
+            ("isinstance", &c.fn_isinstance),
+            ("typing.Callable", &c.typing_callable),
+        ] {
+            assert!(
+                f.0.by_ref(|v| get_static_value_id(*v).is_some()),
+                "{name} is not a registered static"
+            );
+        }
     }
 }

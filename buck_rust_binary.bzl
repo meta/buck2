@@ -6,17 +6,10 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode_macros//build_defs/lib:link_styles.bzl", "link_styles")
 load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
 
 def buck_rust_binary(**kwargs):
-    kwargs.setdefault("edition", "2021")
-    if kwargs.get("link_style") == None:
-        link_style = link_styles.default()
-        kwargs["link_style"] = select({
-            "DEFAULT": link_style,
-            "ovr_config//os:macos": "static",
-        })
+    kwargs.setdefault("link_style", "static")
 
     # Link group is currently used automatically for rust in dev mode. Unfortunately, it builds
     # a binary that is not relocatable and it checks for dev mode by reading the build mode buckconfig.
@@ -27,6 +20,14 @@ def buck_rust_binary(**kwargs):
     kwargs["link_group_map"] = []
 
     # JEMalloc is not (yet!) the default on MacOS so add the allocator
-    # explicitly on all platforms here.
-    kwargs.setdefault("allocator", "jemalloc")
+    # explicitly on all platforms here. Intel Mac (x86_64) jemalloc headers
+    # are no longer maintained (platform is EOL); fall back to the system
+    # allocator there.
+    kwargs.setdefault(
+        "allocator",
+        select({
+            "DEFAULT": "jemalloc",
+            "ovr_config//os:macos-x86_64": "malloc",
+        }),
+    )
     rust_binary(**kwargs)

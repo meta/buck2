@@ -1,5 +1,47 @@
-load(":defs.bzl", "test_rule", "write_file")
+load(":defs.bzl", "input", "macro_writer", "tagged_writer", "test_rule", "write_file")
 
 write_file(name = "write_file")
 
 test_rule(name = "test_rule", arg = "$(@query_outputs :write_file)")
+
+input(name = "payload")
+
+input(name = "unrelated", fail = True)
+
+macro_writer(
+    name = "macro_only",
+    inline = "$(location :unrelated)",
+    macro = "$(@location :payload)",
+)
+
+macro_writer(
+    name = "macro_only_tagged",
+    inline = "$(location :unrelated)",
+    macro = "$(@location :payload)",
+    tagged = True,
+)
+
+macro_writer(
+    name = "hidden_macro",
+    hidden = True,
+    macro = "$(@location :payload)",
+)
+
+macro_writer(
+    name = "hidden_macro_tagged",
+    hidden = True,
+    macro = "$(@location :payload)",
+    tagged = True,
+)
+
+tagged_writer(name = "tagged", dep = ":unrelated")
+
+tagged_writer(name = "tagged_inputs", dep = ":unrelated", inputs_only = True)
+
+tagged_writer(name = "tagged_retained", dep = ":unrelated", with_inputs = True)
+
+tagged_writer(name = "tagged_inputs_retained", dep = ":unrelated", inputs_only = True, with_inputs = True)
+
+macro_writer(name = "tagged_macro_payload", macro = "$(@exe :tagged)")
+
+macro_writer(name = "tagged_inputs_macro_payload", macro = "$(@exe :tagged_inputs)")

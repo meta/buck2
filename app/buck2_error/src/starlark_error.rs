@@ -15,7 +15,7 @@ use std::fmt;
 use ref_cast::RefCast;
 
 use crate::__for_macro::ContextValue;
-use crate::any::recover_crate_error;
+use crate::any::from_any_with_tag_and_source_location;
 use crate::context_value::StarlarkContext;
 use crate::error::ErrorKind;
 use crate::source_location::SourceLocation;
@@ -131,14 +131,31 @@ fn from_starlark_impl(
         }
     };
 
+    let mut runtime_type_kind = None;
     let tag = match e.kind() {
         starlark_syntax::ErrorKind::Fail(_) => crate::ErrorTag::StarlarkFail,
         starlark_syntax::ErrorKind::StackOverflow(_) => crate::ErrorTag::StarlarkStackOverflow,
         starlark_syntax::ErrorKind::Value(_) => crate::ErrorTag::StarlarkValue,
         starlark_syntax::ErrorKind::Function(_) => crate::ErrorTag::StarlarkFunction,
+        starlark_syntax::ErrorKind::RuntimeType(kind, _) => {
+            runtime_type_kind = Some(*kind);
+            match kind {
+                starlark_syntax::RuntimeTypeErrorKind::FunctionCall => {
+                    crate::ErrorTag::StarlarkFunction
+                }
+                starlark_syntax::RuntimeTypeErrorKind::Parameter
+                | starlark_syntax::RuntimeTypeErrorKind::ValueUnpack
+                | starlark_syntax::RuntimeTypeErrorKind::Operation
+                | starlark_syntax::RuntimeTypeErrorKind::Attribute => {
+                    crate::ErrorTag::StarlarkValue
+                }
+                starlark_syntax::RuntimeTypeErrorKind::Annotation => crate::ErrorTag::StarlarkError,
+            }
+        }
         starlark_syntax::ErrorKind::Scope(_) => crate::ErrorTag::StarlarkScope,
         starlark_syntax::ErrorKind::Parser(_) => crate::ErrorTag::StarlarkParser,
         starlark_syntax::ErrorKind::Internal(_) => crate::ErrorTag::StarlarkInternal,
+        starlark_syntax::ErrorKind::DeferredRead(_) => crate::ErrorTag::DeferredFieldRead,
         starlark_syntax::ErrorKind::Native(_) | starlark_syntax::ErrorKind::Other(_)
             if error_handling == NativeErrorHandling::InputError =>
         {
@@ -151,14 +168,17 @@ fn from_starlark_impl(
         starlark_syntax::ErrorKind::Fail(_) => "StarlarkError::Fail",
         starlark_syntax::ErrorKind::StackOverflow(_) => "StarlarkError::StackOverflow",
         starlark_syntax::ErrorKind::Internal(_) => "StarlarkError::Internal",
+        starlark_syntax::ErrorKind::DeferredRead(_) => "StarlarkError::DeferredRead",
         starlark_syntax::ErrorKind::Value(_) => "StarlarkError::Value",
         starlark_syntax::ErrorKind::Function(_) => "StarlarkError::Function",
+        starlark_syntax::ErrorKind::RuntimeType(_, _) => "StarlarkError::RuntimeType",
         starlark_syntax::ErrorKind::Scope(_) => "StarlarkError::Scope",
         starlark_syntax::ErrorKind::Parser(_) => "StarlarkError::Parser",
         starlark_syntax::ErrorKind::Native(_) => "StarlarkError::Native",
         _ => "StarlarkError",
     };
-    let source_location = SourceLocation::new(std::file!()).with_type_name(variant_name);
+    let source_location =
+        SourceLocation::new(std::file!(), std::line!()).with_type_name(variant_name);
     let description = if skip_stacktrace {
         format!("{}", e.without_diagnostic())
     } else {
@@ -171,14 +191,20 @@ fn from_starlark_impl(
         | starlark_syntax::ErrorKind::Internal(e)
         | starlark_syntax::ErrorKind::Value(e)
         | starlark_syntax::ErrorKind::Function(e)
+        | starlark_syntax::ErrorKind::RuntimeType(_, e)
         | starlark_syntax::ErrorKind::Scope(e)
         | starlark_syntax::ErrorKind::Parser(e)
         | starlark_syntax::ErrorKind::Other(e)
         | starlark_syntax::ErrorKind::Native(e) => {
-            let error: anyhow::Error = Into::into(BuckStarlarkError(e, description));
-            let std_err: &'_ (dyn std::error::Error + 'static) = error.as_ref();
+            let error = BuckStarlarkError(e, description);
 
-            recover_crate_error(std_err, source_location, tag)
+            let error = from_any_with_tag_and_source_location(&error, source_location, tag);
+            match runtime_type_kind {
+                Some(kind) => error
+                    .tag([crate::ErrorTag::StarlarkRuntimeTypeError])
+                    .string_tag(&format!("starlark_runtime_type_error={}", kind.as_ref())),
+                None => error,
+            }
         }
         _ => crate::Error::new(description, tag, source_location, None),
     }
@@ -222,47 +248,27 @@ impl std::error::Error for StarlarkErrorWrapper {}
 
 #[cfg(test)]
 mod tests {
-    use std::error::Request;
     use std::sync::Arc;
 
     use allocative::Allocative;
 
-    use crate::any::ProvidableMetadata;
+    use crate as buck2_error;
     use crate::buck2_error;
     use crate::context_value::StarlarkContext;
-    use crate::source_location::SourceLocation;
     use crate::starlark_error::error_with_starlark_context;
 
-    #[derive(Debug, Allocative, derive_more::Display)]
+    #[derive(buck2_error::Error, Debug, Allocative)]
+    #[error("FullMetadataError")]
+    #[buck2(tag = crate::ErrorTag::Tier0)]
     struct FullMetadataError;
-
-    impl From<FullMetadataError> for crate::Error {
-        #[cold]
-        fn from(value: FullMetadataError) -> Self {
-            let error = anyhow::Error::from(value);
-            let source_location = SourceLocation::new(file!());
-            crate::any::recover_crate_error(error.as_ref(), source_location, crate::ErrorTag::Tier0)
-        }
-    }
-
-    impl std::error::Error for FullMetadataError {
-        fn provide<'a>(&'a self, request: &mut Request<'a>) {
-            request.provide_value(ProvidableMetadata {
-                action_error: None,
-                source_location: SourceLocation::new(file!()).with_type_name("FullMetadataError"),
-                tags: vec![
-                    crate::ErrorTag::WatchmanTimeout,
-                    crate::ErrorTag::StarlarkNativeInput,
-                    crate::ErrorTag::StarlarkFail,
-                ],
-                string_tags: vec![],
-            });
-        }
-    }
 
     impl crate::TypedContext for FullMetadataError {
         fn eq(&self, _other: &dyn crate::TypedContext) -> bool {
             true
+        }
+
+        fn display(&self) -> Option<String> {
+            Some("FullMetadataError".to_owned())
         }
     }
 
@@ -275,28 +281,21 @@ mod tests {
     }
 
     #[test]
-    fn test_metadata_roundtrip_with_anyhow() {
-        // Tests buck2_error->anyhow->starlark->buck2_error
-        let e = crate::Error::from(FullMetadataError);
-        let e = e.context("test context 123");
-        let e: anyhow::Error = e.into();
-        let e: starlark_syntax::Error = e.into();
-        let e: crate::Error = e.into();
+    fn test_runtime_type_error_metadata() {
+        let e: crate::Error = starlark_syntax::Error::new_runtime_type(
+            starlark_syntax::RuntimeTypeErrorKind::Annotation,
+            anyhow::anyhow!("runtime type mismatch"),
+        )
+        .into();
 
-        assert_eq!(e.get_tier(), Some(crate::Tier::Tier0));
-        assert!(format!("{e:?}").contains("test context 123"));
-        assert_eq!(
-            e.source_location().to_string(),
-            "buck2_error/src/starlark_error.rs::FullMetadataError",
+        assert!(e.tags().contains(&crate::ErrorTag::StarlarkError));
+        assert!(
+            e.tags()
+                .contains(&crate::ErrorTag::StarlarkRuntimeTypeError)
         );
-        assert_eq!(
-            &e.tags(),
-            &[
-                crate::ErrorTag::StarlarkFail,
-                crate::ErrorTag::StarlarkNativeInput,
-                crate::ErrorTag::Tier0,
-                crate::ErrorTag::WatchmanTimeout
-            ]
+        assert!(
+            e.category_key()
+                .ends_with("starlark_runtime_type_error=ANNOTATION")
         );
     }
 

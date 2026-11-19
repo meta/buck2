@@ -13,26 +13,22 @@
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use allocative::Allocative;
-use async_trait::async_trait;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKeyBxl;
 use buck2_util::late_binding::LateBinding;
 use dice::DiceComputations;
-use dupe::Dupe;
+use futures::future::BoxFuture;
 
 use crate::bxl::result::BxlResult;
 
-#[async_trait]
 pub trait BxlCalculationDyn: Debug + Send + Sync + 'static {
-    async fn eval_bxl(
+    fn eval_bxl<'a, 'd>(
         &self,
-        ctx: &mut DiceComputations<'_>,
+        ctx: &'a mut DiceComputations<'d>,
         bxl: BaseDeferredKeyBxl,
-    ) -> buck2_error::Result<BxlComputeResult>;
+    ) -> BoxFuture<'a, buck2_error::Result<&'d Arc<BxlResult>>>
+    where
+        'd: 'a;
 }
-
-#[derive(Allocative, Clone, Dupe)]
-pub struct BxlComputeResult(pub Arc<BxlResult>);
 
 /// Dependency injection for BXL.
 ///

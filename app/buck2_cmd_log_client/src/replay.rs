@@ -28,6 +28,7 @@ use buck2_client_ctx::subscribers::superconsole::timekeeper::Clock;
 use buck2_client_ctx::subscribers::superconsole::timekeeper::Timekeeper;
 use buck2_client_ctx::subscribers::superconsole::timekeeper::duration_between_timestamps;
 use buck2_client_ctx::ticker::Tick;
+use buck2_error::ErrorTag;
 use buck2_event_log::read::EventLogPathBuf;
 use buck2_event_log::stream_value::StreamValue;
 use buck2_event_log::utils::Invocation;
@@ -52,6 +53,11 @@ pub(crate) enum ReplayError {
     InvalidSeek(f64),
 }
 
+enum Seek {
+    Relative(Duration),
+    Absolute(SystemTime),
+}
+
 /// Replay an event log.
 ///
 /// This command allows visualizing an existing event log in a Superconsole.
@@ -70,12 +76,21 @@ pub struct ReplayCommand {
 
     /// Skip to the given number of seconds after the start of the command before starting the
     /// replay
-    #[clap(long, default_value = "0.0")]
-    pub seek: f64,
+    #[clap(long, conflicts_with = "seek_absolute")]
+    pub seek: Option<f64>,
+
+    /// Skip to the given unixtime number of seconds (floating point) or
+    /// nanoseconds (integral) before starting the replay
+    #[clap(long, conflicts_with = "seek")]
+    pub seek_absolute: Option<String>,
 
     /// Preload the event log. This is typically only useful for benchmarking.
     #[clap(long)]
     preload: bool,
+
+    /// Start the replay in a paused state.
+    #[clap(long, help = "Start the replay in a paused state, press 'y' to resume")]
+    start_paused: bool,
 
     #[clap(flatten)]
     console_opts: CommonConsoleOptions,
@@ -94,7 +109,9 @@ impl BuckSubcommand for ReplayCommand {
             event_log,
             speed,
             seek,
+            seek_absolute,
             preload,
+            start_paused,
             console_opts,
         } = self;
 
@@ -102,16 +119,30 @@ impl BuckSubcommand for ReplayCommand {
             return ExitResult::from(buck2_error::Error::from(ReplayError::InvalidSpeed(speed)));
         }
 
-        if !seek.is_finite() || seek < 0.0 {
-            return ExitResult::from(buck2_error::Error::from(ReplayError::InvalidSeek(seek)));
-        }
-
-        let seek = Duration::from_secs(1).mul_f64(seek);
+        let seek = if let Some(seek) = seek {
+            // Rejects non-finite, negative, and overflowing values.
+            let Ok(seek) = Duration::try_from_secs_f64(seek) else {
+                return ExitResult::from(buck2_error::Error::from(ReplayError::InvalidSeek(seek)));
+            };
+            Seek::Relative(seek)
+        } else if let Some(seek_absolute) = seek_absolute {
+            Seek::Absolute(buck2_event_log::utils::timestamp::parse(seek_absolute.as_str())?.into())
+        } else {
+            Seek::Relative(Duration::from_secs(0))
+        };
 
         let work = async {
-            let (event_stream, invocation, timekeeper) =
-                make_replayer(event_log.get(&ctx).await?, speed, seek, preload).await?;
-            let console = get_console_with_root(
+            let (event_stream, invocation, timekeeper) = make_replayer(
+                event_log.get(&ctx).await?,
+                speed,
+                seek,
+                preload,
+                start_paused,
+            )
+            .await?;
+            // Replay doesn't surface the build-speed rating prompt, so we
+            // don't need the `used_superconsole` flag from get_console_with_root.
+            let (console, _used_superconsole) = get_console_with_root(
                 invocation.trace_id,
                 console_opts.console_type,
                 ctx.verbosity,
@@ -132,8 +163,7 @@ impl BuckSubcommand for ReplayCommand {
                 .await;
 
             if let Err(e) = &res {
-                let msg = "request finished without returning a CommandResult";
-                if e.to_string().contains(msg) {
+                if e.has_tag(ErrorTag::MissingCommandResult) {
                     buck2_client_ctx::eprintln!(
                         "Warning: Incomplete log. Replay may be inaccurate."
                     )?;
@@ -145,8 +175,15 @@ impl BuckSubcommand for ReplayCommand {
                 buck2_client_ctx::eprintln!("{}", e.message)?;
             }
 
-            // FIXME(JakobDegen)(easy): This should probably return failures if there were errors
-            ExitResult::success()
+            // If the replayed command had errors, surface them as a failing exit code so
+            // callers (e.g. scripts, CI) can distinguish failed replays from successful ones.
+            // `from_command_result_errors` picks an appropriate exit code based on the error
+            // tags and marks the errors as already-emitted so they aren't printed twice.
+            if res.errors.is_empty() {
+                ExitResult::success()
+            } else {
+                ExitResult::from_command_result_errors(res.errors)
+            }
         };
 
         with_simple_sigint_handler(work)
@@ -155,8 +192,8 @@ impl BuckSubcommand for ReplayCommand {
     }
 }
 
-struct ReplayResult {
-    errors: Vec<buck2_data::ErrorReport>,
+pub(crate) struct ReplayResult {
+    pub(crate) errors: Vec<buck2_data::ErrorReport>,
 }
 
 impl TryFrom<buck2_cli_proto::command_result::Result> for ReplayResult {
@@ -170,7 +207,7 @@ impl TryFrom<buck2_cli_proto::command_result::Result> for ReplayResult {
         let errors = match v {
             Result::Error(error) => vec![error],
             Result::BuildResponse(v) => v.errors,
-            Result::TestResponse(v) => v.errors,
+            Result::TestResponse(v) => v.build_errors.into_iter().chain(v.test_errors).collect(),
             Result::BxlResponse(v) => v.errors,
             _ => Vec::new(),
         };
@@ -182,8 +219,9 @@ impl TryFrom<buck2_cli_proto::command_result::Result> for ReplayResult {
 async fn make_replayer(
     log_path: EventLogPathBuf,
     speed: f64,
-    seek: Duration,
+    seek: Seek,
     preload: bool,
+    start_paused: bool,
 ) -> buck2_error::Result<(
     impl Stream<Item = buck2_error::Result<StreamValue>> + Unpin,
     Invocation,
@@ -219,7 +257,13 @@ async fn make_replayer(
         }
     };
 
-    let seek_timestamp = timestamp_add_duration(start_time, seek);
+    let seek_timestamp = match seek {
+        Seek::Relative(duration) => timestamp_add_duration(start_time, duration),
+        Seek::Absolute(time) => {
+            let time: SystemTime = time.into();
+            time.into()
+        }
+    };
 
     // Note: Seeking forward in time on a large log might take a while; intentionally do this before
     // computing the `command_start_instant` so that the time that superconsole starts up actually
@@ -229,6 +273,12 @@ async fn make_replayer(
     // The point in real time at which we treat the command as having happened - delays of
     // subsequent events are calculated relative to this.
     let command_start_instant = Instant::now();
+
+    let (speed, pause_state) = if start_paused {
+        (0.0, Some(speed))
+    } else {
+        (speed, None)
+    };
 
     let syncher = Syncher {
         reference_instant: command_start_instant,
@@ -254,7 +304,7 @@ async fn make_replayer(
         Box::new(ReplayClock {
             syncher,
             speed_update_request_sender,
-            pause_state: None,
+            pause_state,
         }),
         EventTimestamp(start_time),
     );
@@ -329,17 +379,11 @@ async fn find_next_event_with_delay(
     min_timestamp: Option<prost_types::Timestamp>,
 ) -> Option<(buck2_error::Result<StreamValue>, prost_types::Timestamp)> {
     while let Some(event) = events.next().await {
-        match &event {
-            Ok(StreamValue::Event(buck_event)) => {
-                let ts = buck_event.timestamp.unwrap();
-                if min_timestamp
-                    .is_none_or(|min_timestamp| cmp_timestamps(min_timestamp, ts).is_le())
-                {
-                    return Some((event, ts));
-                }
+        if let Ok(StreamValue::Event(buck_event)) = &event {
+            let ts = buck_event.timestamp.unwrap();
+            if min_timestamp.is_none_or(|min_timestamp| cmp_timestamps(min_timestamp, ts).is_le()) {
+                return Some((event, ts));
             }
-            // Most other kinds of events don't really happen, don't need a delay for them
-            _ => {}
         }
         if sink.send(event).is_err() {
             // The sink is closed, so we can stop sending events.
@@ -360,9 +404,17 @@ struct Syncher {
 
 impl Syncher {
     fn convert_instant(&self, instant: Instant) -> prost_types::Timestamp {
-        let elapsed = instant
-            .saturating_duration_since(self.reference_instant)
-            .mul_f64(self.speed);
+        // Speed is validated positive at startup and only ever scaled by positive factors (or set
+        // to zero while paused), so a negative speed would be a bug: `try_from_secs_f64` would
+        // reject the negative product and silently clamp to `Duration::MAX`.
+        debug_assert!(self.speed >= 0.0, "replay speed should never be negative");
+        let elapsed = Duration::try_from_secs_f64(
+            instant
+                .saturating_duration_since(self.reference_instant)
+                .as_secs_f64()
+                * self.speed,
+        )
+        .unwrap_or(Duration::MAX);
         timestamp_add_duration(self.reference_timestamp, elapsed)
     }
 
@@ -377,10 +429,17 @@ impl Syncher {
             return Either::Left(pending());
         }
         let log_offset_time = duration_between_timestamps(self.reference_timestamp, event_time);
-        let sync_offset_time = log_offset_time.div_f64(self.speed);
-        Either::Right(tokio::time::sleep_until(
-            self.reference_instant + sync_offset_time,
-        ))
+        let sync_offset_time =
+            Duration::try_from_secs_f64(log_offset_time.as_secs_f64() / self.speed)
+                .unwrap_or(Duration::MAX);
+        // A very small (but nonzero) speed can push the offset up to `Duration::MAX`, which would
+        // overflow the `Instant` addition and panic; `checked_add` sleeps effectively forever
+        // instead.
+        let deadline = self
+            .reference_instant
+            .checked_add(sync_offset_time)
+            .unwrap_or_else(|| self.reference_instant + Duration::from_secs(60 * 60 * 24 * 365));
+        Either::Right(tokio::time::sleep_until(deadline))
     }
 }
 

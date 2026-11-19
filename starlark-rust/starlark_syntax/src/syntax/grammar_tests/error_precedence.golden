@@ -1,0 +1,51 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+f(x = 1, 2
+
+Error:
+error: Parse error: unexpected new line, expected symbol ')'
+ --> error_precedence:1:11
+  |
+1 | f(x = 1, 2
+  |           ^
+
+
+Program:
+def f(**x, y
+
+Error:
+error: Parse error: unexpected new line, expected symbol ')'
+ --> error_precedence:1:13
+  |
+1 | def f(**x, y
+  |             ^
+
+
+Program:
+return 1
+)
+
+Error:
+error: Parse error: unexpected symbol ')', expected expression
+ --> error_precedence:2:1
+  |
+2 | )
+  | ^
+
+
+Program:
+def f():
+  load("m.bzl", "x")
+)
+
+Error:
+error: Parse error: unexpected symbol ')', expected expression
+ --> error_precedence:3:1
+  |
+3 | )
+  | ^

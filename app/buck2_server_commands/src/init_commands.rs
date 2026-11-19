@@ -9,6 +9,8 @@
  */
 
 use async_trait::async_trait;
+use buck2_cli_proto::new_generic::AnonTargetsRequest;
+use buck2_cli_proto::new_generic::AnonTargetsResponse;
 use buck2_cli_proto::new_generic::CompleteRequest;
 use buck2_cli_proto::new_generic::CompleteResponse;
 use buck2_cli_proto::new_generic::DebugEvalRequest;
@@ -25,6 +27,7 @@ use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 use crate::build::build_command;
 use crate::complete::complete_command;
+use crate::debug_anon_targets::debug_anon_targets_command;
 use crate::debug_eval::debug_eval_command;
 use crate::expand_external_cells::expand_external_cells_command;
 use crate::explain::explain_command;
@@ -65,6 +68,14 @@ impl OtherServerCommands for OtherServerCommandsInstance {
         req: DebugEvalRequest,
     ) -> buck2_error::Result<DebugEvalResponse> {
         debug_eval_command(ctx, req).await
+    }
+
+    async fn debug_anon_targets(
+        &self,
+        ctx: &dyn ServerCommandContextTrait,
+        req: AnonTargetsRequest,
+    ) -> buck2_error::Result<AnonTargetsResponse> {
+        debug_anon_targets_command(ctx, req).await
     }
 
     async fn explain(

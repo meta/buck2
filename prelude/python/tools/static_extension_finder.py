@@ -6,8 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
-
 
 # Add a try except to force eager importing
 try:

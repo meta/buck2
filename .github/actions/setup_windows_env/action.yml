@@ -3,25 +3,28 @@ description: Setup Windows environment for building and testing
 runs:
   using: composite
   steps:
-  - name: Write Visual Studio path
-    run: |-
-      $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Llvm.Clang -property installationPath
-      Join-Path $vsPath "VC\Tools\Llvm\x64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-    shell: pwsh
-  - name: Create python3 symlink
-    run: |
-      New-Item -ItemType SymbolicLink -Path C:\ProgramData\chocolatey\bin\python3.exe -Target $(Get-Command python).Source
-    shell: pwsh
-  - uses: SebRollen/toml-action@v1.2.0
-    id: read_rust_toolchain
+  - uses: ./.github/actions/setup_cargo_env
     with:
-      file: rust-toolchain
-      field: toolchain.channel
-  - uses: dtolnay/rust-toolchain@v1
-    with:
-      toolchain: ${{ steps.read_rust_toolchain.outputs.value }}
       components: clippy
   - uses: actions/setup-go@v5
     with:
       cache: false
-      go-version: '~1.22.0'
+      go-version: '~1.24.0'
+  # The Erlang support in the prelude uses OTP 28 syntax.
+  - uses: erlef/setup-beam@v1
+    with:
+      otp-version: '28'
+      install-rebar: false
+      install-hex: false
+  - uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: '21'
+  # The demo toolchains in the prelude read the JDK from `[java] java_home`
+  # and the Android SDK from `[android] sdk_path`. The runner images carry an
+  # Android SDK under ANDROID_HOME.
+  - name: Point examples/with_prelude at the JDK and the Android SDK
+    run: |-
+      printf '[java]\n  java_home = %s\n' "${JAVA_HOME//\\//}" >> examples/with_prelude/.buckconfig.local
+      printf '[android]\n  sdk_path = %s\n' "${ANDROID_HOME//\\//}" >> examples/with_prelude/.buckconfig.local
+    shell: bash

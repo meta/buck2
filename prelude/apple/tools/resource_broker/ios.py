@@ -15,7 +15,6 @@ from typing import Optional
 from packaging.version import Version
 
 from .simctl_runtime import list_runtimes, XCSimRuntime
-
 from .simulator import (
     managed_simulators_list_from_stdout,
     Simulator,
@@ -23,9 +22,7 @@ from .simulator import (
     SimulatorState,
     SimulatorType,
 )
-
 from .timeouts import SIMULATOR_BOOT_TIMEOUT
-
 from .utils import execute_generic_text_producing_command
 
 

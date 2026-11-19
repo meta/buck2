@@ -1,0 +1,23 @@
+load("@root//platforms:rules.bzl", "config_setting", "constraint_value", "target_platform")
+
+config_setting(name = "setting")
+
+constraint_value(
+    name = "config_a",
+    setting = ":setting",
+)
+
+constraint_value(
+    name = "config_b",
+    setting = ":setting",
+)
+
+target_platform(
+    name = "platform_a",
+    constraint_value = ":config_a",
+)
+
+target_platform(
+    name = "platform_b",
+    constraint_value = ":config_b",
+)

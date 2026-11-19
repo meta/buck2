@@ -1,0 +1,9 @@
+load("@prelude//:native.bzl", "native")
+
+constraint = native.constraint
+
+constraint(
+    name = "version",
+    values = ["v1"],
+    default = "v1",
+)

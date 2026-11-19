@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::fmt::Display;
 use std::sync::Arc;
 
 use buck2_core::configuration::transition::id::TransitionId;
@@ -61,6 +62,12 @@ pub trait CoercedAttrTraversal<'a> {
     fn input(&mut self, input: SourcePathRef) -> buck2_error::Result<()>;
 
     fn label(&mut self, _label: &'a ProvidersLabel) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
+    /// A `$(exe)`, `$(location_exec)` or `$(location_toolchain)` macro in an `attrs.arg()`
+    /// without `exec_group`, reported in addition to its dep.
+    fn ungrouped_tool_macro(&mut self, _macro: &dyn Display) -> buck2_error::Result<()> {
         Ok(())
     }
 }

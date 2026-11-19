@@ -8,13 +8,10 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 //! The downward api for external processes. This crate defines a trait of downward api that Buck
 //! will need to handle as the process runner.
 
-use std::collections::HashMap;
-
+use buck2_hash::BuckMutMap;
 use tracing::Level;
 
 /// The API available to processes that Buck will need to handle
@@ -28,7 +25,7 @@ pub trait DownwardApi {
     async fn log(&self, level: Level, msg: String) -> buck2_error::Result<()>;
 
     /// reports an externally consumable event containing some data that will be untouched by buck
-    async fn external(&self, data: HashMap<String, String>) -> buck2_error::Result<()>;
+    async fn external(&self, data: BuckMutMap<String, String>) -> buck2_error::Result<()>;
 
     // TODO map the StepEvent and TraceEvents in buckv1 to something. Maybe just a single trace event
 }

@@ -41,7 +41,6 @@ public class ExopackageDexLoader {
    *
    * @param context The application context.
    */
-  @SuppressWarnings("PMD.CollapsibleIfStatements")
   public static void loadExopackageJars(Context context) {
     // Normal exopackage jars go to system CL
     File secondaryDirectory =

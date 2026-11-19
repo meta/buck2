@@ -18,9 +18,6 @@ pub enum AttrInspectOptions {
 
 impl AttrInspectOptions {
     pub fn include_default(&self) -> bool {
-        match self {
-            AttrInspectOptions::DefinedOnly => false,
-            _ => true,
-        }
+        !matches!(self, AttrInspectOptions::DefinedOnly)
     }
 }

@@ -1,0 +1,4 @@
+# `enforce_within_view_intersection()` may be called at most once per PACKAGE
+# file. The second direct call fails PACKAGE evaluation.
+enforce_within_view_intersection()
+enforce_within_view_intersection()

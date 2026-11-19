@@ -24,7 +24,8 @@ pub(crate) fn mach_error_string(err: libc::kern_return_t) -> &'static str {
     }
 }
 
-#[cfg(test)]
+// Miri does not implement `mach_error_string`.
+#[cfg(all(test, not(miri)))]
 mod tests {
     use crate::os::macos::mach_error_string::mach_error_string;
 

@@ -12,6 +12,7 @@ use std::borrow::Borrow;
 use std::ops::Deref;
 
 use allocative::Allocative;
+use pagable::Pagable;
 use ref_cast::RefCast;
 
 use crate::cells::paths::CellRelativePath;
@@ -69,7 +70,16 @@ impl AsRef<ProjectRelativePath> for CellRootPath {
 }
 
 /// Path to the cell root.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, Allocative)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    Allocative,
+    Pagable
+)]
 pub struct CellRootPathBuf(ProjectRelativePathBuf);
 
 impl CellRootPathBuf {

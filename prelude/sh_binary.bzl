@@ -7,6 +7,8 @@
 # above-listed licenses.
 
 load("@prelude//:paths.bzl", "paths")
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//decls:common.bzl", "buck")
 load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup")
 
 def _derive_link(artifact):
@@ -20,14 +22,15 @@ def _derive_link(artifact):
     return paths.join(artifact.owner.package, artifact.owner.name)
 
 def _generate_script(
-        name: str,
-        main: Artifact,
-        resources: list[Artifact],
-        append_script_extension: bool,
-        actions: AnalysisActions,
-        is_windows: bool,
-        copy_resources: bool,
-        has_content_based_path: bool) -> (Artifact, Artifact):
+    name: str,
+    main: Artifact,
+    resources: list[Artifact],
+    append_script_extension: bool,
+    actions: AnalysisActions,
+    is_windows: bool,
+    copy_resources: bool,
+    has_content_based_path: bool,
+) -> (Artifact, Artifact):
     main_path = main.short_path
     if not append_script_extension:
         main_link = main_path
@@ -35,8 +38,12 @@ def _generate_script(
         main_link = main_path if main_path.endswith(".bat") or main_path.endswith(".cmd") else main_path + ".bat"
     else:
         main_link = main_path if main_path.endswith(".sh") else main_path + ".sh"
-    resources = {_derive_link(src): src for src in resources}
-    resources[main_link] = main
+    links = {}
+    for link, src in [(_derive_link(src), src) for src in resources] + [(main_link, main)]:
+        if links.get(link, src) != src:
+            fail("sh_binary `{}`: `{}` and `{}` would both be placed at `{}`".format(name, links[link], src, link))
+        links[link] = src
+    resources = links
 
     # windows isn't stable with resources passed in as symbolic links for
     # remote execution. Allow using copies instead.
@@ -71,7 +78,10 @@ def _generate_script(
             # identify what the right format is. For now, this variable lets
             # callees disambiguate (see D28960177 for more context).
             "export BUCK_SH_BINARY_VERSION_UNSTABLE=2",
-            cmd_args("export BUCK_PROJECT_ROOT=\"$__SCRIPT_DIR/", resources_dir, "\"", delimiter = ""),
+            cmd_args('export BUCK_PROJECT_ROOT="$__SCRIPT_DIR/', resources_dir, '"', delimiter = ""),
+            # Normalize backslashes to forward slashes for the Windows-host /
+            # Linux-target (RE) case where relative_to produces Windows-style separators.
+            'export BUCK_PROJECT_ROOT="${BUCK_PROJECT_ROOT//\\\\//}"',
             # In buck1, the paths for resources that are outputs of rules have
             # different paths in BUCK_PROJECT_ROOT and
             # BUCK_DEFAULT_RUNTIME_RESOURCES, but we use the same paths. buck1's
@@ -79,8 +89,8 @@ def _generate_script(
             # than something derived from the target and so to use that people
             # would need to hardcode buck-out paths into their scripts. For repo
             # sources, the paths are the same for both.
-            "export BUCK_DEFAULT_RUNTIME_RESOURCES=\"$BUCK_PROJECT_ROOT\"",
-            "exec \"$BUCK_PROJECT_ROOT/{}\" \"$@\"".format(main_link),
+            'export BUCK_DEFAULT_RUNTIME_RESOURCES="$BUCK_PROJECT_ROOT"',
+            'exec "$BUCK_PROJECT_ROOT/{}" "$@"'.format(main_link),
             relative_to = (script, 1),
         )
     else:
@@ -91,7 +101,9 @@ def _generate_script(
             "set __SRC=%~f0",
             # Symbolic links on windows RE systems may not be stable depending on implementation.
             # Don't try to resolve the links when using copies.
-            'for /f "tokens=2 delims=[]" %%a in (\'dir %__SRC% ^|%SYSTEMROOT%\\System32\\find.exe "<SYMLINK>"\') do set "__SRC=%%a"' if not copy_resources else "",
+            'for /f "tokens=2 delims=[]" %%a in (\'dir %__SRC% ^|%SYSTEMROOT%\\System32\\find.exe "<SYMLINK>"\') do set "__SRC=%%a"'
+            if not copy_resources
+            else "",
             # Get parent folder.
             'for %%a in ("%__SRC%") do set "__SCRIPT_DIR=%%~dpa"',
             "set BUCK_SH_BINARY_VERSION_UNSTABLE=2",
@@ -140,3 +152,96 @@ def sh_binary_impl(ctx):
             args = cmd_args(script, hidden = resources_dir),
         ),
     ]
+
+sh_binary = prelude_rule(
+    name = "sh_binary",
+    impl = sh_binary_impl,
+    docs = """
+        An `sh_binary()` is used to execute a shell script.
+    """,
+    examples = """
+        This sh\\_binary() just cats a sample data file back at the user.
+
+        ```
+        # $REPO/BUCK
+        sh_binary(
+            name = "script",
+            main = "script.sh",
+            resources = [
+                "data.dat",
+            ],
+        )
+        ```
+
+        ```
+        # Sample data file with data we need at runtime
+        $ echo "I'm a datafile" > data.dat
+
+        # Create a simple script that prints out the resource
+        $ cat > script.sh
+        #!/bin/sh
+        cat $BUCK_DEFAULT_RUNTIME_RESOURCES/data.dat
+
+        # Make sure the script is executable
+        $ chmod u+x script.sh
+
+        # Run the script, and see that it prints out the resource we provided
+        $ buck run //:script
+        Jobs completed: 4. Time elapsed: 0.2s.
+        BUILD SUCCEEDED
+        I'm a datafile
+        ```
+    """,
+    further = None,
+    attrs = (
+        # @unsorted-dict-items
+        {
+            "main": attrs.source(
+                doc = """
+                Either the path to the script (relative to the build file), or a `build target`.
+                 This file must be executable in order to be run.
+            """
+            ),
+            "resources": attrs.list(
+                attrs.source(allow_directory = True),
+                default = [],
+                doc = """
+                A list of files or build rules that this rule requires in order to run. These could be things such as
+                 random data files.
+
+                 When the script runs, the `$BUCK_DEFAULT_RUNTIME_RESOURCES`
+                 environment variable specifies the directory that contains these resources.
+                 This directory's location is determined entirely by Buck; the script should
+                 not assume the directory's location.
+
+                 The resources are also made available in a tree structure that mirrors
+                 their locations in the source and `buck-out` trees. The
+                 environment variable `$BUCK_PROJECT_ROOT` specifies a directory
+                 that contains all the resources, laid out in their locations relative to
+                 the original buck project root.
+            """,
+            ),
+            "append_script_extension": attrs.bool(
+                default = True,
+                doc = """
+                By default, sh_binary ensures that the script has an appropriate extension (e.g. `.sh` or `.bat`),
+                  appending one itself if necessary. Setting this to False prevents that behavior and makes the caller
+                  responsible for ensuring an existing appropriate extension.
+            """,
+            ),
+            "copy_resources": attrs.bool(
+                default = False,
+                doc = """
+                By default, sh_binary attempts to use symbolic links for the resources. This can be changed so,
+                that copies are made instead.
+            """,
+            ),
+            "deps": attrs.list(attrs.dep(), default = []),
+            "_target_os_type": buck.target_os_type_arg(),
+            "has_content_based_path": attrs.bool(default = True),
+        }
+        | buck.licenses_arg()
+        | buck.labels_arg()
+        | buck.contacts_arg()
+    ),
+)

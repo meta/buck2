@@ -38,3 +38,13 @@ erlang_tests(
         ":test_exec",
     ],
 )
+
+erlang_tests(
+    contacts = ["whatsapp_testing_infra"],
+    labels = ["unit"],
+    suites = ["test/ct_daemon_capture_SUITE.erl"],
+    deps = [
+        "stdlib",
+        ":test_exec",
+    ],
+)

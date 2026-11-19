@@ -20,8 +20,8 @@ this learning process.
 This is one of the most important concepts to understand when using Buck2. It is
 a precise way to identify any buildable unit in your codebase.
 
-In the tutorials, you encoutered the following target label like
-[<FbInternalOnly> `fbcode//scripts/<unixname>/buck2_lab/greeter_bin:main` </FbInternalOnly> <OssOnly> `root//buck2_lab/greeter_bin:main` </OssOnly>](../tutorial_adding_dependencies/#step-5-run-the-binary).
+In the tutorials, you encountered the following target label like
+[<FbInternalOnly> `fbcode//scripts/$USER/buck2_lab/greeter_bin:main` </FbInternalOnly> <OssOnly> `root//buck2_lab/greeter_bin:main` </OssOnly>](../tutorial_adding_dependencies/#step-5-run-the-binary).
 
 Here is the anatomy of a target label:
 
@@ -29,7 +29,7 @@ Here is the anatomy of a target label:
 
 <TargetDiagram
     cell_name="fbcode"
-    pkg_name="scripts/<unixname>/buck2_lab/greeter_bin"
+    pkg_name="scripts/$USER/buck2_lab/greeter_bin"
     target_name="main"
     cell_href="#cell"
     pkg_href="#package"
@@ -78,10 +78,10 @@ You can run `buck2 audit cell` to inspect the abs path of each cell root.
 ## Package
 
 The existence of a [BUCK file](#buck-file) ({ isInternal() ?
-<code>scripts/&lt;unixname&gt;/buck2_lab/greeter_bin/BUCK</code> :
+<code>scripts/$USER/buck2_lab/greeter_bin/BUCK</code> :
 <code>buck2_lab/greeter_bin/BUCK</code> }) defines a buck
 [package](../../concepts/key_concepts/#packages) { isInternal() ?
-<code>scripts/&lt;unixname&gt;/buck2_lab/greeter_bin</code> :
+<code>scripts/$USER/buck2_lab/greeter_bin</code> :
 <code>buck2_lab/greeter_bin</code> } isn't just a directory. If a buck target
 uses the source file as input, that target is regarded as the **owner** of the
 source.
@@ -139,10 +139,10 @@ you will soon become very familiar with these patterns during daily development.
   [macros](https://buck.build/extending/macros.html), which are
   wrappers/extensions around native build rules, macros are usually defined .bzl
   files. <FbInternalOnly> The `rust_binary`, `rust_library` and `rust_unittest`
-  used in the lab are actually fbcode macros, not native rulesas defined in this
+  used in the lab are actually fbcode macros, not native rules as defined in this
   doc. You may notice that when we run
   [`buck2 targets`](../tutorial_first_build/#step-6-inspecting-your-target-optional)
-  there are sevaral other targets except `:main` in the otuputs. These are
+  there are several other targets except `:main` in the outputs. These are
   defined in macros. </FbInternalOnly>
 - Buck uses [starlark](../../concepts/glossary/#starlark) language which is a
   dialect of python, to define build rules and macros.
@@ -341,7 +341,7 @@ graph TD
 ## Load Function and Attributes
 
 <FbInternalOnly>
-You might have noticed  that the first line in the main BUCK file is a load function:
+You might have noticed that the first line in the main BUCK file is a load function:
 
 <code>load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")</code>
 
@@ -462,7 +462,7 @@ As you become more adept, you can explore other powerful buck commands, such as:
   [buck daemon](../../concepts/daemon/), this is sometimes needed to recover
   from a failed build due to bad daemon state;
 - [`buck clean`](../../users/commands/clean/) to remove build artifacts from
-  [buck-out](../../concepts/buck_out/),this is a remedy to recover from failed
+  [buck-out](../../concepts/buck_out/), this is a remedy to recover from failed
   build due to either bad daemon or bad artifacts in cache;
 - [`buck log`](../../users/commands/log/) to see information about previous
   builds
@@ -474,7 +474,7 @@ As you become more adept, you can explore other powerful buck commands, such as:
 - Buck offers help menus for all commands, try the -h option, you can buck -h or
   buck build -h to see all available commands and options
 
-<FBInternalOnly>
+<FbInternalOnly>
 
 - Sometimes you’ll see options like `@mode/opt` in the command, the mode file
   (path is `cell/mode/opt`) contains a set of buck configs that are extensions
@@ -482,7 +482,7 @@ As you become more adept, you can explore other powerful buck commands, such as:
   [this wiki](https://www.internalfb.com/wiki/Buck/Buck-users/fbcode-repo/C++/running-buck-in-different-modes/)
   for C++ build mode;
 
-</FBInternalOnly>
+</FbInternalOnly>
 
 ### Buck2 Command Flow
 
@@ -558,7 +558,7 @@ buck-out,it has the following characteristics:
 - Buck-out can grow very big and consumes your disk space, you can run buck
   clean or [buck clean --stale](../../users/commands/clean/) as the remedy
 
-## Buck UI
+<h2>Buck UI</h2>
 
 Buck is mostly a command line tool but buck team does offer a
 [web-based UI](../../users/build_observability/observability/#buck2s-web-ui) for

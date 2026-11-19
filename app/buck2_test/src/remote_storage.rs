@@ -8,33 +8,43 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
+use buck2_common::file_ops::metadata::FileDigest;
+use buck2_common::file_ops::metadata::FileDigestConfig;
+use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_error::Ok;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest::CasDigestToReExt;
+use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::directory::ActionDirectoryEntry;
 use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::directory::ActionSharedDirectory;
+use buck2_execute::materialize::materializer::CasDownloadInfo;
 use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
+use buck2_fs::async_fs_util::spawn_blocking;
+use buck2_fs::paths::abs_path::AbsPathBuf;
+use buck2_hash::BuckMutMap;
 use buck2_test_api::data::RemoteStorageConfig;
 use dupe::Dupe;
+use remote_execution::NamedDigest;
 use remote_execution::TDigest;
 
-type CacheKey = TDigest;
+type CacheKey = (TDigest, RemoteExecutorUseCase);
 
 pub struct ReClientWithCache {
     client: UnconfiguredRemoteExecutionClient,
-    cache: Mutex<HashSet<Arc<CacheKey>>>,
+    /// The longest TTL granted so far for each digest and use case. A digest is recorded only
+    /// once its extension succeeded.
+    cache: Mutex<BuckMutMap<CacheKey, Duration>>,
 }
 
 impl ReClientWithCache {
     pub fn new(client: UnconfiguredRemoteExecutionClient) -> Self {
         Self {
             client,
-            cache: Mutex::new(HashSet::new()),
+            cache: Mutex::new(BuckMutMap::default()),
         }
     }
 
@@ -51,34 +61,87 @@ impl ReClientWithCache {
                 // we are materializing them on disk.
                 let digests = collect_digests(artifact.entry());
 
-                // Filter out digests that are already in cache
-                let digests_to_extend = {
-                    let mut cache = self.cache.lock().unwrap();
-                    let mut uncached_digests = Vec::new();
-                    for digest in digests {
-                        let digest = Arc::new(digest);
-                        if !cache.contains(&digest) {
-                            cache.insert(digest.dupe());
-                            uncached_digests.push(Arc::unwrap_or_clone(digest));
-                        }
-                    }
-                    uncached_digests
+                // Skip digests already granted at least this TTL under this use case.
+                let digests_to_extend: Vec<TDigest> = {
+                    let cache = self.cache.lock().unwrap();
+                    digests
+                        .into_iter()
+                        .filter(|digest| {
+                            cache
+                                .get(&(digest.clone(), ttl_config.use_case))
+                                .is_none_or(|granted| *granted < ttl_config.ttl)
+                        })
+                        .collect()
                 };
 
-                // Only extend TTL for digests not in cache
                 if digests_to_extend.is_empty() {
                     return Ok(());
                 }
 
-                Ok(self
-                    .client
+                let info = CasDownloadInfo::new_test_artifact(ttl_config.use_case);
+                self.client
                     .clone()
-                    .with_use_case(ttl_config.use_case.dupe())
-                    .extend_digest_ttl(digests_to_extend, ttl_config.ttl)
-                    .await?)
+                    .with_use_case(info.re_use_case)
+                    .extend_digest_ttl(digests_to_extend.clone(), ttl_config.ttl, &info)
+                    .await?;
+
+                let mut cache = self.cache.lock().unwrap();
+                for digest in digests_to_extend {
+                    cache
+                        .entry((digest, ttl_config.use_case))
+                        .and_modify(|granted| *granted = std::cmp::max(*granted, ttl_config.ttl))
+                        .or_insert(ttl_config.ttl);
+                }
+                Ok(())
             }
             _ => Ok(()),
         }
+    }
+
+    /// Upload a raw local file to CAS by its absolute path.
+    ///
+    /// Computes the file's digest, uploads it to CAS, and returns the RE digest.
+    /// Called by the `upload_to_cas` RPC handler when tpx requests CAS upload
+    /// of a local test artifact file.
+    pub async fn upload_local_file(
+        &self,
+        local_path: &str,
+        digest_config: DigestConfig,
+        ttl_seconds: i64,
+        use_case: &str,
+    ) -> buck2_error::Result<TDigest> {
+        let file_config = FileDigestConfig::build(digest_config.cas_digest_config());
+        let file_path = AbsPathBuf::new(local_path)?;
+        let tracked_digest =
+            spawn_blocking(move || FileDigest::from_file(&file_path, file_config)).await??;
+        let re_digest = tracked_digest.to_re();
+
+        let re_use_case = RemoteExecutorUseCase::new(use_case.to_owned());
+
+        let info = CasDownloadInfo::new_uploaded(re_use_case);
+        let managed_client = self.client.dupe().with_use_case(info.re_use_case);
+
+        managed_client
+            .upload_files_and_directories(
+                vec![NamedDigest {
+                    name: local_path.to_owned(),
+                    digest: re_digest.clone(),
+                    ..Default::default()
+                }],
+                vec![],
+                vec![],
+            )
+            .await?;
+
+        managed_client
+            .extend_digest_ttl(
+                vec![re_digest.clone()],
+                Duration::from_secs(ttl_seconds as u64),
+                &info,
+            )
+            .await?;
+
+        Ok(re_digest)
     }
 }
 
@@ -89,8 +152,7 @@ fn collect_digests(directory_entry: &ActionDirectoryEntry<ActionSharedDirectory>
             let mut digests: Vec<_> = dir
                 .entries()
                 .into_iter()
-                .map(|(_, entry)| collect_digests(entry))
-                .flatten()
+                .flat_map(|(_, entry)| collect_digests(entry))
                 .collect();
             digests.push(dir.fingerprint().to_re());
             digests
@@ -108,14 +170,47 @@ mod tests {
     use buck2_execute::directory::ActionDirectoryBuilder;
     use buck2_execute::directory::extract_artifact_value;
     use buck2_execute::directory::insert_file;
+    use buck2_test_api::data::TtlConfig;
 
     use super::*;
+
+    fn ttl_config(secs: u64, use_case: &str) -> RemoteStorageConfig {
+        RemoteStorageConfig {
+            supports_remote: true,
+            ttl_config: Some(TtlConfig {
+                ttl: Duration::from_secs(secs),
+                use_case: RemoteExecutorUseCase::new(use_case.to_owned()),
+            }),
+        }
+    }
+
+    /// A digest is remembered only once its extension succeeded. The dummy client cannot
+    /// connect, so every call reaches RE and fails.
+    #[tokio::test]
+    async fn test_failed_ttl_extension_is_retried() {
+        let client = ReClientWithCache::new(UnconfiguredRemoteExecutionClient::testing_new_dummy());
+        let artifact = ArtifactValue::file(DigestConfig::testing_default().empty_file());
+        for _ in 0..2 {
+            assert!(
+                client
+                    .apply_config(&artifact, &ttl_config(3600, "tpx-default"))
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(
+            client
+                .apply_config(&artifact, &ttl_config(30 * 24 * 3600, "other-use-case"))
+                .await
+                .is_err()
+        );
+    }
 
     #[test]
     fn test_collect_digests_dir() {
         let digest_config = DigestConfig::testing_default();
         let mut expected: Vec<TDigest> = vec![];
-        let mut builder = ActionDirectoryBuilder::empty();
+        let mut builder = ActionDirectoryBuilder::empty_non_exhaustive();
 
         // construct a directory with 3 files, f1, f2, and f3
         for file in &["d1/f1", "d1/f2", "d1/f3"] {
@@ -134,6 +229,8 @@ mod tests {
             );
         }
 
+        builder.mark_uniformly_exhaustive();
+
         let value = extract_artifact_value(
             &builder,
             ProjectRelativePath::new("d1").unwrap(),
@@ -145,7 +242,7 @@ mod tests {
         let digests = match value.entry() {
             ActionDirectoryEntry::Dir(dir) => {
                 expected.push(dir.fingerprint().to_re());
-                collect_digests(&value.entry())
+                collect_digests(value.entry())
             }
             _ => vec![],
         };

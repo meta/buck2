@@ -19,6 +19,7 @@ rust_binary(
         "fbsource//third-party/rust:rustc-hash",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:serde_json",
+        "fbsource//third-party/rust:serde_path_to_error",
         "fbsource//third-party/rust:tracing",
         "fbsource//third-party/rust:tracing-subscriber",
         "fbsource//third-party/rust:whoami",

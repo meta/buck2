@@ -121,7 +121,6 @@ fn test_go() {
             "9223372036854775807",
             "p53",
             "maxint64",
-            "int too large to convert to float",
             "int(1e100)",
             "1000000 * 1000000 * 1000000",
             "int overflow in starlark-rust",

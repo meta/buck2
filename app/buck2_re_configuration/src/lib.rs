@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 use std::str::FromStr;
 
 use allocative::Allocative;
@@ -23,7 +21,16 @@ static BUCK2_RE_CLIENT_CFG_SECTION: &str = "buck2_re_client";
 /// fbcode_build or not(fbcode_build)
 pub trait RemoteExecutionStaticMetadataImpl: Sized {
     fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> buck2_error::Result<Self>;
+    /// Whether there is a CAS to talk to at all. Independent of any executor configuration: a
+    /// command that runs nothing remotely still has one, and asks it about blobs.
+    fn cas_configured(&self) -> bool;
     fn cas_semaphore_size(&self) -> usize;
+    fn exec_semaphore_size(&self) -> usize;
+    fn action_cache_semaphore_size(&self) -> usize;
+    /// How many CAS presence-check RPCs may be in flight at once.
+    fn presence_check_concurrency(&self) -> usize;
+    /// How many digests one CAS presence-check RPC carries at most.
+    fn presence_check_max_batch(&self) -> usize;
 }
 
 #[derive(Clone, Debug, Allocative)]
@@ -49,7 +56,6 @@ pub enum CASdMode {
     LocalWithSync,
     LocalWithoutSync,
     Remote,
-    RemoteToDest,
 }
 
 impl FromStr for CASdMode {
@@ -60,7 +66,6 @@ impl FromStr for CASdMode {
             "local_with_sync" => Ok(CASdMode::LocalWithSync),
             "local_without_sync" => Ok(CASdMode::LocalWithoutSync),
             "remote" => Ok(CASdMode::Remote),
-            "remote_to_dest" => Ok(CASdMode::RemoteToDest),
             _ => Err(buck2_error::buck2_error!(
                 buck2_error::ErrorTag::Input,
                 "Invalid CASd mode: {}",
@@ -101,6 +106,8 @@ mod fbcode {
         // gRPC settings
         pub cas_address: Option<String>,
         pub cas_connection_count: i32,
+        pub presence_check_concurrency: usize,
+        pub presence_check_max_batch: usize,
         pub shared_casd_cache_path: Option<String>,
         pub legacy_shared_casd_mode: Option<String>,
         pub shared_casd_mode_small_files: Option<CASdMode>,
@@ -113,10 +120,8 @@ mod fbcode {
         pub shared_casd_address: Option<CASdAddress>,
         pub shared_casd_use_tls: Option<bool>,
         pub cas_client_label: Option<String>,
-        pub action_cache_address: Option<String>,
-        pub action_cache_connection_count: i32,
-        pub engine_address: Option<String>,
-        pub engine_connection_count: i32,
+        /// Client-side cap on concurrent action cache RPCs (reads and writes).
+        pub action_cache_semaphore_size: Option<usize>,
         // End gRPC settings
         pub verbose_logging: bool,
 
@@ -156,6 +161,8 @@ mod fbcode {
         pub engine_host: Option<String>,
         pub engine_port: Option<i32>,
         // End Thrift settings
+        /// When set to True, allows for cancellation of RE downloads when futures are dropped
+        pub enable_download_cancellation: bool,
     }
 
     impl RemoteExecutionStaticMetadataImpl for RemoteExecutionStaticMetadata {
@@ -171,6 +178,23 @@ mod fbcode {
                         property: "cas_connection_count",
                     })?
                     .unwrap_or(16),
+                // Well under the CAS client's own limit on these RPCs (an internal semaphore
+                // of 5000 at the time of writing), and above what a build's uploads had in
+                // flight before buck2 bounded them at all.
+                presence_check_concurrency: legacy_config
+                    .parse(BuckconfigKeyRef {
+                        section: BUCK2_RE_CLIENT_CFG_SECTION,
+                        property: "presence_check_concurrency",
+                    })?
+                    .unwrap_or(10),
+                // The internal CAS client accepts up to 500 per RPC; we see significant
+                // improvements from larger batching
+                presence_check_max_batch: legacy_config
+                    .parse(BuckconfigKeyRef {
+                        section: BUCK2_RE_CLIENT_CFG_SECTION,
+                        property: "presence_check_max_batch",
+                    })?
+                    .unwrap_or(500),
                 shared_casd_cache_path: legacy_config.parse(BuckconfigKeyRef {
                     section: BUCK2_RE_CLIENT_CFG_SECTION,
                     property: "cas_shared_cache",
@@ -230,26 +254,10 @@ mod fbcode {
                     section: BUCK2_RE_CLIENT_CFG_SECTION,
                     property: "cas_client_label_v2",
                 })?,
-                action_cache_address: legacy_config.parse(BuckconfigKeyRef {
+                action_cache_semaphore_size: legacy_config.parse(BuckconfigKeyRef {
                     section: BUCK2_RE_CLIENT_CFG_SECTION,
-                    property: "action_cache_address",
+                    property: "action_cache_semaphore_size",
                 })?,
-                action_cache_connection_count: legacy_config
-                    .parse(BuckconfigKeyRef {
-                        section: BUCK2_RE_CLIENT_CFG_SECTION,
-                        property: "action_cache_connection_count",
-                    })?
-                    .unwrap_or(4),
-                engine_address: legacy_config.parse(BuckconfigKeyRef {
-                    section: BUCK2_RE_CLIENT_CFG_SECTION,
-                    property: "engine_address",
-                })?,
-                engine_connection_count: legacy_config
-                    .parse(BuckconfigKeyRef {
-                        section: BUCK2_RE_CLIENT_CFG_SECTION,
-                        property: "engine_connection_count",
-                    })?
-                    .unwrap_or(4),
                 verbose_logging: legacy_config
                     .parse(BuckconfigKeyRef {
                         section: BUCK2_RE_CLIENT_CFG_SECTION,
@@ -368,11 +376,41 @@ mod fbcode {
                     section: BUCK2_RE_CLIENT_CFG_SECTION,
                     property: "engine_port",
                 })?,
+                enable_download_cancellation: legacy_config
+                    .parse(BuckconfigKeyRef {
+                        section: BUCK2_RE_CLIENT_CFG_SECTION,
+                        property: "enable_download_cancellation",
+                    })?
+                    .unwrap_or(false),
             })
+        }
+
+        fn cas_configured(&self) -> bool {
+            // `cas_address` only picks which CAS; internal builds always have one.
+            true
         }
 
         fn cas_semaphore_size(&self) -> usize {
             self.cas_connection_count as usize * 30
+        }
+
+        fn action_cache_semaphore_size(&self) -> usize {
+            // See D116018045 for data showing that scaling this much higher doesn't really matter
+            // at data center latency, and hurts Max RSS; on non-dc networks though, somewhat larger
+            // numbers are needed
+            self.action_cache_semaphore_size.unwrap_or(5000)
+        }
+
+        fn exec_semaphore_size(&self) -> usize {
+            self.execution_concurrency_limit as usize
+        }
+
+        fn presence_check_concurrency(&self) -> usize {
+            self.presence_check_concurrency
+        }
+
+        fn presence_check_max_batch(&self) -> usize {
+            self.presence_check_max_batch
         }
     }
 }
@@ -392,9 +430,30 @@ mod not_fbcode {
             )?))
         }
 
+        fn cas_configured(&self) -> bool {
+            self.0.cas_address.is_some()
+        }
+
         fn cas_semaphore_size(&self) -> usize {
             // FIXME: make this configurable?
             1024
+        }
+
+        fn action_cache_semaphore_size(&self) -> usize {
+            // FIXME: make this configurable?
+            1024
+        }
+
+        fn exec_semaphore_size(&self) -> usize {
+            self.0.execution_concurrency_limit.unwrap_or(400)
+        }
+
+        fn presence_check_concurrency(&self) -> usize {
+            100
+        }
+
+        fn presence_check_max_batch(&self) -> usize {
+            50
         }
     }
 }
@@ -441,6 +500,12 @@ pub struct Buck2OssReConfiguration {
     pub max_total_batch_size: Option<usize>,
     /// Maximum number of concurrent upload requests for each action.
     pub max_concurrent_uploads_per_action: Option<usize>,
+    /// Maximum number of digests to ask about in a single
+    /// `FindMissingBlobs` (a.k.a. `GetDigestsTtl`) RPC. Larger values
+    /// reduce per-call wall-clock latency by issuing fewer round-trips,
+    /// at the cost of bigger requests and more concurrent server load
+    /// when many actions issue independent calls.
+    pub find_missing_blobs_batch_size: Option<usize>,
     /// Time that digests are assumed to live in CAS after being touched.
     pub cas_ttl_secs: Option<i64>,
     /// Interval in seconds for HTTP/2 ping frames to detect stale connections.
@@ -449,6 +514,14 @@ pub struct Buck2OssReConfiguration {
     pub grpc_keepalive_timeout_secs: Option<u64>,
     /// Whether to send HTTP/2 pings when connection is idle.
     pub grpc_keepalive_while_idle: Option<bool>,
+    /// Maximum number of concurrent execution requests.
+    pub execution_concurrency_limit: Option<usize>,
+    /// Minimum number of HTTP/2 connections per host in the connection pool.
+    pub min_connections: Option<usize>,
+    /// Maximum number of HTTP/2 connections per host in the connection pool.
+    pub max_connections: Option<usize>,
+    /// Maximum concurrent streams per connection.
+    pub max_concurrency_per_connection: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, Allocative)]
@@ -550,6 +623,10 @@ impl Buck2OssReConfiguration {
                 section: BUCK2_RE_CLIENT_CFG_SECTION,
                 property: "max_concurrent_uploads_per_action",
             })?,
+            find_missing_blobs_batch_size: legacy_config.parse(BuckconfigKeyRef {
+                section: BUCK2_RE_CLIENT_CFG_SECTION,
+                property: "find_missing_blobs_batch_size",
+            })?,
             cas_ttl_secs: legacy_config.parse(BuckconfigKeyRef {
                 section: BUCK2_RE_CLIENT_CFG_SECTION,
                 property: "cas_ttl_secs",
@@ -565,6 +642,22 @@ impl Buck2OssReConfiguration {
             grpc_keepalive_while_idle: legacy_config.parse(BuckconfigKeyRef {
                 section: BUCK2_RE_CLIENT_CFG_SECTION,
                 property: "grpc_keepalive_while_idle",
+            })?,
+            execution_concurrency_limit: legacy_config.parse(BuckconfigKeyRef {
+                section: BUCK2_RE_CLIENT_CFG_SECTION,
+                property: "execution_concurrency_limit",
+            })?,
+            min_connections: legacy_config.parse(BuckconfigKeyRef {
+                section: BUCK2_RE_CLIENT_CFG_SECTION,
+                property: "min_connections",
+            })?,
+            max_connections: legacy_config.parse(BuckconfigKeyRef {
+                section: BUCK2_RE_CLIENT_CFG_SECTION,
+                property: "max_connections",
+            })?,
+            max_concurrency_per_connection: legacy_config.parse(BuckconfigKeyRef {
+                section: BUCK2_RE_CLIENT_CFG_SECTION,
+                property: "max_concurrency_per_connection",
             })?,
         })
     }

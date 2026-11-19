@@ -22,30 +22,28 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::PagableBoxDeserialize;
+use pagable::PagableDeserialize;
+use pagable::PagableSerialize;
+use pagable::StaticValue;
+use pagable::static_value::HasStaticValueRegistry;
 
 #[derive(Debug, Allocative)]
 enum Inner<T: ?Sized + 'static> {
     Arc(Arc<T>),
-    Static(&'static T),
+    Static(StaticValue<T>),
 }
 
 #[derive(Debug, Allocative)]
 pub(crate) struct ArcOrStatic<T: ?Sized + 'static>(Inner<T>);
 
 impl<T: ?Sized + 'static> ArcOrStatic<T> {
-    pub(crate) fn new_static(a: &'static T) -> Self {
+    pub(crate) fn new_static(a: StaticValue<T>) -> Self {
         ArcOrStatic(Inner::Static(a))
     }
 
     pub(crate) fn new_arc(a: Arc<T>) -> Self {
         ArcOrStatic(Inner::Arc(a))
-    }
-
-    pub(crate) fn new(a: T) -> Self
-    where
-        T: Sized,
-    {
-        Self::new_arc(Arc::new(a))
     }
 }
 
@@ -55,7 +53,7 @@ impl<T: ?Sized + 'static> Deref for ArcOrStatic<T> {
     fn deref(&self) -> &Self::Target {
         match &self.0 {
             Inner::Arc(a) => a,
-            Inner::Static(s) => s,
+            Inner::Static(sv) => sv,
         }
     }
 }
@@ -70,7 +68,7 @@ impl<T: ?Sized + 'static> Clone for ArcOrStatic<T> {
     fn clone(&self) -> Self {
         Self(match &self.0 {
             Inner::Arc(a) => Inner::Arc(a.dupe()),
-            Inner::Static(s) => Inner::Static(*s),
+            Inner::Static(sv) => Inner::Static(*sv),
         })
     }
 }
@@ -112,5 +110,63 @@ where
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         (**self).hash(state)
+    }
+}
+
+// Pagable round-trip: Static variant preserves via index (zero allocation on
+// deserialize). Arc variant goes through `serialize_arc` so Arc identity is
+// deduplicated across the page.
+impl<T> PagableSerialize for ArcOrStatic<T>
+where
+    T: ?Sized
+        + HasStaticValueRegistry
+        + PagableSerialize
+        + for<'de> PagableBoxDeserialize<'de>
+        + Send
+        + Sync
+        + 'static,
+{
+    fn pagable_serialize(
+        &self,
+        serializer: &mut dyn pagable::PagableSerializer,
+    ) -> pagable::Result<()> {
+        match &self.0 {
+            Inner::Static(sv) => {
+                0u8.pagable_serialize(serializer)?;
+                sv.pagable_serialize(serializer)
+            }
+            Inner::Arc(a) => {
+                1u8.pagable_serialize(serializer)?;
+                serializer.serialize_arc(a)
+            }
+        }
+    }
+}
+
+impl<'de, T> PagableDeserialize<'de> for ArcOrStatic<T>
+where
+    T: ?Sized
+        + HasStaticValueRegistry
+        + PagableSerialize
+        + for<'d> PagableBoxDeserialize<'d>
+        + Send
+        + Sync
+        + 'static,
+{
+    fn pagable_deserialize<D: pagable::PagableDeserializer<'de> + ?Sized>(
+        deserializer: &mut D,
+    ) -> pagable::Result<Self> {
+        let tag = u8::pagable_deserialize(deserializer)?;
+        match tag {
+            0 => {
+                let sv = StaticValue::<T>::pagable_deserialize(deserializer)?;
+                Ok(ArcOrStatic::new_static(sv))
+            }
+            1 => {
+                let a = Arc::<T>::pagable_deserialize(deserializer)?;
+                Ok(ArcOrStatic::new_arc(a))
+            }
+            _ => panic!("invalid ArcOrStatic<T> tag: {tag}"),
+        }
     }
 }

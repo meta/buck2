@@ -60,6 +60,35 @@ impl Frame {
         write: &mut dyn fmt::Write,
     ) -> fmt::Result {
         if let Some(location) = &self.location {
+            // A frame whose span lies outside its codemap gets a
+            // self-describing line instead of a resolved snippet: resolution
+            // would silently clamp, presenting an unrelated source line as if
+            // it were the real location. This is also a detection site in its
+            // own right — frame formatting is where corrupt spans have
+            // surfaced in production — so it reports, not just prints.
+            if location.span.begin() > location.span.end()
+                || location.span.end() > location.file.full_span().end()
+            {
+                crate::codemap::report_corrupt_span(format_args!(
+                    "frame formatting: frame `{}` has span {}..{} beyond {} ({} bytes)",
+                    caller,
+                    location.span.begin().get(),
+                    location.span.end().get(),
+                    location.file.describe_for_diagnostic(),
+                    location.file.full_span().end().get(),
+                ));
+                writeln!(
+                    write,
+                    "{}* {} <frame span {}..{} is beyond the file's {} bytes>, in {}",
+                    indent,
+                    location.file.filename(),
+                    location.span.begin().get(),
+                    location.span.end().get(),
+                    location.file.full_span().end().get(),
+                    caller,
+                )?;
+                return Ok(());
+            }
             let line = location
                 .file
                 .source_line_at_pos(location.span.begin())
@@ -85,7 +114,35 @@ impl Frame {
 
 #[cfg(test)]
 mod tests {
+    use crate::codemap::CodeMap;
+    use crate::codemap::FileSpan;
+    use crate::frame::Frame;
     use crate::frame::truncate_snippet;
+
+    #[test]
+    fn test_corrupt_frame_span_degrades_to_diagnostic() {
+        let small = CodeMap::new("small.star".to_owned(), "x = 1\n".to_owned());
+        let big = CodeMap::new(
+            "big.star".to_owned(),
+            "# a much longer file\ny = 2\nz = 3\n".to_owned(),
+        );
+        let frame = Frame {
+            name: "f".to_owned(),
+            location: Some(FileSpan {
+                file: small,
+                span: big.full_span(),
+            }),
+        };
+        let mut out = String::new();
+        frame
+            .write_two_lines("  ", "<module>", &mut out)
+            .expect("a corrupt frame must format without panicking");
+        assert!(
+            out.contains("is beyond the file's"),
+            "expected diagnostic line, got: {out}"
+        );
+        assert!(out.contains("small.star"), "got: {out}");
+    }
 
     #[test]
     fn test_truncate_snippet() {

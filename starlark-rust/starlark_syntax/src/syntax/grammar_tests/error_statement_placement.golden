@@ -1,0 +1,49 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+return 1
+
+Error:
+error: `return` cannot be used outside of a `def` function
+ --> error_statement_placement:1:1
+  |
+1 | return 1
+  | ^^^^^^^^
+
+
+Program:
+break
+
+Error:
+error: `break` cannot be used outside of a `for` loop
+ --> error_statement_placement:1:1
+  |
+1 | break
+  | ^^^^^
+
+
+Program:
+continue
+
+Error:
+error: `continue` cannot be used outside of a `for` loop
+ --> error_statement_placement:1:1
+  |
+1 | continue
+  | ^^^^^^^^
+
+
+Program:
+def f():
+  load("m.bzl", "x")
+
+Error:
+error: `load` must only occur at the top of a module
+ --> error_statement_placement:2:3
+  |
+2 |   load("m.bzl", "x")
+  |   ^^^^^^^^^^^^^^^^^^

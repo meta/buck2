@@ -9,11 +9,11 @@
  */
 
 pub(crate) mod anon_target_attr_validation;
+pub mod arena;
 pub mod attr;
 pub mod attr_type;
-pub mod coerced_attr;
+pub mod coerced;
 pub mod coerced_attr_full;
-pub mod coerced_attr_with_type;
 pub mod coerced_deps_collector;
 pub mod coerced_path;
 pub mod coercion_context;
@@ -30,6 +30,8 @@ pub mod inspect_options;
 pub mod json;
 pub mod serialize;
 pub mod spec;
+pub mod special_attr;
+pub(crate) mod strong_hash_without_config;
 pub mod testing;
 pub mod traversal;
 pub mod values;

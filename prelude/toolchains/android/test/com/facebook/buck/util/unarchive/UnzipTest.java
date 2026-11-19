@@ -13,14 +13,12 @@ package com.facebook.buck.util.unarchive;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assume.assumeThat;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.io.file.MorePosixFilePermissions;
 import com.facebook.buck.io.file.MostFiles;
 import com.facebook.buck.testutil.TemporaryPaths;
 import com.facebook.buck.testutil.ZipArchive;
-import com.facebook.buck.util.environment.Platform;
 import com.facebook.buck.util.zip.ZipConstants;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -116,8 +114,6 @@ public class UnzipTest {
 
   @Test
   public void testExtractSymlink() throws IOException {
-    assumeThat(Platform.detect(), Matchers.is(Matchers.not(Platform.WINDOWS)));
-
     // Create a simple zip archive using apache's commons-compress to store executable info.
     try (ZipArchiveOutputStream zip = new ZipArchiveOutputStream(zipFile.toFile())) {
       ZipArchiveEntry entry = new ZipArchiveEntry("link.txt");
@@ -140,8 +136,6 @@ public class UnzipTest {
 
   @Test
   public void testExtractBrokenSymlinkWithOwnerExecutePermissions() throws IOException {
-    assumeThat(Platform.detect(), Matchers.is(Matchers.not(Platform.WINDOWS)));
-
     // Create a simple zip archive using apache's commons-compress to store executable info.
     try (ZipArchiveOutputStream zip = new ZipArchiveOutputStream(zipFile.toFile())) {
       ZipArchiveEntry entry = new ZipArchiveEntry("link.txt");

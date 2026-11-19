@@ -17,7 +17,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assume.assumeTrue;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.testutil.TemporaryPaths;
@@ -27,7 +26,6 @@ import com.google.common.jimfs.Jimfs;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.FileSystem;
-import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -198,12 +196,10 @@ public class MostFilesTest {
     AbsPath file = tmp.newFile();
 
     // If the file system does not support the executable permission, skip the test
-    assumeTrue(file.toFile().setExecutable(false));
     assertFalse("File should not be executable", file.toFile().canExecute());
     MostFiles.makeExecutable(file);
     assertTrue("File should be executable", file.toFile().canExecute());
 
-    assumeTrue(file.toFile().setExecutable(true));
     assertTrue("File should be executable", Files.isExecutable(file.getPath()));
     MostFiles.makeExecutable(file);
     assertTrue("File should be executable", Files.isExecutable(file.getPath()));
@@ -211,8 +207,6 @@ public class MostFilesTest {
 
   @Test
   public void testMakeExecutableOnPosix() throws IOException {
-    assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"));
-
     AbsPath file = tmp.newFile();
 
     Files.setPosixFilePermissions(file.getPath(), PosixFilePermissions.fromString("r--------"));

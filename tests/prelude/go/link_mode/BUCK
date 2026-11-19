@@ -1,0 +1,55 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+
+oncall("golang")
+
+prelude = native
+
+prelude.go_binary(
+    name = "bin",
+    srcs = ["main.go"],
+    link_mode = "internal",
+)
+
+py_assertion(
+    name = "check_static_link",
+    script = """
+import subprocess
+import sys
+import platform
+
+if platform.system() == "Linux":
+    result = subprocess.run(["ldd", sys.argv[1]], capture_output=True, text=True)
+    assert (
+        "not a dynamic executable" in result.stderr
+        or "not a dynamic executable" in result.stdout
+    )
+""",
+    script_args = ["$(exe_target :bin)"],
+)
+
+prelude.go_binary(
+    name = "bin_external",
+    srcs = ["main.go"],
+    link_mode = "external",
+)
+
+py_assertion(
+    name = "check_dynamic_link",
+    script = """
+import subprocess
+import sys
+import platform
+
+if platform.system() == "Linux":
+    result = subprocess.run(["ldd", sys.argv[1]], capture_output=True, text=True)
+    # For external link mode, the binary should be dynamically linked
+    # and ldd should show library dependencies (not "not a dynamic executable")
+    assert (
+        "not a dynamic executable" not in result.stderr
+        and "not a dynamic executable" not in result.stdout
+    )
+    # Verify it actually has some shared library dependencies
+    assert "libc.so" in result.stdout or "libpthread" in result.stdout
+""",
+    script_args = ["$(exe_target :bin_external)"],
+)

@@ -1,0 +1,13 @@
+# Forbidden: the dep is OUTSIDE `within_view_preserve/...`, violating
+# the inherited within_view. If `enforce_visibility_intersection()` had
+# silently widened within_view to PUBLIC, this dep would be allowed and
+# the test would fail to detect it.
+#
+# Lives in its own package because the within_view check fires at
+# PACKAGE evaluation time -- co-locating with `child/ok_dep:c` would
+# block the positive test case from loading at all.
+stub(
+    name = "c",
+    visibility = ["PUBLIC"],
+    deps = ["root//some_other:t"],
+)

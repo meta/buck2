@@ -15,7 +15,6 @@
 [<TIMESTAMP>]       |
 [<TIMESTAMP>]     1 | fail("foobar")
 [<TIMESTAMP>]       | ^^^^^^^^^^^^^^
-[<TIMESTAMP>]       |
 [<TIMESTAMP>]     
 Command failed: 
 Failed to parse 1 package

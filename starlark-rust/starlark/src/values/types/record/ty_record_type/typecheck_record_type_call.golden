@@ -18,4 +18,3 @@ error: Expected type `int` but got `str`
   |
 4 |     MyRec(x = "")
   |           ^^^^^^
-  |

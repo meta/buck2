@@ -10,7 +10,6 @@
 
 #![feature(decl_macro)]
 #![feature(once_cell_try)]
-#![feature(used_with_arg)]
 
 pub mod env;
 pub mod soft_error;

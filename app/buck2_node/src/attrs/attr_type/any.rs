@@ -9,21 +9,8 @@
  */
 
 use allocative::Allocative;
-use buck2_util::arc_str::ArcSlice;
+use pagable::Pagable;
+use strong_hash::StrongHash;
 
-use crate::attrs::attr_type::list::ListLiteral;
-use crate::attrs::attr_type::string::StringLiteral;
-use crate::attrs::coerced_attr::CoercedAttr;
-
-#[derive(Debug, Eq, PartialEq, Hash, Allocative)]
+#[derive(Debug, Eq, PartialEq, Hash, Pagable, Allocative, StrongHash)]
 pub struct AnyAttrType;
-
-impl AnyAttrType {
-    pub fn empty_string() -> CoercedAttr {
-        CoercedAttr::String(StringLiteral::default())
-    }
-
-    pub fn empty_list() -> CoercedAttr {
-        CoercedAttr::List(ListLiteral(ArcSlice::new([])))
-    }
-}

@@ -1,0 +1,12 @@
+[buildfile]
+name=TARGETS.fixture
+
+[repositories]
+root = .
+
+# The production shape: BLAKE3-KEYED preferred, sha1 accepted for digests that rules supply.
+# Sources are hashed with sha1 so that a remote action's upload of a source file seeds a
+# sha1-named blob in the CAS, which is what a `cas_artifact` with a sha1 digest then names.
+[buck2]
+digest_algorithms = BLAKE3-KEYED,SHA1
+source_digest_algorithm = SHA1

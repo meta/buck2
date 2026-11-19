@@ -10,7 +10,7 @@
 
 use std::default::Default;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ProcessStats {
     pub rss_bytes: Option<u64>,
     pub max_rss_bytes: Option<u64>,
@@ -20,6 +20,7 @@ pub struct ProcessStats {
 
 #[cfg(unix)]
 pub fn process_stats() -> ProcessStats {
+    use crate::os::unix_like::sc_page_size::sc_page_size;
     use crate::process_stats::proc_self_stat::ProcSelfStat;
 
     let usage = unsafe {
@@ -44,10 +45,8 @@ pub fn process_stats() -> ProcessStats {
 
     let rss_bytes = if cfg!(target_os = "linux") {
         // Buck2 snapshot is made once per second, so this shouldn't be too expensive.
-        ProcSelfStat::read().map(|stat| {
-            // `getconf PAGESIZE`, but practically it's always 4096.
-            stat.rss * 4096
-        })
+        let page_size = sc_page_size().ok();
+        ProcSelfStat::rss_bytes(ProcSelfStat::read().as_ref(), page_size)
     } else {
         None
     };
@@ -62,15 +61,14 @@ pub fn process_stats() -> ProcessStats {
 
 #[cfg(windows)]
 pub fn process_stats() -> ProcessStats {
-    use winapi::shared::minwindef::DWORD;
-    use winapi::shared::minwindef::FILETIME;
-    use winapi::um::processthreadsapi::GetCurrentProcess;
-    use winapi::um::processthreadsapi::GetProcessTimes;
-    use winapi::um::psapi::K32GetProcessMemoryInfo;
-    use winapi::um::psapi::PROCESS_MEMORY_COUNTERS;
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::ProcessStatus::K32GetProcessMemoryInfo;
+    use windows_sys::Win32::System::ProcessStatus::PROCESS_MEMORY_COUNTERS;
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
 
     let mut pmc: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
-    pmc.cb = std::mem::size_of_val(&pmc) as DWORD;
+    pmc.cb = std::mem::size_of_val(&pmc) as u32;
     // Code is referenced from eden/scm/lib/procinfo/src/lib.rs
     // API reference: https://learn.microsoft.com/en-us/windows/win32/api/psapi/ns-psapi-process_memory_counters
     let (wss_bytes, max_wss_bytes) =
@@ -160,14 +158,23 @@ mod proc_self_stat {
                 .ok()
                 .and_then(|s| ProcSelfStat::parse(&s))
         }
+
+        /// Resident set size in bytes when both the stat and kernel page size are available.
+        pub fn rss_bytes(stat: Option<&Self>, page_size: Option<usize>) -> Option<u64> {
+            stat.zip(page_size)
+                .map(|(stat, page_size)| stat.rss * page_size as u64)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::process_stats::proc_self_stat::ProcSelfStat;
+    #[cfg(not(miri))]
     use crate::process_stats::process_stats;
 
+    // Calls `getrusage`, which Miri does not implement.
+    #[cfg(not(miri))]
     #[test]
     fn test_process_stats() {
         let process_stats = process_stats();
@@ -180,8 +187,16 @@ mod tests {
         }
         assert!(process_stats.max_rss_bytes.unwrap() > 0);
         if cfg!(target_os = "linux") || cfg!(target_os = "windows") {
-            let rss_bytes = process_stats.rss_bytes.unwrap();
-            assert!(rss_bytes > 0);
+            let rss_bytes = process_stats
+                .rss_bytes
+                .unwrap_or_else(|| panic!("no rss in {process_stats:?}"));
+            // Linux keeps a process's RSS in per-CPU counters and folds them into the total only
+            // in batches of two pages per CPU, so on a many-core host `/proc/self/stat` can say
+            // `0` for a process holding a hundred megabytes: only that there is a reading is
+            // asserted there.
+            if cfg!(target_os = "windows") {
+                assert!(rss_bytes > 0, "{process_stats:?}");
+            }
         }
     }
 
@@ -194,14 +209,37 @@ mod tests {
             0 0 0 0 0 0 0 0 0 17 11 0 0 0 0 0 \
             94565084199504 94565084201152 94565084205056 140727456831309 \
             140727456831329 140727456831329 140727456833519 0";
-        assert_eq!(215, ProcSelfStat::parse(stat).unwrap().rss);
+        let stat = ProcSelfStat::parse(stat).unwrap();
+        assert_eq!(215, stat.rss);
+        // 215 pages of 4 KiB (x86_64) and of 64 KiB (some aarch64 kernels).
+        assert_eq!(
+            Some(880_640),
+            ProcSelfStat::rss_bytes(Some(&stat), Some(4096))
+        );
+        assert_eq!(
+            Some(14_090_240),
+            ProcSelfStat::rss_bytes(Some(&stat), Some(65536))
+        );
     }
 
     #[test]
+    fn test_rss_bytes_missing_inputs() {
+        let stat = ProcSelfStat { rss: 215 };
+        assert_eq!(None, ProcSelfStat::rss_bytes(Some(&stat), None));
+        assert_eq!(None, ProcSelfStat::rss_bytes(None, Some(65536)));
+    }
+
+    // Reads `/proc`, which Miri's isolation hides.
+    #[cfg(not(miri))]
+    #[test]
     fn test_proc_self_stat_read() {
         if cfg!(target_os = "linux") {
-            let stat = ProcSelfStat::read().unwrap();
-            assert!(stat.rss > 0);
+            // Read it here too, so that a failure says which step failed.
+            let raw = std::fs::read_to_string("/proc/self/stat")
+                .unwrap_or_else(|e| panic!("reading /proc/self/stat: {e}"));
+            // Not `> 0`: the kernel may say `0` for a live process (see `test_process_stats`).
+            ProcSelfStat::parse(&raw).unwrap_or_else(|| panic!("could not parse {raw:?}"));
+            assert!(ProcSelfStat::read().is_some());
         }
     }
 }

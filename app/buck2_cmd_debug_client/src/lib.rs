@@ -14,10 +14,11 @@ use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_common::argv::Argv;
 use buck2_common::argv::SanitizedArgv;
+use buck2_log_common::chrome_trace::ChromeTraceCommand;
 
 use crate::allocative::AllocativeCommand;
 use crate::allocator_stats::AllocatorStatsCommand;
-use crate::chrome_trace::ChromeTraceCommand;
+use crate::anon_targets::AnonTargetsCommand;
 use crate::crash::CrashCommand;
 use crate::daemon_dir::DaemonDirCommand;
 use crate::dice_dump::DiceDumpCommand;
@@ -25,20 +26,24 @@ use crate::eval::EvalCommand;
 use crate::exe::ExeCommand;
 use crate::file_status::FileStatusCommand;
 use crate::flush_dep_files::FlushDepFilesCommand;
+use crate::flush_pgo_profile::FlushPgoProfileCommand;
 use crate::heap_dump::HeapDumpCommand;
+use crate::hydration::HydrationCommand;
 use crate::internal_version::InternalVersionCommand;
 use crate::log_perf::LogPerfCommand;
-use crate::materialize::MaterializeCommand;
 use crate::paranoid::ParanoidCommand;
 use crate::persist_event_logs::PersistEventLogsCommand;
+use crate::recent_alloc_dump::RecentAllocDumpCommand;
+use crate::restart::RestartCommand;
 use crate::set_log_filter::SetLogFilterCommand;
+use crate::tenants::TenantsCommand;
 use crate::thread_dump::ThreadDumpCommand;
 use crate::trace_io::TraceIoCommand;
 use crate::upload_re_logs::UploadReLogsCommand;
 
 mod allocative;
 mod allocator_stats;
-mod chrome_trace;
+mod anon_targets;
 mod crash;
 mod daemon_dir;
 mod dice_dump;
@@ -46,13 +51,17 @@ mod eval;
 mod exe;
 mod file_status;
 mod flush_dep_files;
+mod flush_pgo_profile;
 mod heap_dump;
+mod hydration;
 mod internal_version;
 mod log_perf;
-mod materialize;
 mod paranoid;
 mod persist_event_logs;
+mod recent_alloc_dump;
+mod restart;
 mod set_log_filter;
+mod tenants;
 mod thread_dump;
 mod trace_io;
 mod upload_re_logs;
@@ -60,9 +69,13 @@ mod upload_re_logs;
 #[derive(Debug, clap::Parser)]
 #[clap(about = "Hidden debug commands useful for testing buck2")]
 pub enum DebugCommand {
+    Restart(RestartCommand),
     /// Deliberately crashes the Buck daemon, for testing purposes.
     Crash(CrashCommand),
     HeapDump(HeapDumpCommand),
+    /// Dumps jemalloc's recent-allocations ring (individual allocations with
+    /// sizes, alloc/free stacks, and lifetimes) to a JSON file.
+    RecentAllocDump(RecentAllocDumpCommand),
     /// Dumps allocator stat
     AllocatorStats(AllocatorStatsCommand),
     /// Dump the DICE graph to a file and saves it to disk.
@@ -73,8 +86,8 @@ pub enum DebugCommand {
     ChromeTrace(ChromeTraceCommand),
     /// Flushes all dep files known to Buck2.
     FlushDepFiles(FlushDepFilesCommand),
-    /// Forces materialization of a path, even on the deferred materializer
-    Materialize(MaterializeCommand),
+    /// Flush PGO profile data from the daemon to disk.
+    FlushPgoProfile(FlushPgoProfileCommand),
     // Upload RE logs given an RE session ID
     UploadReLogs(UploadReLogsCommand),
     /// Validates that Buck2 and disk agree on the state of files.
@@ -94,7 +107,15 @@ pub enum DebugCommand {
     #[clap(subcommand)]
     Paranoid(ParanoidCommand),
     Eval(EvalCommand),
+    /// List the anon targets requested while analyzing the deps closure of the given
+    /// targets.
+    AnonTargets(AnonTargetsCommand),
     ThreadDump(ThreadDumpCommand),
+    /// List tenants currently registered in the daemon.
+    Tenants(TenantsCommand),
+    /// Control DICE node value page-out / page-in.
+    #[clap(subcommand)]
+    Hydration(HydrationCommand),
 }
 
 impl DebugCommand {
@@ -106,14 +127,16 @@ impl DebugCommand {
     ) -> ExitResult {
         let matches = matches.unwrap_subcommand();
         match self {
+            DebugCommand::Restart(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::DiceDump(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::Crash(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::HeapDump(cmd) => ctx.exec(cmd, matches, events_ctx),
+            DebugCommand::RecentAllocDump(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::AllocatorStats(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::InternalVersion(cmd) => cmd.exec(matches, ctx),
             DebugCommand::ChromeTrace(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::FlushDepFiles(cmd) => ctx.exec(cmd, matches, events_ctx),
-            DebugCommand::Materialize(cmd) => ctx.exec(cmd, matches, events_ctx),
+            DebugCommand::FlushPgoProfile(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::UploadReLogs(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::DaemonDir(cmd) => cmd.exec(matches, ctx),
             DebugCommand::Exe(cmd) => cmd.exec(matches, ctx),
@@ -125,7 +148,10 @@ impl DebugCommand {
             DebugCommand::PersistEventLogs(cmd) => cmd.exec(matches, ctx, events_ctx),
             DebugCommand::Paranoid(cmd) => cmd.exec(matches, ctx),
             DebugCommand::Eval(cmd) => ctx.exec(cmd, matches, events_ctx),
+            DebugCommand::AnonTargets(cmd) => ctx.exec(cmd, matches, events_ctx),
             DebugCommand::ThreadDump(cmd) => cmd.exec(matches, ctx),
+            DebugCommand::Tenants(cmd) => ctx.exec(cmd, matches, events_ctx),
+            DebugCommand::Hydration(cmd) => ctx.exec(cmd, matches, events_ctx),
         }
     }
 

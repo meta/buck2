@@ -26,5 +26,6 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/cd/serialization/java:java",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java:support",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
     ],
 )

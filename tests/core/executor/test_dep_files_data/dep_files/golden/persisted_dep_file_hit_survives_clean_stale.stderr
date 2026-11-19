@@ -1,0 +1,7 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+[<TIMESTAMP>] File changed: app/other.h
+[<TIMESTAMP>] Cache hits: <CACHE_STATS>
+[<TIMESTAMP>] Commands: <COMMAND_STATS>
+BUILD SUCCEEDED

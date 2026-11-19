@@ -9,4 +9,3 @@ error: Variable `bar` not found, did you mean `chr`?
   |
 1 | f'foo {bar}'
   |        ^^^
-  |

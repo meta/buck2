@@ -25,8 +25,14 @@ use crate::collections::SmallMap;
 use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::Value;
+use crate::values::ValueOf;
+use crate::values::dict::DictType;
 use crate::values::record::field::Field;
 use crate::values::record::record_type::RecordType;
+use crate::values::string::StarlarkStr;
+use crate::values::types::record::record_type::RecordTypeView;
+use crate::values::types::type_instance_id::StarlarkTypeIdDomain;
+use crate::values::types::type_instance_id::TypeInstanceId;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 
 #[starlark_module]
@@ -59,19 +65,22 @@ pub(crate) fn register_record(builder: &mut GlobalsBuilder) {
     ///
     /// Records are stored deduplicating their field names, making them more memory efficient than dictionaries.
     fn record<'v>(
-        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(kwargs)] kwargs: ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<RecordType<'v>> {
+    ) -> anyhow::Result<ValueOf<'v, RecordTypeView<'v>>> {
         // Every Value must either be a field or a value (the type)
-        let mut mp = SmallMap::with_capacity(kwargs.len());
-        for (k, v) in kwargs.into_iter_hashed() {
+        let mut mp = SmallMap::with_capacity(kwargs.dict().len());
+        for item in kwargs.try_items::<&str, Value>() {
+            let (k, v) = item.map_err(|e| e.into_anyhow())?;
             let field = match Field::from_value(v) {
                 None => Field::new(TypeCompiled::new(v, eval.heap())?, None),
                 Some(v) => v.dupe(),
             };
-            mp.insert_hashed(k, field);
+            mp.insert(k.to_owned(), field);
         }
-        Ok(RecordType::new(mp))
+        let id = TypeInstanceId::from_def_site(StarlarkTypeIdDomain::Record, eval)
+            .map_err(|e| e.into_anyhow())?;
+        Ok(ValueOf::alloc(eval.heap(), RecordType::new(mp, id)))
     }
 
     /// Creates a field record. Used as an argument to the `record` function.
@@ -88,13 +97,13 @@ pub(crate) fn register_record(builder: &mut GlobalsBuilder) {
         #[starlark(require = pos)] typ: Value<'v>,
         default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Field<'v>> {
+    ) -> starlark::Result<ValueOf<'v, Field<'v>>> {
         // We compile the type even if we don't have a default to raise the error sooner
         let compiled = TypeCompiled::new(typ, eval.heap())?;
         if let Some(d) = default {
             compiled.check_type(d, Some("default"))?;
         }
-        Ok(Field::new(compiled, default))
+        Ok(eval.heap().alloc(Field::new(compiled, default)))
     }
 }
 
@@ -246,5 +255,42 @@ assert_ne(r1(host="test"), diff(host="test"))
             &["does not match the type", "`default`"],
         );
         assert::fails("field(True)", &["`True`", "not a valid type"]);
+    }
+
+    /// A record type and its records are hashable whatever the field defaults are: record types
+    /// compare by identity, so the type is hashed by its identity.
+    #[test]
+    fn test_record_with_list_default_is_hashable() {
+        assert::eq(
+            "1",
+            "R = record(a = int, b = field(typing.Any, []))\nlen({R(a = 1, b = 2): 1})",
+        );
+        assert::eq(
+            "1",
+            "R = record(a = int, b = field(typing.Any, []))\nlen({R: 1})",
+        );
+        assert::eq(
+            "1",
+            "R = record(a = int, b = field(typing.Any, []))\nd = {}\nd[R(a = 1, b = 2)] = 1\nd[R(a = 1, b = 2)] = 2\nlen(d)",
+        );
+        assert::eq(
+            "1",
+            "R = record(a = int, b = field(typing.Any, None))\nlen({R(a = 1, b = 2): 1})",
+        );
+    }
+
+    /// An omitted field takes its default only if it still matches the field type: a default
+    /// mutated after the `field()` call is rejected like the same value passed explicitly.
+    #[test]
+    fn test_record_mutated_default_is_rechecked() {
+        assert::fail(
+            "d = []\nR = record(xs = field(list[int], d))\nd.append('s')\nR()",
+            "does not match the type annotation",
+        );
+        assert::fail(
+            "R = record(xs = field(list[int], []))\nR(xs = ['s'])",
+            "does not match the type annotation",
+        );
+        assert::eq("[]", "R = record(xs = field(list[int], []))\nR().xs");
     }
 }

@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _test_impl(ctx):
-    out = ctx.actions.declare_output("file")
+    out = ctx.actions.declare_output("file", has_content_based_path = False)
     ctx.actions.run(
         ["cp", "/run/re_worker/action_dependencies", out.as_output()],
         category = "cp",
@@ -16,7 +16,10 @@ def _test_impl(ctx):
     )
     return [DefaultInfo(out)]
 
-test = rule(attrs = {
-    "cache_buster": attrs.string(default = read_config("test", "cache_buster", "")),
-    "remote_execution_dependencies": attrs.list(attrs.dict(key = attrs.string(), value = attrs.string()), default = []),
-}, impl = _test_impl)
+test = rule(
+    attrs = {
+        "cache_buster": attrs.string(default = read_config("test", "cache_buster", "")),
+        "remote_execution_dependencies": attrs.list(attrs.dict(key = attrs.string(), value = attrs.string()), default = []),
+    },
+    impl = _test_impl,
+)

@@ -3,15 +3,9 @@ id: configuration_transitions
 title: Configuration Transitions
 ---
 
-Configuration transition is a mechanism for changing the configuration when
-depending on a target.
-
-Currently, Buck2 has incoming and outgoing transitions:
-
-- **Incoming** transitions are specified per-target and take effect when
-  depending on that target.
-- **Outgoing** transitions are specified on an attribute and take effect on
-  dependencies that appear in that attribute.
+This page mostly focuses on how configuration transitions are
+implemented. A good understanding of the high-level
+[concepts](../concepts/transitions.md) is therefore required.
 
 ## Defining transitions
 
@@ -118,7 +112,7 @@ transition_to_watchos = rule(
 )
 ```
 
-#### Idempotence
+### Idempotence
 
 A transition function applied twice must produce the configuration identical to
 the configuration produced after applying transition once. Violating this

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use buck2_core::provider::id::ProviderId;
 use starlark::any::ProvidesStaticType;
-use starlark::values::ValueLike;
+use starlark::values::Value;
 
 pub trait ProviderCallableLike {
     fn id(&self) -> buck2_error::Result<&Arc<ProviderId>>;
@@ -26,8 +26,8 @@ pub trait ValueAsProviderCallableLike<'v> {
     fn as_provider_callable(&self) -> Option<&'v dyn ProviderCallableLike>;
 }
 
-impl<'v, V: ValueLike<'v>> ValueAsProviderCallableLike<'v> for V {
+impl<'v> ValueAsProviderCallableLike<'v> for Value<'v> {
     fn as_provider_callable(&self) -> Option<&'v dyn ProviderCallableLike> {
-        self.to_value().request_value::<&dyn ProviderCallableLike>()
+        self.request_value::<&dyn ProviderCallableLike>()
     }
 }

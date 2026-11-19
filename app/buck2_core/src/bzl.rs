@@ -13,10 +13,11 @@ use std::fmt::Formatter;
 
 use allocative::Allocative;
 use buck2_fs::paths::file_name::FileName;
+use pagable::Pagable;
+use strong_hash::StrongHash;
 
 use crate::cells::build_file_cell::BuildFileCell;
 use crate::cells::cell_path::CellPath;
-use crate::cells::cell_path::CellPathRef;
 use crate::cells::name::CellName;
 use crate::cells::paths::CellRelativePath;
 
@@ -30,7 +31,9 @@ enum ImportPathError {
 }
 
 /// Path of a `.bzl` file.
-#[derive(Clone, Hash, Eq, PartialEq, Debug, Allocative, strong_hash::StrongHash)]
+#[derive(
+    Clone, Hash, StrongHash, Eq, PartialEq, Ord, PartialOrd, Debug, Allocative, Pagable
+)]
 pub struct ImportPath {
     /// The path to the import as a 'CellPath', which contains the cell
     /// information and the cell relative path to the bzl file itself, including the bzl suffix
@@ -102,11 +105,9 @@ impl ImportPath {
         filename: &str,
         build_file_cell: &str,
     ) -> Self {
-        let cell_path = CellPath::new(
-            CellName::testing_new(cell),
-            CellRelativePath::unchecked_new(cell_relative_path)
-                .join(FileName::unchecked_new(filename)),
-        );
+        let path = CellRelativePath::unchecked_new(cell_relative_path)
+            .join(FileName::unchecked_new(filename));
+        let cell_path = CellPath::new(CellName::testing_new(cell), &path);
         Self::new_with_build_file_cells(
             cell_path,
             BuildFileCell::new(CellName::testing_new(build_file_cell)),
@@ -127,7 +128,7 @@ impl ImportPath {
     }
 
     /// Parent directory of the import path.
-    pub fn path_parent(&self) -> CellPathRef<'_> {
+    pub fn path_parent(&self) -> CellPath {
         self.path
             .parent()
             .expect("constructor verified path has parent")

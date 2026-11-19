@@ -17,7 +17,6 @@ error: Expected type `str` but got `list[typing.Never]`
   |
 3 |     return type(x) == []
   |                       ^^
-  |
 
 Error:
 error: Expected type `list` but got `bool`
@@ -25,7 +24,6 @@ error: Expected type `list` but got `bool`
   |
 6 |     foo(True)
   |         ^^^^
-  |
 
 Compiler typechecker (eval):
 error: Expected type `str` but got `list[typing.Never]`
@@ -33,4 +31,3 @@ error: Expected type `str` but got `list[typing.Never]`
   |
 3 |     return type(x) == []
   |                       ^^
-  |

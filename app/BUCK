@@ -1,0 +1,10 @@
+load("@fbcode_macros//build_defs:clippy_configuration.bzl", "clippy_configuration")
+
+oncall("build_infra")
+
+# Attached to the app crates by `app/PACKAGE`; `../clippy.toml` says why app has its own.
+clippy_configuration(
+    name = "clippy_config",
+    clippy_toml_src = "clippy.toml",
+    visibility = ["PUBLIC"],
+)

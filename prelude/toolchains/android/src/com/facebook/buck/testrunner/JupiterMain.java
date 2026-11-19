@@ -13,11 +13,14 @@ package com.facebook.buck.testrunner;
 import static com.facebook.buck.testrunner.CheckDependency.classPresent;
 import static com.facebook.buck.testrunner.CheckDependency.requiresClass;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /**
  * Launcher for JUnit Jupiter (Junit5).
  *
  * @see JUnitMain
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class JupiterMain {
 
   private JupiterMain() {

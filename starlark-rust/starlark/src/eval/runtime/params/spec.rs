@@ -21,18 +21,17 @@ use std::fmt;
 
 use allocative::Allocative;
 use dupe::Dupe;
-use starlark_derive::Coerce;
-use starlark_derive::Freeze;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::Trace;
 use starlark_map::Hashed;
 use starlark_map::small_map::SmallMap;
 use starlark_syntax::function_error;
 use starlark_syntax::other_error;
 use starlark_syntax::syntax::def::DefParamIndices;
+use triomphe::Arc;
 
 use crate as starlark;
-use crate::__macro_refs::coerce;
-use crate::cast::transmute;
+use crate::any::ProvidesStaticType;
 use crate::collections::symbol::map::SymbolMap;
 use crate::docs::DocParam;
 use crate::docs::DocParams;
@@ -50,16 +49,19 @@ use crate::eval::runtime::params::display::fmt_param_spec;
 use crate::hint::unlikely;
 use crate::typing::ParamIsRequired;
 use crate::typing::Ty;
+use crate::util::arc_str::ArcStr;
+use crate::values::Freeze;
+use crate::values::FreezeResult;
+use crate::values::Freezer;
 use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueLike;
 use crate::values::dict::Dict;
 use crate::values::dict::DictRef;
 
 /// Describe parameter for [`ParametersSpec`].
 #[derive(
-    Debug, Clone, Copy, Dupe, PartialEq, Eq, PartialOrd, Ord, Trace, Freeze, Allocative
+    Debug, Clone, Copy, Dupe, PartialEq, Eq, PartialOrd, Ord, Trace, Allocative
 )]
 pub enum ParametersSpecParam<V> {
     /// Parameter is required.
@@ -81,18 +83,50 @@ impl<V> ParametersSpecParam<V> {
     }
 }
 
-#[derive(Debug, Copy, Clone, Dupe, Coerce, PartialEq, Trace, Freeze, Allocative)]
-#[repr(C)]
-pub(crate) enum ParameterKind<V> {
+/// Function parameter kind, packed into a `u32`: values below
+/// [`FIRST_SPECIAL`](ParameterKind::FIRST_SPECIAL) are `Defaulted` indices into
+/// [`ParametersSpec::defaults`]; the values near `u32::MAX` encode others.
+/// Match via [`unpack`](ParameterKind::unpack).
+#[derive(Debug, Copy, Clone, Dupe, PartialEq, Eq, Allocative, pagable::Pagable)]
+#[repr(transparent)]
+pub(crate) struct ParameterKind(u32);
+
+/// Unpacked view of [`ParameterKind`] for matching.
+pub(crate) enum ParameterKindUnpacked {
     Required,
     /// When optional parameter is not supplied, there's no error,
     /// but the slot remains `None`.
     ///
     /// This is used only in native code, parameters of type `Option<T>` become `Optional`.
     Optional,
-    Defaulted(V),
+    /// Index into [`ParametersSpec::defaults`] holding this parameter's default value.
+    Defaulted(u32),
     Args,
     KWargs,
+}
+
+impl ParameterKind {
+    pub(crate) const REQUIRED: ParameterKind = ParameterKind(u32::MAX);
+    pub(crate) const OPTIONAL: ParameterKind = ParameterKind(u32::MAX - 1);
+    pub(crate) const ARGS: ParameterKind = ParameterKind(u32::MAX - 2);
+    pub(crate) const KWARGS: ParameterKind = ParameterKind(u32::MAX - 3);
+    /// Everything below this is a `Defaulted` index.
+    const FIRST_SPECIAL: u32 = u32::MAX - 3;
+
+    fn defaulted(index: u32) -> ParameterKind {
+        assert!(index < ParameterKind::FIRST_SPECIAL);
+        ParameterKind(index)
+    }
+
+    pub(crate) fn unpack(self) -> ParameterKindUnpacked {
+        match self {
+            ParameterKind::REQUIRED => ParameterKindUnpacked::Required,
+            ParameterKind::OPTIONAL => ParameterKindUnpacked::Optional,
+            ParameterKind::ARGS => ParameterKindUnpacked::Args,
+            ParameterKind::KWARGS => ParameterKindUnpacked::KWargs,
+            ParameterKind(index) => ParameterKindUnpacked::Defaulted(index),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Dupe, PartialEq, Eq, PartialOrd, Ord)]
@@ -109,8 +143,9 @@ enum CurrentParameterStyle {
 
 /// Builder for [`ParametersSpec`]
 pub(crate) struct ParametersSpecBuilder<V> {
-    function_name: String,
-    params: Vec<(String, ParameterKind<V>)>,
+    function_name: ArcStr,
+    params: Vec<(String, ParameterKind)>,
+    defaults: Vec<V>,
     names: SymbolMap<u32>,
     /// Number of parameters that can be filled only positionally.
     positional_only: usize,
@@ -124,30 +159,56 @@ pub(crate) struct ParametersSpecBuilder<V> {
     kwargs: Option<usize>,
 }
 
-/// Define a list of parameters. This code assumes that all names are distinct and that
-/// `*args`/`**kwargs` occur in well-formed locations.
-// V = Value, or FrozenValue
-#[derive(Debug, Clone, Trace, Freeze, Allocative)]
-#[repr(C)]
-pub struct ParametersSpec<V> {
-    /// Only used in error messages
-    function_name: String,
-
+/// The value-independent part of a [`ParametersSpec`]: everything except the
+/// default values. One prototype is shared by all instantiations of the same
+/// `def`/`lambda` site, so nothing here may depend on `V`. Contains no
+/// starlark values, so it is plain `Pagable` and gets identity-preserving
+/// `Arc` dedup from the base pagable crate.
+#[derive(Debug, Allocative, pagable::Pagable)]
+pub(crate) struct ParametersSpecPrototype {
+    /// Only used in error messages.
+    function_name: ArcStr,
     /// Parameters in the order they occur.
-    param_kinds: Box<[ParameterKind<V>]>,
+    param_kinds: Box<[ParameterKind]>,
     /// Parameter names in the order they occur.
     param_names: Box<[String]>,
     /// Mapping from name to index where the argument lives.
-    #[freeze(identity)]
     pub(crate) names: SymbolMap<u32>,
-    #[freeze(identity)]
     indices: DefParamIndices,
+    /// Number of `Defaulted` entries in `param_kinds`; their indices are dense
+    /// `0..num_defaults` in parameter order.
+    num_defaults: u32,
+}
+
+/// Define a list of parameters. This code assumes that all names are distinct and that
+/// `*args`/`**kwargs` occur in well-formed locations.
+#[derive(Debug, Clone, Trace, Allocative, ProvidesStaticType, StarlarkPagable)]
+#[repr(C)]
+pub struct ParametersSpec<V> {
+    /// The shared, value-independent part. `Arc` rather than a frozen-heap
+    /// reference because native functions and non-value `V`s build specs with
+    /// no frozen heap in reach.
+    #[starlark_pagable(pagable)]
+    prototype: Arc<ParametersSpecPrototype>,
+    /// Default values, indexed by [`ParameterKind::Defaulted`], in parameter order.
+    defaults: Box<[V]>,
+}
+
+impl<'v> Freeze<'v> for ParametersSpec<Value<'v>> {
+    type Frozen<'fv> = ParametersSpec<Value<'fv>>;
+
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
+        Ok(ParametersSpec {
+            prototype: self.prototype,
+            defaults: self.defaults.freeze(freezer)?,
+        })
+    }
 }
 
 impl<V> ParametersSpecBuilder<V> {
-    fn add(&mut self, name: &str, val: ParameterKind<V>) {
+    fn add(&mut self, name: &str, val: ParameterKind) {
         assert!(
-            !matches!(val, ParameterKind::Args | ParameterKind::KWargs),
+            !matches!(val, ParameterKind::ARGS | ParameterKind::KWARGS),
             "adding parameter `{}` to `{}",
             name,
             self.function_name
@@ -187,21 +248,23 @@ impl<V> ParametersSpecBuilder<V> {
     /// it. If you want to supply a position-only argument, prepend a `$` to
     /// the name.
     pub(crate) fn required(&mut self, name: &str) {
-        self.add(name, ParameterKind::Required);
+        self.add(name, ParameterKind::REQUIRED);
     }
 
     /// Add an optional parameter. Will be None if the caller doesn't supply it.
     /// If you want to supply a position-only argument, prepend a `$` to the
     /// name.
     pub(crate) fn optional(&mut self, name: &str) {
-        self.add(name, ParameterKind::Optional);
+        self.add(name, ParameterKind::OPTIONAL);
     }
 
     /// Add an optional parameter. Will be the default value if the caller
     /// doesn't supply it. If you want to supply a position-only argument,
     /// prepend a `$` to the name.
     pub(crate) fn defaulted(&mut self, name: &str, val: V) {
-        self.add(name, ParameterKind::Defaulted(val));
+        let index = u32::try_from(self.defaults.len()).expect("too many parameters");
+        self.defaults.push(val);
+        self.add(name, ParameterKind::defaulted(index));
     }
 
     fn param(&mut self, name: &str, param: ParametersSpecParam<V>) {
@@ -219,7 +282,7 @@ impl<V> ParametersSpecBuilder<V> {
     /// [`optional`](ParametersSpecBuilder::optional) or
     /// [`defaulted`](ParametersSpecBuilder::defaulted)
     /// parameters can _only_ be supplied by name.
-    pub(crate) fn args(&mut self) {
+    pub(crate) fn args(&mut self, name: &str) {
         assert!(
             self.args.is_none(),
             "adding *args to `{}`",
@@ -235,7 +298,7 @@ impl<V> ParametersSpecBuilder<V> {
             "adding *args to `{}`",
             self.function_name
         );
-        self.params.push(("*args".to_owned(), ParameterKind::Args));
+        self.params.push((format!("*{name}"), ParameterKind::ARGS));
         self.args = Some(self.params.len() - 1);
         self.current_style = CurrentParameterStyle::NamedOnly;
     }
@@ -279,16 +342,21 @@ impl<V> ParametersSpecBuilder<V> {
     /// [`optional`](ParametersSpecBuilder::optional) or
     /// [`defaulted`](ParametersSpecBuilder::defaulted)
     /// parameters can _only_ be supplied by position.
-    pub(crate) fn kwargs(&mut self) {
+    pub(crate) fn kwargs(&mut self, name: &str) {
         assert!(
             self.kwargs.is_none(),
             "adding **kwargs to `{}`",
             self.function_name
         );
         self.params
-            .push(("**kwargs".to_owned(), ParameterKind::KWargs));
+            .push((format!("**{name}"), ParameterKind::KWARGS));
         self.current_style = CurrentParameterStyle::NoMore;
         self.kwargs = Some(self.params.len() - 1);
+    }
+
+    /// Construct only the shared prototype, discarding any default values
+    pub(crate) fn finish_prototype(self) -> Arc<ParametersSpecPrototype> {
+        self.finish().prototype
     }
 
     /// Construct the parameters specification.
@@ -301,25 +369,52 @@ impl<V> ParametersSpecBuilder<V> {
             current_style,
             kwargs,
             params,
+            defaults,
             names,
         } = self;
         let _ = current_style;
         let positional_only: u32 = positional_only.try_into().unwrap();
         let positional: u32 = positional.try_into().unwrap();
         assert!(positional_only <= positional, "building `{function_name}`");
-        let (param_names, param_kinds): (Vec<String>, Vec<ParameterKind<V>>) =
+        let (param_names, param_kinds): (Vec<String>, Vec<ParameterKind>) =
             params.into_iter().unzip();
         ParametersSpec {
-            function_name,
-            param_kinds: param_kinds.into_boxed_slice(),
-            param_names: param_names.into_boxed_slice(),
-            names,
-            indices: DefParamIndices {
-                num_positional_only: positional_only,
-                num_positional: positional,
-                args: args.map(|args| args.try_into().unwrap()),
-                kwargs: kwargs.map(|kwargs| kwargs.try_into().unwrap()),
-            },
+            prototype: Arc::new(ParametersSpecPrototype {
+                function_name,
+                param_kinds: param_kinds.into_boxed_slice(),
+                param_names: param_names.into_boxed_slice(),
+                names,
+                indices: DefParamIndices {
+                    num_positional_only: positional_only,
+                    num_positional: positional,
+                    args: args.map(|args| args.try_into().unwrap()),
+                    kwargs: kwargs.map(|kwargs| kwargs.try_into().unwrap()),
+                },
+                num_defaults: defaults.len().try_into().unwrap(),
+            }),
+            defaults: defaults.into_boxed_slice(),
+        }
+    }
+}
+
+impl<V> ParametersSpec<V> {
+    /// Instantiate a spec from a shared prototype plus this instance's default
+    /// values, which must match the prototype's `Defaulted` indices in order.
+    pub(crate) fn from_prototype(
+        prototype: Arc<ParametersSpecPrototype>,
+        defaults: Vec<V>,
+    ) -> Self {
+        // `Defaulted` indices are dense `0..num_defaults` by builder construction;
+        // a mismatched defaults list here would silently bind wrong default values.
+        assert_eq!(
+            defaults.len(),
+            prototype.num_defaults as usize,
+            "building `{}`",
+            prototype.function_name
+        );
+        ParametersSpec {
+            prototype,
+            defaults: defaults.into_boxed_slice(),
         }
     }
 }
@@ -327,12 +422,13 @@ impl<V> ParametersSpecBuilder<V> {
 impl<V> ParametersSpec<V> {
     /// Create a new [`ParametersSpec`] with the given function name and an advance capacity hint.
     pub(crate) fn with_capacity(
-        function_name: String,
+        function_name: ArcStr,
         capacity: usize,
     ) -> ParametersSpecBuilder<V> {
         ParametersSpecBuilder {
             function_name,
             params: Vec::with_capacity(capacity),
+            defaults: Vec::new(),
             names: SymbolMap::with_capacity(capacity),
             positional_only: 0,
             positional: 0,
@@ -356,7 +452,7 @@ impl<V> ParametersSpec<V> {
         let named_only = named_only.into_iter();
 
         let mut builder = ParametersSpec::with_capacity(
-            function_name.to_owned(),
+            ArcStr::from(function_name),
             pos_only.size_hint().0
                 + pos_or_named.size_hint().0
                 + args as usize
@@ -372,7 +468,7 @@ impl<V> ParametersSpec<V> {
             builder.param(name, val);
         }
         if args {
-            builder.args();
+            builder.args("args");
         } else {
             builder.no_more_positional_args();
         }
@@ -380,7 +476,7 @@ impl<V> ParametersSpec<V> {
             builder.param(name, val);
         }
         if kwargs {
-            builder.kwargs();
+            builder.kwargs("kwargs");
         }
         builder.finish()
     }
@@ -409,7 +505,7 @@ impl<V> ParametersSpec<V> {
 
     // Generate a good error message for it
     pub(crate) fn collect_signature(&self, collector: &mut String) {
-        collector.push_str(&self.function_name);
+        collector.push_str(&self.prototype.function_name);
 
         // We used to make the "name" of a function include all its parameters, but that is a lot of
         // details and visually crowds out everything else. Try disabling, although we might want it
@@ -427,37 +523,39 @@ impl<V> ParametersSpec<V> {
             format!("<{args}>")
         }
 
-        if let Some(args) = self.indices.args {
-            if args != self.indices.num_positional {
+        if let Some(args) = self.prototype.indices.args {
+            if args != self.prototype.indices.num_positional {
                 return err(format_args!(
                     "Inconsistent *args: {:?}, args={}, positional={}",
-                    self.function_name, args, self.indices.num_positional
+                    self.prototype.function_name, args, self.prototype.indices.num_positional
                 ));
             }
         }
-        if let Some(kwargs) = self.indices.kwargs {
-            if kwargs as usize + 1 != self.param_kinds.len() {
+        if let Some(kwargs) = self.prototype.indices.kwargs {
+            if kwargs as usize + 1 != self.prototype.param_kinds.len() {
                 return err(format_args!(
                     "Inconsistent **kwargs: {:?}, kwargs={}, param_kinds.len()={}",
-                    self.function_name,
+                    self.prototype.function_name,
                     kwargs,
-                    self.param_kinds.len()
+                    self.prototype.param_kinds.len()
                 ));
             }
         }
 
         let pf = |i: usize| {
-            let name = self.param_names[i].as_str();
+            let name = self.prototype.param_names[i].as_str();
             let name = name.strip_prefix("**").unwrap_or(name);
             let name = name.strip_prefix("*").unwrap_or(name);
             ParamFmt {
                 name,
                 ty: None::<&str>,
-                default: match self.param_kinds[i] {
-                    ParameterKind::Defaulted(_) | ParameterKind::Optional => {
+                default: match self.prototype.param_kinds[i].unpack() {
+                    ParameterKindUnpacked::Defaulted(_) | ParameterKindUnpacked::Optional => {
                         Some(PARAM_FMT_OPTIONAL)
                     }
-                    ParameterKind::Required | ParameterKind::Args | ParameterKind::KWargs => None,
+                    ParameterKindUnpacked::Required
+                    | ParameterKindUnpacked::Args
+                    | ParameterKindUnpacked::KWargs => None,
                 },
             }
         };
@@ -465,11 +563,14 @@ impl<V> ParametersSpec<V> {
         let mut s = String::new();
         fmt_param_spec(
             &mut s,
-            self.indices.pos_only().map(pf),
-            self.indices.pos_or_named().map(pf),
-            self.indices.args.map(|a| a as usize).map(pf),
-            self.indices.named_only(self.param_kinds.len()).map(pf),
-            self.indices.kwargs.map(|a| a as usize).map(pf),
+            self.prototype.indices.pos_only().map(pf),
+            self.prototype.indices.pos_or_named().map(pf),
+            self.prototype.indices.args.map(|a| a as usize).map(pf),
+            self.prototype
+                .indices
+                .named_only(self.prototype.param_kinds.len())
+                .map(pf),
+            self.prototype.indices.kwargs.map(|a| a as usize).map(pf),
         )
         .unwrap();
         s
@@ -477,12 +578,17 @@ impl<V> ParametersSpec<V> {
 
     pub(crate) fn resolve_name(&self, name: Hashed<&str>) -> ResolvedArgName {
         let hash = name.hash();
-        let param_index = self.names.get_hashed_str(name).copied();
+        let param_index = self.prototype.names.get_hashed_str(name).copied();
         ResolvedArgName { hash, param_index }
     }
 
+    /// Mapping from parameter name to index where the argument lives.
+    pub(crate) fn names(&self) -> &SymbolMap<u32> {
+        &self.prototype.names
+    }
+
     pub(crate) fn has_args_or_kwargs(&self) -> bool {
-        self.indices.args.is_some() || self.indices.kwargs.is_some()
+        self.prototype.indices.args.is_some() || self.prototype.indices.kwargs.is_some()
     }
 
     /// Generate documentation for each of the parameters, using a custom formatter for default values.
@@ -496,14 +602,14 @@ impl<V> ParametersSpec<V> {
         F: Fn(&V) -> String,
     {
         assert_eq!(
-            self.param_kinds.len(),
+            self.prototype.param_kinds.len(),
             parameter_types.len(),
             "function: `{}`",
-            self.function_name,
+            self.prototype.function_name,
         );
 
         let mut dp = |i: usize| -> DocParam {
-            let name = self.param_names[i].as_str();
+            let name = self.prototype.param_names[i].as_str();
             let name = name.strip_prefix("**").unwrap_or(name);
             let name = name.strip_prefix("*").unwrap_or(name);
 
@@ -515,38 +621,54 @@ impl<V> ParametersSpec<V> {
                 name,
                 docs,
                 typ: parameter_types[i].dupe(),
-                default_value: match &self.param_kinds[i] {
-                    ParameterKind::Required => None,
-                    ParameterKind::Optional => Some(PARAM_FMT_OPTIONAL.to_owned()),
-                    ParameterKind::Defaulted(v) => Some(formatter(v)),
-                    ParameterKind::Args => None,
-                    ParameterKind::KWargs => None,
+                default_value: match self.prototype.param_kinds[i].unpack() {
+                    ParameterKindUnpacked::Required => None,
+                    ParameterKindUnpacked::Optional => Some(PARAM_FMT_OPTIONAL.to_owned()),
+                    ParameterKindUnpacked::Defaulted(idx) => {
+                        Some(formatter(&self.defaults[idx as usize]))
+                    }
+                    ParameterKindUnpacked::Args => None,
+                    ParameterKindUnpacked::KWargs => None,
                 },
             }
         };
 
         DocParams {
-            pos_only: self.indices.pos_only().map(&mut dp).collect(),
-            pos_or_named: self.indices.pos_or_named().map(&mut dp).collect(),
-            args: self.indices.args.map(|a| a as usize).map(&mut dp),
+            pos_only: self.prototype.indices.pos_only().map(&mut dp).collect(),
+            pos_or_named: self.prototype.indices.pos_or_named().map(&mut dp).collect(),
+            args: self.prototype.indices.args.map(|a| a as usize).map(&mut dp),
             named_only: self
+                .prototype
                 .indices
-                .named_only(self.param_kinds.len())
+                .named_only(self.prototype.param_kinds.len())
                 .map(&mut dp)
                 .collect(),
-            kwargs: self.indices.kwargs.map(|a| a as usize).map(&mut dp),
+            kwargs: self
+                .prototype
+                .indices
+                .kwargs
+                .map(|a| a as usize)
+                .map(&mut dp),
         }
     }
 }
 
-impl<'v, V: ValueLike<'v>> ParametersSpec<V> {
-    pub(crate) fn as_value(&self) -> &ParametersSpec<Value<'v>> {
-        // Everything is `repr(C)` and `Value` and `FrozenValue` have the same layout.
-        unsafe { transmute!(&ParametersSpec<V>, &ParametersSpec<Value>, self) }
-    }
-
+impl<V> ParametersSpec<V> {
     /// Number of function parameters.
     pub fn len(&self) -> usize {
+        self.prototype.param_kinds.len()
+    }
+
+    /// The value-independent part of the spec; see [`from_prototype`](Self::from_prototype).
+    pub(crate) fn prototype(&self) -> Arc<ParametersSpecPrototype> {
+        self.prototype.clone()
+    }
+}
+
+#[cfg(test)]
+impl ParametersSpecPrototype {
+    /// Number of function parameters.
+    pub(crate) fn len(&self) -> usize {
         self.param_kinds.len()
     }
 }
@@ -555,11 +677,11 @@ impl<'v> ParametersSpec<Value<'v>> {
     /// Move parameters from [`Arguments`] to a list of [`Value`],
     /// using the supplied [`ParametersSpec`].
     #[inline]
-    fn collect_impl(
+    pub fn collect(
         &self,
         args: &Arguments<'v, '_>,
         slots: &mut [Option<Value<'v>>],
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> crate::Result<()> {
         self.collect_inline(&args.0, slots, heap)
     }
@@ -568,10 +690,10 @@ impl<'v> ParametersSpec<Value<'v>> {
     ///
     /// This function is called by generated code.
     #[inline]
-    fn collect_into_impl<const N: usize>(
+    pub fn collect_into<const N: usize>(
         &self,
         args: &Arguments<'v, '_>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> crate::Result<[Option<Value<'v>>; N]> {
         let mut slots = [(); N].map(|_| None);
         self.collect(args, &mut slots, heap)?;
@@ -581,11 +703,11 @@ impl<'v> ParametersSpec<Value<'v>> {
     /// A variant of `collect` that is always inlined
     /// for Def and NativeFunction that are hot-spots
     #[inline(always)]
-    fn collect_inline_impl<'a, A: ArgumentsImpl<'v, 'a>>(
+    pub(crate) fn collect_inline<'a, A: ArgumentsImpl<'v, 'a>>(
         &self,
         args: &A,
         slots: &mut [Option<Value<'v>>],
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> crate::Result<()>
     where
         'v: 'a,
@@ -593,8 +715,8 @@ impl<'v> ParametersSpec<Value<'v>> {
         // If the arguments equal the length and the kinds, and we don't have any other args,
         // then no_args, *args and **kwargs must all be unset,
         // and we don't have to crate args/kwargs objects, we can skip everything else
-        if args.pos().len() == (self.indices.num_positional as usize)
-            && args.pos().len() == self.param_kinds.len()
+        if args.pos().len() == (self.prototype.indices.num_positional as usize)
+            && args.pos().len() == self.prototype.param_kinds.len()
             && args.named().is_empty()
             && args.args().is_none()
             && args.kwargs().is_none()
@@ -613,7 +735,7 @@ impl<'v> ParametersSpec<Value<'v>> {
         &self,
         args: &A,
         slots: &mut [Option<Value<'v>>],
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> crate::Result<()>
     where
         'v: 'a,
@@ -653,16 +775,16 @@ impl<'v> ParametersSpec<Value<'v>> {
                 }
             }
 
-            fn alloc(self, heap: &'v Heap) -> Value<'v> {
+            fn alloc(self, heap: Heap<'v>) -> Value<'v> {
                 let kwargs = match self.kwargs {
-                    Some(kwargs) => Dict::new(coerce(kwargs)),
+                    Some(kwargs) => Dict::from_string_keyed(kwargs),
                     None => Dict::default(),
                 };
-                heap.alloc(kwargs)
+                heap.alloc(kwargs).to_value()
             }
         }
 
-        let len = self.param_kinds.len();
+        let len = self.prototype.param_kinds.len();
         // We might do unchecked stuff later on, so make sure we have as many slots as we expect
         assert!(slots.len() >= len);
 
@@ -671,7 +793,7 @@ impl<'v> ParametersSpec<Value<'v>> {
         let mut next_position = 0;
 
         // First deal with positional parameters
-        if args.pos().len() <= (self.indices.num_positional as usize) {
+        if args.pos().len() <= (self.prototype.indices.num_positional as usize) {
             // fast path for when we don't need to bounce down to filling in args
             for (v, s) in args.pos().iter().zip(slots.iter_mut()) {
                 *s = Some(*v);
@@ -679,7 +801,7 @@ impl<'v> ParametersSpec<Value<'v>> {
             next_position = args.pos().len();
         } else {
             for v in args.pos() {
-                if next_position < (self.indices.num_positional as usize) {
+                if next_position < (self.prototype.indices.num_positional as usize) {
                     slots[next_position] = Some(*v);
                     next_position += 1;
                 } else {
@@ -718,7 +840,7 @@ impl<'v> ParametersSpec<Value<'v>> {
                 .iterate(heap)
                 .map_err(|_| FunctionError::ArgsArrayIsNotIterable)?
             {
-                if next_position < (self.indices.num_positional as usize) {
+                if next_position < (self.prototype.indices.num_positional as usize) {
                     slots[next_position] = Some(v);
                     next_position += 1;
                 } else {
@@ -730,7 +852,7 @@ impl<'v> ParametersSpec<Value<'v>> {
         // Check if the named arguments clashed with the positional arguments
         if unlikely(next_position > lowest_name) {
             return Err(FunctionError::RepeatedArg {
-                name: self.param_names[lowest_name].clone(),
+                name: self.prototype.param_names[lowest_name].clone(),
             }
             .into());
         }
@@ -740,13 +862,12 @@ impl<'v> ParametersSpec<Value<'v>> {
             match DictRef::from_value(param_kwargs) {
                 Some(y) => {
                     for (k, v) in y.iter_hashed() {
-                        match StringValue::new(*k.key()) {
-                            None => return Err(FunctionError::ArgsValueIsNotString.into()),
-                            Some(s) => {
-                                let repeat = match self
-                                    .names
-                                    .get_hashed_string_value(Hashed::new_unchecked(k.hash(), s))
-                                {
+                        match StringValue::new_with_get(*k.key()) {
+                            None => return Err(FunctionError::KwargsKeyIsNotString.into()),
+                            Some((s, str)) => {
+                                let repeat = match self.prototype.names.get_hashed_starlark_str(
+                                    Hashed::new_unchecked(k.hash(), str.as_ref()),
+                                ) {
                                     None => kwargs.insert(Hashed::new_unchecked(k.hash(), s), v),
                                     Some(i) => {
                                         let this_slot = &mut slots[*i as usize];
@@ -771,7 +892,7 @@ impl<'v> ParametersSpec<Value<'v>> {
 
         // We have moved parameters into all the relevant slots, so need to finalise things.
         // We need to set default values and error if any required values are missing
-        let kinds = &*self.param_kinds;
+        let kinds = &*self.prototype.param_kinds;
         // This code is very hot, and setting up iterators was a noticeable bottleneck.
         for index in next_position..kinds.len() {
             // The number of locals must be at least the number of parameters, see `collect`
@@ -783,15 +904,15 @@ impl<'v> ParametersSpec<Value<'v>> {
             if slot.is_some() {
                 continue;
             }
-            match def {
-                ParameterKind::Required => {
-                    let function_name = &self.function_name;
-                    let param_name = &self.param_names[index];
-                    if index < self.indices.num_positional_only as usize {
+            match def.unpack() {
+                ParameterKindUnpacked::Required => {
+                    let function_name = &self.prototype.function_name;
+                    let param_name = &self.prototype.param_names[index];
+                    if index < self.prototype.indices.num_positional_only as usize {
                         return Err(function_error!(
                             "Missing positional-only parameter `{param_name}` for call to `{function_name}`",
                         ));
-                    } else if index >= self.indices.num_positional as usize {
+                    } else if index >= self.prototype.indices.num_positional as usize {
                         return Err(function_error!(
                             "Missing named-only parameter `{param_name}` for call to `{function_name}`",
                         ));
@@ -801,8 +922,8 @@ impl<'v> ParametersSpec<Value<'v>> {
                         ));
                     }
                 }
-                ParameterKind::Defaulted(x) => {
-                    *slot = Some(x.to_value());
+                ParameterKindUnpacked::Defaulted(x) => {
+                    *slot = Some(self.defaults[x as usize].to_value());
                 }
                 _ => {}
             }
@@ -811,8 +932,8 @@ impl<'v> ParametersSpec<Value<'v>> {
         // Now set the kwargs/args slots, if they are requested, and fail it they are absent but used
         // Note that we deliberately give warnings about missing parameters _before_ giving warnings
         // about unexpected extra parameters, so if a user misspells an argument they get a better error.
-        if let Some(args_pos) = self.indices.args {
-            slots[args_pos as usize] = Some(heap.alloc_tuple(&star_args));
+        if let Some(args_pos) = self.prototype.indices.args {
+            slots[args_pos as usize] = Some(heap.alloc_tuple(&star_args).to_value());
         } else if unlikely(!star_args.is_empty()) {
             return Err(FunctionError::ExtraPositionalArg {
                 count: star_args.len(),
@@ -821,7 +942,7 @@ impl<'v> ParametersSpec<Value<'v>> {
             .into());
         }
 
-        if let Some(kwargs_pos) = self.indices.kwargs {
+        if let Some(kwargs_pos) = self.prototype.indices.kwargs {
             slots[kwargs_pos as usize] = Some(kwargs.alloc(heap));
         } else if let Some(kwargs) = kwargs.kwargs {
             return Err(FunctionError::ExtraNamedArg {
@@ -835,22 +956,24 @@ impl<'v> ParametersSpec<Value<'v>> {
 
     /// Check if current parameters can be filled with given arguments signature.
     #[allow(clippy::needless_range_loop)]
-    fn can_fill_with_args_impl(&self, pos: usize, names: &[&str]) -> bool {
-        let mut filled = vec![false; self.param_kinds.len()];
+    pub fn can_fill_with_args(&self, pos: usize, names: &[&str]) -> bool {
+        let mut filled = vec![false; self.prototype.param_kinds.len()];
         for p in 0..pos {
-            if p < (self.indices.num_positional as usize) {
+            if p < (self.prototype.indices.num_positional as usize) {
                 filled[p] = true;
-            } else if self.indices.args.is_some() {
+            } else if self.prototype.indices.args.is_some() {
                 // Filled into `*args`.
             } else {
                 return false;
             }
         }
-        if pos > (self.indices.num_positional as usize) && self.indices.args.is_none() {
+        if pos > (self.prototype.indices.num_positional as usize)
+            && self.prototype.indices.args.is_none()
+        {
             return false;
         }
         for name in names {
-            match self.names.get_str(name) {
+            match self.prototype.names.get_str(name) {
                 Some(i) => {
                     if filled[*i as usize] {
                         // Duplicate argument.
@@ -859,99 +982,25 @@ impl<'v> ParametersSpec<Value<'v>> {
                     filled[*i as usize] = true;
                 }
                 None => {
-                    if self.indices.kwargs.is_none() {
+                    if self.prototype.indices.kwargs.is_none() {
                         return false;
                     }
                 }
             }
         }
-        for (filled, p) in filled.iter().zip(self.param_kinds.iter()) {
+        for (filled, p) in filled.iter().zip(self.prototype.param_kinds.iter()) {
             if *filled {
                 continue;
             }
-            match p {
-                ParameterKind::Args => {}
-                ParameterKind::KWargs => {}
-                ParameterKind::Defaulted(_) => {}
-                ParameterKind::Optional => {}
-                ParameterKind::Required => return false,
+            match p.unpack() {
+                ParameterKindUnpacked::Args => {}
+                ParameterKindUnpacked::KWargs => {}
+                ParameterKindUnpacked::Defaulted(_) => {}
+                ParameterKindUnpacked::Optional => {}
+                ParameterKindUnpacked::Required => return false,
             }
         }
         true
-    }
-
-    /// Create a [`ParametersParser`] for given arguments.
-    #[inline]
-    fn parser_impl<R, F>(
-        &self,
-        args: &Arguments<'v, '_>,
-        eval: &mut Evaluator<'v, '_, '_>,
-        k: F,
-    ) -> crate::Result<R>
-    where
-        F: FnOnce(&mut ParametersParser<'v, '_>, &mut Evaluator<'v, '_, '_>) -> crate::Result<R>,
-    {
-        eval.alloca_init(
-            self.len(),
-            || None,
-            |slots, eval| {
-                self.collect_inline(&args.0, slots, eval.heap())?;
-                let mut parser = ParametersParser::new(slots, &self.param_names);
-                let r = k(&mut parser, eval)?;
-                if !parser.is_eof() {
-                    return Err(other_error!(
-                        "Parser for `{}` did not consume all arguments",
-                        self.function_name
-                    ));
-                }
-                Ok(r)
-            },
-        )
-    }
-}
-
-impl<'v, V: ValueLike<'v>> ParametersSpec<V> {
-    /// Collect `N` arguments.
-    ///
-    /// This function is called by generated code.
-    #[inline]
-    pub fn collect_into<const N: usize>(
-        &self,
-        args: &Arguments<'v, '_>,
-        heap: &'v Heap,
-    ) -> crate::Result<[Option<Value<'v>>; N]> {
-        self.as_value().collect_into_impl(args, heap)
-    }
-
-    /// Move parameters from [`Arguments`] to a list of [`Value`],
-    /// using the supplied [`ParametersSpec`].
-    #[inline]
-    pub fn collect(
-        &self,
-        args: &Arguments<'v, '_>,
-        slots: &mut [Option<Value<'v>>],
-        heap: &'v Heap,
-    ) -> crate::Result<()> {
-        self.as_value().collect_impl(args, slots, heap)
-    }
-
-    /// Generate documentation for each of the parameters.
-    ///
-    /// # Arguments
-    /// * `parameter_types` should be a mapping of parameter index to type
-    /// * `parameter_docs` should be a mapping of parameter name to possible documentation for
-    ///                    that parameter
-    #[inline]
-    pub fn documentation(
-        &self,
-        parameter_types: Vec<Ty>,
-        parameter_docs: HashMap<String, Option<DocString>>,
-    ) -> DocParams {
-        self.as_value().documentation_with_default_value_formatter(
-            parameter_types,
-            parameter_docs,
-            |v| v.to_value().to_repr(),
-        )
     }
 
     /// Create a [`ParametersParser`] for given arguments.
@@ -965,26 +1014,39 @@ impl<'v, V: ValueLike<'v>> ParametersSpec<V> {
     where
         F: FnOnce(&mut ParametersParser<'v, '_>, &mut Evaluator<'v, '_, '_>) -> crate::Result<R>,
     {
-        self.as_value().parser_impl(args, eval, k)
+        eval.alloca_init(
+            self.len(),
+            || None,
+            |slots, eval| {
+                self.collect_inline(&args.0, slots, eval.heap())?;
+                let mut parser = ParametersParser::new(slots, &self.prototype.param_names);
+                let r = k(&mut parser, eval)?;
+                if !parser.is_eof() {
+                    return Err(other_error!(
+                        "Parser for `{}` did not consume all arguments",
+                        self.prototype.function_name
+                    ));
+                }
+                Ok(r)
+            },
+        )
     }
+}
 
-    /// A variant of `collect` that is always inlined
-    /// for Def and NativeFunction that are hot-spots
-    #[inline(always)]
-    pub(crate) fn collect_inline<'a, A: ArgumentsImpl<'v, 'a>>(
+impl<'v> ParametersSpec<Value<'v>> {
+    /// Generate documentation for each of the parameters.
+    ///
+    /// # Arguments
+    /// * `parameter_types` should be a mapping of parameter index to type
+    /// * `parameter_docs` should be a mapping of parameter name to possible documentation for
+    ///                    that parameter
+    pub fn documentation(
         &self,
-        args: &A,
-        slots: &mut [Option<Value<'v>>],
-        heap: &'v Heap,
-    ) -> crate::Result<()>
-    where
-        'v: 'a,
-    {
-        self.as_value().collect_inline_impl(args, slots, heap)
-    }
-
-    /// Check if current parameters can be filled with given arguments signature.
-    pub fn can_fill_with_args(&self, pos: usize, names: &[&str]) -> bool {
-        self.as_value().can_fill_with_args_impl(pos, names)
+        parameter_types: Vec<Ty>,
+        parameter_docs: HashMap<String, Option<DocString>>,
+    ) -> DocParams {
+        self.documentation_with_default_value_formatter(parameter_types, parameter_docs, |v| {
+            v.to_repr()
+        })
     }
 }

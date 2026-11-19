@@ -12,12 +12,14 @@ package com.facebook.buck.step.isolatedsteps;
 
 import com.facebook.buck.core.build.execution.context.IsolatedExecutionContext;
 import com.facebook.buck.step.StepExecutionResult;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 
 /**
  * Isolated step - build rule's step that is isolated from the buck core data structures as an
  * action graph.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface IsolatedStep {
 
   /**

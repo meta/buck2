@@ -18,7 +18,7 @@ load("@prelude//:paths.bzl", "paths")
 #        quux.cmi
 #      corge.cmx:
 #        quux.cmx
-#```
+# ```
 # and the sources we care about.
 #
 #'parse_makefile' produces a mapping of which sources depend on which. In fact,

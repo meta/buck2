@@ -22,6 +22,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::StaticStr;
 
 use crate::util::arc_or_static::ArcOrStatic;
 
@@ -36,14 +38,24 @@ use crate::util::arc_or_static::ArcOrStatic;
     PartialOrd,
     Debug,
     derive_more::Display,
-    Allocative
+    Allocative,
+    Pagable
 )]
 #[display("{}", &**self)]
 pub struct ArcStr(ArcOrStatic<str>);
 
 impl ArcStr {
-    /// Create from static `str` without allocation.
-    pub fn new_static(s: &'static str) -> ArcStr {
+    /// Create from a `&'static str`. Allocates an `Arc<str>` — for zero-copy
+    /// round-trippable static strings, register via `pagable::static_str!`
+    /// and use [`ArcStr::new_static_value`].
+    pub fn new_static(s: StaticStr) -> ArcStr {
+        // ArcStr(ArcOrStatic::new_arc(Arc::from(s)))
+        ArcStr(ArcOrStatic::new_static(s))
+    }
+
+    /// Create from a pre-registered [`StaticStr`] — zero-copy and preserved
+    /// across pagable round-trips by index.
+    pub fn new_static_value(s: StaticStr) -> ArcStr {
         ArcStr(ArcOrStatic::new_static(s))
     }
 
@@ -67,10 +79,12 @@ impl Borrow<str> for ArcStr {
     }
 }
 
+pagable::static_str!(EMPTY_STR = "");
+
 impl<'a> From<&'a str> for ArcStr {
     fn from(s: &'a str) -> Self {
         if s.is_empty() {
-            ArcStr(ArcOrStatic::new_static(""))
+            ArcStr(ArcOrStatic::new_static(EMPTY_STR))
         } else {
             ArcStr(ArcOrStatic::new_arc(Arc::from(s)))
         }

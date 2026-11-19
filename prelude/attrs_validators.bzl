@@ -38,7 +38,8 @@ def _validation_specs_arg():
     return {
         "validation_specs": attrs.dict(
             attrs.string(),
-            attrs.source(doc = """
+            attrs.source(
+                doc = """
                 An artifact pointing to a JSON file that will be used in ValidationSpec.
                 {
                   "version": 1,
@@ -47,7 +48,8 @@ def _validation_specs_arg():
                     "status": "success" | "failure",
                   }
                 } 
-            """),
+            """
+            ),
             default = {},
         ),
     }

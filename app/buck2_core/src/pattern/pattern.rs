@@ -11,23 +11,23 @@
 use std::fmt;
 use std::fmt::Display;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use allocative::Allocative;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_fs::paths::relative_path::Component;
+use buck2_fs::paths::relative_path::RelativePath;
 use dupe::Dupe;
-use once_cell::sync::Lazy;
+use pagable::Pagable;
 use regex::Regex;
-use relative_path::RelativePath;
 use serde::Serialize;
+use strong_hash::StrongHash;
 
 use crate::cells::CellAliasResolver;
 use crate::cells::CellResolver;
-use crate::cells::alias::CellAlias;
 use crate::cells::cell_path::CellPath;
-use crate::cells::cell_path::CellPathCow;
-use crate::cells::cell_path::CellPathRef;
 use crate::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use crate::cells::cell_root_path::CellRootPathBuf;
 use crate::cells::name::CellName;
@@ -48,7 +48,6 @@ use crate::pattern::pattern_type::ConfiguredProvidersPatternExtra;
 use crate::pattern::pattern_type::PatternType;
 use crate::pattern::pattern_type::ProvidersPatternExtra;
 use crate::pattern::pattern_type::TargetPatternExtra;
-use crate::provider::flavors::map_flavors;
 use crate::provider::label::NonDefaultProvidersName;
 use crate::provider::label::ProviderName;
 use crate::provider::label::ProvidersLabel;
@@ -66,7 +65,7 @@ enum TargetPatternParseError {
     #[error("Package is empty")]
     PackageIsEmpty,
     #[error(
-        "Must be absolute. Starting with either `//` for a cell alias or `:` for a relative target."
+        "Target pattern must be absolute (e.g. `//package:target`). Relative patterns like `:target` are not permitted in this context."
     )]
     AbsoluteRequired,
     #[error(
@@ -79,10 +78,10 @@ enum TargetPatternParseError {
         "You may be trying to use a macro instead of a target pattern. Macro usage is invalid here"
     )]
     PossibleMacroUsage,
-    #[error("Expecting {0} pattern, got: `{1}`")]
-    ExpectingPatternOfType(&'static str, String),
     #[error("Configuration part of the pattern must be enclosed in `()`")]
     ConfigurationPartMustBeEnclosedInParentheses,
+    #[error("Configuration is not supported on package or recursive pattern `{0}`")]
+    ConfigurationOnPackageOrRecursivePattern(String),
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -117,10 +116,7 @@ pub fn display_precise_pattern<'a, T: PatternType>(
 
 /// Extract provider name from a target pattern.
 pub(crate) fn split_providers_name(s: &str) -> buck2_error::Result<(&str, ProvidersName)> {
-    if let Some((t, flavors)) = split1_opt_ascii(s, AsciiChar::new('#')) {
-        let name = map_flavors(flavors, s)?;
-        Ok((t, name))
-    } else if let Some((t, p)) = split1_opt_ascii(s, AsciiChar::new('[')) {
+    if let Some((t, p)) = split1_opt_ascii(s, AsciiChar::new('[')) {
         let mut names = Vec::new();
 
         let mut remaining = if let Some((p, r)) = split1_opt_ascii(p, AsciiChar::new(']')) {
@@ -237,7 +233,7 @@ impl TargetLabelWithExtra<ProvidersPatternExtra> {
 }
 
 /// A parsed target pattern.
-#[derive(Clone, Debug, Hash, Eq, PartialEq, Allocative)]
+#[derive(Clone, Debug, Hash, StrongHash, Eq, PartialEq, Allocative, Pagable)]
 pub enum ParsedPattern<T: PatternType> {
     /// A target pattern that matches a explicit target pattern type T. See
     /// `PatternType` for pattern
@@ -267,7 +263,7 @@ impl ParsedPattern<TargetPatternExtra> {
             }
             ParsedPattern::Package(pkg) => target_pkg.as_cell_path() == pkg.as_cell_path(),
             ParsedPattern::Recursive(cell_path) => {
-                target_pkg.as_cell_path().starts_with(cell_path.as_ref())
+                target_pkg.as_cell_path().starts_with(*cell_path)
             }
         }
     }
@@ -336,35 +332,14 @@ impl<T: PatternType> ParsedPattern<T> {
             cell_alias_resolver,
             TargetParsingOptions {
                 relative: TargetParsingRel::RequireAbsolute(cell),
-                infer_target: false,
+                infer_target: InferTargetNames::No,
                 strip_package_trailing_slash: false,
             },
             pattern,
         )
         .with_buck_error_context(|| {
-            format!("Invalid absolute target pattern `{pattern}` is not allowed")
+            format!("Error parsing target pattern `{pattern}`, expected an absolute pattern")
         })?;
-
-        Self::from_parsed_pattern_with_modifiers(pattern_with_modifiers)
-    }
-
-    pub fn parse_not_relaxed(
-        pattern: &str,
-        relative: TargetParsingRel<'_>,
-        cell_resolver: &CellResolver,
-        cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<Self> {
-        let pattern_with_modifiers = parse_target_pattern(
-            cell_resolver,
-            cell_alias_resolver,
-            TargetParsingOptions {
-                relative,
-                infer_target: false,
-                strip_package_trailing_slash: false,
-            },
-            pattern,
-        )
-        .with_buck_error_context(|| format!("Invalid target pattern `{pattern}` is not allowed"))?;
 
         Self::from_parsed_pattern_with_modifiers(pattern_with_modifiers)
     }
@@ -378,7 +353,7 @@ impl<T: PatternType> ParsedPattern<T> {
     /// generally preferred elsewhere.
     pub fn parse_relaxed(
         target_alias_resolver: &dyn TargetAliasResolver,
-        relative_dir: CellPathRef,
+        relative_dir: CellPath,
         pattern: &str,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
@@ -388,17 +363,41 @@ impl<T: PatternType> ParsedPattern<T> {
             cell_alias_resolver,
             TargetParsingOptions {
                 relative: TargetParsingRel::AllowRelative(
-                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
-                        relative_dir.to_owned(),
-                    ),
+                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(relative_dir),
                     Some(target_alias_resolver),
                 ),
-                infer_target: true,
+                infer_target: InferTargetNames::Yes,
                 strip_package_trailing_slash: true,
             },
             pattern,
         )
         .with_buck_error_context(|| format!("Parsing target pattern `{pattern}`"))?;
+
+        Self::from_parsed_pattern_with_modifiers(pattern_with_modifiers)
+    }
+
+    /// Parse a TargetPattern out, resolving aliases via `cell_resolver` and resolving
+    /// relative targets as permitted by `relative`. If `infer_target` is `Yes`, a target
+    /// name is inferred when none is provided (e.g. `//foo/bar` is interpreted as
+    /// `//foo/bar:bar`).
+    pub fn parse_not_relaxed(
+        pattern: &str,
+        relative: TargetParsingRel<'_>,
+        cell_resolver: &CellResolver,
+        cell_alias_resolver: &CellAliasResolver,
+        infer_target: InferTargetNames,
+    ) -> buck2_error::Result<Self> {
+        let pattern_with_modifiers = parse_target_pattern(
+            cell_resolver,
+            cell_alias_resolver,
+            TargetParsingOptions {
+                relative,
+                infer_target,
+                strip_package_trailing_slash: false,
+            },
+            pattern,
+        )
+        .with_buck_error_context(|| format!("Error parsing target pattern `{pattern}`"))?;
 
         Self::from_parsed_pattern_with_modifiers(pattern_with_modifiers)
     }
@@ -476,19 +475,19 @@ impl<T: PatternType> ParsedPatternWithModifiers<T> {
             cell_alias_resolver,
             TargetParsingOptions {
                 relative: TargetParsingRel::RequireAbsolute(cell),
-                infer_target: false,
+                infer_target: InferTargetNames::No,
                 strip_package_trailing_slash: false,
             },
             pattern,
         )
         .with_buck_error_context(|| {
-            format!("Invalid absolute target pattern `{pattern}` is not allowed")
+            format!("Error parsing target pattern `{pattern}`, expected an absolute pattern")
         })
     }
 
     pub fn parse_relaxed(
         target_alias_resolver: &dyn TargetAliasResolver,
-        relative_dir: CellPathRef,
+        relative_dir: CellPath,
         pattern: &str,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
@@ -498,12 +497,10 @@ impl<T: PatternType> ParsedPatternWithModifiers<T> {
             cell_alias_resolver,
             TargetParsingOptions {
                 relative: TargetParsingRel::AllowRelative(
-                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
-                        relative_dir.to_owned(),
-                    ),
+                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(relative_dir),
                     Some(target_alias_resolver),
                 ),
-                infer_target: true,
+                infer_target: InferTargetNames::Yes,
                 strip_package_trailing_slash: true,
             },
             pattern,
@@ -522,16 +519,16 @@ impl<T: PatternType> ParsedPatternWithModifiers<T> {
             cell_alias_resolver,
             TargetParsingOptions {
                 relative,
-                infer_target: false,
+                infer_target: InferTargetNames::No,
                 strip_package_trailing_slash: false,
             },
             pattern,
         )
-        .with_buck_error_context(|| format!("Invalid target pattern `{pattern}` is not allowed"))
+        .with_buck_error_context(|| format!("Error parsing target pattern `{pattern}`"))
     }
 }
 
-#[derive(Clone, Debug, Hash, Eq, PartialEq, Allocative)]
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Allocative, Pagable)]
 pub enum ParsedPatternPredicate<T: PatternType> {
     Any,
     AnyOf(Vec<ParsedPattern<T>>),
@@ -638,10 +635,12 @@ where
                 let package = normalize_package(pattern, strip_package_trailing_slash)?;
 
                 let target = package
-                    .file_name()
-                    .buck_error_context(TargetPatternParseError::PackageIsEmpty)?;
+                    .components()
+                    .next_back()
+                    .and_then(Component::as_normal)
+                    .ok_or(TargetPatternParseError::PackageIsEmpty)?;
 
-                let target_name = TargetName::new(target)?;
+                let target_name = TargetName::new(target.as_str())?;
 
                 Ok(PatternData::TargetInPackage {
                     package,
@@ -754,28 +753,10 @@ impl<'a, T: PatternType> PatternData<'a, T> {
     }
 }
 
-// Splits a pattern into cell alias and forward relative path if "//" is present, otherwise returns None,
-pub fn maybe_split_cell_alias_and_relative_path(
-    pattern: &str,
-) -> buck2_error::Result<Option<(CellAlias, &ForwardRelativePath)>> {
-    Ok(match split1_opt_ascii(pattern, AsciiStr2::new("//")) {
-        Some((a, p)) => Some((
-            CellAlias::new(trim_prefix_ascii(a, AsciiChar::new('@')).to_owned()),
-            ForwardRelativePath::new(p)?,
-        )),
-        None => None,
-    })
-}
-
 fn lex_provider_pattern(
     pattern: &str,
     strip_package_trailing_slash: bool,
 ) -> buck2_error::Result<PatternParts<'_, ProvidersPatternExtra>> {
-    let (cell_alias, pattern) = match split1_opt_ascii(pattern, AsciiStr2::new("//")) {
-        Some((a, p)) => (Some(trim_prefix_ascii(a, AsciiChar::new('@'))), p),
-        None => (None, pattern),
-    };
-
     if pattern.chars().filter(|&c| c == '?').count() > 1 {
         return Err(buck2_error!(
             buck2_error::ErrorTag::Input,
@@ -783,9 +764,15 @@ fn lex_provider_pattern(
         ));
     }
 
+    // Modifiers may be cell-qualified, so they come off before the cell alias is split at `//`.
     let (pattern, modifiers) = match split1_opt_ascii(pattern, AsciiChar::new('?')) {
         Some((pattern, modifiers)) => (pattern, Modifiers::parse(modifiers)),
         None => (pattern, Modifiers::new(None)),
+    };
+
+    let (cell_alias, pattern) = match split1_opt_ascii(pattern, AsciiStr2::new("//")) {
+        Some((a, p)) => (Some(trim_prefix_ascii(a, AsciiChar::new('@'))), p),
+        None => (None, pattern),
     };
 
     let pattern = match split1_opt_ascii(pattern, AsciiChar::new(':')) {
@@ -809,13 +796,13 @@ fn lex_provider_pattern(
         None => {
             if let Some(package) = strip_suffix_ascii(pattern, AsciiStr::new("/...")) {
                 PatternData::Recursive {
-                    package: RelativePath::new(package),
+                    package: RelativePath::unchecked_new(package),
                     modifiers,
                 }
                 .into()
             } else if pattern == "..." {
                 PatternData::Recursive {
-                    package: RelativePath::new(""),
+                    package: RelativePath::empty(),
                     modifiers,
                 }
                 .into()
@@ -840,12 +827,12 @@ fn lex_provider_pattern(
 }
 
 fn lex_configuration_predicate(pattern: &str) -> buck2_error::Result<ConfigurationPredicate> {
-    let pattern = pattern.strip_prefix('(').buck_error_context(
-        TargetPatternParseError::ConfigurationPartMustBeEnclosedInParentheses,
-    )?;
-    let pattern = pattern.strip_suffix(')').buck_error_context(
-        TargetPatternParseError::ConfigurationPartMustBeEnclosedInParentheses,
-    )?;
+    let pattern = pattern
+        .strip_prefix('(')
+        .ok_or(TargetPatternParseError::ConfigurationPartMustBeEnclosedInParentheses)?;
+    let pattern = pattern
+        .strip_suffix(')')
+        .ok_or(TargetPatternParseError::ConfigurationPartMustBeEnclosedInParentheses)?;
     match pattern.split_once('#') {
         Some((cfg, hash)) => {
             let cfg = BoundConfigurationLabel::new(cfg.to_owned())?;
@@ -865,43 +852,82 @@ fn lex_configuration_predicate(pattern: &str) -> buck2_error::Result<Configurati
     }
 }
 
-/// Split target pattern and configuration preserving parentheses for better diagnostics.
-fn split_cfg(s: &str) -> Option<(&str, &str)> {
-    // Fast path.
-    if !s.contains(' ') {
+/// Split target pattern and configuration predicate(s).
+///
+/// Configuration predicates appear as parenthesized suffixes: `target (cfg)`.
+/// `ConfiguredTargetLabel::fmt` can also produce two groups for toolchain deps:
+/// `target (cfg) (exec_cfg)`. This function handles both forms.
+///
+/// Since parentheses are disallowed in both target names (`TargetName::verify`)
+/// and configuration labels (`BoundConfigurationLabel::new`, which is also the
+/// validation path for labels produced by config transitions via
+/// `ConfigurationData::from_platform`), there cannot be nested parentheses in
+/// valid patterns. We simply find the last `(` preceded by a space, split
+/// there, and then check if the remainder also ends with a parenthesized
+/// group (the cfg, with the already-split group being exec_cfg).
+///
+/// Returns `(target, cfg, Option<exec_cfg>)` where cfg and exec_cfg include
+/// the surrounding parentheses.
+fn split_cfg(s: &str) -> Option<(&str, &str, Option<&str>)> {
+    // Configuration predicates are parenthesized and must be at the end of the string.
+    if !s.ends_with(')') {
         return None;
     }
 
-    let mut braces: u32 = 0;
-    for (i, c) in s.char_indices() {
-        match c {
-            '(' => braces += 1,
-            ')' => match braces.checked_sub(1) {
-                Some(b) => braces = b,
-                None => {
-                    // Pattern is invalid, let parser fail elsewhere.
-                    return None;
-                }
-            },
-            ' ' if braces == 0 => return Some((&s[..i], &s[i + 1..])),
-            _ => {}
+    // Parentheses are disallowed in target names and configuration labels,
+    // so there are no nested parens to worry about. Just find the last '('.
+    let i = s.rfind('(')?;
+    if i == 0 || s.as_bytes()[i - 1] != b' ' {
+        return None;
+    }
+
+    let last_group = &s[i..];
+    let remainder = &s[..i - 1];
+
+    // Check if the remainder also ends with a parenthesized group preceded by
+    // a space. This handles the `target (cfg) (exec_cfg)` format produced by
+    // ConfiguredTargetLabel::fmt for toolchain deps.
+    if remainder.ends_with(')') {
+        if let Some(j) = remainder.rfind('(') {
+            if j > 0 && remainder.as_bytes()[j - 1] == b' ' {
+                return Some((&remainder[..j - 1], &remainder[j..], Some(last_group)));
+            }
         }
     }
-    None
+
+    Some((remainder, last_group, None))
 }
 
 pub fn lex_configured_providers_pattern(
     pattern: &str,
     strip_package_trailing_slash: bool,
 ) -> buck2_error::Result<PatternParts<'_, ConfiguredProvidersPatternExtra>> {
-    let (provider_pattern, cfg) = match split_cfg(pattern) {
-        Some((providers, cfg)) => {
+    let (provider_pattern, cfg, exec_cfg) = match split_cfg(pattern) {
+        Some((providers, cfg, exec_cfg)) => {
             let provider_pattern = lex_provider_pattern(providers, strip_package_trailing_slash)?;
+            // `Package` and `Recursive` patterns have nowhere to keep a configuration, and
+            // `try_map` below would drop it without a word.
+            if let PatternDataOrAmbiguous::PatternData(
+                PatternData::Recursive { .. } | PatternData::AllTargetsInPackage { .. },
+            ) = &provider_pattern.pattern
+            {
+                return Err(
+                    TargetPatternParseError::ConfigurationOnPackageOrRecursivePattern(
+                        pattern.to_owned(),
+                    )
+                    .into(),
+                );
+            }
             let cfg = lex_configuration_predicate(cfg)?;
-            (provider_pattern, cfg)
+            let exec_cfg = match exec_cfg {
+                Some(e) => lex_configuration_predicate(e)?,
+                None => ConfigurationPredicate::Any,
+            };
+            (provider_pattern, cfg, exec_cfg)
         }
         None => (
             lex_provider_pattern(pattern, strip_package_trailing_slash)?,
+            ConfigurationPredicate::Any,
             ConfigurationPredicate::Any,
         ),
     };
@@ -926,7 +952,11 @@ pub fn lex_configured_providers_pattern(
     }
 
     provider_pattern.try_map(|ProvidersPatternExtra { providers }| {
-        Ok(ConfiguredProvidersPatternExtra { providers, cfg })
+        Ok(ConfiguredProvidersPatternExtra {
+            providers,
+            cfg,
+            exec_cfg,
+        })
     })
 }
 
@@ -939,8 +969,12 @@ pub fn lex_target_pattern<T: PatternType>(
     provider_pattern
         .try_map(|extra| T::from_configured_providers(extra))
         .with_buck_error_context(|| {
-            // This can only fail when `PatternType = TargetName`, so the message is correct.
-            TargetPatternParseError::ExpectingPatternOfType(T::NAME, pattern.to_owned())
+            format!(
+                "Expecting {} pattern, got: `{}`",
+                // This can only fail when `PatternType = TargetName`, so the message is correct.
+                T::NAME,
+                pattern.to_owned(),
+            )
         })
 }
 
@@ -951,7 +985,7 @@ fn normalize_package(
     // Strip or reject trailing `/`, such as in `foo/:bar`.
     if let Some(stripped) = strip_suffix_ascii(package, AsciiChar::new('/')) {
         if strip_package_trailing_slash {
-            return Ok(RelativePath::new(stripped));
+            return Ok(RelativePath::unchecked_new(stripped));
         } else {
             return Err(buck2_error::Error::from(
                 TargetPatternParseError::PackageTrailingSlash,
@@ -959,7 +993,7 @@ fn normalize_package(
         }
     }
 
-    Ok(RelativePath::new(package))
+    Ok(RelativePath::unchecked_new(package))
 }
 
 #[derive(Clone, Dupe)]
@@ -970,7 +1004,7 @@ pub enum TargetParsingRel<'a> {
         Option<&'a dyn TargetAliasResolver>,
     ),
     /// Allows relative patterns, but only if they're like `:foo`, not `bar:foo`
-    AllowLimitedRelative(CellPathRef<'a>),
+    AllowLimitedRelative(CellPath),
     /// Require the pattern to be absolute.
     ///
     /// Still allows reference to the self-cell (`//foo:bar`)
@@ -978,22 +1012,6 @@ pub enum TargetParsingRel<'a> {
 }
 
 impl<'a> TargetParsingRel<'a> {
-    fn dir(&self) -> Option<CellPathRef<'a>> {
-        match self {
-            TargetParsingRel::AllowRelative(dir, _) => Some(dir.current_dir().as_ref()),
-            TargetParsingRel::AllowLimitedRelative(dir) => Some(*dir),
-            TargetParsingRel::RequireAbsolute(_) => None,
-        }
-    }
-
-    fn allow_full_relative(&self) -> bool {
-        match self {
-            TargetParsingRel::AllowRelative(_, _) => true,
-            TargetParsingRel::AllowLimitedRelative(_) => false,
-            TargetParsingRel::RequireAbsolute(_) => false,
-        }
-    }
-
     fn target_alias_resolver(&self) -> Option<&dyn TargetAliasResolver> {
         match self {
             TargetParsingRel::AllowRelative(_, r) => *r,
@@ -1014,7 +1032,14 @@ impl<'a> TargetParsingRel<'a> {
         match self {
             TargetParsingRel::AllowRelative(dir, _) => Ok(dir.join_normalized(path)?),
             TargetParsingRel::AllowLimitedRelative(dir) => {
-                Ok(dir.join(<&ForwardRelativePath>::try_from(path)?))
+                // This allows things of the form `//foo` (having a cell alias) or `:bar` (no cell, no package,
+                // just relative target). This is a bit of a wonky  definition of "is_absolute" but we rely on
+                // it.
+                if path.as_str().is_empty() {
+                    Ok(*dir)
+                } else {
+                    Err(TargetPatternParseError::AbsoluteRequired.into())
+                }
             }
             TargetParsingRel::RequireAbsolute(_) => Err(buck2_error::Error::from(
                 TargetPatternParseError::AbsoluteRequired,
@@ -1023,11 +1048,19 @@ impl<'a> TargetParsingRel<'a> {
     }
 }
 
+/// Whether to infer a target name from the last component of a package path when
+/// a pattern does not name one, making `//foo/bar` equivalent to `//foo/bar:bar`.
+#[derive(Copy, Clone, Dupe, Debug, Eq, PartialEq, Allocative, Pagable)]
+pub enum InferTargetNames {
+    Yes,
+    No,
+}
+
 #[derive(Clone, Dupe)]
 struct TargetParsingOptions<'a> {
     relative: TargetParsingRel<'a>,
     /// Whether to infer the target in a pattern such as `foo/bar` (to `foo/bar:bar`).
-    infer_target: bool,
+    infer_target: InferTargetNames,
     /// Whether to strip trailing slashes in package names, in e.g. `foo/bar/` or `foo/bar/:qux`.
     /// If not set, trailing slashes are an error. Note that this happens before target inference
     /// (if enabled), so e.g. `foo/bar/` becomes `foo/bar:bar`.
@@ -1083,54 +1116,32 @@ where
         pattern,
     } = lex;
 
-    let pattern = if infer_target {
-        pattern.infer_target()?
-    } else {
-        pattern.reject_ambiguity()?
+    let pattern = match infer_target {
+        InferTargetNames::Yes => pattern.infer_target()?,
+        InferTargetNames::No => pattern.reject_ambiguity()?,
     };
 
-    // This allows things of the form `//foo` (having a cell alias) or `:bar` (no cell, no package,
-    // just relative target). This is a bit of a wonky  definition of "is_absolute" but we rely on
-    // it.
-    let is_absolute_or_adjacent = cell_alias.is_some() || pattern.is_adjacent_target();
-    if !relative.allow_full_relative() && !is_absolute_or_adjacent {
-        return Err(TargetPatternParseError::AbsoluteRequired.into());
-    }
-
-    // Prohibit parsing `:foo` as `root//:foo`.
-    if relative.dir().is_none() && cell_alias.is_none() {
-        return Err(TargetPatternParseError::AbsoluteRequired.into());
-    }
-
-    // We ask for the cell, but if the pattern is relative we might not use it
-    let cell = cell_alias_resolver.resolve(cell_alias.unwrap_or_default())?;
-
-    let package_path = pattern.package_path();
-
-    let path = match relative.dir() {
-        Some(_) if cell_alias.is_none() => {
-            CellPathCow::Owned(relative.join_relative(package_path)?)
-        }
-        _ => CellPathCow::Borrowed(CellPathRef::new(
+    let path = if let Some(cell_alias) = cell_alias {
+        let cell = cell_alias_resolver.resolve(cell_alias)?;
+        CellPath::new(
             cell,
-            CellRelativePath::new(<&ForwardRelativePath>::try_from(package_path)?),
-        )),
+            CellRelativePath::new(<&ForwardRelativePath>::try_from(pattern.package_path())?),
+        )
+    } else {
+        let package_path = pattern.package_path();
+        relative.join_relative(package_path)?
     };
 
     let modifiers = pattern.modifiers().clone();
 
     let parsed_pattern = match pattern {
-        PatternData::Recursive { .. } => ParsedPattern::Recursive(path.into_owned()),
+        PatternData::Recursive { .. } => ParsedPattern::Recursive(path),
         PatternData::AllTargetsInPackage { .. } => {
-            ParsedPattern::Package(PackageLabel::from_cell_path(path.as_ref())?)
+            ParsedPattern::Package(PackageLabel::from_cell_path(path)?)
         }
         PatternData::TargetInPackage {
             target_name, extra, ..
-        } => ParsedPattern::Target(
-            PackageLabel::from_cell_path(path.as_ref())?,
-            target_name,
-            extra,
-        ),
+        } => ParsedPattern::Target(PackageLabel::from_cell_path(path)?, target_name, extra),
     };
 
     Ok(ParsedPatternWithModifiers {
@@ -1142,9 +1153,6 @@ where
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tier0)]
 enum ResolveTargetAliasError {
-    #[error("Error dereferencing alias `{}` -> `{}`", target, alias)]
-    ErrorDereferencing { target: String, alias: String },
-
     #[error("Invalid alias: `{}`", alias)]
     InvalidAlias { alias: String },
 
@@ -1163,8 +1171,8 @@ where
     T: PatternType,
 {
     // Imported from Buck1
-    static ALIAS_REGEX: Lazy<Regex> =
-        Lazy::new(|| Regex::new("^[a-zA-Z_-][a-zA-Z0-9_-]*$").unwrap());
+    static ALIAS_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new("^[a-zA-Z_-][a-zA-Z0-9_-]*$").unwrap());
 
     // If the input starts with a cell path, it can't be an alias.
     if lex.cell_alias.is_some() {
@@ -1204,15 +1212,12 @@ where
         cell_alias_resolver,
         TargetParsingOptions {
             relative: TargetParsingRel::RequireAbsolute(cell_name),
-            infer_target: false,
+            infer_target: InferTargetNames::No,
             strip_package_trailing_slash: false,
         },
         alias,
     )
-    .with_buck_error_context(|| ResolveTargetAliasError::ErrorDereferencing {
-        target: target.to_owned(),
-        alias: alias.to_owned(),
-    })?;
+    .with_buck_error_context(|| format!("Error dereferencing alias `{}` -> `{}`", target, alias))?;
 
     // And finally, put the `T` we were looking for back together.
     let parsed_pattern = match res.parsed_pattern {
@@ -1245,12 +1250,11 @@ pub enum PackageSpec<T: PatternType> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::marker::PhantomData;
 
     use assert_matches::assert_matches;
+    use buck2_hash::IntentionallyStdHashMap;
     use dupe::Dupe;
-    use gazebo::prelude::*;
     use test_case::test_case;
 
     use crate::cells::CellAliasResolver;
@@ -1261,11 +1265,11 @@ mod tests {
     use crate::cells::cell_root_path::CellRootPathBuf;
     use crate::cells::name::CellName;
     use crate::cells::paths::CellRelativePath;
-    use crate::cells::paths::CellRelativePathBuf;
     use crate::configuration::bound_label::BoundConfigurationLabel;
     use crate::configuration::builtin::BuiltinPlatform;
     use crate::configuration::hash::ConfigurationHash;
     use crate::package::PackageLabel;
+    use crate::pattern::pattern::InferTargetNames;
     use crate::pattern::pattern::Modifiers;
     use crate::pattern::pattern::ParsedPattern;
     use crate::pattern::pattern::ParsedPatternWithModifiers;
@@ -1289,11 +1293,8 @@ mod tests {
         ParsedPattern::Package(PackageLabel::testing_new(cell, path))
     }
 
-    fn mk_recursive<P: PatternType>(cell: &str, path: &str) -> ParsedPattern<P> {
-        ParsedPattern::Recursive(CellPath::new(
-            CellName::testing_new(cell),
-            CellRelativePathBuf::unchecked_new(path.to_owned()),
-        ))
+    fn mk_recursive<P: PatternType>(package: &str) -> ParsedPattern<P> {
+        ParsedPattern::Recursive(CellPath::testing_new(package))
     }
 
     fn mk_target(cell: &str, path: &str, target: &str) -> ParsedPattern<TargetPatternExtra> {
@@ -1317,7 +1318,9 @@ mod tests {
                 providers: providers.map_or(ProvidersName::Default, |n| {
                     ProvidersName::NonDefault(triomphe::Arc::new(NonDefaultProvidersName::Named(
                         buck2_util::arc_str::ArcSlice::from_iter(
-                            n.map(|s| ProviderName::new((*s).to_owned()).unwrap()),
+                            n.iter()
+                                .map(|s| ProviderName::new((*s).to_owned()).unwrap())
+                                .collect::<Vec<_>>(),
                         ),
                     )))
                 }),
@@ -1334,7 +1337,11 @@ mod tests {
     ) -> ParsedPattern<ConfiguredProvidersPatternExtra> {
         mk_providers(cell, path, target, providers)
             .try_map(|ProvidersPatternExtra { providers }| {
-                Ok(ConfiguredProvidersPatternExtra { providers, cfg })
+                Ok(ConfiguredProvidersPatternExtra {
+                    providers,
+                    cfg,
+                    exec_cfg: ConfigurationPredicate::Any,
+                })
             })
             .unwrap()
     }
@@ -1398,7 +1405,7 @@ mod tests {
                     CellRootPathBuf::testing_new("cell2"),
                 ),
             ],
-            HashMap::from_iter([
+            IntentionallyStdHashMap::from_iter([
                 (
                     NonEmptyCellAlias::testing_new("cell1"),
                     CellName::testing_new("cell1"),
@@ -1420,10 +1427,7 @@ mod tests {
     #[test_case(PhantomData::< ConfiguredTargetPatternExtra >; "parsing ConfiguredTargetPatternExtra")]
     #[test_case(PhantomData::< ConfiguredProvidersPatternExtra >; "parsing ConfiguredProvidersPatternExtra")]
     fn parse_absolute_pattern<T: PatternType>(_: PhantomData<T>) {
-        let package = CellPath::new(
-            CellName::testing_new("root"),
-            CellRelativePath::unchecked_new("package/path").to_owned(),
-        );
+        let package = CellPath::testing_new("root//package/path");
 
         assert_eq!(
             mk_package::<T>("root", "package/path"),
@@ -1485,7 +1489,7 @@ mod tests {
             .unwrap()
         );
         assert_eq!(
-            mk_recursive::<T>("root", "package/path"),
+            mk_recursive::<T>("root//package/path"),
             ParsedPattern::<T>::parse_precise(
                 "//package/path/...",
                 CellName::testing_new("root"),
@@ -1495,22 +1499,21 @@ mod tests {
             .unwrap()
         );
         assert_eq!(
-            mk_recursive::<T>("root", "package/path"),
+            mk_recursive::<T>("root//package/path"),
             ParsedPattern::<T>::parse_not_relaxed(
                 "...",
                 TargetParsingRel::AllowRelative(
-                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
-                        package.clone()
-                    ),
+                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(package),
                     Some(&NoAliases),
                 ),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             )
             .unwrap()
         );
         assert_eq!(
-            mk_recursive::<T>("root", "package/path/foo"),
+            mk_recursive::<T>("root//package/path/foo"),
             ParsedPattern::<T>::parse_not_relaxed(
                 "foo/...",
                 TargetParsingRel::AllowRelative(
@@ -1519,6 +1522,7 @@ mod tests {
                 ),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             )
             .unwrap()
         );
@@ -1526,10 +1530,7 @@ mod tests {
 
     #[test]
     fn parse_relative_pattern() -> buck2_error::Result<()> {
-        let package = CellPath::new(
-            CellName::testing_new("root"),
-            CellRelativePath::unchecked_new("package/path").to_owned(),
-        );
+        let package = CellPath::testing_new("root//package/path");
 
         assert_eq!(
             mk_target("root", "package/path", "target"),
@@ -1550,6 +1551,7 @@ mod tests {
                 ),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             )?
         );
         Ok(())
@@ -1557,20 +1559,32 @@ mod tests {
 
     #[test]
     fn test_relaxed() -> buck2_error::Result<()> {
-        let package = CellPath::new(
-            CellName::testing_new("root"),
-            CellRelativePath::unchecked_new("package").to_owned(),
+        let package = CellPath::testing_new("root//package");
+
+        assert_eq!(
+            mk_target("root", "package/path", "path"),
+            ParsedPattern::<TargetPatternExtra>::parse_not_relaxed(
+                "path",
+                TargetParsingRel::AllowRelative(
+                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(package),
+                    Some(&NoAliases),
+                ),
+                &resolver(),
+                &alias_resolver(),
+                InferTargetNames::Yes,
+            )?
         );
 
         assert_matches!(
             ParsedPattern::<TargetPatternExtra>::parse_not_relaxed(
                 "path",
                 TargetParsingRel::AllowRelative(
-                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(package.clone()),
+                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(package),
                     Some(&NoAliases),
                 ),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             ),
             Err(e) => {
                 assert!(
@@ -1583,7 +1597,7 @@ mod tests {
             mk_target("root", "package/path", "path"),
             ParsedPattern::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "//package/path",
                 &resolver(),
                 &alias_resolver(),
@@ -1593,7 +1607,7 @@ mod tests {
             mk_target("root", "package/path", "path"),
             ParsedPattern::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "path",
                 &resolver(),
                 &alias_resolver(),
@@ -1603,7 +1617,7 @@ mod tests {
             mk_providers("root", "package/path", "path", Some(&["provider"])),
             ParsedPattern::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "path[provider]",
                 &resolver(),
                 &alias_resolver(),
@@ -1618,7 +1632,7 @@ mod tests {
             ),
             ParsedPattern::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "path/subpath[provider]",
                 &resolver(),
                 &alias_resolver(),
@@ -1628,7 +1642,7 @@ mod tests {
             mk_target("root", "package/path/subpath", "subpath"),
             ParsedPattern::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "path/subpath",
                 &resolver(),
                 &alias_resolver(),
@@ -1638,7 +1652,7 @@ mod tests {
             mk_target("root", "package/path", "path"),
             ParsedPattern::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "//package/path/",
                 &resolver(),
                 &alias_resolver(),
@@ -1648,7 +1662,7 @@ mod tests {
             mk_target("root", "package/path", "target"),
             ParsedPattern::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "//package/path/:target",
                 &resolver(),
                 &alias_resolver(),
@@ -1660,7 +1674,7 @@ mod tests {
             mk_target("root", "package", "foo"),
             ParsedPattern::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "/:foo",
                 &resolver(),
                 &alias_resolver(),
@@ -1671,7 +1685,7 @@ mod tests {
         assert_matches!(
             ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "/",
                 &resolver(),
                 &alias_resolver(),
@@ -1688,27 +1702,26 @@ mod tests {
 
     #[test]
     fn test_parsed_opt_absolute() -> buck2_error::Result<()> {
-        let package = CellPath::new(
-            CellName::testing_new("root"),
-            CellRelativePath::unchecked_new("package/path").to_owned(),
-        );
+        let package = CellPath::testing_new("root//package/path");
 
         assert_eq!(
             mk_target("root", "other", "target"),
             ParsedPattern::parse_not_relaxed(
                 "//other:target",
-                TargetParsingRel::AllowLimitedRelative(package.as_ref()),
+                TargetParsingRel::AllowLimitedRelative(package),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             )?
         );
         assert_eq!(
             mk_target("root", "package/path", "target"),
             ParsedPattern::parse_not_relaxed(
                 ":target",
-                TargetParsingRel::AllowLimitedRelative(package.as_ref()),
+                TargetParsingRel::AllowLimitedRelative(package),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             )?
         );
         let err = ParsedPattern::<TargetPatternExtra>::parse_not_relaxed(
@@ -1716,11 +1729,12 @@ mod tests {
             TargetParsingRel::RequireAbsolute(CellName::testing_new("root")),
             &resolver(),
             &alias_resolver(),
+            InferTargetNames::No,
         )
         .unwrap_err();
         assert!(
             err.to_string()
-                .contains("Invalid target pattern `:target` is not allowed"),
+                .contains("Error parsing target pattern `:target`"),
             "{}",
             err
         );
@@ -1732,15 +1746,32 @@ mod tests {
                 TargetParsingRel::RequireAbsolute(CellName::testing_new("root")),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             )?
         );
 
         assert_matches!(
             ParsedPattern::<TargetPatternExtra>::parse_not_relaxed(
                 "foo/bar",
-                TargetParsingRel::AllowLimitedRelative(package.as_ref()),
+                TargetParsingRel::AllowLimitedRelative(package),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::Yes,
+            ),
+            Err(e) => {
+                assert!(
+                    format!("{e:?}").contains(&format!("{}", TargetPatternParseError::AbsoluteRequired))
+                );
+            }
+        );
+
+        assert_matches!(
+            ParsedPattern::<TargetPatternExtra>::parse_not_relaxed(
+                "foo/bar",
+                TargetParsingRel::AllowLimitedRelative(package),
+                &resolver(),
+                &alias_resolver(),
+                InferTargetNames::No,
             ),
             Err(e) => {
                 assert!(
@@ -1752,9 +1783,10 @@ mod tests {
         assert_matches!(
             ParsedPattern::<TargetPatternExtra>::parse_not_relaxed(
                 "foo/bar:bar",
-                TargetParsingRel::AllowLimitedRelative(package.as_ref()),
+                TargetParsingRel::AllowLimitedRelative(package),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             ),
             Err(e) => {
                 assert!(
@@ -1768,6 +1800,7 @@ mod tests {
                 TargetParsingRel::RequireAbsolute(CellName::testing_new("root")),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             ),
             Err(e) => {
                 assert!(
@@ -1781,10 +1814,7 @@ mod tests {
 
     #[test]
     fn test_aliases() -> buck2_error::Result<()> {
-        let package = CellPath::new(
-            CellName::testing_new("root"),
-            CellRelativePath::unchecked_new("package").to_owned(),
-        );
+        let package = CellPath::testing_new("root//package");
 
         let config = aliases(&[
             ("foo", "cell1//foo/bar:target"),
@@ -1794,19 +1824,13 @@ mod tests {
 
         assert_eq!(
             mk_target("cell1", "foo/bar", "target"),
-            ParsedPattern::parse_relaxed(
-                &config,
-                package.as_ref(),
-                "foo",
-                &resolver(),
-                &alias_resolver(),
-            )?
+            ParsedPattern::parse_relaxed(&config, package, "foo", &resolver(), &alias_resolver(),)?
         );
 
         assert_matches!(
             ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                 &config,
-                package.as_ref(),
+                package,
                 "invalid/alias",
                 &resolver(),
                 &alias_resolver(),
@@ -1821,7 +1845,7 @@ mod tests {
         assert_matches!(
             ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                 &config,
-                package.as_ref(),
+                package,
                 "badalias",
                 &resolver(),
                 &alias_resolver(),
@@ -1870,32 +1894,12 @@ mod tests {
                 &alias_resolver(),
             )?
         );
-
-        let (target_label, providers) = ParsedPattern::parse_precise(
-            "//package/path:target#flavor",
-            CellName::testing_new("root"),
-            &resolver(),
-            &alias_resolver(),
-        )?
-        .as_literal("")?;
-        assert_eq!(
-            "root//package/path:target#flavor",
-            ProvidersPatternExtra::into_providers_label(
-                providers,
-                target_label.pkg(),
-                target_label.name()
-            )
-            .to_string(),
-        );
         Ok(())
     }
 
     #[test]
     fn parse_providers_pattern_with_alias() -> buck2_error::Result<()> {
-        let package = CellPath::new(
-            CellName::testing_new("root"),
-            CellRelativePath::unchecked_new("package").to_owned(),
-        );
+        let package = CellPath::testing_new("root//package");
 
         let config = aliases(&[("foo", "cell1//foo/bar:target")]);
 
@@ -1903,7 +1907,7 @@ mod tests {
             mk_providers("cell1", "foo/bar", "target", Some(&["qux"])),
             ParsedPattern::parse_relaxed(
                 &config,
-                package.as_ref(),
+                package,
                 "foo[qux]",
                 &resolver(),
                 &alias_resolver(),
@@ -2258,10 +2262,7 @@ mod tests {
 
     #[test]
     fn test_relative_pattern_with_parent() -> buck2_error::Result<()> {
-        let package = CellPath::new(
-            CellName::testing_new("root"),
-            CellRelativePath::unchecked_new("package/path").to_owned(),
-        );
+        let package = CellPath::testing_new("root//package/path");
 
         assert_eq!(
             mk_target("root", "package/sibling", "target"),
@@ -2269,13 +2270,14 @@ mod tests {
                 "../sibling:target",
                 TargetParsingRel::AllowRelative(
                     &CellPathWithAllowedRelativeDir::new(
-                        package.clone(),
+                        package,
                         Some(CellPath::testing_new("root//package"))
                     ),
                     Some(&NoAliases),
                 ),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             )?
         );
 
@@ -2283,15 +2285,14 @@ mod tests {
             ParsedPattern::<TargetPatternExtra>::parse_not_relaxed(
                 "../sibling:target",
                 TargetParsingRel::AllowRelative(
-                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
-                        package.clone(),
-                    ),
+                    &CellPathWithAllowedRelativeDir::backwards_relative_not_supported(package),
                     Some(&NoAliases),
                 ),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             ),
-            &["Invalid target pattern `../sibling:target` is not allowed"],
+            &["Error parsing target pattern `../sibling:target`"],
         );
 
         fails(
@@ -2299,15 +2300,16 @@ mod tests {
                 "../../not_allowed:target",
                 TargetParsingRel::AllowRelative(
                     &CellPathWithAllowedRelativeDir::new(
-                        package.clone(),
+                        package,
                         Some(CellPath::testing_new("root//package")),
                     ),
                     Some(&NoAliases),
                 ),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             ),
-            &["Invalid target pattern `../../not_allowed:target` is not allowed"],
+            &["Error parsing target pattern `../../not_allowed:target`"],
         );
 
         Ok(())
@@ -2317,15 +2319,12 @@ mod tests {
     fn test_parsed_pattern_with_modifiers_relaxed() -> buck2_error::Result<()> {
         let resolver = resolver();
         let alias_resolver = alias_resolver();
-        let package = CellPath::new(
-            CellName::testing_new("root"),
-            CellRelativePath::unchecked_new("package").to_owned(),
-        );
+        let package = CellPath::testing_new("root//package");
 
         fails(
             ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "root//package?/target?modifier",
                 &resolver,
                 &alias_resolver,
@@ -2338,7 +2337,7 @@ mod tests {
         // Test target pattern with modifiers
         let pattern_parts = ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
             &NoAliases,
-            package.as_ref(),
+            package,
             "root//package/path:target?modifier1+modifier2",
             &resolver,
             &alias_resolver,
@@ -2356,7 +2355,7 @@ mod tests {
         // Test package pattern with modifiers
         let pattern_parts = ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
             &NoAliases,
-            package.as_ref(),
+            package,
             "root//package/path:?modifier",
             &resolver,
             &alias_resolver,
@@ -2374,7 +2373,7 @@ mod tests {
         // Test recursive pattern with modifiers
         let pattern_parts = ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
             &NoAliases,
-            package.as_ref(),
+            package,
             "root//package/path/...?modifier1+modifier2+modifier3",
             &resolver,
             &alias_resolver,
@@ -2382,7 +2381,7 @@ mod tests {
 
         assert_eq!(
             pattern_parts.parsed_pattern,
-            mk_recursive("root", "package/path")
+            mk_recursive("root//package/path")
         );
         assert_eq!(
             pattern_parts.modifiers,
@@ -2396,7 +2395,7 @@ mod tests {
         // Test relative pattern with modifiers
         let pattern_parts = ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
             &NoAliases,
-            package.as_ref(),
+            package,
             "path:target?modifier",
             &resolver,
             &alias_resolver,
@@ -2414,7 +2413,7 @@ mod tests {
         // Test ambiguous pattern with modifiers
         let pattern_parts = ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
             &NoAliases,
-            package.as_ref(),
+            package,
             "root//package/path?modifier",
             &resolver,
             &alias_resolver,
@@ -2432,7 +2431,7 @@ mod tests {
         // Test pattern with trailing slash and modifiers
         let pattern_parts = ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
             &NoAliases,
-            package.as_ref(),
+            package,
             "root//package/path/?modifier",
             &resolver,
             &alias_resolver,
@@ -2452,7 +2451,7 @@ mod tests {
 
         let pattern_parts = ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
             &alias_config,
-            package.as_ref(),
+            package,
             "foo_target?modifier1+modifier2",
             &resolver,
             &alias_resolver,
@@ -2467,6 +2466,71 @@ mod tests {
             Modifiers::new(Some(vec!["modifier1".to_owned(), "modifier2".to_owned()]))
         );
 
+        Ok(())
+    }
+
+    /// A relative pattern with a cell-qualified modifier (`:target?root//cfg:x`): the `//` inside
+    /// the modifier is not a cell separator.
+    #[test]
+    fn test_relative_pattern_with_qualified_modifier() -> buck2_error::Result<()> {
+        let resolver = resolver();
+        let alias_resolver = alias_resolver();
+        let package = CellPath::new(
+            CellName::testing_new("root"),
+            CellRelativePath::unchecked_new("package"),
+        );
+
+        let pattern_parts = ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
+            &NoAliases,
+            package,
+            "path:target?root//modifier:x",
+            &resolver,
+            &alias_resolver,
+        )?;
+        assert_eq!(
+            pattern_parts.parsed_pattern,
+            mk_target("root", "package/path", "target")
+        );
+        assert_eq!(
+            pattern_parts.modifiers,
+            Modifiers::new(Some(vec!["root//modifier:x".to_owned()]))
+        );
+
+        let pattern_parts = ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
+            &NoAliases,
+            package,
+            ":target?cell1//modifier:x+cell1//modifier:y",
+            &resolver,
+            &alias_resolver,
+        )?;
+        assert_eq!(
+            pattern_parts.parsed_pattern,
+            mk_target("root", "package", "target")
+        );
+        assert_eq!(
+            pattern_parts.modifiers,
+            Modifiers::new(Some(vec![
+                "cell1//modifier:x".to_owned(),
+                "cell1//modifier:y".to_owned()
+            ]))
+        );
+
+        // An explicit cell on the pattern and on the modifier still splits at the right `//`.
+        let pattern_parts = ParsedPatternWithModifiers::<TargetPatternExtra>::parse_relaxed(
+            &NoAliases,
+            package,
+            "cell1//path:target?root//modifier:x",
+            &resolver,
+            &alias_resolver,
+        )?;
+        assert_eq!(
+            pattern_parts.parsed_pattern,
+            mk_target("cell1", "path", "target")
+        );
+        assert_eq!(
+            pattern_parts.modifiers,
+            Modifiers::new(Some(vec!["root//modifier:x".to_owned()]))
+        );
         Ok(())
     }
 
@@ -2488,6 +2552,7 @@ mod tests {
                 TargetParsingRel::RequireAbsolute(CellName::testing_new("root")),
                 &resolver(),
                 &alias_resolver(),
+                InferTargetNames::No,
             ),
             &["The ?modifier syntax is unsupported for this command"],
         );
@@ -2495,11 +2560,7 @@ mod tests {
         fails(
             ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                 &NoAliases,
-                CellPath::new(
-                    CellName::testing_new("root"),
-                    CellRelativePath::unchecked_new("package").to_owned(),
-                )
-                .as_ref(),
+                CellPath::testing_new("root//package"),
                 "root//package/path:target?modifier",
                 &resolver(),
                 &alias_resolver(),
@@ -2512,16 +2573,13 @@ mod tests {
     fn test_configured_parsed_pattern_with_modifiers() -> buck2_error::Result<()> {
         let resolver = resolver();
         let alias_resolver = alias_resolver();
-        let package = CellPath::new(
-            CellName::testing_new("root"),
-            CellRelativePath::unchecked_new("package").to_owned(),
-        );
+        let package = CellPath::testing_new("root//package");
 
         // Test that it fails when there are modifiers and configuration predicate is not Any or Builtin
         fails(
             ParsedPatternWithModifiers::<ConfiguredProvidersPatternExtra>::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "//package/path:target?modifier (<foo>)",
                 &resolver,
                 &alias_resolver,
@@ -2533,7 +2591,7 @@ mod tests {
         let pattern_parts =
             ParsedPatternWithModifiers::<ConfiguredProvidersPatternExtra>::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "//package/path:target?modifier",
                 &resolver,
                 &alias_resolver,
@@ -2548,7 +2606,7 @@ mod tests {
         let pattern_parts =
             ParsedPatternWithModifiers::<ConfiguredProvidersPatternExtra>::parse_relaxed(
                 &NoAliases,
-                package.as_ref(),
+                package,
                 "//package/path:target?modifier (<unbound>)",
                 &resolver,
                 &alias_resolver,
@@ -2560,5 +2618,97 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn configuration_on_package_and_recursive_patterns() -> buck2_error::Result<()> {
+        // A pattern type that cannot carry a configuration rejects one on a target pattern...
+        fails(
+            ParsedPattern::<TargetPatternExtra>::parse_precise(
+                "//package/path:target (<foo>)",
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            ),
+            &["Expecting target pattern, without configuration"],
+        );
+        // ...and so does every pattern type on a package or recursive pattern, which have nowhere
+        // to keep one.
+        for pattern in ["//package/path/... (<foo>)", "//package/path: (<foo>)"] {
+            fails(
+                ParsedPattern::<TargetPatternExtra>::parse_precise(
+                    pattern,
+                    CellName::testing_new("root"),
+                    &resolver(),
+                    &alias_resolver(),
+                ),
+                &["Configuration is not supported on package or recursive pattern"],
+            );
+            fails(
+                ParsedPattern::<ConfiguredProvidersPatternExtra>::parse_precise(
+                    pattern,
+                    CellName::testing_new("root"),
+                    &resolver(),
+                    &alias_resolver(),
+                ),
+                &["Configuration is not supported on package or recursive pattern"],
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_split_cfg_with_spaces_in_path() {
+        use super::split_cfg;
+
+        // Paths with spaces should not be split.
+        assert_eq!(
+            split_cfg("//fbobjc/Xcode Templates/File Templates/foo/..."),
+            None,
+        );
+        assert_eq!(split_cfg("//path/dir name/sub dir/..."), None,);
+
+        // Paths with spaces and parentheses mid-path should not be split.
+        assert_eq!(split_cfg("//path/dir (stuff)/foo/..."), None,);
+        assert_eq!(split_cfg("//path/dir(v2)/foo/..."), None,);
+
+        // Target ending with parentheses but no space should not be split.
+        assert_eq!(split_cfg("//path:target(v2)"), None,);
+
+        // No spaces at all should not be split.
+        assert_eq!(split_cfg("//path/to:target"), None,);
+
+        // Configuration suffix should still be split correctly.
+        assert_eq!(
+            split_cfg("//pkg:target (cfg:platform#abc123)"),
+            Some(("//pkg:target", "(cfg:platform#abc123)", None)),
+        );
+        assert_eq!(
+            split_cfg("//pkg:target (<unbound>)"),
+            Some(("//pkg:target", "(<unbound>)", None)),
+        );
+
+        // Space in path with configuration suffix at end.
+        assert_eq!(
+            split_cfg("//path/Xcode Templates/foo:target (cfg:platform)"),
+            Some(("//path/Xcode Templates/foo:target", "(cfg:platform)", None)),
+        );
+
+        // ConfiguredTargetLabel::fmt produces two groups for toolchain deps:
+        // `target (cfg) (exec_cfg)`. Both are split out.
+        assert_eq!(
+            split_cfg("//pkg:target (cfg1) (cfg2)"),
+            Some(("//pkg:target", "(cfg1)", Some("(cfg2)"))),
+        );
+
+        // Two groups with spaces in path.
+        assert_eq!(
+            split_cfg("//path/Xcode Templates/foo:target (cfg) (exec_cfg)"),
+            Some((
+                "//path/Xcode Templates/foo:target",
+                "(cfg)",
+                Some("(exec_cfg)")
+            )),
+        );
     }
 }

@@ -1,0 +1,6 @@
+# Consumer inside the intersection (`root//intersect/...`). Matches the clipped
+# `public_target:t` visibility, so the dep is allowed.
+stub(
+    name = "c",
+    deps = ["root//intersect/public_target:t"],
+)

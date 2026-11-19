@@ -12,8 +12,8 @@
 
 use std::iter;
 
+use buck2_hash::BuckMutInsertionMap;
 use dupe::Dupe;
-use indexmap::IndexMap;
 use itertools::Either;
 
 use crate::query::environment::QueryTarget;
@@ -22,7 +22,7 @@ use crate::query::syntax::simple::eval::values::QueryEvaluationValue;
 
 /// Used to represent the results for a "multi-query" (one that contains a "%s" and potentially is applied against multiple literals).
 pub struct MultiQueryResult<T: QueryTarget>(
-    pub IndexMap<String, buck2_error::Result<QueryEvaluationValue<T>>>,
+    pub BuckMutInsertionMap<String, buck2_error::Result<QueryEvaluationValue<T>>>,
 );
 
 impl<T: QueryTarget> MultiQueryResult<T> {
@@ -44,10 +44,16 @@ impl<T: QueryTarget> MultiQueryResult<T> {
                 (QueryEvaluationValue::FileSet(value), QueryEvaluationValue::FileSet(results)) => {
                     results.insert_all(&value)
                 }
-                _ => unreachable!(
-                    "no queries should return different types for different literals, but somehow that happened for `{}` and `{}`",
-                    first_literal, name
-                ),
+                (value, results) => {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "`{}` returns {} but `{}` returns {}: a `%s` query can only merge results of one kind. Use `--json` to print each result separately",
+                        first_literal,
+                        results.kind(),
+                        name,
+                        value.kind(),
+                    ));
+                }
             }
         }
         Ok(results)

@@ -488,8 +488,9 @@ mod tests {
 
     #[test]
     fn test_million() {
+        let n = if cfg!(miri) { 1_000 } else { 1_000_000 };
         let vec = LockFreeVec::<String, 20>::new();
-        for i in 0..1_000_000 {
+        for i in 0..n {
             assert_eq!(i, vec.len());
             vec.push_at(i, i.to_string()).unwrap();
         }

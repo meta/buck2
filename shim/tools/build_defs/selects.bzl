@@ -48,9 +48,26 @@ def _if(cond, a, b):
 def _if_inner(cond, a, b):
     return a if cond else b
 
+def _with_or(conditions):
+    """Expands tuple keys into one select entry per condition.
+
+    Mirrors the internal selects.with_or() used by exported BUCK files (e.g.
+    folly's defs.bzl): `{("//c:a", "//c:b"): v}` becomes a select in which
+    both conditions map to the same value.
+    """
+    expanded = {}
+    for conditions_key, value in conditions.items():
+        if type(conditions_key) == type(()):
+            for condition in conditions_key:
+                expanded[condition] = value
+        else:
+            expanded[conditions_key] = value
+    return select(expanded)
+
 selects = struct(
     and_ = _and,
     cond = _cond,
     or_ = _or,
     if_ = _if,
+    with_or = _with_or,
 )

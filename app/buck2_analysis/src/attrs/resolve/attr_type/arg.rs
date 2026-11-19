@@ -9,9 +9,9 @@
  */
 
 use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
+use buck2_build_api::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfoCallable;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::TemplatePlaceholderInfo;
 use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
 use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacros;
 use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacrosPart;
@@ -19,13 +19,14 @@ use buck2_core::package::PackageLabel;
 use buck2_core::package::source_path::SourcePath;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_node::attrs::attr_type::arg::ConfiguredMacro;
 use buck2_node::attrs::attr_type::arg::ConfiguredStringWithMacros;
 use buck2_node::attrs::attr_type::arg::ConfiguredStringWithMacrosPart;
 use buck2_node::attrs::attr_type::arg::StringWithMacros;
-use buck2_node::attrs::attr_type::arg::UnrecognizedMacro;
 use dupe::Dupe;
 use either::Either;
+use starlark::values::FrozenValueTyped;
 use starlark::values::Value;
 
 use crate::attrs::resolve::attr_type::arg::query::ConfiguredQueryMacroBaseExt;
@@ -54,8 +55,6 @@ enum ResolveMacroError {
     UnkeyedPlaceholderUnresolved(String),
     #[error("Expected a RunInfo provider from target `{0}`.")]
     ExpectedRunInfo(String),
-    #[error("Can't expand unrecognized macros (`{0}`).")]
-    UnrecognizedMacroUnimplemented(String),
 }
 
 pub trait ConfiguredStringWithMacrosExt {
@@ -97,28 +96,19 @@ impl ConfiguredStringWithMacrosExt for ConfiguredStringWithMacros {
             }
         };
 
-        let configured_macros = if self.anon_target_compatible {
+        let configured_macros = if self.anon_target_compatible() {
             Some(self)
         } else {
             None
         };
 
-        // SAFETY: FIXME(JakobDegen): This isn't quite right. We know that this is safe because we
-        // know that the underlying references point into frozen heaps kept alive by this module.
-        // However, it's also possible to get `'v`-lifetimed references into the non-frozen heap in
-        // the current module, in which case this is unsound. Ergonomic support for this pattern
-        // would require adopting an additional lifetime to represent the distinction.
-        let resolved_parts = unsafe {
-            std::mem::transmute::<
-                Vec<ResolvedStringWithMacrosPart<'v>>,
-                Vec<ResolvedStringWithMacrosPart<'static>>,
-            >(resolved_parts)
-        };
-
-        Ok(ctx.heap().alloc(ResolvedStringWithMacros::new(
-            resolved_parts,
-            configured_macros,
-        )))
+        Ok(ctx
+            .heap()
+            .alloc(ResolvedStringWithMacros::new(
+                resolved_parts,
+                configured_macros,
+            ))
+            .to_value())
     }
 }
 
@@ -131,22 +121,26 @@ fn resolve_configured_macro<'v>(
         ConfiguredMacro::Location { label, .. } => {
             // Don't need to consider exec_dep as it already was applied when configuring the label.
             let providers_value = ctx.get_dep(label)?;
-            Ok(ResolvedMacro::Location(
-                providers_value.as_ref().default_info()?,
-            ))
+            // `ResolvedMacro::Location` wants the frozen witness; dep provider collections are
+            // always frozen, so this cannot fail.
+            let default_info = providers_value.as_ref().default_info()?;
+            let default_info = FrozenValueTyped::new(default_info.to_value())
+                .internal_error("dep provider collections are frozen")?;
+            Ok(ResolvedMacro::Location(default_info))
         }
         ConfiguredMacro::Exe { label, .. } => {
             // Don't need to consider exec_dep as it already was applied when configuring the label.
             let providers = ctx.get_dep(label)?;
-            let run_info = match providers.get_provider_raw(RunInfoCallable::provider_id()) {
-                Some(value) => *value,
+            let run_info = match providers.get_provider_raw(RunInfoCallable::provider_id())? {
+                Some(value) => value,
                 None => {
                     return Err(ResolveMacroError::ExpectedRunInfo(label.to_string()).into());
                 }
             };
             // A RunInfo is an arg-like value.
-            Ok(ResolvedMacro::ArgLike(FrozenCommandLineArg::new(run_info)?))
+            Ok(ResolvedMacro::ArgLike(CommandLineArg::new_err(run_info)?))
         }
+        ConfiguredMacro::InGroup(box (inner, _)) => resolve_configured_macro(inner, ctx, pkg),
         ConfiguredMacro::Source(p) => {
             let buck_path = SourcePath::new(pkg.dupe(), p.path().dupe());
             Ok(ResolvedMacro::Source(SourceArtifact::new(buck_path).into()))
@@ -160,14 +154,14 @@ fn resolve_configured_macro<'v>(
         ConfiguredMacro::UserKeyedPlaceholder(box (name, label, arg)) => {
             let providers = ctx.get_dep(label)?;
             let placeholder_info = providers
-                .builtin_provider::<FrozenTemplatePlaceholderInfo>()
+                .builtin_provider::<TemplatePlaceholderInfo>()?
                 .ok_or_else(|| {
                     ResolveMacroError::KeyedPlaceholderInfoMissing(
                         (**name).to_owned(),
                         label.dupe(),
                     )
                 })?;
-            let keyed_variables = placeholder_info.keyed_variables();
+            let keyed_variables = placeholder_info.keyed_variables()?;
             let either_cmd_or_mapping = keyed_variables.get(&**name).ok_or_else(|| {
                 ResolveMacroError::KeyedPlaceholderMappingMissing(
                     (**name).to_owned(),
@@ -175,7 +169,7 @@ fn resolve_configured_macro<'v>(
                 )
             })?;
 
-            let value: FrozenCommandLineArg = match (arg, either_cmd_or_mapping) {
+            let value = match (arg, either_cmd_or_mapping) {
                 (None, Either::Left(mapping)) => *mapping,
                 (Some(arg), Either::Left(_)) => {
                     return Err(ResolveMacroError::KeyedPlaceholderMappingNotADict(
@@ -200,11 +194,5 @@ fn resolve_configured_macro<'v>(
             Ok(ResolvedMacro::ArgLike(value))
         }
         ConfiguredMacro::Query(query) => Ok(ResolvedMacro::Query(query.resolve(ctx)?)),
-        ConfiguredMacro::UnrecognizedMacro(box UnrecognizedMacro {
-            macro_type,
-            args: _,
-        }) => {
-            Err(ResolveMacroError::UnrecognizedMacroUnimplemented((**macro_type).to_owned()).into())
-        }
     }
 }

@@ -21,12 +21,8 @@ use crate::codemap::CodeMap;
 use crate::codemap::Pos;
 use crate::codemap::Span;
 use crate::codemap::Spanned;
-use crate::dot_format_parser::FormatConv;
-use crate::dot_format_parser::FormatParser;
-use crate::dot_format_parser::FormatToken;
 use crate::eval_exception::EvalException;
-use crate::lexer::TokenFString;
-use crate::lexer::lex_exactly_one_identifier;
+use crate::lexer::FStringConv as LexerFStringConv;
 use crate::slice_vec_ext::VecExt;
 use crate::syntax::DialectTypes;
 use crate::syntax::ast::AssignIdentP;
@@ -34,19 +30,14 @@ use crate::syntax::ast::AssignOp;
 use crate::syntax::ast::AssignP;
 use crate::syntax::ast::AssignTarget;
 use crate::syntax::ast::AssignTargetP;
-use crate::syntax::ast::AstAssignIdent;
 use crate::syntax::ast::AstAssignTarget;
 use crate::syntax::ast::AstExpr;
 use crate::syntax::ast::AstFString;
 use crate::syntax::ast::AstStmt;
 use crate::syntax::ast::AstString;
 use crate::syntax::ast::AstTypeExpr;
-use crate::syntax::ast::Comma;
 use crate::syntax::ast::Expr;
-use crate::syntax::ast::ExprP;
 use crate::syntax::ast::FStringP;
-use crate::syntax::ast::IdentP;
-use crate::syntax::ast::LoadArgP;
 use crate::syntax::ast::LoadP;
 use crate::syntax::ast::Stmt;
 use crate::syntax::ast::StmtP;
@@ -68,6 +59,8 @@ enum GrammarUtilError {
     TypeAnnotationOnTupleAssign,
     #[error("`load` statement requires at least two arguments")]
     LoadRequiresAtLeastTwoArguments,
+    #[error("unparenthesized tuple with trailing comma")]
+    UnparenthesizedTupleTrailingComma,
 }
 
 /// Ensure we produce normalised Statements, rather than singleton Statements
@@ -146,6 +139,18 @@ pub fn check_assignment(
     })
 }
 
+pub(crate) fn reject_unparenthesized_tuple_trailing_comma<T>(
+    codemap: &CodeMap,
+    begin: usize,
+    end: usize,
+) -> Result<T, EvalException> {
+    Err(EvalException::new_anyhow(
+        GrammarUtilError::UnparenthesizedTupleTrailingComma.into(),
+        Span::new(Pos::new(begin as _), Pos::new(end as _)),
+        codemap,
+    ))
+}
+
 pub(crate) fn check_load_0(module: AstString, parser_state: &mut ParserState) -> Stmt {
     parser_state.errors.push(EvalException::new_anyhow(
         GrammarUtilError::LoadRequiresAtLeastTwoArguments.into(),
@@ -159,39 +164,17 @@ pub(crate) fn check_load_0(module: AstString, parser_state: &mut ParserState) ->
     })
 }
 
-pub(crate) fn check_load(
-    module: AstString,
-    args: Vec<((AstAssignIdent, AstString), Spanned<Comma>)>,
-    last: Option<(AstAssignIdent, AstString)>,
-    parser_state: &mut ParserState,
-) -> Stmt {
-    if args.is_empty() && last.is_none() {
-        return check_load_0(module, parser_state);
-    }
-
-    let args = args
-        .into_iter()
-        .map(|((local, their), comma)| LoadArgP {
-            local,
-            their,
-            comma: Some(comma),
-        })
-        .chain(last.map(|(local, their)| LoadArgP {
-            local,
-            their,
-            comma: None,
-        }))
-        .collect();
-
-    Stmt::Load(LoadP {
-        module,
-        args,
-        payload: (),
-    })
+/// An element of an f-string during parsing - either text or an expression.
+pub enum FStringElement {
+    /// Literal text in the f-string.
+    Text(AstString),
+    /// An expression with optional conversion specifier.
+    Expr(AstExpr, LexerFStringConv),
 }
 
-pub(crate) fn fstring(
-    fstring: TokenFString,
+/// Build an f-string from parsed parts (new parsing approach with proper expression support).
+pub(crate) fn fstring_from_parts(
+    parts: Vec<FStringElement>,
     begin: usize,
     end: usize,
     parser_state: &mut ParserState,
@@ -203,57 +186,27 @@ pub(crate) fn fstring(
         );
     }
 
-    let TokenFString {
-        content,
-        content_start_offset,
-    } = fstring;
-
-    let mut format = String::with_capacity(content.len());
+    let mut format = String::new();
     let mut expressions = Vec::new();
 
-    let mut parser = FormatParser::new(&content);
-    while let Some(res) = parser.next().transpose() {
-        match res {
-            Ok(FormatToken::Text(text)) => format.push_str(text),
-            Ok(FormatToken::Escape(e)) => {
-                // We are producing a format string here so we need to escape this back!
-                format.push_str(e.back_to_escape())
-            }
-            Ok(FormatToken::Capture { capture, pos, conv }) => {
-                let capture_begin = begin + content_start_offset + pos;
-                let capture_end = capture_begin + capture.len();
-
-                let ident = match lex_exactly_one_identifier(capture) {
-                    Some(ident) => ident,
-                    None => {
-                        parser_state.error(
-                            Span::new(Pos::new(capture_begin as _), Pos::new(capture_end as _)),
-                            format_args!("Not a valid identifier: `{capture}`"),
-                        );
-                        // Might as well keep going here. This doesn't compromise the parsing of
-                        // the rest of the format string.
-                        continue;
+    for part in parts {
+        match part {
+            FStringElement::Text(text) => {
+                // Escape any literal braces in the text for the format string
+                for c in text.node.chars() {
+                    match c {
+                        '{' => format.push_str("{{"),
+                        '}' => format.push_str("}}"),
+                        _ => format.push(c),
                     }
-                };
-
-                let expr = ExprP::Identifier(
-                    IdentP { ident, payload: () }.ast(capture_begin, capture_end),
-                )
-                .ast(capture_begin, capture_end);
-                expressions.push(expr);
-                // Positional format.
-                match conv {
-                    FormatConv::Str => format.push_str("{}"),
-                    FormatConv::Repr => format.push_str("{!r}"),
                 }
             }
-            Err(inner) => {
-                // TODO: Reporting the exact position of the error would be better.
-                parser_state.error(
-                    Span::new(Pos::new(begin as _), Pos::new(end as _)),
-                    format_args!("Invalid format: {inner:#}"),
-                );
-                break;
+            FStringElement::Expr(expr, conv) => {
+                expressions.push(expr);
+                match conv {
+                    LexerFStringConv::None | LexerFStringConv::Str => format.push_str("{}"),
+                    LexerFStringConv::Repr => format.push_str("{!r}"),
+                }
             }
         }
     }
@@ -292,4 +245,14 @@ pub(crate) fn dialect_check_type(
         expr: Spanned { node, span },
         payload: (),
     }))
+}
+
+/// Create an error for an invalid f-string conversion specifier.
+pub(crate) fn fstring_conv_error(l: usize, r: usize, state: &ParserState) -> EvalException {
+    let span = Span::new(Pos::new(l as u32), Pos::new(r as u32));
+    EvalException::parser_error(
+        "invalid f-string conversion specifier, expected 's' or 'r'",
+        span,
+        state.codemap,
+    )
 }

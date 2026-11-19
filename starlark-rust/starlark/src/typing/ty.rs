@@ -30,7 +30,6 @@ use starlark_syntax::codemap::Span;
 use starlark_syntax::codemap::Spanned;
 
 use crate as starlark;
-use crate::__derive_refs::components::NativeCallableComponents;
 use crate::eval::compiler::small_vec_1::SmallVec1;
 use crate::typing::ParamSpec;
 use crate::typing::TypingOracleCtx;
@@ -45,12 +44,13 @@ use crate::typing::function::TyCustomFunction;
 use crate::typing::function::TyCustomFunctionImpl;
 use crate::typing::function::TyFunction;
 use crate::typing::small_arc_vec::SmallArcVec1;
+use crate::typing::starlark_value::HasTyVTable;
 use crate::typing::starlark_value::TyStarlarkValue;
 use crate::typing::structs::TyStruct;
 use crate::typing::tuple::TyTuple;
 use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::bool::StarlarkBool;
+use crate::values::types::bool::value::StarlarkBool;
 use crate::values::typing::never::TypingNever;
 
 /// A typing operation wasn't able to produce a precise result,
@@ -83,6 +83,7 @@ impl Display for Approximation {
 #[derive(
     Debug, Clone, Dupe, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative, Trace
 )]
+#[derive(pagable::Pagable)]
 pub struct Ty {
     /// A series of alternative types.
     ///
@@ -274,7 +275,7 @@ impl Ty {
     }
 
     /// Type from the implementation of [`StarlarkValue`].
-    pub const fn starlark_value<'v, T: StarlarkValue<'v>>() -> Self {
+    pub const fn starlark_value<'v, T: StarlarkValue<'v> + HasTyVTable>() -> Self {
         Ty::basic(TyBasic::starlark_value::<T>())
     }
 
@@ -420,7 +421,10 @@ impl Ty {
     }
 
     /// Create a custom function type.
-    pub fn custom_function(f: impl TyCustomFunctionImpl) -> Self {
+    pub fn custom_function<F>(f: F) -> Self
+    where
+        F: TyCustomFunctionImpl,
+    {
         Ty::custom(TyCustomFunction(f))
     }
 
@@ -491,20 +495,6 @@ impl Ty {
         }
     }
 
-    pub(crate) fn from_native_callable_components(
-        comp: &NativeCallableComponents,
-        as_type: Option<Ty>,
-    ) -> starlark::Result<Self> {
-        let result = comp.return_type.clone();
-
-        let params = comp.param_spec.param_spec();
-
-        match as_type {
-            None => Ok(Ty::function(params, result)),
-            Some(type_attr) => Ok(Ty::ctor_function(type_attr, params, result)),
-        }
-    }
-
     pub(crate) fn fmt_with_config(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -554,5 +544,152 @@ impl Display for TyDisplay<'_> {
 impl Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_with_config(f, &TypeRenderConfig::Default)
+    }
+}
+
+#[cfg(all(test, feature = "pagable"))]
+mod tests {
+    use pagable::PagableDeserialize;
+    use pagable::PagableSerialize;
+    use pagable::testing::TestingDeserializer;
+    use pagable::testing::TestingSerializer;
+
+    use super::*;
+    use crate::typing::ParamSpec;
+    use crate::typing::function::TyFunction;
+    use crate::values::dict::value::FrozenDict;
+
+    fn round_trip(ty: &Ty) -> Ty {
+        let mut ser = TestingSerializer::new();
+        ty.pagable_serialize(&mut ser).unwrap();
+        let bytes = ser.finish();
+        let mut de = TestingDeserializer::new(&bytes);
+        Ty::pagable_deserialize(&mut de).unwrap()
+    }
+
+    #[track_caller]
+    fn assert_round_trip(ty: Ty) {
+        assert_eq!(ty, round_trip(&ty));
+    }
+
+    #[test]
+    fn test_round_trip_primitives() {
+        assert_round_trip(Ty::any());
+        assert_round_trip(Ty::never());
+        assert_round_trip(Ty::none());
+        assert_round_trip(Ty::bool());
+        assert_round_trip(Ty::int());
+        assert_round_trip(Ty::float());
+        assert_round_trip(Ty::string());
+    }
+
+    #[test]
+    fn test_round_trip_containers() {
+        assert_round_trip(Ty::list(Ty::string()));
+        assert_round_trip(Ty::dict(Ty::string(), Ty::int()));
+        assert_round_trip(Ty::set(Ty::int()));
+        assert_round_trip(Ty::tuple(vec![Ty::int(), Ty::string()]));
+        assert_round_trip(Ty::iter(Ty::int()));
+    }
+
+    #[test]
+    fn test_round_trip_callable() {
+        assert_round_trip(Ty::callable(ParamSpec::empty(), Ty::int()));
+    }
+
+    #[test]
+    fn test_round_trip_ty_function() {
+        assert_round_trip(Ty::ty_function(TyFunction::new(
+            ParamSpec::empty(),
+            Ty::string(),
+        )));
+    }
+
+    #[test]
+    fn test_ty_custom_arc_dedup_roundtrip() {
+        // Two `Ty` values that share the same `Arc<dyn TyCustomDyn>` should
+        // serialize the body exactly once (Arc identity dedup via
+        // `pagable::typetag::TaggedArc`). After deserialize, the restored Arcs
+        // should be pointer-equal.
+        let ty1 = Ty::ty_function(TyFunction::new(ParamSpec::empty(), Ty::string()));
+        // Dupe pulls the same Arc<dyn TyCustomDyn> out of ty1.
+        let ty2 = ty1.dupe();
+
+        let mut ser = TestingSerializer::new();
+        ty1.pagable_serialize(&mut ser).unwrap();
+        ty2.pagable_serialize(&mut ser).unwrap();
+        let shared_bytes = ser.finish();
+
+        // Baseline: same Ty built twice independently (different Arcs).
+        let ty_a = Ty::ty_function(TyFunction::new(ParamSpec::empty(), Ty::string()));
+        let ty_b = Ty::ty_function(TyFunction::new(ParamSpec::empty(), Ty::string()));
+        let mut ser = TestingSerializer::new();
+        ty_a.pagable_serialize(&mut ser).unwrap();
+        ty_b.pagable_serialize(&mut ser).unwrap();
+        let distinct_bytes = ser.finish();
+
+        assert!(
+            shared_bytes.len() < distinct_bytes.len(),
+            "dedup should make shared-Arc encoding smaller: shared={} distinct={}",
+            shared_bytes.len(),
+            distinct_bytes.len(),
+        );
+
+        // Round-trip the shared stream and check the Arcs are pointer-equal.
+        let mut de = TestingDeserializer::new(&shared_bytes);
+        let restored1 = Ty::pagable_deserialize(&mut de).unwrap();
+        let restored2 = Ty::pagable_deserialize(&mut de).unwrap();
+        assert_eq!(ty1, restored1);
+        assert_eq!(ty2, restored2);
+        match (
+            &restored1.alternatives.as_slice()[0],
+            &restored2.alternatives.as_slice()[0],
+        ) {
+            (TyBasic::Custom(a), TyBasic::Custom(b)) => {
+                assert!(
+                    std::sync::Arc::ptr_eq(&a.0, &b.0),
+                    "deduped Arcs should round-trip to the same allocation",
+                );
+            }
+            _ => panic!("expected TyBasic::Custom"),
+        }
+    }
+
+    #[test]
+    fn test_round_trip_union() {
+        let u = Ty::unions(vec![Ty::int(), Ty::string(), Ty::none()]);
+        assert_round_trip(u);
+    }
+
+    #[test]
+    fn test_round_trip_starlark_value() {
+        assert_round_trip(Ty::starlark_value::<FrozenDict>());
+    }
+
+    #[test]
+    fn test_round_trip_nested() {
+        let ty = Ty::dict(
+            Ty::string(),
+            Ty::list(Ty::tuple(vec![Ty::int(), Ty::none()])),
+        );
+        assert_round_trip(ty);
+    }
+
+    #[test]
+    fn test_multiple_values_in_one_stream() {
+        let a = Ty::list(Ty::string());
+        let b = Ty::dict(Ty::int(), Ty::bool());
+
+        let mut ser = TestingSerializer::new();
+        a.pagable_serialize(&mut ser).unwrap();
+        b.pagable_serialize(&mut ser).unwrap();
+        let bytes = ser.finish();
+
+        let mut de = TestingDeserializer::new(&bytes);
+        let restored_a = Ty::pagable_deserialize(&mut de).unwrap();
+        let restored_b = Ty::pagable_deserialize(&mut de).unwrap();
+        assert_eq!(restored_a, a);
+        assert_eq!(restored_b, b);
+        assert_ne!(restored_a, restored_b);
     }
 }

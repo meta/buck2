@@ -1,32 +1,30 @@
 # @generated
 # To regenerate, append -- --env BUCK2_RUST_REGENERATE_GOLDEN_TESTS=1 and re-run the test
 
+error: Error to be displayed in stacktrace
+ --> outer_import.bzl:4:6
+  |
+4 |      outer_rust_failure()
+  |      ^^^^^^^^^^^^^^^^^^^^
 Traceback (most recent call last):
   * assert.bzl:3, in <module>
       outer_fail()
   * outer_import.bzl:4, in outer_fail
       outer_rust_failure()
 
-error: Error to be displayed in stacktrace
- --> outer_import.bzl:4:6
-  |
-4 |      outer_rust_failure()
-  |      ^^^^^^^^^^^^^^^^^^^^
-  |
 
 Caused by:
     0: Adding a context in between backtraces
-    1: Traceback (most recent call last):
+    1: error: rust failure
+        --> imported.bzl:9:6
+         |
+       9 |      rust_failure()
+         |      ^^^^^^^^^^^^^^
+       Traceback (most recent call last):
          * assert.bzl:3, in <module>
              should_fail()
          * imported.bzl:9, in should_fail
              rust_failure()
        
-       error: rust failure
-        --> imported.bzl:9:6
-         |
-       9 |      rust_failure()
-         |      ^^^^^^^^^^^^^^
-         |
     2: fail 2
     3: fail 1

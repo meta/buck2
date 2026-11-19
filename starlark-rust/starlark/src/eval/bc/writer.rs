@@ -19,7 +19,11 @@
 
 use std::cmp;
 
-use crate::cast::transmute;
+use allocative::Allocative;
+use starlark_derive::StarlarkPagable;
+
+use crate as starlark;
+use crate::any::ProvidesStaticType;
 use crate::eval::bc::addr::BcAddr;
 use crate::eval::bc::addr::BcAddrOffset;
 use crate::eval::bc::bytecode::Bc;
@@ -54,26 +58,28 @@ use crate::eval::runtime::frame_span::FrameSpan;
 use crate::eval::runtime::slots::LocalCapturedSlotId;
 use crate::eval::runtime::slots::LocalSlotId;
 use crate::values::FrozenHeap;
-use crate::values::FrozenRef;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValue;
+use crate::values::StringValue;
+use crate::values::Value;
+use crate::values::ValueTyped;
+use crate::values::any_complex::StarlarkAnyComplex;
 
-#[derive(Debug)]
-pub(crate) struct BcStmtLoc {
-    pub(crate) span: FrameSpan,
+#[derive(Debug, Allocative, ProvidesStaticType, StarlarkPagable)]
+pub(crate) struct BcStmtLoc<'v> {
+    pub(crate) span: FrameSpan<'v>,
 }
 
 /// This records the locations of the first instruction for each starlark statement. It's effectively
 /// Map<BcAddr, BcStmtLoc>. This is very performance sensitive (when profiling/debugging are enabled we
 /// do a lookup for every instruction) and so it's implemented as a vec of statements and then a vec of
 /// statement indexes for each possible BcAddr in a bytecode Bc.
-pub(crate) struct BcStatementLocations {
-    pub(crate) locs: Vec<BcStmtLoc>,
+#[derive(Allocative, ProvidesStaticType, StarlarkPagable)]
+pub(crate) struct BcStatementLocations<'v> {
+    pub(crate) locs: Vec<BcStmtLoc<'v>>,
     /// Map bytecode offset to index in `locs`.
     pub(crate) stmts: Vec<u32>,
 }
 
-impl BcStatementLocations {
+impl<'v> BcStatementLocations<'v> {
     const CONTINUED_BIT: u32 = 1 << 31;
 
     pub(crate) fn new() -> Self {
@@ -89,7 +95,7 @@ impl BcStatementLocations {
         addr / BC_INSTR_ALIGN
     }
 
-    fn push(&mut self, addr: BcAddr, span: BcStmtLoc) {
+    fn push(&mut self, addr: BcAddr, span: BcStmtLoc<'v>) {
         let idx = Self::idx_for(addr);
         let stmt_idx = self.locs.len().try_into().unwrap();
         debug_assert_eq!(0, stmt_idx & Self::CONTINUED_BIT);
@@ -102,7 +108,7 @@ impl BcStatementLocations {
     }
 
     fn last_stmt_idx(&self) -> Option<u32> {
-        for stmt_idx in (&self.stmts).iter().rev() {
+        for stmt_idx in self.stmts.iter().rev() {
             if *stmt_idx != u32::MAX {
                 return Some(*stmt_idx & !Self::CONTINUED_BIT);
             }
@@ -126,7 +132,7 @@ impl BcStatementLocations {
         }
     }
 
-    pub(crate) fn stmt_at(&self, offset: BcAddr) -> Option<(&BcStmtLoc, bool)> {
+    pub(crate) fn stmt_at(&self, offset: BcAddr) -> Option<(&BcStmtLoc<'v>, bool)> {
         match self.stmts.get(Self::idx_for(offset)) {
             None | Some(&u32::MAX) => None,
             Some(v) => {
@@ -150,20 +156,21 @@ struct BcWriterForLoop {
     end_addrs_to_patch: Vec<PatchAddr>,
 }
 
-/// Write bytecode here.
+/// Write bytecode here, with operands at the brand `'f` of the frozen heap it allocates on.
 pub(crate) struct BcWriter<'f> {
     /// Serialized instructions.
-    instrs: BcInstrsWriter,
+    instrs: BcInstrsWriter<'f>,
     /// Instruction spans, used for errors.
-    slow_args: Vec<(BcAddr, BcInstrSlowArg)>,
+    slow_args: Vec<(BcAddr, BcInstrSlowArg<'f>)>,
+    dictnpop_spans: Vec<FrameSpan<'f>>,
     /// For each statement, will store the span for the first instruction and any instruction after a call.
-    stmt_locs: BcStatementLocations,
+    stmt_locs: BcStatementLocations<'f>,
     /// The last-written opcode
     last_opcode: BcOpcode,
     /// Current stack size.
     stack_size: u32,
-    /// Local slot count.
-    local_names: FrozenRef<'f, [FrozenStringValue]>,
+    /// Local variable names, indexed by slot.
+    local_names: Box<[StringValue<'f>]>,
     /// Local variables which are known to be definitely assigned at current program point.
     definitely_assigned: BcDefinitelyAssigned,
     /// Max observed stack size.
@@ -174,15 +181,15 @@ pub(crate) struct BcWriter<'f> {
     max_loop_depth: LoopDepth,
 
     /// Allocate various objects here.
-    pub(crate) heap: &'f FrozenHeap,
+    pub(crate) heap: FrozenHeap<'f>,
 }
 
 impl<'f> BcWriter<'f> {
     /// Empty.
     pub(crate) fn new(
-        local_names: FrozenRef<'f, [FrozenStringValue]>,
+        local_names: &[StringValue<'f>],
         param_count: u32,
-        heap: &'f FrozenHeap,
+        heap: FrozenHeap<'f>,
     ) -> BcWriter<'f> {
         assert!(param_count as usize <= local_names.len());
         let mut definitely_assigned =
@@ -193,10 +200,11 @@ impl<'f> BcWriter<'f> {
         BcWriter {
             instrs: BcInstrsWriter::new(),
             slow_args: Vec::new(),
+            dictnpop_spans: Vec::new(),
             stmt_locs: BcStatementLocations::new(),
             last_opcode: BcOpcode::End,
             stack_size: 0,
-            local_names,
+            local_names: local_names.into(),
             definitely_assigned,
             max_stack_size: 0,
             heap,
@@ -207,10 +215,11 @@ impl<'f> BcWriter<'f> {
 
     /// Finish writing the bytecode.
     #[allow(let_underscore_drop)]
-    pub(crate) fn finish(self) -> Bc {
+    pub(crate) fn finish(self) -> Bc<'f> {
         let BcWriter {
             instrs,
             slow_args: spans,
+            dictnpop_spans,
             stmt_locs,
             last_opcode: _,
             stack_size,
@@ -225,17 +234,14 @@ impl<'f> BcWriter<'f> {
         let _ = definitely_assigned;
         assert_eq!(stack_size, 0);
         assert!(for_loops.is_empty());
-        // Drop lifetime.
-        let local_names = unsafe {
-            transmute!(
-                FrozenRef<[FrozenStringValue]>,
-                FrozenRef<[FrozenStringValue]>,
-                local_names
-            )
-        };
         Bc {
-            instrs: instrs.finish(spans, stmt_locs, local_names),
             local_count: local_names.len().try_into().unwrap(),
+            instrs: instrs.finish(
+                spans,
+                dictnpop_spans.into_boxed_slice(),
+                stmt_locs,
+                local_names,
+            ),
             max_stack_size,
             max_loop_depth,
         }
@@ -250,10 +256,23 @@ impl<'f> BcWriter<'f> {
         self.instrs.ip()
     }
 
-    /// Version of instruction write with explicit slow arg arg.
-    fn do_write_generic_explicit<I: BcInstr>(
+    pub(crate) fn add_dictnpop_spans(
         &mut self,
-        slow_arg: BcInstrSlowArg,
+        spans: impl IntoIterator<Item = FrameSpan<'f>>,
+    ) -> u32 {
+        let offset = self
+            .dictnpop_spans
+            .len()
+            .try_into()
+            .expect("too many dictionary key spans");
+        self.dictnpop_spans.extend(spans);
+        offset
+    }
+
+    /// Version of instruction write with explicit slow arg arg.
+    fn do_write_generic_explicit<I: BcInstr<'f>>(
+        &mut self,
+        slow_arg: BcInstrSlowArg<'f>,
         arg: I::Arg,
     ) -> (BcAddr, *const I::Arg) {
         // If the previously written instruction was a form of a call
@@ -269,54 +288,42 @@ impl<'f> BcWriter<'f> {
         self.instrs.write::<I>(arg)
     }
 
-    pub(crate) fn mark_before_stmt(&mut self, span: FrameSpan) {
+    pub(crate) fn mark_before_stmt(&mut self, span: FrameSpan<'f>) {
         self.stmt_locs.push(self.ip(), BcStmtLoc { span })
     }
 
     /// Write an instruction, return address and argument.
-    fn write_instr_ret_arg_explicit<I: BcInstr>(
+    fn write_instr_ret_arg_explicit<I: BcInstr<'f>>(
         &mut self,
-        slow_arg: BcInstrSlowArg,
+        slow_arg: BcInstrSlowArg<'f>,
         arg: I::Arg,
     ) -> (BcAddr, *const I::Arg) {
         self.do_write_generic_explicit::<I>(slow_arg, arg)
     }
 
-    fn write_instr_ret_arg<I: BcInstr>(
+    fn write_instr_ret_arg<I: BcInstr<'f>>(
         &mut self,
-        span: FrameSpan,
+        span: FrameSpan<'f>,
         arg: I::Arg,
     ) -> (BcAddr, *const I::Arg) {
-        self.write_instr_ret_arg_explicit::<I>(
-            BcInstrSlowArg {
-                span,
-                ..Default::default()
-            },
-            arg,
-        )
+        self.write_instr_ret_arg_explicit::<I>(BcInstrSlowArg { span }, arg)
     }
 
-    pub(crate) fn write_instr_explicit<I: BcInstr>(
+    pub(crate) fn write_instr_explicit<I: BcInstr<'f>>(
         &mut self,
-        slow_arg: BcInstrSlowArg,
+        slow_arg: BcInstrSlowArg<'f>,
         arg: I::Arg,
     ) {
         self.write_instr_ret_arg_explicit::<I>(slow_arg, arg);
     }
 
     /// Write an instruction.
-    pub(crate) fn write_instr<I: BcInstr>(&mut self, span: FrameSpan, arg: I::Arg) {
-        self.write_instr_explicit::<I>(
-            BcInstrSlowArg {
-                span,
-                ..Default::default()
-            },
-            arg,
-        );
+    pub(crate) fn write_instr<I: BcInstr<'f>>(&mut self, span: FrameSpan<'f>, arg: I::Arg) {
+        self.write_instr_explicit::<I>(BcInstrSlowArg { span }, arg);
     }
 
     /// Write load constant instruction.
-    pub(crate) fn write_const(&mut self, span: FrameSpan, value: FrozenValue, slot: BcSlotOut) {
+    pub(crate) fn write_const(&mut self, span: FrameSpan<'f>, value: Value<'f>, slot: BcSlotOut) {
         assert!(slot.get().0 < self.local_count() + self.stack_size);
 
         self.write_instr::<InstrConst>(span, (value, slot));
@@ -325,7 +332,7 @@ impl<'f> BcWriter<'f> {
     /// Write load local instruction.
     pub(crate) fn write_load_local(
         &mut self,
-        span: FrameSpan,
+        span: FrameSpan<'f>,
         slot: LocalSlotId,
         target: BcSlotOut,
     ) {
@@ -340,7 +347,7 @@ impl<'f> BcWriter<'f> {
 
     pub(crate) fn write_load_local_captured(
         &mut self,
-        span: FrameSpan,
+        span: FrameSpan<'f>,
         source: LocalCapturedSlotId,
         target: BcSlotOut,
     ) {
@@ -349,7 +356,7 @@ impl<'f> BcWriter<'f> {
         self.write_instr_ret_arg::<InstrLoadLocalCaptured>(span, (source, target));
     }
 
-    pub(crate) fn write_mov(&mut self, span: FrameSpan, source: BcSlotIn, target: BcSlotOut) {
+    pub(crate) fn write_mov(&mut self, span: FrameSpan<'f>, source: BcSlotIn, target: BcSlotOut) {
         assert!(source.get().0 < self.local_count() + self.stack_size);
         assert!(target.get().0 < self.local_count() + self.stack_size);
 
@@ -365,7 +372,7 @@ impl<'f> BcWriter<'f> {
 
     pub(crate) fn write_store_local_captured(
         &mut self,
-        span: FrameSpan,
+        span: FrameSpan<'f>,
         source: BcSlotIn,
         target: LocalCapturedSlotId,
     ) {
@@ -386,20 +393,20 @@ impl<'f> BcWriter<'f> {
     }
 
     /// Write branch.
-    pub(crate) fn write_br(&mut self, span: FrameSpan) -> PatchAddr {
+    pub(crate) fn write_br(&mut self, span: FrameSpan<'f>) -> PatchAddr {
         let (addr, arg) = self.write_instr_ret_arg::<InstrBr>(span, BcAddrOffset::FORWARD);
         self.instrs.addr_to_patch(addr, arg)
     }
 
     /// Write conditional branch.
-    pub(crate) fn write_if_not_br(&mut self, cond: BcSlotIn, span: FrameSpan) -> PatchAddr {
+    pub(crate) fn write_if_not_br(&mut self, cond: BcSlotIn, span: FrameSpan<'f>) -> PatchAddr {
         let (addr, arg) =
             self.write_instr_ret_arg::<InstrIfNotBr>(span, (cond, BcAddrOffset::FORWARD));
         self.instrs.addr_to_patch(addr, unsafe { &(*arg).1 })
     }
 
     /// Write conditional branch.
-    pub(crate) fn write_if_br(&mut self, cond: BcSlotIn, span: FrameSpan) -> PatchAddr {
+    pub(crate) fn write_if_br(&mut self, cond: BcSlotIn, span: FrameSpan<'f>) -> PatchAddr {
         let (addr, arg) =
             self.write_instr_ret_arg::<InstrIfBr>(span, (cond, BcAddrOffset::FORWARD));
         self.instrs.addr_to_patch(addr, unsafe { &(*arg).1 })
@@ -408,7 +415,7 @@ impl<'f> BcWriter<'f> {
     fn write_if_else_impl(
         &mut self,
         cond: BcSlotIn,
-        span: FrameSpan,
+        span: FrameSpan<'f>,
         then_block: impl FnOnce(&mut Self),
         else_block: impl FnOnce(&mut Self),
     ) {
@@ -432,7 +439,7 @@ impl<'f> BcWriter<'f> {
         &mut self,
         cond: BcSlotIn,
         maybe_not: MaybeNot,
-        span: FrameSpan,
+        span: FrameSpan<'f>,
         then_block: impl FnOnce(&mut Self),
         else_block: impl FnOnce(&mut Self),
     ) {
@@ -442,7 +449,7 @@ impl<'f> BcWriter<'f> {
         }
     }
 
-    pub(crate) fn write_continue(&mut self, span: FrameSpan) {
+    pub(crate) fn write_continue(&mut self, span: FrameSpan<'f>) {
         let loop_depth = LoopDepth(self.for_loops.len().checked_sub(1).unwrap() as u32);
         let for_loop = self.for_loops.last().unwrap();
         let jump_back = self.ip().offset_from(for_loop.inner_addr).neg();
@@ -462,7 +469,7 @@ impl<'f> BcWriter<'f> {
         for_loop.end_addrs_to_patch.push(end_patch);
     }
 
-    pub(crate) fn write_break(&mut self, span: FrameSpan) {
+    pub(crate) fn write_break(&mut self, span: FrameSpan<'f>) {
         let for_loop = self.for_loops.last().unwrap();
         let (addr, arg) =
             self.write_instr_ret_arg::<InstrBreak>(span, (for_loop.iter, BcAddrOffset::FORWARD));
@@ -476,8 +483,8 @@ impl<'f> BcWriter<'f> {
         &mut self,
         over: BcSlotIn,
         var: BcSlotOut,
-        span: FrameSpan,
-        body: impl FnOnce(&mut BcWriter),
+        span: FrameSpan<'f>,
+        body: impl FnOnce(&mut BcWriter<'f>),
     ) {
         // Allocate a slot to store the iterator.
         self.alloc_slot(|iter, bc| {
@@ -511,7 +518,7 @@ impl<'f> BcWriter<'f> {
 
     /// Write instructions to stop all current iterations.
     /// This is done before `return`.
-    pub(crate) fn write_iter_stop(&mut self, span: FrameSpan) {
+    pub(crate) fn write_iter_stop(&mut self, span: FrameSpan<'f>) {
         // We can stop iteration in any order, but let's for consistency stop them in reverse order.
         for depth in (0..self.for_loops.len()).rev() {
             let iter = self.for_loops[depth].iter;
@@ -556,7 +563,7 @@ impl<'f> BcWriter<'f> {
     /// Allocate a temporary slot, and call a callback.
     ///
     /// The slot is valid during the callback run, and can be reused later.
-    pub(crate) fn alloc_slot<R>(&mut self, k: impl FnOnce(BcSlot, &mut BcWriter) -> R) -> R {
+    pub(crate) fn alloc_slot<R>(&mut self, k: impl FnOnce(BcSlot, &mut BcWriter<'f>) -> R) -> R {
         let slot = BcSlot(self.local_count() + self.stack_size);
         self.stack_add(1);
         let r = k(slot, self);
@@ -568,7 +575,7 @@ impl<'f> BcWriter<'f> {
     pub(crate) fn alloc_slots<R>(
         &mut self,
         count: u32,
-        k: impl FnOnce(BcSlotRange, &mut BcWriter) -> R,
+        k: impl FnOnce(BcSlotRange, &mut BcWriter<'f>) -> R,
     ) -> R {
         let slots = BcSlotRange {
             start: BcSlot(self.local_count() + self.stack_size),
@@ -583,7 +590,7 @@ impl<'f> BcWriter<'f> {
     /// Allocate several slots.
     pub(crate) fn alloc_slots_c<const N: usize, R>(
         &mut self,
-        k: impl FnOnce(BcSlotsN<N>, &mut BcWriter) -> R,
+        k: impl FnOnce(BcSlotsN<N>, &mut BcWriter<'f>) -> R,
     ) -> R {
         self.alloc_slots(N as u32, |slots, bc| k(BcSlotsN::from_range(slots), bc))
     }
@@ -594,9 +601,9 @@ impl<'f> BcWriter<'f> {
         // Iterate over the elements.
         exprs: impl IntoIterator<Item = K>,
         // Invoke a callback which fills the slots.
-        mut expr: impl FnMut(BcSlot, K, &mut BcWriter),
+        mut expr: impl FnMut(BcSlot, K, &mut BcWriter<'f>),
         // And then invoke a callback which consumes all the slots again together.
-        k: impl FnOnce(BcSlotInRange, &mut BcWriter) -> R,
+        k: impl FnOnce(BcSlotInRange, &mut BcWriter<'f>) -> R,
     ) -> R {
         let start = BcSlot(self.local_count() + self.stack_size);
         let mut end = start;
@@ -621,7 +628,11 @@ impl<'f> BcWriter<'f> {
         r
     }
 
-    pub(crate) fn alloc_file_span(&self, span: FrameSpan) -> FrozenRef<'static, FrameSpan> {
-        self.heap.alloc_any(span)
+    /// The span of a call instruction, allocated so that the call stack can hold it by reference.
+    pub(crate) fn alloc_file_span(
+        &self,
+        span: FrameSpan<'f>,
+    ) -> ValueTyped<'f, StarlarkAnyComplex<FrameSpan<'f>>> {
+        self.heap.alloc_simple_typed(StarlarkAnyComplex::new(span))
     }
 }

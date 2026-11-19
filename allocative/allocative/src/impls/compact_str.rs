@@ -15,7 +15,7 @@ use compact_str::CompactString;
 use crate::allocative_trait::Allocative;
 use crate::impls::common::PTR_NAME;
 use crate::impls::common::UNUSED_CAPACITY_NAME;
-use crate::key::Key;
+use crate::key;
 use crate::visitor::Visitor;
 
 impl Allocative for CompactString {
@@ -23,7 +23,7 @@ impl Allocative for CompactString {
         let mut visitor = visitor.enter_self_sized::<Self>();
         if self.is_heap_allocated() {
             let mut visitor = visitor.enter_unique(PTR_NAME, std::mem::size_of::<*const u8>());
-            visitor.visit_simple(Key::new("str"), self.len());
+            visitor.visit_simple(key!("str"), self.len());
             let unused_capacity = self.capacity() - self.len();
             visitor.visit_simple(UNUSED_CAPACITY_NAME, unused_capacity);
         }

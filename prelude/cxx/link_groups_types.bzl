@@ -14,11 +14,35 @@ load(
 load("@prelude//linking:types.bzl", "Linkage")
 load(":groups_types.bzl", "Group", "GroupFilterInfo", "Traversal")
 
+# What a project generator needs to reproduce the link, carried by an entry
+# when xcode data is enabled (`cxx.enable_xcode_data`).
+LinkGroupsDebugLinkableEntryExtras = record(
+    # The target the entry stands for: a target entry's own target; for a link
+    # group entry the target owning the group's library, None when the link
+    # created the group itself (auto link groups).
+    label = field(TargetLabel | None, None),
+    # The artifacts the linker is given for this entry, in link order: the
+    # archive (or the objects of a virtual archive); the shared library, or the
+    # interface the toolchain links against instead (`__shlib_intfs__/...`, a
+    # `.tbd`); or the objects. Empty when the entry contributes no artifact (a
+    # header-only library, a shared library with no sources, linked as nothing).
+    #
+    # An artifact with a content-based path has no path until it is built.
+    # Shared-library interfaces always have one, archives and objects do on the
+    # toolchains that enable it, so the JSON of a record with extras is written
+    # only after every listed artifact is built, and fails with them; written
+    # without extras, the record stays an analysis-time output. That is why
+    # extras are opt-in.
+    outputs = field(list[Artifact], []),
+)
+
 # These are targets or link groups that will be added to .linker.argsfile
 # Targets will be expanded to .o files, link groups will be added to NEEDS
 LinkGroupsDebugLinkableEntry = record(
     name = field(TargetLabel | Label | str),
     output_style = field(LibOutputStyle),
+    # None unless xcode data is enabled.
+    extras = field(LinkGroupsDebugLinkableEntryExtras | None, None),
 )
 
 # This is info about single output unit. It is either a final binary or

@@ -9,10 +9,10 @@
 def _test_impl(ctx):
     tag = ctx.actions.artifact_tag()
 
-    dep_file = ctx.actions.declare_output("depfile")
-    app = ctx.actions.declare_output("app")
+    dep_file = ctx.actions.declare_output("depfile", has_content_based_path = False)
+    app = ctx.actions.declare_output("app", has_content_based_path = False)
 
-    seed = ctx.actions.write("seed", ctx.attrs.seed)
+    seed = ctx.actions.write("seed", ctx.attrs.seed, has_content_based_path = False)
 
     ctx.actions.run(
         [
@@ -43,7 +43,7 @@ test = rule(
 )
 
 def _n_outputs_tagged_as_dep_file_impl(ctx):
-    app = ctx.actions.declare_output("app")
+    app = ctx.actions.declare_output("app", has_content_based_path = False)
     args = cmd_args([
         "sh",
         "-c",
@@ -54,7 +54,7 @@ def _n_outputs_tagged_as_dep_file_impl(ctx):
 
     tag = ctx.actions.artifact_tag()
     for i in range(ctx.attrs.num_dep_files):
-        dep_file = ctx.actions.declare_output("depfile{}".format(i))
+        dep_file = ctx.actions.declare_output("depfile{}".format(i), has_content_based_path = False)
         args.add(tag.tag_artifacts(dep_file.as_output()))
 
     ctx.actions.run(
@@ -77,9 +77,9 @@ n_outputs_tagged_as_dep_file = rule(
 )
 
 def _same_tag_for_multiple_labels_impl(ctx):
-    app = ctx.actions.declare_output("app")
+    app = ctx.actions.declare_output("app", has_content_based_path = False)
     tag = ctx.actions.artifact_tag()
-    dep_file = ctx.actions.declare_output("depfile")
+    dep_file = ctx.actions.declare_output("depfile", has_content_based_path = False)
     args = cmd_args([
         "sh",
         "-c",
@@ -102,21 +102,20 @@ def _same_tag_for_multiple_labels_impl(ctx):
     ]
 
 same_tag_for_multiple_labels = rule(
-    attrs = {
-    },
+    attrs = {},
     impl = _same_tag_for_multiple_labels_impl,
 )
 
 def _input_tagged_multiple_times_impl(ctx):
-    app = ctx.actions.declare_output("app")
+    app = ctx.actions.declare_output("app", has_content_based_path = False)
 
     tag1 = ctx.actions.artifact_tag()
     tag2 = ctx.actions.artifact_tag()
 
-    dep_file1 = ctx.actions.declare_output("depfile1")
-    dep_file2 = ctx.actions.declare_output("depfile2")
+    dep_file1 = ctx.actions.declare_output("depfile1", has_content_based_path = False)
+    dep_file2 = ctx.actions.declare_output("depfile2", has_content_based_path = False)
 
-    input = tag1.tag_artifacts(tag2.tag_artifacts(ctx.actions.write("input_tagged_multiple_times.txt", "input")))
+    input = tag1.tag_artifacts(tag2.tag_artifacts(ctx.actions.write("input_tagged_multiple_times.txt", "input", has_content_based_path = False)))
 
     args = cmd_args([
         "sh",
@@ -142,7 +141,6 @@ def _input_tagged_multiple_times_impl(ctx):
     ]
 
 input_tagged_multiple_times = rule(
-    attrs = {
-    },
+    attrs = {},
     impl = _input_tagged_multiple_times_impl,
 )

@@ -1,0 +1,77 @@
+/*
+ * Copyright (C) 2018 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+syntax = "proto3";
+package apex.proto;
+option java_package = "com.facebook.buck.android.apex";
+option java_outer_classname = "ApexManifestProto";
+message ApexManifest {
+  // APEX Name. Note that this can be different from what PackageManager sees.
+  // This is used to identify an APEX and to mount under /apex directory.
+  string name = 1;
+  // Version Number
+  int64 version = 2;
+  // Pre Install Hook
+  string preInstallHook = 3;
+  // Post Install Hook
+  // This feature is not supported.
+  string postInstallHook = 4 [ deprecated = true ];
+  // Version Name
+  string versionName = 5;
+  // Signals whenever this APEX doesn't contain any executable code.
+  // If this field is set to true, then apexd will mount this apex
+  // with MS_NOEXEC flag.
+  bool noCode = 6;
+  // List of native libs which can be used by other apexes or system.
+  repeated string provideNativeLibs = 7;
+  // List of native libs which this apex uses from other apexes or system.
+  repeated string requireNativeLibs = 8;
+  // List of JNI libs.
+  // linkerconfig/libnativeloader use this field so that java libraries can
+  // load JNI libraries in the same apex.
+  // This is supposed to be filled by the build system with libraries which are
+  // marked as "is_jni: true" from the list of "native_shared_libs".
+  repeated string jniLibs = 9;
+  // List of libs required that are located in a shared libraries APEX.  The
+  // Android platform only checks whether this list is non-empty, and by default
+  // the Android build system never sets this. This field can be used when
+  // producing or processing an APEX using libraries in /apex/sharedlibs (see
+  // `provideSharedApexLibs` field) to store some information about the
+  // libraries.
+  repeated string requireSharedApexLibs = 10;
+  // Whether this APEX provides libraries to be shared with other APEXs. This
+  // causes libraries contained in the APEX to be made available under
+  // /apex/sharedlibs .
+  bool provideSharedApexLibs = 11;
+  message CompressedApexMetadata {
+    // Valid only for compressed APEX. This field contains the root digest of
+    // the original_apex contained inside CAPEX.
+    string originalApexDigest = 1;
+  }
+  // Exists only for compressed APEX
+  CompressedApexMetadata capexMetadata = 12;
+  // Indicates that this APEX can be updated without rebooting device.
+  bool supportsRebootlessUpdate = 13;
+  // VNDK version for apexes depending on a specific version of VNDK libs.
+  string vndkVersion = 14;
+  // Deprecated.
+  // Whether this vendor APEX needs to be activated in bootstrap phase.
+  // For new APEX, please use `bootstrap` instead.
+  // Vendor APEX become bootstrap APEX if either `vendorBootstrap`
+  // or `bootstrap` is set to true.
+  bool vendorBootstrap = 15 [ deprecated = true ];
+  // Whether this APEX needs to be activated in bootstrap phase.
+  bool bootstrap = 16;
+}

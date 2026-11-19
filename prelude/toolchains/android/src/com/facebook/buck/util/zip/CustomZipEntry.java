@@ -13,16 +13,19 @@ package com.facebook.buck.util.zip;
 import static java.util.zip.Deflater.BEST_COMPRESSION;
 import static java.util.zip.Deflater.NO_COMPRESSION;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CustomZipEntry extends ZipEntry {
 
   private int compressionLevel = Deflater.DEFAULT_COMPRESSION;
   private long externalAttributes = 0;
+  private boolean rawCopy = false;
 
   public CustomZipEntry(ZipEntry other) {
     super(other);
@@ -79,5 +82,18 @@ public class CustomZipEntry extends ZipEntry {
 
   public void setExternalAttributes(long externalAttributes) {
     this.externalAttributes = externalAttributes;
+  }
+
+  /**
+   * Marks this entry for raw copy mode. When set, the data written to the zip output stream is
+   * treated as pre-compressed bytes — no CRC computation or deflation is performed. The caller must
+   * set CRC, size, and compressedSize on this entry before writing.
+   */
+  public void setRawCopy(boolean rawCopy) {
+    this.rawCopy = rawCopy;
+  }
+
+  public boolean isRawCopy() {
+    return rawCopy;
   }
 }

@@ -26,13 +26,8 @@ def get_universal_binary_name(ctx: AnalysisContext) -> str:
     # The universal executable should have the same name as the base/thin ones
     return first_binary_artifact.short_path
 
-def lipo_binary_artifacts(
-        ctx: AnalysisContext,
-        binaries: list[Artifact],
-        binary_name: [str, None],
-        lipo: RunInfo,
-        identifier: str) -> Artifact:
-    binary_output = ctx.actions.declare_output("UniversalBinary" if binary_name == None else binary_name, dir = False)
+def lipo_binary_artifacts(ctx: AnalysisContext, binaries: list[Artifact], binary_name: [str, None], lipo: RunInfo, identifier: str) -> Artifact:
+    binary_output = ctx.actions.declare_output("UniversalBinary" if binary_name == None else binary_name, dir = False, has_content_based_path = False)
     lipo_cmd = [lipo] + binaries
 
     lipo_cmd.extend(["-create", "-output", binary_output.as_output()])
@@ -40,11 +35,7 @@ def lipo_binary_artifacts(
 
     return binary_output
 
-def lipo_binaries(
-        ctx: AnalysisContext,
-        binary_deps: dict[str, Dependency],
-        binary_name: [str, None],
-        lipo: RunInfo) -> Artifact:
+def lipo_binaries(ctx: AnalysisContext, binary_deps: dict[str, Dependency], binary_name: [str, None], lipo: RunInfo) -> Artifact:
     binaries = [binary[DefaultInfo].default_outputs[0] for binary in binary_deps.values()]
     return lipo_binary_artifacts(ctx, binaries, binary_name, lipo, "default")
 
@@ -62,18 +53,17 @@ def _get_unstripped_binaries(binary_deps: dict[str, Dependency]) -> list[Artifac
     return unstripped_binaries
 
 def create_universal_binary(
-        ctx: AnalysisContext,
-        binary_deps: dict[str, Dependency],
-        binary_name: [str, None],
-        dsym_bundle_name: [str, None],
-        split_arch_dsym: bool) -> AppleBundleBinaryOutput:
+    ctx: AnalysisContext, binary_deps: dict[str, Dependency], binary_name: [str, None], dsym_bundle_name: [str, None], split_arch_dsym: bool
+) -> AppleBundleBinaryOutput:
     binary_output = lipo_binaries(ctx, binary_deps, binary_name, ctx.attrs._apple_toolchain[AppleToolchainInfo].lipo)
 
     unstripped_binaries = _get_unstripped_binaries(binary_deps)
     unstripped_binary_output = None
     if unstripped_binaries:
         unstripped_binary_name = "unstripped/{}".format(binary_name) if binary_name else "UniversalBinary-Unstripped"
-        unstripped_binary_output = lipo_binary_artifacts(ctx, unstripped_binaries, unstripped_binary_name, ctx.attrs._apple_toolchain[AppleToolchainInfo].lipo, "unstripped")
+        unstripped_binary_output = lipo_binary_artifacts(
+            ctx, unstripped_binaries, unstripped_binary_name, ctx.attrs._apple_toolchain[AppleToolchainInfo].lipo, "unstripped"
+        )
 
     # Universal binaries can be created out of plain `cxx_binary()` / `cxx_library()`
     # which lack the `AppleDebuggableInfo` provider.
@@ -82,10 +72,12 @@ def create_universal_binary(
 
     dsym_output = None
     if split_arch_dsym and contains_full_debuggable_info:
-        dsym_output = ctx.actions.declare_output("UniversalBinary.dSYM" if dsym_bundle_name == None else dsym_bundle_name, dir = True)
+        dsym_output = ctx.actions.declare_output(
+            "UniversalBinary.dSYM" if dsym_bundle_name == None else dsym_bundle_name, dir = True, has_content_based_path = False
+        )
         dsym_combine_cmd = [ctx.attrs._apple_tools[AppleToolsInfo].split_arch_combine_dsym_bundles_tool]
 
-        for (arch, binary) in binary_deps.items():
+        for arch, binary in binary_deps.items():
             dsym_combine_cmd.extend(["--dsym-bundle", cmd_args(binary.get(AppleDebuggableInfo).dsyms[0]), "--arch", arch])
         dsym_combine_cmd.extend(["--output", dsym_output.as_output()])
         ctx.actions.run(cmd_args(dsym_combine_cmd), category = "universal_binaries_dsym")
@@ -97,15 +89,15 @@ def create_universal_binary(
     return AppleBundleBinaryOutput(
         binary = binary_output,
         unstripped_binary = unstripped_binary_output,
-        debuggable_info =
-            AppleDebuggableInfo(
-                dsyms = [dsym_output] if dsym_output != None else [],
-                debug_info_tset = make_artifact_tset(
-                    actions = ctx.actions,
-                    label = ctx.label,
-                    children = filter(None, all_debug_info_tsets),
-                ),
+        debuggable_info = AppleDebuggableInfo(
+            dsyms = [dsym_output] if dsym_output != None else [],
+            binaries = [unstripped_binary_output] if unstripped_binary_output else [binary_output],
+            debug_info_tset = make_artifact_tset(
+                actions = ctx.actions,
+                label = ctx.label,
+                children = filter(None, all_debug_info_tsets),
             ),
+        ),
     )
 
 def _all_binaries_have_apple_debuggable_info(binary_deps: dict[str, Dependency]) -> bool:

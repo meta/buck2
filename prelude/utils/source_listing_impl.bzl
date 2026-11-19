@@ -6,9 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-SourceListingInfo = provider(fields = {
-    "sources": dict[str, Artifact],
-})
+SourceListingInfo = provider(
+    fields = {
+        "sources": dict[str, Artifact],
+    }
+)
 
 SourceListingInfoAlias = SourceListingInfo
 

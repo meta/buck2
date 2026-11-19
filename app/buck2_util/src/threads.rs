@@ -17,8 +17,17 @@ use std::sync::OnceLock;
 use std::task::Poll;
 use std::thread;
 
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::internal_error;
+
+/// Concurrency for filesystem operations that modify directory structure (unlinks, rmdirs,
+/// renames). Their throughput peaks at a small number of concurrent workers on all filesystems
+/// we care about (sometimes earlier, but 4 is the one-size-fits-all value) and degrades with
+/// more — D33922298 has benchmark details. Clamped to the host's available parallelism.
+pub fn directory_mutation_parallelism() -> usize {
+    const DIRECTORY_MUTATION_THREADS: usize = 4;
+    DIRECTORY_MUTATION_THREADS.min(available_parallelism())
+}
 
 /// Get the available parallelism
 ///
@@ -47,10 +56,7 @@ pub fn available_parallelism_fresh() -> usize {
 ///
 /// We want to be independent of possible future changes to the default stack size in Rust.
 pub(crate) const THREAD_DEFAULT_STACK_SIZE: usize = {
-    if cfg!(buck2_asan) {
-        // ASAN requires much larger stack size.
-        8 << 20
-    } else if cfg!(debug_assertions) {
+    if cfg!(debug_assertions) {
         // Need 4MB for windows-debug according to D60449433.
         4 << 20
     } else {
@@ -189,7 +195,8 @@ pub async fn ignore_stack_overflow_checks_for_future<F: Future>(f: F) -> F::Outp
     IgnoreStackOverflowChecksForFuture { f }.await
 }
 
-#[cfg(test)]
+// Overflowing the stack and catching it is signal handling, which Miri does not model.
+#[cfg(all(test, not(miri)))]
 pub(crate) mod tests {
     use std::hint;
 

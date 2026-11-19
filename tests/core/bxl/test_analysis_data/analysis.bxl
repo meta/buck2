@@ -21,24 +21,6 @@ providers_test = bxl_main(
     cli_args = {},
 )
 
-def _incompatible_targets_single(ctx):
-    result = ctx.analysis("root//:incompatible_target")
-    ctx.output.print(result)
-
-incompatible_targets_single = bxl_main(
-    impl = _incompatible_targets_single,
-    cli_args = {},
-)
-
-def _incompatible_targets(ctx):
-    result = ctx.analysis(["root//:incompatible_target"])
-    ctx.output.print(result)
-
-incompatible_targets = bxl_main(
-    impl = _incompatible_targets,
-    cli_args = {},
-)
-
 def _dependency_test_impl(ctx):
     node = ctx.configured_targets("root//:stub")
 
@@ -58,4 +40,52 @@ def _missing_subtarget_test(ctx):
 missing_subtarget_test = bxl_main(
     impl = _missing_subtarget_test,
     cli_args = {},
+)
+
+def _unconfigured_target_error_test(ctx):
+    result = ctx.analysis("root//:stub")
+    ctx.output.print(result)
+
+unconfigured_target_error_test = bxl_main(
+    impl = _unconfigured_target_error_test,
+    cli_args = {},
+)
+
+def _ordered_subtargets_test(ctx):
+    label = ctx.configured_targets("root//:provides_foo").label
+    labels = [label.with_sub_target("child_{}".format(i)) for i in range(129, -1, -1)]
+    for result in ctx.analysis(labels).values():
+        ctx.output.print(result.providers()[FooInfo].foo)
+
+ordered_subtargets_test = bxl_main(
+    impl = _ordered_subtargets_test,
+    cli_args = {},
+)
+
+def _incompatible_skip_test(ctx):
+    ctx.output.print(ctx.analysis(ctx.cli_args.target, skip_incompatible = True))
+    ctx.output.print(len(ctx.analysis([ctx.cli_args.target], skip_incompatible = True)))
+    compatible = ctx.configured_targets("root//:provides_foo").label
+    for result in ctx.analysis([ctx.cli_args.target, compatible], skip_incompatible = True).values():
+        ctx.output.print(result.providers()[FooInfo].foo)
+
+incompatible_skip_test = bxl_main(
+    impl = _incompatible_skip_test,
+    cli_args = {"target": cli_args.configured_target_label()},
+)
+
+def _incompatible_error_test(ctx):
+    ctx.analysis(ctx.cli_args.target, skip_incompatible = False)
+
+incompatible_error_test = bxl_main(
+    impl = _incompatible_error_test,
+    cli_args = {"target": cli_args.configured_target_label()},
+)
+
+def _incompatible_list_error_test(ctx):
+    ctx.analysis([ctx.cli_args.target], skip_incompatible = False)
+
+incompatible_list_error_test = bxl_main(
+    impl = _incompatible_list_error_test,
+    cli_args = {"target": cli_args.configured_target_label()},
 )

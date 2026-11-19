@@ -11,6 +11,7 @@
 use std::convert::Infallible;
 use std::ops::ControlFlow;
 use std::ops::FromResidual;
+use std::ops::Residual;
 use std::ops::Try;
 
 use crate::exit_result::ExitResult;
@@ -34,8 +35,8 @@ pub enum CommandOutcome<R> {
     Failure(ExitResult),
 }
 
-/// Small wrapper used in FromResidual
-pub struct CommandFailure(ExitResult);
+/// Compatibility alias for code that names the residual type directly.
+pub type CommandFailure = CommandOutcome<Infallible>;
 
 /// Allow the usage of '?' when going from a CommandOutcome -> ExitResult
 impl<R> Try for CommandOutcome<R> {
@@ -49,26 +50,36 @@ impl<R> Try for CommandOutcome<R> {
     fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
         match self {
             CommandOutcome::Success(res) => ControlFlow::Continue(res),
-            CommandOutcome::Failure(status) => ControlFlow::Break(CommandFailure(status)),
+            CommandOutcome::Failure(status) => ControlFlow::Break(CommandOutcome::Failure(status)),
         }
     }
 }
 
+impl<R> Residual<R> for CommandFailure {
+    type TryType = CommandOutcome<R>;
+}
+
 impl FromResidual<CommandFailure> for ExitResult {
     fn from_residual(residual: CommandFailure) -> Self {
-        residual.0
+        match residual {
+            CommandOutcome::Failure(status) => status,
+        }
     }
 }
 
 impl<T> FromResidual<CommandFailure> for Result<T, ExitResult> {
     fn from_residual(residual: CommandFailure) -> Self {
-        Err(residual.0)
+        match residual {
+            CommandOutcome::Failure(status) => Err(status),
+        }
     }
 }
 
 impl<R> FromResidual<CommandFailure> for CommandOutcome<R> {
     fn from_residual(residual: CommandFailure) -> Self {
-        Self::Failure(residual.0)
+        match residual {
+            CommandOutcome::Failure(status) => Self::Failure(status),
+        }
     }
 }
 

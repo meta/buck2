@@ -1,0 +1,4 @@
+load(":defs.bzl", "failing_default_info_test", "failing_run_info_test")
+
+failing_default_info_test(name = "failing_default_info")
+failing_run_info_test(name = "failing_run_info")

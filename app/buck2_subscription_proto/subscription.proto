@@ -15,11 +15,12 @@ package buck.subscription;
 // Client-to-daemon interaction in a subscription. This is what the client
 // writes to `stdin` of the `subscribe` command.
 message SubscriptionRequest {
+  reserved 2, 3;
+  reserved "subscribe_to_paths", "unsubscribe_from_paths";
+
   // The actual request. See documentation of the underlying types for details.
   oneof request {
     Disconnect disconnect = 1;
-    SubscribeToPaths subscribe_to_paths = 2;
-    UnsubscribeFromPaths unsubscribe_from_paths = 3;
     SubscribeToActiveCommands subscribe_to_active_commands = 4;
   }
 }
@@ -32,57 +33,19 @@ message Disconnect {
   bool ok = 2;
 }
 
-// Request eager materialization of specific paths AND notifications when they
-// get materialized. If the paths have already been materialized, a
-// `Materialized` notification will be sent immediately.
-message SubscribeToPaths {
-  // The paths to subscribe to. Those paths must be ProjectRelativePaths, which
-  // are fully-normalized paths relative to the project root. It is expected
-  // that the client may obtain those paths via a separate mechanism such as a
-  // BXL script.
-  //
-  // Regardless of platform, those paths use forward slashes as delimiters.
-  //
-  // Note that while requesting notifications for source paths (i.e. paths not
-  // under buck-out) is not an error, it will not produce notifications, since
-  // those paths are never materialized by Buck itself.
-  repeated string paths = 1;
-}
-
-// Undo the effects of SubscribeToPaths. In-flight notifications for the paths
-// that are being unsubscribed from are not cancelled: the caller should expect
-// the possibility of receiving notifications for paths after having
-// unsubscribed from them.
-//
-// It is not considered an error to unsubscribe from paths the client never
-// subscribed to.
-message UnsubscribeFromPaths {
-  // The paths to unsubscribe from. The format expected is the same as in
-  // SubscribeToPaths.
-  repeated string paths = 1;
-}
-
 message SubscribeToActiveCommands {}
 
 // Daemon to client interaction in a subscription. This is what the client will
 // receive via the `stdout` of the `subscribe` command.
 message SubscriptionResponse {
+  reserved 1;
+  reserved "materialized";
+
   // The actual response. See documentation of the underlying types for details.
   oneof response {
-    Materialized materialized = 1;
     ActiveCommandsSnapshot active_commands_snapshot = 2;
     Goodbye goodbye = 3;
   }
-}
-
-// This notification is sent by the daemon when a path that was previously
-// passed in `SubscribeToPaths` is materialized.
-message Materialized {
-  // The path that was materialized. This is a ProjectRelativePath, i.e. a
-  // fully-normalized path relative to the project root.
-  //
-  // Regardless of platform, those paths use forward slashes as delimiters.
-  string path = 1;
 }
 
 message ActiveCommandsSnapshot {

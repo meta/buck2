@@ -17,6 +17,7 @@ import static com.facebook.buck.jvm.java.CompilerOutputPaths.getKspDepFilePath;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.java.ClassUsageURIParser;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
@@ -36,6 +37,7 @@ import java.util.Set;
  *
  * <p>This class includes utility functions for parsing and merging kotlin temp dep files.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinClassUsageHelper {
 
   /**

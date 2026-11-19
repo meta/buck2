@@ -9,13 +9,7 @@ load("@prelude//third-party:pkgconfig.bzl", "external_pkgconfig_library")
 
 HOMEBREW_CONSTRAINT = "//os:macos-homebrew"
 
-def system_library(
-        name: str,
-        packages = None,
-        visibility = ["PUBLIC"],
-        deps = [],
-        exported_deps = [],
-        **kwargs):
+def system_library(name: str, packages = None, visibility = ["PUBLIC"], deps = [], exported_deps = [], **kwargs):
     system_packages_target_name = "__{}_system_pkgs".format(name)
     packages = packages or dict()
     packages["DEFAULT"] = []
@@ -32,23 +26,9 @@ def system_library(
             "DEFAULT": [],
         })
 
-    native.prebuilt_cxx_library(
-        name = name,
-        visibility = visibility,
-        deps = deps,
-        exported_deps = exported_deps,
-        **kwargs
-    )
+    native.prebuilt_cxx_library(name = name, visibility = visibility, deps = deps, exported_deps = exported_deps, **kwargs)
 
-def pkgconfig_system_library(
-        name: str,
-        pkgconfig_name = None,
-        packages = None,
-        visibility = ["PUBLIC"],
-        deps = [],
-        exported_deps = [],
-        unsupported = dict(),
-        **kwargs):
+def pkgconfig_system_library(name: str, pkgconfig_name = None, packages = None, visibility = ["PUBLIC"], deps = [], exported_deps = [], unsupported = dict(), **kwargs):
     system_packages_target_name = "__{}_system_pkgs".format(name)
     packages = packages or dict()
     packages["DEFAULT"] = []
@@ -60,13 +40,7 @@ def pkgconfig_system_library(
     deps = exported_deps + deps
 
     if len(unsupported) == 0:
-        external_pkgconfig_library(
-            name = name,
-            package = pkgconfig_name,
-            visibility = visibility,
-            deps = deps + [":" + system_packages_target_name],
-            **kwargs
-        )
+        external_pkgconfig_library(name = name, package = pkgconfig_name, visibility = visibility, deps = deps + [":" + system_packages_target_name], **kwargs)
     else:
         exported_deps_select_map = {}
         for constraint, constraint_exported_deps in unsupported.items():
@@ -77,13 +51,7 @@ def pkgconfig_system_library(
             exported_deps_select_map[constraint] = constraint_exported_deps
 
         pkgconfig_target_name = "__{}_pkgconfig".format(name)
-        external_pkgconfig_library(
-            name = pkgconfig_target_name,
-            package = pkgconfig_name,
-            visibility = [],
-            deps = deps,
-            **kwargs
-        )
+        external_pkgconfig_library(name = pkgconfig_target_name, package = pkgconfig_name, visibility = [], deps = deps, **kwargs)
         exported_deps_select_map["DEFAULT"] = [":" + pkgconfig_target_name]
 
         native.prebuilt_cxx_library(
@@ -93,9 +61,7 @@ def pkgconfig_system_library(
             exported_deps = select(exported_deps_select_map),
         )
 
-def _system_homebrew_targets(
-        name: str,
-        brews):
+def _system_homebrew_targets(name: str, brews):
     deps = []
     for brew in brews:
         homebrew_target_name = "__{}_homebrew_{}".format(name, brew)
@@ -119,19 +85,20 @@ system_packages = rule(
 )
 
 def homebrew_library(
-        name: str,
-        brew: str,
-        homebrew_header_path = "include",
-        exported_preprocessor_flags = [],
-        exported_linker_flags = [],
-        target_compatible_with = ["//os:macos-homebrew"],
-        **kwargs):
+    name: str,
+    brew: str,
+    homebrew_header_path = "include",
+    exported_preprocessor_flags = [],
+    exported_linker_flags = [],
+    target_compatible_with = ["//os:macos-homebrew"],
+    **kwargs,
+):
     preproc_flags_rule_name = "__{}__{}__preproc_flags".format(name, brew)
     native.genrule(
         name = preproc_flags_rule_name,
         type = "homebrew_library_preproc_flags",
         out = "out",
-        cmd = "echo \"-I`brew --prefix {}`/{}\" > $OUT".format(brew, homebrew_header_path),
+        cmd = 'echo "-I`brew --prefix {}`/{}" > $OUT'.format(brew, homebrew_header_path),
         target_compatible_with = target_compatible_with,
     )
 
@@ -140,18 +107,20 @@ def homebrew_library(
         name = linker_flags_rule_name,
         type = "homebrew_library_linker_flags",
         out = "out",
-        cmd = "echo \"-L`brew --prefix {}`/lib\" > $OUT".format(brew),
+        cmd = 'echo "-L`brew --prefix {}`/lib" > $OUT'.format(brew),
         target_compatible_with = target_compatible_with,
     )
 
     native.prebuilt_cxx_library(
         name = name,
-        exported_preprocessor_flags = exported_preprocessor_flags + [
+        exported_preprocessor_flags = exported_preprocessor_flags
+        + [
             "@$(location :{})/preproc_flags.txt".format(preproc_flags_rule_name),
         ],
-        exported_linker_flags = exported_linker_flags + [
+        exported_linker_flags = exported_linker_flags
+        + [
             "@$(location :{})/linker_flags.txt".format(linker_flags_rule_name),
         ],
         target_compatible_with = target_compatible_with,
-        **kwargs
+        **kwargs,
     )

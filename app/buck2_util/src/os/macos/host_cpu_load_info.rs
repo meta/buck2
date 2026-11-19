@@ -70,7 +70,8 @@ pub fn host_cpu_load_info() -> buck2_error::Result<HostCpuLoadInfo> {
     }
 }
 
-#[cfg(test)]
+// Miri does not implement `mach_host_self` or `host_statistics64`.
+#[cfg(all(test, not(miri)))]
 mod tests {
     use std::thread;
     use std::time::Duration;

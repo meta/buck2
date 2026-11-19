@@ -1,0 +1,27 @@
+load(":rules.bzl", "constraint_with_group", "uses_select")
+
+constraint_with_group(
+    name = "anon_constraint",
+    anon = True,
+)
+
+constraint_with_group(
+    name = "run_constraint",
+    anon = False,
+)
+
+uses_select(
+    name = "anon",
+    value = select({
+        ":anon_constraint": "matched",
+        "DEFAULT": "default",
+    }),
+)
+
+uses_select(
+    name = "run",
+    value = select({
+        ":run_constraint": "matched",
+        "DEFAULT": "default",
+    }),
+)

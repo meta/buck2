@@ -244,7 +244,7 @@ fn is_static(ty: &Type, generics: &HashSet<String>) -> bool {
 
     match ty {
         Type::Array(x) => f(&x.elem),
-        Type::BareFn(_) => true,
+        Type::FnPtr(_) => true,
         Type::Never(_) => true,
         Type::Paren(x) => f(&x.elem),
         Type::Path(x) => x.qself.is_none() && is_static_path(&x.path, generics),
@@ -254,6 +254,7 @@ fn is_static(ty: &Type, generics: &HashSet<String>) -> bool {
         Type::Tuple(x) => x.elems.iter().all(f),
         Type::TraitObject(tr) => {
             let syn::TypeTraitObject {
+                attrs: _,
                 dyn_token: _,
                 bounds,
             } = tr;
@@ -276,8 +277,9 @@ fn is_static_type_param_bound(x: &TypeParamBound, generics: &HashSet<String>) ->
         TypeParamBound::Trait(trait_bound) => {
             let TraitBound {
                 paren_token: _,
-                modifier: _,
                 lifetimes,
+                modifiers: _,
+                maybe: _,
                 path,
             } = trait_bound;
             lifetimes.is_none() && is_static_path(path, generics)
@@ -299,7 +301,7 @@ fn is_static_path_arguments(x: &PathArguments, generics: &HashSet<String>) -> bo
         }),
         PathArguments::Parenthesized(x) => match &x.output {
             ReturnType::Default => false, // An inferred type we can't see
-            ReturnType::Type(_, ty) => f(ty) && x.inputs.iter().all(f),
+            ReturnType::Type(_, ty) => f(ty) && x.inputs.iter().all(|i| f(&i.ty)),
         },
     }
 }

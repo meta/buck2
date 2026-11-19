@@ -7,14 +7,14 @@
 # above-listed licenses.
 
 def _impl(
-        # starlark-lint-disable unused-argument
-        ctx):  # @unused
+    # starlark-lint-disable unused-argument
+    ctx,
+):  # @unused
     fail("not needed in test")
 
 main = bxl_main(
     impl = _impl,
-    cli_args = {
-    },
+    cli_args = {},
 )
 
 def wrong_types(x: str) -> int:

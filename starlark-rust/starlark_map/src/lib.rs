@@ -21,31 +21,18 @@
 #![allow(clippy::missing_safety_doc)]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
-#![cfg_attr(rust_nightly, feature(core_intrinsics))]
-#![cfg_attr(rust_nightly, feature(portable_simd))]
-#![cfg_attr(rust_nightly, feature(cfg_version))]
-#![cfg_attr(rust_nightly, allow(internal_features))]
 
-mod hash_value;
-mod hashed;
-mod hasher;
-mod iter;
-mod mix_u32;
 pub mod ordered_map;
 pub mod ordered_set;
 pub mod small_map;
 pub mod small_set;
-pub mod sorted_map;
-pub mod sorted_set;
 pub mod sorted_vec;
-pub(crate) mod sorting;
 pub mod unordered_map;
 pub mod unordered_set;
-pub mod vec2;
-pub(crate) mod vec_map;
 
 pub use equivalent::Equivalent;
-pub use hash_value::StarlarkHashValue;
-pub use hashed::Hashed;
-pub use hasher::StarlarkHasher;
-pub use hasher::StarlarkHasherBuilder;
+// The hashing layer lives in `mini_map` now; these are the names starlark has always used for it.
+pub use mini_map::FastHasher as StarlarkHasher;
+pub use mini_map::FastHasherBuilder as StarlarkHasherBuilder;
+pub use mini_map::Hashed;
+pub use mini_map::ShortHash as StarlarkHashValue;

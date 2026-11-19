@@ -17,6 +17,15 @@ rust_library(
         "test_data/**/*",
         "test_data/**/.*",
     ]),
+    autocargo = {
+        "cargo_toml_config": {
+            "extra_buck_dependencies": {
+                "build-dependencies": [
+                    "fbsource//third-party/rust:walkdir",
+                ],
+            },
+        },
+    },
     mapped_srcs = {
         ":prelude": "src/prelude",
     },

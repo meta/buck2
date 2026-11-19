@@ -17,9 +17,11 @@ import com.facebook.buck.io.filesystem.impl.ProjectFilesystemUtils;
 import com.facebook.buck.step.StepExecutionResult;
 import com.facebook.buck.step.StepExecutionResults;
 import com.facebook.buck.step.isolatedsteps.common.AbstractIsolatedExecutionStep;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 
 /** Make Missing Output directories step. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class MakeMissingOutputsStep extends AbstractIsolatedExecutionStep {
 
   private final RelPath annotationsPath;

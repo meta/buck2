@@ -109,7 +109,6 @@ public class SystemClassLoaderAdder {
    * @param newClassLoader the class loader with the new paths
    * @param systemClassLoader the system class loader
    */
-  @SuppressWarnings("PMD.EmptyCatchBlock")
   private void addNewClassLoaderToSystemClassLoaderPreBaseDex(
       DexClassLoader newClassLoader, PathClassLoader systemClassLoader)
       throws NoSuchFieldException, IllegalAccessException {

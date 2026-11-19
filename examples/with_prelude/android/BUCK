@@ -50,5 +50,6 @@ prebuilt_jar(
 java_test(
     name = "java_test",
     srcs = ["HelloWorldTest.java"],
+    test_type = "junit",
     deps = [":junit"],
 )

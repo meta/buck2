@@ -9,7 +9,7 @@
 def _slow_impl(ctx: AnalysisContext) -> list[Provider]:
     outs = {}
     for i in range(ctx.attrs.count):
-        o = ctx.actions.declare_output("out/{}".format(i))
+        o = ctx.actions.declare_output("out/{}".format(i), has_content_based_path = False)
         ctx.actions.run(
             ["fbpython", ctx.attrs.src, ctx.attrs.duration, ctx.attrs.pids, o.as_output()],
             category = "test",
@@ -17,12 +17,15 @@ def _slow_impl(ctx: AnalysisContext) -> list[Provider]:
         )
         outs[str(i)] = o
 
-    out = ctx.actions.symlinked_dir("outs", outs)
+    out = ctx.actions.symlinked_dir("outs", outs, has_content_based_path = False)
     return [DefaultInfo(out)]
 
-slow_actions = rule(impl = _slow_impl, attrs = {
-    "count": attrs.int(),
-    "duration": attrs.string(),
-    "pids": attrs.string(),
-    "src": attrs.source(),
-})
+slow_actions = rule(
+    impl = _slow_impl,
+    attrs = {
+        "count": attrs.int(),
+        "duration": attrs.string(),
+        "pids": attrs.string(),
+        "src": attrs.source(),
+    },
+)

@@ -17,20 +17,20 @@
 
 use crate::eval::Arguments;
 use crate::eval::ParametersSpec;
-use crate::values::FrozenValue;
 use crate::values::Heap;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::dict::AllocDict;
 
 /// Collect `N` arguments.
 ///
 /// This function is called by generated code.
 #[inline]
 pub fn parse_signature<'v, const N: usize>(
-    parser: &ParametersSpec<FrozenValue>,
+    parser: &ParametersSpec<Value<'v>>,
     args: &Arguments<'v, '_>,
-    heap: &'v Heap,
+    heap: Heap<'v>,
 ) -> crate::Result<[Option<Value<'v>>; N]> {
     parser.collect_into(args, heap)
 }
@@ -39,7 +39,7 @@ pub fn parse_signature<'v, const N: usize>(
 #[inline(always)]
 pub fn parse_positional<'v, const R: usize, const O: usize>(
     args: &Arguments<'v, '_>,
-    heap: &'v Heap,
+    heap: Heap<'v>,
 ) -> crate::Result<([Value<'v>; R], [Option<Value<'v>>; O])> {
     args.no_named_args()?;
     args.optional(heap)
@@ -48,11 +48,11 @@ pub fn parse_positional<'v, const R: usize, const O: usize>(
 #[inline(always)]
 pub fn parse_positional_kwargs_alloc<'v, 'a, const R: usize, const O: usize>(
     args: &'a Arguments<'v, 'a>,
-    heap: &'v Heap,
+    heap: Heap<'v>,
 ) -> crate::Result<([Value<'v>; R], [Option<Value<'v>>; O], Value<'v>)> {
     let (required, optional) = args.optional(heap)?;
     let kwargs = args.names_map()?;
-    let kwargs = heap.alloc(kwargs);
+    let kwargs = heap.alloc(AllocDict(kwargs)).to_value();
     Ok((required, optional, kwargs))
 }
 

@@ -116,15 +116,15 @@ impl<'a> AqueryFunctions<'a> {
                     res.insert(node);
                 }
                 ActionQueryNodeData::Analysis(analysis) => {
-                    for action in analysis.analysis_result().analysis_values().iter_actions() {
-                        action_keys.push(action.key().dupe());
+                    for action in analysis.analysis_result().analysis_values()?.iter_actions() {
+                        action_keys.push(action?.key().dupe());
                     }
                 }
             }
         }
 
         let nodes = buck2_util::future::try_join_all(
-            action_keys.iter().map(|key| env.delegate.get_node(&key)),
+            action_keys.iter().map(|key| env.delegate.get_node(key)),
         )
         .await?;
         res.extend(nodes);

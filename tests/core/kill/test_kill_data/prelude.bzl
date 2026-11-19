@@ -7,8 +7,9 @@
 # above-listed licenses.
 
 def _rule_for_test_kill_impl(
-        # starlark-lint-disable unused-argument
-        ctx):  # @unused
+    # starlark-lint-disable unused-argument
+    ctx,
+):  # @unused
     return [DefaultInfo()]
 
 rule_for_test_kill = rule(

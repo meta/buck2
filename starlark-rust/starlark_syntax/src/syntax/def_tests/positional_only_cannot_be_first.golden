@@ -12,4 +12,3 @@ Error: error: `/` cannot be first parameter
   |
 1 | def test(/, x): pass
   |          ^
-  |

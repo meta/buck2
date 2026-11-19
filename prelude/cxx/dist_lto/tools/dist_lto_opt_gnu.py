@@ -21,13 +21,14 @@ import argparse
 import os
 import subprocess
 import sys
-from typing import List
+import traceback
+from typing import List, Optional
 
 EXIT_SUCCESS, EXIT_FAILURE = 0, 1
 
 
 # Filter opt related flags
-def _filter_flags(clang_flags: List[str]) -> List[str]:  # noqa: C901
+def _filter_flags(clang_flags: List[str]) -> Optional[List[str]]:  # noqa: C901
     # List of llvm flags to be ignored.
     # They either don't have an valid mapping or unused during opt.
     IGNORE_OPT_FLAGS = [
@@ -122,7 +123,7 @@ def _filter_flags(clang_flags: List[str]) -> List[str]:  # noqa: C901
                     f"error: cannot handle -Xlinker flags {clang_flags}, "
                     "-Xlinker should be followed by an option"
                 )
-                return EXIT_FAILURE
+                return None
             if clang_flags[index + 1] == "-mllvm":
                 # Validate -Xlinker
                 #          -mllvm
@@ -142,7 +143,7 @@ def _filter_flags(clang_flags: List[str]) -> List[str]:  # noqa: C901
                         f"error: cannot handle -Xlinker flags {clang_flags}, "
                         "-mllvm should be followed by an llvm option"
                     )
-                    return EXIT_FAILURE
+                    return None
                 opt_flags.extend(["-mllvm", clang_flags[index + 3]])
                 index += 3
             else:
@@ -202,26 +203,55 @@ def _cleanup_flags(clang_opt_flags: List[str]) -> List[str]:
     return clean_output
 
 
+# Flags that the compiler wrapper consumes and does not pass through.
+_COMPILER_WRAPPER_CONSUMED_PREFIXES = (
+    "--log-fbcc",
+    "--fbcc-create-external-debug-info=",
+    "--show-flags",
+)
+
+
+def _compiler_wrapper_passthrough_arg_index(opt_args: List[str]) -> int:
+    """Return the index of the compiler wrapper's required ``--cc=`` argument."""
+    for index, arg in enumerate(opt_args):
+        if arg.startswith("--cc="):
+            return index
+    raise ValueError("compiler wrapper command is missing a --cc argument")
+
+
+def _compiler_wrapper_prefix_end(opt_args: List[str]) -> int:
+    """Return the slice end for the compiler wrapper prefix within opt_args.
+
+    opt_args layout:
+        ['--', <compiler wrapper command...>, '--cc=<compiler>', <optional wrapper-consumed args>, ...]
+
+    Only arguments consumed by the wrapper belong in the prefix. Pass-through
+    arguments like ``--target=`` are already folded into cc1 flags by
+    ``_cleanup_flags`` and must not precede ``-cc1``.
+    """
+    end = _compiler_wrapper_passthrough_arg_index(opt_args) + 1
+    while end < len(opt_args) and any(
+        opt_args[end].startswith(p) for p in _COMPILER_WRAPPER_CONSUMED_PREFIXES
+    ):
+        end += 1
+    return end
+
+
 def main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", help="The output native object file.")
     parser.add_argument("--input", help="The input bitcode object file.")
     parser.add_argument("--index", help="The thinlto index file.")
-    parser.add_argument("--split-dwarf", required=False, help="Split dwarf option.")
-    parser.add_argument(
-        "--create-external-debug-info",
-        required=False,
-        help="""
-        Creates empty external debug info file if one was not produced by clang. Needed because buck2 always require output artifacts to exist if declared, but clang do not produce empty files. 
-        This filename should match what clang would otherwise implicitly produce. That is usually <input_base_name.dwo>: https://fburl.com/code/l98cksg9
-        """,
-    )
+    parser.add_argument("--split-dwarf", help="Split dwarf option.", default="none")
+    parser.add_argument("--dwo", help="Split-dwarf .dwo file to be created.")
     parser.add_argument(
         "--args", help="The argsfile containing unfiltered and unprocessed flags."
     )
     parser.add_argument("--debug", action="store_true", help="Dump clang -cc1 flags.")
     parser.add_argument("opt_args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv[1:])
+    split_dwarf: str = args.split_dwarf
+    dwo: str | None = args.dwo
 
     with open(args.args, "r") as argsfile:
         clang_opt_flags = _filter_flags(argsfile.read().splitlines())
@@ -239,44 +269,59 @@ def main(argv: List[str]) -> int:
             f"-fthinlto-index={args.index}",
         ]
     )
-    if args.split_dwarf == "none":
+    if split_dwarf == "none":
+        assert dwo is None
         clang_opt_flags.append("-gno-split-dwarf")
     else:
+        # Note that -gsplit-dwarf=single does not create a .dwo file.
+        assert (dwo is not None) == (split_dwarf == "split")
         clang_opt_flags.append(f"-gsplit-dwarf={args.split_dwarf}")
 
-    # The following args slices manipulating may be confusing. The first 4 element of opt_args are:
-    #   1. a spliter "--", it's not used anywhere;
-    #   2. the fbcc wrapper script path
-    #   3. the "-cc" arg pointing to the compiler we use
-    #   4. the "-log-fbcc" arg indicating whether we want to log the compiler invocation
-    # EXAMPLE: ['--', 'buck-out/v2/gen/fbcode/8e3db19fe005003a/tools/build/buck/wrappers/__fbcc__/fbcc', '--cc=fbcode/third-party-buck/platform010/build/llvm-fb/<ver>/bin/clang++', '--log-fbcc=False', '--target=x86_64-redhat-linux-gnu', ...]
-    clang_cc1_flags = _cleanup_flags(args.opt_args[2:] + clang_opt_flags)
+    compiler_wrapper_passthrough_arg_index = _compiler_wrapper_passthrough_arg_index(
+        args.opt_args
+    )
+    clang_cc1_flags = _cleanup_flags(
+        args.opt_args[compiler_wrapper_passthrough_arg_index:] + clang_opt_flags
+    )
     if clang_cc1_flags is None:
         return EXIT_FAILURE
 
-    fbcc_cmd = args.opt_args[1:4] + clang_cc1_flags
+    if clang_cc1_flags and clang_cc1_flags[0] == "-cc1":
+        # `-cc1` must be argv[1] for the clang driver.
+        cc_arg = args.opt_args[compiler_wrapper_passthrough_arg_index]
+        compiler_wrapper_cmd = [cc_arg[len("--cc=") :]] + clang_cc1_flags
+    else:
+        compiler_wrapper_prefix_end = _compiler_wrapper_prefix_end(args.opt_args)
+        compiler_wrapper_cmd = (
+            args.opt_args[1:compiler_wrapper_prefix_end] + clang_cc1_flags
+        )
 
     if args.debug:
-        # Print fbcc commandline and exit.
-        print(" ".join(fbcc_cmd))
+        # Print the compiler wrapper command line and exit.
+        print(" ".join(compiler_wrapper_cmd))
         return EXIT_SUCCESS
 
-    subprocess.check_call(fbcc_cmd)
+    subprocess.check_call(compiler_wrapper_cmd)
     if os.stat(args.out).st_size == 0:
         print("error: opt produced empty file")
         return EXIT_FAILURE
 
-    if args.create_external_debug_info:
-        # Creates empty external debug info file if one was not produced by clang. Needed because buck2
-        # always require output artifacts to exist if declared, but clang do not produce empty files.
+    if dwo is not None:
+        # Unfortunately some users manually add `-gno-split-dwarf` to the
+        # compiler flags contradicting the --split-dwarf setting. Create an
+        # empty file so buck rules are not missing the file...
         try:
-            with open(args.create_external_debug_info, "x") as _:
+            with open(dwo, "x") as _:
                 pass
-        except FileExistsError:
+        except IOError:
             pass
 
     return EXIT_SUCCESS
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    try:
+        sys.exit(main(sys.argv))
+    except subprocess.CalledProcessError as e:
+        traceback.print_exc()
+        sys.exit(e.returncode)

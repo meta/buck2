@@ -16,7 +16,7 @@ transition_to_reindeer = transition(
 )
 
 def _simple_impl(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("out", ["out"]))]
+    return [DefaultInfo(default_output = ctx.actions.write("out", ["out"], has_content_based_path = False))]
 
 simple = rule(
     impl = _simple_impl,

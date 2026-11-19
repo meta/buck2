@@ -1,0 +1,8 @@
+stub(
+    name = "t",
+    visibility = ["PUBLIC"],
+)
+
+# No own `visibility`: inherits the restrictive `boundary/PACKAGE` default,
+# which the exemption does not lift.
+stub(name = "inherits_default")

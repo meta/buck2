@@ -95,6 +95,44 @@ fn test_define_transitive_set_projections() -> buck2_error::Result<()> {
 }
 
 #[test]
+fn test_define_transitive_set_wrong_signature() {
+    for (param, bad) in [
+        ("args_projections", "def bad(_value, _extra):"),
+        ("json_projections", "def bad():"),
+        ("reductions", "def bad(_children):"),
+    ] {
+        let contents = format!(
+            indoc!(
+                r#"
+                {bad}
+                    pass
+
+                FooSet = transitive_set({param} = {{ "foo": bad }})
+
+                def test():
+                    pass
+                "#
+            ),
+            bad = bad,
+            param = param,
+        );
+
+        let err = transitive_set_tester()
+            .run_starlark_bzl_test(&contents)
+            .unwrap_err();
+        let err = format!("{err:?}");
+        assert!(
+            err.contains(&format!("Invalid `{param}` entry `foo`")),
+            "{err}"
+        );
+        assert!(
+            err.contains("does not match the expected signature"),
+            "{err}"
+        );
+    }
+}
+
+#[test]
 fn test_create_transitive_set() -> buck2_error::Result<()> {
     let mut tester = transitive_set_tester();
 
@@ -452,6 +490,7 @@ fn test_projection_iteration() -> buck2_error::Result<()> {
 
 #[test]
 fn test_json_projection() -> buck2_error::Result<()> {
+    let _guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
     let mut tester = transitive_set_tester();
 
     /*
@@ -670,6 +709,7 @@ fn test_transitive_set_ordering_docs() -> buck2_error::Result<()> {
 
 #[test]
 fn test_accessors() -> buck2_error::Result<()> {
+    let _guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
     let mut tester = transitive_set_tester();
 
     tester.run_starlark_bzl_test(indoc!(

@@ -1,0 +1,7 @@
+# The default `within_view` here is PUBLIC (see `no_wv_child/PACKAGE`), so
+# without the cap this outside dep would be allowed. The parent's cap
+# refuses it.
+stub(
+    name = "c",
+    deps = ["root//outside:t"],
+)

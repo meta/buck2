@@ -12,7 +12,7 @@ load("@prelude//java:java_toolchain.bzl", "JavaToolchainInfo")
 def _jdk_system_image_impl(ctx: AnalysisContext) -> list[Provider]:
     java_toolchain = ctx.attrs._java_toolchain[JavaToolchainInfo]
 
-    output = ctx.actions.declare_output("image")
+    output = ctx.actions.declare_output("image", has_content_based_path = False)
     cmd = cmd_args([
         ctx.attrs.create_jdk_system_image[RunInfo],
         "--core-for-system-modules-jar",

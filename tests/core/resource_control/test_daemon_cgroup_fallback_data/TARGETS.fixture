@@ -1,0 +1,1 @@
+trivial_build(name = "rule")

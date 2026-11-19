@@ -34,7 +34,6 @@ import javax.lang.model.type.TypeVariable;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.SimpleElementVisitor8;
 import org.hamcrest.Matchers;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -371,19 +370,6 @@ public class TreeBackedTypeElementTest extends CompilerTreeApiParameterizedTest 
 
     assertSame(unnamedPackage, fooElement.getEnclosingElement());
     assertTrue(unnamedPackage.getEnclosedElements().contains(fooElement));
-  }
-
-  @Ignore(
-      "TODO(jkeljo): Need to wrap elements coming out of javac to ensure callers always get"
-          + "our PackageElement impl instead of javac's.")
-  @Test
-  public void testGetEnclosingElementForBuiltInTopLevelClasses() throws IOException {
-    initCompiler();
-
-    TypeElement stringElement = elements.getTypeElement("java.lang.String");
-    PackageElement javaLangElement = elements.getPackageElement("java.lang");
-
-    assertSame(javaLangElement, stringElement.getEnclosingElement());
   }
 
   @Test

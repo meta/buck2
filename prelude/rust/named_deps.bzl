@@ -13,13 +13,12 @@ load(":context.bzl", "CompileContext")
 # Write a file containing all the dynamically-generated dependency names. This
 # isn't used in the course of any Buck builds, but is needed by rust-project to
 # supply an accurate dependency graph to rust-analyzer..
-def write_named_deps_names(
-        ctx: AnalysisContext,
-        compile_ctx: CompileContext) -> Artifact | None:
+def write_named_deps_names(ctx: AnalysisContext, compile_ctx: CompileContext) -> Artifact | None:
     if not is_list(ctx.attrs.named_deps):
         return None
 
-    named_deps_names = ctx.actions.declare_output("named_deps")
+    use_cbp = getattr(ctx.attrs, "use_content_based_paths", False)
+    named_deps_names = ctx.actions.declare_output("named_deps", has_content_based_path = use_cbp)
     ctx.actions.run(
         cmd_args(
             compile_ctx.internal_tools_info.rustc_action,
@@ -29,6 +28,7 @@ def write_named_deps_names(
                 name = "named_deps.args",
                 args = [name for name, _dep in ctx.attrs.named_deps],
                 allow_args = True,
+                has_content_based_path = use_cbp,
             ),
         ),
         category = "named_deps",

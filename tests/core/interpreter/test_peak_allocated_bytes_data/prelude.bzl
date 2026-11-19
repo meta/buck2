@@ -7,8 +7,9 @@
 # above-listed licenses.
 
 def _eee(
-        # starlark-lint-disable unused-argument
-        ctx):  # @unused
+    # starlark-lint-disable unused-argument
+    ctx,
+):  # @unused
     return [DefaultInfo()]
 
 eee = rule(

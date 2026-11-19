@@ -22,8 +22,8 @@ use crate::environment::GlobalsBuilder;
 use crate::eval::Evaluator;
 use crate::values::StringValue;
 use crate::values::Value;
-use crate::values::ValueLike;
 use crate::values::string::StarlarkStr;
+use crate::values::types::bytes::value::StarlarkBytes;
 
 #[starlark_module]
 pub(crate) fn register_str(globals: &mut GlobalsBuilder) {
@@ -76,17 +76,33 @@ pub(crate) fn register_str(globals: &mut GlobalsBuilder) {
     /// # "#);
     /// ```
     #[starlark(speculative_exec_safe)]
-    fn ord<'v>(#[starlark(require = pos)] a: StringValue<'v>) -> anyhow::Result<i32> {
-        let mut chars = a.as_str().chars();
-        if let Some(c) = chars.next() {
-            if chars.next().is_none() {
-                return Ok(u32::from(c) as i32);
+    fn ord<'v>(#[starlark(require = pos)] a: Value<'v>) -> anyhow::Result<i32> {
+        if let Some(s) = a.unpack_str() {
+            let mut chars = s.chars();
+            if let Some(c) = chars.next() {
+                if chars.next().is_none() {
+                    return Ok(u32::from(c) as i32);
+                }
             }
+            Err(anyhow::anyhow!(
+                "ord(): {} is not a single character string",
+                a.to_repr()
+            ))
+        } else if let Some(b) = StarlarkBytes::from_value(a) {
+            if b.len() == 1 {
+                Ok(b.as_bytes()[0] as i32)
+            } else {
+                Err(anyhow::anyhow!(
+                    "ord(): bytes argument must have length 1, not {}",
+                    b.len()
+                ))
+            }
+        } else {
+            Err(anyhow::anyhow!(
+                "ord(): expected string or bytes, got '{}'",
+                a.get_type()
+            ))
         }
-        Err(anyhow::anyhow!(
-            "ord(): {} is not a single character string",
-            a.to_value().to_repr()
-        ))
     }
 
     /// [repr](
@@ -137,14 +153,12 @@ pub(crate) fn register_str(globals: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<StringValue<'v>> {
         if let Some(a) = StringValue::new(a) {
-            // Special case that can avoid reallocating, but is equivalent.
-            Ok(a)
-        } else {
-            let mut s = eval.string_pool.alloc();
-            a.collect_repr(&mut s);
-            let r = eval.heap().alloc_str(&s);
-            eval.string_pool.release(s);
-            Ok(r)
+            return Ok(a);
         }
+        let mut s = eval.string_pool.alloc();
+        a.collect_str(&mut s);
+        let r = eval.heap().alloc_str(&s);
+        eval.string_pool.release(s);
+        Ok(r)
     }
 }

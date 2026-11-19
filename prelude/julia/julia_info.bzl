@@ -49,21 +49,24 @@ JuliaLibraryTSet = transitive_set(
 )
 
 # Information about a julia library and its dependencies.
-JuliaLibraryInfo = provider(fields = {
-    "julia_tsets": provider_field(typing.Any, default = None),  # JuliaLibraryTSet
-    "shared_library_info": provider_field(typing.Any, default = None),  # SharedLibraryInfo
-})
+JuliaLibraryInfo = provider(
+    fields = {
+        "julia_tsets": provider_field(typing.Any, default = None),  # JuliaLibraryTSet
+        "shared_library_info": provider_field(typing.Any, default = None),  # SharedLibraryInfo
+    }
+)
 
 def create_julia_library_info(
-        actions: AnalysisActions,
-        label: Label,
-        uuid: str = "",
-        src_labels: typing.Any = [],
-        project_toml: typing.Any = None,
-        srcs: typing.Any = [],
-        deps: list[JuliaLibraryInfo] = [],
-        jll: [JllInfo, None] = None,
-        shlibs: list[SharedLibraryInfo] = []) -> JuliaLibraryInfo:
+    actions: AnalysisActions,
+    label: Label,
+    uuid: str = "",
+    src_labels: typing.Any = [],
+    project_toml: typing.Any = None,
+    srcs: typing.Any = [],
+    deps: list[JuliaLibraryInfo] = [],
+    jll: [JllInfo, None] = None,
+    shlibs: list[SharedLibraryInfo] = [],
+) -> JuliaLibraryInfo:
     julia_tsets = JuliaLibrary(
         uuid = uuid,
         label = label,

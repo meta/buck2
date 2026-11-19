@@ -17,7 +17,7 @@ profile_without_actions = bxl_main(
 def _profile_with_actions(ctx):
     actions = ctx.bxl_actions().actions
 
-    output = actions.write("my_output", "out")
+    output = actions.write("my_output", "out", has_content_based_path = False)
 
     ensured = ctx.output.ensure(output)
     ctx.output.print(ensured)

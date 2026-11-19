@@ -35,17 +35,18 @@ message KotlinExtraParams {
   repeated string extraClassPaths = 2;
   string standardLibraryClassPath = 3;
   string annotationProcessingClassPath = 4;
-  AnnotationProcessingTool annotationProcessingTool = 5;
+  reserved 5;
   repeated string extraKotlincArguments = 6;
   // kotlinCompilerPlugin keys are strings encoded as strings due to limitations
   // in proto3.
   map<string, PluginParams> kotlinCompilerPlugins = 7;
   map<string, string> kosabiPluginOptions = 8;
-  string kosabiJvmAbiGenEarlyTerminationMessagePrefix = 9;
+  reserved 9;
+  reserved "kosabiJvmAbiGenEarlyTerminationMessagePrefix";
   repeated string friendPaths = 10;
   repeated string kotlinHomeLibraries = 11;
   string jvmTarget = 12;
-  bool shouldGenerateAnnotationProcessingStats = 13;
+  reserved 13;
   bool shouldUseJvmAbiGen = 14;
   string jvmAbiGenPlugin = 15;
   bool shouldVerifySourceOnlyAbiConstraints = 16;
@@ -55,19 +56,47 @@ message KotlinExtraParams {
   string incrementalStateDir = 22;
   string languageVersion = 23;
   repeated string extraClassPathSnapshots = 24;
-  bool shouldKsp2RunIncrementally = 26;
-  bool shouldKosabiJvmAbiGenUseK2 = 27;
-  string kotlinClassesDir = 28;
+  reserved 26; // was shouldKsp2RunIncrementally, KSP2 always runs
+               // non-incrementally
+  reserved "shouldKsp2RunIncrementally";
+  reserved 27; // was shouldKosabiJvmAbiGenUseK2, unused (kotlincd derives K2
+               // from LanguageVersion.getSupportsK2())
+  reserved 28;
+  reserved "kotlinClassesDir";
+  reserved 29; // was skipClasspathRemovalRebuild, removed after KT-85740 fix
+  string javaBinary = 30;
+  // Reduced SO-ABI classpath for the applicability plugin (only deps with
+  // required_for_source_only_abi=True or in source_only_abi_deps). Distinct
+  // from compileTimeClasspathPaths which contains the full dep set during
+  // library builds.
+  repeated string applicabilityClasspath = 31;
+  // Records only directly-referenced classes in Kosabi source-only ABI dep
+  // files, recursing into supertypes for the target's own supertype chain.
+  bool shouldKosabiUseShallowClassUsage = 32;
+  // How the K2 JVM ABI gen plugin reports ABI content repaired because a
+  // dependency was missing from the source-only ABI classpath: off, warn,
+  // or error (fails the compilation instead of emitting a knowingly-wrong ABI).
+  string kosabiAbiValidationMode = 33;
+  // `option=value` pairs passed to the K2 JVM ABI gen plugin of source-only ABI
+  // actions, set by toolchain kill switches. Empty by default.
+  repeated string kosabiJvmAbiGenOptions = 40;
+
+  // Turns off the K2 JVM ABI gen check that fails a source-only ABI whose kept
+  // inline bodies name a class that only a Kosabi stub provides. Unset (false)
+  // keeps the check on.
+  bool disableKosabiKeptBodyStubCheck = 36;
+  // Records the compiler settings in incremental_config.json, compiles in full
+  // when a compiler plugin or a file that an option names changed since the
+  // last successful incremental round, and has the incremental compiler compute
+  // classpath changes when only the classpath order changed.
+  bool shouldTrackIncrementalInputs = 34;
+  // Replaces read-only outputs with writable copies before an incremental
+  // round, when Buck2 seals outputs (`buck2.readonly_outputs`).
+  bool shouldReclaimReadOnlyOutputs = 35;
 }
 
 message PluginParams {
   map<string, string> params = 1;
-}
-
-/** Model for KotlinLibraryDescription.AnnotationProcessingTool */
-enum AnnotationProcessingTool {
-  KAPT = 0;
-  JAVAC = 1;
 }
 
 /** Model for metadata provided by Buck2 incremental action see:

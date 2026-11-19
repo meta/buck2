@@ -16,6 +16,7 @@ use superconsole::DrawMode;
 use superconsole::Lines;
 
 use crate::subscribers::superconsole::message_renderer::render_rich_message_lines;
+use crate::subscribers::superconsole::message_renderer::render_rich_message_lines_compact;
 use crate::subscribers::superconsole::message_renderer::warning_styled;
 use crate::subscribers::system_warning::check_memory_pressure_snapshot;
 use crate::subscribers::system_warning::check_remaining_disk_space_snapshot;
@@ -62,9 +63,13 @@ impl Component for SystemWarningComponent<'_> {
                             header,
                             body,
                             footer,
+                            compact,
                         } => {
-                            let rich_lines =
-                                render_rich_message_lines(header, body, footer.as_deref())?;
+                            let rich_lines = if *compact {
+                                render_rich_message_lines_compact(header, body, footer.as_deref())?
+                            } else {
+                                render_rich_message_lines(header, body, footer.as_deref())?
+                            };
                             lines.extend(rich_lines);
                         }
                     }

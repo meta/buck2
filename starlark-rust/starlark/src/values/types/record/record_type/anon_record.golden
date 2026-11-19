@@ -18,4 +18,3 @@ error: Record instance cannot be created if record type is not assigned to a glo
   |
 1 | record(a = field(int))(a = 1)
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |

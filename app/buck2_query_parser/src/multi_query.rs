@@ -8,14 +8,18 @@
  * above-listed licenses.
  */
 
-use gazebo::prelude::SliceExt;
-
 use crate::placeholder::QUERY_PERCENT_S_PLACEHOLDER;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum EvalQueryError {
-    #[error("Query args supplied without any `%s` placeholder in the query, got args {}", .0.map(|x| format!("`{x}`")).join(", "))]
+    #[error(
+        "Query args supplied without any `%s` placeholder in the query, got args {}. \
+         Only the first argument is the query; each later argument is substituted for `%s` in it. \
+         Use `\"owner('%s')\" a.rs b.rs` to run the query once per argument, \
+         or `\"owner('a.rs') + owner('b.rs')\"` to combine expressions in a single query",
+        .0.iter().map(|x| format!("`{x}`")).collect::<Vec<_>>().join(", ")
+    )]
     ArgsWithoutPlaceholder(Vec<String>),
     #[error("Placeholder `%s` in query argument `{0}`")]
     PlaceholderInPattern(String),
@@ -63,5 +67,21 @@ impl MaybeMultiQuery {
                 Ok(MaybeMultiQuery::SingleQuery(query.to_owned()))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_args_without_placeholder_suggests_working_forms() {
+        let err = match MaybeMultiQuery::parse("owner('a.rs')", ["owner('b.rs')"]) {
+            Err(e) => format!("{e}"),
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(err.contains("got args `owner('b.rs')`"), "{err}");
+        assert!(err.contains("\"owner('%s')\" a.rs b.rs"), "{err}");
+        assert!(err.contains("\"owner('a.rs') + owner('b.rs')\""), "{err}");
     }
 }

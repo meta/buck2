@@ -1,4 +1,4 @@
-load("@prelude//toolchains/android/tools:build_rules.bzl", "buck_java_binary", "buck_java_library")
+load("@prelude//toolchains/android/tools:build_rules.bzl", "SIGNED_JAR_BLOCKLIST", "buck_java_binary", "buck_java_library")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("android_devxx")
@@ -19,6 +19,8 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/util/environment:platform",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:guava",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
         "prelude//toolchains/android/third-party:manifest-merger",
         "prelude//toolchains/android/third-party:tools-sdk-common",
     ],
@@ -26,15 +28,9 @@ buck_java_library(
 
 buck_java_binary(
     name = "generate_manifest_binary",
-    blocklist = [
-        "META-INF/.*\\.DSA",
-        "META-INF/.*\\.SF",
-        "META-INF/.*\\.RSA",
-    ],
+    blocklist = SIGNED_JAR_BLOCKLIST,
     main_class = "com.facebook.buck.android.manifest.GenerateManifestExecutableMain",
-    visibility = [
-        "PUBLIC",
-    ],
+    visibility = ["PUBLIC"],
     deps = [
         ":manifest",
     ],
@@ -42,15 +38,9 @@ buck_java_binary(
 
 buck_java_binary(
     name = "replace_application_id_placeholders_binary",
-    blocklist = [
-        "META-INF/.*\\.DSA",
-        "META-INF/.*\\.SF",
-        "META-INF/.*\\.RSA",
-    ],
+    blocklist = SIGNED_JAR_BLOCKLIST,
     main_class = "com.facebook.buck.android.manifest.ReplaceApplicationIdPlaceholdersExecutableMain",
-    visibility = [
-        "PUBLIC",
-    ],
+    visibility = ["PUBLIC"],
     deps = [
         ":manifest",
     ],

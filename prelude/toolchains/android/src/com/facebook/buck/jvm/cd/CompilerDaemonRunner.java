@@ -18,6 +18,7 @@ import com.facebook.buck.step.isolatedsteps.IsolatedStepsRunner;
 import com.facebook.buck.util.ClassLoaderCache;
 import com.facebook.buck.util.Console;
 import com.facebook.buck.util.Verbosity;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import java.io.Closeable;
 import java.io.IOException;
@@ -30,6 +31,7 @@ import java.util.concurrent.TimeUnit;
  * Holds state needed to execute compilation commands. Can be used for a single command or stored
  * and re-used by a worker tool.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CompilerDaemonRunner implements Closeable {
   private final OutputStream eventsOutputStream;
   private final ClassLoaderCache classLoaderCache;

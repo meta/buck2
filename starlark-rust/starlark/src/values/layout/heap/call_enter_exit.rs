@@ -21,11 +21,13 @@ use std::fmt::Debug;
 
 use allocative::Allocative;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkPagablePanic;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::eval::runtime::profile::instant::ProfilerInstant;
+use crate::typing::HasTyVTable;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
 use crate::values::Value;
@@ -67,16 +69,23 @@ pub(crate) struct CallEnter<'v, D: MaybeDrop + 'static> {
 }
 
 #[starlark_value(type = "call_enter")]
-impl<'v, D: MaybeDrop + Trace<'v> + 'v> StarlarkValue<'v> for CallEnter<'v, D> {
-    type Canonical = Self;
+impl<'v, D: MaybeDrop + Trace<'v> + 'v> StarlarkValue<'v> for CallEnter<'v, D> where
+    Self: HasTyVTable
+{
 }
+
+// `MaybeDrop` has exactly two implementors: `NeedsDrop` and `NoDrop`. Register
+// both concrete instantiations.
+crate::register_ty_starlark_value!(CallEnter<'_, NeedsDrop>);
+crate::register_ty_starlark_value!(CallEnter<'_, NoDrop>);
 
 #[derive(
     Debug,
     derive_more::Display,
     ProvidesStaticType,
     NoSerialize,
-    Allocative
+    Allocative,
+    StarlarkPagablePanic
 )]
 #[display("CallExit")]
 pub(crate) struct CallExit<D: MaybeDrop + 'static> {
@@ -85,6 +94,7 @@ pub(crate) struct CallExit<D: MaybeDrop + 'static> {
 }
 
 #[starlark_value(type = "call_exit")]
-impl<'v, D: MaybeDrop> StarlarkValue<'v> for CallExit<D> {
-    type Canonical = Self;
-}
+impl<'v, D: MaybeDrop> StarlarkValue<'v> for CallExit<D> where Self: HasTyVTable {}
+
+crate::register_avalue_simple_frozen!(CallExit<NeedsDrop>);
+crate::register_avalue_simple_frozen!(CallExit<NoDrop>);

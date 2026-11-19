@@ -1,0 +1,58 @@
+load("@fbcode_macros//build_defs:native_rules.bzl", "buck_genrule")
+load("@fbcode_macros//build_defs:python_binary.bzl", "python_binary")
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+load("@fbsource//tools/build_defs:rust_linkable_symbol.bzl", "rust_linkable_symbol")
+load("@fbsource//xplat/third-party/yarn:yarn_offline_mirror.bzl", "yarn_offline_mirror_view")
+
+oncall("build_infra")
+
+rust_library(
+    name = "buck2_trailcam",
+    srcs = glob(["src/**/*.rs"]),
+    deps = [
+        "fbsource//third-party/rust:axum",
+        "fbsource//third-party/rust:futures",
+        "fbsource//third-party/rust:mime_guess",
+        "fbsource//third-party/rust:prost",
+        "fbsource//third-party/rust:prost-types",
+        "fbsource//third-party/rust:serde",
+        "fbsource//third-party/rust:tar",
+        "fbsource//third-party/rust:tokio",
+        "fbsource//third-party/rust:tokio-util",
+        "fbsource//third-party/rust:zstd",
+        ":trailcam_bundle",
+        "//buck2/app/buck2_cli_proto:buck2_cli_proto",
+        "//buck2/app/buck2_data:buck2_data",
+        "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_event_log:buck2_event_log",
+        "//buck2/app/buck2_events:buck2_events",
+        "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
+    ],
+)
+
+# The viewer, built with yarn and vite from the sources the Nest app exposes
+# (nest/apps/trailcam/core, see its README) and packed into one tarball so a
+# linkable symbol can carry it.
+python_binary(
+    name = "build_bundle",
+    main_function = ".build_bundle.main",
+    main_src = "build_bundle.py",
+)
+
+yarn_offline_mirror_view(
+    name = "bundle_offline_mirror",
+    offline_mirror = "fbsource//xplat/third-party/yarn:offline-mirror",
+    yarn_lock = "fbsource//nest/apps/trailcam:core_yarn_lock",
+)
+
+buck_genrule(
+    name = "bundle_tar",
+    out = "bundle.tar",
+    cmd = '$(exe :build_bundle) --yarn "$(exe fbsource//xplat/third-party/yarn:yarn)" --node "$(location fbsource//xplat/third-party/node/v22.16.0:node)" --yarn-offline-mirror "$(location :bundle_offline_mirror)" --src "$(location fbsource//nest/apps/trailcam:core_srcs)" --tmp "$TMP" -o "$OUT"',
+)
+
+rust_linkable_symbol(
+    name = "trailcam_bundle",
+    content_bytes = ":bundle_tar",
+)

@@ -9,9 +9,10 @@
  */
 
 use allocative::Allocative;
-use buck2_util::arc_str::ArcS;
+use buck2_util::arc_str::PackedStr;
 use derive_more::Display;
 use dupe::Dupe;
+use pagable::Pagable;
 
 use crate::cells::cell_path::CellPath;
 use crate::package::PackageLabel;
@@ -28,26 +29,25 @@ use crate::package::package_relative_path::PackageRelativePath;
     Ord,
     PartialOrd,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 #[display("{}", self.as_ref())]
 pub struct SourcePath {
     pkg: PackageLabel,
-    path: ArcS<PackageRelativePath>,
+    path: PackedStr<PackageRelativePath>,
 }
 
 impl SourcePath {
     #[inline]
-    pub fn new(pkg: PackageLabel, path: ArcS<PackageRelativePath>) -> Self {
+    pub fn new(pkg: PackageLabel, path: PackedStr<PackageRelativePath>) -> Self {
         SourcePath { pkg, path }
     }
 
     /// This is slow, but OK to use in tests.
     pub fn testing_new(pkg: &str, path: &str) -> Self {
-        SourcePath::new(
-            PackageLabel::testing_parse(pkg),
-            ArcS::from(PackageRelativePath::new(path).unwrap()),
-        )
+        let path = PackageRelativePath::new(path).unwrap();
+        SourcePath::new(PackageLabel::testing_parse(pkg), PackedStr::new(path))
     }
 
     #[inline]
@@ -78,12 +78,12 @@ impl SourcePath {
 #[display("{}/{}", pkg, path.as_str())]
 pub struct SourcePathRef<'a> {
     pkg: PackageLabel,
-    path: &'a ArcS<PackageRelativePath>,
+    path: &'a PackedStr<PackageRelativePath>,
 }
 
 impl<'a> SourcePathRef<'a> {
     #[inline]
-    pub fn new(pkg: PackageLabel, path: &'a ArcS<PackageRelativePath>) -> SourcePathRef<'a> {
+    pub fn new(pkg: PackageLabel, path: &'a PackedStr<PackageRelativePath>) -> SourcePathRef<'a> {
         SourcePathRef { pkg, path }
     }
 

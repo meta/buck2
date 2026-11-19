@@ -320,42 +320,48 @@ mod tests {
 
     #[test]
     fn test_smoke() {
-        let module = Module::new();
-        let globals = Globals::standard();
-        let mut eval = Evaluator::new(&module);
-        eval.enable_profile(&ProfileMode::Bytecode).unwrap();
-        eval.eval_module(
-            AstModule::parse("bc.star", "repr([1, 2])".to_owned(), &Dialect::Standard).unwrap(),
-            &globals,
-        )
+        Module::with_temp_heap(|module| {
+            let globals = Globals::standard();
+            let mut eval = Evaluator::new(&module);
+            eval.enable_profile(&ProfileMode::Bytecode).unwrap();
+            eval.eval_module(
+                AstModule::parse("bc.star", "repr([1, 2])".to_owned(), &Dialect::Standard).unwrap(),
+                &globals,
+            )
+            .unwrap();
+            let csv = eval.gen_bc_profile().unwrap().gen_csv().unwrap();
+            assert!(
+                csv.contains(&format!("\n\"{:?}\",1,", BcOpcode::CallFrozenNativePos)),
+                "{csv:?}"
+            );
+            crate::Result::Ok(())
+        })
         .unwrap();
-        let csv = eval.gen_bc_profile().unwrap().gen_csv().unwrap();
-        assert!(
-            csv.contains(&format!("\n\"{:?}\",1,", BcOpcode::CallFrozenNativePos)),
-            "{csv:?}"
-        );
     }
 
     #[test]
     fn test_smoke_2() {
-        let module = Module::new();
-        let globals = Globals::standard();
-        let mut eval = Evaluator::new(&module);
-        eval.enable_profile(&ProfileMode::BytecodePairs).unwrap();
-        eval.eval_module(
-            AstModule::parse("bc.star", "repr([1, 2])".to_owned(), &Dialect::Standard).unwrap(),
-            &globals,
-        )
+        Module::with_temp_heap(|module| {
+            let globals = Globals::standard();
+            let mut eval = Evaluator::new(&module);
+            eval.enable_profile(&ProfileMode::BytecodePairs).unwrap();
+            eval.eval_module(
+                AstModule::parse("bc.star", "repr([1, 2])".to_owned(), &Dialect::Standard).unwrap(),
+                &globals,
+            )
+            .unwrap();
+            let csv = eval.gen_bc_pairs_profile().unwrap().gen_csv().unwrap();
+            assert!(
+                csv.contains(&format!(
+                    "\n\"{:?}\",\"{:?}\",1",
+                    BcOpcode::ListOfConsts,
+                    BcOpcode::CallFrozenNativePos
+                )),
+                "{csv:?}"
+            );
+            crate::Result::Ok(())
+        })
         .unwrap();
-        let csv = eval.gen_bc_pairs_profile().unwrap().gen_csv().unwrap();
-        assert!(
-            csv.contains(&format!(
-                "\n\"{:?}\",\"{:?}\",1",
-                BcOpcode::ListOfConsts,
-                BcOpcode::CallFrozenNativePos
-            )),
-            "{csv:?}"
-        );
     }
 
     #[test]

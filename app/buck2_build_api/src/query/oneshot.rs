@@ -30,6 +30,7 @@ pub trait QueryFrontend: Send + Sync + 'static {
         working_dir: &ProjectRelativePath,
         query: &str,
         query_args: &[String],
+        allow_partial_graph: bool,
     ) -> buck2_error::Result<QueryEvaluationResult<TargetNode>>;
 
     async fn eval_cquery(

@@ -56,16 +56,20 @@ ModifierInfo = ConstraintValueInfo | ModifiersMatchInfo | None
 
 # A provider for conditional modifier used by cfg constructor function when constructing the
 # configuration
-ConditionalModifierInfo = provider(fields = {
-    "inner": ModifierInfo,
-    "key": TargetLabel,
-})
+ConditionalModifierInfo = provider(
+    fields = {
+        "inner": ModifierInfo,
+        "key": TargetLabel,
+    }
+)
 
-BuckconfigBackedModifierInfo = provider(fields = {
-    "post_platform_modifiers": list[ConditionalModifierInfo],
-    "pre_cli_modifiers": list[ConditionalModifierInfo],
-    "pre_platform_modifiers": list[ConditionalModifierInfo],
-})
+BuckconfigBackedModifierInfo = provider(
+    fields = {
+        "post_platform_modifiers": list[ConditionalModifierInfo],
+        "pre_cli_modifiers": list[ConditionalModifierInfo],
+        "pre_platform_modifiers": list[ConditionalModifierInfo],
+    }
+)
 
 def is_modifiers_match(modifier: Modifier) -> bool:
     if modifier == None or isinstance(modifier, str):

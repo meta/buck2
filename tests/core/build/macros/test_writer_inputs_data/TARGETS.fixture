@@ -1,0 +1,48 @@
+load(":defs.bzl", "input", "writer")
+
+[input(name = name) for name in ["inline", "macro", "direct", "hidden_macro"]]
+input(name = "hidden", fail = True)
+input(name = "failing_inline", fail = True)
+input(name = "origin", resources = False)
+
+writer(
+    name = "mixed",
+    direct = ":direct",
+    hidden = "$(location :hidden)",
+    inline = "$(location :inline)",
+    macro = "$(@location :macro)",
+)
+
+writer(
+    name = "macro_only",
+    direct = ":direct",
+    hidden = "$(location :hidden)",
+    inline = "$(location :failing_inline)",
+    macro = "$(@location :macro)",
+)
+
+writer(
+    name = "hidden_macro_writer",
+    direct = ":direct",
+    hidden = "$(@location :hidden_macro)",
+    inline = "$(location :inline)",
+    macro = "$(@location :macro)",
+)
+
+writer(
+    name = "relative",
+    direct = ":direct",
+    hidden = "$(location :hidden)",
+    inline = "$(location :inline)",
+    macro = "$(@location :macro)",
+    origin = ":origin",
+)
+
+writer(
+    name = "retained",
+    direct = ":direct",
+    hidden = "$(location :hidden)",
+    inline = "$(location :inline)",
+    macro = "$(@location :macro)",
+    with_inputs = True,
+)

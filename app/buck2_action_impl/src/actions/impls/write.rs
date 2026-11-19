@@ -14,38 +14,57 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use buck2_artifact::artifact::artifact_dyn::ArtifactDyn;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_build_api::actions::Action;
 use buck2_build_api::actions::ActionExecutionCtx;
 use buck2_build_api::actions::UnregisteredAction;
+use buck2_build_api::actions::errors::execute_error::ExecuteError;
 use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
 use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
 use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
+use buck2_build_api::actions::impls::write_action_cache_stats::WRITE_ACTION_CACHE_STATS;
+use buck2_build_api::actions::impls::write_action_cache_stats::WriteActionCacheStats;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
-use buck2_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineSink;
+use buck2_build_api::interpreter::rule_defs::cmd_args::InputProperties;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use buck2_build_signals::env::WaitingData;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
+use buck2_core::buck2_env;
 use buck2_core::category::CategoryRef;
 use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_error::BuckErrorContext;
+use buck2_core::soft_error;
+use buck2_error::BuckErrorOptionContext;
+use buck2_error::buck2_error;
 use buck2_execute::artifact::fs::ExecutorFs;
+use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::execute::command_executor::ActionExecutionTimingData;
 use buck2_execute::materialize::materializer::WriteRequest;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutInsertionSet;
+use buck2_hash::buck_mut_insertion_map;
 use dupe::Dupe;
-use indexmap::IndexMap;
-use indexmap::IndexSet;
-use indexmap::indexmap;
-use starlark::values::OwnedFrozenValue;
+use mini_vec::MiniBoxSlice;
+use pagable::Pagable;
+use pagable::pagable_typetag;
+use starlark::values::OwnedFrozen;
 use starlark::values::UnpackValue;
+use starlark::values::Value;
 
+use crate::actions::impls::declare_writes::declare_writes;
 use crate::actions::impls::run::DepFilesPlaceholderArtifactPathMapper;
+use crate::actions::impls::write_cache;
+use crate::actions::impls::write_cache::CacheUse;
+use crate::actions::impls::write_cache::KeyInputs;
+use crate::actions::impls::write_cache::WriteCache;
+use crate::actions::impls::write_cache::WriteCacheKey;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Tier0)]
@@ -59,7 +78,7 @@ enum WriteActionValidationError {
 }
 
 pub(crate) struct CommandLineContentBasedInputVisitor {
-    pub(crate) content_based_inputs: IndexSet<ArtifactGroup>,
+    pub(crate) content_based_inputs: BuckMutInsertionSet<ArtifactGroup>,
 }
 
 impl CommandLineContentBasedInputVisitor {
@@ -71,8 +90,13 @@ impl CommandLineContentBasedInputVisitor {
 }
 
 impl<'v> CommandLineArtifactVisitor<'v> for CommandLineContentBasedInputVisitor {
-    fn visit_input(&mut self, input: ArtifactGroup, _tags: Vec<&ArtifactTag>) {
-        if input.uses_content_based_path() {
+    fn visit_input(
+        &mut self,
+        input: ArtifactGroup,
+        _props: InputProperties,
+        _tags: Vec<&ArtifactTag>,
+    ) {
+        if input.path_resolution_may_require_artifact_value() {
             self.content_based_inputs.insert(input);
         }
     }
@@ -84,35 +108,36 @@ impl<'v> CommandLineArtifactVisitor<'v> for CommandLineContentBasedInputVisitor 
     fn visit_declared_artifact(
         &mut self,
         declared_artifact: buck2_artifact::artifact::artifact_type::DeclaredArtifact<'v>,
+        props: InputProperties,
         tags: Vec<&ArtifactTag>,
     ) -> buck2_error::Result<()> {
         if declared_artifact.has_content_based_path() {
             let artifact = declared_artifact.ensure_bound()?.into_artifact();
-            self.visit_input(ArtifactGroup::Artifact(artifact), tags);
+            self.visit_input(ArtifactGroup::Artifact(artifact), props, tags);
         }
 
         Ok(())
     }
 
-    fn skip_hidden(&self) -> bool {
+    fn inputs_for_path_resolution(&self) -> bool {
         true
     }
 }
 
-#[derive(Allocative, Debug)]
+#[derive(Allocative, Debug, Pagable)]
 pub(crate) struct UnregisteredWriteAction {
     pub(crate) is_executable: bool,
     pub(crate) absolute: bool,
-    pub(crate) macro_files: Option<IndexSet<Artifact>>,
+    pub(crate) macro_files: Option<MiniBoxSlice<Artifact>>,
     pub(crate) use_dep_files_placeholder_for_content_based_paths: bool,
 }
 
 impl UnregisteredAction for UnregisteredWriteAction {
     fn register(
         self: Box<Self>,
-        outputs: IndexSet<BuildArtifact>,
-        starlark_data: Option<OwnedFrozenValue>,
-        _error_handler: Option<OwnedFrozenValue>,
+        outputs: BuckMutInsertionSet<BuildArtifact>,
+        starlark_data: Option<OwnedFrozen<Value<'static>>>,
+        _error_handler: Option<OwnedFrozen<Value<'static>>>,
     ) -> buck2_error::Result<Box<dyn Action>> {
         let contents = starlark_data.expect("module data to be present");
 
@@ -121,17 +146,17 @@ impl UnregisteredAction for UnregisteredWriteAction {
     }
 }
 
-#[derive(Debug, Allocative)]
+#[derive(Debug, Allocative, Pagable)]
 struct WriteAction {
-    contents: OwnedFrozenValue, // StarlarkCmdArgs
+    contents: OwnedFrozen<Value<'static>>, // StarlarkCmdArgs
     output: BuildArtifact,
     inner: UnregisteredWriteAction,
 }
 
 impl WriteAction {
     fn new(
-        contents: OwnedFrozenValue,
-        outputs: IndexSet<BuildArtifact>,
+        contents: OwnedFrozen<Value<'static>>,
+        outputs: BuckMutInsertionSet<BuildArtifact>,
         inner: UnregisteredWriteAction,
     ) -> buck2_error::Result<Self> {
         let mut outputs = outputs.into_iter();
@@ -142,9 +167,12 @@ impl WriteAction {
             (Some(..), Some(..)) => return Err(WriteActionValidationError::TooManyOutputs.into()),
         };
 
-        if ValueAsCommandLineLike::unpack_value(contents.value())?.is_none() {
+        let is_command_line = contents.by_ref(|v| -> buck2_error::Result<bool> {
+            Ok(ValueAsCommandLineLike::unpack_value(*v)?.is_some())
+        })?;
+        if !is_command_line {
             return Err(WriteActionValidationError::ContentsNotCommandLineValue(
-                contents.value().to_repr(),
+                contents.by_ref(|v| v.to_repr()),
             )
             .into());
         }
@@ -163,37 +191,186 @@ impl WriteAction {
     ) -> buck2_error::Result<String> {
         let mut cli = Vec::<String>::new();
 
-        let macro_files = self.inner.macro_files.as_ref().map(|macro_files| {
-            macro_files
-                .iter()
-                .map(|a| (a, artifact_path_mapping.get(a)))
-                .collect()
-        });
-
-        let mut ctx = if let Some(ref macro_files) = macro_files {
-            DefaultCommandLineContext::new_with_write_to_file_macros_support(fs, macro_files)
-        } else {
-            DefaultCommandLineContext::new(fs)
-        };
-
-        let mut abs;
-
-        let ctx = if self.inner.absolute {
-            abs = AbsCommandLineContext::wrap(ctx);
-            &mut abs as _
-        } else {
-            &mut ctx as _
-        };
-
-        ValueAsCommandLineLike::unpack_value_err(self.contents.value())
-            .unwrap()
-            .0
-            .add_to_command_line(&mut cli, ctx, artifact_path_mapping)?;
+        self.contents.by_ref(|v| {
+            WriteCommandLineOptions {
+                absolute: self.inner.absolute,
+                macro_files: self.inner.macro_files.as_deref(),
+            }
+            .render(*v, fs, artifact_path_mapping, &mut cli)
+        })?;
 
         Ok(cli.join("\n"))
     }
+
+    /// The write as the materializer performs it.
+    fn write_request(&self, ctx: &dyn ActionExecutionCtx) -> buck2_error::Result<WriteRequest> {
+        let content = if self.inner.use_dep_files_placeholder_for_content_based_paths {
+            self.get_contents(
+                &ctx.executor_fs(),
+                &DepFilesPlaceholderArtifactPathMapper {},
+            )?
+        } else {
+            self.get_contents(&ctx.executor_fs(), &ctx.artifact_path_mapping(None))?
+        }
+        .into_bytes();
+        let path = ctx.fs().resolve_build(
+            self.output.get_path(),
+            if self.output.get_path().is_content_based_path() {
+                let digest = TrackedFileDigest::from_content(
+                    &content,
+                    ctx.digest_config().cas_digest_config(),
+                );
+                Some(ContentBasedPathHash::new(digest.raw_digest().as_bytes())?)
+            } else {
+                None
+            }
+            .as_ref(),
+        )?;
+        Ok(WriteRequest {
+            path,
+            content,
+            is_executable: self.inner.is_executable,
+            path_kind: self.output.get_path().path_resolution_method(),
+        })
+    }
+
+    fn cache_key(&self, ctx: &dyn ActionExecutionCtx) -> buck2_error::Result<WriteCacheKey> {
+        let mapping;
+        let artifact_path_mapping = if self.inner.use_dep_files_placeholder_for_content_based_paths
+        {
+            None
+        } else {
+            mapping = ctx.artifact_path_mapping(None);
+            Some(&mapping)
+        };
+        let key = self.contents.by_ref(|v| {
+            write_cache::key(
+                *v,
+                &KeyInputs {
+                    is_executable: self.inner.is_executable,
+                    path_separator: ctx.executor_fs().path_separator(),
+                    macro_files: self.inner.macro_files.as_deref(),
+                    artifact_path_mapping,
+                },
+                ctx.fs(),
+            )
+        })?;
+        if let Some(dump) = buck2_env!(
+            "BUCK2_TEST_WRITE_ACTION_CACHE_KEY_DUMP",
+            applicability = testing
+        )? {
+            write_cache::dump_key(
+                dump,
+                self.output.get_path().owner(),
+                self.output.get_path().path(),
+                &key,
+            )?;
+        }
+        Ok(key)
+    }
+
+    /// Declares the output as a write without the cache is declared.
+    async fn execute_plain(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+    ) -> buck2_error::Result<(ArtifactValue, ActionExecutionKind)> {
+        let (values, execution_kind) =
+            declare_writes(ctx, Box::new(|| Ok(vec![self.write_request(ctx)?]))).await?;
+        Ok((single(values)?, execution_kind))
+    }
+
+    /// Declares the output through `cache`: as the content the cache has for it, or else the
+    /// way a write without the cache is declared, recorded for later first where the write is
+    /// one to record.
+    async fn execute_cached(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        cache: WriteCache<'_>,
+    ) -> buck2_error::Result<(ArtifactValue, ActionExecutionKind)> {
+        let key = self.cache_key(ctx)?;
+        let populate = match cache.use_for(&key) {
+            CacheUse::None => return self.execute_plain(ctx).await,
+            CacheUse::Lookup => false,
+            CacheUse::Populate => true,
+        };
+        if let Some(cached) = cache.lookup(ctx, &key).await {
+            let value = cached.value(self.inner.is_executable);
+            write_cache::declare(ctx, &self.output, value.dupe(), cached.info).await?;
+            return Ok((value, ActionExecutionKind::Deferred));
+        }
+        let request = self.write_request(ctx)?;
+        if populate {
+            match cache.populate(ctx, &key, &request).await {
+                Ok((value, info)) => {
+                    write_cache::declare(ctx, &self.output, value.dupe(), info).await?;
+                    return Ok((value, ActionExecutionKind::Deferred));
+                }
+                Err(e) => {
+                    WriteActionCacheStats::bump(&WRITE_ACTION_CACHE_STATS.populate_failures);
+                    // Producing the write anyway is the right fallback, but a cache that
+                    // cannot be populated would silently stay empty, which should be visible.
+                    soft_error!(
+                        "write_action_cache_populate_failed",
+                        e.context("Recording a write's content in the action cache failed")
+                    );
+                }
+            }
+        }
+        write_cache::declare_miss(ctx, request).await
+    }
+
+    /// Declares the output as it would be declared without the cache, and checks the content
+    /// the cache has for the write, if any, against what the write renders.
+    async fn execute_verifying(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        cache: WriteCache<'_>,
+    ) -> buck2_error::Result<(ArtifactValue, ActionExecutionKind)> {
+        let key = self.cache_key(ctx)?;
+        let cached = cache.lookup(ctx, &key).await;
+        let request = self.write_request(ctx)?;
+        if let Some(cached) = cached {
+            let rendered = TrackedFileDigest::from_content(
+                &request.content,
+                ctx.digest_config().cas_digest_config(),
+            );
+            WriteActionCacheStats::bump(&WRITE_ACTION_CACHE_STATS.verified);
+            if cached.digest != rendered {
+                WriteActionCacheStats::bump(&WRITE_ACTION_CACHE_STATS.mismatches);
+                soft_error!(
+                    "write_action_cache_mismatch",
+                    buck2_error!(
+                        buck2_error::ErrorTag::Tier0,
+                        "Write action cache holds `{}` for `{}`, which renders as `{}`",
+                        cached.digest,
+                        request.path,
+                        rendered
+                    )
+                );
+            }
+        }
+        // Rendered once above; `declare_writes` asks again only for a probe miss.
+        let mut rendered = Some(request);
+        let (values, execution_kind) = declare_writes(
+            ctx,
+            Box::new(move || match rendered.take() {
+                Some(request) => Ok(vec![request]),
+                None => Ok(vec![self.write_request(ctx)?]),
+            }),
+        )
+        .await?;
+        Ok((single(values)?, execution_kind))
+    }
 }
 
+fn single(values: Vec<ArtifactValue>) -> buck2_error::Result<ArtifactValue> {
+    values
+        .into_iter()
+        .next()
+        .internal_error("Write did not execute")
+}
+
+#[pagable_typetag]
 #[async_trait]
 impl Action for WriteAction {
     fn kind(&self) -> buck2_data::ActionKind {
@@ -206,13 +383,15 @@ impl Action for WriteAction {
         }
 
         let mut visitor = CommandLineContentBasedInputVisitor::new();
-        ValueAsCommandLineLike::unpack_value_err(self.contents.value())?
-            .0
-            .visit_artifacts(&mut visitor)?;
+        self.contents.by_ref(|v| -> buck2_error::Result<()> {
+            ValueAsCommandLineLike::unpack_value_err(*v)?
+                .0
+                .visit_artifacts(&mut visitor)
+        })?;
         let mut content_based_inputs = visitor.content_based_inputs;
         if let Some(macro_files) = &self.inner.macro_files {
             for artifact in macro_files {
-                if artifact.has_content_based_path() {
+                if artifact.path_resolution_requires_artifact_value() {
                     content_based_inputs.insert(ArtifactGroup::Artifact(artifact.dupe()));
                 }
             }
@@ -240,73 +419,100 @@ impl Action for WriteAction {
         &self,
         fs: &ExecutorFs,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> IndexMap<String, String> {
-        // TODO(cjhopman): We should change this api to support returning a Result.
-        indexmap! {
-            "contents".to_owned() => match self.get_contents(fs, artifact_path_mapping) {
-                Ok(v) => v,
-                Err(e) => format!("ERROR: constructing contents ({e})")
-            },
+    ) -> buck2_error::Result<BuckMutInsertionMap<String, String>> {
+        Ok(buck_mut_insertion_map! {
+            "contents".to_owned() => self.get_contents(fs, artifact_path_mapping)?,
             "absolute".to_owned() => self.inner.absolute.to_string(),
-        }
+        })
     }
 
     async fn execute(
         &self,
         ctx: &mut dyn ActionExecutionCtx,
+        waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
-        let fs = ctx.fs();
-
         let mut execution_start = None;
 
-        let value = ctx
-            .materializer()
-            .declare_write(Box::new(|| {
+        // A write with `absolute` renders the project root, which is not the same between
+        // hosts, so the cache is not for it.
+        let cache = if self.inner.absolute {
+            None
+        } else {
+            WriteCache::for_ctx(ctx)
+        };
+        let (value, execution_kind) = match cache {
+            Some(cache) if cache.verifies() => {
                 execution_start = Some(Instant::now());
-                let content = if self.inner.use_dep_files_placeholder_for_content_based_paths {
-                    self.get_contents(
-                        &ctx.executor_fs(),
-                        &DepFilesPlaceholderArtifactPathMapper {},
-                    )?
-                } else {
-                    self.get_contents(&ctx.executor_fs(), &ctx.artifact_path_mapping(None))?
-                }
-                .into_bytes();
-                let path = fs.resolve_build(
-                    self.output.get_path(),
-                    if self.output.get_path().is_content_based_path() {
-                        let digest = TrackedFileDigest::from_content(
-                            &content,
-                            ctx.digest_config().cas_digest_config(),
-                        );
-                        Some(ContentBasedPathHash::new(digest.raw_digest().as_bytes())?)
-                    } else {
-                        None
-                    }
-                    .as_ref(),
-                )?;
-                Ok(vec![WriteRequest {
-                    path,
-                    content,
-                    is_executable: self.inner.is_executable,
-                }])
-            }))
-            .await?
-            .into_iter()
-            .next()
-            .buck_error_context("Write did not execute")?;
+                self.execute_verifying(ctx, cache).await?
+            }
+            Some(cache) => {
+                execution_start = Some(Instant::now());
+                self.execute_cached(ctx, cache).await?
+            }
+            None => {
+                let (values, execution_kind) = declare_writes(
+                    ctx,
+                    Box::new(|| {
+                        execution_start = Some(Instant::now());
+                        Ok(vec![self.write_request(ctx)?])
+                    }),
+                )
+                .await?;
+                (single(values)?, execution_kind)
+            }
+        };
 
         let wall_time = Instant::now()
-            - execution_start.buck_error_context("Action did not set execution_start")?;
+            - execution_start.internal_error("Action did not set execution_start")?;
 
         Ok((
-            ActionOutputs::new(indexmap![self.output.get_path().dupe() => value]),
+            ActionOutputs::new(buck_mut_insertion_map![self.output.get_path().dupe() => value]),
             ActionExecutionMetadata {
-                execution_kind: ActionExecutionKind::Simple,
-                timing: ActionExecutionTimingData { wall_time },
+                dep_file_db_writes_queued: 0,
+                execution_kind,
+                timing: ActionExecutionTimingData {
+                    wall_time,
+                    ..Default::default()
+                },
                 input_files_bytes: None,
+                waiting_data,
             },
         ))
+    }
+}
+
+pub(crate) struct WriteCommandLineOptions<'a> {
+    pub(crate) absolute: bool,
+    pub(crate) macro_files: Option<&'a [Artifact]>,
+}
+
+impl WriteCommandLineOptions<'_> {
+    pub(crate) fn render(
+        &self,
+        content: Value<'_>,
+        fs: &ExecutorFs<'_>,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+        sink: &mut dyn CommandLineSink,
+    ) -> buck2_error::Result<()> {
+        let macro_files = self
+            .macro_files
+            .map(|files| {
+                files
+                    .iter()
+                    .map(|a| a.resolve_path(fs.fs(), artifact_path_mapping.get(a)))
+                    .collect::<buck2_error::Result<Vec<_>>>()
+            })
+            .transpose()?;
+        let mut builder = CommandLineBuilder::new_with_options(
+            sink,
+            artifact_path_mapping,
+            fs,
+            self.absolute,
+            macro_files,
+        );
+        ValueAsCommandLineLike::unpack_value_err(content)?
+            .0
+            .add_to_command_line(&mut builder)
     }
 }
 

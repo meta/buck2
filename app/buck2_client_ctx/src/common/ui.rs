@@ -10,7 +10,7 @@
 
 use buck2_core::buck2_env;
 use buck2_core::buck2_env_name;
-use buck2_core::soft_error;
+use buck2_core::soft_error_or_panic;
 use buck2_event_observer::event_observer::NoopEventObserverExtra;
 use buck2_event_observer::verbosity::Verbosity;
 use buck2_health_check::report::DisplayReport;
@@ -25,6 +25,7 @@ use crate::subscribers::errorconsole::ErrorConsole;
 use crate::subscribers::simpleconsole::SimpleConsole;
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::subscribers::superconsole::BUCK_NO_INTERACTIVE_CONSOLE;
+use crate::subscribers::superconsole::ConsoleCanvas;
 use crate::subscribers::superconsole::StatefulSuperConsole;
 use crate::subscribers::superconsole::SuperConsoleConfig;
 use crate::subscribers::superconsole::timekeeper::Timekeeper;
@@ -48,7 +49,23 @@ pub enum ConsoleType {
     Super,
 }
 
-/// Given a command name and the command arguments, create a default console / superconsole.
+impl ConsoleType {
+    /// Returns true if this console type may use a superconsole.
+    /// Used to decide whether to print Buck UI / Build ID at the end of a build,
+    /// since the superconsole's live area (which shows it during the build) gets cleared.
+    pub fn maybe_superconsole(self) -> bool {
+        matches!(self, ConsoleType::Super | ConsoleType::Auto)
+    }
+}
+
+/// Given a command name and the command arguments, create a default console /
+/// superconsole. Returns the chosen subscriber along with `used_superconsole`
+/// — `true` iff a superconsole was actually constructed (false for all
+/// `Simple*` variants, the `Auto`-falls-back-to-simple case, the
+/// init-error fallback below, and `None`). This is the authoritative answer
+/// from where the decision is actually made; callers downstream that need to
+/// know "did we use superconsole?" should use this instead of guessing from
+/// the requested `ConsoleType`.
 pub fn get_console_with_root(
     trace_id: TraceId,
     console_type: ConsoleType,
@@ -58,30 +75,35 @@ pub fn get_console_with_root(
     command_name: &str,
     config: SuperConsoleConfig,
     health_check_display_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
-) -> Box<dyn EventSubscriber> {
-    let result: buck2_error::Result<Box<dyn EventSubscriber>> = match console_type {
-        ConsoleType::Simple => Ok(Box::new(
-            SimpleConsole::<NoopEventObserverExtra>::autodetect(
+) -> (Box<dyn EventSubscriber>, bool) {
+    let result: buck2_error::Result<(Box<dyn EventSubscriber>, bool)> = match console_type {
+        ConsoleType::Simple => Ok((
+            Box::new(SimpleConsole::<NoopEventObserverExtra>::autodetect(
                 trace_id.dupe(),
                 verbosity,
                 expect_spans,
                 health_check_display_reports_receiver,
-            ),
+            )),
+            false,
         )),
-        ConsoleType::SimpleNoTty => Ok(Box::new(
-            SimpleConsole::<NoopEventObserverExtra>::without_tty(
+        ConsoleType::SimpleNoTty => Ok((
+            Box::new(SimpleConsole::<NoopEventObserverExtra>::without_tty(
                 trace_id.dupe(),
                 verbosity,
                 expect_spans,
                 health_check_display_reports_receiver,
-            ),
+            )),
+            false,
         )),
-        ConsoleType::SimpleTty => Ok(Box::new(SimpleConsole::<NoopEventObserverExtra>::with_tty(
-            trace_id.dupe(),
-            verbosity,
-            expect_spans,
-            health_check_display_reports_receiver,
-        ))),
+        ConsoleType::SimpleTty => Ok((
+            Box::new(SimpleConsole::<NoopEventObserverExtra>::with_tty(
+                trace_id.dupe(),
+                verbosity,
+                expect_spans,
+                health_check_display_reports_receiver,
+            )),
+            false,
+        )),
         ConsoleType::Super => StatefulSuperConsole::new_with_root_forced(
             trace_id.dupe(),
             command_name,
@@ -92,43 +114,47 @@ pub fn get_console_with_root(
             config,
             health_check_display_reports_receiver,
         )
-        .map(|c| Box::new(c) as Box<dyn EventSubscriber>),
+        .map(|c| (Box::new(c) as Box<dyn EventSubscriber>, true)),
         ConsoleType::Auto => match StatefulSuperConsole::console_builder().build() {
             Ok(Some(sc)) => StatefulSuperConsole::new(
                 command_name,
                 trace_id.dupe(),
-                sc,
+                ConsoleCanvas::Terminal(sc),
                 verbosity,
                 expect_spans,
                 timekeeper,
                 config,
                 health_check_display_reports_receiver,
             )
-            .map(|c| Box::new(c) as Box<dyn EventSubscriber>),
-            _ => Ok(Box::new(
-                SimpleConsole::<NoopEventObserverExtra>::autodetect(
+            .map(|c| (Box::new(c) as Box<dyn EventSubscriber>, true)),
+            _ => Ok((
+                Box::new(SimpleConsole::<NoopEventObserverExtra>::autodetect(
                     trace_id.dupe(),
                     verbosity,
                     expect_spans,
                     health_check_display_reports_receiver,
-                ),
+                )),
+                false,
             )),
         },
-        ConsoleType::None => Ok(Box::new(ErrorConsole)),
+        ConsoleType::None => Ok((Box::new(ErrorConsole), false)),
     };
 
     match result {
-        Ok(result) => result,
+        Ok(pair) => pair,
         Err(e) => {
             eprintln!("Falling back to simple console, super console initialization failed: {e}");
-            let _unused = soft_error!("console_init_failed", e);
-            Box::new(SimpleConsole::<NoopEventObserverExtra>::autodetect(
-                trace_id,
-                verbosity,
-                expect_spans,
-                // Maybe refactor and set this.
-                None,
-            ))
+            soft_error_or_panic!("console_init_failed", e);
+            (
+                Box::new(SimpleConsole::<NoopEventObserverExtra>::autodetect(
+                    trace_id,
+                    verbosity,
+                    expect_spans,
+                    // Maybe refactor and set this.
+                    None,
+                )),
+                false,
+            )
         }
     }
 }

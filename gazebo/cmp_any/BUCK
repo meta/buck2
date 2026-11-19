@@ -7,6 +7,17 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
-    deps = [
-    ],
+    autocargo = {
+        "cargo_toml_config": {
+            "package": {
+                "authors": ["Facebook"],
+                "categories": ["rust-patterns"],
+                "description": "Comparison for &dyn types",
+                "documentation": "https://docs.rs/cmp_any",
+                "version": "0.8.1",
+            },
+        },
+    },
+    unittests_miri = True,
+    deps = [],
 )

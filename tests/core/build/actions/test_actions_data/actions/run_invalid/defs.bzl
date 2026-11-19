@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _artifact_cycle(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
 
     # Cycle
     cmd = cmd_args(out.as_output())

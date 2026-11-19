@@ -26,7 +26,6 @@ use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::coerce::Coerce;
 use crate::docs::DocItem;
 use crate::docs::DocMember;
 use crate::docs::DocProperty;
@@ -37,49 +36,24 @@ use crate::eval::Evaluator;
 use crate::eval::ParametersSpec;
 use crate::private::Private;
 use crate::starlark_complex_value;
-use crate::starlark_simple_value;
 use crate::typing::Ty;
 use crate::typing::TyBasic;
 use crate::typing::arc_ty::ArcTy;
 use crate::typing::tuple::TyTuple;
-use crate::values::AllocFrozenValue;
-use crate::values::AllocValue;
 use crate::values::Freeze;
-use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
 use crate::values::FrozenValueTyped;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::ValueLifetimeless;
-use crate::values::ValueLike;
-use crate::values::type_repr::StarlarkTypeRepr;
 use crate::values::types::ellipsis::Ellipsis;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
-
-#[derive(Debug, thiserror::Error)]
-enum FunctionError {
-    #[error("`tuple[]` is implemented only for `tuple[T, ...]`")]
-    TupleOnlyEllipsis,
-}
 
 /// Return value of `type(any function)`.
 pub const FUNCTION_TYPE: &str = "function";
 
-/// Marker trait for function types.
-pub(crate) enum StarlarkFunction {}
-
-impl StarlarkTypeRepr for StarlarkFunction {
-    type Canonical = Self;
-
-    fn starlark_type_repr() -> Ty {
-        Ty::any_callable()
-    }
-}
-
-#[derive(Debug, Allocative, Clone, Copy, Dupe)]
+#[derive(Debug, Allocative, Clone, Copy, Dupe, pagable::Pagable)]
 #[doc(hidden)]
 pub enum SpecialBuiltinFunction {
     List,
@@ -92,21 +66,22 @@ pub enum SpecialBuiltinFunction {
 #[doc(hidden)]
 pub type NativeFuncFn = for<'v> fn(
     eval: &mut Evaluator<'v, '_, '_>,
-    sig: &ParametersSpec<FrozenValue>,
+    sig: &ParametersSpec<Value<'v>>,
     args: &Arguments<'v, '_>,
 ) -> crate::Result<Value<'v>>;
 
 /// Storage for a `NativeFuncFn` and the parameters spec needed to call it
-#[derive(Debug, ProvidesStaticType, Allocative)]
-pub(crate) struct NativeFunc(
+#[derive(Debug, ProvidesStaticType, Allocative, crate::StarlarkPagable)]
+pub(crate) struct NativeFunc<'v>(
     #[allocative(skip)] // Not general enough
-    pub(crate)  NativeFuncFn,
-    pub(crate) ParametersSpec<FrozenValue>,
+    #[starlark_pagable(skip = "{ |_a, _b, _c| { unimplemented!() } }")]
+    pub(crate) NativeFuncFn,
+    pub(crate) ParametersSpec<Value<'v>>,
 );
 
-impl NativeFunc {
+impl<'v> NativeFunc<'v> {
     #[inline]
-    pub(crate) fn invoke<'v>(
+    pub(crate) fn invoke(
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
         args: &Arguments<'v, '_>,
@@ -117,52 +92,52 @@ impl NativeFunc {
 
 /// Starlark representation of native (Rust) functions.
 ///
-/// Almost always created with [`#[starlark_module]`](macro@crate::starlark_module).
-#[derive(Derivative, ProvidesStaticType, Display, NoSerialize, Allocative)]
+/// Almost always created with [`#[starlark_module]`](macro@crate::starlark_module). The
+/// signature's default values are at the brand of the heap the function is allocated in.
+#[derive(
+    Derivative,
+    ProvidesStaticType,
+    Display,
+    NoSerialize,
+    Allocative,
+    crate::StarlarkPagable
+)]
 #[derivative(Debug)]
 #[display("{}", name)]
-pub(crate) struct NativeFunction {
+pub(crate) struct NativeFunction<'v> {
     #[derivative(Debug = "ignore")]
-    pub(crate) function: NativeFunc,
+    pub(crate) function: NativeFunc<'v>,
     pub(crate) name: String,
     /// `.type` attribute and a type when this function is used in type expression.
+    #[starlark_pagable(pagable)]
     pub(crate) as_type: Option<Ty>,
+    #[starlark_pagable(pagable)]
     pub(crate) ty: Ty,
     /// Safe to evaluate speculatively.
     pub(crate) speculative_exec_safe: bool,
     #[derivative(Debug = "ignore")]
+    #[starlark_pagable(pagable)]
     pub(crate) docs: DocItem,
+    #[starlark_pagable(pagable)]
     pub(crate) special_builtin_function: Option<SpecialBuiltinFunction>,
 }
 
-impl AllocFrozenValue for NativeFunction {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        heap.alloc_simple(self)
-    }
-}
-
-impl<'v> AllocValue<'v> for NativeFunction {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_simple(self)
-    }
-}
-
 /// Define the function type
-#[starlark_value(type = FUNCTION_TYPE)]
-impl<'v> StarlarkValue<'v> for NativeFunction {
+#[starlark_value(type = FUNCTION_TYPE, frozen_vtable)]
+impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
     fn invoke(
         &self,
         _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        self.function.invoke(eval, args).map_err(Into::into)
+        self.function.invoke(eval, args)
     }
 
-    fn get_attr(&self, attribute: &str, heap: &'v Heap) -> Option<Value<'v>> {
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         if let Some(s) = self.as_type.as_ref().and_then(|t| t.as_name()) {
             if attribute == "type" {
-                return Some(heap.alloc(s));
+                return Some(heap.alloc(s).to_value());
             }
         }
         None
@@ -172,7 +147,7 @@ impl<'v> StarlarkValue<'v> for NativeFunction {
         self.as_type.clone()
     }
 
-    fn has_attr(&self, _attribute: &str, _heap: &'v Heap) -> bool {
+    fn has_attr(&self, _attribute: &str, _heap: Heap<'v>) -> bool {
         // TODO(nga): implement properly.
         false
     }
@@ -193,7 +168,7 @@ impl<'v> StarlarkValue<'v> for NativeFunction {
         Some(self.ty.dupe())
     }
 
-    fn at(&self, index: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match &self.special_builtin_function {
             Some(SpecialBuiltinFunction::List) => {
                 let index = TypeCompiled::new(index, heap)?;
@@ -203,6 +178,12 @@ impl<'v> StarlarkValue<'v> for NativeFunction {
                 let index = TypeCompiled::new(index, heap)?;
                 Ok(TypeCompiled::type_set_of(index, heap).to_inner())
             }
+            Some(SpecialBuiltinFunction::Tuple) => {
+                // The 1-tuple type, whatever the element type is: a tuple of types is itself a
+                // type (the tuple of those types), so it is not read as a list of elements here.
+                let elem = TypeCompiled::new(index, heap)?;
+                Ok(TypeCompiled::from_ty(&Ty::tuple(vec![elem.as_ty().clone()]), heap).to_inner())
+            }
             _ => ValueError::unsupported(self, "[]"),
         }
     }
@@ -211,7 +192,7 @@ impl<'v> StarlarkValue<'v> for NativeFunction {
         &self,
         index0: Value<'v>,
         index1: Value<'v>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
         _private: Private,
     ) -> crate::Result<Value<'v>> {
         match &self.special_builtin_function {
@@ -231,7 +212,12 @@ impl<'v> StarlarkValue<'v> for NativeFunction {
                     )
                     .to_inner())
                 } else {
-                    Err(crate::Error::new_other(FunctionError::TupleOnlyEllipsis))
+                    let second = TypeCompiled::new(index1, heap)?;
+                    Ok(TypeCompiled::from_ty(
+                        &Ty::tuple(vec![item.as_ty().clone(), second.as_ty().clone()]),
+                        heap,
+                    )
+                    .to_inner())
                 }
             }
             _ => ValueError::unsupported(self, "[,]"),
@@ -244,21 +230,22 @@ impl<'v> StarlarkValue<'v> for NativeFunction {
 pub type NativeMethFn = for<'v> fn(
     eval: &mut Evaluator<'v, '_, '_>,
     this: Value<'v>,
-    sig: &ParametersSpec<FrozenValue>,
+    sig: &ParametersSpec<Value<'v>>,
     args: &Arguments<'v, '_>,
 ) -> crate::Result<Value<'v>>;
 
 /// Storage for a `NativeMethFn` and the parameters spec needed to call it
-#[derive(Debug, ProvidesStaticType, Allocative)]
-pub(crate) struct NativeMeth(
+#[derive(Debug, ProvidesStaticType, Allocative, crate::StarlarkPagable)]
+pub(crate) struct NativeMeth<'v>(
     #[allocative(skip)] // Not general enough
-    pub(crate)  NativeMethFn,
-    pub(crate) ParametersSpec<FrozenValue>,
+    #[starlark_pagable(skip = "{ |_a, _b, _c, _d| { unimplemented!() } }")]
+    pub(crate) NativeMethFn,
+    pub(crate) ParametersSpec<Value<'v>>,
 );
 
-impl NativeMeth {
+impl<'v> NativeMeth<'v> {
     #[inline]
-    pub(crate) fn invoke<'v>(
+    pub(crate) fn invoke(
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
         this: Value<'v>,
@@ -268,24 +255,33 @@ impl NativeMeth {
     }
 }
 
-#[derive(Derivative, Display, NoSerialize, ProvidesStaticType, Allocative)]
+/// A method of a type, before it is bound to an instance. Lives in a
+/// [`Methods`](crate::environment::Methods) table.
+#[derive(
+    Derivative,
+    Display,
+    NoSerialize,
+    ProvidesStaticType,
+    Allocative,
+    crate::StarlarkPagable
+)]
 #[derivative(Debug)]
 #[display("{}", name)]
-pub(crate) struct NativeMethod {
+pub(crate) struct NativeMethod<'v> {
     #[derivative(Debug = "ignore")]
-    pub(crate) function: NativeMeth,
+    pub(crate) function: NativeMeth<'v>,
     pub(crate) name: String,
+    #[starlark_pagable(pagable)]
     pub(crate) ty: Ty,
     /// Safe to evaluate speculatively.
     pub(crate) speculative_exec_safe: bool,
     #[derivative(Debug = "ignore")]
+    #[starlark_pagable(pagable)]
     pub(crate) docs: DocItem,
 }
 
-starlark_simple_value!(NativeMethod);
-
-#[starlark_value(type = "native_method")]
-impl<'v> StarlarkValue<'v> for NativeMethod {
+#[starlark_value(type = "native_method", frozen_vtable)]
+impl<'v> StarlarkValue<'v> for NativeMethod<'v> {
     fn documentation(&self) -> DocItem {
         self.docs.clone()
     }
@@ -297,36 +293,43 @@ impl<'v> StarlarkValue<'v> for NativeMethod {
 
 /// Used by the `#[starlark(attribute)]` tag of [`#[starlark_module]`](macro@starlark_module)
 /// to define a function that pretends to be an attribute.
-#[derive(Derivative, Display, NoSerialize, ProvidesStaticType, Allocative)]
+#[derive(
+    Derivative,
+    Display,
+    NoSerialize,
+    ProvidesStaticType,
+    Allocative,
+    crate::StarlarkPagable
+)]
 #[display("Attribute")]
 #[derivative(Debug)]
-pub(crate) struct NativeAttribute {
+pub(crate) struct NativeAttribute<'v> {
     /// Safe to evaluate speculatively.
     pub(crate) speculative_exec_safe: bool,
     pub(crate) docstring: Option<String>,
+    #[starlark_pagable(pagable)]
     pub(crate) typ: Ty,
     /// Essentially a `&dyn Fn(Value, Heap) -> Result<Value>`, but expanded out by hand, and
-    /// with the `Self` hardcoded to always be `Option<FrozenValue>`
+    /// with the `Self` hardcoded to always be `Option<Value>`
     ///
     /// We don't use a enum over whether the callable below requires a `data` argument as that
     /// would introduce an additional branch when calling the attribute
-    pub(crate) data: Option<FrozenValue>,
+    pub(crate) data: Option<Value<'v>>,
     #[allocative(skip)] // "Not general enough"
+    #[starlark_pagable(skip = "{ |_a, _b, _c| { unimplemented!() } }")]
     pub(crate) callable:
-        for<'v> fn(Option<FrozenValue>, Value<'v>, &'v Heap) -> crate::Result<Value<'v>>,
+        for<'v2> fn(Option<Value<'v2>>, Value<'v2>, Heap<'v2>) -> crate::Result<Value<'v2>>,
 }
 
-starlark_simple_value!(NativeAttribute);
-
-impl NativeAttribute {
+impl<'v> NativeAttribute<'v> {
     #[inline]
-    pub(crate) fn invoke<'v>(&self, this: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub(crate) fn invoke(&self, this: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         (self.callable)(self.data, this, heap)
     }
 }
 
-#[starlark_value(type = "attribute")]
-impl<'v> StarlarkValue<'v> for NativeAttribute {
+#[starlark_value(type = "attribute", frozen_vtable)]
+impl<'v> StarlarkValue<'v> for NativeAttribute<'v> {
     fn documentation(&self) -> DocItem {
         let ds = self
             .docstring
@@ -342,44 +345,39 @@ impl<'v> StarlarkValue<'v> for NativeAttribute {
     Clone,
     Debug,
     Trace,
-    Coerce,
     Display,
     Freeze,
     NoSerialize,
     ProvidesStaticType,
-    Allocative
+    Allocative,
+    crate::StarlarkPagable
 )]
 #[repr(C)]
 #[display("{}", method)]
-pub(crate) struct BoundMethodGen<V: ValueLifetimeless> {
-    pub(crate) method: FrozenValueTyped<'static, NativeMethod>,
-    pub(crate) this: V,
+pub(crate) struct BoundMethod<'v> {
+    pub(crate) method: FrozenValueTyped<'v, NativeMethod<'v>>,
+    pub(crate) this: Value<'v>,
 }
 
 starlark_complex_value!(pub(crate) BoundMethod);
 
-impl<'v, V: ValueLike<'v>> BoundMethodGen<V> {
+impl<'v> BoundMethod<'v> {
     /// Create a new [`BoundMethod`]. Given the expression `object.function`,
     /// the first argument would be `object`, and the second would be `getattr(object, "function")`.
-    pub(crate) fn new(this: V, method: FrozenValueTyped<'static, NativeMethod>) -> Self {
-        BoundMethodGen { method, this }
+    pub(crate) fn new(this: Value<'v>, method: FrozenValueTyped<'v, NativeMethod<'v>>) -> Self {
+        BoundMethod { method, this }
     }
 }
 
 #[starlark_value(type = FUNCTION_TYPE)]
-impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for BoundMethodGen<V>
-where
-    Self: ProvidesStaticType<'v>,
-{
+impl<'v> StarlarkValue<'v> for BoundMethod<'v> {
     fn invoke(
         &self,
         _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        self.method
-            .function
-            .invoke(eval, self.this.to_value(), args)
+        self.method.function.invoke(eval, self.this, args)
     }
 
     fn documentation(&self) -> DocItem {

@@ -12,6 +12,7 @@ package com.facebook.buck.util.zip;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import com.google.common.io.CountingOutputStream;
@@ -20,13 +21,16 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Calendar;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A wrapper containing the {@link ZipEntry} and additional book keeping information required to
  * write the entry to a zip file.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class EntryAccounting {
 
   private static final ThreadLocal<Calendar> CALENDAR =
@@ -63,15 +67,22 @@ class EntryAccounting {
 
   public EntryAccounting(ZipEntry entry, long currentOffset) {
     this.entry = entry;
-    this.method = Method.detect(entry.getMethod());
     this.offset = currentOffset;
+
+    if (entry instanceof CustomZipEntry && ((CustomZipEntry) entry).isRawCopy()) {
+      this.method = Method.RAW_COPY;
+    } else {
+      this.method = Method.detect(entry.getMethod());
+    }
 
     if (entry.getTime() == -1) {
       entry.setTime(System.currentTimeMillis());
     }
 
     if (entry instanceof CustomZipEntry) {
-      deflater.setCompressionLevel(((CustomZipEntry) entry).getCompressionLevel());
+      if (method != Method.RAW_COPY) {
+        deflater.setCompressionLevel(((CustomZipEntry) entry).getCompressionLevel());
+      }
       externalAttributes = ((CustomZipEntry) entry).getExternalAttributes();
     }
   }
@@ -82,7 +93,7 @@ class EntryAccounting {
   public long getTime() {
     // Calendar objects aren't thread-safe, but they're quite expensive to create, so we'll re-use
     // them per thread.
-    Calendar instance = CALENDAR.get();
+    Calendar instance = Objects.requireNonNull(CALENDAR.get());
     instance.setTimeInMillis(entry.getTime());
 
     int year = instance.get(Calendar.YEAR);
@@ -210,7 +221,7 @@ class EntryAccounting {
         ByteIo.writeInt(stream, ZipConstants.ZIP64_MAGICVAL);
         ByteIo.writeInt(stream, ZipConstants.ZIP64_MAGICVAL);
       } else {
-        ByteIo.writeInt(stream, entry.getSize());
+        ByteIo.writeInt(stream, entry.getCompressedSize());
         ByteIo.writeInt(stream, entry.getSize());
       }
     }
@@ -223,7 +234,7 @@ class EntryAccounting {
       ByteIo.writeShort(stream, ZipConstants.ZIP64_EXTID);
       ByteIo.writeShort(stream, 16);
       ByteIo.writeLong(stream, entry.getSize());
-      ByteIo.writeLong(stream, entry.getSize());
+      ByteIo.writeLong(stream, entry.getCompressedSize());
     }
 
     return stream.getCount();
@@ -256,13 +267,20 @@ class EntryAccounting {
     if (len == 0) {
       return;
     }
-    updateCrc(b, off, len);
 
-    if (method == Method.STORE) {
+    if (method == Method.RAW_COPY) {
+      // Raw copy: write pre-compressed bytes directly, skip CRC and deflation.
       out.write(b, off, len);
       length += len;
-    } else if (method == Method.DEFLATE) {
-      deflater.write(out, b, off, len);
+    } else {
+      updateCrc(b, off, len);
+
+      if (method == Method.STORE) {
+        out.write(b, off, len);
+        length += len;
+      } else if (method == Method.DEFLATE) {
+        deflater.write(out, b, off, len);
+      }
     }
   }
 
@@ -283,6 +301,14 @@ class EntryAccounting {
       entry.setSize(deflater.getBytesRead());
       entry.setCompressedSize(deflater.getBytesWritten());
       entry.setCrc(calculateCrc());
+    } else if (method == Method.RAW_COPY) {
+      // Raw copy: sizes and CRC are already set on the entry by the caller.
+      // Verify the number of compressed bytes written matches compressedSize.
+      checkState(
+          entry.getCompressedSize() == length,
+          "Number of raw bytes written (%s) differs from compressedSize (%s).",
+          length,
+          entry.getCompressedSize());
     }
 
     // write the data descriptor if required
@@ -296,6 +322,7 @@ class EntryAccounting {
 
   private boolean requiresDataDescriptor() {
     return method == Method.DEFLATE;
+    // RAW_COPY does not need a data descriptor — CRC and sizes are known upfront.
   }
 
   private void updateCrc(byte[] b, int off, int len) {
@@ -309,6 +336,7 @@ class EntryAccounting {
   private enum Method {
     DEFLATE(20, 8),
     STORE(10, 0),
+    RAW_COPY(20, 8),
     ;
 
     private final int requiredVersion;
@@ -342,8 +370,8 @@ class EntryAccounting {
 
     private static final int DEFAULT_BUFFER_SIZE = 8192;
 
-    private byte[] buffer;
-    private Deflater deflater;
+    private byte @Nullable [] buffer;
+    private @Nullable Deflater deflater;
     private int compressionLevel = Deflater.DEFAULT_COMPRESSION;
 
     void setCompressionLevel(int compressionLevel) {
@@ -361,6 +389,7 @@ class EntryAccounting {
     /** Writes data to the output stream. */
     void write(OutputStream out, byte[] bytes, int off, int len) throws IOException {
       initializeIfNeeded();
+      Deflater deflater = Objects.requireNonNull(this.deflater);
       deflater.setInput(bytes, off, len);
       while (!deflater.needsInput()) {
         deflate(out);
@@ -370,6 +399,7 @@ class EntryAccounting {
     /** Finishes the compression process. */
     void finish(OutputStream out) throws IOException {
       initializeIfNeeded();
+      Deflater deflater = Objects.requireNonNull(this.deflater);
       deflater.finish();
       while (!deflater.finished()) {
         deflate(out);
@@ -379,6 +409,8 @@ class EntryAccounting {
     /** Compress data to the output stream. */
     private int deflate(OutputStream out) throws IOException {
       initializeIfNeeded();
+      Deflater deflater = Objects.requireNonNull(this.deflater);
+      byte[] buffer = Objects.requireNonNull(this.buffer);
       final int written = deflater.deflate(buffer, 0, buffer.length);
       if (written > 0) {
         out.write(buffer, 0, written);

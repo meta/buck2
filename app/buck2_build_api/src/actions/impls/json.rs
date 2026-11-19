@@ -12,46 +12,45 @@ use std::io::Write;
 use std::io::sink;
 use std::sync::Arc;
 
-use buck2_artifact::artifact::artifact_type::Artifact;
+use buck2_artifact::artifact::artifact_dyn::ArtifactDyn;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_error::BuckErrorContext;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
 use buck2_execute::artifact::fs::ExecutorFs;
+use buck2_hash::BuckMutMap;
 use buck2_interpreter::types::cell_path::StarlarkCellPath;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use dupe::Dupe;
-use either::Either;
-use fxhash::FxHashMap;
+use buck2_util::threads::check_stack_overflow;
 use serde::Serialize;
 use serde::Serializer;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueLike;
-use starlark::values::ValueTypedComplex;
-use starlark::values::dict::DictRef;
+use starlark::values::ValueOf;
+use starlark::values::dict::DictType;
 use starlark::values::enumeration::EnumValue;
-use starlark::values::list::ListRef;
+use starlark::values::int::IntView;
+use starlark::values::list::ListType;
 use starlark::values::none::NoneType;
 use starlark::values::record::Record;
-use starlark::values::structs::StructRef;
-use starlark::values::tuple::TupleRef;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::string::StarlarkStr;
+use starlark::values::structs::Struct;
+use starlark::values::tuple::TupleType;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::bxl::select::StarlarkSelectConcat;
 use crate::bxl::select::StarlarkSelectDict;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::artifact_tagging::StarlarkTaggedValue;
-use crate::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
-use crate::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
+use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
+use crate::interpreter::rule_defs::cmd_args::InputProperties;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use crate::interpreter::rule_defs::cmd_args::path_format;
+use crate::interpreter::rule_defs::cmd_args::path_format_absolute;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
@@ -96,6 +95,18 @@ impl<'a, 'v> SerializeValue<'a, 'v> {
     }
 }
 
+/// Serializes a value, or fails the serialization with the error that stood in for it.
+pub(crate) struct SerializeOrFail<T>(pub(crate) buck2_error::Result<T>);
+
+impl<T: Serialize> Serialize for SerializeOrFail<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.0 {
+            Ok(value) => value.serialize(serializer),
+            Err(e) => Err(serde::ser::Error::custom(format!("{e:#}"))),
+        }
+    }
+}
+
 fn err<R, E: serde::ser::Error>(res: buck2_error::Result<R>) -> Result<R, E> {
     match res {
         Ok(v) => Ok(v),
@@ -103,69 +114,41 @@ fn err<R, E: serde::ser::Error>(res: buck2_error::Result<R>) -> Result<R, E> {
     }
 }
 
-fn with_command_line_context<F, T>(fs: &ExecutorFs<'_>, absolute: bool, f: F) -> T
-where
-    F: FnOnce(&mut dyn CommandLineContext) -> T,
-{
-    let mut ctx = DefaultCommandLineContext::new(fs);
-    let mut abs;
-    let ctx = if absolute {
-        abs = AbsCommandLineContext::wrap(ctx);
-        &mut abs as _
-    } else {
-        &mut ctx as _
-    };
-
-    f(ctx)
-}
-
 /// Grab the value as an artifact, if you can.
 /// We want to deal with both normal artifacts, and .as_output() artifacts,
 /// since otherwise the .as_output ones will fall through as a cmd_args
 /// and end up getting wrapped in a list below.
-#[derive(UnpackValue, StarlarkTypeRepr)]
+#[derive(UnpackValue)]
 pub enum JsonArtifact<'v> {
-    ValueAsInputArtifactLike(ValueAsInputArtifactLike<'v>),
-    StarlarkOutputArtifact(ValueTypedComplex<'v, StarlarkOutputArtifact<'v>>),
-}
-
-impl<'v> JsonArtifact<'v> {
-    fn artifact(&self) -> buck2_error::Result<Artifact> {
-        match self {
-            JsonArtifact::ValueAsInputArtifactLike(x) => Ok(x.0.get_bound_artifact()?.dupe()),
-            JsonArtifact::StarlarkOutputArtifact(x) => match x.unpack() {
-                Either::Left(x) => Ok((*x.inner()).get_bound_artifact()?.dupe()),
-                Either::Right(x) => Ok(x.inner().artifact()),
-            },
-        }
-    }
+    Artifact(StarlarkArtifactView<'v>),
+    StarlarkOutputArtifact(StarlarkOutputArtifactView<'v>),
 }
 
 /// Partially unpack the value into JSON writable with `ctx.actions.write_json`.
 /// This does not help typechecker much (because it only validates top-level types),
 /// but it provides better documentation.
-#[derive(UnpackValue, StarlarkTypeRepr)]
+#[derive(UnpackValue)]
 pub enum JsonUnpack<'v> {
     None(NoneType),
-    String(&'v str),
-    Number(i64),
+    String(ValueOf<'v, StarlarkStr>),
+    Number(ValueOf<'v, IntView<'v>>),
     Bool(bool),
-    List(&'v ListRef<'v>),
-    Tuple(&'v TupleRef<'v>),
-    Dict(DictRef<'v>),
-    Struct(StructRef<'v>),
-    Record(&'v Record<'v>),
-    Enum(&'v EnumValue<'v>),
-    TransitiveSetJsonProjection(&'v TransitiveSetJsonProjection<'v>),
-    TargetLabel(&'v StarlarkTargetLabel),
-    ConfiguredProvidersLabel(&'v StarlarkConfiguredProvidersLabel),
-    CellPath(&'v StarlarkCellPath),
+    List(ValueOf<'v, ListType<Value<'v>>>),
+    Tuple(ValueOf<'v, TupleType<Value<'v>>>),
+    Dict(ValueOf<'v, DictType<Value<'v>, Value<'v>>>),
+    Struct(ValueOf<'v, Struct<'v>>),
+    Record(ValueOf<'v, Record<'v>>),
+    Enum(ValueOf<'v, EnumValue<'v>>),
+    TransitiveSetJsonProjection(ValueOf<'v, TransitiveSetJsonProjection<'v>>),
+    TargetLabel(ValueOf<'v, StarlarkTargetLabel>),
+    ConfiguredProvidersLabel(ValueOf<'v, StarlarkConfiguredProvidersLabel>),
+    CellPath(ValueOf<'v, StarlarkCellPath>),
     Artifact(JsonArtifact<'v>),
     CommandLine(CommandLineArg<'v>),
     Provider(ValueAsProviderLike<'v>),
-    TaggedValue(&'v StarlarkTaggedValue<'v>),
-    BxlSelectConcat(&'v StarlarkSelectConcat),
-    BxlSelectDict(&'v StarlarkSelectDict),
+    TaggedValue(ValueOf<'v, StarlarkTaggedValue<'v>>),
+    BxlSelectConcat(ValueOf<'v, StarlarkSelectConcat>),
+    BxlSelectDict(ValueOf<'v, StarlarkSelectDict>),
 }
 
 impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
@@ -173,15 +156,25 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
     where
         S: Serializer,
     {
+        // The recursion depth of this function is determined by the nesting
+        // depth of the value, which is unbounded. Detect such cases and return
+        // an error nicely rather than crashing.
+        err(check_stack_overflow())?;
         match &self.value {
             JsonUnpack::None(_) => serializer.serialize_none(),
-            JsonUnpack::String(x) => serializer.serialize_str(x),
-            JsonUnpack::Number(x) => serializer.serialize_i64(*x),
+            JsonUnpack::String(x) => serializer.serialize_str(x.as_str()),
+            JsonUnpack::Number(x) => serializer
+                .serialize_i64(err(i64::unpack_value_err(x.to_value()).map_err(Into::into))?),
             JsonUnpack::Bool(x) => serializer.serialize_bool(*x),
-            JsonUnpack::List(x) => serializer.collect_seq(x.iter().map(|v| self.with_value(v))),
-            JsonUnpack::Tuple(x) => serializer.collect_seq(x.iter().map(|v| self.with_value(v))),
+            JsonUnpack::List(x) => {
+                serializer.collect_seq(x.list().iter().map(|v| self.with_value(v)))
+            }
+            JsonUnpack::Tuple(x) => {
+                serializer.collect_seq(x.tuple().iter().map(|v| self.with_value(v)))
+            }
             JsonUnpack::Dict(x) => serializer.collect_map(
-                x.iter()
+                x.dict()
+                    .iter()
                     .map(|(k, v)| (self.with_value(k), self.with_value(v))),
             ),
             JsonUnpack::Struct(x) => {
@@ -192,7 +185,16 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
             }
             JsonUnpack::Enum(x) => x.serialize(serializer),
             JsonUnpack::TransitiveSetJsonProjection(x) => {
-                serializer.collect_seq(err(x.iter_values())?.map(|v| self.with_value(v)))
+                match self.fs {
+                    // Skip validation when fs == None because it can be expensive.
+                    // TransitiveSet::new already did validate_json for projected values.
+                    None => serializer.collect_seq(std::iter::empty::<u8>()),
+                    Some(_) => serializer.collect_seq(
+                        err(x.collect_values())?
+                            .into_iter()
+                            .map(|v| self.with_value(v)),
+                    ),
+                }
             }
             JsonUnpack::TargetLabel(x) => {
                 // Users could do this with `str(ctx.label.raw_target())`, but in some benchmarks that causes
@@ -213,21 +215,31 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
                         serializer.serialize_str("")
                     }
                     Some(fs) => {
-                        let artifact = err(x.artifact())?;
-                        let path = match x {
-                            JsonArtifact::ValueAsInputArtifactLike(_) => {
-                                let content_hash = self.artifact_path_mapping.get(&artifact);
-                                err(artifact.resolve_path(fs.fs(), content_hash))?
+                        let p = match x {
+                            JsonArtifact::Artifact(x) => {
+                                let art = err(x.as_input_artifact_like().get_bound_artifact())?;
+                                err(art.resolve_path(fs.fs(), self.artifact_path_mapping.get(&art)))?
                             }
-                            JsonArtifact::StarlarkOutputArtifact(_) => {
-                                let content_hash = ContentBasedPathHash::for_output_artifact();
-                                err(artifact.resolve_path(fs.fs(), Some(&content_hash)))?
+                            JsonArtifact::StarlarkOutputArtifact(x) => {
+                                let art = match x {
+                                    StarlarkOutputArtifactView::Unfrozen(x) => {
+                                        err((*x.inner()).get_bound_artifact())?
+                                    }
+                                    StarlarkOutputArtifactView::Frozen(x) => x.inner().artifact(),
+                                };
+
+                                err(art.resolve_path(
+                                    fs.fs(),
+                                    Some(&ContentBasedPathHash::for_output_artifact()),
+                                ))?
                             }
                         };
-                        let path = with_command_line_context(fs, self.absolute, |ctx| {
-                            err(ctx.resolve_project_path(path)).map(|loc| loc.into_string())
-                        })?;
-                        serializer.serialize_str(&path)
+                        let p = if self.absolute {
+                            path_format_absolute(&p, fs.path_separator(), fs.fs().fs())
+                        } else {
+                            path_format(p.as_ref(), fs.path_separator())
+                        };
+                        serializer.serialize_str(p.as_ref())
                     }
                 }
             }
@@ -243,17 +255,17 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
                         }
                     }
                     Some(fs) => {
-                        // WriteJsonCommandLineArgGen assumes that any args/write-to-file macros are
-                        // rejected here and needs to be updated if that changes.
                         let mut items = Vec::<String>::new();
-
-                        with_command_line_context(fs, self.absolute, |ctx| {
-                            err(x.as_command_line_arg().add_to_command_line(
-                                &mut items,
-                                ctx,
-                                self.artifact_path_mapping,
-                            ))
-                        })?;
+                        let mut fmt = CommandLineBuilder::new_with_options(
+                            &mut items,
+                            self.artifact_path_mapping,
+                            fs,
+                            self.absolute,
+                            // WriteJsonCommandLineArgGen assumes that any args/write-to-file macros are
+                            // rejected here and needs to be updated if that changes.
+                            None,
+                        );
+                        err(x.get().0.add_to_command_line(&mut fmt))?;
 
                         // We change the type, based on the value - singleton = String, otherwise list.
                         // That's a little annoying (type based on value), but otherwise there would be
@@ -269,7 +281,7 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
             JsonUnpack::Provider(x) => {
                 serializer.collect_map(x.0.items().iter().map(|(k, v)| (k, self.with_value(*v))))
             }
-            JsonUnpack::TaggedValue(x) => self.with_value(*x.value()).serialize(serializer),
+            JsonUnpack::TaggedValue(x) => self.with_value(x.value()).serialize(serializer),
             JsonUnpack::BxlSelectConcat(x) => x.serialize(serializer),
             JsonUnpack::BxlSelectDict(x) => x.serialize(serializer),
         }
@@ -287,7 +299,7 @@ fn is_singleton_cmdargs(x: CommandLineArg) -> bool {
 }
 
 pub fn validate_json(x: JsonUnpack) -> buck2_error::Result<()> {
-    write_json(x, None, &mut sink(), false, false, &FxHashMap::default())
+    write_json(x, None, &mut sink(), false, false, &BuckMutMap::default())
 }
 
 pub fn write_json(
@@ -322,6 +334,10 @@ pub fn visit_json_artifacts<'v>(
     v: Value<'v>,
     visitor: &mut dyn CommandLineArtifactVisitor<'v>,
 ) -> buck2_error::Result<()> {
+    // The recursion depth of this function is determined by the nesting depth
+    // of the value, which is unbounded. Detect such cases and return an error
+    // nicely rather than crashing.
+    check_stack_overflow()?;
     match JsonUnpack::unpack_value_err(v)? {
         JsonUnpack::None(_)
         | JsonUnpack::String(_)
@@ -335,17 +351,17 @@ pub fn visit_json_artifacts<'v>(
         | JsonUnpack::CellPath(_) => {}
 
         JsonUnpack::List(x) => {
-            for x in x.iter() {
+            for x in x.list().iter() {
                 visit_json_artifacts(x, visitor)?;
             }
         }
         JsonUnpack::Tuple(x) => {
-            for x in x.iter() {
+            for x in x.tuple().iter() {
                 visit_json_artifacts(x, visitor)?;
             }
         }
         JsonUnpack::Dict(x) => {
-            for (k, v) in x.iter() {
+            for (k, v) in x.dict().iter() {
                 visit_json_artifacts(k, visitor)?;
                 visit_json_artifacts(v, visitor)?;
             }
@@ -362,6 +378,7 @@ pub fn visit_json_artifacts<'v>(
         }
         JsonUnpack::TransitiveSetJsonProjection(x) => visitor.visit_input(
             ArtifactGroup::TransitiveSetProjection(Arc::new(x.to_projection_key_wrapper()?)),
+            InputProperties::default(),
             vec![],
         ),
         JsonUnpack::Artifact(_x) => {
@@ -372,7 +389,7 @@ pub fn visit_json_artifacts<'v>(
                 .0
                 .visit_artifacts(visitor)?;
         }
-        JsonUnpack::CommandLine(x) => x.as_command_line_arg().visit_artifacts(visitor)?,
+        JsonUnpack::CommandLine(x) => x.get().0.visit_artifacts(visitor)?,
         JsonUnpack::Provider(x) => {
             for (_, v) in x.0.items() {
                 visit_json_artifacts(v, visitor)?;
@@ -380,7 +397,7 @@ pub fn visit_json_artifacts<'v>(
         }
         JsonUnpack::TaggedValue(v) => {
             let mut visitor = v.wrap_visitor(visitor);
-            visit_json_artifacts(*v.value(), &mut visitor)?;
+            visit_json_artifacts(v.value(), &mut visitor)?;
         }
     }
     Ok(())

@@ -21,69 +21,83 @@ use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 
+use dupe::Dupe;
+
+use crate as starlark;
+use crate::any::ProvidesStaticType;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::eval::runtime::frame_span::FrameSpan;
-use crate::values::FrozenRef;
-use crate::values::FrozenValue;
 use crate::values::FrozenValueTyped;
 use crate::values::Heap;
+use crate::values::HeapEdge;
 use crate::values::Value;
-use crate::values::ValueLike;
-use crate::values::function::BoundMethodGen;
+use crate::values::function::BoundMethod;
 use crate::values::function::NativeAttribute;
 use crate::values::function::NativeMethod;
 
-/// A value or an unbound method or unbound attribute.
-#[derive(Clone)]
-pub(crate) enum UnboundValue {
+/// A method or attribute of a type, before it is bound to an instance. Lives in a
+/// [`Methods`](crate::environment::Methods) table.
+#[derive(Clone, Copy, Dupe, ProvidesStaticType, crate::StarlarkPagable)]
+pub(crate) enum UnboundValue<'v> {
     /// A method with `this` unbound.
-    Method(FrozenValueTyped<'static, NativeMethod>),
+    Method(FrozenValueTyped<'v, NativeMethod<'v>>),
     /// An attribute with `this` unbound.
-    Attr(FrozenValueTyped<'static, NativeAttribute>),
+    Attr(FrozenValueTyped<'v, NativeAttribute<'v>>),
 }
 
-impl Debug for UnboundValue {
+impl<'v> Debug for UnboundValue<'v> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("MaybeUnboundValue").finish_non_exhaustive()
     }
 }
 
-impl UnboundValue {
+impl UnboundValue<'static> {
+    /// The member, for use with any heap.
+    ///
+    /// Methods tables are only ever reached as `&'static Methods`, which is what makes their
+    /// members immortal and the `'static` brand honest, see
+    /// [`HeapEdge::immortal`](HeapEdge::immortal).
     #[inline]
-    pub(crate) fn to_frozen_value(&self) -> FrozenValue {
+    pub(crate) fn at<'v>(&'static self) -> UnboundValue<'v> {
+        HeapEdge::immortal().rebrand(*self)
+    }
+}
+
+impl<'v> UnboundValue<'v> {
+    #[inline]
+    pub(crate) fn to_value(self) -> Value<'v> {
         match self {
-            UnboundValue::Method(m) => m.to_frozen_value(),
-            UnboundValue::Attr(a) => a.to_frozen_value(),
+            UnboundValue::Method(m) => m.to_value(),
+            UnboundValue::Attr(a) => a.to_value(),
         }
     }
 
     /// Bind this object to given `this` value.
     #[inline]
-    pub(crate) fn bind<'v>(&self, this: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    pub(crate) fn bind(self, this: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match self {
-            UnboundValue::Method(m) => {
-                Ok(heap.alloc_complex(BoundMethodGen::new(this.to_value(), *m)))
-            }
+            UnboundValue::Method(m) => Ok(heap.alloc_complex(BoundMethod::new(this, m))),
             UnboundValue::Attr(a) => a.invoke(this, heap),
         }
     }
 
     #[inline]
-    pub(crate) fn invoke_method<'v>(
-        &self,
+    pub(crate) fn invoke_method(
+        self,
         this: Value<'v>,
-        span: FrozenRef<'static, FrameSpan>,
+        span: &'v FrameSpan<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        eval.with_call_stack(
-            self.to_frozen_value().to_value(),
-            Some(span),
-            |eval| match self {
-                UnboundValue::Method(m) => m.function.invoke(eval, this, args),
-                UnboundValue::Attr(a) => a.invoke(this, eval.heap()),
-            },
-        )
+        match self {
+            UnboundValue::Method(m) => eval.with_call_stack(m.to_value(), Some(span), |eval| {
+                m.function.invoke(eval, this, args)
+            }),
+            UnboundValue::Attr(a) => {
+                let value = a.invoke(this, eval.heap())?;
+                value.invoke_with_loc(Some(span), args, eval)
+            }
+        }
     }
 }

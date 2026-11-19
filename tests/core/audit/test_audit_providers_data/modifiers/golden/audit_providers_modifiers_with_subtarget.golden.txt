@@ -1,6 +1,6 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
-root//:dummy_with_subtarget[sub] (cfg:<empty>#<HASH>):
+root//:dummy_with_subtarget[sub] (<modifiers>#<HASH>):
   Providers([
     DefaultInfo(
       sub_targets={},

@@ -11,9 +11,9 @@
 use std::fmt;
 use std::fmt::Display;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use anyhow::Context;
-use once_cell::sync::Lazy;
 use regex::Regex;
 
 #[derive(Clone, Default, PartialEq, Eq, Hash, Debug)]
@@ -33,8 +33,8 @@ impl FromStr for TDigest {
     type Err = anyhow::Error;
 
     fn from_str(digest: &str) -> anyhow::Result<TDigest> {
-        static DIGEST_RE: Lazy<Regex> = Lazy::new(|| {
-            Regex::new("([0-9a-f]+):([0-9]+)").expect("Failed to compile digest regex")
+        static DIGEST_RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new("^([0-9a-f]+):([0-9]+)$").expect("Failed to compile digest regex")
         });
 
         let matches = DIGEST_RE
@@ -47,5 +47,20 @@ impl FromStr for TDigest {
             })?,
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TDigest;
+
+    /// Only `<lowercase hex>:<decimal>` parses.
+    #[test]
+    fn test_from_str_rejects_junk_around_the_digest() {
+        assert!("XYZabc:12:junk".parse::<TDigest>().is_err());
+        assert!("ABCDEF0123:5".parse::<TDigest>().is_err());
+        let digest: TDigest = "abc:12".parse().unwrap();
+        assert_eq!(digest.hash, "abc");
+        assert_eq!(digest.size_in_bytes, 12);
     }
 }

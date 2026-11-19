@@ -23,6 +23,7 @@ buck_kotlin_test(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics/logger:logger",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics/logger/model:model",
         "prelude//toolchains/android/third-party:junit",
+        "prelude//toolchains/android/third-party:kotlin-compiler",
         "prelude//toolchains/android/third-party:mockito-kotlin",
     ],
 )

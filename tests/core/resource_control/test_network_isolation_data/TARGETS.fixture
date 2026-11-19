@@ -1,0 +1,5 @@
+load(":defs.bzl", "network_accessible_test", "network_isolated_test")
+
+network_isolated_test(name = "network_isolated")
+
+network_accessible_test(name = "network_accessible")

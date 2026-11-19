@@ -11,8 +11,10 @@
 package com.facebook.buck.jvm.cd.serialization.java;
 
 import com.facebook.buck.jvm.core.BuildTargetValue;
+import com.facebook.infer.annotation.Nullsafe;
 
 /** {@link BuildTargetValue} to protobuf serializer */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class BuildTargetValueSerializer {
 
   private BuildTargetValueSerializer() {}

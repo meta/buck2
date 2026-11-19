@@ -51,11 +51,13 @@ enum BuildMode {
 
 // Common parameters for build jar commands (abi and library jar ones)
 message BaseJarCommand {
-  AbiGenerationMode abiCompatibilityMode = 1;
+  reserved 1;
+  reserved "abiCompatibilityMode";
   AbiGenerationMode abiGenerationMode = 2;
   bool isRequiredForSourceOnlyAbi = 3;
   bool trackClassUsage = 4;
-  string configuredBuckOut = 6;
+  reserved 6;
+  reserved "configuredBuckOut";
   BuildTargetValue buildTargetValue = 7;
   OutputPathsValue outputPathsValue = 8;
   repeated string compileTimeClasspathPaths = 9;
@@ -63,11 +65,18 @@ message BaseJarCommand {
   repeated RelPathMapEntry resourcesMap = 13;
   JarParameters jarParameters = 15;
   string buildCellRootPath = 16;
-  ResolvedJavac resolvedJavac = 17;
+  reserved 17;
+  reserved "resolvedJavac";
   ResolvedJavacOptions resolvedJavacOptions = 18;
   repeated string compileTimeClasspathSnapshotPaths = 19;
-  string pathToClasses = 20;
+  reserved 20;
+  reserved "pathToClasses";
+  // Optional. When omitted, generated sources stay in BUCK_SCRATCH_PATH.
   string annotationsPath = 23;
+  // Alternating ABI jar and directory paths, in classpath order. An empty
+  // directory keeps jar-level dep-file tracking. Mutually exclusive with
+  // compileTimeClasspathPaths.
+  repeated string compileTimeClasspathAbiAndDirPaths = 24;
 }
 
 enum AbiGenerationMode {
@@ -107,13 +116,17 @@ message OutputPathsValue {
   string libraryTargetFullyQualifiedName = 4;
 
   message OutputPaths {
-    string classesDir = 1;
+    reserved 1;
+    reserved "classesDir";
     string outputJarDirPath = 2;
     string abiJarPath = 3;
+    // Optional. When omitted, generated sources stay in BUCK_SCRATCH_PATH.
     string annotationPath = 4;
     string pathToSourcesList = 5;
     string workingDirectory = 6;
     string outputJarPath = 7;
+    // Optional compiler-reported class-file to source-file mapping.
+    string compilerClassToSourceMap = 8;
   }
 }
 
@@ -121,7 +134,8 @@ message ResolvedJavacOptions {
   // reserved = 1;
   repeated string bootclasspathList = 2;
   JavacLanguageLevelOptions languageLevelOptions = 3;
-  bool debug = 4;
+  reserved 4;
+  reserved "debug";
   bool verbose = 5;
   JavacPluginParams javaAnnotationProcessorParams = 6;
   JavacPluginParams standardJavacPluginParams = 7;
@@ -150,8 +164,8 @@ message ResolvedJavacOptions {
     bool runsOnJavaOnly = 4;
     repeated string processorNames = 5;
     repeated string classpath = 6;
-    // Appears to only be used for the internal NullSafe.
-    map<string, string> pathParams = 7;
+    reserved 7;
+    reserved "pathParams";
     repeated string arguments = 8;
   }
 }
@@ -165,36 +179,10 @@ message JarParameters {
   repeated string overrideEntriesToJar = 6;
   string mainClass = 7;
   string manifestFile = 8;
-  LogLevel duplicatesLogLevel = 9;
-
-  enum LogLevel {
-    UNKNOWN = 0;
-    OFF = 1;
-    SEVERE = 2;
-    WARNING = 3;
-    INFO = 4;
-    CONFIG = 5;
-    FINE = 6;
-    FINER = 7;
-    FINEST = 8;
-    ALL = 9;
-  }
+  reserved 9;
+  reserved "duplicatesLogLevel";
 
   message RemoveClassesPatternsMatcher {
     repeated string patterns = 1;
   }
-}
-
-message ResolvedJavac {
-  oneof javac {
-    ExternalJavac externalJavac = 1;
-    JSR199Javac jsr199Javac = 2;
-  }
-
-  message ExternalJavac {
-    string shortName = 1;
-    repeated string commandPrefix = 2;
-  }
-
-  message JSR199Javac {}
 }

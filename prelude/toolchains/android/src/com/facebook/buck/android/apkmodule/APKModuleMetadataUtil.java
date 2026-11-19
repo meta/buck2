@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.apkmodule;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Ordering;
@@ -24,6 +25,7 @@ import java.util.SortedMap;
 import java.util.SortedSet;
 import java.util.function.Function;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class APKModuleMetadataUtil {
 
   public static final String CLASS_SECTION_HEADER = "CLASSES";

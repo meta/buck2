@@ -9,16 +9,20 @@
  */
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use allocative::Allocative;
 use derive_more::Display;
 use dice::DiceTransactionUpdater;
+use dice::EqualityBehavior;
 use dice::InjectedKey;
+use dice::PagableValueSerialize;
+use dice::ValueSerialize;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
-#[derive(Display, Debug, Hash, Eq, Clone, Dupe, PartialEq, Allocative)]
-
+#[derive(Display, Debug, Hash, Eq, Clone, Dupe, PartialEq, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
 // DICE key that corresponds to optional validations that are enabled via command line flag.
 pub(crate) struct EnabledOptionalValidationsKey;
 
@@ -30,10 +34,14 @@ pub trait SetEnabledOptionalValidations {
 }
 
 impl InjectedKey for EnabledOptionalValidationsKey {
-    type Value = Arc<BTreeSet<String>>;
+    type Value = BTreeSet<String>;
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        PagableValueSerialize::<Self::Value>::new()
     }
 }
 
@@ -44,7 +52,7 @@ impl SetEnabledOptionalValidations for DiceTransactionUpdater {
     ) -> buck2_error::Result<()> {
         Ok(self.changed_to(vec![(
             EnabledOptionalValidationsKey,
-            Arc::new(BTreeSet::from_iter(validations)),
+            BTreeSet::from_iter(validations),
         )])?)
     }
 }

@@ -28,7 +28,7 @@ def bar(a, b: str, *, c: str, d: str = "some_default") -> list[str]:
     return ["a={a},  b={b},  c={c},  d={d}".format(a = a, b = b, c = c, d = d)]
 
 def baz():
-    """ Simple docstring for baz """
+    """Simple docstring for baz"""
     pass
 
 def quz():

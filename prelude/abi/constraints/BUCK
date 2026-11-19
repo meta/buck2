@@ -1,3 +1,4 @@
+load("@prelude//configurations:constraint_alias.bzl", "constraint_with_aliases")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("build_infra")
@@ -6,25 +7,14 @@ source_listing()
 
 # Used by open source projects to support `prelude//`
 
-constraint_setting(
+constraint_with_aliases(
     name = "abi",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "gnu",
-    constraint_setting = ":abi",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "msvc",
-    constraint_setting = ":abi",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "musl",
-    constraint_setting = ":abi",
+    aliases = {
+        "gnu": "gnu",
+        "msvc": "msvc",
+        "musl": "musl",
+    },
+    default = "unspecified",
+    values = ["gnu", "msvc", "musl", "unspecified"],
     visibility = ["PUBLIC"],
 )

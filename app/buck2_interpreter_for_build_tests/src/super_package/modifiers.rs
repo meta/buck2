@@ -38,9 +38,10 @@ async fn test_set_package_cfg_modifiers() {
         ),
     );
 
-    let mut ctx = calculation(&fs).await;
+    let ctx = calculation(&fs).await;
 
     let target_node = ctx
+        .ctx()
         .get_target_node(&TargetLabel::testing_parse("root//foo:a"))
         .await
         .unwrap();
@@ -48,7 +49,7 @@ async fn test_set_package_cfg_modifiers() {
     let cfg_modifiers = target_node
         .package_cfg_modifiers()
         .unwrap()
-        .to_value()
+        .to_json()
         .to_string();
     assert_eq!("[\"aaabbbccc\"]", cfg_modifiers);
 }
@@ -73,9 +74,10 @@ async fn test_get_parent_package_cfg_modifiers() {
         ),
     );
 
-    let mut ctx = calculation(&fs).await;
+    let ctx = calculation(&fs).await;
 
     let target_node = ctx
+        .ctx()
         .get_target_node(&TargetLabel::testing_parse("root//foo:a"))
         .await
         .unwrap();
@@ -83,7 +85,7 @@ async fn test_get_parent_package_cfg_modifiers() {
     let cfg_modifiers = target_node
         .package_cfg_modifiers()
         .unwrap()
-        .to_value()
+        .to_json()
         .to_string();
     assert_eq!("[\"aaaa\",\"bbb\"]", cfg_modifiers);
 }

@@ -1,8 +1,8 @@
-load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library_prost_0134")
+load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 
 oncall("build_infra")
 
-rust_protobuf_library_prost_0134(
+rust_protobuf_library(
     name = "buck2_downward_api_proto",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",
@@ -10,6 +10,7 @@ rust_protobuf_library_prost_0134(
     deps = [
         "fbsource//third-party/rust:tracing",
         "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_hash:buck2_hash",
     ],
 )
 

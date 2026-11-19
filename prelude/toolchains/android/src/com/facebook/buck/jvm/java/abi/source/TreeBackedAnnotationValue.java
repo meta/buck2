@@ -10,7 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.AssignmentTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.TreePath;
@@ -21,7 +21,9 @@ import javax.lang.model.element.AnnotationValueVisitor;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.SimpleAnnotationValueVisitor8;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedAnnotationValue implements ArtificialAnnotationValue {
   private final AnnotationValue underlyingAnnotationValue;
   private final TreePath treePath;

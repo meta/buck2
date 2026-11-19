@@ -8,9 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(if_let_guard)]
-
 use buck2_error::ErrorTag;
 use hyper::StatusCode;
 
@@ -24,6 +21,8 @@ mod x2p;
 pub use client::HttpClient;
 pub use client::HttpClientBuilder;
 pub use client::to_bytes;
+#[cfg(fbcode_build)]
+pub use proxy::ProxyHostAllowlist;
 
 fn http_error_label(status: StatusCode) -> &'static str {
     if status.is_server_error() {

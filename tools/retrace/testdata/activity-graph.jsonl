@@ -1,0 +1,3 @@
+{"graph":{"dir":"/repo","pid":1,"makelevel":0,"goals":["fbcode//example:all"],"kind":"full","enc":2,"run":"aaaa-bbbb","coverage":{"nodes":2,"edges":0,"dangling_deps":0,"dangling_tsets":0}}}
+{"t":"fallback (rustc)","d":[]}
+{"t":"input_setup (cxx_compile)","d":[]}

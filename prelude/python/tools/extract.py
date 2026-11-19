@@ -7,13 +7,14 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
 
-"""
-Quick and dirty wrapper to extract zip files; python 3.6.2+
+"""Prepare an archive or existing directory for a prebuilt Python library.
 
-extract.py my_zip_file.zip --output=output_directory
+Archives are extracted into ``--output``. Existing directories are inspected in
+place, without copying, when ``--output`` is omitted.
 """
+
+from __future__ import annotations
 
 import argparse
 import configparser
@@ -26,10 +27,9 @@ import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Optional
 
 
-def strip_soabi_tag(path: Path) -> Optional[Path]:
+def strip_soabi_tag(path: Path) -> Path | None:
     """
     Helper to strip any SOABI tag from the given extension path.  Returns `None`
     if no stripping is performed.
@@ -98,10 +98,12 @@ def extract(src: Path, dst_dir: Path, strip_soabi_tags: bool = False) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Extract .zip/.tar.gz archives to a directory in a cross platform manner"
+        description="Prepare an archive or existing source directory for a prebuilt Python library"
     )
     parser.add_argument(
-        "--output", type=Path, required=True, help="The directory to write to"
+        "--output",
+        type=Path,
+        help="The directory to extract an archive to; omit for an existing directory",
     )
     parser.add_argument("--strip-soabi-tags", action="store_true")
     parser.add_argument("--entry-points", type=Path, help="The directory to write to")
@@ -113,22 +115,35 @@ def main() -> None:
     parser.add_argument(
         "--entry-points-manifest", type=Path, help="The directory to write to"
     )
-    parser.add_argument("src", type=Path, help="The archive to extract to --output")
+    parser.add_argument(
+        "src", type=Path, help="An archive or existing source directory"
+    )
     args = parser.parse_args()
 
-    args.output.mkdir(parents=True, exist_ok=True)
-
-    extract(
-        src=args.src,
-        dst_dir=args.output,
-        strip_soabi_tags=args.strip_soabi_tags,
-    )
+    if args.src.is_dir():
+        if args.output is not None:
+            parser.error("--output must be omitted when src is a directory")
+        if args.strip_soabi_tags:
+            parser.error(
+                "--strip-soabi-tags cannot mutate an existing source directory"
+            )
+        source_root = args.src
+    else:
+        if args.output is None:
+            parser.error("--output is required when src is an archive")
+        args.output.mkdir(parents=True, exist_ok=True)
+        extract(
+            src=args.src,
+            dst_dir=args.output,
+            strip_soabi_tags=args.strip_soabi_tags,
+        )
+        source_root = args.output
 
     # Infer C++ header dirs.
     if args.cxx_header_dirs is not None:
         with open(args.cxx_header_dirs, mode="w") as f:
-            for root, dirs, _files in os.walk(args.output):
-                root = os.path.relpath(root, args.output)
+            for root, dirs, _files in os.walk(source_root):
+                root = os.path.relpath(root, source_root)
                 if "include" in dirs:
                     print(os.path.normpath(os.path.join(root, "include")), file=f)
 
@@ -136,7 +151,7 @@ def main() -> None:
     # (just like `pip install` would do).
     if args.entry_points is not None:
         entry_points = glob.glob(
-            os.path.join(args.output, "*.dist-info", "entry_points.txt")
+            os.path.join(source_root, "*.dist-info", "entry_points.txt")
         )
         os.makedirs(args.entry_points, exist_ok=True)
         manifest = []
@@ -149,7 +164,7 @@ def main() -> None:
                     mod, func = entry_point.split(":")
                     path = os.path.join(args.entry_points, name)
                     manifest.append(
-                        (name, path, os.path.relpath(entry_points, args.output))
+                        (name, path, os.path.relpath(entry_points, source_root))
                     )
                     with open(path, mode="w") as bf:
                         bf.write(

@@ -11,7 +11,7 @@
 use buck2_common::target_aliases::BuckConfigTargetAliasResolver;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPathRef;
+use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::pattern::pattern::ParsedPattern;
@@ -20,14 +20,15 @@ use buck2_core::target::label::label::TargetLabel;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
 use starlark::values::UnpackValue;
+use starlark::values::ValueOf;
 use starlark::values::none::NoneType;
-use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::string::StarlarkStr;
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 pub(crate) enum ValueAsStarlarkTargetLabel<'v> {
     None(NoneType),
-    Str(&'v str),
-    TargetLabel(&'v StarlarkTargetLabel),
+    Str(ValueOf<'v, StarlarkStr>),
+    TargetLabel(ValueOf<'v, StarlarkTargetLabel>),
 }
 
 impl<'v> ValueAsStarlarkTargetLabel<'v> {
@@ -39,16 +40,17 @@ impl<'v> ValueAsStarlarkTargetLabel<'v> {
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
         cell_name: CellName,
-        default_target_platform: &Option<TargetLabel>,
+        default_target_platform: Option<TargetLabel>,
     ) -> buck2_error::Result<Option<TargetLabel>> {
         match self {
-            ValueAsStarlarkTargetLabel::None(_) => Ok(default_target_platform.clone()),
+            ValueAsStarlarkTargetLabel::None(_) => Ok(default_target_platform),
             ValueAsStarlarkTargetLabel::Str(s) => {
+                let s = s.as_str();
                 Ok(Some(
                     ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                         target_alias_resolver,
                         // TODO(nga): Parse relaxed relative to cell root is incorrect.
-                        CellPathRef::new(cell_name, CellRelativePath::empty()),
+                        CellPath::new(cell_name, CellRelativePath::empty()),
                         s,
                         cell_resolver,
                         cell_alias_resolver,

@@ -25,28 +25,21 @@ ThirdPartyBuild = record(
 # transitive set type" errors:
 # https://fb.prod.workplace.com/groups/buck2users/posts/3637287806527574/
 ThirdPartyBuildTSet = transitive_set()
-ThirdPartyBuildInfo = provider(fields = {
-    "build": provider_field(ThirdPartyBuild | None),
-    "_tset": provider_field(ThirdPartyBuildTSet),
-})
+ThirdPartyBuildInfo = provider(
+    fields = {
+        "build": provider_field(ThirdPartyBuild | None),
+        "_tset": provider_field(ThirdPartyBuildTSet),
+    }
+)
 
 def third_party_build_info(
-        actions,
-        build: [ThirdPartyBuild, None] = None,
-        children: list[ThirdPartyBuildInfo] = [],
-        deps: list[Dependency] = []) -> ThirdPartyBuildInfo:
+    actions, build: [ThirdPartyBuild, None] = None, children: list[ThirdPartyBuildInfo] = [], deps: list[Dependency] = []
+) -> ThirdPartyBuildInfo:
     kwargs = {}
     if build != None:
         kwargs["value"] = build
     if deps or children:
-        kwargs["children"] = [
-            child._tset
-            for child in children
-        ] + [
-            dep[ThirdPartyBuildInfo]._tset
-            for dep in deps
-            if ThirdPartyBuildInfo in dep
-        ]
+        kwargs["children"] = [child._tset for child in children] + [dep[ThirdPartyBuildInfo]._tset for dep in deps if ThirdPartyBuildInfo in dep]
     return ThirdPartyBuildInfo(
         build = build,
         _tset = actions.tset(ThirdPartyBuildTSet, **kwargs),

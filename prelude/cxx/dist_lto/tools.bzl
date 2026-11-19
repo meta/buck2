@@ -13,18 +13,9 @@ def _impl(ctx):
         DefaultInfo(),
         DistLtoToolsInfo(
             compiler_stats_merger = ctx.attrs.compiler_stats_merger[RunInfo],
-            planner = {
-                LinkerType(linker_type): planner[RunInfo]
-                for linker_type, planner in ctx.attrs.planner.items()
-            },
-            opt = {
-                LinkerType(linker_type): opt[RunInfo]
-                for linker_type, opt in ctx.attrs.opt.items()
-            },
-            prepare = {
-                LinkerType(linker_type): prepare[RunInfo]
-                for linker_type, prepare in ctx.attrs.prepare.items()
-            },
+            planner = {LinkerType(linker_type): planner[RunInfo] for linker_type, planner in ctx.attrs.planner.items()},
+            opt = {LinkerType(linker_type): opt[RunInfo] for linker_type, opt in ctx.attrs.opt.items()},
+            prepare = {LinkerType(linker_type): prepare[RunInfo] for linker_type, prepare in ctx.attrs.prepare.items()},
             copy = ctx.attrs.copy[RunInfo],
             archive_mapper = ctx.attrs.archive_mapper[RunInfo],
         ),

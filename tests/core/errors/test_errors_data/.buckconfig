@@ -5,14 +5,10 @@ name=TARGETS.fixture
 root = .
 toolchains = toolchains
 prelude = prelude
-cell = package_listing/cell
 nano_prelude = nano_prelude
 
 [external_cells]
 nano_prelude = bundled
-
-[project]
-ignore = package_listing/*red/**
 
 [buck2]
 allow_eden_io = false

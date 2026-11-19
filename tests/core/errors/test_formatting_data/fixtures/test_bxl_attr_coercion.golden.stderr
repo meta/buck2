@@ -1,25 +1,20 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
 Command failed: 
-Traceback (most recent call last):
-  File <builtin>, in <module>
-  * fail_attr_coercion.bxl:10, in _int_rule
-      ctx.unconfigured_targets("//attr_coercion:int_rule")
-
 error: Error loading targets in package `root//attr_coercion` for target `root//attr_coercion:int_rule`
   --> fail_attr_coercion.bxl:10:5
    |
 10 |     ctx.unconfigured_targets("//attr_coercion:int_rule")
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
+Traceback (most recent call last):
+  File <builtin>, in <module>
+  * fail_attr_coercion.bxl:10, in _int_rule
+      ctx.unconfigured_targets("//attr_coercion:int_rule")
+
 
 Caused by:
     0: Error evaluating build file: `root//attr_coercion:TARGETS.fixture`
-    1: Traceback (most recent call last):
-         * attr_coercion/TARGETS.fixture:3, in <module>
-             int_rule(
-       
-       error: Error coercing attribute `x` of `root//attr_coercion:int_rule`
+    1: error: Error coercing attribute `x` of `root//attr_coercion:int_rule`
         --> attr_coercion/TARGETS.fixture:3:1
          |
        3 | / int_rule(
@@ -27,7 +22,10 @@ Caused by:
        5 | |     x = "foobar",
        6 | | )
          | |_^
-         |
+       Traceback (most recent call last):
+         * attr_coercion/TARGETS.fixture:3, in <module>
+             int_rule(
+       
     2: Error coercing attribute `x` of type `attrs.int()`
     3: Error coercing "foobar"
     4: Expected `int`, but got `string (repr: "foobar")`

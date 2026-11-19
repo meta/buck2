@@ -4,237 +4,211 @@ title: Configurations
 ---
 
 This page mostly focuses on how configurations and related features are
-implemented.
+implemented. A good understanding of the high-level
+[concepts](../concepts/configurations.md) is therefore required.
 
-## Context
+## Defining platforms
 
-Buck configurations provide an API to express the different ways in which
-projects and targets can be built.
+A platform is simply a target with at least a
+[`PlatformInfo`](../../api/build/PlatformInfo). That target can be an
+instance of a custom rule, or it can simply use the prelude's
+[`platform`](../../prelude/rules/core/platform) rule:
 
-A configuration consists of a set of constraints and config settings (values
-from buckconfig). These are determined by a base platform that sets the initial
-values and then a series of transitions that may change them.
+```python
+platform(
+    name = "my_platform",
+    constraint_values = [
+        "//constraints:build_mode[debug]",
+        "//constraints:cpu[x64]",
+    ],
+)
+```
 
-The common way that users are exposed to configurations is in `select()`
-invocations where the resolution is based on the configuration.
-
-A build may involve many configurations. A particular target label (`//:foo`)
-may end up with multiple instances in the configured graph with different
-configurations.
-
-## Selectable attributes
-
-Almost all rule attributes can be set to a `select()` value; such an attribute
-is 'selectable'. These attributes' final resolved values will depend on the
-configuration.
-
-There are some attributes that cannot use a `select()`; such attributes are
-termed 'not selectable'. Examples include attributes that buck needs to read
-from the unconfigured node (such as `name` and `default_target_platform`) and
-attributes that are used by `platform()` rules and their dependencies (see
-below).
-
-## Selectable resolution
-
-Resolving selectable attributes is pretty straightforward, it happens when
-constructing the 'configured target node'. At that point, the full configuration
-is available so Buck can lookup whether each constraint in the select is
-satisfied or not.
-
-If multiple conditions of the select() match, then the select will be resolved
-to the 'most refined' of the conditions that match. A set of constraints (as in
-a `config_setting`) is said to 'refine' another if it is a superset of that
-other's constraints. The 'most refined' of a set is then the condition that
-refines all the others. If there is no 'most refined' condition of the matching
-ones, it is an error.
-
-## Target Platform Resolution
-
-In the event that targets are provided on the command line, or when there is no
-indication of what configuration the target will be built in, configurations are
-determined by performing 'target platform resolution' on the unconfigured target
-labels.
-
-The target platform resolution for a target `//:foo` works as follows:
-
-1. Look up (unconfigured) target node for `//:foo`.
-1. If the command has a `--target-platforms` flag, use that.
-1. If there's a `default_target_platform` attribute, use that.
-1. Else, use the cell's default platform.
-
-This is performed independently for any targets that need a platform. Since this
-resolution is done without a configuration, it means that the
-`default_target_platform` attribute **is not selectable**.
-
-This target platform will form the initial configuration for the node.
-
-## Configuration propagation
-
-Once the top-level nodes have been configured via the target platform
-resolution, the configuration is propagated to dependencies (possibly altered by
-transitions).
-
-:::note
-
-The target platform resolution is not applied to all nodes in the graph.
-
-:::
-
-## Transitions
-
-A transition transforms a configuration by adding or changing constraint values
-and config settings or by setting an entirely new underlying target platform.
-
-For more details, see [Configuration transitions](configuration_transitions.md).
-
-## `ConfigurationInfo`, `platform()` analysis, and more
-
-The definition of a platform (either execution or target) is done with a
-`platform` rule instance. The configuration is actually part of the analysis
-result of the platform target (the `ConfigurationInfo` provider instance). This
-is convenient from an implementation standpoint, but it leads to a situation
-where some nodes are analyzed with an 'unbound' Configuration.
+The configuration is actually part of the analysis result of the
+platform target (the
+[`ConfigurationInfo`](../../api/build/ConfigurationInfo) provider
+instance). This is convenient from an implementation standpoint, but it
+leads to a situation where some nodes are analyzed with an "unbound"
+Configuration.
 
 All the rule types involved in defining a platform may be analyzed with an
 unbound configuration (`platform()`, `config_setting()`, `constraint_setting()`,
-and so on). These are sometimes called 'configuration rules'. This means that
+and so on). These are sometimes called "configuration rules". This means that
 all the attributes of these rules are not selectable.
 
 Configurations also reference a few other provider instances such as
 `ConstraintSettingInfo`. All of these end up being potentially produced in a
 context with an unbound configuration.
 
-Using analysis for this also means that 'configuration' and 'analysis' are not
+Using analysis for this also means that "configuration" and "analysis" are not
 distinct phases within a build (although they are still distinct for a node and
 are still conceptually useful).
 
-## Configurations and output paths
-
-Since a target may appear within a build in multiple different configurations,
-output paths cannot be derived based on just targets (as multiple actions would
-map to the same outputs). For this reason, the target and the configuration are
-encoded into output paths. The configuration is currently represented as a hash
-of its values (a 'hashed buck-out').
-
-## Target platform compatibility
-
-All (non-configuration) rules support a `target_compatible_with` attribute. In
-addition, the rule itself can define `target_compatible_with` constraints that
-affect all instances. The `target_compatible_with` attribute is a list of
-constraints/config settings and it **is selectable**.
-
-Target platform compatibility is transitive, all _dependents_ of an incompatible
-target are incompatible. In other words, a node is compatible if and only if the
-node itself and all of its transitive dependencies are compatible.
-
-In buck, this is implemented by graph configuration returning either a
-configured target node or an indicator that the node is incompatible with the
-target platform.
-
-### Buck v1 compatibility
-
-Buck2 also supports the `compatible_with` field on nodes but it has different
-behavior.
-
-In summary:
-
-- `compatible_with`: List of constraints, where _any_ of them must match the
-  configuration to be compatible.
-- `target_compatible_with`: List of constraints, where _all_ of them must match
-  the configuration to be compatible.
-
-## Incompatible target skipping
-
-In a build-like command where a non-literal target pattern is provided (for
-example, `buck build //:` or `buck build //foo/...`), the target pattern will be
-resolved to a set of unconfigured targets. Those targets will then go through
-[target platform resolution](#target-platform-resolution). If any of those
-targets resolve to a platform where they are incompatible, building them will be
-skipped. Users generally expect and prefer this behavior to needing to
-explicitly specify only the targets that can build in their current context.
-
-If an explicitly specified literal is incompatible, it is an error.
-
-The implementation checks compatibility when looking up the analysis results for
-configured nodes requested (in the non-ignored flow, it uses that analysis
-result to lookup the default outputs and build them).
-
 ## Execution platforms
 
-Execution platforms/configurations are used to represent the platforms where
-build execution happens. These are defined in a similar manner to target
-platforms. These may or may not be what one would logically consider different
-'platforms'. For example, there could be multiple different execution platforms
-that all execute things similarly on the local machine.
+> To Buck, both execution platforms and the list of them are based on
+> `ExecutionPlatformInfo` and `ExecutionPlatformRegistrationInfo`, but
+> we’ll talk in
+> terms of the `execution_platform` and `execution_platforms` rules.
 
-A build configures a fixed list of one or more execution platforms.
+There are three main concepts to understand about execution platforms:
 
-## Execution deps
+1. Execution platforms
+2. Execution deps
+3. Execution platform resolution
 
-Some target deps are 'execution deps'. These are the dependencies of the target
-that should be built for the execution platform. For example, a compiler or
-other build tool would be an execution dep. This includes all exe macro deps
-(for example, `$(exe //:tool)`) and includes all `attrs.exec_dep()` deps.
+### Execution platforms
 
-## Toolchain deps
+The simplest execution platform setup is the one `buck2 init` uses. This
+setup gathers constraints from the host machine Buck is running on.
 
-In addition to `attrs.exec_dep()`, there are `attrs.toolchain_dep()`, which are
-similar but differ in an important way. These nodes don't select their execution
-platform, but instead inherit the execution platform of whatever target
-references them; hence, it must be recorded in the configured target label. In
-some sense, execution platform resolution sees through them.
+```ini
+[parser]
+  target_platform_detector_spec = target:root//...->prelude//platforms:default
+[build]
+  execution_platforms = prelude//platforms:default
+```
 
-In other words, `attrs.toolchain_dep()` is like a mix of `attrs.dep()` and
-`attrs.exec_dep()`:
+For many projects, this will suffice, and your target and execution
+platform will be the same (until you provide a config modifier, which
+applies only to the target platform). But the target/exec distinction
+forms the basis of all kinds of cross compilation and remote build
+execution. You can use these to express "I want to compile code that
+will eventually run on Windows, but all the build tools and compilers
+should run on my local Linux computer". In that case the target platform
+is Windows, and the execution platform is Linux. You can imagine exotic
+situations in which the compiler itself has to be compiled first, on yet
+another execution platform.
 
-- It inherits its target platform from the dependent build target like
-  `attrs.dep()` (so any `select()`s using the target of the
-  `attrs.toolchain_dep()` will evaluate as if they were on the target
-  referencing the `attrs.toolchain_dep()` - the target platform gets inherited
-  as with `attrs.dep()`)
-- Like `attrs.exec_dep()` itself, `attrs.exec_dep()`s of the
-  `attrs.toolchain_dep()` target are inserted into the list of
-  `attrs.exec_dep()` on the dependent target of the `attrs.toolchain_dep()`
-  (they get passed up the dep tree, so participate in exec platform resolution).
+More complex setups are possible. You can:
 
-This is illustrated in the following example:
+- Add more constraints and configure code differently when it will be
+  executed in a build step (e.g. release mode, for faster builds of
+  everything else).
+- Set up cross compilation, in conjunction with toolchains that will
+  provide the right flags.
+- Let buck automatically select from multiple execution platforms
+  depending on what's being built (for example, most of the build can be
+  done on Linux, but the linker might only run on Windows).
+
+#### Custom execution platforms
+
+The process for fully specifying your own execution platforms is:
+
+1. Create a target that exposes an
+   `ExecutionPlatformRegistrationInfo(platforms = [...])` provider. Each
+   platform is an `ExecutionPlatformInfo`, which has its own
+   `ConfigurationInfo` (a set of constraints describing it, e.g. it's an
+   x86 server running Linux). This `ConfigurationInfo` is used for exec
+   platform resolution/compatibility, and also to configure software
+   that will run there. So often you will tell it you want all build
+   tools to be built themselves in release mode, so your builds are
+   faster.
+2. Configure the `build.execution_platforms` value in your `.buckconfig`
+   to point to this target:
+
+    ```ini
+    [build]
+    execution_platforms = platforms//:my_exec_platforms
+    ```
+
+Here’s an example definition of execution platforms.
 
 ```python
-target(
-    name = "A",
-    toolchain = attrs.toolchain_dep(default = ":B"),
+execution_platform(
+    name = "mac-exec",
+    platform = "//platforms:mac-arm64-opt",
+    local_enabled = host_info().os.is_macos,
+    remote_enabled = True,
+    use_limited_hybrid = False,
+    remote_execution_use_case = "buck2-build",
+    remote_execution_properties = {
+        "platform": "mac-re"
+    },
 )
-target(
-    name = "B",
-    tool = attrs.exec_dep(default = ":C")
+
+execution_platform(
+    name = "windows-exec",
+    platform = "//platforms:windows-arm64-opt",
+    local_enabled = host_info().os.is_windows,
+    ...
+)
+
+execution_platform(
+    name = "linux-exec",
+    ...
+)
+
+execution_platforms(
+    name = "exec-platforms",
+    # In practice, may want to change this order based on the host os.
+    platforms = [
+        "linux-exec",
+        "windows-exec",
+        "mac-exec",
+    ],
+    fallback = "error",
 )
 ```
 
-The above means that `:C` will be an execution dependency of `:A` and any
-`select()`s defined in `:B` would be evaluated against the same target platform
-as `:A` (as target platform gets inherited by `attrs.toolchain_dep()`s).
+This sets us up with three execution platforms, one for each of Windows,
+macOS, and Linux. We choose a more optimized configuration for that
+platform (i.e. `opt` instead of `dev`). Generally for build tools we
+recommend using an optimized form, as most of the time the build will be
+executing the prebuilt tools rather than building them.
 
-## Running non-execution deps
+In simple cases you will only have one execution platform, and the story
+ends there.
 
-If you have a binary that you want to run, but it isn't a build tool, then you
-should use `$(exe_target //:binary)` rather than `$(exe //:binary)`. That will
-run the same binary that you'd get from `buck2 build`, rather than one that is
-built for the execution platform.
+In more complex cases, you may have multiple execution platforms. For
+example, you may have a remote build farm that has both Linux and
+Windows machines. When a build is requested for a particular configured
+target, Buck will iterate the platforms provided in the registration
+provider, and select the first platform whose configuration matches the
+execution constraints. Basically, some build tools only run on Linux, so
+if the tools need to be built, Buck will configure them to be built for
+Linux, and then when it comes time to run them, it will schedule them to
+run under the Linux execution platform. Other build tools (a
+cross-platform python script) could run anywhere and these will not
+influence the choice of exec platform for a given target. The
+`ExecutionPlatformInfo` provider that is ultimately chosen supplies
+key-value data that is sent to the remote build farm that can be used to
+comply with the request, like `"OSFamily": "linux"` or a given Docker
+image. You could have dozens of auto-generated execution platforms, or a
+few well-known platforms that are maintained and rotated as you migrate
+infrastructure over time.
 
-The path macros vary along two axes:
+### Execution deps
 
-- **Path Source**: either `DefaultInfo` or `RunInfo` providers
-- **Configuration**: inherits the configuration or transitions to an execution
-  platform configuration
+Some target deps are "execution deps". These are the dependencies of the
+target that should be built for the execution platform. For example, a
+compiler or other build tool would be an execution dep. This includes
+all exe [string parameter macro](./string_parameter_macros.md) deps (for
+example, `$(exe //:tool)`) and includes all `attrs.exec_dep()` deps.
 
-Specifically:
+An exec dep differs in two ways from a normal dep:
 
-- `$location`: `DefaultInfo` path source, inherits configuration
-- `$location_exec`: `DefaultInfo` path source, exec platform configuration
-- `$exe`: `RunInfo` path source, exec platform configuration
-- `$exe_target`: `RunInfo` path source, inherits configuration
+1. Its target platform will be set to the resolved exec platform of the
+   dependent. Normal deps simply inherit the target platform.
+2. It influences which exec platform is chosen for a dependent target.
+   This is covered in exec platform resolution below.
 
-## Execution platform resolution
+Aside from the way they interact with dependents, exec deps are regular
+targets in the build graph. They may themselves be compiled using their
+own `exec_dep`s, and therefore may need to select their own exec platform
+based on their own exec deps. Each time a target somewhere in the build
+graph has `exec_dep`s, Buck will do another transition through exec
+platform resolution.
+
+You might not notice an incorrectly typed dependency edge if your only
+registered execution platform = your target platform = your host machine
+and you don't do much build configuration, but it matters once you start
+writing your own build tools and compiling for platforms other than your
+host machine. The typical error when you have misconfigured is "exec
+format error" on Linux, where Buck is trying to execute e.g. a Windows
+executable on a Linux machine.
+
+### Execution platform resolution
 
 During analysis, unlike target platform resolution, every configured node
 undergoes execution platform resolution independently (see exception below).
@@ -260,7 +234,8 @@ for them can only be performed at that point).
 
 For the normal use case, a particular configured target node performs execution
 platform resolution a single time. The execution platform **is not** encoded in
-output paths.
+output paths. A rule that declares [execution groups](execution_groups.md)
+resolves one execution platform per group.
 
 Regarding target compatibility, imagine the following pseudo-code for the
 `target_compatible_with()` function above:
@@ -288,8 +263,91 @@ def target_compatible_with(target, cfg):
     return True
 ```
 
-## Execution groups
+## Toolchain deps
 
-Execution groups are a future feature that will allow a rule to perform
-execution platform resolution multiple times and then specify in which of the
-resolved platforms each action runs in.
+In addition to `attrs.exec_dep()`, there is also
+`attrs.toolchain_dep()`. Toolchain deps must always point to an instance
+of a [toolchain rule](../concepts/toolchain.md). They are much like
+[macros](custom_macros.md) for adding one or more exec deps, configuring
+them a little, and storing them in a convenient provider structure.
+
+This intuition holds when considering configuration, as toolchains and
+macros share two main properties:
+
+1. Toolchain deps have the same target platform as whatever uses them.
+   So if you `select()` in the parameters to a toolchain rule, you match
+   on how the dependent target was configured. Many toolchain rules
+   allow you to set defaults or base flags for a given target platform
+   in this way.
+2. Toolchain deps inherit exec configuration from the exec platform
+   resolution of the dependent target. This means the exec deps of the
+   toolchain behave as if they were attached directly to the dependent
+   target. They participate in exec platform resolution for the dependent,
+   so Buck2 finds an exec platform that is compatible with all the tools
+   in the toolchain.
+
+This has many benefits:
+
+- It saves you from having to put the same few `attrs.exec_dep()`s on a
+  bunch of different rules for the same programming language.
+- It "delays" the exec_dep transition and provides a point of
+  configurability before this happens.
+- It bundles all configurability into one spot. The user can instantiate
+  a toolchain at a known location (usually `toolchains//:languagename`)
+  that includes exec deps or paths to binaries and configures it all in
+  one go.
+
+As mentioned above, toolchain targets don't select their execution platform
+but instead inherit the execution platform of whatever target references them. In
+some sense, execution platform resolution sees _through_ them.
+
+This is illustrated in the following example:
+
+```python
+some_regular_rule(
+    name = "A",
+    toolchain = attrs.toolchain_dep(default = ":B"),
+)
+
+some_toolchain_rule(
+    name = "B",
+    tool = attrs.exec_dep(default = ":C")
+)
+```
+
+The above means that `:C` will be an execution dependency of `:A` and any
+`select()`s defined in `:B` would be evaluated against the same target platform
+as `:A` (as target platform gets inherited by `attrs.toolchain_dep()`s).
+
+## Visualizing configuration concepts
+
+### Graph with deps
+
+![Example graph with dependencies](/img/configurations/graph_with_deps.png)
+
+### Splitting //:lib3
+
+As we work out the configurations here, `//:lib3` will end up being in two
+different configurations, so gonna be easiest to split it now.
+
+### Execution Platform resolution
+
+![Example graph with dependencies](/img/configurations/execution_platform_resolution.png)
+
+This shows which nodes are involved in determining the exec configuration for
+the `//:binary` target. The exec deps of `//:binary` and the exec deps for the
+(transitive) toolchain deps of `//:binary` are the main things involved, that set
+of exec deps must all be target compatible with an execution platform for it to
+be selected. In addition, the target itself and its toolchain deps must be
+`exec_compatible_with`. It is very rare to use `exec_compatible_with`, for the most
+part exec platform restrictions should be marked on `target_compatible_with` of the
+tools that require these restrictions.
+
+### Target configurations
+
+![Example graph with dependencies](/img/configurations/graph_with_target_configurations.png)
+
+## See also
+
+- [Configuration transitions for rule
+  authors](./configuration_transitions.md)

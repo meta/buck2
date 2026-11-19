@@ -1,0 +1,24 @@
+load("@prelude//transitions:constraint_override_registry.bzl", "constraint_override_refs", "constraint_override_registry")
+load(":defs.bzl", "group", "platform", "probe", "setting", "value")
+
+constraint_override_registry(name = "registry", refs = constraint_override_refs())
+setting(name = "color", visibility = ["PUBLIC"])
+setting(name = "retained", visibility = ["PUBLIC"])
+value(name = "red", setting = ":color", visibility = ["PUBLIC"])
+value(name = "blue", setting = ":color", visibility = ["PUBLIC"])
+value(name = "keep", setting = ":retained", visibility = ["PUBLIC"])
+platform(name = "original", values = [":red", ":keep"], visibility = ["PUBLIC"])
+platform(name = "replacement", values = [":blue"], visibility = ["PUBLIC"])
+
+selected = select({":blue": ["blue"], ":red": ["red"], "DEFAULT": ["none"]}) + select({":keep": ["keep"], "DEFAULT": ["dropped"]})
+
+probe(name = "unchanged", selected = selected)
+probe(name = "constraint", constraint_overrides = ["alias//:blue"], selected = selected)
+probe(name = "ordered", constraint_overrides = ["root//:red", "alias//:blue"], selected = selected)
+probe(name = "platform", platform_override = "root//:replacement", selected = selected)
+probe(name = "platform_constraint", platform_override = "root//:replacement", constraint_overrides = ["root//:red"], selected = selected)
+probe(name = "unsupported", constraint_overrides = ["root//:keep"], selected = selected)
+probe(name = "malformed", constraint_overrides = [":blue"], selected = selected)
+
+group(name = "colors", entries = {"blue": ":blue"}, visibility = ["PUBLIC"])
+probe(name = "subtarget", constraint_overrides = ["alias//:colors[blue]"], selected = selected)

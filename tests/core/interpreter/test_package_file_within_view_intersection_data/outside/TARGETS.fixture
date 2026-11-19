@@ -1,0 +1,10 @@
+# The dependency every capped subtree in this fixture is forbidden to reach.
+stub(
+    name = "t",
+    visibility = ["PUBLIC"],
+)
+
+stub_toolchain(
+    name = "tc",
+    visibility = ["PUBLIC"],
+)

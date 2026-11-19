@@ -24,7 +24,7 @@ class KStub(val pkg: String?, val name: String) {
       |    - name: $pkg:$name
       |    - type: ${field.name} -> ${value.name}
     """
-              .trimMargin()
+              .trimMargin(),
       )
       field = value
     }
@@ -39,7 +39,7 @@ class KStub(val pkg: String?, val name: String) {
       |    - type: ${type.name}
       |    - genericTypes: $field -> $value
     """
-                .trimMargin()
+                .trimMargin(),
         )
       }
       field = value
@@ -53,7 +53,7 @@ class KStub(val pkg: String?, val name: String) {
         |    - name: $pkg:$name
         |    - type: ${type.name}
         |    - ctorParams: $field -> $value
-      """
+      """,
       )
       field = value
     }
@@ -66,6 +66,12 @@ class KStub(val pkg: String?, val name: String) {
   var stubImports: List<String> = emptyList()
 
   var abstract: Boolean = false
+
+  // A final CLASS renders without `open` on the class and on its non-override members.
+  var isFinal: Boolean = false
+
+  // An internal CLASS renders with the `internal` modifier.
+  var isInternal: Boolean = false
   var doNotRenderAsKotlinObject: Boolean = false
 
   // TODO: We might want to optimise [innerStubs] for find operation

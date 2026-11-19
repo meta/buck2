@@ -14,10 +14,11 @@ use std::io;
 fn main() -> io::Result<()> {
     let proto_files = &["data.proto", "error.proto"];
 
-    let includes = if let Ok(path) = env::var("BUCK_PROTO_SRCS") {
-        vec![path]
+    let buck_proto_srcs = env::var("BUCK_PROTO_SRCS");
+    let includes = if let Ok(path) = &buck_proto_srcs {
+        vec![path.as_str()]
     } else {
-        vec![".".to_owned(), "../buck2_host_sharing_proto".to_owned()]
+        vec![".", "../buck2_host_sharing_proto"]
     };
 
     let builder = buck2_protoc_dev::configure();
@@ -36,39 +37,39 @@ fn main() -> io::Result<()> {
         )
         .type_attribute(
             "buck.data.BuckEvent.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.SpanStartEvent.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.SpanEndEvent.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.CommandStart.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.CommandEnd.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.CommandCriticalStart.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.CommandCriticalEnd.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.InstantEvent.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.RecordEvent.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.LocalStage.stage",
@@ -81,15 +82,15 @@ fn main() -> io::Result<()> {
         )
         .type_attribute(
             "buck.data.CommandExecution.status",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.ActionExecutionEnd.error",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.ActionError.error",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .field_attribute(
             "buck.data.CommandExecutionDetails.cmd_stderr",
@@ -101,81 +102,96 @@ fn main() -> io::Result<()> {
         )
         .type_attribute(
             "buck.data.CommandExecutionDetails.command",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.DynamicLambdaStart.owner",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.DeferredPreparationStageStart.stage",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.AnalysisStart.target",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.AnalysisEnd.target",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
-        .type_attribute("buck.data.TargetLabel", "#[derive(Eq, Hash)]")
-        .type_attribute("buck.data.Configuration", "#[derive(Eq, Hash)]")
-        .type_attribute("buck.data.ConfiguredTargetLabel", "#[derive(Eq, Hash)]")
-        .type_attribute("buck.data.AnonTarget", "#[derive(Eq, Hash)]")
-        .type_attribute("buck.data.BxlFunctionLabel", "#[derive(Eq, Hash)]")
-        .type_attribute("buck.data.BxlFunctionKey", "#[derive(Eq, Hash)]")
-        .type_attribute("buck.data.ActionKey.owner", "#[derive(Eq, Hash)]")
-        .type_attribute("buck.data.ActionKey", "#[derive(Eq, Hash)]")
-        .type_attribute("buck.data.FileWatcherEvent", "#[derive(Eq, Hash)]")
         .type_attribute(
             "buck.data.ActionKind",
-            "#[derive(::gazebo::variants::VariantName)]",
+            "#[derive(::variant_name::VariantName, ::pagable::Pagable)]",
         )
         .type_attribute(
             "buck.data.MaterializationMethod",
-            "#[derive(::gazebo::variants::VariantName)]",
+            "#[derive(::variant_name::VariantName)]",
         )
         .type_attribute("buck.data.CpuCounter", "#[derive(dupe::Dupe)]")
         .type_attribute("buck.data.CommandExecutionStats", "#[derive(dupe::Dupe)]")
+        .type_attribute(
+            "buck.data.LocalCommand.EnvironmentRule",
+            "#[derive(dupe::Dupe)]",
+        )
         .type_attribute(".", "#[derive(::serde::Serialize, ::serde::Deserialize)]")
         .type_attribute(".", "#[derive(::allocative::Allocative)]")
-        .type_attribute("buck.data.SoftError", "#[derive(Eq, Hash)]")
+        // Keep the JSON event log for ordinary failures as `{"Failure": {}}`.
+        .field_attribute(
+            "buck.data.CommandExecution.Failure.missing_materialized_inputs",
+            "#[serde(default, skip_serializing_if = \"std::ops::Not::not\")]",
+        )
         .field_attribute(
             "timestamp",
-            "#[serde(with = \"crate::serialize_timestamp\")]",
+            "#[serde(with = \"::buck2_proto_serde::serialize_timestamp\")]",
         )
         .field_attribute(
             "start_time",
-            "#[serde(default, with = \"crate::serialize_timestamp\")]",
+            "#[serde(default, with = \"::buck2_proto_serde::serialize_timestamp\")]",
+        )
+        .field_attribute(
+            "buck.data.BuildPhaseEnd.end_time",
+            "#[serde(default, with = \"::buck2_proto_serde::serialize_timestamp\")]",
         )
         .field_attribute(
             "event_time",
-            "#[serde(default, with = \"crate::serialize_timestamp\")]",
+            "#[serde(default, with = \"::buck2_proto_serde::serialize_timestamp\")]",
+        )
+        .field_attribute(
+            "time_event_generated",
+            "#[serde(default, with = \"::buck2_proto_serde::serialize_timestamp\")]",
+        )
+        .field_attribute(
+            "time_collected",
+            "#[serde(default, with = \"::buck2_proto_serde::serialize_timestamp\")]",
         )
         .field_attribute(
             "suspend_duration",
-            "#[serde(default, with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(default, with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "duration",
-            "#[serde(rename = \"duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "command_duration",
-            "#[serde(rename = \"command_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"command_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "client_walltime",
-            "#[serde(rename = \"client_walltime_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"client_walltime_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "critical_path_duration",
-            "#[serde(rename = \"critical_path_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"critical_path_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
+        )
+        .field_attribute(
+            "critical_path_page_in",
+            "#[serde(rename = \"critical_path_page_in_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "ActionExecutionEnd.wall_time",
-            "#[serde(rename = \"wall_time_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"wall_time_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "ActionKey.id",
@@ -193,51 +209,55 @@ fn main() -> io::Result<()> {
         )
         .field_attribute(
             "RemoteCommand.queue_time",
-            "#[serde(rename = \"queue_time_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"queue_time_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "concurrent_command_blocking_duration",
-            "#[serde(rename = \"concurrent_command_blocking_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"concurrent_command_blocking_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "bxl_ensure_artifacts_duration",
-            "#[serde(rename = \"bxl_ensure_artifacts_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"bxl_ensure_artifacts_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "install_duration",
-            "#[serde(rename = \"install_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"install_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "CriticalPathEntry2.user_duration",
-            "#[serde(rename = \"user_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"user_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "CriticalPathEntry2.total_duration",
-            "#[serde(rename = \"total_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"total_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "CriticalPathEntry2.potential_improvement_duration",
-            "#[serde(rename = \"potential_improvement_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"potential_improvement_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "CriticalPathEntry2.queue_duration",
-            "#[serde(rename = \"queue_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"queue_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
+        )
+        .field_attribute(
+            "CriticalPathEntry2.non_critical_path_duration",
+            "#[serde(rename = \"non_critical_path_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .type_attribute(
             "buck.data.CriticalPathEntry2.entry",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.CriticalPathEntry2.Analysis.target",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.CriticalPathEntry2.ActionExecution.owner",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.CriticalPathEntry2.Materialization.owner",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.data.StarlarkUserMetadataDictValue",
@@ -257,7 +277,7 @@ fn main() -> io::Result<()> {
         )
         .type_attribute(
             "buck.data.CommandExecutionKind.command",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .field_attribute(
             "buck.data.Invocation.expanded_command_line_args",
@@ -265,28 +285,41 @@ fn main() -> io::Result<()> {
         )
         .field_attribute(
             "buck.data.CommandExecutionMetadata.wall_time",
-            "#[serde(rename = \"wall_time_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"wall_time_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "buck.data.CommandExecutionMetadata.execution_time",
-            "#[serde(rename = \"execution_time_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"execution_time_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "buck.data.CommandExecutionMetadata.input_materialization_duration",
-            "#[serde(rename = \"input_materialization_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"input_materialization_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "buck.data.CommandExecutionMetadata.hashing_duration",
-            "#[serde(rename = \"hashing_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"hashing_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "buck.data.CommandExecutionMetadata.queue_duration",
-            "#[serde(rename = \"queue_duration_us\", with = \"crate::serialize_duration_as_micros\")]",
+            "#[serde(rename = \"queue_duration_us\", with = \"::buck2_proto_serde::serialize_duration_as_micros\")]",
         )
         .boxed("RecordEvent.data.invocation_record")
+        // Putting some of the larger, rarer payloads into a Box reduce the size of every event in the event queue
         .boxed("SpanEndEvent.data.action_execution")
+        .boxed("RemoteCommand.re_worker")
         .boxed("SpanEndEvent.data.cache_upload")
+        .boxed("SpanEndEvent.data.dep_file_upload")
+        .boxed("SpanEndEvent.data.test_discovery")
+        .boxed("SpanEndEvent.data.test_run")
+        .boxed("CommandEnd.data.clean")
+        .boxed("InstantEvent.data.action_error")
+        .boxed("InstantEvent.data.clean_stale_result")
+        .boxed("InstantEvent.data.page_out_summary")
+        .boxed("InstantEvent.data.paging_summary")
+        .boxed("InstantEvent.data.rage_result")
+        .boxed("InstantEvent.data.resource_control_event")
         .boxed("InstantEvent.data.snapshot")
+        .boxed("StructuredError.error")
         .extern_path(".buck.host_sharing", "::buck2_host_sharing_proto")
         .compile(proto_files, &includes)
 }

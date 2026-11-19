@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _simple_impl(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.write(out, ctx.attrs.arg_attr)
 
     return [DefaultInfo(default_output = out)]

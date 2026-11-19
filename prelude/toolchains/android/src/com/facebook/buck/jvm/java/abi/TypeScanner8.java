@@ -10,9 +10,9 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.HashSet;
 import java.util.Set;
-import javax.annotation.Nullable;
 import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
@@ -27,10 +27,12 @@ import javax.lang.model.type.TypeVariable;
 import javax.lang.model.type.UnionType;
 import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.AbstractTypeVisitor8;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A scanning visitor of {@link TypeMirror}s for {@link javax.lang.model.SourceVersion#RELEASE_8}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TypeScanner8<R, P> extends AbstractTypeVisitor8<R, P> {
   private final Set<TypeParameterElement> visitedTypeVars = new HashSet<>();
   @Nullable private final R defaultValue;

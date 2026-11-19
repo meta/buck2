@@ -1,0 +1,103 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+_LOAD_FILES = [
+    "load/TARGETS.fixture",
+    "load/a.bzl",
+    "load/a.json",
+]
+
+_TRANSITIVE_LOAD_FILES = [
+    "transitive_load/TARGETS.fixture",
+    "transitive_load/b.bzl",
+    "transitive_load/c.bzl",
+    "transitive_load/c.json",
+]
+
+_RBUILDFILES_C_BZL = [
+    "transitive_load/TARGETS.fixture",
+    "transitive_load/b.bzl",
+    "transitive_load/c.bzl",
+]
+
+def _paths(file_set):
+    return sorted([f.path for f in file_set if f.cell == "root"])
+
+def _uquery_allbuildfiles_impl(ctx: bxl.Context):
+    res = ctx.uquery().allbuildfiles("root//load:abc")
+    asserts.equals(_LOAD_FILES, _paths(res))
+
+    res = ctx.uquery().allbuildfiles(["root//load:abc", "root//transitive_load:def"])
+    asserts.equals(sorted(_LOAD_FILES + _TRANSITIVE_LOAD_FILES), _paths(res))
+
+uquery_allbuildfiles = bxl_main(
+    impl = _uquery_allbuildfiles_impl,
+    cli_args = {},
+)
+
+def _uquery_rbuildfiles_impl(ctx: bxl.Context):
+    res = ctx.uquery().rbuildfiles("transitive_load/TARGETS.fixture", "transitive_load/c.bzl")
+    asserts.equals(_RBUILDFILES_C_BZL, _paths(res))
+
+    res = ctx.uquery().rbuildfiles("transitive_load/TARGETS.fixture", "transitive_load/TARGETS.fixture")
+    asserts.equals(["transitive_load/TARGETS.fixture"], _paths(res))
+
+uquery_rbuildfiles = bxl_main(
+    impl = _uquery_rbuildfiles_impl,
+    cli_args = {},
+)
+
+def _cquery_allbuildfiles_impl(ctx: bxl.Context):
+    universe = ctx.target_universe("root//load:abc").target_set()
+    res = ctx.cquery().allbuildfiles(universe)
+    asserts.equals(_LOAD_FILES, _paths(res))
+
+    universe = ctx.target_universe(["root//load:abc", "root//transitive_load:def"]).target_set()
+    res = ctx.cquery().allbuildfiles(universe)
+    asserts.equals(sorted(_LOAD_FILES + _TRANSITIVE_LOAD_FILES), _paths(res))
+
+cquery_allbuildfiles = bxl_main(
+    impl = _cquery_allbuildfiles_impl,
+    cli_args = {},
+)
+
+def _cquery_rbuildfiles_impl(ctx: bxl.Context):
+    res = ctx.cquery().rbuildfiles("transitive_load/TARGETS.fixture", "transitive_load/c.bzl")
+    asserts.equals(_RBUILDFILES_C_BZL, _paths(res))
+
+    res = ctx.cquery().rbuildfiles("transitive_load/TARGETS.fixture", "transitive_load/TARGETS.fixture")
+    asserts.equals(["transitive_load/TARGETS.fixture"], _paths(res))
+
+cquery_rbuildfiles = bxl_main(
+    impl = _cquery_rbuildfiles_impl,
+    cli_args = {},
+)
+
+def _lazy_uquery_allbuildfiles_impl(ctx: bxl.Context):
+    res = ctx.lazy.uquery().allbuildfiles("root//load:abc").resolve()
+    asserts.equals(_LOAD_FILES, _paths(res))
+
+    res = ctx.lazy.uquery().allbuildfiles(["root//load:abc", "root//transitive_load:def"]).resolve()
+    asserts.equals(sorted(_LOAD_FILES + _TRANSITIVE_LOAD_FILES), _paths(res))
+
+lazy_uquery_allbuildfiles = bxl_main(
+    impl = _lazy_uquery_allbuildfiles_impl,
+    cli_args = {},
+)
+
+def _lazy_uquery_rbuildfiles_impl(ctx: bxl.Context):
+    res = ctx.lazy.uquery().rbuildfiles("transitive_load/TARGETS.fixture", "transitive_load/c.bzl").resolve()
+    asserts.equals(_RBUILDFILES_C_BZL, _paths(res))
+
+    res = ctx.lazy.uquery().rbuildfiles("transitive_load/TARGETS.fixture", "transitive_load/TARGETS.fixture").resolve()
+    asserts.equals(["transitive_load/TARGETS.fixture"], _paths(res))
+
+lazy_uquery_rbuildfiles = bxl_main(
+    impl = _lazy_uquery_rbuildfiles_impl,
+    cli_args = {},
+)

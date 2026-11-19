@@ -62,10 +62,12 @@ def _enforce_deps(deps, name):
             # dependencies manageable. If two op targets would like to share
             # code, define a separate runtime.cxx_library that they both depend
             # on.
-            fail("op_target {} may not depend on other op_target {}".format(
-                name,
-                dep,
-            ))
+            fail(
+                "op_target {} may not depend on other op_target {}".format(
+                    name,
+                    dep,
+                )
+            )
 
 def define_op_library(name, deps):
     """Defines a cxx_library target for the named operator overload group.
@@ -98,7 +100,8 @@ def define_op_library(name, deps):
         compiler_flags = ["-Wno-missing-prototypes"],
         deps = [
             "//executorch/runtime/kernel:kernel_includes",
-        ] + augmented_deps,
+        ]
+        + augmented_deps,
         fbandroid_platform_preprocessor_flags = get_vec_android_preprocessor_flags(),
         # sleef needs to be added as a direct dependency of the operator target when building for Android,
         # or a linker error may occur. Not sure why this happens; it seems that fbandroid_platform_deps of

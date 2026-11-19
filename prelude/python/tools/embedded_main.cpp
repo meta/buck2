@@ -103,7 +103,7 @@ int main(int argc, char* argv[]) {
     return exit_code;
   }
 
-  if (std::getenv("NP_DEBUG_BINARY")) {
+  if (std::getenv("FB_NATIVE_PYTHON_DEBUG")) {
     fprintf(
         stderr,
         "Pausing for debugger, pid=%d. Press <return> to continue.\n",

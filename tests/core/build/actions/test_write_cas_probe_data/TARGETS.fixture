@@ -1,0 +1,26 @@
+load(":defs.bzl", "consume", "consume_source", "copied_dir_sources", "copy_source", "write")
+
+write(name = "write", content = read_config("test", "content"))
+
+# The same content written by a second action, so that a test can seed the CAS through one and
+# probe with the other.
+write(name = "write_again", content = read_config("test", "content"))
+
+consume(name = "consume", dep = ":write")
+
+# `src.txt` gets its content from the test, so that no earlier run has put it in the CAS.
+copy_source(name = "copy_src", src = "src.txt")
+
+copy_source(name = "copy_src_again", src = "src.txt")
+
+copied_dir_sources(name = "copied_dir_src", srcs = ["src.txt"])
+
+copied_dir_sources(name = "copied_dir_src_again", srcs = ["src.txt"])
+
+# `mixed_a.txt` and `mixed_b.txt` get their content from the test too; it seeds the CAS with one of
+# them and copies both.
+copied_dir_sources(name = "copied_dir_mixed", srcs = ["mixed_a.txt", "mixed_b.txt"])
+
+consume_source(name = "consume_mixed_b", src = "mixed_b.txt")
+
+consume_source(name = "consume_src", src = "src.txt")

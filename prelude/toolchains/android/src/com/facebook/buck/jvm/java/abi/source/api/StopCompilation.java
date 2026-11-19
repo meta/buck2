@@ -10,5 +10,8 @@
 
 package com.facebook.buck.jvm.java.abi.source.api;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** Thrown by our ABI generating plugin to stop the compiler. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class StopCompilation extends RuntimeException {}

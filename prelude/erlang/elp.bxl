@@ -62,7 +62,7 @@ def _generate_sources(ctx, src, build_results) -> list:
         target = src.configured_target()
         deps = ctx.cquery().deps(target)
         inputs = ctx.cquery().inputs(deps)
-        return [f.cell() + "//" + f.path() for f in inputs]
+        return [f.cell + "//" + f.path for f in inputs]
 
     else:
         return []
@@ -71,8 +71,44 @@ def _strip_includes_only(inc):
     str_inc = str(inc)
     suffix = "_includes_only"
     if str_inc.endswith(suffix):
-        str_inc = str_inc[:-len(suffix)]
+        str_inc = str_inc[: -len(suffix)]
     return str_inc
+
+def _build_alias_map(ctx, targets):
+    """Build a map from alias target labels to their fully-resolved actual targets.
+
+    Follows alias chains: if alias A points to alias B which points to
+    target C, both A and B map to C.
+    """
+    alias_targets = ctx.cquery().kind("^alias$", targets)
+    raw_map = {}
+    for alias_tgt in alias_targets:
+        actual_attr = alias_tgt.attrs_lazy().get("actual")
+        if actual_attr:
+            actual_value = actual_attr.value()
+            if isinstance(actual_value, ConfiguredProvidersLabel):
+                raw_map[alias_tgt.label.raw_target()] = actual_value.raw_target()
+
+    # Collapse chains: follow each entry until it lands on a non-alias.
+    # Depth is capped at 10 to guard against alias cycles.
+    alias_map = {}
+    for src, dst in raw_map.items():
+        visited = [src]
+        cur = dst
+        for _ in range(10):
+            if cur not in raw_map:
+                break
+            visited.append(cur)
+            cur = raw_map[cur]
+        if cur in raw_map:
+            print("alias chain starting at {} exceeds 10 hops — possible cycle, truncating".format(src))  # buildifier: disable=print
+        for v in visited:
+            alias_map[v] = cur
+    return alias_map
+
+def _resolve_target_label(label, alias_map):
+    """If label is an alias, return the fully-resolved actual target label."""
+    return alias_map.get(label, label)
 
 def _elp_config(ctx):
     included_targets = ctx.cli_args.included_targets
@@ -81,13 +117,39 @@ def _elp_config(ctx):
     # by included or deps targets, and processed in ELP
 
     included_targets = ctx.unconfigured_targets(included_targets)
-    included_app_targets = ctx.uquery().kind("^(erlang_app|erlang_test)$", included_targets)
-    included_targets = ctx.configured_targets(included_app_targets, None)
-    all_targets = ctx.cquery().deps(included_targets)
-    deps_targets = all_targets - included_targets
 
-    all = {tgt.label.raw_target(): ("app", tgt.attrs_lazy()) for tgt in included_targets}
-    all.update({tgt.label.raw_target(): ("dep", tgt.attrs_lazy()) for tgt in ctx.cquery().kind("^erlang_app$", deps_targets)})
+    # Keep alias targets alongside erlang targets for configuration.
+    # Aliases have kind "alias" (not "erlang_app"), so a kind-only filter
+    # would drop them.  Configuring them lets deps() follow alias→actual
+    # edges, placing actual targets into the dep graph where the single
+    # alias map built below can resolve them — including multi-hop chains.
+    included_candidates = ctx.uquery().kind("^(erlang_app|erlang_test|alias)$", included_targets)
+    included_configured = ctx.configured_targets(included_candidates, None)
+    all_targets = ctx.cquery().deps(included_configured)
+
+    # Build a single alias map from the full configured dep graph.
+    # deps() already follows alias→actual edges transitively, so alias
+    # actuals are always in all_targets.  The alias map is still needed to
+    # translate alias labels (e.g. //third-party/erlang/vendor:foo in a deps
+    # attribute) to actual target labels that match result dict keys.
+    alias_map = _build_alias_map(ctx, all_targets)
+
+    # Determine which targets are directly included (apps), resolving any
+    # aliases in the user-specified set through the alias map.
+    included_labels = {}
+    for tgt in included_configured:
+        raw = tgt.label.raw_target()
+        included_labels[_resolve_target_label(raw, alias_map)] = True
+
+    all = {}
+    for tgt in ctx.cquery().kind("^(erlang_app|erlang_test)$", all_targets):
+        raw = tgt.label.raw_target()
+        if raw in included_labels:
+            all[raw] = ("app", tgt.attrs_lazy())
+    for tgt in ctx.cquery().kind("^erlang_app$", all_targets):
+        raw = tgt.label.raw_target()
+        if raw not in all:
+            all[raw] = ("dep", tgt.attrs_lazy())
 
     build_results = None
     if ctx.cli_args.build_generated_code:
@@ -107,22 +169,35 @@ def _elp_config(ctx):
         if not extra_includes:
             extra_includes_list = []
         else:
-            extra_includes_list = [_strip_includes_only(tgt.raw_target()) for tgt in extra_includes.value()]
+            extra_includes_list = [_strip_includes_only(_resolve_target_label(tgt.raw_target(), alias_map)) for tgt in extra_includes.value()]
 
         deps_list = []
         apps_list = []
         included_apps_list = []
         deps = attrs.get("deps")
         if deps:
-            deps_list = [tgt.raw_target() for tgt in deps.value()]
+            deps_list = [_resolve_target_label(tgt.raw_target(), alias_map) for tgt in deps.value()]
+
+        test_binary_lib = attrs.get("_test_binary_lib")
+        if test_binary_lib:
+            deps_list.append(_resolve_target_label(test_binary_lib.value().raw_target(), alias_map))
 
         apps = attrs.get("applications")
         if apps:
-            apps_list = [tgt.raw_target() for tgt in apps.value()]
+            apps_list = [_resolve_target_label(tgt.raw_target(), alias_map) for tgt in apps.value()]
 
         included_apps = attrs.get("included_applications")
         if included_apps:
-            included_apps_list = [tgt.raw_target() for tgt in included_apps.value()]
+            included_apps_list = [_resolve_target_label(tgt.raw_target(), alias_map) for tgt in included_apps.value()]
+
+        # These end up verbatim in the generated `.app` file, so unlike the
+        # attributes above they hold application names, not target labels.
+        extra_properties_map = {}
+        extra_properties = attrs.get("extra_properties")
+        if extra_properties:
+            # Absent on target types that do not declare the attribute at all,
+            # and `None` on those that declare it and leave it unset.
+            extra_properties_map = extra_properties.value() or {}
 
         is_generated = "generated" in attrs.get("labels").value()
         gen_srcs = []
@@ -161,6 +236,7 @@ def _elp_config(ctx):
             apps = apps_list,
             included_apps = included_apps_list,
             extra_includes = extra_includes_list,
+            extra_properties = extra_properties_map,
             origin = typ,
         )
 
@@ -212,7 +288,7 @@ def _as_build(artifact):
     return {"type": "build", "value": artifact}
 
 def _as_error(error):
-    warning("ERROR: {}".format(error))
+    print("ERROR: {}".format(error))  # buildifier: disable=print
     return {"type": "error", "value": error}
 
 # ------------------ INTERFACE ------------------
@@ -221,7 +297,9 @@ elp_config = bxl_main(
     impl = _elp_config,
     cli_args = {
         "build_generated_code": cli_args.option(cli_args.bool(), default = False, doc = "Enable builds for generated sources"),
-        "deps_targets": cli_args.option(cli_args.list(cli_args.string()), doc = "Target to include deps from, if specified. See corresponding field in .elp.toml"),
+        "deps_targets": cli_args.option(
+            cli_args.list(cli_args.string()), doc = "Target to include deps from, if specified. See corresponding field in .elp.toml"
+        ),
         "included_targets": cli_args.list(cli_args.string(), doc = "Targets to include in the query. See corresponding field in .elp.toml"),
     },
 )

@@ -13,12 +13,17 @@ use std::path::Path;
 use std::process::Stdio;
 
 use buck2_error::BuckErrorContext as _;
+use buck2_events::metadata::username;
 use buck2_util::process::async_background_command;
 use futures::future::Either;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
 use crate::executor_launcher::ExecutorFuture;
+
+/// Environment variable used to pass the actual username from Buck2 client to the test executor.
+/// This is necessary because in some scenarios buck2d may run as a different user than the user who invoked `buck2 test`.
+const BUCK2_TEST_EXECUTOR_USER_ENV_VAR: &str = "BUCK2_TEST_EXECUTOR_USER";
 
 pub(crate) async fn spawn(
     executable: &Path,
@@ -43,10 +48,15 @@ pub(crate) async fn spawn(
         .arg("--")
         .args(tpx_args);
 
+    // Pass the actual username from Buck2 client to the executor.
+    if let Ok(Some(user)) = username() {
+        command.env(BUCK2_TEST_EXECUTOR_USER_ENV_VAR, user);
+    }
+
     let proc = command.spawn().with_buck_error_context(|| {
         format!(
             "Failed to start {} for OutOfProcessTestExecutor",
-            &executable.display()
+            executable.display()
         )
     })?;
 
@@ -62,7 +72,7 @@ pub(crate) async fn spawn(
         .with_buck_error_context(|| {
             format!(
                 "Failed to accept TCP connection from {}",
-                &executable.display()
+                executable.display()
             )
         })?;
 
@@ -76,7 +86,7 @@ pub(crate) async fn spawn(
     match futures::future::select(exec, conns).await {
         Either::Left((output, _)) => Err(buck2_error::internal_error!(
             "Executor exited before connecting: {}",
-            output?
+            output?.termination_message()
         )),
         Either::Right((conns, exec)) => {
             let (orchestrator_tcp_stream, executor_tcp_stream) = conns?;

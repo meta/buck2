@@ -116,7 +116,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.output.exists():
-        raise ValueError("Appending to an existing archive is unsupported")
+        raise ValueError(
+            f"Appending to an existing archive ({args.output}) is unsupported"
+        )
 
     thin = False
     for modifier in args.modifiers:

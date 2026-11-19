@@ -11,6 +11,7 @@
 // gRPC to rust converters
 
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 
 use crate::interface::HealthCheckContextEvent;
 use crate::interface::HealthCheckSnapshotData;
@@ -48,14 +49,12 @@ impl TryFrom<buck2_health_check_proto::Remediation> for Remediation {
     type Error = buck2_error::Error;
 
     fn try_from(value: buck2_health_check_proto::Remediation) -> buck2_error::Result<Self> {
-        Ok(
-            match value.data.buck_error_context("Invalid `remediation`")? {
-                buck2_health_check_proto::remediation::Data::Message(message) => {
-                    Remediation::Message(message)
-                }
-                buck2_health_check_proto::remediation::Data::Link(link) => Remediation::Link(link),
-            },
-        )
+        Ok(match value.data.internal_error("Invalid `remediation`")? {
+            buck2_health_check_proto::remediation::Data::Message(message) => {
+                Remediation::Message(message)
+            }
+            buck2_health_check_proto::remediation::Data::Link(link) => Remediation::Link(link),
+        })
     }
 }
 
@@ -125,12 +124,13 @@ impl TryFrom<buck2_health_check_proto::Message> for Message {
     type Error = buck2_error::Error;
 
     fn try_from(value: buck2_health_check_proto::Message) -> buck2_error::Result<Self> {
-        match value.data.buck_error_context("Invalid message format")? {
+        match value.data.internal_error("Invalid message format")? {
             buck2_health_check_proto::message::Data::Simple(text) => Ok(Message::Simple(text)),
             buck2_health_check_proto::message::Data::Rich(rich_msg) => Ok(Message::Rich {
                 header: rich_msg.header,
                 body: rich_msg.body,
                 footer: rich_msg.footer,
+                compact: rich_msg.compact,
             }),
         }
     }
@@ -146,11 +146,13 @@ impl TryInto<buck2_health_check_proto::Message> for Message {
                 header,
                 body,
                 footer,
+                compact,
             } => buck2_health_check_proto::message::Data::Rich(
                 buck2_health_check_proto::RichMessage {
                     header,
                     body,
                     footer,
+                    compact,
                 },
             ),
         };
@@ -166,7 +168,7 @@ impl TryFrom<buck2_health_check_proto::HealthIssue> for HealthIssue {
             severity: value.severity.try_into()?,
             message: value
                 .message
-                .buck_error_context("Missing message")?
+                .internal_error("Missing message")?
                 .try_into()?,
             remediation: value.remediation.map(|r| r.try_into()).transpose()?,
         })
@@ -258,6 +260,11 @@ impl TryInto<buck2_health_check_proto::HealthCheckContextEvent> for HealthCheckC
                     data: Some(buck2_health_check_proto::health_check_context_event::Data::ExperimentConfigurations(system_info.clone())),
                 }
             }
+            HealthCheckContextEvent::TestSlowBuildThreshold(secs) => {
+                buck2_health_check_proto::HealthCheckContextEvent {
+                    data: Some(buck2_health_check_proto::health_check_context_event::Data::TestSlowBuildThresholdSecs(secs)),
+                }
+            }
         })
     }
 }
@@ -267,7 +274,7 @@ impl TryFrom<buck2_health_check_proto::HealthCheckContextEvent> for HealthCheckC
     fn try_from(
         value: buck2_health_check_proto::HealthCheckContextEvent,
     ) -> buck2_error::Result<Self> {
-        Ok( match value.data.buck_error_context("Invalid `health_check_context_event`")? {
+        Ok( match value.data.internal_error("Invalid `health_check_context_event`")? {
             buck2_health_check_proto::health_check_context_event::Data::BranchedFromRevision(rev) => {
                 HealthCheckContextEvent::BranchedFromRevision(rev)
             }
@@ -282,6 +289,9 @@ impl TryFrom<buck2_health_check_proto::HealthCheckContextEvent> for HealthCheckC
             }
             buck2_health_check_proto::health_check_context_event::Data::ExperimentConfigurations(system_info) => {
                 HealthCheckContextEvent::ExperimentConfigurations(system_info)
+            }
+            buck2_health_check_proto::health_check_context_event::Data::TestSlowBuildThresholdSecs(secs) => {
+                HealthCheckContextEvent::TestSlowBuildThreshold(secs)
             }
         }
     )

@@ -17,7 +17,11 @@
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
+use starlark_derive::type_matcher;
 
+use crate as starlark;
 use crate::typing::starlark_value::TyStarlarkValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
@@ -28,15 +32,18 @@ use crate::values::list::value::FrozenList;
 use crate::values::set::refs::SetRef;
 use crate::values::set::value::FrozenSet;
 use crate::values::starlark_type_id::StarlarkTypeId;
-use crate::values::starlark_type_id::StarlarkTypeIdAligned;
 use crate::values::tuple::value::Tuple;
 use crate::values::types::int::int_or_big::StarlarkIntRef;
 use crate::values::typing::type_compiled::matcher::TypeMatcher;
 use crate::values::typing::type_compiled::matcher::TypeMatcherBox;
+use crate::values::typing::type_compiled::matcher::TypeMatcherDyn;
+use crate::values::typing::type_compiled::matcher::TypeMatcherRegistered;
 
-#[derive(Clone, Copy, Dupe, Allocative, Debug)]
+#[derive(Clone, Copy, Dupe, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsAny;
 
+#[type_matcher]
 impl TypeMatcher for IsAny {
     fn matches(&self, _value: Value) -> bool {
         true
@@ -47,35 +54,44 @@ impl TypeMatcher for IsAny {
     }
 }
 
-#[derive(Clone, Copy, Dupe, Allocative, Debug)]
+#[derive(Clone, Copy, Dupe, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsNever;
 
+#[type_matcher]
 impl TypeMatcher for IsNever {
     fn matches(&self, _value: Value) -> bool {
         false
     }
 }
 
-#[derive(Clone, Copy, Dupe, Allocative, Debug)]
+#[derive(Clone, Copy, Dupe, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsStr;
 
+#[type_matcher]
 impl TypeMatcher for IsStr {
     fn matches(&self, value: Value) -> bool {
         value.unpack_str().is_some()
     }
 }
 
-#[derive(Clone, Copy, Dupe, Allocative, Debug)]
+#[derive(Clone, Copy, Dupe, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsList;
 
+#[type_matcher]
 impl TypeMatcher for IsList {
     fn matches(&self, value: Value) -> bool {
         value.starlark_type_id() == StarlarkTypeId::of::<FrozenList>()
     }
 }
 
-#[derive(Clone, Allocative, Debug)]
+#[pagable_typetag(TypeMatcherDyn)]
+#[derive(Clone, Allocative, Debug, Pagable)]
 pub(crate) struct IsListOf<I: TypeMatcher>(pub(crate) I);
+
+unsafe impl<I: TypeMatcher> TypeMatcherRegistered for IsListOf<I> {}
 
 impl<I: TypeMatcher> TypeMatcher for IsListOf<I> {
     fn matches(&self, value: Value) -> bool {
@@ -86,8 +102,11 @@ impl<I: TypeMatcher> TypeMatcher for IsListOf<I> {
     }
 }
 
-#[derive(Clone, Allocative, Debug)]
+#[pagable_typetag(TypeMatcherDyn)]
+#[derive(Clone, Allocative, Debug, Pagable)]
 pub(crate) struct IsTupleOf<A: TypeMatcher>(pub(crate) A);
+
+unsafe impl<A: TypeMatcher> TypeMatcherRegistered for IsTupleOf<A> {}
 
 impl<A: TypeMatcher> TypeMatcher for IsTupleOf<A> {
     fn matches(&self, value: Value) -> bool {
@@ -98,9 +117,11 @@ impl<A: TypeMatcher> TypeMatcher for IsTupleOf<A> {
     }
 }
 
-#[derive(Clone, Allocative, Debug)]
+#[derive(Clone, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsTupleElems(pub(crate) Vec<TypeMatcherBox>);
 
+#[type_matcher]
 impl TypeMatcher for IsTupleElems {
     fn matches(&self, value: Value) -> bool {
         match Tuple::from_value(value) {
@@ -112,9 +133,11 @@ impl TypeMatcher for IsTupleElems {
     }
 }
 
-#[derive(Clone, Allocative, Debug)]
+#[derive(Clone, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsTupleElems0;
 
+#[type_matcher]
 impl TypeMatcher for IsTupleElems0 {
     fn matches(&self, value: Value) -> bool {
         match Tuple::from_value(value).map(|t| t.content()) {
@@ -124,8 +147,11 @@ impl TypeMatcher for IsTupleElems0 {
     }
 }
 
-#[derive(Clone, Allocative, Debug)]
+#[pagable_typetag(TypeMatcherDyn)]
+#[derive(Clone, Allocative, Debug, Pagable)]
 pub(crate) struct IsTupleElems1<A: TypeMatcher>(pub(crate) A);
+
+unsafe impl<A: TypeMatcher> TypeMatcherRegistered for IsTupleElems1<A> {}
 
 impl<A: TypeMatcher> TypeMatcher for IsTupleElems1<A> {
     fn matches(&self, value: Value) -> bool {
@@ -136,8 +162,11 @@ impl<A: TypeMatcher> TypeMatcher for IsTupleElems1<A> {
     }
 }
 
-#[derive(Clone, Allocative, Debug)]
+#[pagable_typetag(TypeMatcherDyn)]
+#[derive(Clone, Allocative, Debug, Pagable)]
 pub(crate) struct IsTupleElems2<A: TypeMatcher, B: TypeMatcher>(pub(crate) A, pub(crate) B);
+
+unsafe impl<A: TypeMatcher, B: TypeMatcher> TypeMatcherRegistered for IsTupleElems2<A, B> {}
 
 impl<A: TypeMatcher, B: TypeMatcher> TypeMatcher for IsTupleElems2<A, B> {
     fn matches(&self, value: Value) -> bool {
@@ -148,17 +177,22 @@ impl<A: TypeMatcher, B: TypeMatcher> TypeMatcher for IsTupleElems2<A, B> {
     }
 }
 
-#[derive(Clone, Copy, Dupe, Allocative, Debug)]
+#[derive(Clone, Copy, Dupe, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsDict;
 
+#[type_matcher]
 impl TypeMatcher for IsDict {
     fn matches(&self, value: Value) -> bool {
         value.starlark_type_id() == StarlarkTypeId::of::<FrozenDict>()
     }
 }
 
-#[derive(Clone, Allocative, Debug)]
+#[pagable_typetag(TypeMatcherDyn)]
+#[derive(Clone, Allocative, Debug, Pagable)]
 pub(crate) struct IsDictOf<K: TypeMatcher, V: TypeMatcher>(pub(crate) K, pub(crate) V);
+
+unsafe impl<K: TypeMatcher, V: TypeMatcher> TypeMatcherRegistered for IsDictOf<K, V> {}
 
 impl<K: TypeMatcher, V: TypeMatcher> TypeMatcher for IsDictOf<K, V> {
     fn matches(&self, value: Value) -> bool {
@@ -171,17 +205,22 @@ impl<K: TypeMatcher, V: TypeMatcher> TypeMatcher for IsDictOf<K, V> {
     }
 }
 
-#[derive(Clone, Copy, Dupe, Allocative, Debug)]
+#[derive(Clone, Copy, Dupe, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsSet;
 
+#[type_matcher]
 impl TypeMatcher for IsSet {
     fn matches(&self, value: Value) -> bool {
         value.starlark_type_id() == StarlarkTypeId::of::<FrozenSet>()
     }
 }
 
-#[derive(Clone, Allocative, Debug)]
+#[pagable_typetag(TypeMatcherDyn)]
+#[derive(Clone, Allocative, Debug, Pagable)]
 pub(crate) struct IsSetOf<I: TypeMatcher>(pub(crate) I);
+
+unsafe impl<I: TypeMatcher> TypeMatcherRegistered for IsSetOf<I> {}
 
 impl<I: TypeMatcher> TypeMatcher for IsSetOf<I> {
     fn matches(&self, value: Value) -> bool {
@@ -192,8 +231,11 @@ impl<I: TypeMatcher> TypeMatcher for IsSetOf<I> {
     }
 }
 
-#[derive(Clone, Allocative, Debug)]
+#[pagable_typetag(TypeMatcherDyn)]
+#[derive(Clone, Allocative, Debug, Pagable)]
 pub(crate) struct IsAnyOfTwo<A: TypeMatcher, B: TypeMatcher>(pub(crate) A, pub(crate) B);
+
+unsafe impl<A: TypeMatcher, B: TypeMatcher> TypeMatcherRegistered for IsAnyOfTwo<A, B> {}
 
 impl<A: TypeMatcher, B: TypeMatcher> TypeMatcher for IsAnyOfTwo<A, B> {
     fn matches(&self, value: Value) -> bool {
@@ -201,84 +243,102 @@ impl<A: TypeMatcher, B: TypeMatcher> TypeMatcher for IsAnyOfTwo<A, B> {
     }
 }
 
-#[derive(Clone, Allocative, Debug)]
+#[derive(Clone, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsAnyOf(pub(crate) Vec<TypeMatcherBox>);
 
+#[type_matcher]
 impl TypeMatcher for IsAnyOf {
     fn matches(&self, value: Value) -> bool {
         self.0.iter().any(|t| t.matches(value))
     }
 }
 
-#[derive(Allocative, Clone, Copy, Dupe, Debug)]
+#[derive(Allocative, Clone, Copy, Dupe, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsCallable;
 
+#[type_matcher]
 impl TypeMatcher for IsCallable {
     fn matches(&self, value: Value) -> bool {
-        value.vtable().starlark_value.HAS_invoke
+        value.vtable().starlark_value.ty.HAS_invoke
     }
 }
 
-#[derive(Allocative, Clone, Copy, Dupe, Debug)]
+#[derive(Allocative, Clone, Copy, Dupe, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsType;
 
+#[type_matcher]
 impl TypeMatcher for IsType {
     fn matches(&self, value: Value) -> bool {
-        TyStarlarkValue::is_type_from_vtable(&value.vtable().starlark_value)
+        TyStarlarkValue::is_type_from_vtable(&value.vtable().starlark_value.ty)
     }
 }
 
-#[derive(Copy, Clone, Dupe, Debug, Allocative)]
+#[derive(Copy, Clone, Dupe, Debug, Allocative, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsIterable;
 
+#[type_matcher]
 impl TypeMatcher for IsIterable {
     fn matches(&self, value: Value) -> bool {
-        TyStarlarkValue::is_iterable(&value.vtable().starlark_value)
+        TyStarlarkValue::is_iterable(&value.vtable().starlark_value.ty)
     }
 }
 
-#[derive(Clone, Copy, Dupe, Allocative, Debug)]
+#[derive(Clone, Copy, Dupe, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsInt;
 
+#[type_matcher]
 impl TypeMatcher for IsInt {
     fn matches(&self, value: Value) -> bool {
         StarlarkIntRef::unpack(value).is_some()
     }
 }
 
-#[derive(Clone, Copy, Dupe, Allocative, Debug)]
+#[derive(Clone, Copy, Dupe, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsBool;
 
+#[type_matcher]
 impl TypeMatcher for IsBool {
     fn matches(&self, value: Value) -> bool {
         value.unpack_bool().is_some()
     }
 }
 
-#[derive(Clone, Copy, Dupe, Allocative, Debug)]
+#[derive(Clone, Copy, Dupe, Allocative, Debug, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct IsNone;
 
+#[type_matcher]
 impl TypeMatcher for IsNone {
     fn matches(&self, value: Value) -> bool {
         value.is_none()
     }
 }
 
-#[derive(Allocative, Debug, Clone)]
+// Matches values by `StarlarkTypeId`. Ideally store `StarlarkTypeId`
+// directly, but it wraps a `std::any::TypeId` and isn't pagable. Instead
+// store a `TyStarlarkValue` which is pagable and extract the id from it at
+// match time.
+#[derive(Allocative, Debug, Clone, Pagable)]
+#[pagable_typetag(TypeMatcherDyn)]
 pub(crate) struct StarlarkTypeIdMatcher {
-    starlark_type_id: StarlarkTypeIdAligned,
+    ty: TyStarlarkValue,
 }
 
 impl StarlarkTypeIdMatcher {
     pub(crate) fn new(ty: TyStarlarkValue) -> StarlarkTypeIdMatcher {
-        StarlarkTypeIdMatcher {
-            starlark_type_id: StarlarkTypeIdAligned::new(ty.starlark_type_id()),
-        }
+        StarlarkTypeIdMatcher { ty }
     }
 }
 
+#[type_matcher]
 impl TypeMatcher for StarlarkTypeIdMatcher {
     fn matches(&self, value: Value) -> bool {
-        value.starlark_type_id() == self.starlark_type_id.get()
+        value.starlark_type_id() == self.ty.starlark_type_id()
     }
 }

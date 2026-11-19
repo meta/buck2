@@ -1,0 +1,13 @@
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("android_devxx")
+
+source_listing()
+
+prelude = native
+
+prelude.python_bootstrap_binary(
+    name = "typechecker",
+    main = "typechecker.py",
+    visibility = ["PUBLIC"],
+)

@@ -5,6 +5,13 @@ oncall("build_infra")
 rust_unittest(
     name = "strong_hash_tests",
     srcs = glob(["src/**/*.rs"]),
+    autocargo = {
+        "cargo_toml_config": {
+            "package": {
+                "description": "Tests for strong_hash crate",
+            },
+        },
+    },
     deps = [
         "fbsource//third-party/rust:blake3",
         "//buck2/gazebo/strong_hash:strong_hash",

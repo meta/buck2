@@ -19,5 +19,4 @@ Caused by:
           |
        10 |     return ls[5]
           |            ^^^^^
-          |
        

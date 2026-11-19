@@ -21,68 +21,71 @@ use allocative::Allocative;
 use derive_more::Display;
 use starlark_derive::Freeze;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::Trace;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::coerce::Coerce;
+use crate::starlark_complex_value;
 use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
-use crate::values::StringValueLike;
 use crate::values::Value;
-use crate::values::ValueLike;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
+use crate::values::string::StarlarkStr;
+use crate::values::types::int::view::IntView;
 use crate::values::typing::iter::StarlarkIter;
 
 /// An opaque iterator over a string, produced by elems/codepoints
 #[derive(
     Debug,
     Trace,
-    Coerce,
     Display,
     Freeze,
     NoSerialize,
     ProvidesStaticType,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[display("iterator")]
 #[repr(C)]
-struct StringIterableGen<'v, V: ValueLike<'v>> {
-    string: V::String,
+struct StringIterable<'v> {
+    string: StringValue<'v>,
     produce_char: bool, // if not char, then int
 }
 
+starlark_complex_value!(StringIterable);
+
 pub(crate) fn iterate_chars<'v>(
     string: StringValue<'v>,
-    heap: &'v Heap,
-) -> ValueOfUnchecked<'v, StarlarkIter<String>> {
-    ValueOfUnchecked::new(heap.alloc_complex(StringIterableGen::<'v, Value<'v>> {
+    heap: Heap<'v>,
+) -> ValueOf<'v, StarlarkIter<StarlarkStr>> {
+    ValueOf::new(heap.alloc_complex(StringIterable {
         string,
         produce_char: true,
     }))
+    .expect("a `StringIterable` iterates")
 }
 
 pub(crate) fn iterate_codepoints<'v>(
     string: StringValue<'v>,
-    heap: &'v Heap,
-) -> ValueOfUnchecked<'v, StarlarkIter<String>> {
-    ValueOfUnchecked::new(heap.alloc_complex(StringIterableGen::<'v, Value<'v>> {
+    heap: Heap<'v>,
+) -> ValueOf<'v, StarlarkIter<IntView<'v>>> {
+    ValueOf::new(heap.alloc_complex(StringIterable {
         string,
         produce_char: false,
     }))
+    .expect("a `StringIterable` iterates")
 }
 
 #[starlark_value(type = "iterator")]
-impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for StringIterableGen<'v, V>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    unsafe fn iterate(&self, _me: Value<'v>, heap: &'v Heap) -> crate::Result<Value<'v>> {
+impl<'v> StarlarkValue<'v> for StringIterable<'v> {
+    unsafe fn iterate(&self, _me: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         // Lazy implementation: we allocate a tuple and then iterate over it.
         let iter = if self.produce_char {
             heap.alloc_tuple_iter(self.string.as_str().chars().map(|c| heap.alloc(c)))
+                .to_value()
         } else {
             heap.alloc_tuple_iter(
                 self.string
@@ -90,6 +93,7 @@ where
                     .chars()
                     .map(|c| heap.alloc(u32::from(c))),
             )
+            .to_value()
         };
         Ok(iter)
     }

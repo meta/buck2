@@ -37,4 +37,5 @@ echo "$keep_alive_pid" > "$cgd"/_keep_alive/cgroup.procs
 mkdir "$cgd"/action
 echo +memory > "$cgd"/cgroup.subtree_control
 echo +cpu > "$cgd"/cgroup.subtree_control
+echo +pids > "$cgd"/cgroup.subtree_control
 echo "$cgd"/action

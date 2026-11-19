@@ -12,6 +12,7 @@
 
 pub use line::Line;
 pub use lines::Lines;
+pub use span::Hyperlink;
 pub use span::Span;
 pub use span::SpanError;
 

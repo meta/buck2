@@ -22,6 +22,7 @@ use buck2_common::manifold::ManifoldClient;
 use buck2_common::manifold::Ttl;
 use buck2_core::buck2_env;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
 use buck2_error::internal_error;
 use dupe::Dupe;
@@ -156,7 +157,7 @@ impl Display for WatchmanEvent {
         write!(
             f,
             "{:?}{}<{}>",
-            &self.event,
+            self.event,
             self.kind.symbol(),
             self.path.to_string_lossy()
         )
@@ -215,7 +216,7 @@ async fn write_to_manifold(buf: &[u8], name: &str) -> Option<String> {
     let ttl = Ttl::from_days(14); // 14 days should be plenty of time to take action
 
     let bucket = Bucket::RAGE_DUMPS;
-    let mut cursor = &mut std::io::Cursor::new(buf);
+    let mut cursor = std::io::Cursor::new(buf);
 
     manifold
         .read_and_upload(bucket, &filename, ttl, &mut cursor)
@@ -309,12 +310,16 @@ pub(crate) trait SyncableQueryProcessor: Send + Sync {
     ) -> buck2_error::Result<(Self::Output, Self::Payload)>;
 
     /// Indicates that all derived data should be invalidated. This could happen, for example, if the watchman server restarts.
+    ///
+    /// `events_since_mergebase` says whether `events` lists every file that differs from
+    /// `mergebase`, rather than what changed since the previous query.
     async fn on_fresh_instance(
         &mut self,
         dice: Self::Payload,
         events: Vec<WatchmanEvent>,
         mergebase: &Option<String>,
         watchman_version: Option<String>,
+        events_since_mergebase: bool,
     ) -> buck2_error::Result<(Self::Output, Self::Payload)>;
 }
 
@@ -365,6 +370,7 @@ struct SyncableQueryHandler<T, P> {
     last_clock: ClockSpec,
     last_mergebase: Option<String>,
     mergebase_with: Option<String>,
+    dice_clear_on_mergebase_change: bool,
     control_rx: UnboundedReceiver<SyncableQueryCommand<T, P>>,
 }
 
@@ -379,7 +385,7 @@ where
         // give Watchman time to warm up.
         let mut client = None;
         if let Err(e) = self.reconnect(&mut client).await {
-            tracing::warn!("Connecting to Watchman failed (will re-attempt): {:#}", e);
+            tracing::debug!("Connecting to Watchman failed (will re-attempt): {:#}", e);
         };
 
         loop {
@@ -423,6 +429,7 @@ where
             } => {
                 if self.mergebase_with.is_none()
                     || self.last_mergebase.is_some() && self.last_mergebase == merge_base
+                    || !self.dice_clear_on_mergebase_change
                 {
                     (
                         self.processor
@@ -434,7 +441,13 @@ where
                 } else {
                     (
                         self.processor
-                            .on_fresh_instance(payload, events, &merge_base, watchman_version)
+                            .on_fresh_instance(
+                                payload,
+                                events,
+                                &merge_base,
+                                watchman_version,
+                                false,
+                            )
                             .await?,
                         merge_base,
                         clock,
@@ -448,7 +461,13 @@ where
                 watchman_version,
             } => (
                 self.processor
-                    .on_fresh_instance(payload, events, &merge_base, watchman_version)
+                    .on_fresh_instance(
+                        payload,
+                        events,
+                        &merge_base,
+                        watchman_version,
+                        self.mergebase_with.is_some() && !self.query.empty_on_fresh_instance,
+                    )
                     .await?,
                 merge_base,
                 clock,
@@ -487,9 +506,7 @@ where
         &mut self,
         client: &mut Option<WatchmanClient>,
     ) -> buck2_error::Result<WatchmanSyncResult> {
-        let client = client
-            .as_mut()
-            .buck_error_context("No Watchman connection")?;
+        let client = client.as_mut().internal_error("No Watchman connection")?;
 
         let make_query = |last_clock, last_mergebase| {
             let mut query = self.query.clone();
@@ -546,6 +563,24 @@ where
 
         // While we use scm-based queries, the processor api doesn't really support them yet so we just treat it as a fresh instance.
         let (new_mergebase, clock) = unpack_clock(clock);
+
+        // When the mergebase moved and the caller handles that incrementally (no DICE clear),
+        // the scm-aware result lists only the files that differ from the *new* mergebase: it
+        // misses files changed between the two mergebases and local edits the checkout dropped.
+        // Ask for everything since the last clock instead.
+        let (is_fresh_instance, files, clock) = if !is_fresh_instance
+            && !self.dice_clear_on_mergebase_change
+            && self.last_mergebase.is_some()
+            && new_mergebase != self.last_mergebase
+        {
+            let mut query = self.query.clone();
+            query.since = Some(Clock::Spec(self.last_clock.clone()));
+            let since_result = client.query::<BuckQueryResult>(query).await?;
+            let (_, clock) = unpack_clock(since_result.clock);
+            (since_result.is_fresh_instance, since_result.files, clock)
+        } else {
+            (is_fresh_instance, files, clock)
+        };
 
         let events = match files {
             None if is_fresh_instance => vec![],
@@ -609,7 +644,7 @@ where
         async move {
             tx_res
                 .ok()
-                .buck_error_context("SyncableQueryHandler has exited")?;
+                .internal_error("SyncableQueryHandler has exited")?;
 
             let out = sync_done_rx
                 .await
@@ -629,6 +664,7 @@ where
         processor: Box<dyn SyncableQueryProcessor<Output = T, Payload = P>>,
         mergebase_with: Option<String>,
         empty_on_fresh_instance: bool,
+        dice_clear_on_mergebase_change: bool,
     ) -> buck2_error::Result<SyncableQuery<T, P>> {
         let path = path.as_ref();
         let path = CanonicalPath::canonicalize(path)
@@ -660,6 +696,7 @@ where
                 last_clock: ClockSpec::default(),
                 last_mergebase: None,
                 mergebase_with,
+                dice_clear_on_mergebase_change,
                 processor,
                 control_rx,
             };

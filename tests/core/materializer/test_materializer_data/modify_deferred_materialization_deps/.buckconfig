@@ -6,3 +6,4 @@
 
 [buck2]
   materializations = deferred
+  verbose_materializer_event_log = true

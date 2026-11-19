@@ -8,7 +8,7 @@
 
 def _builds(ctx: AnalysisContext):
     # Create locally
-    stage0 = ctx.actions.declare_output("stage0")
+    stage0 = ctx.actions.declare_output("stage0", has_content_based_path = False)
     ctx.actions.run(
         ["sh", "-c", 'head -c 10 /dev/urandom > "$1"', "--", stage0.as_output()],
         category = "stage0",
@@ -16,15 +16,15 @@ def _builds(ctx: AnalysisContext):
     )
 
     # Use on RE
-    stage1 = ctx.actions.declare_output("stage1")
+    stage1 = ctx.actions.declare_output("stage1", has_content_based_path = False)
     ctx.actions.run(["sh", "-c", 'cat "$1" "$1" > "$2"', "--", stage0, stage1.as_output()], category = "stage1")
 
     # Reuse on RE
-    stage2 = ctx.actions.declare_output("stage2")
+    stage2 = ctx.actions.declare_output("stage2", has_content_based_path = False)
     ctx.actions.run(["sh", "-c", 'cat "$1" "$1" > "$2"', "--", stage1, stage2.as_output()], category = "stage2")
 
     # Reuse locally
-    stage3 = ctx.actions.declare_output("stage3")
+    stage3 = ctx.actions.declare_output("stage3", has_content_based_path = False)
     ctx.actions.run(
         ["sh", "-c", 'cat "$1" "$1" > "$2"', "--", stage2, stage3.as_output()],
         category = "stage3",
@@ -32,7 +32,7 @@ def _builds(ctx: AnalysisContext):
     )
 
     # Verify
-    stage4 = ctx.actions.declare_output("stage4")
+    stage4 = ctx.actions.declare_output("stage4", has_content_based_path = False)
     ctx.actions.run(
         [
             "sh",

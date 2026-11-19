@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterables;
 import java.io.IOException;
@@ -18,10 +19,11 @@ import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.util.List;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.ClassVisitor;
 
 /** A {@link LibraryReader} that reads from a jar file. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class JarReader implements LibraryReader {
   private final Path jarPath;
   @Nullable FileSystem fileSystem;

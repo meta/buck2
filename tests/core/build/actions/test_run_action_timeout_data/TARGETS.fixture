@@ -1,0 +1,13 @@
+load(":defs.bzl", "run_with_timeout")
+
+run_with_timeout(
+    name = "slow_with_timeout",
+    script = "slow.sh",
+    timeout_seconds = 1,
+)
+
+run_with_timeout(
+    name = "fast_with_timeout",
+    script = "fast.sh",
+    timeout_seconds = 60,
+)

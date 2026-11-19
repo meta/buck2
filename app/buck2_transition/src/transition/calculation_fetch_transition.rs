@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::transition::TRANSITION_ATTRS_PROVIDER;
@@ -18,45 +16,68 @@ use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
+use dupe::ResultDupedErrExt;
 use either::Either;
+use futures::FutureExt;
+use futures::future::BoxFuture;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use ref_cast::RefCast;
-use starlark::values::FrozenStringValue;
-use starlark::values::OwnedFrozenValueTyped;
 
-use crate::transition::provider::FrozenTransitionInfo;
+use crate::transition::provider::OwnedTransitionInfo;
+use crate::transition::provider::TransitionInfo;
 use crate::transition::starlark::FrozenTransition;
+use crate::transition::starlark::OwnedTransition;
 
 pub(crate) enum TransitionData {
-    MagicObject(OwnedFrozenValueTyped<FrozenTransition>),
-    Target(OwnedFrozenValueTyped<FrozenTransitionInfo>),
+    MagicObject(OwnedTransition),
+    Target(OwnedTransitionInfo),
 }
 
 impl TransitionData {
-    pub(crate) fn refs(
-        &self,
-    ) -> impl Iterator<Item = (&FrozenStringValue, &ProvidersLabel)> + Send + Sync {
+    /// The transition's `refs`, as `(name, target)` pairs.
+    ///
+    /// The iterator holds heap-branded values and so is not `Send`; collect it before crossing
+    /// an await.
+    pub(crate) fn refs(&self) -> impl Iterator<Item = (&str, &ProvidersLabel)> {
         match self {
-            TransitionData::MagicObject(v) => Either::Left(v.refs.iter()),
+            TransitionData::MagicObject(v) => Either::Left(
+                v.as_ref()
+                    .value()
+                    .as_ref()
+                    .refs
+                    .iter()
+                    .map(|(name, target)| (name.as_str(), target)),
+            ),
             TransitionData::Target(_) => Either::Right([].into_iter()),
         }
         .into_iter()
     }
 
-    pub(crate) fn attr_names(&self) -> Option<impl IntoIterator<Item = &str>> {
+    pub(crate) fn attr_names(&self) -> Option<impl Iterator<Item = buck2_error::Result<&str>>> {
         match self {
             TransitionData::MagicObject(v) => Some(Either::Left(
-                v.attrs_names.as_ref()?.iter().map(|s| s.as_str()),
+                v.as_ref()
+                    .value()
+                    .as_ref()
+                    .attrs_names
+                    .as_ref()?
+                    .iter()
+                    .map(|s| Ok(s.as_str())),
             )),
-            TransitionData::Target(v) => {
-                Some(Either::Right(v.as_ref().get_attrs_names()?.into_iter()))
-            }
+            TransitionData::Target(v) => Some(Either::Right(
+                v.as_ref().value().as_ref().get_attrs_names()?,
+            )),
         }
     }
 
     pub(crate) fn is_split(&self) -> bool {
         match self {
-            TransitionData::MagicObject(v) => v.split,
+            TransitionData::MagicObject(v) => v.as_ref().value().as_ref().split,
             TransitionData::Target(_) => false,
         }
     }
@@ -93,20 +114,16 @@ impl FetchTransition for DiceComputations<'_> {
                     })?
                     .0;
 
-                Ok(TransitionData::MagicObject(transition.downcast_starlark()?))
+                Ok(TransitionData::MagicObject(
+                    transition.downcast_starlark::<FrozenTransition<'static>>()?,
+                ))
             }
             TransitionId::Target(label) => {
                 let transition_info = self
                     .get_configuration_analysis_result(label)
                     .await?
-                    .value
-                    .try_map(|c| {
-                        c.as_ref()
-                            .builtin_provider_value::<FrozenTransitionInfo>()
-                            .ok_or_else(|| {
-                                FetchTransitionError::MissingTransitionInfo(label.clone())
-                            })
-                    })?;
+                    .builtin_provider_value::<TransitionInfo>()?
+                    .ok_or_else(|| FetchTransitionError::MissingTransitionInfo(label.clone()))?;
                 Ok(TransitionData::Target(transition_info))
             }
         }
@@ -115,9 +132,9 @@ impl FetchTransition for DiceComputations<'_> {
 
 /// Computes the attributes required by a transition.
 ///
-/// This basically only exists so that we have a lifetime to attach to the `Arc<[String]>`, as we
-/// cannot directly return the `FrozenStarlarkStr`s that are actually stored to crates that avoid
-/// depending on starlark.
+/// This basically only exists so that we have a place to hand out the transition's attribute names
+/// as owned `String`s, as we cannot directly return the `FrozenStarlarkStr`s that are actually
+/// stored to crates that avoid depending on starlark.
 #[derive(
     Debug,
     Eq,
@@ -126,48 +143,61 @@ impl FetchTransition for DiceComputations<'_> {
     Clone,
     derive_more::Display,
     allocative::Allocative,
-    ref_cast::RefCast
+    ref_cast::RefCast,
+    Pagable
 )]
 #[display("{}", _0)]
 #[repr(transparent)]
+#[pagable_typetag(dice::DiceKeyDyn)]
 struct TransitionAttrsKey(TransitionId);
 
 #[async_trait]
 impl Key for TransitionAttrsKey {
-    type Value = buck2_error::Result<Option<Arc<[String]>>>;
+    type Value = buck2_error::Result<Option<Box<[String]>>>;
 
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
         _cancellation: &dice::CancellationContext,
     ) -> Self::Value {
-        Ok(ctx
-            .fetch_transition(&self.0)
+        ctx.fetch_transition(&self.0)
             .await?
             .attr_names()
-            .map(|n| n.into_iter().map(|s| s.to_owned()).collect()))
+            .map(|names| names.map(|s| Ok(s?.to_owned())).collect())
+            .transpose()
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        if let (Ok(x), Ok(y)) = (x, y) {
-            x == y
-        } else {
-            false
-        }
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| {
+            if let (Ok(x), Ok(y)) = (x, y) {
+                x == y
+            } else {
+                false
+            }
+        })
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
     }
 }
 
 struct TransitionGetAttrs;
 
-#[async_trait]
 impl TransitionAttrProvider for TransitionGetAttrs {
-    async fn transition_attrs(
+    fn transition_attrs<'a, 'd>(
         &self,
-        ctx: &mut DiceComputations<'_>,
-        transition_id: &TransitionId,
-    ) -> buck2_error::Result<Option<Arc<[String]>>> {
-        let k = TransitionAttrsKey::ref_cast(transition_id);
-        ctx.compute(k).await?
+        ctx: &'a mut DiceComputations<'d>,
+        transition_id: &'a TransitionId,
+    ) -> BoxFuture<'a, buck2_error::Result<Option<&'d [String]>>>
+    where
+        'd: 'a,
+    {
+        async move {
+            let k = TransitionAttrsKey::ref_cast(transition_id);
+            Ok(ctx.compute(k).await?.as_ref().duped_err()?.as_deref())
+        }
+        .boxed()
     }
 }
 

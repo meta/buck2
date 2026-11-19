@@ -1,0 +1,67 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Checking each target against execution platforms defined by root//config:platforms
+root//groups:binary (<unspecified>):
+  Execution platform: root//config:linux_remote
+    Execution platform configuration: root//config:linux_remote#<HASH>
+    Execution deps:
+      root//groups:any_tool (root//config:linux_remote#<HASH>)
+      root//groups:remote_tool (root//config:linux_remote#<HASH>)
+    Toolchain deps:
+    Configuration deps:
+    Skipped root//config:linux_local
+      root//groups:remote_tool
+          is incompatible with root//config:linux_local#<HASH> (root//config:remote unsatisfied), check the target's compatibility attributes
+  Execution group `Link`: root//config:linux_local
+    Execution deps:
+      root//groups:any_tool (root//config:linux_local#<HASH>)
+      root//groups:local_tool (root//config:linux_local#<HASH>)
+    Toolchain deps:
+  Execution group `Unused`: root//config:linux_local
+    Execution deps:
+    Toolchain deps:
+root//groups:bundle (<unspecified>):
+  Execution platform: root//config:linux_local
+    Execution platform configuration: root//config:linux_local#<HASH>
+    Execution deps:
+    Toolchain deps:
+    Configuration deps:
+  Execution group `Resources`: root//config:macos_local
+    Execution deps:
+    Toolchain deps:
+      root//groups:resource_toolchain (<unspecified>) (root//config:macos_local#<HASH>)
+    Skipped root//config:linux_local
+      root//groups:macos_tool
+          is incompatible with root//config:linux_local#<HASH> (root//config:macos unsatisfied), check the target's compatibility attributes
+    Skipped root//config:linux_remote
+      root//groups:macos_tool
+          is incompatible with root//config:linux_remote#<HASH> (root//config:macos unsatisfied), check the target's compatibility attributes
+  Execution group `Package`: root//config:linux_remote
+    Execution deps:
+    Toolchain deps:
+      root//groups:package_toolchain (<unspecified>) (root//config:linux_remote#<HASH>)
+    Skipped root//config:linux_local
+      root//groups:remote_tool
+          is incompatible with root//config:linux_local#<HASH> (root//config:remote unsatisfied), check the target's compatibility attributes
+root//groups:same_platform (<unspecified>):
+  Execution platform: root//config:linux_local
+    Execution platform configuration: root//config:linux_local#<HASH>
+    Execution deps:
+      root//groups:any_tool (root//config:linux_local#<HASH>)
+    Toolchain deps:
+    Configuration deps:
+  Execution group `Link`: root//config:linux_local
+    Execution deps:
+      root//groups:any_tool (root//config:linux_local#<HASH>)
+    Toolchain deps:
+root//groups:plugin_user (<unspecified>):
+  Execution platform: root//config:linux_local
+    Execution platform configuration: root//config:linux_local#<HASH>
+    Execution deps:
+      root//groups:local_tool (root//config:linux_local#<HASH>)
+    Toolchain deps:
+    Configuration deps:
+  Execution group `Link`: root//config:linux_local
+    Execution deps:
+      root//groups:any_tool (root//config:linux_local#<HASH>)
+    Toolchain deps:

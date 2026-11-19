@@ -34,7 +34,7 @@ pub fn gen_daemon_constraints(
     daemon_id: &DaemonId,
 ) -> buck2_error::Result<buck2_cli_proto::DaemonConstraints> {
     Ok(buck2_cli_proto::DaemonConstraints {
-        version: version(),
+        version: version()?,
         user_version: user_version()?,
         daemon_id: daemon_id.to_string(),
         daemon_startup_config: Some(daemon_startup_config.serialize()?),
@@ -42,13 +42,21 @@ pub fn gen_daemon_constraints(
     })
 }
 
-pub fn version() -> String {
-    BuckVersion::get_unique_id().to_owned()
+pub fn version() -> buck2_error::Result<String> {
+    Ok(BuckVersion::get_unique_id()?.to_owned())
 }
 
 /// Used to make sure that daemons are restarted between CI jobs if they don't properly clean up
 /// after themselves.
+///
+/// A client run by an action takes the value of the daemon running the action, present or
+/// absent, which the daemon exports next to `BUCK2_DAEMON_UUID`, so that neither a job id the
+/// action's environment dropped nor one it added restarts that daemon under the action.
 pub fn user_version() -> buck2_error::Result<Option<String>> {
+    // Intentionally don't use `buck2_env!` because we don't want this showing up in help output
+    if get_possibly_nested_invocation_daemon_uuid().is_some() {
+        return Ok(std::env::var("BUCK2_DAEMON_USER_VERSION").ok());
+    }
     // This shouldn't really be necessary, but we used to check it so we'll keep it for now.
     if let Some(id) = buck2_env!("SANDCASTLE_ID", applicability = internal)? {
         return Ok(Some(id.to_owned()));

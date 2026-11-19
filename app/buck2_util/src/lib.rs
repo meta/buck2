@@ -9,21 +9,24 @@
  */
 
 #![feature(decl_macro)]
-#![feature(error_generic_member_access)]
+#![cfg_attr(not(windows), feature(linkage))]
 #![feature(once_cell_try)]
 
 pub mod arc_str;
 pub mod async_move_clone;
 pub mod commas;
-pub mod cycle_detector;
+pub mod early_command_timing;
+pub mod env_vars;
+pub mod exact_size_iter;
 pub mod future;
 pub mod golden_test_helper;
-pub mod hash;
 pub mod indent;
 pub mod late_binding;
 pub mod network_speed_average;
 pub mod os;
 pub mod per_thread_instruction_counter;
+pub mod pgo;
+pub mod pointer_identity;
 pub mod process;
 pub mod process_stats;
 pub mod properly_reaped_child;
@@ -32,10 +35,13 @@ pub mod self_ref;
 pub mod sliding_window;
 pub mod strong_hasher;
 pub mod system_stats;
-pub mod thin_box;
 pub mod threads;
+pub mod time_span;
 pub mod tokio_runtime;
 pub mod truncate;
+pub mod vec2;
 
 // Re-export this to encourage people to use it in a fully qualified way.
 pub use async_move_clone::async_move_clone;
+// Re-export because not everything has `mini_vec` deps so this is a bit nicer.
+pub use mini_vec::size_assert;

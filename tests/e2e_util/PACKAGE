@@ -1,0 +1,6 @@
+load("@fbcode_macros//build_defs:python.bzl", "python")
+
+python.set_typing(
+    True,
+    overwrite = True,
+)

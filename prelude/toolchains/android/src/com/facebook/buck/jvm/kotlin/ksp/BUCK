@@ -21,7 +21,6 @@ buck_kotlin_library(
         "prelude//toolchains/android/src/com/facebook/buck/jvm/core:core",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/java:support",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics:analytics",
-        "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/ksp/incremental:incremental",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/util:util",
         "prelude//toolchains/android/src/com/facebook/buck/step/isolatedsteps/common:common",
         "prelude//toolchains/android/third-party:guava",

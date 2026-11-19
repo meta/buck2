@@ -1,0 +1,8 @@
+load("@fbcode//buck2/app:modifier.bzl", "buck2_modifiers")
+load("@prelude//cfg/modifier:set_cfg_modifiers.bzl", "set_cfg_modifiers")
+
+modifiers_list = buck2_modifiers()
+
+set_cfg_modifiers(
+    cfg_modifiers = modifiers_list,
+)

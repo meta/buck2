@@ -17,9 +17,11 @@
 
 //! The string type. All strings must be valid UTF8.
 
+mod alloc;
 mod alloc_unpack;
 pub(crate) mod dot_format;
 pub(crate) mod globals;
+pub(crate) mod handle;
 pub(crate) mod intern;
 pub(crate) mod interpolation;
 pub(crate) mod iter;
@@ -28,5 +30,7 @@ pub(crate) mod repr;
 pub(crate) mod simd;
 pub(crate) mod str_type;
 
+pub use crate::values::types::string::alloc::AllocStrConcat;
+pub use crate::values::types::string::alloc::AllocStrIntern;
 pub use crate::values::types::string::str_type::STRING_TYPE;
 pub use crate::values::types::string::str_type::StarlarkStr;

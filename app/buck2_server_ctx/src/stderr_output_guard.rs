@@ -15,6 +15,7 @@ use std::marker::PhantomData;
 use std::str;
 
 use buck2_core::buck2_env;
+use buck2_core::soft_error_or_panic;
 use buck2_events::dispatch::EventDispatcher;
 use dupe::Dupe;
 
@@ -41,6 +42,13 @@ pub struct StderrOutputWriter {
     chunk_size: usize,
 }
 
+/// Override for the maximum number of bytes carried by a single raw output
+/// message (stdout and stderr). Each writer has its own default; this is
+/// mostly useful for tests that want to exercise the chunking paths.
+pub(crate) fn raw_output_chunk_size_override() -> buck2_error::Result<Option<usize>> {
+    buck2_env!("BUCK2_DEBUG_RAWOUTPUT_CHUNK_SIZE", type = usize)
+}
+
 impl Write for StderrOutputGuard<'_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.inner.write(buf)
@@ -53,10 +61,12 @@ impl Write for StderrOutputGuard<'_> {
 
 impl Drop for StderrOutputGuard<'_> {
     fn drop(&mut self) {
-        // This would only happen if we had output that isn't utf-8 and got flushed. For now we live with ignoring
-        // this.
+        // This would only happen if we had output that isn't utf-8 and got flushed.
         if let Err(e) = self.inner.flush() {
-            tracing::error!("Discarded StderrOutputWriter output: {:#}", e);
+            soft_error_or_panic!(
+                "stderr_output_discarded",
+                buck2_error::Error::from(e).context("Discarded StderrOutputWriter output")
+            );
         }
     }
 }
@@ -72,7 +82,7 @@ impl StderrOutputWriter {
     fn get_chunk_size() -> buck2_error::Result<usize> {
         // protobuf recommends each message should be under 1MB
         const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024;
-        buck2_env!("BUCK2_DEBUG_RAWOUTPUT_CHUNK_SIZE", type=usize, default=DEFAULT_CHUNK_SIZE)
+        Ok(raw_output_chunk_size_override()?.unwrap_or(DEFAULT_CHUNK_SIZE))
     }
 
     /// Given complete valid UTF-8 string, truncate it to be no longer than given limit.

@@ -15,14 +15,20 @@ py_bin - the python executable
 py_version - a string denoting the version of python represented by this provider
 stdlib - the path to the python standard library
 """
-PythonRuntimeBundleInfo = provider(fields = {
-    "include": provider_field(Artifact),
-    "libpython": provider_field(Artifact | None),
-    "py_bin": provider_field(Artifact),
-    "py_version": provider_field(str),
-    "shared_libs": provider_field(list[Dependency]),
-    "stdlib": provider_field(Artifact),
-})
+
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//decls:common.bzl", "buck")
+
+PythonRuntimeBundleInfo = provider(
+    fields = {
+        "include": provider_field(Artifact),
+        "libpython": provider_field(Artifact | None),
+        "py_bin": provider_field(Artifact),
+        "py_version": provider_field(str),
+        "shared_libs": provider_field(list[Dependency]),
+        "stdlib": provider_field(Artifact),
+    }
+)
 
 def python_runtime_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
     root = ctx.attrs.install_root[DefaultInfo].default_outputs[0]
@@ -35,3 +41,31 @@ def python_runtime_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
         shared_libs = ctx.attrs.shared_libs,
     )
     return [DefaultInfo(default_output = root), info]
+
+python_runtime_bundle = prelude_rule(
+    name = "python_runtime_bundle",
+    impl = python_runtime_bundle_impl,
+    docs = """
+        A `python_runtime_bundle()` rule declares a bundled Python runtime
+        — a full install of Python including the interpreter, standard
+        library, headers, and optionally `libpython.so` and additional
+        shared libraries — that can be embedded in a PAR to produce a
+        fully hermetic distribution.
+    """,
+    examples = None,
+    further = None,
+    attrs = {
+        "include": attrs.string(doc = "Header files required for linking python extensions"),
+        "install_root": attrs.dep(doc = "The filegroup containing the runtime artifacts, all the paths are relative to this location"),
+        "libpython": attrs.option(
+            attrs.string(doc = "libpyhon.so required at runtime for the python executable and native extensions."),
+            default = None,
+        ),
+        "py_bin": attrs.string(doc = "The runtime executable"),
+        "py_version": attrs.string(doc = "The version of python this represents"),
+        "shared_libs": attrs.list(attrs.dep(), default = [], doc = "Additional shared libraries required by this runtime"),
+        "stdlib": attrs.string(doc = "The python standard library"),
+    }
+    | buck.labels_arg()
+    | buck.contacts_arg(),
+)

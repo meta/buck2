@@ -16,7 +16,8 @@ memory_allocating_actions(
     memory_per_tick_mb = 2,
     tick_duration_ms = 100,
     ticks = 75,
-    sleep_ms = 1000,
+    # Needs to be long enough, since we look at memory pressure over a 60s interval
+    sleep_ms = 60000,
 )
 
 memory_allocating_actions(

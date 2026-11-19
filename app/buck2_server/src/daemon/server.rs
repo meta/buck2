@@ -10,60 +10,78 @@
 
 use std::future;
 use std::io;
+use std::io::Write;
+use std::marker::PhantomData;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
+use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::configure_dice::configure_dice_for_buck;
-use buck2_build_api::spawner::BuckSpawner;
+use buck2_build_api::configure_dice::DiceEngineConfiguration;
+use buck2_build_api::configure_dice::DiceEngineConfigurationInputs;
+use buck2_build_api::configure_dice::DiceRootConfiguration;
+use buck2_build_api::configure_dice::configure_dice_data_for_buck;
 use buck2_certs::validate::CertState;
-use buck2_certs::validate::check_cert_state;
+use buck2_certs::validate::CertStateReport;
+use buck2_certs::validate::INVALID_CERTS_TAG;
+use buck2_certs::validate::check_cert_state_for;
 use buck2_certs::validate::validate_certs;
 use buck2_cli_proto::daemon_api_server::*;
 use buck2_cli_proto::*;
 use buck2_common::buckd_connection::BUCK_AUTH_TOKEN_HEADER;
-use buck2_common::events::HasEvents;
+use buck2_common::cancellation::CancellationScope;
+use buck2_common::ignores::ignore_set::IgnoreSet;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::io::IoProvider;
-use buck2_common::io::trace::TracingIoProvider;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::memory;
 use buck2_common::sqlite::sqlite_db::SqliteIdentity;
+use buck2_common::tenting::TentingAclProvider;
 use buck2_core::buck2_env;
-use buck2_core::error::reload_hard_error_config;
-use buck2_core::error::reset_soft_error_counters;
+use buck2_core::error::SoftErrorContext;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::logging::LogConfigurationReloadHandle;
 use buck2_core::pattern::unparsed::UnparsedPatternPredicate;
+use buck2_core::tag_error;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+use buck2_error::ErrorTag;
+use buck2_error::buck2_error;
 use buck2_events::Event;
 use buck2_events::daemon_id::DaemonId;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::source::ChannelEventSource;
 use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::materialize::materializer::MaterializationMethod;
+use buck2_execute::materialize::materializer::FinalArtifactMaterialization;
 use buck2_execute_impl::executors::local::ForkserverAccess;
+use buck2_fs::async_fs_util::spawn_blocking;
 use buck2_fs::cwd::WorkingDirectory;
 use buck2_fs::fs_util;
 use buck2_fs::fs_util::DiskSpaceStats;
 use buck2_fs::fs_util::disk_space_stats;
 use buck2_fs::paths::abs_path::AbsPathBuf;
+use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_interpreter::starlark_profiler::config::StarlarkProfilerConfiguration;
 use buck2_profile::proto_to_profile_mode;
 use buck2_profile::starlark_profiler_configuration_from_request;
 use buck2_resource_control::buck_cgroup_tree::BuckCgroupTree;
+use buck2_resource_control::buck_cgroup_tree::PreppedBuckCgroups;
 use buck2_server_ctx::bxl::BXL_SERVER_COMMANDS;
+use buck2_server_ctx::concurrency::ConcurrencyHandler;
+use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::late_bindings::AUDIT_SERVER_COMMAND;
+use buck2_server_ctx::late_bindings::LSP_SERVER_COMMAND;
 use buck2_server_ctx::late_bindings::OTHER_SERVER_COMMANDS;
 use buck2_server_ctx::late_bindings::QUERY_SERVER_COMMANDS;
 use buck2_server_ctx::late_bindings::STARLARK_SERVER_COMMAND;
@@ -74,13 +92,16 @@ use buck2_server_ctx::streaming_request_handler::StreamingRequestHandler;
 use buck2_server_ctx::test_command::TEST_COMMAND;
 use buck2_server_starlark_debug::run::run_dap_server_command;
 use buck2_test::executor_launcher::get_all_test_executors;
+use buck2_util::system_stats::container_memory_limit_bytes;
+use buck2_util::system_stats::num_cores;
 use buck2_util::system_stats::system_memory_stats;
 use buck2_util::threads::thread_spawn;
-use dice::DetectCycles;
+use buck2_wrapper_common::invocation_id::TraceId;
+use dice::BranchId;
 use dice::Dice;
 use dice_futures::cancellation::CancellationContext;
+use dice_futures::cancellation::DropcancelHandle;
 use dice_futures::drop::DropTogether;
-use dice_futures::spawn::spawn_dropcancel;
 use dupe::Dupe;
 use futures::Future;
 use futures::FutureExt;
@@ -92,30 +113,38 @@ use futures::channel::mpsc::UnboundedReceiver;
 use futures::channel::mpsc::UnboundedSender;
 use futures::future::BoxFuture;
 use futures::stream;
-use rand::RngCore;
+use pagable::DeferredReadFailures;
+use parking_lot::Mutex;
+use rand::Rng as _;
 use rand::SeedableRng;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tokio::time::timeout;
+use tokio::time::timeout_at;
 use tonic::Code;
 use tonic::Request;
 use tonic::Response;
 use tonic::Status;
 use tonic::service::Interceptor;
-use tonic::service::interceptor;
-use tonic::transport::Server;
+use tonic::service::InterceptorLayer;
 
 use crate::active_commands::ActiveCommand;
 use crate::active_commands::ActiveCommandStateWriter;
 use crate::clean_stale::clean_stale_command;
+use crate::command_observer::ObservedCommand;
 use crate::ctx::ServerCommandContext;
 use crate::daemon::crash::crash;
+use crate::daemon::dice::TenantDiceProvider;
 use crate::daemon::multi_event_stream::MultiEventStream;
 use crate::daemon::server_allocative::spawn_allocative;
 use crate::daemon::state::DaemonState;
+use crate::daemon::state::Registrant;
 use crate::file_status::file_status_command;
-use crate::lsp::run_lsp_server_command;
+use crate::hydration::hydration_command;
 use crate::new_generic::new_generic_command;
+use crate::paging::EvictionGate;
+use crate::paging::cancel_active_page_out;
 use crate::profile::profile_command;
 use crate::profiling_manager::StarlarkProfilingManager;
 use crate::snapshot;
@@ -127,60 +156,220 @@ use crate::version_control_revision;
 // TODO(cjhopman): Figure out a reasonable value for this.
 static DEFAULT_KILL_TIMEOUT: Duration = Duration::from_millis(500);
 
-static DEFAULT_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(4 * 86400);
+/// Extra time past `shutdown_deadline` before the watchdog kills the process.
+///
+/// Only reached if a client still holds a connection open, since `shutdown_deadline` already
+/// covers the drain and the `dice.wait_for_idle()` after it. Just the return and the exit logs
+/// can still be outstanding, so this is small - and it adds directly to how long `buck2 kill`
+/// takes when the drain cannot finish.
+static SHUTDOWN_WATCHDOG_GRACE: Duration = Duration::from_secs(1);
 
-pub trait BuckdServerDelegate: Allocative + Send + Sync {
-    fn force_shutdown_with_timeout(&self, reason: String, timeout: Duration);
+static DEFAULT_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(4 * 86400);
+static CLEAN_STALE_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+#[derive(Clone)]
+struct DaemonInactivityConfig {
+    initial_timeout: Duration,
+    standard_timeout: Duration,
+    use_standard_timeout: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Copy)]
+enum DaemonActivity {
+    CleanStale,
+    Other,
+}
+
+impl DaemonInactivityConfig {
+    fn try_new(
+        daemon_idle_timeout_s: Option<u64>,
+        started_for_clean_stale: bool,
+    ) -> buck2_error::Result<Self> {
+        let mut standard_timeout = daemon_idle_timeout_s
+            .map(Duration::from_secs)
+            .unwrap_or(DEFAULT_INACTIVITY_TIMEOUT);
+        if buck2_env!(
+            "BUCK2_TESTING_INACTIVITY_TIMEOUT",
+            bool,
+            applicability = testing
+        )? {
+            standard_timeout = Duration::from_secs(1);
+        }
+
+        Ok(Self {
+            initial_timeout: if started_for_clean_stale {
+                CLEAN_STALE_INACTIVITY_TIMEOUT.min(standard_timeout)
+            } else {
+                standard_timeout
+            },
+            standard_timeout,
+            use_standard_timeout: Arc::new(AtomicBool::new(!started_for_clean_stale)),
+        })
+    }
+
+    fn note_activity(&self, activity: DaemonActivity) {
+        if let DaemonActivity::Other = activity {
+            self.use_standard_timeout.store(true, Ordering::Release);
+        }
+    }
+
+    fn current_timeout(&self) -> Duration {
+        if self.use_standard_timeout.load(Ordering::Acquire) {
+            self.standard_timeout
+        } else {
+            self.initial_timeout
+        }
+    }
 }
 
 #[derive(Allocative)]
 struct DaemonShutdown {
-    delegate: Box<dyn BuckdServerDelegate>,
-
+    /// Whether a shutdown was triggered.
+    started: AtomicBool,
     /// This channel is used to trigger a graceful shutdown of the grpc server. After
     /// an item is sent on this channel, the server will start rejecting new requests
-    /// and once current requests are finished the server will shutdown.
+    /// and once current requests are finished the server will shutdown. The item is
+    /// the deadline for completing the graceful shutdown.
     #[allocative(skip)]
-    shutdown_channel: UnboundedSender<()>,
+    shutdown_channel: UnboundedSender<tokio::time::Instant>,
 }
 
 impl DaemonShutdown {
-    /// Trigger a graceful server shutdown with a timeout. After the timeout expires, a hard shutdown
-    /// will be triggered.
+    /// Trigger a graceful server shutdown with a timeout. Once the timeout expires,
+    /// `spawn_shutdown_watchdog` takes the process down whether or not the drain finished.
+    ///
+    /// A daemon shuts down once: only the first call does anything.
     ///
     /// As we might be processing a `kill()` (or other) request, we cannot wait for the server to actually
     /// shutdown (as it will wait for current requests to finish), so this returns immediately.
     fn start_shutdown(&self, reason: buck2_data::DaemonShutdown, timeout: Option<Duration>) {
-        // It would be better to pass reason to be logged later in a more structured way, but this can't be done via
-        // the existing graceful (not forced) shutdown mechanism (serve_with_incoming_shutdown), so logging here instead.
-        tracing::warn!("triggered shutdown: {}", reason.reason);
+        if self.started.swap(true, Ordering::Relaxed) {
+            return;
+        }
+
+        // The daemon's stderr is `buckd.stderr`, which the client tails into the console and the
+        // invocation record and `rage` collects: it is where a daemon's last words are looked
+        // for, so the reason goes there directly.
+        eprintln!("triggered shutdown: {}", reason.reason);
         crate::active_commands::broadcast_shutdown(&reason);
 
         let timeout = timeout.unwrap_or(DEFAULT_KILL_TIMEOUT);
+        let shutdown_deadline = tokio::time::Instant::now() + timeout;
 
         // Ignore errors on shutdown_channel as that would mean we've already started shutdown;
-        let _ = self.shutdown_channel.unbounded_send(());
-        self.delegate
-            .force_shutdown_with_timeout(reason.to_string(), timeout);
+        let _ = self.shutdown_channel.unbounded_send(shutdown_deadline);
+    }
+
+    /// Whether a shutdown was triggered. The daemon then takes no new commands.
+    fn has_started(&self) -> bool {
+        self.started.load(Ordering::Relaxed)
     }
 }
 
 #[derive(Allocative)]
 pub struct BuckdServerInitPreferences {
-    pub detect_cycles: Option<DetectCycles>,
     pub enable_trace_io: bool,
     pub reject_materializer_state: Option<SqliteIdentity>,
     pub daemon_startup_config: DaemonStartupConfig,
+    pub daemon_originating_cgroup: Option<String>,
+    pub started_for_clean_stale: bool,
+    /// This daemon runs as a thread inside its only client (`--no-buckd`).
+    pub in_process: bool,
+}
+
+#[derive(Allocative, Clone)]
+pub(crate) struct TenantStateInitPreferences {
+    pub(crate) enable_trace_io: bool,
+    pub(crate) reject_materializer_state: Option<SqliteIdentity>,
+    pub(crate) daemon_startup_config: DaemonStartupConfig,
+    pub(crate) in_process: bool,
 }
 
 impl BuckdServerInitPreferences {
-    pub async fn construct_dice(
+    pub(crate) fn split(self) -> (TenantStateInitPreferences, Option<String>) {
+        let Self {
+            enable_trace_io,
+            reject_materializer_state,
+            daemon_startup_config,
+            daemon_originating_cgroup,
+            in_process,
+            ..
+        } = self;
+        (
+            TenantStateInitPreferences {
+                enable_trace_io,
+                reject_materializer_state,
+                daemon_startup_config,
+                in_process,
+            },
+            daemon_originating_cgroup,
+        )
+    }
+}
+
+pub(crate) struct TenantDiceInputs<'a> {
+    pub(crate) io: Arc<dyn IoProvider>,
+    pub(crate) digest_config: DigestConfig,
+    pub(crate) ignore_set: Arc<IgnoreSet>,
+    pub(crate) root_config: &'a LegacyBuckConfig,
+    pub(crate) tenting_acl_provider: Option<Arc<dyn TentingAclProvider>>,
+    pub(crate) dice_state_path: &'a Path,
+    pub(crate) provider: &'a TenantDiceProvider,
+    pub(crate) lifetime_guard: Option<Arc<dyn Send + Sync>>,
+    pub(crate) memory_pressure: Option<watch::Receiver<bool>>,
+}
+
+impl TenantStateInitPreferences {
+    pub(crate) async fn construct_dice(
         &self,
-        io: Arc<dyn IoProvider>,
-        digest_config: DigestConfig,
-        root_config: &LegacyBuckConfig,
-    ) -> buck2_error::Result<Arc<Dice>> {
-        configure_dice_for_buck(io, digest_config, Some(root_config), self.detect_cycles).await
+        inputs: TenantDiceInputs<'_>,
+    ) -> buck2_error::Result<(Arc<ConcurrencyHandler>, BranchId, Arc<EvictionGate>)> {
+        let TenantDiceInputs {
+            io,
+            digest_config,
+            ignore_set,
+            root_config,
+            tenting_acl_provider,
+            dice_state_path,
+            provider,
+            lifetime_guard,
+            memory_pressure,
+        } = inputs;
+        let hydration = self
+            .daemon_startup_config
+            .startup_options
+            .hydration
+            .as_ref();
+        let configuration = DiceEngineConfiguration::resolve(DiceEngineConfigurationInputs {
+            dice_state_path: hydration.map(|_| provider.state_path(dice_state_path)),
+            pagable_storage_backend: hydration
+                .map_or_else(Default::default, |h| h.pagable_storage_backend),
+            page_out_policy: hydration.map_or_else(Default::default, |h| h.page_out_policy),
+            eviction_policy: hydration.map_or_else(Default::default, |h| h.eviction_policy),
+            defer_field_reads: self
+                .daemon_startup_config
+                .daemon_buck_settings()
+                .hydration
+                .defer_field_reads(),
+        })?;
+        let data = configure_dice_data_for_buck(DiceRootConfiguration {
+            io,
+            digest_config,
+            ignore_set,
+            root_config: Some(root_config),
+            tenting_acl_provider,
+            buck_settings: self.daemon_startup_config.daemon_buck_settings().dupe(),
+        })?;
+        provider
+            .create_with_lifetime_guard(
+                configuration,
+                data,
+                lifetime_guard,
+                memory_pressure.filter(|_| {
+                    hydration.is_some_and(|h| h.eviction_policy.evicts_on_memory_pressure())
+                }),
+            )
+            .await
     }
 }
 
@@ -209,23 +398,47 @@ impl Interceptor for BuckCheckAuthTokenInterceptor {
 
 #[derive(Allocative)]
 pub(crate) struct BuckdServerData {
-    /// The flag that is set to true when server is shutting down.
-    stop_accepting_requests: AtomicBool,
     #[allocative(skip)]
     process_info: DaemonProcessInfo,
     base_daemon_constraints: buck2_cli_proto::DaemonConstraints,
+    /// Whether the daemon's tenants record I/O traces: a startup choice that every tenant's I/O
+    /// provider is built from, so it is known before any tenant initializes.
+    enable_trace_io: bool,
     start_time: prost_types::Timestamp,
     start_instant: Instant,
-    daemon_shutdown: DaemonShutdown,
+    daemon_shutdown: Arc<DaemonShutdown>,
     daemon_state: Arc<DaemonState>,
     #[allocative(skip)]
     cert_state: CertState,
+    #[allocative(skip)]
+    inactivity_config: DaemonInactivityConfig,
     #[allocative(skip)]
     command_channel: UnboundedSender<()>,
     #[allocative(skip)]
     log_reload_handle: Arc<dyn LogConfigurationReloadHandle>,
     #[allocative(skip)]
     rt: Handle,
+}
+
+/// How long a daemon that is restarting gives its commands to hear of it.
+const RESTART_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// The shutdown of the daemon that this process runs. An in-process daemon's is not kept
+/// here: its client is the only one that could start another.
+static DAEMON_SHUTDOWN: Mutex<Weak<DaemonShutdown>> = Mutex::new(Weak::new());
+
+/// Shuts the daemon down for `error`, for its clients to start another. An in-process daemon
+/// is left running.
+pub fn restart_daemon(error: &buck2_error::Error) {
+    let Some(daemon_shutdown) = DAEMON_SHUTDOWN.lock().upgrade() else {
+        return;
+    };
+    let shutdown = buck2_data::DaemonShutdown {
+        reason: format!("{error:#}"),
+        callers: Vec::new(),
+        error_tag: None,
+    };
+    daemon_shutdown.start_shutdown(shutdown, Some(RESTART_TIMEOUT));
 }
 
 /// The BuckdServer implements the DaemonApi.
@@ -235,95 +448,426 @@ pub(crate) struct BuckdServerData {
 #[derive(Allocative)]
 pub struct BuckdServer(Arc<BuckdServerData>);
 
+/// A reserved tenant generation whose registration has not run to completion. Dropping it with
+/// the registration unfinished, as a client's disconnect does, evicts the generation when this
+/// was its last registrant and it never initialized, so that it does not stay registered without
+/// a client or a tenant; a generation that other clients are registering, or that already serves
+/// clients, stays.
+struct PendingRegistration {
+    server: Option<BuckdServer>,
+    registrant: Option<Registrant>,
+    context: ClientContext,
+    generation: u64,
+    published: bool,
+}
+
+impl PendingRegistration {
+    fn disarm(&mut self) {
+        self.server = None;
+        if let Some(registrant) = self.registrant.take() {
+            registrant.leave();
+        }
+    }
+}
+
+impl Drop for PendingRegistration {
+    fn drop(&mut self) {
+        let Some(server) = self.server.take() else {
+            return;
+        };
+        let unclaimed = self
+            .registrant
+            .take()
+            .is_some_and(|registrant| registrant.leave());
+        tracing::info!(
+            generation = self.generation,
+            unclaimed,
+            "Tenant registration dropped before it completed"
+        );
+        if !unclaimed {
+            return;
+        }
+        let context = std::mem::take(&mut self.context);
+        let generation = self.generation;
+        let published = self.published;
+        server.0.rt.clone().spawn(async move {
+            server
+                .evict_failed_registration(&context, generation, published)
+                .await;
+        });
+    }
+}
+
 impl BuckdServer {
+    fn shutdown_after_final_tenant_eviction(&self) {
+        self.0.daemon_shutdown.start_shutdown(
+            buck2_data::DaemonShutdown {
+                reason: "The final tenant was evicted".to_owned(),
+                callers: Vec::new(),
+                error_tag: None,
+            },
+            None,
+        );
+    }
+
+    /// The spec of the proxy for a tenant generation, from what is known before the tenant
+    /// initializes. The I/O provider and the materializer state identity come out of
+    /// initialization, and clients take them from the daemon, not the proxy.
+    fn tenant_proxy_spec(
+        &self,
+        context: &ClientContext,
+        generation: u64,
+    ) -> buck2_error::Result<buck2_common::daemon_compatibility::TenantProxySpec> {
+        let mut constraints = self.0.base_daemon_constraints.clone();
+        constraints.extra = Some(buck2_cli_proto::ExtraDaemonConstraints {
+            trace_io_enabled: self.0.enable_trace_io,
+            materializer_state_identity: None,
+        });
+        let key = buck2_common::daemon_compatibility::DaemonCompatibilityKey::new(
+            &constraints.version,
+            constraints.user_version.as_deref(),
+            constraints
+                .daemon_startup_config
+                .as_deref()
+                .internal_error("Daemon constraints lack a startup config")?,
+            self.0.enable_trace_io,
+        );
+        Ok(buck2_common::daemon_compatibility::TenantProxySpec {
+            reference: buck2_common::daemon_compatibility::UnidaemonTenantReference {
+                compatibility_key: key,
+                daemon_id: constraints.daemon_id.clone(),
+                generation,
+            },
+            tenant: context
+                .tenant_identity
+                .clone()
+                .internal_error("Client context lacks a tenant identity")?,
+            daemon: self.0.process_info.clone(),
+            constraints,
+            io_provider: None,
+        })
+    }
+
+    /// Registers the tenant addressed by `context`. With `proxy`, the tenant's proxy is
+    /// published before the tenant initializes, so that a `kill` that arrives during
+    /// initialization reaches the tenant through the proxy as it does afterwards. Returns the
+    /// generation and the proxy's connection record.
+    async fn register_tenant_with_proxy(
+        &self,
+        context: &ClientContext,
+        reject_materializer_state: Option<SqliteIdentity>,
+    ) -> Result<(u64, DaemonProcessInfo), Status> {
+        let data = self.0.daemon_state.data().clone();
+        let reservation = data
+            .reserve_tenant_for_client_context(context)
+            .map_err(|error| Status::failed_precondition(format!("{error:#}")))?;
+        let generation = reservation.generation();
+        let mut pending = PendingRegistration {
+            server: Some(BuckdServer(self.0.dupe())),
+            registrant: Some(reservation.registrant()),
+            context: context.clone(),
+            generation,
+            published: false,
+        };
+        let launch = super::proxies::LAUNCH_PROXY
+            .get()
+            .ok_or_else(|| Status::unimplemented("Tenant proxy launcher is not installed"))?;
+        // An evicted generation's proxy owns the tenant's directory until its eviction
+        // completes, so the replacement's proxy cannot publish before then.
+        data.wait_for_earlier_evictions(&reservation).await;
+        let spec = self
+            .tenant_proxy_spec(context, generation)
+            .map_err(|error| Status::internal(format!("{error:#}")))?;
+        let published = match launch(spec, self.proxy_supervisor()).await {
+            Ok(info) => {
+                pending.published = true;
+                info
+            }
+            Err(error) => {
+                pending.disarm();
+                self.evict_failed_registration(context, generation, false)
+                    .await;
+                return Err(Status::internal(format!(
+                    "Launching tenant proxy: {error:#}"
+                )));
+            }
+        };
+        match data
+            .register_reserved_tenant(reservation, reject_materializer_state)
+            .await
+        {
+            Ok(generation) => {
+                pending.disarm();
+                Ok((generation, published))
+            }
+            Err(error) => {
+                pending.disarm();
+                self.evict_failed_registration(context, generation, true)
+                    .await;
+                Err(Status::failed_precondition(format!("{error:#}")))
+            }
+        }
+    }
+
+    /// Evicts a generation whose registration failed. The eviction retires the generation's
+    /// proxy; a proxy that published after the generation was already evicted is retired here,
+    /// as nothing else would. The proxy of a final tenant is left to exit with the daemon. No
+    /// watchdog bounds the eviction: no client waits for it, and it completes once the tenant's
+    /// initialization, which cannot be interrupted, has returned.
+    async fn evict_failed_registration(
+        &self,
+        context: &ClientContext,
+        generation: u64,
+        published: bool,
+    ) {
+        let mut daemon_exits = false;
+        match self
+            .0
+            .daemon_state
+            .data()
+            .evict_tenant_generation(context, Some(generation))
+        {
+            Ok(Some(eviction)) => {
+                eviction.completed.await;
+                daemon_exits = eviction.final_tenant;
+                if daemon_exits {
+                    self.shutdown_after_final_tenant_eviction();
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(generation, "Evicting a failed registration: {error:#}");
+            }
+        }
+        if published
+            && !daemon_exits
+            && let (Some(retire), Some(identity)) = (
+                super::proxies::RETIRE_PROXY.get(),
+                context.tenant_identity.clone(),
+            )
+        {
+            if let Err(error) = tokio::task::spawn_blocking(move || {
+                retire(&identity.project_root, &identity.isolation, generation)
+            })
+            .await
+            {
+                tracing::warn!(
+                    generation,
+                    "Retiring the proxy of a failed registration: {error:#}"
+                );
+            }
+        }
+    }
+
+    fn proxy_supervisor(&self) -> super::proxies::ProxySupervisor {
+        let weak = Arc::downgrade(&self.0);
+        let replacement = weak.clone();
+        super::proxies::ProxySupervisor {
+            runtime: self.0.rt.clone(),
+            begin_eviction: Arc::new(move |spec, recovery_allowed| {
+                let Some(inner) = weak.upgrade() else {
+                    return Ok(None);
+                };
+                let server = BuckdServer(inner);
+                let context = ClientContext {
+                    working_dir: spec.tenant.project_root.clone(),
+                    tenant_identity: Some(spec.tenant),
+                    command_name: "proxy-liveness-loss".to_owned(),
+                    ..Default::default()
+                };
+                let Some(eviction) = server.0.daemon_state.data().evict_tenant_after_proxy_loss(
+                    &context,
+                    spec.reference.generation,
+                    recovery_allowed,
+                )?
+                else {
+                    return Ok(None);
+                };
+                super::proxies::arm_tenant_eviction_watchdog(
+                    &eviction,
+                    super::proxies::PROXY_EVICTION_TIMEOUT,
+                );
+                let final_tenant = eviction.final_tenant;
+                let recovery_allowed = eviction.recovery_allowed.clone();
+                Ok(Some(super::proxies::ProxyEviction {
+                    final_tenant,
+                    recovery_allowed,
+                    completed: async move {
+                        eviction.completed.await;
+                        if final_tenant {
+                            server.shutdown_after_final_tenant_eviction();
+                        }
+                    }
+                    .boxed(),
+                }))
+            }),
+            register_replacement: Arc::new(move |previous| {
+                let weak = replacement.clone();
+                async move {
+                    let Some(inner) = weak.upgrade() else {
+                        return Ok(None);
+                    };
+                    let server = BuckdServer(inner);
+                    server
+                        .check_if_accepting_requests()
+                        .map_err(buck2_error::Error::from)?;
+                    let context = ClientContext {
+                        working_dir: previous.tenant.project_root.clone(),
+                        tenant_identity: Some(previous.tenant),
+                        command_name: "recover-tenant-proxy".to_owned(),
+                        ..Default::default()
+                    };
+                    if server
+                        .0
+                        .daemon_state
+                        .data()
+                        .tenant_generation_for_client_context(&context)?
+                        .is_some()
+                    {
+                        return Ok(None);
+                    }
+                    let (_, published) = server
+                        .register_tenant_with_proxy(&context, None)
+                        .await
+                        .map_err(|status| {
+                            buck2_error::buck2_error!(
+                                buck2_error::ErrorTag::Input,
+                                "{}",
+                                status.message()
+                            )
+                        })?;
+                    Ok(Some(published))
+                }
+                .boxed()
+            }),
+        }
+    }
+
+    #[tracing::instrument(name = "daemon_listener", skip_all)]
     pub async fn run(
         fb: fbinit::FacebookInit,
         log_reload_handle: Arc<dyn LogConfigurationReloadHandle>,
         paths: InvocationPaths,
-        delegate: Box<dyn BuckdServerDelegate>,
         init_ctx: BuckdServerInitPreferences,
         process_info: DaemonProcessInfo,
-        cgroup_tree: Option<BuckCgroupTree>,
+        prepped_cgroups: Option<PreppedBuckCgroups>,
         base_daemon_constraints: buck2_cli_proto::DaemonConstraints,
         listener: Pin<Box<dyn Stream<Item = Result<tokio::net::TcpStream, io::Error>> + Send>>,
         rt: Handle,
         daemon_id: DaemonId,
+        ready: Box<dyn FnOnce() + Send>,
     ) -> buck2_error::Result<()> {
         let now = SystemTime::now();
         let now = now.duration_since(SystemTime::UNIX_EPOCH)?;
 
-        let (shutdown_channel, shutdown_receiver): (UnboundedSender<()>, _) = mpsc::unbounded();
+        let (shutdown_channel, shutdown_receiver): (UnboundedSender<tokio::time::Instant>, _) =
+            mpsc::unbounded();
         let (command_channel, command_receiver): (UnboundedSender<()>, _) = mpsc::unbounded();
 
-        let materializations = MaterializationMethod::try_new_from_config_value(
-            init_ctx.daemon_startup_config.materializations.as_deref(),
-        )?;
+        let final_artifact_materialization =
+            FinalArtifactMaterialization::try_new_from_config_value(
+                init_ctx
+                    .daemon_startup_config
+                    .startup_options
+                    .materializations
+                    .as_deref(),
+            )?;
 
-        // Create buck-out and potentially chdir to there.
-        fs_util::create_dir_all(paths.buck_out_path())
-            .buck_error_context("Error creating buck_out_path")?;
+        let working_dir = paths.daemon_working_dir()?;
+        fs_util::create_dir_all(&working_dir)
+            .tag(ErrorTag::InvalidBuckOut)
+            .buck_error_context("Error creating daemon working directory")?;
 
-        // TODO(scottcao): make this not optional
         let cwd = {
-            let dir = WorkingDirectory::open(paths.buck_out_path())?;
+            let dir = WorkingDirectory::open(working_dir)?;
             dir.chdir_and_promise_it_will_not_change()?;
-            Some(dir)
+            dir
+        };
+
+        let cgroup_tree = if let Some(prepped_cgroups) = prepped_cgroups {
+            Some(
+                BuckCgroupTree::set_up(
+                    prepped_cgroups,
+                    &init_ctx
+                        .daemon_startup_config
+                        .startup_options
+                        .resource_control,
+                )
+                .await?,
+            )
+        } else {
+            None
         };
 
         let cert_state = CertState::new().await;
         certs_validation_background_job(cert_state.dupe()).await;
+        #[cfg(unix)]
+        executable_cache::keep_cached_background_job()?;
+        // Keeps the variable in `buck2 help-env` on platforms without the job.
+        #[cfg(not(unix))]
+        buck2_core::buck2_env_name!("DOTSLASH_ARTIFACT_DIR");
 
+        let inactivity_config = DaemonInactivityConfig::try_new(
+            init_ctx
+                .daemon_startup_config
+                .startup_options
+                .daemon_idle_timeout_s,
+            init_ctx.started_for_clean_stale,
+        )?;
+        let in_process = init_ctx.in_process;
+
+        let enable_trace_io = init_ctx.enable_trace_io;
         let daemon_state = Arc::new(
             DaemonState::new(
                 fb,
                 paths,
                 init_ctx,
                 &rt,
-                materializations,
+                final_artifact_materialization,
                 cwd,
                 cgroup_tree,
                 daemon_id,
+                base_daemon_constraints.user_version.clone(),
             )
             .await?,
         );
 
-        #[cfg(fbcode_build)]
-        {
-            let root_path =
-                std::path::PathBuf::from(&daemon_state.paths.project_root().root().as_os_str());
-            if !buck2_env!("BUCK2_DISABLE_EDEN_HEALTH_CHECK", bool)?
-                && detect_eden::is_eden(root_path).unwrap_or(false)
-            {
-                tracing::trace!("EdenFS root detected; starting health check job");
-                eden_health::edenfs_health_check(fb, daemon_state.paths.roots.project_root.dupe())
-                    .await;
-            }
-        }
-
         let auth_token = process_info.auth_token.clone();
+        let daemon_shutdown = Arc::new(DaemonShutdown {
+            started: AtomicBool::new(false),
+            shutdown_channel,
+        });
+        if !in_process {
+            *DAEMON_SHUTDOWN.lock() = Arc::downgrade(&daemon_shutdown);
+        }
         let api_server = BuckdServer(Arc::new(BuckdServerData {
-            stop_accepting_requests: AtomicBool::new(false),
             process_info,
             base_daemon_constraints,
+            enable_trace_io,
             start_time: prost_types::Timestamp {
                 seconds: now.as_secs() as i64,
                 nanos: now.subsec_nanos() as i32,
             },
             start_instant: Instant::now(),
-            daemon_shutdown: DaemonShutdown {
-                delegate,
-                shutdown_channel,
-            },
-            daemon_state,
+            daemon_shutdown,
+            daemon_state: daemon_state.clone(),
             cert_state,
+            inactivity_config: inactivity_config.clone(),
             command_channel,
             log_reload_handle,
             rt,
         }));
 
-        let shutdown = server_shutdown_signal(command_receiver, shutdown_receiver)?;
-        let server = Server::builder()
-            .layer(interceptor(BuckCheckAuthTokenInterceptor { auth_token }))
+        let (shutdown, shutdown_deadline) = server_shutdown_signal(
+            command_receiver,
+            shutdown_receiver,
+            inactivity_config,
+            in_process,
+        );
+        let server = buck2_grpc::server_builder()
+            .layer(InterceptorLayer::new(BuckCheckAuthTokenInterceptor {
+                auth_token,
+            }))
             .add_service(
                 DaemonApiServer::new(api_server)
                     .max_encoding_message_size(usize::MAX)
@@ -331,7 +875,31 @@ impl BuckdServer {
             )
             .serve_with_incoming_shutdown(listener, shutdown);
 
-        server.await?;
+        tracing::info!("Starting server");
+        if let Some(sleep_secs) = buck2_env!(
+            "BUCK2_TEST_INIT_DATA_SLEEP_SECS",
+            type = u64,
+            applicability = testing
+        )? {
+            tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
+        }
+
+        // The listener accepted connections since before the daemon state existed, but answers
+        // them only from here on.
+        ready();
+        let server_result = server.await;
+
+        let shutdown_deadline = shutdown_deadline
+            .await
+            .unwrap_or_else(|_| tokio::time::Instant::now() + DEFAULT_KILL_TIMEOUT);
+        if timeout_at(shutdown_deadline, daemon_state.data().wait_for_dice_idle())
+            .await
+            .is_err()
+        {
+            eprintln!("timed out waiting for DICE tasks to finish during shutdown");
+        }
+
+        server_result?;
 
         Ok(())
     }
@@ -373,10 +941,11 @@ impl BuckdServer {
         }?;
 
         let init_request = Request::new(init_request);
+        let activity_sender = self.0.command_channel.clone();
         self.run_streaming(
             init_request,
             opts,
-            |ctx, partial_result_dispatcher, init_req| {
+            move |ctx, partial_result_dispatcher, init_req| {
                 // TODO: Use the PartialResultDispatcher instead of writing events.
                 func(
                     ctx,
@@ -384,157 +953,287 @@ impl BuckdServer {
                     init_req
                         .client_context()
                         .expect("already checked for a valid context"),
-                    StreamingRequestHandler::new(req),
+                    StreamingRequestHandler::new(req, activity_sender.clone()),
                 )
             },
         )
         .await
     }
 
-    async fn run_streaming_fallible<Req, Res, PartialRes, F>(
+    /// The body of `run_streaming`, compiled once for all commands. `#[inline(never)]` keeps
+    /// it from being inlined back into each command's `run_streaming` instantiation.
+    #[inline(never)]
+    fn run_streaming_erased(
         &self,
-        req: Request<Req>,
-        opts: impl StreamingCommandOptions<Req>,
-        func: F,
-    ) -> buck2_error::Result<Response<ResponseStream>>
-    where
-        F: for<'a> FnOnce(
-                &'a ServerCommandContext,
-                PartialResultDispatcher<PartialRes>,
-                Req,
-            ) -> BoxFuture<'a, buck2_error::Result<Res>>
-            + Send
-            + 'static,
-        Req: HasClientContext + HasBuildOptions + Send + Sync + 'static,
-        Res: Into<command_result::Result> + Send + 'static,
-        PartialRes: Into<partial_result::PartialResult> + Send + 'static,
-    {
-        if buck2_env!("BUCK2_TEST_FAIL_STREAMING", bool, applicability = testing).unwrap() {
-            Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "Injected client streaming error"
-            ))?;
-        }
+        command: Box<dyn ErasedStreamingCommand>,
+    ) -> BoxFuture<'_, buck2_error::Result<Response<ResponseStream>>> {
+        Box::pin(async move {
+            let command_start = Instant::now();
 
-        let client_ctx = req.get_ref().client_context()?;
+            if buck2_env!("BUCK2_TEST_FAIL_STREAMING", bool, applicability = testing).unwrap() {
+                Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Injected client streaming error"
+                ))?;
+            }
 
-        // This will reset counters incorrectly if commands are running concurrently.
-        // This is fine.
-        reset_soft_error_counters();
+            let client_ctx = command.client_context()?;
+            let soft_error_context = Arc::new(SoftErrorContext::new(
+                &client_ctx.buck2_hard_error,
+                &client_ctx.buck2_show_soft_errors,
+            )?);
 
-        reload_hard_error_config(&client_ctx.buck2_hard_error)?;
+            command.pre_run(self)?;
 
-        OneshotCommandOptions::pre_run(&opts, self)?;
+            let daemon_state = self.0.daemon_state.dupe();
+            let trace_id = client_ctx.trace_id.parse()?;
+            let (events, dispatch) = daemon_state.prepare_events(trace_id).await?;
+            let dispatch = dispatch.with_soft_error_context(soft_error_context);
+            let ActiveCommand {
+                guard,
+                daemon_shutdown_channel,
+                state,
+            } = ActiveCommand::new(&dispatch, client_ctx.sanitized_argv.clone());
 
-        let daemon_state = self.0.daemon_state.dupe();
-        let trace_id = client_ctx.trace_id.parse()?;
-        let (events, dispatch) = daemon_state.prepare_events(trace_id).await?;
-        let ActiveCommand {
-            guard,
-            daemon_shutdown_channel,
-            state,
-        } = ActiveCommand::new(&dispatch, client_ctx.sanitized_argv.clone());
-        let data = daemon_state.data();
+            // A command that contends for the DICE graph is starting; cancel any
+            // in-progress idle page-out so it yields resources back. Read-only /
+            // debug commands opt out (see `triggers_idle_page_out`).
+            let triggers_idle_page_out = command.triggers_idle_page_out();
+            let prevents_background_cleanup = command.prevents_background_cleanup();
+            if triggers_idle_page_out {
+                cancel_active_page_out();
+            }
 
-        // Fire off a system-wide event to record the memory usage of this process.
-        // TODO(ezgi): add it to oneshot command too
-        let system_warning_config = &data.system_warning_config;
-        dispatch.instant_event(buck2_data::SystemInfo {
-            system_total_memory_bytes: Some(system_memory_stats()),
-            memory_pressure_threshold_percent: system_warning_config
-                .memory_pressure_threshold_percent,
-            total_disk_space_bytes: disk_space_stats(daemon_state.paths.buck_out_path())
-                .ok()
-                .map(|DiskSpaceStats { total_space, .. }| total_space),
-            remaining_disk_space_threshold_gb: system_warning_config
-                .remaining_disk_space_threshold_gb,
-            min_re_download_bytes_threshold: system_warning_config.min_re_download_bytes_threshold,
-            avg_re_download_bytes_per_sec_threshold: system_warning_config
-                .avg_re_download_bytes_per_sec_threshold,
-            optin_vpn_check_targets_regex: system_warning_config
-                .optin_vpn_check_targets_regex
-                .clone(),
-            enable_stable_revision_check: system_warning_config.enable_stable_revision_check,
-            enable_health_check_process_isolation: system_warning_config
-                .enable_health_check_process_isolation,
-        });
-
-        // Fire off a snapshot before we start doing anything else. We use the metrics emitted here
-        // as a baseline.
-        let snapshot_collector =
-            SnapshotCollector::new(data.dupe(), daemon_state.paths.buck_out_path());
-        dispatch.instant_event(Box::new(snapshot_collector.create_snapshot()));
-        let cert_state = self.0.cert_state.dupe();
-
-        let repo_root = daemon_state.paths.project_root().root().to_buf();
-        // Spawn an async task to collect expensive info
-        // We start collecting immediately, and emit the event as soon as it is ready
-        let version_control_revision_collector =
-            version_control_revision::spawn_version_control_collector(dispatch.dupe(), repo_root);
-
-        #[cfg(unix)]
-        let memory_reporter = daemon_state.data.memory_tracker.as_ref().map(|t| {
-            buck2_resource_control::memory_tracker::spawn_memory_reporter(dispatch.dupe(), t.dupe())
-        });
-
-        let resp = streaming(
-            req,
-            events,
-            state,
-            dispatch.dupe(),
-            daemon_shutdown_channel,
-            move |req, cancellations| {
-                async move {
-                    let result: buck2_error::Result<Res> = try {
-                        let base_context =
-                            daemon_state.prepare_command(dispatch.dupe(), guard).await?;
-
-                        let client_ctx = req.client_context()?;
-
-                        let profiling_manager = StarlarkProfilingManager::new(
-                            client_ctx.profile_pattern_opts.as_ref(),
-                            opts.starlark_profiler_instrumentation_override(&req)?,
-                            &base_context.events,
-                        )?;
-
-                        let context = ServerCommandContext::new(
-                            base_context,
-                            client_ctx,
-                            profiling_manager,
-                            req.build_options(),
-                            &daemon_state.paths,
-                            cert_state.dupe(),
-                            snapshot_collector,
-                            cancellations,
-                        )?;
-
-                        let res =
-                            func(&context, PartialResultDispatcher::new(dispatch.dupe()), req)
-                                .await;
-
-                        context.finalize()?;
-                        res?
-                    };
-
-                    // Do not kill the process prematurely.
-                    drop(version_control_revision_collector);
-                    #[cfg(unix)]
-                    drop(memory_reporter);
-                    match result {
-                        Ok(_) => dispatch.command_result(result_to_command_result(result)),
-                        Err(e) => match check_cert_state(cert_state).await {
-                            Some(err) => dispatch.command_result(error_to_command_result(
-                                err.context(format!("{e:?}")).into(),
-                            )),
-                            _ => dispatch.command_result(error_to_command_result(e)),
-                        },
-                    }
+            let data = daemon_state.data();
+            // Observed before the tenant is set up, so a command whose tenant fails to set up, or
+            // whose client goes away meanwhile, is reported too.
+            let observed_command = ObservedCommand::start(
+                dispatch.trace_id(),
+                client_ctx,
+                &data.tenant_paths_for_client_context(client_ctx)?,
+            )?;
+            let tenant = match data.tenant_for_client_context(client_ctx).await {
+                Ok(tenant) => tenant,
+                Err(e) => {
+                    let e = error_before_stream(self.0.cert_state.dupe(), e).await;
+                    observed_command.end(&error_to_command_result(e.dupe()));
+                    return Ok(error_to_response_stream(e));
                 }
-                .boxed()
-            },
-            &self.0.rt,
-        );
-        Ok(resp)
+            };
+            let repo = tenant.repo.dupe();
+
+            // The total disk space on `buck-out`, effectively fixed for the daemon's life.
+            // Captured here alongside `SystemInfo` and handed to this command's
+            // `PagingManager`, which pairs it with the command-end snapshot's used-disk
+            // reading to gate idle page-out without a second disk stat.
+            let total_disk_space_bytes = disk_space_stats(repo.paths.buck_out_path())
+                .ok()
+                .map(|DiskSpaceStats { total_space, .. }| total_space);
+
+            // Fire off a system-wide event to record the memory usage of this process.
+            // TODO(ezgi): add it to oneshot command too
+            let system_warning_config = &repo.system_warning_config;
+            dispatch.instant_event(buck2_data::SystemInfo {
+                system_total_memory_bytes: Some(system_memory_stats()),
+                memory_pressure_threshold_percent: system_warning_config
+                    .memory_pressure_threshold_percent,
+                total_disk_space_bytes,
+                remaining_disk_space_threshold_gb: system_warning_config
+                    .remaining_disk_space_threshold_gb,
+                min_re_download_bytes_threshold: system_warning_config
+                    .min_re_download_bytes_threshold,
+                avg_re_download_bytes_per_sec_threshold: system_warning_config
+                    .avg_re_download_bytes_per_sec_threshold,
+                optin_vpn_check_targets_regex: system_warning_config
+                    .optin_vpn_check_targets_regex
+                    .clone(),
+                enable_stable_revision_check: system_warning_config.enable_stable_revision_check,
+                enable_health_check_process_isolation: system_warning_config
+                    .enable_health_check_process_isolation,
+                daemon_cgroup_path: {
+                    #[cfg(unix)]
+                    {
+                        data.memory_tracker
+                            .as_ref()
+                            .map(|mt| mt.cgroup_tree.daemon().path().to_string())
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        None
+                    }
+                },
+                allprocs_cgroup_path: {
+                    #[cfg(unix)]
+                    {
+                        data.memory_tracker
+                            .as_ref()
+                            .map(|mt| mt.cgroup_tree.allprocs().path().to_string())
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        None
+                    }
+                },
+                daemon_cgroup_slice_path: {
+                    #[cfg(unix)]
+                    {
+                        std::fs::read_to_string("/proc/self/cgroup")
+                            .ok()
+                            .and_then(|s| {
+                                s.lines()
+                                    .find_map(|l| l.strip_prefix("0::"))
+                                    .map(|p| format!("/sys/fs/cgroup{}", p))
+                            })
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        None
+                    }
+                },
+                num_cores: Some(num_cores() as u64),
+                container_memory_limit_bytes: container_memory_limit_bytes(),
+            });
+
+            // Fire off a snapshot before we start doing anything else. We use the metrics emitted here
+            // as a baseline.
+            let snapshot_collector =
+                SnapshotCollector::new(data.dupe(), tenant.dupe(), self.0.rt.clone());
+            dispatch.instant_event(Box::new(snapshot_collector.create_snapshot().await));
+            let cert_state = self.0.cert_state.dupe();
+
+            let repo_root = repo.paths.project_root().root().to_buf();
+            // Spawn an async task to collect expensive info
+            // We start collecting immediately, and emit the event as soon as it is ready
+            let version_control_revision_collector =
+                version_control_revision::spawn_version_control_collector(
+                    dispatch.dupe(),
+                    repo_root,
+                );
+
+            #[cfg(unix)]
+            let memory_reporter = daemon_state.data.memory_tracker.as_ref().map(|t| {
+                buck2_resource_control::memory_tracker::spawn_memory_reporter(
+                    dispatch.dupe(),
+                    t.dupe(),
+                )
+            });
+
+            let cancellation = tenant.cancellation.clone();
+            let resp = streaming(
+                events,
+                state,
+                observed_command,
+                dispatch.dupe(),
+                daemon_shutdown_channel,
+                &cancellation,
+                move |cancellations| {
+                    async move {
+                        let _background_cleanup_guard = if prevents_background_cleanup {
+                            Some(repo.materializer.prevent_background_cleanup().await)
+                        } else {
+                            None
+                        };
+                        let result: buck2_error::Result<command_result::Result> = try {
+                            let base_context = daemon_state
+                                .prepare_command(tenant, dispatch.dupe(), guard)
+                                .await?;
+
+                            let client_ctx = command.client_context()?;
+
+                            let instrumentation = command.starlark_profiler_configuration(
+                                base_context.repo().paths.project_root(),
+                            )?;
+                            let profiling_manager = StarlarkProfilingManager::new(
+                                client_ctx.profile_pattern_opts.as_ref(),
+                                instrumentation,
+                                &base_context.events,
+                            )?;
+
+                            let context = ServerCommandContext::new(
+                                base_context,
+                                client_ctx,
+                                profiling_manager,
+                                command.build_options(),
+                                cert_state.dupe(),
+                                snapshot_collector,
+                                cancellations,
+                                command_start,
+                                total_disk_space_bytes,
+                            )?;
+
+                            let res = command.run(&context, dispatch.dupe()).await;
+
+                            // Build failures are reported inside a successful response, so the
+                            // command's own result does not say whether a deferred read failed.
+                            if let Some(payload) = deferred_read_failures(
+                                context.base_context.tenant.dice_manager.unsafe_dice(),
+                            ) {
+                                dispatch.instant_event(buck2_data::StructuredError {
+                                    payload,
+                                    quiet: false,
+                                    task: Some(false),
+                                    soft_error_category: Some(buck2_data::SoftError {
+                                        category: "paging_deferred_read_failed".to_owned(),
+                                        is_quiet: false,
+                                        is_deprecation: false,
+                                    }),
+                                    daemon_in_memory_state_is_corrupted: true,
+                                    ..Default::default()
+                                });
+                            }
+                            if let Some(payload) =
+                                heap_rekeys(context.base_context.tenant.dice_manager.unsafe_dice())
+                            {
+                                dispatch.instant_event(buck2_data::StructuredError {
+                                    payload,
+                                    quiet: false,
+                                    task: Some(false),
+                                    soft_error_category: Some(buck2_data::SoftError {
+                                        category: "paging_heap_indexed_under_two_keys".to_owned(),
+                                        is_quiet: false,
+                                        is_deprecation: false,
+                                    }),
+                                    ..Default::default()
+                                });
+                            }
+
+                            // Finalize the command, emitting its paging telemetry and (if
+                            // eligible) scheduling an idle page-out.
+                            context.finalize(triggers_idle_page_out).await?;
+                            res?
+                        };
+
+                        // Do not kill the process prematurely.
+                        drop(version_control_revision_collector);
+                        #[cfg(unix)]
+                        drop(memory_reporter);
+                        match result {
+                            Ok(_) => dispatch.command_result(result_to_command_result(result)),
+                            Err(e) => {
+                                let report = check_cert_state_for(cert_state, [&e]).await;
+                                if report.cert_error().is_some() {
+                                    dispatch.instant_event(buck2_data::TagEvent {
+                                        tags: vec![INVALID_CERTS_TAG.to_owned()],
+                                    });
+                                }
+                                let e = match report {
+                                    CertStateReport::Valid => e,
+                                    CertStateReport::Explains(err) => err.context(format!("{e:?}")),
+                                    CertStateReport::Hint(err) => {
+                                        dispatch.console_warning(err.to_string());
+                                        e
+                                    }
+                                };
+                                dispatch.command_result(error_to_command_result(e))
+                            }
+                        }
+                    }
+                    .boxed()
+                },
+                &self.0.rt,
+            );
+            Ok(resp)
+        })
     }
 
     /// Runs a single command (given by the func F). Prior to running the command, calls the
@@ -558,17 +1257,20 @@ impl BuckdServer {
         Res: Into<command_result::Result> + Send + 'static,
         PartialRes: Into<partial_result::PartialResult> + Send + 'static,
     {
-        // send signal to register new command time
-        _ = self.0.command_channel.unbounded_send(());
+        self.note_command_activity(opts.daemon_activity());
 
-        match self.run_streaming_fallible(req, opts, func).await {
+        let command = Box::new(StreamingCommand {
+            req: req.into_inner(),
+            opts,
+            func,
+            _types: PhantomData,
+        });
+
+        match self.run_streaming_erased(command).await {
             Ok(resp) => Ok(resp),
-            Err(e) => match check_cert_state(self.0.cert_state.dupe()).await {
-                Some(err) => Ok(error_to_response_stream(
-                    err.context(format!("{e:?}")).into(),
-                )),
-                _ => Ok(error_to_response_stream(e)),
-            },
+            Err(e) => Ok(error_to_response_stream(
+                error_before_stream(self.0.cert_state.dupe(), e).await,
+            )),
         }
     }
 
@@ -593,7 +1295,7 @@ impl BuckdServer {
     /// Checks if the server is accepting requests.
     #[allow(clippy::result_large_err)]
     fn check_if_accepting_requests(&self) -> Result<(), Status> {
-        if self.0.stop_accepting_requests.load(Ordering::Relaxed) {
+        if self.0.daemon_shutdown.has_started() {
             Err(Status::failed_precondition(
                 "Failed to run command, `buckd` is shutting down soon!",
             ))
@@ -601,9 +1303,47 @@ impl BuckdServer {
             Ok(())
         }
     }
+
+    fn note_command_activity(&self, activity: DaemonActivity) {
+        self.0.inactivity_config.note_activity(activity);
+        let _ = self.0.command_channel.unbounded_send(());
+    }
 }
 
 #[allow(clippy::result_large_err)]
+/// The message for the finishing command's corrupted-state report when a
+/// deferred read has failed on paged-out data. A value paged back in cannot be
+/// repaired once a field it kept in storage fails to read, so the daemon has to
+/// be replaced, and every command that finishes before that happens says so:
+/// the client only restarts a command that failed, so a report consumed by an
+/// unrelated command that succeeded would be lost.
+fn deferred_read_failures(dice: &Dice) -> Option<String> {
+    let failures = dice
+        .pagable_storage_context()?
+        .get::<DeferredReadFailures>()?
+        .snapshot();
+    if failures.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Deferred reads of paged-out data failed: [{}]. The daemon's in-memory state cannot be repaired; restarting the daemon",
+        failures.join("; ")
+    ))
+}
+
+/// The report for Starlark heaps the storage indexed under a second data key
+/// during this command, which should not occur and leaves page-in able to
+/// deserialize a copy of a resident heap.
+fn heap_rekeys(dice: &Dice) -> Option<String> {
+    let rekeyed = starlark::pagable::take_heap_rekeys(dice.pagable_storage_context()?);
+    (rekeyed > 0).then(|| {
+        format!(
+            "{rekeyed} Starlark heap(s) were indexed under a second data key, so a page-in \
+             through that key deserializes a copy of a heap that is still resident"
+        )
+    })
+}
+
 fn convert_positive_duration(proto_duration: &prost_types::Duration) -> Result<Duration, Status> {
     if proto_duration.seconds < 0 || proto_duration.nanos < 0 {
         return Err(Status::new(
@@ -613,6 +1353,17 @@ fn convert_positive_duration(proto_duration: &prost_types::Duration) -> Result<D
     }
     Ok(Duration::from_secs(proto_duration.seconds as u64)
         + Duration::from_nanos(proto_duration.nanos as u64))
+}
+
+/// The error a streaming command that fails before its event stream starts reports to its client.
+async fn error_before_stream(cert_state: CertState, e: buck2_error::Error) -> buck2_error::Error {
+    // There is no event stream to send a hint on yet, so a user error gets the cert
+    // error as context, which does not change its classification.
+    match check_cert_state_for(cert_state, [&e]).await {
+        CertStateReport::Valid => e,
+        CertStateReport::Explains(err) => err.context(format!("{e:?}")),
+        CertStateReport::Hint(err) => e.context(err.to_string()),
+    }
 }
 
 fn error_to_command_result(e: buck2_error::Error) -> CommandResult {
@@ -675,6 +1426,7 @@ impl<T: Stream + Send> Stream for SyncStream<T> {
 fn pump_events(
     mut events: ChannelEventSource,
     mut state: ActiveCommandStateWriter,
+    observed_command: ObservedCommand,
     output_send: tokio::sync::mpsc::UnboundedSender<
         Result<buck2_cli_proto::CommandProgress, tonic::Status>,
     >,
@@ -689,6 +1441,7 @@ fn pump_events(
             // The CommandResult event indicates that the spawned
             // computation won't be producing any more events.
             Event::CommandResult(result) => {
+                observed_command.end(&result);
                 let _ignore = output_send.send(Ok(CommandProgress {
                     progress: Some(command_progress::Progress::Result(result)),
                 }));
@@ -712,49 +1465,55 @@ fn pump_events(
 
 /// Dispatches a request to the given function and returns a stream of responses, suitable for streaming to a client.
 #[allow(clippy::mut_mut)] // select! does this internally
-fn streaming<Req, F>(
-    req: Request<Req>,
+fn streaming<F>(
     events: ChannelEventSource,
     state: ActiveCommandStateWriter,
+    observed_command: ObservedCommand,
     dispatcher: EventDispatcher,
     daemon_shutdown_channel: oneshot::Receiver<buck2_data::DaemonShutdown>,
+    cancellation_scope: &CancellationScope,
     func: F,
     rt: &Handle,
 ) -> Response<ResponseStream>
 where
-    Req: Send + Sync + 'static,
-    F: for<'a> FnOnce(Req, &'a CancellationContext) -> BoxFuture<'a, ()> + Send + 'static,
+    F: for<'a> FnOnce(&'a CancellationContext) -> BoxFuture<'a, ()> + Send + 'static,
 {
     // This function is responsible for receiving all events coming into an ChannelEventSource and reacting accordingly.
     // The function `func` is the computation that we are going to run. It communicates its success or failure using
     // control events; our first step is to spawn it.
 
-    struct EventsCtx {
-        dispatcher: EventDispatcher,
-    }
-    impl HasEvents for EventsCtx {
-        fn get_dispatcher(&self) -> &EventDispatcher {
-            &self.dispatcher
-        }
-    }
-
     let trace_id = dispatcher.trace_id().dupe();
-
-    let req = req.into_inner();
-    let events_ctx = EventsCtx { dispatcher };
-
-    let spawned = spawn_dropcancel(
-        |cancellations| func(req, cancellations),
-        &BuckSpawner::new(rt.clone()),
-        &events_ctx,
-    );
+    // Created outside the task so that a task that never runs still reports.
+    let report = ReportCancelledCommand {
+        dispatcher: Some(dispatcher.dupe()),
+        trace_id: trace_id.dupe(),
+    };
+    let (_spawned, cancellation) = cancellation_scope.spawn(rt, move |context| {
+        async move {
+            buck2_events::dispatch::with_dispatcher_async(dispatcher, func(context)).await;
+            // `func` sends its own result and the event pump stops at the first one, so the guard
+            // is disarmed in the same poll that `func` returns in. This relies on `func` not
+            // awaiting between sending its result and returning, which holds for both callers.
+            // Blocking on purpose: the test needs the task to stay in this poll.
+            if let Ok(Some(ms)) = buck2_env!(
+                "BUCK2_TEST_COMMAND_END_STALL_MS",
+                type = u64,
+                applicability = testing
+            ) {
+                thread::sleep(Duration::from_millis(ms));
+            }
+            report.disarm();
+        }
+        .boxed()
+    });
+    let cancellation = CancelCommandOnDrop(cancellation);
     let (output_send, output_recv) = tokio::sync::mpsc::unbounded_channel();
 
     // We run the event consumer on new non-tokio thread to avoid the consumer task from getting stuck behind
     // another tokio task in its lifo task slot. See T96012305 and https://github.com/tokio-rs/tokio/issues/4323 for more
     // information.
     let merge_task = thread_spawn("pump-events", move || {
-        pump_events(events, state, output_send);
+        pump_events(events, state, observed_command, output_send);
     });
     if let Err(e) = merge_task {
         return error_to_response_stream(
@@ -802,8 +1561,40 @@ where
     let events = MultiEventStream::new(events);
 
     Response::new(Box::pin(SyncStream {
-        wrapped: sync_wrapper::SyncWrapper::new(DropTogether::new(events, spawned)),
+        wrapped: sync_wrapper::SyncWrapper::new(DropTogether::new(events, cancellation)),
     }))
+}
+
+struct CancelCommandOnDrop(Arc<DropcancelHandle>);
+
+impl Drop for CancelCommandOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
+/// Sends the command's result if the task is dropped before the body returns.
+struct ReportCancelledCommand {
+    dispatcher: Option<EventDispatcher>,
+    trace_id: TraceId,
+}
+
+impl ReportCancelledCommand {
+    fn disarm(mut self) {
+        self.dispatcher = None;
+    }
+}
+
+impl Drop for ReportCancelledCommand {
+    fn drop(&mut self) {
+        if let Some(dispatcher) = self.dispatcher.take() {
+            dispatcher.command_result(error_to_command_result(buck2_error!(
+                ErrorTag::InterruptedByDaemonShutdown,
+                "Command {} was cancelled before it completed: its daemon tenant was evicted or the daemon is shutting down",
+                self.trace_id
+            )));
+        }
+    }
 }
 
 struct QueryCommandOptions {
@@ -821,6 +1612,7 @@ impl<Req> StreamingCommandOptions<Req> for QueryCommandOptions {
     fn starlark_profiler_instrumentation_override(
         &self,
         _req: &Req,
+        _project_root: &ProjectRoot,
     ) -> buck2_error::Result<StarlarkProfilerConfiguration> {
         match self.profile_mode {
             None => Ok(StarlarkProfilerConfiguration::None),
@@ -843,6 +1635,25 @@ type ResponseStream =
 
 #[async_trait]
 impl DaemonApi for BuckdServer {
+    async fn restart(
+        &self,
+        req: Request<RestartRequest>,
+    ) -> Result<Response<RestartResponse>, Status> {
+        self.check_if_accepting_requests()?;
+        let error = buck2_error!(
+            ErrorTag::InterruptedByDaemonShutdown,
+            "Daemon restart requested: {}",
+            req.into_inner().reason
+        );
+        let _reported = tag_error!(
+            "daemon_restart_requested",
+            error,
+            daemon_restart_requested: true,
+            task: false
+        );
+        Ok(Response::new(RestartResponse {}))
+    }
+
     async fn kill(&self, req: Request<KillRequest>) -> Result<Response<CommandResult>, Status> {
         struct KillRunCommandOptions;
 
@@ -854,10 +1665,6 @@ impl DaemonApi for BuckdServer {
         }
 
         self.oneshot(req, KillRunCommandOptions, move |req| async move {
-            self.0
-                .stop_accepting_requests
-                .store(true, Ordering::Relaxed);
-
             let timeout = req
                 .timeout
                 .as_ref()
@@ -867,9 +1674,35 @@ impl DaemonApi for BuckdServer {
             let reason = buck2_data::DaemonShutdown {
                 reason: req.reason,
                 callers: req.callers,
+                error_tag: None,
             };
 
-            self.0.daemon_shutdown.start_shutdown(reason, timeout);
+            if self.0.daemon_state.data().routing().is_shared() {
+                // A process-state rejection covers shared services. Retire all generations and
+                // revoke proxy recovery before acknowledging Kill; the watchdog also covers
+                // cleanup already in progress. Finer failure scopes can be handled separately.
+                let evictions = self.0.daemon_state.data().evict_all_tenants("kill");
+                let budget = timeout
+                    .unwrap_or(super::proxies::PROXY_EVICTION_TIMEOUT)
+                    .min(super::proxies::PROXY_EVICTION_TIMEOUT);
+                for eviction in &evictions {
+                    super::proxies::arm_tenant_eviction_watchdog(eviction, budget);
+                }
+                crate::active_commands::broadcast_shutdown(&reason);
+                let data = self.0.clone();
+                self.0.rt.spawn(async move {
+                    futures::stream::iter(evictions)
+                        .map(|eviction| eviction.completed)
+                        .buffer_unordered(16)
+                        .collect::<Vec<_>>()
+                        .await;
+                    // Every generation's work has drained, so the daemon shuts down normally;
+                    // an eviction that does not drain is ended by its watchdog instead.
+                    data.daemon_shutdown.start_shutdown(reason, timeout);
+                });
+            } else {
+                self.0.daemon_shutdown.start_shutdown(reason, timeout);
+            }
             Ok(KillResponse {})
         })
         .await
@@ -877,12 +1710,9 @@ impl DaemonApi for BuckdServer {
 
     async fn ping(&self, req: Request<PingRequest>) -> Result<Response<CommandResult>, Status> {
         self.oneshot(req, DefaultCommandOptions, move |req| async move {
-            match &req.delay {
-                Some(delay) => {
-                    let delay = convert_positive_duration(delay)?;
-                    tokio::time::sleep(delay).await;
-                }
-                _ => {}
+            if let Some(delay) = &req.delay {
+                let delay = convert_positive_duration(delay)?;
+                tokio::time::sleep(delay).await;
             }
 
             let mut payload = vec![
@@ -900,24 +1730,26 @@ impl DaemonApi for BuckdServer {
 
     async fn status(&self, req: Request<StatusRequest>) -> Result<Response<CommandResult>, Status> {
         let daemon_state = self.0.daemon_state.dupe();
+        let rt = self.0.rt.clone();
 
         self.oneshot(req, DefaultCommandOptions, move |req| async move {
-            let snapshot = if req.snapshot {
+            let data = daemon_state.data();
+            let metadata = data.initial_tenant_metadata();
+            let snapshot = if req.snapshot
+                && let Some(tenant) = data.status_tenant()
+            {
                 Some(
-                    snapshot::SnapshotCollector::new(
-                        daemon_state.data(),
-                        daemon_state.paths.buck_out_path(),
-                    )
-                    .create_snapshot(),
+                    snapshot::SnapshotCollector::new(daemon_state.data(), tenant, rt.clone())
+                        .create_snapshot()
+                        .await,
                 )
             } else {
                 None
             };
 
             let extra_constraints = buck2_cli_proto::ExtraDaemonConstraints {
-                trace_io_enabled: TracingIoProvider::from_io(&*daemon_state.data().io).is_some(),
-                materializer_state_identity: daemon_state
-                    .data()
+                trace_io_enabled: metadata.trace_io_enabled,
+                materializer_state_identity: metadata
                     .materializer_state_identity
                     .as_ref()
                     .map(|i| i.to_string()),
@@ -927,20 +1759,24 @@ impl DaemonApi for BuckdServer {
             daemon_constraints.extra = Some(extra_constraints);
 
             let valid_working_directory = daemon_state.validate_cwd().is_ok();
-            let valid_buck_out_mount = daemon_state.validate_buck_out_mount().is_ok();
+            let valid_buck_out_mount = daemon_state
+                .validate_buck_out_mount(&metadata.paths)
+                .is_ok();
 
-            let io_provider = daemon_state.data().io.name().to_owned();
+            let io_provider = metadata.io_provider.clone();
 
             let uptime = Instant::now() - self.0.start_instant;
 
+            let process_info = self.0.process_info.clone();
+
             let mut base = StatusResponse {
-                process_info: Some(self.0.process_info.clone()),
+                process_info: Some(process_info),
                 start_time: Some(self.0.start_time),
                 uptime: Some(uptime.try_into()?),
                 snapshot,
                 daemon_constraints: Some(daemon_constraints),
-                project_root: daemon_state.paths.project_root().to_string(),
-                isolation_dir: daemon_state.paths.isolation.to_string(),
+                project_root: metadata.paths.project_root().to_string(),
+                isolation_dir: metadata.paths.isolation().to_string(),
                 forkserver_pid: match &daemon_state.data.forkserver {
                     #[cfg(unix)]
                     ForkserverAccess::Client(f) => Some(f.pid()),
@@ -951,6 +1787,21 @@ impl DaemonApi for BuckdServer {
                 valid_working_directory: Some(valid_working_directory),
                 valid_buck_out_mount: Some(valid_buck_out_mount),
                 io_provider: Some(io_provider),
+                active_commands: crate::active_commands::active_commands_snapshot(),
+                allprocs_cgroup_path: {
+                    #[cfg(unix)]
+                    {
+                        daemon_state
+                            .data()
+                            .memory_tracker
+                            .as_ref()
+                            .map(|mt| mt.cgroup_tree.allprocs().path().to_string())
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        None
+                    }
+                },
                 ..Default::default()
             };
 
@@ -972,17 +1823,46 @@ impl DaemonApi for BuckdServer {
         &self,
         req: Request<FlushDepFilesRequest>,
     ) -> Result<Response<CommandResult>, Status> {
+        let data = self.0.daemon_state.data();
         self.oneshot(req, DefaultCommandOptions, move |req| async move {
+            let tenant = data
+                .tenant_for_optional_client_context(req.context.as_ref())
+                .await?;
+            let repo = tenant.repo.dupe();
             let FlushDepFilesRequest {
                 retain_locally_produced_dep_files,
+                context: _,
             } = req;
             if retain_locally_produced_dep_files {
-                buck2_file_watcher::dep_files::flush_non_local_dep_files();
+                repo.dep_file_cache.clear_non_local();
             } else {
-                buck2_file_watcher::dep_files::flush_dep_files();
+                // Clearing the persisted store waits for its writer thread to drain, so clear both
+                // caches on the blocking pool rather than parking a runtime worker.
+                let _ignored = spawn_blocking(move || {
+                    repo.dep_file_cache.clear();
+                    if let Some(cache) = repo.persisted_dep_file_cache.as_ref() {
+                        cache.store.clear();
+                    }
+                })
+                .await;
             }
             Ok(GenericResponse {})
         })
+        .await
+    }
+
+    type HydrationStream = ResponseStream;
+    async fn hydration(
+        &self,
+        req: Request<HydrationRequest>,
+    ) -> Result<Response<ResponseStream>, Status> {
+        self.run_streaming(
+            req,
+            HydrationCommandOptions,
+            |context, partial_result_dispatcher, req| {
+                hydration_command(context, partial_result_dispatcher, req).boxed()
+            },
+        )
         .await
     }
 
@@ -993,7 +1873,7 @@ impl DaemonApi for BuckdServer {
     ) -> Result<Response<ResponseStream>, Status> {
         self.run_streaming(
             req,
-            DefaultCommandOptions,
+            NonPagingCommandOptions,
             |context, partial_result_dispatcher, req| {
                 file_status_command(context, partial_result_dispatcher, req).boxed()
             },
@@ -1232,11 +2112,9 @@ impl DaemonApi for BuckdServer {
         &self,
         req: Request<UnstableCrashRequest>,
     ) -> Result<Response<CommandResult>, Status> {
-        self.oneshot(
-            req,
-            DefaultCommandOptions,
-            move |req| async move { crash(req) },
-        )
+        self.oneshot(req, DefaultCommandOptions, move |req| async move {
+            crash(req).await
+        })
         .await
     }
 
@@ -1269,19 +2147,229 @@ impl DaemonApi for BuckdServer {
         Ok(Response::new(UnstableHeapDumpResponse {}))
     }
 
+    async fn unstable_recent_alloc_dump(
+        &self,
+        req: Request<UnstableRecentAllocDumpRequest>,
+    ) -> Result<Response<UnstableRecentAllocDumpResponse>, Status> {
+        self.check_if_accepting_requests()?;
+        let req = req.into_inner();
+
+        // Producing the dump and streaming it to disk are blocking; run them off
+        // the async runtime so a large dump can't stall the daemon.
+        tokio::task::spawn_blocking(move || {
+            memory::write_recent_alloc_to_file(&req.destination_path)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("recent alloc dump task failed: {e}")))?
+        .map_err(|e| {
+            // `Input`-tagged errors are unmet preconditions (jemalloc isn't the
+            // allocator, or profiling / the recent-alloc ring isn't enabled);
+            // anything else (mallctl or file-IO failure) is an internal error.
+            let msg = format!("failed to dump recent allocations: {e:#}");
+            if e.has_tag(buck2_error::ErrorTag::Input) {
+                Status::failed_precondition(msg)
+            } else {
+                Status::internal(msg)
+            }
+        })?;
+        Ok(Response::new(UnstableRecentAllocDumpResponse {}))
+    }
+
+    async fn unstable_flush_pgo_profile(
+        &self,
+        _req: Request<UnstableFlushPgoProfileRequest>,
+    ) -> Result<Response<UnstableFlushPgoProfileResponse>, Status> {
+        self.check_if_accepting_requests()?;
+        let pgo_active = buck2_util::pgo::flush_pgo_profile();
+        Ok(Response::new(UnstableFlushPgoProfileResponse {
+            pgo_active,
+        }))
+    }
+
     async fn unstable_allocator_stats(
         &self,
         req: Request<UnstableAllocatorStatsRequest>,
     ) -> Result<Response<UnstableAllocatorStatsResponse>, Status> {
         self.check_if_accepting_requests()?;
 
-        let response = memory::allocator_stats(&req.into_inner().options)
-            .buck_error_context("Failed to retrieve allocator stats");
+        let req = req.into_inner();
+        let response = if req.purge {
+            memory::purge_jemalloc()
+                .buck_error_context("Failed to purge jemalloc")
+                .and_then(|()| memory::allocator_stats(&req.options))
+        } else {
+            memory::allocator_stats(&req.options)
+        }
+        .buck_error_context("Failed to retrieve allocator stats");
 
         match response {
             Ok(response) => Ok(Response::new(UnstableAllocatorStatsResponse { response })),
             Err(e) => Err(Status::invalid_argument(format!("{e:#}"))),
         }
+    }
+
+    async fn unstable_list_tenants(
+        &self,
+        _req: Request<UnstableListTenantsRequest>,
+    ) -> Result<Response<UnstableListTenantsResponse>, Status> {
+        self.check_if_accepting_requests()?;
+        let tenants = self
+            .0
+            .daemon_state
+            .data()
+            .tenants()
+            .into_iter()
+            .map(|tenant| UnstableTenantInfo {
+                project_root: tenant.key.project_root().display().to_string(),
+                isolation: tenant.key.isolation().as_str().to_owned(),
+                generation: tenant.generation,
+                initialized: tenant.initialized,
+                pending_registrations: tenant.pending_registrations as u64,
+            })
+            .collect();
+        Ok(Response::new(UnstableListTenantsResponse { tenants }))
+    }
+
+    async fn unstable_register_tenant(
+        &self,
+        req: Request<buck2_cli_proto::UnstableRegisterTenantRequest>,
+    ) -> Result<Response<buck2_cli_proto::UnstableRegisterTenantResponse>, Status> {
+        self.check_if_accepting_requests()?;
+        let req = req.into_inner();
+        let context = req
+            .context
+            .ok_or_else(|| Status::invalid_argument("missing tenant client context"))?;
+        // A rejected materializer database belongs to one generation of the tenant. That
+        // generation is evicted, bounded as a client's direct eviction is, so that the
+        // registration below creates one with a fresh database. The daemon keeps serving
+        // through the eviction even when the generation was its only tenant.
+        if let Some(rejected) = &req.reject_materializer_state {
+            let data = self.0.daemon_state.data();
+            let current = data
+                .tenant_generation_for_client_context(&context)
+                .map_err(|error| Status::failed_precondition(format!("{error:#}")))?;
+            // A generation whose metadata cannot be read is still initializing or already
+            // replaced, so it is not the one that produced the rejected database.
+            if let Some(generation) = current
+                && data
+                    .proxy_metadata(&context, generation)
+                    .ok()
+                    .and_then(|metadata| metadata.materializer_state_identity)
+                    .is_some_and(|identity| identity.to_string() == *rejected)
+                && let Some(eviction) = data
+                    .evict_tenant_generation_for_replacement(&context, generation)
+                    .map_err(|error| Status::internal(format!("{error:#}")))?
+            {
+                super::proxies::arm_tenant_eviction_watchdog(&eviction, Duration::from_secs(10));
+                eviction.completed.await;
+            }
+        }
+        let (generation, _) = self
+            .register_tenant_with_proxy(&context, req.reject_materializer_state.map(Into::into))
+            .await?;
+        let materializer_state_identity = self
+            .0
+            .daemon_state
+            .data()
+            .proxy_metadata(&context, generation)
+            .map_err(|error| Status::failed_precondition(format!("{error:#}")))?
+            .materializer_state_identity
+            .map(|identity| identity.to_string());
+        Ok(Response::new(
+            buck2_cli_proto::UnstableRegisterTenantResponse {
+                generation,
+                materializer_state_identity,
+            },
+        ))
+    }
+
+    async fn evict_tenant(
+        &self,
+        req: Request<EvictTenantRequest>,
+    ) -> Result<Response<EvictTenantResponse>, Status> {
+        let req = req.into_inner();
+        if req.expected_generation.is_none() {
+            self.check_if_accepting_requests()?;
+        }
+        let timeout = req.eviction_timeout_ms.map(Duration::from_millis);
+        let context = req
+            .context
+            .ok_or_else(|| Status::invalid_argument("missing tenant client context"))?;
+        let eviction = self
+            .0
+            .daemon_state
+            .data()
+            .evict_tenant_generation(&context, req.expected_generation)
+            .map_err(|e| Status::invalid_argument(format!("{e:#}")))?;
+        let shutting_down = eviction
+            .as_ref()
+            .is_some_and(|eviction| eviction.final_tenant);
+        // The watchdog stops the whole process tree, which is only a fallback for a shared
+        // daemon; an unshared daemon's eviction is its shutdown.
+        if let (Some(eviction), Some(timeout)) = (&eviction, timeout)
+            && self.0.daemon_state.data().routing().is_shared()
+        {
+            super::proxies::arm_tenant_eviction_watchdog(eviction, timeout);
+        }
+        if shutting_down && req.expected_generation.is_none() && timeout.is_none() {
+            self.shutdown_after_final_tenant_eviction();
+        }
+        if shutting_down && (req.expected_generation.is_some() || timeout.is_some()) {
+            // A fenced or bounded eviction of the final tenant shuts the daemon down once the
+            // eviction completes, whether or not this request waits for it.
+            let completed = eviction.as_ref().map(|eviction| eviction.completed.clone());
+            let server = BuckdServer(self.0.dupe());
+            let shutdown = async move {
+                if let Some(completed) = completed {
+                    completed.await;
+                }
+                server.shutdown_after_final_tenant_eviction();
+            };
+            if req.wait_for_completion.unwrap_or(true) {
+                shutdown.await;
+            } else {
+                tokio::spawn(shutdown);
+            }
+        } else if req.wait_for_completion.unwrap_or(true)
+            && let Some(eviction) = &eviction
+        {
+            eviction.completed.clone().await;
+        }
+        Ok(Response::new(EvictTenantResponse {
+            evicted: eviction.is_some(),
+            generation: eviction.as_ref().map_or(0, |eviction| eviction.generation),
+            shutting_down,
+        }))
+    }
+
+    async fn evict_project_tenants(
+        &self,
+        req: Request<EvictProjectTenantsRequest>,
+    ) -> Result<Response<EvictProjectTenantsResponse>, Status> {
+        self.check_if_accepting_requests()?;
+        let req = req.into_inner();
+        let context = req
+            .context
+            .ok_or_else(|| Status::invalid_argument("missing tenant client context"))?;
+        let isolation = req
+            .isolation
+            .map(FileNameBuf::try_from)
+            .transpose()
+            .map_err(|e| Status::invalid_argument(format!("{e:#}")))?;
+        let eviction = self
+            .0
+            .daemon_state
+            .data()
+            .evict_project_tenants_for_client_context(&context, isolation)
+            .map_err(|e| Status::invalid_argument(format!("{e:#}")))?;
+        if eviction.final_tenant {
+            self.shutdown_after_final_tenant_eviction();
+        }
+        eviction.completed.await;
+        Ok(Response::new(EvictProjectTenantsResponse {
+            generations: eviction.generations,
+            shutting_down: eviction.final_tenant,
+        }))
     }
 
     async fn unstable_dice_dump(
@@ -1291,16 +2379,20 @@ impl DaemonApi for BuckdServer {
         self.check_if_accepting_requests()?;
 
         let inner = req.into_inner();
-        let path = inner.destination_path;
         let res: buck2_error::Result<_> = try {
+            let tenant = self
+                .0
+                .daemon_state
+                .data()
+                .tenant_for_optional_client_context(inner.context.as_ref())
+                .await?;
+            let path = inner.destination_path;
             let path = Path::new(&path);
             let format_proto =
                 buck2_cli_proto::unstable_dice_dump_request::DiceDumpFormat::try_from(inner.format)
                     .buck_error_context("Invalid DICE dump format")?;
 
-            self.0
-                .daemon_state
-                .data()
+            tenant
                 .spawn_dice_dump(path, format_proto)
                 .await
                 .with_buck_error_context(|| {
@@ -1320,16 +2412,31 @@ impl DaemonApi for BuckdServer {
         req: Request<AllocativeRequest>,
     ) -> Result<Response<ResponseStream>, Status> {
         self.check_if_accepting_requests()?;
+        self.note_command_activity(DaemonActivity::Other);
 
         let res: buck2_error::Result<_> = try {
             let client_ctx = req.get_ref().client_context()?;
-            let trace_id = client_ctx.trace_id.parse()?;
+            let soft_error_context = Arc::new(SoftErrorContext::new(
+                &client_ctx.buck2_hard_error,
+                &client_ctx.buck2_show_soft_errors,
+            )?);
+            let trace_id = client_ctx
+                .trace_id
+                .parse()
+                .map_err(buck2_error::Error::from)?;
             let (event_source, dispatcher) = self.0.daemon_state.prepare_events(trace_id).await?;
+            let dispatcher = dispatcher.with_soft_error_context(soft_error_context);
             let active_command = ActiveCommand::new(&dispatcher, client_ctx.sanitized_argv.clone());
-            (event_source, dispatcher, active_command)
+            let tenant = self
+                .0
+                .daemon_state
+                .data()
+                .tenant_for_client_context(client_ctx)
+                .await?;
+            (event_source, dispatcher, active_command, tenant)
         };
 
-        let (event_source, dispatcher, active_command) = match res {
+        let (event_source, dispatcher, active_command, tenant) = match res {
             Ok(v) => v,
             Err(e) => return Ok(error_to_response_stream(e)),
         };
@@ -1341,17 +2448,21 @@ impl DaemonApi for BuckdServer {
         } = active_command;
 
         let this = self.0.dupe();
+        let req = req.into_inner();
+        let cancellation = tenant.cancellation.clone();
         Ok(streaming(
-            req,
             event_source,
             state,
+            ObservedCommand::default(),
             dispatcher.dupe(),
             daemon_shutdown_channel,
-            move |req, _| {
+            &cancellation,
+            move |_| {
                 async move {
                     let result = try {
                         spawn_allocative(
                             this,
+                            tenant.repo.dupe(),
                             AbsPathBuf::try_from(req.output_path)?,
                             dispatcher.dupe(),
                         )
@@ -1373,9 +2484,7 @@ impl DaemonApi for BuckdServer {
         &self,
         req: Request<ProfileRequest>,
     ) -> Result<Response<ResponseStream>, Status> {
-        struct ProfileCommandOptions {
-            project_root: ProjectRoot,
-        }
+        struct ProfileCommandOptions;
 
         impl OneshotCommandOptions for ProfileCommandOptions {}
 
@@ -1383,16 +2492,15 @@ impl DaemonApi for BuckdServer {
             fn starlark_profiler_instrumentation_override(
                 &self,
                 req: &ProfileRequest,
+                project_root: &ProjectRoot,
             ) -> buck2_error::Result<StarlarkProfilerConfiguration> {
-                starlark_profiler_configuration_from_request(req, &self.project_root)
+                starlark_profiler_configuration_from_request(req, project_root)
             }
         }
 
         self.run_streaming(
             req,
-            ProfileCommandOptions {
-                project_root: self.0.daemon_state.paths.project_root().dupe(),
-            },
+            ProfileCommandOptions,
             |ctx, partial_result_dispatcher, req| {
                 Box::pin(async {
                     match req.profile_opts.as_ref().expect("Missing profile opts") {
@@ -1434,7 +2542,7 @@ impl DaemonApi for BuckdServer {
     ) -> Result<Response<ResponseStream>, Status> {
         self.run_streaming(
             req,
-            DefaultCommandOptions,
+            CleanStaleCommandOptions,
             |context, partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>, req| {
                 clean_stale_command(context, partial_result_dispatcher, req).boxed()
             },
@@ -1449,12 +2557,16 @@ impl DaemonApi for BuckdServer {
     ) -> Result<Response<Self::LspStream>, Status> {
         self.run_bidirectional(
             req,
-            DefaultCommandOptions,
+            LspCommandOptions,
             |ctx,
              partial_result_dispatcher,
              _client_ctx,
              req: StreamingRequestHandler<LspRequest>| {
-                run_lsp_server_command(ctx, partial_result_dispatcher, req).boxed()
+                Box::pin(async move {
+                    (LSP_SERVER_COMMAND.get()?)
+                        .lsp(ctx, partial_result_dispatcher, req)
+                        .await
+                })
             },
         )
         .await
@@ -1467,7 +2579,7 @@ impl DaemonApi for BuckdServer {
     ) -> Result<Response<Self::SubscriptionStream>, Status> {
         self.run_bidirectional(
             req,
-            DefaultCommandOptions,
+            NonPagingCommandOptions,
             |ctx,
              partial_result_dispatcher,
              _client_ctx,
@@ -1485,7 +2597,7 @@ impl DaemonApi for BuckdServer {
     ) -> Result<Response<Self::DapStream>, Status> {
         self.run_bidirectional(
             req,
-            DefaultCommandOptions,
+            DapCommandOptions,
             |ctx,
              partial_result_dispatcher,
              _client_ctx,
@@ -1532,7 +2644,7 @@ impl DaemonApi for BuckdServer {
     ) -> Result<Response<ResponseStream>, Status> {
         self.run_streaming(
             req,
-            DefaultCommandOptions,
+            NonPagingCommandOptions,
             |context, _: PartialResultDispatcher<NoPartialResult>, req| {
                 trace_io_command(context, req).boxed()
             },
@@ -1551,46 +2663,294 @@ trait OneshotCommandOptions: Send + Sync + 'static {
 
 /// Options to configure the execution of a streaming command (i.e. what happens in `run_streaming()`).
 trait StreamingCommandOptions<Req>: OneshotCommandOptions {
+    fn daemon_activity(&self) -> DaemonActivity {
+        DaemonActivity::Other
+    }
+
     fn starlark_profiler_instrumentation_override(
         &self,
         _req: &Req,
+        _project_root: &ProjectRoot,
     ) -> buck2_error::Result<StarlarkProfilerConfiguration> {
         Ok(StarlarkProfilerConfiguration::None)
+    }
+
+    /// Whether this command takes part in the idle page-out lifecycle: it cancels
+    /// an in-progress page-out when it starts, and triggers a new one when it
+    /// finishes. True for commands that contend for the DICE graph; false for
+    /// read-only / non-graph commands (see `NonPagingCommandOptions`,
+    /// `HydrationCommandOptions`), which neither cancel nor trigger.
+    fn triggers_idle_page_out(&self) -> bool {
+        true
+    }
+
+    /// Whether background materializer cleanup must stop while this command runs,
+    /// so that it cannot delete materialized outputs from under it.
+    fn prevents_background_cleanup(&self) -> bool {
+        true
+    }
+}
+
+/// A streaming command with its request, result and partial result types erased.
+///
+/// `run_streaming` is instantiated once per command, so anything it does directly is compiled
+/// once per command. Everything that does not need the concrete types lives behind this trait
+/// in `run_streaming_erased`; the per-command half should stay small.
+trait ErasedStreamingCommand: Send + 'static {
+    fn client_context(&self) -> buck2_error::Result<&ClientContext>;
+
+    fn build_options(&self) -> Option<&CommonBuildOptions>;
+
+    #[allow(clippy::result_large_err)]
+    fn pre_run(&self, server: &BuckdServer) -> Result<(), Status>;
+
+    fn triggers_idle_page_out(&self) -> bool;
+
+    fn prevents_background_cleanup(&self) -> bool;
+
+    fn starlark_profiler_configuration(
+        &self,
+        project_root: &ProjectRoot,
+    ) -> buck2_error::Result<StarlarkProfilerConfiguration>;
+
+    /// Runs the command. The partial result dispatcher is created here because its type is one
+    /// of the erased ones.
+    fn run<'b>(
+        self: Box<Self>,
+        context: &'b ServerCommandContext<'_>,
+        dispatch: EventDispatcher,
+    ) -> BoxFuture<'b, buck2_error::Result<command_result::Result>>;
+}
+
+struct StreamingCommand<Req, Res, PartialRes, Opts, F> {
+    req: Req,
+    opts: Opts,
+    func: F,
+    _types: PhantomData<fn() -> (Res, PartialRes)>,
+}
+
+impl<Req, Res, PartialRes, Opts, F> ErasedStreamingCommand
+    for StreamingCommand<Req, Res, PartialRes, Opts, F>
+where
+    F: for<'a> FnOnce(
+            &'a ServerCommandContext,
+            PartialResultDispatcher<PartialRes>,
+            Req,
+        ) -> BoxFuture<'a, buck2_error::Result<Res>>
+        + Send
+        + 'static,
+    Req: HasClientContext + HasBuildOptions + Send + Sync + 'static,
+    Res: Into<command_result::Result> + Send + 'static,
+    PartialRes: Into<partial_result::PartialResult> + Send + 'static,
+    Opts: StreamingCommandOptions<Req>,
+{
+    fn client_context(&self) -> buck2_error::Result<&ClientContext> {
+        self.req.client_context()
+    }
+
+    fn build_options(&self) -> Option<&CommonBuildOptions> {
+        self.req.build_options()
+    }
+
+    fn pre_run(&self, server: &BuckdServer) -> Result<(), Status> {
+        self.opts.pre_run(server)
+    }
+
+    fn triggers_idle_page_out(&self) -> bool {
+        self.opts.triggers_idle_page_out()
+    }
+
+    fn prevents_background_cleanup(&self) -> bool {
+        self.opts.prevents_background_cleanup()
+    }
+
+    fn starlark_profiler_configuration(
+        &self,
+        project_root: &ProjectRoot,
+    ) -> buck2_error::Result<StarlarkProfilerConfiguration> {
+        self.opts
+            .starlark_profiler_instrumentation_override(&self.req, project_root)
+    }
+
+    fn run<'b>(
+        self: Box<Self>,
+        context: &'b ServerCommandContext<'_>,
+        dispatch: EventDispatcher,
+    ) -> BoxFuture<'b, buck2_error::Result<command_result::Result>> {
+        let StreamingCommand { req, func, .. } = *self;
+        let partial_result_dispatcher =
+            PartialResultDispatcher::new(dispatch, context.cancellation_context().into());
+        func(context, partial_result_dispatcher, req)
+            .map_ok(Into::into)
+            .boxed()
     }
 }
 
 fn server_shutdown_signal(
     command_receiver: UnboundedReceiver<()>,
-    mut shutdown_receiver: UnboundedReceiver<()>,
-) -> buck2_error::Result<impl Future<Output = ()>> {
-    let mut duration = DEFAULT_INACTIVITY_TIMEOUT;
-    if buck2_env!(
-        "BUCK2_TESTING_INACTIVITY_TIMEOUT",
-        bool,
-        applicability = testing
-    )? {
-        duration = Duration::from_secs(1);
-    }
+    mut shutdown_receiver: UnboundedReceiver<tokio::time::Instant>,
+    inactivity_config: DaemonInactivityConfig,
+    in_process: bool,
+) -> (
+    impl Future<Output = ()>,
+    oneshot::Receiver<tokio::time::Instant>,
+) {
+    let (shutdown_deadline_sender, shutdown_deadline_receiver) = oneshot::channel();
 
-    Ok(async move {
-        let timeout = inactivity_timeout(command_receiver, duration);
+    let shutdown = async move {
+        let timeout = inactivity_timeout(command_receiver, inactivity_config);
         let shutdown = shutdown_receiver.next();
 
         futures::pin_mut!(shutdown);
         futures::pin_mut!(timeout);
 
-        futures::future::select(timeout, shutdown).await;
+        let shutdown_deadline = match futures::future::select(timeout, shutdown).await {
+            futures::future::Either::Left((idle, _)) => {
+                if let Some(idle) = idle {
+                    crate::active_commands::broadcast_shutdown(&idle);
+                }
+                tokio::time::Instant::now() + DEFAULT_KILL_TIMEOUT
+            }
+            futures::future::Either::Right((shutdown_deadline, _)) => shutdown_deadline
+                .unwrap_or_else(|| tokio::time::Instant::now() + DEFAULT_KILL_TIMEOUT),
+        };
+        // The clock starts at the decision to shut down, not once the drain returns, so that the
+        // deadline bounds the drain as well as the teardown that follows it.
+        spawn_shutdown_watchdog(in_process, shutdown_deadline);
+
+        let _ = shutdown_deadline_sender.send(shutdown_deadline);
+    };
+
+    (shutdown, shutdown_deadline_receiver)
+}
+
+/// Guarantee that a daemon which has announced its shutdown actually exits.
+///
+/// The graceful path waits for in-flight gRPC connections to drain, and a long lived streaming
+/// command such as `buck2 lsp` holds one open for as long as its client lives - the inactivity
+/// timer is only reset when a command *starts*, so it can fire underneath one. While the daemon
+/// waits, its listener still accepts connections that are never answered, which is worse for
+/// clients than being dead: a refused connection costs them milliseconds, an unanswered one costs
+/// them their whole startup budget.
+///
+/// Runs on its own thread, so neither the drain nor a runtime that has stopped making progress
+/// can starve it.
+///
+/// Does nothing for an in-process daemon, which has no process of its own to end: `--no-buckd`
+/// runs it on a thread inside the client, and tests run it inside the test binary. Note this is
+/// not the same as `--dont-daemonize`, which still gets a process to itself.
+fn spawn_shutdown_watchdog(in_process: bool, deadline: tokio::time::Instant) {
+    if in_process {
+        return;
+    }
+
+    let deadline = deadline.into_std() + SHUTDOWN_WATCHDOG_GRACE;
+    // Panicking is the point rather than a way of giving up on it: nothing else bounds the drain,
+    // and the daemon's panic hook `_exit`s, so a daemon that cannot arm its watchdog dies now
+    // instead of becoming one that hangs forever.
+    thread_spawn("buck2-shutdown-watchdog", move || {
+        thread::sleep(deadline.saturating_duration_since(std::time::Instant::now()));
+
+        // Clients read `buckd.stderr` to explain why the daemon went away, so make sure the
+        // reason is on disk before we go.
+        eprintln!("Shutdown deadline exceeded, exiting");
+        let _ignored = io::stderr().flush();
+        buck2_util::pgo::flush_pgo_profile();
+
+        // `_exit` rather than `exit`: the atexit chain runs alongside the threads we are
+        // abandoning, so it can block on a lock one of them holds, and a watchdog that can hang
+        // is no watchdog. It skips stdio flushing, hence the flushes above.
+        // SAFETY: `_exit` is async-signal-safe and does not return. It ends the process without
+        // touching state that this or any other thread may be using.
+        unsafe { libc::_exit(1) }
+    })
+    .expect("Failed to spawn shutdown watchdog thread");
+}
+
+/// The shutdown to report to commands still running once no command has arrived for the
+/// inactivity timeout, or `None` once commands can no longer arrive.
+async fn inactivity_timeout(
+    mut command_receiver: UnboundedReceiver<()>,
+    inactivity_config: DaemonInactivityConfig,
+) -> Option<buck2_data::DaemonShutdown> {
+    let duration = loop {
+        let duration = inactivity_config.current_timeout();
+        match timeout(duration, command_receiver.next()).await {
+            Ok(Some(())) => {}        // A command arrived; restart the timer.
+            Ok(None) => return None,  // Channel closed; exit without logging.
+            Err(_) => break duration, // Timeout expired; break with the duration that fired.
+        }
+    };
+
+    let reason = format!("inactivity timeout elapsed ({duration:?})");
+    eprintln!("{reason}, shutting down server");
+    Some(buck2_data::DaemonShutdown {
+        reason,
+        callers: Vec::new(),
+        error_tag: Some(ErrorTag::DaemonInactivityTimeout as i32),
     })
 }
 
-async fn inactivity_timeout(mut command_receiver: UnboundedReceiver<()>, duration: Duration) {
-    // this restarts the timer everytime there is a new command
-    while (timeout(duration, command_receiver.next()).await).is_ok() {}
+// Unix only: Windows refuses to delete an executable that is running.
+#[cfg(unix)]
+mod executable_cache {
+    use std::env;
+    use std::path::Path;
+    use std::time::Duration;
+    use std::time::SystemTime;
 
-    tracing::warn!(
-        "inactivity timeout elapsed ({:?}), shutting down server",
-        duration
-    );
+    use buck2_core::buck2_env;
+    use buck2_core::soft_error;
+    use buck2_core::soft_error_or_panic;
+    use buck2_fs::async_fs_util;
+    use buck2_fs::paths::abs_path::AbsPathBuf;
+
+    /// The directory whose mtime the launcher that cached this binary reads to tell whether the
+    /// binary is in use.
+    fn cache_dir() -> buck2_error::Result<Option<AbsPathBuf>> {
+        let Some(dir) = buck2_env!("DOTSLASH_ARTIFACT_DIR")? else {
+            return Ok(None);
+        };
+        // Every descendant of a launched program inherits the variable, so it may name the
+        // directory of a different binary.
+        let holds_this_binary = env::current_exe().is_ok_and(|exe| exe.starts_with(Path::new(dir)));
+        if !holds_this_binary {
+            return Ok(None);
+        }
+        Ok(Some(AbsPathBuf::new(dir)?))
+    }
+
+    /// A cache cleaner that judges use by mtime takes a daemon no client has run through the
+    /// launcher for a while to be unused, and deletes the binary it is running.
+    pub(super) fn keep_cached_background_job() -> buck2_error::Result<()> {
+        let dir = match cache_dir() {
+            Ok(Some(dir)) => dir,
+            Ok(None) => return Ok(()),
+            Err(e) => {
+                soft_error!("daemon_executable_cache_dir_invalid", e);
+                return Ok(());
+            }
+        };
+
+        tokio::task::spawn(async move {
+            const INTERVAL: Duration = Duration::from_secs(60 * 60);
+            let mut reported = false;
+            loop {
+                tokio::time::sleep(INTERVAL).await;
+                let touched = async_fs_util::set_modified(&dir, SystemTime::now()).await;
+                if let Err(e) = touched
+                    && !reported
+                {
+                    reported = true;
+                    soft_error_or_panic!(
+                        "daemon_executable_cache_dir_touch_failed",
+                        e.categorize_internal()
+                    );
+                }
+            }
+        });
+        Ok(())
+    }
 }
 
 async fn certs_validation_background_job(cert_state: CertState) {
@@ -1607,12 +2967,14 @@ async fn certs_validation_background_job(cert_state: CertState) {
 }
 
 #[cfg(fbcode_build)]
-mod eden_health {
+pub(crate) mod eden_health {
     use std::time::Duration;
 
     use buck2_core::fs::project::ProjectRoot;
-    use buck2_core::soft_error;
+    use buck2_core::soft_error_or_panic;
     use buck2_eden::connection::EdenConnectionManager;
+    use buck2_eden::connection::EdenDaemonIdentity;
+    use buck2_eden::error::EdenDaemonRestarted;
     use buck2_eden::error::ErrorFromHangingMount;
     use buck2_eden::semaphore;
     use buck2_error::buck2_error;
@@ -1624,9 +2986,24 @@ mod eden_health {
                 "spawned EdenFS health check that runs every {} seconds",
                 HEALTH_CHECK_INTERVAL
             );
+            // The Eden daemon identity from the previous iteration. An identity change means
+            // Eden restarted underneath this daemon, invalidating cached state and file
+            // handles. This catches restarts on any daemon with an Eden repo, including ones
+            // whose I/O provider doesn't go through Eden's Thrift interface.
+            let mut last_identity: Option<EdenDaemonIdentity> = None;
             loop {
                 tokio::time::sleep(Duration::from_secs(HEALTH_CHECK_INTERVAL)).await;
-                match EdenConnectionManager::new(fb, &root, Some(semaphore::buck2_default())) {
+                let semaphore = match semaphore::buck2_default() {
+                    Ok(semaphore) => semaphore,
+                    Err(e) => {
+                        soft_error_or_panic!(
+                            "eden_health_check_setup_failed",
+                            e.context("EdenFS health check cannot be set up")
+                        );
+                        return;
+                    }
+                };
+                match EdenConnectionManager::new(fb, &root, Some(semaphore)) {
                     Ok(Some(conn)) => {
                         let info = conn
                             .with_eden(|eden| {
@@ -1635,20 +3012,37 @@ mod eden_health {
                             })
                             .await;
                         match info {
-                            Err(e) if e.is_caused_by_hanging_mount() => {
-                                tracing::error!(
-                                    "check hit an EdenFS error caused by a hanging mount: {:#}",
-                                    e
-                                );
-                                soft_error!(
-                                    "eden_thrift_health_check_failed",
-                                    buck2_error!(buck2_error::ErrorTag::Input, "check failed with: {:#}", e),
-                                    quiet: true
-                                )
-                                .ok();
-                            }
-                            _ => {
+                            Ok(info) => {
                                 tracing::debug!("check determined EdenFS is not hanging");
+                                let identity = EdenDaemonIdentity::from_daemon_info(&info);
+                                if let Some(last) = &last_identity {
+                                    if !last.is_same_daemon(&identity) {
+                                        soft_error_or_panic!(
+                                            "eden_restart_detected",
+                                            EdenDaemonRestarted {
+                                                old_pid: last.pid(),
+                                                old_start_time: last.start_time(),
+                                                new_pid: identity.pid(),
+                                                new_start_time: identity.start_time(),
+                                            }
+                                            .into()
+                                        );
+                                    }
+                                }
+                                last_identity = Some(identity);
+                            }
+                            Err(e) if e.is_caused_by_hanging_mount() => {
+                                soft_error_or_panic!(
+                                    "eden_thrift_health_check_failed",
+                                    buck2_error!(
+                                        buck2_error::ErrorTag::Input,
+                                        "check failed with: {:#}",
+                                        e
+                                    )
+                                );
+                            }
+                            Err(e) => {
+                                tracing::debug!("check failed with a non-hanging error: {:#}", e);
                             }
                         }
                     }
@@ -1660,13 +3054,14 @@ mod eden_health {
                     // Can occur for a number of reasons, including IO into the Eden mount failing.
                     // This _could_ signal a hanging mount, so we'll report a possible hang.
                     Err(e) => {
-                        tracing::error!("check failed to create an EdenFS client: {:#}", e);
-                        soft_error!(
+                        soft_error_or_panic!(
                             "eden_thrift_client_creation_failed",
-                            buck2_error!(buck2_error::ErrorTag::Input, "client creation failed with: {:#}", e),
-                            quiet: true
-                        )
-                        .ok();
+                            buck2_error!(
+                                buck2_error::ErrorTag::Input,
+                                "client creation failed with: {:#}",
+                                e
+                            )
+                        );
                     }
                 }
             }
@@ -1680,3 +3075,751 @@ struct DefaultCommandOptions;
 impl OneshotCommandOptions for DefaultCommandOptions {}
 
 impl<Req> StreamingCommandOptions<Req> for DefaultCommandOptions {}
+
+struct CleanStaleCommandOptions;
+
+impl OneshotCommandOptions for CleanStaleCommandOptions {}
+
+impl<Req> StreamingCommandOptions<Req> for CleanStaleCommandOptions {
+    fn daemon_activity(&self) -> DaemonActivity {
+        DaemonActivity::CleanStale
+    }
+}
+
+/// Options for `debug hydration`. Its subcommands manage the idle page-out
+/// directly (see `hydration_command`), so starting one must not cancel it.
+struct HydrationCommandOptions;
+
+impl OneshotCommandOptions for HydrationCommandOptions {}
+
+impl<Req> StreamingCommandOptions<Req> for HydrationCommandOptions {
+    fn triggers_idle_page_out(&self) -> bool {
+        false
+    }
+}
+
+/// Options for commands that reach the daemon but do no DICE graph work —
+/// `debug trace-io`, `debug file-status`, and `subscribe`. They don't contend
+/// with a background idle page-out or need materialized outputs, so starting one
+/// leaves background cleanup running.
+struct NonPagingCommandOptions;
+
+impl OneshotCommandOptions for NonPagingCommandOptions {}
+
+impl<Req> StreamingCommandOptions<Req> for NonPagingCommandOptions {
+    fn triggers_idle_page_out(&self) -> bool {
+        false
+    }
+
+    fn prevents_background_cleanup(&self) -> bool {
+        false
+    }
+}
+
+/// Options for `lsp`. Its stream stays open for as long as the IDE client lives, so
+/// holding off background cleanup would suppress scheduled clean-stale for a whole
+/// IDE session rather than for the duration of a build.
+struct LspCommandOptions;
+
+impl OneshotCommandOptions for LspCommandOptions {}
+
+impl<Req> StreamingCommandOptions<Req> for LspCommandOptions {
+    fn prevents_background_cleanup(&self) -> bool {
+        false
+    }
+}
+
+/// Options for `dap`, long lived in the same way as `lsp` (see `LspCommandOptions`).
+struct DapCommandOptions;
+
+impl OneshotCommandOptions for DapCommandOptions {}
+
+impl<Req> StreamingCommandOptions<Req> for DapCommandOptions {
+    fn prevents_background_cleanup(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use buck2_events::BuckEvent;
+    use buck2_events::EventSink;
+    use futures::channel::mpsc;
+    use parking_lot::Mutex;
+
+    use super::*;
+    use crate::active_commands::ActiveCommandDropGuard;
+    use crate::active_commands::REGISTRY_TEST_LOCK;
+
+    /// These tests drive the shutdown signal to completion inside the test binary, under
+    /// `tokio::time::pause`. A watchdog would sleep against the wall clock the paused deadline has
+    /// no relation to, and then `_exit` the test binary out from under the other tests.
+    const IN_PROCESS: bool = true;
+
+    /// Records the `CommandResult`s sent to the event pump's channel.
+    struct RecordingSink {
+        send: crossbeam_channel::Sender<Event>,
+        results: Arc<Mutex<Vec<CommandResult>>>,
+    }
+
+    impl EventSink for RecordingSink {
+        fn send(&self, event: Event) {
+            if let Event::CommandResult(result) = &event {
+                self.results.lock().push((**result).clone());
+            }
+            let _ignored = self.send.send(event);
+        }
+    }
+
+    struct StreamingCommand {
+        response: Option<Response<ResponseStream>>,
+        dispatcher: EventDispatcher,
+        results: Arc<Mutex<Vec<CommandResult>>>,
+        /// Another sender on the pump's channel, which fails once the pump has exited.
+        probe: crossbeam_channel::Sender<Event>,
+        _guard: ActiveCommandDropGuard,
+        /// Dropping the scope would cancel the command.
+        _scope: CancellationScope,
+    }
+
+    impl StreamingCommand {
+        fn start(
+            func: impl FnOnce(EventDispatcher) -> BoxFuture<'static, ()> + Send + 'static,
+        ) -> Self {
+            Self::start_in(CancellationScope::new(), func)
+        }
+
+        fn start_in(
+            scope: CancellationScope,
+            func: impl FnOnce(EventDispatcher) -> BoxFuture<'static, ()> + Send + 'static,
+        ) -> Self {
+            let (send, recv) = crossbeam_channel::unbounded();
+            let results = Arc::new(Mutex::new(Vec::new()));
+            let dispatcher = EventDispatcher::new(
+                TraceId::new(),
+                DaemonId::new(),
+                RecordingSink {
+                    send: send.clone(),
+                    results: results.dupe(),
+                },
+            );
+            let ActiveCommand {
+                guard,
+                state,
+                daemon_shutdown_channel,
+            } = ActiveCommand::new(&dispatcher, Vec::new());
+            let body_dispatcher = dispatcher.dupe();
+            let response = streaming(
+                ChannelEventSource::new(recv),
+                state,
+                ObservedCommand::default(),
+                dispatcher.dupe(),
+                daemon_shutdown_channel,
+                &scope,
+                move |_| func(body_dispatcher),
+                &Handle::current(),
+            );
+            Self {
+                response: Some(response),
+                dispatcher,
+                results,
+                probe: send,
+                _guard: guard,
+                _scope: scope,
+            }
+        }
+
+        async fn wait_for_pump_exit(&self) {
+            let probe = || {
+                Event::Buck(BuckEvent::new(
+                    SystemTime::now(),
+                    self.dispatcher.trace_id().dupe(),
+                    None,
+                    None,
+                    buck2_data::SpanStartEvent {
+                        data: Some(buck2_data::AnalysisStart::default().into()),
+                    }
+                    .into(),
+                ))
+            };
+            tokio::time::timeout(Duration::from_secs(30), async {
+                while self.probe.send(probe()).is_ok() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the event pump should exit after the first result");
+        }
+
+        /// What tonic does when the client disconnects.
+        fn drop_response(&mut self) {
+            self.response = None;
+        }
+
+        fn results(&self) -> Vec<CommandResult> {
+            self.results.lock().clone()
+        }
+
+        fn cancelled_message(&self) -> String {
+            format!(
+                "Command {} was cancelled before it completed: its daemon tenant was evicted or the daemon is shutting down",
+                self.dispatcher.trace_id()
+            )
+        }
+    }
+
+    fn error_report(result: &CommandResult) -> &buck2_data::ErrorReport {
+        match &result.result {
+            Some(command_result::Result::Error(report)) => report,
+            other => panic!("expected an error result, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_streaming_reports_command_dropped_before_its_result() {
+        let _registry = REGISTRY_TEST_LOCK.lock().await;
+        let (started_send, started_recv) = oneshot::channel();
+        let (_park_send, park_recv) = oneshot::channel::<()>();
+        let (dropped_send, dropped_recv) = oneshot::channel::<()>();
+        let mut command = StreamingCommand::start(move |dispatcher| {
+            async move {
+                let _dropped = dropped_send;
+                started_send.send(()).unwrap();
+                let _ignored = park_recv.await;
+                dispatcher.command_result(error_to_command_result(buck2_error!(
+                    ErrorTag::Input,
+                    "body result"
+                )));
+            }
+            .boxed()
+        });
+        started_recv.await.unwrap();
+
+        command.drop_response();
+        command.wait_for_pump_exit().await;
+        // The body is dropped by then, so nothing can send another result.
+        assert!(dropped_recv.await.is_err());
+
+        let results = command.results();
+        assert_eq!(
+            1,
+            results.len(),
+            "only the guard should report: {results:?}"
+        );
+        let report = error_report(&results[0]);
+        assert_eq!(
+            Some(command.cancelled_message().as_str()),
+            report.message.lines().next()
+        );
+        assert!(
+            report
+                .tags
+                .contains(&(ErrorTag::InterruptedByDaemonShutdown as i32))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_streaming_does_not_report_completed_command_again() {
+        let _registry = REGISTRY_TEST_LOCK.lock().await;
+        let (dropped_send, dropped_recv) = oneshot::channel::<()>();
+        let mut command = StreamingCommand::start(move |dispatcher| {
+            async move {
+                let _dropped = dropped_send;
+                dispatcher.command_result(error_to_command_result(buck2_error!(
+                    ErrorTag::Input,
+                    "body result"
+                )));
+            }
+            .boxed()
+        });
+        command.wait_for_pump_exit().await;
+        assert!(dropped_recv.await.is_err());
+
+        command.drop_response();
+        tokio::task::yield_now().await;
+
+        let results = command.results();
+        assert_eq!(1, results.len(), "only the body should report: {results:?}");
+        assert_eq!(
+            Some("body result"),
+            error_report(&results[0]).message.lines().next()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_streaming_does_not_report_command_cancelled_after_its_result() {
+        let _registry = REGISTRY_TEST_LOCK.lock().await;
+        let (release_send, release_recv) = std::sync::mpsc::channel::<()>();
+        let (dropped_send, dropped_recv) = oneshot::channel::<()>();
+        let mut command = StreamingCommand::start(move |dispatcher| {
+            async move {
+                let _dropped = dropped_send;
+                dispatcher.command_result(error_to_command_result(buck2_error!(
+                    ErrorTag::Input,
+                    "body result"
+                )));
+                // Blocks without yielding, so the cancel below arrives during the task's final
+                // poll, after the body has sent its result.
+                release_recv.recv().unwrap();
+            }
+            .boxed()
+        });
+        command.wait_for_pump_exit().await;
+
+        command.drop_response();
+        release_send.send(()).unwrap();
+        assert!(dropped_recv.await.is_err());
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let results = command.results();
+        assert_eq!(1, results.len(), "only the body should report: {results:?}");
+        assert_eq!(
+            Some("body result"),
+            error_report(&results[0]).message.lines().next()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_streaming_reports_command_admitted_after_scope_closed() {
+        let _registry = REGISTRY_TEST_LOCK.lock().await;
+        let scope = CancellationScope::new();
+        scope.cancel();
+        let command = StreamingCommand::start_in(scope, |_| {
+            async { unreachable!("a closed scope should not run the command") }.boxed()
+        });
+        command.wait_for_pump_exit().await;
+
+        let results = command.results();
+        assert_eq!(
+            1,
+            results.len(),
+            "only the guard should report: {results:?}"
+        );
+        assert_eq!(
+            Some(command.cancelled_message().as_str()),
+            error_report(&results[0]).message.lines().next()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_server_shutdown_custom_idle_timeout() {
+        tokio::time::pause();
+
+        let (_cmd_tx, cmd_rx) = mpsc::unbounded::<()>();
+        let (_shutdown_tx, shutdown_rx) = mpsc::unbounded::<tokio::time::Instant>();
+        let inactivity_config = DaemonInactivityConfig::try_new(Some(2), false)
+            .expect("test inactivity config should be valid");
+        let (shutdown_future, shutdown_deadline) =
+            server_shutdown_signal(cmd_rx, shutdown_rx, inactivity_config, IN_PROCESS);
+        futures::pin_mut!(shutdown_future);
+
+        let result = tokio::time::timeout(Duration::from_secs(1), &mut shutdown_future).await;
+        assert!(result.is_err(), "should not shut down before timeout");
+
+        let result = tokio::time::timeout(Duration::from_secs(2), &mut shutdown_future).await;
+        assert!(result.is_ok(), "should shut down after idle timeout");
+        assert_eq!(
+            tokio::time::Instant::now() + DEFAULT_KILL_TIMEOUT,
+            shutdown_deadline.await.unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_server_shutdown_default_idle_timeout() {
+        tokio::time::pause();
+
+        let (_cmd_tx, cmd_rx) = mpsc::unbounded::<()>();
+        let (_shutdown_tx, shutdown_rx) = mpsc::unbounded::<tokio::time::Instant>();
+        let inactivity_config = DaemonInactivityConfig::try_new(None, false)
+            .expect("test inactivity config should be valid");
+        let (shutdown_future, _) =
+            server_shutdown_signal(cmd_rx, shutdown_rx, inactivity_config, IN_PROCESS);
+        futures::pin_mut!(shutdown_future);
+
+        let result = tokio::time::timeout(Duration::from_secs(3600), &mut shutdown_future).await;
+        assert!(result.is_err(), "should not shut down before 4-day default");
+    }
+
+    #[tokio::test]
+    async fn test_server_shutdown_command_resets_idle_timer() {
+        tokio::time::pause();
+
+        let (cmd_tx, cmd_rx) = mpsc::unbounded::<()>();
+        let (_shutdown_tx, shutdown_rx) = mpsc::unbounded::<tokio::time::Instant>();
+        let inactivity_config = DaemonInactivityConfig::try_new(Some(3), false)
+            .expect("test inactivity config should be valid");
+        let (shutdown_future, _) =
+            server_shutdown_signal(cmd_rx, shutdown_rx, inactivity_config, IN_PROCESS);
+        futures::pin_mut!(shutdown_future);
+
+        tokio::time::advance(Duration::from_secs(2)).await;
+        cmd_tx.unbounded_send(()).unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), &mut shutdown_future).await;
+        assert!(result.is_err(), "timer should have been reset by command");
+
+        let result = tokio::time::timeout(Duration::from_secs(2), &mut shutdown_future).await;
+        assert!(
+            result.is_ok(),
+            "should shut down after idle timeout post-reset"
+        );
+    }
+
+    #[test]
+    fn test_clean_stale_daemon_timeout_promotion_is_permanent() {
+        let inactivity_config = DaemonInactivityConfig::try_new(None, true)
+            .expect("test inactivity config should be valid");
+
+        assert_eq!(
+            CLEAN_STALE_INACTIVITY_TIMEOUT,
+            inactivity_config.current_timeout()
+        );
+        inactivity_config.note_activity(DaemonActivity::CleanStale);
+        assert_eq!(
+            CLEAN_STALE_INACTIVITY_TIMEOUT,
+            inactivity_config.current_timeout()
+        );
+        inactivity_config.note_activity(DaemonActivity::Other);
+        assert_eq!(
+            DEFAULT_INACTIVITY_TIMEOUT,
+            inactivity_config.current_timeout()
+        );
+        inactivity_config.note_activity(DaemonActivity::CleanStale);
+        assert_eq!(
+            DEFAULT_INACTIVITY_TIMEOUT,
+            inactivity_config.current_timeout()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_clean_stale_daemon_promotion_resets_to_standard_timeout() {
+        tokio::time::pause();
+
+        let (cmd_tx, cmd_rx) = mpsc::unbounded::<()>();
+        let (_shutdown_tx, shutdown_rx) = mpsc::unbounded::<tokio::time::Instant>();
+        let inactivity_config = DaemonInactivityConfig::try_new(None, true)
+            .expect("test inactivity config should be valid");
+        let (shutdown_future, _) =
+            server_shutdown_signal(cmd_rx, shutdown_rx, inactivity_config.clone(), IN_PROCESS);
+        futures::pin_mut!(shutdown_future);
+
+        let result = tokio::time::timeout(
+            CLEAN_STALE_INACTIVITY_TIMEOUT - Duration::from_secs(1),
+            &mut shutdown_future,
+        )
+        .await;
+        assert!(result.is_err(), "should not shut down before short timeout");
+
+        inactivity_config.note_activity(DaemonActivity::Other);
+        cmd_tx.unbounded_send(()).unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), &mut shutdown_future).await;
+        assert!(result.is_err(), "promotion should install standard timeout");
+    }
+
+    #[tokio::test]
+    async fn test_server_shutdown_preserves_deadline() {
+        tokio::time::pause();
+
+        let (_cmd_tx, cmd_rx) = mpsc::unbounded::<()>();
+        let (shutdown_tx, shutdown_rx) = mpsc::unbounded();
+        let inactivity_config = DaemonInactivityConfig::try_new(None, false)
+            .expect("test inactivity config should be valid");
+        let (shutdown_future, shutdown_deadline) =
+            server_shutdown_signal(cmd_rx, shutdown_rx, inactivity_config, IN_PROCESS);
+        let expected_deadline = tokio::time::Instant::now() + Duration::from_secs(7);
+
+        shutdown_tx.unbounded_send(expected_deadline).unwrap();
+        shutdown_future.await;
+
+        assert_eq!(expected_deadline, shutdown_deadline.await.unwrap());
+    }
+
+    /// `streaming` must dispatch exactly one `CommandResult` per command, however the command's
+    /// completion interleaves with its cancellation. `pump_events` stops at the first result, and
+    /// `ChannelEventSink` reports a control event that finds its receiver gone as a soft error,
+    /// which is a panic under the hard errors these tests run with. These tests record every
+    /// result dispatched, and a panic in a spawned task fails them.
+    ///
+    /// The cancellation primitive makes a second one easy to produce: a task whose body completes
+    /// in the same poll in which a cancel arrives still resolves as cancelled, so "the task was
+    /// cancelled" does not mean "the body did not report". A client that receives its result and
+    /// closes its stream cancels the command exactly like that.
+    mod one_result_per_command {
+        use std::sync::mpsc;
+
+        use buck2_events::EventSink;
+        use buck2_wrapper_common::invocation_id::TraceId;
+        use parking_lot::Mutex;
+
+        use super::super::*;
+        use crate::active_commands::ActiveCommandDropGuard;
+        use crate::active_commands::REGISTRY_TEST_LOCK;
+
+        /// Records every `CommandResult` dispatched for a command, in front of the sink the
+        /// command's client reads from.
+        struct RecordingSink<S> {
+            results: Arc<Mutex<Vec<CommandResult>>>,
+            inner: S,
+            /// Dropped with the last clone of the dispatcher, after which nothing can send.
+            _held: oneshot::Sender<()>,
+        }
+
+        impl<S: EventSink> EventSink for RecordingSink<S> {
+            fn send(&self, event: Event) {
+                if let Event::CommandResult(result) = &event {
+                    self.results.lock().push((**result).clone());
+                }
+                self.inner.send(event);
+            }
+        }
+
+        /// A command's plumbing before `streaming` takes it: what `run_streaming_erased` sets up.
+        struct CommandUnderTest {
+            dispatcher: EventDispatcher,
+            events: ChannelEventSource,
+            active: ActiveCommand,
+            results: Arc<Mutex<Vec<CommandResult>>>,
+            released: oneshot::Receiver<()>,
+        }
+
+        /// What is left once the command is streaming: the results dispatched so far, and the
+        /// means to wait until nothing can dispatch another.
+        struct Dispatched {
+            results: Arc<Mutex<Vec<CommandResult>>>,
+            released: oneshot::Receiver<()>,
+            guard: ActiveCommandDropGuard,
+        }
+
+        impl CommandUnderTest {
+            fn new() -> Self {
+                let (events, sink) = buck2_events::create_source_sink_pair();
+                let results = Arc::new(Mutex::new(Vec::new()));
+                let (held, released) = oneshot::channel();
+                let dispatcher = EventDispatcher::new(
+                    TraceId::new(),
+                    DaemonId::new(),
+                    RecordingSink {
+                        results: results.dupe(),
+                        inner: sink,
+                        _held: held,
+                    },
+                );
+                let active = ActiveCommand::new(&dispatcher, Vec::new());
+                Self {
+                    dispatcher,
+                    events,
+                    active,
+                    results,
+                    released,
+                }
+            }
+
+            fn stream<F>(self, scope: &CancellationScope, func: F) -> (ResponseStream, Dispatched)
+            where
+                F: for<'a> FnOnce(&'a CancellationContext) -> BoxFuture<'a, ()> + Send + 'static,
+            {
+                let ActiveCommand {
+                    guard,
+                    daemon_shutdown_channel,
+                    state,
+                } = self.active;
+                let response = streaming(
+                    self.events,
+                    state,
+                    ObservedCommand::default(),
+                    self.dispatcher,
+                    daemon_shutdown_channel,
+                    scope,
+                    func,
+                    &Handle::current(),
+                );
+                (
+                    response.into_inner(),
+                    Dispatched {
+                        results: self.results,
+                        released: self.released,
+                        guard,
+                    },
+                )
+            }
+        }
+
+        impl Dispatched {
+            /// Waits until every holder of the command's dispatcher is gone: the command's task,
+            /// whatever `streaming` spawned beside it, and the active command registry. Only then
+            /// is the list of dispatched results final.
+            async fn settled(self) -> Vec<CommandResult> {
+                drop(self.guard);
+                let _ = timeout(Duration::from_secs(60), self.released)
+                    .await
+                    .expect("the command's dispatcher should be released once its task is done");
+                self.results.lock().clone()
+            }
+        }
+
+        fn body_result() -> CommandResult {
+            CommandResult {
+                result: Some(command_result::Result::PingResponse(PingResponse::default())),
+            }
+        }
+
+        fn is_error(result: &CommandResult) -> bool {
+            matches!(result.result, Some(command_result::Result::Error(_)))
+        }
+
+        /// The result the client reads from the stream.
+        async fn delivered(response: &mut ResponseStream) -> CommandResult {
+            while let Some(batch) = response.next().await {
+                for message in batch
+                    .expect("the stream carries no transport errors")
+                    .messages
+                {
+                    if let Some(command_progress::Progress::Result(result)) = message.progress {
+                        return *result;
+                    }
+                }
+            }
+            panic!("the stream ended without a result");
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_completed_command_reports_once() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
+            let scope = CancellationScope::new();
+            let command = CommandUnderTest::new();
+            let dispatcher = command.dispatcher.dupe();
+            let (mut response, dispatched) = command.stream(&scope, move |_| {
+                async move { dispatcher.command_result(body_result()) }.boxed()
+            });
+
+            assert!(!is_error(&delivered(&mut response).await));
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+        }
+
+        /// The client receives its result and closes its stream while the command's task is still
+        /// inside the poll that sent it. Closing the stream cancels the task, which then resolves
+        /// as cancelled even though its body reported; that must not be reported again. This is
+        /// the crash that fast-reverted the 2026-11-02 buck2 bump (D129074969).
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_client_that_disconnects_after_its_result_does_not_get_a_second_one() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
+            let scope = CancellationScope::new();
+            let (release, released) = mpsc::channel::<()>();
+            let command = CommandUnderTest::new();
+            let dispatcher = command.dispatcher.dupe();
+            let (mut response, dispatched) = command.stream(&scope, move |_| {
+                async move {
+                    dispatcher.command_result(body_result());
+                    // Blocks inside the poll on purpose: the cancel has to land before the task
+                    // resolves, as a client's disconnect does when it wins the race with the
+                    // task's last few instructions.
+                    released.recv().unwrap();
+                }
+                .boxed()
+            });
+
+            assert!(!is_error(&delivered(&mut response).await));
+            drop(response);
+            release.send(()).unwrap();
+
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+            assert!(!is_error(&results[0]), "{results:?}");
+        }
+
+        /// The cancel lands in the poll that reports, before the body has sent its result. The
+        /// body still completes, so its result is the only one.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_cancel_during_the_reporting_poll_does_not_add_a_result() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
+            let scope = CancellationScope::new();
+            let (started, polling) = oneshot::channel::<()>();
+            let (release, released) = mpsc::channel::<()>();
+            let command = CommandUnderTest::new();
+            let dispatcher = command.dispatcher.dupe();
+            let (response, dispatched) = command.stream(&scope, move |_| {
+                async move {
+                    started.send(()).unwrap();
+                    released.recv().unwrap();
+                    dispatcher.command_result(body_result());
+                }
+                .boxed()
+            });
+
+            polling.await.unwrap();
+            drop(response);
+            release.send(()).unwrap();
+
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+            assert!(!is_error(&results[0]), "{results:?}");
+        }
+
+        /// The client disconnects while the body is pending: the body never reports, so the
+        /// cancellation is the one result.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_client_that_disconnects_mid_command_gets_one_result() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
+            let scope = CancellationScope::new();
+            let command = CommandUnderTest::new();
+            let (response, dispatched) =
+                command.stream(&scope, |_| futures::future::pending::<()>().boxed());
+
+            drop(response);
+
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+            assert!(is_error(&results[0]), "{results:?}");
+        }
+
+        /// The tenant is evicted while the body is pending and the client is still connected: the
+        /// client is told once that its command stopped.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn an_evicted_command_tells_its_client_once() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
+            let scope = CancellationScope::new();
+            let command = CommandUnderTest::new();
+            let (mut response, dispatched) =
+                command.stream(&scope, |_| futures::future::pending::<()>().boxed());
+
+            scope.cancel();
+            assert!(is_error(&delivered(&mut response).await));
+            scope.wait().await;
+
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+        }
+
+        /// The tenant was evicted before the command was spawned: the body never runs, and the
+        /// client is told once.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_command_admitted_after_eviction_tells_its_client_once() {
+            let _registry = REGISTRY_TEST_LOCK.lock().await;
+            let scope = CancellationScope::new();
+            scope.cancel();
+            let ran = Arc::new(AtomicBool::new(false));
+            let command = CommandUnderTest::new();
+            let dispatcher = command.dispatcher.dupe();
+            let (mut response, dispatched) = command.stream(&scope, {
+                let ran = ran.dupe();
+                move |_| {
+                    async move {
+                        ran.store(true, Ordering::SeqCst);
+                        dispatcher.command_result(body_result());
+                    }
+                    .boxed()
+                }
+            });
+
+            assert!(is_error(&delivered(&mut response).await));
+
+            let results = dispatched.settled().await;
+            assert_eq!(1, results.len(), "{results:?}");
+            assert!(!ran.load(Ordering::SeqCst));
+        }
+    }
+}

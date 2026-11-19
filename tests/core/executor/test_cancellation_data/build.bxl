@@ -11,6 +11,5 @@ def _build_impl(ctx):
 
 build = bxl_main(
     impl = _build_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )

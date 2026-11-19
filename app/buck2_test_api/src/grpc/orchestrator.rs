@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
@@ -20,12 +19,15 @@ use buck2_downward_api_proto::LogRequest;
 use buck2_downward_api_proto::downward_api_client;
 use buck2_downward_api_proto::downward_api_server;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::dispatch::with_dispatcher_async;
 use buck2_grpc::ServerHandle;
 use buck2_grpc::make_channel;
 use buck2_grpc::spawn_oneshot;
 use buck2_grpc::to_tonic;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_hash::BuckMutMap;
 use buck2_test_proto::AttachInfoMessageRequest;
 use buck2_test_proto::Empty;
 use buck2_test_proto::EndOfTestResultsRequest;
@@ -35,14 +37,14 @@ use buck2_test_proto::ReportTestResultRequest;
 use buck2_test_proto::ReportTestSessionRequest;
 use buck2_test_proto::ReportTestsDiscoveredRequest;
 use buck2_test_proto::Testing;
+use buck2_test_proto::UploadFileToCasRequest;
+use buck2_test_proto::UploadFileToCasResponse;
 use buck2_test_proto::test_orchestrator_client;
 use buck2_test_proto::test_orchestrator_server;
 use dupe::Dupe;
 use futures::future::BoxFuture;
 use futures::future::FutureExt;
-use gazebo::prelude::VecExt;
 use host_sharing::HostSharingRequirements;
-use sorted_vector_map::SortedVectorMap;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tonic::transport::Channel;
@@ -50,6 +52,7 @@ use tower_layer::Layer;
 use tracing::Level;
 
 use crate::data::ArgValue;
+use crate::data::CasDigest;
 use crate::data::ConfiguredTargetHandle;
 use crate::data::DeclaredOutput;
 use crate::data::ExecuteRequest2;
@@ -121,7 +124,7 @@ impl DownwardApi for TestOrchestratorClient {
         Ok(())
     }
 
-    async fn external(&self, data: HashMap<String, String>) -> buck2_error::Result<()> {
+    async fn external(&self, data: BuckMutMap<String, String>) -> buck2_error::Result<()> {
         let event = data.into();
 
         self.downward_api_client
@@ -139,12 +142,13 @@ impl TestOrchestratorClient {
         ui_prints: TestStage,
         target: ConfiguredTargetHandle,
         cmd: Vec<ArgValue>,
-        env: SortedVectorMap<String, ArgValue>,
+        env: BuckFixedSortedMap<String, ArgValue>,
         timeout: Duration,
         host_sharing_requirements: HostSharingRequirements,
         pre_create_dirs: Vec<DeclaredOutput>,
         executor_override: Option<ExecutorConfigOverride>,
         required_local_resources: RequiredLocalResources,
+        disable_test_execution_caching: bool,
     ) -> buck2_error::Result<ExecuteResponse> {
         let test_executable = TestExecutable {
             stage: ui_prints,
@@ -160,6 +164,7 @@ impl TestOrchestratorClient {
             host_sharing_requirements,
             executor_override,
             required_local_resources,
+            disable_test_execution_caching,
         };
 
         let req: buck2_test_proto::ExecuteRequest2 = req
@@ -173,7 +178,7 @@ impl TestOrchestratorClient {
             .await?
             .into_inner();
 
-        let response = match response.buck_error_context("Missing `response`")? {
+        let response = match response.internal_error("Missing `response`")? {
             buck2_test_proto::execute_response2::Response::Result(res) => {
                 ExecuteResponse::Result(res.try_into().buck_error_context("Invalid `result`")?)
             }
@@ -229,6 +234,7 @@ impl TestOrchestratorClient {
                     suite,
                     testcases: tests,
                     variant: None,
+                    repeat_count: None,
                 }),
             })
             .await?;
@@ -236,10 +242,17 @@ impl TestOrchestratorClient {
         Ok(())
     }
 
-    pub async fn report_test_session(&self, session_info: String) -> buck2_error::Result<()> {
+    pub async fn report_test_session(
+        &self,
+        session_info: String,
+        test_session_id: Option<String>,
+    ) -> buck2_error::Result<()> {
         self.test_orchestrator_client
             .clone()
-            .report_test_session(ReportTestSessionRequest { session_info })
+            .report_test_session(ReportTestSessionRequest {
+                session_info,
+                test_session_id,
+            })
             .await?;
 
         Ok(())
@@ -259,7 +272,7 @@ impl TestOrchestratorClient {
         stage: TestStage,
         target: ConfiguredTargetHandle,
         cmd: Vec<ArgValue>,
-        env: SortedVectorMap<String, ArgValue>,
+        env: BuckFixedSortedMap<String, ArgValue>,
         pre_create_dirs: Vec<DeclaredOutput>,
         required_local_resources: RequiredLocalResources,
     ) -> buck2_error::Result<PrepareForLocalExecutionResult> {
@@ -277,7 +290,11 @@ impl TestOrchestratorClient {
 
         let request = buck2_test_proto::PrepareForLocalExecutionRequest {
             test_executable: Some(executable),
-            required_local_resources: required_local_resources.resources.into_map(|r| r.into()),
+            required_local_resources: required_local_resources
+                .resources
+                .into_iter()
+                .map(|r| r.into())
+                .collect::<Vec<_>>(),
         };
         self.test_orchestrator_client
             .clone()
@@ -294,6 +311,124 @@ impl TestOrchestratorClient {
             .attach_info_message(AttachInfoMessageRequest { message })
             .await?;
         Ok(())
+    }
+
+    pub async fn upload_to_cas(
+        &self,
+        local_path: String,
+        ttl_seconds: i64,
+        use_case: String,
+    ) -> buck2_error::Result<CasDigest> {
+        let UploadFileToCasResponse { digest } = self
+            .test_orchestrator_client
+            .clone()
+            .upload_file_to_cas(UploadFileToCasRequest {
+                local_path,
+                ttl_config: Some(buck2_test_proto::TtlConfig {
+                    ttl_seconds,
+                    use_case,
+                }),
+            })
+            .await?
+            .into_inner();
+
+        let digest = digest.internal_error("Missing `digest`")?;
+        Ok(digest)
+    }
+}
+
+/// Implement the `TestOrchestrator` trait for the gRPC client so that both the
+/// gRPC-based and in-process paths can use `dyn TestOrchestrator` uniformly.
+/// Each method delegates to the identically-named inherent method which handles
+/// protobuf serialization and gRPC transport.
+#[async_trait::async_trait]
+impl TestOrchestrator for TestOrchestratorClient {
+    async fn execute2(
+        &self,
+        stage: TestStage,
+        target: ConfiguredTargetHandle,
+        cmd: Vec<ArgValue>,
+        env: BuckFixedSortedMap<String, ArgValue>,
+        timeout: Duration,
+        host_sharing_requirements: HostSharingRequirements,
+        pre_create_dirs: Vec<DeclaredOutput>,
+        executor_override: Option<ExecutorConfigOverride>,
+        required_local_resources: RequiredLocalResources,
+        disable_test_execution_caching: bool,
+    ) -> buck2_error::Result<ExecuteResponse> {
+        // Calls the inherent method (inherent methods take priority over trait methods).
+        self.execute2(
+            stage,
+            target,
+            cmd,
+            env,
+            timeout,
+            host_sharing_requirements,
+            pre_create_dirs,
+            executor_override,
+            required_local_resources,
+            disable_test_execution_caching,
+        )
+        .await
+    }
+
+    async fn report_test_result(&self, r: TestResult) -> buck2_error::Result<()> {
+        self.report_test_result(r).await
+    }
+
+    async fn report_tests_discovered(
+        &self,
+        target: ConfiguredTargetHandle,
+        suite: String,
+        name: Vec<String>,
+    ) -> buck2_error::Result<()> {
+        self.report_tests_discovered(target, suite, name).await
+    }
+
+    async fn report_test_session(
+        &self,
+        session_info: String,
+        test_session_id: Option<String>,
+    ) -> buck2_error::Result<()> {
+        self.report_test_session(session_info, test_session_id)
+            .await
+    }
+
+    async fn end_of_test_results(&self, exit_code: i32) -> buck2_error::Result<()> {
+        self.end_of_test_results(exit_code).await
+    }
+
+    async fn prepare_for_local_execution(
+        &self,
+        stage: TestStage,
+        target: ConfiguredTargetHandle,
+        cmd: Vec<ArgValue>,
+        env: BuckFixedSortedMap<String, ArgValue>,
+        pre_create_dirs: Vec<DeclaredOutput>,
+        required_local_resources: RequiredLocalResources,
+    ) -> buck2_error::Result<PrepareForLocalExecutionResult> {
+        self.prepare_for_local_execution(
+            stage,
+            target,
+            cmd,
+            env,
+            pre_create_dirs,
+            required_local_resources,
+        )
+        .await
+    }
+
+    async fn attach_info_message(&self, message: String) -> buck2_error::Result<()> {
+        self.attach_info_message(message).await
+    }
+
+    async fn upload_to_cas(
+        &self,
+        local_path: String,
+        ttl_seconds: i64,
+        use_case: String,
+    ) -> buck2_error::Result<CasDigest> {
+        self.upload_to_cas(local_path, ttl_seconds, use_case).await
     }
 }
 
@@ -317,6 +452,7 @@ where
                 host_sharing_requirements,
                 executor_override,
                 required_local_resources,
+                disable_test_execution_caching,
             } = request
                 .into_inner()
                 .try_into()
@@ -342,6 +478,7 @@ where
                     pre_create_dirs,
                     executor_override,
                     required_local_resources,
+                    disable_test_execution_caching,
                 )
                 .await
                 .buck_error_context("Execution failed")?;
@@ -404,7 +541,7 @@ where
             let ReportTestResultRequest { result } = request.into_inner();
 
             let result = result
-                .buck_error_context("Missing `result`")?
+                .internal_error("Missing `result`")?
                 .try_into()
                 .buck_error_context("Invalid `result`")?;
 
@@ -426,13 +563,13 @@ where
             let ReportTestsDiscoveredRequest { target, testing } = request.into_inner();
 
             let target = target
-                .buck_error_context("Missing `target`")?
+                .internal_error("Missing `target`")?
                 .try_into()
                 .buck_error_context("Invalid `target`")?;
 
             let Testing {
                 suite, testcases, ..
-            } = testing.buck_error_context("Missing `testing`")?;
+            } = testing.internal_error("Missing `testing`")?;
 
             self.inner
                 .report_tests_discovered(target, suite, testcases)
@@ -449,10 +586,13 @@ where
         request: tonic::Request<ReportTestSessionRequest>,
     ) -> Result<tonic::Response<Empty>, tonic::Status> {
         to_tonic(async move {
-            let ReportTestSessionRequest { session_info } = request.into_inner();
+            let ReportTestSessionRequest {
+                session_info,
+                test_session_id,
+            } = request.into_inner();
 
             self.inner
-                .report_test_session(session_info)
+                .report_test_session(session_info, test_session_id)
                 .await
                 .buck_error_context("Failed to report test session summary")?;
 
@@ -471,7 +611,10 @@ where
                 required_local_resources,
             } = request.into_inner();
             let resources = RequiredLocalResources {
-                resources: required_local_resources.into_map(|r| r.into()),
+                resources: required_local_resources
+                    .into_iter()
+                    .map(|r| r.into())
+                    .collect::<Vec<_>>(),
             };
 
             let TestExecutable {
@@ -481,7 +624,7 @@ where
                 env,
                 pre_create_dirs,
             } = test_executable
-                .buck_error_context("Missing `test_executable`")?
+                .internal_error("Missing `test_executable`")?
                 .try_into()
                 .buck_error_context("Invalid `test_executable`")
                 .buck_error_context("Invalid prepare_for_local_execution request")?;
@@ -515,6 +658,31 @@ where
         })
         .await
     }
+
+    async fn upload_file_to_cas(
+        &self,
+        request: tonic::Request<UploadFileToCasRequest>,
+    ) -> Result<tonic::Response<UploadFileToCasResponse>, tonic::Status> {
+        to_tonic(async move {
+            let UploadFileToCasRequest {
+                local_path,
+                ttl_config,
+            } = request.into_inner();
+
+            let ttl_config = ttl_config.internal_error("Missing `ttl_config`")?;
+
+            let digest = self
+                .inner
+                .upload_to_cas(local_path, ttl_config.ttl_seconds, ttl_config.use_case)
+                .await
+                .buck_error_context("Failed to upload file to CAS")?;
+
+            Ok(UploadFileToCasResponse {
+                digest: Some(digest),
+            })
+        })
+        .await
+    }
 }
 
 struct DownwardApiService<T: DownwardApi> {
@@ -534,7 +702,7 @@ where
             let ConsoleRequest { level, message } = request.into_inner();
 
             let level = level
-                .buck_error_context("Missing `level`")?
+                .internal_error("Missing `level`")?
                 .try_into()
                 .buck_error_context("Invalid `level`")?;
 
@@ -556,7 +724,7 @@ where
             let LogRequest { level, message } = request.into_inner();
 
             let level = level
-                .buck_error_context("Missing `level`")?
+                .internal_error("Missing `level`")?
                 .try_into()
                 .buck_error_context("Invalid `level`")?;
 
@@ -578,7 +746,7 @@ where
             let ExternalEventRequest { event } = request.into_inner();
 
             let event = event
-                .buck_error_context("Missing `event`")?
+                .internal_error("Missing `event`")?
                 .try_into()
                 .buck_error_context("Invalid `event`")?;
 
@@ -604,7 +772,7 @@ where
     O: TestOrchestrator + Send + Sync + 'static,
     D: DownwardApi + Send + Sync + 'static,
 {
-    let router = tonic::transport::Server::builder()
+    let router = buck2_grpc::server_builder()
         .layer(EventDispatcherLayer::new(dispatcher))
         .add_service(
             test_orchestrator_server::TestOrchestratorServer::new(TestOrchestratorService {

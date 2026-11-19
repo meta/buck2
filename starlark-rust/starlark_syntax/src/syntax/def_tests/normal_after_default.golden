@@ -12,4 +12,3 @@ Error: error: positional parameter after non positional
   |
 1 | def test(x, y=1, z): pass
   |                  ^
-  |

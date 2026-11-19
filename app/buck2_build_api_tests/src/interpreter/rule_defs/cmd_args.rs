@@ -8,5 +8,9 @@
  * above-listed licenses.
  */
 
+mod hashing;
+mod inputs_outputs;
+mod old;
+mod options;
 pub(crate) mod testing;
 mod tests;

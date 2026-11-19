@@ -8,6 +8,9 @@
  * above-listed licenses.
  */
 
+use std::sync::LazyLock;
+use std::time::Duration;
+
 use async_trait::async_trait;
 use buck2_cli_proto::LspRequest;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
@@ -27,7 +30,6 @@ use buck2_client_ctx::stream_util::reborrow_stream_for_static;
 use buck2_client_ctx::streaming::StreamingCommand;
 use futures::stream::StreamExt;
 use lsp_server::Message;
-use once_cell::sync::Lazy;
 
 #[derive(Debug, clap::Parser)]
 #[clap(about = "Start an LSP server for starlark files")]
@@ -77,25 +79,26 @@ impl StreamingCommand for LspCommand {
                         events_ctx,
                         &mut partial_result_handler,
                     )
-                    .await
-            },
-            // The LSP server side does not handle hangups. So, until it does... we never hang up:
-            // Err(Status { code: FailedPrecondition, message: "received a message that is not a `StreamingRequest`", source: None })
-            || None,
-        )
-        .await??;
+                    .await??;
 
-        ExitResult::success()
+                ExitResult::success()
+            },
+            // The LSP server side does not handle hangups as a request, so there's nothing to send here. We simply drop the connection on the client side, and let the server detect the dropped command.
+            || None,
+            || Some((Duration::ZERO, ExitResult::success())),
+        )
+        .await
     }
 
     fn console_opts(&self) -> &CommonConsoleOptions {
         // This should only be communicated with by an IDE, so disable anything other
         // than the simple console
-        static SIMPLE_CONSOLE: Lazy<CommonConsoleOptions> = Lazy::new(|| CommonConsoleOptions {
-            console_type: ConsoleType::Simple,
-            ui: vec![],
-            no_interactive_console: true,
-        });
+        static SIMPLE_CONSOLE: LazyLock<CommonConsoleOptions> =
+            LazyLock::new(|| CommonConsoleOptions {
+                console_type: ConsoleType::Simple,
+                ui: vec![],
+                no_interactive_console: true,
+            });
         &SIMPLE_CONSOLE
     }
 

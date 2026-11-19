@@ -1,9 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
-# This source code is licensed under both the MIT license found in the
-# LICENSE-MIT file in the root directory of this source tree and the Apache
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
 # License, Version 2.0 found in the LICENSE-APACHE file in the root directory
-# of this source tree.
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
 
 buildscript.run = false
 
@@ -62,7 +63,12 @@ compiler_flags = [
     "-DZSTDLIB_VISIBILITY=",
     "-DZDICTLIB_VISIBILITY=",
     "-DZSTDERRORLIB_VISIBILITY=",
-    "-DZSTD_LEGACY_SUPPORT=1"
+    "-DZSTD_LEGACY_SUPPORT=1",
+    # The zstd crate is built with the "zstdmt" feature, whose Rust side
+    # references ZSTD_createThreadPool/ZSTD_freeThreadPool — only defined
+    # when ZSTD_MULTITHREAD is set (zstd-sys build.rs does the same).
+    # ELF links hid the mismatch via --gc-sections; link.exe does not.
+    "-DZSTD_MULTITHREAD"
 ]
 
 [['cfg(all(target_os = "windows", target_env = "msvc"))'.cxx_library]]
@@ -119,5 +125,7 @@ compiler_flags = [
     "-DZSTDLIB_VISIBILITY=",
     "-DZDICTLIB_VISIBILITY=",
     "-DZSTDERRORLIB_VISIBILITY=",
-    "-DZSTD_LEGACY_SUPPORT=1"
+    "-DZSTD_LEGACY_SUPPORT=1",
+    # See the unix section: required by the zstd crate's "zstdmt" feature.
+    "-DZSTD_MULTITHREAD"
 ]

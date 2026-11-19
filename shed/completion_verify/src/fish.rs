@@ -11,21 +11,25 @@
 use std::io;
 use std::path::Path;
 
-use crate::extract_from_outputs;
 use crate::runtime::FishRuntime;
 
-fn reconstruct_with_beginning_omitted(out: String, last_input_word: &str) -> String {
-    let Some(end) = out.strip_prefix('…') else {
-        return out;
-    };
+fn parse_completions(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let completion = line
+                .split_once('\t')
+                .map_or(line, |(completion, _)| completion);
+            (!completion.is_empty()).then(|| completion.to_owned())
+        })
+        .collect()
+}
 
-    for (i, _) in end.char_indices().rev() {
-        if let Some(omited) = last_input_word.strip_suffix(&end[0..i]) {
-            return format!("{omited}{end}");
-        }
-    }
-    // Unreachable because of `i == 0` case
-    unreachable!()
+fn replace_last_word(input: &str, completion: &str) -> String {
+    let last_word = input
+        .rsplit_once(|c: char| c.is_ascii_whitespace())
+        .map_or(input, |(_, last_word)| last_word);
+    format!("{}{completion}", &input[..input.len() - last_word.len()])
 }
 
 pub(crate) fn run_fish(
@@ -39,19 +43,42 @@ pub(crate) fn run_fish(
     let mut r = FishRuntime::new(home.to_owned())?;
     r.register(completion_name, script)?;
 
-    let outs = extract_from_outputs(
-        input,
-        std::iter::empty()
-            .chain(std::iter::once_with(|| r.complete(&format!("{input}\t"))))
-            .chain(std::iter::once_with(|| r.complete(&format!("{input}\t\t")))),
-    )?;
+    let completions = parse_completions(&r.complete(input)?);
+    let [completion] = completions.as_slice() else {
+        return Ok(completions);
+    };
 
-    let last_input_word = input
+    let last_word = input
         .rsplit_once(|c: char| c.is_ascii_whitespace())
-        .map_or(input, |x| x.1);
+        .map_or(input, |(_, last_word)| last_word);
+    if !completion.ends_with('/') || completion == last_word {
+        return Ok(completions);
+    }
 
-    Ok(outs
-        .into_iter()
-        .map(|out| reconstruct_with_beginning_omitted(out, last_input_word))
-        .collect())
+    // Fish leaves a trailing-slash completion active instead of terminating it with a space.
+    // Query the completed command line once more to match the existing two-Tab behavior.
+    Ok(parse_completions(
+        &r.complete(&replace_last_word(input, completion))?,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_completions_strips_descriptions() {
+        assert_eq!(
+            parse_completions("car1\tdescription\ncar2\n\n"),
+            vec!["car1".to_owned(), "car2".to_owned()],
+        );
+    }
+
+    #[test]
+    fn test_replace_last_word() {
+        assert_eq!(
+            replace_last_word("buck2 build other/", "root//other/"),
+            "buck2 build root//other/",
+        );
+    }
 }

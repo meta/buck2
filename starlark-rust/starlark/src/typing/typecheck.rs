@@ -53,7 +53,9 @@ use crate::typing::mode::TypecheckMode;
 use crate::typing::oracle::ctx::TypingOracleCtx;
 use crate::typing::ty::Approximation;
 use crate::typing::ty::Ty;
-use crate::values::FrozenHeap;
+use crate::values::Heap;
+use crate::values::any::StarlarkAny;
+use crate::values::layout::heap::module_heaps::ModuleHeaps;
 
 // Things which are None in the map have type void - they are never constructed
 pub(crate) fn solve_bindings(
@@ -193,65 +195,49 @@ impl AstModuleTypecheck for AstModule {
         loads: &HashMap<String, Interface>,
     ) -> (Vec<crate::Error>, TypeMap, Interface, Vec<Approximation>) {
         let (codemap, statement, _dialect, _) = self.into_parts();
-        let names = MutableNames::new();
-        let frozen_heap = FrozenHeap::new();
-        let (
-            scope_errors,
-            ModuleScopes {
-                mut cst,
-                scope_data,
-                ..
-            },
-        ) = ModuleScopes::check_module(
-            &names,
-            &frozen_heap,
-            loads,
-            statement,
-            ScopeResolverGlobals {
-                globals: Some(frozen_heap.alloc_any(globals.dupe())),
-            },
-            frozen_heap.alloc_any(codemap.dupe()),
-            &Dialect::AllOptionsInternal,
-        );
-        let scope_errors = scope_errors.into_map(TypingError::from_eval_exception);
-        // We don't really need to properly unpack top-level statements,
-        // but make it safe against future changes.
-        let mut cst: Vec<&mut CstStmt> = top_level_stmts_mut(&mut cst);
-        let oracle = TypingOracleCtx { codemap: &codemap };
-
-        let mut approximations = Vec::new();
-        let (fill_types_errors, module_var_types) = match fill_types_for_lint_typechecker(
-            &mut cst,
-            oracle,
-            &scope_data,
-            &mut approximations,
-        ) {
-            Ok(fill_types_errors) => fill_types_errors,
-            Err(e) => {
-                return (
-                    vec![InternalError::into_error(e)],
-                    TypeMap {
-                        codemap,
-                        bindings: UnorderedMap::new(),
+        // A scratch module's heaps: the scope resolves the globals at the frozen heap and the
+        // lint typechecker evaluates on the value heap, with the edge between them.
+        Heap::temp(|heap| {
+            let heaps = ModuleHeaps::new(heap);
+            heaps.frozen_heap(|frozen_heap, edge, _seal_edge| {
+                let names = MutableNames::new();
+                let (
+                    scope_errors,
+                    ModuleScopes {
+                        mut cst,
+                        scope_data,
+                        ..
                     },
-                    Interface::default(),
-                    Vec::new(),
-                );
-            }
-        };
+                ) = globals.data().by_ref_with_reconstructor(|globals, r| {
+                    ModuleScopes::check_module(
+                        &names,
+                        frozen_heap,
+                        edge,
+                        loads,
+                        statement,
+                        ScopeResolverGlobals {
+                            globals: Some((globals, r.frozen_edge(frozen_heap))),
+                        },
+                        frozen_heap.alloc_simple_typed(StarlarkAny::new(codemap.dupe())),
+                        &Dialect::AllOptionsInternal,
+                    )
+                });
+                let scope_errors = scope_errors.into_map(TypingError::from_eval_exception);
+                // We don't really need to properly unpack top-level statements,
+                // but make it safe against future changes.
+                let mut cst: Vec<&mut CstStmt> = top_level_stmts_mut(&mut cst);
+                let oracle = TypingOracleCtx { codemap: &codemap };
 
-        let mut typemap = UnorderedMap::new();
-        let mut all_solve_errors = Vec::new();
-
-        for top in cst.iter_mut() {
-            if let StmtP::Def(_) = &mut top.node {
-                let bindings = match BindingsCollect::collect_one(
-                    top,
-                    TypecheckMode::Lint,
-                    &codemap,
+                let mut approximations = Vec::new();
+                let (fill_types_errors, module_var_types) = match fill_types_for_lint_typechecker(
+                    &mut cst,
+                    oracle,
+                    &scope_data,
                     &mut approximations,
+                    heap,
+                    edge,
                 ) {
-                    Ok(bindings) => bindings,
+                    Ok(fill_types_errors) => fill_types_errors,
                     Err(e) => {
                         return (
                             vec![InternalError::into_error(e)],
@@ -264,61 +250,102 @@ impl AstModuleTypecheck for AstModule {
                         );
                     }
                 };
-                let (solve_errors, types, solve_approximations) =
-                    match solve_bindings(bindings.bindings, oracle, &module_var_types) {
-                        Ok(x) => x,
-                        Err(e) => {
-                            return (
-                                vec![e.into_error()],
-                                TypeMap {
-                                    codemap,
-                                    bindings: UnorderedMap::new(),
-                                },
-                                Interface::default(),
-                                Vec::new(),
-                            );
+
+                let mut typemap = UnorderedMap::new();
+                let mut all_solve_errors = Vec::new();
+
+                for top in cst.iter_mut() {
+                    // Besides functions, also solve the top-level statements that
+                    // `fill_types_for_lint_typechecker` does not check: expression
+                    // statements, `+=` statements, and the bodies of `if` and `for`
+                    // statements. Plain assignments and loads are handled by the
+                    // fill pass itself.
+                    let solve = matches!(
+                        &top.node,
+                        StmtP::Def(_)
+                            | StmtP::Expression(_)
+                            | StmtP::AssignModify(..)
+                            | StmtP::If(..)
+                            | StmtP::IfElse(..)
+                            | StmtP::For(..)
+                    );
+                    if solve {
+                        let bindings = match BindingsCollect::collect_one(
+                            top,
+                            TypecheckMode::Lint,
+                            &codemap,
+                            &mut approximations,
+                        ) {
+                            Ok(bindings) => bindings,
+                            Err(e) => {
+                                return (
+                                    vec![InternalError::into_error(e)],
+                                    TypeMap {
+                                        codemap,
+                                        bindings: UnorderedMap::new(),
+                                    },
+                                    Interface::default(),
+                                    Vec::new(),
+                                );
+                            }
+                        };
+                        let (solve_errors, types, solve_approximations) =
+                            match solve_bindings(bindings.bindings, oracle, &module_var_types) {
+                                Ok(x) => x,
+                                Err(e) => {
+                                    return (
+                                        vec![e.into_error()],
+                                        TypeMap {
+                                            codemap,
+                                            bindings: UnorderedMap::new(),
+                                        },
+                                        Interface::default(),
+                                        Vec::new(),
+                                    );
+                                }
+                            };
+
+                        all_solve_errors.extend(solve_errors);
+                        approximations.extend(solve_approximations);
+
+                        for (id, ty) in &types {
+                            let binding = scope_data.get_binding(*id);
+                            let name = binding.name.as_str().to_owned();
+                            let span = match binding.source {
+                                BindingSource::Source(span) => span,
+                                BindingSource::FromModule => Span::default(),
+                            };
+                            typemap.insert(*id, (name, span, ty.clone()));
                         }
-                    };
-
-                all_solve_errors.extend(solve_errors);
-                approximations.extend(solve_approximations);
-
-                for (id, ty) in &types {
-                    let binding = scope_data.get_binding(*id);
-                    let name = binding.name.as_str().to_owned();
-                    let span = match binding.source {
-                        BindingSource::Source(span) => span,
-                        BindingSource::FromModule => Span::default(),
-                    };
-                    typemap.insert(*id, (name, span, ty.clone()));
+                    }
                 }
-            }
-        }
 
-        let typemap = TypeMap {
-            bindings: typemap,
-            codemap: codemap.dupe(),
-        };
+                let typemap = TypeMap {
+                    bindings: typemap,
+                    codemap: codemap.dupe(),
+                };
 
-        let errors = [scope_errors, fill_types_errors, all_solve_errors]
-            .into_iter()
-            .flatten()
-            .map(TypingError::into_error)
-            .collect();
+                let errors = [scope_errors, fill_types_errors, all_solve_errors]
+                    .into_iter()
+                    .flatten()
+                    .map(TypingError::into_error)
+                    .collect();
 
-        let mut res = HashMap::new();
-        for (name, module_slot_id, vis) in names.all_names_slots_and_visibilities() {
-            if vis == Visibility::Public {
-                let ty = module_var_types
-                    .types
-                    .get(&module_slot_id)
-                    .cloned()
-                    .unwrap_or_else(Ty::any);
-                res.insert(name.as_str().to_owned(), ty);
-            }
-        }
-        let interface = Interface::new(res);
+                let mut res = HashMap::new();
+                for (name, module_slot_id, vis) in names.all_names_slots_and_visibilities() {
+                    if vis == Visibility::Public {
+                        let ty = module_var_types
+                            .types
+                            .get(&module_slot_id)
+                            .cloned()
+                            .unwrap_or_else(Ty::any);
+                        res.insert(name.as_str().to_owned(), ty);
+                    }
+                }
+                let interface = Interface::new(res);
 
-        (errors, typemap, interface, approximations)
+                (errors, typemap, interface, approximations)
+            })
+        })
     }
 }

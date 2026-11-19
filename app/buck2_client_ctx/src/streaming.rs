@@ -12,14 +12,17 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use async_trait::async_trait;
+use buck2_agent_interactive::Advice;
 use buck2_common::argv::Argv;
 use buck2_common::argv::SanitizedArgv;
-use buck2_common::init::DEFAULT_RETAINED_EVENT_LOGS;
+use buck2_common::invocation_paths::DEFAULT_ISOLATION_DIR;
 use buck2_common::invocation_paths::InvocationPaths;
+use buck2_error::ErrorTag;
 use buck2_error::ExitCode;
 use buck2_event_observer::span_tracker::EventTimestamp;
 use dupe::Dupe;
 
+use crate::client_ctx::AgentAdvice;
 use crate::client_ctx::BuckSubcommand;
 use crate::client_ctx::ClientCommandContext;
 use crate::common::BuckArgMatches;
@@ -29,22 +32,28 @@ use crate::common::CommonStarlarkOptions;
 use crate::common::ui::CommonConsoleOptions;
 use crate::common::ui::get_console_with_root;
 use crate::daemon::client::BuckdClientConnector;
-use crate::daemon::client::connect::BuckdConnectConstraints;
+use crate::daemon::client::connect::BuckdConnectDaemonOptions;
+use crate::daemon::client::connect::BuckdConnectOptions;
 use crate::daemon::client::connect::DaemonConstraintsRequest;
+use crate::daemon::client::connect::DaemonStartupMode;
 use crate::daemon::client::connect::DesiredTraceIoState;
 use crate::daemon::client::connect::connect_buckd;
+use crate::daemon::client::connect::remove_in_process_daemon_info;
 use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
 use crate::path_arg::PathArg;
+use crate::restarter::RestartState;
 use crate::signal_handler::with_simple_sigint_handler;
 use crate::subscribers::build_graph_stats::BuildGraphStats;
 use crate::subscribers::build_id_writer::BuildIdWriter;
 use crate::subscribers::event_log::EventLog;
 use crate::subscribers::health_check_subscriber::HealthCheckSubscriber;
+#[cfg(fbcode_build)]
 use crate::subscribers::re_log::ReLog;
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::subscribers::superconsole::timekeeper::RealtimeClock;
 use crate::subscribers::superconsole::timekeeper::Timekeeper;
+use crate::subscribers::test_id_writer::TestIdWriter;
 
 const HEALTH_CHECK_CHANNEL_SIZE: usize = 100;
 
@@ -66,14 +75,14 @@ fn update_events_ctx<T: StreamingCommand>(
     let log_size_counter_bytes = Some(Arc::new(AtomicU64::new(0)));
 
     let enable_health_checks = ctx
-        .immediate_config
-        .daemon_startup_config()
-        .map(|daemon_startup_config| {
-            daemon_startup_config
-                .health_check_config
-                .enable_health_checks
+        .buck_settings()
+        .and_then(|settings| {
+            let mut buckconfig = ctx.immediate_config.root_config()?;
+            settings.invocation.health_check.enabled(&mut buckconfig)
         })
-        .unwrap_or(false);
+        .unwrap_or(false)
+        // Force-enable health checks when the test override is set.
+        || std::env::var_os("BUCK2_TEST_SLOW_BUILD_CHECK").is_some();
 
     let (
         health_check_tags_receiver,
@@ -88,7 +97,7 @@ fn update_events_ctx<T: StreamingCommand>(
         (None, None, None)
     };
 
-    subscribers.push(get_console_with_root(
+    let (console_subscriber, used_superconsole) = get_console_with_root(
         ctx.trace_id.dupe(),
         console_opts.console_type,
         ctx.verbosity,
@@ -100,11 +109,16 @@ fn update_events_ctx<T: StreamingCommand>(
         T::COMMAND_NAME,
         console_opts.superconsole_config(),
         health_check_display_reports_receiver,
-    ));
+    );
+    subscribers.push(console_subscriber);
+    events_ctx.used_superconsole = used_superconsole;
 
     if let Some(paths) = paths {
-        let re_log_subscriber = ReLog::new(paths.isolation.clone());
-        subscribers.push(Box::new(re_log_subscriber));
+        #[cfg(fbcode_build)]
+        {
+            let re_log_subscriber = ReLog::new(paths.isolation.clone());
+            subscribers.push(Box::new(re_log_subscriber));
+        }
 
         if !event_log_opts.no_event_log {
             let event_log_subscriber =
@@ -114,6 +128,9 @@ fn update_events_ctx<T: StreamingCommand>(
     }
     if let Some(build_id_writer) = get_build_id_writer(cmd.event_log_opts(), ctx) {
         subscribers.push(build_id_writer)
+    }
+    if let Some(test_id_writer) = get_test_id_writer(cmd, ctx) {
+        subscribers.push(test_id_writer)
     }
     if let Some(build_graph_stats) = get_build_graph_stats(cmd, ctx) {
         subscribers.push(build_graph_stats)
@@ -173,6 +190,10 @@ pub trait StreamingCommand: Sized + Send + Sync {
         DesiredTraceIoState::Existing
     }
 
+    fn daemon_startup_mode() -> DaemonStartupMode {
+        DaemonStartupMode::Standard
+    }
+
     fn console_opts(&self) -> &CommonConsoleOptions;
 
     fn event_log_opts(&self) -> &CommonEventLogOptions;
@@ -201,6 +222,11 @@ pub trait StreamingCommand: Sized + Send + Sync {
     fn user_event_log(&self) -> &Option<PathArg> {
         &None
     }
+
+    /// Path to write test session ID. Currently only for TestCommand.
+    fn write_test_id(&self) -> &Option<PathArg> {
+        &None
+    }
 }
 
 impl<T: StreamingCommand> BuckSubcommand for T {
@@ -214,49 +240,82 @@ impl<T: StreamingCommand> BuckSubcommand for T {
         mut ctx: ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
+        let in_process_daemon_dir = match &ctx.start_in_process_daemon {
+            None => None,
+            Some(_) => Some(ctx.paths()?.daemon_dir()?),
+        };
         let work = async {
-            let mut constraints = if T::existing_only() {
-                BuckdConnectConstraints::ExistingOnly
+            let mut connect_options = if T::existing_only() {
+                BuckdConnectOptions::ExistingOnly
             } else {
                 let mut req =
                     DaemonConstraintsRequest::new(ctx.immediate_config, T::trace_io(&self))?;
-                ctx.restarter.apply_to_constraints(&mut req);
-                BuckdConnectConstraints::Constraints(req)
+                if let RestartState::Restarted(restart_request) = &events_ctx.restart_state {
+                    restart_request.apply_to_constraints(&mut req);
+                }
+                BuckdConnectOptions::Options(BuckdConnectDaemonOptions {
+                    constraints: req,
+                    daemon_startup_mode: T::daemon_startup_mode(),
+                    new_isolation_dir_advice: if ctx.paths()?.isolation.as_str()
+                        == DEFAULT_ISOLATION_DIR
+                    {
+                        AgentAdvice::not_applicable(Advice::NewIsolationDir)
+                    } else {
+                        ctx.agent_advice(Advice::NewIsolationDir)?
+                    },
+                    trace_id: ctx.trace_id.dupe(),
+                    #[cfg(all(fbcode_build, target_os = "linux"))]
+                    allow_daemon_start_unsandboxed_via_wrapper: ctx
+                        .immediate_config
+                        .allow_daemon_start_unsandboxed_via_wrapper()?,
+                })
             };
             let buckd = match ctx.start_in_process_daemon.take() {
-                None => connect_buckd(constraints, events_ctx, ctx.paths()?).await,
+                None => connect_buckd(connect_options, events_ctx, ctx.paths()?).await,
                 Some(start_in_process_daemon) => {
                     // Start in-process daemon, wait until it is ready to accept connections.
                     start_in_process_daemon()?;
 
                     // Do not attempt to spawn a daemon if connect failed.
                     // Connect should not fail.
-                    constraints = BuckdConnectConstraints::ExistingOnly;
+                    connect_options = BuckdConnectOptions::ExistingOnly;
 
-                    connect_buckd(constraints, events_ctx, ctx.paths()?).await
+                    connect_buckd(connect_options, events_ctx, ctx.paths()?).await
                 }
             };
 
             let mut buckd = match buckd {
                 Ok(buckd) => buckd,
+                Err(e) if e.has_tag(ErrorTag::AgentAdviceBlocked) => return ExitResult::err(e),
                 Err(e) => {
                     return ExitResult::err_with_exit_code(e, ExitCode::ConnectError);
                 }
             };
 
-            let command_result = self
-                .exec_impl(&mut buckd, matches, &mut ctx, events_ctx)
-                .await;
+            events_ctx.daemon_pid = Some(buckd.daemon_pid);
+            events_ctx.cgroup_path_of_buck2_daemon = buckd.cgroup_path_of_buck2_daemon.clone();
+            events_ctx.daemon_start_instant = buckd.daemon_start_instant;
+            if let RestartState::Watching(restarter) = &mut events_ctx.restart_state {
+                restarter.connected(buckd.daemon_constraints());
+            }
 
-            ctx.restarter.observe(&buckd, events_ctx);
-
-            command_result
+            self.exec_impl(&mut buckd, matches, &mut ctx, events_ctx)
+                .await
         };
 
         // FIXME: move this into client_ctx
-        with_simple_sigint_handler(work)
+        let result = with_simple_sigint_handler(work)
             .await
-            .unwrap_or_else(ExitResult::signal_interrupt)
+            .unwrap_or_else(ExitResult::signal_interrupt);
+
+        // The in-process daemon dies with this client: by exit, or by `run` replacing the client
+        // with the target. The command is done or interrupted, so the record goes now, before
+        // either.
+        if let Some(daemon_dir) = in_process_daemon_dir {
+            remove_in_process_daemon_info(&daemon_dir);
+        }
+
+        result
     }
 
     fn update_events_ctx(
@@ -301,10 +360,9 @@ fn get_event_log_subscriber<T: StreamingCommand>(
         T::COMMAND_NAME.to_owned(),
         ctx.start_time,
         log_size_counter_bytes,
-        ctx.immediate_config
-            .daemon_startup_config()
-            .map(|daemon_startup_config| daemon_startup_config.retained_event_logs)
-            .unwrap_or(DEFAULT_RETAINED_EVENT_LOGS),
+        ctx.buck_settings()
+            .map(|settings| settings.invocation.event_log.retained_logs())
+            .unwrap_or_else(|_| buck2_settings::EventLog::default().retained_logs()),
     );
     Box::new(log)
 }
@@ -315,6 +373,19 @@ fn get_build_id_writer(
 ) -> Option<Box<dyn EventSubscriber>> {
     if let Some(file_loc) = opts.write_build_id.as_ref() {
         Some(Box::new(BuildIdWriter::new(
+            file_loc.resolve(&ctx.working_dir),
+        )))
+    } else {
+        None
+    }
+}
+
+fn get_test_id_writer<T: StreamingCommand>(
+    cmd: &T,
+    ctx: &ClientCommandContext,
+) -> Option<Box<dyn EventSubscriber>> {
+    if let Some(file_loc) = cmd.write_test_id().as_ref() {
+        Some(Box::new(TestIdWriter::new(
             file_loc.resolve(&ctx.working_dir),
         )))
     } else {

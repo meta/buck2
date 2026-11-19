@@ -17,13 +17,14 @@
 
 //! The AST of Starlark as [`AstModule`], along with a [`parse`](AstModule::parse) function.
 
+pub use ast_load::AstLoad;
 pub use module::AstModule;
-pub use parser::AstLoad;
 
 pub use crate::dialect::Dialect;
 pub use crate::dialect::DialectTypes;
 
 pub mod ast;
+pub mod ast_load;
 pub mod call;
 pub mod def;
 #[cfg(test)]
@@ -31,28 +32,14 @@ mod grammar_tests;
 pub mod grammar_util;
 mod lint_suppressions;
 pub mod module;
-pub mod parser;
 pub mod payload_map;
 pub(crate) mod state;
-#[cfg(test)]
+// Far too much input to parse interpreted.
+#[cfg(all(test, not(miri)))]
 mod testcases;
 pub mod top_level_stmts;
 pub mod type_expr;
 pub mod uniplate;
 pub mod validate;
 
-#[allow(clippy::all)]
-// Things we explicitly turn on need to be explicitly turned off
-#[allow(clippy::inefficient_to_string)]
-#[allow(clippy::trivially_copy_pass_by_ref)]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::cloned_instead_of_copied)]
-#[allow(clippy::type_complexity)]
-#[allow(clippy::needless_lifetimes)]
-#[allow(clippy::single_match)]
-#[allow(unused_extern_crates)]
-#[allow(unused_braces)]
-
-mod grammar {
-    include!(concat!(env!("OUT_DIR"), "/syntax/grammar.rs"));
-}
+pub(crate) mod parser_rd;

@@ -1,0 +1,30 @@
+load("@prelude//toolchains/android/tools:build_rules.bzl", "SIGNED_JAR_BLOCKLIST", "buck_java_binary", "buck_java_library")
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("android_devxx")
+
+source_listing()
+
+buck_java_library(
+    name = "buildinfo",
+    srcs = glob(["*.java"]),
+    visibility = [
+        "prelude//toolchains/android/src/com/facebook/buck/android/...",
+        "prelude//toolchains/android/test/com/facebook/buck/...",
+    ],
+    deps = [
+        "prelude//toolchains/android/third-party:args4j",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
+    ],
+)
+
+buck_java_binary(
+    name = "build_info_generator_binary",
+    blocklist = SIGNED_JAR_BLOCKLIST,
+    main_class = "com.facebook.buck.android.buildinfo.BuildInfoGeneratorExecutableMain",
+    visibility = ["PUBLIC"],
+    deps = [
+        ":buildinfo",
+    ],
+)

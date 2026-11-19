@@ -57,19 +57,19 @@ use crate::typing::ty::Ty;
 use crate::util::arc_str::ArcStr;
 
 #[derive(Clone)]
-pub(crate) enum BindExpr<'a> {
-    Expr(&'a CstExpr),
+pub(crate) enum BindExpr<'a, 'f> {
+    Expr(&'a CstExpr<'f>),
     /// Get this position from the expression
-    GetIndex(usize, Box<BindExpr<'a>>),
-    Iter(Box<BindExpr<'a>>),
-    AssignModify(&'a CstAssignTarget, AssignOp, &'a CstExpr),
+    GetIndex(usize, Box<BindExpr<'a, 'f>>),
+    Iter(Box<BindExpr<'a, 'f>>),
+    AssignModify(&'a CstAssignTarget<'f>, AssignOp, &'a CstExpr<'f>),
     /// Set this index in the variable
-    SetIndex(BindingId, &'a CstExpr, Box<BindExpr<'a>>),
-    ListAppend(BindingId, &'a CstExpr),
-    ListExtend(BindingId, &'a CstExpr),
+    SetIndex(BindingId, &'a CstExpr<'f>, Box<BindExpr<'a, 'f>>),
+    ListAppend(BindingId, &'a CstExpr<'f>),
+    ListExtend(BindingId, &'a CstExpr<'f>),
 }
 
-impl<'a> BindExpr<'a> {
+impl<'a, 'f> BindExpr<'a, 'f> {
     pub(crate) fn span(&self) -> Span {
         match self {
             BindExpr::Expr(x) => x.span,
@@ -84,8 +84,8 @@ impl<'a> BindExpr<'a> {
 }
 
 #[derive(Default)]
-pub(crate) struct Bindings<'a> {
-    pub(crate) expressions: SmallMap<BindingId, Vec<BindExpr<'a>>>,
+pub(crate) struct Bindings<'a, 'f> {
+    pub(crate) expressions: SmallMap<BindingId, Vec<BindExpr<'a, 'f>>>,
     /// Non-inferred types of bindings: from `load`,
     /// or from variable or function parameter type annotations.
     pub(crate) types: HashMap<BindingId, Ty>,
@@ -96,21 +96,21 @@ pub(crate) struct Bindings<'a> {
     /// ```python
     /// if expr: ...
     /// ```
-    pub(crate) check: Vec<&'a CstExpr>,
-    pub(crate) check_type: Vec<(Span, Option<&'a CstExpr>, Ty)>,
+    pub(crate) check: Vec<&'a CstExpr<'f>>,
+    pub(crate) check_type: Vec<(Span, Option<&'a CstExpr<'f>>, Ty)>,
 }
 
-pub(crate) struct BindingsCollect<'a, 'b> {
-    pub(crate) bindings: Bindings<'a>,
+pub(crate) struct BindingsCollect<'a, 'b, 'f> {
+    pub(crate) bindings: Bindings<'a, 'f>,
     pub(crate) approximations: &'b mut Vec<Approximation>,
 }
 
-impl<'a, 'b> BindingsCollect<'a, 'b> {
+impl<'a, 'b, 'f> BindingsCollect<'a, 'b, 'f> {
     /// Collect all the assignments to variables.
     ///
     /// This function only fails on internal errors.
     pub(crate) fn collect_one(
-        x: &'a mut CstStmt,
+        x: &'a mut CstStmt<'f>,
         typecheck_mode: TypecheckMode,
         codemap: &CodeMap,
         approximations: &'b mut Vec<Approximation>,
@@ -126,8 +126,8 @@ impl<'a, 'b> BindingsCollect<'a, 'b> {
 
     fn assign(
         &mut self,
-        lhs: &'a CstAssignTarget,
-        rhs: BindExpr<'a>,
+        lhs: &'a CstAssignTarget<'f>,
+        rhs: BindExpr<'a, 'f>,
         codemap: &CodeMap,
     ) -> Result<(), InternalError> {
         match &**lhs {
@@ -177,7 +177,7 @@ impl<'a, 'b> BindingsCollect<'a, 'b> {
 
     /// Type must be populated earlier.
     fn resolved_ty(
-        expr: &CstTypeExpr,
+        expr: &CstTypeExpr<'f>,
         typecheck_mode: TypecheckMode,
         codemap: &CodeMap,
     ) -> Result<Ty, InternalError> {
@@ -196,7 +196,7 @@ impl<'a, 'b> BindingsCollect<'a, 'b> {
     }
 
     fn resolve_ty_opt(
-        expr: Option<&CstTypeExpr>,
+        expr: Option<&CstTypeExpr<'f>>,
         typecheck_mode: TypecheckMode,
         codemap: &CodeMap,
     ) -> Result<Ty, InternalError> {
@@ -208,7 +208,7 @@ impl<'a, 'b> BindingsCollect<'a, 'b> {
 
     fn visit_def(
         &mut self,
-        def: &'a DefP<CstPayload>,
+        def: &'a DefP<CstPayload<'f>>,
         typecheck_mode: TypecheckMode,
         codemap: &CodeMap,
     ) -> Result<(), InternalError> {
@@ -289,7 +289,7 @@ impl<'a, 'b> BindingsCollect<'a, 'b> {
 
     fn visit(
         &mut self,
-        x: Visit<'a, CstPayload>,
+        x: Visit<'a, CstPayload<'f>>,
         return_type: &Ty,
         typecheck_mode: TypecheckMode,
         codemap: &CodeMap,
@@ -343,8 +343,10 @@ impl<'a, 'b> BindingsCollect<'a, 'b> {
                                     _ => None,
                                 };
                                 if let Some((extend, arg)) = res {
-                                    if let ResolvedIdent::Slot(_, id) =
-                                        id.node.payload.as_ref().unwrap()
+                                    // The payload is `None` after a scope error, which the lint
+                                    // typechecker reports without stopping.
+                                    if let Some(ResolvedIdent::Slot(_, id)) =
+                                        id.node.payload.as_ref()
                                     {
                                         let bind = if extend {
                                             BindExpr::ListExtend(*id, args.args[arg].expr())
@@ -367,7 +369,9 @@ impl<'a, 'b> BindingsCollect<'a, 'b> {
             Visit::Expr(x) => match &**x {
                 ExprP::ListComprehension(_, for1, clauses)
                 | ExprP::DictComprehension(_, for1, clauses) => {
-                    fn get_for_clause(x: &ClauseP<CstPayload>) -> Option<&ForClauseP<CstPayload>> {
+                    fn get_for_clause<'a, 'f>(
+                        x: &'a ClauseP<CstPayload<'f>>,
+                    ) -> Option<&'a ForClauseP<CstPayload<'f>>> {
                         match x {
                             ClauseP::For(x) => Some(x),
                             _ => None,

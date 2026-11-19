@@ -7,6 +7,33 @@ buck_rust_binary(
     srcs = glob(
         ["bin/**/*.rs"],
     ),
+    autocargo = {
+        # The package is `starlark_bin`, the binary it builds is `starlark`.
+        "cargo_target_config": {"doc": False, "name": "starlark"},
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    # The `pagable` feature of starlark needs nightly; only
+                    # buck2 enables it.
+                    "starlark": {"features": []},
+                },
+            },
+            "package": {
+                "authors": [
+                    "Damien Martin-Guillerez <dmarting@google.com>",
+                    "Facebook",
+                ],
+                "categories": ["parser-implementations", "development-tools"],
+                "description": "starlark binary",
+                "documentation": "https://docs.rs/starlark",
+                "keywords": ["starlark", "skylark", "language", "interpreter"],
+                "license": "Apache-2.0",
+                "name": "starlark_bin",
+                "repository": "https://github.com/facebook/starlark-rust",
+                "version": "0.14.2",
+            },
+        },
+    },
     crate_root = "bin/main.rs",
     env = {"CARGO_PKG_VERSION": "0.0"},  # So our OSS builds can support --version
     deps = [
@@ -21,6 +48,7 @@ buck_rust_binary(
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:serde_json",
         "fbsource//third-party/rust:thiserror",
+        "fbsource//third-party/rust:tower-lsp-server",
         "fbsource//third-party/rust:walkdir",
         "//buck2/gazebo/dupe:dupe",
         "//buck2/starlark-rust/starlark:starlark",

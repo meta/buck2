@@ -10,5 +10,6 @@
 
 mod calculation;
 mod impls;
+mod paging;
 pub(crate) mod registry;
 pub(crate) mod testings;

@@ -6,15 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//android:android_providers.bzl", "KeystoreInfo")  # @unused used as type
 load("@prelude//android:android_toolchain.bzl", "AndroidToolchainInfo")
-load("@prelude//java:java_providers.bzl", "KeystoreInfo")  # @unused used as type
 
-def derive_universal_apk(
-        ctx: AnalysisContext,
-        android_toolchain: AndroidToolchainInfo,
-        app_bundle: Artifact,
-        keystore: [KeystoreInfo, None]) -> Artifact:
-    output_apk = ctx.actions.declare_output("universal.apk")
+def derive_universal_apk(ctx: AnalysisContext, android_toolchain: AndroidToolchainInfo, app_bundle: Artifact, keystore: [KeystoreInfo, None]) -> Artifact:
+    output_apk = ctx.actions.declare_output("universal.apk", has_content_based_path = False)
 
     bundle_apks_builder_args = cmd_args([
         android_toolchain.bundle_apks_builder[RunInfo],
@@ -31,12 +27,14 @@ def derive_universal_apk(
     ])
 
     if keystore:
-        bundle_apks_builder_args.add(cmd_args([
-            "--keystore",
-            keystore.store,
-            "--keystore-properties",
-            keystore.properties,
-        ]))
+        bundle_apks_builder_args.add(
+            cmd_args([
+                "--keystore",
+                keystore.store,
+                "--keystore-properties",
+                keystore.properties,
+            ])
+        )
 
     ctx.actions.run(bundle_apks_builder_args, category = "bundle_build", identifier = "build_universal_apk")
 

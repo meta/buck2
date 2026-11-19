@@ -1,0 +1,27 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error evaluating expression:
+    root//exec_dep:c
+    ^--------------^
+
+
+Caused by:
+    0: Error evaluating build file: `root//exec_dep:TARGETS.fixture`
+    1: error: checking `within_view` for attribute `exec_deps` of `root//exec_dep:c`
+        --> exec_dep/TARGETS.fixture:3:1
+         |
+       3 | / stub(
+       4 | |     name = "c",
+       5 | |     within_view = ["PUBLIC"],
+       6 | |     exec_deps = ["root//outside:t"],
+       7 | | )
+         | |_^
+       Traceback (most recent call last):
+         * exec_dep/TARGETS.fixture:3, in <module>
+             stub(
+       
+    2: Target's effective `within_view` does not allow dependency `root//outside:t` (within_view = ["PUBLIC"]). Capped to ["root//exec_dep/..."] by `enforce_within_view_intersection()` in an ancestor PACKAGE

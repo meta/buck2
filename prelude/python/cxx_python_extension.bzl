@@ -7,6 +7,8 @@
 # above-listed licenses.
 
 load("@prelude//:paths.bzl", "paths")
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//cxx:attrs.bzl", "cxx_common", "cxx_library_base_attrs")
 load(
     "@prelude//cxx:cuda.bzl",
     "CudaCompileStyle",
@@ -31,28 +33,27 @@ load(
     "CxxRuleSubTargetParams",
 )
 load("@prelude//cxx:cxx_utility.bzl", "cxx_attrs_get_allow_cache_upload")
-load("@prelude//cxx:headers.bzl", "cxx_get_regular_cxx_headers_layout")
+load("@prelude//cxx:headers.bzl", "CPrecompiledHeaderInfo", "cxx_get_regular_cxx_headers_layout")
 load("@prelude//cxx:linker.bzl", "DUMPBIN_SUB_TARGET", "PDB_SUB_TARGET", "get_dumpbin_providers", "get_pdb_providers")
 load(
     "@prelude//cxx:omnibus.bzl",
     "create_linkable_root",
     "get_roots",
 )
+load("@prelude//decls:common.bzl", "CxxRuntimeType", "CxxSourceType", "HeadersAsRawHeadersMode", "LinkableDepType", "buck")
+load("@prelude//decls:native_common.bzl", "native_common")
+load("@prelude//decls:third_party_common.bzl", "third_party_common")
+load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
 load(
     "@prelude//linking:link_groups.bzl",
     "merge_link_group_lib_info",
 )
 load(
-    "@prelude//linking:link_info.bzl",
-    "LibOutputStyle",
-    "LinkInfo",
-    "LinkInfos",
-    "LinkableFlavor",
-    "create_merged_link_info",
-    "wrap_link_infos",
+    "@prelude//linking:link_info.bzl", "LibOutputStyle", "LinkInfo", "LinkInfos", "LinkOrdering", "LinkableFlavor", "create_merged_link_info", "wrap_link_infos"
 )
 load(
     "@prelude//linking:linkable_graph.bzl",
+    "LinkableGraph",  # @unused Used as a type
     "create_linkable_graph",
     "create_linkable_graph_node",
     "create_linkable_node",
@@ -64,11 +65,13 @@ load(
 )
 load(
     "@prelude//linking:shared_libraries.bzl",
+    "SharedLibraryInfo",
     "merge_shared_libraries",
 )
 load("@prelude//linking:types.bzl", "Linkage")
 load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup")
-load("@prelude//python:toolchain.bzl", "PythonPlatformInfo", "PythonToolchainInfo", "get_platform_attr")
+load("@prelude//python:attrs.bzl", "python_common")
+load("@prelude//python:toolchain.bzl", "PythonToolchainInfo")
 load(
     "@prelude//python/linking:native_python_util.bzl",
     "merge_cxx_extension_info",
@@ -85,6 +88,7 @@ load("@prelude//utils:utils.bzl", "value_or")
 load(":manifest.bzl", "create_manifest_for_source_map")
 load(":python.bzl", "NativeDepsInfo", "NativeDepsInfoTSet", "PythonLibraryInfo")
 load(":python_library.bzl", "create_python_library_info", "dest_prefix", "gather_dep_libraries", "qualify_srcs")
+load(":source_db.bzl", "create_python_source_db_info", "create_source_db_no_deps")
 load(":versions.bzl", "gather_versioned_dependencies")
 
 # This extension is basically cxx_library, plus base_module.
@@ -139,19 +143,16 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
         generate_sub_targets = sub_targets,
         compiler_flags = ctx.attrs.compiler_flags,
         lang_compiler_flags = ctx.attrs.lang_compiler_flags,
-        platform_compiler_flags = ctx.attrs.platform_compiler_flags,
         extra_link_flags = python_toolchain.extension_linker_flags,
-        lang_platform_compiler_flags = ctx.attrs.lang_platform_compiler_flags,
         preprocessor_flags = ctx.attrs.preprocessor_flags,
         lang_preprocessor_flags = ctx.attrs.lang_preprocessor_flags,
-        platform_preprocessor_flags = ctx.attrs.platform_preprocessor_flags,
-        lang_platform_preprocessor_flags = ctx.attrs.lang_platform_preprocessor_flags,
         error_handler = cxx_toolchain.cxx_error_handler,
         allow_cache_upload = cxx_attrs_get_allow_cache_upload(ctx.attrs, get_cxx_toolchain_info(ctx).cxx_compiler_info.allow_cache_upload),
         precompiled_header = ctx.attrs.precompiled_header,
         prefix_header = ctx.attrs.prefix_header,
         _cxx_toolchain = ctx.attrs._cxx_toolchain,
         coverage_instrumentation_compiler_flags = ctx.attrs.coverage_instrumentation_compiler_flags,
+        coverage_profile_list = ctx.attrs.coverage_profile_list[DefaultInfo].default_outputs[0] if ctx.attrs.coverage_profile_list else None,
         separate_debug_info = ctx.attrs.separate_debug_info,
         cuda_compile_style = CudaCompileStyle(ctx.attrs.cuda_compile_style),
         supports_stripping = ctx.attrs.supports_stripping,
@@ -175,17 +176,10 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
     if dumpbin_toolchain_path:
         sub_targets[DUMPBIN_SUB_TARGET] = get_dumpbin_providers(ctx, extension.output, dumpbin_toolchain_path)
 
-    providers.append(DefaultInfo(
-        default_output = shared_output.default,
-        other_outputs = shared_output.other,
-        sub_targets = sub_targets,
-    ))
-
     cxx_deps = cxx_attr_deps(ctx)
 
     extension_artifacts = {}
     python_module_names = {}
-    unembeddable_extensions = {}
 
     link_infos = libraries.link_infos
 
@@ -223,17 +217,16 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
         if base_module != "":
             lines = ["# auto generated stub for {}\n".format(ctx.label.raw_target())]
             stub_name = module_name + ".empty_stub"
-            extension_artifacts.update(qualify_srcs(ctx.label, ctx.attrs.base_module, {stub_name: ctx.actions.write(stub_name, lines)}))
+            extension_artifacts.update(
+                qualify_srcs(ctx.label, ctx.attrs.base_module, {stub_name: ctx.actions.write(stub_name, lines, has_content_based_path = False)})
+            )
 
         python_module_names[base_module.replace("/", ".") + module_name] = pyinit_symbol
 
-    # Add a dummy shared link info to avoid marking this node as preferred
-    # linkage being "static", which has a special meaning for various link
-    # strategies
+    # A shared placeholder keeps this node eligible for all native link strategies.
     link_infos[LibOutputStyle("shared_lib")] = LinkInfos(default = LinkInfo())
-
-    # Create linkable providers for the extension.
     link_deps = linkables(cxx_deps)
+    python_dep_libraries, shared_deps = gather_dep_libraries(ctx.attrs.deps, resolve_versioned_deps = False)
     linkable_providers = LinkableProviders(
         link_group_lib_info = merge_link_group_lib_info(deps = cxx_deps),
         linkable_graph = create_linkable_graph(
@@ -271,46 +264,95 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
             deps = cxx_deps,
         ),
     )
+    omnibus_graph = create_linkable_graph(
+        ctx,
+        node = create_linkable_graph_node(
+            ctx,
+            roots = get_roots([dep for dep in ctx.attrs.deps if PythonLibraryInfo in dep]),
+        ),
+        deps = ctx.attrs.deps,
+    )
 
-    if not embeddable:
-        unembeddable_extensions[base_module + name] = linkable_providers
-        linkable_providers = None
-
-    providers.append(merge_cxx_extension_info(
-        actions = ctx.actions,
-        deps = cxx_deps,
-        linkable_providers = linkable_providers,
-        artifacts = extension_artifacts,
-        python_module_names = python_module_names,
-        unembeddable_extensions = unembeddable_extensions,
-    ))
     providers.extend(cxx_library_info.providers)
+    providers.extend(
+        python_extension_providers(
+            ctx = ctx,
+            extension = extension,
+            shared_output = shared_output,
+            linkable_providers = linkable_providers,
+            omnibus_graph = omnibus_graph,
+            extension_shared_libraries = shared_deps,
+            extension_deps = cxx_deps,
+            raw_deps = ctx.attrs.deps,
+            python_dep_libraries = python_dep_libraries,
+            soname = name,
+            base_module = base_module,
+            base_module_attr = ctx.attrs.base_module,
+            module_name = module_name,
+            type_stub = ctx.attrs.type_stub,
+            embeddable = embeddable,
+            extension_artifacts = extension_artifacts,
+            python_module_names = python_module_names,
+            sub_targets = sub_targets,
+        )
+    )
+    return providers
+
+def python_extension_providers(
+    *,
+    ctx: AnalysisContext,
+    extension,
+    shared_output,
+    linkable_providers: LinkableProviders,
+    omnibus_graph: LinkableGraph,
+    extension_shared_libraries: list[SharedLibraryInfo],
+    extension_deps: list[Dependency],
+    raw_deps: list[Dependency],
+    python_dep_libraries: list[PythonLibraryInfo],
+    soname: str,
+    base_module: str,
+    base_module_attr,
+    module_name: str,
+    type_stub,
+    embeddable: bool,
+    extension_artifacts: dict,
+    python_module_names: dict,
+    sub_targets: dict,
+) -> list[Provider]:
+    providers = []
+    unembeddable_extensions = {}
+    if not embeddable:
+        unembeddable_extensions[base_module + soname] = linkable_providers
+
+    providers.append(
+        merge_cxx_extension_info(
+            actions = ctx.actions,
+            deps = extension_deps,
+            linkable_providers = linkable_providers if embeddable else None,
+            artifacts = extension_artifacts,
+            python_module_names = python_module_names,
+            unembeddable_extensions = unembeddable_extensions,
+        )
+    )
 
     # If a type stub was specified, create a manifest for export.
+    src_types = None
     src_type_manifest = None
-    if ctx.attrs.type_stub != None:
+    if type_stub != None:
+        src_types = qualify_srcs(
+            ctx.label,
+            base_module_attr,
+            {module_name + ".pyi": type_stub},
+        )
         src_type_manifest = create_manifest_for_source_map(
             ctx,
             "type_stub",
-            qualify_srcs(
-                ctx.label,
-                ctx.attrs.base_module,
-                {module_name + ".pyi": ctx.attrs.type_stub},
-            ),
+            src_types,
         )
 
-    # Export library info.
-    python_platform = ctx.attrs._python_toolchain[PythonPlatformInfo]
-    cxx_toolchain = ctx.attrs._cxx_toolchain
-    raw_deps = ctx.attrs.deps
-    raw_deps.extend(
-        get_platform_attr(python_platform, cxx_toolchain, ctx.attrs.platform_deps),
-    )
-
-    deps, shared_deps = gather_dep_libraries(raw_deps, resolve_versioned_deps = False)
     providers.append(gather_versioned_dependencies(raw_deps))
 
-    # We dont process anything for cxx_extensions, we just add an empty set
+    # We dont process anything for python extensions, we just add an empty set.
     native_deps = ctx.actions.tset(
         NativeDepsInfoTSet,
         value = NativeDepsInfo(native_deps = {}),
@@ -319,36 +361,28 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
     library_info = create_python_library_info(
         ctx.actions,
         ctx.label,
-        extensions = qualify_srcs(ctx.label, ctx.attrs.base_module, {name: extension}),
-        deps = deps,
-        extension_shared_libraries = shared_deps,
+        extensions = qualify_srcs(ctx.label, base_module_attr, {soname: extension}),
+        deps = python_dep_libraries,
+        extension_shared_libraries = extension_shared_libraries,
         src_types = src_type_manifest,
         native_deps = native_deps,
         is_native_dep = True,
     )
     providers.append(library_info)
 
-    # Omnibus providers
+    # Source DBs.
+    if src_types != None:
+        sub_targets["source-db-no-deps"] = [create_source_db_no_deps(ctx, src_types), create_python_source_db_info(library_info.manifests)]
 
-    # Handle the case where C++ Python extensions depend on other C++ Python
-    # extensions, which should also be treated as roots.
-    roots = get_roots([
-        dep
-        for dep in raw_deps
-        # We only want to handle C++ Python extension deps, but not other native
-        # linkable deps like C++ libraries.
-        if PythonLibraryInfo in dep
-    ])
-
-    linkable_graph = create_linkable_graph(
-        ctx,
-        node = create_linkable_graph_node(
-            ctx,
-            roots = roots,
-        ),
-        deps = raw_deps,
+    providers.append(
+        DefaultInfo(
+            default_output = shared_output.default,
+            other_outputs = shared_output.other,
+            sub_targets = sub_targets,
+        )
     )
-    providers.append(linkable_graph)
+
+    providers.append(omnibus_graph)
 
     # Allow third-party-build rules to depend on Python rules.
     tp_prefix = prefix_from_label(ctx.label)
@@ -359,7 +393,7 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
                 prefix = tp_prefix,
                 root = create_third_party_build_root(
                     ctx = ctx,
-                    paths = [(paths.join("lib/python", base_module + name), extension.output)],
+                    paths = [(paths.join("lib/python", base_module + soname), extension.output)],
                 ),
                 manifest = ctx.actions.write_json(
                     "third_party_build_manifest.json",
@@ -373,6 +407,7 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
                         py_lib_paths = ["lib/python"],
                         runtime_lib_paths = [],
                     ),
+                    has_content_based_path = False,
                 ),
             ),
             deps = raw_deps,
@@ -391,3 +426,129 @@ def cxx_python_extension_impl(ctx: AnalysisContext) -> list[Provider]:
     )
 
     return providers
+
+cxx_python_extension = prelude_rule(
+    name = "cxx_python_extension",
+    impl = cxx_python_extension_impl,
+    docs = """
+        A `cxx_python_extension()` rule is a variant of a C/C++ library which is built as a Python module. As such,
+        it has a module name formed by the `base_module` parameter and the rule name.
+    """,
+    examples = """
+        ```
+        # A rule that builds a Python extension from a single .cpp file.
+        cxx_python_extension(
+          name = 'mymodule',
+          base_module = 'foo.bar',
+          srcs = [
+            'mymodule.cpp',
+          ],
+        )
+
+        # A library rule which has a single source importing the above extension.
+        python_library(
+          name = 'utils',
+          srcs = [
+            'utils.py',
+          ],
+          deps = [
+            ':mymodule',
+          ],
+        )
+        ```
+
+        ```
+        ## The `utils.py` source, wrapped by the `utils` rule above.
+
+        ## Import the C/C++ extension build above.
+        from foo.bar import mymodule
+
+        ...
+        ```
+    """,
+    further = None,
+    attrs = (
+        # cxx_python_extension is a subset of cxx_library, plus a base_module.
+        # So we can reuse cxx_library, we augment it with the additional attributes it defines.
+        # This isn't the ideal way to reuse it (we'd rather cxx_library was split it multiple reusable parts),
+        # but it's the pragmatic way of getting it working for now.
+        # @unsorted-dict-items
+        {k: attrs.default_only(v) for k, v in cxx_library_base_attrs().items()}
+        | buck.labels_arg()
+        | python_common.base_module_arg()
+        | cxx_common.srcs_arg()
+        | cxx_common.deps_arg()
+        | cxx_common.headers_arg()
+        | cxx_common.header_namespace_arg()
+        | cxx_common.preprocessor_flags_arg()
+        | cxx_common.compiler_flags_arg()
+        | {
+            "link_style": attrs.option(
+                attrs.enum(LinkableDepType),
+                default = None,
+                doc = """
+                Determines whether to build and link this rule's dependencies statically or dynamically.
+                 Can be either `static`, `static_pic` or `shared`.
+                 Note: since shared libraries re-export its dependencies, depending on multiple shared libraries
+                 which themselves have overlapping static dependencies may cause problems if they init using global state.
+            """,
+            ),
+        }
+        | cxx_common.linker_extra_outputs_arg()
+        | cxx_common.linker_flags_arg()
+        | cxx_common.local_linker_flags_arg()
+        | cxx_common.supports_stripping()
+        | cxx_common.default_deps_arg()
+        | native_common.transformation_spec_arg()
+        | third_party_common.create_third_party_build_root_attrs()
+        | {
+            "cxx_runtime_type": attrs.option(attrs.enum(CxxRuntimeType), default = None),
+            "default_platform": attrs.option(attrs.string(), default = None),
+            "defaults": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
+            "executable_name": attrs.option(attrs.string(), default = None),
+            "frameworks": attrs.list(attrs.string(), default = []),
+            "headers_as_raw_headers_mode": attrs.option(attrs.enum(HeadersAsRawHeadersMode), default = None),
+            "include_directories": attrs.set(attrs.string(), sorted = True, default = []),
+            "lang_compiler_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),
+            "lang_preprocessor_flags": attrs.dict(key = attrs.enum(CxxSourceType), value = attrs.list(attrs.arg()), sorted = False, default = {}),
+            "libraries": attrs.list(attrs.string(), default = []),
+            "module_name": attrs.option(attrs.string(), default = None),
+            "post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True), default = []),
+            "precompiled_header": attrs.option(attrs.source(), default = None),
+            "prefix_header": attrs.option(attrs.source(), default = None),
+            "raw_headers": attrs.set(attrs.source(), sorted = True, default = []),
+            "type_stub": attrs.option(attrs.source(), default = None),
+        }
+        | {
+            "allow_embedding": attrs.bool(default = True),
+            "allow_suffixing": attrs.bool(default = True),
+            # Copied from cxx_library.
+            "auto_link_groups": attrs.bool(default = False),
+            # These flags will only be used to instrument a target
+            # when coverage for that target is enabled by `exported_needs_coverage_instrumentation`
+            # or by any of the target's dependencies.
+            "coverage_instrumentation_compiler_flags": attrs.list(attrs.string(), default = []),
+            # Optional clang_profile_list target for selective coverage instrumentation via -fprofile-list.
+            "coverage_profile_list": attrs.option(attrs.dep(), default = None),
+            "cuda_compile_style": attrs.enum(CudaCompileStyle.values(), default = "mono"),
+            "exported_needs_coverage_instrumentation": attrs.bool(default = False),
+            "extra_dwp_flags": attrs.list(attrs.string(), default = []),
+            "link_ordering": attrs.option(attrs.enum(LinkOrdering.values()), default = None),
+            "link_whole": attrs.default_only(attrs.bool(default = True)),
+            "precompiled_header": attrs.option(attrs.dep(providers = [CPrecompiledHeaderInfo]), default = None),
+            "preferred_linkage": attrs.default_only(attrs.string(default = "any")),
+            "separate_debug_info": attrs.bool(default = False),
+            "suffix_all": attrs.bool(default = True),
+            "suffix_exclude_rtti": attrs.bool(default = False),
+            "support_shlib_interfaces": attrs.bool(default = True),
+            "_cxx_hacks": attrs.default_only(attrs.dep(default = "prelude//cxx/tools:cxx_hacks")),
+            "_cxx_toolchain": toolchains_common.cxx(),
+            # Copied from python_library.
+            "_python_internal_tools": python_common.internal_tools_arg(),
+            "_python_toolchain": toolchains_common.python(),
+            "_target_os_type": buck.target_os_type_arg(),
+        }
+        | buck.licenses_arg()
+        | buck.contacts_arg()
+    ),
+)

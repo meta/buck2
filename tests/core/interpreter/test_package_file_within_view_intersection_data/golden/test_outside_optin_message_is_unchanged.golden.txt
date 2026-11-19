@@ -1,0 +1,28 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Starting new buck2 daemon...
+[<TIMESTAMP>] Connected to new buck2 daemon.
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error evaluating expression:
+    root//no_optin/bad:c
+    ^------------------^
+
+
+Caused by:
+    0: Error evaluating build file: `root//no_optin/bad:TARGETS.fixture`
+    1: error: checking `within_view` for attribute `deps` of `root//no_optin/bad:c`
+        --> no_optin/bad/TARGETS.fixture:1:1
+         |
+       1 | / stub(
+       2 | |     name = "c",
+       3 | |     deps = ["root//outside:t"],
+       4 | | )
+         | |_^
+       Traceback (most recent call last):
+         * no_optin/bad/TARGETS.fixture:1, in <module>
+             stub(
+       
+    2: Target's `within_view` attribute does not allow dependency `root//outside:t`. Allowed dependencies:
+         root//no_optin/...
+       

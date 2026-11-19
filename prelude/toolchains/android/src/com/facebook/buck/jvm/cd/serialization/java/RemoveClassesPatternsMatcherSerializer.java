@@ -12,10 +12,12 @@ package com.facebook.buck.jvm.cd.serialization.java;
 
 import com.facebook.buck.cd.model.java.JarParameters;
 import com.facebook.buck.jvm.java.RemoveClassesPatternsMatcher;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableSet;
 import java.util.regex.Pattern;
 
 /** {@link RemoveClassesPatternsMatcher} to protobuf serializer */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class RemoveClassesPatternsMatcherSerializer {
 
   private RemoveClassesPatternsMatcherSerializer() {}

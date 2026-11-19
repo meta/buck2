@@ -8,20 +8,18 @@
  * above-listed licenses.
  */
 
-use buck2_core::soft_error;
+use buck2_core::deprecation;
+use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr_type::any::AnyAttrType;
-use buck2_node::attrs::attr_type::bool::BoolLiteral;
-use buck2_node::attrs::attr_type::list::ListLiteral;
-use buck2_node::attrs::attr_type::string::StringLiteral;
-use buck2_node::attrs::attr_type::tuple::TupleLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::dict::DictRef;
+use starlark::values::int::IntView;
 use starlark::values::list::ListRef;
+use starlark::values::none::NoneType;
 use starlark::values::tuple::TupleRef;
 
 use crate::attrs::coerce::AttrTypeCoerce;
@@ -34,55 +32,66 @@ enum AnyError {
     CannotCoerce(&'static str, String),
 }
 
-fn to_literal(value: Value, ctx: &dyn AttrCoercionContext) -> buck2_error::Result<CoercedAttr> {
-    if value.is_none() {
-        Ok(CoercedAttr::None)
-    } else if let Some(x) = value.unpack_bool() {
-        Ok(CoercedAttr::Bool(BoolLiteral(x)))
-    } else if let Some(x) = i64::unpack_value(value)? {
-        Ok(CoercedAttr::Int(x))
-    } else if let Some(x) = DictRef::from_value(value) {
-        Ok(CoercedAttr::Dict(
-            x.iter()
+/// The values that `attrs.any()` keeps as they are. Any other value is kept as its `str()`.
+#[derive(UnpackValue)]
+enum Literal<'v> {
+    None(NoneType),
+    Bool(bool),
+    Int(IntView<'v>),
+    Dict(DictRef<'v>),
+    Tuple(&'v TupleRef<'v>),
+    List(&'v ListRef<'v>),
+    Str(&'v str),
+}
+
+fn to_literal<'v>(
+    value: Value<'v>,
+    ctx: &dyn AttrCoercionContext<'v>,
+) -> buck2_error::Result<AttrToken> {
+    match Literal::unpack_value_opt(value) {
+        Some(Literal::None(_)) => ctx.attr_arena().encode_none(),
+        Some(Literal::Bool(x)) => ctx.attr_arena().encode_bool(x),
+        Some(Literal::Int(x)) => ctx.attr_arena().encode_int(x.to_integer()?),
+        Some(Literal::Dict(x)) => {
+            let pairs = x
+                .iter()
                 .map(|(k, v)| Ok((to_literal(k, ctx)?, to_literal(v, ctx)?)))
-                .collect::<buck2_error::Result<_>>()?,
-        ))
-    } else if let Some(x) = TupleRef::from_value(value) {
-        Ok(CoercedAttr::Tuple(TupleLiteral(
-            ctx.intern_list(
-                x.iter()
-                    .map(|v| to_literal(v, ctx))
-                    .collect::<buck2_error::Result<Vec<_>>>()?,
-            ),
-        )))
-    } else if let Some(x) = ListRef::from_value(value) {
-        Ok(CoercedAttr::List(ListLiteral(
-            ctx.intern_list(
-                x.iter()
-                    .map(|v| to_literal(v, ctx))
-                    .collect::<buck2_error::Result<Vec<_>>>()?,
-            ),
-        )))
-    } else if let Some(s) = value.unpack_str() {
-        Ok(CoercedAttr::String(StringLiteral(ctx.intern_str(s))))
-    } else {
-        soft_error!(
-            "coerce_to_any",
-            AnyError::CannotCoerce(value.get_type(), value.to_repr()).into()
-        )?;
-        Ok(CoercedAttr::String(StringLiteral(
-            ctx.intern_str(&value.to_str()),
-        )))
+                .collect::<buck2_error::Result<Vec<_>>>()?;
+            ctx.attr_arena().encode_dict(&pairs)
+        }
+        Some(Literal::Tuple(x)) => {
+            let items = x
+                .iter()
+                .map(|v| to_literal(v, ctx))
+                .collect::<buck2_error::Result<Vec<_>>>()?;
+            ctx.attr_arena().encode_tuple(&items)
+        }
+        Some(Literal::List(x)) => {
+            let items = x
+                .iter()
+                .map(|v| to_literal(v, ctx))
+                .collect::<buck2_error::Result<Vec<_>>>()?;
+            ctx.attr_arena().encode_list(&items)
+        }
+        Some(Literal::Str(s)) => ctx.attr_arena().encode_string(s),
+        None => {
+            deprecation!(
+                "coerce_to_any",
+                AnyError::CannotCoerce(value.get_type(), value.to_repr()).into(),
+                owner: "jtbraun", started: "2023-04-29"
+            );
+            ctx.attr_arena().encode_string(&value.to_str())
+        }
     }
 }
 
 impl AttrTypeCoerce for AnyAttrType {
-    fn coerce_item(
+    fn coerce_item<'v>(
         &self,
         _configurable: AttrIsConfigurable,
-        ctx: &dyn AttrCoercionContext,
-        value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+        ctx: &dyn AttrCoercionContext<'v>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<AttrToken> {
         to_literal(value, ctx)
     }
 

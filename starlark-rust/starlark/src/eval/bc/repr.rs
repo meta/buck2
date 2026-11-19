@@ -34,7 +34,7 @@ pub(crate) struct BcInstrHeader {
     pub(crate) opcode: BcOpcode,
 }
 impl BcInstrHeader {
-    fn for_instr<I: BcInstr>() -> BcInstrHeader {
+    fn for_instr<'v, I: BcInstr<'v>>() -> BcInstrHeader {
         Self {
             opcode: BcOpcode::for_instr::<I>(),
         }
@@ -47,15 +47,15 @@ impl BcInstrHeader {
 
 /// How instructions are stored in memory.
 #[repr(C, align(8))]
-pub(crate) struct BcInstrRepr<I: BcInstr> {
+pub(crate) struct BcInstrRepr<'v, I: BcInstr<'v>> {
     pub(crate) header: BcInstrHeader,
     pub(crate) arg: I::Arg,
     // Align all instructions to make IP increment simple.
     pub(crate) _align: [u64; 0],
 }
 
-impl<I: BcInstr> BcInstrRepr<I> {
-    pub(crate) fn new(arg: I::Arg) -> BcInstrRepr<I> {
+impl<'v, I: BcInstr<'v>> BcInstrRepr<'v, I> {
+    pub(crate) fn new(arg: I::Arg) -> BcInstrRepr<'v, I> {
         BcInstrRepr::<I>::assert_align();
         BcInstrRepr {
             header: BcInstrHeader::for_instr::<I>(),
@@ -89,8 +89,9 @@ impl BcOpcode {
     pub(crate) fn size_of_repr(self) -> usize {
         struct HandlerImpl;
 
-        impl BcOpcodeHandler<usize> for HandlerImpl {
-            fn handle<I: BcInstr>(self) -> usize {
+        // The size does not depend on the brand.
+        impl BcOpcodeHandler<'static, usize> for HandlerImpl {
+            fn handle<I: BcInstr<'static>>(self) -> usize {
                 <BcInstrRepr<I>>::assert_align();
 
                 mem::size_of::<BcInstrRepr<I>>()

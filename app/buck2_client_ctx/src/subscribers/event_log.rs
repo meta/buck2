@@ -94,7 +94,7 @@ impl EventSubscriber for EventLog {
         Ok(self.writer.flush_files().await?)
     }
 
-    async fn finalize(&mut self) -> buck2_error::Result<()> {
+    async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
         self.writer.exit().await;
         Ok(())
     }

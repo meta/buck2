@@ -15,7 +15,7 @@ use buck2_build_api::actions::query::ActionQueryNode;
 use buck2_build_api::query::oneshot::QUERY_FRONTEND;
 use buck2_cli_proto::HasClientContext;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_query::query::environment::AttrFmtOptions;
 use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
@@ -30,8 +30,8 @@ use crate::query::printer::ShouldPrintProviders;
 use crate::query::query_target_ext::QueryCommandTarget;
 
 impl QueryCommandTarget for ActionQueryNode {
-    fn call_stack(&self) -> Option<String> {
-        None
+    fn call_stack(&self) -> buck2_error::Result<Option<String>> {
+        Ok(None)
     }
 
     fn attr_to_string_alternate(&self, _options: AttrFmtOptions, attr: &Self::Attr<'_>) -> String {
@@ -94,10 +94,10 @@ impl ServerCommandTemplate for AqueryServerCommand {
 async fn aquery(
     server_ctx: &dyn ServerCommandContextTrait,
     mut stdout: impl Write,
-    mut ctx: DiceTransaction,
+    ctx: DiceTransaction,
     request: &buck2_cli_proto::AqueryRequest,
 ) -> buck2_error::Result<buck2_cli_proto::AqueryResponse> {
-    let cell_resolver = ctx.get_cell_resolver().await?;
+    let cell_resolver = ctx.ctx().get_cell_resolver().await?;
 
     let output_configuration = QueryResultPrinter::from_request_options(
         &cell_resolver,
@@ -116,14 +116,14 @@ async fn aquery(
             .as_ref()
             .internal_error("target_cfg must be set")?,
         server_ctx,
-        &mut ctx,
+        &mut ctx.ctx(),
     )
     .await?;
 
     let query_result = QUERY_FRONTEND
         .get()?
         .eval_aquery(
-            &mut ctx,
+            &mut ctx.ctx(),
             server_ctx.working_dir(),
             query,
             query_args,

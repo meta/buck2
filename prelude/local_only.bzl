@@ -24,10 +24,8 @@ def link_cxx_binary_locally(ctx: AnalysisContext, cxx_toolchain: [CxxToolchainIn
     return _cxx_toolchain_sets_link_binaries_locally(ctx, cxx_toolchain)
 
 def get_resolved_cxx_binary_link_execution_preference(
-        ctx: AnalysisContext,
-        links: list[Label],
-        force_full_hybrid_if_capable: bool,
-        cxx_toolchain: [CxxToolchainInfo, None] = None) -> LinkExecutionPreference:
+    ctx: AnalysisContext, links: list[Label], force_full_hybrid_if_capable: bool, cxx_toolchain: [CxxToolchainInfo, None] = None
+) -> LinkExecutionPreference:
     if force_full_hybrid_if_capable:
         return LinkExecutionPreference("full_hybrid")
 
@@ -45,7 +43,7 @@ def get_resolved_cxx_binary_link_execution_preference(
     return get_link_execution_preference(ctx, links)
 
 def package_python_locally(ctx: AnalysisContext, python_toolchain: PythonToolchainInfo) -> bool:
-    if _is_core_tool(ctx) or getattr(ctx.attrs, "_package_remotely", False):
+    if _is_core_tool(ctx):
         return False
 
     return python_toolchain.build_standalone_binaries_locally

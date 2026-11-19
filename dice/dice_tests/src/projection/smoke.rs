@@ -22,13 +22,21 @@ use dice::DetectCycles;
 use dice::Dice;
 use dice::DiceComputations;
 use dice::DiceData;
+use dice::DiceKeyDyn;
 use dice::DiceProjectionComputations;
+use dice::DiceProjectionDyn;
+use dice::EqualityBehavior;
 use dice::InjectedKey;
 use dice::Key;
+use dice::NoValueSerialize;
 use dice::ProjectionKey;
 use dice::UserComputationData;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::PagablePanic;
+use pagable::pagable_typetag;
 use parking_lot::Mutex;
 
 /// We have three keys in this test:
@@ -56,14 +64,28 @@ struct GlobalConfig {
 }
 
 /// "Evaluate" a file.
-#[derive(Debug, derive_more::Display, Clone, Hash, PartialEq, Eq, Allocative)]
+#[derive(
+    Debug,
+    derive_more::Display,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable
+)]
 #[display("{}", name)]
+#[pagable_typetag(DiceKeyDyn)]
 struct FileKey {
     name: String,
 }
 
 #[async_trait]
 impl Key for FileKey {
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+
     type Value = Result<Arc<String>, Arc<anyhow::Error>>;
 
     async fn compute(
@@ -98,11 +120,11 @@ impl Key for FileKey {
         Ok(Arc::new(format!("<{value}>")))
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
             (Ok(x), Ok(y)) => x == y,
             _ => false,
-        }
+        })
     }
 }
 
@@ -115,14 +137,19 @@ impl Key for FileKey {
     Hash,
     PartialEq,
     Eq,
-    Allocative
+    Allocative,
+    Pagable
 )]
 #[display("{:?}", self)]
+#[pagable_typetag(DiceKeyDyn)]
 struct ConfigKey;
 
 #[async_trait]
 impl Key for ConfigKey {
     type Value = Arc<HashMap<String, String>>;
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
     async fn compute(
         &self,
@@ -147,14 +174,24 @@ impl Key for ConfigKey {
         )
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
     }
 }
 
 /// One "property" of the "configuration".
-#[derive(Debug, derive_more::Display, Clone, Hash, PartialEq, Eq, Allocative)]
+#[derive(
+    Debug,
+    derive_more::Display,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable
+)]
 #[display("{}", key)]
+#[pagable_typetag(DiceProjectionDyn)]
 struct ConfigPropertyKey {
     key: String,
 }
@@ -164,6 +201,9 @@ impl ProjectionKey for ConfigPropertyKey {
     type DeriveFromKey = ConfigKey;
     /// And produce a string.
     type Value = Arc<String>;
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
     fn compute(
         &self,
@@ -184,8 +224,8 @@ impl ProjectionKey for ConfigPropertyKey {
         Arc::new(value)
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
     }
 }
 
@@ -199,6 +239,7 @@ async fn smoke() -> anyhow::Result<()> {
 
     dice.set(tracker.dupe());
     let dice = dice.build(DetectCycles::Enabled);
+    let root = dice.new_root().await;
 
     // Part 1: full evaluation. We request a file,
     // and dice evaluates: config -> config property -> file.
@@ -207,18 +248,22 @@ async fn smoke() -> anyhow::Result<()> {
     data.set(GlobalConfig {
         config: HashMap::from_iter([("x".to_owned(), "X".to_owned())]),
     });
-    let ctx = dice.updater_with_data(UserComputationData {
-        data,
-        ..Default::default()
-    });
+    let ctx = dice.updater_with_data(
+        root,
+        UserComputationData {
+            data,
+            ..Default::default()
+        },
+    );
 
-    let mut ctx = ctx.commit().await;
+    let ctx = ctx.commit().await;
 
     let file = ctx
         .compute(&FileKey {
             name: "file.fl".to_owned(),
         })
         .await?
+        .clone()
         .map_err(|e| anyhow::anyhow!(format!("{:#}", e)))?;
     assert_eq!("<X>", &*file);
 
@@ -232,7 +277,7 @@ async fn smoke() -> anyhow::Result<()> {
         tracker.lock().computations.as_slice()
     );
 
-    let mut ctx = ctx.into_updater();
+    let mut ctx = dice.updater(root);
     ctx.changed([ConfigKey])?;
     ctx.commit().await;
     tracker.lock().computations.clear();
@@ -245,13 +290,14 @@ async fn smoke() -> anyhow::Result<()> {
     data.data.set(GlobalConfig {
         config: HashMap::from_iter([("x".to_owned(), "X".to_owned())]),
     });
-    let mut ctx = dice.updater_with_data(data).commit().await;
+    let ctx = dice.updater_with_data(root, data).commit().await;
 
     let file = ctx
         .compute(&FileKey {
             name: "file.fl".to_owned(),
         })
         .await?
+        .clone()
         .map_err(|e| anyhow::anyhow!(format!("{:#}", e)))?;
     assert_eq!("<X>", &*file);
 
@@ -260,7 +306,7 @@ async fn smoke() -> anyhow::Result<()> {
         tracker.lock().computations.as_slice()
     );
 
-    let mut ctx = ctx.into_updater();
+    let mut ctx = dice.updater(root);
     ctx.changed([ConfigKey])?;
     ctx.commit().await;
     tracker.lock().computations.clear();
@@ -277,13 +323,14 @@ async fn smoke() -> anyhow::Result<()> {
             ("y".to_owned(), "Y".to_owned()),
         ]),
     });
-    let mut ctx = dice.updater_with_data(data).commit().await;
+    let ctx = dice.updater_with_data(root, data).commit().await;
 
     let file = ctx
         .compute(&FileKey {
             name: "file.fl".to_owned(),
         })
         .await?
+        .clone()
         .map_err(|e| anyhow::anyhow!(format!("{:#}", e)))?;
     assert_eq!("<X>", &*file);
 
@@ -299,13 +346,18 @@ async fn smoke() -> anyhow::Result<()> {
 async fn projection_sync_and_then_recompute_incremental_reuses_key() -> anyhow::Result<()> {
     let dice = Dice::builder();
     let dice = dice.build(DetectCycles::Enabled);
+    let root = dice.new_root().await;
 
-    #[derive(Allocative, Clone, Debug, Display)]
+    #[derive(Allocative, Clone, Debug, Display, Pagable)]
+    #[pagable_typetag(DiceProjectionDyn)]
     struct ProjectionEqualKey;
 
     #[async_trait]
     impl ProjectionKey for ProjectionEqualKey {
         type DeriveFromKey = BaseKey;
+        fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+            dice::NoValueSerialize::<Self::Value>::new()
+        }
         type Value = usize;
 
         fn compute(
@@ -316,8 +368,8 @@ async fn projection_sync_and_then_recompute_incremental_reuses_key() -> anyhow::
             1
         }
 
-        fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-            x == y
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|x, y| x == y)
         }
     }
     impl PartialEq for ProjectionEqualKey {
@@ -330,15 +382,19 @@ async fn projection_sync_and_then_recompute_incremental_reuses_key() -> anyhow::
         fn hash<H: Hasher>(&self, _state: &mut H) {}
     }
 
-    #[derive(Allocative, Clone, Debug, Display)]
+    #[derive(Allocative, Clone, Debug, Display, Pagable)]
+    #[pagable_typetag(DiceKeyDyn)]
     struct BaseKey;
 
     #[async_trait]
     impl InjectedKey for BaseKey {
+        fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+            dice::NoValueSerialize::<Self::Value>::new()
+        }
         type Value = usize;
 
-        fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-            x == y
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|x, y| x == y)
         }
     }
     impl PartialEq for BaseKey {
@@ -351,12 +407,16 @@ async fn projection_sync_and_then_recompute_incremental_reuses_key() -> anyhow::
         fn hash<H: Hasher>(&self, _state: &mut H) {}
     }
 
-    #[derive(Allocative, Clone, Debug, Display)]
+    #[derive(Allocative, Clone, Debug, Display, PagablePanic)]
     #[display("{:?}", self)]
+    #[pagable_typetag(DiceKeyDyn)]
     struct DependsOnProjection(Arc<AtomicBool>);
 
     #[async_trait]
     impl Key for DependsOnProjection {
+        fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+            dice::NoValueSerialize::<Self::Value>::new()
+        }
         type Value = usize;
 
         async fn compute(
@@ -372,8 +432,8 @@ async fn projection_sync_and_then_recompute_incremental_reuses_key() -> anyhow::
             .unwrap()
         }
 
-        fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-            x == y
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|x, y| x == y)
         }
     }
     impl PartialEq for DependsOnProjection {
@@ -388,26 +448,26 @@ async fn projection_sync_and_then_recompute_incremental_reuses_key() -> anyhow::
 
     let is_ran = Arc::new(AtomicBool::new(false));
 
-    let mut updater = dice.updater();
+    let mut updater = dice.updater(root);
     updater.changed_to([(BaseKey, 1)])?;
-    let mut ctx = updater.commit().await;
+    let ctx = updater.commit().await;
 
-    assert_eq!(ctx.compute(&DependsOnProjection(is_ran.dupe())).await?, 1);
+    assert_eq!(*ctx.compute(&DependsOnProjection(is_ran.dupe())).await?, 1);
     assert!(is_ran.load(Ordering::SeqCst));
 
     is_ran.store(false, Ordering::SeqCst);
     // introduce a change
-    let mut updater = dice.updater();
+    let mut updater = dice.updater(root);
     updater.changed_to([(BaseKey, 9999)])?;
-    let mut ctx = updater.commit().await;
+    let ctx = updater.commit().await;
 
     // if we run the sync first
-    let derive_from = ctx.compute_opaque(&BaseKey).await?;
-    let projected = ctx.projection(&derive_from, &ProjectionEqualKey)?;
+    let derive_from = ctx.ctx().compute_opaque(&BaseKey).await?;
+    let projected = ctx.ctx().projection(&derive_from, &ProjectionEqualKey)?;
     assert_eq!(projected, 1);
 
     // should not be ran
-    assert_eq!(ctx.compute(&DependsOnProjection(is_ran.dupe())).await?, 1);
+    assert_eq!(*ctx.compute(&DependsOnProjection(is_ran.dupe())).await?, 1);
     assert!(!is_ran.load(Ordering::SeqCst));
 
     Ok(())

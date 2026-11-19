@@ -5,6 +5,7 @@ oncall("build_infra")
 rust_library(
     name = "buck2_eden",
     srcs = glob(["src/**/*.rs"]),
+    autocargo = {"ignore_rule": True},
     named_deps = {
         # @oss-disable[end= ]: "edenfs": "//eden/fs/service:thrift-rust",
         # @oss-disable[end= ]: "edenfs_clients": "//eden/fs/service:thrift-rust-clients",

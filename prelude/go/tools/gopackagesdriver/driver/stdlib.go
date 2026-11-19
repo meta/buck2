@@ -154,20 +154,7 @@ func getImportedStdPackages(ctx context.Context, resp *packages.DriverResponse, 
 			importedPkgs[imp.ID] = true
 		}
 
-		// If a user has unsaved changes and imported a new stdlib package, we need to add it to the response
-		for _, file := range pkg.GoFiles {
-			if content, ok := req.Overlay[file]; ok {
-				for _, impPath := range parseImports(file, content) {
-					// If we never saw this import before, adding it to pkg.Imports
-					if stdPkg, ok := stdPackageByImportName[impPath]; ok {
-						pkg.Imports[impPath] = stdPkg
-					}
-
-					// Also, adding it to the list of imported packages to add dependencies to the response
-					importedPkgs[impPath] = true
-				}
-			}
-		}
+		addOverlayImports(pkg, req.Overlay, stdPackageByImportName, importedPkgs)
 	}
 
 	directDeps := []*packages.Package{}
@@ -178,6 +165,27 @@ func getImportedStdPackages(ctx context.Context, resp *packages.DriverResponse, 
 	}
 
 	return flattenDeps(directDeps), nil
+}
+
+// addOverlayImports records the std packages that unsaved edits of pkg's files import, so a
+// package the user is editing resolves imports that are not in its saved sources yet.
+func addOverlayImports(pkg *packages.Package, overlay map[string][]byte, stdPackageByImportName map[string]*packages.Package, importedPkgs map[string]bool) {
+	for _, file := range pkg.GoFiles {
+		content, ok := overlay[file]
+		if !ok {
+			continue
+		}
+		// The BXL response leaves Imports nil for a package without imports.
+		if pkg.Imports == nil {
+			pkg.Imports = map[string]*packages.Package{}
+		}
+		for _, impPath := range parseImports(file, content) {
+			if stdPkg, ok := stdPackageByImportName[impPath]; ok {
+				pkg.Imports[impPath] = stdPkg
+			}
+			importedPkgs[impPath] = true
+		}
+	}
 }
 
 // buildStdQuery constructs query arguments for standard library targets

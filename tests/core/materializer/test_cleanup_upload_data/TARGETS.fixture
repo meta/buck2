@@ -1,0 +1,5 @@
+load(":defs.bzl", "consume_payload", "write_payload")
+
+write_payload(name = "payload", script = "write.py")
+consume_payload(name = "before", src = ":payload", script = "copy.py")
+consume_payload(name = "after", src = ":payload", script = "copy.py")

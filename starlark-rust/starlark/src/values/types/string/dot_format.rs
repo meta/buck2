@@ -26,7 +26,6 @@ use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::ValueLike;
 use crate::values::dict::Dict;
 
 /// Try parse `"aaa{}bbb"` and return `("aaa", "bbb")`.
@@ -59,19 +58,20 @@ pub(crate) fn parse_format_one(s: &str) -> Option<(String, String)> {
     Some((before, after))
 }
 
-/// Evaluate `"<before>{}<after>".format(arg)`.
+/// Evaluate `"<before>{}<after>".format(arg)`. `{}` renders with `str`, like the general
+/// `format` does.
 pub(crate) fn format_one<'v>(
     before: &str,
     arg: Value<'v>,
     after: &str,
-    heap: &'v Heap,
+    heap: Heap<'v>,
 ) -> StringValue<'v> {
     match StringValue::new(arg) {
         Some(arg) => heap.alloc_str_concat3(before, &arg, after),
         None => {
             let mut result = String::with_capacity(before.len() + after.len() + 10);
             result.push_str(before);
-            arg.collect_repr(&mut result);
+            arg.collect_str(&mut result);
             result.push_str(after);
             heap.alloc_str(&result)
         }
@@ -137,7 +137,7 @@ pub(crate) fn format<'v>(
     args: impl Iterator<Item = Value<'v>>,
     kwargs: Dict<'v>,
     string_pool: &mut StringPool,
-    heap: &'v Heap,
+    heap: Heap<'v>,
 ) -> anyhow::Result<StringValue<'v>> {
     let mut parser = FormatParser::new(this);
     let mut result = string_pool.alloc();
@@ -206,7 +206,6 @@ mod tests {
     use starlark_syntax::dot_format_parser::FormatConv;
 
     use crate::assert;
-    use crate::coerce::coerce;
     use crate::values::Heap;
     use crate::values::Value;
     use crate::values::dict::Dict;
@@ -227,42 +226,56 @@ mod tests {
 
     #[test]
     fn test_format_capture() {
-        let heap = Heap::new();
-        let original_args = [heap.alloc("1"), heap.alloc("2"), heap.alloc("3")];
-        let mut args = FormatArgs::new(original_args.iter().copied());
-        let mut kwargs = SmallMap::new();
+        Heap::temp(|heap| {
+            let original_args = [
+                heap.alloc("1").to_value(),
+                heap.alloc("2").to_value(),
+                heap.alloc("3").to_value(),
+            ];
+            let mut args = FormatArgs::new(original_args.iter().copied());
+            let mut kwargs = SmallMap::new();
 
-        kwargs.insert_hashed(heap.alloc_str("a").get_hashed(), heap.alloc("x"));
-        kwargs.insert_hashed(heap.alloc_str("b").get_hashed(), heap.alloc("y"));
-        kwargs.insert_hashed(heap.alloc_str("c").get_hashed(), heap.alloc("z"));
-        let kwargs = Dict::new(coerce(kwargs));
-        assert_eq!(
-            format_capture_for_test("", FormatConv::Str, &mut args, &kwargs).unwrap(),
-            "1"
-        );
-        assert_eq!(
-            format_capture_for_test("", FormatConv::Str, &mut args, &kwargs).unwrap(),
-            "2"
-        );
-        assert_eq!(
-            format_capture_for_test("", FormatConv::Repr, &mut args, &kwargs).unwrap(),
-            "\"3\""
-        );
-        assert_eq!(
-            format_capture_for_test("a", FormatConv::Repr, &mut args, &kwargs).unwrap(),
-            "\"x\""
-        );
-        assert_eq!(
-            format_capture_for_test("a", FormatConv::Str, &mut args, &kwargs).unwrap(),
-            "x"
-        );
-        assert!(format_capture_for_test("1", FormatConv::Str, &mut args, &kwargs).is_err());
-        let mut args = FormatArgs::new(original_args.iter().copied());
-        assert_eq!(
-            format_capture_for_test("1", FormatConv::Str, &mut args, &kwargs).unwrap(),
-            "2"
-        );
-        assert!(format_capture_for_test("", FormatConv::Str, &mut args, &kwargs).is_err());
+            kwargs.insert_hashed(
+                heap.alloc_str("a").get_hashed_value(),
+                heap.alloc("x").to_value(),
+            );
+            kwargs.insert_hashed(
+                heap.alloc_str("b").get_hashed_value(),
+                heap.alloc("y").to_value(),
+            );
+            kwargs.insert_hashed(
+                heap.alloc_str("c").get_hashed_value(),
+                heap.alloc("z").to_value(),
+            );
+            let kwargs = Dict::new(kwargs);
+            assert_eq!(
+                format_capture_for_test("", FormatConv::Str, &mut args, &kwargs).unwrap(),
+                "1"
+            );
+            assert_eq!(
+                format_capture_for_test("", FormatConv::Str, &mut args, &kwargs).unwrap(),
+                "2"
+            );
+            assert_eq!(
+                format_capture_for_test("", FormatConv::Repr, &mut args, &kwargs).unwrap(),
+                "\"3\""
+            );
+            assert_eq!(
+                format_capture_for_test("a", FormatConv::Repr, &mut args, &kwargs).unwrap(),
+                "\"x\""
+            );
+            assert_eq!(
+                format_capture_for_test("a", FormatConv::Str, &mut args, &kwargs).unwrap(),
+                "x"
+            );
+            assert!(format_capture_for_test("1", FormatConv::Str, &mut args, &kwargs).is_err());
+            let mut args = FormatArgs::new(original_args.iter().copied());
+            assert_eq!(
+                format_capture_for_test("1", FormatConv::Str, &mut args, &kwargs).unwrap(),
+                "2"
+            );
+            assert!(format_capture_for_test("", FormatConv::Str, &mut args, &kwargs).is_err());
+        });
     }
 
     #[test]
@@ -289,5 +302,41 @@ mod tests {
         assert_eq!(None, parse_format_one("a{"));
         assert_eq!(None, parse_format_one("a{}{}"));
         assert_eq!(None, parse_format_one("{x}"));
+    }
+
+    /// `"<lit>{}<lit>".format(x)` with exactly one positional argument that is not a compile-time
+    /// constant is compiled to `FormatOne` (eval/compiler/call.rs `try_format`); it renders like
+    /// the general method, with `str`, for bytes too.
+    #[test]
+    fn test_format_one_fast_path_bytes() {
+        assert::pass(
+            r#"
+def f(x):
+    return "<{}>".format(x)
+def g(x):
+    return "<{0}>".format(x)
+def h(x):
+    return "<{}{}>".format(x, "")
+assert_eq(f(b"b"), "<b>")
+assert_eq(g(b"b"), "<b>")
+assert_eq(h(b"b"), "<b>")
+assert_eq("<{}>".format(b"b"), "<b>")
+assert_eq(str(b"b"), "b")
+"#,
+        );
+    }
+
+    /// `"<lit>%s<lit>" % x` also has a fast path, but the general `%s` uses repr for non-strings
+    /// too, so `%` is consistent either way.
+    #[test]
+    fn test_percent_s_one_fast_path_bytes_consistent() {
+        assert::pass(
+            r#"
+def f(x):
+    return "<%s>" % x
+assert_eq(f(b"b"), '<b"b">')
+assert_eq("<%s>" % b"b", '<b"b">')
+"#,
+        );
     }
 }

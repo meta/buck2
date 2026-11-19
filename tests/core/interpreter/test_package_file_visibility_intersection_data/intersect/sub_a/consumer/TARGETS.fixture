@@ -1,0 +1,6 @@
+# Consumer inside the intersection but outside `narrow_target:t`'s own
+# `visibility`: a genuine violation.
+stub(
+    name = "c",
+    deps = ["root//intersect/narrow_target:t"],
+)

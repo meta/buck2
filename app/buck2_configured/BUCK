@@ -7,6 +7,9 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
+    test_deps = [
+        "fbsource//third-party/rust:tokio",
+    ],
     deps = [
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:derive_more",
@@ -17,14 +20,16 @@ rust_library(
         "//buck2/app/buck2_build_api:buck2_build_api",
         "//buck2/app/buck2_build_signals:buck2_build_signals",
         "//buck2/app/buck2_common:buck2_common",
+        "//buck2/app/buck2_configuration_providers:buck2_configuration_providers",
         "//buck2/app/buck2_core:buck2_core",
         "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_node:buck2_node",
+        "//buck2/app/buck2_settings:buck2_settings",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/dice/dice:dice",
         "//buck2/dice/dice_futures:dice_futures",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
+        "//buck2/pagable:pagable",
     ],
 )

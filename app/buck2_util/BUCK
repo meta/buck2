@@ -2,59 +2,54 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("build_infra")
 
-# @oss-disable[end= ]: _is_oss = False
-_is_oss = True # @oss-enable
-
 rust_library(
     name = "buck2_util",
     srcs = glob(
         ["src/**/*.rs"],
     ),
-    os_deps = [
-        (
-            "linux",
-            [
-                "fbsource//third-party/rust:libc",
-                "fbsource//third-party/rust:perf-event",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "fbsource//third-party/rust:libc",
-            ],
-        ),
-        (
-            "windows",
-            [
-                "fbsource//third-party/rust:winapi",
-            ],
-        ),
-    ],
-    rustc_flags = (select({
-        "DEFAULT": [],
-        "ovr_config//build_mode:sanitizer_type[asan-ubsan-dev]": ["--cfg=buck2_asan"],
-        "ovr_config//build_mode:sanitizer_type[asan-ubsan]": ["--cfg=buck2_asan"],
-        "ovr_config//build_mode:sanitizer_type[asan]": ["--cfg=buck2_asan"],
-    }) if not _is_oss else []),
+    # See `buck2_client_ctx` for why sysinfo's default features are off.
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    "sysinfo": {"default-features": False, "features": ["system"]},
+                },
+            },
+        },
+    },
     test_deps = [
         "fbcode//buck2/shed/three_billion_instructions:three_billion_instructions",
         "fbsource//third-party/rust:serde_json",
     ],
+    unittests_miri = True,
     deps = [
         "fbsource//third-party/rust:blake3",
-        "fbsource//third-party/rust:futures",
+        "fbsource//third-party/rust:regex",
         "fbsource//third-party/rust:serde",
-        "fbsource//third-party/rust:static_assertions",
         "fbsource//third-party/rust:sysinfo",
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tracing",
         "fbsource//third-party/rust:triomphe",
         "//buck2/allocative/allocative:allocative",
+        "//buck2/app/buck2_env:buck2_env",
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",
+        "//buck2/dice/dice_futures:dice_futures",
         "//buck2/gazebo/dupe:dupe",
         "//buck2/gazebo/strong_hash:strong_hash",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
-    ],
+        "//buck2/pagable:pagable",
+        "//buck2/shed/mini_vec:mini_vec",
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:libc",
+            "fbsource//third-party/rust:perf-event",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:libc",
+        ],
+        "ovr_config//os:windows": [
+            "fbsource//third-party/rust:windows-sys",
+        ],
+    }),
 )

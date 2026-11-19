@@ -1,0 +1,100 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+$ buck cquery root//:foo -v0 --target-platforms=//:platform1
+root//:foo (root//:platform1#<HASH>)
+
+$ buck cquery root//:foo --console=none -v0 --target-platforms=//:platform2
+Command failed: 
+Error looking up configured node root//:foo (root//:platform2#<HASH>)
+
+Caused by:
+    0: configuring attr `data`
+    1: select resolved to select_fail(): fail message
+
+$ buck cquery root//:foo --console=none -v0 --target-platforms=//:platform3
+Command failed: 
+Error looking up configured node root//:foo (root//:platform3#<HASH>)
+
+Caused by:
+    0: configuring attr `data`
+    1: select resolved to select_fail(): default fail message
+
+$ buck uquery root//:foo -v0 --output-format=starlark
+error_rule(
+  name = "foo",
+  data = select({
+    "root//:constraint1": "constraint1",
+    "root//:constraint2": select_fail("fail message"),
+    "DEFAULT": select_fail("default fail message")
+  }),
+  visibility = [],
+  within_view = ["PUBLIC"],
+)
+
+$ buck uquery root//:foo -v0 --output-format=json -B
+{
+  "root//:foo": {
+    "buck.type": "error_rule",
+    "buck.package": "root//:TARGETS.fixture",
+    "name": "foo",
+    "default_target_platform": null,
+    "target_compatible_with": [],
+    "compatible_with": [],
+    "exec_compatible_with": [],
+    "visibility": [],
+    "within_view": [
+      "PUBLIC"
+    ],
+    "metadata": {},
+    "tests": [],
+    "modifiers": [],
+    "data": {
+      "__type": "selector",
+      "entries": {
+        "DEFAULT": {
+          "__type": "select_fail",
+          "message": "default fail message"
+        },
+        "root//:constraint1": "constraint1",
+        "root//:constraint2": {
+          "__type": "select_fail",
+          "message": "fail message"
+        }
+      }
+    },
+    "deps": []
+  }
+}
+
+$ buck uquery root//:foo2 -v0 --output-format=starlark
+error_rule(
+  name = "foo2",
+  data = "",
+  visibility = [],
+  within_view = ["PUBLIC"],
+)
+
+$ buck uquery root//:foo2 --console=none -v0 --output-format=starlark -c user.check_bad_coercion=1
+Command failed: 
+Error evaluating expression:
+    root//:foo2
+    ^---------^
+
+
+Caused by:
+    0: Error evaluating build file: `root//:TARGETS.fixture`
+    1: error: Error coercing attribute `data` of `root//:foo2`
+         --> TARGETS.fixture:50:1
+          |
+       50 | / error_rule(
+       51 | |     name = "foo2",
+       52 | |     data = select_fail("bad use") if read_root_config("user", "check_bad_coercion") != None else "",
+       53 | | )
+          | |_^
+       Traceback (most recent call last):
+         * TARGETS.fixture:50, in <module>
+             error_rule(
+       
+    2: Error coercing attribute `data` of type `attrs.string()`
+    3: Error coercing "bad use"
+    4: Expected `str`, but got `SelectFail (repr: "bad use")`

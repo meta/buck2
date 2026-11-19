@@ -1,0 +1,2 @@
+[execution_platforms]
+target = "//execution_platforms:execution_platforms"

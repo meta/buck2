@@ -21,4 +21,3 @@ error: Expected type `MyRec` but got `WrongRec`
   |
 7 |     foo(WrongRec(x = 1))
   |         ^^^^^^^^^^^^^^^
-  |

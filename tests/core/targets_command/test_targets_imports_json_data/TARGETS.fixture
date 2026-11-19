@@ -1,0 +1,3 @@
+load(":uses_json.bzl", "test")
+
+test()

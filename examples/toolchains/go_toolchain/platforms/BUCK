@@ -1,5 +1,17 @@
 oncall("golang")
 
+# The default platform without cgo: the example defines no C++ toolchain, and
+# cgo is on by default.
+platform(
+    name = "default",
+    constraint_values = [
+        "prelude//go/constraints:cgo_enabled[false]",
+    ],
+    deps = [
+        "prelude//platforms:default",
+    ],
+)
+
 platform(
     name = "linux_x86_64",
     constraint_values = [

@@ -9,20 +9,23 @@
  */
 
 use core::fmt;
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use allocative::Allocative;
+use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_error::BuckErrorContext as _;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_error::BuckErrorOptionContext;
+use buck2_execute::materialize::materializer::ReadLease;
+use buck2_hash::BuckDashMap;
 use buck2_test_api::data::ConfiguredTargetHandle;
-use chrono::Local;
-use dashmap::DashMap;
 use dupe::Dupe;
+use pagable::Pagable;
 
-#[derive(Debug, Clone, Copy, Dupe, Default, Allocative, PartialEq, Hash, Eq)]
+#[derive(
+    Debug, Clone, Copy, Dupe, Default, Allocative, PartialEq, Hash, Eq, Pagable
+)]
 pub struct TestSessionOptions {
     /// Whether this session should allow things to run on RE.
     pub allow_re: bool,
@@ -46,39 +49,43 @@ pub struct TestSession {
     next_id: AtomicU64,
     /// A mapping of ConfiguredTargetHandle (which Tpx can use with) to the underlying provider in
     /// Buck2.
-    labels: DashMap<ConfiguredTargetHandle, ConfiguredProvidersLabel>,
-    /// The prefix to assign to all paths for this test session. This isn't used to provide any
-    /// uniqueness (at least not at this time), but it's helpful to group outputs in a way that
-    /// more-or-less matches a given test session.
-    prefix: Arc<ForwardRelativePathBuf>,
+    labels: BuckDashMap<ConfiguredTargetHandle, ConfiguredProvidersLabel>,
     /// Options overriding the behavior of tests executed in this session. This is primarily
     /// intended for unstable or debugging features.
     options: TestSessionOptions,
+    /// Leases over what the test runner reads out of process, by the output root of the
+    /// execution they belong to: a run's outputs, or the inputs of a command the runner executes
+    /// itself. Each is held until the runner comes back to its root or the session ends.
+    held: BuckDashMap<ProjectRelativePathBuf, ReadLease>,
 }
 
 impl TestSession {
     pub fn new(options: TestSessionOptions) -> Self {
-        // NOTE: This is the format that Tpx has historically used. We don't really *have* to use
-        // this considering we don't even put it in the same place (we do it in ./buck-out/v2/tmp,
-        // but Tpx put it in /tmp), but it's a reasonable one.
-        let now = Local::now();
-        let now = now.format("%Y%m%d-%H%M%S").to_string();
-        let prefix = ForwardRelativePathBuf::unchecked_new(now);
-
         Self {
             next_id: AtomicU64::new(0),
-            labels: DashMap::new(),
-            prefix: Arc::new(prefix),
+            labels: BuckDashMap::default(),
             options,
+            held: BuckDashMap::default(),
         }
+    }
+
+    /// Holds `lease` for the execution at `root`, in place of whatever was held for it.
+    pub fn hold(&self, root: ProjectRelativePathBuf, lease: ReadLease) {
+        self.held.insert(root, lease);
+    }
+
+    /// Releases what is held for the execution at `root`, ahead of producing there again.
+    pub fn release(&self, root: &ProjectRelativePath) {
+        self.held.remove(root);
+    }
+
+    /// Releases everything held: the runner is done reading.
+    pub fn release_all(&self) {
+        self.held.clear();
     }
 
     pub fn options(&self) -> TestSessionOptions {
         self.options
-    }
-
-    pub fn prefix(&self) -> Arc<ForwardRelativePathBuf> {
-        self.prefix.dupe()
     }
 
     /// Insert a new provider and retrieve the matching handle.
@@ -94,7 +101,7 @@ impl TestSession {
         let res = self
             .labels
             .get(&id)
-            .with_buck_error_context(|| format!("Invalid id provided to TestSession: {id:?}"))?;
+            .with_internal_error(|| format!("Invalid id provided to TestSession: {id:?}"))?;
 
         Ok(res.clone())
     }

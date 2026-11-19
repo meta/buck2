@@ -11,6 +11,7 @@ rust_library(
         "fbsource//third-party/rust:dashmap",
         "fbsource//third-party/rust:futures-intrusive",
         "//buck2/allocative/allocative:allocative",
+        "//buck2/pagable:pagable",
         "//buck2/starlark-rust/starlark_map:starlark_map",
     ],
 )

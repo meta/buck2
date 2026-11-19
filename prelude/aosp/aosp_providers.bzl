@@ -6,4 +6,12 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-AospJarInfo = provider(fields = {})
+AospJarInfo = provider(
+    fields = {
+        # Optional ART profile source (a text HSPL class/method listing) for this jar.
+        # When the jar is placed on an APEX systemserverclasspath, the APEX rule compiles
+        # this against the jar with profman to produce a profile-guided .prof for
+        # dexpreopt/odrefresh. None if the jar has no profile.
+        "profile": provider_field(typing.Any, default = None),
+    },
+)

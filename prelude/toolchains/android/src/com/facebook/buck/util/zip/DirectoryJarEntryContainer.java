@@ -18,6 +18,7 @@ import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.io.file.MorePaths;
 import com.facebook.buck.io.pathformat.PathFormatter;
 import com.facebook.buck.util.function.ThrowingSupplier;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -29,17 +30,18 @@ import java.util.Objects;
 import java.util.function.Supplier;
 import java.util.jar.Manifest;
 import java.util.stream.Stream;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Provides all files and directories recursively contained in a given directory as entries to be
  * added to a jar.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class DirectoryJarEntryContainer implements JarEntryContainer {
 
   private final Path directory;
 
-  private Supplier<List<FileJarEntry>> entriesSupplier;
+  @Nullable private Supplier<List<FileJarEntry>> entriesSupplier;
 
   DirectoryJarEntryContainer(AbsPath absPath) {
     this(absPath.getPath());
@@ -99,6 +101,7 @@ class DirectoryJarEntryContainer implements JarEntryContainer {
     return localSupplier;
   }
 
+  @Nullable
   private FileJarEntry createFileJarEntry(final Path path) {
     final String relativePath =
         PathFormatter.pathWithUnixSeparators(MorePaths.relativize(directory, path));
@@ -157,7 +160,7 @@ class DirectoryJarEntryContainer implements JarEntryContainer {
     }
 
     @Override
-    public boolean equals(Object o) {
+    public boolean equals(@Nullable Object o) {
       if (this == o) {
         return true;
       }

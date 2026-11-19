@@ -1,0 +1,4 @@
+package(
+    visibility = ["//from-package/..."],
+    within_view = ["//from-package/..."],
+)

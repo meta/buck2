@@ -21,10 +21,7 @@ def cxx_universal_executable_impl(ctx: AnalysisContext) -> list[Provider]:
         lipo = lipo,
     )
 
-    sub_targets = {
-        arch: [DefaultInfo(default_output = binary[DefaultInfo].default_outputs[0])]
-        for arch, binary in ctx.attrs.executable.items()
-    }
+    sub_targets = {arch: [DefaultInfo(default_output = binary[DefaultInfo].default_outputs[0])] for arch, binary in ctx.attrs.executable.items()}
 
     return [
         DefaultInfo(

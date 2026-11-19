@@ -1,0 +1,40 @@
+name: Build with buck2
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch: # allows manual triggering
+
+permissions:
+  contents: read
+
+# On `main`, cancelling would leave most commits without a verdict: codesync
+# pushes faster than a ~50 minute run finishes. Let the run in flight finish;
+# only a pull request's superseded run is cancelled.
+concurrency:
+  group: build-with-buck2-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # rust-cache keeps only the dependency artifacts between runs, so every run
+  # compiles the workspace crates from scratch and incremental compilation only
+  # costs time and disk.
+  CARGO_INCREMENTAL: 0
+  # This `buck2` only drives the build below; backtraces keep their file:line.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  # Runner labels are repository (owner) specific, so the Meta larger runner
+  # (16-core-ubuntu) doesn't exist on forks; fall back to the standard
+  # GitHub-hosted runner there.
+  linux-build-with-buck2:
+    runs-on: ${{ github.repository_owner == 'meta' && '16-core-ubuntu' || 'ubuntu-latest' }}
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_rust_toolchain
+    - uses: ./.github/actions/build_debug
+    - uses: ./.github/actions/setup_reindeer
+    - uses: ./.github/actions/build_bootstrap
+      with:
+        targets: "//..."

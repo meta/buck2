@@ -14,12 +14,17 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::conversion::from_any_with_tag;
+use buck2_hash::BuckFixedInsertionMap;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::file_type::StarlarkFileType;
 use buck2_node::metadata::key::MetadataKey;
 use buck2_node::metadata::key::MetadataKeyRef;
 use buck2_node::metadata::super_package_values::SuperPackageValues;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -28,13 +33,12 @@ use starlark::values::FreezeError;
 use starlark::values::FreezeErrorContext;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
-use starlark::values::FrozenHeapRef;
-use starlark::values::FrozenValue;
-use starlark::values::OwnedFrozenValue;
+use starlark::values::Heap;
+use starlark::values::OwnedFrozen;
+use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::none::NoneType;
-use starlark_map::small_map::SmallMap;
 
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::package_file_extra::PackageFileExtra;
@@ -48,9 +52,11 @@ enum PackageValueError {
     KeySetInParentFile(MetadataKey),
 }
 
-#[derive(Debug, Default, Allocative)]
+#[derive(Debug, Default, Allocative, Pagable)]
 pub struct SuperPackageValuesImpl {
-    values: SmallMap<MetadataKey, OwnedFrozenStarlarkPackageValue>,
+    /// In the order the values were written, which is the order `audit package-values` prints
+    /// them in.
+    values: BuckFixedInsertionMap<MetadataKey, OwnedFrozenStarlarkPackageValue>,
 }
 
 impl SuperPackageValuesImpl {
@@ -70,21 +76,25 @@ impl SuperPackageValuesImpl {
 
     pub(crate) fn merge(
         parent: &Arc<dyn SuperPackageValues>,
-        this_package: SmallMap<MetadataKey, OwnedFrozenStarlarkPackageValue>,
+        this_package: BuckMutInsertionMap<MetadataKey, OwnedFrozenStarlarkPackageValue>,
     ) -> buck2_error::Result<Arc<dyn SuperPackageValues>> {
         if this_package.is_empty() {
             Ok(parent.dupe())
         } else {
             let parent = Self::get(&**parent)?;
-            let mut merged_package_values = parent.values.clone();
-            merged_package_values.extend(this_package);
             Ok(Arc::new(SuperPackageValuesImpl {
-                values: merged_package_values,
+                values: parent
+                    .values
+                    .iter()
+                    .map(|(key, value)| (key.dupe(), value.dupe()))
+                    .chain(this_package)
+                    .collect(),
             }))
         }
     }
 }
 
+#[pagable_typetag]
 impl SuperPackageValues for SuperPackageValuesImpl {
     fn as_any(&self) -> &dyn Any {
         self
@@ -94,8 +104,10 @@ impl SuperPackageValues for SuperPackageValuesImpl {
         self.values.is_empty()
     }
 
-    fn package_values_json(&self) -> buck2_error::Result<SmallMap<MetadataKey, serde_json::Value>> {
-        let mut values = SmallMap::with_capacity(self.values.len());
+    fn package_values_json(
+        &self,
+    ) -> buck2_error::Result<BuckMutInsertionMap<MetadataKey, serde_json::Value>> {
+        let mut values = BuckMutInsertionMap::with_capacity(self.values.len());
         for (key, value) in &self.values {
             values.insert(key.clone(), value.to_json_value()?);
         }
@@ -118,14 +130,11 @@ impl SuperPackageValues for SuperPackageValuesImpl {
 }
 
 /// Value that is known to be serializable to JSON.
-#[derive(Trace, Debug, Allocative, Clone, Dupe, Copy)]
+#[derive(Trace, Debug, Allocative, Clone, Dupe, Copy, StarlarkPagable)]
 pub(crate) struct StarlarkPackageValue<'v>(Value<'v>);
 
-#[derive(Debug, Allocative, Clone, Dupe, Copy)]
-pub(crate) struct FrozenStarlarkPackageValue(FrozenValue);
-
-#[derive(Debug, Allocative, Clone, Dupe)]
-pub struct OwnedFrozenStarlarkPackageValue(OwnedFrozenValue);
+#[derive(Debug, Allocative, Clone, Dupe, Pagable)]
+pub struct OwnedFrozenStarlarkPackageValue(OwnedFrozen<Value<'static>>);
 
 impl<'v> StarlarkPackageValue<'v> {
     pub(crate) fn new(value: Value<'v>) -> buck2_error::Result<StarlarkPackageValue<'v>> {
@@ -134,45 +143,46 @@ impl<'v> StarlarkPackageValue<'v> {
         )?;
         Ok(StarlarkPackageValue(value))
     }
+
+    pub(crate) fn value(self) -> Value<'v> {
+        self.0
+    }
 }
 
-impl<'v> Freeze for StarlarkPackageValue<'v> {
-    type Frozen = FrozenStarlarkPackageValue;
+impl<'v> Freeze<'v> for StarlarkPackageValue<'v> {
+    type Frozen<'fv> = StarlarkPackageValue<'fv>;
 
-    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<StarlarkPackageValue<'fv>> {
         let frozen = self.0.freeze(freezer)?;
 
         // Error is possible if either:
         // * package value is modified after `write_package_value`
         // * frozen value is not valid JSON even if original value was
-        StarlarkPackageValue::new(frozen.to_value())
+        StarlarkPackageValue::new(frozen)
             .map_err(|e| FreezeError::new(e.to_string()))
-            .freeze_error_context("Frozen value is not valid JSON")?;
-
-        Ok(FrozenStarlarkPackageValue(frozen))
+            .freeze_error_context("Frozen value is not valid JSON")
     }
 }
 
 impl OwnedFrozenStarlarkPackageValue {
-    /// This function is unsafe for the same reason `OwnedFrozenValue::new` is unsafe:
-    /// `owner` must be the owner of `value`.
-    pub(crate) unsafe fn new(
-        owner: FrozenHeapRef,
-        value: FrozenStarlarkPackageValue,
-    ) -> OwnedFrozenStarlarkPackageValue {
-        OwnedFrozenStarlarkPackageValue(unsafe { OwnedFrozenValue::new(owner, value.0) })
+    pub(crate) fn new(value: OwnedFrozen<Value<'static>>) -> OwnedFrozenStarlarkPackageValue {
+        OwnedFrozenStarlarkPackageValue(value)
     }
 
     pub(crate) fn to_json_value(&self) -> buck2_error::Result<serde_json::Value> {
         self.0
-            .value()
-            .to_json_value()
+            .by_ref(|v| v.to_json_value())
             .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
             .internal_error("Not valid JSON, should have been validated at construction")
     }
 
-    pub fn owned_frozen_value(&self) -> &OwnedFrozenValue {
-        &self.0
+    /// Reads the value without copying it to a heap.
+    pub(crate) fn with_value<R>(&self, f: impl for<'v> FnOnce(Value<'v>) -> R) -> R {
+        self.0.by_ref(|v| f(*v))
+    }
+
+    pub fn add_to_heap<'v>(&self, heap: Heap<'v>) -> Value<'v> {
+        self.0.as_ref().add_to_heap(heap)
     }
 }
 
@@ -249,7 +259,7 @@ pub(crate) fn read_parent_package_value_impl<'v>(
         .values
         .get(key)
     {
-        Some(value) => Ok(value.owned_frozen_value().owned_value(eval.frozen_heap())),
+        Some(value) => Ok(value.add_to_heap(eval.heap())),
         None => Ok(Value::new_none()),
     }
 }
@@ -285,7 +295,7 @@ pub(crate) fn register_read_package_value(globals: &mut GlobalsBuilder) {
             .values
             .get(key)
         {
-            Some(value) => Ok(value.owned_frozen_value().owned_value(eval.frozen_heap())),
+            Some(value) => Ok(value.add_to_heap(eval.heap())),
             None => Ok(Value::new_none()),
         }
     }

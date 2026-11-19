@@ -55,8 +55,8 @@ def _dirname(p: str) -> str:
         return sep
     else:
         # If there are multiple consecutive slashes, strip them all out as Python's
-        # os.path.dirname does.
-        return prefix.rstrip("/")
+        # os.path.dirname does, unless the path is nothing but slashes.
+        return prefix.rstrip("/") or prefix + sep
 
 def _is_absolute(path: str) -> bool:
     """Returns `True` if `path` is an absolute path.
@@ -128,7 +128,7 @@ def _normalize(path: str) -> str:
         initial_slashes = 1
     else:
         initial_slashes = 0
-    is_relative = (initial_slashes == 0)
+    is_relative = initial_slashes == 0
 
     components = path.split("/")
     new_components = []
@@ -177,20 +177,17 @@ def _relativize(path: str, start: str) -> str:
         start_segments = []
     start_length = len(start_segments)
 
-    if (path.startswith("..") or start.startswith("..")):
+    if path.startswith("..") or start.startswith(".."):
         fail("Cannot relativize paths above the current (unknown) directory")
 
-    if (path.startswith("/") != start.startswith("/") or
-        len(segments) < start_length):
+    if path.startswith("/") != start.startswith("/") or len(segments) < start_length:
         fail("Path '%s' is not beneath '%s'" % (path, start))
 
     for ancestor_segment, segment in zip(start_segments, segments):
         if ancestor_segment != segment:
             fail("Path '%s' is not beneath '%s'" % (path, start))
 
-    length = len(segments) - start_length
-    result_segments = segments[-length:]
-    return "/".join(result_segments)
+    return "/".join(segments[start_length:])
 
 def _replace_extension(p: str, new_extension: str) -> str:
     """Replaces the extension of the file at the end of a path.
@@ -223,9 +220,9 @@ def _split_extension(p: str) -> (str, str):
     b = _basename(p)
     last_dot_in_basename = b.rfind(".")
 
-    # If there is no dot or the only dot in the basename is at the front, then
-    # there is no extension.
-    if last_dot_in_basename <= 0:
+    # If there is no dot or the last dot in the basename is one of its leading
+    # dots, then there is no extension.
+    if last_dot_in_basename < len(b) - len(b.lstrip(".")):
         return (p, "")
 
     dot_distance_from_end = len(b) - last_dot_in_basename
@@ -262,7 +259,7 @@ def _strip_suffix(a: str, b: str) -> [str, None]:
             return None
 
     # Return the original path, minus the suffix.
-    return "/".join(pa[:len(pa) - len(pb)])
+    return "/".join(pa[: len(pa) - len(pb)])
 
 def _starts_with(path: str, prefix: str) -> bool:
     """Returns `True` if `prefix` is a prefix path of `path`.

@@ -27,6 +27,7 @@
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::ops::ControlFlow;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -34,62 +35,72 @@ use async_trait::async_trait;
 use buck2_artifact::actions::key::ActionKey;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
+use buck2_build_signals::env::WaitingData;
 use buck2_common::io::IoProvider;
 use buck2_core::category::Category;
 use buck2_core::category::CategoryRef;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_core::execution_types::execution_group::ExecutionGroup;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
+use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_execute::artifact::fs::ExecutorFs;
+use buck2_execute::dep_file_state::DepFileStore;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
 use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::execute::cache_uploader::CacheUploadResult;
+use buck2_execute::execute::cache_uploader::CacheUploadResults;
 use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
+use buck2_execute::execute::low_pass_filter::LowPassFilter;
 use buck2_execute::execute::manager::CommandExecutionManager;
 use buck2_execute::execute::prepared::PreparedAction;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::result::CommandExecutionResult;
+use buck2_execute::execute::write_action_cache::WriteActionCache;
+use buck2_execute::incremental_state::IncrementalStore;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
 use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+use buck2_file_watcher::dep_files::DepFileCache;
 use buck2_file_watcher::mergebase::Mergebase;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutInsertionSet;
+use buck2_hash::BuckMutMap;
+use buck2_hash::BuckMutSet;
+use buck2_hash::buck_mut_insertion_map;
 use buck2_http::HttpClient;
 use derivative::Derivative;
 use derive_more::Display;
 use dice_futures::cancellation::CancellationContext;
-use fxhash::FxHashMap;
-use indexmap::IndexMap;
-use indexmap::IndexSet;
-use indexmap::indexmap;
+use pagable::Pagable;
+use pagable::PagableTagged;
+use pagable::pagable_typetag;
 use remote_execution::TActionResult2;
 use starlark::values::Heap;
-use starlark::values::OwnedFrozenValue;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::dict::DictType;
-use static_assertions::_core::ops::Deref;
+use starlark::values::OwnedFrozen;
+use starlark::values::Value;
 
+use crate::actions::errors::error_handler::OutputArtifacts;
+use crate::actions::errors::execute_error::ExecuteError;
 use crate::actions::execute::action_execution_target::ActionExecutionTarget;
 use crate::actions::execute::action_executor::ActionExecutionMetadata;
 use crate::actions::execute::action_executor::ActionOutputs;
-use crate::actions::execute::error::ExecuteError;
 use crate::actions::impls::run_action_knobs::RunActionKnobs;
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
-use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 
 pub mod artifact;
 pub mod box_slice_set;
 pub mod calculation;
-mod error;
-pub mod error_handler;
+pub mod errors;
 pub mod execute;
+pub mod graph_recorder;
 pub mod impls;
 pub mod query;
 pub mod registry;
@@ -97,14 +108,14 @@ pub mod registry;
 /// Represents an unregistered 'Action' that will be registered into the 'Actions' module.
 /// The 'UnregisteredAction' is not executable until it is registered, upon which it becomes an
 /// 'Action' that is executable.
-pub trait UnregisteredAction: Allocative {
+pub trait UnregisteredAction: Allocative + Send {
     /// consumes the self and becomes a registered 'Action'. The 'Action' will be executable
     /// and no longer bindable to any other 'Artifact's.
     fn register(
         self: Box<Self>,
-        outputs: IndexSet<BuildArtifact>,
-        starlark_data: Option<OwnedFrozenValue>,
-        error_handler: Option<OwnedFrozenValue>,
+        outputs: BuckMutInsertionSet<BuildArtifact>,
+        starlark_data: Option<OwnedFrozen<Value<'static>>>,
+        error_handler: Option<OwnedFrozen<Value<'static>>>,
     ) -> buck2_error::Result<Box<dyn Action>>;
 }
 
@@ -113,8 +124,9 @@ pub trait UnregisteredAction: Allocative {
 ///
 /// The 'Action' can be executed to produce the set of 'BuildArtifact's it declares. Before
 /// execution, all input 'Artifact's will be made available to access.
+#[pagable_typetag]
 #[async_trait]
-pub trait Action: Allocative + Debug + Send + Sync + 'static {
+pub trait Action: PagableTagged + Allocative + Debug + Send + Sync + 'static {
     /// A machine readable kind identifying this type of action.
     fn kind(&self) -> buck2_data::ActionKind;
 
@@ -134,6 +146,7 @@ pub trait Action: Allocative + Debug + Send + Sync + 'static {
     async fn execute(
         &self,
         ctx: &mut dyn ActionExecutionCtx,
+        waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>;
 
     /// A machine-readable category for this action, intended to be used when analyzing actions outside of buck2 itself.
@@ -170,22 +183,26 @@ pub trait Action: Allocative + Debug + Send + Sync + 'static {
         &self,
         _fs: &ExecutorFs,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> IndexMap<String, String> {
-        indexmap! {}
+    ) -> buck2_error::Result<BuckMutInsertionMap<String, String>> {
+        Ok(buck_mut_insertion_map! {})
     }
 
-    fn error_handler(&self) -> Option<OwnedFrozenValue> {
+    fn error_handler(&self) -> Option<&OwnedFrozen<Value<'static>>> {
         None
+    }
+
+    /// The outputs the error handler reads, put on disk before it runs.
+    fn outputs_for_error_handler(&self) -> buck2_error::Result<Vec<BuildArtifactPath>> {
+        Ok(Vec::new())
     }
 
     fn failed_action_output_artifacts<'v>(
         &self,
         _artifact_fs: &ArtifactFs,
-        _heap: &'v Heap,
+        _heap: Heap<'v>,
         _outputs: Option<&ActionOutputs>,
-    ) -> buck2_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>>
-    {
-        Ok(ValueOfUnchecked::new(starlark::values::Value::new_none()))
+    ) -> buck2_error::Result<Option<OutputArtifacts<'v>>> {
+        Ok(None)
     }
 
     fn all_outputs_are_content_based(&self) -> bool {
@@ -209,14 +226,19 @@ pub trait Action: Allocative + Debug + Send + Sync + 'static {
         } else {
             None
         };
-
         let mut ineligible_inputs = Vec::new();
         for ag in self.inputs().unwrap_or_default().iter() {
-            if !ag.is_eligible_for_dedupe(target_platform) {
+            if ag.is_eligible_for_dedupe(target_platform)
+                == buck2_data::EligibleForDedupe::IneligibleInput
+            {
                 ineligible_inputs.push(ag.to_string());
             }
         }
         ineligible_inputs
+    }
+
+    fn is_expected_eligible_for_dedupe(&self) -> Option<bool> {
+        None
     }
 
     // TODO this probably wants more data for execution, like printing a short_name and the target
@@ -237,7 +259,7 @@ pub trait ActionExecutionCtx: Send + Sync {
 
     fn events(&self) -> &EventDispatcher;
 
-    fn command_execution_manager(&self) -> CommandExecutionManager;
+    fn command_execution_manager(&self, waiting_data: WaitingData) -> CommandExecutionManager;
 
     fn mergebase(&self) -> &Mergebase;
 
@@ -265,9 +287,10 @@ pub trait ActionExecutionCtx: Send + Sync {
         &mut self,
         action: &ActionDigestAndBlobs,
         execution_result: &CommandExecutionResult,
-        re_result: Option<TActionResult2>,
+        re_result: Option<&mut TActionResult2>,
         dep_file_entry: Option<&mut dyn IntoRemoteDepFile>,
-    ) -> buck2_error::Result<CacheUploadResult>;
+        allow_cache_upload: bool,
+    ) -> buck2_error::Result<CacheUploadResults>;
 
     /// Executes a command
     /// TODO(bobyf) this seems like it deserves critical sections?
@@ -288,23 +311,56 @@ pub trait ActionExecutionCtx: Send + Sync {
         incremental_kind: buck2_data::IncrementalKind,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>;
 
-    /// Clean up all the output directories for this action. This requires a mutable reference
-    /// because you shouldn't be doing anything else with the ActionExecutionCtx while cleaning the
-    /// outputs.
-    async fn cleanup_outputs(&mut self) -> buck2_error::Result<()>;
-
     /// Get the value of an Artifact. This Artifact _must_ have been declared
     /// as an input to the associated action or a panic will be raised.
     fn artifact_values(&self, input: &ArtifactGroup) -> &ArtifactGroupValues;
 
+    /// Content-based path hashes of the action's inputs, restricted to the groups in
+    /// `filter` when given.
     fn artifact_path_mapping(
         &self,
-        filter: Option<IndexSet<ArtifactGroup>>,
-    ) -> FxHashMap<&Artifact, ContentBasedPathHash>;
+        filter: Option<&BuckMutInsertionSet<ArtifactGroup>>,
+    ) -> BuckMutMap<&Artifact, ContentBasedPathHash>;
+
+    /// Like `artifact_path_mapping` over the union of `rendered` and `path_only`,
+    /// also returning the artifacts that belong to a `path_only` group. One pass over
+    /// the inputs serves both.
+    fn artifact_path_mapping_with_path_only(
+        &self,
+        rendered: &BuckMutInsertionSet<ArtifactGroup>,
+        path_only: &BuckMutInsertionSet<ArtifactGroup>,
+    ) -> (
+        BuckMutMap<&Artifact, ContentBasedPathHash>,
+        BuckMutSet<&Artifact>,
+    );
 
     fn blocking_executor(&self) -> &dyn BlockingExecutor;
 
     fn re_client(&self) -> UnconfiguredRemoteExecutionClient;
+
+    /// The RE use case the invocation talks to the CAS as on its own behalf: materialize requests
+    /// and probes for content the action could skip producing. The action's RE request and the
+    /// uploads that feed it run under its executor configuration's use case instead.
+    fn invocation_re_use_case(&self) -> RemoteExecutorUseCase;
+
+    /// Whether there is a CAS to talk to at all, independent of how this action executes.
+    fn cas_configured(&self) -> bool;
+
+    /// Whether this action may ask the CAS whether it already holds content it would otherwise
+    /// produce, a write's or a copy's: false without a CAS, and under `--local-only` and
+    /// `--no-remote-cache`, which forgo what remote caches hold. `download_file` asks under
+    /// [`Self::cas_configured`] instead: its content is named by the user's checksum, and the
+    /// CAS serves it in place of the URL rather than in place of a cache.
+    fn may_probe_cas(&self) -> bool;
+
+    /// The action cache as write actions use it, under this action's executor configuration;
+    /// `None` where that executor reads no cache.
+    fn write_action_cache(&self) -> Option<&dyn WriteActionCache>;
+
+    /// The command's gate on local work: the hybrid executor runs a command locally only when
+    /// there is room behind it, and a write that could as well be uploaded is written locally
+    /// on the same terms.
+    fn low_pass_filter(&self) -> &LowPassFilter;
 
     fn re_platform(&self) -> &remote_execution::Platform;
 
@@ -313,14 +369,23 @@ pub trait ActionExecutionCtx: Send + Sync {
     /// Obtain per-command knobs for RunAction.
     fn run_action_knobs(&self) -> &RunActionKnobs;
 
+    /// The current repo's persisted dep-file cache, if enabled.
+    fn dep_file_store(&self) -> Option<&dyn DepFileStore>;
+
+    /// The current repo's incremental records (`buck2_execute::incremental_state`).
+    fn incremental_store(&self) -> Option<&dyn IncrementalStore>;
+
+    /// The current repo's live dep-file cache.
+    fn dep_file_cache(&self) -> &dyn DepFileCache;
+
     fn cancellation_context(&self) -> &CancellationContext;
 
     /// I/O layer access to add non-source files (e.g. downloaded files) to
-    /// offline archive trace. If None, tracing is not enabled.
-    fn io_provider(&self) -> Arc<dyn IoProvider>;
+    /// offline archive trace.
+    fn io_provider(&self) -> &dyn IoProvider;
 
     /// Http client used for fetching and downloading remote artifacts.
-    fn http_client(&self) -> HttpClient;
+    fn http_client(&self) -> &HttpClient;
 
     fn output_trees_download_config(&self) -> &OutputTreesDownloadConfig;
 }
@@ -346,9 +411,24 @@ pub enum ActionErrors {
         "Analysis produced multiple actions with category `{0}` and at least one of them had no identifier. Add an identifier to these actions to disambiguate them"
     )]
     ActionCategoryDuplicateSingleton(Category),
+    #[error(
+        "Action with category `{category}`{identifier} runs in execution group `{group}`, which has no compatible execution platform. Run `buck2 audit execution-platform-resolution` on the target to see why each platform was skipped"
+    )]
+    NoExecutionPlatformForGroup {
+        category: String,
+        identifier: String,
+        group: String,
+    },
 }
 
-#[derive(Derivative, Debug, Display, Allocative)]
+/// The category and identifier of an action, which name it in errors raised when it is
+/// registered.
+pub struct ActionName {
+    pub category: String,
+    pub identifier: Option<String>,
+}
+
+#[derive(Derivative, Debug, Display, Allocative, Pagable)]
 #[derivative(Eq, Hash, PartialEq)]
 #[display("Action(key={}, name={})", key, action.name())]
 pub struct RegisteredAction {
@@ -359,7 +439,15 @@ pub struct RegisteredAction {
     action: Box<dyn Action>,
     #[derivative(Hash = "ignore", PartialEq = "ignore")]
     executor_config: Arc<CommandExecutorConfig>,
+    /// For actions of rules that declare named execution groups, the execution group whose
+    /// platform `executor_config` comes from; `None` for rules without named groups. Boxed so the
+    /// field is one word: only actions of rules with named groups allocate.
+    #[derivative(Hash = "ignore", PartialEq = "ignore")]
+    execution_group: Option<Box<ExecutionGroup>>,
 }
+
+// One word for the group keeps the `Arc` allocation in the same allocator size class.
+buck2_util::size_assert::words_of_type!(RegisteredAction, 8);
 
 impl RegisteredAction {
     pub fn new(
@@ -367,10 +455,20 @@ impl RegisteredAction {
         action: Box<dyn Action>,
         executor_config: Arc<CommandExecutorConfig>,
     ) -> Self {
+        Self::new_in_group(key, action, executor_config, None)
+    }
+
+    pub fn new_in_group(
+        key: ActionKey,
+        action: Box<dyn Action>,
+        executor_config: Arc<CommandExecutorConfig>,
+        execution_group: Option<ExecutionGroup>,
+    ) -> Self {
         Self {
             key,
             action,
             executor_config,
+            execution_group: execution_group.map(Box::new),
         }
     }
 
@@ -406,12 +504,20 @@ impl RegisteredAction {
         &self.executor_config
     }
 
+    pub fn execution_group(&self) -> Option<&ExecutionGroup> {
+        self.execution_group.as_deref()
+    }
+
     pub fn category(&self) -> CategoryRef<'_> {
         self.action.category()
     }
 
     pub fn identifier(&self) -> Option<&str> {
         self.action.identifier()
+    }
+
+    pub fn is_expected_eligible_for_dedupe(&self) -> Option<bool> {
+        self.action.is_expected_eligible_for_dedupe()
     }
 }
 
@@ -428,20 +534,23 @@ impl Deref for RegisteredAction {
 #[derive(Allocative)]
 struct ActionToBeRegistered {
     key: ActionKey,
-    outputs: IndexSet<BuildArtifact>,
+    outputs: BuckMutInsertionSet<BuildArtifact>,
     action: Box<dyn UnregisteredAction>,
+    execution_group: ExecutionGroup,
 }
 
 impl ActionToBeRegistered {
     fn new<A: UnregisteredAction + 'static>(
         key: ActionKey,
-        outputs: IndexSet<BuildArtifact>,
+        outputs: BuckMutInsertionSet<BuildArtifact>,
         a: A,
+        execution_group: ExecutionGroup,
     ) -> Self {
         Self {
             key,
             outputs,
             action: Box::new(a),
+            execution_group,
         }
     }
 
@@ -451,8 +560,8 @@ impl ActionToBeRegistered {
 
     fn register(
         self,
-        starlark_data: Option<OwnedFrozenValue>,
-        error_handler: Option<OwnedFrozenValue>,
+        starlark_data: Option<OwnedFrozen<Value<'static>>>,
+        error_handler: Option<OwnedFrozen<Value<'static>>>,
     ) -> buck2_error::Result<Box<dyn Action>> {
         self.action
             .register(self.outputs, starlark_data, error_handler)

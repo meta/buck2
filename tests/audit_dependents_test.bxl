@@ -11,8 +11,8 @@ load(":dependencies_test_util.bzl", "rule_list_regex")
 def _audit_dependents_test(ctx: bxl.Context, source_target: TargetLabel, target: TargetLabel, allowlist_patterns: list[str]):
     """Checks dependents of a given target in a dependency graph of a source target.
 
-       Test passes if only targets that match allowlist_patterns have direct dependency on target (in source_target's target universe).
-       The logic for non-bxl version: https://fburl.com/code/b7sbezop
+    Test passes if only targets that match allowlist_patterns have direct dependency on target (in source_target's target universe).
+    The logic for non-bxl version: https://fburl.com/code/b7sbezop
     """
 
     cquery = ctx.cquery()

@@ -28,9 +28,12 @@ use std::vec;
 
 use allocative::Allocative;
 use either::Either;
+use starlark_derive::StarlarkPagable;
+
+use crate as starlark;
 
 /// A small vector.
-#[derive(Clone, Allocative)]
+#[derive(Clone, Allocative, StarlarkPagable)]
 pub(crate) enum SmallVec1<T> {
     One(T),
     Vec(Vec<T>),
@@ -97,6 +100,12 @@ impl<T> SmallVec1<T> {
         match self {
             SmallVec1::One(x) => slice::from_ref(x),
             SmallVec1::Vec(xs) => xs,
+        }
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        if let SmallVec1::Vec(v) = self {
+            v.shrink_to_fit();
         }
     }
 

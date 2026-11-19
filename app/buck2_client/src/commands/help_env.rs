@@ -17,7 +17,7 @@ use buck2_client_ctx::exit_result::ExitResult;
 use buck2_core::env::registry::Applicability;
 use buck2_core::env::registry::ENV_INFO;
 use buck2_core::env::registry::EnvInfoEntry;
-use buck2_error::BuckErrorContext;
+use buck2_error::internal_error;
 
 /// Print help for environment variables used by buck2.
 #[derive(Debug, clap::Parser)]
@@ -50,16 +50,16 @@ impl HelpEnvCommand {
         env_info.sort();
         env_info.dedup();
 
-        let longest_name = env_info
-            .iter()
-            .map(|e| e.name.len())
-            .max()
-            .buck_error_context("No environment variables stored defined, this is a bug")?;
+        let longest_name = env_info.iter().map(|e| e.name.len()).max().ok_or_else(|| {
+            internal_error!("No environment variables stored defined, this is a bug")
+        })?;
         let longest_ty = env_info
             .iter()
             .map(|e| e.ty_short().len())
             .max()
-            .buck_error_context("No environment variables stored defined, this is a bug")?;
+            .ok_or_else(|| {
+                internal_error!("No environment variables stored defined, this is a bug")
+            })?;
         let longest_default = env_info
             .iter()
             .filter_map(|e| e.default)

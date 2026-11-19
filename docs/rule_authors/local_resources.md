@@ -52,6 +52,50 @@ JSON keys:
 
 ## Test Execution
 
+### Cleanup registration protocol (Linux, opt in)
+
+`[buck2] local_resource_cleanup_registration = true` enables a local ownership
+channel for setup commands. The default is false. Buck passes a per-attempt
+`BUCK2_LOCAL_RESOURCE_CLEANUP_V1` JSON capability with `version`, `socket_path`,
+`attempt_id`, `consumer_pid` and `consumer_uid`. Disabled consumers explicitly
+pass an empty value. Providers requiring this protocol must fail before allocation
+when no authenticated consumer is available. Existing providers may ignore it.
+
+The consumer creates a private Unix socket directory. A provider's cleanup process
+connects before allocation, verifies the consumer's Linux peer PID/UID, and sends
+`HELLO 1 <attempt_id> <cleanup_pid>\n`. Buck verifies the peer PID/UID and replies
+`CONNECTED 1 <attempt_id>\n`. This acknowledges supervision during setup; it does
+not acknowledge registration. Setup cancellation, provider death before yield,
+consumer EOF and the provider's existing setup deadline must still trigger cleanup.
+
+Successful setup includes an optional field alongside the existing `pid` and
+`resources`: `"cleanup_registration": {"version": 1, "attempt_id": "..."}`.
+The PID must match the authenticated cleanup process. Buck validates resources,
+stores a pending cleanup lease, then sends `REGISTER 1 <attempt_id>\n`. The cleanup
+process checks cancellation/deadline before replying `REGISTERED 1 <attempt_id>\n`.
+Only this acknowledgment makes the resource available. The configured setup
+timeout covers execution and registration together. A failed, timed out or
+interrupted registration closes the channel, even after pending state was stored.
+
+After registration, the cleanup process observes consumer EOF and signals for the
+resource lifetime. Setup expiration must be disabled; it must not terminate tests
+that use registered resources. Channel records are limited to 128 bytes, and
+unknown, malformed or out-of-order records fail closed.
+
+For registered protocol resources, release closes the channel and makes the pool
+unavailable. Buck does not apply the legacy PID termination/escalation helper:
+the independent cleanup process retains responsibility for completing its cleanup
+attempt. Successful release means the request was issued, not that backend release
+or process exit was verified. Legacy output without a protocol connection retains
+the existing SIGTERM contract. A connection without a descriptor is an error.
+
+The private directory and peer credentials protect the existing same-user local
+execution boundary; hostile code running as that UID or root is outside it.
+The attempt identifier binds one setup, rather than acting as a bearer secret.
+Channel ownership cannot recover unknown backend allocation IDs or survive hard
+loss of the cleanup process, enclosing cgroup or host. Providers remain responsible
+for reporting their backend cleanup/retry limits.
+
 For a general context on how tests are executed, see
 [Test Execution](test_execution.md).
 

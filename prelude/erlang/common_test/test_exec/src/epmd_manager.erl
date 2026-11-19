@@ -13,7 +13,7 @@ each suite execution.
 """.
 -compile(warn_missing_spec_all).
 
--include_lib("common/include/buck_ct_records.hrl").
+-behaviour(gen_server).
 
 %% UI methods
 -export([start_link/1, get_epmd_out_path/1, get_port/0]).
@@ -21,7 +21,7 @@ each suite execution.
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--behaviour(gen_server).
+-include_lib("common/include/buck_ct_records.hrl").
 
 -define(raw_file_access, prim_file).
 

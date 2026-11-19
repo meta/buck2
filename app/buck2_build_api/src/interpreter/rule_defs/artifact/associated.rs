@@ -11,14 +11,25 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
+use buck2_hash::BuckFixedInsertionSet;
 use dupe::*;
+use pagable::Pagable;
+use starlark::values::StarlarkPagableViaPagable;
 use starlark::values::Trace;
-use starlark_map::ordered_set::OrderedSet;
 
 use crate::artifact_groups::ArtifactGroup;
 
-#[derive(Debug, Clone, Dupe_, Allocative, Trace, PartialEq)]
-pub struct AssociatedArtifacts(Option<Arc<OrderedSet<ArtifactGroup>>>);
+#[derive(
+    Debug,
+    Clone,
+    Dupe_,
+    Allocative,
+    Trace,
+    PartialEq,
+    Pagable,
+    StarlarkPagableViaPagable
+)]
+pub struct AssociatedArtifacts(Option<Arc<BuckFixedInsertionSet<ArtifactGroup>>>);
 
 impl AssociatedArtifacts {
     pub fn new() -> Self {
@@ -34,7 +45,7 @@ impl AssociatedArtifacts {
     }
 
     pub fn from<T: IntoIterator<Item = ArtifactGroup>>(from: T) -> Self {
-        let values: OrderedSet<_> = from.into_iter().collect();
+        let values: BuckFixedInsertionSet<_> = from.into_iter().collect();
         if values.is_empty() {
             Self(None)
         } else {

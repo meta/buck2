@@ -1,0 +1,24 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+Command failed: 
+Error evaluating expression:
+    root//inherit_test/restricted_child/escaping:c
+    ^--------------------------------------------^
+
+
+Caused by:
+    0: Error evaluating build file: `root//inherit_test/restricted_child/escaping:TARGETS.fixture`
+    1: error: checking `within_view` for attribute `deps` of `root//inherit_test/restricted_child/escaping:c`
+         --> inherit_test/restricted_child/escaping/TARGETS.fixture:9:1
+          |
+        9 | / stub(
+       10 | |     name = "c",
+       11 | |     deps = ["root//inherit_test/lib:t"],
+       12 | | )
+          | |_^
+       Traceback (most recent call last):
+         * inherit_test/restricted_child/escaping/TARGETS.fixture:9, in <module>
+             stub(
+       
+    2: Target's effective `within_view` does not allow dependency `root//inherit_test/lib:t` (within_view = ["root//inherit_test/...", "root//inherit_test/restricted_child/..."]). Capped to ["root//inherit_test/..."] AND ["root//inherit_test/restricted_child/..."] by `enforce_within_view_intersection()` in an ancestor PACKAGE

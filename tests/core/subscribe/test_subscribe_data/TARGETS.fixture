@@ -1,5 +1,0 @@
-load(":defs.bzl", "cp")
-
-cp(name = "stage0", src = "src")
-cp(name = "stage1", src = ":stage0")
-cp(name = "stage2", src = ":stage1")

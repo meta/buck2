@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
 use std::io::Write;
 
 use buck2_cli_proto::ClientContext;
@@ -17,6 +16,7 @@ use buck2_common::dice::cells::HasCellResolver;
 use buck2_core::bzl::ImportPath;
 use buck2_core::pattern::parse_package::parse_package;
 use buck2_error::buck2_error;
+use buck2_hash::BuckMutSet;
 use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::load_module::INTERPRETER_CALCULATION_IMPL;
 use buck2_interpreter::paths::module::StarlarkModulePath;
@@ -31,11 +31,12 @@ pub(crate) async fn server_execute(
     _client_ctx: ClientContext,
 ) -> buck2_error::Result<()> {
     server_ctx
-        .with_dice_ctx(|server_ctx, mut dice_ctx| async move {
-            let cell_resolver = dice_ctx.get_cell_resolver().await?;
+        .with_dice_ctx(|server_ctx, dice_ctx| async move {
+            let cell_resolver = dice_ctx.ctx().get_cell_resolver().await?;
             let cwd = server_ctx.working_dir();
             let current_cell_path = cell_resolver.get_cell_path(cwd);
             let cell_alias_resolver = dice_ctx
+                .ctx()
                 .get_cell_alias_resolver(current_cell_path.cell())
                 .await?;
 
@@ -43,14 +44,14 @@ pub(crate) async fn server_execute(
 
             let module_deps = INTERPRETER_CALCULATION_IMPL
                 .get()?
-                .get_module_deps(&mut dice_ctx, package)
+                .get_module_deps(&mut dice_ctx.ctx(), package)
                 .await?;
 
             let mut stdout = stdout.as_writer();
 
             struct Printer {
                 first: bool,
-                visited: HashSet<ImportPath>,
+                visited: BuckMutSet<ImportPath>,
             }
 
             impl Printer {
@@ -92,7 +93,7 @@ pub(crate) async fn server_execute(
 
             let mut printer = Printer {
                 first: true,
-                visited: HashSet::new(),
+                visited: BuckMutSet::default(),
             };
 
             for module in module_deps.0.into_iter() {

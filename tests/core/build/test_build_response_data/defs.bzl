@@ -7,14 +7,14 @@
 # above-listed licenses.
 
 def _fail(ctx):
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
     ctx.actions.run(cmd_args("false", hidden = out.as_output()), category = "fail")
     return [DefaultInfo(out)]
 
 fail = rule(attrs = {}, impl = _fail)
 
 def _one(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("out", "one"))]
+    return [DefaultInfo(default_output = ctx.actions.write("out", "one", has_content_based_path = False))]
 
 one = rule(
     impl = _one,

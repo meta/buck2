@@ -54,8 +54,14 @@ class AppId:
         try:
             keychain_access_groups = entitlements.get("keychain-access-groups")
             if keychain_access_groups:
-                app_id_string = keychain_access_groups[0]
-                return AppId.from_string(app_id_string)
+                # Shared groups such as `com.apple.token` carry no team prefix and can come
+                # first; a list without any prefixed group fails on its first entry.
+                prefixed = [
+                    group
+                    for group in keychain_access_groups
+                    if re.match(AppId._re_pattern, group)
+                ]
+                return AppId.from_string((prefixed or keychain_access_groups)[0])
 
             application_identifier = entitlements.get("application-identifier")
             if application_identifier:

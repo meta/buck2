@@ -9,7 +9,7 @@
 def _remote_text_impl(ctx):
     text = ctx.attrs.text
 
-    out = ctx.actions.declare_output("action_output")
+    out = ctx.actions.declare_output("action_output", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(["cp", text, out.as_output()]),
         category = "touch",
@@ -26,7 +26,7 @@ remote_text = rule(
 
 def _symlink_dir_impl(ctx):
     remote_text = ctx.attrs.remote_text[DefaultInfo].default_outputs[0]
-    link = ctx.actions.symlinked_dir(ctx.label.name, {"link": remote_text})
+    link = ctx.actions.symlinked_dir(ctx.label.name, {"link": remote_text}, has_content_based_path = False)
     return [DefaultInfo(default_output = link)]
 
 symlink_dir = rule(
@@ -40,7 +40,7 @@ def _check_impl(ctx):
     text = ctx.attrs.text
     symlink_dir = ctx.attrs.symlink_dir[DefaultInfo].default_outputs[0]
 
-    out = ctx.actions.declare_output("out")
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
 
     ctx.actions.run(
         cmd_args(

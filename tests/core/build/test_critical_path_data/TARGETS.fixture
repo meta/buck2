@@ -14,3 +14,34 @@ dynamic_cp2(name = "check_dynamic_input", dep = ":step_1")
 
 seed_val = read_config("test", "seed", "42")
 simple_test(name = "long_running_test", seed = seed_val)
+
+tset_write(name = "tset_leaf")
+tset_write(name = "tset_top", deps = [":tset_leaf"])
+
+# Anon target test: uses_anon creates an anon target and then uses its output
+uses_anon(name = "anon_step")
+
+# Cross-package dep: `cross_pkg` (in root//) depends on `root//sub:leaf` (a different
+# package). Building it exercises enrich_load's cross-package load-edge enrichment, which
+# the single-package targets above never hit.
+cp(name = "cross_pkg", dep = "//sub:leaf")
+
+# `root//cfg` is reachable only through a select key, i.e. a configuration dep. Resolving the
+# select still forces that package to load, so it is a real load edge.
+cp(
+    name = "cfg_dep_pkg",
+    dep = ":step_0",
+    sleep = select({
+        "//cfg:setting": 0,
+        "DEFAULT": 0,
+    }),
+)
+
+# A package-level cycle with no target cycle: root//:pkg_cycle_top -> root//sub:pkg_cycle_mid
+# -> root//:pkg_cycle_leaf.
+cp(name = "pkg_cycle_top", dep = "//sub:pkg_cycle_mid")
+write(name = "pkg_cycle_leaf", visibility = ["PUBLIC"])
+
+# `root//sub:preloaded_literal` shares a package with `preloaded_top`'s dep, so querying both
+# loads root//sub before any traversal reaches it.
+cp(name = "preloaded_top", dep = "//sub:preloaded_dep")

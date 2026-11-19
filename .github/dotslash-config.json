@@ -64,6 +64,38 @@
             "path": "rust-project-x86_64-unknown-linux-musl"
           }
         }
+      },
+      "starlark_fmt": {
+        "platforms": {
+          "macos-aarch64": {
+            "regex": "^starlark_fmt-aarch64-apple-darwin.zst$",
+            "path": "starlark_fmt-aarch64-apple-darwin"
+          },
+          "windows-aarch64": {
+            "regex": "^starlark_fmt-aarch64-pc-windows-msvc.exe.zst$",
+            "path": "starlark_fmt-aarch64-pc-windows-msvc.exe"
+          },
+          "linux-aarch64": {
+            "regex": "^starlark_fmt-aarch64-unknown-linux-musl.zst$",
+            "path": "starlark_fmt-aarch64-unknown-linux-musl"
+          },
+          "linux-riscv64": {
+            "regex": "^starlark_fmt-riscv64gc-unknown-linux-gnu.zst$",
+            "path": "starlark_fmt-riscv64gc-unknown-linux-gnu"
+          },
+          "macos-x86_64": {
+            "regex": "^starlark_fmt-x86_64-apple-darwin.zst$",
+            "path": "starlark_fmt-x86_64-apple-darwin"
+          },
+          "windows-x86_64": {
+            "regex": "^starlark_fmt-x86_64-pc-windows-msvc.exe.zst$",
+            "path": "starlark_fmt-x86_64-pc-windows-msvc.exe"
+          },
+          "linux-x86_64": {
+            "regex": "^starlark_fmt-x86_64-unknown-linux-musl.zst$",
+            "path": "starlark_fmt-x86_64-unknown-linux-musl"
+          }
+        }
       }
     }
 }

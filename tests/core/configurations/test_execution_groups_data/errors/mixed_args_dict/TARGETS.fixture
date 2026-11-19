@@ -1,0 +1,8 @@
+load("//errors/mixed_args:rules.bzl", "r", "tool")
+
+tool(name = "tool")
+
+r(
+    name = "t",
+    mapping = {"$(exe :tool)": "-O2"},
+)

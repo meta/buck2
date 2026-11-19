@@ -10,6 +10,7 @@
 
 package com.facebook.buck.core.util.graph;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableCollection;
@@ -25,7 +26,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DirectedAcyclicGraph<T> implements TraversableGraph<T> {
 
   private final ImmutableSet<T> nodes;
@@ -128,7 +131,7 @@ public class DirectedAcyclicGraph<T> implements TraversableGraph<T> {
   }
 
   @Override
-  public boolean equals(Object other) {
+  public boolean equals(@Nullable Object other) {
     if (!(other instanceof DirectedAcyclicGraph)) {
       return false;
     }
@@ -202,16 +205,9 @@ public class DirectedAcyclicGraph<T> implements TraversableGraph<T> {
       Preconditions.checkState(!finished);
       finished = true;
 
-      // Create an immutable copy of the nodes, and clear out the builder set to free up memory.
       ImmutableSet<T> nodes = buildImmutableSet(this.nodes);
-      this.nodes = null;
-
-      // Create an immutable copy of the outgoing edges, which frees up the builder map to free up
-      // memory.
       ImmutableMap<T, ImmutableSet<T>> outgoingEdges =
           DirectedAcyclicGraph.toImmutableMap(this::buildImmutableSet, this.outgoingEdges);
-      this.outgoingEdges = null;
-
       return new DirectedAcyclicGraph<>(nodes, outgoingEdges);
     }
   }

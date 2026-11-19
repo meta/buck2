@@ -16,23 +16,29 @@
  */
 
 use allocative::Allocative;
+use starlark_derive::StarlarkPagable;
+use triomphe::Arc;
 
-use crate::eval::ParametersSpec;
+use crate as starlark;
+use crate::eval::runtime::params::spec::ParametersSpecPrototype;
 use crate::typing::Ty;
-use crate::values::FrozenValue;
 
-#[derive(Allocative, Debug)]
+#[derive(Allocative, Debug, StarlarkPagable)]
 #[doc(hidden)]
 pub struct TyRecordData {
     /// Name of the record type.
     pub(crate) name: String,
     /// Type of record instance.
+    #[starlark_pagable(pagable)]
     pub(crate) ty_record: Ty,
     /// Type of record type.
+    #[starlark_pagable(pagable)]
     pub(crate) ty_record_type: Ty,
-    /// Creating these on every invoke is pretty expensive (profiling shows)
-    /// so compute them in advance and cache.
-    pub(crate) parameter_spec: ParametersSpec<FrozenValue>,
+    /// The constructor's signature, which has no default values: the fields' defaults are read
+    /// from the fields at call time. Building the signature is expensive enough to show up in
+    /// profiles, so it is built once here and instantiated at the brand of each call.
+    #[starlark_pagable(pagable)]
+    pub(crate) parameter_spec_prototype: Arc<ParametersSpecPrototype>,
 }
 
 #[cfg(test)]

@@ -11,9 +11,11 @@
 package com.facebook.buck.jvm.cd;
 
 import com.facebook.buck.step.isolatedsteps.IsolatedStep;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 
 /** Builder for java compilation steps. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface CompileStepsBuilder {
 
   ImmutableList<IsolatedStep> buildIsolatedSteps();

@@ -72,7 +72,7 @@ fn render_property(name: &str, property: &DocProperty, render_config: &RenderCon
     let prototype = render_code_block(
         &format!(
             "{name}: {}",
-            &property.typ.display_with(&render_config.type_config)
+            property.typ.display_with(&render_config.type_config)
         ),
         &render_config.type_config,
     );
@@ -288,9 +288,9 @@ pub(super) fn render_doc_type(
         .as_ref()
         .map(|c| render_function(name, c, false, render_config));
     render_members(
-        &name,
+        name,
         &t.docs,
-        &prefix,
+        prefix,
         t.members.iter().map(|(n, m)| (&**n, m.clone())),
         constructor,
         render_config,
@@ -436,7 +436,7 @@ impl DocType {
         name: &str,
         render_config: &RenderConfig,
     ) -> String {
-        render_doc_type(&name, &format!("{name}."), self, render_config)
+        render_doc_type(name, &format!("{name}."), self, render_config)
     }
 }
 

@@ -204,7 +204,6 @@ get_additional_paths(Path) ->
             ],
             Result =
                 [MaybePath || MaybePath <- MaybeAllPaths, filelib:is_dir(MaybePath, prim_file)],
-            waaat:log("Result ~p", [Result]),
             Result;
         error ->
             []

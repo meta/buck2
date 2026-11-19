@@ -9,7 +9,7 @@
 def _impl(ctx):
     ctx.output.print("123")
     action_factory = ctx.bxl_actions().actions
-    out = action_factory.declare_output("foo_out")
+    out = action_factory.declare_output("foo_out", has_content_based_path = False)
     action_factory.write(out, "foo")
 
     ctx.output.print(ctx.output.ensure(out).abs_path())

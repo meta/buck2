@@ -182,6 +182,9 @@ enum ParseLineResult {
         matching_entry: Box<Entry>,
     },
     Ignore(Entry),
+    // A plain rule matched while a multi-line message was open: the message so far, if any,
+    // then the single-line entry.
+    ValidMany(Vec<Entry>),
     // Not match any pattern, but we can still return the entry if the line is on multi-line, if the entry is available.
     NoMatch(Option<Entry>),
 }
@@ -394,14 +397,13 @@ impl ParseMode for MultiLineState {
         error_format: &ErrorFormat,
     ) -> (Box<dyn ParseMode>, ParseLineResult) {
         if let Ok(Some((entry, efm))) = error_format.parse_line_with_state(line, self.as_ref()) {
-            if efm
+            // The open message's own flag decides whether it is emitted; a `-` rule excludes
+            // only the line it matched.
+            let ignore = self.ignore.get();
+            let line_ignored = efm
                 .format_specifier
                 .as_ref()
-                .is_some_and(|s| s.is_ignore_multi_line())
-            {
-                self.ignore.set(true);
-            }
-            let ignore = self.ignore.get();
+                .is_some_and(|s| s.is_ignore_multi_line());
             let (next_state, result) = match efm.format_specifier {
                 Some(ref specifier) if specifier.is_enter_multi_line() => {
                     // New a new state for multi-line
@@ -438,16 +440,34 @@ impl ParseMode for MultiLineState {
                 Some(ref specifier) if specifier.is_end_multi_line() => {
                     self.prev_entries.push(entry);
                     let final_entry = self.combine_entries();
+                    let result = if line_ignored {
+                        ParseLineResult::Ignore(final_entry)
+                    } else {
+                        ParseLineResult::Valid(final_entry)
+                    };
                     (
                         Box::new(SingleLineState(self.ctx)) as Box<dyn ParseMode>,
-                        ParseLineResult::Valid(final_entry),
+                        result,
                     )
                 }
                 Some(ref specifier) if specifier.is_generic_message() => {
+                    let result = if line_ignored {
+                        ParseLineResult::Ignore(entry)
+                    } else {
+                        ParseLineResult::Valid(entry)
+                    };
+                    (self as Box<dyn ParseMode>, result)
+                }
+                None => {
+                    // A plain rule ends the open message and stands on its own.
+                    let mut entries = Vec::new();
+                    if !ignore && !self.prev_entries.is_empty() {
+                        entries.push(self.combine_entries());
+                    }
+                    entries.push(entry);
                     (
-                        self as Box<dyn ParseMode>,
-                        // Just return the valid entry for now
-                        ParseLineResult::Valid(entry),
+                        Box::new(SingleLineState(self.ctx)) as Box<dyn ParseMode>,
+                        ParseLineResult::ValidMany(entries),
                     )
                 }
                 _ => {
@@ -471,7 +491,7 @@ impl ParseMode for MultiLineState {
         } else {
             // Exit MultiLineState when line doesn't match any pattern, same behavior in vim/neovim implementation
             // This allows the multi-line parsing to continue waiting for continuation or end patterns
-            if !self.prev_entries.is_empty() {
+            if !self.prev_entries.is_empty() && !self.ignore.get() {
                 let entry = self.combine_entries();
                 (
                     Box::new(SingleLineState(self.ctx)) as Box<dyn ParseMode>,
@@ -511,7 +531,7 @@ impl ParseMode for MultiLineState {
             {
                 efm.match_line(line).map_err(ErrorFormatError::from)
             }
-            None => Ok(None),
+            None => efm.match_line(line).map_err(ErrorFormatError::from),
             _ => Err(ErrorFormatError::UnsupportedSpecifier {
                 specifier: format!("{:?}", efm.format_specifier),
                 state: "MultiLineState".to_owned(),
@@ -524,11 +544,10 @@ impl ParseMode for MultiLineState {
     }
 
     fn pop_valid_entry(&mut self) -> Option<Entry> {
-        if !self.prev_entries.is_empty() {
-            let entry = self.combine_entries();
-            Some(entry)
-        } else {
+        if self.prev_entries.is_empty() || self.ignore.get() {
             None
+        } else {
+            Some(self.combine_entries())
         }
     }
 }
@@ -561,13 +580,11 @@ impl ShareContext {
         if let Some(file) = file_path {
             if std::path::Path::new(file).is_absolute() {
                 Some(file.to_owned())
+            } else if let Some(dir) = self.dir_stack.last() {
+                let path = std::path::Path::new(dir).join(file);
+                Some(path.to_string_lossy().into_owned())
             } else {
-                if let Some(dir) = self.dir_stack.last() {
-                    let path = std::path::Path::new(dir).join(file);
-                    Some(path.to_string_lossy().into_owned())
-                } else {
-                    Some(file.to_owned())
-                }
+                Some(file.to_owned())
             }
         } else {
             self.dir_stack.last().map(|s| s.to_owned())
@@ -612,6 +629,7 @@ pub fn parse_error_format(
         let result = parser.parse_line(&line);
         match result {
             ParseLineResult::Valid(entry) => entries.push(entry),
+            ParseLineResult::ValidMany(many) => entries.extend(many),
             ParseLineResult::MatchingMultiLine {
                 valid_entry,
                 matching_entry: _,

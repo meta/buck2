@@ -26,107 +26,56 @@ def buck2_modifiers():
     #   mode buckconfig, and as a result the presence of link group map breaks our opt modifier build.
 
     return [
+        "ovr_config//build_mode/constraints:opt",
         modifiers.conditional({
-            "DEFAULT": modifiers.conditional({
-                "DEFAULT": "ovr_config//build_mode/default_opt_cxx:disabled",
-                "ovr_config//build_mode:dev": "ovr_config//build_mode/default_opt_cxx:enabled",
-                "ovr_config//build_mode:opt": "ovr_config//build_mode/default_opt_cxx:enabled",
+            "DEFAULT": None,
+            "ovr_config//os:linux": modifiers.conditional({
+                "DEFAULT": modifiers.conditional({
+                    "DEFAULT": "ovr_config//build_mode/constraints:default_link_style[static]",
+                    "ovr_config//build_mode:dev": "ovr_config//build_mode/constraints:default_link_style[shared]",
+                }),
+                "ovr_config//build_mode:sanitizer_type[asan]": "ovr_config//build_mode/constraints:default_link_style[static_pic]",
             }),
-            # Opt by default cxx toolchain would override the thin-lto toolchain, so don't use opt by default toolchain
-            # if thin-lto is present
-            "ovr_config//build_mode/constraints:lto-thin": "ovr_config//build_mode/default_opt_cxx:disabled",
+        }),
+        "ovr_config//build_mode:sanitizer_type[no-san]",
+        modifiers.conditional({
+            "DEFAULT": "ovr_config//build_mode/constraints:fbcode-build-info-mode[stable]",
+            "ovr_config//build_mode:opt": "ovr_config//build_mode/constraints:fbcode-build-info-mode[full]",
+        }),
+        modifiers.conditional({
+            "DEFAULT": "ovr_config//build_mode/constraints:python-default-package-style[inplace]",
+            "ovr_config//build_mode:opt": "ovr_config//build_mode/constraints:python-default-package-style[standalone]",
         }),
         modifiers.conditional({
             "DEFAULT": None,
-            "ovr_config//build_mode/default_opt_cxx:enabled": modifiers.conditional({
-                "DEFAULT": None,
-                "ovr_config//os:linux": modifiers.conditional({
-                    "DEFAULT": modifiers.conditional({
-                        "DEFAULT": "ovr_config//build_mode/constraints:static",
-                        "ovr_config//build_mode:dev": "ovr_config//build_mode/constraints:shared",
-                    }),
-                    "ovr_config//build_mode:asan": "ovr_config//build_mode/constraints:static_pic",
+            "ovr_config//os:macos": "ovr_config//build_mode/constraints:fbcode-build-info-ldflags[accepted]",
+        }),
+        modifiers.conditional({
+            "DEFAULT": None,
+            "ovr_config//os:macos": "ovr_config//build_mode/constraints:fbcode-custom-allocators[enabled]",
+        }),
+        modifiers.conditional({
+            "DEFAULT": None,
+            "ovr_config//runtime:fbcode": modifiers.conditional({
+                "ovr_config//cpu:arm64": "ovr_config//runtime/constraints:platform010-aarch64",
+                "ovr_config//cpu:x86_64": modifiers.conditional({
+                    "DEFAULT": "ovr_config//runtime/constraints:platform010",
+                    "ovr_config//cpp/constraints:libc++": "ovr_config//runtime/constraints:platform010-libcxx",
                 }),
             }),
         }),
         modifiers.conditional({
             "DEFAULT": None,
-            "ovr_config//build_mode/default_opt_cxx:enabled": modifiers.conditional({
+            "ovr_config//runtime:fbcode": modifiers.conditional({
+                "ovr_config//cpu:arm64": "ovr_config//cpu/constraints:nosve2",
+                "ovr_config//cpu:x86_64": "ovr_config//cpu/constraints:sve2",
+            }),
+        }),
+        modifiers.conditional({
+            "DEFAULT": None,
+            "ovr_config//os:linux": modifiers.conditional({
                 "DEFAULT": None,
-                "ovr_config//os:linux": modifiers.conditional({
-                    "DEFAULT": "ovr_config//build_mode/constraints:split-dwarf-single",
-                    "ovr_config//build_mode:dev": None,
-                }),
-            }),
-        }),
-        modifiers.conditional({
-            "DEFAULT": None,
-            "ovr_config//build_mode/default_opt_cxx:enabled": (
-                "ovr_config//build_mode:no-san"
-            ),
-        }),
-        modifiers.conditional({
-            "DEFAULT": None,
-            "ovr_config//build_mode/default_opt_cxx:enabled": modifiers.conditional({
-                "DEFAULT": "ovr_config//build_mode/constraints:fbcode-build-info-mode-stable",
-                "ovr_config//build_mode:opt": "ovr_config//build_mode/constraints:fbcode-build-info-mode-full",
-            }),
-        }),
-        modifiers.conditional({
-            "DEFAULT": None,
-            "ovr_config//build_mode/default_opt_cxx:enabled": modifiers.conditional({
-                "DEFAULT": "ovr_config//build_mode/constraints:python-default-package-style-inplace",
-                "ovr_config//build_mode:opt": "ovr_config//build_mode/constraints:python-default-package-style-standalone",
-            }),
-        }),
-        modifiers.conditional({
-            "DEFAULT": None,
-            "ovr_config//build_mode/default_opt_cxx:enabled": modifiers.conditional({
-                "DEFAULT": None,
-                "ovr_config//os:macos": "ovr_config//build_mode/constraints:fbcode-build-info-ldflags-accepted",
-            }),
-        }),
-        modifiers.conditional({
-            "DEFAULT": None,
-            "ovr_config//build_mode/default_opt_cxx:enabled": modifiers.conditional({
-                "DEFAULT": None,
-                "ovr_config//os:macos": "ovr_config//build_mode/constraints:fbcode-custom-allocators-enabled",
-            }),
-        }),
-        modifiers.conditional({
-            "DEFAULT": None,
-            "ovr_config//build_mode/default_opt_cxx:enabled": modifiers.conditional({
-                "DEFAULT": None,
-                "ovr_config//runtime:fbcode": modifiers.conditional({
-                    "ovr_config//cpu:arm64": "ovr_config//runtime/constraints:platform010-aarch64",
-                    "ovr_config//cpu:x86_64": modifiers.conditional({
-                        "DEFAULT": "ovr_config//runtime/constraints:platform010",
-                        "ovr_config//cpp/constraints:libc++": "ovr_config//runtime/constraints:platform010-libcxx",
-                    }),
-                }),
-            }),
-        }),
-        modifiers.conditional({
-            "DEFAULT": None,
-            "ovr_config//build_mode/default_opt_cxx:enabled": modifiers.conditional({
-                "DEFAULT": None,
-                "ovr_config//runtime:fbcode": modifiers.conditional({
-                    "ovr_config//cpu:arm64": "ovr_config//cpu/constraints:nosve2",
-                    "ovr_config//cpu:x86_64": "ovr_config//cpu/constraints:sve2",
-                }),
-            }),
-        }),
-        modifiers.conditional({
-            "DEFAULT": None,
-            "ovr_config//build_mode/default_opt_cxx:enabled": modifiers.conditional({
-                "DEFAULT": None,
-                "ovr_config//os:linux": modifiers.conditional({
-                    "DEFAULT": None,
-                    "ovr_config//cpu:arm64": "ovr_config//cpu/constraints:armv9.0a",
-                }),
+                "ovr_config//cpu:arm64": "ovr_config//cpu/constraints:armv9.0a",
             }),
         }),
     ]
-
-def disable_buck2_modifiers():
-    return ["ovr_config//build_mode/default_opt_cxx:disabled"]

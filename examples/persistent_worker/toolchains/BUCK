@@ -1,7 +1,7 @@
 load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
 load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
-load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
-load(":defs.bzl", "python_toolchain")
+load("@prelude//toolchains:python.bzl", "python_bootstrap_toolchain")
+load(":defs.bzl", "python_interpreter", "python_toolchain")
 
 oncall("build_infra")
 
@@ -15,26 +15,40 @@ system_genrule_toolchain(
     visibility = ["PUBLIC"],
 )
 
-system_python_bootstrap_toolchain(
-    name = "python_bootstrap",
-    interpreter = "python3",
-    visibility = ["PUBLIC"],
-)
-
-remote_file(
+# The download and the extraction use no Python tool, so the bootstrap
+# toolchain below can depend on them: remote_file and extract_archive run
+# prelude's unzip, which is itself a Python bootstrap binary.
+http_file(
     name = "python-download",
     out = "cpython.tar.gz",
     sha256 = "445156c61e1cc167f7b8777ad08cc36e5598e12cd27e07453f6e6dc0f62e421e",
-    url = "https://github.com/indygreg/python-build-standalone/releases/download/20241002/cpython-3.13.0rc3+20241002-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    urls = [
+        "https://github.com/indygreg/python-build-standalone/releases/download/20241002/cpython-3.13.0rc3+20241002-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    ],
 )
 
-extract_archive(
+genrule(
     name = "python-extract",
-    src = ":python-download",
+    out = "python-extract",
+    cmd = "mkdir -p $OUT && tar -xzf $(location :python-download) -C $OUT",
 )
 
 python_toolchain(
     name = "python",
     distribution = ":python-extract",
+    visibility = ["PUBLIC"],
+)
+
+# Prelude's Python tools run with the same downloaded interpreter. A bare
+# `python3` resolves to the executor image's, and BuildBuddy's default image
+# (Ubuntu 16.04) has Python 3.5, older than those tools support.
+python_interpreter(
+    name = "python-interpreter",
+    distribution = ":python-extract",
+)
+
+python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    interpreter = ":python-interpreter",
     visibility = ["PUBLIC"],
 )

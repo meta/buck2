@@ -61,11 +61,20 @@ pub async fn create_io_provider(
 
     let _allow_unused = (fb, root_config);
 
+    #[cfg(fbcode_build)]
+    let is_eden = detect_eden::is_eden(project_fs.root().to_path_buf()).unwrap_or(false);
+    #[cfg(not(fbcode_build))]
+    let is_eden = false;
+
     if trace_io {
         Ok(Arc::new(TracingIoProvider::new(Box::new(
-            FsIoProvider::new(project_fs, cas_digest_config),
+            FsIoProvider::new(project_fs, cas_digest_config, is_eden),
         ))))
     } else {
-        Ok(Arc::new(FsIoProvider::new(project_fs, cas_digest_config)))
+        Ok(Arc::new(FsIoProvider::new(
+            project_fs,
+            cas_digest_config,
+            is_eden,
+        )))
     }
 }

@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.List;
 import javax.lang.model.AnnotatedConstruct;
 
@@ -17,6 +18,7 @@ import javax.lang.model.AnnotatedConstruct;
  * Interface for {@link AnnotatedConstruct}s that are implemented by something other than javac
  * itself.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 interface ArtificialAnnotatedConstruct extends AnnotatedConstruct {
   // TODO(jkeljo): I think we should be able to sometimes use the real annotation mirrors
   @Override

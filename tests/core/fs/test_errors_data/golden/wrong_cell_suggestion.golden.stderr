@@ -1,0 +1,12 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Command failed: 
+Error evaluating expression:
+    root//something:target
+    ^--------------------^
+
+
+Caused by:
+    package `root//something:` does not exist
+             ^-------------^
+        dir `root//something` does not exist. Did you mean one of [`cell//something`]?

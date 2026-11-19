@@ -7,51 +7,56 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
-    os_deps = [
-        (
-            "linux",
-            [
-                "fbsource//third-party/rust:nix",
-                "fbsource//third-party/rust:libc",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "fbsource//third-party/rust:nix",
-                "fbsource//third-party/rust:libc",
-            ],
-        ),
-        (
-            "windows",
-            [
-                "fbsource//third-party/rust:common-path",
-                "fbsource//third-party/rust:winapi",
-            ],
-        ),
-    ],
+    autocargo = {
+        "cargo_toml_config": {
+            "extra_buck_dependencies": {
+                "dependencies": [
+                    (None, "//common/rust/shed/detect_eden:detect_eden"),
+                ],
+            },
+        },
+    },
     test_deps = [
         "fbsource//third-party/rust:assert_matches",
         "fbsource//third-party/rust:serde_json",
         "fbsource//third-party/rust:tempfile",
     ],
+    # `BumpArena` never frees anything by design, and its unit tests create arenas of their own.
+    test_miri_flags = ["-Zmiri-ignore-leaks"],
+    unittests_miri = True,
     deps = [
         "fbsource//third-party/rust:compact_str",
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:dunce",
         "fbsource//third-party/rust:memchr",
         "fbsource//third-party/rust:ref-cast",
-        "fbsource//third-party/rust:relative-path",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:smallvec",
         "fbsource//third-party/rust:tokio",
         "//buck2/allocative/allocative:allocative",
         "//buck2/app/buck2_env:buck2_env",
         "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
         "//buck2/gazebo/strong_hash:strong_hash",
+        "//buck2/pagable:pagable",
+        "//buck2/shed/lock_free_hashtable:lock_free_hashtable",
+        "//buck2/shed/mini_vec:mini_vec",
         # @oss-disable[end= ]: "//common/rust/shed/detect_eden:detect_eden",
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:libc",
+            "fbsource//third-party/rust:nix",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:libc",
+            "fbsource//third-party/rust:nix",
+        ],
+        "ovr_config//os:windows": [
+            "fbsource//third-party/rust:common-path",
+            "fbsource//third-party/rust:windows-sys",
+        ],
+    }),
 )

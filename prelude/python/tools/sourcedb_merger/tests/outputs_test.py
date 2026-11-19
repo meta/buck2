@@ -6,12 +6,9 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-strict
-
 
 import unittest
-
-from typing import Mapping
+from collections.abc import Mapping
 
 # pyre-fixme[21]: Could not find module `sourcedb_merger.inputs`.
 from sourcedb_merger.inputs import PartialBuildMap, Target, TargetEntry

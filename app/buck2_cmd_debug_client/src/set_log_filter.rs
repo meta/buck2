@@ -11,7 +11,7 @@
 use buck2_cli_proto::SetLogFilterRequest;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::daemon::client::connect::BuckdConnectConstraints;
+use buck2_client_ctx::daemon::client::connect::BuckdConnectOptions;
 use buck2_client_ctx::daemon::client::connect::connect_buckd;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
@@ -40,7 +40,7 @@ impl SetLogFilterCommand {
             let mut events_ctx = EventsCtx::new(None, vec![Box::new(StdoutStderrForwarder)]);
 
             let mut buckd = connect_buckd(
-                BuckdConnectConstraints::ExistingOnly,
+                BuckdConnectOptions::ExistingOnly,
                 &mut events_ctx,
                 ctx.paths()?,
             )

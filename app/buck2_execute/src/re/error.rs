@@ -41,6 +41,8 @@ pub fn get_re_group_tag(group: &TCodeReasonGroup) -> Option<ErrorTag> {
     match *group {
         TCodeReasonGroup::RE_CONNECTION => Some(ErrorTag::ReConnection),
         TCodeReasonGroup::USER_QUOTA => Some(ErrorTag::ReUserQuota),
+        TCodeReasonGroup::USER_BAD_CERTS => Some(ErrorTag::ReUserBadCerts),
+        TCodeReasonGroup::USER_ACTION_LOST_WORKERS => Some(ErrorTag::ReActionLostWorkers),
         _ => None,
     }
 }
@@ -66,8 +68,8 @@ impl TypedContext for RemoteExecutionError {
         }
     }
 
-    fn should_display(&self) -> bool {
-        false
+    fn display(&self) -> Option<String> {
+        None
     }
 }
 
@@ -93,7 +95,7 @@ fn re_error(
     }
 }
 
-pub(crate) async fn with_error_handler<T>(
+pub(crate) fn with_error_handler<T>(
     re_action: &str,
     re_session_id: &str,
     result: anyhow::Result<T>,
@@ -103,22 +105,31 @@ pub(crate) async fn with_error_handler<T>(
         Err(e) => {
             let (code, group) = e
                 .downcast_ref::<REClientError>()
-                .map(|e| (e.code, e.group))
-                .unwrap_or((TCode::UNKNOWN, TCodeReasonGroup::UNKNOWN));
+                .map_or((TCode::UNKNOWN, TCodeReasonGroup::UNKNOWN), |e| {
+                    (e.code, e.group)
+                });
 
-            Err(re_error(re_action, re_session_id, format!("{e:#}"), code, group).into())
+            Err(re_error(
+                re_action,
+                re_session_id,
+                format!("{e:#}"),
+                code,
+                group,
+            ))
         }
     }
 }
 
 pub fn test_re_error(message: &str, code: TCode) -> buck2_error::Error {
-    re_error(
-        "test",
-        "test",
-        message.to_owned(),
-        code,
-        TCodeReasonGroup::UNKNOWN,
-    )
+    test_re_error_with_group(message, code, TCodeReasonGroup::UNKNOWN)
+}
+
+pub(crate) fn test_re_error_with_group(
+    message: &str,
+    code: TCode,
+    group: TCodeReasonGroup,
+) -> buck2_error::Error {
+    re_error("test", "test", message.to_owned(), code, group)
 }
 
 #[cfg(test)]

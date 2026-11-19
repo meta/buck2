@@ -1,0 +1,4 @@
+many_rebound_outputs(
+    name = "check",
+    seed = "A",
+)

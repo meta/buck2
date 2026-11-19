@@ -5,38 +5,30 @@ oncall("build_infra")
 rust_library(
     name = "buck2_test",
     srcs = glob(["src/**/*.rs"]),
-    os_deps = [
-        (
-            "linux",
-            [
-                "fbsource//third-party/rust:libc",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "fbsource//third-party/rust:libc",
-            ],
-        ),
-    ],
+    # `//buck2/remote_execution:remote_execution` is an alias selecting between
+    # the internal and OSS impls; autocargo doesn't follow aliases, so point at
+    # the OSS rust_library directly for cargo's sake.
+    autocargo = {
+        "cargo_toml_config": {
+            "extra_buck_dependencies": {
+                "dependencies": [
+                    "fbcode//buck2/remote_execution/oss/re_grpc:remote_execution",
+                ],
+            },
+        },
+    },
     test_deps = [
         "fbsource//third-party/rust:maplit",
     ],
     deps = [
         "fbsource//third-party/rust:async-trait",
-        "fbsource//third-party/rust:chrono",
-        "fbsource//third-party/rust:dashmap",
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:fxhash",
-        "fbsource//third-party/rust:indexmap",
         "fbsource//third-party/rust:itertools",
-        "fbsource//third-party/rust:once_cell",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:serde_json",
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tracing",
-        "fbsource//third-party/rust:uuid",
         "//buck2/allocative/allocative:allocative",
         "//buck2/app/buck2_build_api:buck2_build_api",
         "//buck2/app/buck2_build_signals:buck2_build_signals",
@@ -52,6 +44,7 @@ rust_library(
         "//buck2/app/buck2_execute_impl:buck2_execute_impl",
         "//buck2/app/buck2_fs:buck2_fs",
         "//buck2/app/buck2_grpc:buck2_grpc",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_interpreter:buck2_interpreter",
         "//buck2/app/buck2_interpreter_for_build:buck2_interpreter_for_build",
         "//buck2/app/buck2_node:buck2_node",
@@ -64,8 +57,15 @@ rust_library(
         "//buck2/gazebo/display_container:display_container",
         "//buck2/gazebo/dupe:dupe",
         "//buck2/host_sharing:host_sharing",
+        "//buck2/pagable:pagable",
         "//buck2/remote_execution:remote_execution",
-        "//buck2/starlark-rust/starlark:starlark",
-        "//common/rust/shed/sorted_vector_map:sorted_vector_map",
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:libc",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:libc",
+        ],
+    }),
 )

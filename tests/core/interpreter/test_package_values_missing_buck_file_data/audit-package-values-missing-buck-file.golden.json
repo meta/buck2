@@ -2,6 +2,17 @@
 
 {
   "root//": {
-    "aaa.bbb": "ccc"
+    "aaa.bbb": "ccc",
+    "visibility": [],
+    "within_view": [
+      "PUBLIC"
+    ],
+    "visibility_cap": [
+      "PUBLIC"
+    ],
+    "within_view_cap": [
+      "PUBLIC"
+    ],
+    "visibility_intersection": []
   }
 }

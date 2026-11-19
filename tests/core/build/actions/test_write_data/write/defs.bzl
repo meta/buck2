@@ -9,7 +9,7 @@
 FooInfo = provider(fields = ["args", "out"])
 
 def _simple_write_impl(ctx):
-    out = ctx.actions.write("out.txt", "contents")
+    out = ctx.actions.write("out.txt", "contents", has_content_based_path = False)
     args = cmd_args([out])
     return [
         FooInfo(args = args, out = out),
@@ -18,10 +18,10 @@ def _simple_write_impl(ctx):
 
 def _write_file_impl(ctx):
     if ctx.attrs.name == "uses_declared_output":
-        declared = ctx.actions.declare_output(ctx.attrs.out)
+        declared = ctx.actions.declare_output(ctx.attrs.out, has_content_based_path = False)
         output = ctx.actions.write(declared, ctx.attrs.content)
     elif ctx.attrs.name == "uses_declared_output_as_output":
-        declared = ctx.actions.declare_output(ctx.attrs.out)
+        declared = ctx.actions.declare_output(ctx.attrs.out, has_content_based_path = False)
         output = ctx.actions.write(declared.as_output(), ctx.attrs.content)
     elif ctx.attrs.name == "declares_output":
         output = ctx.actions.write(ctx.attrs.out, ctx.attrs.content)
@@ -36,8 +36,8 @@ def _write_file_impl(ctx):
     elif ctx.attrs.name == "writes_frozen_command_lines":
         output = ctx.actions.write(ctx.attrs.out, ctx.attrs.dep[FooInfo].args)
     elif ctx.attrs.name == "with_inputs_and_copy":
-        output1 = ctx.actions.write("intermediate.txt", ctx.attrs.content)
-        output2 = ctx.actions.declare_output(ctx.attrs.out)
+        output1 = ctx.actions.write("intermediate.txt", ctx.attrs.content, has_content_based_path = False)
+        output2 = ctx.actions.declare_output(ctx.attrs.out, has_content_based_path = False)
 
         # Create script with output1 as its associated artifact
         cmd = cmd_args(output1, format = "import sys; fp1=open('{}','r'); all=fp1.read(); fp2=open(sys.argv[1], 'w'); fp2.write(all);")
@@ -48,6 +48,7 @@ def _write_file_impl(ctx):
             "script.py",
             [cmd],
             with_inputs = True,
+            has_content_based_path = False,
         )
 
         # Read output1 and write back into output2. Output1 should be included as an associated artifact here so we do not need to add it as hidden
@@ -73,6 +74,32 @@ write_file = rule(
 
 simple_write = rule(
     impl = _simple_write_impl,
-    attrs = {
-    },
+    attrs = {},
+)
+
+def _shell_quoted_roundtrip_impl(ctx):
+    # `quote = "shell"` words, written to an argsfile and read back by bash: each word must
+    # survive bash word processing (brace expansion included) as a single word.
+    argsfile = ctx.actions.write(
+        "args.txt",
+        cmd_args(["a{b,c}", "{a..c}", "x y"], quote = "shell"),
+        has_content_based_path = False,
+    )
+    out = ctx.actions.declare_output("out.txt", has_content_based_path = False)
+    ctx.actions.run(
+        cmd_args([
+            "bash",
+            "-c",
+            'eval "printf \'<%s>\\n\' $(tr "\\n" " " < "$1")" > "$2"',
+            "_",
+            argsfile,
+            out.as_output(),
+        ]),
+        category = "roundtrip",
+    )
+    return [DefaultInfo(default_output = out)]
+
+shell_quoted_roundtrip = rule(
+    impl = _shell_quoted_roundtrip_impl,
+    attrs = {},
 )

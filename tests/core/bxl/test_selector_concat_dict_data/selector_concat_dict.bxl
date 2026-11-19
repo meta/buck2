@@ -22,12 +22,17 @@ def _selector_dict_attr(ctx):
     node = ctx.lazy.unconfigured_target_node("root//:select_dict").resolve()
     flags = node.get_attr("flags")
 
-    asserts.equals(str(flags), 'select({"root//constraints:macos": ["--foo-macos", "--bar-macos"], "root//constraints:x86": ["--foo-x86", "--bar-x86"], "DEFAULT": ["--foo", "--bar"]})')
+    asserts.equals(
+        str(flags),
+        'select({"root//constraints:macos": ["--foo-macos", "--bar-macos"], "root//constraints:x86": ["--foo-x86", "--bar-x86"], "DEFAULT": ["--foo", "--bar"]})',
+    )
 
     asserts.true(isinstance(flags, bxl.SelectDict))
 
     # it will return false, since it is Select not bxl.SelectDict. We will support `Select = bxl.SelectDict | bxl.SelectConcat` later
-    asserts.false(isinstance(select({"DEFAULT": ["--foo"], "root//constraints:macos": ["--foo-macos"], "root//constraints:x86": ["--foo-x86"]}), bxl.SelectDict))
+    asserts.false(
+        isinstance(select({"DEFAULT": ["--foo"], "root//constraints:macos": ["--foo-macos"], "root//constraints:x86": ["--foo-x86"]}), bxl.SelectDict)
+    )
 
     # test for iter on iterms
     for key, value in flags.select_items():
@@ -64,12 +69,18 @@ def _selector_concat_attr(ctx):
     flags = node.get_attr("flags")
 
     asserts.true(isinstance(flags, bxl.SelectConcat))
-    asserts.equals(str(flags), '["--flag", "--baz"]+select({"root//constraints:macos": ["--foo-macos", "--bar-macos"], "root//constraints:x86": ["--foo-x86", "--bar-x86"], "DEFAULT": ["--foo", "--bar"]})')
+    asserts.equals(
+        str(flags),
+        '["--flag", "--baz"]+select({"root//constraints:macos": ["--foo-macos", "--bar-macos"], "root//constraints:x86": ["--foo-x86", "--bar-x86"], "DEFAULT": ["--foo", "--bar"]})',
+    )
 
     # test for iterator
     for v in flags.select_iter():
         if isinstance(v, bxl.SelectDict):
-            asserts.equals(str(v), 'select({"root//constraints:macos": ["--foo-macos", "--bar-macos"], "root//constraints:x86": ["--foo-x86", "--bar-x86"], "DEFAULT": ["--foo", "--bar"]})')
+            asserts.equals(
+                str(v),
+                'select({"root//constraints:macos": ["--foo-macos", "--bar-macos"], "root//constraints:x86": ["--foo-x86", "--bar-x86"], "DEFAULT": ["--foo", "--bar"]})',
+            )
             for key, val in v.select_items():
                 print(key)
                 print(val)
@@ -92,7 +103,7 @@ def _selector_dict_write_json(ctx):
     asserts.true(isinstance(flags, bxl.SelectDict))
 
     actions = ctx.bxl_actions().actions
-    output = actions.write_json("dict.json", flags)
+    output = actions.write_json("dict.json", flags, has_content_based_path = False)
     ctx.output.print(ctx.output.ensure(output).abs_path())
 
 selector_dict_write_json = bxl_main(
@@ -106,7 +117,7 @@ def _selector_concat_write_json(ctx):
     asserts.true(isinstance(flags, bxl.SelectConcat))
 
     actions = ctx.bxl_actions().actions
-    output = actions.write_json("concat.json", flags)
+    output = actions.write_json("concat.json", flags, has_content_based_path = False)
     ctx.output.print(ctx.output.ensure(output).abs_path())
 
 selector_concat_write_json = bxl_main(

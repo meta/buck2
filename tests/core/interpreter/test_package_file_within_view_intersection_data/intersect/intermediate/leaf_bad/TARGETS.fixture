@@ -1,0 +1,7 @@
+# Default `within_view` is PUBLIC here (from `intermediate/PACKAGE`), so the
+# target's own `within_view` allows the outside dep; the cap inherited from
+# `root//intersect/PACKAGE` refuses it.
+stub(
+    name = "c",
+    deps = ["root//outside:t"],
+)

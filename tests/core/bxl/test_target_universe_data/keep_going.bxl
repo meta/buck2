@@ -6,21 +6,105 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-def _assert_eq(a, b):
-    if a != b:
-        fail("Expected {} == {}".format(a, b))
+def _assert_targets(ctx, result, expected_labels):
+    expected = ctx.configured_targets(expected_labels) if expected_labels else ctarget_set()
+    if result != expected:
+        fail("Expected {} but got {}".format(expected, result))
 
 def _target_universe_keep_going_with_errors(ctx):
     # recursive target pattern
     result = ctx.target_universe("//bad_targets/...", keep_going = True).target_set()
-    _assert_eq(len(result), 1)
-    _assert_eq("root//bad_targets:declared_dep", str(result[0].label.raw_target()))
+    _assert_targets(ctx, result, ["//bad_targets:declared_dep"])
 
     # single target
     result = ctx.target_universe("//bad_targets:has_a_missing_dep", keep_going = True).target_set()
-    _assert_eq(len(result), 0)
+    _assert_targets(ctx, result, [])
 
 target_universe_keep_going_with_errors = bxl_main(
     impl = _target_universe_keep_going_with_errors,
+    cli_args = {},
+)
+
+def _target_universe_keep_going_list_input(ctx):
+    result = ctx.target_universe(["//bad_targets/..."], keep_going = True).target_set()
+    _assert_targets(ctx, result, ["//bad_targets:declared_dep"])
+
+target_universe_keep_going_list_input = bxl_main(
+    impl = _target_universe_keep_going_list_input,
+    cli_args = {},
+)
+
+def _target_universe_keep_going_target_set_input(ctx):
+    targets = ctx.uquery().eval("//bad_targets/...")
+    result = ctx.target_universe(targets, keep_going = True).target_set()
+    _assert_targets(ctx, result, ["//bad_targets:declared_dep"])
+
+target_universe_keep_going_target_set_input = bxl_main(
+    impl = _target_universe_keep_going_target_set_input,
+    cli_args = {},
+)
+
+def _target_universe_keep_going_mixed_list(ctx):
+    result = ctx.target_universe(
+        [
+            "//bad_targets:declared_dep",
+            "//bad_targets:has_a_missing_dep",
+        ],
+        keep_going = True,
+    ).target_set()
+    _assert_targets(ctx, result, ["//bad_targets:declared_dep"])
+
+target_universe_keep_going_mixed_list = bxl_main(
+    impl = _target_universe_keep_going_mixed_list,
+    cli_args = {},
+)
+
+def _target_universe_keep_going_all_fail(ctx):
+    result = ctx.target_universe(
+        [
+            "//bad_targets:has_a_missing_dep",
+            "//bad_targets:has_a_dep_with_package_listing_err",
+            "//bad_targets:has_a_dep_from_nonexistent_buildfile",
+        ],
+        keep_going = True,
+    ).target_set()
+    _assert_targets(ctx, result, [])
+
+target_universe_keep_going_all_fail = bxl_main(
+    impl = _target_universe_keep_going_all_fail,
+    cli_args = {},
+)
+
+def _target_universe_keep_going_incompatible_target_set(ctx):
+    targets = ctx.uquery().eval("//incompatible_targets/...")
+    result = ctx.target_universe(targets, keep_going = True).target_set()
+    _assert_targets(ctx, result, ["//incompatible_targets:compatible_target"])
+
+target_universe_keep_going_incompatible_target_set = bxl_main(
+    impl = _target_universe_keep_going_incompatible_target_set,
+    cli_args = {},
+)
+
+def _target_universe_keep_going_incompatible_string_pattern(ctx):
+    result = ctx.target_universe("//incompatible_targets/...", keep_going = True).target_set()
+    _assert_targets(ctx, result, ["//incompatible_targets:compatible_target"])
+
+target_universe_keep_going_incompatible_string_pattern = bxl_main(
+    impl = _target_universe_keep_going_incompatible_string_pattern,
+    cli_args = {},
+)
+
+def _target_universe_keep_going_incompatible_list(ctx):
+    result = ctx.target_universe(
+        [
+            "//incompatible_targets:compatible_target",
+            "//incompatible_targets:incompatible_target",
+        ],
+        keep_going = True,
+    ).target_set()
+    _assert_targets(ctx, result, ["//incompatible_targets:compatible_target"])
+
+target_universe_keep_going_incompatible_list = bxl_main(
+    impl = _target_universe_keep_going_incompatible_list,
     cli_args = {},
 )

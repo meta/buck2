@@ -8,9 +8,13 @@
  * above-listed licenses.
  */
 
+use std::sync::LazyLock;
+use std::time::Duration;
+
 use async_trait::async_trait;
 use buck2_cli_proto::protobuf_util::ProtobufSplitter;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
+use buck2_client_ctx::command_outcome::CommandOutcome;
 use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::common::CommonBuildConfigurationOptions;
 use buck2_client_ctx::common::CommonEventLogOptions;
@@ -25,10 +29,10 @@ use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::stream_util::reborrow_stream_for_static;
 use buck2_client_ctx::streaming::StreamingCommand;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_subscription_proto::SubscriptionRequest;
 use futures::stream::StreamExt;
 use futures::stream::TryStreamExt;
-use once_cell::sync::Lazy;
 use prost::Message;
 use tokio_util::codec::FramedRead;
 
@@ -146,6 +150,14 @@ impl StreamingCommand for SubscribeCommand {
                         }),
                     })
                 },
+                || {
+                    Some((
+                        Duration::from_secs(5),
+                        Ok(CommandOutcome::Success(
+                            buck2_cli_proto::SubscriptionCommandResponse {},
+                        )),
+                    ))
+                },
             )
             .await??;
         };
@@ -163,11 +175,12 @@ impl StreamingCommand for SubscribeCommand {
     fn console_opts(&self) -> &CommonConsoleOptions {
         // This should only be communicated with by an IDE, so disable anything other
         // than the simple console
-        static SIMPLE_CONSOLE: Lazy<CommonConsoleOptions> = Lazy::new(|| CommonConsoleOptions {
-            console_type: ConsoleType::Simple,
-            ui: vec![],
-            no_interactive_console: true,
-        });
+        static SIMPLE_CONSOLE: LazyLock<CommonConsoleOptions> =
+            LazyLock::new(|| CommonConsoleOptions {
+                console_type: ConsoleType::Simple,
+                ui: vec![],
+                no_interactive_console: true,
+            });
         &SIMPLE_CONSOLE
     }
 
@@ -208,7 +221,7 @@ impl PartialResultHandler for SubscriptionPartialResultHandler {
     ) -> buck2_error::Result<()> {
         let response = partial_res
             .response
-            .buck_error_context("Empty `SubscriptionResponseWrapper`")?;
+            .internal_error("Empty `SubscriptionResponseWrapper`")?;
 
         if let Some(buck2_subscription_proto::subscription_response::Response::Goodbye(goodbye)) =
             &response.response

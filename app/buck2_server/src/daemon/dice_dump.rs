@@ -13,11 +13,12 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::sync::Arc;
 
-use bincode::Options;
 use buck2_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
 use dice::Dice;
+use dice::introspection::serialize_dense_graph;
+use dice::introspection::serialize_graph;
 use dupe::Dupe;
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -76,41 +77,46 @@ fn dice_dump_tsv(dice: &Arc<Dice>, path: &Path) -> buck2_error::Result<()> {
 
     let nodes = File::create(&nodes_path).buck_error_context(format!(
         "Failed to open DICE node dumpfile {:?}",
-        &nodes_path
+        nodes_path
     ))?;
     let mut nodes = GzEncoder::new(BufWriter::new(nodes), Compression::default());
 
     let edges = File::create(&edges_path).buck_error_context(format!(
         "Failed to open DICE edge dumpfile {:?}",
-        &edges_path
+        edges_path
     ))?;
     let mut edges = GzEncoder::new(BufWriter::new(edges), Compression::default());
 
     let nodes_currently_running =
         File::create(&nodes_currently_running_path).buck_error_context(format!(
             "Failed to open DICE node currently running dumpfile {:?}",
-            &nodes_currently_running_path
+            nodes_currently_running_path
         ))?;
     let mut nodes_currently_running = GzEncoder::new(
         BufWriter::new(nodes_currently_running),
         Compression::default(),
     );
 
-    dice.serialize_tsv(&mut nodes, &mut edges, &mut nodes_currently_running)
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
-        .buck_error_context("Failed to serialize")?;
+    serialize_graph(
+        &dice.to_introspectable(),
+        &mut nodes,
+        &mut edges,
+        &mut nodes_currently_running,
+    )
+    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+    .buck_error_context("Failed to serialize")?;
 
     nodes
         .try_finish()
-        .buck_error_context(format!("Failed to flush DICE nodes to {:?}", &nodes_path))?;
+        .buck_error_context(format!("Failed to flush DICE nodes to {:?}", nodes_path))?;
     edges
         .try_finish()
-        .buck_error_context(format!("Failed to flush DICE edges to {:?}", &edges_path))?;
+        .buck_error_context(format!("Failed to flush DICE edges to {:?}", edges_path))?;
     nodes_currently_running
         .try_finish()
         .buck_error_context(format!(
             "Failed to flush DICE nodes currently running to {:?}",
-            &nodes_currently_running_path
+            nodes_currently_running_path
         ))?;
 
     Ok(())
@@ -121,17 +127,16 @@ fn dice_dump_bincode(dice: &Arc<Dice>, path: &Path) -> buck2_error::Result<()> {
     std::fs::create_dir_all(path.parent().unwrap())
         .buck_error_context("Failed to create directory")?;
     let out = File::create(&path)
-        .buck_error_context(format!("Failed to open serde DICE dumpfile {:?}", &path))?;
-    let out = GzEncoder::new(BufWriter::new(out), Compression::default());
+        .buck_error_context(format!("Failed to open serde DICE dumpfile {:?}", path))?;
+    let mut out = GzEncoder::new(BufWriter::new(out), Compression::default());
 
-    let mut writer = bincode::Serializer::new(
-        out,
-        bincode::config::DefaultOptions::new()
-            .with_fixint_encoding()
-            .allow_trailing_bytes(),
-    );
-    dice.serialize_serde(&mut writer)
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+    bincode::serde::encode_into_std_write(
+        dice.to_introspectable(),
+        &mut out,
+        bincode::config::legacy(),
+    )
+    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+
     Ok(())
 }
 
@@ -140,10 +145,11 @@ fn dice_dump_json_pretty(dice: &Arc<Dice>, path: &Path) -> buck2_error::Result<(
     std::fs::create_dir_all(path.parent().unwrap())
         .buck_error_context("Failed to create directory")?;
     let out = File::create(&path)
-        .buck_error_context(format!("Failed to open serde DICE dumpfile {:?}", &path))?;
+        .buck_error_context(format!("Failed to open serde DICE dumpfile {:?}", path))?;
     let out = GzEncoder::new(BufWriter::new(out), Compression::default());
 
     let mut writer = serde_json::Serializer::pretty(out);
-    dice.serialize_serde(&mut writer)?;
+
+    serialize_dense_graph(&dice.to_introspectable(), &mut writer)?;
     Ok(())
 }

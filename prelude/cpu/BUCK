@@ -7,7 +7,7 @@ source_listing()
 config_setting(
     name = "x86_64",
     constraint_values = [
-        "prelude//cpu/constraints:x86_64",
+        "prelude//cpu/constraints:cpu[x86_64]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -15,7 +15,7 @@ config_setting(
 config_setting(
     name = "x86_32",
     constraint_values = [
-        "prelude//cpu/constraints:x86_32",
+        "prelude//cpu/constraints:cpu[x86_32]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -23,7 +23,7 @@ config_setting(
 config_setting(
     name = "arm64",
     constraint_values = [
-        "prelude//cpu/constraints:arm64",
+        "prelude//cpu/constraints:cpu[arm64]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -31,7 +31,7 @@ config_setting(
 config_setting(
     name = "arm32",
     constraint_values = [
-        "prelude//cpu/constraints:arm32",
+        "prelude//cpu/constraints:cpu[arm32]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -39,7 +39,7 @@ config_setting(
 config_setting(
     name = "wasm32",
     constraint_values = [
-        "prelude//cpu/constraints:wasm32",
+        "prelude//cpu/constraints:cpu[wasm32]",
     ],
     visibility = ["PUBLIC"],
 )
@@ -47,7 +47,7 @@ config_setting(
 config_setting(
     name = "riscv64",
     constraint_values = [
-        "prelude//cpu/constraints:riscv64",
+        "prelude//cpu/constraints:cpu[riscv64]",
     ],
     visibility = ["PUBLIC"],
 )

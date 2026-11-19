@@ -1,0 +1,6 @@
+# Default `within_view` is PUBLIC here (from `intermediate/PACKAGE`); the
+# dep is inside the grandparent's cap, so it is allowed.
+stub(
+    name = "c",
+    deps = ["root//intersect/lib:t"],
+)

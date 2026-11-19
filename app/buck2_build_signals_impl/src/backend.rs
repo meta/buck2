@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+#[allow(clippy::module_inception)]
 pub(crate) mod backend;
 pub(crate) mod logging;
 pub(crate) mod longest_path_graph;

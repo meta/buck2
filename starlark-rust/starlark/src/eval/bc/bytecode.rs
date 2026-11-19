@@ -19,8 +19,11 @@
 
 use std::fmt::Write;
 
+use starlark_derive::StarlarkPagable;
 use starlark_syntax::eval_exception::EvalException;
 
+use crate as starlark;
+use crate::any::ProvidesStaticType;
 use crate::eval::Evaluator;
 use crate::eval::bc::addr::BcPtrAddr;
 use crate::eval::bc::for_loop::LoopDepth;
@@ -37,44 +40,49 @@ use crate::eval::compiler::add_span_to_expr_error;
 use crate::eval::runtime::evaluator::EvaluationCallbacks;
 use crate::values::Value;
 
-/// Ready to execute bytecode.
-#[derive(Default)]
-pub(crate) struct Bc {
-    pub(crate) instrs: BcInstrs,
+/// Ready to execute bytecode, whose operands are values at `'v`.
+#[derive(Default, ProvidesStaticType, StarlarkPagable)]
+pub(crate) struct Bc<'v> {
+    pub(crate) instrs: BcInstrs<'v>,
     /// Number of local variable slots.
     pub(crate) local_count: u32,
     /// Max stack size in values (`Value`).
     pub(crate) max_stack_size: u32,
     /// Max depth of loops.
+    #[starlark_pagable(pagable)]
     pub(crate) max_loop_depth: LoopDepth,
 }
 
-impl Bc {
-    /// Find span for instruction.
+impl<'v> Bc<'v> {
+    /// Find the end instruction and its argument from an instruction pointer.
     #[cold]
     #[inline(never)]
-    pub(crate) fn slow_arg_at_ptr(addr_ptr: BcPtrAddr<'_>) -> &BcInstrSlowArg {
+    pub(crate) fn end_arg_at_ptr<'b>(
+        addr_ptr: BcPtrAddr<'b>,
+    ) -> (BcPtrAddr<'b>, &'b BcInstrEndArg<'v>) {
         let mut ptr = addr_ptr;
         loop {
             let opcode = ptr.get_opcode();
             if opcode == BcOpcode::End {
-                let end_of_bc = ptr.get_instr::<InstrEnd>();
-                let BcInstrEndArg {
-                    slow_args,
-                    end_addr,
-                    ..
-                } = &end_of_bc.arg;
-                let code_start_ptr = ptr.sub(*end_addr);
-                let addr = addr_ptr.offset_from(code_start_ptr);
-                for (next_addr, next_span) in slow_args {
-                    if *next_addr == addr {
-                        return next_span;
-                    }
-                }
-                panic!("span not found for addr: {addr}");
+                return (ptr, &ptr.get_instr::<'v, InstrEnd>().arg);
             }
             ptr = ptr.add(opcode.size_of_repr());
         }
+    }
+
+    /// Find span for instruction.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn slow_arg_at_ptr<'b>(addr_ptr: BcPtrAddr<'b>) -> &'b BcInstrSlowArg<'v> {
+        let (end_ptr, end_arg) = Self::end_arg_at_ptr(addr_ptr);
+        let code_start_ptr = end_ptr.sub(end_arg.end_addr);
+        let addr = addr_ptr.offset_from(code_start_ptr);
+        for (next_addr, next_span) in &end_arg.slow_args {
+            if *next_addr == addr {
+                return next_span;
+            }
+        }
+        panic!("span not found for addr: {addr}");
     }
 
     #[cold]
@@ -82,7 +90,7 @@ impl Bc {
     pub(crate) fn wrap_error_for_instr_ptr(
         ptr: BcPtrAddr,
         e: crate::Error,
-        eval: &Evaluator,
+        eval: &Evaluator<'v, '_, '_>,
     ) -> EvalException {
         let span = Self::slow_arg_at_ptr(ptr).span;
         add_span_to_expr_error(e, span, eval)
@@ -92,7 +100,7 @@ impl Bc {
     ///
     /// Frame must be allocated properly, otherwise it will likely result in memory corruption.
     #[inline(always)]
-    pub(crate) fn run<'v, EC: EvaluationCallbacks>(
+    pub(crate) fn run<EC: EvaluationCallbacks>(
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
         ec: &mut EC,
@@ -131,11 +139,13 @@ fn step<'v, 'b, EC: EvaluationCallbacks>(
         ip: BcPtrAddr<'b>,
     }
 
-    impl<'v, 'a, 'e, 'y, 'b> BcOpcodeHandler<InstrControl<'v, 'b>> for HandlerImpl<'v, 'a, 'e, 'y, 'b> {
+    impl<'v, 'a, 'e, 'y, 'b> BcOpcodeHandler<'v, InstrControl<'v, 'b>>
+        for HandlerImpl<'v, 'a, 'e, 'y, 'b>
+    {
         #[cfg_attr(not(debug_assertions), inline(always))]
-        fn handle<I: BcInstr>(self) -> InstrControl<'v, 'b> {
+        fn handle<I: BcInstr<'v>>(self) -> InstrControl<'v, 'b> {
             let HandlerImpl { eval, frame, ip } = self;
-            let repr = ip.get_instr::<I>();
+            let repr = ip.get_instr::<'v, I>();
             I::run(eval, frame, ip, &repr.arg)
         }
     }

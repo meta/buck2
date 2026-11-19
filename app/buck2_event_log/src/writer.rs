@@ -18,6 +18,7 @@ use std::task::Poll;
 
 use async_compression::tokio::write::GzipEncoder;
 use async_compression::tokio::write::ZstdEncoder;
+use buck2_core::soft_error_or_panic;
 use counting_reader::CountingReader;
 use pin_project::pin_project;
 use tokio::io::AsyncWrite;
@@ -112,7 +113,7 @@ impl NamedEventLogWriter {
             )) as EventLogWriter,
             Compression::Zstd => Box::new(ZstdEncoder::with_quality(
                 CountingReader::new(file, bytes_written),
-                async_compression::Level::Default,
+                async_compression::Level::Precise(9),
             )) as EventLogWriter,
         };
         Self {
@@ -139,8 +140,19 @@ impl NamedEventLogWriter {
     }
 
     pub(crate) async fn shutdown(&mut self) {
-        if let Err(e) = self.file.shutdown().await {
-            tracing::warn!("Failed to flush log file at `{}`: {:#}", self.path.path, e);
+        match self.file.shutdown().await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                // The subprocess exited with some kind of error. That is logged separately, so
+                // here we just ignore it.
+            }
+            Err(e) => {
+                soft_error_or_panic!(
+                    "event_log_flush_failed",
+                    buck2_error::Error::from(e)
+                        .context(format!("Failed to flush log file at `{}`", self.path.path))
+                );
+            }
         }
     }
 
@@ -148,7 +160,7 @@ impl NamedEventLogWriter {
         self.process_to_wait_for.take()
     }
 
-    fn serialize_event<'b, T>(&self, mut buf: &mut Vec<u8>, event: &T) -> buck2_error::Result<()>
+    fn serialize_event<'b, T>(&self, buf: &mut Vec<u8>, event: &T) -> buck2_error::Result<()>
     where
         T: SerializeForLog + 'b,
     {
@@ -156,14 +168,14 @@ impl NamedEventLogWriter {
             EventLogType::System => {
                 match self.path.encoding.mode {
                     LogMode::Json => {
-                        event.serialize_to_json(&mut buf)?;
+                        event.serialize_to_json(buf)?;
                         buf.push(b'\n');
                     }
-                    LogMode::Protobuf => event.serialize_to_protobuf_length_delimited(&mut buf)?,
+                    LogMode::Protobuf => event.serialize_to_protobuf_length_delimited(buf)?,
                 };
             }
             EventLogType::User => {
-                if event.maybe_serialize_user_event(&mut buf)? {
+                if event.maybe_serialize_user_event(buf)? {
                     buf.push(b'\n');
                 }
             }
@@ -185,7 +197,7 @@ impl NamedEventLogWriter {
 
     pub(crate) async fn write_events<'b, T, I>(
         &mut self,
-        mut buf: &mut Vec<u8>,
+        buf: &mut Vec<u8>,
         events: &I,
     ) -> Result<(), buck2_error::Error>
     where
@@ -193,10 +205,9 @@ impl NamedEventLogWriter {
         I: IntoIterator<Item = &'b T> + Clone + 'b,
     {
         for event in events.clone() {
-            self.serialize_event(&mut buf, event)?;
+            self.serialize_event(buf, event)?;
         }
-        self.write_all(&buf).await?;
-        Ok(())
+        self.write_all(buf).await
     }
 }
 

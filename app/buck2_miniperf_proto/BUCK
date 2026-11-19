@@ -8,9 +8,10 @@ rust_library(
     test_deps = [
         "fbsource//third-party/rust:bincode",
     ],
+    # Keep this dep set small and slow-moving: this is `buck2_miniperf`'s only
+    # first-party dep. See the note in `buck2_miniperf/BUCK`.
     deps = [
         "fbsource//third-party/rust:serde",
-        "//buck2/app/buck2_data:buck2_data",
         "//buck2/gazebo/dupe:dupe",
     ],
 )

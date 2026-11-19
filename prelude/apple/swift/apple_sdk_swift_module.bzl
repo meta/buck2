@@ -36,6 +36,7 @@ def apple_sdk_swift_module_impl(ctx: AnalysisContext) -> list[Provider]:
         is_framework = ctx.attrs.is_framework,
         is_swiftmodule = True,
         module_name = ctx.attrs.module_name,
+        overlays_transitive_deps = ctx.attrs.overlays_transitive_deps,
         partial_cmd = cmd,
         target = target,
     )
@@ -56,6 +57,8 @@ apple_sdk_swift_module = rule(
         # which has a special suffix to distinguish Swift and Clang modules with the same name
         "module_name": attrs.string(),
         "overlays": attrs.dict(key = attrs.string(), value = attrs.list(attrs.string(), default = []), sorted = False, default = {}),
+        # Transitive closure filtered to overlay owners and underlyings.
+        "overlays_transitive_deps": attrs.list(attrs.string(), default = []),
         # A prefixed path ($SDKROOT/$PLATFORM_DIR) to swiftinterface textual file.
         "swiftinterface_relative_path": attrs.option(attrs.string(), default = None),  # if `swiftinterface` is None represents a Root node.
         "target": attrs.string(),

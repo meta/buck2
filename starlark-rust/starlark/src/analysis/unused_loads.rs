@@ -16,6 +16,8 @@
  */
 
 pub(crate) mod find;
+#[cfg(test)]
 mod find_tests;
 pub(crate) mod remove;
+#[cfg(test)]
 mod remove_tests;

@@ -26,6 +26,8 @@ fun KtClassOrObject.declaredTypes(prefix: List<String>): List<FullTypeQualifier>
   // TODO: log the name == null cases (likely anonymous classes)
   val theName = name ?: return emptyList()
   val inners = getChildOfType<KtClassBody>()?.getChildrenOfType<KtClassOrObject>() ?: emptyArray()
-  val qualifier = FullTypeQualifier(prefix + listOf(theName))
+  // A declaration names a class whatever its case, which FullTypeQualifier's import heuristics
+  // would read as a constant (`MC`) or a method (`some_config`).
+  val qualifier = FullTypeQualifier(prefix + listOf(theName)).withMemberAsNestedName()
   return listOf(qualifier) + inners.flatMap { it.declaredTypes(qualifier.segments) }
 }

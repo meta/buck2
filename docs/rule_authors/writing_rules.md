@@ -54,8 +54,8 @@ To add a rule for a language, say `pascal`:
 Before merging a diff, it's important that all your Starlark is warning free (if
 you don't want to set up Buck2 for local development, test it in CI).
 <FbInternalOnly>If you do set it up locally, see the `README.md` in the root of
-`fbcode/buck2`. Running `./test.py --lint-only` will confirm your Starlark code
-is warning free.</FbInternalOnly>
+`fbcode/buck2`. `buck2 starlark lint <files>` will confirm your Starlark code is
+warning free.</FbInternalOnly>
 
 :::
 

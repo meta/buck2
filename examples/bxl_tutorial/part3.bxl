@@ -17,7 +17,7 @@ def _main(ctx: bxl.Context):
         index_sub_target_provider = default_info.sub_targets["index"]
         index_outputs.extend(index_sub_target_provider[DefaultInfo].default_outputs)
     actions = ctx.bxl_actions().actions
-    index_db = actions.write("index.txt", index_outputs)
+    index_db = actions.write("index.txt", index_outputs, has_content_based_path = False)
     ensured_index_db = ctx.output.ensure(index_db)
     ctx.output.print(ensured_index_db)
 

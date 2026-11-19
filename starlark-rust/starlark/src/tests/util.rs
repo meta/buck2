@@ -18,50 +18,39 @@
 #![cfg(test)]
 
 use allocative::Allocative;
-use starlark_derive::Freeze;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::Trace;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::values::AllocFrozenValue;
-use crate::values::AllocValue;
-use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
-use crate::values::Heap;
+use crate::values::Freeze;
+use crate::values::FreezeResult;
+use crate::values::Freezer;
 use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::ValueLifetimeless;
-use crate::values::ValueLike;
 
 #[derive(
     Trace,
-    Freeze,
     Debug,
     derive_more::Display,
     Allocative,
     ProvidesStaticType,
-    NoSerialize
+    NoSerialize,
+    StarlarkPagable
 )]
 #[display("TestComplexValue<{}>", _0)]
-pub(crate) struct TestComplexValue<V: ValueLifetimeless>(pub(crate) V);
+pub(crate) struct TestComplexValue<'v>(pub(crate) Value<'v>);
 
-#[starlark_value(type = "TestComplexValue")]
-impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for TestComplexValue<V> where
-    Self: ProvidesStaticType<'v>
-{
-}
+#[starlark_value(type = "TestComplexValue", frozen_vtable, alloc = complex)]
+impl<'v> StarlarkValue<'v> for TestComplexValue<'v> {}
 
-impl<'v> AllocValue<'v> for TestComplexValue<Value<'v>> {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        heap.alloc_complex(self)
-    }
-}
+impl<'v> Freeze<'v> for TestComplexValue<'v> {
+    type Frozen<'fv> = TestComplexValue<'fv>;
 
-impl AllocFrozenValue for TestComplexValue<FrozenValue> {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        heap.alloc_simple(self)
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
+        Ok(TestComplexValue(freezer.freeze(self.0)?))
     }
 }
 

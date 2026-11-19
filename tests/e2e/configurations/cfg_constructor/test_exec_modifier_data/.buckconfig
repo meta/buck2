@@ -1,0 +1,22 @@
+[buildfile]
+name=TARGETS.fixture
+
+[repositories]
+root = .
+prelude = prelude
+
+[cell_aliases]
+fbsource = root
+fbcode = root
+config = prelude
+ovr_config = prelude
+toolchains = prelude
+
+[external_cells]
+prelude = bundled
+
+[build]
+execution_platforms = root//cfg:execution_platforms
+
+[test]
+enable_buckconfig_backed = true

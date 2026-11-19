@@ -1,0 +1,9 @@
+load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
+
+oncall("build_infra")
+
+# Exposed so `//buck2/tests/js_lockfiles:test_yarn_lockfiles` can read it. Nothing
+# in this package is built with buck; the website is built with yarn/Docusaurus.
+export_file(
+    name = "yarn.lock",
+)

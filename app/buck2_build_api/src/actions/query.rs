@@ -9,7 +9,6 @@
  */
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::hash::Hash;
@@ -31,6 +30,8 @@ use buck2_core::package::PackageLabel;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutSet;
 use buck2_node::attrs::configured_attr::ConfiguredAttr;
 use buck2_query::query::environment::QueryTarget;
 use buck2_query::query::graph::node::LabeledNode;
@@ -40,13 +41,13 @@ use derivative::Derivative;
 use dice::DiceComputations;
 use dupe::Dupe;
 use either::Either;
-use gazebo::variants::VariantName;
-use indexmap::IndexMap;
 use internment::ArcIntern;
+use pagable::Pagable;
 use ref_cast::RefCast;
 use serde::Serialize;
 use starlark::values::Heap;
 use starlark::values::Value;
+use variant_name::VariantName;
 
 use crate::actions::RegisteredAction;
 use crate::analysis::AnalysisResult;
@@ -54,7 +55,7 @@ use crate::artifact_groups::TransitiveSetProjectionKey;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
 
-#[derive(Debug, derive_more::Display, RefCast, Serialize, Allocative)]
+#[derive(Debug, derive_more::Display, RefCast, Serialize, Allocative, Pagable)]
 #[repr(transparent)]
 #[serde(transparent)]
 pub struct OwnedActionAttr(pub String);
@@ -78,7 +79,13 @@ impl ActionAttr {
 pub struct SetProjectionInputsData {
     key: TransitiveSetProjectionKey,
     pub direct: Vec<ActionQueryNodeRef>,
-    pub(crate) children: Vec<SetProjectionInputs>,
+    pub children: Vec<SetProjectionInputs>,
+}
+
+impl SetProjectionInputsData {
+    pub fn key(&self) -> &TransitiveSetProjectionKey {
+        &self.key
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -113,11 +120,25 @@ pub enum ActionInput {
 
 /// Both the fields are enums here. Ideally they wouldn't be, but since the query interface wants a
 /// &NodeRef (and that is rather hard to change), we pull this out.
-#[derive(Debug, Clone, Dupe, Allocative)]
+///
+/// Not pagable: it carries a `RegisteredAction` and an `AnalysisResult`. Anything holding one
+/// fails page-out with an error and stays resident.
+#[derive(Debug, Clone, Dupe, Allocative, pagable::PagableUnsupported)]
 pub struct ActionQueryNode {
     key: ActionQueryNodeRef,
     #[allocative(skip)] // TODO(@wendyy) we should derive allocative for action-related structs
     data: ActionQueryNodeData,
+}
+
+// SAFETY: `_assert_send_sync` requires every field to be `Send + Sync`. Spelled out
+// so that auto-trait proofs for aquery futures stop here; see `dice::DiceComputations`.
+unsafe impl Send for ActionQueryNode {}
+unsafe impl Sync for ActionQueryNode {}
+
+fn _assert_send_sync(ActionQueryNode { key, data }: &ActionQueryNode) {
+    fn assert<T: Send + Sync>(_: &T) {}
+    assert(key);
+    assert(data);
 }
 
 impl PartialEq for ActionQueryNode {
@@ -143,7 +164,7 @@ impl ActionQueryNode {
     pub fn new_action(
         action: Arc<RegisteredAction>,
         deps: Vec<ActionInput>,
-        fs: Arc<ArtifactFs>,
+        fs: ArtifactFs,
     ) -> Self {
         Self {
             key: ActionQueryNodeRef::Action(action.key().dupe()),
@@ -231,11 +252,17 @@ pub struct ActionData {
     action: Arc<RegisteredAction>,
     deps: Arc<Vec<ActionInput>>,
     #[derivative(Debug = "ignore")]
-    fs: Arc<ArtifactFs>,
+    fs: ArtifactFs,
 }
 
 impl ActionData {
-    fn attrs(&self) -> IndexMap<String, String> {
+    /// The action's inputs with the tset structure preserved, unlike the flattened
+    /// `QueryTarget::deps()` view.
+    pub fn inputs(&self) -> &[ActionInput] {
+        &self.deps
+    }
+
+    fn attrs(&self) -> buck2_error::Result<BuckMutInsertionMap<String, String>> {
         let mut attrs = self.action.action().aquery_attributes(
             &ExecutorFs::new(
                 &self.fs,
@@ -244,11 +271,14 @@ impl ActionData {
             &AqueryArtifactPathMapper {
                 aquery_placeholder: ContentBasedPathHash::AqueryPlaceholder,
             },
-        );
+        )?;
         attrs.insert(
             "buck.executor_configuration".to_owned(),
             self.action.execution_config().executor.to_string(),
         );
+        if let Some(group) = self.action.execution_group() {
+            attrs.insert("buck.exec_group".to_owned(), group.to_string());
+        }
         attrs.insert(
             "buck.all_outputs_are_content_based".to_owned(),
             self.action
@@ -272,7 +302,7 @@ impl ActionData {
             );
         }
 
-        attrs
+        Ok(attrs)
     }
 }
 
@@ -329,7 +359,7 @@ impl QueryTarget for ActionQueryNode {
     }
 
     /// Return the path to the buildfile that defines this target, e.g. `fbcode//foo/bar/TARGETS`
-    fn buildfile_path(&self) -> &BuildFilePath {
+    fn buildfile_path(&self) -> buck2_error::Result<&BuildFilePath> {
         // TODO(cjhopman): In addition to implementing this, we should be able to return an buck2_error::Error here rather than panicking.
         unimplemented!("buildfile not yet implemented in aquery")
     }
@@ -369,14 +399,20 @@ impl QueryTarget for ActionQueryNode {
         filter(&attr.0)
     }
 
-    fn special_attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn special_attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         mut _func: F,
     ) -> Result<(), E> {
         Ok(())
     }
 
-    fn attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         mut func: F,
     ) -> Result<(), E> {
@@ -398,20 +434,27 @@ impl QueryTarget for ActionQueryNode {
 
         // inputs and outputs are not supported for aquery
 
-        for (k, v) in action.attrs() {
+        for (k, v) in action.attrs()? {
             func(&k, ActionAttr::new(&v))?;
         }
         Ok(())
     }
 
-    fn defined_attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
+    fn defined_attrs_for_each<
+        E: From<buck2_error::Error>,
+        F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>,
+    >(
         &self,
         func: F,
     ) -> Result<(), E> {
         self.attrs_for_each(func)
     }
 
-    fn map_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(&self, key: &str, mut func: F) -> R {
+    fn map_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(
+        &self,
+        key: &str,
+        mut func: F,
+    ) -> buck2_error::Result<R> {
         let mut res = None;
 
         self.attrs_for_each(|k, attr| {
@@ -419,15 +462,14 @@ impl QueryTarget for ActionQueryNode {
                 res = Some(func(Some(attr)));
             }
             Ok::<(), buck2_error::Error>(())
-        })
-        .unwrap();
-        match res {
+        })?;
+        Ok(match res {
             Some(v) => v,
             None => func(None),
-        }
+        })
     }
 
-    fn inputs_for_each<E, F: FnMut(CellPath) -> Result<(), E>>(
+    fn inputs_for_each<E: From<buck2_error::Error>, F: FnMut(CellPath) -> Result<(), E>>(
         &self,
         mut _func: F,
     ) -> Result<(), E> {
@@ -435,7 +477,11 @@ impl QueryTarget for ActionQueryNode {
         unimplemented!("inputs not yet implemented in aquery")
     }
 
-    fn map_any_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(&self, key: &str, func: F) -> R {
+    fn map_any_attr<R, F: FnMut(Option<&Self::Attr<'_>>) -> R>(
+        &self,
+        key: &str,
+        func: F,
+    ) -> buck2_error::Result<R> {
         // aquery doesn't have special attrs, so this is the same as map_attr
         self.map_attr(key, func)
     }
@@ -445,13 +491,13 @@ pub fn iter_action_inputs<'a>(
     deps: &'a [ActionInput],
 ) -> impl Iterator<Item = &'a ActionQueryNodeRef> + Send + 'a {
     struct Iter<'a> {
-        visited: HashSet<&'a SetProjectionInputs>,
+        visited: BuckMutSet<&'a SetProjectionInputs>,
         queue: VecDeque<&'a SetProjectionInputs>,
     }
 
     impl<'a> Iter<'a> {
         fn new<From: Iterator<Item = &'a SetProjectionInputs>>(iter: From) -> Self {
-            let mut visited = HashSet::new();
+            let mut visited = BuckMutSet::default();
             let mut queue = VecDeque::new();
             for it in iter {
                 if visited.insert(it) {
@@ -522,6 +568,6 @@ pub static CONFIGURED_ATTR_TO_VALUE: LateBinding<
     for<'v> fn(
         this: &ConfiguredAttr,
         pkg: PackageLabelOption,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> buck2_error::Result<Value<'v>>,
 > = LateBinding::new("CONFIGURED_ATTR_TO_VALUE");

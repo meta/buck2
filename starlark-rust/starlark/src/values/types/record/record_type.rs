@@ -24,26 +24,24 @@ use std::sync::Arc;
 use allocative::Allocative;
 use display_container::fmt_keyed_container;
 use dupe::Dupe;
-use either::Either;
+use mini_map::MiniFixedSortedMap;
 use once_cell::unsync::OnceCell;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
 use starlark_map::StarlarkHasher;
 use starlark_map::small_map::SmallMap;
-use starlark_map::sorted_map::SortedMap;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::coerce::coerce;
 use crate::environment::Methods;
 use crate::environment::MethodsBuilder;
-use crate::environment::MethodsStatic;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
 use crate::eval::ParametersSpec;
 use crate::eval::ParametersSpecParam;
-use crate::starlark_complex_values;
+use crate::eval::runtime::params::spec::ParametersSpecPrototype;
 use crate::typing::ParamIsRequired;
 use crate::typing::ParamSpec;
 use crate::typing::Ty;
@@ -56,65 +54,73 @@ use crate::util::ArcStr;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
-use crate::values::FrozenValue;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
 use crate::values::Value;
-use crate::values::ValueLifetimeless;
-use crate::values::ValueLike;
-use crate::values::ValueTypedComplex;
+use crate::values::ValueTyped;
 use crate::values::function::FUNCTION_TYPE;
 use crate::values::record::Record;
-use crate::values::record::field::FieldGen;
+use crate::values::record::field::Field;
 use crate::values::record::matcher::RecordTypeMatcher;
 use crate::values::record::ty_record_type::TyRecordData;
+use crate::values::types::type_instance_id::StarlarkTypeIdDomain;
 use crate::values::types::type_instance_id::TypeInstanceId;
 use crate::values::typing::type_compiled::type_matcher_factory::TypeMatcherFactory;
 
-#[doc(hidden)]
-pub trait RecordCell: ValueLifetimeless {
-    type TyRecordDataOpt: Debug;
-
+pub trait RecordVariant: Allocative + Debug + 'static {
     fn get_or_init_ty(
-        ty: &Self::TyRecordDataOpt,
+        &self,
         f: impl FnOnce() -> crate::Result<Arc<TyRecordData>>,
     ) -> crate::Result<()>;
-    fn get_ty(ty: &Self::TyRecordDataOpt) -> Option<&Arc<TyRecordData>>;
+
+    fn get_ty(&self) -> Option<&Arc<TyRecordData>>;
 }
 
-impl<'v> RecordCell for Value<'v> {
-    type TyRecordDataOpt = OnceCell<Arc<TyRecordData>>;
+#[doc(hidden)]
+#[derive(Debug, Allocative)]
+pub struct RecordVariantUnfrozen {
+    #[allocative(skip)] // FIXME(JakobDegen): Allocative OSS release
+    ty: OnceCell<Arc<TyRecordData>>,
+}
 
+impl RecordVariant for RecordVariantUnfrozen {
     fn get_or_init_ty(
-        ty: &Self::TyRecordDataOpt,
+        &self,
         f: impl FnOnce() -> crate::Result<Arc<TyRecordData>>,
     ) -> crate::Result<()> {
-        ty.get_or_try_init(f)?;
+        self.ty.get_or_try_init(f)?;
         Ok(())
     }
 
-    fn get_ty(ty: &Self::TyRecordDataOpt) -> Option<&Arc<TyRecordData>> {
-        ty.get()
+    fn get_ty(&self) -> Option<&Arc<TyRecordData>> {
+        self.ty.get()
     }
 }
-impl RecordCell for FrozenValue {
-    type TyRecordDataOpt = Option<Arc<TyRecordData>>;
 
+#[doc(hidden)]
+#[derive(Debug, Allocative, starlark_derive::StarlarkPagable)]
+pub struct RecordVariantFrozen {
+    pub(crate) ty: Option<Arc<TyRecordData>>,
+}
+
+impl RecordVariant for RecordVariantFrozen {
     fn get_or_init_ty(
-        ty: &Self::TyRecordDataOpt,
-        f: impl FnOnce() -> crate::Result<Arc<TyRecordData>>,
+        &self,
+        _f: impl FnOnce() -> crate::Result<Arc<TyRecordData>>,
     ) -> crate::Result<()> {
-        let _ignore = (ty, f);
+        // `ty` is fixed at freeze time, so this is intentionally a no-op;
+        // callers handle `get_ty` returning `None`.
         Ok(())
     }
 
-    fn get_ty(ty: &Self::TyRecordDataOpt) -> Option<&Arc<TyRecordData>> {
-        ty.as_ref()
+    fn get_ty(&self) -> Option<&Arc<TyRecordData>> {
+        self.ty.as_ref()
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-enum RecordTypeError {
+pub(crate) enum RecordTypeError {
     #[error(
         "Record instance cannot be created if record type is not assigned to a global variable"
     )]
@@ -122,179 +128,85 @@ enum RecordTypeError {
 }
 
 /// The result of `record()`, being the type of records.
-#[derive(Debug, Trace, NoSerialize, ProvidesStaticType, Allocative)]
-pub struct RecordTypeGen<V: RecordCell> {
+#[derive(
+    Debug,
+    Trace,
+    NoSerialize,
+    ProvidesStaticType,
+    Allocative,
+    starlark_derive::StarlarkPagable
+)]
+#[trace(bound = "")]
+pub struct RecordTypeGen<'v, V: RecordVariant + 'static> {
     pub(crate) id: TypeInstanceId,
-    #[allocative(skip)] // TODO(nga): do not skip.
-    // TODO(nga): teach derive to do something like `#[trace(static)]`.
-    #[trace(unsafe_ignore)]
-    pub(crate) ty_record_data: V::TyRecordDataOpt,
+    #[trace(static)]
+    pub(crate) ty_record_data: V,
     /// The V is the type the field must satisfy (e.g. `"string"`)
-    fields: SmallMap<String, FieldGen<V>>,
+    pub(crate) fields: SmallMap<String, Field<'v>>,
 }
 
-impl<'v, V: ValueLike<'v> + RecordCell> Display for RecordTypeGen<V> {
+impl<'v, V: RecordVariant> Display for RecordTypeGen<'v, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt_keyed_container(f, "record(", ")", "=", &self.fields)
     }
 }
 
 /// Type of a record in a heap.
-pub type RecordType<'v> = RecordTypeGen<Value<'v>>;
+pub type RecordType<'v> = RecordTypeGen<'v, RecordVariantUnfrozen>;
 /// Type of a record in a frozen heap.
-pub type FrozenRecordType = RecordTypeGen<FrozenValue>;
+pub type FrozenRecordType<'v> = RecordTypeGen<'v, RecordVariantFrozen>;
 
-starlark_complex_values!(RecordType);
-
-pub(crate) fn record_fields<'v>(
-    x: Either<&'v RecordType<'v>, &'v FrozenRecordType>,
-) -> &'v SmallMap<String, FieldGen<Value<'v>>> {
-    x.either(|x| &x.fields, |x| coerce(&x.fields))
-}
+crate::register_simple_vtable_entry!(FrozenRecordType<'static>);
+// SAFETY: The vtable entry is registered above. The deser type id is
+// lifetime-erased, so the `'static` instantiation covers all heap lifetimes.
+unsafe impl<'v> crate::__derive_refs::VtableRegistered for FrozenRecordType<'v> {}
 
 impl<'v> RecordType<'v> {
-    pub(crate) fn new(fields: SmallMap<String, FieldGen<Value<'v>>>) -> Self {
+    /// Creates a new `RecordType`.
+    pub fn new(fields: SmallMap<String, Field<'v>>, id: TypeInstanceId) -> Self {
         Self {
-            id: TypeInstanceId::r#gen(),
+            id,
             fields,
-            ty_record_data: OnceCell::new(),
+            ty_record_data: RecordVariantUnfrozen {
+                ty: OnceCell::new(),
+            },
         }
     }
 }
 
-impl<'v> Freeze for RecordType<'v> {
-    type Frozen = FrozenRecordType;
-    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+impl<'v> Freeze<'v> for RecordType<'v> {
+    type Frozen<'fv> = FrozenRecordType<'fv>;
+
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
         Ok(FrozenRecordType {
             id: self.id,
             fields: self.fields.freeze(freezer)?,
-            ty_record_data: self.ty_record_data.into_inner(),
+            ty_record_data: RecordVariantFrozen {
+                ty: self.ty_record_data.ty.into_inner(),
+            },
         })
     }
 }
 
-impl<'v, V: ValueLike<'v> + RecordCell + 'v> RecordTypeGen<V>
-where
-    Self: ProvidesStaticType<'v>,
-    FieldGen<V>: ProvidesStaticType<'v>,
-{
-    pub(crate) fn ty_record_data(&self) -> Option<&Arc<TyRecordData>> {
+impl<'v, V: RecordVariant> RecordTypeGen<'v, V> {
+    /// Returns the number of fields in the record type.
+    pub fn len(&self) -> usize {
+        self.fields.len()
+    }
+
+    /// Returns whether the record type has no fields.
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    fn ty_record_data(&self) -> Option<&Arc<TyRecordData>> {
         V::get_ty(&self.ty_record_data)
     }
 
-    pub(crate) fn instance_ty(&self) -> Ty {
-        self.ty_record_data()
-            .expect("Instances can only be created if named are assigned")
-            .ty_record
-            .dupe()
-    }
-
-    fn make_parameter_spec(
-        name: &str,
-        fields: &SmallMap<String, FieldGen<V>>,
-    ) -> ParametersSpec<FrozenValue> {
-        ParametersSpec::new_named_only(
-            name,
-            fields.iter().map(|(name, field)| {
-                (
-                    name.as_str(),
-                    match field.default {
-                        None => ParametersSpecParam::Required,
-                        Some(_default) => ParametersSpecParam::Optional,
-                    },
-                )
-            }),
-        )
-    }
-}
-
-#[starlark_value(type = FUNCTION_TYPE)]
-impl<'v, V: ValueLike<'v> + RecordCell + 'v> StarlarkValue<'v> for RecordTypeGen<V>
-where
-    Self: ProvidesStaticType<'v>,
-    FieldGen<V>: ProvidesStaticType<'v>,
-{
-    type Canonical = FrozenRecordType;
-
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        for (name, typ) in &self.fields {
-            name.hash(hasher);
-            // No need to hash typ.1, since it was computed from typ.0
-            typ.write_hash(hasher)?;
-        }
-        Ok(())
-    }
-
-    fn invoke(
-        &self,
-        me: Value<'v>,
-        args: &Arguments<'v, '_>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> crate::Result<Value<'v>> {
-        let Some(ty_record_data) = self.ty_record_data() else {
-            return Err(crate::Error::new_other(
-                RecordTypeError::RecordTypeNotAssigned,
-            ));
-        };
-
-        let this = me;
-
-        ty_record_data
-            .parameter_spec
-            .parser(args, eval, |param_parser, eval| {
-                let fields = record_fields(RecordType::from_value(this).unwrap());
-                let mut values = Vec::with_capacity(fields.len());
-                for (name, field) in fields.iter() {
-                    let value = match field.default {
-                        None => {
-                            let v: Value = param_parser.next()?;
-                            field.typ.check_type(v, Some(name))?;
-                            v
-                        }
-                        Some(default) => {
-                            let v: Option<Value> = param_parser.next_opt()?;
-                            match v {
-                                None => default,
-                                Some(v) => {
-                                    field.typ.check_type(v, Some(name))?;
-                                    v
-                                }
-                            }
-                        }
-                    };
-                    values.push(value);
-                }
-                Ok(eval.heap().alloc_complex(Record {
-                    typ: this,
-                    values: values.into_boxed_slice(),
-                }))
-            })
-            .map_err(Into::into)
-    }
-
-    fn get_methods() -> Option<&'static Methods>
-    where
-        Self: Sized,
-    {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(record_type_methods)
-    }
-
-    fn eval_type(&self) -> Option<Ty> {
-        self.ty_record_data().map(|t| t.ty_record.dupe())
-    }
-
-    fn typechecker_ty(&self) -> Option<Ty> {
-        self.ty_record_data().map(|t| t.ty_record_type.dupe())
-    }
-
-    fn export_as(
-        &self,
-        variable_name: &str,
-        _eval: &mut Evaluator<'v, '_, '_>,
-    ) -> crate::Result<()> {
+    /// What `export_as` does: give the type its name, once.
+    fn export_as(&self, variable_name: &str) -> crate::Result<()> {
         V::get_or_init_ty(&self.ty_record_data, || {
-            let fields: SortedMap<String, Ty> = self
+            let fields: MiniFixedSortedMap<String, Ty> = self
                 .fields
                 .iter()
                 .map(|(name, field)| (name.clone(), field.ty()))
@@ -317,7 +229,7 @@ where
             let ty_record_type = Ty::custom(TyUser::new(
                 format!("record[{variable_name}]"),
                 TyStarlarkValue::new::<RecordType>(),
-                TypeInstanceId::r#gen(),
+                TypeInstanceId::from_identity(StarlarkTypeIdDomain::RecordTypeOfType, &self.id),
                 TyUserParams {
                     callable: Some(TyCallable::new(
                         ParamSpec::new_named_only(self.fields.iter().map(|(name, field)| {
@@ -341,21 +253,184 @@ where
                 name: variable_name.to_owned(),
                 ty_record,
                 ty_record_type,
-                parameter_spec: Self::make_parameter_spec(variable_name, &self.fields),
+                parameter_spec_prototype: Self::make_parameter_spec_prototype(
+                    variable_name,
+                    &self.fields,
+                ),
             }))
         })
     }
+
+    pub(super) fn instance_ty(&self) -> Ty {
+        self.ty_record_data()
+            .expect("Instances can only be created if named are assigned")
+            .ty_record
+            .dupe()
+    }
+
+    /// See [`TyRecordData::parameter_spec_prototype`].
+    pub(crate) fn make_parameter_spec_prototype(
+        name: &str,
+        fields: &SmallMap<String, Field<'_>>,
+    ) -> triomphe::Arc<ParametersSpecPrototype> {
+        ParametersSpec::<()>::new_named_only(
+            name,
+            fields.iter().map(|(name, field)| {
+                (
+                    name.as_str(),
+                    match field.default {
+                        None => ParametersSpecParam::Required,
+                        Some(_default) => ParametersSpecParam::Optional,
+                    },
+                )
+            }),
+        )
+        .prototype()
+    }
+}
+
+starlark::methods_static!(RECORD_TYPE_METHODS = record_type_methods);
+
+/// A record type in either of its representations.
+#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+pub enum RecordTypeView<'v> {
+    Frozen(ValueTyped<'v, FrozenRecordType<'v>>),
+    Unfrozen(ValueTyped<'v, RecordType<'v>>),
+}
+
+/// `$e` with `$x` bound to the representation's `RecordTypeGen`.
+macro_rules! with_record_type {
+    ($self:expr, |$x:ident| $e:expr) => {
+        match $self {
+            RecordTypeView::Frozen($x) => {
+                let $x = $x.as_ref();
+                $e
+            }
+            RecordTypeView::Unfrozen($x) => {
+                let $x = $x.as_ref();
+                $e
+            }
+        }
+    };
+}
+
+impl<'v> RecordTypeView<'v> {
+    pub(super) fn fields(self) -> &'v SmallMap<String, Field<'v>> {
+        with_record_type!(self, |r| &r.fields)
+    }
+
+    pub(super) fn ty_record_data(self) -> Option<&'v Arc<TyRecordData>> {
+        with_record_type!(self, |r| r.ty_record_data())
+    }
+
+    pub(super) fn id(self) -> TypeInstanceId {
+        with_record_type!(self, |r| r.id)
+    }
+
+    pub(super) fn instance_ty(self) -> Ty {
+        with_record_type!(self, |r| r.instance_ty())
+    }
+}
+
+#[starlark_value(type = FUNCTION_TYPE)]
+impl<'v> StarlarkType<'v> for RecordTypeView<'v> {
+    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+        // Record types compare by identity, so the identity is enough, and unlike the fields it
+        // cannot fail to hash (a field default may be a list or a dict).
+        with_record_type!(self, |r| r.id.hash(hasher));
+    }
+
+    fn invoke(
+        &self,
+        me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> crate::Result<Value<'v>> {
+        let Some(ty_record_data) = self.ty_record_data() else {
+            return Err(crate::Error::new_other(
+                RecordTypeError::RecordTypeNotAssigned,
+            ));
+        };
+
+        let this = me;
+        let fields = self.fields();
+
+        ParametersSpec::<Value<'v>>::from_prototype(
+            ty_record_data.parameter_spec_prototype.clone(),
+            Vec::new(),
+        )
+        .parser(args, eval, |param_parser, eval| {
+            eval.alloca_init(fields.len(), Value::new_none, |values, eval| {
+                for ((name, field), slot) in fields.iter().zip(values.iter_mut()) {
+                    *slot = match field.default {
+                        None => {
+                            let v: Value = param_parser.next()?;
+                            field.typ.check_type(v, Some(name))?;
+                            v
+                        }
+                        Some(default) => {
+                            let v: Option<Value> = param_parser.next_opt()?;
+                            match v {
+                                None => {
+                                    // The default was checked by `field()`, but it may have been
+                                    // mutated since if the module is not frozen yet.
+                                    field.typ.check_type(default, Some(name))?;
+                                    default
+                                }
+                                Some(v) => {
+                                    field.typ.check_type(v, Some(name))?;
+                                    v
+                                }
+                            }
+                        }
+                    };
+                }
+                Ok(eval.heap().alloc_record(this, values))
+            })
+        })
+    }
+
+    fn get_methods() -> Option<&'static Methods>
+    where
+        Self: Sized,
+    {
+        Some(RECORD_TYPE_METHODS.methods())
+    }
+
+    fn eval_type(&self) -> Option<Ty> {
+        self.ty_record_data().map(|t| t.ty_record.dupe())
+    }
+
+    fn typechecker_ty(&self) -> Option<Ty> {
+        self.ty_record_data().map(|t| t.ty_record_type.dupe())
+    }
+
+    fn export_as(
+        &self,
+        variable_name: &str,
+        _eval: &mut Evaluator<'v, '_, '_>,
+    ) -> crate::Result<()> {
+        with_record_type!(self, |r| r.export_as(variable_name))
+    }
+}
+
+#[starlark_value]
+impl<'v> StarlarkValue<'v> for RecordType<'v> {
+    type Type = RecordTypeView<'v>;
+}
+
+#[starlark_value(alloc = frozen)]
+impl<'v> StarlarkValue<'v> for FrozenRecordType<'v> {
+    type Type = RecordTypeView<'v>;
 }
 
 #[starlark_module]
 fn record_type_methods(methods: &mut MethodsBuilder) {
     #[starlark(attribute)]
-    fn r#type<'v>(this: ValueTypedComplex<'v, RecordType<'v>>) -> starlark::Result<&'v str> {
-        let ty_record_type = match this.unpack() {
-            Either::Left(x) => x.ty_record_data.get(),
-            Either::Right(x) => x.ty_record_data.as_ref(),
-        };
-        Ok(ty_record_type.map_or(Record::TYPE, |s| s.name.as_str()))
+    fn r#type<'v>(this: RecordTypeView<'v>) -> starlark::Result<&'v str> {
+        Ok(this
+            .ty_record_data()
+            .map_or(Record::TYPE, |s| s.name.as_str()))
     }
 }
 

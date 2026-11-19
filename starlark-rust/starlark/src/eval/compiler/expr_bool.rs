@@ -22,17 +22,17 @@ use crate::eval::compiler::expr::ExprCompiled;
 use crate::eval::compiler::expr::ExprLogicalBinOp;
 use crate::eval::compiler::span::IrSpanned;
 use crate::eval::runtime::frame_span::FrameSpan;
-use crate::values::FrozenValue;
+use crate::values::Value;
 
 /// Boolean expression.
-pub(crate) enum ExprCompiledBool {
+pub(crate) enum ExprCompiledBool<'f> {
     Const(bool),
     /// Non-const expression.
-    Expr(ExprCompiled),
+    Expr(ExprCompiled<'f>),
 }
 
-impl IrSpanned<ExprCompiledBool> {
-    pub(crate) fn into_expr(self) -> IrSpanned<ExprCompiled> {
+impl<'f> IrSpanned<'f, ExprCompiledBool<'f>> {
+    pub(crate) fn into_expr(self) -> IrSpanned<'f, ExprCompiled<'f>> {
         IrSpanned {
             span: self.span,
             node: self.node.into_expr(),
@@ -40,10 +40,10 @@ impl IrSpanned<ExprCompiledBool> {
     }
 }
 
-impl ExprCompiledBool {
-    fn into_expr(self) -> ExprCompiled {
+impl<'f> ExprCompiledBool<'f> {
+    fn into_expr(self) -> ExprCompiled<'f> {
         match self {
-            ExprCompiledBool::Const(b) => ExprCompiled::Value(FrozenValue::new_bool(b)),
+            ExprCompiledBool::Const(b) => ExprCompiled::Value(Value::new_bool(b)),
             ExprCompiledBool::Expr(e) => e,
         }
     }
@@ -56,8 +56,10 @@ impl ExprCompiledBool {
     }
 
     /// `bool(x)` and do trivial optimizations.
-    pub(crate) fn new(expr: IrSpanned<ExprCompiled>) -> IrSpanned<ExprCompiledBool> {
-        fn new_bool(span: FrameSpan, b: bool) -> IrSpanned<ExprCompiledBool> {
+    pub(crate) fn new(
+        expr: IrSpanned<'f, ExprCompiled<'f>>,
+    ) -> IrSpanned<'f, ExprCompiledBool<'f>> {
+        fn new_bool<'f>(span: FrameSpan<'f>, b: bool) -> IrSpanned<'f, ExprCompiledBool<'f>> {
             IrSpanned {
                 node: ExprCompiledBool::Const(b),
                 span,

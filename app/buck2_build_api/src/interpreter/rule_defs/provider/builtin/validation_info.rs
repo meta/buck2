@@ -8,77 +8,96 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
 use std::fmt::Debug;
 
 use allocative::Allocative;
 use buck2_build_api_derive::internal_provider;
+use buck2_hash::BuckMutSet;
 use starlark::any::ProvidesStaticType;
-use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
+use starlark::values::Heap;
+use starlark::values::OwnedFrozen;
+use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
-use starlark::values::ValueLifetimeless;
-use starlark::values::ValueLike;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUnchecked;
-use starlark::values::ValueOfUncheckedGeneric;
-use starlark::values::list::ListRef;
+use starlark::values::ValueTyped;
 use starlark::values::list::ListType;
 
 use crate as buck2_build_api;
-use crate::interpreter::rule_defs::validation_spec::FrozenStarlarkValidationSpec;
 use crate::interpreter::rule_defs::validation_spec::StarlarkValidationSpec;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum ValidationInfoError {
-    #[error("Expected `ValidationSpec` value, got `{0}`")]
-    WrongSpecType(String),
     #[error("Multiple specs with same name `{0}` which is not allowed.")]
     SpecsWithDuplicateName(String),
-    #[error("Validations should be a list of `ValidationSpec` values")]
-    ValidationsAreNotListOfSpecs,
     #[error("`ValidationInfo` should contain at least one validation.")]
     ValidationSpecsEmpty,
 }
 
-/// Provider describing how a given target node should be validated.
-/// Validations are run when target with `ValidationInfo` provider is a transitive
-/// dependency of a requested target.
+/// Provider declaring how a target should be validated.
+///
+/// When a target carrying `ValidationInfo` is reachable via a transitive
+/// dependency edge from a target requested on the command line (e.g.
+/// `buck2 build`, `buck2 test`), Buck2 schedules every `ValidationSpec`
+/// it carries before the requested action is considered complete. A
+/// failed required validation causes the build to fail; an optional
+/// validation is skipped unless the user opts in via
+/// `--enable-optional-validations <name>`.
+///
+/// Validations run in parallel with the build of the requested target —
+/// they only have to finish before Buck2 reports success.
+///
+/// Constraints enforced at construction / freezing time:
+/// - `validations` must be a non-empty list of `ValidationSpec` values.
+/// - Spec names must be unique within the provider.
+///
+/// Example:
+/// ```python
+/// def _my_rule_impl(ctx):
+///     report = ctx.actions.declare_output("validation.json")
+///     ctx.actions.run(
+///         cmd_args("validator", "--out", report.as_output(), ctx.attrs.src),
+///         category = "my_validation",
+///     )
+///     return [
+///         DefaultInfo(default_output = ctx.attrs.src),
+///         ValidationInfo(validations = [
+///             ValidationSpec(name = "schema_check", validation_result = report),
+///         ]),
+///     ]
+/// ```
+///
+/// See the [Validations guide](https://buck2.build/docs/rule_authors/validation/)
+/// for the end-to-end story.
 #[internal_provider(validation_info_creator)]
-#[derive(Clone, Debug, Trace, Coerce, Freeze, ProvidesStaticType, Allocative)]
-#[freeze(validator = validate_validation_info, bounds = "V: ValueLike<'freeze>")]
+#[derive(
+    Clone,
+    Debug,
+    Trace,
+    Freeze,
+    ProvidesStaticType,
+    Allocative,
+    StarlarkPagable
+)]
+#[freeze(validator = validate_validation_info)]
 #[repr(transparent)]
-pub struct ValidationInfoGen<V: ValueLifetimeless> {
-    /// List of `ValidationSpec` values each representing a single validation.
-    validations: ValueOfUncheckedGeneric<V, Vec<FrozenStarlarkValidationSpec>>,
+pub struct ValidationInfo<'v> {
+    /// Non-empty list of `ValidationSpec` values, each representing a single
+    /// validation. Spec names must be unique within this provider.
+    ///
+    /// See the [Validations guide](https://buck2.build/docs/rule_authors/validation/)
+    /// for how to declare validations end-to-end and write the validator
+    /// action that produces each spec's `validation_result`.
+    validations: ValueOf<'v, ListType<StarlarkValidationSpec<'v>>>,
 }
 
-fn validate_validation_info<'v, V>(info: &ValidationInfoGen<V>) -> buck2_error::Result<()>
-where
-    V: ValueLike<'v>,
-{
-    let values = ListRef::from_value(info.validations.get().to_value())
-        .ok_or(buck2_error::Error::from(
-            ValidationInfoError::ValidationsAreNotListOfSpecs,
-        ))?
-        .iter();
-    let mut spec_names = HashSet::new();
-    for value in values {
-        let wrong_type_error = || ValidationInfoError::WrongSpecType(format!("{value}"));
-        let name = if let Some(frozen_value) = value.unpack_frozen() {
-            let spec = frozen_value
-                .downcast_ref::<FrozenStarlarkValidationSpec>()
-                .ok_or_else(wrong_type_error)?;
-            spec.name()
-        } else {
-            let spec = value
-                .downcast_ref::<StarlarkValidationSpec>()
-                .ok_or_else(wrong_type_error)?;
-            spec.name()
-        };
+fn validate_validation_info<'v>(info: &ValidationInfo<'v>) -> buck2_error::Result<()> {
+    let mut spec_names = BuckMutSet::default();
+    for spec in info.validations.iter() {
+        let name = spec?.as_ref().name();
         if !spec_names.insert(name) {
             return Err(ValidationInfoError::SpecsWithDuplicateName(name.to_owned()).into());
         }
@@ -91,29 +110,24 @@ where
 
 #[starlark_module]
 fn validation_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = FrozenValidationInfo)]
+    #[starlark(as_type = ValidationInfo<'static>)]
     fn ValidationInfo<'v>(
-        #[starlark(require = named)] validations: ValueOf<
-            'v,
-            ListType<&'v StarlarkValidationSpec<'v>>,
-        >,
-    ) -> starlark::Result<ValidationInfo<'v>> {
-        let result = ValidationInfo {
-            validations: ValueOfUnchecked::new(validations.value),
-        };
+        #[starlark(require = named)] validations: ValueOf<'v, ListType<StarlarkValidationSpec<'v>>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, ValidationInfo<'v>>> {
+        let result = ValidationInfo { validations };
         validate_validation_info(&result)?;
-        Ok(result)
+        Ok(heap.alloc(result))
     }
 }
 
-impl FrozenValidationInfo {
-    pub fn validations(&self) -> impl Iterator<Item = &FrozenStarlarkValidationSpec> {
-        let it = ListRef::from_value(self.validations.get().to_value())
-            .expect("type checked during construction or freezing")
-            .iter();
-        it.map(|x| {
-            x.downcast_ref::<FrozenStarlarkValidationSpec>()
-                .expect("type checked during construction or freezing")
-        })
+/// A `ValidationInfo` kept alive by its owning frozen heap; usable across threads and awaits.
+pub type OwnedValidationInfo = OwnedFrozen<ValueTyped<'static, ValidationInfo<'static>>>;
+
+impl<'v> ValidationInfo<'v> {
+    pub fn validations(
+        &self,
+    ) -> impl Iterator<Item = buck2_error::Result<&'v StarlarkValidationSpec<'v>>> + 'v {
+        self.validations.iter().map(|spec| Ok(spec?.as_ref()))
     }
 }

@@ -7,23 +7,31 @@
 # above-listed licenses.
 
 def _execution_platforms(ctx):
-    platforms = [
-        p[ExecutionPlatformInfo]
-        for p in ctx.attrs.platforms
-    ] if ctx.attrs.platforms else [ExecutionPlatformInfo(
-        label = ctx.label.raw_target(),
-        configuration = ConfigurationInfo(constraints = {}, values = {}),
-        executor_config = CommandExecutorConfig(local_enabled = True, remote_enabled = False),
-    )]
+    platforms = (
+        [p[ExecutionPlatformInfo] for p in ctx.attrs.platforms]
+        if ctx.attrs.platforms
+        else [
+            ExecutionPlatformInfo(
+                label = ctx.label.raw_target(),
+                configuration = ConfigurationInfo(constraints = {}, values = {}),
+                executor_config = CommandExecutorConfig(local_enabled = True, remote_enabled = False),
+            )
+        ]
+    )
+
+    kwargs = {}
+    if ctx.attrs.exec_marker_constraint:
+        kwargs["exec_marker_constraint"] = ctx.attrs.exec_marker_constraint
 
     return [
         DefaultInfo(),
-        ExecutionPlatformRegistrationInfo(platforms = platforms),
+        ExecutionPlatformRegistrationInfo(platforms = platforms, **kwargs),
     ]
 
 execution_platforms = rule(
     impl = _execution_platforms,
     attrs = {
+        "exec_marker_constraint": attrs.option(attrs.string(), default = None),
         "platforms": attrs.option(attrs.list(attrs.dep(providers = [ExecutionPlatformInfo])), default = None),
     },
 )

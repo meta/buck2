@@ -6,9 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-HttpArchiveExecDeps = provider(fields = {
-    "exec_os_type": provider_field(typing.Any, default = None),
-})
+HttpArchiveExecDeps = provider(
+    fields = {
+        "exec_os_type": provider_field(typing.Any, default = None),
+    }
+)
 
 def _http_archive_exec_deps_impl(ctx: AnalysisContext) -> list[Provider]:
     return [

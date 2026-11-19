@@ -8,10 +8,12 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::task::Context;
 use std::task::Poll;
@@ -22,16 +24,15 @@ use buck2_error::BuckErrorContext as _;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_grpc::DuplexChannel;
 use buck2_grpc::ServerHandle;
+use buck2_hash::BuckMutMap;
 use buck2_test_api::grpc::TestExecutorClient;
 use buck2_test_api::grpc::spawn_orchestrator_server;
 use buck2_test_api::protocol::TestExecutor;
-use derive_more::Display;
 use dupe::Dupe;
 use futures::future::BoxFuture;
 use futures::future::Future;
 use futures::future::FutureExt;
 use futures::future::try_join3;
-use once_cell::sync::Lazy;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tokio::process::Child;
@@ -39,8 +40,8 @@ use tokio::process::Child;
 use crate::downward_api::BuckTestDownwardApi;
 use crate::orchestrator::BuckTestOrchestrator;
 
-static TEST_EXECUTOR_CLIENTS: Lazy<Mutex<HashMap<u16, Arc<dyn TestExecutor>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static TEST_EXECUTOR_CLIENTS: LazyLock<Mutex<BuckMutMap<u16, Arc<dyn TestExecutor>>>> =
+    LazyLock::new(|| Mutex::new(BuckMutMap::default()));
 
 pub struct TestExecutorClientWrapper(u16);
 impl TestExecutorClientWrapper {
@@ -89,10 +90,21 @@ impl ExecutorFuture {
                 .await
                 .buck_error_context("Failed to run OutOfProcessTestExecutor")?;
 
-            let exit_code = status.code().unwrap_or(1);
+            // Preserve the distinction between an orderly non-zero exit and a signal
+            // death (crash or OOM kill): `code()` is `None` when the process was
+            // terminated by a signal, so coercing it to an exit code would make a real
+            // crash indistinguishable from a clean failure.
+            let exit_code = status.code();
+
+            #[cfg(unix)]
+            let (signal, core_dumped) = (status.signal(), status.core_dumped());
+            #[cfg(not(unix))]
+            let (signal, core_dumped) = (None, false);
 
             Ok(ExecutorOutput {
                 exit_code,
+                signal,
+                core_dumped,
                 stdout,
                 stderr,
             })
@@ -110,17 +122,39 @@ impl Future for ExecutorFuture {
     }
 }
 
-#[derive(Debug, Display)]
-#[display(
-    "Test executor exited unexpectedly with status {}.\nStdout:\n{}\nStderr:\n{}",
-    exit_code,
-    stdout,
-    stderr
-)]
+#[derive(Debug)]
 pub struct ExecutorOutput {
-    pub exit_code: i32,
+    /// The process exit code, or `None` if the process was terminated by a signal.
+    pub exit_code: Option<i32>,
+    /// The signal that terminated the process, if it was terminated by one (Unix only).
+    pub signal: Option<i32>,
+    /// Whether the terminated process dumped core (Unix only).
+    pub core_dumped: bool,
     pub stdout: String,
     pub stderr: String,
+}
+
+impl ExecutorOutput {
+    /// Human-readable description of how the test executor terminated, including its
+    /// captured stdout/stderr, for the error surfaced when it does not exit cleanly.
+    pub(crate) fn termination_message(&self) -> String {
+        let how = match (self.signal, self.exit_code) {
+            (Some(signal), _) => {
+                let core = if self.core_dumped {
+                    " (core dumped)"
+                } else {
+                    ""
+                };
+                format!("was terminated by signal {signal}{core}")
+            }
+            (None, Some(exit_code)) => format!("exited unexpectedly with status {exit_code}"),
+            (None, None) => "exited unexpectedly with unknown status".to_owned(),
+        };
+        format!(
+            "Test executor {how}.\nStdout:\n{}\nStderr:\n{}",
+            self.stdout, self.stderr
+        )
+    }
 }
 
 #[async_trait]
@@ -218,5 +252,57 @@ mod read_and_log {
         ret.push("".into());
 
         Ok(ret.join("\n"))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use buck2_util::process::async_background_command;
+
+    use super::*;
+
+    // A live signal death (as with a crash or an OOM kill) must be reported as a
+    // signal, not coerced into an exit code.
+    #[tokio::test]
+    async fn test_signal_death_is_captured() {
+        let child = async_background_command("sh")
+            .arg("-c")
+            .arg("kill -KILL $$")
+            .spawn()
+            .unwrap();
+
+        let output = ExecutorFuture::new(child).await.unwrap();
+
+        assert_eq!(output.exit_code, None);
+        assert_eq!(output.signal, Some(9));
+        assert!(
+            output
+                .termination_message()
+                .contains("was terminated by signal 9"),
+            "unexpected message: {}",
+            output.termination_message()
+        );
+    }
+
+    // An orderly non-zero exit must be reported as an exit code, with no signal.
+    #[tokio::test]
+    async fn test_non_zero_exit_is_captured() {
+        let child = async_background_command("sh")
+            .arg("-c")
+            .arg("exit 3")
+            .spawn()
+            .unwrap();
+
+        let output = ExecutorFuture::new(child).await.unwrap();
+
+        assert_eq!(output.signal, None);
+        assert_eq!(output.exit_code, Some(3));
+        assert!(
+            output
+                .termination_message()
+                .contains("exited unexpectedly with status 3"),
+            "unexpected message: {}",
+            output.termination_message()
+        );
     }
 }

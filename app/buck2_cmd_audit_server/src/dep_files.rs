@@ -15,7 +15,7 @@ use buck2_cmd_audit_client::dep_files::AuditDepFilesCommand;
 use buck2_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
 use buck2_core::category::CategoryRef;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_node::target_calculation::ConfiguredTargetCalculation;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::ctx::ServerCommandDiceContext;
@@ -33,26 +33,27 @@ impl ServerAuditSubcommand for AuditDepFilesCommand {
         _client_ctx: ClientContext,
     ) -> buck2_error::Result<()> {
         Ok(server_ctx
-            .with_dice_ctx(|server_ctx, mut ctx| async move {
+            .with_dice_ctx(|server_ctx, ctx| async move {
                 let global_cfg_options = global_cfg_options_from_client_context(
                     &self.target_cfg.target_cfg(),
                     server_ctx,
-                    &mut ctx,
+                    &mut ctx.ctx(),
                 )
                 .await?;
 
                 let label = parse_patterns_from_cli_args::<TargetPatternExtra>(
-                    &mut ctx,
+                    &mut ctx.ctx(),
                     std::slice::from_ref(&self.pattern),
                     server_ctx.working_dir(),
                 )
                 .await?
                 .into_iter()
                 .next()
-                .buck_error_context("Parsing patterns returned nothing")?
+                .internal_error("Parsing patterns returned nothing")?
                 .as_target_label(&self.pattern)?;
 
                 let label = ctx
+                    .ctx()
                     .get_configured_target_post_transition(&label, &global_cfg_options)
                     .await?;
 

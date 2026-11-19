@@ -38,7 +38,7 @@ pub struct WhatRanOptions {
     #[clap(long)]
     pub skip_local_executions: bool,
     #[clap(long)]
-    /// Regular expression to filter commands by given action category (i.e. type of of actions that are
+    /// Regular expression to filter commands by given action category (i.e. type of actions that are
     /// similar but operate on different inputs, such as invocations of a C++
     /// compiler (whose category would be `cxx_compile`)). Matches by full string.
     pub filter_category: Option<String>,
@@ -81,7 +81,7 @@ impl WhatRanRelevantAction {
                 Some(buck2_data::span_start_event::Data::TestDiscovery(suite)) => {
                     Some(Self::TestDiscovery(suite.clone()))
                 }
-                Some(buck2_data::span_start_event::Data::TestStart(test)) => {
+                Some(buck2_data::span_start_event::Data::TestRun(test)) => {
                     Some(Self::TestRun(test.clone()))
                 }
                 Some(buck2_data::span_start_event::Data::LocalResources(setup)) => {
@@ -227,6 +227,11 @@ pub enum CommandReproducer {
     CacheHit(buck2_data::CacheHit),
     LocalDepFileCacheHit,
     ReExecute(buck2_data::ReExecute),
+    /// Submitted for remote execution, but the service served its action cache instead.
+    ReServedFromCache(buck2_data::ReExecute),
+    /// Submitted for remote execution, but the service deduplicated it against an identical
+    /// execution already in flight.
+    ReDeduplicated(buck2_data::ReExecute),
     LocalExecute(buck2_data::LocalExecute),
     WorkerExecute(buck2_data::WorkerExecute),
     WorkerInit(buck2_data::WorkerInit),
@@ -236,20 +241,32 @@ impl CommandReproducer {
     pub fn executor(&self) -> String {
         match self {
             Self::CacheQuery(..) => "cache_query".to_owned(),
-            Self::CacheHit(cache) => {
-                let cache_type = cache.cache_type;
-                match buck2_data::CacheHitType::try_from(cache_type) {
-                    Ok(buck2_data::CacheHitType::RemoteDepFileCache) => {
-                        "re_dep_file_cache".to_owned()
-                    }
-                    _ => "cache".to_owned(),
-                }
-            }
+            Self::CacheHit(cache) => match cache.cache_type() {
+                buck2_data::CacheType::RemoteDepFileCache => "re_dep_file_cache".to_owned(),
+                buck2_data::CacheType::ActionCache => "cache".to_owned(),
+            },
             Self::LocalDepFileCacheHit => "dep_file".to_owned(),
-            Self::ReExecute(execute) => executor_with_platform(execute),
+            Self::ReExecute(execute) => executor_with_platform(execute, ""),
+            Self::ReServedFromCache(execute) => {
+                executor_with_platform(execute, "_served_from_cache")
+            }
+            Self::ReDeduplicated(execute) => executor_with_platform(execute, "_deduplicated"),
             Self::LocalExecute(..) => "local".to_owned(),
             Self::WorkerExecute(..) => "worker".to_owned(),
             Self::WorkerInit(..) => "worker_init".to_owned(),
+        }
+    }
+
+    /// Relabels a remote execution once the result shows the service did not actually run it.
+    pub fn with_remote_origin(self, remote: &buck2_data::RemoteCommand) -> Self {
+        match (self, remote.cache_hit_type()) {
+            (Self::ReExecute(execute), buck2_data::RemoteCommandOrigin::ReServedFromCache) => {
+                Self::ReServedFromCache(execute)
+            }
+            (Self::ReExecute(execute), buck2_data::RemoteCommandOrigin::ReDeduplicated) => {
+                Self::ReDeduplicated(execute)
+            }
+            (other, _) => other,
         }
     }
 
@@ -257,65 +274,51 @@ impl CommandReproducer {
         data: &buck2_data::buck_event::Data,
         options: &WhatRanOptions,
     ) -> Option<Self> {
-        match data {
-            buck2_data::buck_event::Data::SpanStart(span) => match &span.data {
-                Some(buck2_data::span_start_event::Data::ExecutorStage(executor_stage)) => {
-                    match &executor_stage.stage {
-                        Some(buck2_data::executor_stage_start::Stage::CacheQuery(cache_hit))
-                            if options.emit_cache_queries =>
-                        {
-                            return Some(CommandReproducer::CacheQuery(cache_hit.clone()));
-                        }
-                        Some(buck2_data::executor_stage_start::Stage::CacheHit(cache_hit))
-                            if !options.skip_cache_hits =>
-                        {
-                            return Some(CommandReproducer::CacheHit(cache_hit.clone()));
-                        }
-                        Some(buck2_data::executor_stage_start::Stage::Re(re_stage))
-                            if !options.skip_remote_executions =>
-                        {
-                            match &re_stage.stage {
-                                Some(buck2_data::re_stage::Stage::Execute(execute)) => {
-                                    return Some(CommandReproducer::ReExecute(execute.clone()));
-                                }
-                                _ => {}
+        if let buck2_data::buck_event::Data::SpanStart(span) = data
+            && let Some(buck2_data::span_start_event::Data::ExecutorStage(executor_stage)) =
+                &span.data
+        {
+            match &executor_stage.stage {
+                Some(buck2_data::executor_stage_start::Stage::CacheQuery(cache_hit))
+                    if options.emit_cache_queries =>
+                {
+                    return Some(CommandReproducer::CacheQuery(cache_hit.clone()));
+                }
+                Some(buck2_data::executor_stage_start::Stage::CacheHit(cache_hit))
+                    if !options.skip_cache_hits =>
+                {
+                    return Some(CommandReproducer::CacheHit(cache_hit.clone()));
+                }
+                Some(buck2_data::executor_stage_start::Stage::Re(re_stage))
+                    if !options.skip_remote_executions =>
+                {
+                    if let Some(buck2_data::re_stage::Stage::Execute(execute)) = &re_stage.stage {
+                        return Some(CommandReproducer::ReExecute(execute.clone()));
+                    }
+                }
+                Some(buck2_data::executor_stage_start::Stage::Local(local_stage)) => {
+                    if !options.skip_local_executions {
+                        match &local_stage.stage {
+                            Some(buck2_data::local_stage::Stage::Execute(local_execute)) => {
+                                return Some(CommandReproducer::LocalExecute(
+                                    local_execute.clone(),
+                                ));
                             }
-                        }
-                        Some(buck2_data::executor_stage_start::Stage::Local(local_stage)) => {
-                            if !options.skip_local_executions {
-                                match &local_stage.stage {
-                                    Some(buck2_data::local_stage::Stage::Execute(
-                                        local_execute,
-                                    )) => {
-                                        return Some(CommandReproducer::LocalExecute(
-                                            local_execute.clone(),
-                                        ));
-                                    }
-                                    Some(buck2_data::local_stage::Stage::WorkerExecute(
-                                        worker_execute,
-                                    )) => {
-                                        return Some(CommandReproducer::WorkerExecute(
-                                            worker_execute.clone(),
-                                        ));
-                                    }
-                                    Some(buck2_data::local_stage::Stage::WorkerInit(
-                                        worker_init,
-                                    )) => {
-                                        return Some(CommandReproducer::WorkerInit(
-                                            worker_init.clone(),
-                                        ));
-                                    }
-                                    _ => {}
-                                }
+                            Some(buck2_data::local_stage::Stage::WorkerExecute(worker_execute)) => {
+                                return Some(CommandReproducer::WorkerExecute(
+                                    worker_execute.clone(),
+                                ));
                             }
+                            Some(buck2_data::local_stage::Stage::WorkerInit(worker_init)) => {
+                                return Some(CommandReproducer::WorkerInit(worker_init.clone()));
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
                 _ => {}
-            },
-            _ => {}
-        };
+            }
+        }
 
         None
     }
@@ -331,7 +334,9 @@ impl fmt::Display for CommandReproducer {
                 write!(formatter, "{}", cache_hit.action_digest)
             }
             CommandReproducer::LocalDepFileCacheHit => Ok(()),
-            CommandReproducer::ReExecute(re_execute) => {
+            CommandReproducer::ReExecute(re_execute)
+            | CommandReproducer::ReServedFromCache(re_execute)
+            | CommandReproducer::ReDeduplicated(re_execute) => {
                 write!(formatter, "{}", re_execute.action_digest)
             }
             CommandReproducer::LocalExecute(local_execute) => {
@@ -405,21 +410,29 @@ pub fn worker_command_as_fallback_to_string(command: &buck2_data::WorkerCommand)
 }
 
 pub fn command_to_string<'a>(command: impl Into<Command<'a>>) -> String {
+    // TODO: the `env` command and `shlex` quoting below is POSIX-specific. How can we best support windows?
     let command = command.into();
-    let mut cmd = vec![];
+    let mut cmd = "env -C \"$(buck2 root --kind project)\" --".to_owned();
 
-    if !command.env.is_empty() {
-        cmd.push(Cow::Borrowed("env"));
-        cmd.push(Cow::Borrowed("--"));
-        for entry in command.env.iter() {
-            cmd.push(Cow::Owned(format!("{}={}", entry.key, entry.value)))
-        }
+    for entry in command.env.iter() {
+        cmd.push(' ');
+        cmd.push_str(
+            shlex::try_quote(format!("{}={}", entry.key, entry.value).as_ref())
+                .expect("Null byte unexpected")
+                .as_ref(),
+        );
     }
 
     for arg in command.argv.iter() {
-        cmd.push(Cow::Borrowed(arg));
+        cmd.push(' ');
+        cmd.push_str(
+            shlex::try_quote(arg)
+                .expect("Null byte unexpected")
+                .as_ref(),
+        );
     }
-    shlex::try_join(cmd.iter().map(|e| e.as_ref())).expect("Null byte unexpected")
+
+    cmd
 }
 
 impl WhatRanOutputWriter for SuperConsole {
@@ -456,12 +469,13 @@ impl fmt::Display for WhatRanCommandConsoleFormat<'_> {
     }
 }
 
-fn executor_with_platform(execute: &buck2_data::ReExecute) -> String {
+fn executor_with_platform(execute: &buck2_data::ReExecute, outcome: &str) -> String {
     let exec = if execute.persistent_worker {
         "re_worker"
     } else {
         "re"
     };
+    let exec = format!("{exec}{outcome}");
 
     if let Some(platform) = &execute.platform {
         let platform = platform
@@ -503,7 +517,7 @@ mod tests {
             use_case: "".to_owned(),
             persistent_worker: false,
         };
-        let result = executor_with_platform(&execute);
+        let result = executor_with_platform(&execute, "");
         assert_eq!(
             result,
             "re(platform=linux-remote-execution,name1=value1)".to_owned()
@@ -513,7 +527,36 @@ mod tests {
     #[test]
     fn test_executor_with_platform_no_platform() {
         let execute = buck2_data::ReExecute::default();
-        let result = executor_with_platform(&execute);
+        let result = executor_with_platform(&execute, "");
         assert_eq!(result, "re".to_owned());
+    }
+
+    #[test]
+    fn test_remote_origin_relabels_only_executions_the_service_did_not_run() {
+        let execute = buck2_data::ReExecute::default();
+        let remote = |origin: buck2_data::RemoteCommandOrigin| buck2_data::RemoteCommand {
+            cache_hit_type: origin.into(),
+            ..Default::default()
+        };
+        let label = |origin| {
+            CommandReproducer::ReExecute(execute.clone())
+                .with_remote_origin(&remote(origin))
+                .executor()
+        };
+        assert_eq!(label(buck2_data::RemoteCommandOrigin::Executed), "re");
+        assert_eq!(
+            label(buck2_data::RemoteCommandOrigin::ReServedFromCache),
+            "re_served_from_cache"
+        );
+        assert_eq!(
+            label(buck2_data::RemoteCommandOrigin::ReDeduplicated),
+            "re_deduplicated"
+        );
+        assert_eq!(
+            CommandReproducer::LocalDepFileCacheHit
+                .with_remote_origin(&remote(buck2_data::RemoteCommandOrigin::ReServedFromCache))
+                .executor(),
+            "dep_file"
+        );
     }
 }

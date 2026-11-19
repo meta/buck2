@@ -9,7 +9,8 @@
  */
 
 use allocative::Allocative;
-use starlark_map::sorted_map::SortedMap;
+use buck2_hash::BuckFixedSortedMap;
+use pagable::Pagable;
 
 use crate::configuration::data::ConfigurationData;
 
@@ -25,12 +26,12 @@ enum TransitionAppliedError {
 }
 
 /// Result of `transition` function application to a configuration.
-#[derive(PartialEq, Eq, Hash, Debug, Allocative)]
+#[derive(PartialEq, Eq, Hash, Debug, Allocative, Pagable)]
 pub enum TransitionApplied {
     /// Transition to single configuration.
     Single(ConfigurationData),
     /// Split transition.
-    Split(SortedMap<String, ConfigurationData>),
+    Split(BuckFixedSortedMap<String, ConfigurationData>),
 }
 
 impl TransitionApplied {
@@ -41,7 +42,7 @@ impl TransitionApplied {
         }
     }
 
-    pub fn split(&self) -> buck2_error::Result<&SortedMap<String, ConfigurationData>> {
+    pub fn split(&self) -> buck2_error::Result<&BuckFixedSortedMap<String, ConfigurationData>> {
         match self {
             TransitionApplied::Split(configurations) => Ok(configurations),
             _ => Err(TransitionAppliedError::SingleWhereSplitExpected.into()),

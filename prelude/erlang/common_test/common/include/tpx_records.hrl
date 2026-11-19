@@ -7,9 +7,16 @@
 
 %% @format
 
--record(test_spec_test_info, {name :: binary(), filter :: binary()}).
+-record(test_spec_test_info, {
+    name :: binary(),
+    filter :: binary(),
+    breakpoint :: mfa()
+}).
 
--record(test_spec_test_case, {suite :: binary(), testcases :: [#test_spec_test_info{}]}).
+-record(test_spec_test_case, {
+    suite :: binary(),
+    testcases :: [#test_spec_test_info{}]
+}).
 
 -type optional(Type) :: undefined | Type.
 

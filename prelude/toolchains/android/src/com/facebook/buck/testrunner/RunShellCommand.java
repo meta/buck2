@@ -10,12 +10,14 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 
 /** class for running shell commands through bash. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class RunShellCommand {
 
   /** runs command and args through bash. */

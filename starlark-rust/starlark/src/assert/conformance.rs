@@ -103,7 +103,7 @@ impl ConformanceTest {
                 if got != Some(*line) {
                     panic!(
                         "starlark::assert::conformance, failed at wrong line!\nCode:\n{}\nError:\n{}\nExpected: {}\nGot: {:?}\n",
-                        &self.code, &err, line, got
+                        self.code, err, line, got
                     );
                 }
             }

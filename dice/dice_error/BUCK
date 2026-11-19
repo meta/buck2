@@ -8,7 +8,6 @@ rust_library(
         ["src/**/*.rs"],
     ),
     deps = [
-        "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:thiserror",
         "//buck2/allocative/allocative:allocative",
         "//buck2/gazebo/cmp_any:cmp_any",

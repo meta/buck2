@@ -17,12 +17,15 @@ def _fail_with_message(msg: str, targets: bxl.ConfiguredTargetSet) -> None:
     fail(msg + "\n" + targets_str)
 
 def _impl_check_dependencies_test(
-        ctx: bxl.Context,
-        verification_mode: str,
-        allowlist_patterns: list[str] | None,
-        blocklist_patterns: list[str] | None,
-        target: TargetLabel,
-        target_deps: bool):
+    ctx: bxl.Context,
+    verification_mode: str,
+    allowlist_patterns: list[str] | None,
+    blocklist_patterns: list[str] | None,
+    target: TargetLabel,
+    target_deps: bool,
+    deps_filter_pattern: str | None = None,
+    deps_exclude_pattern: str | None = None,
+):
     """Test the dependencies of a given rule.
 
     The behavior is determined by the verification_mode string value:
@@ -33,26 +36,37 @@ def _impl_check_dependencies_test(
     Each pattern list may contain target names (e.g. //foo/bar:bar)
     or regex patterns (e.g. //foo/.*)
 
+    deps_exclude_pattern: When set, targets matching this regex pattern are
+    pruned from the dependency traversal. This is useful for excluding
+    "dummy_deps" targets that exist only for query resolution and don't
+    contribute to the actual binary. The exclusion happens during traversal,
+    so the entire subtree under the excluded target is not explored.
+
     """
     if not allowlist_patterns and not blocklist_patterns:
         fail("Self-check and self-documentation: must provide allow or block list")
 
     cquery = ctx.cquery()
     cquery_kwargs = {}
-    if target_deps:
+    if deps_filter_pattern:
+        base = "target_deps()" if target_deps else "first_order_deps()"
+        filter_expr = 'filter("{}", {})'.format(deps_filter_pattern, base)
+        if deps_exclude_pattern:
+            filter_expr = '{} - filter("{}", {})'.format(filter_expr, deps_exclude_pattern, base)
+        cquery_kwargs["filter"] = filter_expr
+    elif deps_exclude_pattern:
+        base = "target_deps()" if target_deps else "first_order_deps()"
+        cquery_kwargs["filter"] = '{} - filter("{}", {})'.format(base, deps_exclude_pattern, base)
+    elif target_deps:
         cquery_kwargs["filter"] = "target_deps()"
 
-    transitive_deps = cquery.deps(
-        ctx.target_universe(target, modifiers = ctx.modifiers).target_set(),
-        _MAX_DEPTH,
-        **cquery_kwargs
-    )
+    transitive_deps = cquery.deps(ctx.target_universe(target, modifiers = ctx.modifiers).target_set(), _MAX_DEPTH, **cquery_kwargs)
 
-    allowlist_regex = rule_list_regex(allowlist_patterns)
-    blocklist_regex = rule_list_regex(blocklist_patterns)
+    allowlist_regex = regex(rule_list_regex(allowlist_patterns), fancy = True)
+    blocklist_regex = regex(rule_list_regex(blocklist_patterns), fancy = True)
 
-    allowlisted = filter(lambda target: regex_match(allowlist_regex, str(target.label.raw_target())), transitive_deps)
-    blocklisted = filter(lambda target: regex_match(blocklist_regex, str(target.label.raw_target())), transitive_deps)
+    allowlisted = filter(lambda target: allowlist_regex.match(str(target.label.raw_target())), transitive_deps)
+    blocklisted = filter(lambda target: blocklist_regex.match(str(target.label.raw_target())), transitive_deps)
 
     allowlisted_deps = ctx.target_universe(allowlisted).target_set()
     blocklisted_deps = ctx.target_universe(blocklisted).target_set()
@@ -79,12 +93,16 @@ def _impl(ctx: bxl.Context):
         ctx.cli_args.blocklist_patterns,
         ctx.cli_args.target,
         ctx.cli_args.target_deps,
+        ctx.cli_args.deps_filter_pattern,
+        ctx.cli_args.deps_exclude_pattern,
     )
 
 test = bxl_main(
     cli_args = {
         "allowlist_patterns": cli_args.option(cli_args.list(cli_args.string())),
         "blocklist_patterns": cli_args.option(cli_args.list(cli_args.string())),
+        "deps_exclude_pattern": cli_args.option(cli_args.string()),
+        "deps_filter_pattern": cli_args.option(cli_args.string()),
         "target": cli_args.target_label(),
         "target_deps": cli_args.bool(default = True),
         "verification_mode": cli_args.string(),

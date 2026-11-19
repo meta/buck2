@@ -8,10 +8,9 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
-
 use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
 use buck2_core::fs::project::ProjectRoot;
+use buck2_hash::BuckMutSet;
 use dice::DiceTransaction;
 
 use crate::experiment_util::get_experiment_tags;
@@ -21,15 +20,19 @@ use crate::experiment_util::get_experiment_tags;
 /// This function retrieves all experiments from buckconfig that start with "experiments.tpx_"
 /// and returns them as a HashSet with the "experiments.tpx_" prefix removed.
 pub async fn get_tpx_experiments(
-    mut ctx: DiceTransaction,
+    ctx: DiceTransaction,
     project_root: &ProjectRoot,
-) -> buck2_error::Result<HashSet<String>> {
+) -> buck2_error::Result<BuckMutSet<String>> {
     // Get all experiments from buckconfig
-    if !ctx.is_injected_external_buckconfig_data_key_set().await? {
-        return Ok(HashSet::new());
+    if !ctx
+        .ctx()
+        .is_injected_external_buckconfig_data_key_set()
+        .await?
+    {
+        return Ok(BuckMutSet::default());
     }
 
-    let external_configs = ctx.get_injected_external_buckconfig_data().await?;
+    let external_configs = ctx.ctx().get_injected_external_buckconfig_data().await?;
     let current_external_and_local_configs = external_configs
         .get_buckconfig_components(project_root)
         .await;
@@ -39,7 +42,7 @@ pub async fn get_tpx_experiments(
         .into_iter()
         .filter(|tag| tag.starts_with("experiments.tpx_"))
         .map(|tag| tag.replace("experiments.tpx_", ""))
-        .collect::<HashSet<String>>();
+        .collect::<BuckMutSet<String>>();
 
     Ok(tpx_experiments)
 }

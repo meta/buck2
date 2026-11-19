@@ -1,0 +1,3 @@
+load(":rules.bzl", "no_group_platform")
+
+no_group_platform(name = "t")

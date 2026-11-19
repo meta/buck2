@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_error::internal_error;
 use starlark::environment::FrozenModule;

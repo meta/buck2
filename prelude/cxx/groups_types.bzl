@@ -15,6 +15,11 @@ MATCH_ALL_LABEL = "MATCH_ALL"
 # against the final binary
 NO_MATCH_LABEL = "NO_MATCH"
 
+# Label for special group mapping which causes every target associated with it to be included
+# in any groups that contain any targets with direct dependencies on it.
+# Sample use case: Vendor-supplied shared libraries that are used from multiple link-groups.
+MATCH_DIRECT_DEPS_LABEL = "MATCH_DIRECT_DEPS"
+
 Traversal = enum(
     # Includes the target and all of it's transitive dependencies in the group.
     "tree",
@@ -64,6 +69,13 @@ GroupAttrs = record(
     linker_flags = field(list[typing.Any], []),
     # Passes a linker script to the link group shared library's link command.
     linker_script = field([Artifact, None], None),
+    # Passes a version script to the link group shared library's link command.
+    # Tagging a group's symbols with a version keeps them from satisfying an
+    # identically-named *versioned* reference in another copy of the same library
+    # loaded into the process, which is otherwise allowed: glibc lets an
+    # unversioned definition satisfy a versioned reference, so whichever copy
+    # reaches the global scope first captures the other.
+    version_script = field([Artifact, None], None),
     # Adds additional linker flags to apply to dependents that link against the
     # link group's shared object.
     exported_linker_flags = field(list[typing.Any], []),

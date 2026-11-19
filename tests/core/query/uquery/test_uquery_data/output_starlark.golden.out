@@ -13,7 +13,7 @@ foo_config_setting(
 #  Traceback (most recent call last):
 #    * lib/TARGETS.fixture:33, in <module>
 #        foo_genrule(
-#    * rules/rules.bzl:109, in foo_genrule
+#    * rules/rules.bzl:111, in foo_genrule
 #        _foo_genrule(default_target_platform = _default_platform, **kwargs)
 _foo_genrule(
   name = "file1",
@@ -27,7 +27,7 @@ _foo_genrule(
 #  Traceback (most recent call last):
 #    * lib/TARGETS.fixture:39, in <module>
 #        foo_genrule(
-#    * rules/rules.bzl:109, in foo_genrule
+#    * rules/rules.bzl:111, in foo_genrule
 #        _foo_genrule(default_target_platform = _default_platform, **kwargs)
 _foo_genrule(
   name = "file2",
@@ -41,7 +41,7 @@ _foo_genrule(
 #  Traceback (most recent call last):
 #    * lib/TARGETS.fixture:45, in <module>
 #        foo_genrule(
-#    * rules/rules.bzl:109, in foo_genrule
+#    * rules/rules.bzl:111, in foo_genrule
 #        _foo_genrule(default_target_platform = _default_platform, **kwargs)
 _foo_genrule(
   name = "file3",
@@ -55,7 +55,7 @@ _foo_genrule(
 #  Traceback (most recent call last):
 #    * lib/TARGETS.fixture:7, in <module>
 #        foo_library(
-#    * rules/rules.bzl:102, in foo_library
+#    * rules/rules.bzl:104, in foo_library
 #        _foo_library(default_target_platform = _default_platform, **kwargs)
 _foo_library(
   name = "lib1",
@@ -73,7 +73,7 @@ _foo_library(
 #  Traceback (most recent call last):
 #    * lib/TARGETS.fixture:14, in <module>
 #        foo_library(
-#    * rules/rules.bzl:102, in foo_library
+#    * rules/rules.bzl:104, in foo_library
 #        _foo_library(default_target_platform = _default_platform, **kwargs)
 _foo_library(
   name = "lib2",
@@ -93,7 +93,7 @@ _foo_library(
 #  Traceback (most recent call last):
 #    * lib/TARGETS.fixture:22, in <module>
 #        foo_library(
-#    * rules/rules.bzl:102, in foo_library
+#    * rules/rules.bzl:104, in foo_library
 #        _foo_library(default_target_platform = _default_platform, **kwargs)
 _foo_library(
   name = "lib3",

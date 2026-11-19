@@ -17,7 +17,6 @@ error: Expected type `int` but got `None`
   |
 6 |     accepts_typed_kwargs(x=None)
   |                          ^^^^^^
-  |
 
 Compiler typechecker (eval):
 error: Expected type `int` but got `None`
@@ -25,4 +24,3 @@ error: Expected type `int` but got `None`
   |
 6 |     accepts_typed_kwargs(x=None)
   |                          ^^^^^^
-  |

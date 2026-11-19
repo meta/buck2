@@ -9,6 +9,7 @@
  */
 
 use std::io::Write;
+use std::sync::LazyLock;
 
 use async_trait::async_trait;
 use buck2_cli_proto::DapRequest;
@@ -32,7 +33,6 @@ use buck2_event_observer::unpack_event::UnpackedBuckEvent;
 use buck2_event_observer::unpack_event::unpack_event;
 use buck2_events::BuckEvent;
 use futures::StreamExt;
-use once_cell::sync::Lazy;
 
 /// Run the starlark debug adapter protocol server
 ///
@@ -114,6 +114,7 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
             },
             // The DAP server side does not handle hangups. So, until it does... we never hang up:
             || None,
+            || None,
         )
         .await??;
 
@@ -123,11 +124,12 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
     fn console_opts(&self) -> &CommonConsoleOptions {
         // This should only be communicated with by an IDE, so disable anything other
         // than the simple console
-        static SIMPLE_CONSOLE: Lazy<CommonConsoleOptions> = Lazy::new(|| CommonConsoleOptions {
-            console_type: ConsoleType::Simple,
-            ui: vec![],
-            no_interactive_console: true,
-        });
+        static SIMPLE_CONSOLE: LazyLock<CommonConsoleOptions> =
+            LazyLock::new(|| CommonConsoleOptions {
+                console_type: ConsoleType::Simple,
+                ui: vec![],
+                no_interactive_console: true,
+            });
         &SIMPLE_CONSOLE
     }
 
@@ -196,13 +198,13 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
                 events: &[std::sync::Arc<BuckEvent>],
             ) -> buck2_error::Result<()> {
                 for ev in events {
-                    match unpack_event(ev)? {
-                        UnpackedBuckEvent::Instant(_, _, data) => match data {
+                    if let UnpackedBuckEvent::Instant(_, _, data) = unpack_event(ev)? {
+                        match data {
                             buck2_data::instant_event::Data::StructuredError(soft_error) => {
                                 if !soft_error.quiet {
                                     self.write_console(&format!(
                                         "soft error: {}",
-                                        &soft_error.payload
+                                        soft_error.payload
                                     ))?;
                                 }
                             }
@@ -210,8 +212,7 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
                                 self.write_console(&message.message)?;
                             }
                             _ => {}
-                        },
-                        _ => {}
+                        }
                     }
                 }
                 Ok(())

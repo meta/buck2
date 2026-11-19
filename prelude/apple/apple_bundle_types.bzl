@@ -6,6 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
+load("@prelude//apple/user:apple_selective_debugging.bzl", "AppleSelectedDebugInfo", "AppleSelectedDsymArchives")
 load(":debug.bzl", "AppleDebuggableInfo")
 
 AppleBundleType = enum(
@@ -78,33 +79,44 @@ AppleBundleInfo = provider(
         "extra_codesign_paths": provider_field([list[str], None], default = None),
         "codesign_manifest_tree": provider_field(AppleBundleCodesignManifestTree | None, default = None),
         "signing_context_tree": provider_field(AppleBundleSigningContextTree | None, default = None),
+        "signing_info": provider_field(Artifact | None, default = None),
     },
 )
 
 # Provider which helps to propagate minimum deployment version up the target graph.
-AppleMinDeploymentVersionInfo = provider(fields = {
-    "version": provider_field([str, None]),
-})
+AppleMinDeploymentVersionInfo = provider(
+    fields = {
+        "version": provider_field([str, None]),
+    }
+)
 
-AppleBundleResourceInfo = provider(fields = {
-    "resource_output": provider_field(typing.Any, default = None),  # AppleBundleResourcePartListOutput
-})
+AppleBundleResourceInfo = provider(
+    fields = {
+        "resource_output": provider_field(typing.Any, default = None),  # AppleBundleResourcePartListOutput
+    }
+)
 
-AppleBundleLinkerMapInfo = provider(fields = {
-    "linker_maps": provider_field(list[Artifact]),
-})
+AppleBundleLinkerMapInfo = provider(
+    fields = {
+        "linker_maps": provider_field(list[Artifact]),
+    }
+)
 
 # Providers used to merge extra linker outputs as a top level output
 # of an application bundle.
-AppleBinaryExtraOutputsInfo = provider(fields = {
-    "default_output": provider_field(Artifact),
-    "extra_outputs": provider_field(dict[str, list[Artifact]]),
-    "name": provider_field(str),
-})
+AppleBinaryExtraOutputsInfo = provider(
+    fields = {
+        "default_output": provider_field(Artifact),
+        "extra_outputs": provider_field(dict[str, list[Artifact]]),
+        "name": provider_field(str),
+    }
+)
 
-AppleBundleExtraOutputsInfo = provider(fields = {
-    "extra_outputs": provider_field(list[AppleBinaryExtraOutputsInfo]),
-})
+AppleBundleExtraOutputsInfo = provider(
+    fields = {
+        "extra_outputs": provider_field(list[AppleBinaryExtraOutputsInfo]),
+    }
+)
 
 AppleBundleBinaryOutput = record(
     binary = field(Artifact),
@@ -112,6 +124,14 @@ AppleBundleBinaryOutput = record(
     # Otherwise, `unstripped_binary` is distinct from `binary` and is unstripped.
     unstripped_binary = field([Artifact, None]),
     debuggable_info = field([AppleDebuggableInfo, None], None),
+    # When set, the binary is not scrubbed and its dSYMs must be generated
+    # with this `dsymutil --allow` file instead.
+    dsym_allowlist = field([Artifact, None], None),
+    # When set, the dSYMs of the binary must be generated from these artifacts
+    # instead of `debuggable_info.debug_info_tset`.
+    selected_debug_info = field([AppleSelectedDebugInfo, None], None),
+    # When set, the dSYM actions of the binary also get these archives as inputs.
+    dsym_archives = field([AppleSelectedDsymArchives, None], None),
 )
 
 AppleBundleTypeDefault = AppleBundleType("default")
@@ -126,6 +146,8 @@ AppleBundleTypeAttributeType = enum(
     "watchapp",
 )
 
-AppleInfoPlistInfo = provider(fields = {
-    "info_plist": provider_field(Artifact),
-})
+AppleInfoPlistInfo = provider(
+    fields = {
+        "info_plist": provider_field(Artifact),
+    }
+)

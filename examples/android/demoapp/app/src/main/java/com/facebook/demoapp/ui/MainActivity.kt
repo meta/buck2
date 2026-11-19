@@ -34,12 +34,11 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
-    val models =
-        listOf(
-            PostModel("Alan Turing", R.drawable.ic_launcher_background, "Some post text #1", 20),
-            PostModel("Ada Lovelace", R.drawable.ic_launcher_background, "Some post text #2", 10),
-            PostModel("Grace Hopper", R.drawable.ic_launcher_background, "Some post text #3", 30),
-        )
+    val models = listOf(
+        PostModel("Alan Turing", R.drawable.ic_launcher_background, "Some post text #1", 20),
+        PostModel("Ada Lovelace", R.drawable.ic_launcher_background, "Some post text #2", 10),
+        PostModel("Grace Hopper", R.drawable.ic_launcher_background, "Some post text #3", 30),
+    )
 
     enableEdgeToEdge()
     setContent {

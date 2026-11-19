@@ -15,6 +15,12 @@ load("@prelude//toolchains/android/tools/build_rules:fb_native.bzl", "fb_native"
 load("@prelude//toolchains/android/tools/build_rules:utils.bzl", "add_os_labels")
 load("@prelude//utils:selects.bzl", "selects")
 
+SIGNED_JAR_BLOCKLIST = [
+    "META-INF/.*\\.DSA",
+    "META-INF/.*\\.SF",
+    "META-INF/.*\\.RSA",
+]
+
 OPEN_JDK_COMPILER_ARGS = [
     "--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED",
     "--add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED",
@@ -48,7 +54,11 @@ def _add_labels(**kwargs):
     return kwargs
 
 def _set_buck2_java_toolchain(**kwargs):
-    kwargs["_java_toolchain"] = "toolchains//:java_bootstrap"
+    # Default to the bootstrap toolchain, but let callers opt into a different one (e.g. a
+    # non-bootstrap toolchain when the binary packages native code, which the bootstrap fat-jar
+    # tooling does not support).
+    if "_java_toolchain" not in kwargs:
+        kwargs["_java_toolchain"] = "toolchains//:java_bootstrap"
     return kwargs
 
 def _set_buck2_kotlin_toolchain(**kwargs):
@@ -69,9 +79,9 @@ def _set_versioned_java_srcs(**kwargs):
         return kwargs
     java_version = select({
         "DEFAULT": native.read_config("java", "buck2_java_version", "21"),
-        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-11": "11",
-        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-17": "17",
-        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-21": "21",
+        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-setting-version[11]": "11",
+        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-setting-version[17]": "17",
+        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-setting-version[21]": "21",
     })
     versioned_srcs = selects.apply(
         java_version,
@@ -93,10 +103,7 @@ def buck_kotlin_library(name, **kwargs):
     kwargs = _set_buck2_kotlin_toolchain(**kwargs)
     kwargs = _set_buck2_dex_toolchain(**kwargs)
     kwargs = _add_kotlin_deps(**kwargs)
-    return fb_native.kotlin_library(
-        name = name,
-        **kwargs
-    )
+    return fb_native.kotlin_library(name = name, **kwargs)
 
 def buck_java_library(name, **kwargs):
     kwargs = _add_labels(**kwargs)
@@ -104,10 +111,7 @@ def buck_java_library(name, **kwargs):
     kwargs = _set_buck2_java_toolchain(**kwargs)
     kwargs = _set_buck2_dex_toolchain(**kwargs)
     kwargs = _set_versioned_java_srcs(**kwargs)
-    return fb_native.java_library(
-        name = name,
-        **kwargs
-    )
+    return fb_native.java_library(name = name, **kwargs)
 
 def buck_java_binary(name, **kwargs):
     kwargs = _add_labels(**kwargs)
@@ -118,10 +122,7 @@ def buck_java_binary(name, **kwargs):
     # https://stackoverflow.com/a/16535804/5208808
     java_args += ["-XX:-MaxFDLimit", "-Xss2m"]
     kwargs["java_args_for_run_info"] = java_args
-    return fb_native.java_binary(
-        name = name,
-        **kwargs
-    )
+    return fb_native.java_binary(name = name, **kwargs)
 
 def _toolchain_prebuilt_jar(name, **kwargs):
     kwargs = _add_labels(**kwargs)
@@ -130,31 +131,16 @@ def _toolchain_prebuilt_jar(name, **kwargs):
         kwargs["_prebuilt_jar_toolchain"] = "toolchains//:prebuilt_jar_bootstrap_no_snapshot"
     else:
         kwargs["_prebuilt_jar_toolchain"] = "toolchains//:prebuilt_jar_bootstrap"
-    return fb_native.prebuilt_jar(
-        name = name,
-        **kwargs
-    )
+    return fb_native.prebuilt_jar(name = name, **kwargs)
 
 def _oss_remote_file_with_wrapper(name, ext, url, sha1, **kwargs):
     remote_file_target_name = name + "_" + ext
     if ext == "jar":
-        _toolchain_prebuilt_jar(
-            name = name,
-            binary_jar = ":" + remote_file_target_name,
-            **kwargs
-        )
+        _toolchain_prebuilt_jar(name = name, binary_jar = ":" + remote_file_target_name, **kwargs)
     elif ext == "aar":
-        fb_native.android_prebuilt_aar(
-            name = name,
-            aar = ":" + remote_file_target_name,
-            **kwargs
-        )
+        fb_native.android_prebuilt_aar(name = name, aar = ":" + remote_file_target_name, **kwargs)
     elif ext == "exe":
-        fb_native.alias(
-            name = name,
-            actual = ":" + remote_file_target_name,
-            **kwargs
-        )
+        fb_native.alias(name = name, actual = ":" + remote_file_target_name, **kwargs)
 
     fb_native.remote_file(
         name = remote_file_target_name,
@@ -165,12 +151,13 @@ def _oss_remote_file_with_wrapper(name, ext, url, sha1, **kwargs):
     )
 
 def _buck_remote_file_with_wrapper(
-        name,
-        ext,
-        url,
-        sha1,
-        # @oss-disable[end= ]: internal_alias,
-        **kwargs):
+    name,
+    ext,
+    url,
+    sha1,
+    # @oss-disable[end= ]: internal_alias,
+    **kwargs,
+):
     if not is_full_meta_repo():
         return _oss_remote_file_with_wrapper(name, ext, url, sha1, **kwargs)
     # @oss-disable[end= ]: else:
@@ -180,48 +167,51 @@ def _buck_remote_file_with_wrapper(
         fail() # @oss-enable
 
 def third_party_jar(
-        name,
-        url,
-        sha1,
-        # @oss-disable[end= ]: internal_alias,
-        **kwargs):
+    name,
+    url,
+    sha1,
+    # @oss-disable[end= ]: internal_alias,
+    **kwargs,
+):
     return _buck_remote_file_with_wrapper(
         name,
         "jar",
         url,
         sha1,
         # @oss-disable[end= ]: internal_alias,
-        **kwargs
+        **kwargs,
     )
 
 def third_party_aar(
-        name,
-        url,
-        sha1,
-        # @oss-disable[end= ]: internal_alias,
-        **kwargs):
+    name,
+    url,
+    sha1,
+    # @oss-disable[end= ]: internal_alias,
+    **kwargs,
+):
     return _buck_remote_file_with_wrapper(
         name,
         "aar",
         url,
         sha1,
         # @oss-disable[end= ]: internal_alias,
-        **kwargs
+        **kwargs,
     )
 
 def third_party_exe(
-        name,
-        url,
-        sha1,
-        # @oss-disable[end= ]: internal_alias,
-        **kwargs):
+    name,
+    url,
+    sha1,
+    # @oss-disable[end= ]: internal_alias,
+    **kwargs,
+):
     return _buck_remote_file_with_wrapper(
         name,
         "exe",
         url,
         sha1,
         # @oss-disable[end= ]: internal_alias,
-        **kwargs
+        **kwargs,
     )
 
 def buck_prebuilt_jar(name, **kwargs):
@@ -243,11 +233,7 @@ def buck_kotlin_test(**kwargs):
 
     fb_native.kotlin_test(**kwargs)
 
-def buck_java_test(
-        name,
-        vm_args = None,
-        run_test_separately = False,
-        **kwargs):
+def buck_java_test(name, vm_args = None, run_test_separately = False, **kwargs):
     """java_test wrapper that provides sensible defaults for buck tests.
 
     Args:
@@ -286,7 +272,8 @@ def buck_java_test(
 
     fb_native.java_test(
         name = name,
-        deps = deps + [
+        deps = deps
+        + [
             # When actually running Buck, the launcher script loads the bootstrapper,
             # and the bootstrapper loads the rest of Buck. For unit tests, which don't
             # run Buck, we have to add a direct dependency on the bootstrapper in case
@@ -296,7 +283,6 @@ def buck_java_test(
         vm_args = [
             # Don't use the system-installed JNA; extract it from the local jar.
             "-Djna.nosys=true",
-
             # Add -Dsun.zip.disableMemoryMapping=true to work around a JDK issue
             # related to modifying JAR/ZIP files that have been loaded into memory:
             #
@@ -322,46 +308,35 @@ def buck_java_test(
             # internally, but removes it from the set of system properties that are
             # publicly accessible.
             "-Dsun.zip.disableMemoryMapping=true",
-        ] + (vm_args or []),
+        ]
+        + (vm_args or []),
         env = env,
         run_test_separately = run_test_separately,
-        **kwargs
+        **kwargs,
     )
 
-def standard_java_test(
-        name,
-        run_test_separately = False,
-        vm_args = None,
-        fork_mode = "none",
-        labels = None,
-        with_test_data = False,
-        **kwargs):
+def standard_java_test(name, run_test_separately = False, vm_args = None, labels = None, with_test_data = False, **kwargs):
     test_srcs = native.glob(["*Test.java"])
 
     if len(test_srcs) > 0:
-        # @lint-ignore BUCKLINT
         buck_java_test(
             name = name,
             srcs = test_srcs,
             resources = native.glob(["testdata/**"]) if with_test_data else [],
             vm_args = vm_args,
             run_test_separately = run_test_separately,
-            fork_mode = fork_mode,
             labels = (labels or []) + ["buck2_run_from_cell_root"],
-            **kwargs
+            **kwargs,
         )
 
 def buck_prebuilt_artifact(
-        # @oss-disable[end= ]: cas_digest,
-        oss_url = None,
-        oss_sha1 = None,
-        **kwargs):
+    # @oss-disable[end= ]: cas_digest,
+    oss_url = None,
+    oss_sha1 = None,
+    **kwargs,
+):
     if (not is_full_meta_repo()) and oss_url:
-        return fb_native.remote_file(
-            sha1 = oss_sha1,
-            url = oss_url,
-            **kwargs
-        )
+        return fb_native.remote_file(sha1 = oss_sha1, url = oss_url, **kwargs)
     # @oss-disable[end= ]: else:
         # @oss-disable[end= ]: return android_build_tools_cas_artifact(digest = cas_digest, **kwargs)
         fail() # @oss-enable

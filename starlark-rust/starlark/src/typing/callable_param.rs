@@ -19,9 +19,11 @@ use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::iter;
+use std::sync::OnceLock;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
 use starlark_map::small_set::SmallSet;
 use starlark_syntax::other_error;
 use starlark_syntax::syntax::def::DefParamIndices;
@@ -30,14 +32,14 @@ use crate::eval::runtime::params::display::PARAM_FMT_OPTIONAL;
 use crate::eval::runtime::params::display::ParamFmt;
 use crate::eval::runtime::params::display::fmt_param_spec;
 use crate::typing::Ty;
-use crate::typing::small_arc_vec_or_static::SmallArcVec1OrStatic;
+use crate::typing::small_arc_vec::SmallArcVec1;
 use crate::typing::ty::TyDisplay;
 use crate::typing::ty::TypeRenderConfig;
 use crate::util::arc_str::ArcStr;
 
 /// Indication whether parameter is required.
 #[derive(
-    Debug, Clone, Dupe, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative
+    Debug, Clone, Dupe, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative, Pagable
 )]
 pub enum ParamIsRequired {
     /// Parameter is required.
@@ -47,7 +49,9 @@ pub enum ParamIsRequired {
 }
 
 /// The type of a parameter - can be positional, by name, `*args` or `**kwargs`.
-#[derive(Debug, Clone, Dupe, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative)]
+#[derive(
+    Debug, Clone, Dupe, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative, Pagable
+)]
 pub(crate) enum ParamMode {
     /// Parameter can only be passed by position.
     PosOnly(ParamIsRequired),
@@ -62,7 +66,9 @@ pub(crate) enum ParamMode {
 }
 
 /// A parameter argument to a function
-#[derive(Debug, Clone, Dupe, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative)]
+#[derive(
+    Debug, Clone, Dupe, PartialEq, Eq, Hash, PartialOrd, Ord, Allocative, Pagable
+)]
 pub(crate) struct Param {
     /// The type of parameter
     pub(crate) mode: ParamMode,
@@ -131,9 +137,11 @@ struct ParamSpecSplit<'a> {
 }
 
 /// Callable parameter specification (e.g. positional only followed by `**kwargs`).
-#[derive(Debug, Eq, PartialEq, Clone, Dupe, Hash, PartialOrd, Ord, Allocative)]
+#[derive(
+    Debug, Eq, PartialEq, Clone, Dupe, Hash, PartialOrd, Ord, Allocative, Pagable
+)]
 pub struct ParamSpec {
-    params: SmallArcVec1OrStatic<Param>,
+    params: SmallArcVec1<Param>,
     indices: DefParamIndices,
 }
 
@@ -274,7 +282,7 @@ impl ParamSpec {
         }
 
         Ok(ParamSpec {
-            params: SmallArcVec1OrStatic::clone_from_slice(&params),
+            params: SmallArcVec1::clone_from_slice(&params),
             indices: DefParamIndices {
                 num_positional,
                 num_positional_only,
@@ -324,9 +332,16 @@ impl ParamSpec {
     }
 
     pub(crate) fn any() -> ParamSpec {
-        static ANY_PARAMS: [Param; 2] = [Param::args(Ty::any()), Param::kwargs(Ty::any())];
+        static ANY_PARAMS: OnceLock<SmallArcVec1<Param>> = OnceLock::new();
         ParamSpec {
-            params: SmallArcVec1OrStatic::new_static(&ANY_PARAMS),
+            params: ANY_PARAMS
+                .get_or_init(|| {
+                    SmallArcVec1::clone_from_slice(&[
+                        Param::args(Ty::any()),
+                        Param::kwargs(Ty::any()),
+                    ])
+                })
+                .dupe(),
             indices: DefParamIndices {
                 num_positional: 0,
                 num_positional_only: 0,

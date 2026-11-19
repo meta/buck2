@@ -29,6 +29,9 @@ use allocative::Allocative;
 use cmp_any::OrdAny;
 use cmp_any::PartialEqAny;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::PagableTagged;
+use pagable::pagable_typetag;
 use starlark_map::StarlarkHasher;
 
 use crate::codemap::Span;
@@ -43,7 +46,6 @@ use crate::typing::error::InternalError;
 use crate::typing::error::TypingNoContextError;
 use crate::typing::error::TypingNoContextOrInternalError;
 use crate::typing::error::TypingOrInternalError;
-use crate::values::Value;
 use crate::values::typing::type_compiled::alloc::TypeMatcherAlloc;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 use crate::values::typing::type_compiled::factory::TypeCompiledFactory;
@@ -51,8 +53,12 @@ use crate::values::typing::type_compiled::matcher::TypeMatcherBox;
 use crate::values::typing::type_compiled::matcher::TypeMatcherBoxAlloc;
 
 /// Custom type implementation. [`Display`] must implement the representation of the type.
-pub trait TyCustomImpl: Debug + Display + Hash + Ord + Allocative + Send + Sync + 'static {
+pub trait TyCustomImpl:
+    Debug + Display + Hash + Ord + Allocative + PagableTagged + Send + Sync + 'static
+{
+    /// The type name used for display and error messages.
     fn as_name(&self) -> Option<&str>;
+    /// Type-check a call expression, returning the result type.
     fn validate_call(
         &self,
         span: Span,
@@ -65,9 +71,11 @@ pub trait TyCustomImpl: Debug + Display + Hash + Ord + Allocative + Send + Sync 
     fn as_callable(&self) -> Option<TyCallable> {
         None
     }
+    /// Underlying `TyFunction`, if this type wraps one.
     fn as_function(&self) -> Option<&TyFunction> {
         None
     }
+    /// Result type of `self <op> rhs`.
     fn bin_op(
         &self,
         bin_op: TypingBinOp,
@@ -77,9 +85,11 @@ pub trait TyCustomImpl: Debug + Display + Hash + Ord + Allocative + Send + Sync 
         let _unused = (bin_op, rhs, ctx);
         Err(TypingNoContextOrInternalError::Typing)
     }
+    /// Element type when iterating (`for x in self`).
     fn iter_item(&self) -> Result<Ty, TypingNoContextError> {
         Err(TypingNoContextError)
     }
+    /// Result type of `self[item]`.
     fn index(
         &self,
         item: &TyBasic,
@@ -88,10 +98,13 @@ pub trait TyCustomImpl: Debug + Display + Hash + Ord + Allocative + Send + Sync 
         let _unused = (item, ctx);
         Err(TypingNoContextOrInternalError::Typing)
     }
+    /// Type of `self.attr`.
     fn attribute(&self, attr: &str) -> Result<Ty, TypingNoContextError>;
+    /// Merge `x | other` into a single custom type, or fail.
     fn union2(x: Arc<Self>, other: Arc<Self>) -> Result<Arc<Self>, (Arc<Self>, Arc<Self>)> {
         if x == other { Ok(x) } else { Err((x, other)) }
     }
+    /// Whether `x` and `y` could represent overlapping values.
     fn intersects(x: &Self, y: &Self) -> bool {
         let _ignore = (x, y);
         true
@@ -100,12 +113,14 @@ pub trait TyCustomImpl: Debug + Display + Hash + Ord + Allocative + Send + Sync 
     fn intersects_with(&self, _other: &TyBasic) -> bool {
         false
     }
-
     /// Create runtime type matcher for values.
     fn matcher<T: TypeMatcherAlloc>(&self, factory: T) -> T::Result;
 }
 
-pub(crate) trait TyCustomDyn: Debug + Display + Allocative + Send + Sync + 'static {
+#[pagable_typetag]
+pub(crate) trait TyCustomDyn:
+    Debug + Display + Allocative + PagableTagged + Send + Sync + 'static
+{
     fn eq_token(&self) -> PartialEqAny<'_>;
     fn hash_code(&self) -> u64;
     fn cmp_token(&self) -> (OrdAny<'_>, &'static str);
@@ -144,7 +159,7 @@ pub(crate) trait TyCustomDyn: Debug + Display + Allocative + Send + Sync + 'stat
     fn matcher_with_type_compiled_factory_dyn<'v>(
         &self,
         type_compiled_factory: TypeCompiledFactory<'_, 'v>,
-    ) -> TypeCompiled<Value<'v>>;
+    ) -> TypeCompiled<'v>;
 
     fn matcher_box_dyn(&self) -> TypeMatcherBox;
 }
@@ -247,7 +262,7 @@ impl<T: TyCustomImpl> TyCustomDyn for T {
     fn matcher_with_type_compiled_factory_dyn<'v>(
         &self,
         type_compiled_factory: TypeCompiledFactory<'_, 'v>,
-    ) -> TypeCompiled<Value<'v>> {
+    ) -> TypeCompiled<'v> {
         self.matcher(type_compiled_factory)
     }
 
@@ -256,7 +271,7 @@ impl<T: TyCustomImpl> TyCustomDyn for T {
     }
 }
 
-#[derive(Debug, derive_more::Display, Allocative, Clone, Dupe)]
+#[derive(Debug, derive_more::Display, Allocative, Clone, Dupe, Pagable)]
 pub struct TyCustom(pub(crate) Arc<dyn TyCustomDyn>);
 
 impl TyCustom {
@@ -299,7 +314,7 @@ impl TyCustom {
     pub(crate) fn matcher_with_type_compiled_factory<'v>(
         &self,
         type_compiled_factory: TypeCompiledFactory<'_, 'v>,
-    ) -> TypeCompiled<Value<'v>> {
+    ) -> TypeCompiled<'v> {
         self.0
             .matcher_with_type_compiled_factory_dyn(type_compiled_factory)
     }

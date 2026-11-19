@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
+use buck2_grpc::configure_endpoint;
 use futures::Future;
 use tokio::time::Instant;
 use tonic::transport::Channel;
@@ -27,6 +28,7 @@ pub async fn get_channel_uds(
     unix_socket: &Path,
     change_to_parent_dir: bool,
 ) -> buck2_error::Result<Channel> {
+    use buck2_fs::error::IoResultExt;
     use buck2_fs::fs_util;
 
     use crate::home_buck_tmp::home_buck_tmp_dir;
@@ -38,7 +40,7 @@ pub async fn get_channel_uds(
     if change_to_parent_dir {
         let symlink = TempPath::new_in(home_buck_tmp_dir()?)?;
 
-        fs_util::symlink(unix_socket, symlink.path())?;
+        fs_util::symlink(unix_socket, symlink.path()).categorize_internal()?;
 
         let r = get_channel_uds_no_symlink(symlink.path())
             .await
@@ -70,22 +72,16 @@ async fn get_channel_uds_no_symlink(connect_to: &Path) -> buck2_error::Result<Ch
     use tonic::codegen::http::Uri;
     use tower::service_fn;
 
-    let io = tokio::net::UnixStream::connect(&connect_to).await?;
-
-    // tokio provides a UnixStream that has implementations for AsyncRead/AsyncWrite,
-    // but its own connect_with_connector uses the hyper equivalents
-    // Use the hyper interop wrapper to paper over this discrepancy
-    let io = hyper_util::rt::tokio::TokioIo::new(io);
-
-    let mut io = Some(io);
+    let connect_to = connect_to.to_owned();
     // This URL string is not relevant to the connection. Some URL is required for the function to work but the closure running inside connect_with_connector()
     // deals with connecting to the unix domain socket.
-    Endpoint::try_from("http://[::]:50051")?
+    configure_endpoint(Endpoint::try_from("http://[::]:50051")?)
         .connect_with_connector(service_fn(move |_: Uri| {
-            let io = io
-                .take()
-                .ok_or_else(|| "Cannot reconnect after connection loss to uds".to_owned());
-            futures::future::ready(io)
+            let path = connect_to.clone();
+            async move {
+                let io = tokio::net::UnixStream::connect(&path).await?;
+                Ok::<_, std::io::Error>(hyper_util::rt::tokio::TokioIo::new(io))
+            }
         }))
         .await
         .tag(ErrorTag::ServerTransportError)
@@ -103,7 +99,7 @@ pub async fn get_channel_uds(
 }
 
 pub async fn get_channel_tcp(socket_addr: Ipv4Addr, port: u16) -> buck2_error::Result<Channel> {
-    Endpoint::try_from(format!("http://{socket_addr}:{port}"))?
+    configure_endpoint(Endpoint::try_from(format!("http://{socket_addr}:{port}"))?)
         .connect()
         .await
         .tag(ErrorTag::ServerTransportError)

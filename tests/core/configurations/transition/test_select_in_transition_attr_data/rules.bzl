@@ -7,11 +7,7 @@
 # above-listed licenses.
 
 def _impl_tr(platform, refs, attrs):
-    constraints = {
-        s: v
-        for (s, v) in platform.configuration.constraints.items()
-        if s != refs.os[ConstraintSettingInfo].label
-    }
+    constraints = {s: v for (s, v) in platform.configuration.constraints.items() if s != refs.os[ConstraintSettingInfo].label}
 
     watchos = refs.watchos[ConstraintValueInfo]
     iphoneos = refs.iphoneos[ConstraintValueInfo]
@@ -48,6 +44,9 @@ def _impl(_ctx):
 
 test_rule = rule(impl = _impl, attrs = {"device": attrs.string(), "extra": attrs.string(default = "")}, cfg = iphone_or_watch_transition)
 
-test_rule_with_transition_dep = rule(impl = _impl, attrs = {"attr_with_transition": attrs.transition_dep(cfg = iphone_or_watch_transition), "device": attrs.string(), "extra": attrs.string(default = "")})
+test_rule_with_transition_dep = rule(
+    impl = _impl,
+    attrs = {"attr_with_transition": attrs.transition_dep(cfg = iphone_or_watch_transition), "device": attrs.string(), "extra": attrs.string(default = "")},
+)
 
 any_rule = rule(impl = _impl, attrs = {"another_device": attrs.string()})

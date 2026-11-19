@@ -12,4 +12,3 @@ Error: error: Multiple kwargs dictionary in parameters
   |
 1 | def test(**x, **y): pass
   |               ^^^
-  |

@@ -15,8 +15,8 @@ MyInfo = provider(fields = ["data"])
 
 # We just want an impl that uses some dynamic outputs and tsets and that we can conditionally make the dynamic output's input fail.
 def _impl(ctx):
-    out1 = ctx.actions.copy_file("out1", ctx.attrs.input)
-    out2 = ctx.actions.declare_output("out2")
+    out1 = ctx.actions.copy_file("out1", ctx.attrs.input, has_content_based_path = False)
+    out2 = ctx.actions.declare_output("out2", has_content_based_path = False)
     if ctx.attrs.dyn_input_good:
         ctx.actions.write(out2, "data")
     else:
@@ -24,7 +24,7 @@ def _impl(ctx):
 
     tset = ctx.actions.tset(MyTset, value = out1, children = [d[MyInfo].data for d in ctx.attrs.deps])
 
-    dyn_out = ctx.actions.declare_output("out3")
+    dyn_out = ctx.actions.declare_output("out3", has_content_based_path = False)
 
     def _dyn_impl(ctx, _inputs, outputs):
         ctx.actions.run(
@@ -37,7 +37,7 @@ def _impl(ctx):
 
     ctx.actions.dynamic_output(f = _dyn_impl, outputs = [dyn_out.as_output()], dynamic = [out2])
 
-    out4 = ctx.actions.declare_output("out4")
+    out4 = ctx.actions.declare_output("out4", has_content_based_path = False)
     ctx.actions.run(
         cmd_args(
             ["sh", "-c", 'echo > "$1"', "--", out4.as_output()],
@@ -48,8 +48,26 @@ def _impl(ctx):
 
     return [DefaultInfo(default_outputs = [out4]), MyInfo(data = tset)]
 
-my_rule = rule(impl = _impl, attrs = {
-    "deps": attrs.list(attrs.dep()),
-    "dyn_input_good": attrs.bool(),
-    "input": attrs.source(),
-})
+my_rule = rule(
+    impl = _impl,
+    attrs = {
+        "deps": attrs.list(attrs.dep()),
+        "dyn_input_good": attrs.bool(),
+        "input": attrs.source(),
+    },
+)
+
+def _slow_impl(ctx: AnalysisContext) -> list[Provider]:
+    out = ctx.actions.declare_output("out", has_content_based_path = False)
+    ctx.actions.run(
+        ["fbpython", ctx.attrs.src, out.as_output()],
+        category = "slow",
+    )
+    return [DefaultInfo(out)]
+
+slow_actions = rule(
+    impl = _slow_impl,
+    attrs = {
+        "src": attrs.source(),
+    },
+)

@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.java.abi;
 
 import com.facebook.buck.jvm.java.abi.source.api.CannotInferException;
 import com.facebook.buck.jvm.java.lang.model.ElementsExtended;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import java.util.List;
 import java.util.Set;
@@ -26,6 +27,7 @@ import javax.lang.model.util.ElementFilter;
 import org.objectweb.asm.Opcodes;
 
 /** Computes the access flags (see JVMS8 4.1, 4.5, 4.6) for {@link Element}s. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public final class AccessFlags {
   private final ElementsExtended elements;
 

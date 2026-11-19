@@ -27,6 +27,8 @@ mod fbcode {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use async_trait::async_trait;
+
     use crate::BuckEvent;
     use crate::Event;
     use crate::EventSink;
@@ -44,6 +46,7 @@ mod fbcode {
         }
     }
 
+    #[async_trait]
     impl EventSink for RemoteEventSink {
         fn send(&self, _event: Event) {}
     }

@@ -20,7 +20,7 @@ def _simple_impl(_ctx):
 
 simple = rule(
     impl = _simple_impl,
-    attrs = {},
+    attrs = {"labels": attrs.list(attrs.string(), default = ["transitioned-label"])},
     # The configuration transition.
     cfg = transition_to_reindeer,
 )

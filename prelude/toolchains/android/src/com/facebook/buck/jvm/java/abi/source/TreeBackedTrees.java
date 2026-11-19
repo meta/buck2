@@ -10,7 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.AnnotatedTypeTree;
 import com.sun.source.tree.CatchTree;
 import com.sun.source.tree.ClassTree;
@@ -27,6 +27,7 @@ import com.sun.source.util.TreePath;
 import com.sun.source.util.Trees;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
@@ -38,10 +39,12 @@ import javax.lang.model.type.ErrorType;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
 import javax.tools.JavaCompiler;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link Trees} that uses our tree-backed elements and types when available.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedTrees extends Trees {
   private final Trees javacTrees;
   private final PostEnterCanonicalizer canonicalizer;
@@ -144,7 +147,7 @@ class TreeBackedTrees extends Trees {
   }
 
   @Override
-  public TreePath getPath(Element e, AnnotationMirror a, AnnotationValue v) {
+  public @Nullable TreePath getPath(Element e, AnnotationMirror a, AnnotationValue v) {
     if (e instanceof TreeBackedElement) {
       return javacTrees.getPath(e, a, v);
     }
@@ -213,39 +216,41 @@ class TreeBackedTrees extends Trees {
    * any type arguments or annotations).
    */
   /* package */
-  static CharSequence treeToName(Tree tree) {
+  static CharSequence treeToName(@Nullable Tree tree) {
     if (tree == null) {
       return "";
     }
 
-    return tree.accept(
-        new SimpleTreeVisitor<CharSequence, Void>() {
-          @Override
-          protected CharSequence defaultAction(Tree node, Void aVoid) {
-            throw new AssertionError(String.format("Unexpected tree of kind: %s", node.getKind()));
-          }
+    return Objects.requireNonNull(
+        tree.accept(
+            new SimpleTreeVisitor<CharSequence, Void>() {
+              @Override
+              protected CharSequence defaultAction(Tree node, Void aVoid) {
+                throw new AssertionError(
+                    String.format("Unexpected tree of kind: %s", node.getKind()));
+              }
 
-          @Override
-          public CharSequence visitAnnotatedType(AnnotatedTypeTree node, Void aVoid) {
-            return node.getUnderlyingType().accept(this, aVoid);
-          }
+              @Override
+              public CharSequence visitAnnotatedType(AnnotatedTypeTree node, Void aVoid) {
+                return Objects.requireNonNull(node.getUnderlyingType().accept(this, aVoid));
+              }
 
-          @Override
-          public CharSequence visitParameterizedType(ParameterizedTypeTree node, Void aVoid) {
-            return node.getType().accept(this, aVoid);
-          }
+              @Override
+              public CharSequence visitParameterizedType(ParameterizedTypeTree node, Void aVoid) {
+                return Objects.requireNonNull(node.getType().accept(this, aVoid));
+              }
 
-          @Override
-          public CharSequence visitMemberSelect(MemberSelectTree node, Void aVoid) {
-            return String.format(
-                "%s.%s", node.getExpression().accept(this, aVoid), node.getIdentifier());
-          }
+              @Override
+              public CharSequence visitMemberSelect(MemberSelectTree node, Void aVoid) {
+                return String.format(
+                    "%s.%s", node.getExpression().accept(this, aVoid), node.getIdentifier());
+              }
 
-          @Override
-          public CharSequence visitIdentifier(IdentifierTree node, Void aVoid) {
-            return node.getName();
-          }
-        },
-        null);
+              @Override
+              public CharSequence visitIdentifier(IdentifierTree node, Void aVoid) {
+                return node.getName();
+              }
+            },
+            null));
   }
 }

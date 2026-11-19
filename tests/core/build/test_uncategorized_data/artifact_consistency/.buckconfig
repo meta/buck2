@@ -3,6 +3,5 @@ root = .
 prelude = prelude
 [buck2]
 allow_eden_io = false
-dice = modern
 [buildfile]
 name = TARGETS.fixture

@@ -6,6 +6,3 @@
 
 [user_section]
   key = value
-
-[project]
-  ignore = dir/src3.txt

@@ -14,14 +14,15 @@ use std::io;
 fn main() -> io::Result<()> {
     let proto_files = &["daemon.proto"];
 
-    let includes = if let Ok(path) = env::var("BUCK_PROTO_SRCS") {
-        vec![path]
+    let buck_proto_srcs = env::var("BUCK_PROTO_SRCS");
+    let includes = if let Ok(path) = &buck_proto_srcs {
+        vec![path.as_str()]
     } else {
         vec![
-            ".".to_owned(),
-            "../buck2_data".to_owned(),
-            "../buck2_subscription_proto".to_owned(),
-            "../buck2_host_sharing_proto".to_owned(),
+            ".",
+            "../buck2_data",
+            "../buck2_subscription_proto",
+            "../buck2_host_sharing_proto",
         ]
     };
 
@@ -30,14 +31,16 @@ fn main() -> io::Result<()> {
         .type_attribute(".", "#[derive(::serde::Serialize, ::serde::Deserialize)] #[serde(rename_all = \"snake_case\")]")
         .type_attribute(".", "#[derive(::allocative::Allocative)]")
         .field_attribute("start_time", "#[serde(with = \"serialize_timestamp\")]")
-        .field_attribute("timeout", "#[serde(rename = \"timeout_us\", with = \"buck2_data::serialize_duration_as_micros\")]")
-        .field_attribute("uptime", "#[serde(rename = \"uptime_us\", with = \"buck2_data::serialize_duration_as_micros\")]")
-        .field_attribute("delay", "#[serde(rename = \"delay_us\", with = \"buck2_data::serialize_duration_as_micros\")]")
-        .field_attribute("ProfileResponse.elapsed", "#[serde(rename = \"elapsed_us\", with = \"buck2_data::serialize_duration_as_micros\")]")
+        .field_attribute("timeout", "#[serde(rename = \"timeout_us\", with = \"buck2_proto_serde::serialize_duration_as_micros\")]")
+        .field_attribute("uptime", "#[serde(rename = \"uptime_us\", with = \"buck2_proto_serde::serialize_duration_as_micros\")]")
+        .field_attribute("delay", "#[serde(rename = \"delay_us\", with = \"buck2_proto_serde::serialize_duration_as_micros\")]")
+        .field_attribute("ProfileResponse.elapsed", "#[serde(rename = \"elapsed_us\", with = \"buck2_proto_serde::serialize_duration_as_micros\")]")
         .boxed("CommandProgress.progress.event")
         .boxed("CommandProgress.progress.result")
         .boxed("CommandProgress.progress.partial_result")
         .field_attribute("expires_at", "#[serde(with = \"serialize_timestamp\")]")
+        // buckd.info files written by older daemons lack this field.
+        .field_attribute("DaemonProcessInfo.pid_start_time", "#[serde(default)]")
         .extern_path(".buck.data", "::buck2_data")
         .extern_path(".buck.subscription", "::buck2_subscription_proto")
         .compile(proto_files, &includes)

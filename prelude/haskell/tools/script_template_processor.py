@@ -19,11 +19,8 @@ The macros in the script should be in the format `<MACRO_NAME>`.
 For example, `echo <binutils_path>` is an expression that would be replaced.
 """
 
-# pyre-unsafe
-
 import argparse
 import os
-import re
 import sys
 from typing import Dict, List, Optional
 
@@ -53,6 +50,8 @@ def _replace_template_values(
 ):
     script_template = template_file.read()
 
+    # Plain replacement throughout: a regex replacement would read backslash escapes in
+    # the values (compiler flags, paths), and the values can hold any text.
     for macro_name, rel_path in rel_toolchain_paths.items():
         # Skip macro if its path wasn't provided for a specific template
         if not rel_path:
@@ -61,11 +60,7 @@ def _replace_template_values(
         # Follow symlink to get canonical path
         canonical_path = os.path.realpath(rel_path)
 
-        script_template = re.sub(
-            pattern=f"<{macro_name}>",
-            repl=canonical_path,
-            string=script_template,
-        )
+        script_template = script_template.replace(f"<{macro_name}>", canonical_path)
 
     if user_ghci_path is not None:
         # user_ghci_path has to be handled separately because it needs to be passed
@@ -84,17 +79,11 @@ def _replace_template_values(
                 user_ghci_path=user_ghci_path,
             )
 
-        script_template = re.sub(
-            pattern="<user_ghci_path>",
-            repl=replacement,
-            string=script_template,
-        )
+        script_template = script_template.replace("<user_ghci_path>", replacement)
 
     if len(exposed_packages) > 0:
-        script_template = re.sub(
-            pattern="<exposed_packages>",
-            repl=" ".join(exposed_packages),
-            string=script_template,
+        script_template = script_template.replace(
+            "<exposed_packages>", " ".join(exposed_packages)
         )
 
     prebuilt_package_dbs_args = None
@@ -117,20 +106,15 @@ def _replace_template_values(
             ["-package-db ${{DIR}}/{}".format(pkg) for pkg in package_dbs.split(" ")]
         )
 
-    script_template = re.sub(
-        pattern="<package_dbs>",
-        repl=" ".join(filter(None, [prebuilt_package_dbs_args, package_dbs_args])),
-        string=script_template,
+    script_template = script_template.replace(
+        "<package_dbs>",
+        " ".join(filter(None, [prebuilt_package_dbs_args, package_dbs_args])),
     )
 
     # Replace all other macros
     for macro_name, macro_value in string_macros.items():
         if macro_value is not None:
-            script_template = re.sub(
-                pattern=f"<{macro_name}>",
-                repl=macro_value,
-                string=script_template,
-            )
+            script_template = script_template.replace(f"<{macro_name}>", macro_value)
 
     with open(output_fpath, "w") as output_file:
         output_file.write(script_template)
@@ -217,4 +201,5 @@ def main() -> int:
     return 0
 
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())

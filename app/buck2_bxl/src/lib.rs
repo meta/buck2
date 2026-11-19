@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
 #![feature(trait_alias)]
 #![feature(try_blocks)]
 #![feature(never_type)]
+#![feature(mapped_lock_guards)]
 
 use std::sync::Once;
 
@@ -33,8 +33,13 @@ pub fn init_late_bindings() {
 
 #[test]
 fn init_late_bindings_for_test() {
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init() {
+        buck2_action_impl::init_late_bindings();
+        buck2_anon_target::init_late_bindings();
+        buck2_build_api::init_late_bindings();
+        buck2_transition::init_late_bindings();
+        buck2_interpreter_for_build::init_late_bindings();
         init_late_bindings();
     }
 }

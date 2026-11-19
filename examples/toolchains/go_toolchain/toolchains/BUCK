@@ -33,15 +33,25 @@ http_archive(
     urls = ["https://go.dev/dl/go1.24.4.linux-amd64.tar.gz"],
 )
 
+http_archive(
+    name = "archive_go1.24.4.windows-amd64",
+    sha256 = "b751a1136cb9d8a2e7ebb22c538c4f02c09b98138c7c8bfb78a54a4566c013b1",
+    strip_prefix = "go",
+    type = "zip",
+    urls = ["https://go.dev/dl/go1.24.4.windows-amd64.zip"],
+)
+
 go_bootstrap_distr(
     name = "go_bootstrap_distr",
     go_os_arch = select({
         "config//os:linux": select({"config//cpu:x86_64": ("linux", "amd64")}),
         "config//os:macos": select({"config//cpu:arm64": ("darwin", "arm64")}),
+        "config//os:windows": select({"config//cpu:x86_64": ("windows", "amd64")}),
     }),
     go_root = select({
         "config//os:linux": select({"config//cpu:x86_64": ":archive_go1.24.4.linux-amd64"}),
         "config//os:macos": select({"config//cpu:arm64": ":archive_go1.24.4.darwin-arm64"}),
+        "config//os:windows": select({"config//cpu:x86_64": ":archive_go1.24.4.windows-amd64"}),
     }),
 )
 
@@ -54,6 +64,7 @@ go_bootstrap_toolchain(
     env_go_os = select({
         "config//os:linux": "linux",
         "config//os:macos": "darwin",
+        "config//os:windows": "windows",
     }),
     go_bootstrap_distr = ":go_bootstrap_distr",
     visibility = ["PUBLIC"],
@@ -64,11 +75,14 @@ go_distr(
     go_os_arch = select({
         "config//os:linux": select({"config//cpu:x86_64": ("linux", "amd64")}),
         "config//os:macos": select({"config//cpu:arm64": ("darwin", "arm64")}),
+        "config//os:windows": select({"config//cpu:x86_64": ("windows", "amd64")}),
     }),
     go_root = select({
         "config//os:linux": select({"config//cpu:x86_64": ":archive_go1.24.4.linux-amd64"}),
         "config//os:macos": select({"config//cpu:arm64": ":archive_go1.24.4.darwin-arm64"}),
+        "config//os:windows": select({"config//cpu:x86_64": ":archive_go1.24.4.windows-amd64"}),
     }),
+    version = "1.24.4",
 )
 
 go_toolchain(

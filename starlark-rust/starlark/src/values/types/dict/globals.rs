@@ -28,7 +28,7 @@ use crate::values::dict::DictRef;
 use crate::values::dict::value::FrozenDict;
 use crate::values::function::SpecialBuiltinFunction;
 
-fn unpack_pair<'v>(pair: Value<'v>, heap: &'v Heap) -> crate::Result<(Value<'v>, Value<'v>)> {
+fn unpack_pair<'v>(pair: Value<'v>, heap: Heap<'v>) -> crate::Result<(Value<'v>, Value<'v>)> {
     let mut it = pair.iterate(heap)?;
     if let Some(first) = it.next() {
         if let Some(second) = it.next() {
@@ -81,7 +81,7 @@ pub(crate) fn register_dict(globals: &mut GlobalsBuilder) {
     speculative_exec_safe,
     special_builtin_function = SpecialBuiltinFunction::Dict,
     )]
-    fn dict<'v>(args: &Arguments<'v, '_>, heap: &'v Heap) -> starlark::Result<Dict<'v>> {
+    fn dict<'v>(args: &Arguments<'v, '_>, heap: Heap<'v>) -> starlark::Result<Dict<'v>> {
         // Dict is super hot, and has a slightly odd signature, so we can do a bunch of special cases on it.
         // In particular, we don't generate the kwargs if there are no positional arguments.
         // Therefore we make it take the raw Arguments.

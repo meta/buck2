@@ -16,22 +16,23 @@
  */
 
 use allocative::Allocative;
+use pagable::Pagable;
 
 use crate::typing::Ty;
 use crate::values::types::type_instance_id::TypeInstanceId;
 
 #[doc(hidden)]
-#[derive(Allocative, Ord, PartialOrd, Debug)]
-pub struct TyEnumData {
+#[derive(Allocative, Ord, PartialOrd, Debug, Pagable)]
+pub(crate) struct TyEnumData {
     /// Name of the enum type.
-    pub(crate) name: String,
+    pub(super) name: String,
     /// Globally unique id of the enum type.
     // Id must be last so `Ord` is deterministic.
-    pub(crate) id: TypeInstanceId,
+    pub(super) id: TypeInstanceId,
     /// Type of enum variant.
-    pub(crate) ty_enum_value: Ty,
+    pub(super) ty_enum_value: Ty,
     /// Type of enum type value.
-    pub(crate) ty_enum_type: Ty,
+    pub(super) ty_enum_type: Ty,
 }
 
 impl PartialEq for TyEnumData {

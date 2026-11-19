@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.dex;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import java.util.regex.Pattern;
@@ -20,6 +21,7 @@ import java.util.regex.Pattern;
  * <p>We use this to determine if a class must be placed in our primary dex. It supports prefix,
  * suffix, substring, regular expression and exact matches.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class ClassNameFilter {
   private static final Character PREFIX_MARKER = '^';
   private static final Character SUFFIX_MARKER = '^';
@@ -51,7 +53,7 @@ public class ClassNameFilter {
    *
    * <p>patterns are substrings by default, but {@code ^} at the start or end of a pattern anchors
    * it to the start or end of the class name. {@code ^-} at the start of a pattern specifies that
-   * pattern is a regular expression.
+   * pattern is a regular expression, matched from the start of the class name.
    *
    * @param patterns Patterns to include in the filter.
    * @return A new filter.
@@ -94,7 +96,7 @@ public class ClassNameFilter {
     }
 
     for (Pattern pattern : regularExpressions) {
-      if (pattern.matcher(internalClassName).find()) {
+      if (pattern.matcher(internalClassName).lookingAt()) {
         return true;
       }
     }

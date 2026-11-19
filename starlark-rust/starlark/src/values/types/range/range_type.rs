@@ -22,6 +22,7 @@ use std::num::NonZeroI32;
 use allocative::Allocative;
 use dupe::Dupe;
 use starlark_derive::NoSerialize;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_value;
 
 use crate as starlark;
@@ -29,15 +30,24 @@ use crate::any::ProvidesStaticType;
 use crate::starlark_simple_value;
 use crate::typing::Ty;
 use crate::values::Heap;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueError;
-use crate::values::ValueLike;
 use crate::values::index::convert_index;
 use crate::values::index::convert_slice_indices;
 
 /// Representation of `range()` type.
-#[derive(Clone, Copy, Dupe, Debug, ProvidesStaticType, NoSerialize, Allocative)]
+#[derive(
+    Clone,
+    Copy,
+    Dupe,
+    Debug,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
 pub struct Range {
     start: i32,
     stop: i32,
@@ -119,16 +129,18 @@ impl<'v> StarlarkValue<'v> for Range {
             return Ok(0);
         }
 
-        // Convert range and step to `u64`
+        // Compute the distance and step magnitude in `i64`. The endpoints span up to
+        // the full `i32` range, so a `wrapping_sub` in `i32` would wrap and then
+        // sign-extend to a bogus `u64`.
         let (dist, step) = if self.step.get() >= 0 {
             (
-                self.stop.wrapping_sub(self.start) as u64,
+                (self.stop as i64 - self.start as i64) as u64,
                 self.step.get() as u64,
             )
         } else {
             (
-                self.start.wrapping_sub(self.stop) as u64,
-                self.step.get().wrapping_neg() as u64,
+                (self.start as i64 - self.stop as i64) as u64,
+                (self.step.get() as i64).unsigned_abs(),
             )
         };
         let i = ((dist - 1) / step + 1) as i32;
@@ -139,18 +151,16 @@ impl<'v> StarlarkValue<'v> for Range {
         }
     }
 
-    fn at(&self, index: Value, heap: &'v Heap) -> crate::Result<Value<'v>> {
+    fn at(&self, index: i32) -> crate::Result<i32> {
         let index = convert_index(index, self.length()?)?;
-        // Must not overflow if `length` is computed correctly
-        Ok(heap.alloc(self.start + self.step.get() * index))
+        // The element itself fits in `i32`, but `step * index` can leave the range
+        // on the way there, so compute in `i64` like `slice` and the iterator do.
+        let element = self.start as i64 + self.step.get() as i64 * index as i64;
+        i32::try_from(element).map_err(|_| ValueError::IntegerOverflow.into())
     }
 
-    fn equals(&self, other: Value) -> crate::Result<bool> {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            self.equals_range(other)
-        } else {
-            Ok(false)
-        }
+    fn equals(&self, other: &Self) -> crate::Result<bool> {
+        self.equals_range(other)
     }
 
     fn slice(
@@ -158,45 +168,63 @@ impl<'v> StarlarkValue<'v> for Range {
         start: Option<Value>,
         stop: Option<Value>,
         stride: Option<Value>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
         let (start, stop, step) = convert_slice_indices(self.length()?, start, stop, stride)?;
-        return Ok(heap.alloc(Range {
-            start: self
-                .start
-                .checked_add(
-                    start
-                        .checked_mul(self.step.get())
-                        .ok_or(ValueError::IntegerOverflow)?,
-                )
-                .ok_or(ValueError::IntegerOverflow)?,
-            stop: self
-                .start
-                .checked_add(
-                    stop.checked_mul(self.step.get())
-                        .ok_or(ValueError::IntegerOverflow)?,
-                )
-                .ok_or(ValueError::IntegerOverflow)?,
-            step: NonZeroI32::new(
-                step.checked_mul(self.step.get())
-                    .ok_or(ValueError::IntegerOverflow)?,
-            )
-            .unwrap(),
-        }));
+        // The stop index is one past the last element, so the raw endpoint can leave `i32`
+        // although every element of the result is an element of `self`: compute in `i64` and
+        // build an equal range that fits.
+        let self_step = i64::from(self.step.get());
+        let first = i64::from(self.start) + i64::from(start) * self_step;
+        let end = i64::from(self.start) + i64::from(stop) * self_step;
+        let step = i64::from(step) * self_step;
+        let len = if step > 0 {
+            if end > first {
+                (end - first - 1) / step + 1
+            } else {
+                0
+            }
+        } else if first > end {
+            (first - end - 1) / (-step) + 1
+        } else {
+            0
+        };
+        let range = if len == 0 {
+            Range::new(0, 0, NonZeroI32::new(1).unwrap())
+        } else {
+            let last = first + (len - 1) * step;
+            let first = i32::try_from(first).map_err(|_| ValueError::IntegerOverflow)?;
+            let last = i32::try_from(last).map_err(|_| ValueError::IntegerOverflow)?;
+            if len == 1 {
+                if last < i32::MAX {
+                    Range::new(last, last + 1, NonZeroI32::new(1).unwrap())
+                } else {
+                    Range::new(last, last - 1, NonZeroI32::new(-1).unwrap())
+                }
+            } else {
+                let step = i32::try_from(step).map_err(|_| ValueError::IntegerOverflow)?;
+                // `last` is an element of `self` and `self.stop` lies beyond it, so this fits.
+                let stop = last
+                    .checked_add(step.signum())
+                    .ok_or(ValueError::IntegerOverflow)?;
+                Range::new(first, stop, NonZeroI32::new(step).unwrap())
+            }
+        };
+        Ok(heap.alloc(range).to_value())
     }
 
-    unsafe fn iterate(&self, me: Value<'v>, _heap: &'v Heap) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(me)
     }
 
-    unsafe fn iter_next(&self, index: usize, heap: &'v Heap) -> Option<Value<'v>> {
+    unsafe fn iter_next(&self, index: usize, heap: Heap<'v>) -> Option<Value<'v>> {
         let rem_range = self.rem_range_at_iter(index)?;
 
         if !rem_range.to_bool() {
             return None;
         }
 
-        Some(heap.alloc(rem_range.start))
+        Some(heap.alloc(rem_range.start).to_value())
     }
 
     unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
@@ -233,13 +261,13 @@ impl<'v> StarlarkValue<'v> for Range {
             if other < self.start || other >= self.stop {
                 return Ok(false);
             }
-            Ok((other.wrapping_sub(self.start) as u64).is_multiple_of(self.step.get() as u64))
+            Ok(((other as i64 - self.start as i64) as u64).is_multiple_of(self.step.get() as u64))
         } else {
             if other > self.start || other <= self.stop {
                 return Ok(false);
             }
-            Ok((self.start.wrapping_sub(other) as u64)
-                .is_multiple_of(self.step.get().wrapping_neg() as u64))
+            Ok(((self.start as i64 - other as i64) as u64)
+                .is_multiple_of((self.step.get() as i64).unsigned_abs()))
         }
     }
 
@@ -261,7 +289,7 @@ mod tests {
 
     use crate::assert;
     use crate::values::Heap;
-    use crate::values::StarlarkValue;
+    use crate::values::StarlarkType;
     use crate::values::Value;
     use crate::values::range::Range;
     use crate::values::types::int::inline_int::InlineInt;
@@ -306,6 +334,34 @@ mod tests {
         assert_eq!(Some(1), range(4, 14, 10).length().ok());
     }
 
+    /// A slice of a range near the `i32` limits is an equal range that fits.
+    #[test]
+    fn test_slice_near_i32_limits() {
+        assert::is_true("range(0, 2147483647, 2)[:] == range(0, 2147483647, 2)");
+        assert::eq("len(range(0, 2147483647, 2)[1:])", "1073741823");
+        assert::is_true("range(-2147483648, -2147483647)[::-1] == range(-2147483648, -2147483647)");
+        assert::eq("len(range(5, 5, 2)[::2147483647])", "0");
+        assert::eq("list(range(10)[2:8:3])", "[2, 5]");
+        assert::eq("list(range(10)[::-3])", "[9, 6, 3, 0]");
+        assert::eq("list(range(2147483646, 2147483647)[:])", "[2147483646]");
+        assert::eq("list(range(3, 10, 3)[1:2])", "[6]");
+    }
+
+    /// Indexing an element whose `step * index` product leaves `i32`, even though the
+    /// element itself is in range.
+    #[test]
+    fn test_at_near_i32_limits() {
+        assert::eq(
+            "range(-2000000000, 2000000000, 1000000)[3999]",
+            "1999000000",
+        );
+        assert::eq("range(-2147483648, 2147483647, 3)[1000000000]", "852516352");
+        assert::eq(
+            "range(2000000000, -2000000000, -1000000)[3999]",
+            "-1999000000",
+        );
+    }
+
     #[test]
     fn eq() {
         assert_eq!(range_stop(0), range(2, 1, 3));
@@ -328,27 +384,28 @@ mod tests {
         }
         assert_eq!(ranges.len(), 294); // Assert we don't accidentally take too long
 
-        let heap = Heap::new();
-        for x in &ranges {
-            let x = heap.alloc_simple(*x);
-            let full: Vec<Value> = x.iterate(&heap).unwrap().collect();
-            assert_eq!(x.length().unwrap(), full.len() as i32);
-            for (i, v) in full.iter().enumerate() {
-                assert_eq!(x.at(heap.alloc(i), &heap).unwrap(), *v);
-            }
-        }
-
-        // Takes 294^2 steps - but completes instantly
-        for x in &ranges {
-            for y in &ranges {
+        Heap::temp(|heap| {
+            for x in &ranges {
                 let x = heap.alloc_simple(*x);
-                let y = heap.alloc_simple(*y);
-                assert_eq!(
-                    x == y,
-                    Iterator::eq(x.iterate(&heap).unwrap(), y.iterate(&heap).unwrap())
-                )
+                let full: Vec<Value> = x.iterate(heap).unwrap().collect();
+                assert_eq!(x.length().unwrap(), full.len() as i32);
+                for (i, v) in full.iter().enumerate() {
+                    assert_eq!(x.at(heap.alloc(i).to_value(), heap).unwrap(), *v);
+                }
             }
-        }
+
+            // Takes 294^2 steps - but completes instantly
+            for x in &ranges {
+                for y in &ranges {
+                    let x = heap.alloc_simple(*x);
+                    let y = heap.alloc_simple(*y);
+                    assert_eq!(
+                        x == y,
+                        Iterator::eq(x.iterate(heap).unwrap(), y.iterate(heap).unwrap())
+                    )
+                }
+            }
+        });
     }
 
     #[test]
@@ -361,5 +418,24 @@ mod tests {
             &InlineInt::MAX.to_string(),
             &format!("len(range({}, -1))", InlineInt::MIN),
         );
+    }
+
+    #[test]
+    fn test_length_spanning_full_i32_range() {
+        // `stop - start` exceeds `i32::MAX` here, so the distance must be computed in
+        // a wider type. The resulting length still fits in `i32`.
+        assert_eq!(Some(4294968), range(i32::MIN, i32::MAX, 1000).length().ok());
+        assert_eq!(Some(613566757), range(i32::MIN, i32::MAX, 7).length().ok());
+        assert_eq!(
+            Some(4294968),
+            range(i32::MAX, i32::MIN, -1000).length().ok()
+        );
+    }
+
+    #[test]
+    fn test_in_spanning_full_i32_range() {
+        // `5 == -2147483648 + 7 * 306783379`, so it is a member.
+        assert::is_true("5 in range(-2147483648, 2147483647, 7)");
+        assert::is_true("6 not in range(-2147483648, 2147483647, 7)");
     }
 }

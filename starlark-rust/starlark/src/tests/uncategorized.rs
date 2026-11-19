@@ -21,6 +21,9 @@ use std::fmt::Write;
 use allocative::Allocative;
 use anyhow::Context;
 use derive_more::Display;
+use either::Either;
+use starlark_derive::StarlarkPagable;
+use starlark_derive::StarlarkRepresentations;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
 use starlark_syntax::golden_test_template::golden_test_template;
@@ -43,12 +46,23 @@ use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::Heap;
 use crate::values::NoSerialize;
+use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Trace;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::list_or_tuple::UnpackListOrTuple;
+use crate::values::ValueError;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
+use crate::values::dict::DictType;
+use crate::values::layout::heap::name::StarlarkTestHeapName;
+use crate::values::list::ListOf;
+use crate::values::list_or_tuple::ListOrTupleType;
 use crate::values::none::NoneType;
+use crate::values::string::StarlarkStr;
+use crate::values::tuple::TupleOf;
+use crate::values::type_expr::StarlarkTypeExpr;
+use crate::values::types::int::view::IntView;
 
 #[test]
 fn alias_test() {
@@ -287,23 +301,35 @@ xs[1] += 1
 fn test_radd() {
     // We want select append to always produce a select, much like the
     // Bazel/Buck `select` function.
-    #[derive(Debug, Display, Clone, ProvidesStaticType, NoSerialize, Allocative)]
+    #[derive(
+        Debug,
+        Display,
+        Clone,
+        ProvidesStaticType,
+        NoSerialize,
+        Allocative,
+        StarlarkPagable
+    )]
     #[display("${:?}", _0)]
     struct Select(Vec<i32>);
     starlark_simple_value!(Select);
 
     impl<'v> UnpackValue<'v> for Select {
+        type Type = Either<Select, ListOrTupleType<IntView<'v>>>;
         type Error = crate::Error;
 
-        fn unpack_value_impl(value: Value<'v>) -> crate::Result<Option<Self>> {
-            match Select::from_value(value) {
-                Some(x) => Ok(Some(x.clone())),
-                None => {
-                    let Some(list_or_tuple) = UnpackListOrTuple::unpack_value(value)? else {
-                        return Ok(None);
-                    };
-                    Ok(Some(Select(list_or_tuple.items)))
-                }
+        fn unpack(
+            _value: ValueOf<'v, Self::Type>,
+            get: <Self::Type as StarlarkTypeExpr<'v>>::Get,
+        ) -> crate::Result<Self> {
+            match get {
+                Either::Left(x) => Ok(x.as_ref().clone()),
+                Either::Right(items) => Ok(Select(
+                    items
+                        .map_either(ListOf::try_items::<IntView>, TupleOf::try_items::<IntView>)
+                        .map(|x| x?.to_integer())
+                        .collect::<crate::Result<_>>()?,
+                )),
             }
         }
     }
@@ -317,13 +343,13 @@ fn test_radd() {
 
     #[starlark_value(type = "select")]
     impl<'v> StarlarkValue<'v> for Select {
-        fn radd(&self, lhs: Value<'v>, heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
+        fn radd(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
             let lhs: Select = Select::unpack_value(lhs).unwrap().unwrap();
-            Some(Ok(heap.alloc(lhs.add(self))))
+            Some(Ok(heap.alloc(lhs.add(self)).to_value()))
         }
-        fn add(&self, rhs: Value<'v>, heap: &'v Heap) -> Option<crate::Result<Value<'v>>> {
+        fn add(&self, rhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
             let rhs: Select = UnpackValue::unpack_value(rhs).unwrap().unwrap();
-            Some(Ok(heap.alloc(self.clone().add(&rhs))))
+            Some(Ok(heap.alloc(self.clone().add(&rhs)).to_value()))
         }
         fn collect_repr(&self, collector: &mut String) {
             write!(collector, "{self}").unwrap()
@@ -332,8 +358,16 @@ fn test_radd() {
 
     #[starlark_module]
     fn module(build: &mut GlobalsBuilder) {
-        fn select(xs: UnpackListOrTuple<i32>) -> anyhow::Result<Select> {
-            Ok(Select(xs.items))
+        fn select<'v>(
+            xs: ValueOf<'v, ListOrTupleType<IntView<'v>>>,
+            heap: Heap<'v>,
+        ) -> anyhow::Result<ValueOf<'v, Select>> {
+            let select = Select(
+                xs.try_items::<i32>()
+                    .collect::<crate::Result<_>>()
+                    .map_err(|e| e.into_anyhow())?,
+            );
+            Ok(ValueOf::alloc(heap, select))
         }
     }
 
@@ -537,47 +571,53 @@ fn test_module_visibility_preserved_by_evaluator() -> crate::Result<()> {
 
     let globals = Globals::standard();
 
-    let import = Module::new();
-    import.set("a", Value::testing_new_int(1));
-    import.set_private(
-        import.frozen_heap().alloc_str_intern("b"),
-        Value::testing_new_int(2),
-    );
-
-    {
-        let mut eval = Evaluator::new(&import);
-        let ast = AstModule::parse("prelude.bzl", "c = 3".to_owned(), &Dialect::Standard).unwrap();
-        // This mutates the original module named `import`
-        let _: Value = eval.eval_module(ast, &globals)?;
-    }
-    let frozen_import = import.freeze()?;
-
-    let m_uses_public = Module::new();
-    m_uses_public.import_public_symbols(&frozen_import);
-    {
-        let mut eval = Evaluator::new(&m_uses_public);
-        let ast = AstModule::parse("code.bzl", "d = a".to_owned(), &Dialect::Standard).unwrap();
-        let _: Value = eval.eval_module(ast, &globals)?;
-    }
-
-    let m_uses_private = Module::new();
-    m_uses_private.import_public_symbols(&frozen_import);
-    {
-        let mut eval = Evaluator::new(&m_uses_private);
-        let ast = AstModule::parse("code.bzl", "d = b".to_owned(), &Dialect::Standard).unwrap();
-        let err = eval
-            .eval_module(ast, &globals)
-            .expect_err("Evaluation should have failed using a private symbol");
-
-        let msg = err.to_string();
-        let expected_msg = "Variable `b` not found";
-        assert!(
-            msg.contains(expected_msg),
-            "Expected `{expected_msg}` to be in error message `{msg}`"
+    Module::with_temp_heap(|import| {
+        import.set("a", Value::testing_new_int(1));
+        import.set_private(
+            import.frozen_heap(|fh, edge| edge.rebrand(fh.alloc("b"))),
+            Value::testing_new_int(2),
         );
-    }
 
-    Ok(())
+        {
+            let mut eval = Evaluator::new(&import);
+            let ast =
+                AstModule::parse("prelude.bzl", "c = 3".to_owned(), &Dialect::Standard).unwrap();
+            // This mutates the original module named `import`
+            let _: Value = eval.eval_module(ast, &globals)?;
+        }
+        let frozen_import = import.freeze_named(StarlarkTestHeapName::frozen_heap_name())?;
+
+        Module::with_temp_heap(|m_uses_public| {
+            m_uses_public.import_public_symbols(&frozen_import);
+            {
+                let mut eval = Evaluator::new(&m_uses_public);
+                let ast =
+                    AstModule::parse("code.bzl", "d = a".to_owned(), &Dialect::Standard).unwrap();
+                let _: Value = eval.eval_module(ast, &globals)?;
+            }
+            crate::Result::Ok(())
+        })?;
+
+        Module::with_temp_heap(|m_uses_private| {
+            m_uses_private.import_public_symbols(&frozen_import);
+            {
+                let mut eval = Evaluator::new(&m_uses_private);
+                let ast =
+                    AstModule::parse("code.bzl", "d = b".to_owned(), &Dialect::Standard).unwrap();
+                let err = eval
+                    .eval_module(ast, &globals)
+                    .expect_err("Evaluation should have failed using a private symbol");
+
+                let msg = err.to_string();
+                let expected_msg = "Variable `b` not found";
+                assert!(
+                    msg.contains(expected_msg),
+                    "Expected `{expected_msg}` to be in error message `{msg}`"
+                );
+            }
+            Ok(())
+        })
+    })
 }
 
 #[test]
@@ -586,36 +626,36 @@ fn test_cancellation() -> crate::Result<()> {
     // module with ScopeData preserves the visibility of symbols.
 
     let globals = Globals::standard();
-    let import = Module::new();
+    Module::with_temp_heap(|import| {
+        let mut eval = Evaluator::new(&import);
+        eval.set_check_cancelled(Box::new(|| true));
 
-    let mut eval = Evaluator::new(&import);
-    eval.set_check_cancelled(Box::new(|| true));
+        let ast = AstModule::parse(
+            "prelude.bzl",
+            // Note that the exact range here is unimportant, so long as it's small enough to not trigger the "infrequent" checks
+            "def loop():\n    for i in range(10):\n       pass\nloop()".to_owned(),
+            &Dialect::Standard,
+        )
+        .unwrap();
+        eval.eval_module(ast, &globals).unwrap_err();
 
-    let ast = AstModule::parse(
-        "prelude.bzl",
-        // Note that the exact range here is unimportant, so long as it's small enough to not trigger the "infrequent" checks
-        "def loop():\n    for i in range(10):\n       pass\nloop()".to_owned(),
-        &Dialect::Standard,
-    )
-    .unwrap();
-    eval.eval_module(ast, &globals).unwrap();
+        let ast = AstModule::parse(
+            "prelude.bzl",
+            // Note that the exact range here is unimportant, so long as it's large enough to trigger the "infrequent" checks
+            "def loop():\n    for i in range(1000000):\n       pass\nloop()".to_owned(),
+            &Dialect::Standard,
+        )
+        .unwrap();
+        let err = eval.eval_module(ast, &globals);
 
-    let ast = AstModule::parse(
-        "prelude.bzl",
-        // Note that the exact range here is unimportant, so long as it's large enough to trigger the "infrequent" checks
-        "def loop():\n    for i in range(1000000):\n       pass\nloop()".to_owned(),
-        &Dialect::Standard,
-    )
-    .unwrap();
-    let err = eval.eval_module(ast, &globals);
+        let expected = "Evaluation cancelled";
+        let err_msg = format!("{err:#?}");
+        if !err_msg.contains(expected) {
+            panic!("Error:\n{err:#?}\nExpected:\n{expected:?}")
+        }
 
-    let expected = "Evaluation cancelled";
-    let err_msg = format!("{err:#?}");
-    if !err_msg.contains(expected) {
-        panic!("Error:\n{err:#?}\nExpected:\n{expected:?}")
-    }
-
-    Ok(())
+        Ok(())
+    })
 }
 
 #[test]
@@ -750,37 +790,65 @@ fn test_label_assign() {
     #[display("{:?}", self)]
     struct Wrapper<'v>(RefCell<SmallMap<String, Value<'v>>>);
 
+    #[derive(Debug, Clone, Copy, StarlarkRepresentations)]
+    enum WrapperView<'v> {
+        Unfrozen(ValueTyped<'v, Wrapper<'v>>),
+        Frozen(ValueTyped<'v, FrozenWrapper>),
+    }
+
     #[starlark_value(type = "wrapper")]
-    impl<'v> StarlarkValue<'v> for Wrapper<'v> {
-        fn get_attr(&self, attribute: &str, _heap: &'v Heap) -> Option<Value<'v>> {
-            Some(*self.0.borrow().get(attribute).unwrap())
+    impl<'v> StarlarkType<'v> for WrapperView<'v> {
+        fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+            match self {
+                WrapperView::Unfrozen(this) => Some(*this.0.borrow().get(attribute).unwrap()),
+                WrapperView::Frozen(_) => None,
+            }
         }
 
         fn set_attr(&self, attribute: &str, new_value: Value<'v>) -> starlark::Result<()> {
-            self.0.borrow_mut().insert(attribute.to_owned(), new_value);
-            Ok(())
+            match self {
+                WrapperView::Unfrozen(this) => {
+                    this.0.borrow_mut().insert(attribute.to_owned(), new_value);
+                    Ok(())
+                }
+                WrapperView::Frozen(_) => Err(starlark::Error::new_other(
+                    ValueError::CannotMutateImmutableValue,
+                )),
+            }
         }
     }
 
-    #[derive(Debug, ProvidesStaticType, Display, NoSerialize, Allocative)]
+    #[starlark_value]
+    impl<'v> StarlarkValue<'v> for Wrapper<'v> {
+        type Type = WrapperView<'v>;
+    }
+
+    #[derive(
+        Debug,
+        ProvidesStaticType,
+        Display,
+        NoSerialize,
+        Allocative,
+        StarlarkPagable
+    )]
     #[display("FrozenWrapper")]
     struct FrozenWrapper;
 
-    #[starlark_value(type = "wrapper")]
+    #[starlark_value]
     impl<'v> StarlarkValue<'v> for FrozenWrapper {
-        type Canonical = Wrapper<'v>;
+        type Type = WrapperView<'v>;
     }
 
-    impl<'v> Freeze for Wrapper<'v> {
-        type Frozen = FrozenWrapper;
-        fn freeze(self, _freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+    impl<'v> Freeze<'v> for Wrapper<'v> {
+        type Frozen<'fv> = FrozenWrapper;
+        fn freeze<'fv>(self, _freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
             Ok(FrozenWrapper)
         }
     }
 
     #[starlark_module]
     fn module(builder: &mut GlobalsBuilder) {
-        fn wrapper<'v>(heap: &'v Heap) -> anyhow::Result<Value<'v>> {
+        fn wrapper<'v>(heap: Heap<'v>) -> anyhow::Result<Value<'v>> {
             Ok(heap.alloc_complex(Wrapper(RefCell::new(SmallMap::new()))))
         }
     }
@@ -874,6 +942,28 @@ xs = []
 xs[xs] = xs
 "#,
         "Expected `int`, but got",
+    );
+}
+
+#[test]
+fn test_str_index_and_in_of_another_type() {
+    assert::fail(
+        r#"
+def at(s, i):
+    return s[i]
+
+at("abc", None)
+"#,
+        "Expected `int`, but got `NoneType",
+    );
+    assert::fail(
+        r#"
+def is_in(x, s):
+    return x in s
+
+is_in(1, "abc")
+"#,
+        "Expected `str`, but got `int",
     );
 }
 
@@ -977,13 +1067,20 @@ def animal(id):
     }
 animal("Joe")
 "#;
-    let m = Module::new();
-    let globals = Globals::standard();
-    let mut eval = Evaluator::new(&m);
-    let ast = AstModule::parse("code.bzl", code.to_owned(), &Dialect::Standard).unwrap();
-    let res: Value = eval.eval_module(ast, &globals).unwrap();
-    let animal = SmallMap::<String, Value>::unpack_value(res).unwrap();
-    println!("animal = {animal:?}");
+    Module::with_temp_heap(|m| {
+        let globals = Globals::standard();
+        let mut eval = Evaluator::new(&m);
+        let ast = AstModule::parse("code.bzl", code.to_owned(), &Dialect::Standard).unwrap();
+        let res: Value = eval.eval_module(ast, &globals).unwrap();
+        let animal: SmallMap<&str, Value> = ValueOf::<DictType<StarlarkStr, Value>>::new_err(res)
+            .unwrap()
+            .try_items::<&str, Value>()
+            .collect::<crate::Result<_>>()
+            .unwrap();
+        println!("animal = {animal:?}");
+        crate::Result::Ok(())
+    })
+    .unwrap();
 }
 
 #[test]
@@ -1012,7 +1109,10 @@ fn test_fuzzer_59839() {
     let src = "\"{20000000000000000396}\".format()";
     let ast = AstModule::parse("hello_world.star", src.to_owned(), &Dialect::Standard).unwrap();
     let globals: Globals = Globals::standard();
-    let module: Module = Module::new();
-    let mut eval: Evaluator = Evaluator::new(&module);
-    assert!(eval.eval_module(ast, &globals).is_err());
+    Module::with_temp_heap(|module| {
+        let mut eval: Evaluator = Evaluator::new(&module);
+        assert!(eval.eval_module(ast, &globals).is_err());
+        crate::Result::Ok(())
+    })
+    .unwrap();
 }

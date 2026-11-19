@@ -3,6 +3,17 @@
 {
   "other//": {
     "aaa.bbb": "ccc",
-    "xxx.yyy": "zzz"
+    "xxx.yyy": "zzz",
+    "visibility": [],
+    "within_view": [
+      "PUBLIC"
+    ],
+    "visibility_cap": [
+      "PUBLIC"
+    ],
+    "within_view_cap": [
+      "PUBLIC"
+    ],
+    "visibility_intersection": []
   }
 }

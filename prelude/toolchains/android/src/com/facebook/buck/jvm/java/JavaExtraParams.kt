@@ -16,6 +16,11 @@ import com.facebook.buck.jvm.java.CompileToJarStepFactory.ExtraParams
 data class JavaExtraParams(
     val resolvedJavacOptions: ResolvedJavacOptions,
     val addAnnotationPath: Boolean,
+    /**
+     * Only safe where javac does not own the rule's jar, since a skipped invocation writes no
+     * output.
+     */
+    val skipIfNoCompilationUnits: Boolean = false,
 ) : ExtraParams {
   companion object {
     @JvmStatic
@@ -29,6 +34,15 @@ data class JavaExtraParams(
         addAnnotationPath: Boolean,
     ): JavaExtraParams {
       return JavaExtraParams(resolvedJavacOptions, addAnnotationPath)
+    }
+
+    @JvmStatic
+    fun of(
+        resolvedJavacOptions: ResolvedJavacOptions,
+        addAnnotationPath: Boolean,
+        skipIfNoCompilationUnits: Boolean,
+    ): JavaExtraParams {
+      return JavaExtraParams(resolvedJavacOptions, addAnnotationPath, skipIfNoCompilationUnits)
     }
   }
 }

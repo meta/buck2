@@ -8,31 +8,33 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::file_ops::dice::FileChangeTracker;
-use buck2_common::ignores::ignore_set::IgnoreSet;
+use buck2_common::file_ops::baseline::FileSystemBaseline;
+use buck2_common::file_ops::baseline::SetFileSystemBaseline;
+use buck2_common::file_ops::io::FileChangeTracker;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
+use buck2_core::fs::i_project_rel_path::IProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::rollout_percentage::RolloutPercentage;
-use buck2_error::BuckErrorContext;
+use buck2_error::internal_error;
 use buck2_events::dispatch::span_async;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_util::process::async_background_command;
 use dice::DiceTransactionUpdater;
-use tracing::debug;
+use dupe::Dupe;
 use tracing::info;
 use watchman_client::expr::Expr;
 use watchman_client::prelude::Connector;
 use watchman_client::prelude::FileType;
 
+use crate::dep_files::DepFileCache;
 use crate::file_watcher::FileWatcher;
+use crate::file_watcher::SyncOutcome;
+use crate::ignores::FileWatcherIgnores;
 use crate::mergebase::Mergebase;
 use crate::stats::FileWatcherStats;
 use crate::watchman::core::SyncableQuery;
@@ -43,16 +45,15 @@ use crate::watchman::core::WatchmanKind;
 use crate::watchman::utils::find_first_valid_parent;
 
 struct WatchmanQueryProcessor {
-    // FIXME(JakobDegen): Storing these values statically is completely broken. See
-    // `tests/e2e/cells/test_file_watcher_resolution:test_changing_cell_location_bug` for a repro of
-    // a bug.
-    cells: CellResolver,
-    ignore_specs: HashMap<CellName, IgnoreSet>,
+    ignores: FileWatcherIgnores,
     empty_on_fresh_instance: bool,
     report_global_rev: bool,
     last_mergebase: Option<String>,
     last_mergebase_global_rev: Option<u64>,
     last_mergebase_timestamp: Option<u64>,
+    dep_file_cache: Arc<dyn DepFileCache>,
+    /// What the changes recorded on the updater are relative to.
+    baseline: FileSystemBaseline,
 }
 
 /// Used in process_one_change
@@ -84,8 +85,11 @@ impl WatchmanQueryProcessor {
                     // If we error out here then we might miss other changes. This seems like
                     // it shouldn't happen, since the empty path should always be a valid path.
                     let path = find_first_valid_parent(&ev.path)
-                        .with_buck_error_context(|| {
-                            format!("Invalid path had no valid parent: `{}`", ev.path.display())
+                        .ok_or_else(|| {
+                            internal_error!(
+                                "Invalid path had no valid parent: `{}`",
+                                ev.path.display()
+                            )
                         })
                         .unwrap();
 
@@ -98,6 +102,7 @@ impl WatchmanQueryProcessor {
 
         let stats = stats.finish();
         handler.write_to_dice(&mut ctx)?;
+        ctx.set_file_system_baseline(self.baseline.dupe())?;
 
         Ok((stats, ctx))
     }
@@ -109,22 +114,21 @@ impl WatchmanQueryProcessor {
         handler: &mut FileChangeTracker,
         stats: &mut FileWatcherStats,
     ) -> buck2_error::Result<()> {
-        let cell_path = self.cells.get_cell_path(path);
+        // Watchman cookie files are synchronization markers, not real source changes.
+        if crate::is_watchman_cookie(path) {
+            stats.add_ignored(1);
+            return Ok(());
+        }
 
-        let ignore = self
-            .ignore_specs
-            .get(&cell_path.cell())
-            // This shouldn't ever really happen. However, because of the bugs caused by just
-            // storing the `CellResolver` in the watcher permanently, sometimes it can, so we just
-            // default to not ignoring the file in that case
-            .is_some_and(|ignore| ignore.is_match(cell_path.path()));
+        let path = IProjectRelativePath::intern_directly(&path);
+
+        let ignore = self.ignores.is_ignored(path);
 
         info!("Watchman: {:?} (ignore = {})", ev, ignore);
 
         if ignore {
             stats.add_ignored(1);
         } else {
-            let cell_path_str = cell_path.to_string();
             let log_kind;
             let log_event;
 
@@ -134,15 +138,15 @@ impl WatchmanQueryProcessor {
                         log_kind = buck2_data::FileWatcherKind::File;
                         match typ {
                             WatchmanEventType::Modify => {
-                                handler.file_contents_changed(cell_path);
+                                handler.file_contents_changed(path);
                                 log_event = buck2_data::FileWatcherEventType::Modify;
                             }
                             WatchmanEventType::Create => {
-                                handler.file_added_or_removed(cell_path);
+                                handler.file_added_or_removed(path);
                                 log_event = buck2_data::FileWatcherEventType::Create;
                             }
                             WatchmanEventType::Delete => {
-                                handler.file_added_or_removed(cell_path);
+                                handler.file_added_or_removed(path);
                                 log_event = buck2_data::FileWatcherEventType::Delete;
                             }
                         }
@@ -151,15 +155,15 @@ impl WatchmanQueryProcessor {
                         log_kind = buck2_data::FileWatcherKind::Directory;
                         match typ {
                             WatchmanEventType::Modify => {
-                                handler.dir_entries_changed_for_watchman_bug(cell_path);
+                                handler.dir_entries_changed_for_watchman_bug(path);
                                 log_event = buck2_data::FileWatcherEventType::Modify;
                             }
                             WatchmanEventType::Create => {
-                                handler.dir_added_or_removed(cell_path);
+                                handler.dir_added_or_removed(path);
                                 log_event = buck2_data::FileWatcherEventType::Create;
                             }
                             WatchmanEventType::Delete => {
-                                handler.dir_added_or_removed(cell_path);
+                                handler.dir_added_or_removed(path);
                                 log_event = buck2_data::FileWatcherEventType::Delete;
                             }
                         }
@@ -168,19 +172,15 @@ impl WatchmanQueryProcessor {
                         log_kind = buck2_data::FileWatcherKind::Symlink;
                         match typ {
                             WatchmanEventType::Modify => {
-                                handler.file_contents_changed(cell_path);
+                                handler.file_contents_changed(path);
                                 log_event = buck2_data::FileWatcherEventType::Modify;
                             }
                             WatchmanEventType::Create => {
-                                debug!(
-                                    "New symlink detected (source symlinks are not supported): {}",
-                                    cell_path
-                                );
-                                handler.file_added_or_removed(cell_path);
+                                handler.file_added_or_removed(path);
                                 log_event = buck2_data::FileWatcherEventType::Create;
                             }
                             WatchmanEventType::Delete => {
-                                handler.file_added_or_removed(cell_path);
+                                handler.file_added_or_removed(path);
                                 log_event = buck2_data::FileWatcherEventType::Delete;
                             }
                         }
@@ -190,11 +190,11 @@ impl WatchmanQueryProcessor {
                     log_kind = buck2_data::FileWatcherKind::Directory;
                     log_event = buck2_data::FileWatcherEventType::Modify;
                     // FIXME(JakobDegen): Add comment explaining why this is needed.
-                    handler.dir_entries_changed_force_invalidate(cell_path);
+                    handler.dir_entries_changed_force_invalidate(path);
                 }
             };
 
-            stats.add(cell_path_str, log_event, log_kind);
+            stats.add(path, log_event, log_kind);
         }
 
         Ok(())
@@ -264,10 +264,11 @@ impl SyncableQueryProcessor for WatchmanQueryProcessor {
 
     async fn on_fresh_instance(
         &mut self,
-        ctx: DiceTransactionUpdater,
+        mut ctx: DiceTransactionUpdater,
         events: Vec<WatchmanEvent>,
         mergebase: &Option<String>,
         watchman_version: Option<String>,
+        events_since_mergebase: bool,
     ) -> buck2_error::Result<(Self::Output, DiceTransactionUpdater)> {
         let has_new_mergebase = self.last_mergebase.as_ref() != mergebase.as_ref();
 
@@ -286,7 +287,7 @@ impl SyncableQueryProcessor for WatchmanQueryProcessor {
         // We do retain dep files that were produced locally, since we don't need to fetch them as
         // they are already on disk.
         if clear_dep_files {
-            crate::dep_files::flush_non_local_dep_files();
+            self.dep_file_cache.clear_non_local();
         }
 
         self.last_mergebase = mergebase.clone();
@@ -303,11 +304,12 @@ impl SyncableQueryProcessor for WatchmanQueryProcessor {
             }
         }
 
-        // TODO(cjhopman): could probably get away with just invalidating all fs things, but that's not supported.
-        // Dropping the entire DICE map can be somewhat computationally expensive as there
-        // are a lot of destructors to run. On the other hand, we don't have to wait for
-        // it. So, we just send it off to its own thread.
-        let ctx = ctx.unstable_take();
+        self.baseline = match mergebase {
+            Some(mergebase) if events_since_mergebase => {
+                FileSystemBaseline::Revision(Arc::from(mergebase.as_str()))
+            }
+            _ => FileSystemBaseline::unique(),
+        };
 
         let mut base_stats = buck2_data::FileWatcherStats {
             fresh_instance: true,
@@ -325,6 +327,7 @@ impl SyncableQueryProcessor for WatchmanQueryProcessor {
 
         if self.empty_on_fresh_instance {
             base_stats.incomplete_events_reason = Some("Fresh instance".to_owned());
+            ctx.set_file_system_baseline(self.baseline.dupe())?;
             Ok((base_stats, ctx))
         } else {
             self.process_events_impl(ctx, events, base_stats).await
@@ -346,8 +349,8 @@ impl WatchmanFileWatcher {
     pub(crate) fn new(
         project_root: &AbsNormPath,
         root_config: &LegacyBuckConfig,
-        cells: CellResolver,
-        ignore_specs: HashMap<CellName, IgnoreSet>,
+        ignores: FileWatcherIgnores,
+        dep_file_cache: Arc<dyn DepFileCache>,
     ) -> buck2_error::Result<Self> {
         let watchman_merge_base = root_config
             .get(BuckconfigKeyRef {
@@ -381,6 +384,9 @@ impl WatchmanFileWatcher {
             })?
             .unwrap_or(false);
 
+        let dice_clear_on_mergebase_change =
+            crate::file_watcher::dice_clear_on_mergebase_change(root_config)?;
+
         let query = SyncableQuery::new(
             Connector::new(),
             project_root,
@@ -390,16 +396,18 @@ impl WatchmanFileWatcher {
                 Expr::FileType(FileType::Symlink),
             ]),
             Box::new(WatchmanQueryProcessor {
-                cells,
-                ignore_specs,
+                ignores,
                 empty_on_fresh_instance,
                 report_global_rev,
                 last_mergebase: None,
                 last_mergebase_global_rev: None,
                 last_mergebase_timestamp: None,
+                dep_file_cache,
+                baseline: FileSystemBaseline::unique(),
             }),
             watchman_merge_base,
             empty_on_fresh_instance,
+            dice_clear_on_mergebase_change,
         )?;
 
         Ok(Self { query })
@@ -411,7 +419,7 @@ impl FileWatcher for WatchmanFileWatcher {
     async fn sync(
         &self,
         dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(DiceTransactionUpdater, Mergebase)> {
+    ) -> buck2_error::Result<(DiceTransactionUpdater, Mergebase, SyncOutcome)> {
         span_async(
             buck2_data::FileWatcherStart {
                 provider: buck2_data::FileWatcherProvider::Watchman as i32,
@@ -420,7 +428,8 @@ impl FileWatcher for WatchmanFileWatcher {
                 let (stats, res) = match self.query.sync(dice).await {
                     Ok((stats, dice)) => {
                         let mergebase = Mergebase(Arc::new(stats.branched_from_revision.clone()));
-                        ((Some(stats)), Ok((dice, mergebase)))
+                        let outcome = SyncOutcome::reported_by(&stats);
+                        ((Some(stats)), Ok((dice, mergebase, outcome)))
                     }
                     Err(e) => (None, Err(e)),
                 };

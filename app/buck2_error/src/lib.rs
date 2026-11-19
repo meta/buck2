@@ -9,7 +9,6 @@
  */
 
 #![feature(error_generic_member_access)]
-#![feature(trait_alias)]
 
 pub mod any;
 pub mod classify;
@@ -22,11 +21,10 @@ mod error;
 mod exit_code;
 mod format;
 pub mod macros;
+mod paging;
 mod root;
 pub mod source_location;
 pub mod starlark_error;
-
-use std::error::Request;
 
 /// A piece of metadata to indicate whether this error is an infra or user error.
 ///
@@ -38,7 +36,10 @@ use std::error::Request;
 #[doc(inline)]
 pub use classify::Tier;
 pub use context::BuckErrorContext;
+pub use context::BuckErrorOptionContext;
+pub use context_value::ContextValue;
 pub use context_value::TypedContext;
+pub use conversion::serde::BuckErrorSerde;
 pub use error::DynLateFormat;
 pub use error::Error;
 pub use exit_code::ExitCode;
@@ -79,60 +80,10 @@ pub use buck2_data::error::ErrorTag;
 #[doc(inline)]
 pub use buck2_error_derive::Error;
 
-use crate::any::ProvidableMetadata;
-use crate::source_location::SourceLocation;
-
-/// Provide metadata about an error.
-///
-/// This is a manual alternative to deriving `buck2_error::Error`, which should be preferred if at
-/// all possible. This function has a pretty strict contract: You must call it within the `provide`
-/// implementation for an error type `E`, and must pass `E` as the type parameter.
-pub fn provide_metadata(
-    request: &mut Request<'_>,
-    tags: impl IntoIterator<Item = crate::ErrorTag>,
-    string_tags: impl IntoIterator<Item = String>,
-    source_location: SourceLocation,
-    action_error: Option<buck2_data::ActionError>,
-) {
-    let metadata = ProvidableMetadata {
-        action_error,
-        tags: tags.into_iter().collect(),
-        string_tags: string_tags.into_iter().collect(),
-        source_location,
-    };
-    Request::provide_value(request, metadata);
-}
-
 #[doc(hidden)]
 pub mod __for_macro {
-    use std::error::Error as StdError;
-
     pub use anyhow;
-    use ref_cast::RefCast;
     pub use thiserror;
 
-    use crate::any::CrateAsStdError;
     pub use crate::context_value::ContextValue;
-
-    pub trait AsDynError {
-        fn as_dyn_error<'a>(&'a self) -> &'a (dyn StdError + 'static);
-    }
-
-    impl AsDynError for dyn StdError + Sync + Send + 'static {
-        fn as_dyn_error<'a>(&'a self) -> &'a (dyn StdError + 'static) {
-            self
-        }
-    }
-
-    impl<T: StdError + 'static> AsDynError for T {
-        fn as_dyn_error<'a>(&'a self) -> &'a (dyn StdError + 'static) {
-            self
-        }
-    }
-
-    impl AsDynError for crate::Error {
-        fn as_dyn_error<'a>(&'a self) -> &'a (dyn StdError + 'static) {
-            CrateAsStdError::ref_cast(self)
-        }
-    }
 }

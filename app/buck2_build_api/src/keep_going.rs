@@ -11,36 +11,36 @@
 use dice::DiceComputations;
 use dice::UserComputationData;
 use futures::Future;
-use futures::future::BoxFuture;
+use futures::FutureExt;
 
 pub struct KeepGoing;
 
 impl KeepGoing {
-    pub fn try_compute_join_all<'a, T: Send, R: 'a, E: 'a>(
-        ctx: &'a mut DiceComputations<'_>,
-        items: impl IntoIterator<Item = T>,
-        mapper: impl for<'x> FnOnce(&'x mut DiceComputations<'a>, T) -> BoxFuture<'x, Result<R, E>>
-        + Send
-        + Sync
-        + Copy,
-    ) -> impl Future<Output = Result<Vec<R>, E>> {
+    pub fn try_compute_join_all<'a, 'd, Items, Mapper, T, R, E>(
+        ctx: &'a mut DiceComputations<'d>,
+        items: Items,
+        mapper: Mapper,
+    ) -> impl Future<Output = Result<Vec<R>, E>> + Send + use<'a, 'd, Items, Mapper, T, R, E>
+    where
+        Items: IntoIterator<Item = T>,
+        Items::IntoIter: ExactSizeIterator,
+        Mapper: for<'x> AsyncFnOnce(&'x mut DiceComputations<'d>, T) -> Result<R, E>
+            + Send
+            + Sync
+            + Copy,
+        for<'x> <Mapper as AsyncFnOnce<(&'x mut DiceComputations<'d>, T)>>::CallOnceFuture: Send,
+        T: Send,
+        R: Send,
+        E: Send,
+    {
         let keep_going = ctx.per_transaction_data().get_keep_going();
 
-        let futs = ctx.compute_many(items.into_iter().map(move |v| {
-            DiceComputations::declare_closure(
-                move |ctx: &mut DiceComputations| -> BoxFuture<Result<R, E>> { mapper(ctx, v) },
-            )
-        }));
-
-        async move {
-            Ok(if keep_going {
-                futures::future::join_all(futs)
-                    .await
-                    .into_iter()
-                    .try_collect::<Vec<_>>()?
-            } else {
-                buck2_util::future::try_join_all(futs).await?
-            })
+        if keep_going {
+            ctx.compute_join(items, mapper)
+                .map(|v| v.into_iter().try_collect::<Vec<_>>())
+                .left_future()
+        } else {
+            ctx.try_compute_join(items, mapper).right_future()
         }
     }
 }

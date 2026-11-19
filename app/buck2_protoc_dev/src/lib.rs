@@ -8,13 +8,11 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 use std::env;
 use std::ffi::OsString;
 use std::io;
 use std::path::Path;
-#[cfg(not(buck2_build))]
+#[cfg(not(buck_build))]
 use std::path::PathBuf;
 
 fn get_env(key: &str) -> Option<OsString> {
@@ -22,7 +20,7 @@ fn get_env(key: &str) -> Option<OsString> {
     env::var_os(key)
 }
 
-#[cfg(not(buck2_build))]
+#[cfg(not(buck_build))]
 unsafe fn set_var(
     var: &str,
     override_var: &str,
@@ -52,7 +50,7 @@ unsafe fn set_var(
 ///
 /// Note: repo root is expected to be a relative or absolute path to the root of the repository.
 unsafe fn maybe_set_protoc() {
-    #[cfg(not(buck2_build))]
+    #[cfg(not(buck_build))]
     {
         // `cargo build` of `buck2` does not require external `protoc` dependency
         // because it uses prebuilt bundled `protoc` binary from `protoc-bin-vendored` crate.
@@ -72,7 +70,7 @@ unsafe fn maybe_set_protoc() {
 
 /// Set $PROTOC_INCLUDE.
 unsafe fn maybe_set_protoc_include() {
-    #[cfg(not(buck2_build))]
+    #[cfg(not(buck_build))]
     {
         unsafe {
             set_var(
@@ -85,11 +83,11 @@ unsafe fn maybe_set_protoc_include() {
 }
 
 pub struct Builder {
-    tonic: tonic_build::Builder,
+    tonic: tonic_prost_build::Builder,
 }
 
 pub fn configure() -> Builder {
-    let tonic = tonic_build::configure();
+    let tonic = tonic_prost_build::configure();
     // We want to use optional everywhere
     let tonic = tonic.protoc_arg("--experimental_allow_proto3_optional");
 
@@ -121,6 +119,14 @@ impl Builder {
         }
     }
 
+    /// Sets up the PROTOC and PROTOC_INCLUDE environment variables.
+    ///
+    /// # Safety
+    ///
+    /// This function calls `std::env::set_var` which is unsafe due to potential data races
+    /// when environment variables are read concurrently from other threads. The caller must
+    /// ensure that no other threads are reading environment variables while this function
+    /// is executing, or that such concurrent access is properly synchronized.
     pub unsafe fn setup_protoc(self) -> Self {
         // It would be great if there were on the config rather than an env variables...
         unsafe { maybe_set_protoc() };
@@ -128,11 +134,10 @@ impl Builder {
         self
     }
 
-    pub fn compile(
-        self,
-        protos: &[impl AsRef<Path>],
-        includes: &[impl AsRef<Path>],
-    ) -> io::Result<()> {
+    pub fn compile<P>(self, protos: &[P], includes: &[P]) -> io::Result<()>
+    where
+        P: AsRef<Path>,
+    {
         let Self { mut tonic } = self;
 
         // Buck likes to set $OUT in a genrule, while Cargo likes to set $OUT_DIR.
@@ -148,7 +153,6 @@ impl Builder {
             println!("cargo:rerun-if-changed={}", proto_file.as_ref().display());
         }
 
-        #[allow(deprecated)] // The recommended replacement is not available yet
-        tonic.compile(protos, includes)
+        tonic.compile_protos(protos, includes)
     }
 }

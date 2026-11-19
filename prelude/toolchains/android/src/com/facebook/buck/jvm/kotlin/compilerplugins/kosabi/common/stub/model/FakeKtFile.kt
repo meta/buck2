@@ -16,22 +16,15 @@ import com.facebook.kotlin.compilerplugins.kosabi.common.stub.render.RenderedKSt
 import org.jetbrains.kotlin.com.intellij.openapi.project.Project
 import org.jetbrains.kotlin.com.intellij.openapi.vfs.VirtualFile
 import org.jetbrains.kotlin.com.intellij.psi.FileViewProvider
-import org.jetbrains.kotlin.com.intellij.psi.PsiManager
-import org.jetbrains.kotlin.com.intellij.psi.SingleRootFileViewProvider
-import org.jetbrains.kotlin.com.intellij.testFramework.LightVirtualFile
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.KtPsiFactory
 
 /**
- * [FakeKtFile] and [FakeVirtualFile] will be a part of the asttools common API. Currently this code
- * has a duplicates in other Meta compiler plugins.
- */
-
-/**
- * [StubsAdditionalSourcesExtension] fakes KtFiles without having a properly created [VirtualFile]
- * anywhere in [VirtualFileSystem].
+ * [FakeKtFile] will be a part of the asttools common API. Currently this code has a duplicate in
+ * other Meta compiler plugins.
  *
- * Every [VirtualFile] fakes its path with and defaults to dummy.kt
+ * It fakes a KtFile without having a properly created [VirtualFile] anywhere in the
+ * VirtualFileSystem, defaulting its path to a dummy .kt name.
  */
 class FakeKtFile(viewProvider: FileViewProvider, isCompiled: Boolean) :
     KtFile(viewProvider, isCompiled) {
@@ -44,13 +37,6 @@ class FakeKtFile(viewProvider: FileViewProvider, isCompiled: Boolean) :
   }
 }
 
-private class FakeVirtualFile(name: String, content: String, private val virtualFilePath: String) :
-    LightVirtualFile(name, content) {
-  override fun getPath(): String {
-    return virtualFilePath
-  }
-}
-
 fun generateFakeKtFile(project: Project, renderedKStub: RenderedKStub): FakeKtFile {
   // KtPsiFactory creates a [LightVirtualFile] which is a in-memory implementation of [VirtualFile]
   // https://dploeger.github.io/intellij-api-doc/com/intellij/testFramework/LightVirtualFile.html
@@ -60,16 +46,6 @@ fun generateFakeKtFile(project: Project, renderedKStub: RenderedKStub): FakeKtFi
           .createFile(
               "kosabi_stub.${if (renderedKStub.stub.pkg?.isNotEmpty() == true) "${renderedKStub.stub.pkg}." else ""}${renderedKStub.stub.name}.kt",
               renderedKStub.render,
-          )
+          ),
   )
-}
-
-fun generateFakeKtFile(
-    fileManager: PsiManager,
-    virtualFilePath: String,
-    name: String,
-    content: String,
-): KtFile {
-  val fakeVirtualFile = FakeVirtualFile(name, content, virtualFilePath)
-  return FakeKtFile(SingleRootFileViewProvider(fileManager, fakeVirtualFile), false)
 }

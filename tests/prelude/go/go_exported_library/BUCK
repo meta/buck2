@@ -1,0 +1,34 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+
+oncall("golang")
+
+prelude = native
+
+prelude.go_library(
+    name = "cgo",
+    package_name = "buck2/tests/prelude/go/go_exported_library/cgo",
+    srcs = ["lib.go"],
+)
+
+prelude.go_exported_library(
+    name = "lib",
+    srcs = ["main.go"],
+    build_mode = "c_shared",
+    deps = [":cgo"],
+)
+
+py_assertion(
+    name = "check_so_extension",
+    script = """
+import sys
+import platform
+from pathlib import Path
+
+file_path = Path(sys.argv[1])
+if platform.system() == "Windows":
+    assert file_path.suffix == ".dll", f"Expected .dll on Windows, got {file_path.suffix}"
+else:
+    assert file_path.suffix == ".so", f"Expected .so on {platform.system()}, got {file_path.suffix}"
+""",
+    script_args = ["$(location :lib)"],
+)

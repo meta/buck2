@@ -1,0 +1,7 @@
+# Consumer in `root//intersect/sub_b/...`. Matches BOTH the target's
+# declared `root//intersect/sub_b/...` AND the intersection, so the dep is
+# allowed.
+stub(
+    name = "c",
+    deps = ["root//intersect/narrow_target:t"],
+)

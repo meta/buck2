@@ -24,6 +24,7 @@ use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 
+use buck2_core::error::SoftErrorContext;
 use buck2_core::event::EventDispatch;
 use buck2_data::SpanEndEvent;
 use buck2_data::SpanStartEvent;
@@ -53,6 +54,8 @@ pub struct EventDispatcher {
     /// The sink to log events to.
     #[allocative(skip)] // TODO(nga): do not skip.
     sink: Arc<dyn EventSink>,
+    #[allocative(skip)]
+    soft_error_context: Option<Arc<SoftErrorContext>>,
 }
 
 impl EventDispatcher {
@@ -66,7 +69,19 @@ impl EventDispatcher {
             trace_id,
             daemon_id,
             sink: Arc::new(sink),
+            soft_error_context: None,
         }
+    }
+
+    /// Associates command-scoped soft-error policy and rate-limit state with this dispatcher.
+    pub fn with_soft_error_context(mut self, context: Arc<SoftErrorContext>) -> Self {
+        self.soft_error_context = Some(context);
+        self
+    }
+
+    /// Returns the command-scoped soft-error context, if this dispatcher has one.
+    pub fn soft_error_context(&self) -> Option<Arc<SoftErrorContext>> {
+        self.soft_error_context.clone()
     }
 
     pub fn sink(&self) -> Arc<dyn EventSink> {
@@ -79,6 +94,21 @@ impl EventDispatcher {
             trace_id: TraceId::null(),
             daemon_id: DaemonId::null(),
             sink: Arc::new(NullEventSink::new()),
+            soft_error_context: None,
+        }
+    }
+
+    /// Creates an Event Dispatcher that reports a soft_error if any event is
+    /// dispatched through it. Used as a sentinel for code paths that should not
+    /// emit events; if they do, it means a real EventDispatcher needs to be
+    /// threaded through from the caller/requestor.
+    pub fn error_on_event() -> EventDispatcher {
+        use crate::sink::error_on_event::ErrorOnEventSink;
+        EventDispatcher {
+            trace_id: TraceId::null(),
+            daemon_id: DaemonId::null(),
+            sink: Arc::new(ErrorOnEventSink),
+            soft_error_context: None,
         }
     }
 
@@ -105,6 +135,22 @@ impl EventDispatcher {
 
     pub fn streaming_output(&self, message: String) {
         self.instant_event(buck2_data::StdoutStreamingOutput { message })
+    }
+
+    /// Like `instant_event`, but bypasses internal buffering. See [`EventSink::send_now`].
+    pub async fn instant_event_send_now<E: Into<buck2_data::instant_event::Data>>(&self, data: E) {
+        let instant = buck2_data::InstantEvent {
+            data: Some(data.into()),
+        };
+        let now = SystemTime::now();
+        let event = BuckEvent::new(
+            now,
+            self.trace_id.dupe(),
+            None,
+            current_span(),
+            instant.into(),
+        );
+        self.sink.send_now(Event::Buck(event)).await;
     }
 
     fn event_with_span_id<E: Into<buck_event::Data>>(
@@ -216,6 +262,50 @@ where
             }
             task::Poll::Pending => task::Poll::Pending,
         }
+    }
+}
+
+/// A [`Future`] wrapper that captures the current [`SpanId`] at construction
+/// time and proxies it into each [`Future::poll`] call via
+/// [`maybe_proxy_current_span`]. This is the async counterpart to the
+/// synchronous `maybe_proxy_current_span`, allowing span context to follow
+/// futures that may be polled on a different tokio task or thread.
+#[pin_project]
+pub struct SpanProxyAsync<Fut, R>
+where
+    Fut: Future<Output = R>,
+{
+    #[pin]
+    fut: Fut,
+    span_id: Option<SpanId>,
+}
+
+impl<Fut, R> SpanProxyAsync<Fut, R>
+where
+    Fut: Future<Output = R>,
+{
+    pub fn new(fut: Fut) -> Self {
+        SpanProxyAsync {
+            fut,
+            span_id: current_span(),
+        }
+    }
+
+    pub fn new_with_span(fut: Fut, span_id: Option<SpanId>) -> Self {
+        SpanProxyAsync { fut, span_id }
+    }
+}
+
+impl<Fut, R> Future for SpanProxyAsync<Fut, R>
+where
+    Fut: Future<Output = R>,
+{
+    type Output = R;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> task::Poll<Self::Output> {
+        let this = self.project();
+        let span_id = *this.span_id;
+        maybe_proxy_current_span(span_id, || this.fut.poll(cx))
     }
 }
 
@@ -372,6 +462,51 @@ impl Drop for Span {
     }
 }
 
+struct RestoreSpan<'a> {
+    tl_span: &'a Cell<Option<SpanId>>,
+    previous_span: Option<SpanId>,
+}
+
+impl Drop for RestoreSpan<'_> {
+    fn drop(&mut self) {
+        self.tl_span.set(self.previous_span);
+    }
+}
+
+/// Temporarily installs a captured `SpanId` as the `CURRENT_SPAN` on the
+/// current thread while executing `fun`. This is used to propagate span
+/// context from a parent thread into worker threads (e.g. the IO executor),
+/// so that actions executed on those threads appear under the correct span.
+///
+/// If the current thread already has its own span set, the proxied span is
+/// **not** installed (don't-clobber semantics). The thread-local
+/// `RootSpansRecorder` is also cleared for the duration to prevent the worker
+/// thread from accidentally recording spans belonging to the caller.
+///
+/// No-op when `span_id` is `None`.
+pub fn maybe_proxy_current_span<T, Fun>(span_id: Option<SpanId>, fun: Fun) -> T
+where
+    Fun: FnOnce() -> T,
+{
+    match span_id {
+        Some(span_id) => unset_thread_local_recorder(|| {
+            CURRENT_SPAN.with(|tl_span| {
+                let previous_span = tl_span.replace(Some(span_id));
+                if previous_span.is_some() {
+                    // This thread already has its own span; don't override it.
+                    tl_span.set(previous_span);
+                }
+                let _guard = RestoreSpan {
+                    tl_span,
+                    previous_span,
+                };
+                fun()
+            })
+        }),
+        None => fun(),
+    }
+}
+
 thread_local! {
     static CURRENT_SPAN: Cell<Option<SpanId>> = const { Cell::new(None) };
 }
@@ -392,12 +527,34 @@ where
     EVENTS.sync_scope(dispatcher, func)
 }
 
-// Wraps the Future fut with a TaskLocalFuture that sets the task_local dispatcher before polling fut.
+/// Invokes `func` with an optional captured dispatcher, preserving the absence of command context.
+pub fn with_dispatcher_opt<R, F>(dispatcher: Option<EventDispatcher>, func: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    match dispatcher {
+        Some(dispatcher) => with_dispatcher(dispatcher, func),
+        None => func(),
+    }
+}
+
+// Wraps the Future fut with a TaskLocalFuture that sets the task_local dispatcher and the current_span (if any) before polling fut.
 pub fn with_dispatcher_async<F, R>(dispatcher: EventDispatcher, fut: F) -> impl Future<Output = R>
 where
     F: Future<Output = R>,
 {
-    EVENTS.scope(dispatcher, fut)
+    EVENTS.scope(dispatcher, SpanProxyAsync::new(fut))
+}
+
+/// Polls `fut` with an optional captured dispatcher, preserving absent command context.
+pub async fn with_dispatcher_opt_async<F, R>(dispatcher: Option<EventDispatcher>, fut: F) -> R
+where
+    F: Future<Output = R>,
+{
+    match dispatcher {
+        Some(dispatcher) => with_dispatcher_async(dispatcher, fut).await,
+        None => fut.await,
+    }
 }
 
 /// Get the ambient dispatcher, if one is available (and None otherwise). In contexts that aren't
@@ -417,7 +574,7 @@ pub fn get_dispatcher() -> EventDispatcher {
                 panic!("dispatcher is not set")
             } else {
                 // TODO: This is firing millions of times, needs to fix this up before it's made a soft error.
-                // let _ignored = soft_error!(buck2_error::buck2_error!([], "Task local event dispatcher not set."));
+                // soft_error!(buck2_error::buck2_error!([], "Task local event dispatcher not set."));
                 EventDispatcher::null()
             }
         }
@@ -610,6 +767,7 @@ pub fn async_record_root_spans<Fut>(fut: Fut) -> RootSpansRecordingFuture<Fut> {
 
 #[cfg(test)]
 mod tests {
+    use buck2_core::error::SoftErrorContext;
     use buck2_data::CommandEnd;
     use buck2_data::CommandStart;
     use tokio::task::JoinHandle;
@@ -642,6 +800,20 @@ mod tests {
         };
 
         (start, end)
+    }
+
+    #[tokio::test]
+    async fn soft_error_context_propagates_through_spawn() -> buck2_error::Result<()> {
+        let context = Arc::new(SoftErrorContext::new("", "")?);
+        let dispatcher = EventDispatcher::null().with_soft_error_context(context.dupe());
+
+        let observed = tokio::spawn(with_dispatcher_async(dispatcher, async {
+            get_dispatcher_opt().and_then(|dispatcher| dispatcher.soft_error_context())
+        }))
+        .await?;
+
+        assert!(observed.is_some_and(|observed| Arc::ptr_eq(&context, &observed)));
+        Ok(())
     }
 
     #[tokio::test]

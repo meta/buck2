@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 load("get_vs_settings.bxl", "get_basic_vs_settings")
-load("utils.bxl", "basename", "gen_guid", "get_project_file_path", "log_debug", "sanitize")
+load("utils.bxl", "basename", "gen_guid", "get_project_file_path", "log_debug", "log_warn", "sanitize")
 
 def _gen_entry(project_type_guid, project_name, project_filepath, project_guid):
     return """Project("{project_type_guid}") = "{project_name}", "{project_filepath}", "{project_guid}"
@@ -69,7 +69,7 @@ def _gen_target(target, vs_settings, existing_folders, nested_projects):
 
     folder_prev = None
     for i in range(len(folders)):
-        folder = "/".join(folders[0:i + 1])
+        folder = "/".join(folders[0 : i + 1])
         folder_guid = gen_guid(folder)
         if folder_prev:
             nested_projects[folder_guid] = existing_folders[folder_prev]
@@ -83,10 +83,7 @@ def _gen_target(target, vs_settings, existing_folders, nested_projects):
     return "\n".join(entries)
 
 def _gen_nested_projects(nested_projects):
-    return "\n".join([
-        "\t\t{} = {}".format(child, parent)
-        for (child, parent) in nested_projects.items()
-    ])
+    return "\n".join(["\t\t{} = {}".format(child, parent) for (child, parent) in nested_projects.items()])
 
 def _gen_solution_configuration_platform(project_configuration):
     return "\t\t{configuration}|{platform} = {configuration}|{platform}".format(
@@ -99,15 +96,19 @@ def _gen_project_configuration_platforms(target_node, vs_settings, explicit_targ
     guid = vs_settings["Globals"]["ProjectGuid"]
     for config in vs_settings["ProjectConfigurations"]:
         config_name = config["Configuration"] + "|" + config["Platform"]
-        configs.append("\t\t{guid}.{config_name}.ActiveCfg = {config_name}".format(
-            guid = guid,
-            config_name = config_name,
-        ))
-        if target_node.label.raw_target() in explicit_targets:
-            configs.append("\t\t{guid}.{config_name}.Build.0 = {config_name}".format(
+        configs.append(
+            "\t\t{guid}.{config_name}.ActiveCfg = {config_name}".format(
                 guid = guid,
                 config_name = config_name,
-            ))
+            )
+        )
+        if target_node.label.raw_target() in explicit_targets:
+            configs.append(
+                "\t\t{guid}.{config_name}.Build.0 = {config_name}".format(
+                    guid = guid,
+                    config_name = config_name,
+                )
+            )
     return "\n".join(configs)
 
 def _set_startup_target(targets, vs_settings_list, startup_target_label: TargetLabel):
@@ -117,7 +118,10 @@ def _set_startup_target(targets, vs_settings_list, startup_target_label: TargetL
         targets[0], targets[startup_target_index] = targets[startup_target_index], targets[0]
         vs_settings_list[0], vs_settings_list[startup_target_index] = vs_settings_list[startup_target_index], vs_settings_list[0]
     else:
-        warning("Startup target couldn't be located: {}. Please check passed in targets list, `--recursive_target_types`, `--target_exclude_pattern` and `--target_exclude_pattern`.".format(startup_target_label))
+        log_warn(
+            "Startup target couldn't be located: {}. Please check passed in targets list, `--recursive_target_types`, `--target_exclude_pattern` and `--target_exclude_pattern`.",
+            startup_target_label,
+        )
 
 # In buck dependency tree, duplicate targets can exist with exact same label but different
 # configurations. While VS doesn't like duplicate project names (prompting with message: The
@@ -171,18 +175,9 @@ Global
 \t\tSolutionGuid = {solution_guid}
 \tEndGlobalSection
 EndGlobal""".format(
-        projects = "\n".join([
-            _gen_target(t, s, existing_folders, nested_projects)
-            for (t, s) in zip(targets, vs_settings_list)
-        ]),
-        solution_configuration_platforms = "\n".join([
-            _gen_solution_configuration_platform(config)
-            for config in vs_settings_list[-1]["ProjectConfigurations"]
-        ]),
-        project_configuration_platforms = "\n".join([
-            _gen_project_configuration_platforms(t, s, explicit_targets)
-            for (t, s) in zip(targets, vs_settings_list)
-        ]),
+        projects = "\n".join([_gen_target(t, s, existing_folders, nested_projects) for (t, s) in zip(targets, vs_settings_list)]),
+        solution_configuration_platforms = "\n".join([_gen_solution_configuration_platform(config) for config in vs_settings_list[-1]["ProjectConfigurations"]]),
+        project_configuration_platforms = "\n".join([_gen_project_configuration_platforms(t, s, explicit_targets) for (t, s) in zip(targets, vs_settings_list)]),
         nested_projects = _gen_nested_projects(nested_projects),
         solution_guid = solution_guid,
     )

@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
 #![feature(box_patterns)]
 #![allow(clippy::len_without_is_empty)]
 
@@ -26,6 +25,7 @@ pub mod nodes;
 pub mod oncall;
 pub mod package;
 pub mod package_values_calculation;
+pub mod package_visibility;
 pub mod provider_id_set;
 pub mod query;
 pub mod rule;

@@ -126,7 +126,7 @@ def gen_compilation_database_impl(ctx):
         entry.pop("is_pic")
 
     actions = ctx.bxl_actions(target_platform = ctx.cli_args.platform).actions
-    db_artifact = actions.write_json("compile_commands.json", entries.values())
+    db_artifact = actions.write_json("compile_commands.json", entries.values(), has_content_based_path = False)
     db_artifact_ensured = ctx.output.ensure(db_artifact)
 
     ctx.output.print(db_artifact_ensured)

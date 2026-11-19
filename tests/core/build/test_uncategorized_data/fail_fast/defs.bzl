@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _slow(ctx):
-    slow = ctx.actions.declare_output("slow")
+    slow = ctx.actions.declare_output("slow", has_content_based_path = False)
 
     ctx.actions.run(
         ["fbpython", "-c", "import time, sys; time.sleep(10); sys.exit(1)", slow.as_output()],
@@ -17,8 +17,8 @@ def _slow(ctx):
     return [DefaultInfo(slow)]
 
 def _mixed(ctx):
-    fast = ctx.actions.declare_output("fast")
-    slow = ctx.actions.declare_output("slow")
+    fast = ctx.actions.declare_output("fast", has_content_based_path = False)
+    slow = ctx.actions.declare_output("slow", has_content_based_path = False)
 
     ctx.actions.run(
         ["fbpython", "-c", "import sys; sys.exit(1)", fast.as_output()],

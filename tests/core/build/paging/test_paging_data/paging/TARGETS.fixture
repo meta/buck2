@@ -1,0 +1,46 @@
+load(":rules.bzl", "analysis_node", "copy_file", "many_actions", "module_const", "uses_anon")
+
+analysis_node(
+    name = "analysis_leaf",
+)
+
+analysis_node(
+    name = "analysis_middle",
+    deps = [":analysis_leaf"],
+)
+
+analysis_node(
+    name = "analysis_root",
+    deps = [":analysis_middle"],
+)
+
+copy_file(
+    name = "mysrcrule",
+    src = "src.txt",
+    out = "out.txt",
+)
+
+# Two targets whose analysis results each hold a `FrozenValue` from `rules.bzl`'s
+# shared module heap. Paging one out (evicting that shared heap), then paging out
+# the other, exercises serializing a `FrozenValue` into an already-paged-out heap.
+module_const(
+    name = "module_const_a",
+)
+
+module_const(
+    name = "module_const_b",
+)
+
+uses_anon(
+    name = "uses_anon_a",
+)
+
+uses_anon(
+    name = "uses_anon_b",
+)
+
+many_actions(
+    name = "many_actions",
+    src = "src.txt",
+    installer = ":many_actions",
+)

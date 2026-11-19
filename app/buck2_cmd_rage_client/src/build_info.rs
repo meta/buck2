@@ -18,8 +18,6 @@ use buck2_event_log::utils::Invocation;
 use buck2_events::BuckEvent;
 use buck2_util::truncate::truncate;
 use buck2_wrapper_common::invocation_id::TraceId;
-use chrono::DateTime;
-use chrono::Local;
 use futures::TryStreamExt;
 use humantime::format_duration;
 
@@ -39,7 +37,7 @@ struct LogInfo {
 
 pub(crate) struct BuildInfo {
     uuid: TraceId,
-    pub timestamp: DateTime<Local>,
+    pub timestamp: jiff::Zoned,
     pub command: String,
     working_dir: String,
     pub buck2_revision: String,
@@ -62,7 +60,7 @@ daemon uptime: {}
 RE session id: {}
         ",
             self.uuid,
-            self.timestamp.format("%c %Z"),
+            self.timestamp.strftime("%c %Z"),
             self.command,
             self.working_dir,
             self.buck2_revision,
@@ -101,7 +99,7 @@ pub(crate) async fn get(log: &EventLogPathBuf) -> buck2_error::Result<BuildInfo>
         let res = match filtered_events.try_next().await {
             Ok(Some(event)) => extract_info(&mut info, event),
             Ok(None) => break,
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         };
         if let Err(e) = res {
             buck2_client_ctx::eprintln!("Error found when iterating through logs: {:#}", e)?;
@@ -118,7 +116,9 @@ pub(crate) async fn get(log: &EventLogPathBuf) -> buck2_error::Result<BuildInfo>
         }
     };
 
-    let t_start: DateTime<Local> = timestamp_start.into();
+    let t_start = jiff::Timestamp::try_from(timestamp_start)
+        .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+        .to_zoned(jiff::tz::TimeZone::system());
 
     let output = BuildInfo {
         uuid: first_event.trace_id()?,
@@ -135,28 +135,21 @@ pub(crate) async fn get(log: &EventLogPathBuf) -> buck2_error::Result<BuildInfo>
 }
 
 fn extract_info(info: &mut LogInfo, event: Box<buck2_data::BuckEvent>) -> buck2_error::Result<()> {
-    match event.data {
-        Some(buck2_data::buck_event::Data::SpanStart(span)) => match &span.data {
-            Some(buck2_data::span_start_event::Data::Command(action)) => {
-                if info.revision.is_none() && action.metadata.contains_key("buck2_revision") {
-                    if let Some(buck2_revision) = action.metadata.get("buck2_revision") {
-                        info.revision.get_or_insert(buck2_revision.clone());
-                    }
-                }
-            }
-            _ => (),
-        },
-        Some(buck2_data::buck_event::Data::Instant(span)) => match &span.data {
-            Some(buck2_data::instant_event::Data::Snapshot(snapshot)) => {
-                info.daemon_uptime_s.get_or_insert(snapshot.daemon_uptime_s);
-            }
-            Some(buck2_data::instant_event::Data::ReSession(session)) => {
-                info.re_session_id.get_or_insert(session.session_id.clone());
-            }
-            _ => (),
-        },
-
-        _ => (),
+    if let Some(buck2_data::buck_event::Data::SpanStart(span)) = &event.data
+        && let Some(buck2_data::span_start_event::Data::Command(action)) = &span.data
+    {
+        if info.revision.is_none()
+            && action.metadata.contains_key("buck2_revision")
+            && let Some(buck2_revision) = action.metadata.get("buck2_revision")
+        {
+            info.revision.get_or_insert(buck2_revision.clone());
+        }
+    } else if let Some(buck2_data::buck_event::Data::Instant(span)) = &event.data {
+        if let Some(buck2_data::instant_event::Data::Snapshot(snapshot)) = &span.data {
+            info.daemon_uptime_s.get_or_insert(snapshot.daemon_uptime_s);
+        } else if let Some(buck2_data::instant_event::Data::ReSession(session)) = &span.data {
+            info.re_session_id.get_or_insert(session.session_id.clone());
+        }
     }
     if let Some(timestamp) = event.timestamp {
         info.timestamp_end = Some(SystemTime::try_from(timestamp)?)

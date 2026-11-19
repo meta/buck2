@@ -112,10 +112,12 @@ def _compute_metal_std_compiler_arg(ctx: AnalysisContext, min_os_version: str) -
         # Mac Catalyst, i.e., `maccatalyst`, is using iOS args
         is_mac = "macosx" in platform_info.name
         platform_name = "macos" if is_mac else "ios"
-        return ["-std={platform}-metal{version}".format(
-            platform = platform_name,
-            version = version,
-        )]
+        return [
+            "-std={platform}-metal{version}".format(
+                platform = platform_name,
+                version = version,
+            )
+        ]
 
     return ["-std=metal{version}".format(version = version)]
 
@@ -138,7 +140,7 @@ def _compile_apple_metal_library(ctx: AnalysisContext) -> Artifact:
 
     header_symlink_tree = None
     if len(header_map):
-        header_symlink_tree = ctx.actions.symlinked_dir(str(ctx.label.name) + "_header_symlink_tree", header_map)
+        header_symlink_tree = ctx.actions.symlinked_dir(str(ctx.label.name) + "_header_symlink_tree", header_map, has_content_based_path = False)
 
     sysroot = ctx.attrs._apple_toolchain[AppleToolchainInfo].sdk_path
     air_files = []
@@ -146,7 +148,7 @@ def _compile_apple_metal_library(ctx: AnalysisContext) -> Artifact:
     min_os_version = get_min_deployment_version_for_node(ctx)
     compile_std_arg = _compute_metal_std_compiler_arg(ctx, min_os_version)
     for metal_file in ctx.attrs.srcs:
-        air_output = ctx.actions.declare_output(paths.replace_extension(ctx.attrs.name + "_" + metal_file.basename, ".air"))
+        air_output = ctx.actions.declare_output(paths.replace_extension(ctx.attrs.name + "_" + metal_file.basename, ".air"), has_content_based_path = False)
         air_compile_cmd = cmd_args(toolchain.metal)
         air_compile_cmd.add("-target", get_versioned_metal_target_triple(ctx, min_os_version))
         air_compile_cmd.add(compile_std_arg)
@@ -165,7 +167,7 @@ def _compile_apple_metal_library(ctx: AnalysisContext) -> Artifact:
         output_name = ctx.attrs.out
     else:
         output_name = ctx.attrs.name + ".metallib"
-    output = ctx.actions.declare_output(output_name)
+    output = ctx.actions.declare_output(output_name, has_content_based_path = False)
     metallib_compile = cmd_args(toolchain.metallib)
     for air_file in air_files:
         metallib_compile.add(air_file)

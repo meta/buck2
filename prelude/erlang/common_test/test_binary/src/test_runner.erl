@@ -9,13 +9,11 @@
 -module(test_runner).
 -compile(warn_missing_spec_all).
 
+-export([run_tests/6]).
+
 -include_lib("common/include/tpx_records.hrl").
 -include_lib("common/include/buck_ct_records.hrl").
 -include_lib("kernel/include/logger.hrl").
-
--export([run_tests/6, mark_success/2, mark_failure/2]).
-
--export([parse_test_name/2]).
 
 -import(common_util, [unicode_characters_to_list/1, unicode_characters_to_binary/1]).
 
@@ -36,7 +34,7 @@ run_tests(Tests, #test_info{} = TestInfo, OutputDir, Listing, Timeout, StdoutStr
             SuiteBin when is_binary(SuiteBin) -> binary_to_atom(SuiteBin);
             SuiteStr when is_list(SuiteStr) -> list_to_atom(SuiteStr)
         end,
-    StructuredTests = [parse_test_name(Test, Suite) || Test <- Tests],
+    StructuredTests = [common_util:parse_test_name(Test, Suite) || Test <- Tests],
     case StructuredTests of
         [] ->
             throw(no_tests_to_run);
@@ -64,7 +62,8 @@ run_tests(Tests, #test_info{} = TestInfo, OutputDir, Listing, Timeout, StdoutStr
                     trampolines = TestInfo#test_info.trampolines,
                     timeout = Timeout,
                     ct_stdout_fingerprint = ct_stdout:make_fingerprint(),
-                    ct_stdout_streaming = StdoutStreaming
+                    ct_stdout_streaming = StdoutStreaming,
+                    result_recipient = self()
                 }
             )
     end.
@@ -99,24 +98,25 @@ execute_test_suite(TestEnv) ->
         ok -> ok
     catch
         Class:Reason:StackTrace ->
+            FailureTime = erlang:system_time(millisecond),
             ErrorMsg = io_lib:format("run_test failed due to ~ts\n", [
                 erl_error:format_exception(Class, Reason, StackTrace)
             ]),
             ?LOG_ERROR(ErrorMsg),
-            test_run_fail(NewTestEnv, ErrorMsg, #{})
+            test_run_fail(NewTestEnv, ErrorMsg, #{}, FailureTime)
     end.
 
 -spec run_test(TestEnv, Timeout) -> ok when
     TestEnv :: #test_env{},
     Timeout :: timeout().
 run_test(TestEnv, Timeout) ->
-    register(?MODULE, self()),
     application:set_env(test_exec, test_env, TestEnv, [{persistent, true}]),
     case application:ensure_all_started(test_exec, temporary) of
         {ok, _Apps} ->
             Ref = erlang:monitor(process, test_exec_sup, []),
             receive
                 {'DOWN', Ref, _Type, Object, Info} ->
+                    FailureTime = erlang:system_time(millisecond),
                     test_run_fail(
                         TestEnv,
                         io_lib:format(
@@ -124,27 +124,31 @@ run_test(TestEnv, Timeout) ->
                             "                        application test_exec crashed (~tp ~tp) ~n",
                             [Object, Info]
                         ),
-                        #{}
+                        #{},
+                        FailureTime
                     );
                 {run_succeed, Result, ProgressMarkersOffsets} ->
                     ensure_test_exec_stopped(),
                     test_run_succeed(TestEnv, Result, ProgressMarkersOffsets);
                 {run_failed, Result, ProgressMarkersOffsets} ->
+                    FailureTime = erlang:system_time(millisecond),
                     ensure_test_exec_stopped(),
-                    test_run_fail(TestEnv, Result, ProgressMarkersOffsets)
+                    test_run_fail(TestEnv, Result, ProgressMarkersOffsets, FailureTime)
             after Timeout ->
+                FailureTime = erlang:system_time(millisecond),
                 ensure_test_exec_stopped(),
                 ErrorMsg =
-                    "\n***************************************************************\n"
-                    "* the suite timed out, all tests will be reported as failure. *\n"
-                    "***************************************************************\n",
-                test_run_timeout(TestEnv, ErrorMsg)
+                    "\n************************\n"
+                    "* the suite timed out. *\n"
+                    "************************\n",
+                test_run_timeout(TestEnv, ErrorMsg, FailureTime)
             end;
         {error, Reason} ->
+            FailureTime = erlang:system_time(millisecond),
             ErrorMsg = io_lib:format("TextExec failed to start due to ~tp", [Reason]),
 
             ?LOG_ERROR(ErrorMsg),
-            test_run_fail(TestEnv, ErrorMsg, #{})
+            test_run_fail(TestEnv, ErrorMsg, #{}, FailureTime)
     end.
 
 -spec ensure_test_exec_stopped() -> ok.
@@ -158,21 +162,23 @@ ensure_test_exec_stopped() ->
 -doc """
 Provides result as specified by the tpx protocol when test failed to ran.
 """.
--spec test_run_fail(TestEnv, Reason, ProgressMarkersOffsets) -> ok when
+-spec test_run_fail(TestEnv, Reason, ProgressMarkersOffsets, FailureTime) -> ok when
     TestEnv :: #test_env{},
     Reason :: unicode:chardata(),
-    ProgressMarkersOffsets :: #{ct_stdout:progress_line() => ct_stdout:offset()}.
-test_run_fail(TestEnv, Reason, ProgressMarkersOffsets) ->
+    ProgressMarkersOffsets :: #{ct_stdout:progress_line() => ct_stdout:offset()},
+    FailureTime :: integer().
+test_run_fail(TestEnv, Reason, ProgressMarkersOffsets, FailureTime) ->
     provide_output_file(
         TestEnv,
         io_lib:format("Test failed to ran due to ~ts", [Reason]),
         failed,
-        ProgressMarkersOffsets
+        ProgressMarkersOffsets,
+        FailureTime
     ).
 
--spec test_run_timeout(#test_env{}, string()) -> ok.
-test_run_timeout(TestEnv, Reason) ->
-    provide_output_file(TestEnv, Reason, timeout, #{}).
+-spec test_run_timeout(#test_env{}, string(), integer()) -> ok.
+test_run_timeout(TestEnv, Reason, FailureTime) ->
+    provide_output_file(TestEnv, Reason, timeout, #{}, FailureTime).
 
 -doc """
 Provides result as specified by the tpx protocol when test succeed to ran.
@@ -182,26 +188,27 @@ Provides result as specified by the tpx protocol when test succeed to ran.
     Reason :: unicode:chardata(),
     ProgressMarkersOffsets :: #{ct_stdout:progress_line() => ct_stdout:offset()}.
 test_run_succeed(TestEnv, Reason, ProgressMarkersOffsets) ->
-    provide_output_file(TestEnv, Reason, passed, ProgressMarkersOffsets).
+    provide_output_file(TestEnv, Reason, passed, ProgressMarkersOffsets, 0).
 
 -doc """
 Provides result as specified by the tpx protocol.
 """.
--spec provide_output_file(TestEnv, ResultExec, Status, ProgressMarkersOffsets) -> ok when
+-spec provide_output_file(TestEnv, ResultExec, Status, ProgressMarkersOffsets, FailureTime) -> ok when
     TestEnv :: #test_env{},
     ResultExec :: unicode:chardata(),
     Status :: failed | passed | timeout,
-    ProgressMarkersOffsets :: #{ct_stdout:progress_line() => ct_stdout:offset()}.
+    ProgressMarkersOffsets :: #{ct_stdout:progress_line() => ct_stdout:offset()},
+    FailureTime :: integer().
 provide_output_file(
     #test_env{
         output_dir = OutputDir,
         tests = Tests,
-        suite = Suite,
         artifact_annotation_mfa = ArtifactAnnotationFunction
     },
     ResultExec,
     Status,
-    ProgressMarkersOffsets
+    ProgressMarkersOffsets,
+    FailureTime
 ) ->
     LogFile = test_logger:get_log_file(OutputDir, ct_executor),
     StdOutFile = ct_stdout:filename(OutputDir),
@@ -214,14 +221,14 @@ provide_output_file(
     Results =
         case Status of
             failed ->
-                collect_results_broken_run(Tests, Suite, ~"internal crash", ResultExec, LogFilesForCrashes);
+                collect_results_broken_run(
+                    Tests, ~"internal crash", ResultExec, LogFilesForCrashes
+                );
             timeout ->
-                % Suite timeout: this is typically a user error, so we don't want to display the
-                % executor logs.
-                StdOutLogFile = #{ct_executor_stdout => StdOutFile},
-                collect_results_broken_run(Tests, Suite, ~"", ResultExec, StdOutLogFile);
+                % Once the suite watchdog fires, group/suite teardown may not
+                % have completed, so no testcase has an independent verdict.
+                [];
             passed ->
-                % Here we either passed or timeout.
                 case file:read_file(ResultsFile, [raw]) of
                     {ok, JsonFile} ->
                         TreeResults = decode_erlang_term(JsonFile),
@@ -233,7 +240,9 @@ provide_output_file(
                                             ResultsFile
                                         ]
                                     ),
-                                collect_results_broken_run(Tests, Suite, ErrorMsg, ResultExec, LogFilesForCrashes);
+                                collect_results_broken_run(
+                                    Tests, ErrorMsg, ResultExec, LogFilesForCrashes
+                                );
                             _ ->
                                 {ok, CollectedStdOut} = ct_stdout:collect_method_stdout(
                                     StdOutFile,
@@ -247,18 +256,20 @@ provide_output_file(
                         ErrorMsg = io_lib:format(~"ct failed to produced results file ~tp", [
                             ResultsFile
                         ]),
-                        collect_results_broken_run(Tests, Suite, ErrorMsg, ResultExec, LogFilesForCrashes)
+                        collect_results_broken_run(
+                            Tests, ErrorMsg, ResultExec, LogFilesForCrashes
+                        )
                 end
         end,
 
-    {ok, _ResultOuptuFile} = json_interfacer:write_json_output(OutputDir, Results),
+    ok = test_result_output:write(OutputDir, Status, FailureTime, ResultExec, Results),
     test_artifact_directory:link_to_artifact_dir(
         StdOutFile, OutputDir, ArtifactAnnotationFunction
     ),
     test_artifact_directory:link_to_artifact_dir(
         test_logger:get_std_out(OutputDir, test_runner), OutputDir, ArtifactAnnotationFunction
     ),
-    test_artifact_directory:prepare(OutputDir, ArtifactAnnotationFunction).
+    test_artifact_directory:prepare(OutputDir, Tests, ArtifactAnnotationFunction).
 
 -spec decode_erlang_term(Bin :: binary()) -> dynamic().
 decode_erlang_term(Bin) ->
@@ -296,18 +307,17 @@ trimmed_content_file(File) ->
 -doc """
 Provide tpx with a result when CT failed to provide results for tests.
 """.
--spec collect_results_broken_run(Tests, Suite, ErrorMsg, ResultExec, RelevantLogFiles) ->
+-spec collect_results_broken_run(Tests, ErrorMsg, ResultExec, RelevantLogFiles) ->
     [cth_tpx_test_tree:collected_result()]
 when
     Tests :: [#ct_test{}],
-    Suite :: module(),
     ErrorMsg :: unicode:chardata(),
     ResultExec :: unicode:chardata(),
     RelevantLogFiles :: #{
         ct_executor_log => file:filename_all(),
         ct_executor_stdout := file:filename_all()
     }.
-collect_results_broken_run(Tests, _Suite, ErrorMsg, ResultExec, RelevantLogFiles) ->
+collect_results_broken_run(Tests, ErrorMsg, ResultExec, RelevantLogFiles) ->
     #{ct_executor_stdout := StdOutFile} = RelevantLogFiles,
     TrimmedStdOut = trimmed_content_file(StdOutFile),
     StdOut =
@@ -327,10 +337,10 @@ collect_results_broken_run(Tests, _Suite, ErrorMsg, ResultExec, RelevantLogFiles
             main => #{
                 name => lists:flatten(
                     io_lib:format("~ts.[main_testcase]", [
-                        % We need to reverse the list of groups as the method cth_tpx_test_tree:qualified_name expects them
+                        % We need to reverse the list of groups as the method common_util:qualified_name expects them
                         % in the reverse order (as it is designed to be called when exploring the tree of results
                         % where we push at each time the group we are in, leading to them being in reverse order).
-                        cth_tpx_test_tree:qualified_name(
+                        common_util:qualified_name(
                             lists:reverse(Test#ct_test.groups),
                             Test#ct_test.test_name
                         )
@@ -359,39 +369,48 @@ provided by ct displaying results of all the tests ran.
     Tests :: [#ct_test{}],
     CollectedStdOut :: ct_stdout:collected_stdout().
 collect_results_fine_run(TreeResults, Tests, CollectedStdOut) ->
-    cth_tpx_test_tree:collect_results(TreeResults, maps:from_list(get_requested_tests(Tests)), CollectedStdOut).
+    cth_tpx_test_tree:collect_results(
+        TreeResults, get_requested_tests_by_group_path(Tests), CollectedStdOut
+    ).
 
 -doc """
-Returns a list of the tests by classifying from the (sequence) of groups they belong.
-The list is [{[sequence of groups] => [list of tests belonging to this sequence]}].
-We make sure to respect the group / test insertion order. That is, if the sequence is
-g1.t1, g2.t2, g1.t2, g1.t3, g2.t2, we produce:
-[g1.[t1,t2,t3], g2.[t1,t2]]
+Splits the requested tests into consecutive runs of tests sharing a (sequence) of groups.
+The list is [{[sequence of groups], [list of tests belonging to this sequence]}], in the order the
+tests were requested, so a sequence returned to later gets a further entry. That is, if the sequence
+is g1.t1, g2.t1, g1.t2, g1.t3, g2.t2, we produce:
+[{g1,[t1]}, {g2,[t1]}, {g1,[t2,t3]}, {g2,[t2]}]
+The tests are expected in listing order, the depth first traversal of all/0 with groups/0 expanded
+that reorder_tests/2 puts them in. The runs only follow the order the suite declares under that
+precondition.
 """.
--spec get_requested_tests([#ct_test{}]) -> [{[atom()], [atom()]}].
+-spec get_requested_tests(Tests) -> [{GroupPath, TestCases}] when
+    Tests :: [#ct_test{}],
+    GroupPath :: cth_tpx_test_tree:group_path(),
+    TestCases :: [ct_suite:ct_testname()].
 get_requested_tests(Tests) ->
-    lists:foldl(
-        fun(Test, List) ->
-            Groups = Test#ct_test.groups,
-            add_or_append(List, {Groups, Test#ct_test.test_name})
+    lists:foldr(
+        fun(#ct_test{groups = Groups, test_name = TestName}, Runs) ->
+            case Runs of
+                [{Groups, TestNames} | Rest] -> [{Groups, [TestName | TestNames]} | Rest];
+                _ -> [{Groups, [TestName]} | Runs]
+            end
         end,
         [],
         Tests
     ).
 
--spec add_or_append(list({K, list(V)}), {K, V}) -> list({K, list(V)}).
-add_or_append(List, {Key, Value}) ->
-    List0 = lists:map(
-        fun
-            ({Key0, Value0}) when Key0 =:= Key -> {Key0, lists:append(Value0, [Value])};
-            (Other) -> Other
+-spec get_requested_tests_by_group_path(Tests) -> #{GroupPath => TestCases} when
+    Tests :: [#ct_test{}],
+    GroupPath :: cth_tpx_test_tree:group_path(),
+    TestCases :: [ct_suite:ct_testname()].
+get_requested_tests_by_group_path(Tests) ->
+    lists:foldr(
+        fun(#ct_test{groups = Groups, test_name = TestName}, Acc) ->
+            maps:update_with(Groups, fun(TestNames) -> [TestName | TestNames] end, [TestName], Acc)
         end,
-        List
-    ),
-    case List0 =:= List of
-        true -> lists:append(List0, [{Key, [Value]}]);
-        false -> List0
-    end.
+        #{},
+        Tests
+    ).
 
 -doc """
 Built the test_spec selecting the requested tests and
@@ -435,7 +454,7 @@ Collect all the ct_hooks entries provided by the user, and add the cth_tpx hook 
     CtHooks :: {ct_hooks, [term()]},
     CtOpts1 :: [term()].
 getCtHook(CtOpts0, ResultOutput, ProgressLineFingerprint) ->
-    {CtHooksOpts, CtOpts1} = lists:splitwith(
+    {CtHooksOpts, CtOpts1} = lists:partition(
         fun
             ({ct_hooks, _}) -> true;
             (_) -> false
@@ -460,25 +479,6 @@ add_spec_if_absent({Key, Value}, CtOpts) ->
         false -> [{Key, Value} | CtOpts];
         _ -> CtOpts
     end.
-
--doc """
-Parse the test name, and decompose it into the test, group and suite atoms
-""".
--spec parse_test_name(string(), atom()) -> #ct_test{}.
-parse_test_name(Test, Suite) ->
-    [Groups0, TestName] = string:split(Test, ".", all),
-    Groups1 =
-        case Groups0 of
-            [] -> [];
-            _ -> string:split(Groups0, ":", all)
-        end,
-    Groups = lists:map(fun(GroupStr) -> list_to_atom(GroupStr) end, Groups1),
-    #ct_test{
-        suite = Suite,
-        groups = Groups,
-        test_name = list_to_atom(TestName),
-        canonical_name = Test
-    }.
 
 -spec reorder_tests(list(#ct_test{}), #test_spec_test_case{}) -> list(#ct_test{}).
 reorder_tests(Tests, #test_spec_test_case{testcases = TestCases}) ->
@@ -509,26 +509,6 @@ set_up_log_dir(OutputDir) ->
     LogDir = filename:join(OutputDir, "log_dir"),
     ok = filelib:ensure_path(LogDir),
     LogDir.
-
--doc """
-Informs the test runner of a successful test run.
-""".
--spec mark_success(Result, ProgressMarkersOffsets) -> ok when
-    Result :: unicode:chardata(),
-    ProgressMarkersOffsets :: #{ct_stdout:progress_line() => ct_stdout:offset()}.
-mark_success(Result, ProgressMarkersOffsets) ->
-    ?MODULE ! {run_succeed, Result, ProgressMarkersOffsets},
-    ok.
-
--doc """
-Informs the test runner of a fataled test run.
-""".
--spec mark_failure(Result, ProgressMarkersOffsets) -> ok when
-    Result :: unicode:chardata(),
-    ProgressMarkersOffsets :: #{ct_stdout:progress_line() => ct_stdout:offset()}.
-mark_failure(Error, ProgressMarkersOffsets) ->
-    ?MODULE ! {run_failed, Error, ProgressMarkersOffsets},
-    ok.
 
 -doc """
 CtOpts must be tuple as defined here:

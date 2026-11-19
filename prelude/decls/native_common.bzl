@@ -16,10 +16,14 @@ load(":common.bzl", "LinkableDepType")
 
 def _link_style():
     return {
-        "link_style": attrs.option(attrs.enum(LinkableDepType), default = None, doc = """
+        "link_style": attrs.option(
+            attrs.enum(LinkableDepType),
+            default = None,
+            doc = """
     Determines whether to build and link this rule's dependencies statically or dynamically. Can be
      either `static`, `static_pic` or `shared`.
-"""),
+""",
+        ),
     }
 
 def _link_whole(link_whole_type):
@@ -34,29 +38,41 @@ def _preferred_linkage(preferred_linkage_type):
 
 def _link_group_deps():
     return {
-        "link_group_deps": attrs.list(attrs.dep(), default = [], doc = """
+        "link_group_deps": attrs.list(
+            attrs.dep(),
+            default = [],
+            doc = """
     Additional targets to traverse when building link groups, but which should not
      be direct dependencies of the main executable.
-"""),
+""",
+        ),
     }
 
 def _link_group_public_deps_label():
     return {
-        "link_group_public_deps_label": attrs.option(attrs.string(), default = None, doc = """
+        "link_group_public_deps_label": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
     Surface nodes with this label as "public" nodes in the main executable when
      linking with with link groups.
-"""),
+""",
+        ),
     }
 
 def _soname():
     return {
-        "soname": attrs.option(attrs.string(), default = None, doc = """
+        "soname": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
     Sets the soname ("shared object name") of any shared library produced from this rule.
      The default value is based on the full rule name.
      The macro `$(ext)` will be replaced with a platform-appropriate extension.
      An argument can be provided, which is a library version.
      For example `soname = 'libfoo.$(ext 2.3)'` will be `libfoo.2.3.dylib` on Mac and `libfoo.so.2.3` on Linux.
-"""),
+""",
+        ),
     }
 
 def _transformation_spec_arg():

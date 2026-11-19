@@ -16,7 +16,11 @@ load(":apple_toolchain_types.bzl", "AppleToolchainInfo", "AppleToolsInfo")
 
 def _headers_arg():
     return {
-        "headers": attrs.named_set(attrs.source(), sorted = True, default = [], doc = """
+        "headers": attrs.named_set(
+            attrs.source(),
+            sorted = True,
+            default = [],
+            doc = """
     The set of header files that are made available for inclusion to the source files in this
      target. These should be specified as either a list of header files or a dictionary of header names
      to header files. The header names can contain forward slashes (`/`). If a list of
@@ -28,12 +32,17 @@ def _headers_arg():
      with `#import "$HEADER_NAME"`, where `$HEADER_NAME` is the key
      corresponding to this file. In this case, the `header_path_prefix` attribute is
      ignored. In either case, quotes in the import statements can be replaced with angle brackets.
-"""),
+""",
+        ),
     }
 
 def _exported_headers_arg():
     return {
-        "exported_headers": attrs.named_set(attrs.source(), sorted = True, default = [], doc = """
+        "exported_headers": attrs.named_set(
+            attrs.source(),
+            sorted = True,
+            default = [],
+            doc = """
     The set of header files that are made available for inclusion to the source files in this
      target and all targets that transitively depend on this one. These should be specified as
      either a list of header files or a dictionary of header names
@@ -47,12 +56,16 @@ def _exported_headers_arg():
      with `#import "$HEADER_NAME"`, where `$HEADER_NAME` is the key
      corresponding to this file. In this case, the `header_path_prefix` attribute is
      ignored. In either case, quotes in the import statements can be replaced with angle brackets.
-"""),
+""",
+        ),
     }
 
 def _header_path_prefix_arg():
     return {
-        "header_path_prefix": attrs.option(attrs.string(), default = None, doc = """
+        "header_path_prefix": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
     A path prefix when including headers of this target. For example, headers from a library defined
      using
 
@@ -73,87 +86,96 @@ def _header_path_prefix_arg():
 
     Defaults to the short name of the target. Can contain forward slashes (`/`), but
      cannot start with one. See `headers` for more information.
-"""),
+""",
+        ),
     }
 
 def _frameworks_arg():
     return {
-        "frameworks": attrs.list(attrs.string(), default = [], doc = """
+        "frameworks": attrs.list(
+            attrs.string(),
+            default = [],
+            doc = """
     A list of system frameworks that the code in this target uses. Each entry should be a path
      starting with `$SDKROOT` or `$PLATFORM_DIR` to denote that the rest of the
      path is relative to the root of the SDK used for the build or to the platform toolchain
      directory.
-"""),
+""",
+        ),
     }
 
 def _target_sdk_version():
     return {
-        "target_sdk_version": attrs.option(attrs.string(), default = None, doc = """
+        "target_sdk_version": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
     The minimum OS version that the library target should support, overriding the minimum set in
      `.buckconfig`. When set, Buck will automatically add flags to both Objective-C and
      Swift compilation that will allow the use of the new APIs without guarding code inside availability
      checks.
-"""),
+""",
+        ),
     }
 
 def _info_plist_arg():
     return {
-        "info_plist": attrs.source(doc = """
+        "info_plist": attrs.source(
+            doc = """
     A path to an `Info.plist` file that will be placed in the bundle. The specified file
      will be processed by substituting variable names with their values
      (see `info_plist_substitutions` for more information).
-"""),
+"""
+        ),
     }
 
 def _info_plist_substitutions_arg():
     return {
-        "info_plist_substitutions": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}, doc = """
+        "info_plist_substitutions": attrs.dict(
+            key = attrs.string(),
+            value = attrs.string(),
+            sorted = False,
+            default = {},
+            doc = """
     A dictionary that assigns variable names to their values. It is used for variable
      substitution when processing the file specified in `info_plist`. For example if this
      argument is set to `{\'VAR\': \'MyValue\'}`, then each occurrence of `$(VAR)` or `${VAR}` in the file will be replaced by `MyValue`.
-"""),
+""",
+        ),
     }
 
 def _extra_xcode_sources():
     return {
-        "extra_xcode_sources": attrs.list(attrs.source(allow_directory = True), default = [], doc = """
+        "extra_xcode_sources": attrs.list(
+            attrs.source(allow_directory = True),
+            default = [],
+            doc = """
     When the project is generated, this is the list of files that will added to the build phase
      "Compile Sources" of the given target.
-"""),
+""",
+        ),
     }
 
 def _extra_xcode_files():
     return {
-        "extra_xcode_files": attrs.list(attrs.source(), default = [], doc = """
+        "extra_xcode_files": attrs.list(
+            attrs.source(),
+            default = [],
+            doc = """
     When the project is generated, this is the list of files that will added to the project.
      Those files won't be added to the build phase "Compile Sources".
-"""),
+""",
+        ),
     }
 
 def _privacy_manifest_arg():
     return {
-        "privacy_manifest": attrs.option(attrs.source(), default = None, doc = """
+        "privacy_manifest": attrs.option(
+            attrs.source(),
+            default = None,
+            doc = """
     A path to an `.xcprivacy` file that will be placed in the bundle.
-"""),
-    }
-
-def _debug_artifacts_validators_arg():
-    return {
-        "debug_artifacts_validators": attrs.dict(
-            attrs.string(),
-            attrs.tuple(
-                # A target which will be passed two named arguments:
-                # --artifacts: A path to a file containing a list of artifact paths to inspect.
-                # --output: The path to write the analysis output to.
-                attrs.exec_dep(providers = [RunInfo]),
-                # A target which is passed the outputs of the previous script
-                # and emits a ValidationSpec validation_result JSON file.
-                # --analysis-json-path: A path to a JSON artifact. Keys are the configured target.
-                # --output: The path to write the ValidationSpec validation_result JSON file.
-                # value is a list of artifact outputs from the previous script.
-                attrs.exec_dep(providers = [RunInfo]),
-            ),
-            default = {},
+""",
         ),
     }
 
@@ -173,13 +195,70 @@ def _uses_explicit_modules_arg():
         "uses_explicit_modules": attrs.bool(default = False),
     }
 
+def swift_dynamic_replacement_select(enabled, disabled):
+    """`enabled` or `disabled`, as the configuration decides Swift dynamic
+    replacement. The `swift_dynamic_replacement` constraint decides when it is
+    set, to `enabled` or `disabled`; the
+    `apple.swift_dynamic_replacement_override_enabled` buckconfig is only the
+    fallback for a configuration that leaves the constraint unspecified, so a
+    platform or a mode's modifier pins the decision and a buckconfig alone
+    cannot override a platform that pins `disabled`. It is the default of the
+    `swift_dynamic_replacement_enabled` attribute, which a target may set
+    itself; what follows the configuration alone, such as the runtime
+    `ios_binary` links, uses this select directly."""
+    return select({
+        "DEFAULT": select({
+            "DEFAULT": disabled,
+            "config//features/apple:swift_dynamic_replacement_override_enabled": enabled,
+        }),
+        "config//features/apple/constraints:swift_dynamic_replacement[disabled]": disabled,
+        "config//features/apple/constraints:swift_dynamic_replacement[enabled]": enabled,
+    })
+
+def apple_hot_code_reload_enabled_select(enabled, disabled):
+    """`enabled` or `disabled`, as the configuration decides hot code reload:
+    what an app build does for it as a whole, such as linking the SwiftUI
+    reload runtime and recording the decision in `BuildInfo.json`. The
+    `hot_reload` constraint decides when it is set, to `enabled` or `disabled`;
+    the `apple.hot_code_reload_enabled` buckconfig
+    (`@fbsource//fbobjc/mode/hot-code-reload`) is only the fallback for a
+    configuration that leaves the constraint unspecified, so a platform pins the
+    decision and a buckconfig alone cannot override a platform that pins
+    `disabled`. Independent of whether modules are compiled for Swift dynamic
+    replacement, which `swift_dynamic_replacement_select` decides."""
+    return select({
+        "DEFAULT": select({
+            "DEFAULT": disabled,
+            "config//features/apple:hot_code_reload_enabled": enabled,
+        }),
+        "config//features/apple/constraints:hot_reload[disabled]": disabled,
+        "config//features/apple/constraints:hot_reload[enabled]": enabled,
+    })
+
+def get_swift_dynamic_replacement_enabled():
+    """Whether Swift is compiled for dynamic replacement: by default as
+    `swift_dynamic_replacement_select` decides, and a target may set it."""
+    return attrs.bool(default = swift_dynamic_replacement_select(True, False))
+
+def _swift_dynamic_replacement_enabled_arg():
+    """Compiles a Swift module so that every function, initializer, computed
+    property and subscript can be replaced at run time with
+    `@_dynamicReplacement`, and lets the library produce such replacements.
+    Every call pays an indirection, so this is for development builds only. Unset, it follows the
+    `swift_dynamic_replacement` constraint, and when that is unspecified the
+    `apple.swift_dynamic_replacement_override_enabled` buckconfig; a target
+    that sets it decides for itself, whatever the configuration says."""
+    return {
+        "swift_dynamic_replacement_enabled": get_swift_dynamic_replacement_enabled(),
+    }
+
 def _meta_apple_library_validation_enabled_default_value():
     if not is_full_meta_repo():
         return False
 
-    meta_apple_library_validation_enabled_default = (read_root_config("apple", "meta_apple_library_validation", "false").lower() == "true")
+    meta_apple_library_validation_enabled_default = read_root_config("apple", "meta_apple_library_validation", "false").lower() == "true"
 
-    is_arvr_build = (read_root_config("fb", "arvr_build", "false").lower() == "true")
+    is_arvr_build = read_root_config("fb", "arvr_build", "false").lower() == "true"
     if is_arvr_build:
         # Not all arvr builds have `arvr_mode_enabled` constraint, so under arvr
         # build mode, always disable suffixing checks as those graphs are not suffixed
@@ -193,7 +272,7 @@ def _meta_apple_library_validation_enabled_default_value():
         }),
         # arvr targets do not use suffixed targets, as any xplat target deps
         # get rewritten without the Apple-specific suffixes.
-        "config//build_mode/constraints:arvr_mode_enabled": False,
+        "config//build_mode:arvr_mode[enabled]": False,
     })
 
 def _meta_apple_library_validation_enabled_arg():
@@ -236,10 +315,14 @@ def _product_name_from_module_name_arg():
 
 def _executable_name_for_universal_arg():
     return {
-        "executable_name": attrs.option(attrs.string(), default = None, doc = """
+        "executable_name": attrs.option(
+            attrs.string(),
+            default = None,
+            doc = """
                     By default, the name of the universal executable is same as the name of the binary
                     from the `binary` target attribute. Set `executable_name` to override the default.
-                """),
+                """,
+        ),
     }
 
 def _executable_name_arg():
@@ -249,12 +332,16 @@ def _executable_name_arg():
 
 def _apple_toolchain_arg():
     return {
-        "_apple_toolchain": attrs.toolchain_dep(default = "toolchains//:apple-default", providers = [AppleToolchainInfo]),
+        "_apple_toolchain": attrs.toolchain_dep(default = "toolchains//:apple-default", providers = [AppleToolchainInfo], exec_group = DefaultExecGroup),
     }
 
 def _asset_catalogs_compilation_options_arg():
     return {
-        "asset_catalogs_compilation_options": attrs.dict(key = attrs.string(), value = attrs.any(), default = {}, doc = """
+        "asset_catalogs_compilation_options": attrs.dict(
+            key = attrs.string(),
+            value = attrs.any(),
+            default = {},
+            doc = """
                 A dict holding parameters for asset catalogs compiler (actool). Its options include:
 
                 * `notices` (defaults to `True`)
@@ -264,7 +351,8 @@ def _asset_catalogs_compilation_options_arg():
                 * `optimization` (defaults to `'space'`)
                 * `output_format` (defaults to `'human-readable-text'`)
                 * `extra_flags` (defaults to `[]`)
-            """),
+            """,
+        ),
     }
 
 def _apple_installer_arg():
@@ -278,6 +366,153 @@ def _enforce_minimum_os_plist_key():
         "enforce_minimum_os_plist_key": attrs.bool(default = False),
     }
 
+def _default_platform_arg():
+    return {"default_platform": attrs.option(attrs.string(), default = None)}
+
+def _codesign_flags_arg():
+    return {"codesign_flags": attrs.list(attrs.string(), default = [])}
+
+def _codesign_identity_arg():
+    return {"codesign_identity": attrs.option(attrs.string(), default = None)}
+
+def _defaults_arg():
+    return {"defaults": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {})}
+
+def _deps_arg():
+    return {"deps": attrs.list(attrs.dep(), default = [])}
+
+def _devirt_enabled_arg():
+    return {"devirt_enabled": attrs.bool(default = False)}
+
+def _diagnostics_arg():
+    return {"diagnostics": attrs.dict(key = attrs.string(), value = attrs.source(), sorted = False, default = {})}
+
+def _enable_cxx_interop_arg():
+    return {"enable_cxx_interop": attrs.bool(default = False)}
+
+def _fat_lto_arg():
+    return {"fat_lto": attrs.bool(default = False)}
+
+def _ibtool_flags_arg():
+    return {"ibtool_flags": attrs.option(attrs.list(attrs.string()), default = None)}
+
+def _libraries_arg():
+    return {"libraries": attrs.list(attrs.string(), default = [])}
+
+def _link_group_arg():
+    return {"link_group": attrs.option(attrs.string(), default = None)}
+
+def _minimum_os_version_arg():
+    return {"minimum_os_version": attrs.option(attrs.string(), default = None)}
+
+def _modular_arg():
+    return {"modular": attrs.bool(default = False)}
+
+def _module_name_arg():
+    return {"module_name": attrs.option(attrs.string(), default = None)}
+
+def _module_requires_cxx_arg():
+    return {"module_requires_cxx": attrs.bool(default = False)}
+
+def _product_name_arg():
+    return {"product_name": attrs.option(attrs.string(), default = None)}
+
+def _resource_group_arg():
+    return {"resource_group": attrs.option(attrs.string(), default = None)}
+
+def _sdk_modules_arg():
+    return {"sdk_modules": attrs.list(attrs.string(), default = [])}
+
+def _static_library_basename_arg():
+    return {"static_library_basename": attrs.option(attrs.string(), default = None)}
+
+def _strip_level_arg():
+    return {
+        "strip_level": attrs.enum(
+            ["unstripped", "all", "non_global", "debug"],
+            default = read_root_config("apple", "strip_level", "unstripped"),
+        )
+    }
+
+def _swift_module_skip_function_bodies_arg():
+    return {"swift_module_skip_function_bodies": attrs.bool(default = True)}
+
+def _disable_generated_umbrella_header_arg():
+    # When True, the Swift compilation will not auto-generate an umbrella
+    # header for mixed ObjC/Swift modules. Modules that opt in must provide
+    # their own umbrella header (or an empty one) named after the module so
+    # that `#import <ModuleName/ModuleName.h>` emitted in the -Swift.h header
+    # still resolves.
+    return {"disable_generated_umbrella_header": attrs.bool(default = True)}
+
+def _swift_package_name_arg():
+    return {"swift_package_name": attrs.option(attrs.string(), default = None)}
+
+def _skip_private_swiftinterface_arg():
+    return {"skip_private_swiftinterface": attrs.bool(default = False)}
+
+def _thin_lto_arg():
+    return {"thin_lto": attrs.bool(default = False)}
+
+def _use_submodules_arg():
+    return {"use_submodules": attrs.bool(default = True)}
+
+def _uses_cxx_explicit_modules_arg():
+    return {"uses_cxx_explicit_modules": attrs.bool(default = False)}
+
+def _uses_modules_arg():
+    return {"uses_modules": attrs.bool(default = False)}
+
+def _xcode_product_type_arg():
+    return {"xcode_product_type": attrs.option(attrs.string(), default = None)}
+
+def _entitlements_suffixed_key_map_arg():
+    return {
+        "entitlements_suffixed_key_map": attrs.dict(
+            key = attrs.string(),
+            value = attrs.string(),
+            sorted = False,
+            default = {},
+            doc = """
+    A map of entitlement key to suffix string. For each entry, the corresponding value(s) in the
+     entitlements plist will have the suffix appended. Values can be a single string or a list of
+     strings; both are handled. For example, `{"keychain-access-groups": ".suffix"}` will append
+     `.suffix` to every value under the `keychain-access-groups` key.
+""",
+        ),
+    }
+
+def _entitlements_removed_keys_arg():
+    return {
+        "entitlements_removed_keys": attrs.list(
+            attrs.string(),
+            default = [],
+            doc = """
+    A list of entitlement keys to remove from the entitlements plist. Any key present in this list
+     will be deleted from the final entitlements before code signing. For example,
+     `["com.apple.developer.icloud-services"]` will remove the `com.apple.developer.icloud-services`
+     key from the entitlements.
+""",
+        ),
+    }
+
+def _entitlements_removed_values_map_arg():
+    return {
+        "entitlements_removed_values_map": attrs.dict(
+            key = attrs.string(),
+            value = attrs.list(attrs.string()),
+            sorted = False,
+            default = {},
+            doc = """
+    A map of entitlement keys to a list of values to remove from that key's value in the
+     entitlements plist. If the entitlement value is a list, the specified values are removed
+     from it. If the entitlement value is a dict, the specified values are removed as keys
+     from it. For example, `{"keychain-access-groups": ["group1"]}` will remove "group1"
+     from the `keychain-access-groups` list.
+""",
+        ),
+    }
+
 apple_common = struct(
     headers_arg = _headers_arg,
     exported_headers_arg = _exported_headers_arg,
@@ -289,9 +524,9 @@ apple_common = struct(
     extra_xcode_sources = _extra_xcode_sources,
     extra_xcode_files = _extra_xcode_files,
     privacy_manifest_arg = _privacy_manifest_arg,
-    debug_artifacts_validators_arg = _debug_artifacts_validators_arg,
     serialize_debugging_options_arg = _serialize_debugging_options_arg,
     uses_explicit_modules_arg = _uses_explicit_modules_arg,
+    swift_dynamic_replacement_enabled_arg = _swift_dynamic_replacement_enabled_arg,
     meta_apple_library_validation_enabled_arg = _meta_apple_library_validation_enabled_arg,
     skip_universal_resource_dedupe_arg = _skip_universal_resource_dedupe_arg,
     apple_sanitizer_compatibility_arg = _apple_sanitizer_compatibility_arg,
@@ -303,4 +538,37 @@ apple_common = struct(
     asset_catalogs_compilation_options_arg = _asset_catalogs_compilation_options_arg,
     apple_installer_arg = _apple_installer_arg,
     enforce_minimum_os_plist_key = _enforce_minimum_os_plist_key,
+    default_platform_arg = _default_platform_arg,
+    codesign_flags_arg = _codesign_flags_arg,
+    codesign_identity_arg = _codesign_identity_arg,
+    defaults_arg = _defaults_arg,
+    deps_arg = _deps_arg,
+    devirt_enabled_arg = _devirt_enabled_arg,
+    diagnostics_arg = _diagnostics_arg,
+    enable_cxx_interop_arg = _enable_cxx_interop_arg,
+    fat_lto_arg = _fat_lto_arg,
+    ibtool_flags_arg = _ibtool_flags_arg,
+    libraries_arg = _libraries_arg,
+    link_group_arg = _link_group_arg,
+    minimum_os_version_arg = _minimum_os_version_arg,
+    modular_arg = _modular_arg,
+    module_name_arg = _module_name_arg,
+    module_requires_cxx_arg = _module_requires_cxx_arg,
+    product_name_arg = _product_name_arg,
+    resource_group_arg = _resource_group_arg,
+    sdk_modules_arg = _sdk_modules_arg,
+    static_library_basename_arg = _static_library_basename_arg,
+    strip_level_arg = _strip_level_arg,
+    swift_module_skip_function_bodies_arg = _swift_module_skip_function_bodies_arg,
+    disable_generated_umbrella_header_arg = _disable_generated_umbrella_header_arg,
+    swift_package_name_arg = _swift_package_name_arg,
+    skip_private_swiftinterface_arg = _skip_private_swiftinterface_arg,
+    thin_lto_arg = _thin_lto_arg,
+    use_submodules_arg = _use_submodules_arg,
+    uses_cxx_explicit_modules_arg = _uses_cxx_explicit_modules_arg,
+    uses_modules_arg = _uses_modules_arg,
+    xcode_product_type_arg = _xcode_product_type_arg,
+    entitlements_suffixed_key_map_arg = _entitlements_suffixed_key_map_arg,
+    entitlements_removed_keys_arg = _entitlements_removed_keys_arg,
+    entitlements_removed_values_map_arg = _entitlements_removed_values_map_arg,
 )

@@ -99,11 +99,7 @@ LOG_BUCKCONFIGS = bool(_BUCKCONFIG_LOG_KEYS or _BUCKCONFIG_LOG_JSON_KEYS or _BUC
 _BUCKCONFIG_LOG_CALLSTACK = read_root_config("buckconfig", "log_callstack") in ("True", "true")
 _BUCKCONFIG_LOG_VALUE = read_root_config("buckconfig", "log_value") in ("True", "true")
 
-def _log_read_config(
-        read_func,
-        section: str,
-        key: str,
-        default = None):
+def _log_read_config(read_func, section: str, key: str, default = None):
     value = read_func(section, key, default)
 
     maybe_value_dict = {"value": value} if _BUCKCONFIG_LOG_VALUE else {}
@@ -114,7 +110,9 @@ def _log_read_config(
                 "cell": get_cell_name(),
                 "key": key,
                 "section": section,
-            } | maybe_value_dict | maybe_callstack_dict,
+            }
+            | maybe_value_dict
+            | maybe_callstack_dict,
         }
 
         # This only prints if buckconfig is set
@@ -127,7 +125,8 @@ def _log_read_config(
                 "starlark_log_buckconfig": {
                     "call_stack": call_stack(),
                     "cell": get_cell_name(),
-                } | maybe_value_dict,
+                }
+                | maybe_value_dict,
             }
 
             # This only prints if buckconfig is set
@@ -150,12 +149,7 @@ read_root_config_with_logging = partial(_log_read_config, read_root_config)
 _read_config = read_config_with_logging if LOG_BUCKCONFIGS else read_config
 _read_root_config = read_root_config_with_logging if LOG_BUCKCONFIGS else read_root_config
 
-def read(
-        section: str,
-        field: str,
-        default: str | Select | None = None,
-        root_cell: bool = False,
-        logging: bool = True) -> str | Select | None:
+def read(section: str, field: str, default: str | Select | None = None, root_cell: bool = False, logging: bool = True) -> str | Select | None:
     """Read a `string` from `.buckconfig`."""
     if logging:
         read_config_func = _read_root_config if root_cell else _read_config
@@ -167,12 +161,8 @@ def read(
 read_string = read
 
 def read_choice(
-        section: str,
-        field: str,
-        choices: typing.Iterable,
-        default: str | Select | None = None,
-        required: bool = True,
-        root_cell: bool = False) -> str | None:
+    section: str, field: str, choices: typing.Iterable, default: str | Select | None = None, required: bool = True, root_cell: bool = False
+) -> str | Select | None:
     """Read a string from `.buckconfig` that must be one `choices`."""
 
     val = read(section, field, root_cell = root_cell)
@@ -191,12 +181,8 @@ def read_choice(
         fail("`{}:{}`: no value set".format(section, field))
 
 def read_bool(
-        section: str,
-        field: str,
-        default: bool | Select | None = None,
-        required: bool = True,
-        root_cell: bool = False,
-        logging: bool = True) -> bool | Select | None:
+    section: str, field: str, default: bool | Select | None = None, required: bool = True, root_cell: bool = False, logging: bool = True
+) -> bool | Select | None:
     """Read a `boolean` from `.buckconfig`."""
 
     # Treat the empty string as "unset".  This allows the user to "override" a
@@ -225,12 +211,7 @@ def read_bool(
     else:
         fail("`{}:{}`: no value set".format(section, field))
 
-def read_int(
-        section: str,
-        field: str,
-        default: int | Select | None = None,
-        required: bool = True,
-        root_cell: bool = False) -> int | Select | None:
+def read_int(section: str, field: str, default: int | Select | None = None, required: bool = True, root_cell: bool = False) -> int | Select | None:
     """Read an `int` from `.buckconfig`."""
 
     val = read(section, field, root_cell = root_cell)
@@ -249,12 +230,8 @@ def read_int(
         fail("`{}:{}`: no value set".format(section, field))
 
 def read_list(
-        section: str,
-        field: str,
-        delimiter: str | None = ",",
-        default: typing.Iterable | Select | None = None,
-        required: bool = True,
-        root_cell = False) -> typing.Iterable | Select | None:
+    section: str, field: str, delimiter: str | None = ",", default: typing.Iterable | Select | None = None, required: bool = True, root_cell = False
+) -> typing.Iterable | Select | None:
     """Read a `list` from `.buckconfig`."""
     val = read(section, field, root_cell = root_cell)
     if val != None:

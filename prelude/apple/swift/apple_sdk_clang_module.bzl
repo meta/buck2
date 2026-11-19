@@ -23,6 +23,7 @@ def apple_sdk_clang_module_impl(ctx: AnalysisContext) -> list[Provider]:
         input_relative_path = ctx.attrs.modulemap_relative_path,
         deps = ctx.attrs.deps,
         cxx_deps = ctx.attrs.cxx_deps,
+        overlays_transitive_deps = ctx.attrs.overlays_transitive_deps,
     )
 
     return [
@@ -42,5 +43,7 @@ apple_sdk_clang_module = rule(
         "module_name": attrs.string(),
         "modulemap_relative_path": attrs.string(),
         "overlays": attrs.dict(key = attrs.string(), value = attrs.list(attrs.string(), default = []), sorted = False, default = {}),
+        # Transitive closure filtered to overlay owners and underlyings.
+        "overlays_transitive_deps": attrs.list(attrs.string(), default = []),
     },
 )

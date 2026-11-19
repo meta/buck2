@@ -42,6 +42,5 @@ def _resolve_test_impl(ctx):
 
 resolve_test = bxl_main(
     impl = _resolve_test_impl,
-    cli_args = {
-    },
+    cli_args = {},
 )

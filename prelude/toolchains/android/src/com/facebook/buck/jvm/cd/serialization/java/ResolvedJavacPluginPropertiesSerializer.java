@@ -11,15 +11,15 @@
 package com.facebook.buck.jvm.cd.serialization.java;
 
 import com.facebook.buck.cd.model.java.ResolvedJavacOptions;
-import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.cd.serialization.RelPathSerializer;
 import com.facebook.buck.jvm.java.ResolvedJavacPluginProperties;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
-import java.util.Map;
 
 /** {@link ResolvedJavacPluginProperties} to protobuf serializer */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class ResolvedJavacPluginPropertiesSerializer {
 
   private ResolvedJavacPluginPropertiesSerializer() {}
@@ -39,16 +39,7 @@ class ResolvedJavacPluginPropertiesSerializer {
         pluginProperties.getClasspathList().stream()
             .map(RelPathSerializer::deserialize)
             .collect(ImmutableList.toImmutableList()),
-        toPathParams(pluginProperties.getPathParamsMap()),
+        ImmutableMap.of(),
         ImmutableList.copyOf(pluginProperties.getArgumentsList()));
-  }
-
-  private static ImmutableMap<String, RelPath> toPathParams(Map<String, String> pathParamsMap) {
-    ImmutableMap.Builder<String, RelPath> pathParamsBuilder =
-        ImmutableMap.builderWithExpectedSize(pathParamsMap.size());
-    for (Map.Entry<String, String> entry : pathParamsMap.entrySet()) {
-      pathParamsBuilder.put(entry.getKey(), RelPathSerializer.deserialize(entry.getValue()));
-    }
-    return pathParamsBuilder.build();
   }
 }

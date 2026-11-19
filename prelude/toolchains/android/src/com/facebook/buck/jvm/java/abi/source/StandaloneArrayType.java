@@ -10,6 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Collections;
 import java.util.List;
 import javax.lang.model.element.AnnotationMirror;
@@ -22,6 +23,7 @@ import javax.lang.model.type.TypeMirror;
  * implementation. It requires a {@link TypeMirror}, but does not depend on any particular
  * implementation of it (beyond the spec).
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class StandaloneArrayType extends StandaloneTypeMirror implements ArrayType {
 
   private final TypeMirror componentType;

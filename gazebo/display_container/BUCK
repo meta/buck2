@@ -7,6 +7,17 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
+    autocargo = {
+        "cargo_toml_config": {
+            "package": {
+                "authors": ["Facebook"],
+                "categories": ["rust-patterns"],
+                "description": "Utilities to implement Display",
+                "documentation": "https://docs.rs/display_container",
+                "version": "0.9.0",
+            },
+        },
+    },
     deps = [
         "fbsource//third-party/rust:either",
         "fbsource//third-party/rust:indenter",

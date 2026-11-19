@@ -57,6 +57,5 @@ def _useless(ctx):
 
 useless = rule(
     impl = _useless,
-    attrs = {
-    },
+    attrs = {},
 )

@@ -7,8 +7,8 @@
 # above-listed licenses.
 
 def _test(ctx: AnalysisContext):
-    local = ctx.actions.declare_output("local")
-    remote = ctx.actions.declare_output("remote")
+    local = ctx.actions.declare_output("local", has_content_based_path = False)
+    remote = ctx.actions.declare_output("remote", has_content_based_path = False)
 
     ctx.actions.run(
         [

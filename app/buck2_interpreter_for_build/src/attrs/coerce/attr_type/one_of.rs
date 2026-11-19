@@ -8,11 +8,10 @@
  * above-listed licenses.
  */
 
+use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr_type::one_of::OneOfAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
-use gazebo::prelude::SliceExt;
 use starlark::values::Value;
 
 use crate::attrs::coerce::AttrTypeCoerce;
@@ -21,27 +20,32 @@ use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 use crate::attrs::coerce::error::CoercionError;
 
 impl AttrTypeCoerce for OneOfAttrType {
-    fn coerce_item(
+    fn coerce_item<'v>(
         &self,
         configurable: AttrIsConfigurable,
-        ctx: &dyn AttrCoercionContext,
-        value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+        ctx: &dyn AttrCoercionContext<'v>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<AttrToken> {
         let mut errs = Vec::new();
         // Bias towards the start of the list - try and use success/failure from first in preference
         for (i, x) in self.xs.iter().enumerate() {
             match x.coerce_item(configurable, ctx, value) {
-                Ok(v) => return Ok(CoercedAttr::OneOf(Box::new(v), i as u32)),
+                Ok(v) => return ctx.attr_arena().encode_one_of(i as u32, v),
                 Err(e) => {
                     // TODO(nga): anyhow error creation is expensive.
                     errs.push(e)
                 }
             }
         }
-        Err(CoercionError::one_of_many(errs).into())
+        Err(CoercionError::one_of_many(errs))
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {
-        TyMaybeSelect::Union(self.xs.map(|x| x.starlark_type()))
+        TyMaybeSelect::Union(
+            self.xs
+                .iter()
+                .map(|x| x.starlark_type())
+                .collect::<Vec<_>>(),
+        )
     }
 }

@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import sys
 
-from writable import make_path_user_writable
+from writable import make_dir_recursively_writable, make_path_user_writable
 
 _RE_TMPDIR_ENV_VAR = "TMPDIR"
 _FILE_WRITE_FAILURE_MARKER = "could not write"
@@ -101,12 +101,18 @@ def _make_path_user_writable(path: str) -> None:
 
     backup_path = f"{path}.bak"
     shutil.move(path, backup_path)
-    shutil.copy2(backup_path, path)
-
-    backup_file = pathlib.Path(backup_path)
-    backup_file.unlink()
-
-    make_path_user_writable(path)
+    if os.path.isdir(backup_path):
+        shutil.copytree(backup_path, path)
+        make_dir_recursively_writable(path)
+        # Remove the original dir. Unlinking its files needs write
+        # permission on parent dir
+        for dirpath, _dirnames, _filenames in os.walk(backup_path):
+            make_path_user_writable(dirpath)
+        shutil.rmtree(backup_path)
+    else:
+        shutil.copy2(backup_path, path)
+        pathlib.Path(backup_path).unlink()
+        make_path_user_writable(path)
 
 
 def _rewrite_dependency_file(command, out_path):
@@ -288,7 +294,7 @@ def main():
             # We also need this prefix for the clang module cache path if we are
             # not using explicit modules with remote actions.
             "-file-prefix-map",
-            f"{env.get(_RE_TMPDIR_ENV_VAR, "/tmp").rstrip("/")}=/tmp",
+            f"{env.get(_RE_TMPDIR_ENV_VAR, '/tmp').rstrip('/')}=/tmp",
             "-file-prefix-map",
             f"{os.getcwd()}/=",
             "-file-prefix-map",
@@ -334,6 +340,16 @@ def main():
                     maybe_path = value.get(subkey, None)
                     if maybe_path:
                         _make_path_user_writable(maybe_path)
+
+    # Ensure the directories referenced by the output file map exist.
+    # This can happen for Swift Incremental mode where there's no
+    # previous incremental action available
+    if "-output-file-map" in command:
+        with open(command[command.index("-output-file-map") + 1]) as f:
+            for entry in json.load(f).values():
+                for maybe_path in entry.values():
+                    if isinstance(maybe_path, str) and os.path.dirname(maybe_path):
+                        os.makedirs(os.path.dirname(maybe_path), exist_ok=True)
 
     result = subprocess.run(
         command,

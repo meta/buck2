@@ -21,14 +21,18 @@ use std::hash::Hasher;
 
 use allocative::Allocative;
 use dupe::Dupe;
-use starlark_map::sorted_map::SortedMap;
+use mini_map::MiniFixedSortedMap;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use starlark_syntax::codemap::Span;
 
 use crate::typing::Ty;
 use crate::typing::TyBasic;
+use crate::typing::TypingBinOp;
 use crate::typing::TypingOracleCtx;
 use crate::typing::call_args::TyCallArgs;
 use crate::typing::callable::TyCallable;
+use crate::typing::custom::TyCustomDyn;
 use crate::typing::custom::TyCustomImpl;
 use crate::typing::error::TypingNoContextError;
 use crate::typing::error::TypingNoContextOrInternalError;
@@ -51,7 +55,7 @@ enum TyUserError {
 }
 
 /// Types of `[]` operator.
-#[derive(Allocative, Debug)]
+#[derive(Allocative, Debug, Pagable)]
 pub struct TyUserIndex {
     /// Type of index argument.
     pub(crate) index: Ty,
@@ -59,11 +63,18 @@ pub struct TyUserIndex {
     pub(crate) result: Ty,
 }
 
+impl TyUserIndex {
+    /// Indexing with a value of type `index` yields a value of type `result`.
+    pub fn new(index: Ty, result: Ty) -> TyUserIndex {
+        TyUserIndex { index, result }
+    }
+}
+
 /// Fields of the struct.
-#[derive(Allocative, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(Allocative, Debug, Ord, PartialOrd, Eq, PartialEq, Hash, Pagable)]
 pub struct TyUserFields {
     /// Known fields.
-    pub known: SortedMap<String, Ty>,
+    pub known: MiniFixedSortedMap<String, Ty>,
     /// Are there unknown fields?
     /// Unknown fields are possible if this type represents an abstract type like a provider.
     pub unknown: bool,
@@ -81,7 +92,7 @@ impl TyUserFields {
     /// No fields.
     pub fn no_fields() -> TyUserFields {
         TyUserFields {
-            known: SortedMap::new(),
+            known: MiniFixedSortedMap::new(),
             unknown: false,
         }
     }
@@ -89,7 +100,7 @@ impl TyUserFields {
     /// All fields are not known.
     pub fn unknown() -> TyUserFields {
         TyUserFields {
-            known: SortedMap::new(),
+            known: MiniFixedSortedMap::new(),
             unknown: true,
         }
     }
@@ -116,8 +127,9 @@ pub struct TyUserParams {
 }
 
 /// Type description for arbitrary type.
-#[derive(Allocative, Debug, derive_more::Display)]
+#[derive(Allocative, Debug, derive_more::Display, Pagable)]
 #[display("{}", name)]
+#[pagable_typetag(TyCustomDyn)]
 pub struct TyUser {
     name: String,
     /// Base type for this custom type, e.g. generic record for record with known fields.
@@ -181,6 +193,20 @@ impl TyUser {
     }
 }
 
+impl TyUser {
+    /// The type whose values this type's are.
+    pub(crate) fn base(&self) -> TyStarlarkValue {
+        self.base
+    }
+
+    /// Whether the type stands for more than values of its base, as `Provider` does for the
+    /// values of every provider type: such a type has a matcher of its own and does not know
+    /// its fields.
+    pub(crate) fn is_abstract(&self) -> bool {
+        self.matcher.is_some() && self.fields.unknown
+    }
+}
+
 impl PartialEq for TyUser {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -197,7 +223,7 @@ impl PartialOrd for TyUser {
 
 impl Ord for TyUser {
     fn cmp(&self, other: &Self) -> Ordering {
-        (&self.name, &self.fields, self.id).cmp(&(&other.name, &self.fields, other.id))
+        (&self.name, &self.fields, self.id).cmp(&(&other.name, &other.fields, other.id))
     }
 }
 
@@ -240,7 +266,7 @@ impl TyCustomImpl for TyUser {
             }
             Ok(index.result.dupe())
         } else {
-            Ok(self.base.index(item)?)
+            self.base.index(item, ctx)
         }
     }
 
@@ -250,6 +276,15 @@ impl TyCustomImpl for TyUser {
         } else {
             self.base.iter_item()
         }
+    }
+
+    fn bin_op(
+        &self,
+        bin_op: TypingBinOp,
+        rhs: &TyBasic,
+        ctx: &TypingOracleCtx,
+    ) -> Result<Ty, TypingNoContextOrInternalError> {
+        self.base.bin_op(bin_op, rhs, ctx)
     }
 
     fn as_callable(&self) -> Option<TyCallable> {
@@ -300,6 +335,8 @@ mod tests {
     use dupe::Dupe;
     use starlark_derive::NoSerialize;
     use starlark_derive::ProvidesStaticType;
+    use starlark_derive::StarlarkPagable;
+    use starlark_derive::StarlarkPagablePanic;
     use starlark_derive::starlark_module;
     use starlark_derive::starlark_value;
 
@@ -314,11 +351,10 @@ mod tests {
     use crate::typing::TyUser;
     use crate::typing::callable::TyCallable;
     use crate::typing::user::TyUserParams;
-    use crate::values::AllocValue;
     use crate::values::Heap;
     use crate::values::StarlarkValue;
     use crate::values::Value;
-    use crate::values::starlark_value_as_type::StarlarkValueAsType;
+    use crate::values::ValueOf;
     use crate::values::typing::TypeInstanceId;
 
     #[derive(
@@ -326,7 +362,8 @@ mod tests {
         derive_more::Display,
         ProvidesStaticType,
         Allocative,
-        NoSerialize
+        NoSerialize,
+        StarlarkPagablePanic
     )]
     #[display("plant")]
     enum AbstractPlant {}
@@ -343,19 +380,16 @@ mod tests {
         derive_more::Display,
         ProvidesStaticType,
         Allocative,
-        NoSerialize
+        NoSerialize,
+        StarlarkPagable
     )]
     #[display("fruit_callable")]
     struct FruitCallable {
         name: String,
+        #[starlark_pagable(pagable)]
         ty_fruit_callable: Ty,
+        #[starlark_pagable(pagable)]
         ty_fruit: Ty,
-    }
-
-    impl<'v> AllocValue<'v> for FruitCallable {
-        fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-            heap.alloc_simple(self)
-        }
     }
 
     #[starlark_value(type = "fruit_callable")]
@@ -387,16 +421,11 @@ mod tests {
         derive_more::Display,
         ProvidesStaticType,
         Allocative,
-        NoSerialize
+        NoSerialize,
+        StarlarkPagable
     )]
     struct Fruit {
         name: String,
-    }
-
-    impl<'v> AllocValue<'v> for Fruit {
-        fn alloc_value(self, _heap: &'v Heap) -> Value<'v> {
-            unreachable!("not needed in test")
-        }
     }
 
     #[starlark_value(type = "fruit")]
@@ -406,13 +435,46 @@ mod tests {
         }
     }
 
+    /// Value whose static type is a `TyUser`, and whose base only supports `+`, with a value
+    /// of the same type.
+    #[derive(
+        Debug,
+        derive_more::Display,
+        ProvidesStaticType,
+        Allocative,
+        NoSerialize,
+        StarlarkPagable
+    )]
+    #[display("coin")]
+    struct Coin;
+
+    #[starlark_value(type = "coin")]
+    impl<'v> StarlarkValue<'v> for Coin {
+        fn get_type_starlark_repr() -> Ty {
+            Ty::custom(
+                TyUser::new(
+                    "Coin".to_owned(),
+                    TyStarlarkValue::new::<Coin>(),
+                    TypeInstanceId::for_test(&"coin"),
+                    TyUserParams::default(),
+                )
+                .unwrap(),
+            )
+        }
+
+        fn add(&self, _other: &Self) -> Coin {
+            unreachable!("only typechecked in tests")
+        }
+    }
+
     #[starlark_module]
+    #[starlark_types(AbstractPlant as Plant)]
     fn globals(globals: &mut GlobalsBuilder) {
-        fn fruit(name: String) -> starlark::Result<FruitCallable> {
+        fn fruit<'v>(name: &str, heap: Heap<'v>) -> starlark::Result<ValueOf<'v, FruitCallable>> {
             let ty_fruit = Ty::custom(TyUser::new(
-                name.clone(),
+                name.to_owned(),
                 TyStarlarkValue::new::<Fruit>(),
-                TypeInstanceId::r#gen(),
+                TypeInstanceId::for_test(&("fruit", name)),
                 TyUserParams {
                     supertypes: AbstractPlant::get_type_starlark_repr()
                         .iter_union()
@@ -423,25 +485,30 @@ mod tests {
             let ty_fruit_callable = Ty::custom(TyUser::new(
                 format!("fruit[{name}]"),
                 TyStarlarkValue::new::<FruitCallable>(),
-                TypeInstanceId::r#gen(),
+                TypeInstanceId::for_test(&("fruit_callable", name)),
                 TyUserParams {
                     callable: Some(TyCallable::new(ParamSpec::empty(), ty_fruit.clone())),
 
                     ..TyUserParams::default()
                 },
             )?);
-            Ok(FruitCallable {
-                name,
-                ty_fruit,
-                ty_fruit_callable,
-            })
+            Ok(ValueOf::alloc(
+                heap,
+                FruitCallable {
+                    name: name.to_owned(),
+                    ty_fruit_callable,
+                    ty_fruit,
+                },
+            ))
         }
 
         fn mk_fruit() -> anyhow::Result<Fruit> {
             panic!("not needed in test")
         }
 
-        const Plant: StarlarkValueAsType<AbstractPlant> = StarlarkValueAsType::new();
+        fn mk_coin<'v>() -> anyhow::Result<ValueOf<'v, Coin>> {
+            panic!("not needed in test")
+        }
     }
 
     #[test]
@@ -478,6 +545,63 @@ def test():
     # They should intersect.
     takes_pear(mk_fruit())
 "#,
+        );
+    }
+
+    #[test]
+    fn test_ty_user_bin_op_uses_base() {
+        let mut a = Assert::new();
+        a.globals_add(globals);
+        a.pass(
+            r#"
+def test():
+    mk_coin() + mk_coin()
+"#,
+        );
+        a.fail(
+            r#"
+def test():
+    mk_coin() - mk_coin()
+"#,
+            "Binary operator `-` is not available on the types `Coin` and `Coin`",
+        );
+    }
+
+    /// The base's `+` is written with its operand and result, which are the base's type, and
+    /// that is the `TyUser`: a value of the user type or of unknown type is taken, a value of
+    /// another type is not, and the result is of the user type.
+    #[test]
+    fn test_ty_user_typed_bin_op() {
+        let mut a = Assert::new();
+        a.globals_add(globals);
+        a.pass(
+            r#"
+def test(x):
+    mk_coin() + x
+"#,
+        );
+        a.fail(
+            r#"
+def test():
+    mk_coin() + mk_fruit()
+"#,
+            "Binary operator `+` is not available on the types `Coin` and `fruit`",
+        );
+        a.fail(
+            r#"
+Pear = fruit("pear")
+
+def test(pear: Pear):
+    mk_coin() + pear
+"#,
+            "Binary operator `+` is not available on the types `Coin` and `pear`",
+        );
+        a.fail(
+            r#"
+def test() -> str:
+    return mk_coin() + mk_coin()
+"#,
+            "Expected type `str` but got `Coin`",
         );
     }
 }

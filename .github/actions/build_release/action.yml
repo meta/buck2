@@ -6,6 +6,7 @@ runs:
   - uses: Swatinem/rust-cache@v2
     with:
       prefix-key: buck2-release
+      save-if: ${{ github.ref == 'refs/heads/main' }}
   - name: Build buck2 binary (release)
     run: |-
       mkdir $RUNNER_TEMP/artifacts

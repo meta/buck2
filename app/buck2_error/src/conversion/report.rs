@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use buck2_data::ActionError;
 use buck2_data::ErrorReport;
 
 use crate::ErrorTag;
@@ -19,6 +20,14 @@ impl From<ErrorReport> for crate::Error {
     #[cold]
     #[track_caller]
     fn from(value: ErrorReport) -> Self {
+        Self::from_error_report(value, None)
+    }
+}
+
+impl crate::Error {
+    #[cold]
+    #[track_caller]
+    pub(crate) fn from_error_report(value: ErrorReport, action: Option<ActionError>) -> Self {
         // TODO(ctolliday) convert remaining fields
         // (note: not using tags() as a workaround for likely false positive ASAN failure)
         let tags: Vec<ErrorTag> = value
@@ -28,13 +37,12 @@ impl From<ErrorReport> for crate::Error {
             .collect();
 
         let mut error = crate::Error::new(
-            value.message.clone(),
+            value.message,
             *tags.first().unwrap_or(&ErrorTag::InvalidErrorReport),
             value
                 .source_location
-                .map(|s| s.into())
-                .unwrap_or(SourceLocation::new(file!())),
-            None,
+                .map_or(SourceLocation::new(file!(), line!()), |s| s.into()),
+            action,
         )
         .tag(tags);
 

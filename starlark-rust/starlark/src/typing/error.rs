@@ -120,7 +120,9 @@ pub struct TypingNoContextError;
 /// * Typing error means, types are not compatible.
 /// * Internal error means, bug in the typechecker.
 pub enum TypingOrInternalError {
+    /// Types are not compatible.
     Typing(TypingError),
+    /// Bug in the typechecker.
     Internal(InternalError),
 }
 
@@ -136,8 +138,11 @@ impl From<InternalError> for TypingOrInternalError {
     }
 }
 
+/// Like [`TypingOrInternalError`], but without context on the typing variant.
 pub enum TypingNoContextOrInternalError {
+    /// Types are not compatible.
     Typing,
+    /// Bug in the typechecker.
     Internal(InternalError),
 }
 

@@ -17,12 +17,13 @@
 
 use allocative::Allocative;
 use dupe::Dupe;
+use starlark_derive::StarlarkPagable;
 use starlark_derive::Trace;
 use starlark_derive::VisitSpanMut;
 
 use crate as starlark;
 use crate::eval::bc::stack_ptr::BcSlot;
-use crate::values::Freeze;
+use crate::register_starlark_any;
 
 /// Not captured.
 #[derive(
@@ -33,9 +34,9 @@ use crate::values::Freeze;
     PartialEq,
     Eq,
     Trace,
-    Freeze,
     VisitSpanMut,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 pub(crate) struct LocalSlotId(pub(crate) u32);
 
@@ -67,7 +68,17 @@ impl LocalSlotId {
 /// ```
 ///
 /// `x` slots (in both `f` and `lambda`) are captured.
-#[derive(Clone, Copy, Dupe, Debug, PartialEq, Eq, Trace, VisitSpanMut)]
+#[derive(
+    Clone,
+    Copy,
+    Dupe,
+    Debug,
+    PartialEq,
+    Eq,
+    Trace,
+    VisitSpanMut,
+    StarlarkPagable
+)]
 pub(crate) struct LocalCapturedSlotId(pub(crate) u32);
 
 impl LocalCapturedSlotId {
@@ -80,5 +91,7 @@ impl LocalCapturedSlotId {
 /// Local slot id, when we don't know if it is captured or not.
 ///
 /// This is used only during AST analysis.
-#[derive(Clone, Copy, Dupe, Debug, PartialEq, Eq, Trace)]
+#[derive(Clone, Copy, Dupe, Debug, PartialEq, Eq, Trace, pagable::Pagable)]
 pub(crate) struct LocalSlotIdCapturedOrNot(pub(crate) u32);
+
+register_starlark_any!(LocalSlotId);

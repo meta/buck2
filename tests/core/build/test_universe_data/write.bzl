@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _impl(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("out.txt", ctx.attrs.data))]
+    return [DefaultInfo(default_output = ctx.actions.write("out.txt", ctx.attrs.data, has_content_based_path = False))]
 
 write = rule(
     impl = _impl,

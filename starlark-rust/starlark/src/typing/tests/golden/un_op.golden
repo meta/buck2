@@ -19,7 +19,6 @@ error: Unary operator `~` is not available on the type `bool`
   |
 6 |     y = ~True
   |         ^^^^^
-  |
 
 Types:
 x: int
@@ -32,4 +31,3 @@ error: Unary operator `~` is not available on the type `bool`
   |
 6 |     y = ~True
   |         ^^^^^
-  |

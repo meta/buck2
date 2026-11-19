@@ -63,12 +63,25 @@ impl<T> WithDiagnostic<T> {
         }))
     }
 
+    /// Build from an inner value and an existing `Diagnostic`. The companion
+    /// to [`into_parts`](Self::into_parts) — used by callers that want to
+    /// transform the inner value while preserving the diagnostic.
+    pub(crate) fn new_from_parts(t: T, diagnostic: Diagnostic) -> Self {
+        Self(Box::new(WithDiagnosticInner { t, diagnostic }))
+    }
+
     pub fn inner(&self) -> &T {
         &self.0.t
     }
 
     pub fn into_inner(self) -> T {
         self.0.t
+    }
+
+    /// Decompose into the inner value and the `Diagnostic`. Pairs with
+    /// [`new_from_parts`](Self::new_from_parts).
+    pub(crate) fn into_parts(self) -> (T, Diagnostic) {
+        (self.0.t, self.0.diagnostic)
     }
 
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> WithDiagnostic<U> {
@@ -126,7 +139,7 @@ impl<T: Into<crate::Error>> From<WithDiagnostic<T>> for crate::Error {
 
 /// A description of where in starlark execution the error happened.
 #[derive(Debug, Default)]
-struct Diagnostic {
+pub(crate) struct Diagnostic {
     /// Location where the error originated.
     span: Option<FileSpan>,
 

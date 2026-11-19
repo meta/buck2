@@ -57,7 +57,11 @@ impl<C: Component> Component for Padded<C> {
     type Error = C::Error;
 
     fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> Result<Lines, C::Error> {
-        let mut output = self.child.draw(dimensions, mode)?;
+        let inner = Dimensions {
+            width: dimensions.width.saturating_sub(self.left + self.right),
+            height: dimensions.height.saturating_sub(self.top + self.bottom),
+        };
+        let mut output = self.child.draw(inner, mode)?;
 
         // ordering is important:
         // the top and bottom lines need to be padded horizontally too.
@@ -77,19 +81,100 @@ impl<C: Component> Component for Padded<C> {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
+
     use derive_more::AsRef;
 
     use crate::Component;
     use crate::Dimensions;
+    use crate::Direction;
     use crate::DrawMode;
     use crate::Line;
     use crate::Lines;
+    use crate::components::Aligned;
     use crate::components::Padded;
+    use crate::components::Split;
+    use crate::components::alignment::HorizontalAlignmentKind;
+    use crate::components::alignment::VerticalAlignmentKind;
     use crate::components::echo::Echo;
+    use crate::components::splitting::SplitKind;
 
     #[derive(Debug, AsRef)]
     #[allow(dead_code)]
     struct Msg(Lines);
+
+    fn rows(lines: &Lines) -> Vec<String> {
+        lines.iter().map(|l| l.to_unstyled()).collect()
+    }
+
+    fn echo_rows(rows: &[&str]) -> Echo {
+        Echo(Lines(
+            rows.iter().map(|r| Line::unstyled(r).unwrap()).collect(),
+        ))
+    }
+
+    /// The child is drawn in the window that remains inside the padding, so a child that fills
+    /// its window keeps all of its content.
+    #[test]
+    fn test_child_filling_its_window() {
+        // Right-aligned "ab" with two columns of left padding in six columns.
+        let padded = Padded::new(
+            Aligned::new(
+                echo_rows(&["ab"]),
+                HorizontalAlignmentKind::Right,
+                VerticalAlignmentKind::Top,
+            ),
+            2,
+            0,
+            0,
+            0,
+        );
+        let out = padded
+            .draw(Dimensions::new(6, 1), DrawMode::Normal)
+            .unwrap();
+        assert_eq!(rows(&out), vec!["    ab".to_owned()]);
+
+        // Bottom-aligned "ab" with one row of top padding in three rows.
+        let padded = Padded::new(
+            Aligned::new(
+                echo_rows(&["ab"]),
+                HorizontalAlignmentKind::Left(false),
+                VerticalAlignmentKind::Bottom,
+            ),
+            0,
+            0,
+            1,
+            0,
+        );
+        let out = padded
+            .draw(Dimensions::new(6, 3), DrawMode::Normal)
+            .unwrap();
+        let r = rows(&out);
+        assert_eq!(r.len(), 3);
+        assert!(r[0].trim().is_empty() && r[1].trim().is_empty(), "{r:?}");
+        assert_eq!(r[2].trim_end(), "ab");
+
+        // Padding of one around an equal horizontal split whose right pane right-aligns its
+        // content, as a two-pane TUI does.
+        let left = echo_rows(&["stats", "more", "last"]);
+        let right = Aligned::new(
+            echo_rows(&["14.1s", "0.2s", "9.9s"]),
+            HorizontalAlignmentKind::Right,
+            VerticalAlignmentKind::Top,
+        );
+        let split = Split::<&dyn Component<Error = Infallible>>::new(
+            vec![&left, &right],
+            Direction::Horizontal,
+            SplitKind::Equal,
+        );
+        let padded = Padded::new(split, 1, 1, 1, 1);
+        let out = padded
+            .draw(Dimensions::new(20, 5), DrawMode::Normal)
+            .unwrap();
+        let r = rows(&out);
+        assert_eq!(r.len(), 5);
+        assert_eq!(r[1], " stats        14.1s ");
+    }
 
     #[test]
     fn test_pad_left() {

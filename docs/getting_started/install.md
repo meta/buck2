@@ -7,7 +7,7 @@ import { FbInternalOnly } from 'docusaurus-plugin-internaldocs-fb/internal';
 
 <FbInternalOnly>
 
-## Internal Meta User
+<h2>Internal Meta User</h2>
 
 For Internal Meta Users, Buck2 is already configured and available for you.
 Simply cloning the
@@ -30,16 +30,22 @@ a repository. This will automatically fetch the correct version and architecture
 for each user, and ensures a consistent build environment for each commit in the
 repo.
 
-To get started, first install [rustup](https://rustup.rs/), then compile the
-`buck2` executable:
+If no prebuilt binary is available for your platform — or you want to hack on
+Buck2 itself — see [Building from Source](#building-from-source) below.
+
+## Building from Source
+
+Buck2 currently requires a nightly Rust toolchain. The simplest setup is via
+[rustup](https://rustup.rs/), which provisions the right `rustc`/`cargo` for
+you. Once it's installed, build and install `buck2` directly from GitHub:
 
 ```bash
-rustup install nightly-2025-08-01
-cargo +nightly-2025-08-01 install --git https://github.com/facebook/buck2.git buck2
+rustup install nightly-2026-08-15
+cargo +nightly-2026-08-15 install --git https://github.com/facebook/buck2.git buck2
 ```
 
-The above commands install `buck2` into a suitable directory, such as
-`$HOME/.cargo/bin`, which you should then add to your `$PATH`:
+This installs `buck2` into a suitable directory such as `$HOME/.cargo/bin`,
+which you should add to your `$PATH`:
 
 Linux / macOS
 
@@ -53,6 +59,63 @@ Windows Powershell
 $Env:PATH += ";$HOME\.cargo\bin"
 ```
 
-With Buck2 installed, you can build projects with `buck2`!
+Verify the install with `buck2 --help`.
 
-You can verify that it's working by running `buck2 --help`.
+To hack on Buck2, build from a clone of the repo instead:
+
+```sh
+git clone https://github.com/facebook/buck2.git
+cd buck2/
+cargo install --path=app/buck2
+```
+
+### Using Nix
+
+Most [Nix](https://nixos.org/nix) users provision tools directly with Nix
+itself, rather than rustup. The Buck2 source ships a `flake.nix` that exposes a
+`cargo`/`rustc` development shell:
+
+```sh
+git clone https://github.com/facebook/buck2.git
+cd buck2/
+nix develop . # add 'rustc' and 'cargo' to $PATH
+cargo build --release --bin=buck2
+```
+
+A Nix package (e.g. `nix build .#buck2`) does not yet exist; see `buck2` in
+nixpkgs for inspiration for writing one. An `.envrc` using the Nix flake is
+provided for `direnv` users — `direnv allow` will give a usable development
+environment.
+
+### `protoc` on non-Tier-1 platforms
+
+Buck2 uses Protocol Buffers extensively, both internally and to talk to remote
+systems for things like Remote Execution. Compiling the `.proto` files needs
+the `protoc` compiler.
+
+On Linux (aarch64/x86_64), Windows, and macOS the `cargo` build pulls a
+prebuilt `protoc` from the
+[`protoc-bin-vendored`](https://crates.io/crates/protoc-bin-vendored) crate, so
+no setup is required.
+
+On other operating systems, install `protoc` from another source (out of scope
+here) and point the build at it before running `cargo build`:
+
+- `BUCK2_BUILD_PROTOC` — path to the `protoc` binary
+- `BUCK2_BUILD_PROTOC_INCLUDE` — path to the protocol buffers header directory
+
+For example, with protobuf installed under `/opt/protobuf`:
+
+```bash
+export BUCK2_BUILD_PROTOC=/opt/protobuf/bin/protoc
+export BUCK2_BUILD_PROTOC_INCLUDE=/opt/protobuf/include
+```
+
+### Building Buck2 with Buck2
+
+See [Bootstrapping](../about/bootstrapping.md) for details. The gist:
+
+```sh
+reindeer --third-party-dir shim/third-party/rust buckify
+buck2 build //:buck2
+```

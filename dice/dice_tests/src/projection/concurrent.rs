@@ -20,18 +20,28 @@ use derive_more::Display;
 use dice::DetectCycles;
 use dice::Dice;
 use dice::DiceComputations;
+use dice::DiceKeyDyn;
 use dice::DiceProjectionComputations;
+use dice::DiceProjectionDyn;
+use dice::EqualityBehavior;
 use dice::Key;
 use dice::ProjectionKey;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
-#[derive(Allocative, Clone, Debug, Display, Eq, PartialEq, Hash)]
+#[derive(Allocative, Clone, Debug, Display, Eq, PartialEq, Hash, Pagable)]
+#[pagable_typetag(DiceKeyDyn)]
 struct BaseK;
 
 #[async_trait]
 impl Key for BaseK {
     type Value = ();
+
+    fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+        dice::NoValueSerialize::<Self::Value>::new()
+    }
 
     async fn compute(
         &self,
@@ -40,16 +50,21 @@ impl Key for BaseK {
     ) -> Self::Value {
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        true
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|_x, _y| true)
     }
 }
 
 #[tokio::test]
 async fn concurrent_identical_requests_are_reused() -> anyhow::Result<()> {
-    #[derive(Allocative, Clone, Debug, Display)]
+    #[derive(Allocative, Clone, Debug, Display, Pagable)]
     #[display("{:?}", self)]
-    struct ComputeOnce(#[allocative(skip)] Arc<AtomicU8>);
+    #[pagable_typetag(DiceProjectionDyn)]
+    struct ComputeOnce(
+        #[allocative(skip)]
+        #[pagable(discard = "(|| unimplemented!())()")]
+        Arc<AtomicU8>,
+    );
 
     impl PartialEq for ComputeOnce {
         fn eq(&self, _other: &Self) -> bool {
@@ -67,6 +82,10 @@ async fn concurrent_identical_requests_are_reused() -> anyhow::Result<()> {
         type DeriveFromKey = BaseK;
         type Value = ();
 
+        fn value_serialize() -> impl dice::ValueSerialize<Value = Self::Value> {
+            dice::NoValueSerialize::<Self::Value>::new()
+        }
+
         fn compute(
             &self,
             _derive_from: &<<Self as ProjectionKey>::DeriveFromKey as Key>::Value,
@@ -75,31 +94,32 @@ async fn concurrent_identical_requests_are_reused() -> anyhow::Result<()> {
             self.0.fetch_add(1, Ordering::SeqCst);
         }
 
-        fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-            true
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|_x, _y| true)
         }
     }
 
     let dice = Dice::builder().build(DetectCycles::Enabled);
+    let root = dice.new_root().await;
 
     let count = Arc::new(AtomicU8::new(0));
 
-    let mut ctx = dice.updater().commit().await;
+    let ctx = dice.updater(root).commit().await;
 
     let k = ComputeOnce(count.dupe());
 
-    let base = ctx.compute_opaque(&BaseK).await?;
+    let base = ctx.ctx().compute_opaque(&BaseK).await?;
 
-    ctx.projection(&base, &k)?;
+    ctx.ctx().projection(&base, &k)?;
 
     assert_eq!(count.load(Ordering::SeqCst), 1);
-    ctx.projection(&base, &k)?;
+    ctx.ctx().projection(&base, &k)?;
     assert_eq!(count.load(Ordering::SeqCst), 1);
 
     // call base again but technically same key
-    let base = ctx.compute_opaque(&BaseK).await?;
+    let base = ctx.ctx().compute_opaque(&BaseK).await?;
 
-    ctx.projection(&base, &k)?;
+    ctx.ctx().projection(&base, &k)?;
     assert_eq!(count.load(Ordering::SeqCst), 1);
 
     Ok(())

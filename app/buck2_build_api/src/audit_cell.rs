@@ -11,10 +11,10 @@
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_util::late_binding::LateBinding;
 use dice::DiceComputations;
 use futures::future::BoxFuture;
-use indexmap::IndexMap;
 
 pub static AUDIT_CELL: LateBinding<
     for<'v> fn(
@@ -23,7 +23,8 @@ pub static AUDIT_CELL: LateBinding<
         aliases: bool,
         cwd: &'v ProjectRelativePath,
         fs: &'v ProjectRoot,
-    ) -> BoxFuture<'v, buck2_error::Result<IndexMap<String, AbsNormPathBuf>>>,
+    )
+        -> BoxFuture<'v, buck2_error::Result<BuckMutInsertionMap<String, AbsNormPathBuf>>>,
 > = LateBinding::new("AUDIT_CELL");
 
 pub fn audit_cell<'v>(
@@ -32,7 +33,9 @@ pub fn audit_cell<'v>(
     aliases: bool,
     cwd: &'v ProjectRelativePath,
     fs: &'v ProjectRoot,
-) -> buck2_error::Result<BoxFuture<'v, buck2_error::Result<IndexMap<String, AbsNormPathBuf>>>> {
+) -> buck2_error::Result<
+    BoxFuture<'v, buck2_error::Result<BuckMutInsertionMap<String, AbsNormPathBuf>>>,
+> {
     Ok((AUDIT_CELL.get()?)(
         ctx,
         aliases_to_resolve,

@@ -9,19 +9,43 @@
  */
 
 use std::hash::Hash;
+use std::hash::Hasher;
 use std::mem;
 use std::ops::Deref;
 use std::slice;
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
+use serde::Deserialize;
+use serde::Serialize;
+use strong_hash::StrongHash;
 use triomphe::ThinArc;
 
-use crate::arc_str::iterator_as_exact_size_iterator::IteratorAsExactSizeIterator;
+use crate::exact_size_iter::IterExactSize;
 
-#[derive(Allocative, Debug)]
+#[derive(Allocative, Debug, Pagable)]
 pub struct ThinArcSlice<T> {
     slice: Option<ThinArc<(), T>>,
+}
+
+impl<T: Serialize> Serialize for ThinArcSlice<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.as_slice().serialize(serializer)
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for ThinArcSlice<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let v: Vec<T> = Vec::deserialize(deserializer)?;
+        Ok(ThinArcSlice::from_iter(v))
+    }
 }
 
 impl<T> Clone for ThinArcSlice<T> {
@@ -46,6 +70,12 @@ impl<T: Eq> Eq for ThinArcSlice<T> {}
 impl<T: Hash> Hash for ThinArcSlice<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.as_slice().hash(state)
+    }
+}
+
+impl<T: StrongHash> StrongHash for ThinArcSlice<T> {
+    fn strong_hash<H: Hasher>(&self, state: &mut H) {
+        self.as_slice().strong_hash(state);
     }
 }
 
@@ -116,7 +146,7 @@ impl<T> FromIterator<T> for ThinArcSlice<T> {
         if upper == Some(0) {
             ThinArcSlice::default()
         } else if Some(lower) == upper {
-            let arc = ThinArc::from_header_and_iter((), IteratorAsExactSizeIterator(iter));
+            let arc = ThinArc::from_header_and_iter((), iter.with_exact_size(lower));
             if arc.slice.is_empty() {
                 ThinArcSlice::default()
             } else {

@@ -9,11 +9,5 @@
 load("@prelude//rust:linkable_symbol.bzl", prelude_rust_linkable_symbol = "rust_linkable_symbol")
 load("@shim//:shims.bzl", _rust_library = "rust_library")
 
-def rust_linkable_symbol(
-        visibility = ["PUBLIC"],
-        **kwargs):
-    prelude_rust_linkable_symbol(
-        visibility = visibility,
-        rust_library_macro = _rust_library,
-        **kwargs
-    )
+def rust_linkable_symbol(visibility = ["PUBLIC"], **kwargs):
+    prelude_rust_linkable_symbol(visibility = visibility, rust_library_macro = _rust_library, **kwargs)

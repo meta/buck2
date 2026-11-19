@@ -14,12 +14,19 @@ use std::ops::Deref;
 use allocative::Allocative;
 use buck2_util::arc_str::ThinArcStr;
 use dupe::Dupe;
+use pagable::Pagable;
+use serde::Deserialize;
+use serde::Serialize;
 use strong_hash::StrongHash;
 
 use crate::ascii_char_set::AsciiCharSet;
-use crate::soft_error;
 
 pub const EQ_SIGN_SUBST: &str = "_eqsb_";
+
+const TARGET_NAME_VALID_CHARS: &str =
+    r"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_,.=-\/~@!+$";
+pub(crate) const TARGET_NAME_VALID_CHARS_SET: AsciiCharSet =
+    AsciiCharSet::new(TARGET_NAME_VALID_CHARS);
 
 /// 'TargetName' is the name given to a particular target.
 /// e.g. `foo` in the label `fbsource//package/path:foo`.
@@ -29,14 +36,18 @@ pub const EQ_SIGN_SUBST: &str = "_eqsb_";
     Dupe,
     derive_more::Display,
     Hash,
+    StrongHash,
     Eq,
     PartialEq,
     Ord,
     PartialOrd,
-    Allocative
+    Allocative,
+    Serialize,
+    Deserialize,
+    Pagable
 )]
 // TODO intern this?
-pub struct TargetName(ThinArcStr);
+pub struct TargetName(#[pagable(flatten_serde)] ThinArcStr);
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(input)]
@@ -52,12 +63,12 @@ enum TargetNameError {
         _0
     )]
     FoundProvidersLabel(String),
-    #[error("Target name `{0}` has special character `{1}`, which is discouraged")]
-    LabelHasSpecialCharacter(String, char),
     #[error("Target name must not be equal to `...`")]
     DotDotDot,
     #[error("Target name `{0}` should not contain pattern: `{1}`")]
     InvalidPattern(String, String),
+    #[error("Target name is {0} bytes long, which exceeds the limit of {1}")]
+    NameTooLong(usize, u16),
 }
 
 impl TargetName {
@@ -80,12 +91,18 @@ impl TargetName {
         TargetNameError::InvalidName(name.to_owned()).into()
     }
 
-    fn verify(name: &str) -> buck2_error::Result<()> {
-        const VALID_CHARS: &str =
-            r"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_,.=-\/~@!+$";
-        const SET: AsciiCharSet = AsciiCharSet::new(VALID_CHARS);
+    /// Bounds the name length so label allocations can store it as a `u16`.
+    pub(crate) const MAX_NAME_LEN: u16 = u16::MAX;
 
-        if name.is_empty() || !name.as_bytes().iter().all(|&b| SET.contains(b)) {
+    fn verify(name: &str) -> buck2_error::Result<()> {
+        if name.len() > Self::MAX_NAME_LEN as usize {
+            return Err(TargetNameError::NameTooLong(name.len(), Self::MAX_NAME_LEN).into());
+        }
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii() && TARGET_NAME_VALID_CHARS_SET.contains(c as u8))
+        {
             return Err(Self::bad_name_error(name));
         }
 
@@ -98,22 +115,7 @@ impl TargetName {
         if name == "..." {
             return Err(TargetNameError::DotDotDot.into());
         }
-        if name.contains(',') {
-            soft_error!(
-                "label_has_comma",
-                TargetNameError::LabelHasSpecialCharacter(name.to_owned(), ',').into(),
-                deprecation: true,
-                quiet: true
-            )?;
-        }
-        if name.contains('$') {
-            soft_error!(
-                "label_has_dollar_sign",
-                TargetNameError::LabelHasSpecialCharacter(name.to_owned(), '$').into(),
-                deprecation: true,
-                quiet: true
-            )?;
-        }
+        // FIXME(JakobDegen): `,` and `$` should not be allowed in target names.
 
         Ok(())
     }
@@ -226,6 +228,17 @@ mod tests {
     use crate::target::name::TargetNameRef;
 
     #[test]
+    fn test_name_length_bound() {
+        let max = "x".repeat(TargetName::MAX_NAME_LEN as usize);
+        assert!(TargetName::new(&max).is_ok(), "u16::MAX-byte name is legal");
+        let over = "x".repeat(TargetName::MAX_NAME_LEN as usize + 1);
+        assert!(
+            TargetName::new(&over).is_err(),
+            "names beyond u16::MAX are rejected"
+        );
+    }
+
+    #[test]
     fn target_name_validation() {
         assert_eq!(
             TargetName::new("foo").unwrap(),
@@ -234,13 +247,18 @@ mod tests {
         assert_eq!(
             // Copied allowed symbols from above.
             // `.`, `-`, `/`, `~`, `@`, `!`, `+` and `_`
-            // `,`, `$`, and `=` are currently soft errors and should eventually be removed.
+            // `,` and `$` are allowed but should not be, see the FIXME in `verify`.
             TargetName::new("foo.-/~@!+_1").unwrap(),
             TargetName(ThinArcStr::from("foo.-/~@!+_1"))
         );
         assert!(TargetName::new("foo bar").is_err());
         assert!(TargetName::new("foo?bar").is_err());
         assert!(TargetName::new("foo_eqsb_bar").is_err());
+        // Parentheses must be rejected; split_cfg relies on this invariant
+        // to avoid brace-matching when splitting configuration predicates.
+        assert!(TargetName::new("foo(bar)").is_err());
+        assert!(TargetName::new("foo(").is_err());
+        assert!(TargetName::new("foo)").is_err());
 
         if let Err(e) = TargetName::new("target[label]") {
             let msg = format!("{e:#}");

@@ -10,21 +10,25 @@ def _error_handler_produced_error_categories(ctx):
     def error_handler(ctx: ActionErrorCtx) -> list[ActionSubError]:
         categories = []
 
-        categories.append(ctx.new_sub_error(
-            category = "FirstError",
-            message = "FirstError message",
-            show_in_stderr = True,
-        ))
+        categories.append(
+            ctx.new_sub_error(
+                category = "FirstError",
+                message = "FirstError message",
+                show_in_stderr = True,
+            )
+        )
 
-        categories.append(ctx.new_sub_error(
-            category = "SecondError",
-            message = "SecondError message",
-            show_in_stderr = True,
-        ))
+        categories.append(
+            ctx.new_sub_error(
+                category = "SecondError",
+                message = "SecondError message",
+                show_in_stderr = True,
+            )
+        )
 
         return categories
 
-    out = ctx.actions.declare_output(ctx.attrs.name)
+    out = ctx.actions.declare_output(ctx.attrs.name, has_content_based_path = False)
 
     # error handler is invoked but won't catch anything
     ctx.actions.run(
@@ -37,6 +41,5 @@ def _error_handler_produced_error_categories(ctx):
 
 error_handler_produced_error_categories = rule(
     impl = _error_handler_produced_error_categories,
-    attrs = {
-    },
+    attrs = {},
 )

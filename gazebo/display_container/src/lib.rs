@@ -72,7 +72,7 @@ const INDENT: &str = "  ";
 /// Used to indent a displayed item for alternate display. This helps us pretty-print deep data structures.
 fn subwriter<T: Display>(indent: &'static str, f: &mut fmt::Formatter, v: T) -> fmt::Result {
     if f.alternate() {
-        write!(indenter::indented(f).with_str(indent), "{:#}", &v)
+        write!(indenter::indented(f).with_str(indent), "{:#}", v)
     } else {
         Display::fmt(&v, f)
     }

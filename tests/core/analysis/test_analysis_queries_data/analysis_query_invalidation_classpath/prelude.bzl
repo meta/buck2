@@ -9,16 +9,18 @@
 CLASSPATH_KEY = "classpath_including_targets_with_no_output"
 
 def _target_impl(ctx):
-    out = ctx.actions.write("out", ctx.attrs.arg or "", allow_args = True)[0]
+    out = ctx.actions.write("out", ctx.attrs.arg or "", allow_args = True, has_content_based_path = False)[0]
     classpaths = [out]
     if ctx.attrs.dep:
         classpaths.append(ctx.attrs.dep[TemplatePlaceholderInfo].keyed_variables[CLASSPATH_KEY])
     return [
         DefaultInfo(default_output = out),
         RunInfo(),
-        TemplatePlaceholderInfo(keyed_variables = {
-            CLASSPATH_KEY: cmd_args(classpaths),
-        }),
+        TemplatePlaceholderInfo(
+            keyed_variables = {
+                CLASSPATH_KEY: cmd_args(classpaths),
+            }
+        ),
     ]
 
 target = rule(

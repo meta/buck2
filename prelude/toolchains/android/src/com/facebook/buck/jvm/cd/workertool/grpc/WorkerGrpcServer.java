@@ -18,6 +18,7 @@ import com.facebook.buck.util.Console;
 import com.facebook.buck.util.Verbosity;
 import com.facebook.buck.util.perf.PerfStatsTracking;
 import com.facebook.buck.util.unit.SizeUnit;
+import com.facebook.infer.annotation.Nullsafe;
 import io.grpc.ForwardingServerCallListener;
 import io.grpc.Metadata;
 import io.grpc.Server;
@@ -26,6 +27,7 @@ import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.netty.NettyServerBuilder;
 import io.netty.channel.EventLoopGroup;
+import io.netty.channel.MultithreadEventLoopGroup;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerDomainSocketChannel;
@@ -38,14 +40,21 @@ import java.io.OutputStream;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /** Worker tool grpc server using unix domain sockets */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class WorkerGrpcServer implements ServerInterceptor {
   private static final Logger LOG = Logger.get(WorkerGrpcServer.class);
+
+  // The gRPC server handles sequential compilation requests from a single buck2 client
+  // over UDS, so minimal threads suffice. Default Netty thread count is 2x CPU cores
+  // (~144 on production hosts), which wastes ~140MB of memory on thread stacks.
+  static final int EVENT_LOOP_THREADS = 1;
 
   String serverName;
   EventLoopGroup eventLoopGroup;
@@ -66,7 +75,7 @@ public class WorkerGrpcServer implements ServerInterceptor {
         server.run();
       }
     } catch (InterruptedException | IOException e) {
-      System.err.println(e.getMessage());
+      System.err.println(e.toString());
       System.exit(1);
     }
     System.exit(0);
@@ -86,15 +95,31 @@ public class WorkerGrpcServer implements ServerInterceptor {
                   System.err.println("*** server shut down");
                 }));
 
-    Executors.newSingleThreadScheduledExecutor()
+    Executors.newSingleThreadScheduledExecutor(
+            r -> {
+              Thread t = new Thread(r, serverName + "-health-check");
+              t.setDaemon(true);
+              return t;
+            })
         .scheduleAtFixedRate(this::checkCDState, 1, 10, TimeUnit.SECONDS);
   }
 
   private static final int AVAILABLE_PROCESSORS = Runtime.getRuntime().availableProcessors();
 
+  // A subreaper such as `systemd --user` adopts an orphaned worker, so its parent need not become
+  // pid 1: compare with the parent the worker started with, if it had one.
+  private final OptionalLong startingParentPid =
+      ProcessHandle.current().parent().stream().mapToLong(ProcessHandle::pid).findFirst();
+
   private boolean isParentAlive() {
-    Optional<ProcessHandle> parent = ProcessHandle.current().parent();
-    return parent.isPresent() && parent.get().pid() != 1 && parent.get().isAlive();
+    return isParentAlive(ProcessHandle.current().parent(), startingParentPid);
+  }
+
+  static boolean isParentAlive(Optional<ProcessHandle> parent, OptionalLong startingParentPid) {
+    return parent.isPresent()
+        && (startingParentPid.isEmpty() || parent.get().pid() == startingParentPid.getAsLong())
+        && parent.get().pid() != 1
+        && parent.get().isAlive();
   }
 
   private void checkCDState() {
@@ -172,16 +197,20 @@ public class WorkerGrpcServer implements ServerInterceptor {
     NettyServerBuilder builder =
         NettyServerBuilder.forAddress(socketAddress).addService(service).intercept(this);
     if (KQueue.isAvailable()) {
-      this.eventLoopGroup = new KQueueEventLoopGroup();
+      this.eventLoopGroup = new KQueueEventLoopGroup(EVENT_LOOP_THREADS);
       builder = builder.channelType(KQueueServerDomainSocketChannel.class);
     } else if (Epoll.isAvailable()) {
-      this.eventLoopGroup = new EpollEventLoopGroup();
+      this.eventLoopGroup = new EpollEventLoopGroup(EVENT_LOOP_THREADS);
       builder = builder.channelType(EpollServerDomainSocketChannel.class);
     } else {
       throw new RuntimeException("Server only supports epoll and kqueue (windows not supported)");
     }
     builder = builder.workerEventLoopGroup(eventLoopGroup).bossEventLoopGroup(eventLoopGroup);
     return builder.build();
+  }
+
+  int getEventLoopThreadCount() {
+    return ((MultithreadEventLoopGroup) eventLoopGroup).executorCount();
   }
 
   private void stopServer(Server grpcServer) {

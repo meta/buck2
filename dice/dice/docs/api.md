@@ -52,8 +52,9 @@ use MyComputationTrait;
 
 async fn main() {
     let dice = Dice::builder().build();
+    let root = dice.new_root().await;
 
-    let ctx = dice.updater().commit();
+    let ctx = dice.updater(root).commit();
 
     ctx.more_compute("a").await;
     ctx.some_compute(1).await;

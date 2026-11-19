@@ -9,7 +9,7 @@
 FooInfo = provider(fields = ["args", "out"])
 
 def _simple_write_impl(ctx):
-    out = ctx.actions.write("out.txt", "contents")
+    out = ctx.actions.write("out.txt", "contents", has_content_based_path = False)
     args = cmd_args([out])
     return [
         FooInfo(args = args, out = out),
@@ -18,26 +18,26 @@ def _simple_write_impl(ctx):
 
 def _write_file_impl(ctx):
     if ctx.attrs.name == "uses_declared_output":
-        declared = ctx.actions.declare_output(ctx.attrs.out)
+        declared = ctx.actions.declare_output(ctx.attrs.out, has_content_based_path = False)
         output = ctx.actions.write(declared, ctx.attrs.content)
     elif ctx.attrs.name == "uses_declared_output_as_output":
-        declared = ctx.actions.declare_output(ctx.attrs.out)
+        declared = ctx.actions.declare_output(ctx.attrs.out, has_content_based_path = False)
         output = ctx.actions.write(declared.as_output(), ctx.attrs.content)
     elif ctx.attrs.name == "declares_output":
-        output = ctx.actions.write(ctx.attrs.out, ctx.attrs.content)
+        output = ctx.actions.write(ctx.attrs.out, ctx.attrs.content, has_content_based_path = False)
     elif ctx.attrs.name == "is_executable":
-        output = ctx.actions.write(ctx.attrs.out, ctx.attrs.content, is_executable = True)
+        output = ctx.actions.write(ctx.attrs.out, ctx.attrs.content, is_executable = True, has_content_based_path = False)
     elif ctx.attrs.name == "writes_array_of_commands":
         cmd = [ctx.attrs.dep[FooInfo].out, ctx.attrs.content]
-        output = ctx.actions.write(ctx.attrs.out, cmd)
+        output = ctx.actions.write(ctx.attrs.out, cmd, has_content_based_path = False)
     elif ctx.attrs.name == "writes_command_lines":
         cmd = [ctx.attrs.dep[FooInfo].out, ctx.attrs.content]
-        output = ctx.actions.write(ctx.attrs.out, cmd_args(cmd))
+        output = ctx.actions.write(ctx.attrs.out, cmd_args(cmd), has_content_based_path = False)
     elif ctx.attrs.name == "writes_frozen_command_lines":
-        output = ctx.actions.write(ctx.attrs.out, ctx.attrs.dep[FooInfo].args)
+        output = ctx.actions.write(ctx.attrs.out, ctx.attrs.dep[FooInfo].args, has_content_based_path = False)
     elif ctx.attrs.name == "with_inputs_and_copy":
-        output1 = ctx.actions.write("intermediate.txt", ctx.attrs.content)
-        output2 = ctx.actions.declare_output(ctx.attrs.out)
+        output1 = ctx.actions.write("intermediate.txt", ctx.attrs.content, has_content_based_path = False)
+        output2 = ctx.actions.declare_output(ctx.attrs.out, has_content_based_path = False)
 
         # Create script with output1 as its associated artifact
         cmd = cmd_args(output1, format = "import sys; fp1=open('{}','r'); all=fp1.read(); fp2=open(sys.argv[1], 'w'); fp2.write(all);")
@@ -48,6 +48,7 @@ def _write_file_impl(ctx):
             "script.py",
             [cmd],
             with_inputs = True,
+            has_content_based_path = False,
         )
 
         # Read output1 and write back into output2. Output1 should be included as an associated artifact here so we do not need to add it as hidden
@@ -55,12 +56,12 @@ def _write_file_impl(ctx):
         ctx.actions.run(cmd, category = "test")
         return [DefaultInfo(default_output = output2)]
     elif ctx.attrs.name == "fails_on_invalid_contents":
-        output = ctx.actions.write(ctx.attrs.out, {})
+        output = ctx.actions.write(ctx.attrs.out, {}, has_content_based_path = False)
     elif ctx.attrs.name == "fails_on_invalid_output":
         output = ctx.actions.write([], ctx.attrs.content)
     elif ctx.attrs.name == "writes_absolute":
         content = [ctx.attrs.dep[FooInfo].out]
-        output = ctx.actions.write(ctx.attrs.out, content, absolute = True)
+        output = ctx.actions.write(ctx.attrs.out, content, absolute = True, has_content_based_path = False)
     else:
         fail("invalid test")
     return [DefaultInfo(default_output = output)]
@@ -77,6 +78,5 @@ write_file = rule(
 
 simple_write = rule(
     impl = _simple_write_impl,
-    attrs = {
-    },
+    attrs = {},
 )

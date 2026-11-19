@@ -20,37 +20,15 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
-use futures::future::BoxFuture;
 use pin_project::pin_project;
 
 use crate::cancellation::CancellationContext;
-use crate::cancellation::CancellationHandle;
 use crate::cancellation::CancelledError;
 use crate::cancellation::ExplicitlyCancellableResult;
 use crate::details::shared_state::CancellableFutureSharedStateView;
 use crate::details::shared_state::HasOpenCriticalSections;
 use crate::drop_on_ready::DropOnReadyFuture;
 use crate::owning_future::OwningFuture;
-
-pub(crate) fn make_cancellable_future<F, T>(
-    f: F,
-) -> (ExplicitlyCancellableFuture<T>, CancellationHandle)
-where
-    F: for<'a> FnOnce(&'a CancellationContext) -> BoxFuture<'a, T> + Send,
-{
-    let (handle_view, future_view, context_view) = CancellableFutureSharedStateView::new();
-
-    let fut = {
-        let cancel = CancellationContext::new_explicit(context_view);
-
-        OwningFuture::new(cancel, |d| f(d))
-    };
-
-    let fut = ExplicitlyCancellableFuture::new(fut, future_view);
-    let handle = CancellationHandle::new(handle_view);
-
-    (fut, handle)
-}
 
 /// Defines a future that operates with the 'CancellationContext' to provide explicit cancellation.
 ///
@@ -75,7 +53,7 @@ struct ExplicitlyCancellableFutureInner<T> {
 }
 
 impl<T> ExplicitlyCancellableFuture<T> {
-    fn new(
+    pub(crate) fn new(
         future: Pin<Box<OwningFuture<T, CancellationContext>>>,
         view: CancellableFutureSharedStateView,
     ) -> Self {
@@ -162,7 +140,9 @@ impl<T> Future for ExplicitlyCancellableFutureInner<T> {
     }
 }
 
-#[cfg(test)]
+// `#[tokio::test]` starts tokio's IO driver: epoll, kqueue or IOCP by OS, and Miri models only
+// epoll.
+#[cfg(all(test, any(not(miri), target_os = "linux")))]
 mod tests {
     use std::future::Future;
     use std::pin::Pin;
@@ -176,14 +156,27 @@ mod tests {
     use assert_matches::assert_matches;
     use dupe::Dupe;
     use futures::FutureExt;
+    use futures::future::BoxFuture;
     use parking_lot::Mutex;
     use pin_project::pin_project;
     use pin_project::pinned_drop;
     use tokio::sync::Barrier;
 
+    use crate::cancellation::CancellationContext;
     use crate::cancellation::CancellationHandle;
     use crate::cancellation::CancelledError;
-    use crate::details::cancellable_future::make_cancellable_future;
+    use crate::details::cancellable_future::ExplicitlyCancellableFuture;
+    use crate::spawn::prepare_detached_cancellation;
+
+    pub(crate) fn make_cancellable_future<F, T>(
+        f: F,
+    ) -> (ExplicitlyCancellableFuture<T>, CancellationHandle)
+    where
+        F: for<'a> FnOnce(&'a CancellationContext) -> BoxFuture<'a, T> + Send,
+    {
+        let (spawner, handle) = prepare_detached_cancellation();
+        (spawner.wrap_future(f), handle)
+    }
 
     #[derive(Debug)]
     struct MaybePanicOnDrop {

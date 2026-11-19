@@ -39,7 +39,7 @@ impl Html {
             use buck2_common::manifold::ManifoldClient;
 
             let html_out = output_format(graph)?;
-            let mut cursor = &mut Cursor::new(html_out.as_bytes());
+            let mut cursor = Cursor::new(html_out.as_bytes());
             let manifold_path = format!("flat/{trace_id}-graph.html");
             let manifold = ManifoldClient::new().await?;
 

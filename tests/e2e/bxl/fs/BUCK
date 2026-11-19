@@ -1,8 +1,0 @@
-load("@fbcode//buck2/tests:bxl_test.bzl", "bxl_test")
-
-oncall("build_infra")
-
-bxl_test(
-    name = "fs_inplace.bxl",
-    src = "fs_inplace.bxl",
-)

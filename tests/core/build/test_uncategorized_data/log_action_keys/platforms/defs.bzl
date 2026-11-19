@@ -10,8 +10,7 @@ def _execution_platform(ctx):
     platform = ExecutionPlatformInfo(
         label = ctx.label.raw_target(),
         configuration = ConfigurationInfo(
-            constraints = {
-            },
+            constraints = {},
             values = {},
         ),
         executor_config = CommandExecutorConfig(

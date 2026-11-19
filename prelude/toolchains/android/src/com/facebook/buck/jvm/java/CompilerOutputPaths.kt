@@ -14,7 +14,9 @@ import com.facebook.buck.core.filesystems.RelPath
 import java.util.Optional
 
 /** Provides access to the various output paths for a java library. */
-data class CompilerOutputPaths(
+data class CompilerOutputPaths
+@JvmOverloads
+constructor(
     val classesDir: RelPath,
     val outputJarDirPath: RelPath,
     val abiJarPath: Optional<RelPath>,
@@ -22,6 +24,7 @@ data class CompilerOutputPaths(
     val pathToSourcesList: RelPath,
     val workingDirectory: RelPath,
     val outputJarPath: Optional<RelPath>,
+    val compilerClassToSourceMap: RelPath? = null,
 ) {
   companion object {
     /**

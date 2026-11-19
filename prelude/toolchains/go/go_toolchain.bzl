@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//go:toolchain.bzl", "GoDistrInfo", "GoToolchainInfo")
+load("@prelude//go:toolchain.bzl", "GoDistrInfo", "GoToolchainInfo", "parse_go_version")
 
 def _go_toolchain_impl(ctx):
     # Note: It makes sense to make GoDirstrInfo an attribute of GoToolchainInfo.
@@ -14,27 +14,32 @@ def _go_toolchain_impl(ctx):
     go_distr = ctx.attrs.go_distr[GoDistrInfo]
     return [
         DefaultInfo(
-            sub_targets = {"go": [
-                RunInfo(cmd_args(
-                    ctx.attrs.go_wrapper[RunInfo],
-                    ["--go", go_distr.bin_go],
-                    ["--goroot", go_distr.go_root],
-                    ["--default-goarch", ctx.attrs.env_go_arch],
-                    ["--default-goos", ctx.attrs.env_go_os],
-                    "--",
-                )),
-            ]},
+            sub_targets = {
+                "go": [
+                    RunInfo(
+                        cmd_args(
+                            ctx.attrs.go_wrapper[RunInfo],
+                            ["--go", go_distr.bin_go],
+                            ["--goroot", go_distr.go_root],
+                            ["--default-goarch", ctx.attrs.env_go_arch],
+                            ["--default-goos", ctx.attrs.env_go_os],
+                            "--",
+                        )
+                    ),
+                ]
+            },
         ),
         GoToolchainInfo(
+            allow_cache_upload = ctx.attrs.allow_cache_upload,
             assembler = go_distr.tool_asm,
             assembler_flags = ctx.attrs.assembler_flags,
             cxx_compiler_flags = ctx.attrs.cxx_compiler_flags,
             cgo = go_distr.tool_cgo,
             compiler = go_distr.tool_compile,
             compiler_flags = ctx.attrs.compiler_flags,
-            concat_files = ctx.attrs.concat_files[RunInfo],
+            pkg_analyzer = ctx.attrs.pkg_analyzer[RunInfo],
+            gen_embedcfg = ctx.attrs.gen_embedcfg[RunInfo],
             external_linker_flags = ctx.attrs.external_linker_flags,
-            gen_stdlib_importcfg = ctx.attrs.gen_stdlib_importcfg[RunInfo],
             go_wrapper = ctx.attrs.go_wrapper[RunInfo],
             cover = go_distr.tool_cover,
             go = go_distr.bin_go,
@@ -50,6 +55,8 @@ def _go_toolchain_impl(ctx):
             build_tags = ctx.attrs.build_tags,
             asan = ctx.attrs.asan,
             race = ctx.attrs.race,
+            fuzz = ctx.attrs.fuzz,
+            version = go_distr.version,
         ),
     ]
 
@@ -57,11 +64,11 @@ go_toolchain = rule(
     impl = _go_toolchain_impl,
     is_toolchain_rule = True,
     attrs = {
+        "allow_cache_upload": attrs.option(attrs.bool(), default = None),
         "asan": attrs.bool(default = False),
         "assembler_flags": attrs.list(attrs.arg(), default = []),
         "build_tags": attrs.list(attrs.string(), default = []),
         "compiler_flags": attrs.list(attrs.arg(), default = []),
-        "concat_files": attrs.exec_dep(providers = [RunInfo], default = "prelude//go_bootstrap/tools:go_concat_files"),
         "cxx_compiler_flags": attrs.list(attrs.arg(), default = []),
         "env_go_arch": attrs.string(),
         "env_go_arm": attrs.option(attrs.string(), default = None),
@@ -69,10 +76,12 @@ go_toolchain = rule(
         "env_go_experiment": attrs.list(attrs.string(), default = []),
         "env_go_os": attrs.string(),
         "external_linker_flags": attrs.list(attrs.arg(), default = []),
-        "gen_stdlib_importcfg": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:gen_stdlib_importcfg"),
+        "fuzz": attrs.bool(default = False),
+        "gen_embedcfg": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:gen_embedcfg"),
         "go_distr": attrs.exec_dep(providers = [GoDistrInfo]),
-        "go_wrapper": attrs.exec_dep(providers = [RunInfo], default = "prelude//go_bootstrap/tools:go_go_wrapper"),
+        "go_wrapper": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:go_wrapper"),
         "linker_flags": attrs.list(attrs.arg(), default = []),
+        "pkg_analyzer": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:pkg_analyzer"),
         "race": attrs.bool(default = False),
         "tool_pack": attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:tool_pack"),
     },
@@ -95,6 +104,7 @@ def _go_distr_impl(ctx):
             tool_cover = RunInfo(go_root.project(tool_prefix + "/cover" + suffix)),
             tool_cgo = RunInfo(go_root.project(tool_prefix + "/cgo" + suffix)),
             tool_link = RunInfo(go_root.project(tool_prefix + "/link" + suffix)),
+            version = parse_go_version(ctx.attrs.version),
         ),
     ]
 
@@ -104,5 +114,6 @@ go_distr = rule(
         "go_os_arch": attrs.tuple(attrs.string(), attrs.string()),
         "go_root": attrs.source(allow_directory = True),
         "multiplatform": attrs.bool(default = False),
+        "version": attrs.string(),
     },
 )

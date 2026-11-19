@@ -1,0 +1,7 @@
+load(":defs.bzl", "noisy_rule", "noisy_test_rule")
+
+noisy_rule(name = "noisy1")
+
+noisy_rule(name = "noisy2")
+
+noisy_test_rule(name = "noisy_test")

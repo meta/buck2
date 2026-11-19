@@ -10,6 +10,7 @@
 
 package com.facebook.buck.core.util.graph;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import java.util.ArrayDeque;
@@ -22,6 +23,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class TraversableGraphs {
 
   private TraversableGraphs() {}

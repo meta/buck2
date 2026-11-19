@@ -14,24 +14,20 @@ use allocative::Allocative;
 use buck2_build_api_derive::internal_provider;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
-use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
-use starlark::starlark_complex_value;
 use starlark::starlark_module;
 use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::util::ArcStr;
 use starlark::values::Freeze;
+use starlark::values::Heap;
+use starlark::values::OwnedFrozen;
+use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
-use starlark::values::Value;
-use starlark::values::ValueLifetimeless;
-use starlark::values::ValueLike;
 use starlark::values::ValueOf;
-use starlark::values::ValueOfUncheckedGeneric;
-use starlark::values::list::ListRef;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
-use starlark::values::none::NoneOr;
-use starlark::values::tuple::TupleRef;
+use starlark::values::ValueTyped;
+use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark::values::typing::StarlarkCallableParamSpec;
@@ -40,7 +36,7 @@ use crate::transition::starlark::IMPL_ATTRS_PARAM;
 use crate::transition::starlark::IMPL_PLATFORM_PARAM;
 use crate::transition::starlark::ImplSingleReturnTy;
 
-struct TransitionImplParams;
+pub(crate) struct TransitionImplParams;
 
 impl StarlarkCallableParamSpec for TransitionImplParams {
     fn params() -> ParamSpec {
@@ -61,48 +57,48 @@ impl StarlarkCallableParamSpec for TransitionImplParams {
 }
 
 #[internal_provider(transition_info_creator)]
-#[derive(Clone, Debug, Trace, Coerce, Freeze, ProvidesStaticType, Allocative)]
+#[derive(
+    Clone,
+    Debug,
+    Trace,
+    Freeze,
+    ProvidesStaticType,
+    Allocative,
+    StarlarkPagable
+)]
 #[repr(C)]
-pub(crate) struct TransitionInfoGen<V: ValueLifetimeless> {
-    pub(crate) r#impl: ValueOfUncheckedGeneric<V, StarlarkCallable<'static>>,
-    pub(crate) attrs: ValueOfUncheckedGeneric<V, NoneOr<UnpackListOrTuple<String>>>,
+pub(crate) struct TransitionInfo<'v> {
+    pub(crate) r#impl:
+        ValueOf<'v, StarlarkCallable<'v, TransitionImplParams, ImplSingleReturnTy<'static>>>,
+    pub(crate) attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
 }
+
+/// A `TransitionInfo` kept alive by its owning frozen heap; usable across threads and awaits.
+pub(crate) type OwnedTransitionInfo = OwnedFrozen<ValueTyped<'static, TransitionInfo<'static>>>;
 
 #[starlark_module]
 fn transition_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = FrozenTransitionInfo)]
+    #[starlark(as_type = TransitionInfo<'static>)]
     fn TransitionInfo<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallableChecked<
             'v,
             TransitionImplParams,
-            ImplSingleReturnTy,
+            ImplSingleReturnTy<'static>,
         >,
-        #[starlark(require = named)] attrs: Option<ValueOf<'v, UnpackListOrTuple<String>>>,
-    ) -> starlark::Result<TransitionInfo<'v>> {
-        let attrs = attrs.map_or(Value::new_none(), |v| v.value);
-        Ok(TransitionInfo {
-            r#impl: ValueOfUncheckedGeneric::new(r#impl.0),
-            attrs: ValueOfUncheckedGeneric::new(attrs),
-        })
+        #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, TransitionInfo<'v>>> {
+        Ok(heap.alloc(TransitionInfo {
+            r#impl: heap.alloc(r#impl.to_unchecked()),
+            attrs,
+        }))
     }
 }
 
-impl<'v, V: ValueLike<'v>> TransitionInfoGen<V> {
-    pub(crate) fn get_attrs_names(&self) -> Option<impl IntoIterator<Item = &'v str> + use<'v, V>> {
-        let v = self.attrs.get().to_value();
-        let slice: &[_] = if v.is_none() {
-            return None;
-        } else if let Some(v) = ListRef::from_value(v) {
-            v
-        } else if let Some(v) = TupleRef::from_value(v) {
-            v.content()
-        } else {
-            unreachable!("Checked at construction");
-        };
-        Some(slice.iter().map(|v| {
-            v.unpack_starlark_str()
-                .expect("checked at construction")
-                .as_str()
-        }))
+impl<'v> TransitionInfo<'v> {
+    pub(crate) fn get_attrs_names(
+        &self,
+    ) -> Option<impl Iterator<Item = buck2_error::Result<&'v str>> + use<'v>> {
+        Some(self.attrs?.iter().map(|s| Ok(s?.as_str())))
     }
 }

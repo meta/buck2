@@ -14,6 +14,7 @@ use allocative::Allocative;
 use buck2_core::bxl::BxlFilePath;
 use buck2_data::ToProtoMessage;
 use derive_more::Display;
+use pagable::Pagable;
 use serde::Serialize;
 use serde::Serializer;
 
@@ -28,7 +29,8 @@ use serde::Serializer;
     Ord,
     PartialOrd,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 #[display("{}:{}", bxl_path, name)]
 pub struct BxlFunctionLabel {

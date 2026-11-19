@@ -21,7 +21,6 @@ use buck2_core::target::label::label::TargetLabel;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use dice::DiceComputations;
 use dupe::Dupe;
-use gazebo::prelude::VecExt;
 
 async fn resolve_patterns_to_targets<T: PatternType>(
     ctx: &mut DiceComputations<'_>,
@@ -32,13 +31,16 @@ async fn resolve_patterns_to_targets<T: PatternType>(
         let PackageLabelWithModifiers { package, modifiers } = package_with_modifiers;
 
         match spec {
-            buck2_core::pattern::pattern::PackageSpec::Targets(targets) => {
-                result_targets.extend(targets.into_map(|(name, extra)| TargetLabelWithExtra {
-                    target_label: TargetLabel::new(package.dupe(), name.as_ref()),
-                    extra,
-                    modifiers: modifiers.dupe(),
-                }))
-            }
+            buck2_core::pattern::pattern::PackageSpec::Targets(targets) => result_targets.extend(
+                targets
+                    .into_iter()
+                    .map(|(name, extra)| TargetLabelWithExtra {
+                        target_label: TargetLabel::new(package.dupe(), name.as_ref()),
+                        extra,
+                        modifiers: modifiers.dupe(),
+                    })
+                    .collect::<Vec<_>>(),
+            ),
             buck2_core::pattern::pattern::PackageSpec::All() => {
                 // Note this code is not parallel. Careful if used in performance sensitive code.
                 let interpreter_results = ctx.get_interpreter_results(package.dupe()).await?;
@@ -92,7 +94,10 @@ pub async fn parse_and_resolve_provider_labels_from_cli_args(
         cwd,
     )
     .await?;
-    Ok(targets.into_map(|t| t.into_providers_label()))
+    Ok(targets
+        .into_iter()
+        .map(|t| t.into_providers_label())
+        .collect::<Vec<_>>())
 }
 
 pub async fn parse_and_resolve_provider_labels_with_modifiers_from_cli_args(
@@ -105,5 +110,8 @@ pub async fn parse_and_resolve_provider_labels_with_modifiers_from_cli_args(
     >(ctx, target_patterns, cwd)
     .await?;
 
-    Ok(targets.into_map(|t| t.into_providers_label_with_modifiers()))
+    Ok(targets
+        .into_iter()
+        .map(|t| t.into_providers_label_with_modifiers())
+        .collect::<Vec<_>>())
 }

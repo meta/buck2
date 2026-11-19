@@ -44,15 +44,13 @@ def _get_merge_index_store_tool(ctx: AnalysisContext) -> RunInfo | None:
     return apple_toolchain[AppleToolchainInfo].merge_index_store
 
 def merge_index_store(
-        actions: AnalysisActions,
-        merge_index_store_tool: RunInfo,
-        index_stores: list[Artifact] | TransitiveSet,
-        merge_output_dir_name: str) -> Artifact:
+    actions: AnalysisActions, merge_index_store_tool: RunInfo, index_stores: list[Artifact] | TransitiveSet, merge_output_dir_name: str
+) -> Artifact:
     if isinstance(index_stores, list):
         if len(index_stores) == 1:
             return index_stores[0]
 
-    merged_index_store = actions.declare_output(merge_output_dir_name)
+    merged_index_store = actions.declare_output(merge_output_dir_name, has_content_based_path = False)
 
     cmd = cmd_args([merge_index_store_tool])
     cmd.add(["--dest", merged_index_store.as_output()])
@@ -64,7 +62,7 @@ def merge_index_store(
         txt_args.add(index_stores.project_as_args("args"))
 
     argsfile_path = merge_output_dir_name + ".files.txt"
-    argsfile = actions.write(argsfile_path, txt_args)
+    argsfile = actions.write(argsfile_path, txt_args, has_content_based_path = False)
     argsfile = cmd_args(argsfile, format = "@{}", hidden = txt_args)
 
     cmd.add(["--sources"])
@@ -95,16 +93,13 @@ def _gather_deps_index_store_tsets(deps: list[Dependency]) -> list[IndexStoreTSe
     deps_indexstore_infos = filter(None, [dep.get(IndexStoreInfo) for dep in deps])
     return [info.tset for info in deps_indexstore_infos]
 
-def _gather_deps_swift_index_store_tsets(
-        deps: list[Dependency]) -> list[IndexStoreTSet]:
+def _gather_deps_swift_index_store_tsets(deps: list[Dependency]) -> list[IndexStoreTSet]:
     deps_indexstore_infos = filter(None, [dep.get(IndexStoreInfo) for dep in deps])
     return [info.swift_tset for info in deps_indexstore_infos]
 
 def create_index_store_subtargets_and_provider(
-        ctx: AnalysisContext,
-        current_target_index_stores: list[Artifact],
-        swift_index_stores: list[Artifact],
-        deps: list[Dependency]) -> (dict[str, list[Provider]], IndexStoreInfo):
+    ctx: AnalysisContext, current_target_index_stores: list[Artifact], swift_index_stores: list[Artifact], deps: list[Dependency]
+) -> (dict[str, list[Provider]], IndexStoreInfo):
     merge_index_store_tool = _get_merge_index_store_tool(ctx)
 
     if merge_index_store_tool:

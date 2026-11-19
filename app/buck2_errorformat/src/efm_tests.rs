@@ -198,12 +198,8 @@ fn assert_entry_matches(
             }
         }
         Ok(None) => {
-            if expected_opt.is_some() {
-                panic!(
-                    "Expected Some({:?}), got None for line: {}",
-                    expected_opt.unwrap(),
-                    line
-                );
+            if let Some(expected) = &expected_opt {
+                panic!("Expected Some({expected:?}), got None for line: {line}");
             }
             // Both None, success.
         }

@@ -10,6 +10,7 @@
 
 package com.facebook.buck.util.zip;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.io.ByteStreams;
 import java.io.IOException;
@@ -22,6 +23,7 @@ import java.util.zip.ZipException;
  * An implementation of an {@link OutputStream} that will zip output. Note that, just as with {@link
  * java.util.zip.ZipOutputStream}, no implementation of this is thread-safe.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CustomZipOutputStream extends OutputStream {
 
   protected interface Impl {

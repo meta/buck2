@@ -9,11 +9,9 @@
  */
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::fmt::Write as _;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -33,16 +31,19 @@ use buck2_event_observer::what_ran::WhatRanCommandConsoleFormat;
 use buck2_event_observer::what_ran::WhatRanOutputCommand;
 use buck2_event_observer::what_ran::WhatRanOutputWriter;
 use buck2_events::BuckEvent;
+use buck2_hash::BuckMutMap;
 use buck2_health_check::interface::HealthCheckType;
 use buck2_health_check::report::DisplayReport;
 use buck2_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
-use once_cell::sync::Lazy;
 use superconsole::DrawMode;
 use superconsole::SuperConsole;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::error::TryRecvError;
 
+use crate::agent_context::AgentContextEntry;
+use crate::subscribers::console_output_limit::ConsoleOutputLimit;
+use crate::subscribers::console_output_limit::EmitResult;
 use crate::subscribers::emit_event::emit_event_if_relevant;
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::subscribers::superconsole::io::io_in_flight_non_zero_counters;
@@ -56,11 +57,50 @@ use crate::ticker::Tick;
 /// within this duration.
 const KEEPALIVE_TIME_LIMIT: Duration = Duration::from_secs(7);
 
-static ELAPSED_HEALTH_CHECK_MAP: Lazy<Mutex<HashMap<HealthCheckType, (Instant, u64)>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+/// The shortest gap between two "Waiting on ..." lines when an AI coding agent runs
+/// buck2. Agents read the output only after the command exits, so the line every 7s
+/// mostly adds tokens to their context. Health, resource and stale-snapshot reports
+/// keep the 7s cadence.
+const AGENT_WAITING_LINE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Rate-limits the "Waiting on ..." keepalive line: agents get it at most once per
+/// `AGENT_WAITING_LINE_INTERVAL`, everyone else on every keepalive tick.
+struct WaitingLineThrottle {
+    min_interval: Duration,
+    last_shown: Instant,
+}
+
+impl WaitingLineThrottle {
+    fn new(is_agent: bool, now: Instant) -> Self {
+        Self {
+            min_interval: if is_agent {
+                AGENT_WAITING_LINE_INTERVAL
+            } else {
+                Duration::ZERO
+            },
+            last_shown: now,
+        }
+    }
+
+    fn should_show(&mut self, now: Instant) -> bool {
+        if now.saturating_duration_since(self.last_shown) < self.min_interval {
+            return false;
+        }
+        self.last_shown = now;
+        true
+    }
+}
+
+fn is_agent_invocation() -> bool {
+    AgentContextEntry::from_env().is_ok_and(|entries| !entries.is_empty())
+}
 
 fn now_display() -> impl Display {
-    chrono::Local::now().to_rfc3339_opts(::chrono::SecondsFormat::Millis, false)
+    // Millisecond precision with a numeric offset, like the rfc3339 formatting this had
+    // historically.
+    jiff::Zoned::now()
+        .strftime("%Y-%m-%dT%H:%M:%S%.3f%:z")
+        .to_string()
 }
 
 fn with_timestamps(message: &str) -> String {
@@ -82,7 +122,6 @@ fn with_timestamps(message: &str) -> String {
 macro_rules! echo {
     () => {
         {
-            // patternlint-disable-next-line buck2-cli-simpleconsole-echo
             crate::eprintln!("[{}]", now_display())
         }
     };
@@ -90,30 +129,9 @@ macro_rules! echo {
         {
             let message = format!($fmt $(, $args)*);
             let message = with_timestamps(&message);
-            // patternlint-disable-next-line buck2-cli-simpleconsole-echo
             crate::eprintln!("{}", message)
         }
     };
-}
-
-// Report only if at least double time has passed since reporting interval
-fn echo_system_warning_exponential(
-    warning: &HealthCheckType,
-    msg: &str,
-) -> buck2_error::Result<()> {
-    if let Some((last_reported, every_x)) =
-        ELAPSED_HEALTH_CHECK_MAP.lock().unwrap().get_mut(warning)
-    {
-        let now = Instant::now();
-        let elapsed = now.duration_since(*last_reported);
-        let new_every_double: u64 = 2 * *every_x;
-        if elapsed > Duration::from_secs(new_every_double) {
-            echo!("{}", msg)?;
-            *every_x = new_every_double;
-            *last_reported = now;
-        }
-    }
-    Ok(())
 }
 
 #[derive(Copy, Clone, Dupe, Debug, PartialEq)]
@@ -122,31 +140,50 @@ enum TtyMode {
     Disabled,
 }
 
-fn init_remaining_system_warning_count() {
-    ELAPSED_HEALTH_CHECK_MAP
-        .lock()
-        .unwrap()
-        .insert(HealthCheckType::MemoryPressure, (Instant::now(), 1));
-    ELAPSED_HEALTH_CHECK_MAP
-        .lock()
-        .unwrap()
-        .insert(HealthCheckType::LowDiskSpace, (Instant::now(), 1));
-    ELAPSED_HEALTH_CHECK_MAP
-        .lock()
-        .unwrap()
-        .insert(HealthCheckType::SlowDownloadSpeed, (Instant::now(), 1));
-    ELAPSED_HEALTH_CHECK_MAP
-        .lock()
-        .unwrap()
-        .insert(HealthCheckType::VpnEnabled, (Instant::now(), 1));
-    ELAPSED_HEALTH_CHECK_MAP
-        .lock()
-        .unwrap()
-        .insert(HealthCheckType::StableRevision, (Instant::now(), 1));
-    ELAPSED_HEALTH_CHECK_MAP
-        .lock()
-        .unwrap()
-        .insert(HealthCheckType::SlowBuild, (Instant::now(), 1));
+struct HealthWarningBackoff {
+    elapsed: BuckMutMap<HealthCheckType, (Instant, u64)>,
+}
+
+impl HealthWarningBackoff {
+    fn new(now: Instant) -> Self {
+        let elapsed = [
+            HealthCheckType::MemoryPressure,
+            HealthCheckType::LowDiskSpace,
+            HealthCheckType::SlowDownloadSpeed,
+            HealthCheckType::VpnEnabled,
+            HealthCheckType::StableRevision,
+            HealthCheckType::SlowBuild,
+        ]
+        .into_iter()
+        .map(|warning| (warning, (now, 1)))
+        .collect();
+        Self { elapsed }
+    }
+
+    // Report only if at least double the previous reporting interval has passed.
+    fn should_display(&mut self, warning: &HealthCheckType, now: Instant) -> bool {
+        let Some((last_reported, every_x)) = self.elapsed.get_mut(warning) else {
+            return false;
+        };
+        let new_every_double = 2 * *every_x;
+        if now.duration_since(*last_reported) <= Duration::from_secs(new_every_double) {
+            return false;
+        }
+        *every_x = new_every_double;
+        *last_reported = now;
+        true
+    }
+}
+
+fn echo_system_warning_exponential(
+    backoff: &mut HealthWarningBackoff,
+    warning: &HealthCheckType,
+    message: &str,
+) -> buck2_error::Result<()> {
+    if backoff.should_display(warning, Instant::now()) {
+        echo!("{}", message)?;
+    }
+    Ok(())
 }
 
 /// Just repeats stdout and stderr to client process.
@@ -158,8 +195,11 @@ pub struct SimpleConsole<E> {
     pub(crate) observer: EventObserver<E>,
     action_errors: Vec<buck2_data::ActionError>,
     last_print_time: Instant,
+    waiting_line: WaitingLineThrottle,
     last_shown_snapshot_ts: Option<SystemTime>,
     health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
+    health_warning_backoff: HealthWarningBackoff,
+    pub(crate) output_limit: ConsoleOutputLimit,
 }
 
 impl<E> SimpleConsole<E>
@@ -172,16 +212,19 @@ where
         expect_spans: bool,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
     ) -> Self {
-        init_remaining_system_warning_count();
+        let now = Instant::now();
         SimpleConsole {
             tty_mode: TtyMode::Enabled,
             verbosity,
             expect_spans,
             observer: EventObserver::new(trace_id),
             action_errors: Vec::new(),
-            last_print_time: Instant::now(),
+            last_print_time: now,
+            waiting_line: WaitingLineThrottle::new(is_agent_invocation(), now),
             last_shown_snapshot_ts: None,
             health_check_reports_receiver,
+            health_warning_backoff: HealthWarningBackoff::new(now),
+            output_limit: ConsoleOutputLimit::new(),
         }
     }
 
@@ -191,16 +234,19 @@ where
         expect_spans: bool,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
     ) -> Self {
-        init_remaining_system_warning_count();
+        let now = Instant::now();
         SimpleConsole {
             tty_mode: TtyMode::Disabled,
             verbosity,
             expect_spans,
             observer: EventObserver::new(trace_id),
             action_errors: Vec::new(),
-            last_print_time: Instant::now(),
+            last_print_time: now,
+            waiting_line: WaitingLineThrottle::new(is_agent_invocation(), now),
             last_shown_snapshot_ts: None,
             health_check_reports_receiver,
+            health_warning_backoff: HealthWarningBackoff::new(now),
+            output_limit: ConsoleOutputLimit::new(),
         }
     }
 
@@ -297,15 +343,28 @@ where
     }
 
     fn print_action_error(&mut self, error: &buck2_data::ActionError) -> buck2_error::Result<()> {
-        let display = display::display_action_error(error, TargetDisplayOptions::for_log())?;
-        let message = display.simple_format_with_timestamps(with_timestamps);
+        let error_display = display::display_action_error(error, TargetDisplayOptions::for_log())?;
+        let stream_bytes = error_display.output_stream_byte_count();
+
+        // Always print metadata (action ID, reason, command).
+        // Gate stdout/stderr through the output limit.
+        let output_format = match self.output_limit.emit(stream_bytes) {
+            EmitResult::Emit => display::ActionErrorOutputFormat::IncludeOutputStreams,
+            EmitResult::Exceeded(msg) => {
+                display::ActionErrorOutputFormat::SubstituteOutputStreams(msg)
+            }
+            EmitResult::Skipped => display::ActionErrorOutputFormat::ExcludeOutputStreams,
+        };
+
+        let message = error_display.simple_format_with_timestamps(with_timestamps, output_format);
         if self.tty_mode == TtyMode::Disabled {
-            // patternlint-disable-next-line buck2-cli-simpleconsole-echo
+            // ast-grep-ignore: rust/buck2-cli-simpleconsole-echo
             crate::eprintln!("{}", display::sanitize_output_colors(message.as_bytes()))?;
         } else {
-            // patternlint-disable-next-line buck2-cli-simpleconsole-echo
+            // ast-grep-ignore: rust/buck2-cli-simpleconsole-echo
             crate::eprintln!("{}", message)?;
         }
+
         self.notify_printed();
         Ok(())
     }
@@ -472,7 +531,7 @@ where
             }
         }
 
-        if let Some(re) = &self
+        if let Some(re) = self
             .observer()
             .re_state()
             .render_header(snapshots, DrawMode::Final)
@@ -505,19 +564,27 @@ where
             let incomplete = self.observer().spans().roots_ongoing();
             echo!("{} / {}: {}", complete, complete + incomplete, action_id)?;
             if let Some(stderr) = stderr {
-                // TODO(nmj): Factor out behavior here so that handling ttymode isn't ad hoc.  i.e. write a method that formats text based on tty mode
-                match self.tty_mode {
-                    TtyMode::Enabled => {
-                        // Add the extra control character so that users' stderr messages can't
-                        // mess up the terminal
-                        echo!("stderr:{}\x1b[0m", stderr)?;
+                match self.output_limit.emit(stderr.len()) {
+                    EmitResult::Emit => {
+                        // TODO(nmj): Factor out behavior here so that handling ttymode isn't ad hoc.  i.e. write a method that formats text based on tty mode
+                        match self.tty_mode {
+                            TtyMode::Enabled => {
+                                // Add the extra control character so that users' stderr messages can't
+                                // mess up the terminal
+                                echo!("stderr:{}\x1b[0m", stderr)?;
+                            }
+                            TtyMode::Disabled => {
+                                echo!(
+                                    "stderr:\n{}",
+                                    display::sanitize_output_colors(stderr.as_bytes())
+                                )?;
+                            }
+                        }
                     }
-                    TtyMode::Disabled => {
-                        echo!(
-                            "stderr:\n{}",
-                            display::sanitize_output_colors(stderr.as_bytes())
-                        )?;
+                    EmitResult::Exceeded(msg) => {
+                        echo!("{}", msg)?;
                     }
+                    EmitResult::Skipped => {}
                 }
             }
             self.notify_printed();
@@ -542,7 +609,10 @@ where
     ) -> buck2_error::Result<()> {
         if let Some(data) = &test_info.data {
             match data {
-                buck2_data::test_discovery::Data::Session(buck2_data::TestSessionInfo { info }) => {
+                buck2_data::test_discovery::Data::Session(buck2_data::TestSessionInfo {
+                    info,
+                    ..
+                }) => {
                     echo!("Test session: {}", info)?;
                     self.notify_printed();
                 }
@@ -558,15 +628,22 @@ where
         result: &buck2_data::TestResult,
         _event: &BuckEvent,
     ) -> buck2_error::Result<()> {
-        if let Some(msg) = display::format_test_result(result)? {
+        if let Some(msg) = display::format_test_result(result, self.verbosity)? {
             let mut buffer = String::new();
 
             for line in msg {
                 writeln!(buffer, "{}", line.to_unstyled())
                     .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
             }
-            //Printing the test output in multiple lines. It makes easier for the user to read.
-            echo!("{}", buffer)?;
+            match self.output_limit.emit(buffer.len()) {
+                EmitResult::Emit => {
+                    echo!("{}", buffer)?;
+                }
+                EmitResult::Exceeded(msg) => {
+                    echo!("{}", msg)?;
+                }
+                EmitResult::Skipped => {}
+            }
         }
 
         Ok(())
@@ -599,9 +676,13 @@ where
         None
     }
 
-    fn echo_health_check_warning(&self, report: &DisplayReport) -> buck2_error::Result<()> {
+    fn echo_health_check_warning(&mut self, report: &DisplayReport) -> buck2_error::Result<()> {
         if let Some(warning) = &report.health_issue {
-            echo_system_warning_exponential(&report.health_check_type, &warning.to_string())?;
+            echo_system_warning_exponential(
+                &mut self.health_warning_backoff,
+                &report.health_check_type,
+                &warning.to_string(),
+            )?;
         }
         Ok(())
     }
@@ -656,9 +737,9 @@ where
     }
 
     async fn tick(&mut self, _: &Tick) -> buck2_error::Result<()> {
-        if self.verbosity.print_status()
-            && Instant::now() - self.last_print_time > KEEPALIVE_TIME_LIMIT
-        {
+        let now = Instant::now();
+        if self.verbosity.print_status() && now - self.last_print_time > KEEPALIVE_TIME_LIMIT {
+            let show_waiting_line = self.waiting_line.should_show(now);
             let mut show_stats = self.expect_spans;
 
             for report in self
@@ -668,41 +749,44 @@ where
                 self.echo_health_check_warning(&report)?;
             }
 
-            let mut roots = self.observer().spans().iter_roots();
+            let mut roots = self.observer.spans().iter_roots();
             let sample_event = roots.next();
             match sample_event {
                 Some(sample_event) => {
-                    let child = match sample_event.children().next() {
-                        Some(c) => Cow::Owned(format!(
-                            " [{}]",
+                    if show_waiting_line {
+                        let child = match sample_event.children().next() {
+                            Some(c) => Cow::Owned(format!(
+                                " [{}]",
+                                display::display_event(
+                                    &c.info().event,
+                                    TargetDisplayOptions::for_log(),
+                                )?
+                            )),
+                            None => Cow::Borrowed(""),
+                        };
+
+                        let remaining = match roots.len() {
+                            0 => String::new(),
+                            x => format!(", and {x} other actions"),
+                        };
+                        echo!(
+                            "Waiting on {}{}{}",
                             display::display_event(
-                                &c.info().event,
-                                TargetDisplayOptions::for_log(),
-                            )?
-                        )),
-                        None => Cow::Borrowed(""),
-                    };
+                                &sample_event.info().event,
+                                TargetDisplayOptions::for_log()
+                            )?,
+                            child,
+                            remaining
+                        )?;
+                    }
 
-                    let remaining = match roots.len() {
-                        0 => String::new(),
-                        x => format!(", and {x} other actions"),
-                    };
-                    echo!(
-                        "Waiting on {}{}{}",
-                        display::display_event(
-                            &sample_event.info().event,
-                            TargetDisplayOptions::for_log()
-                        )?,
-                        child,
-                        remaining
-                    )?;
-
-                    let last_snapshot = self.observer().two_snapshots().last.as_ref().map(|s| &s.1);
-                    let sysinfo = self.observer().system_info();
+                    let last_snapshot = self.observer.two_snapshots().last.as_ref().map(|s| &s.1);
+                    let sysinfo = self.observer.system_info();
                     if let Some(memory_pressure) =
                         check_memory_pressure_snapshot(last_snapshot, sysinfo)
                     {
                         echo_system_warning_exponential(
+                            &mut self.health_warning_backoff,
                             &HealthCheckType::MemoryPressure,
                             &system_memory_exceeded_msg(&memory_pressure),
                         )?;
@@ -711,6 +795,7 @@ where
                         check_remaining_disk_space_snapshot(last_snapshot, sysinfo)
                     {
                         echo_system_warning_exponential(
+                            &mut self.health_warning_backoff,
                             &HealthCheckType::LowDiskSpace,
                             &low_disk_space_msg(&low_disk_space),
                         )?;
@@ -718,7 +803,7 @@ where
                     show_stats = self.verbosity.always_print_stats_in_status();
                 }
                 None => {
-                    if self.expect_spans {
+                    if self.expect_spans && show_waiting_line {
                         echo!(
                             "Waiting on buck2 daemon {}...",
                             self.observer.session_info().trace_id
@@ -759,5 +844,47 @@ impl WhatRanOutputWriter for PrintDebugCommandToStderr {
             }
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_warning_backoff_is_exponential_and_instance_local() {
+        let start = Instant::now();
+        let warning = HealthCheckType::MemoryPressure;
+        let mut first = HealthWarningBackoff::new(start);
+        let mut second = HealthWarningBackoff::new(start);
+
+        assert!(!first.should_display(&warning, start + Duration::from_secs(2)));
+        assert!(first.should_display(&warning, start + Duration::from_secs(3)));
+        assert!(!first.should_display(&warning, start + Duration::from_secs(7)));
+        assert!(second.should_display(&warning, start + Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn waiting_line_is_throttled_for_agents_only() {
+        let start = Instant::now();
+        let at = |secs| start + Duration::from_secs(secs);
+
+        let mut human = WaitingLineThrottle::new(false, start);
+        assert!(
+            human.should_show(at(8)) && human.should_show(at(16)),
+            "humans get the line on every keepalive tick"
+        );
+
+        let mut agent = WaitingLineThrottle::new(true, start);
+        assert!(
+            !agent.should_show(at(8)) && !agent.should_show(at(59)),
+            "agents skip the 7s keepalive ticks"
+        );
+        assert!(agent.should_show(at(60)), "agents get the line a minute in");
+        assert!(
+            !agent.should_show(at(100)),
+            "and not again before another minute"
+        );
+        assert!(agent.should_show(at(120)));
     }
 }

@@ -1,0 +1,12 @@
+[buildfile]
+name = TARGETS.fixture
+
+[repositories]
+root = .
+prelude = .
+
+[buck2]
+materializations = deferred
+defer_write_actions = true
+ttl_refresh_enabled = true
+write_cas_probe = true

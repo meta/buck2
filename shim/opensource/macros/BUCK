@@ -8,7 +8,7 @@
 config_setting(
     name = "broken-in-oss",
     constraint_values = [
-        "//opensource/macros/broken_in_oss/constraints:enable",
+        "//opensource/macros/broken_in_oss/constraints:broken_in_oss[enable]",
     ],
     visibility = ["PUBLIC"],
 )

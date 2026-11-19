@@ -12,38 +12,54 @@ use std::borrow::Borrow;
 
 use allocative::Allocative;
 use buck2_core::plugins::PluginKind;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::plugins::PLUGIN_KIND_FROM_VALUE;
 use derive_more::Display;
 use dupe::Dupe;
-use starlark::coerce::CoerceKey;
-use starlark::coerce::coerce;
-use starlark::starlark_complex_value;
-use starlark::values::Coerce;
+use starlark::pagable::SmallMapKeyDeserialize;
+use starlark::pagable::StarlarkDeserialize;
+use starlark::pagable::StarlarkDeserializeContext;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::ProvidesStaticType;
+use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::ValueLifetimeless;
-use starlark::values::ValueLike;
 use starlark::values::starlark_value;
-use starlark_map::small_map::SmallMap;
+use starlark_map::Hashed;
 
 /// Wrapper around `PluginKind` to impl `Trace` and `Freeze`
 #[derive(
-    Clone, Dupe, Debug, Display, Eq, PartialEq, Hash, Ord, PartialOrd, Allocative, Freeze, Trace
+    Clone,
+    Dupe,
+    Debug,
+    Display,
+    Eq,
+    PartialEq,
+    Hash,
+    Ord,
+    PartialOrd,
+    Allocative,
+    Freeze,
+    Trace,
+    StarlarkPagable
 )]
 #[repr(transparent)]
-struct PluginKindWrapper(#[freeze(identity)] PluginKind);
+struct PluginKindWrapper(
+    #[freeze(identity)]
+    #[starlark_pagable(pagable)]
+    PluginKind,
+);
 
-// SAFETY: Trivial coercion is always correct
-unsafe impl Coerce<PluginKindWrapper> for PluginKindWrapper {}
-unsafe impl CoerceKey<PluginKindWrapper> for PluginKindWrapper {}
-// SAFETY: `#[repr(transparent)]` and impls are derived
-unsafe impl Coerce<PluginKindWrapper> for PluginKind {}
-unsafe impl CoerceKey<PluginKindWrapper> for PluginKind {}
+impl<'fv> SmallMapKeyDeserialize<'fv> for PluginKindWrapper {
+    fn starlark_deserialize_hashed(
+        ctx: &mut dyn StarlarkDeserializeContext<'_, 'fv>,
+    ) -> starlark::Result<Hashed<Self>> {
+        Ok(Hashed::new(Self::starlark_deserialize(ctx)?))
+    }
+}
 
 impl Borrow<PluginKind> for PluginKindWrapper {
     fn borrow(&self) -> &PluginKind {
@@ -55,17 +71,17 @@ impl Borrow<PluginKind> for PluginKindWrapper {
 #[derive(
     Debug,
     Display,
-    Trace,
-    Coerce,
     Freeze,
+    Trace,
     ProvidesStaticType,
     NoSerialize,
-    Allocative
+    Allocative,
+    StarlarkPagable
 )]
 #[display("<ctx.plugins>")]
 #[repr(transparent)]
-pub struct AnalysisPluginsGen<V: ValueLifetimeless> {
-    plugins: SmallMap<PluginKindWrapper, V>,
+pub struct AnalysisPlugins<'v> {
+    plugins: BuckMutInsertionMap<PluginKindWrapper, Value<'v>>,
 }
 
 starlark_complex_value!(pub AnalysisPlugins);
@@ -78,17 +94,14 @@ enum AnalysisPluginsError {
 }
 
 #[starlark_value(type = "AnalysisPlugins")]
-impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for AnalysisPluginsGen<V>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    fn at(&self, index: Value<'v>, _heap: &'v Heap) -> starlark::Result<Value<'v>> {
+impl<'v> StarlarkValue<'v> for AnalysisPlugins<'v> {
+    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let kind = (PLUGIN_KIND_FROM_VALUE.get()?)(index)?;
         match self.plugins.get(&kind) {
             Some(v) => Ok(v.to_value()),
-            None => Err(starlark::Error::new_other(buck2_error::Error::from(
-                AnalysisPluginsError::PluginKindNotUsed(kind),
-            ))),
+            None => {
+                Err(buck2_error::Error::from(AnalysisPluginsError::PluginKindNotUsed(kind)).into())
+            }
         }
     }
 
@@ -99,9 +112,12 @@ where
 }
 
 impl<'v> AnalysisPlugins<'v> {
-    pub fn new(plugins: SmallMap<PluginKind, Value<'v>>) -> Self {
+    pub fn new(plugins: BuckMutInsertionMap<PluginKind, Value<'v>>) -> Self {
         Self {
-            plugins: coerce(plugins),
+            plugins: plugins
+                .into_iter()
+                .map(|(k, v)| (PluginKindWrapper(k), v))
+                .collect(),
         }
     }
 }

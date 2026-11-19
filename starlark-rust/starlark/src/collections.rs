@@ -17,7 +17,7 @@
 
 //! Defines [`SmallMap`] and [`SmallSet`] - collections with deterministic iteration and small memory footprint.
 //!
-//! These structures use vector backed storage if there are only a few elements, and and index
+//! These structures use vector backed storage if there are only a few elements, and index
 //! for larger collections. The API mirrors standard Rust collections.
 
 pub use starlark_map::Equivalent;

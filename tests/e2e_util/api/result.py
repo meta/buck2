@@ -7,7 +7,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# pyre-unsafe
 
 from asyncio import subprocess
 from pathlib import Path
@@ -35,7 +34,7 @@ class Result:
         assert self.process.returncode == 0
 
 
-R = TypeVar("R", bound=Result)
+R = TypeVar("R", bound=Result, covariant=True)
 E = TypeVar("E", bound=Exception)
 ResultType = Callable[[subprocess.Process, str, str], R]
 ExceptionType = Callable[

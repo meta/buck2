@@ -163,6 +163,8 @@ impl WhatUpCommand {
                 draw.draw(
                     &SessionInfoComponent {
                         session_info: self.state.session_info(),
+                        re_state: self.state.re_state(),
+                        two_snapshots: self.state.two_snapshots(),
                     },
                     mode,
                 )?;

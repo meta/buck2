@@ -1,0 +1,17 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+[
+  {
+    "buck.target":"root//:parent",
+    "buck.type":"root//defs.bzl:dummy",
+    "buck.deps":["root//:dep (<modifiers>#<HASH>)"],
+    "buck.inputs":[],
+    "buck.target_hash":"<TARGET_HASH>",
+    "buck.package":"root//",
+    "name":"parent",
+    "default_target_platform":"root//:platform",
+    "visibility":[],
+    "within_view":["PUBLIC"],
+    "deps":["root//:dep (<modifiers>#<HASH>)"]
+  }
+]

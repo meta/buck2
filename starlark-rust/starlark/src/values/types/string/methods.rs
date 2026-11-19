@@ -32,13 +32,14 @@ use crate::values::Heap;
 use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
-use crate::values::ValueOfUnchecked;
+use crate::values::ValueOf;
 use crate::values::list::AllocList;
-use crate::values::list::UnpackList;
+use crate::values::list::ListType;
 use crate::values::none::NoneOr;
+use crate::values::string::StarlarkStr;
 use crate::values::string::dot_format;
-use crate::values::tuple::UnpackTuple;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::tuple::TupleType;
+use crate::values::types::int::view::IntView;
 use crate::values::types::string::iter::iterate_chars;
 use crate::values::types::string::iter::iterate_codepoints;
 use crate::values::typing::iter::StarlarkIter;
@@ -98,10 +99,53 @@ fn rsplitn_whitespace(s: &str, maxsplit: usize) -> Vec<String> {
     v
 }
 
-#[derive(StarlarkTypeRepr, UnpackValue)]
+#[derive(UnpackValue)]
 enum StringOrTuple<'v> {
-    String(&'v str),
-    Tuple(UnpackTuple<&'v str>),
+    String(ValueOf<'v, StarlarkStr>),
+    Tuple(ValueOf<'v, TupleType<StarlarkStr>>),
+}
+
+/// A letter with a case: upper, lower, or titlecase such as `ǅ`, which is neither but maps to
+/// a different letter in each case.
+fn is_cased(c: char) -> bool {
+    c.is_uppercase()
+        || c.is_lowercase()
+        || c.to_uppercase().ne(std::iter::once(c))
+        || c.to_lowercase().ne(std::iter::once(c))
+}
+
+/// The `chars` argument of `strip`, `lstrip` and `rstrip` as a set. Testing each character with
+/// `chars.contains(c)` scans all of `chars` every time, which makes stripping quadratic.
+struct StripChars {
+    /// Bit `i` is set if the ASCII character `i` is in `chars`.
+    ascii: u128,
+    /// The other characters of `chars`, sorted and deduplicated.
+    non_ascii: Vec<char>,
+}
+
+impl StripChars {
+    fn new(chars: &str) -> StripChars {
+        let mut ascii = 0;
+        let mut non_ascii = Vec::new();
+        for c in chars.chars() {
+            if c.is_ascii() {
+                ascii |= 1u128 << (c as u32);
+            } else {
+                non_ascii.push(c);
+            }
+        }
+        non_ascii.sort_unstable();
+        non_ascii.dedup();
+        StripChars { ascii, non_ascii }
+    }
+
+    fn contains(&self, c: char) -> bool {
+        if c.is_ascii() {
+            self.ascii & (1u128 << (c as u32)) != 0
+        } else {
+            self.non_ascii.binary_search(&c).is_ok()
+        }
+    }
 }
 
 #[starlark_module]
@@ -123,8 +167,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn elems<'v>(
         this: StringValue<'v>,
-        heap: &'v Heap,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, StarlarkIter<String>>> {
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, StarlarkIter<StarlarkStr>>> {
         Ok(iterate_chars(this, heap))
     }
 
@@ -173,8 +217,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn codepoints<'v>(
         this: StringValue<'v>,
-        heap: &'v Heap,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, StarlarkIter<String>>> {
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, StarlarkIter<IntView<'v>>>> {
         Ok(iterate_codepoints(this, heap))
     }
 
@@ -221,22 +265,30 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     /// https://github.com/bazelbuild/starlark/blob/master/spec.md#string·endswith
     /// ): determine if a string ends with a given suffix.
     ///
-    /// `S.endswith(suffix)` reports whether the string S has the specified
-    /// suffix.
+    /// `S.endswith(suffix[, start[, end]])` reports whether the string
+    /// `S[start:end]` has the specified suffix.
     ///
     /// ```
     /// # starlark::assert::all_true(r#"
     /// "filename.sky".endswith(".sky") == True
+    /// "hello".endswith("ell", 0, 4) == True
+    /// "hello".endswith("lo", 3) == True
     /// # "#);
     /// ```
     #[starlark(speculative_exec_safe)]
     fn endswith(
         this: &str,
         #[starlark(require = pos)] suffix: StringOrTuple,
+        #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
     ) -> anyhow::Result<bool> {
+        let haystack = match convert_str_indices(this, start.into_option(), end.into_option()) {
+            Some(StrIndices { haystack, .. }) => haystack,
+            None => return Ok(false),
+        };
         match suffix {
-            StringOrTuple::String(x) => Ok(this.ends_with(x)),
-            StringOrTuple::Tuple(xs) => Ok(xs.items.iter().any(|x| this.ends_with(x))),
+            StringOrTuple::String(x) => Ok(haystack.ends_with(x.as_str())),
+            StringOrTuple::Tuple(xs) => Ok(xs.items().any(|x| haystack.ends_with(x.as_str()))),
         }
     }
 
@@ -250,7 +302,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     /// If either or both of `start` or `end` are specified,
     /// they specify a subrange of S to which the search should be restricted.
     /// They are interpreted according to Skylark's [indexing
-    /// conventions](#indexing).
+    /// conventions](https://github.com/bazelbuild/starlark/blob/master/spec.md#indexing).
     ///
     /// If no occurrence is found, `found` returns -1.
     ///
@@ -482,10 +534,10 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn islower(this: &str) -> anyhow::Result<bool> {
         let mut result = false;
         for c in this.chars() {
-            if c.is_uppercase() {
-                return Ok(false);
-            } else if c.is_lowercase() {
+            if c.is_lowercase() {
                 result = true;
+            } else if is_cased(c) {
+                return Ok(false);
             }
         }
         Ok(result)
@@ -536,24 +588,25 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn istitle(this: &str) -> anyhow::Result<bool> {
-        let mut last_space = true;
+        // Upper and titlecase letters may only follow uncased characters, lowercase letters only
+        // cased ones, and there must be at least one cased letter.
+        let mut previous_is_cased = false;
         let mut result = false;
-
         for c in this.chars() {
-            if !c.is_alphabetic() {
-                last_space = true;
-            } else {
-                if last_space {
-                    if c.is_lowercase() {
-                        return Ok(false);
-                    }
-                } else if c.is_uppercase() {
+            if c.is_lowercase() {
+                if !previous_is_cased {
                     return Ok(false);
                 }
-                if c.is_alphabetic() {
-                    result = true;
+                result = true;
+                previous_is_cased = true;
+            } else if is_cased(c) {
+                if previous_is_cased {
+                    return Ok(false);
                 }
-                last_space = false;
+                result = true;
+                previous_is_cased = true;
+            } else {
+                previous_is_cased = false;
             }
         }
         Ok(result)
@@ -577,10 +630,10 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn isupper(this: &str) -> anyhow::Result<bool> {
         let mut result = false;
         for c in this.chars() {
-            if c.is_lowercase() {
-                return Ok(false);
-            } else if c.is_uppercase() {
+            if c.is_uppercase() {
                 result = true;
+            } else if is_cased(c) {
+                return Ok(false);
             }
         }
         Ok(result)
@@ -623,32 +676,40 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     #[starlark(speculative_exec_safe)]
     fn join<'v>(
         this: &str,
-        #[starlark(require = pos)] to_join: ValueOfUnchecked<'v, StarlarkIter<String>>,
-        heap: &'v Heap,
-    ) -> starlark::Result<ValueOfUnchecked<'v, String>> {
+        #[starlark(require = pos)] to_join: ValueOf<'v, StarlarkIter<StarlarkStr>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<StringValue<'v>> {
         #[inline(always)]
         fn as_str<'v>(x: Value<'v>) -> crate::Result<StringValue<'v>> {
             StringValue::unpack_named_param(x, "to_join")
         }
 
-        let mut it = to_join.get().iterate(heap)?;
+        let mut it = to_join.to_value().iterate(heap)?;
         match it.next() {
-            None => Ok(ValueOfUnchecked::new(Value::new_empty_string())),
+            None => Ok(StringValue::default()),
             Some(x1) => {
                 match it.next() {
                     None => {
                         // If there is a singleton we can avoid reallocation
-                        Ok(as_str(x1)?.to_value_of_unchecked().cast())
+                        as_str(x1)
                     }
                     Some(x2) => {
                         let s1 = as_str(x1)?.as_str();
                         let s2 = as_str(x2)?.as_str();
-                        // guess towards the upper bound, since we throw away over-allocations quickly
-                        // include a buffer (20 bytes)
+                        // Reserve the first two parts and every separator, and guess that
+                        // each later part is as long as the longer of the first two. The
+                        // guess is capped, as a long first part followed by many short ones
+                        // would otherwise reserve its length once per part; past the cap the
+                        // buffer grows as the parts are pushed.
+                        const MAX_GUESS: usize = 64 * 1024;
                         let n = it.size_hint().0 + 2;
-                        let guess =
-                            (cmp::max(s1.len(), s2.len()) * n) + (this.len() * (n - 1)) + 20;
-                        let mut r = String::with_capacity(guess);
+                        let guess = cmp::min(
+                            cmp::max(s1.len(), s2.len()).saturating_mul(n - 2),
+                            MAX_GUESS,
+                        );
+                        let mut r = String::with_capacity(
+                            s1.len() + s2.len() + this.len() * (n - 1) + guess + 20,
+                        );
                         r.push_str(s1);
                         r.push_str(this);
                         r.push_str(s2);
@@ -656,7 +717,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                             r.push_str(this);
                             r.push_str(as_str(x)?.as_str());
                         }
-                        Ok(heap.alloc_typed_unchecked(r))
+                        Ok(heap.alloc_str(&r))
                     }
                 }
             }
@@ -680,11 +741,14 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn lstrip<'v>(
         this: StringValue<'v>,
         #[starlark(require = pos)] chars: Option<&str>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
         let res = match chars {
             None => this.trim_start(),
-            Some(s) => this.trim_start_matches(|c| s.contains(c)),
+            Some(s) => {
+                let s = StripChars::new(s);
+                this.trim_start_matches(|c| s.contains(c))
+            }
         };
         if res.len() == this.len() {
             Ok(this)
@@ -714,7 +778,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn partition<'v>(
         this: StringValue<'v>,
         #[starlark(require = pos)] needle: StringValue<'v>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<(StringValue<'v>, StringValue<'v>, StringValue<'v>)> {
         if needle.is_empty() {
             return Err(anyhow::anyhow!(
@@ -724,9 +788,9 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         if let Some(offset) = this.find(needle.as_str()) {
             let offset2 = offset + needle.len();
             Ok((
-                heap.alloc_str(this.get(..offset).unwrap()),
+                heap.alloc_str(this.as_str().get(..offset).unwrap()),
                 needle,
-                heap.alloc_str(this.get(offset2..).unwrap()),
+                heap.alloc_str(this.as_str().get(offset2..).unwrap()),
             ))
         } else {
             let empty = StringValue::default();
@@ -762,7 +826,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] old: &str,
         #[starlark(require = pos)] new: &str,
         #[starlark(require = pos)] count: Option<i32>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
         match count {
             Some(count) if count >= 0 => {
@@ -882,7 +946,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn rpartition<'v>(
         this: StringValue<'v>,
         #[starlark(require = pos)] needle: StringValue<'v>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<(StringValue<'v>, StringValue<'v>, StringValue<'v>)> {
         if needle.is_empty() {
             return Err(anyhow::anyhow!(
@@ -892,9 +956,9 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         if let Some(offset) = this.rfind(needle.as_str()) {
             let offset2 = offset + needle.len();
             Ok((
-                heap.alloc_str(this.get(..offset).unwrap()),
+                heap.alloc_str(this.as_str().get(..offset).unwrap()),
                 needle,
-                heap.alloc_str(this.get(offset2..).unwrap()),
+                heap.alloc_str(this.as_str().get(offset2..).unwrap()),
             ))
         } else {
             let empty = StringValue::default();
@@ -922,26 +986,27 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         this: &str,
         #[starlark(require = pos, default = NoneOr::None)] sep: NoneOr<&str>,
         #[starlark(require = pos, default = NoneOr::None)] maxsplit: NoneOr<i32>,
-        heap: &'v Heap,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, UnpackList<String>>> {
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, ListType<StarlarkStr>>> {
+        if sep.into_option() == Some("") {
+            return Err(anyhow::anyhow!(
+                "Empty separator cannot be used for splitting"
+            ));
+        }
         let maxsplit = match maxsplit.into_option() {
             None => None,
             Some(v) => {
                 if v < 0 {
                     None
                 } else {
-                    Some((v + 1) as usize)
+                    Some(v as usize + 1)
                 }
             }
         };
         Ok(match sep.into_option() {
             None => match maxsplit {
-                None => heap
-                    .alloc_typed_unchecked(AllocList(this.split_whitespace()))
-                    .cast(),
-                Some(maxsplit) => heap
-                    .alloc_typed_unchecked(rsplitn_whitespace(this, maxsplit))
-                    .cast(),
+                None => heap.alloc(AllocList(this.split_whitespace())),
+                Some(maxsplit) => heap.alloc(AllocList(rsplitn_whitespace(this, maxsplit))),
             },
             Some(sep) => {
                 let mut v: Vec<_> = match maxsplit {
@@ -949,7 +1014,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                     Some(maxsplit) => this.rsplitn(maxsplit, sep).collect(),
                 };
                 v.reverse();
-                heap.alloc_typed_unchecked(AllocList(v)).cast()
+                heap.alloc(AllocList(v))
             }
         })
     }
@@ -971,11 +1036,14 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn rstrip<'v>(
         this: StringValue<'v>,
         #[starlark(require = pos)] chars: Option<&str>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
         let res = match chars {
             None => this.trim_end(),
-            Some(s) => this.trim_end_matches(|c| s.contains(c)),
+            Some(s) => {
+                let s = StripChars::new(s);
+                this.trim_end_matches(|c| s.contains(c))
+            }
         };
         if res.len() == this.len() {
             Ok(this)
@@ -1021,25 +1089,26 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
         this: &str,
         #[starlark(require = pos, default = NoneOr::None)] sep: NoneOr<&str>,
         #[starlark(require = pos, default = NoneOr::None)] maxsplit: NoneOr<i32>,
-        heap: &'v Heap,
-    ) -> anyhow::Result<ValueOfUnchecked<'v, UnpackList<String>>> {
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, ListType<StarlarkStr>>> {
+        if sep.into_option() == Some("") {
+            return Err(anyhow::anyhow!(
+                "Empty separator cannot be used for splitting"
+            ));
+        }
         let maxsplit = match maxsplit.into_option() {
             None => None,
             Some(v) => {
                 if v < 0 {
                     None
                 } else {
-                    Some((v + 1) as usize)
+                    Some(v as usize + 1)
                 }
             }
         };
         Ok(match (sep.into_option(), maxsplit) {
-            (None, None) => heap
-                .alloc_typed_unchecked(AllocList(this.split_whitespace()))
-                .cast(),
-            (None, Some(maxsplit)) => heap
-                .alloc_typed_unchecked(AllocList(splitn_whitespace(this, maxsplit)))
-                .cast(),
+            (None, None) => heap.alloc(AllocList(this.split_whitespace())),
+            (None, Some(maxsplit)) => heap.alloc(AllocList(splitn_whitespace(this, maxsplit))),
             (Some(sep), None) => {
                 if sep.len() == 1 {
                     // If we are searching for a 1-byte string, we can provide a much faster path.
@@ -1053,15 +1122,12 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                             .map(|x| unsafe { std::str::from_utf8_unchecked(x) }),
                     );
                     debug_assert_eq!(res.len(), count + 1);
-                    heap.alloc_typed_unchecked(AllocList(res)).cast()
+                    heap.alloc(AllocList(res))
                 } else {
-                    heap.alloc_typed_unchecked(AllocList(this.split(sep)))
-                        .cast()
+                    heap.alloc(AllocList(this.split(sep)))
                 }
             }
-            (Some(sep), Some(maxsplit)) => heap
-                .alloc_typed_unchecked(AllocList(this.splitn(maxsplit, sep)))
-                .cast(),
+            (Some(sep), Some(maxsplit)) => heap.alloc(AllocList(this.splitn(maxsplit, sep))),
         })
     }
 
@@ -1088,8 +1154,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn splitlines<'v>(
         this: &str,
         #[starlark(require = pos, default = false)] keepends: bool,
-        heap: &'v Heap,
-    ) -> anyhow::Result<Vec<StringValue<'v>>> {
+        heap: Heap<'v>,
+    ) -> anyhow::Result<AllocList<Vec<StringValue<'v>>>> {
         let mut s = this;
         let mut lines: Vec<StringValue> = Vec::new();
         loop {
@@ -1105,14 +1171,14 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
                     lines.push(heap.alloc_str(s.get(..y).unwrap()))
                 }
                 if x == s.len() {
-                    return Ok(lines);
+                    return Ok(AllocList(lines));
                 }
                 s = s.get(x..).unwrap();
             } else {
                 if !s.is_empty() {
                     lines.push(heap.alloc_str(s));
                 }
-                return Ok(lines);
+                return Ok(AllocList(lines));
             }
         }
     }
@@ -1121,8 +1187,8 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     /// https://github.com/bazelbuild/starlark/blob/master/spec.md#string·startswith
     /// ): test whether a string starts with a given prefix.
     ///
-    /// `S.startswith(suffix)` reports whether the string S has the specified
-    /// prefix.
+    /// `S.startswith(prefix[, start[, end]])` reports whether the string
+    /// `S[start:end]` has the specified prefix.
     ///
     /// ```
     /// # starlark::assert::all_true(r#"
@@ -1131,16 +1197,26 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     /// 'abc'.startswith(('a', 'A')) == True
     /// 'ABC'.startswith(('a', 'A')) == True
     /// 'def'.startswith(('a', 'A')) == False
+    /// "//foo".startswith("//", 0, 2) == True
+    /// "//foo".startswith("foo", 2) == True
+    /// "hello".startswith("ell", 1, 4) == True
+    /// "hello".startswith("ell", 2, 4) == False
     /// # "#);
     /// ```
     #[starlark(speculative_exec_safe)]
     fn startswith(
         this: &str,
         #[starlark(require = pos)] prefix: StringOrTuple,
+        #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
+        #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
     ) -> anyhow::Result<bool> {
+        let haystack = match convert_str_indices(this, start.into_option(), end.into_option()) {
+            Some(StrIndices { haystack, .. }) => haystack,
+            None => return Ok(false),
+        };
         match prefix {
-            StringOrTuple::String(x) => Ok(this.starts_with(x)),
-            StringOrTuple::Tuple(xs) => Ok(xs.items.iter().any(|x| this.starts_with(x))),
+            StringOrTuple::String(x) => Ok(haystack.starts_with(x.as_str())),
+            StringOrTuple::Tuple(xs) => Ok(xs.items().any(|x| haystack.starts_with(x.as_str()))),
         }
     }
 
@@ -1161,11 +1237,14 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn strip<'v>(
         this: StringValue<'v>,
         #[starlark(require = pos)] chars: Option<&str>,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
         let res = match chars {
             None => this.trim(),
-            Some(s) => this.trim_matches(|c| s.contains(c)),
+            Some(s) => {
+                let s = StripChars::new(s);
+                this.trim_matches(|c| s.contains(c))
+            }
         };
         if res.len() == this.len() {
             Ok(this)
@@ -1191,20 +1270,16 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn title(this: &str) -> anyhow::Result<String> {
-        let mut last_space = true;
+        // As in `istitle`, a word starts at a cased letter that follows an uncased character.
+        let mut previous_is_cased = false;
         let mut result = String::with_capacity(this.len());
         for c in this.chars() {
-            if !c.is_alphabetic() {
-                last_space = true;
+            if previous_is_cased {
                 result.extend(c.to_lowercase());
             } else {
-                if last_space {
-                    result.extend(c.to_uppercase())
-                } else {
-                    result.extend(c.to_lowercase())
-                }
-                last_space = false;
+                result.extend(c.to_uppercase());
             }
+            previous_is_cased = is_cased(c);
         }
         Ok(result)
     }
@@ -1244,7 +1319,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn removeprefix<'v>(
         this: StringValue<'v>,
         #[starlark(require = pos)] prefix: &str,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
         let x = this.as_str();
         if x.starts_with(prefix) && !prefix.is_empty() {
@@ -1272,7 +1347,7 @@ pub(crate) fn string_methods(builder: &mut MethodsBuilder) {
     fn removesuffix<'v>(
         this: StringValue<'v>,
         #[starlark(require = pos)] suffix: &str,
-        heap: &'v Heap,
+        heap: Heap<'v>,
     ) -> anyhow::Result<StringValue<'v>> {
         let x = this.as_str();
         if x.ends_with(suffix) && !suffix.is_empty() {
@@ -1294,6 +1369,103 @@ mod tests {
         assert::fail(r#""bonbon".rindex("on", 2, 5)"#, "not found in");
     }
 
+    /// `start` and `end` are both negative with `start > end`, and both clamp to 0, so the
+    /// range is the empty slice at 0, where an empty needle is found, as in Python.
+    #[test]
+    fn test_search_with_two_negative_indices_clamped_to_zero() {
+        assert::eq(r#""abc".find("", -4, -5)"#, "0");
+        assert::eq(r#""abc".rfind("", -4, -5)"#, "0");
+        assert::eq(r#""abc".count("", -4, -5)"#, "1");
+        assert::eq(r#""abc".startswith("", -4, -5)"#, "True");
+        assert::eq(r#""abc".endswith("", -4, -5)"#, "True");
+        assert::eq(r#""abc".index("", -3, -4)"#, "0");
+        assert::eq(r#""abc"[-4:-5]"#, r#""""#);
+        // Indices that do not both clamp still give an empty range.
+        assert::eq(r#""abc".find("", -1, -2)"#, "-1");
+        assert::eq(r#""abc".find("c", -1, -2)"#, "-1");
+    }
+
+    /// `join` reserves room for the later parts from a capped guess based on the first two,
+    /// so the result must not depend on whether that guess is far too large or too small.
+    #[test]
+    fn test_join_parts_of_different_lengths() {
+        assert::eq(
+            r#""-".join(["abcdef", "g", "", "hi"])"#,
+            r#""abcdef-g--hi""#,
+        );
+        assert::eq(r#""-".join(["", "g", "abcdef"])"#, r#""-g-abcdef""#);
+        assert::is_true(r#""".join(["x" * 100000] + [""] * 1000) == "x" * 100000"#);
+        assert::is_true(r#"",".join(["x" * 1000] + ["y"] * 1000) == "x" * 1000 + ",y" * 1000"#);
+        assert::is_true(r#"",".join(["a", "b", "z" * 100000]) == "a,b," + "z" * 100000"#);
+        assert::fail(r#""-".join(["a", "b", 1])"#, "to_join");
+    }
+
+    /// The spec says `split` fails on an empty separator.
+    #[test]
+    fn test_split_empty_separator() {
+        assert::fail(r#""abc".split("")"#, "Empty separator");
+        assert::fail(r#""abc".rsplit("")"#, "Empty separator");
+        assert::fail(r#""abc".split("", 1)"#, "Empty separator");
+        assert::fail(r#""abc".rsplit("", 1)"#, "Empty separator");
+        assert::fail(r#""".split("")"#, "Empty separator");
+        assert::eq(r#""a,b".split(",")"#, r#"["a", "b"]"#);
+    }
+
+    /// `maxsplit` is one less than the number of parts, so `i32::MAX` must not overflow.
+    #[test]
+    fn test_split_max_maxsplit() {
+        assert::eq(r#""a b c".split(None, 2147483647)"#, r#"["a", "b", "c"]"#);
+        assert::eq(r#""a b c".rsplit(None, 2147483647)"#, r#"["a", "b", "c"]"#);
+        assert::eq(r#""a,b,c".split(",", 2147483647)"#, r#"["a", "b", "c"]"#);
+        assert::eq(r#""a,b,c".rsplit(",", 2147483647)"#, r#"["a", "b", "c"]"#);
+    }
+
+    /// `istitle`, `isupper` and `islower` are defined over cased characters: a letter with no
+    /// case (CJK) is not a title-cased word and does not start one, and a titlecase letter such
+    /// as `ǅ` is cased but neither upper nor lower.
+    #[test]
+    fn test_case_predicates_with_uncased_and_titlecase_letters() {
+        assert::eq(r#""中".istitle()"#, "False");
+        assert::eq(r#""中A".istitle()"#, "True");
+        assert::eq(r#""ǅa".istitle()"#, "True");
+        assert::eq(r#""Hello World".istitle()"#, "True");
+        assert::eq(r#""HELLO".istitle()"#, "False");
+        assert::eq(r#""Aǅ".isupper()"#, "False");
+        assert::eq(r#""A中".isupper()"#, "True");
+        assert::eq(r#""中".isupper()"#, "False");
+        assert::eq(r#""aǅ".islower()"#, "False");
+        assert::eq(r#""a中".islower()"#, "True");
+    }
+
+    /// `title` starts a word at a cased letter that follows an uncased character, as `istitle`
+    /// expects: a letter with no case (CJK) does not continue a word.
+    #[test]
+    fn test_title_with_uncased_letters() {
+        assert::eq(r#""中a".title()"#, r#""中A""#);
+        assert::eq(r#""a中b".title()"#, r#""A中B""#);
+        assert::eq(r#""hello 世界world".title()"#, r#""Hello 世界World""#);
+        assert::eq(r#""they're 3rd_party".title()"#, r#""They'Re 3Rd_Party""#);
+        assert::is_true(r#""hello 世界world".title().istitle()"#);
+    }
+
+    /// `chars` is a set of characters: ASCII at both ends of the range, non-ASCII, and
+    /// duplicates, in any order.
+    #[test]
+    fn test_strip_chars() {
+        assert::all_true(
+            r#"
+"\x00\x7fab\x7f\x00".strip("\x7f\x00") == "ab"
+"éaĩbéĩ".strip("ĩéĩé") == "aĩb"
+"éaĩbéĩ".lstrip("ĩéĩé") == "aĩbéĩ"
+"éaĩbéĩ".rstrip("ĩéĩé") == "éaĩb"
+"x!éx".strip("é!x") == ""
+"abc".strip("") == "abc"
+"".strip("abc") == ""
+("é" * 1000).strip("ĩ" * 1000 + "é") == ""
+"#,
+        );
+    }
+
     #[test]
     fn test_count() {
         assert::eq("'abc'.count('a', 10, -10)", "0");
@@ -1308,5 +1480,42 @@ mod tests {
     fn test_opaque_iterator() {
         assert::is_true("type('foo'.elems()) != type([])");
         assert::is_true("type('foo'.codepoints()) != type([])");
+    }
+
+    #[test]
+    fn test_codepoints_yields_ints() {
+        assert::is_true(
+            r#"
+def f() -> int:
+    return list("abc".codepoints())[0]
+f() == 97
+"#,
+        );
+    }
+
+    #[test]
+    fn test_startswith_with_start_end() {
+        assert::all_true(
+            r#"
+"//foo".startswith("//", 0, 2) == True
+"//foo".startswith("foo", 2) == True
+"hello".startswith("ell", 1, 4) == True
+"hello".startswith("ell", 2, 4) == False
+"hello".startswith("hel", -5) == True
+"hello".startswith(("he", "wo"), 0, 3) == True
+"#,
+        );
+    }
+
+    #[test]
+    fn test_endswith_with_start_end() {
+        assert::all_true(
+            r#"
+"hello".endswith("ell", 0, 4) == True
+"hello".endswith("lo", 3) == True
+"hello".endswith("llo", 0, -1) == False
+"hello".endswith(("lo", "la"), 3) == True
+"#,
+        );
     }
 }

@@ -10,12 +10,13 @@
 
 //! Server-side implementation of `buck2 targets --streaming` command.
 
-use std::collections::HashSet;
 use std::io::Write;
 use std::mem;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::pattern::package_roots::find_package_roots_stream;
 use buck2_common::pattern::resolve::ResolvedPattern;
 use buck2_core::bzl::ImportPath;
@@ -26,6 +27,8 @@ use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::PatternType;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::target::name::TargetName;
+use buck2_hash::BuckMutInsertionSet;
+use buck2_hash::BuckMutSet;
 use buck2_interpreter::load_module::INTERPRETER_CALCULATION_IMPL;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::paths::package::PackageFilePath;
@@ -41,10 +44,8 @@ use dupe::Dupe;
 use futures::Stream;
 use futures::StreamExt;
 use futures::future::FutureExt;
-use gazebo::prelude::VecExt;
 use itertools::Either;
 use itertools::Itertools;
-use starlark_map::small_set::SmallSet;
 use tokio::sync::Semaphore;
 
 use crate::target_hash::TargetHashes;
@@ -58,17 +59,45 @@ fn write_str(outputter: &mut dyn Write, s: &mut String) -> buck2_error::Result<(
     Ok(())
 }
 
+struct PackageConcurrency {
+    loads: NonZeroUsize,
+    tasks: NonZeroUsize,
+}
+
+fn package_concurrency(threads: Option<usize>) -> buck2_error::Result<PackageConcurrency> {
+    let max = Semaphore::MAX_PERMITS.min(usize::MAX / 2);
+    let loads = match threads {
+        Some(value) => {
+            let Some(value) = NonZeroUsize::new(value).filter(|value| value.get() <= max) else {
+                return Err(TargetsError::InvalidThreadCount { value, max }.into());
+            };
+            value
+        }
+        None => NonZeroUsize::new(buck2_util::threads::available_parallelism().min(max))
+            .expect("available parallelism and the semaphore limit are non-zero"),
+    };
+    let tasks = NonZeroUsize::new(
+        loads
+            .get()
+            .checked_mul(2)
+            .expect("load concurrency is limited to `usize::MAX / 2`"),
+    )
+    .expect("twice a non-zero value is non-zero");
+
+    Ok(PackageConcurrency { loads, tasks })
+}
+
 /// Run the targets command in streaming mode.
 ///
 /// # Arguments
 ///
-/// `keep_going` - On loading errors, put buck.error in the output stream and continue
-///                Passing from cli args `--keep-going` from `app/buck2_client/src/commands/targets.rs`.
+/// * `keep_going` - On loading errors, put buck.error in the output stream and continue
+///   Passing from cli args `--keep-going` from `app/buck2_client/src/commands/targets.rs`.
 /// * `imports` - Show the imports of each package/import. Shows an additional output per package/import (not per target), including implicit dependencies (e.g. the prelude) but only direct dependencies (not the transitive closure)
-///               Passing from cli args `--imports` from `app/buck2_client/src/commands/targets.rs`.
+///   Passing from cli args `--imports` from `app/buck2_client/src/commands/targets.rs`.
 pub(crate) async fn targets_streaming(
     server_ctx: &dyn ServerCommandContextTrait,
-    mut dice: DiceTransaction,
+    dice: DiceTransaction,
     formatter: Arc<dyn TargetFormatter>,
     outputter: &mut (dyn Write + Send),
     parsed_patterns: Vec<ParsedPattern<TargetPatternExtra>>,
@@ -78,8 +107,9 @@ pub(crate) async fn targets_streaming(
     fast_hash: Option<bool>, // None = no hashing
     threads: Option<usize>,
 ) -> buck2_error::Result<Stats> {
-    let imported = Arc::new(Mutex::new(SmallSet::new()));
-    let threads = Arc::new(Semaphore::new(threads.unwrap_or(Semaphore::MAX_PERMITS)));
+    let imported = Arc::new(Mutex::new(BuckMutInsertionSet::new()));
+    let concurrency = package_concurrency(threads)?;
+    let threads = Arc::new(Semaphore::new(concurrency.loads.get()));
 
     let cloned_dice = dice.clone();
     let mut packages = stream_packages(&cloned_dice, parsed_patterns)
@@ -87,16 +117,25 @@ pub(crate) async fn targets_streaming(
             let formatter = formatter.dupe();
             let imported = imported.dupe();
             let threads = threads.dupe();
-            let mut ctx = cloned_dice.dupe();
+            let ctx = cloned_dice.dupe();
 
             spawn_dropcancel(
-                |_cancellation| {
+                |cancellation| {
                     {
                         async move {
                             let (package, spec) = x?;
                             let res = process_package(
-                                &mut ctx, formatter, package, spec, cached, keep_going, imports,
-                                fast_hash, threads, imported,
+                                &mut ctx.ctx(),
+                                cancellation,
+                                formatter,
+                                package,
+                                spec,
+                                cached,
+                                keep_going,
+                                imports,
+                                fast_hash,
+                                threads,
+                                imported,
                             )
                             .await;
                             buck2_error::Ok(res)
@@ -108,14 +147,15 @@ pub(crate) async fn targets_streaming(
                 cloned_dice.per_transaction_data(),
             )
         })
-        // Use unlimited parallelism - tokio will restrict us anyway
-        .buffer_unordered(1000000);
+        // Keep package loading full while completed loads are formatted and buffered for output.
+        .buffer_unordered(concurrency.tasks.get());
 
     let mut buffer = String::new();
     formatter.begin(&mut buffer);
     let mut stats = Stats::default();
     let mut needs_separator = false;
-    let mut package_files_seen = SmallSet::new();
+    let mut package_files_seen = BuckMutInsertionSet::new();
+    let cell_resolver = dice.ctx().get_cell_resolver().await?;
 
     // Process package results and finally output the result
     while let Some(res) = packages.next().await {
@@ -156,7 +196,7 @@ pub(crate) async fn targets_streaming(
                 // and there aren't many, so we just do it on the main thread.
                 // We ignore errors as these will bubble up as BUCK file errors already.
                 if let Ok(Some((package_file_path, imports))) =
-                    package_imports(&mut dice, x.dupe()).await
+                    package_imports(&mut dice.ctx(), x.dupe()).await
                 {
                     if needs_separator {
                         formatter.separator(&mut buffer);
@@ -166,10 +206,18 @@ pub(crate) async fn targets_streaming(
                     write_str(outputter, &mut buffer)?;
                     imported.lock().unwrap().extend(imports.into_iter());
                 }
-                // TODO(nga): we should cross cell boundary:
-                //   This is what we do when we evaluate `PACKAGE` files.
-                //   https://fburl.com/code/qxl59b64
-                path = x.parent()?;
+                // A `PACKAGE` file in an enclosing cell applies to this
+                // package too, so the walk crosses cell boundaries the same
+                // way `PACKAGE` file evaluation does.
+                path = match x.parent()? {
+                    Some(parent) => Some(parent),
+                    None => match cell_resolver.resolve_path(x.as_cell_path())?.parent() {
+                        None => None,
+                        Some(parent) => Some(PackageLabel::from_cell_path(
+                            cell_resolver.get_cell_path(parent),
+                        )?),
+                    },
+                };
             }
         }
     }
@@ -177,9 +225,9 @@ pub(crate) async fn targets_streaming(
     // Recursively chase down all `imported` paths, and output them.
     // This will only be done if `imports` is set
     let mut todo = mem::take(&mut *imported.lock().unwrap());
-    let mut seen_imported = HashSet::new();
+    let mut seen_imported = BuckMutSet::default();
     while let Some(path) = todo.pop() {
-        if seen_imported.insert(path.path().clone()) {
+        if seen_imported.insert(*path.path()) {
             // If these lead to an error, that's surpsing (we had a working module with it loaded)
             // so we should always propagate the error here (even with keep_going)
             if needs_separator {
@@ -187,7 +235,7 @@ pub(crate) async fn targets_streaming(
             }
             needs_separator = true;
             // No need to parallelise these this step because it will already be on the DICE graph
-            let loaded = dice.get_loaded_module_from_import_path(&path).await?;
+            let loaded = dice.ctx().get_loaded_module_from_import_path(&path).await?;
             let imports = loaded.imports().cloned().collect::<Vec<_>>();
             formatter.imports(path.path(), &imports, None, &mut buffer);
             todo.extend(imports);
@@ -225,7 +273,7 @@ impl PreparePackageResult {
         formatter: &dyn TargetFormatter,
         imports_flag: bool,
         fast_hash: Option<bool>,
-        imported: Arc<Mutex<SmallSet<ImportPath>>>,
+        imported: Arc<Mutex<BuckMutInsertionSet<ImportPath>>>,
     ) {
         if let Some(ref err) = error {
             self.record_error(err, formatter);
@@ -279,7 +327,8 @@ impl PreparePackageResult {
 }
 
 async fn process_package(
-    ctx: &mut DiceTransaction,
+    ctx: &mut DiceComputations<'_>,
+    cancellation: &CancellationContext,
     formatter: Arc<dyn TargetFormatter>,
     package: PackageLabel,
     spec: PackageSpec<TargetPatternExtra>,
@@ -288,13 +337,13 @@ async fn process_package(
     imports_flag: bool,
     fast_hash: Option<bool>,
     threads: Arc<Semaphore>,
-    imported: Arc<Mutex<SmallSet<ImportPath>>>,
+    imported: Arc<Mutex<BuckMutInsertionSet<ImportPath>>>,
 ) -> PreparePackageResult {
     let mut result = PreparePackageResult::from_package(package.dupe());
     let targets = {
         // This bit of code is the heavy CPU stuff, so guard it with the threads
         let _permit = threads.acquire().await.unwrap();
-        load_targets(ctx, package.dupe(), spec, cached, keep_going).await
+        load_targets(ctx, cancellation, package.dupe(), spec, cached, keep_going).await
     };
 
     match targets {
@@ -357,11 +406,14 @@ enum TargetsError {
         _1.iter().map(|x| format!("`{x}`")).join(", ")
     )]
     MissingTargets(PackageLabel, Vec<TargetName>),
+    #[error("`--num-threads` must be between 1 and {max}, got {value}")]
+    InvalidThreadCount { value: usize, max: usize },
 }
 
 /// Load the targets from a package. If `keep_going` is specified then it may return a `Some` error in the triple.
 async fn load_targets(
     dice: &mut DiceComputations<'_>,
+    cancellation: &CancellationContext,
     package: PackageLabel,
     spec: PackageSpec<TargetPatternExtra>,
     cached: bool,
@@ -372,14 +424,11 @@ async fn load_targets(
     Option<buck2_error::Error>,
 )> {
     let result = if cached {
-        dice.get_interpreter_results(package.dupe()).await?
+        dice.get_interpreter_results(package.dupe()).await?.dupe()
     } else {
-        dice.get_interpreter_results_uncached(
-            package.dupe(),
-            CancellationContext::never_cancelled(),
-        )
-        .await
-        .1?
+        dice.get_interpreter_results_uncached(package.dupe(), cancellation)
+            .await
+            .1?
     };
 
     match spec {
@@ -401,9 +450,12 @@ async fn load_targets(
                 };
                 Ok((result, targets, err))
             } else {
-                let targets = targets.into_try_map(|(target, TargetPatternExtra)| {
-                    buck2_error::Ok(result.resolve_target(target.as_ref())?.to_owned())
-                })?;
+                let targets = targets
+                    .into_iter()
+                    .map(|(target, TargetPatternExtra)| {
+                        buck2_error::Ok(result.resolve_target(target.as_ref())?.to_owned())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok((result, targets, None))
             }
         }
@@ -423,4 +475,23 @@ async fn package_imports(
         .get()?
         .get_package_file_deps(dice, path)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_concurrency_rejects_invalid_values() {
+        assert!(package_concurrency(Some(0)).is_err());
+        assert!(package_concurrency(Some(Semaphore::MAX_PERMITS.min(usize::MAX / 2) + 1)).is_err());
+    }
+
+    #[test]
+    fn package_concurrency_uses_explicit_value() {
+        let concurrency =
+            package_concurrency(Some(7)).expect("positive concurrency should be valid");
+        assert_eq!(7, concurrency.loads.get());
+        assert_eq!(14, concurrency.tasks.get());
+    }
 }

@@ -8,12 +8,10 @@
  * above-listed licenses.
  */
 
+use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr_type::list::ListAttrType;
-use buck2_node::attrs::attr_type::list::ListLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
-use gazebo::prelude::*;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::list::ListRef;
@@ -24,16 +22,18 @@ use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
 impl AttrTypeCoerce for ListAttrType {
-    fn coerce_item(
+    fn coerce_item<'v>(
         &self,
         configurable: AttrIsConfigurable,
-        ctx: &dyn AttrCoercionContext,
-        value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+        ctx: &dyn AttrCoercionContext<'v>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<AttrToken> {
         let list = coerce_list(value)?;
-        Ok(CoercedAttr::List(ListLiteral(ctx.intern_list(
-            list.try_map(|v| (self.inner).coerce(configurable, ctx, *v))?,
-        ))))
+        let items = list
+            .iter()
+            .map(|v| (self.inner).coerce(configurable, ctx, *v))
+            .collect::<Result<Vec<_>, _>>()?;
+        ctx.attr_arena().encode_list(&items)
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {

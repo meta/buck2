@@ -74,8 +74,12 @@ def _format_compiler_settings(compiler_settings: dict) -> dict:
 
     concat_compiler_settings["AdditionalIncludeDirectories"] = ";".join(compiler_settings["AdditionalIncludeDirectories"] + ["%(AdditionalIncludeDirectories)"])
     concat_compiler_settings["AdditionalOptions"] = " ".join(compiler_settings["AdditionalOptions"] + ["%(AdditionalOptions)"])
-    concat_compiler_settings["PreprocessorDefinitions"] = ";".join([escape_xml(s) for s in compiler_settings["PreprocessorDefinitions"]] + ["%(PreprocessorDefinitions)"])
-    concat_compiler_settings["UndefinePreprocessorDefinitions"] = ";".join(compiler_settings["UndefinePreprocessorDefinitions"] + ["%(UndefinePreprocessorDefinitions)"])
+    concat_compiler_settings["PreprocessorDefinitions"] = ";".join(
+        [escape_xml(s) for s in compiler_settings["PreprocessorDefinitions"]] + ["%(PreprocessorDefinitions)"]
+    )
+    concat_compiler_settings["UndefinePreprocessorDefinitions"] = ";".join(
+        compiler_settings["UndefinePreprocessorDefinitions"] + ["%(UndefinePreprocessorDefinitions)"]
+    )
     concat_compiler_settings["DisableSpecificWarnings"] = ";".join(compiler_settings["DisableSpecificWarnings"] + ["%(DisableSpecificWarnings)"])
     concat_compiler_settings["ForcedIncludeFiles"] = ";".join(compiler_settings["ForcedIncludeFiles"] + ["%(ForcedIncludeFiles)"])
     return concat_compiler_settings
@@ -100,10 +104,7 @@ def gen_compiler_settings(compiler_settings: dict):
     concat_compiler_settings = _format_compiler_settings(compiler_settings)
     return h(
         "ClCompile",
-        [
-            h(key, value, indent_level = 3)
-            for key, value in concat_compiler_settings.items()
-        ],
+        [h(key, value, indent_level = 3) for key, value in concat_compiler_settings.items()],
         {
             "Label": "CompilerSettings",
         },
@@ -115,11 +116,16 @@ def materialize_compiler_settings_file(target_node, actions, cxx_toolchain_info,
 
     cxxflags_artifact = None
     if cxx_toolchain_info:
-        cxxflags_artifact, _ = actions.write(get_project_file_path(target_node.label, ".toolchain.cxxflags"), cxx_toolchain_info.cxx_compiler_info.compiler_flags, allow_args = True)
+        cxxflags_artifact, _ = actions.write(
+            get_project_file_path(target_node.label, ".toolchain.cxxflags"),
+            cxx_toolchain_info.cxx_compiler_info.compiler_flags,
+            allow_args = True,
+            has_content_based_path = False,
+        )
 
     # Use a different filename suffix for toolchain attrs to avoid conflicts with regular target attrs
-    attrs_outfile = actions.write_json(get_project_file_path(target_node.label, ".toolchain.attrs.json"), attrs, pretty = True)
-    out = actions.declare_output(get_project_file_path(target_node.label, ".compiler_settings.json"))
+    attrs_outfile = actions.write_json(get_project_file_path(target_node.label, ".toolchain.attrs.json"), attrs, pretty = True, has_content_based_path = False)
+    out = actions.declare_output(get_project_file_path(target_node.label, ".compiler_settings.json"), has_content_based_path = False)
 
     def f(ctx, artifacts, outputs, attrs_outfile = attrs_outfile, out = out, target = target_node):
         attrs_input = artifacts[attrs_outfile].read_json()

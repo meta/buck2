@@ -1,0 +1,32 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+Program:
+if True:
+    x = 1
+  y = 2
+
+Error:
+error: Parse error: incorrect indentation
+ --> error_indentation:2:10
+  |
+2 |       x = 1
+  |  __________^
+3 | |   y = 2
+  | |__^
+
+
+Program:
+def foo():
+  x = 1
+    y = 2
+
+Error:
+error: Parse error: unexpected new indentation block, expected expression
+ --> error_indentation:3:1
+  |
+3 |     y = 2
+  | ^^^^

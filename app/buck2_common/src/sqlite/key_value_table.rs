@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use buck2_error::BuckErrorContext;
+use buck2_hash::IntentionallyStdHashMap;
 use itertools::Itertools;
 use parking_lot::Mutex;
 use rusqlite::Connection;
@@ -46,7 +46,10 @@ impl KeyValueSqliteTable {
         Ok(())
     }
 
-    pub fn insert_all(&self, map: HashMap<String, String>) -> buck2_error::Result<()> {
+    pub fn insert_all(
+        &self,
+        map: IntentionallyStdHashMap<String, String>,
+    ) -> buck2_error::Result<()> {
         let sql = format!(
             "INSERT OR REPLACE INTO {} (key, value) VALUES {}",
             self.table_name,
@@ -68,14 +71,14 @@ impl KeyValueSqliteTable {
         Ok(())
     }
 
-    pub fn read_all(&self) -> buck2_error::Result<HashMap<String, String>> {
+    pub fn read_all(&self) -> buck2_error::Result<IntentionallyStdHashMap<String, String>> {
         let sql = format!("SELECT key, value FROM {}", self.table_name);
         tracing::trace!(sql = %sql, "read all from table");
         let connection = self.connection.lock();
         let mut stmt = connection.prepare(&sql)?;
         let map = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<Result<HashMap<String, String>, _>>()
+            .collect::<Result<IntentionallyStdHashMap<String, String>, _>>()
             .with_buck_error_context(|| format!("reading from sqlite table {}", self.table_name))?;
         Ok(map)
     }
@@ -117,7 +120,7 @@ mod tests {
 
         table.create_table().unwrap();
 
-        let expected = HashMap::from([
+        let expected = IntentionallyStdHashMap::from([
             ("foo".to_owned(), "foo".to_owned()),
             ("bar".to_owned(), "bar".to_owned()),
         ]);

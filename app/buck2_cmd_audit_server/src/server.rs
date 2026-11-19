@@ -51,14 +51,10 @@ async fn server_audit_command_inner(
     buck2_error::Result<buck2_cli_proto::GenericResponse>,
     buck2_data::CommandEnd,
 ) {
-    let result = parse_command_and_execute(context, partial_result_dispatcher, req)
-        .await
-        .map_err(Into::into);
+    let result = parse_command_and_execute(context, partial_result_dispatcher, req).await;
     let end_event = command_end(&result, buck2_data::AuditCommandEnd {});
 
-    let result = result
-        .map(|()| buck2_cli_proto::GenericResponse {})
-        .map_err(Into::into);
+    let result = result.map(|()| buck2_cli_proto::GenericResponse {});
 
     (result, end_event)
 }

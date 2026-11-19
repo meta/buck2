@@ -1,0 +1,12 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Command failed: 
+Error evaluating expression:
+    //typo_subdir/subdirs:target
+    ^--------------------------^
+
+
+Caused by:
+    package `root//typo_subdir/subdirs:` does not exist
+             ^-----------------------^
+        dir `root//typo_subdir/subdirs` does not exist. Did you mean `root//typo_subdir/subdir`?

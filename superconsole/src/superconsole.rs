@@ -13,6 +13,7 @@ use std::env;
 use std::io;
 
 use crossterm::QueueableCommand;
+use crossterm::cursor;
 use crossterm::cursor::MoveToColumn;
 use crossterm::cursor::MoveUp;
 use crossterm::terminal::Clear;
@@ -51,7 +52,8 @@ pub struct SuperConsole {
     fallback_size: Option<Dimensions>,
     /// The terminal handle to write a buffer to the screen.
     /// All IO goes through this handle.
-    pub(crate) output: Box<dyn SuperConsoleOutput>,
+    /// It's None only during drop/finalize.
+    output: Option<Box<dyn SuperConsoleOutput>>,
 }
 
 impl SuperConsole {
@@ -88,9 +90,23 @@ impl SuperConsole {
             canvas_contents: Lines::new(),
             to_emit: Lines::new(),
             fallback_size,
-            output,
+            output: Some(output),
             aux_to_emit: Lines::new(),
         }
+    }
+
+    pub(crate) fn output(&self) -> &dyn SuperConsoleOutput {
+        &**self
+            .output
+            .as_ref()
+            .expect("output accessed after taken in finalize/drop")
+    }
+
+    pub(crate) fn output_mut(&mut self) -> &mut dyn SuperConsoleOutput {
+        &mut **self
+            .output
+            .as_mut()
+            .expect("output accessed after taken in finalize/drop")
     }
 
     pub fn compatible() -> bool {
@@ -115,7 +131,7 @@ impl SuperConsole {
         while !has_rendered
             || (anything_emitted && !(self.to_emit.is_empty() && self.aux_to_emit.is_empty()))
         {
-            if !self.output.should_render() {
+            if !self.output_mut().should_render() {
                 break;
             }
 
@@ -123,7 +139,7 @@ impl SuperConsole {
             let last_aux_len = self.aux_to_emit.len();
             self.render_with_mode(root, DrawMode::Normal)?;
             anything_emitted =
-                last_len == self.to_emit.len() && last_aux_len == self.aux_to_emit.len();
+                last_len != self.to_emit.len() || last_aux_len != self.aux_to_emit.len();
             has_rendered = true;
         }
 
@@ -144,7 +160,9 @@ impl SuperConsole {
         mode: DrawMode,
     ) -> crate::RenderResult<(), C> {
         self.render_with_mode(root, mode)?;
-        self.output.finalize().map_err(Into::into)
+
+        // We must not call anything that will access output after this.
+        self.output.take().unwrap().finalize().map_err(Into::into)
     }
 
     /// Convenience method:
@@ -184,7 +202,7 @@ impl SuperConsole {
             return Ok(Dimensions::new(width, height));
         }
         // We want to get the size, but if that fails or is empty use the fallback_size if available.
-        match (self.output.terminal_size(), self.fallback_size) {
+        match (self.output().terminal_size(), self.fallback_size) {
             (Ok(size), Some(fallback)) if size.width == 0 || size.height == 0 => Ok(fallback),
             (Ok(size), _) => Ok(size),
             (Err(_), Some(fallback)) => Ok(fallback),
@@ -225,7 +243,7 @@ impl SuperConsole {
         Self::clear_canvas_pre(&mut buffer, self.canvas_contents.len())?;
         self.canvas_contents = Lines::new();
         Self::clear_canvas_post(&mut buffer)?;
-        self.output.output(buffer).map_err(Into::into)
+        self.output_mut().output(buffer).map_err(Into::into)
     }
 
     /// Helper method to share render + finalize behavior by specifying mode.
@@ -260,7 +278,6 @@ impl SuperConsole {
             let len1: usize = buf1.iter().map(Line::len).sum();
             (len0 + len1) > MAX_GRAPHEME_BUFFER
         }
-
         // Pre-draw the frame *and then* start rendering emitted messages.
         let mut canvas = root.draw(size, mode).map_err(crate::Error::Draw)?;
         // We don't trust the child to not truncate the result.
@@ -293,17 +310,19 @@ impl SuperConsole {
         };
 
         let mut buffer = Vec::new();
+        buffer.queue(cursor::Hide).map_err(OutputError::Terminal)?;
 
         Self::clear_canvas_pre(&mut buffer, self.canvas_contents.len() - reuse_prefix)?;
 
         if !self.aux_to_emit.is_empty() {
-            if self.output.aux_stream_is_tty() {
+            if self.output().aux_stream_is_tty() {
                 // If we have aux_to_emit and the aux stream is tty, we need to output the main output (stderr by default) first
                 // and flushed, so that we can make sure the all output order is correct.
-                self.output.output(buffer)?;
+                self.output_mut().output(buffer)?;
+
                 let mut aux_buffer = Vec::new();
                 limit = self.aux_to_emit.render_with_limit(&mut aux_buffer, limit);
-                self.output.output_to(aux_buffer, OutputTarget::Aux)?;
+                self.output_mut().output_to(aux_buffer, OutputTarget::Aux)?;
 
                 // Since output is moved at `self.output.output(buffer)`, we need to new a new buffer
                 buffer = Vec::new();
@@ -311,7 +330,8 @@ impl SuperConsole {
                 // If the aux stream is not tty, we don't need to render the line, we just output to the auxillary output
                 let mut output_buffer = Vec::new();
                 self.aux_to_emit.render_raw(&mut output_buffer);
-                self.output.output_to(output_buffer, OutputTarget::Aux)?;
+                self.output_mut()
+                    .output_to(output_buffer, OutputTarget::Aux)?;
 
                 // Since we clear the aux_to_emit, we need to recompute the `limit`
                 limit = compute_limit(&self.to_emit, &self.aux_to_emit);
@@ -321,12 +341,24 @@ impl SuperConsole {
         self.to_emit.render_with_limit(&mut buffer, limit);
 
         canvas.render_from_line(&mut buffer, reuse_prefix);
+
+        buffer.queue(cursor::Show).map_err(OutputError::Terminal)?;
         Self::clear_canvas_post(&mut buffer)?;
         self.canvas_contents = canvas;
 
-        self.output.output(buffer)?;
+        self.output_mut().output(buffer)?;
 
         Ok(())
+    }
+}
+
+impl Drop for SuperConsole {
+    fn drop(&mut self) {
+        if let Some(v) = &mut self.output {
+            let mut buffer = Vec::new();
+            drop(buffer.queue(cursor::Show));
+            drop(v.output(buffer));
+        }
     }
 }
 
@@ -653,6 +685,18 @@ mod tests {
         // Since aux output is incompatible with tty, we don't output the any escape sequence to clear the line.
         assert!(frame_contains(&frame, "aux line 1\naux line 2"));
 
+        Ok(())
+    }
+
+    /// `render` keeps drawing frames until the emitted lines are drained.
+    #[test]
+    fn test_render_drains_emitted_lines() -> anyhow::Result<()> {
+        let mut console = test_console();
+        console.emit(Lines(vec![vec!["log line"].try_into()?; 200]));
+        let root = Echo(Lines(vec![vec!["status"].try_into()?]));
+        console.render(&root)?;
+        assert!(console.test_output().frames.len() > 1);
+        assert!(console.to_emit.is_empty());
         Ok(())
     }
 }

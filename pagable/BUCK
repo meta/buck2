@@ -7,23 +7,69 @@ rust_library(
     srcs = glob(
         ["src/**/*.rs"],
     ),
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    # fbsource enables features on these that need nightly.
+                    "bytemuck": {"features": ["const_zeroed", "derive", "min_const_generics", "must_cast"], "workspace": False},
+                    "smallvec": {"features": ["const_generics"], "workspace": False},
+                    "tokio": {"optional": True},
+                },
+            },
+            "extra_buck_dependencies": {
+                # The tests use tokio whether or not the feature is on.
+                "dev-dependencies": ["fbsource//third-party/rust:tokio"],
+            },
+            "features": {
+                "default": [],
+                "tokio": ["dep:tokio"],
+            },
+            "package": {
+                "description": "Serialization framework with content-addressed `Arc` deduplication and runtime polymorphism via typetag",
+                "version": "0.4.2",
+            },
+        },
+        # FIXME(JakobDegen): Needed because autocargo doesn't handle the select below
+        "edge_features": [
+            "tokio",
+        ],
+    },
     crate_root = "src/lib.rs",
+    features = select({
+        "DEFAULT": ["tokio"],
+        # @oss-disable[end= ]: "ovr_config//runtime/constraints:wasm": [],
+    }),
+    unittests_miri = True,
     deps = [
         "fbsource//third-party/rust:anyhow",
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:blake3",
+        "fbsource//third-party/rust:bytemuck",
+        "fbsource//third-party/rust:dashmap",
         "fbsource//third-party/rust:either",
+        "fbsource//third-party/rust:fancy-regex",
+        "fbsource//third-party/rust:indexmap",
+        "fbsource//third-party/rust:inventory",
+        "fbsource//third-party/rust:num-bigint",
+        "fbsource//third-party/rust:once_cell",
         "fbsource//third-party/rust:parking_lot",
         "fbsource//third-party/rust:postcard",
+        "fbsource//third-party/rust:regex",
+        "fbsource//third-party/rust:sequence_trie",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:serde_json",
+        "fbsource//third-party/rust:smallvec",
+        "fbsource//third-party/rust:sorted_vector_map",
         "fbsource//third-party/rust:static_assertions",
         "fbsource//third-party/rust:take_mut",
+        "fbsource//third-party/rust:thiserror",
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:triomphe",
         "//buck2/allocative/allocative:allocative",
         "//buck2/gazebo/dupe:dupe",
         "//buck2/gazebo/strong_hash:strong_hash",
         "//buck2/pagable_derive:pagable_derive",
+        "//buck2/shed/static_interner:static_interner",
     ],
 )

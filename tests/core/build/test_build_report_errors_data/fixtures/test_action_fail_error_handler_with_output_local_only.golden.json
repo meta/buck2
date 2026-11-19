@@ -3,7 +3,7 @@
 {
   "error_category": "USER",
   "failures": {
-    "root//fail_action:fail_error_handler_with_output": "Action failed: root//fail_action:fail_error_handler_with_output (<unspecified>) (fail_error_handler_with_output)\nLocal command returned non-zero exit code 1\nLocal command: env -- 'BUCK_SCRATCH_PATH=buck-out/v2/tmp/root/<HASH>/fail_error_handler_with_output' fbpython fail_action/fail_with_output.py buck-out/v2/gen/root/<HASH>/fail_action/__fail_error_handler_with_output__/output\nStdout: <empty>\nStderr: <empty>\n"
+    "root//fail_action:fail_error_handler_with_output": "Action failed: root//fail_action:fail_error_handler_with_output (<unspecified>) (fail_error_handler_with_output)\nLocal command returned non-zero exit code 1\nLocal command: env -C \"$(buck2 root --kind project)\" -- 'BUCK_SCRATCH_PATH=buck-out/v2/tmp/root/<HASH>/fail_error_handler_with_output' fbpython fail_action/fail_with_output.py buck-out/v2/art/root/<HASH>/fail_action/__fail_error_handler_with_output__/output\nStdout: <empty>\nStderr: <empty>\n"
   },
   "results": {
     "root//fail_action:fail_error_handler_with_output": {
@@ -55,7 +55,9 @@
                 "stderr_content": "<STRING_HASH>",
                 "stdout_content": "<STRING_HASH>"
               },
+              "category_key": "ACTION_COMMAND_FAILURE:compilation",
               "cause_index": 0,
+              "error_category": "USER",
               "error_tags": [
                 "ACTION_COMMAND_FAILURE",
                 "ANY_ACTION_EXECUTION"
@@ -77,7 +79,7 @@
   },
   "strings": {
     "<STRING_HASH>": "",
-    "<STRING_HASH>": "Action failed: root//fail_action:fail_error_handler_with_output (<unspecified>) (fail_error_handler_with_output)\nLocal command returned non-zero exit code 1\nLocal command: env -- 'BUCK_SCRATCH_PATH=buck-out/v2/tmp/root/<HASH>/fail_error_handler_with_output' fbpython fail_action/fail_with_output.py buck-out/v2/gen/root/<HASH>/fail_action/__fail_error_handler_with_output__/output\nStdout: <empty>\nStderr: <empty>\n",
+    "<STRING_HASH>": "Action failed: root//fail_action:fail_error_handler_with_output (<unspecified>) (fail_error_handler_with_output)\nLocal command returned non-zero exit code 1\nLocal command: env -C \"$(buck2 root --kind project)\" -- 'BUCK_SCRATCH_PATH=buck-out/v2/tmp/root/<HASH>/fail_error_handler_with_output' fbpython fail_action/fail_with_output.py buck-out/v2/art/root/<HASH>/fail_action/__fail_error_handler_with_output__/output\nStdout: <empty>\nStderr: <empty>\n",
     "<STRING_HASH>": "Local command returned non-zero exit code 1",
     "<STRING_HASH>": "Try doing xyz"
   },

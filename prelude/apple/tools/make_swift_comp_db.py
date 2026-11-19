@@ -13,8 +13,6 @@ Utility to create Swift's compilation DBs
 $ make_swift_comp_db.py gen --output=entry.json foo.swift -- -I /path/ -Xcc -fno-implicit-modules
 """
 
-# pyre-unsafe
-
 import argparse
 import json
 import shlex

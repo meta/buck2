@@ -13,8 +13,10 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_recursion::async_recursion;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
+use buck2_build_api::dynamic_value::DynamicValue;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_core::cells::cell_path::CellPathRef;
+use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
@@ -22,6 +24,9 @@ use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::target::label::label::TargetLabel;
+use buck2_dynamic_actions::deferred::resolve_dynamic_value;
+use buck2_dynamic_actions::resolved_dynamic_value::StarlarkResolvedDynamicValue;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::types::package_path::StarlarkPackagePath;
 use buck2_node::load_patterns::MissingTargetBehavior;
 use buck2_node::load_patterns::load_patterns;
@@ -37,10 +42,8 @@ use dupe::Dupe;
 use either::Either;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
-use starlark::collections::SmallMap;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
@@ -49,6 +52,8 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueOf;
+use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::starlark_value;
 
@@ -60,7 +65,7 @@ use crate::bxl::starlark_defs::lazy_ctx::operation::uquery::LazyUqueryOperation;
 use crate::bxl::starlark_defs::lazy_ctx::operation::uquery::LazyUqueryResult;
 use crate::bxl::starlark_defs::nodes::unconfigured::StarlarkTargetNode;
 use crate::bxl::starlark_defs::result::StarlarkError;
-use crate::bxl::starlark_defs::result::StarlarkResultGen;
+use crate::bxl::starlark_defs::result::StarlarkResult;
 use crate::bxl::starlark_defs::target_list_expr::OwnedConfiguredTargetNodeArg;
 use crate::bxl::starlark_defs::target_list_expr::OwnedTargetNodeArg;
 use crate::bxl::starlark_defs::target_list_expr::SingleOrCompatibleConfiguredTargets;
@@ -78,9 +83,13 @@ enum LazyOperation {
     },
     UnconfiguredTargetNode(OwnedTargetNodeArg),
     UnconfiguredTargetNodeKeepGoing(String),
-    Uquery(LazyUqueryOperation),
+    Uquery {
+        op: LazyUqueryOperation,
+        allow_partial_graph: bool,
+    },
     Cquery(LazyCqueryOperation),
     BuildArtifact(LazyBuildArtifact),
+    DynamicValue(DynamicValue),
     Join(Arc<LazyOperation>, Arc<LazyOperation>),
     Batch(Vec<Arc<LazyOperation>>),
     Catch(Arc<LazyOperation>),
@@ -93,10 +102,11 @@ enum LazyResult {
     UnconfiguredTargetNodeKeepGoing(
         (
             StarlarkTargetSet<TargetNode>,
-            SmallMap<StarlarkPackagePath, StarlarkError>,
+            BuckMutInsertionMap<StarlarkPackagePath, StarlarkError>,
         ),
     ),
     BuildArtifact(StarlarkArtifact),
+    DynamicValue(FrozenProviderCollectionValue),
     Uquery(LazyUqueryResult),
     Cquery(LazyCqueryResult),
     Join(Box<(LazyResult, LazyResult)>),
@@ -107,34 +117,61 @@ enum LazyResult {
 impl LazyResult {
     fn into_value<'v>(
         self,
-        heap: &'v Heap,
+        heap: Heap<'v>,
         bxl_eval_extra: &BxlEvalExtra,
     ) -> buck2_error::Result<Value<'v>> {
         match self {
-            LazyResult::Analysis(analysis_res) => Ok(heap.alloc(analysis_res)),
+            LazyResult::Analysis(analysis_res) => Ok(heap.alloc(analysis_res).to_value()),
             LazyResult::ConfiguredTargetNode(res) => res.into_value(heap, bxl_eval_extra),
-            LazyResult::UnconfiguredTargetNode(node) => Ok(heap.alloc(node)),
+            LazyResult::UnconfiguredTargetNode(node) => Ok(match node {
+                Either::Left(node) => heap.alloc(node).to_value(),
+                Either::Right(target_set) => heap.alloc(target_set).to_value(),
+            }),
             LazyResult::UnconfiguredTargetNodeKeepGoing((success_targets, error_packages)) => {
-                Ok(heap.alloc((success_targets, error_packages)))
+                let error_packages = heap
+                    .alloc(AllocDict(
+                        error_packages
+                            .into_iter()
+                            .map(|(package, error)| {
+                                Ok((
+                                    heap.alloc(package).to_value().get_hashed()?,
+                                    heap.alloc(error).to_value(),
+                                ))
+                            })
+                            .collect::<starlark::Result<BuckMutInsertionMap<Value, Value>>>()?,
+                    ))
+                    .to_value();
+                Ok(heap
+                    .alloc((heap.alloc(success_targets).to_value(), error_packages))
+                    .to_value())
             }
-            LazyResult::BuildArtifact(artifact) => Ok(heap.alloc(artifact)),
+            LazyResult::BuildArtifact(artifact) => Ok(heap.alloc(artifact).to_value()),
+            LazyResult::DynamicValue(providers) => Ok(heap
+                .alloc(StarlarkResolvedDynamicValue {
+                    value: providers.add_heap_ref(heap),
+                })
+                .to_value()),
             LazyResult::Uquery(res) => res.into_value(heap),
             LazyResult::Cquery(res) => res.into_value(heap),
-            LazyResult::Join(res) => Ok(heap.alloc((
-                res.0.into_value(heap, bxl_eval_extra)?,
-                res.1.into_value(heap, bxl_eval_extra)?,
-            ))),
-            LazyResult::Batch(res) => Ok(heap.alloc(AllocList(
-                res.into_iter()
-                    .map(|v| v.into_value(heap, bxl_eval_extra))
-                    .collect::<buck2_error::Result<Vec<_>>>()?,
-            ))),
+            LazyResult::Join(res) => Ok(heap
+                .alloc((
+                    res.0.into_value(heap, bxl_eval_extra)?,
+                    res.1.into_value(heap, bxl_eval_extra)?,
+                ))
+                .to_value()),
+            LazyResult::Batch(res) => Ok(heap
+                .alloc(AllocList(
+                    res.into_iter()
+                        .map(|v| v.into_value(heap, bxl_eval_extra))
+                        .collect::<buck2_error::Result<Vec<_>>>()?,
+                ))
+                .to_value()),
             LazyResult::Catch(res) => {
                 let val = match *res {
-                    Ok(res) => Ok(res.into_value(heap, bxl_eval_extra)?),
+                    Ok(res) => res.into_value(heap, bxl_eval_extra),
                     Err(e) => Err(e),
                 };
-                Ok(heap.alloc(StarlarkResultGen::from_result(val)))
+                Ok(heap.alloc(StarlarkResult::from_result(val)).to_value())
             }
         }
     }
@@ -169,14 +206,14 @@ impl LazyOperation {
                 // Parse the target pattern
                 let parsed_pattern = ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                     core_data.target_alias_resolver(),
-                    CellPathRef::new(core_data.cell_name(), CellRelativePath::empty()),
+                    CellPath::new(core_data.cell_name(), CellRelativePath::empty()),
                     pattern,
                     core_data.cell_resolver(),
                     core_data.cell_alias_resolver(),
                 )?;
 
                 let mut success_targets = TargetSet::new();
-                let mut error_packages = SmallMap::new();
+                let mut error_packages = BuckMutInsertionMap::new();
 
                 match parsed_pattern {
                     ParsedPattern::Target(package, name, TargetPatternExtra) => {
@@ -221,26 +258,34 @@ impl LazyOperation {
                     error_packages,
                 )))
             }
-            LazyOperation::Uquery(op) => op.resolve(dice, core_data).await.map(LazyResult::Uquery),
+            LazyOperation::Uquery {
+                op,
+                allow_partial_graph,
+            } => op
+                .resolve(dice, core_data, *allow_partial_graph)
+                .await
+                .map(LazyResult::Uquery),
             LazyOperation::Cquery(op) => op.resolve(dice, core_data).await.map(LazyResult::Cquery),
             LazyOperation::BuildArtifact(artifact) => {
                 artifact.build_artifacts(dice).await?;
                 Ok(LazyResult::BuildArtifact(artifact.artifact()))
             }
+            LazyOperation::DynamicValue(value) => Ok(LazyResult::DynamicValue(
+                resolve_dynamic_value(value, dice).await?,
+            )),
             LazyOperation::Join(lazy0, lazy1) => {
-                let compute0 = DiceComputations::declare_closure(|dice| {
-                    async move { lazy0.resolve(dice, core_data).await }.boxed()
-                });
-                let compute1 = DiceComputations::declare_closure(|dice| {
-                    async move { lazy1.resolve(dice, core_data).await }.boxed()
-                });
-                let (res0, res1) = dice.try_compute2(compute0, compute1).await?;
+                let (res0, res1) = dice
+                    .try_compute2(
+                        async |dice| lazy0.resolve(dice, core_data).await,
+                        async |dice| lazy1.resolve(dice, core_data).await,
+                    )
+                    .await?;
                 Ok(LazyResult::Join(Box::new((res0, res1))))
             }
             LazyOperation::Batch(lazies) => {
                 let res = dice
-                    .try_compute_join(lazies, |dice, lazy| {
-                        async move { lazy.resolve(dice, core_data).await }.boxed()
+                    .try_compute_join(lazies, async |dice, lazy| {
+                        lazy.resolve(dice, core_data).await
                     })
                     .await?;
                 Ok(LazyResult::Batch(res))
@@ -261,7 +306,8 @@ impl LazyOperation {
     NoSerialize,
     Allocative,
     Clone,
-    Dupe
+    Dupe,
+    starlark::StarlarkPagableUnsupported
 )]
 #[derivative(Debug)]
 #[display("{:?}", self)]
@@ -285,7 +331,7 @@ impl StarlarkLazy {
         Self {
             lazy: Arc::new(LazyOperation::ConfiguredTargetNode {
                 arg,
-                global_cfg_options: global_cfg_options.map_err(buck2_error::Error::from),
+                global_cfg_options,
             }),
         }
     }
@@ -316,9 +362,12 @@ impl StarlarkLazy {
         }
     }
 
-    pub(crate) fn new_uquery(op: LazyUqueryOperation) -> Self {
+    pub(crate) fn new_uquery(op: LazyUqueryOperation, allow_partial_graph: bool) -> Self {
         Self {
-            lazy: Arc::new(LazyOperation::Uquery(op)),
+            lazy: Arc::new(LazyOperation::Uquery {
+                op,
+                allow_partial_graph,
+            }),
         }
     }
 
@@ -333,13 +382,20 @@ impl StarlarkLazy {
             lazy: Arc::new(LazyOperation::BuildArtifact(artifact)),
         }
     }
+
+    pub(crate) fn new_dynamic_value(value: DynamicValue) -> Self {
+        Self {
+            lazy: Arc::new(LazyOperation::DynamicValue(value)),
+        }
+    }
 }
+
+starlark::methods_static!(LAZY_OPERATION_METHODS = lazy_operation_methods);
 
 #[starlark_value(type = "bxl.Lazy")]
 impl<'v> StarlarkValue<'v> for StarlarkLazy {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(lazy_operation_methods)
+        Some(LAZY_OPERATION_METHODS.methods())
     }
 }
 
@@ -347,10 +403,12 @@ async fn analysis(
     dice: &mut DiceComputations<'_>,
     label: &ConfiguredProvidersLabel,
 ) -> buck2_error::Result<StarlarkAnalysisResult> {
-    let maybe_result = dice.get_analysis_result(label.target()).await?;
+    let maybe_result = dice.get_analysis_result(label.target()).await.ok()?;
     match maybe_result {
         MaybeCompatible::Incompatible(reason) => Err(reason.to_err()),
-        MaybeCompatible::Compatible(result) => StarlarkAnalysisResult::new(result, label.dupe()),
+        MaybeCompatible::Compatible(result) => {
+            Ok(StarlarkAnalysisResult::new(result.lookup(label)?))
+        }
     }
 }
 
@@ -389,8 +447,11 @@ fn lazy_operation_methods(builder: &mut MethodsBuilder) {
     ///     target = ctx.configured_targets("cell//path/to:target")
     ///     analysis_result = ctx.lazy.analysis(target).catch().resolve()
     /// ```
-    fn catch(this: &StarlarkLazy) -> starlark::Result<StarlarkLazy> {
+    fn catch<'v>(
+        this: &StarlarkLazy,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let lazy = Arc::new(LazyOperation::Catch(this.lazy.dupe()));
-        Ok(StarlarkLazy { lazy })
+        Ok(ValueOf::alloc(heap, StarlarkLazy { lazy }))
     }
 }

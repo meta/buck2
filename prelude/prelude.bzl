@@ -7,12 +7,21 @@
 # above-listed licenses.
 
 load("@prelude//:native.bzl", _native = "native")
-load("@prelude//utils:buckconfig.bzl", _read_config = "read_config_with_logging", _read_root_config = "read_root_config_with_logging", log_buckconfigs = "LOG_BUCKCONFIGS")
+load(
+    "@prelude//utils:buckconfig.bzl",
+    _read_config = "read_config_with_logging",
+    _read_root_config = "read_root_config_with_logging",
+    log_buckconfigs = "LOG_BUCKCONFIGS",
+)
 
-__overridden_builtins__ = {
-    "read_config": _read_config,
-    "read_root_config": _read_root_config,
-} if log_buckconfigs else {}
+__overridden_builtins__ = (
+    {
+        "read_config": _read_config,
+        "read_root_config": _read_root_config,
+    }
+    if log_buckconfigs
+    else {}
+)
 
 load_symbols(__overridden_builtins__)
 

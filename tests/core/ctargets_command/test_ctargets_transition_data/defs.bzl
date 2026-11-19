@@ -21,6 +21,6 @@ def _clay_library_impl(ctx):
 
 clay_library = rule(
     impl = _clay_library_impl,
-    attrs = {},
+    attrs = {"value": attrs.string()},
     cfg = clay_transition,
 )

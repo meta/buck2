@@ -14,9 +14,11 @@ import com.facebook.buck.cd.model.java.OutputPathsValue;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.jvm.cd.serialization.RelPathSerializer;
 import com.facebook.buck.jvm.java.CompilerOutputPaths;
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Optional;
 
 /** {@link CompilerOutputPaths} to protobuf serializer */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CompilerOutputPathsSerializer {
 
   private CompilerOutputPathsSerializer() {}
@@ -32,17 +34,19 @@ public class CompilerOutputPathsSerializer {
   public static CompilerOutputPaths deserialize(
       OutputPathsValue.OutputPaths outputPaths, Optional<RelPath> tmpDir) {
     return new CompilerOutputPaths(
-        toRelPath(outputPaths.getClassesDir()),
+        tmpDir.get().resolveRel("__classes__"),
         toRelPath(outputPaths.getOutputJarDirPath()),
         toOptionalRelPath(outputPaths.getAbiJarPath()),
-        toRelPath(outputPaths.getAnnotationPath()),
+        toOptionalRelPath(outputPaths.getAnnotationPath())
+            .orElseGet(() -> tmpDir.get().resolveRel("__gen__")),
         outputPaths.getPathToSourcesList().isEmpty()
             ? tmpDir.map(p -> p.resolveRel("__srcs__")).get()
             : toRelPath(outputPaths.getPathToSourcesList()),
         outputPaths.getWorkingDirectory().isEmpty()
             ? tmpDir.get()
             : toRelPath(outputPaths.getWorkingDirectory()),
-        toOptionalRelPath(outputPaths.getOutputJarPath()));
+        toOptionalRelPath(outputPaths.getOutputJarPath()),
+        toOptionalRelPath(outputPaths.getCompilerClassToSourceMap()).orElse(null));
   }
 
   private static RelPath toRelPath(String relPath) {

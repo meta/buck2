@@ -50,7 +50,7 @@ def _impl_bad(ctx):
     ]
 
 def _seed_impl(ctx):
-    out = ctx.actions.declare_output("file")
+    out = ctx.actions.declare_output("file", has_content_based_path = False)
     ctx.actions.run(
         ["touch", out.as_output()],
         category = "touch",

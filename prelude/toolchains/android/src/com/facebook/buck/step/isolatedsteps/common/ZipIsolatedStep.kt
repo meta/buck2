@@ -47,10 +47,10 @@ data class ZipIsolatedStep(
 ) : IsolatedStep {
   @Throws(IOException::class, InterruptedException::class)
   override fun executeIsolatedStep(context: IsolatedExecutionContext): StepExecutionResult {
+    // Delete any stale zip file from a previous interrupted build.
+    // This can happen when ctrl+c interrupts a build mid-execution.
     if (ProjectFilesystemUtils.exists(rootPath, pathToZipFile)) {
-      throw RuntimeException(
-          String.format("Attempting to overwrite an existing zip: %s", pathToZipFile)
-      )
+      ProjectFilesystemUtils.deleteFileAtPath(rootPath, pathToZipFile)
     }
 
     val entries: Map<String, CustomZipEntryWithPath> = TreeMap()

@@ -1,0 +1,13 @@
+load("@prelude//:native.bzl", "native")
+
+constraint = native.constraint
+
+constraint(
+    name = "version",
+    values = ["v1", "v2"],
+    default = "v1",
+    aliases = {
+        # 'v1' collides with a declared value
+        "v1": "v2",
+    },
+)

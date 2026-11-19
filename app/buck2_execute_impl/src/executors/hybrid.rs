@@ -13,17 +13,20 @@ use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
+use buck2_build_signals::env::WaitingData;
 use buck2_common::liveliness_observer::CancelledLivelinessGuard;
 use buck2_common::liveliness_observer::LivelinessGuard;
 use buck2_common::liveliness_observer::LivelinessObserver;
 use buck2_common::liveliness_observer::LivelinessObserverExt;
 use buck2_core::execution_types::executor_config::HybridExecutionLevel;
+use buck2_core::warn_user_or_panic;
 use buck2_data::SchedulingMode;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_execute::execute::claim::Claim;
 use buck2_execute::execute::claim::ClaimManager;
 use buck2_execute::execute::claim::MutexClaimManager;
+use buck2_execute::execute::low_pass_filter::LowPassFilter;
 use buck2_execute::execute::manager::CommandExecutionManager;
 use buck2_execute::execute::manager::CommandExecutionManagerExt;
 use buck2_execute::execute::prepared::PreparedCommand;
@@ -43,7 +46,6 @@ use futures::future::Future;
 use host_sharing::HostSharingRequirements;
 
 use crate::executors::local::LocalExecutor;
-use crate::low_pass_filter::LowPassFilter;
 
 /// The [HybridExecutor] will accept requests and dispatch them to both a local and remote delegate
 /// executor, unless the CommandExecutionRequest expresses a preference. That will allow them to
@@ -72,9 +74,10 @@ where
         events: EventDispatcher,
         liveliness_observer: Arc<dyn LivelinessObserver>,
         cancellations: &CancellationContext,
+        waiting_data: WaitingData,
     ) -> CommandExecutionResult {
         let local_manager =
-            CommandExecutionManager::new(claim_manager, events, liveliness_observer);
+            CommandExecutionManager::new(claim_manager, events, liveliness_observer, waiting_data);
         self.local
             .exec_cmd(command, local_manager, cancellations)
             .await
@@ -171,6 +174,7 @@ where
                     .and(local_execution_liveliness_observer.dupe()),
             ),
             cancellations,
+            manager.inner.waiting_data.clone(),
         );
 
         let remote_manager = CommandExecutionManager::new(
@@ -181,12 +185,24 @@ where
             )),
             manager.inner.events.dupe(),
             manager.inner.liveliness_observer.dupe(),
+            manager.inner.waiting_data.clone(),
         )
         .with_intend_to_fallback_on_failure(fallback_on_failure);
         let was_result_delayed = remote_manager.inner.was_result_delayed.dupe();
         let remote_result = self.remote_exec_cmd(command, remote_manager, cancellations);
 
         let action_too_large = self.is_action_too_large_for_remote(command.request.paths());
+        if executor_preference.requires_remote() && action_too_large {
+            return manager.error(
+                "remote_only_action_too_large",
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Action inputs are {} bytes, above the remote execution limit of {} bytes, and local execution is not allowed",
+                    command.request.paths().input_files_bytes(),
+                    self.re_max_input_files_bytes
+                ),
+            );
+        }
         if executor_preference.requires_local() || action_too_large {
             let mut res = local_result.await;
             if action_too_large {
@@ -470,7 +486,7 @@ impl Claim for ReClaim {
         // An error here should only occur if local execution had started without the claim.
         self.released_liveliness_guard
             .restore()
-            .buck_error_context("Unable to restore CancelledLivelinessGuard!")?
+            .internal_error("Unable to restore CancelledLivelinessGuard!")?
             .forget();
 
         self.claim.release()?;
@@ -579,9 +595,13 @@ impl FallbackTracker {
 
         if let Some(max) = max {
             if retried >= max {
-                tracing::warn!(
-                    "Not falling back to local because too many actions have fallen back already.  \
+                warn_user_or_panic!(
+                    "local_fallback_limit_reached",
+                    buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Environment,
+                        "Not falling back to local because too many actions have fallen back already.  \
                     If you would like to proceed anyway, pass `--prefer-local`."
+                    )
                 );
                 return false;
             }

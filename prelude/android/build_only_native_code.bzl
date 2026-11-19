@@ -10,6 +10,6 @@ def is_build_only_native_code():
     return select(
         {
             "DEFAULT": False,
-            "prelude//android/constraints:build_only_native_code": True,
+            "prelude//android/constraints:maybe_build_only_native_code[build_only_native_code]": True,
         },
     )

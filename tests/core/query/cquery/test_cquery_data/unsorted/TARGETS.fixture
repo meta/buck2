@@ -23,12 +23,6 @@ foo_genrule(
     visibility = ["PUBLIC"],
 )
 
-foo_binary(
-    name = "package_boundary_violation",
-    srcs = ["package_boundary_violation/bin"],
-    visibility = ["PUBLIC"],
-)
-
 foo_buildable(
     name = "buildable",
     content = "FOO",

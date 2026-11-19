@@ -1,4 +1,5 @@
 load("@prelude//android:min_sdk_version.bzl", "get_min_sdk_version_constraint_value_name", "get_min_sdk_version_range")
+load("@prelude//configurations:constraint_alias.bzl", "constraint_with_aliases")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("build_infra")
@@ -7,25 +8,41 @@ source_listing()
 
 prelude = native  # Avoid warnings and auto-formatters
 
-prelude.constraint_setting(
+constraint_with_aliases(
     name = "maybe_build_only_native_code",
+    aliases = {
+        "build_only_native_code": "build_only_native_code",
+    },
+    default = "unspecified",
+    values = [
+        "build_only_native_code",
+        "unspecified",
+    ],
     visibility = ["PUBLIC"],
 )
 
-prelude.constraint_value(
-    name = "build_only_native_code",
-    constraint_setting = ":maybe_build_only_native_code",
-    visibility = ["PUBLIC"],
-)
-
-prelude.constraint_setting(
+constraint_with_aliases(
     name = "maybe_merge_native_libraries",
+    aliases = {
+        "merge_native_libraries": "merge_native_libraries",
+    },
+    default = "unspecified",
+    values = [
+        "merge_native_libraries",
+        "unspecified",
+    ],
     visibility = ["PUBLIC"],
 )
 
-prelude.constraint_value(
-    name = "merge_native_libraries",
-    constraint_setting = ":maybe_merge_native_libraries",
+# `enabled`: pre-dex at min SDK 24 or higher desugars against the classpath classes D8 can read
+# (`java/dex.bzl`). An app turns it on with this modifier.
+prelude.constraint(
+    name = "pre_dex_desugar_classpath_view",
+    default = "disabled",
+    values = [
+        "disabled",
+        "enabled",
+    ],
     visibility = ["PUBLIC"],
 )
 

@@ -1,0 +1,186 @@
+load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "games",
+    srcs = glob(["src/**/*.rs"]) + glob(["src/**/*.txt"]) + glob(["sprites/**/*.png"]),
+    # Games only embeds PNG assets. Other codecs pull in dependencies that do
+    # not compile with the OSS Rust toolchain.
+    autocargo = {
+        "cargo_toml_config": {
+            "dependencies_override": {
+                "dependencies": {
+                    "image": {
+                        "default-features": False,
+                        "features": ["png"],
+                    },
+                },
+            },
+        },
+    },
+    crate_root = "src/lib.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:async-stream",
+        "fbsource//third-party/rust:async-trait",
+        "fbsource//third-party/rust:futures",
+        "fbsource//third-party/rust:image",
+        "fbsource//third-party/rust:itertools",
+        "fbsource//third-party/rust:rand",
+        "fbsource//third-party/rust:serde",
+        "fbsource//third-party/rust:serde_json",
+        "fbsource//third-party/rust:tokio",
+        "//buck2/superconsole:superconsole",
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:termios",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:termios",
+        ],
+    }),
+)
+
+rust_binary(
+    name = "jump",
+    srcs = ["bin/jump.rs"],
+    crate_root = "bin/jump.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:tokio",
+        ":games",
+        "//buck2/superconsole:superconsole",
+    ],
+)
+
+rust_binary(
+    name = "breakout",
+    srcs = ["bin/breakout.rs"],
+    crate_root = "bin/breakout.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:tokio",
+        ":games",
+        "//buck2/superconsole:superconsole",
+    ],
+)
+
+rust_binary(
+    name = "blocks",
+    srcs = ["bin/blocks.rs"],
+    crate_root = "bin/blocks.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:tokio",
+        ":games",
+        "//buck2/superconsole:superconsole",
+    ],
+)
+
+rust_binary(
+    name = "minesweeper",
+    srcs = ["bin/minesweeper.rs"],
+    crate_root = "bin/minesweeper.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:tokio",
+        ":games",
+        "//buck2/superconsole:superconsole",
+    ],
+)
+
+rust_binary(
+    name = "menu",
+    srcs = ["bin/menu.rs"],
+    crate_root = "bin/menu.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:futures",
+        "fbsource//third-party/rust:tokio",
+        ":games",
+        "//buck2/superconsole:superconsole",
+    ],
+)
+
+rust_binary(
+    name = "life",
+    srcs = ["bin/life.rs"],
+    crate_root = "bin/life.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:tokio",
+        ":games",
+        "//buck2/superconsole:superconsole",
+    ],
+)
+
+rust_binary(
+    name = "snake",
+    srcs = ["bin/snake.rs"],
+    crate_root = "bin/snake.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:tokio",
+        ":games",
+        "//buck2/superconsole:superconsole",
+    ],
+)
+
+rust_binary(
+    name = "sokoban",
+    srcs = ["bin/sokoban.rs"],
+    crate_root = "bin/sokoban.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:tokio",
+        ":games",
+        "//buck2/superconsole:superconsole",
+    ],
+)
+
+rust_binary(
+    name = "sokoban_gen",
+    srcs = ["bin/sokoban_gen.rs"],
+    crate_root = "bin/sokoban_gen.rs",
+    deps = [
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:rand",
+    ],
+)
+
+rust_binary(
+    name = "static",
+    srcs = ["bin/static.rs"],
+    crate_root = "bin/static.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:tokio",
+        ":games",
+        "//buck2/superconsole:superconsole",
+    ],
+)
+
+rust_binary(
+    name = "twenty48",
+    srcs = ["bin/twenty48.rs"],
+    crate_root = "bin/twenty48.rs",
+    deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:clap",
+        "fbsource//third-party/rust:tokio",
+        ":games",
+        "//buck2/superconsole:superconsole",
+    ],
+)

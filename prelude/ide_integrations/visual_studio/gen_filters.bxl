@@ -39,12 +39,12 @@ def _get_file_filter_map(vs_settings: dict) -> dict:
     buck_out_common_dir = _get_common_directory(buck_out_paths)
     for file in buck_out_paths:
         # Add a "generated_files" folder so that the files don't get mixed up with the others
-        filters[file] = "\\".join(["generated_files", dirname(file[len(buck_out_common_dir):], "\\")])
+        filters[file] = "\\".join(["generated_files", dirname(file[len(buck_out_common_dir) :], "\\")])
 
     non_buck_out_paths = [path for path in files if not path.startswith("buck-out")]
     non_buck_out_common_dir = _get_common_directory(non_buck_out_paths)
     for file in non_buck_out_paths:
-        filters[file] = dirname(file[len(non_buck_out_common_dir):], "\\")
+        filters[file] = dirname(file[len(non_buck_out_common_dir) :], "\\")
     return filters
 
 def _get_filter_list(file_filter_map: dict) -> list:
@@ -73,10 +73,7 @@ def gen_filters(vs_settings: dict):
         """<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">""",
         h(
             "ItemGroup",
-            [
-                h("Filter", None, {"Include": filter}, indent_level = 2)
-                for filter in filters_list
-            ],
+            [h("Filter", None, {"Include": filter}, indent_level = 2) for filter in filters_list],
             {
                 "Label": "Filters",
             },
@@ -125,10 +122,19 @@ def _main(bxl_ctx):
     actions = bxl_ctx.bxl_actions().actions
     attrs = get_attrs(target_node, bxl_ctx)
     toolchain = get_cxx_toolchain(target_node, bxl_ctx)
-    attrs_outfile = actions.write_json(get_project_file_path(target_node.label, ".json"), attrs)
-    filters_artifact = actions.declare_output(get_project_file_path(target_node.label, ".vcxproj.filters"))
+    attrs_outfile = actions.write_json(get_project_file_path(target_node.label, ".json"), attrs, has_content_based_path = False)
+    filters_artifact = actions.declare_output(get_project_file_path(target_node.label, ".vcxproj.filters"), has_content_based_path = False)
 
-    def f(ctx, artifacts, outputs, attrs_outfile = attrs_outfile, filters_artifact = filters_artifact, target = target_node, cli_args = bxl_ctx.cli_args, buck_root = bxl_ctx.root()):
+    def f(
+        ctx,
+        artifacts,
+        outputs,
+        attrs_outfile = attrs_outfile,
+        filters_artifact = filters_artifact,
+        target = target_node,
+        cli_args = bxl_ctx.cli_args,
+        buck_root = bxl_ctx.root(),
+    ):
         attrs_input = artifacts[attrs_outfile].read_json()
         vs_settings = get_vs_settings(target, toolchain, attrs_input, {}, cli_args, buck_root, ctx)
         content = gen_filters(vs_settings)

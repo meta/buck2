@@ -158,12 +158,15 @@ impl<'a> Field<'a> {
         Ok(Field {
             original: node,
             attrs: attr::get(&node.attrs)?,
-            member: node.ident.clone().map(Member::Named).unwrap_or_else(|| {
-                Member::Unnamed(Index {
-                    index: i as u32,
-                    span,
-                })
-            }),
+            member: node.ident.clone().map_or_else(
+                || {
+                    Member::Unnamed(Index {
+                        index: i as u32,
+                        span,
+                    })
+                },
+                Member::Named,
+            ),
             ty: &node.ty,
             contains_generic: scope.intersects(&node.ty),
         })

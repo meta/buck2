@@ -1,0 +1,33 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under both the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree and the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree.
+
+configuration_alias(
+    name = "clang",
+    actual = "prelude//:none",
+    visibility = ["PUBLIC"],
+)
+
+# Reads the root cell's config, like ovr_config//os:windows-cl.
+config_setting(
+    name = "cl",
+    constraint_values = ["prelude//os/constraints:os[windows]"],
+    root_values = {"cxx.windows_compiler_type": "windows"},
+    visibility = ["PUBLIC"],
+)
+
+configuration_alias(
+    name = "gcc",
+    actual = "//os:linux",
+    visibility = ["PUBLIC"],
+)
+
+config_setting(
+    name = "msvc",
+    constraint_values = ["prelude//os/constraints:os[windows]"],
+    root_values = {"cxx.windows_compiler_type": "windows"},
+    visibility = ["PUBLIC"],
+)

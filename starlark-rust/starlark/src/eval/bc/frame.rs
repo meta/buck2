@@ -161,7 +161,7 @@ impl<'v> BcFramePtr<'v> {
 impl<'v> BcFrame<'v> {
     #[inline(always)]
     fn offset_of_slots() -> usize {
-        let offset = memoffset::offset_of!(BcFrame<'v>, slots);
+        let offset = mem::offset_of!(BcFrame<'v>, slots);
         assert_eq!(mem::size_of::<BcFrame<'v>>(), offset);
         offset
     }
@@ -210,7 +210,7 @@ impl<'v> BcFrame<'v> {
                 // * zeros, which would be interpreted as uninitialized if copied to a local
                 let byte = 0xef;
 
-                let start = self.stack_uninit().as_ptr() as *mut u8;
+                let start = self.stack_uninit().as_mut_ptr() as *mut u8;
                 ptr::write_bytes(
                     start,
                     byte,
@@ -354,7 +354,9 @@ pub(crate) fn alloca_frame<'v, 'a, 'e, R>(
             // TODO(nga): no need to fill the slots for parameters.
             frame.frame_mut().init();
             let old_frame = mem::replace(&mut eval.current_frame, frame);
+            eval.frame_stack.push(old_frame);
             let r = k(eval);
+            eval.frame_stack.pop();
             eval.current_frame = old_frame;
             r
         },

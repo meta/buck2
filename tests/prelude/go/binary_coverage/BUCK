@@ -1,0 +1,35 @@
+load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+
+oncall("golang")
+
+prelude = native
+
+prelude.go_binary(
+    name = "bin",
+    srcs = ["main.go"],
+    coverage_mode = "set",
+)
+
+py_assertion(
+    name = "check_coverage",
+    script = """
+import os
+import subprocess
+import sys
+import tempfile
+
+binary = sys.argv[1]
+with tempfile.TemporaryDirectory() as covdir:
+    env = dict(os.environ)
+    env["GOCOVERDIR"] = covdir
+    result = subprocess.run([binary], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, f"binary failed: {result.stderr}"
+    assert "hello world" in result.stdout, f"unexpected output: {result.stdout}"
+    files = os.listdir(covdir)
+    cov_meta = [f for f in files if f.startswith("covmeta")]
+    cov_counters = [f for f in files if f.startswith("covcounters")]
+    assert len(cov_meta) > 0, f"expected covmeta files in GOCOVERDIR, got: {files}"
+    assert len(cov_counters) > 0, f"expected covcounters files in GOCOVERDIR, got: {files}"
+""",
+    script_args = ["$(exe_target :bin)"],
+)

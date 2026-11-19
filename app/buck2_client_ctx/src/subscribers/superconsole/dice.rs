@@ -10,7 +10,6 @@
 
 use buck2_event_observer::dice_state::DiceState;
 use buck2_event_observer::humanized::HumanizedCount;
-use gazebo::prelude::*;
 use superconsole::Component;
 use superconsole::Lines;
 
@@ -62,6 +61,11 @@ impl Component for DiceComponent<'_> {
             ));
         }
         lines.push("-".repeat(header_len));
-        Ok(Lines(lines.into_try_map(|v| vec![v].try_into())?))
+        Ok(Lines(
+            lines
+                .into_iter()
+                .map(|v| vec![v].try_into())
+                .collect::<Result<Vec<_>, _>>()?,
+        ))
     }
 }

@@ -8,11 +8,7 @@
 
 def _impl(platform, refs):
     watchos = refs.watchos[ConstraintValueInfo]
-    constraints = {
-        s: v
-        for (s, v) in platform.configuration.constraints.items()
-        if s != refs.os[ConstraintSettingInfo].label
-    }
+    constraints = {s: v for (s, v) in platform.configuration.constraints.items() if s != refs.os[ConstraintSettingInfo].label}
     constraints[watchos.setting.label] = watchos
     new_cfg = ConfigurationInfo(
         constraints = constraints,
@@ -23,7 +19,10 @@ def _impl(platform, refs):
         configuration = new_cfg,
     )
 
-iphone_to_watch_transition = transition(impl = _impl, refs = {
-    "os": "root//:os",
-    "watchos": "root//:watchos",
-})
+iphone_to_watch_transition = transition(
+    impl = _impl,
+    refs = {
+        "os": "root//:os",
+        "watchos": "root//:watchos",
+    },
+)

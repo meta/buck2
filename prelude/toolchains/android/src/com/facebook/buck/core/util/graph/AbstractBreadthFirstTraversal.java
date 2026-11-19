@@ -10,7 +10,10 @@
 
 package com.facebook.buck.core.util.graph;
 
+import com.facebook.infer.annotation.Nullsafe;
+
 /** Performs a breadth-first traversal of dependencies of a graph node. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class AbstractBreadthFirstTraversal<Node>
     extends AbstractBreadthFirstThrowingTraversal<Node, RuntimeException> {
 

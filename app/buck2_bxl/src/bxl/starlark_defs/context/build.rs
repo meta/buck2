@@ -22,13 +22,13 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::Starla
 use buck2_cli_proto::build_request::Materializations;
 use buck2_cli_proto::build_request::Uploads;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
+use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use derive_more::Display;
 use dupe::Dupe;
 use futures::FutureExt;
 use itertools::Itertools;
 use starlark::any::ProvidesStaticType;
-use starlark::coerce::Coerce;
 use starlark::eval::Evaluator;
 use starlark::starlark_complex_value;
 use starlark::values::Freeze;
@@ -36,14 +36,10 @@ use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::UnpackValue as _;
 use starlark::values::Value;
 use starlark::values::ValueError;
-use starlark::values::ValueLifetimeless;
-use starlark::values::ValueLike;
 use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
-use starlark_map::small_map::SmallMap;
 
 use crate::bxl::starlark_defs::build_result::StarlarkBxlBuildResult;
 use crate::bxl::starlark_defs::context::BxlContext;
@@ -55,57 +51,51 @@ use crate::bxl::value_as_starlark_target_label::ValueAsStarlarkTargetLabel;
     Debug,
     Clone,
     Trace,
-    Coerce,
     Freeze,
     Display,
     ProvidesStaticType,
     NoSerialize,
-    Allocative
+    Allocative,
+    starlark::StarlarkPagable
 )]
-#[repr(C)]
-pub(crate) struct StarlarkProvidersArtifactIterableGen<V: ValueLifetimeless>(pub(crate) V);
+pub(crate) struct StarlarkProvidersArtifactIterable<'v>(pub(crate) Value<'v>);
 
 starlark_complex_value!(pub(crate) StarlarkProvidersArtifactIterable);
 
-impl<'v, V: ValueLike<'v>> StarlarkProvidersArtifactIterableGen<V>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    fn iter(&self) -> impl Iterator<Item = &'v Artifact> + use<'v, V> {
+impl<'v> StarlarkProvidersArtifactIterable<'v> {
+    fn iter(&self) -> impl Iterator<Item = &'v Artifact> + use<'v> {
         self.0
             .downcast_ref::<StarlarkBxlBuildResult>()
             .unwrap()
             .0
-            .unpack_built()
+            .built()
             .unwrap()
-            .1
             .outputs
             .iter()
-            .filter_map(|built| built.as_ref().ok())
+            .filter_map(|built| built.inner.as_ref().ok())
             .flat_map(|built| built.values.iter().map(|(artifact, _)| artifact))
     }
 }
 
 #[starlark_value(type = "bxl.BuiltArtifactsIterable")]
-impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for StarlarkProvidersArtifactIterableGen<V>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    fn iterate_collect(&self, heap: &'v Heap) -> starlark::Result<Vec<Value<'v>>> {
+impl<'v> StarlarkValue<'v> for StarlarkProvidersArtifactIterable<'v> {
+    fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
         Ok(self
             .iter()
-            .map(|artifact| heap.alloc(StarlarkArtifact::new(artifact.dupe())))
+            .map(|artifact| {
+                heap.alloc(StarlarkArtifact::new(artifact.dupe()))
+                    .to_value()
+            })
             .collect())
     }
 
-    fn at(&self, index: Value<'v>, heap: &'v Heap) -> starlark::Result<Value<'v>> {
-        let i = i32::unpack_value_err(index)?;
-        if let Ok(i) = usize::try_from(i) {
+    fn at(&self, index: i32) -> starlark::Result<StarlarkArtifact> {
+        if let Ok(i) = usize::try_from(index) {
             if let Some(artifact) = self.iter().nth(i) {
-                return Ok(heap.alloc(StarlarkArtifact::new(artifact.dupe())));
+                return Ok(StarlarkArtifact::new(artifact.dupe()));
             }
         }
-        Err(ValueError::IndexOutOfBound(i).into())
+        Err(ValueError::IndexOutOfBound(index).into())
     }
 
     fn length(&self) -> starlark::Result<i32> {
@@ -117,53 +107,47 @@ where
     Debug,
     Clone,
     Trace,
-    Coerce,
     Freeze,
     Display,
     ProvidesStaticType,
     NoSerialize,
-    Allocative
+    Allocative,
+    starlark::StarlarkPagableUnsupported
 )]
-#[repr(C)]
-pub(crate) struct StarlarkFailedArtifactIterableGen<V: ValueLifetimeless>(pub(crate) V);
+pub(crate) struct StarlarkFailedArtifactIterable<'v>(pub(crate) Value<'v>);
 
 starlark_complex_value!(pub(crate) StarlarkFailedArtifactIterable);
 
-impl<'v, V: ValueLike<'v>> StarlarkFailedArtifactIterableGen<V>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    fn iter(&self) -> impl Iterator<Item = &'v buck2_error::Error> + use<'v, V> {
+impl<'v> StarlarkFailedArtifactIterable<'v> {
+    fn iter(&self) -> impl Iterator<Item = &'v buck2_error::Error> + use<'v> {
         self.0
             .downcast_ref::<StarlarkBxlBuildResult>()
             .unwrap()
             .0
-            .unpack_built()
+            .built()
             .unwrap()
-            .1
             .outputs
             .iter()
-            .filter_map(|built| built.as_ref().err())
+            .filter_map(|built| built.inner.as_ref().err())
     }
 }
 
 #[starlark_value(type = "bxl.FailedArtifactsIterable")]
-impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for StarlarkFailedArtifactIterableGen<V>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    fn iterate_collect(&self, heap: &'v Heap) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(self.iter().map(|e| heap.alloc(format!("{e}"))).collect())
+impl<'v> StarlarkValue<'v> for StarlarkFailedArtifactIterable<'v> {
+    fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+        Ok(self
+            .iter()
+            .map(|e| heap.alloc(format!("{e}")).to_value())
+            .collect())
     }
 
-    fn at(&self, index: Value<'v>, heap: &'v Heap) -> starlark::Result<Value<'v>> {
-        let i = i32::unpack_value_err(index)?;
-        if let Ok(i) = usize::try_from(i) {
+    fn at(&self, index: i32) -> starlark::Result<String> {
+        if let Ok(i) = usize::try_from(index) {
             if let Some(e) = self.iter().nth(i) {
-                return Ok(heap.alloc(format!("{e}")));
+                return Ok(format!("{e}"));
             }
         }
-        Err(ValueError::IndexOutOfBound(i).into())
+        Err(ValueError::IndexOutOfBound(index).into())
     }
 
     fn length(&self) -> starlark::Result<i32> {
@@ -179,12 +163,12 @@ pub(crate) fn build<'v>(
     uploads: Uploads,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> buck2_error::Result<
-    SmallMap<
+    BuckMutInsertionMap<
         ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
         ValueTyped<'v, StarlarkBxlBuildResult>,
     >,
 > {
-    let global_cfg_options = ctx.resolve_global_cfg_options(target_platform, vec![].into())?;
+    let global_cfg_options = ctx.resolve_global_cfg_options(target_platform, vec![])?;
 
     let build_result = ctx.via_dice(eval, |dice| {
         dice.via(|dice| {
@@ -192,45 +176,51 @@ pub(crate) fn build<'v>(
                 let build_spec = ProvidersExpr::<ConfiguredProvidersLabel>::unpack(
                     spec,
                     &global_cfg_options,
-                    &ctx,
+                    ctx,
                     dice,
                 )
                 .await?;
 
-                let (result_builder, consumer) = AsyncBuildTargetResultBuilder::new(None);
+                let (result_builder, consumer) =
+                    AsyncBuildTargetResultBuilder::new(None, std::time::Instant::now());
                 result_builder
                     .wait_for(
                         // TODO (torozco): support --fail-fast in BXL.
                         false,
-                        dice.compute_join(build_spec.labels().unique(), |ctx, target| {
-                            let consumer = consumer.clone();
-                            async move {
+                        dice.compute_join(
+                            build_spec.labels().unique().collect::<Vec<_>>(),
+                            async |ctx, target| {
                                 let target = target.clone();
+                                let consumer = consumer.clone();
 
-                                ctx.with_linear_recompute(|ctx| async move {
-                                    build_configured_label(
-                                        &consumer,
-                                        &ctx,
-                                        &(materializations, uploads).into(),
-                                        target,
-                                        &ProvidersToBuild {
-                                            default: true,
-                                            default_other: true,
-                                            run: true,
-                                            tests: true,
-                                        }, // TODO support skipping/configuring?
-                                        BuildConfiguredLabelOptions {
-                                            skippable: false,
-                                            graph_properties: Default::default(),
-                                        },
-                                        None, // TODO: support timeouts?
-                                    )
-                                    .await
+                                ctx.with_linear_recompute(|ctx| {
+                                    async move {
+                                        build_configured_label(
+                                            &consumer,
+                                            ctx,
+                                            (materializations, uploads).into(),
+                                            target,
+                                            &ProvidersToBuild {
+                                                default: true,
+                                                default_other: true,
+                                                run: true,
+                                                tests: true,
+                                            }, // TODO support skipping/configuring?
+                                            BuildConfiguredLabelOptions {
+                                                skippable: false,
+                                                graph_properties: Default::default(),
+                                                // bxl does not need the build result's RunInfo command line.
+                                                return_run_args: false,
+                                            },
+                                            None, // TODO: support timeouts?
+                                        )
+                                        .await
+                                    }
+                                    .boxed()
                                 })
                                 .await
-                            }
-                            .boxed()
-                        })
+                            },
+                        )
                         .map(|_| ()),
                     )
                     .await
@@ -243,11 +233,11 @@ pub(crate) fn build<'v>(
         .configured
         .values()
         .flatten()
-        .flat_map(|r| &r.errors)
+        .flat_map(|r| r.errors.iter().map(|t| &t.inner))
         .chain(build_result.other_errors.values().flatten())
         .next()
     {
-        return Err(err.dupe().into());
+        return Err(err.dupe());
     }
 
     Ok(build_result
@@ -256,14 +246,16 @@ pub(crate) fn build<'v>(
         .map(|(target, result)| {
             (
                 eval.heap()
-                    .alloc_typed(StarlarkConfiguredProvidersLabel::new(target.clone()))
+                    .alloc(StarlarkConfiguredProvidersLabel::new(target.clone()))
+                    .get()
                     .hashed()
                     .unwrap(),
                 eval.heap()
-                    .alloc_typed(StarlarkBxlBuildResult(BxlBuildResult::new(
+                    .alloc(StarlarkBxlBuildResult(BxlBuildResult::new(
                         target.clone(),
                         result,
-                    ))),
+                    )))
+                    .get(),
             )
         })
         .collect())

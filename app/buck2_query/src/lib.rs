@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(box_patterns)]
 #![feature(try_blocks)]
 
 pub mod query;
@@ -26,7 +24,7 @@ extern crate self as buck2_query;
 #[doc(hidden)]
 pub mod __derive_refs {
     pub use async_trait;
+    pub use buck2_hash;
     pub use buck2_query_parser;
-    pub use indexmap;
     pub use ref_cast;
 }

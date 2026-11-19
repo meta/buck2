@@ -1,24 +1,24 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
 --show-output
-root//:dummy?root//:macos+root//:arm buck-out/v2/gen/root/5ff2de55133dc789/__dummy__/dummy.txt
+root//:dummy?root//:macos+root//:arm buck-out/v2/art/root/eba7ff293fdcb75d/__dummy__/dummy.txt
 
 
 --show-full-output
-root//:dummy?root//:macos+root//:arm /abs/project/root/buck-out/v2/gen/root/5ff2de55133dc789/__dummy__/dummy.txt
+root//:dummy?root//:macos+root//:arm /abs/project/root/buck-out/v2/art/root/eba7ff293fdcb75d/__dummy__/dummy.txt
 
 
 --show-simple-output
-buck-out/v2/gen/root/5ff2de55133dc789/__dummy__/dummy.txt
+buck-out/v2/art/root/eba7ff293fdcb75d/__dummy__/dummy.txt
 
 
 --show-full-simple-output
-/abs/project/root/buck-out/v2/gen/root/5ff2de55133dc789/__dummy__/dummy.txt
+/abs/project/root/buck-out/v2/art/root/eba7ff293fdcb75d/__dummy__/dummy.txt
 
 
 --show-json-output
-{"root//:dummy?root//:macos+root//:arm":"buck-out/v2/gen/root/5ff2de55133dc789/__dummy__/dummy.txt"}
+{"root//:dummy?root//:macos+root//:arm":"buck-out/v2/art/root/eba7ff293fdcb75d/__dummy__/dummy.txt"}
 
 
 --show-full-json-output
-{"root//:dummy?root//:macos+root//:arm":"/abs/project/root/buck-out/v2/gen/root/5ff2de55133dc789/__dummy__/dummy.txt"}
+{"root//:dummy?root//:macos+root//:arm":"/abs/project/root/buck-out/v2/art/root/eba7ff293fdcb75d/__dummy__/dummy.txt"}

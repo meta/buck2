@@ -19,18 +19,25 @@ LinkExecutionPreferenceTypes = [
 
 LinkExecutionPreference = enum(*LinkExecutionPreferenceTypes)
 
-LinkExecutionPreferenceDeterminatorInfo = provider(fields = {
-    # function that takes a list of target labels and the LinkExecutionPreferenceInfo of deps, and returns a LinkExecutionPreference
-    "preference_for_links": provider_field(typing.Any, default = None),
-})
+LinkExecutionPreferenceDeterminatorInfo = provider(
+    fields = {
+        # function that takes a list of target labels and the LinkExecutionPreferenceInfo of deps, and returns a LinkExecutionPreference
+        "preference_for_links": provider_field(typing.Any, default = None),
+    }
+)
 
-LinkExecutionPreferenceInfo = provider(fields = {
-    "preference": provider_field(typing.Any, default = None),  # LinkExecutionPreference
-})
+LinkExecutionPreferenceInfo = provider(
+    fields = {
+        "preference": provider_field(typing.Any, default = None),  # LinkExecutionPreference
+    }
+)
 
 def link_execution_preference_attr():
     # The attribute is optional, allowing for None to represent that no preference has been set and we should fallback on the toolchain.
-    return attrs.option(attrs.one_of(attrs.enum(LinkExecutionPreferenceTypes), attrs.dep(providers = [LinkExecutionPreferenceDeterminatorInfo])), default = None, doc = """
+    return attrs.option(
+        attrs.one_of(attrs.enum(LinkExecutionPreferenceTypes), attrs.dep(providers = [LinkExecutionPreferenceDeterminatorInfo])),
+        default = None,
+        doc = """
     The execution preference for linking. Options are:
 
     - any : No preference is set, and the link action will be performed based on buck2's executor configuration.
@@ -41,7 +48,8 @@ def link_execution_preference_attr():
     - remote : The link action will execute remotely if a compatible remote platform exists, otherwise locally.
 
     The default is None, expressing that no preference has been set on the target itself.
-    """)
+    """,
+    )
 
 def get_link_execution_preference(ctx, links: list[Label]) -> LinkExecutionPreference:
     if not hasattr(ctx.attrs, "link_execution_preference"):

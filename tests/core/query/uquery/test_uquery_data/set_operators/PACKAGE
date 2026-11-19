@@ -1,0 +1,2 @@
+# buildifier: disable=positional-args
+set_modifiers(["cfg//os:linux"])

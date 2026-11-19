@@ -59,7 +59,6 @@ import org.junit.experimental.runners.Enclosed;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-@SuppressWarnings("PMD.TestClassWithoutTestCases")
 @RunWith(Enclosed.class)
 public class ZipOutputStreamTest {
 

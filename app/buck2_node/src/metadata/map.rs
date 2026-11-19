@@ -10,30 +10,44 @@
 
 use std::fmt;
 use std::hash::Hash;
+use std::hash::Hasher;
 
 use allocative::Allocative;
-use starlark_map::small_map::SmallMap;
-use starlark_map::sorted_map::SortedMap;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_hash::BuckMutInsertionMap;
+use pagable::Pagable;
+use strong_hash::StrongHash;
 
 use crate::attrs::attr_type::any_matches::AnyMatches;
 use crate::metadata::key::MetadataKey;
 use crate::metadata::key::MetadataKeyRef;
 use crate::metadata::value::MetadataValue;
 
-#[derive(Debug, Eq, PartialEq, Hash, Clone, Allocative, Default)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Allocative, Default, Pagable)]
 pub struct MetadataMap {
-    values: Box<SortedMap<MetadataKey, MetadataValue>>,
+    values: Box<BuckFixedSortedMap<MetadataKey, MetadataValue>>,
 }
 
 impl MetadataMap {
-    pub fn new(values: SmallMap<MetadataKey, MetadataValue>) -> Self {
+    pub fn new(values: BuckMutInsertionMap<MetadataKey, MetadataValue>) -> Self {
         Self {
-            values: Box::new(SortedMap::from(values)),
+            values: Box::new(BuckFixedSortedMap::from(values)),
         }
     }
 
     pub fn get(&self, key: &MetadataKeyRef) -> Option<&MetadataValue> {
         self.values.get(key)
+    }
+}
+
+impl StrongHash for MetadataMap {
+    fn strong_hash<H: Hasher>(&self, state: &mut H) {
+        let Self { values } = self;
+        (values.len() as u64).strong_hash(state);
+        values.iter().for_each(|(key, value)| {
+            key.as_str().strong_hash(state);
+            value.strong_hash(state);
+        });
     }
 }
 
@@ -82,7 +96,7 @@ mod tests {
     use super::*;
 
     fn make() -> MetadataMap {
-        let mut map = SmallMap::new();
+        let mut map = BuckMutInsertionMap::new();
         map.insert(
             "foo.bar".to_owned().try_into().unwrap(),
             MetadataValue::new(serde_json::Value::String("baz".to_owned())),

@@ -10,9 +10,11 @@
 
 package com.facebook.buck.testrunner;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.lang.annotation.Annotation;
 import java.util.Optional;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class CheckDependency {
 
   private CheckDependency() {

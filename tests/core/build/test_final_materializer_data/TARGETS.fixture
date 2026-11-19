@@ -1,0 +1,52 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+load(":defs.bzl", "artifact_generator")
+
+# Small test targets with hardcoded values for CI tests
+
+# 10 artifacts in a single flat tset
+artifact_generator(
+    name = "small_flat",
+    artifacts_per_node = 1,
+    nodes_per_tset = 10,
+    number_of_tsets = 1,
+)
+
+# 100 artifacts: 10 sub-tsets with 10 nodes each
+artifact_generator(
+    name = "medium_balanced",
+    artifacts_per_node = 1,
+    nodes_per_tset = 10,
+    number_of_tsets = 10,
+)
+
+# 100 artifacts: 1 sub-tset with 100 nodes (flat structure)
+artifact_generator(
+    name = "medium_flat",
+    artifacts_per_node = 1,
+    nodes_per_tset = 100,
+    number_of_tsets = 1,
+)
+
+# 100 artifacts: 100 sub-tsets with 1 node each (deep structure)
+artifact_generator(
+    name = "medium_deep",
+    artifacts_per_node = 1,
+    nodes_per_tset = 1,
+    number_of_tsets = 100,
+)
+
+# Configurable target for performance testing
+# Usage: buck2 build //:configurable -c test.artifacts_per_node=1 -c test.nodes_per_tset=100 -c test.number_of_tsets=100
+artifact_generator(
+    name = "configurable",
+    artifacts_per_node = int(read_config("test", "artifacts_per_node", "1")),
+    nodes_per_tset = int(read_config("test", "nodes_per_tset", "10")),
+    number_of_tsets = int(read_config("test", "number_of_tsets", "1")),
+)

@@ -22,6 +22,8 @@ buck_java_library(
         "prelude//toolchains/android/src/com/facebook/buck/workertool/resources/proto:worker-model",
         "prelude//toolchains/android/third-party:args4j",
         "prelude//toolchains/android/third-party:grpc-netty",
+        "prelude//toolchains/android/third-party:infer-annotations",
+        "prelude//toolchains/android/third-party:kotlin-annotations",
         "prelude//toolchains/android/third-party:netty",
     ],
 )

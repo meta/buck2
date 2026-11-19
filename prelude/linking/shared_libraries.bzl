@@ -29,8 +29,8 @@ Soname = record(
     ensure_str = field(typing.Callable),
     # Return `True` if the SONAME is respresented as a string.
     is_str = field(bool),
-    # The the actual SONAME can be rerepsented by a static string, or the
-    # contents of a file genrated at build time.
+    # The actual SONAME can be represented by a static string, or the
+    # contents of a file generated at build time.
     _soname = field(str | Artifact),
 )
 
@@ -68,14 +68,12 @@ def to_soname(soname: str | Artifact | Soname) -> Soname:
     )
 
 def create_shlib(
-        # The soname can either be a string or an artifact with the soname in
-        # text form.
-        soname: str | Artifact | Soname,
-        **kwargs) -> SharedLibrary:
-    return SharedLibrary(
-        soname = to_soname(soname),
-        **kwargs
-    )
+    # The soname can either be a string or an artifact with the soname in
+    # text form.
+    soname: str | Artifact | Soname,
+    **kwargs,
+) -> SharedLibrary:
+    return SharedLibrary(soname = to_soname(soname), **kwargs)
 
 SharedLibraries = record(
     label = field(Label | None, None),
@@ -87,14 +85,49 @@ SharedLibraries = record(
     flavored_libraries = field(dict[LinkableFlavor, SharedLibrary] | None, None),
 )
 
+def _project_external_debug_info(shared_libraries: SharedLibraries) -> cmd_args:
+    rv = cmd_args()
+    for shared_library in shared_libraries.libraries:
+        external_debug_info = shared_library.lib.external_debug_info._tset
+        if external_debug_info:
+            rv.add(external_debug_info.project_as_args("artifacts"))
+    return rv
+
+def _project_symlink_tree(shared_libraries: SharedLibraries) -> list[(bool, str | Artifact, Artifact, Artifact | None)]:
+    rv = []
+    for shared_library in shared_libraries.libraries:
+        soname = shared_library.soname  # type: Soname
+        linked_object = shared_library.lib  # type: LinkedObject
+
+        rv.append(
+            (
+                soname.is_str,
+                soname._soname,
+                linked_object.output,
+                linked_object.dwp,
+            )
+        )
+    return rv
+
 # T-set of SharedLibraries
-SharedLibrariesTSet = transitive_set()
+SharedLibrariesTSet = transitive_set(
+    args_projections = {
+        "external_debug_info": _project_external_debug_info,
+    },
+    json_projections = {
+        "symlink_tree": _project_symlink_tree,
+    },
+)
 
 # Shared libraries required by top-level packaging rules (e.g. shared libs
 # for Python binary, symlink trees of shared libs for C++ binaries)
-SharedLibraryInfo = provider(fields = {
-    "set": provider_field(SharedLibrariesTSet | None, default = None),
-})
+SharedLibraryInfo = provider(
+    fields = {
+        "set": provider_field(SharedLibrariesTSet | None, default = None),
+    }
+)
+
+EMPTY_SHARED_LIBRARY_INFO = SharedLibraryInfo(set = None)
 
 def get_strip_non_global_flags(cxx_toolchain: CxxToolchainInfo) -> list:
     if cxx_toolchain.strip_flags_info and cxx_toolchain.strip_flags_info.strip_non_global_flags:
@@ -103,10 +136,8 @@ def get_strip_non_global_flags(cxx_toolchain: CxxToolchainInfo) -> list:
     return ["--strip-unneeded"]
 
 def create_shlib_from_ctx(
-        ctx: AnalysisContext,
-        soname: str | Artifact | Soname,
-        lib: LinkedObject,
-        extra_outputs: dict[str, list[DefaultInfo]] = {}) -> SharedLibrary:
+    ctx: AnalysisContext, soname: str | Artifact | Soname, lib: LinkedObject, extra_outputs: dict[str, list[DefaultInfo]] = {}
+) -> SharedLibrary:
     cxx_toolchain = getattr(ctx.attrs, "_cxx_toolchain", None)
     return create_shlib(
         lib = lib,
@@ -115,7 +146,9 @@ def create_shlib_from_ctx(
             cxx_toolchain[CxxToolchainInfo],
             lib.output,
             cmd_args(get_strip_non_global_flags(cxx_toolchain[CxxToolchainInfo])),
-        ) if cxx_toolchain != None else None,
+        )
+        if cxx_toolchain != None
+        else None,
         link_args = lib.link_args,
         shlib_deps = None,  # TODO(cjhopman): we need this figured out.
         can_be_asset = getattr(ctx.attrs, "can_be_asset", False) or False,
@@ -131,9 +164,7 @@ NamedLinkedObject = record(
     extra_outputs = field(dict[str, list[DefaultInfo]], {}),
 )
 
-def create_flavored_shared_libraries(
-        ctx: AnalysisContext,
-        libraries: dict[LinkableFlavor, NamedLinkedObject]) -> SharedLibraries:
+def create_flavored_shared_libraries(ctx: AnalysisContext, libraries: dict[LinkableFlavor, NamedLinkedObject]) -> SharedLibraries:
     default_libraries = []
     flavored_libraries = {}
     for flavor in libraries:
@@ -155,9 +186,8 @@ def create_flavored_shared_libraries(
     )
 
 def create_shared_libraries(
-        ctx: AnalysisContext,
-        libraries: dict[str, LinkedObject],
-        extra_outputs: dict[str, dict[str, list[DefaultInfo]]] = {}) -> SharedLibraries:
+    ctx: AnalysisContext, libraries: dict[str, LinkedObject], extra_outputs: dict[str, dict[str, list[DefaultInfo]]] = {}
+) -> SharedLibraries:
     """
     Take a mapping of dest -> src and turn it into a mapping that will be
     passed around in providers. Used for both srcs, and resources.
@@ -180,24 +210,32 @@ def create_shared_libraries(
 # because that might not always exist, e.g. a Python library can pass through
 # SharedLibraryInfo but it cannot produce any. The value in `deps` represents
 # all the inherited shared libraries for this target.
-def merge_shared_libraries(
-        actions: AnalysisActions,
-        node: [SharedLibraries, None] = None,
-        deps: list[SharedLibraryInfo] = []) -> SharedLibraryInfo:
+def merge_shared_libraries(actions: AnalysisActions, node: [SharedLibraries, None] = None, deps: list[SharedLibraryInfo] = []) -> SharedLibraryInfo:
     kwargs = {}
 
-    children = filter(None, [dep.set for dep in deps])
+    contributing_deps = []
+    children = []
+    for dep in deps:
+        if dep.set != None:
+            contributing_deps.append(dep)
+            children.append(dep.set)
+
+    if node == None:
+        if not children:
+            return EMPTY_SHARED_LIBRARY_INFO
+        if len(children) == 1:
+            # With no local value, one contributing dep is already the complete
+            # merged result.
+            return contributing_deps[0]
     if children:
         kwargs["children"] = children
-    if node:
+    if node != None:
         kwargs["value"] = node
 
     set = actions.tset(SharedLibrariesTSet, **kwargs) if kwargs else None
     return SharedLibraryInfo(set = set)
 
-def traverse_shared_library_info(
-        info: SharedLibraryInfo,
-        transformation_provider: TransformationSpecContext | None) -> list[SharedLibrary]:
+def traverse_shared_library_info(info: SharedLibraryInfo, transformation_provider: TransformationSpecContext | None) -> list[SharedLibrary]:
     libraries = []
     if info.set:
         for libs in info.set.traverse():
@@ -219,19 +257,13 @@ def traverse_shared_library_info(
     return libraries
 
 # Helper to merge shlibs, throwing an error if more than one have the same SONAME.
-def _merge_shlibs(
-        shared_libs: list[SharedLibrary],
-        resolve_soname: typing.Callable) -> dict[str, SharedLibrary]:
+def _merge_shlibs(shared_libs: list[SharedLibrary], resolve_soname: typing.Callable) -> dict[str, SharedLibrary]:
     merged = {}
     for shlib in shared_libs:
         soname = resolve_soname(shlib.soname)
         existing = merged.get(soname)
         if existing != None and existing.lib != shlib.lib:
-            error = (
-                "Duplicate library {}! Conflicting mappings:\n" +
-                "{} from {}\n" +
-                "{} from {}"
-            )
+            error = "Duplicate library {}! Conflicting mappings:\n" + "{} from {}\n" + "{} from {}"
             fail(
                 error.format(
                     shlib.soname,
@@ -244,9 +276,7 @@ def _merge_shlibs(
         merged[soname] = shlib
     return merged
 
-def with_unique_str_sonames(
-        shared_libs: list[SharedLibrary],
-        skip_dynamic: bool = False) -> dict[str, SharedLibrary]:
+def with_unique_str_sonames(shared_libs: list[SharedLibrary], skip_dynamic: bool = False) -> dict[str, SharedLibrary]:
     """
     Convert a list of `SharedLibrary`s to a map of unique SONAMEs to the
     corresponding `SharedLibrary`.
@@ -254,20 +284,11 @@ def with_unique_str_sonames(
     Will fail if the same SONAME maps to multiple `SharedLibrary`s.
     """
     return _merge_shlibs(
-        shared_libs = [
-            shlib
-            for shlib in shared_libs
-            if shlib.soname.is_str or not skip_dynamic
-        ],
+        shared_libs = [shlib for shlib in shared_libs if shlib.soname.is_str or not skip_dynamic],
         resolve_soname = lambda s: s.ensure_str(),
     )
 
-def gen_shared_libs_action(
-        actions: AnalysisActions,
-        out: str,
-        shared_libs: list[SharedLibrary],
-        gen_action: typing.Callable,
-        dir = False) -> Artifact:
+def gen_shared_libs_action(actions: AnalysisActions, out: str, shared_libs: list[SharedLibrary], gen_action: typing.Callable, dir = False) -> Artifact:
     """
     Produce an action by first resolving all SONAME of the given shlibs and
     enforcing that each SONAME is unique.
@@ -276,7 +297,7 @@ def gen_shared_libs_action(
     to the corresponding shlibs.
     """
 
-    output = actions.declare_output(out, dir = dir)
+    output = actions.declare_output(out, dir = dir, has_content_based_path = False)
 
     def func(actions, artifacts, output):
         def resolve_soname(soname):
@@ -307,9 +328,7 @@ def gen_shared_libs_action(
 
     return output
 
-def zip_shlibs(
-        merged: dict[str, SharedLibrary],
-        vals: list[(SharedLibrary, typing.Any)]) -> list[(str, SharedLibrary, typing.Any)]:
+def zip_shlibs(merged: dict[str, SharedLibrary], vals: list[(SharedLibrary, typing.Any)]) -> list[(str, SharedLibrary, typing.Any)]:
     """
     Helper to "zip" together the soname->shlib map to a list with associated
     shared lib values.
@@ -342,6 +361,7 @@ def create_shlib_symlink_tree(actions: AnalysisActions, out: str, shared_libs: l
         gen_action = lambda actions, output, shared_libs: actions.symlinked_dir(
             output,
             {name: shlib.lib.output for name, shlib in shared_libs.items()},
+            has_content_based_path = False,
         ),
         dir = True,
     )
@@ -354,18 +374,16 @@ def create_shlib_dwp_tree(actions: AnalysisActions, out: str, shared_libs: list[
         gen_action = lambda actions, output, shared_libs: actions.symlinked_dir(
             output,
             {name + ".dwp": shlib.lib.dwp for name, shlib in shared_libs.items() if shlib.lib.dwp != None},
+            has_content_based_path = False,
         ),
         dir = True,
     )
 
-def extract_soname_from_shlib(
-        actions: AnalysisActions,
-        name: str,
-        shared_lib: Artifact) -> Artifact:
+def extract_soname_from_shlib(actions: AnalysisActions, name: str, shared_lib: Artifact) -> Artifact:
     """
     Extract the SONAME from a shared library into a file.
     """
-    soname = actions.declare_output(name)
+    soname = actions.declare_output(name, has_content_based_path = False)
     cmd = cmd_args(
         "sh",
         "-c",

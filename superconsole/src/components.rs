@@ -18,12 +18,14 @@ pub use blank::Blank;
 pub use bordering::Bordered;
 pub use bounding::Bounded;
 pub use padding::Padded;
+pub use spinner::Spinner;
 pub use splitting::Split;
 
 use crate::Dimensions;
 use crate::Lines;
 pub use crate::components::draw_horizontal::DrawHorizontal;
 pub use crate::components::draw_vertical::DrawVertical;
+pub use crate::components::spinner::BRAILLE_SPINNER;
 
 pub mod alignment;
 mod blank;
@@ -33,6 +35,7 @@ mod draw_horizontal;
 mod draw_vertical;
 pub(crate) mod echo;
 pub mod padding;
+pub mod spinner;
 pub mod splitting;
 
 /// Used to mark whether a draw is final.

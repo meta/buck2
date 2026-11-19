@@ -1,0 +1,49 @@
+load(":defs.bzl", "cas_artifact", "cas_artifact_out_of_range_expiration", "consume", "generate", "write")
+
+cas_artifact_out_of_range_expiration(
+    name = "out_of_range_expiration",
+)
+
+# A digest nothing has ever uploaded: the sha1 of a string the test invents.
+cas_artifact(
+    name = "missing",
+    digest = read_config("test", "missing_digest", "da39a3ee5e6b4b0d3255bfef95601890afd80709:0"),
+)
+
+# Content the test invents, uploaded under another namespace's use case by running `seed`
+# remotely there, then referenced from this daemon's namespace as `reconciled`.
+write(name = "seed_content", content = read_config("test", "content", ""))
+
+consume(name = "seed", dep = ":seed_content")
+
+cas_artifact(
+    name = "reconciled",
+    digest = read_config("test", "digest", "da39a3ee5e6b4b0d3255bfef95601890afd80709:0"),
+    use_case = "buck2-default",
+)
+
+# The same digest under this daemon's own use case: absent before the copy, present after it.
+cas_artifact(
+    name = "canonical",
+    digest = read_config("test", "digest", "da39a3ee5e6b4b0d3255bfef95601890afd80709:0"),
+)
+
+consume(name = "check", dep = ":reconciled")
+
+# The same round trip with a blob far larger than anything an RPC inlines.
+generate(name = "big_content", seed = read_config("test", "seed", "0"), size = 5000000)
+
+consume(name = "seed_big", dep = ":big_content")
+
+cas_artifact(
+    name = "reconciled_big",
+    digest = read_config("test", "big_digest", "da39a3ee5e6b4b0d3255bfef95601890afd80709:0"),
+    use_case = "buck2-default",
+)
+
+cas_artifact(
+    name = "canonical_big",
+    digest = read_config("test", "big_digest", "da39a3ee5e6b4b0d3255bfef95601890afd80709:0"),
+)
+
+consume(name = "check_big", dep = ":reconciled_big")

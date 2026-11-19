@@ -10,11 +10,14 @@
 
 use buck2_cli_proto::ConfigOverride;
 use buck2_cli_proto::config_override::ConfigType;
+use buck2_core::cells::cell_root_path::CellRootPath;
 use buck2_core::cells::cell_root_path::CellRootPathBuf;
+use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::abs_path::AbsPathBuf;
+use pagable::Pagable;
 
 use crate::legacy_configs::configs::ConfigArgumentParseError;
 use crate::legacy_configs::configs::ConfigSectionAndKey;
@@ -24,8 +27,47 @@ use crate::legacy_configs::file_ops::ConfigParserFileOps;
 use crate::legacy_configs::file_ops::ConfigPath;
 use crate::legacy_configs::parser::LegacyConfigParser;
 
+/// The cell-aware constructors and accessor for `ConfigOverride`. They live here rather
+/// than on the type because `buck2_cli_proto` deliberately does not depend on `buck2_core`.
+pub trait ConfigOverrideExt: Sized {
+    fn flag(s: &str, cell: Option<CellRootPathBuf>) -> Self;
+
+    fn file(p: &str, cell: Option<CellRootPathBuf>) -> Self;
+
+    fn get_cell(&self) -> buck2_error::Result<Option<&CellRootPath>>;
+}
+
+impl ConfigOverrideExt for ConfigOverride {
+    fn flag(s: &str, cell: Option<CellRootPathBuf>) -> Self {
+        Self {
+            cell: cell.map(|c| c.as_str().to_owned()),
+            config_override: s.to_owned(),
+            config_type: ConfigType::Value.into(),
+        }
+    }
+
+    fn file(p: &str, cell: Option<CellRootPathBuf>) -> Self {
+        Self {
+            cell: cell.map(|c| c.as_str().to_owned()),
+            config_override: p.to_owned(),
+            config_type: ConfigType::File.into(),
+        }
+    }
+
+    fn get_cell(&self) -> buck2_error::Result<Option<&CellRootPath>> {
+        self.cell
+            .as_ref()
+            .map(|p| {
+                ProjectRelativePath::new(p)
+                    .map(CellRootPath::new)
+                    .internal_error("Client should have sent a valid path")
+            })
+            .transpose()
+    }
+}
+
 /// Representation of a processed config arg, namely after file path resolution has been performed.
-#[derive(Debug, Clone, PartialEq, Eq, allocative::Allocative)]
+#[derive(Debug, Clone, PartialEq, Eq, allocative::Allocative, Pagable)]
 pub(crate) enum ResolvedLegacyConfigArg {
     /// A single config key-value pair (in `a.b=c` format).
     Flag(ResolvedConfigFlag),
@@ -33,7 +75,7 @@ pub(crate) enum ResolvedLegacyConfigArg {
     File(ResolvedConfigFile),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, allocative::Allocative)]
+#[derive(Clone, Debug, PartialEq, Eq, allocative::Allocative, Pagable)]
 pub(crate) enum ResolvedConfigFile {
     /// If the config file is project relative, the path of the file
     Project(ProjectRelativePathBuf),
@@ -41,14 +83,14 @@ pub(crate) enum ResolvedConfigFile {
     Global(ExternalConfigFile),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, allocative::Allocative)]
+#[derive(Clone, Debug, PartialEq, Eq, allocative::Allocative, Pagable)]
 pub(crate) struct ExternalConfigFile {
     pub(crate) parser: LegacyConfigParser,
     // The origin path of the config file
     origin_path: AbsPathBuf,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, allocative::Allocative)]
+#[derive(Clone, Debug, PartialEq, Eq, allocative::Allocative, Pagable)]
 pub(crate) struct ResolvedConfigFlag {
     pub(crate) section: String,
     pub(crate) key: String,
@@ -56,6 +98,33 @@ pub(crate) struct ResolvedConfigFlag {
     pub(crate) value: Option<String>,
     // If this arg only applies to one cell, the root of that cell.
     pub(crate) cell: Option<CellRootPathBuf>,
+}
+
+/// Renders the arg close to how it was passed on the command line, for user-facing messages.
+/// A cell-scoped flag shows the cell's root path rather than the alias the user typed, since
+/// the alias is not retained after resolution.
+impl std::fmt::Display for ResolvedLegacyConfigArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Flag(flag) => {
+                write!(f, "--config ")?;
+                if let Some(cell) = &flag.cell {
+                    write!(f, "{cell}//")?;
+                }
+                write!(
+                    f,
+                    "{}.{}={}",
+                    flag.section,
+                    flag.key,
+                    flag.value.as_deref().unwrap_or("")
+                )
+            }
+            Self::File(ResolvedConfigFile::Project(path)) => write!(f, "--config-file {path}"),
+            Self::File(ResolvedConfigFile::Global(file)) => {
+                write!(f, "--config-file {}", file.origin_path)
+            }
+        }
+    }
 }
 
 fn resolve_config_flag_arg(
@@ -74,10 +143,10 @@ fn resolve_config_flag_arg(
     };
 
     Ok(ResolvedConfigFlag {
-        cell,
         section,
         key,
         value,
+        cell,
     })
 }
 

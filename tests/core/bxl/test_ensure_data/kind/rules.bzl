@@ -14,8 +14,8 @@ rule2 = rule(impl = _rule_impl, attrs = {"foo": attrs.string()})
 rule3 = rule(impl = _rule_impl, attrs = {"foo": attrs.string()})
 
 def _rule_impl_with_run_info_and_default_info_outputs(ctx):
-    out = ctx.actions.write("default_out", "default_out")
-    run_info_out = ctx.actions.write("run_info_out", "run_info_out")
+    out = ctx.actions.write("default_out", "default_out", has_content_based_path = False)
+    run_info_out = ctx.actions.write("run_info_out", "run_info_out", has_content_based_path = False)
     return [
         DefaultInfo(default_outputs = [out]),
         RunInfo(args = cmd_args(run_info_out)),
@@ -29,15 +29,17 @@ rule4 = rule(
 def project(f: Artifact):
     return f
 
-NameSet = transitive_set(args_projections = {
-    "project": project,
-})
+NameSet = transitive_set(
+    args_projections = {
+        "project": project,
+    }
+)
 
 NameInfo = provider(fields = ["tset"])
 
 def _rule_impl_with_tset(ctx):
     # Produce a file that contains our name.
-    out = ctx.actions.write("out.txt", str(ctx.label.name) + "\n")
+    out = ctx.actions.write("out.txt", str(ctx.label.name) + "\n", has_content_based_path = False)
 
     # Produce a tset that is our file concated wiht all the files emitted by
     # our children.
@@ -46,17 +48,20 @@ def _rule_impl_with_tset(ctx):
 
     # Concatenate all the files declared by the tset, into a single file
     # (agg.txt), which we'll return as our output.
-    agg = ctx.actions.declare_output("tset_out")
+    agg = ctx.actions.declare_output("tset_out", has_content_based_path = False)
     projected = tset.project_as_args("project")
 
-    ctx.actions.run([
-        "sh",
-        "-c",
-        'out="$1" && shift && cat "$@" > "$out"',
-        "--",
-        agg.as_output(),
-        projected,
-    ], category = "test")
+    ctx.actions.run(
+        [
+            "sh",
+            "-c",
+            'out="$1" && shift && cat "$@" > "$out"',
+            "--",
+            agg.as_output(),
+            projected,
+        ],
+        category = "test",
+    )
 
     return [
         NameInfo(tset = tset),

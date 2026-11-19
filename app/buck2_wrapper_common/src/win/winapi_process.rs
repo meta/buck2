@@ -14,14 +14,14 @@ use std::io;
 use std::time::Duration;
 
 use buck2_error::BuckErrorContext;
-use winapi::shared::minwindef::FILETIME;
-use winapi::um::minwinbase::STILL_ACTIVE;
-use winapi::um::processthreadsapi::GetExitCodeProcess;
-use winapi::um::processthreadsapi::GetProcessTimes;
-use winapi::um::processthreadsapi::OpenProcess;
-use winapi::um::processthreadsapi::TerminateProcess;
-use winapi::um::winnt::PROCESS_QUERY_INFORMATION;
-use winapi::um::winnt::PROCESS_TERMINATE;
+use windows_sys::Win32::Foundation::FILETIME;
+use windows_sys::Win32::Foundation::STILL_ACTIVE;
+use windows_sys::Win32::System::Threading::GetExitCodeProcess;
+use windows_sys::Win32::System::Threading::GetProcessTimes;
+use windows_sys::Win32::System::Threading::OpenProcess;
+use windows_sys::Win32::System::Threading::PROCESS_QUERY_INFORMATION;
+use windows_sys::Win32::System::Threading::PROCESS_TERMINATE;
+use windows_sys::Win32::System::Threading::TerminateProcess;
 
 use crate::pid::Pid;
 use crate::win::winapi_handle::WinapiHandle;
@@ -108,7 +108,7 @@ impl WinapiProcessHandle {
         let mut exit_code = 0;
 
         if unsafe { GetExitCodeProcess(self.handle.handle(), &mut exit_code) } != 0 {
-            if exit_code == STILL_ACTIVE {
+            if exit_code == STILL_ACTIVE as u32 {
                 return Ok(None);
             } else {
                 return Ok(Some(exit_code));

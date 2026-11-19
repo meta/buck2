@@ -61,11 +61,7 @@ def _package_flag(toolchain: HaskellToolchainInfo) -> str:
     else:
         return "-package"
 
-def get_packages_info(
-        ctx: AnalysisContext,
-        link_style: LinkStyle,
-        specify_pkg_version: bool,
-        enable_profiling: bool) -> PackagesInfo:
+def get_packages_info(ctx: AnalysisContext, link_style: LinkStyle, specify_pkg_version: bool, enable_profiling: bool) -> PackagesInfo:
     haskell_toolchain = ctx.attrs._haskell_toolchain[HaskellToolchainInfo]
 
     # Collect library dependencies. Note that these don't need to be in a
@@ -73,10 +69,7 @@ def get_packages_info(
     direct_deps_link_info = attr_deps_haskell_link_infos(ctx)
     libs = ctx.actions.tset(
         HaskellLibraryInfoTSet,
-        children = [
-            lib.prof_info[link_style] if enable_profiling else lib.info[link_style]
-            for lib in direct_deps_link_info
-        ],
+        children = [lib.prof_info[link_style] if enable_profiling else lib.info[link_style] for lib in direct_deps_link_info],
     )
 
     # base is special and gets exposed by default
@@ -88,13 +81,15 @@ def get_packages_info(
 
     for lib in libs.traverse():
         packagedb_set[lib.db] = None
-        hidden_args = cmd_args(hidden = [
-            lib.import_dirs.values(),
-            lib.stub_dirs,
-            # libs of dependencies might be needed at compile time if
-            # we're using Template Haskell:
-            lib.libs,
-        ])
+        hidden_args = cmd_args(
+            hidden = [
+                lib.import_dirs.values(),
+                lib.stub_dirs,
+                # libs of dependencies might be needed at compile time if
+                # we're using Template Haskell:
+                lib.libs,
+            ]
+        )
 
         exposed_package_args.add(hidden_args)
 
@@ -113,7 +108,7 @@ def get_packages_info(
     # Expose only the packages we depend on directly
     for lib in haskell_direct_deps_lib_infos:
         pkg_name = lib.name
-        if (specify_pkg_version):
+        if specify_pkg_version:
             pkg_name += "-{}".format(lib.version)
 
         exposed_package_args.add(package_flag, pkg_name)
@@ -124,12 +119,7 @@ def get_packages_info(
         transitive_deps = libs,
     )
 
-def compile_args(
-        ctx: AnalysisContext,
-        link_style: LinkStyle,
-        enable_profiling: bool,
-        pkgname = None,
-        suffix: str = "") -> CompileArgsInfo:
+def compile_args(ctx: AnalysisContext, link_style: LinkStyle, enable_profiling: bool, pkgname = None, suffix: str = "") -> CompileArgsInfo:
     haskell_toolchain = ctx.attrs._haskell_toolchain[HaskellToolchainInfo]
 
     compile_cmd = cmd_args()
@@ -162,9 +152,10 @@ def compile_args(
     objects = ctx.actions.declare_output(
         "objects-" + artifact_suffix,
         dir = True,
+        has_content_based_path = False,
     )
-    hi = ctx.actions.declare_output("hi-" + artifact_suffix, dir = True)
-    stubs = ctx.actions.declare_output("stubs-" + artifact_suffix, dir = True)
+    hi = ctx.actions.declare_output("hi-" + artifact_suffix, dir = True, has_content_based_path = False)
+    stubs = ctx.actions.declare_output("stubs-" + artifact_suffix, dir = True, has_content_based_path = False)
 
     compile_args.add(
         "-odir",
@@ -200,7 +191,7 @@ def compile_args(
 
     arg_srcs = []
     hidden_srcs = []
-    for (path, src) in srcs_to_pairs(ctx.attrs.srcs):
+    for path, src in srcs_to_pairs(ctx.attrs.srcs):
         # hs-boot files aren't expected to be an argument to compiler but does need
         # to be included in the directory of the associated src file
         if is_haskell_src(path):
@@ -227,11 +218,7 @@ def compile_args(
     )
 
 # Compile all the context's sources.
-def compile(
-        ctx: AnalysisContext,
-        link_style: LinkStyle,
-        enable_profiling: bool,
-        pkgname: str | None = None) -> CompileResultInfo:
+def compile(ctx: AnalysisContext, link_style: LinkStyle, enable_profiling: bool, pkgname: str | None = None) -> CompileResultInfo:
     haskell_toolchain = ctx.attrs._haskell_toolchain[HaskellToolchainInfo]
     compile_cmd = cmd_args(haskell_toolchain.compiler)
 
@@ -243,12 +230,14 @@ def compile(
 
     if args.args_for_file:
         if haskell_toolchain.use_argsfile:
-            compile_cmd.add(at_argfile(
-                actions = ctx.actions,
-                name = artifact_suffix + ".haskell_compile_argsfile",
-                args = [args.args_for_file, args.srcs],
-                allow_args = True,
-            ))
+            compile_cmd.add(
+                at_argfile(
+                    actions = ctx.actions,
+                    name = artifact_suffix + ".haskell_compile_argsfile",
+                    args = [args.args_for_file, args.srcs],
+                    allow_args = True,
+                )
+            )
         else:
             compile_cmd.add(args.args_for_file)
             compile_cmd.add(args.srcs)

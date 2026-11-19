@@ -22,13 +22,8 @@ load("@prelude//:prelude.bzl", "native")
 # by this rule so be careful not to cache it in Remote Execution etc to prevent
 # different machines from reusing the outputs of these rules.
 def external_pkgconfig_library(
-        name,
-        package = None,
-        visibility = ["PUBLIC"],
-        labels = [],
-        default_target_platform = "prelude//platforms:default",
-        deps = [],
-        fallback = None):
+    name, package = None, visibility = ["PUBLIC"], labels = [], default_target_platform = "prelude//platforms:default", deps = [], fallback = None
+):
     if package == None:
         package = name
 
@@ -36,12 +31,8 @@ def external_pkgconfig_library(
     cmd_libs = "pkg-config --libs {} > $OUT".format(package)
 
     if fallback != None:
-        preprocessor_flags = (
-            fallback.preprocessor_flags if hasattr(fallback, "preprocessor_flags") else []
-        )
-        linker_flags = (
-            fallback.linker_flags if hasattr(fallback, "linker_flags") else []
-        )
+        preprocessor_flags = fallback.preprocessor_flags if hasattr(fallback, "preprocessor_flags") else []
+        linker_flags = fallback.linker_flags if hasattr(fallback, "linker_flags") else []
 
         cmd_cflags = "if pkg-config --exists {}; then {}; else echo {} > $OUT; fi".format(
             package,

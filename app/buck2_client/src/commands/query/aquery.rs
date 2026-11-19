@@ -69,6 +69,8 @@ return incorrect results or otherwise behave unexpectedly.
     name = "aquery",
     about = "Perform queries on the action graph (experimental)",
     long_about = help(),
+    after_help = "Run `buck2 docs aquery` for detailed information about query functions such as allbuildfiles, allpaths, attrfilter, and more.",
+    after_long_help = "",
     verbatim_doc_comment,
 )]
 pub struct AqueryCommand {

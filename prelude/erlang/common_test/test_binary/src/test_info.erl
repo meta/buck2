@@ -1,12 +1,20 @@
+%% Copyright (c) Meta Platforms, Inc. and affiliates.
+%%
+%% This source code is licensed under both the MIT license found in the
+%% LICENSE-MIT file in the root directory of this source tree and the Apache
+%% License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+%% of this source tree.
+
 %% @format
 -module(test_info).
 -compile(warn_missing_spec_all).
 
--export([load_from_file/1, write_to_file/2]).
+-export([load_from_file/1, write_to_file/2, try_make_path_relative/1]).
+-export_type([test_info/0]).
+
 -include_lib("common/include/buck_ct_records.hrl").
 
 -type test_info() :: #test_info{}.
--export_type([test_info/0]).
 
 -import(common_util, [unicode_characters_to_list/1, unicode_characters_to_binary/1]).
 
@@ -63,7 +71,7 @@ write_to_file(FileName, TestInfo) ->
         raw_target = RawTarget,
         trampolines = Trampolines
     } = TestInfo,
-    ErlTermToStr = fun(Term) -> unicode_characters_to_binary(lists:flatten(io_lib:format("~tp", [Term]))) end,
+    ErlTermToStr = fun(Term) -> unicode_characters_to_binary(io_lib:format("~tp", [Term])) end,
     Json = #{
         <<"dependencies">> => [try_make_path_relative(Dep) || Dep <- Dependencies],
         <<"test_suite">> => filename:basename(SuiteBeamPath, ".beam"),
@@ -95,6 +103,8 @@ make_path_absolute(Path) ->
         RepoRoot -> filename:join(RepoRoot, Path)
     end.
 
+%% Length guard: lists:split/2 throws badarg (not a non-matching tuple)
+%% when Path has fewer components than BaseDir.
 -spec try_make_path_relative(file:filename_all()) -> file:filename_all().
 try_make_path_relative(Path) ->
     case filename:pathtype(Path) of
@@ -111,7 +121,7 @@ try_make_path_relative(Path) ->
                 end,
             BaseDirParts = filename:split(BaseDir),
             PathParts = filename:split(Path),
-            case lists:split(length(BaseDirParts), PathParts) of
+            case length(PathParts) >= length(BaseDirParts) andalso lists:split(length(BaseDirParts), PathParts) of
                 {BaseDirParts, RelativeParts} -> filename:join(RelativeParts);
                 _ -> Path
             end

@@ -586,3 +586,76 @@ fbcode/security/duo-2fac/pam_duo.go:28:11: undefined: pam.PromptEchoOn
     assert_eq!(entry2_2.error_type, Some("A".to_owned()));
     assert_eq!(entry2_2.error_number, None);
 }
+
+fn first_lines(entries: &[Entry]) -> Vec<String> {
+    entries
+        .iter()
+        .map(|e| e.original_err_lines.first().cloned().unwrap_or_default())
+        .collect()
+}
+
+/// The rules of `prelude/go/go_error_handler.bzl`, after Starlark unescaping.
+fn go_error_format() -> Vec<String> {
+    vec![
+        r"%-G#\ %.%#".to_owned(),
+        r"%-G%.%#panic:\ %m".to_owned(),
+        r"%Ecan't\ load\ package:\ %m".to_owned(),
+        r"%A\(\[\^:]\+:\ \)\?%f:%l:%c:\ %m".to_owned(),
+        r"%A\(\[\^:]\+:\ \)\?%f:%l:\ %m".to_owned(),
+        r"%C%*\s%m".to_owned(),
+        r"%-G%.%#".to_owned(),
+    ]
+}
+
+/// `go build` prints a `# <package>` header before each package's errors. The catch-all `%-G`
+/// rule drops the header on its own; the error that is still open survives, as does any error
+/// followed by an unrelated line.
+#[test]
+fn test_ignored_line_between_two_errors_keeps_both_errors() {
+    let lines = split_lines(
+        "# example.com/a\na/a.go:3:2: undefined: x\n# example.com/b\nb/b.go:4:2: undefined: y\n",
+    );
+    let entries = parse_error_format(go_error_format(), lines).unwrap();
+    assert_eq!(
+        first_lines(&entries),
+        vec!["a/a.go:3:2: undefined: x", "b/b.go:4:2: undefined: y"]
+    );
+
+    let lines = split_lines("a.go:1:2: first\nsome unrelated line\na.go:5:6: second\n");
+    let entries = parse_error_format(go_error_format(), lines).unwrap();
+    assert_eq!(
+        first_lines(&entries),
+        vec!["a.go:1:2: first", "a.go:5:6: second"]
+    );
+}
+
+/// An ignored multi-line message (`%-E`) stays ignored when the input ends, or a line matches
+/// nothing, before the message is closed, and an error it follows is kept.
+#[test]
+fn test_ignored_multi_line_message_stays_ignored_when_not_closed() {
+    let efm = vec!["%-EError %n".to_owned(), "%CLine %l".to_owned()];
+    let entries = parse_error_format(efm.clone(), split_lines("Error 100\nLine 10\n")).unwrap();
+    assert!(entries.is_empty(), "{entries:?}");
+    let entries = parse_error_format(efm, split_lines("Error 100\nunrelated\n")).unwrap();
+    assert!(entries.is_empty(), "{entries:?}");
+
+    let efm = vec!["%Eerror: %m".to_owned(), "%-Enote: %m".to_owned()];
+    let entries = parse_error_format(efm, split_lines("error: boom\nnote: ignore me\n")).unwrap();
+    assert_eq!(first_lines(&entries), vec!["error: boom"]);
+}
+
+/// A rule without a prefix is tried while a multi-line message is open; it closes that message
+/// and stands on its own.
+#[test]
+fn test_plain_rule_closes_an_open_multi_line_message() {
+    let efm = vec![
+        "%Eerror: %m".to_owned(),
+        "%C  --> %f:%l".to_owned(),
+        "%f:%l: warning: %m".to_owned(),
+    ];
+    let entries = parse_error_format(efm, split_lines("error: boom\na.c:3: warning: w\n")).unwrap();
+    assert_eq!(
+        first_lines(&entries),
+        vec!["error: boom", "a.c:3: warning: w"]
+    );
+}

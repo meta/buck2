@@ -11,6 +11,7 @@
 use std::num::NonZeroU32;
 
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use dupe::Dupe;
 
 /// Process id.
@@ -23,7 +24,7 @@ pub struct Pid {
 impl Pid {
     pub fn from_u32(pid: u32) -> buck2_error::Result<Self> {
         Ok(Pid {
-            pid: NonZeroU32::new(pid).buck_error_context("pid must be non-zero")?,
+            pid: NonZeroU32::new(pid).internal_error("pid must be non-zero")?,
         })
     }
 

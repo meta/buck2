@@ -38,7 +38,14 @@ The last line is always the `CommandResult`:
 
 ```python
 Result {
-    # One of the result types of CommandResult protobuf type in data.proto
+    # One of the result types of CommandResult protobuf type in daemon.proto.
+    # CommandResult has 23 result variants in total, including BuildResponse,
+    # TestResponse, CqueryResponse, UqueryResponse, AqueryResponse,
+    # TargetsResponse, TargetsShowOutputsResponse, BxlResponse, InstallResponse,
+    # ProfileResponse, LspResponse, DapResponse, AllocativeResponse,
+    # CleanStaleResponse, SubscriptionCommandResponse, TraceIoResponse,
+    # ConfiguredTargetsResponse, GenericResponse, KillResponse, StatusResponse,
+    # PingResponse, and ErrorReport.
     result: BuildResponse | CqueryResponse | BxlResponse | ...,
 }
 ```
@@ -53,7 +60,7 @@ The `BuckEvent` format is roughly as follows:
 ```python
 Event {
     # When the event was fired. This is always a 2-item list, where the first
-    # value is millis, second value is micros
+    # value is seconds since the Unix epoch, second value is nanoseconds
     timestamp: List[u64],
     # UUID of the Buck2 command, same one as the invocation header
     trace_id: str,
@@ -111,7 +118,7 @@ InstantEvent {
 }
 ```
 
-One specific instant event type that may be of interest is the `SnapShot` event,
+One specific instant event type that may be of interest is the `Snapshot` event,
 which includes some interesting details like RSS, CPU, I/O, remote execution,
 and DICE metrics.
 

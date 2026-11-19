@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _test_impl(ctx):
-    out = ctx.actions.declare_output(ctx.attrs.prefix, dir = True)
+    out = ctx.actions.declare_output(ctx.attrs.prefix, dir = True, has_content_based_path = False)
 
     ctx.actions.run(
         [

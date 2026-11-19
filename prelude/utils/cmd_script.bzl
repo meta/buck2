@@ -25,12 +25,13 @@ load("@prelude//os_lookup:defs.bzl", "ScriptLanguage")
 #     return cmd_args(linker_wrapper, format = "-Clinker={}")
 #
 def cmd_script(
-        actions: AnalysisActions,
-        name: str,
-        cmd: cmd_args,
-        language: ScriptLanguage = ScriptLanguage("sh"),
-        quote: str | None = "shell",
-        has_content_based_path: bool = False) -> cmd_args:
+    actions: AnalysisActions,
+    name: str,
+    cmd: cmd_args,
+    language: ScriptLanguage = ScriptLanguage("sh"),
+    quote: str | None = "shell",
+    has_content_based_path: bool = False,
+) -> cmd_args:
     cmd_kwargs = {} if quote == None else {"quote": quote}
     shell_quoted = cmd_args(cmd, **cmd_kwargs)
 
@@ -39,7 +40,7 @@ def cmd_script(
             actions.declare_output("{}.sh".format(name), has_content_based_path = has_content_based_path),
             [
                 "#!/usr/bin/env bash",
-                cmd_args(cmd_args(shell_quoted, delimiter = " \\\n"), format = "{} \"$@\"\n"),
+                cmd_args(cmd_args(shell_quoted, delimiter = " \\\n"), format = '{} "$@"\n'),
             ],
             is_executable = True,
             allow_args = True,

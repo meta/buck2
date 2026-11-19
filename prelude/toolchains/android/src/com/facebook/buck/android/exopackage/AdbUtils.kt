@@ -47,6 +47,7 @@ class AdbUtils(val adb: String, val adbServerPort: Int) {
     return if (adbCommandResult.exitCode != 0) {
       val error =
           "Executing 'adb $command' on $deviceId failed with code ${adbCommandResult.exitCode}." +
+              (adbCommandResult.output.takeIf { it.isNotBlank() }?.let { "\nOutput:\n$it" } ?: "") +
               (adbCommandResult.error?.let { "\nError:\n$it" } ?: "")
       if (!ignoreFailure) {
         LOG.error(error)
@@ -65,6 +66,45 @@ class AdbUtils(val adb: String, val adbServerPort: Int) {
     LOG.info("Running command: $command")
     val processBuilder = ProcessBuilder(*command.split(" ").toTypedArray())
     val process = processBuilder.start()
+    try {
+      return readAdbCommandResult(process)
+    } finally {
+      // Reading either stream can fail, and a child left running would hold its pipes open for the
+      // life of the installer. Already-exited is the normal case, where this does nothing.
+      if (process.isAlive) {
+        process.destroyForcibly()
+      }
+    }
+  }
+
+  private fun readAdbCommandResult(process: Process): AdbCommandResult {
+    // Drained on its own thread: a process blocked writing to a full pipe never exits, so reading
+    // one stream to the end before starting on the other hangs on any command whose unread stream
+    // outgrows the pipe buffer. `adb shell` reports per-file failures on stderr, so a command over
+    // many files reaches that in the failure case.
+    val errorOutput = StringBuilder()
+    var drainFailure: Throwable? = null
+    val drainError = Thread {
+      try {
+        BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
+          var line: String? = reader.readLine()
+          while (line != null) {
+            errorOutput.append(line).append("\n")
+            line = reader.readLine()
+          }
+        }
+      } catch (t: Throwable) {
+        // Rethrown by the caller after the join below, which would otherwise hand back a result
+        // built from silently truncated stderr.
+        drainFailure = t
+      }
+    }
+        .apply {
+          isDaemon = true
+          name = "adb-stderr"
+          start()
+        }
+
     val output = StringBuilder()
     BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
       var line: String? = reader.readLine()
@@ -73,14 +113,8 @@ class AdbUtils(val adb: String, val adbServerPort: Int) {
         line = reader.readLine()
       }
     }
-    val errorOutput = StringBuilder()
-    BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
-      var line: String? = reader.readLine()
-      while (line != null) {
-        errorOutput.append(line).append("\n")
-        line = reader.readLine()
-      }
-    }
+    drainError.join()
+    drainFailure?.let { throw it }
     val exitCode = process.waitFor()
     return AdbCommandResult(
         exitCode,

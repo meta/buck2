@@ -1,0 +1,69 @@
+load(":defs.bzl", "constraint_setting", "constraint_value", "platform", "platforms")
+
+constraint_setting(name = "os")
+
+constraint_value(
+    name = "linux",
+    setting = ":os",
+)
+
+constraint_value(
+    name = "macos",
+    setting = ":os",
+)
+
+constraint_setting(name = "executor")
+
+constraint_value(
+    name = "local",
+    setting = ":executor",
+)
+
+constraint_value(
+    name = "remote",
+    setting = ":executor",
+)
+
+platform(
+    name = "linux_local",
+    configuration = [
+        ":linux",
+        ":local",
+    ],
+)
+
+platform(
+    name = "linux_remote",
+    configuration = [
+        ":linux",
+        ":remote",
+    ],
+    remote = True,
+)
+
+platform(
+    name = "macos_local",
+    configuration = [
+        ":macos",
+        ":local",
+    ],
+)
+
+platforms(
+    name = "platforms",
+    platforms = [
+        ":linux_local",
+        ":linux_remote",
+        ":macos_local",
+    ],
+)
+
+platforms(
+    name = "platforms_error_fallback",
+    fallback = "error",
+    platforms = [
+        ":linux_local",
+        ":linux_remote",
+        ":macos_local",
+    ],
+)

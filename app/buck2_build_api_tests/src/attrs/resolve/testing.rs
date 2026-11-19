@@ -12,16 +12,19 @@ use std::sync::Arc;
 
 use buck2_analysis::attrs::resolve::ctx::AnalysisQueryResult;
 use buck2_analysis::attrs::resolve::ctx::AttrResolutionContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
+use buck2_build_api::interpreter::rule_defs::cmd_args::value::CommandLineArg;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::TemplatePlaceholderInfo;
 use buck2_build_api::interpreter::rule_defs::provider::callable::register_provider;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
 use buck2_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::buck_mut_insertion_map;
+use buck2_interpreter::testing::Buck2TestHeapName;
 use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
 use buck2_interpreter_for_build::attrs::coerce;
 use buck2_interpreter_for_build::attrs::coerce::testing;
@@ -35,27 +38,26 @@ use starlark::environment::Globals;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Module;
 use starlark::values::FrozenValueTyped;
-use starlark::values::dict::FrozenDictRef;
-use starlark_map::small_map::SmallMap;
-use starlark_map::smallmap;
+use starlark::values::Value;
+use starlark::values::dict::DictRef;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
 
-pub(crate) fn resolution_ctx(module: &Module) -> impl AttrResolutionContext<'_> {
+pub(crate) fn resolution_ctx<'v>(module: &Module<'v>) -> impl AttrResolutionContext<'v> {
     resolution_ctx_with_providers(module).0
 }
 
-pub(crate) fn resolution_ctx_with_providers(
-    module: &Module,
-) -> (impl AttrResolutionContext<'_>, ProviderIdSet) {
-    struct Ctx<'v> {
-        module: &'v Module,
-        // This module needs to be kept alive in order for the FrozenValues to stick around
+pub(crate) fn resolution_ctx_with_providers<'v>(
+    module: &Module<'v>,
+) -> (impl AttrResolutionContext<'v>, ProviderIdSet) {
+    struct Ctx<'a, 'v> {
+        module: &'a Module<'v>,
+        // The module the provider collections were frozen in.
         _deps_env: FrozenModule,
-        deps: SmallMap<ConfiguredProvidersLabel, FrozenProviderCollectionValue>,
+        deps: BuckMutInsertionMap<ConfiguredProvidersLabel, FrozenProviderCollectionValue>,
     }
 
-    impl Ctx<'_> {
+    impl Ctx<'_, '_> {
         fn eval(env: &Module, globals: &Globals) {
             testing::to_value(
                 env,
@@ -112,7 +114,7 @@ pub(crate) fn resolution_ctx_with_providers(
         /// Create a simple label -> impl result mapping
         fn simple_deps() -> (
             FrozenModule,
-            SmallMap<ConfiguredProvidersLabel, FrozenProviderCollectionValue>,
+            BuckMutInsertionMap<ConfiguredProvidersLabel, FrozenProviderCollectionValue>,
             ProviderIdSet,
         ) {
             let globals = GlobalsBuilder::standard()
@@ -122,40 +124,36 @@ pub(crate) fn resolution_ctx_with_providers(
                 .build();
 
             // Add some providers into the environment
-            let provider_env = Module::new();
-            let provider_content = indoc!(
-                r#"
+            let frozen_provider_env = Module::with_temp_heap(|provider_env| {
+                let provider_content = indoc!(
+                    r#"
                  FooInfo = provider(fields=["foo"])
                  BarInfo = provider(fields=["bar"])
                  None
                  "#
-            );
-            testing::to_value(&provider_env, &globals, provider_content);
-            let frozen_provider_env = provider_env
-                .freeze()
-                .expect("provider should freeze successfully");
+                );
+                testing::to_value(&provider_env, &globals, provider_content);
+                provider_env.freeze_named(Buck2TestHeapName::frozen_heap_name())
+            })
+            .expect("provider should freeze successfully");
             let foo_info = frozen_provider_env.get("FooInfo").unwrap();
             let bar_info = frozen_provider_env.get("BarInfo").unwrap();
 
-            let env = Module::new();
-            env.frozen_heap()
-                .add_reference(frozen_provider_env.frozen_heap());
-            env.set("FooInfo", foo_info.value());
-            env.set("BarInfo", bar_info.value());
-            Self::eval(&env, &globals);
-
-            let frozen = env.freeze().expect("should freeze successfully");
+            let frozen = Module::with_temp_heap(|env| {
+                env.set("FooInfo", foo_info.as_ref().add_to_heap(env.heap()));
+                env.set("BarInfo", bar_info.as_ref().add_to_heap(env.heap()));
+                Self::eval(&env, &globals);
+                env.freeze_named(Buck2TestHeapName::frozen_heap_name())
+            })
+            .expect("should freeze successfully");
             let label_and_result = |label, var_name| {
                 let configured_label = coerce::testing::coercion_ctx()
                     .coerce_providers_label(label)
                     .unwrap()
                     .configure(ConfigurationData::testing_new());
                 let val = FrozenProviderCollectionValue::try_from_value(
-                    frozen.get("ret").unwrap().map(|x| {
-                        FrozenDictRef::from_frozen_value(x)
-                            .unwrap()
-                            .get_str(var_name)
-                            .unwrap()
+                    frozen.get("ret").unwrap().map::<Value<'static>, _>(|x| {
+                        DictRef::from_value(x).unwrap().get_str(var_name).unwrap()
                     }),
                 )
                 .unwrap();
@@ -178,7 +176,7 @@ pub(crate) fn resolution_ctx_with_providers(
             let (keyed_placeholder_label, keyed_placeholder_result) =
                 label_and_result("//sub/dir:keyed_placeholder", "keyed_placeholder");
 
-            let res = smallmap![
+            let res = buck_mut_insertion_map![
                 foo_label => foo_result,
                 bar_label => bar_result,
                 zero_label => zero_result,
@@ -192,6 +190,7 @@ pub(crate) fn resolution_ctx_with_providers(
 
             let provider_ids = ProviderIdSet::from(vec![
                 foo_info
+                    .as_ref()
                     .value()
                     .as_provider_callable()
                     .unwrap()
@@ -199,6 +198,7 @@ pub(crate) fn resolution_ctx_with_providers(
                     .unwrap()
                     .dupe(),
                 bar_info
+                    .as_ref()
                     .value()
                     .as_provider_callable()
                     .unwrap()
@@ -210,35 +210,42 @@ pub(crate) fn resolution_ctx_with_providers(
         }
     }
 
-    impl<'v> AttrResolutionContext<'v> for Ctx<'v> {
-        fn starlark_module(&self) -> &'v Module {
+    impl<'v> AttrResolutionContext<'v> for Ctx<'_, 'v> {
+        fn starlark_module(&self) -> &Module<'v> {
             self.module
         }
 
         fn get_dep(
             &mut self,
             target: &ConfiguredProvidersLabel,
-        ) -> buck2_error::Result<FrozenValueTyped<'v, FrozenProviderCollection>> {
+        ) -> buck2_error::Result<FrozenValueTyped<'v, ProviderCollection<'v>>> {
             Ok(self
                 .deps
                 .get(target)
                 .duped()
-                .buck_error_context("missing dep")?
-                .add_heap_ref(self.module.frozen_heap()))
+                .internal_error("missing dep")?
+                .add_heap_ref(self.module.heap()))
         }
 
         fn resolve_unkeyed_placeholder(
             &mut self,
             name: &str,
-        ) -> buck2_error::Result<Option<FrozenCommandLineArg>> {
+        ) -> buck2_error::Result<Option<CommandLineArg<'v>>> {
             for providers in self.deps.values() {
-                if let Some(placeholders) = providers
-                    .provider_collection()
-                    .builtin_provider::<FrozenTemplatePlaceholderInfo>()
-                {
-                    if let Some(value) = placeholders.unkeyed_variables().get(name) {
-                        return Ok(Some(*value));
-                    }
+                let resolved = providers.value.by_ref_with_reconstructor(|collection, r| {
+                    let Some(placeholders) = collection
+                        .as_ref()
+                        .builtin_provider::<TemplatePlaceholderInfo>()?
+                    else {
+                        return buck2_error::Ok(None);
+                    };
+                    let Some(value) = placeholders.unkeyed_variables()?.get(name).copied() else {
+                        return Ok(None);
+                    };
+                    Ok(Some(r.edge(self.module.heap()).rebrand(value)))
+                })?;
+                if let Some(value) = resolved {
+                    return Ok(Some(value));
                 }
             }
             Ok(None)

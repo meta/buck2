@@ -24,7 +24,6 @@ error: Expected type `typing.Callable[[int, str], str]` but got `def(x: int, y: 
    |
 13 |     accept_f(bad_function)
    |              ^^^^^^^^^^^^
-   |
 
 Compiler typechecker (eval):
 error: Expected type `typing.Callable[[int, str], str]` but got `def(x: int, y: bool) -> str`
@@ -32,4 +31,3 @@ error: Expected type `typing.Callable[[int, str], str]` but got `def(x: int, y: 
    |
 13 |     accept_f(bad_function)
    |              ^^^^^^^^^^^^
-   |

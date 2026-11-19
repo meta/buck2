@@ -10,10 +10,11 @@
 
 use allocative::Allocative;
 use dupe::Dupe;
+use pagable::Pagable;
 use starlark::eval::ProfileMode;
 
 /// How individual starlark invocation (`bzl`, `BUCK` or analysis) should be interpreted.
-#[derive(Clone, Dupe, Eq, PartialEq, Allocative)]
+#[derive(Clone, Dupe, Eq, PartialEq, Allocative, Pagable)]
 pub enum StarlarkProfileMode {
     None,
     Profile(ProfileMode),

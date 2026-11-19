@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-
 mod lint;
 mod typecheck;
 mod util;
@@ -67,14 +65,10 @@ async fn server_starlark_command_inner(
     buck2_error::Result<buck2_cli_proto::GenericResponse>,
     buck2_data::CommandEnd,
 ) {
-    let result = parse_command_and_execute(context, partial_result_dispatcher, req)
-        .await
-        .map_err(Into::into);
+    let result = parse_command_and_execute(context, partial_result_dispatcher, req).await;
     let end_event = command_end(&result, buck2_data::StarlarkCommandEnd {});
 
-    let result = result
-        .map(|()| buck2_cli_proto::GenericResponse {})
-        .map_err(Into::into);
+    let result = result.map(|()| buck2_cli_proto::GenericResponse {});
 
     (result, end_event)
 }

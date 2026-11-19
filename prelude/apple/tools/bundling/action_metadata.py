@@ -10,57 +10,30 @@
 
 import json
 import os
-from dataclasses import dataclass
 from io import TextIOBase
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, Optional
 
 _METADATA_VERSION = 1
 
 
-@dataclass
-class _Item:
-    path: Path
-    digest: str
-
-
-@dataclass
-class _Metadata:
-    version: int
-    digests: List[_Item]
-
-
-def _object_hook(dict: Dict[str, Any]) -> Union[_Item, _Metadata]:
-    if "version" in dict:
-        return _Metadata(**dict)
-    else:
-        dict["path"] = Path(dict.pop("path"))
-        return _Item(**dict)
-
-
-def parse_action_metadata(data: TextIOBase) -> Optional[Dict[Path, str]]:
+def parse_action_metadata(data: TextIOBase) -> Optional[Dict[str, str]]:
     """
     Returns:
         Mapping from project relative path to hash digest for every file present action metadata.
     """
-    start_stream_position = data.tell()
-    try:
-        metadata = json.load(data, object_hook=_object_hook)
-    except BaseException:
-        data.seek(start_stream_position)
-        version = json.load(data)["version"]
-        if version != _METADATA_VERSION:
-            raise RuntimeError(
-                f"Expected metadata version to be `{_METADATA_VERSION}` got `{version}`."
-            )
-        else:
-            raise
-    return {item.path: item.digest for item in metadata.digests}
+    metadata = json.load(data)
+    version = metadata["version"]
+    if version != _METADATA_VERSION:
+        raise RuntimeError(
+            f"Expected metadata version to be `{_METADATA_VERSION}` got `{version}`."
+        )
+    return {item["path"]: item["digest"] for item in metadata["digests"]}
 
 
 def action_metadata_if_present(
     environment_variable_key: str,
-) -> Optional[Dict[Path, str]]:
+) -> Optional[Dict[str, str]]:
     """
     Returns:
         Mapping from project relative path to hash digest for every file present action metadata.

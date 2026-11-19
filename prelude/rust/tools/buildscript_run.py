@@ -22,6 +22,10 @@ from typing import Any, IO, NamedTuple, Optional
 IS_WINDOWS: bool = os.name == "nt"
 TOOL_CWD: str = os.path.join(os.getcwd(), "")
 
+# Sentinel used to mark OUT_DIR-relative paths emitted by buildscripts.
+# We later replace this sentinel with the actual content-addressed path, once that is known.
+OUT_DIR_SENTINEL: str = "${__BUILDSCRIPT_OUT_DIR__}"
+
 
 def eprint(*args: Any, **kwargs: Any) -> None:
     print(*args, end="\n", file=sys.stderr, flush=True, **kwargs)
@@ -226,6 +230,17 @@ def main() -> None:  # noqa: C901
             target = f.read().strip()
             env["TARGET"] = target
 
+    if os.sep in env.get("LD", ""):
+        env["LD"] = os.path.abspath(env["LD"])
+    if os.sep in env.get("CC", ""):
+        env["CC"] = os.path.abspath(env["CC"])
+    if os.sep in env.get("CXX", ""):
+        env["CXX"] = os.path.abspath(env["CXX"])
+    if os.sep in env.get("AR", ""):
+        env["AR"] = os.path.abspath(env["AR"])
+    if os.sep in env.get("TARGET_CC", ""):
+        env["TARGET_CC"] = os.path.abspath(env["TARGET_CC"])
+
     ensure_rustc_available(
         env=env,
         cwd=cwd,
@@ -240,33 +255,51 @@ def main() -> None:  # noqa: C901
     cargo_rustc_link_search_pattern = re.compile(
         "^cargo::?rustc-link-search=([a-z]+=)?(.+)"
     )
+    out_dir_abs = env["OUT_DIR"]
+
+    # Rewrite a path inside OUT_DIR to OUT_DIR_SENTINEL; None if it is elsewhere.
+    def reanchor_out_dir(path: str) -> Optional[str]:
+        if path == out_dir_abs:
+            return OUT_DIR_SENTINEL
+        if path.startswith(out_dir_abs + os.sep):
+            return OUT_DIR_SENTINEL + path[len(out_dir_abs) :]
+        return None
+
     flags = ""
     for line in script_output.split("\n"):
-        cargo_rustc_cfg_match = cargo_rustc_cfg_pattern.match(line)
+        # Cargo reads each directive from the trimmed line.
+        directive = line.strip()
+        cargo_rustc_cfg_match = cargo_rustc_cfg_pattern.match(directive)
         if cargo_rustc_cfg_match:
             value = cargo_rustc_cfg_match.group(1)
             flags += f"--cfg={value}\n"
             continue
-        cargo_rustc_env_match = cargo_rustc_env_pattern.match(line)
+        cargo_rustc_env_match = cargo_rustc_env_pattern.match(directive)
         if cargo_rustc_env_match:
             key = cargo_rustc_env_match.group(1)
             value = cargo_rustc_env_match.group(2)
-            if value.startswith(TOOL_CWD):
+            reanchored = reanchor_out_dir(value)
+            if reanchored is not None:
+                flags += f"--env-set={key}={reanchored}\n"
+            elif value.startswith(TOOL_CWD):
                 relative_path = value[len(TOOL_CWD) :]
                 flags += f"--env-set={key}=$(abspath {relative_path})\n"
             else:
                 flags += f"--env-set={key}={value}\n"
             continue
-        cargo_rustc_link_lib_match = cargo_rustc_link_lib_pattern.match(line)
+        cargo_rustc_link_lib_match = cargo_rustc_link_lib_pattern.match(directive)
         if args.rustc_link_lib and cargo_rustc_link_lib_match:
             value = cargo_rustc_link_lib_match.group(1)
             flags += f"-l{value}\n"
             continue
-        cargo_rustc_link_search_match = cargo_rustc_link_search_pattern.match(line)
+        cargo_rustc_link_search_match = cargo_rustc_link_search_pattern.match(directive)
         if args.rustc_link_search and cargo_rustc_link_search_match:
             kind = cargo_rustc_link_search_match.group(1) or ""
             path = cargo_rustc_link_search_match.group(2)
-            if path.startswith(TOOL_CWD):
+            reanchored = reanchor_out_dir(path)
+            if reanchored is not None:
+                flags += f"-L{kind}{reanchored}\n"
+            elif path.startswith(TOOL_CWD):
                 relative_path = path[len(TOOL_CWD) :]
                 flags += f"-L{kind}$(abspath {relative_path})\n"
             else:

@@ -10,14 +10,17 @@
 
 package com.facebook.buck.installer.android;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.kohsuke.args4j.Option;
+import org.kohsuke.args4j.spi.ExplicitBooleanOptionHandler;
 
 /**
  * Constructs the Command Line Options to Support Android Install. The majority of these were copied
  * from {@code com.facebook.buck.cli.TargetDeviceCommandLineOptions}.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AndroidCommandLineOptions {
   @VisibleForTesting public static final String EMULATOR_MODE_SHORT_ARG = "-e";
 
@@ -56,6 +59,7 @@ class AndroidCommandLineOptions {
       name = ADB_EXECUTABLE_PATH_LONG_ARG,
       metaVar = "<Adb-executable-path>",
       usage = "Use specified adb executable.")
+  @Nullable
   public String adbExecutablePath;
 
   @VisibleForTesting static final String ADB_THREADS_LONG_ARG = "--adb-threads";
@@ -77,6 +81,20 @@ class AndroidCommandLineOptions {
       usage = "Use ADB server with specific TCP port.")
   public int adbServerPort = 0;
 
+  @Option(
+      name = "--adb-restart-on-failure",
+      handler = ExplicitBooleanOptionHandler.class,
+      metaVar = "<true|false>",
+      usage = "Restart the adb server and look again when adb finds no device. Defaults to true.")
+  public boolean restartAdbOnFailure = true;
+
+  @Option(
+      name = "--staged-install-mode",
+      handler = ExplicitBooleanOptionHandler.class,
+      metaVar = "<true|false>",
+      usage = "Install with adb install --staged; the update applies at the next reboot.")
+  public boolean stagedInstallMode;
+
   @VisibleForTesting static final String MULTI_INSTALL_MODE_SHORT_ARG = "-x";
   @VisibleForTesting static final String MULTI_INSTALL_MODE_LONG_ARG = "--all-devices";
 
@@ -86,15 +104,22 @@ class AndroidCommandLineOptions {
       usage = "Install .apk on all connected devices and/or emulators (multi-install mode)")
   public boolean multiInstallMode;
 
-  public final int adbTimeout = 60_000;
-
   @Option(
       name = "--tcp-port",
       usage = "TCP port used for connection in case TCP protocol is chosen")
   private int tcpPort;
 
   @Option(name = "--log-path", usage = "Use this option to set the log path for the install")
+  @Nullable
   private String logPath;
+
+  @Option(
+      name = "--install-timeout",
+      metaVar = "<seconds>",
+      usage =
+          "Maximum time in seconds to wait for install to complete. Defaults to 600 seconds (10"
+              + " minutes).")
+  private long installTimeoutSeconds = 600;
 
   @Option(
       name = "--run",
@@ -145,6 +170,14 @@ class AndroidCommandLineOptions {
   public boolean keepUserData = false;
 
   @Option(
+      name = "--force-queryable",
+      usage =
+          "Make the installed app visible to all packages on Android 11+. Reuses a matching APK"
+              + " when it is already queryable. The app stays queryable until it is uninstalled"
+              + " or reinstalled with --uninstall (-u) without this flag.")
+  public boolean forceQueryable = false;
+
+  @Option(
       name = "--uninstall",
       aliases = {"-u"},
       usage = "Uninstall before installing an app")
@@ -169,13 +202,32 @@ class AndroidCommandLineOptions {
   @Nullable
   public Boolean enableAppLinks = null;
 
+  public enum RestartMode {
+    auto,
+    yes,
+    no,
+  }
+
+  @Option(name = "--restart", usage = "Restart the device after installing APEX files.")
+  public RestartMode restartMode = RestartMode.auto;
+
+  @Option(
+      name = "--wait-for-device-ready",
+      usage = "Wait for the device to be ready after installation.")
+  public boolean waitForDeviceReady = false;
+
   public AndroidCommandLineOptions() {}
 
   public int getTcpPort() {
     return tcpPort;
   }
 
+  @Nullable
   public String getLogPath() {
     return logPath;
+  }
+
+  public long getInstallTimeoutSeconds() {
+    return installTimeoutSeconds;
   }
 }

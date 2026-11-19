@@ -13,8 +13,11 @@ TransitiveOutputsTSet = transitive_set(args_projections = {"artifacts": _artifac
 
 JsLibraryInfo = provider(
     fields = {
-        "output": provider_field(typing.Any, default = None),  # "artifact"
-        "transitive_outputs": provider_field(typing.Any, default = None),  # "TransitiveOutputsTSet"
+        # Output of the `library_files` action: the library's own transformed
+        # files, before cross-library dependency resolution.
+        "library_files": provider_field(Artifact | None, default = None),
+        "output": provider_field(Artifact | None, default = None),
+        "transitive_outputs": provider_field(TransitiveOutputsTSet | None, default = None),
     },
 )
 
@@ -28,6 +31,9 @@ JsBundleInfo = provider(
         "source_map": provider_field(typing.Any, default = None),  # "artifact",
         # Directory containing the resources (or assets) used by the bundled JavaScript source code.
         "res": provider_field(typing.Any, default = None),  # ["artifact", None]
+        # Directory of raw asset files produced by js_library targets that use
+        # `_asset_dest_path_resolver = "generic"`. Only used on Android platforms.
+        "generic_assets": provider_field(typing.Any, default = None),  # ["artifact", None]
         # Directory containing various metadata that can be used by dependent rules but are not
         # meant to be shipped with the application.
         "misc": provider_field(typing.Any, default = None),  # "artifact"
@@ -36,10 +42,7 @@ JsBundleInfo = provider(
     },
 )
 
-def get_transitive_outputs(
-        actions: AnalysisActions,
-        value: Artifact | None = None,
-        deps: list[JsLibraryInfo] = []) -> TransitiveOutputsTSet:
+def get_transitive_outputs(actions: AnalysisActions, value: Artifact | None = None, deps: list[JsLibraryInfo] = []) -> TransitiveOutputsTSet:
     kwargs = {}
     if value:
         kwargs["value"] = value

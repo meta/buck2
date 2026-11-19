@@ -8,10 +8,6 @@
 
 load("@prelude//:paths.bzl", "paths")
 load(
-    "@prelude//cxx:cxx_toolchain_types.bzl",
-    "CxxPlatformInfo",
-)
-load(
     "@prelude//haskell:library_info.bzl",
     "HaskellLibraryInfo",
     "HaskellLibraryProvider",
@@ -30,8 +26,6 @@ load(
     "@prelude//linking:shared_libraries.bzl",
     "SharedLibraryInfo",
 )
-load("@prelude//utils:platform_flavors_util.bzl", "by_platform")
-load("@prelude//utils:utils.bzl", "flatten")
 
 HASKELL_EXTENSIONS = [
     ".hs",
@@ -58,71 +52,52 @@ def src_to_module_name(x: str) -> str:
     base, _ext = paths.split_extension(x)
     return base.replace("/", ".")
 
-def _by_platform(ctx: AnalysisContext, xs: list[(str, list[typing.Any])]) -> list[typing.Any]:
-    platform = ctx.attrs._cxx_toolchain[CxxPlatformInfo].name
-    return flatten(by_platform([platform], xs))
-
 def attr_deps(ctx: AnalysisContext) -> list[Dependency]:
-    return ctx.attrs.deps + _by_platform(ctx, ctx.attrs.platform_deps)
+    return ctx.attrs.deps
 
 def attr_deps_haskell_link_infos(ctx: AnalysisContext) -> list[HaskellLinkInfo]:
-    return dedupe(filter(
-        None,
-        [
-            d.get(HaskellLinkInfo)
-            for d in attr_deps(ctx) + ctx.attrs.template_deps
-        ],
-    ))
+    return dedupe(
+        filter(
+            None,
+            [d.get(HaskellLinkInfo) for d in attr_deps(ctx) + ctx.attrs.template_deps],
+        )
+    )
 
-# DONT CALL THIS FUNCTION, you want attr_deps_haskell_link_infos instead
+# DONT CALL THIS FUNCTION, you want attr_deps_haskell_link_infos instead
 def attr_deps_haskell_link_infos_sans_template_deps(ctx: AnalysisContext) -> list[HaskellLinkInfo]:
-    return dedupe(filter(
-        None,
-        [
-            d.get(HaskellLinkInfo)
-            for d in attr_deps(ctx)
-        ],
-    ))
+    return dedupe(
+        filter(
+            None,
+            [d.get(HaskellLinkInfo) for d in attr_deps(ctx)],
+        )
+    )
 
-def attr_deps_haskell_lib_infos(
-        ctx: AnalysisContext,
-        link_style: LinkStyle,
-        enable_profiling: bool) -> list[HaskellLibraryInfo]:
+def attr_deps_haskell_lib_infos(ctx: AnalysisContext, link_style: LinkStyle, enable_profiling: bool) -> list[HaskellLibraryInfo]:
     if enable_profiling and link_style == LinkStyle("shared"):
         fail("Profiling isn't supported when using dynamic linking")
     return [
         x.prof_lib[link_style] if enable_profiling else x.lib[link_style]
-        for x in filter(None, [
-            d.get(HaskellLibraryProvider)
-            for d in attr_deps(ctx) + ctx.attrs.template_deps
-        ])
+        for x in filter(None, [d.get(HaskellLibraryProvider) for d in attr_deps(ctx) + ctx.attrs.template_deps])
     ]
 
 def attr_deps_merged_link_infos(ctx: AnalysisContext) -> list[MergedLinkInfo]:
-    return dedupe(filter(
-        None,
-        [
-            d.get(MergedLinkInfo)
-            for d in attr_deps(ctx)
-        ],
-    ))
+    return dedupe(
+        filter(
+            None,
+            [d.get(MergedLinkInfo) for d in attr_deps(ctx)],
+        )
+    )
 
 def attr_deps_profiling_link_infos(ctx: AnalysisContext) -> list[MergedLinkInfo]:
     return filter(
         None,
-        [
-            d.get(HaskellProfLinkInfo).prof_infos if d.get(HaskellProfLinkInfo) else d.get(MergedLinkInfo)
-            for d in attr_deps(ctx)
-        ],
+        [d.get(HaskellProfLinkInfo).prof_infos if d.get(HaskellProfLinkInfo) else d.get(MergedLinkInfo) for d in attr_deps(ctx)],
     )
 
 def attr_deps_shared_library_infos(ctx: AnalysisContext) -> list[SharedLibraryInfo]:
     return filter(
         None,
-        [
-            d.get(SharedLibraryInfo)
-            for d in attr_deps(ctx)
-        ],
+        [d.get(SharedLibraryInfo) for d in attr_deps(ctx)],
     )
 
 def _link_style_extensions(link_style: LinkStyle) -> (str, str):
@@ -134,9 +109,7 @@ def _link_style_extensions(link_style: LinkStyle) -> (str, str):
         return ("o", "hi")
     fail("unknown LinkStyle")
 
-def output_extensions(
-        link_style: LinkStyle,
-        profiled: bool) -> (str, str):
+def output_extensions(link_style: LinkStyle, profiled: bool) -> (str, str):
     osuf, hisuf = _link_style_extensions(link_style)
     if profiled:
         return ("p_" + osuf, "p_" + hisuf)

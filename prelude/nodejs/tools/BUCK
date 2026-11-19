@@ -1,0 +1,28 @@
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("build_infra")
+
+source_listing()
+
+python_bootstrap_binary(
+    name = "package_tree",
+    main = "package_tree.py",
+    visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "test_package_tree",
+    srcs = [
+        "package_tree.py",
+        "tests/test_archive.py",
+        "tests/test_launchers.py",
+        "tests/test_package_tree.py",
+    ],
+    base_module = "",
+)
+
+export_file(
+    name = "nodejs_test_adapter.cjs",
+    src = "nodejs_test_adapter.cjs",
+    visibility = ["PUBLIC"],
+)

@@ -26,12 +26,13 @@ test_rule(
     default_target_platform = ":my_platform",
 )
 
+# Setting modifiers via metadata["buck.cfg_modifiers"] is no longer
+# supported - the cfg constructor must reject it with a hard error.
+# Used by `test_metadata_modifiers_is_hard_error`.
 test_rule(
-    name = "test3",
-    modifiers = [
-        "root//:A_1"
-    ],
+    name = "test_metadata_modifiers",
     metadata = {
-        "buck.cfg_modifiers": ["root//:A_1"]
+        "buck.cfg_modifiers": ["root//:A_1"],
     },
+    default_target_platform = ":my_platform",
 )

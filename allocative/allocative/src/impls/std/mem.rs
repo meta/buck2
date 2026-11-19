@@ -11,13 +11,13 @@
 use std::mem::ManuallyDrop;
 
 use crate::Allocative;
-use crate::Key;
 use crate::Visitor;
+use crate::key;
 
 impl<T: Allocative + ?Sized> Allocative for ManuallyDrop<T> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self(self);
-        visitor.visit_field::<T>(Key::new("inner"), self);
+        visitor.visit_field::<T>(key!("inner"), self);
         visitor.exit();
     }
 }

@@ -1,15 +1,15 @@
-load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library_prost_0134")
+load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
 
 oncall("build_infra")
 
-rust_protobuf_library_prost_0134(
+rust_protobuf_library(
     name = "buck2_test_proto",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",
     proto_srcs = ":buck2_test_proto.proto",
     deps = [
-        "fbsource//third-party/rust:prost-types-0-13-4",
+        "fbsource//third-party/rust:prost-types",
         "//buck2/app/buck2_data:buck2_data",
         "//buck2/app/buck2_host_sharing_proto:buck2_host_sharing_proto",
     ],

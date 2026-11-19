@@ -18,6 +18,8 @@ import com.facebook.buck.testresultsoutput.TestResultsOutputEvent.TestStatus;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.Rule;
 import org.junit.Test;
@@ -126,6 +128,31 @@ public class TestResultsOutputSenderTest {
 
     String expected =
         "{\"finish\":{\"name\":\"test_test_name\",\"status\":0,\"duration\":5,\"ended_time\":20}}\n";
+
+    assertOutputMatchesExpected(expected, tempFile);
+  }
+
+  @Test
+  public void testSendTestFinishWithMetadata() throws IOException {
+    String customEnvVarName = "TEST_CUSTOM_OUTPUT_FILE_NAME";
+    File tempFile = folder.newFile("test_results.json");
+    environmentVariables.set(customEnvVarName, tempFile.getPath());
+
+    Optional<TestResultsOutputSender> maybeSender =
+        TestResultsOutputSender.fromEnvName(customEnvVarName);
+    assertTrue(maybeSender.isPresent());
+
+    Map<String, String> metadata = new HashMap<>();
+    metadata.put("z_key", "z_value");
+    metadata.put("app_info:OS", "Meta/device/build//123:");
+    try (TestResultsOutputSender sender = maybeSender.get()) {
+      sender.sendTestFinish("test_test_name", TestStatus.PASS, 20, 5, Optional.empty(), metadata);
+    }
+
+    String expected =
+        "{\"finish\":{\"name\":\"test_test_name\",\"status\":0,\"duration\":5,"
+            + "\"ended_time\":20,\"metadata\":{\"app_info:OS\":"
+            + "\"Meta/device/build//123:\",\"z_key\":\"z_value\"}}}\n";
 
     assertOutputMatchesExpected(expected, tempFile);
   }

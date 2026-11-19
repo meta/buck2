@@ -10,9 +10,11 @@
 
 package com.facebook.buck.android.apkmodule;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Set;
 
 /** Some object that has a build target. */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public interface HasBuildTargetAndBuildDeps<BuildTarget> {
   BuildTarget getBuildTarget();
 

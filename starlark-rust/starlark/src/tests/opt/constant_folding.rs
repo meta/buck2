@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+use crate::assert;
 use crate::assert::Assert;
 use crate::tests::bc::golden::bc_golden_test;
 
@@ -40,4 +41,28 @@ fn test_fold_list_add_too_large() {
             ),
         );
     }
+}
+
+/// `ExprCompiled::slice` folds `c[a:b:s]` only when every written part is a constant; a part
+/// that is present but not constant disables folding, so the slice is evaluated at runtime.
+#[test]
+fn test_slice_fold_keeps_non_constant_part() {
+    assert::eq("'abcdef'[noop(2):4:1]", "'cd'");
+    assert::eq("'abcdef'[1:noop(3):1]", "'bc'");
+    assert::eq("'abcdef'[1:3:noop(-1)]", "''");
+    assert::eq("(1, 2, 3, 4, 5)[noop(3):5:1]", "(4, 5)");
+    assert::fail("'abc'[noop('x'):2:1]", "");
+    assert::fail("def g():\n    fail('boom')\n'abc'[g():2:1]", "boom");
+    assert::eq("def f(i):\n    return 'abcdef'[i:4:1]\nf(2)", "'cd'");
+    // Fully constant slices still fold, including ones with omitted parts.
+    assert::eq("'abcdef'[1:4:2]", "'bd'");
+    assert::eq("'abcdef'[::-1]", "'fedcba'");
+    assert::eq("'abcdef'[2:]", "'cdef'");
+    let mut a = Assert::new();
+    a.module(
+        "lib.star",
+        "S = ''\nS = 'abcdef'\ndef f(i):\n    return S[i:4:1]\nBEFORE = f(2)\n",
+    );
+    a.eq("load('lib.star', 'BEFORE')\nBEFORE", "'cd'");
+    a.eq("load('lib.star', 'f')\nf(2)", "'cd'");
 }

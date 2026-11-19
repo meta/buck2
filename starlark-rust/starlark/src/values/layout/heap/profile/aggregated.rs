@@ -37,15 +37,14 @@ use crate::eval::runtime::small_duration::SmallDuration;
 use crate::util::arc_str::ArcStr;
 use crate::values::Heap;
 use crate::values::Value;
+use crate::values::layout::heap::arena::ArenaEntry;
 use crate::values::layout::heap::arena::ArenaVisitor;
-use crate::values::layout::heap::heap_type::HeapKind;
+use crate::values::layout::heap::arena::HeapKind;
 use crate::values::layout::heap::profile::alloc_counts::AllocCounts;
 use crate::values::layout::heap::profile::by_type::HeapSummary;
 use crate::values::layout::heap::profile::string_index::StringId;
 use crate::values::layout::heap::profile::string_index::StringIndex;
 use crate::values::layout::heap::profile::summary_by_function::HeapSummaryByFunction;
-use crate::values::layout::heap::repr::AValueOrForward;
-use crate::values::layout::heap::repr::AValueOrForwardUnpack;
 use crate::values::layout::pointer::RawPointer;
 
 /// A mapping from function Value to FunctionId, which must be continuous
@@ -149,12 +148,10 @@ impl<'v> ArenaVisitor<'v> for StackCollector {
         self.last_time = None;
     }
 
-    fn regular_value(&mut self, value: &'v AValueOrForward) {
-        let value = match (value.unpack(), self.retained) {
-            (AValueOrForwardUnpack::Header(header), None) => unsafe {
-                header.unpack_value(HeapKind::Unfrozen)
-            },
-            (AValueOrForwardUnpack::Forward(forward), Some(retained)) => unsafe {
+    fn regular_entry(&mut self, entry: ArenaEntry<'v>) {
+        let value = match (entry, self.retained) {
+            (ArenaEntry::Value(header), None) => unsafe { header.unpack_value(HeapKind::Unfrozen) },
+            (ArenaEntry::Forward(forward), Some(retained)) => unsafe {
                 forward.forward_ptr().unpack_value(retained)
             },
             _ => return,
@@ -172,7 +169,7 @@ impl<'v> ArenaVisitor<'v> for StackCollector {
             typ,
             AllocCounts {
                 count: 1,
-                bytes: value.get_ref().total_memory(),
+                bytes: value.get_ref().total_memory_for_profile(),
             },
         );
     }
@@ -328,7 +325,7 @@ impl Default for AggregateHeapProfileInfo {
 }
 
 impl AggregateHeapProfileInfo {
-    pub(crate) fn collect(heap: &Heap, retained: Option<HeapKind>) -> AggregateHeapProfileInfo {
+    pub(crate) fn collect(heap: Heap<'_>, retained: Option<HeapKind>) -> AggregateHeapProfileInfo {
         let mut collector = StackCollector::new(retained);
         unsafe {
             heap.visit_arena(HeapKind::Unfrozen, &mut collector);
@@ -403,16 +400,22 @@ impl RetainedHeapProfile {
 
 #[cfg(test)]
 mod tests {
+    use std::ptr;
+
     use dupe::Dupe;
 
     use crate::const_frozen_string;
     use crate::values::Freezer;
-    use crate::values::FrozenHeap;
     use crate::values::Heap;
-    use crate::values::layout::heap::heap_type::HeapKind;
+    use crate::values::layout::heap::arena::ArenaEntry;
+    use crate::values::layout::heap::arena::ArenaVisitor;
+    use crate::values::layout::heap::arena::HeapKind;
+    use crate::values::layout::heap::arena::MIN_ALLOC;
     use crate::values::layout::heap::profile::aggregated::AggregateHeapProfileInfo;
+    use crate::values::layout::heap::profile::aggregated::StackCollector;
     use crate::values::layout::heap::profile::aggregated::StackFrame;
     use crate::values::layout::heap::profile::summary_by_function::HeapSummaryByFunction;
+    use crate::values::layout::value_alloc_size::ValueAllocSize;
 
     fn total_alloc_count(frame: &StackFrame) -> usize {
         frame.allocs.total().count
@@ -425,65 +428,91 @@ mod tests {
 
     #[test]
     fn test_stacks_collect() {
-        let heap = Heap::new();
-        heap.record_call_enter(const_frozen_string!("enter").to_value());
-        heap.alloc_str("xxyy");
-        heap.alloc_str("zzww");
-        heap.record_call_exit();
+        Heap::temp(|heap| {
+            heap.record_call_enter(const_frozen_string!("enter").at().to_value());
+            heap.alloc("xxyy");
+            heap.alloc("zzww");
+            heap.record_call_exit();
 
-        let stacks = AggregateHeapProfileInfo::collect(&heap, None);
-        assert!(stacks.root.allocs.summary.is_empty());
-        assert_eq!(1, stacks.root.callees.len());
-        assert_eq!(2, total_alloc_count(&stacks.root));
+            let stacks = AggregateHeapProfileInfo::collect(heap, None);
+            assert!(stacks.root.allocs.summary.is_empty());
+            assert_eq!(1, stacks.root.callees.len());
+            assert_eq!(2, total_alloc_count(&stacks.root));
+        });
+    }
+
+    #[test]
+    fn test_stacks_collect_skips_uninitialized_entries() {
+        Freezer::testing_temp(|heap, freezer| {
+            let retained = heap.alloc("retained");
+            freezer.freeze(retained.to_value()).unwrap();
+            heap.alloc("allocated");
+
+            for retained in [None, Some(HeapKind::Frozen)] {
+                let mut collector = StackCollector::new(retained);
+                // SAFETY: both the allocation arena and forwarding targets remain live.
+                unsafe { heap.visit_arena(HeapKind::Frozen, &mut collector) };
+                let before = collector.current[0].0.borrow().allocs.total();
+                assert_eq!(before.count, 1);
+
+                collector.regular_entry(ArenaEntry::Uninitialized {
+                    payload: ptr::null(),
+                    size: ValueAllocSize::new(MIN_ALLOC),
+                });
+                collector.regular_entry(ArenaEntry::Reservation(ValueAllocSize::new(MIN_ALLOC)));
+
+                let after = collector.current[0].0.borrow().allocs.total();
+                assert_eq!(after.count, before.count);
+                assert_eq!(after.bytes, before.bytes);
+            }
+        });
     }
 
     #[test]
     fn test_stacks_collect_retained() {
-        let heap = Heap::new();
-        heap.record_call_enter(const_frozen_string!("enter").to_value());
-        let s0 = heap.alloc_str("xxyy");
-        let s1 = heap.alloc_str("zzww");
-        heap.alloc_str("rrtt");
-        heap.record_call_exit();
+        Freezer::testing_temp(|heap, freezer| {
+            heap.record_call_enter(const_frozen_string!("enter").at().to_value());
+            let s0 = heap.alloc("xxyy");
+            let s1 = heap.alloc("zzww");
+            heap.alloc("rrtt");
+            heap.record_call_exit();
 
-        let frozen_heap = FrozenHeap::new();
-        let freezer = Freezer::new(&frozen_heap);
-        freezer.freeze(s0.to_value()).unwrap();
-        freezer.freeze(s1.to_value()).unwrap();
+            freezer.freeze(s0.to_value()).unwrap();
+            freezer.freeze(s1.to_value()).unwrap();
 
-        let stacks = AggregateHeapProfileInfo::collect(&heap, Some(HeapKind::Frozen));
-        assert!(stacks.root.allocs.summary.is_empty());
-        assert_eq!(1, stacks.root.callees.len());
-        // 3 allocated, 2 retained.
-        assert_eq!(
-            2,
-            stacks
-                .root
-                .callees
-                .values()
-                .next()
-                .unwrap()
-                .allocs
-                .summary
-                .get("string")
-                .unwrap()
-                .count
-        );
-        assert_eq!(2, total_alloc_count(&stacks.root));
+            let stacks = AggregateHeapProfileInfo::collect(heap, Some(HeapKind::Frozen));
+            assert!(stacks.root.allocs.summary.is_empty());
+            assert_eq!(1, stacks.root.callees.len());
+            // 3 allocated, 2 retained.
+            assert_eq!(
+                2,
+                stacks
+                    .root
+                    .callees
+                    .values()
+                    .next()
+                    .unwrap()
+                    .allocs
+                    .summary
+                    .get("string")
+                    .unwrap()
+                    .count
+            );
+            assert_eq!(2, total_alloc_count(&stacks.root));
+        });
     }
 
     #[test]
     fn test_merge() {
         fn make() -> AggregateHeapProfileInfo {
-            let heap = Heap::new();
-            heap.record_call_enter(const_frozen_string!("xx").to_value());
-            let s = heap.alloc_str("abc");
-            heap.record_call_exit();
-            let frozen_heap = FrozenHeap::new();
-            let freezer = Freezer::new(&frozen_heap);
-            freezer.freeze(s.to_value()).unwrap();
+            Freezer::testing_temp(|heap, freezer| {
+                heap.record_call_enter(const_frozen_string!("xx").at().to_value());
+                let s = heap.alloc("abc");
+                heap.record_call_exit();
+                freezer.freeze(s.to_value()).unwrap();
 
-            AggregateHeapProfileInfo::collect(&heap, Some(HeapKind::Frozen))
+                AggregateHeapProfileInfo::collect(heap, Some(HeapKind::Frozen))
+            })
         }
 
         let merge = AggregateHeapProfileInfo::merge([&make(), &make(), &make()]);

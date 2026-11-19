@@ -1,0 +1,12 @@
+load("@fbcode_macros//build_defs:python_binary.bzl", "python_binary")
+
+oncall("build_infra")
+
+python_binary(
+    name = "pytest_to_unittest",
+    srcs = ["pytest_to_unittest.py"],
+    main_function = "buck2.tests.tools.pytest_to_unittest.pytest_to_unittest.main",
+    deps = [
+        "fbsource//third-party/pypi/libcst:libcst",
+    ],
+)

@@ -1,0 +1,11 @@
+load(":rules.bzl", "leaf", "query_holder")
+
+leaf(name = "dep")
+
+leaf(name = "libc++")
+
+query_holder(
+    name = "holder",
+    arg = "$(query_targets deps(':libc++'))",
+    q = "deps(:dep)",
+)

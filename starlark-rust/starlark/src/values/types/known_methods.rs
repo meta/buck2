@@ -15,37 +15,69 @@
  * limitations under the License.
  */
 
+use std::sync::LazyLock;
+
 use dupe::Dupe;
 use hashbrown::HashMap;
-use once_cell::sync::Lazy;
 
 use crate::environment::Methods;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
-use crate::values::FrozenValueTyped;
+use crate::pagable::StarlarkDeserialize;
+use crate::pagable::StarlarkDeserializeContext;
+use crate::pagable::StarlarkSerialize;
+use crate::pagable::StarlarkSerializeContext;
+use crate::values::HeapEdge;
+use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::dict::value::dict_methods;
+use crate::values::ValueTyped;
+use crate::values::dict::value::FrozenDict;
 use crate::values::function::NativeMeth;
 use crate::values::function::NativeMethod;
-use crate::values::list::value::list_methods;
-use crate::values::set::value::set_methods;
-use crate::values::string::str_type::str_methods;
+use crate::values::list::value::FrozenList;
+use crate::values::set::value::FrozenSet;
+use crate::values::string::StarlarkStr;
 
 /// Method and a `Methods` container which declares it.
+///
+/// The method comes from a `&'static Methods`, so it is immortal and is brought to the brand of
+/// the heap in use through [`HeapEdge::immortal`].
 #[derive(Clone, Copy, Dupe)]
 pub(crate) struct KnownMethod {
     /// An object where the method is defined.
     pub(crate) type_methods: &'static Methods,
     /// The method.
-    method: FrozenValueTyped<'static, NativeMethod>,
+    method: ValueTyped<'static, NativeMethod<'static>>,
     /// Copied here from `method` to faster invocation (one fewer deref).
-    imp: &'static NativeMeth,
+    imp: &'static NativeMeth<'static>,
+}
+
+// `type_methods` and `imp` are `'static` pointers tied to the in-process
+// known-methods table. Round-trip the method name only and re-resolve via
+// `get_known_method` on deserialize.
+impl StarlarkSerialize for KnownMethod {
+    fn starlark_serialize(&self, ctx: &mut dyn StarlarkSerializeContext) -> crate::Result<()> {
+        self.method.as_ref().name.starlark_serialize(ctx)
+    }
+}
+
+impl<'fv> StarlarkDeserialize<'fv> for KnownMethod {
+    fn starlark_deserialize(
+        ctx: &mut dyn StarlarkDeserializeContext<'_, 'fv>,
+    ) -> crate::Result<Self> {
+        let name = String::starlark_deserialize(ctx)?;
+        get_known_method(&name).ok_or_else(|| {
+            crate::Error::new_other(anyhow::anyhow!(
+                "KnownMethod `{name}` not in known-methods table on deserialize"
+            ))
+        })
+    }
 }
 
 impl KnownMethod {
     #[inline]
     pub(crate) fn to_value<'v>(&self) -> Value<'v> {
-        self.method.to_value()
+        HeapEdge::immortal().rebrand(self.method).to_value()
     }
 
     #[inline]
@@ -55,7 +87,8 @@ impl KnownMethod {
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        self.imp.invoke(eval, this, args)
+        let imp: &NativeMeth<'v> = HeapEdge::immortal().rebrand(self.imp);
+        imp.invoke(eval, this, args)
     }
 }
 
@@ -74,9 +107,9 @@ impl KnownMethods {
         ) {
             let type_methods = type_methods.unwrap();
             let mut has_at_least_one_method = false;
-            for (name, member) in type_methods.members() {
+            for (name, member) in type_methods.members::<'static>() {
                 // Take methods, ignore attributes.
-                if let Some(method) = FrozenValueTyped::new(member) {
+                if let Some(method) = ValueTyped::<NativeMethod>::new(member) {
                     // First wins, e. g. `list.clear` is hit, and `dict.clear` is miss.
                     methods.entry(name).or_insert(KnownMethod {
                         type_methods,
@@ -91,10 +124,10 @@ impl KnownMethods {
         }
 
         // We don't need to add all the methods, only the most common ones. This is fine.
-        add_methods(&mut methods, list_methods());
-        add_methods(&mut methods, dict_methods());
-        add_methods(&mut methods, set_methods());
-        add_methods(&mut methods, str_methods());
+        add_methods(&mut methods, FrozenList::get_methods());
+        add_methods(&mut methods, FrozenDict::get_methods());
+        add_methods(&mut methods, FrozenSet::get_methods());
+        add_methods(&mut methods, StarlarkStr::get_methods());
 
         KnownMethods { methods }
     }
@@ -104,6 +137,6 @@ impl KnownMethods {
 /// or method is not very common. Return arbitrary method if more than one
 /// method is found (e. g. `list.clear` and `dict.clear`).
 pub(crate) fn get_known_method(name: &str) -> Option<KnownMethod> {
-    static ANY_METHODS: Lazy<KnownMethods> = Lazy::new(KnownMethods::build);
+    static ANY_METHODS: LazyLock<KnownMethods> = LazyLock::new(KnownMethods::build);
     ANY_METHODS.methods.get(name).copied()
 }

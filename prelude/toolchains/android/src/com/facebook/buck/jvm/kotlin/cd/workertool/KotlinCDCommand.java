@@ -23,16 +23,28 @@ import com.facebook.buck.jvm.cd.DepFileUtils;
 import com.facebook.buck.jvm.cd.JvmCDCommand;
 import com.facebook.buck.jvm.cd.command.PostBuildParams;
 import com.facebook.buck.jvm.cd.command.kotlin.BuildKotlinCommand;
+import com.facebook.buck.jvm.cd.command.kotlin.KotlinExtraParams;
 import com.facebook.buck.jvm.cd.serialization.kotlin.ActionMetadataSerializer;
 import com.facebook.buck.jvm.java.ActionMetadata;
+import com.facebook.buck.jvm.java.CompilerClassToSourceMap;
+import com.facebook.buck.jvm.java.CompilerOutputPaths;
+import com.facebook.buck.jvm.kotlin.ApplicabilityClasspathState;
+import com.facebook.buck.jvm.kotlin.ApplicabilityLedgerFiles;
+import com.facebook.buck.jvm.kotlin.ApplicabilityRoundMarker;
 import com.facebook.buck.jvm.kotlin.KotlinStepsBuilder;
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDAnalytics;
 import com.facebook.buck.jvm.kotlin.cd.analytics.logger.KotlinCDLogger;
 import com.facebook.buck.jvm.kotlin.cd.analytics.logger.KotlinCDLoggerAnalytics;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.ClassAbiWriter;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.ClassAbiWriterFactory;
+import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.PreviousOutputs;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.PreviousStateWriter;
 import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.PreviousStateWriterFactory;
+import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.SkippedCompilationTracker;
+import com.facebook.buck.jvm.kotlin.cd.workertool.postexecutors.SkippedCompilationTrackerFactory;
+import com.facebook.buck.jvm.kotlin.kotlinc.incremental.IncrementalCompilerInputs;
+import com.facebook.buck.util.zip.ZipScrubber;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
@@ -45,11 +57,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.StringJoiner;
 import java.util.stream.Collectors;
-import javax.annotation.Nullable;
+import java.util.stream.Stream;
+import org.jspecify.annotations.Nullable;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
@@ -59,6 +76,7 @@ import org.kohsuke.args4j.Option;
  *
  * <p>This provides a simple executable that can run any of the kotlincd actions.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class KotlinCDCommand implements JvmCDCommand {
 
   private static final String ACTION_META_DATA_FILE = "action_metadata.json";
@@ -72,19 +90,23 @@ public class KotlinCDCommand implements JvmCDCommand {
   protected Path commandFile;
 
   @Option(name = "--incremental-config-file")
+  @Nullable
   protected Path incrementalConfigFile;
 
   @Option(name = "--logging-level")
   private int loggingLevel = 0;
 
-  private final String buildUuid;
+  @Nullable private final String buildUuid;
   private final String executionPlatform;
+  private final Path scratchDir;
 
   private final KotlinStepsBuilder stepsBuilder;
   private final BuildKotlinCommand buildKotlinCommand;
   private final PostBuildParams postBuildParams;
   private final Optional<Path> actionMetadataPath;
   private final Logger logger;
+  private final SkippedCompilationTracker kotlinClassesTracker;
+  private final SkippedCompilationTracker jvmAbiTracker;
 
   public KotlinCDCommand(String[] args, ImmutableMap<String, String> env)
       throws CmdLineException, IOException {
@@ -103,16 +125,43 @@ public class KotlinCDCommand implements JvmCDCommand {
     try (Reader reader = new FileReader(commandFile.toFile())) {
       JsonFormat.parser().ignoringUnknownFields().merge(reader, builder);
     }
-    RelPath buckScratchPath = RelPath.get(env.get(WORKING_DIRECTORY_ENV_VAR));
+    String scratchPath = env.get(WORKING_DIRECTORY_ENV_VAR);
+    if (scratchPath == null || scratchPath.isEmpty()) {
+      throw new IllegalStateException(
+          "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
+    }
+    RelPath buckScratchPath = RelPath.get(scratchPath);
+    scratchDir = buckScratchPath.getPath();
     com.facebook.buck.cd.model.kotlin.BuildKotlinCommand proto = builder.build();
     this.buildKotlinCommand =
         BuildKotlinCommand.Companion.fromProto(
-            proto.getBuildCommand(), Optional.ofNullable(buckScratchPath));
+            proto.getBuildCommand(), Optional.of(buckScratchPath));
     this.postBuildParams = PostBuildParams.Companion.fromProto(proto.getPostBuildParams());
+    CompilerClassToSourceMap.prepare(
+        buildKotlinCommand
+            .getBaseJarCommand()
+            .getCompilerOutputPathsValue()
+            .getLibraryCompilerOutputPath(),
+        buildKotlinCommand.getBaseJarCommand().getBuildCellRootPath().getPath());
     this.buildUuid = env.get("BUCK_BUILD_ID");
     this.executionPlatform = env.get("INSIDE_RE_WORKER") != null ? "remote_execution" : "local";
     KotlinCDAnalytics kotlinCDAnalytics = initKotlinCDAnalytics();
     cleanupOldPostBuildOutputs();
+    reclaimPreviousOutputs();
+
+    // Capture pre-compilation timestamps for tracking which files skip compilation.
+    this.kotlinClassesTracker =
+        SkippedCompilationTrackerFactory.create(
+            postBuildParams.getFilesWhichSkippedCompilation(),
+            buildKotlinCommand.getKotlinExtraParams().getKotlinClassesDir().getPath());
+    this.jvmAbiTracker =
+        SkippedCompilationTrackerFactory.create(
+            postBuildParams.getJvmAbiFilesWhichSkippedCompilation(),
+            buildKotlinCommand
+                .getKotlinExtraParams()
+                .getJvmAbiGenWorkingDir()
+                .map(absPath -> absPath.getPath())
+                .orElse(null));
 
     this.stepsBuilder =
         new KotlinStepsBuilder(
@@ -196,6 +245,46 @@ public class KotlinCDCommand implements JvmCDCommand {
     return sources.stream().filter(pathMatcher::matches).count();
   }
 
+  /**
+   * Makes the outputs this round rewrites in place writable again when Buck2 left them read-only
+   * (see {@link PreviousOutputs#needsReclaim}). Runs after {@link #cleanupOldPostBuildOutputs}, so
+   * that nothing it deletes is copied first.
+   */
+  private void reclaimPreviousOutputs() throws IOException {
+    if (!buildKotlinCommand.getKotlinExtraParams().getShouldActionRunIncrementally()
+        || !buildKotlinCommand.getKotlinExtraParams().getShouldReclaimReadOnlyOutputs()) {
+      return;
+    }
+    Path incrementalStateDir = Objects.requireNonNull(postBuildParams.getIncrementalStateDir());
+    Path sentinel = incrementalStateDir.resolve(PreviousOutputs.RECLAIM_SENTINEL);
+    if (!PreviousOutputs.needsReclaim(sentinel)) {
+      return;
+    }
+    CompilerOutputPaths outputPaths =
+        buildKotlinCommand
+            .getBaseJarCommand()
+            .getCompilerOutputPathsValue()
+            .getLibraryCompilerOutputPath();
+    Set<Path> outputs = new LinkedHashSet<>();
+    outputs.add(incrementalStateDir);
+    outputs.add(outputPaths.getOutputJarDirPath().getPath());
+    outputs.add(outputPaths.getAnnotationPath().getPath());
+    if (outputPaths.getCompilerClassToSourceMap() != null) {
+      outputs.add(outputPaths.getCompilerClassToSourceMap().getPath());
+    }
+    Stream.of(
+            postBuildParams.getDepFile(),
+            postBuildParams.getUsedJarsPath(),
+            postBuildParams.getFilesWhichSkippedCompilation(),
+            postBuildParams.getJvmAbiFilesWhichSkippedCompilation())
+        .filter(Objects::nonNull)
+        .forEach(outputs::add);
+    PreviousOutputs.reclaim(
+        new ArrayList<>(outputs),
+        sentinel,
+        incrementalStateDir.resolve(PreviousOutputs.RECLAIM_DIRECTORY));
+  }
+
   private void cleanupOldPostBuildOutputs() throws IOException {
     if (!buildKotlinCommand.getKotlinExtraParams().getShouldActionRunIncrementally()) {
       return;
@@ -246,11 +335,13 @@ public class KotlinCDCommand implements JvmCDCommand {
   }
 
   protected void maybeWriteAbiDir() throws IOException {
-    if (postBuildParams.getAbiOutputDir() == null) {
+    Path abiOutputDir = postBuildParams.getAbiOutputDir();
+    if (abiOutputDir == null) {
       Preconditions.checkState(postBuildParams.getAbiJar() == null);
       return;
     }
-    AbiDirWriter.writeAbiOutputDir(postBuildParams.getAbiJar(), postBuildParams.getAbiOutputDir());
+    AbiDirWriter.writeAbiOutputDir(
+        Objects.requireNonNull(postBuildParams.getAbiJar()), abiOutputDir);
   }
 
   public void maybeWriteDepFile() throws IOException {
@@ -266,7 +357,7 @@ public class KotlinCDCommand implements JvmCDCommand {
       DepFileUtils.usedClassesToDepFile(
           usedClassesMapPaths,
           postBuildParams.getDepFile(),
-          Optional.ofNullable(postBuildParams.getJarToJarDirMap()),
+          buildKotlinCommand.getBaseJarCommand().getJarToJarDirMap(),
           buildKotlinCommand.getKotlinExtraParams().getShouldActionRunIncrementally());
     }
   }
@@ -296,7 +387,7 @@ public class KotlinCDCommand implements JvmCDCommand {
     }
   }
 
-  protected void maybeWritePreviousStateForNextIncrementalRun() {
+  protected void maybeWritePreviousStateForNextIncrementalRun() throws IOException {
     PreviousStateWriter previousStateWriter =
         PreviousStateWriterFactory.create(
             buildKotlinCommand.getKotlinExtraParams().getShouldActionRunIncrementally(),
@@ -304,6 +395,19 @@ public class KotlinCDCommand implements JvmCDCommand {
             actionMetadataPath.orElse(null));
 
     previousStateWriter.execute();
+    KotlinExtraParams extraParams = buildKotlinCommand.getKotlinExtraParams();
+    if (!extraParams.getShouldActionRunIncrementally()) {
+      return;
+    }
+    Path incrementalStateDir = Objects.requireNonNull(postBuildParams.getIncrementalStateDir());
+    if (extraParams.getShouldTrackIncrementalInputs()) {
+      IncrementalCompilerInputs.promotePending(incrementalStateDir);
+    }
+    if (extraParams.getShouldVerifySourceOnlyAbiConstraints()) {
+      ApplicabilityClasspathState.promotePending(incrementalStateDir);
+      ApplicabilityLedgerFiles.promotePending(incrementalStateDir);
+      ApplicabilityRoundMarker.clear(incrementalStateDir);
+    }
   }
 
   protected void maybeWriteUsedJarsFile() throws IOException {
@@ -340,13 +444,66 @@ public class KotlinCDCommand implements JvmCDCommand {
 
   @Override
   public void postExecute() throws IOException {
+    CompilerClassToSourceMap.writeCombined(
+        buildKotlinCommand
+            .getBaseJarCommand()
+            .getCompilerOutputPathsValue()
+            .getLibraryCompilerOutputPath(),
+        buildKotlinCommand.getBaseJarCommand().getBuildCellRootPath().getPath(),
+        // The shared javaSrcs protocol field carries both .java and .kt inputs.
+        buildKotlinCommand.getBaseJarCommand().getJavaSrcs().stream()
+            .map(RelPath::getPath)
+            .collect(Collectors.toList()));
     maybeCreateIncrementalStateDir();
+    maybeRunPostProcessor();
     maybeWriteClassAbi();
     maybeWriteAbiDir();
+    kotlinClassesTracker.writeSkippedFiles();
+    jvmAbiTracker.writeSkippedFiles();
     maybeWriteDepFile();
     maybeCreateOptionalDirs();
     maybeWriteUsedJarsFile();
     maybeWritePreviousStateForNextIncrementalRun();
+  }
+
+  protected void maybeRunPostProcessor() throws IOException {
+    String postProcessorCmd = postBuildParams.getPostProcessorCmd();
+    if (postProcessorCmd == null) {
+      return;
+    }
+
+    Path libraryJar = postBuildParams.getLibraryJar();
+    Preconditions.checkNotNull(libraryJar, "libraryJar must be set when postProcessorCmd is set");
+
+    Path tempDir = Files.createTempDirectory(scratchDir, "postprocessor");
+    try {
+      Path postprocessedJar = tempDir.resolve("postprocessed_output.jar");
+      List<String> cmd = new ArrayList<>(Arrays.asList(postProcessorCmd.split("\\s+")));
+      cmd.add(libraryJar.toString());
+      cmd.add(postprocessedJar.toString());
+
+      logger.info("Executing post-processor: %s", String.join(" ", cmd));
+      ProcessBuilder pb = new ProcessBuilder(cmd);
+      pb.inheritIO();
+      Process process = pb.start();
+      int exitCode;
+      try {
+        exitCode = process.waitFor();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new IOException("Post-processor interrupted", e);
+      }
+      if (exitCode != 0) {
+        throw new IOException("Post-processor command failed with exit code " + exitCode);
+      }
+
+      Files.copy(postprocessedJar, libraryJar, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    } finally {
+      MostFiles.deleteRecursivelyIfExists(AbsPath.of(tempDir.toAbsolutePath()));
+    }
+
+    // Scrub the jar to normalize timestamps for deterministic builds
+    ZipScrubber.scrubZip(libraryJar);
   }
 
   @Override

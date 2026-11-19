@@ -1,5 +1,4 @@
 load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
-load("@fbsource//tools/build_defs:rust_linkable_symbol.bzl", "rust_linkable_symbol")
 
 oncall("build_infra")
 
@@ -12,14 +11,7 @@ rust_library(
         "ovr_config//os:linux",
         "ovr_config//os:macos",
     ],
-    os_deps = [
-        (
-            "linux",
-            [
-                ":buck2_miniperf_data",
-            ],
-        ),
-    ],
+    test_deps = ["fbsource//third-party/rust:tempfile"],
     deps = [
         "fbsource//third-party/rust:arc-swap",
         "fbsource//third-party/rust:async-trait",
@@ -28,10 +20,11 @@ rust_library(
         "fbsource//third-party/rust:rand",
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tokio-stream",
-        "fbsource//third-party/rust:tonic-0-12-3",
+        "fbsource//third-party/rust:tonic",
         "//buck2/allocative/allocative:allocative",
         "//buck2/app/buck2_common:buck2_common",
         "//buck2/app/buck2_core:buck2_core",
+        "//buck2/app/buck2_data:buck2_data",
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_execute_local:buck2_execute_local",
         "//buck2/app/buck2_forkserver_proto:buck2_forkserver_proto",
@@ -40,10 +33,12 @@ rust_library(
         "//buck2/app/buck2_resource_control:buck2_resource_control",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/gazebo/dupe:dupe",
-    ],
-)
-
-rust_linkable_symbol(
-    name = "buck2_miniperf_data",
-    content_bytes = "//buck2/app/buck2_miniperf:buck2_miniperf",
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:nix",
+            "fbsource//third-party/rust:zstd",
+            # @oss-disable[end= ]: "//buck2/app/buck2_forkserver/meta_only:buck2_miniperf_data",
+        ],
+    }),
 )

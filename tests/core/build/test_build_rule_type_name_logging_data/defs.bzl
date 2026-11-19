@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 def _one(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("out", "one"))]
+    return [DefaultInfo(default_output = ctx.actions.write("out", "one", has_content_based_path = False))]
 
 one = rule(
     impl = _one,
@@ -17,7 +17,7 @@ one = rule(
 )
 
 def _two(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("out", "two"))]
+    return [DefaultInfo(default_output = ctx.actions.write("out", "two", has_content_based_path = False))]
 
 two = rule(
     impl = _two,
@@ -25,17 +25,23 @@ two = rule(
 )
 
 def _nested_subtargets(ctx):
-    out = ctx.actions.write("foo", "foo_content")
+    out = ctx.actions.write("foo", "foo_content", has_content_based_path = False)
 
-    nested_info = [DefaultInfo(
-        sub_targets = {"nested_sub": [
-            DefaultInfo(default_output = out),
-        ]},
-    )]
+    nested_info = [
+        DefaultInfo(
+            sub_targets = {
+                "nested_sub": [
+                    DefaultInfo(default_output = out),
+                ]
+            },
+        )
+    ]
 
-    return [DefaultInfo(
-        sub_targets = {"sub": nested_info},
-    )]
+    return [
+        DefaultInfo(
+            sub_targets = {"sub": nested_info},
+        )
+    ]
 
 nested_subtargets = rule(
     impl = _nested_subtargets,
@@ -53,7 +59,7 @@ def _identity_transition(platform: PlatformInfo, refs: struct) -> PlatformInfo:
 identity_transition = transition(impl = _identity_transition, refs = {})
 
 def _three_with_transition(ctx):
-    return [DefaultInfo(default_output = ctx.actions.write("out", "three"))]
+    return [DefaultInfo(default_output = ctx.actions.write("out", "three", has_content_based_path = False))]
 
 three_with_transition = rule(
     impl = _three_with_transition,

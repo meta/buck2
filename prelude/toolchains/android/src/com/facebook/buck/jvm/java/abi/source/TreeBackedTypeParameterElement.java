@@ -10,7 +10,7 @@
 
 package com.facebook.buck.jvm.java.abi.source;
 
-import com.facebook.buck.util.liteinfersupport.Nullable;
+import com.facebook.infer.annotation.Nullsafe;
 import com.sun.source.tree.TypeParameterTree;
 import com.sun.source.util.TreePath;
 import java.util.Collections;
@@ -20,12 +20,14 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementVisitor;
 import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.type.TypeMirror;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An implementation of {@link TypeParameterElement} that uses only the information available from a
  * {@link TypeParameterTree}. This results in an incomplete implementation; see documentation for
  * individual methods and {@link com.facebook.buck.jvm.java.abi.source} for more information.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class TreeBackedTypeParameterElement extends TreeBackedElement
     implements ArtificialTypeParameterElement {
   private final TypeParameterElement underlyingElement;
@@ -85,7 +87,7 @@ class TreeBackedTypeParameterElement extends TreeBackedElement
   }
 
   @Override
-  public <R, P> R accept(ElementVisitor<R, P> v, P p) {
+  public <R, P> R accept(ElementVisitor<R, P> v, @Nullable P p) {
     return v.visitTypeParameter(this, p);
   }
 }

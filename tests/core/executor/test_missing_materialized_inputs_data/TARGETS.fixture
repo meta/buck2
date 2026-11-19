@@ -1,0 +1,13 @@
+load(":defs.bzl", "failing_action", "test_binary")
+
+test_binary(name = "test_binary")
+
+failing_action(
+    name = "missing_undeclared_executable",
+    command = "./executable-that-does-not-exist",
+)
+
+failing_action(
+    name = "ordinary_failure",
+    command = "/usr/bin/false",
+)

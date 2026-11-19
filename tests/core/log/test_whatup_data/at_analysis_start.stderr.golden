@@ -1,6 +1,6 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
-[1GBuck UI: https://www.internalfb.com/buck2/d2d60ed5-eee0-47bf-8896-1549c37665b0[K
-[1G----------------------------------------------------------------------------------------------------[K
-[1Groot//:long_build -- running analysis [evaluate_rule 0.0s]                                      0.0s[K
-[1G[J
+[?25l[1GBuck UI: https://www.internalfb.com/buck2/d2d60ed5-eee0-47bf-8896-1549c37665b0[K
+[1G────────────────────────────────────────────────────────────────────────────────────────────────────[K
+[1Groot//:long_build · running analysis evaluate_rule   0.0s                                       0.0s[K
+[1G[?25h[J

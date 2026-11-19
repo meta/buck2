@@ -25,6 +25,7 @@
 
 use std::cmp;
 
+use starlark_derive::StarlarkPagable;
 use starlark_derive::VisitSpanMut;
 use starlark_syntax::slice_vec_ext::SliceExt;
 use starlark_syntax::syntax::ast::AssignOp;
@@ -35,11 +36,13 @@ use starlark_syntax::syntax::ast::ForP;
 use starlark_syntax::syntax::ast::StmtP;
 use thiserror::Error;
 
+use crate as starlark;
 use crate::codemap::Span;
 use crate::codemap::Spanned;
 use crate::environment::FrozenModuleData;
 use crate::environment::slots::ModuleSlotId;
 use crate::eval::compiler::Compiler;
+use crate::eval::compiler::def_inline::local_as_value::LocalAsValue;
 use crate::eval::compiler::error::CompilerInternalError;
 use crate::eval::compiler::expr::Builtin1;
 use crate::eval::compiler::expr::ExprCompiled;
@@ -57,69 +60,90 @@ use crate::eval::compiler::span::IrSpanned;
 use crate::eval::runtime::evaluator::Evaluator;
 use crate::eval::runtime::evaluator::GC_THRESHOLD;
 use crate::eval::runtime::frame_span::FrameSpan;
-use crate::eval::runtime::frozen_file_span::FrozenFileSpan;
+use crate::eval::runtime::heap_file_span::HeapFileSpan;
 use crate::eval::runtime::slots::LocalCapturedSlotId;
 use crate::eval::runtime::slots::LocalSlotId;
 use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
 use crate::values::Heap;
+use crate::values::HeapEdge;
+use crate::values::SealEdge;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueTyped;
 use crate::values::dict::Dict;
 use crate::values::dict::DictMut;
 use crate::values::dict::DictRef;
 use crate::values::types::list::value::ListData;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 
-#[derive(Clone, Debug)]
-pub(crate) enum AssignModifyLhs {
-    Dot(IrSpanned<ExprCompiled>, String),
-    Array(IrSpanned<ExprCompiled>, IrSpanned<ExprCompiled>),
-    Local(IrSpanned<LocalSlotId>),
-    LocalCaptured(IrSpanned<LocalCapturedSlotId>),
-    Module(IrSpanned<ModuleSlotId>),
+#[derive(Clone, Debug, StarlarkPagable)]
+pub(crate) enum AssignModifyLhs<'f> {
+    Dot(IrSpanned<'f, ExprCompiled<'f>>, String),
+    Array(
+        IrSpanned<'f, ExprCompiled<'f>>,
+        IrSpanned<'f, ExprCompiled<'f>>,
+    ),
+    Local(IrSpanned<'f, LocalSlotId>),
+    LocalCaptured(IrSpanned<'f, LocalCapturedSlotId>),
+    Module(IrSpanned<'f, ModuleSlotId>),
 }
 
-#[derive(Clone, Debug)]
-pub(crate) enum StmtCompiled {
+#[derive(Clone, Debug, StarlarkPagable)]
+pub(crate) enum StmtCompiled<'f> {
     PossibleGc,
-    Return(IrSpanned<ExprCompiled>),
-    Expr(IrSpanned<ExprCompiled>),
+    Return(IrSpanned<'f, ExprCompiled<'f>>),
+    Expr(IrSpanned<'f, ExprCompiled<'f>>),
     Assign(
-        IrSpanned<AssignCompiledValue>,
-        Option<IrSpanned<TypeCompiled<FrozenValue>>>,
-        IrSpanned<ExprCompiled>,
+        IrSpanned<'f, AssignCompiledValue<'f>>,
+        Option<IrSpanned<'f, TypeCompiled<'f>>>,
+        IrSpanned<'f, ExprCompiled<'f>>,
     ),
-    AssignModify(AssignModifyLhs, AssignOp, IrSpanned<ExprCompiled>),
-    If(Box<(IrSpanned<ExprCompiled>, StmtsCompiled, StmtsCompiled)>),
+    AssignModify(
+        AssignModifyLhs<'f>,
+        AssignOp,
+        IrSpanned<'f, ExprCompiled<'f>>,
+    ),
+    If(
+        Box<(
+            IrSpanned<'f, ExprCompiled<'f>>,
+            StmtsCompiled<'f>,
+            StmtsCompiled<'f>,
+        )>,
+    ),
     For(
         Box<(
-            IrSpanned<AssignCompiledValue>,
-            IrSpanned<ExprCompiled>,
-            StmtsCompiled,
+            IrSpanned<'f, AssignCompiledValue<'f>>,
+            IrSpanned<'f, ExprCompiled<'f>>,
+            StmtsCompiled<'f>,
         )>,
     ),
     Break,
     Continue,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, StarlarkPagable)]
 pub(crate) struct StmtCompileContext {
     /// Current function has return type.
     pub(crate) has_return_type: bool,
 }
 
-pub(crate) struct OptimizeOnFreezeContext<'v, 'a> {
-    pub(crate) module: &'a FrozenModuleData,
+/// The optimizer's context when a def's body is re-optimized against its frozen module, see
+/// `Def::post_freeze`.
+pub(crate) struct OptimizeOnFreezeContext<'v, 'a, 'fv> {
+    pub(crate) module: &'a FrozenModuleData<'fv>,
     /// Nothing useful should be left in the heap after the freeze,
     /// but having a heap is useful to allocate objects temporarily
     /// (when invoking operations which require heap).
-    pub(crate) heap: &'v Heap,
-    pub(crate) frozen_heap: &'a FrozenHeap,
+    pub(crate) heap: Heap<'v>,
+    pub(crate) frozen_heap: FrozenHeap<'fv>,
+    pub(crate) edge: HeapEdge<'v, 'fv>,
+    pub(crate) seal_edge: SealEdge<'fv, 'v>,
+    /// See [`OptCtx::local_as_values`].
+    pub(crate) local_as_values: Vec<ValueTyped<'fv, LocalAsValue>>,
 }
 
-impl AssignModifyLhs {
-    fn optimize(&self, ctx: &mut OptCtx) -> AssignModifyLhs {
+impl<'f> AssignModifyLhs<'f> {
+    fn optimize(&self, ctx: &mut OptCtx<'_, '_, '_, '_, 'f>) -> AssignModifyLhs<'f> {
         match self {
             AssignModifyLhs::Dot(expr, name) => {
                 AssignModifyLhs::Dot(expr.optimize(ctx), name.clone())
@@ -134,8 +158,8 @@ impl AssignModifyLhs {
     }
 }
 
-impl IrSpanned<StmtCompiled> {
-    fn optimize(&self, ctx: &mut OptCtx) -> StmtsCompiled {
+impl<'f> IrSpanned<'f, StmtCompiled<'f>> {
+    fn optimize(&self, ctx: &mut OptCtx<'_, '_, '_, '_, 'f>) -> StmtsCompiled<'f> {
         let span = self.span;
         match &self.node {
             StmtCompiled::Return(e) => StmtsCompiled::one(IrSpanned {
@@ -182,16 +206,20 @@ impl IrSpanned<StmtCompiled> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct StmtsCompiled(SmallVec1<IrSpanned<StmtCompiled>>);
+#[derive(Clone, Debug, StarlarkPagable)]
+pub(crate) struct StmtsCompiled<'f>(SmallVec1<IrSpanned<'f, StmtCompiled<'f>>>);
 
-impl StmtsCompiled {
-    pub(crate) fn empty() -> StmtsCompiled {
+impl<'f> StmtsCompiled<'f> {
+    pub(crate) fn empty() -> StmtsCompiled<'f> {
         StmtsCompiled(SmallVec1::new())
     }
 
-    pub(crate) fn one(stmt: IrSpanned<StmtCompiled>) -> StmtsCompiled {
+    pub(crate) fn one(stmt: IrSpanned<'f, StmtCompiled<'f>>) -> StmtsCompiled<'f> {
         StmtsCompiled(SmallVec1::One(stmt))
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.0.shrink_to_fit();
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -201,7 +229,7 @@ impl StmtsCompiled {
         }
     }
 
-    pub(crate) fn stmts(&self) -> &[IrSpanned<StmtCompiled>] {
+    pub(crate) fn stmts(&self) -> &[IrSpanned<'f, StmtCompiled<'f>>] {
         self.0.as_slice()
     }
 
@@ -217,7 +245,7 @@ impl StmtsCompiled {
         }
     }
 
-    pub(crate) fn extend(&mut self, right: StmtsCompiled) {
+    pub(crate) fn extend(&mut self, right: StmtsCompiled<'f>) {
         // Do not add any code after `break`, `continue` or `return`.
         if self.is_terminal() {
             return;
@@ -225,7 +253,7 @@ impl StmtsCompiled {
         self.0.extend(right.0);
     }
 
-    pub(crate) fn optimize(&self, ctx: &mut OptCtx) -> StmtsCompiled {
+    pub(crate) fn optimize(&self, ctx: &mut OptCtx<'_, '_, '_, '_, 'f>) -> StmtsCompiled<'f> {
         let mut stmts = StmtsCompiled::empty();
         match &self.0 {
             SmallVec1::One(s) => stmts.extend(s.optimize(ctx)),
@@ -241,21 +269,21 @@ impl StmtsCompiled {
         stmts
     }
 
-    pub(crate) fn first(&self) -> Option<&IrSpanned<StmtCompiled>> {
+    pub(crate) fn first(&self) -> Option<&IrSpanned<'f, StmtCompiled<'f>>> {
         match &self.0 {
             SmallVec1::One(s) => Some(s),
             SmallVec1::Vec(ss) => ss.first(),
         }
     }
 
-    pub(crate) fn last(&self) -> Option<&IrSpanned<StmtCompiled>> {
+    pub(crate) fn last(&self) -> Option<&IrSpanned<'f, StmtCompiled<'f>>> {
         match &self.0 {
             SmallVec1::One(s) => Some(s),
             SmallVec1::Vec(ss) => ss.last(),
         }
     }
 
-    fn expr(expr: IrSpanned<ExprCompiled>) -> StmtsCompiled {
+    fn expr(expr: IrSpanned<'f, ExprCompiled<'f>>) -> StmtsCompiled<'f> {
         let span = expr.span;
         match expr.node {
             expr if expr.is_pure_infallible() => StmtsCompiled::empty(),
@@ -291,11 +319,11 @@ impl StmtsCompiled {
     }
 
     fn if_stmt(
-        span: FrameSpan,
-        cond: IrSpanned<ExprCompiled>,
-        t: StmtsCompiled,
-        f: StmtsCompiled,
-    ) -> StmtsCompiled {
+        span: FrameSpan<'f>,
+        cond: IrSpanned<'f, ExprCompiled<'f>>,
+        mut t: StmtsCompiled<'f>,
+        mut f: StmtsCompiled<'f>,
+    ) -> StmtsCompiled<'f> {
         let cond = ExprCompiledBool::new(cond);
         match cond.node {
             ExprCompiledBool::Const(true) => t,
@@ -314,6 +342,8 @@ impl StmtsCompiled {
                     if t.is_empty() && f.is_empty() {
                         Self::expr(cond)
                     } else {
+                        t.shrink_to_fit();
+                        f.shrink_to_fit();
                         StmtsCompiled::one(IrSpanned {
                             span,
                             node: StmtCompiled::If(Box::new((cond, t, f))),
@@ -325,14 +355,15 @@ impl StmtsCompiled {
     }
 
     fn for_stmt(
-        span: FrameSpan,
-        var: IrSpanned<AssignCompiledValue>,
-        over: IrSpanned<ExprCompiled>,
-        body: StmtsCompiled,
-    ) -> StmtsCompiled {
+        span: FrameSpan<'f>,
+        var: IrSpanned<'f, AssignCompiledValue<'f>>,
+        over: IrSpanned<'f, ExprCompiled<'f>>,
+        mut body: StmtsCompiled<'f>,
+    ) -> StmtsCompiled<'f> {
         if over.is_iterable_empty() {
             return StmtsCompiled::empty();
         }
+        body.shrink_to_fit();
         StmtsCompiled::one(IrSpanned {
             span,
             node: StmtCompiled::For(Box::new((var, over, body))),
@@ -347,17 +378,20 @@ pub(crate) enum AssignError {
     IncorrectNumberOfValueToUnpack(i32, i32),
 }
 
-#[derive(Clone, Debug, VisitSpanMut)]
-pub(crate) enum AssignCompiledValue {
-    Dot(IrSpanned<ExprCompiled>, String),
-    Index(IrSpanned<ExprCompiled>, IrSpanned<ExprCompiled>),
-    Tuple(Vec<IrSpanned<AssignCompiledValue>>),
+#[derive(Clone, Debug, VisitSpanMut, starlark_derive::StarlarkPagable)]
+pub(crate) enum AssignCompiledValue<'f> {
+    Dot(IrSpanned<'f, ExprCompiled<'f>>, String),
+    Index(
+        IrSpanned<'f, ExprCompiled<'f>>,
+        IrSpanned<'f, ExprCompiled<'f>>,
+    ),
+    Tuple(Vec<IrSpanned<'f, AssignCompiledValue<'f>>>),
     Local(LocalSlotId),
     LocalCaptured(LocalCapturedSlotId),
     Module(ModuleSlotId, String),
 }
 
-impl AssignCompiledValue {
+impl<'f> AssignCompiledValue<'f> {
     /// Assignment to a local non-captured variable.
     pub(crate) fn as_local_non_captured(&self) -> Option<LocalSlotId> {
         match self {
@@ -367,8 +401,11 @@ impl AssignCompiledValue {
     }
 }
 
-impl IrSpanned<AssignCompiledValue> {
-    pub(crate) fn optimize(&self, ctx: &mut OptCtx) -> IrSpanned<AssignCompiledValue> {
+impl<'f> IrSpanned<'f, AssignCompiledValue<'f>> {
+    pub(crate) fn optimize(
+        &self,
+        ctx: &mut OptCtx<'_, '_, '_, '_, 'f>,
+    ) -> IrSpanned<'f, AssignCompiledValue<'f>> {
         let span = self.span;
         let assign = match self.node {
             AssignCompiledValue::Dot(ref object, ref field) => {
@@ -393,12 +430,12 @@ impl IrSpanned<AssignCompiledValue> {
     }
 }
 
-impl Compiler<'_, '_, '_, '_> {
+impl<'fm> Compiler<'_, '_, '_, '_, 'fm> {
     pub fn assign_target(
         &mut self,
-        expr: &CstAssignTarget,
-    ) -> Result<IrSpanned<AssignCompiledValue>, CompilerInternalError> {
-        let span = FrameSpan::new(FrozenFileSpan::new(self.codemap, expr.span));
+        expr: &CstAssignTarget<'fm>,
+    ) -> Result<IrSpanned<'fm, AssignCompiledValue<'fm>>, CompilerInternalError> {
+        let span = FrameSpan::new(HeapFileSpan::new(self.codemap, expr.span));
         let assign = match &expr.node {
             AssignTargetP::Dot(e, s) => {
                 let e = self.expr(e)?;
@@ -412,10 +449,7 @@ impl Compiler<'_, '_, '_, '_> {
                 AssignCompiledValue::Index(e, idx)
             }
             AssignTargetP::Tuple(v) => {
-                let v = v
-                    .iter()
-                    .map(|x| self.assign_target(x))
-                    .collect::<Result<_, CompilerInternalError>>()?;
+                let v = v.try_map(|x| self.assign_target(x))?;
                 AssignCompiledValue::Tuple(v)
             }
             AssignTargetP::Identifier(ident) => {
@@ -443,12 +477,12 @@ impl Compiler<'_, '_, '_, '_> {
     fn assign_modify(
         &mut self,
         span_stmt: Span,
-        lhs: &CstAssignTarget,
-        rhs: IrSpanned<ExprCompiled>,
+        lhs: &CstAssignTarget<'fm>,
+        rhs: IrSpanned<'fm, ExprCompiled<'fm>>,
         op: AssignOp,
-    ) -> Result<StmtsCompiled, CompilerInternalError> {
-        let span_stmt = FrameSpan::new(FrozenFileSpan::new(self.codemap, span_stmt));
-        let span_lhs = FrameSpan::new(FrozenFileSpan::new(self.codemap, lhs.span));
+    ) -> Result<StmtsCompiled<'fm>, CompilerInternalError> {
+        let span_stmt = FrameSpan::new(HeapFileSpan::new(self.codemap, span_stmt));
+        let span_lhs = FrameSpan::new(HeapFileSpan::new(self.codemap, lhs.span));
         match &lhs.node {
             AssignTargetP::Dot(e, s) => {
                 let e = self.expr(e)?;
@@ -560,7 +594,7 @@ pub(crate) fn possible_gc(eval: &mut Evaluator) {
 pub(crate) fn bit_or_assign<'v>(
     lhs: Value<'v>,
     rhs: Value<'v>,
-    heap: &'v Heap,
+    heap: Heap<'v>,
 ) -> crate::Result<Value<'v>> {
     // The Starlark spec says dict |= mutates, while nothing else does.
     // When mutating, be careful if they alias, so we don't have `lhs`
@@ -599,7 +633,7 @@ pub(crate) fn bit_or_assign<'v>(
 pub(crate) fn add_assign<'v>(
     lhs: Value<'v>,
     rhs: Value<'v>,
-    heap: &'v Heap,
+    heap: Heap<'v>,
 ) -> crate::Result<Value<'v>> {
     // Checking whether a value is an integer or a string is cheap (no virtual call),
     // and `Value::add` has optimizations for these types, so check them first
@@ -637,17 +671,17 @@ pub(crate) fn add_assign<'v>(
     }
 }
 
-impl Compiler<'_, '_, '_, '_> {
+impl<'fm> Compiler<'_, '_, '_, '_, 'fm> {
     pub(crate) fn compile_context(&self, has_return_type: bool) -> StmtCompileContext {
         StmtCompileContext { has_return_type }
     }
 
     pub(crate) fn stmt(
         &mut self,
-        stmt: &CstStmt,
+        stmt: &CstStmt<'fm>,
         allow_gc: bool,
-    ) -> Result<StmtsCompiled, CompilerInternalError> {
-        let span = FrameSpan::new(FrozenFileSpan::new(self.codemap, stmt.span));
+    ) -> Result<StmtsCompiled<'fm>, CompilerInternalError> {
+        let span = FrameSpan::new(HeapFileSpan::new(self.codemap, stmt.span));
         let is_statements = matches!(&stmt.node, StmtP::Statements(_));
         let res = self.stmt_direct(stmt, allow_gc)?;
         // No point inserting a GC point around statements, since they will contain inner statements we can do
@@ -667,8 +701,8 @@ impl Compiler<'_, '_, '_, '_> {
 
     pub(crate) fn module_top_level_stmt(
         &mut self,
-        stmt: &CstStmt,
-    ) -> Result<StmtsCompiled, CompilerInternalError> {
+        stmt: &CstStmt<'fm>,
+    ) -> Result<StmtsCompiled<'fm>, CompilerInternalError> {
         match &stmt.node {
             StmtP::Statements(..) => {
                 unreachable!("top level statement lists are handled by outer loop")
@@ -690,11 +724,11 @@ impl Compiler<'_, '_, '_, '_> {
 
     fn stmt_if(
         &mut self,
-        span: FrameSpan,
-        cond: &CstExpr,
-        then_block: &CstStmt,
+        span: FrameSpan<'fm>,
+        cond: &CstExpr<'fm>,
+        then_block: &CstStmt<'fm>,
         allow_gc: bool,
-    ) -> Result<StmtsCompiled, CompilerInternalError> {
+    ) -> Result<StmtsCompiled<'fm>, CompilerInternalError> {
         let cond = self.expr(cond)?;
         let then_block = self.stmt(then_block, allow_gc)?;
         Ok(StmtsCompiled::if_stmt(
@@ -707,33 +741,36 @@ impl Compiler<'_, '_, '_, '_> {
 
     fn stmt_if_else(
         &mut self,
-        span: FrameSpan,
-        cond: &CstExpr,
-        then_block: &CstStmt,
-        else_block: &CstStmt,
+        span: FrameSpan<'fm>,
+        cond: &CstExpr<'fm>,
+        then_block: &CstStmt<'fm>,
+        else_block: &CstStmt<'fm>,
         allow_gc: bool,
-    ) -> Result<StmtsCompiled, CompilerInternalError> {
+    ) -> Result<StmtsCompiled<'fm>, CompilerInternalError> {
         let cond = self.expr(cond)?;
         let then_block = self.stmt(then_block, allow_gc)?;
         let else_block = self.stmt(else_block, allow_gc)?;
         Ok(StmtsCompiled::if_stmt(span, cond, then_block, else_block))
     }
 
-    fn stmt_expr(&mut self, expr: &CstExpr) -> Result<StmtsCompiled, CompilerInternalError> {
+    fn stmt_expr(
+        &mut self,
+        expr: &CstExpr<'fm>,
+    ) -> Result<StmtsCompiled<'fm>, CompilerInternalError> {
         let expr = self.expr(expr)?;
         Ok(StmtsCompiled::expr(expr))
     }
 
     fn stmt_direct(
         &mut self,
-        stmt: &CstStmt,
+        stmt: &CstStmt<'fm>,
         allow_gc: bool,
-    ) -> Result<StmtsCompiled, CompilerInternalError> {
-        let span = FrameSpan::new(FrozenFileSpan::new(self.codemap, stmt.span));
+    ) -> Result<StmtsCompiled<'fm>, CompilerInternalError> {
+        let span = FrameSpan::new(HeapFileSpan::new(self.codemap, stmt.span));
         match &stmt.node {
             StmtP::Def(def) => {
                 let signature_span = def.signature_span();
-                let signature_span = FrozenFileSpan::new(self.codemap, signature_span);
+                let signature_span = HeapFileSpan::new(self.codemap, signature_span);
                 let DefP {
                     name,
                     params,
@@ -771,7 +808,7 @@ impl Compiler<'_, '_, '_, '_> {
             StmtP::Return(None) => Ok(StmtsCompiled::one(IrSpanned {
                 node: StmtCompiled::Return(IrSpanned {
                     span,
-                    node: ExprCompiled::Value(FrozenValue::new_none()),
+                    node: ExprCompiled::Value(Value::new_none()),
                 }),
                 span,
             })),

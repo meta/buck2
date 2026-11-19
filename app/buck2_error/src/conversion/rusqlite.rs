@@ -19,7 +19,22 @@ impl From<rusqlite::Error> for crate::Error {
                 return wrapper.0.clone();
             }
         }
-        crate::conversion::from_any_with_tag(value, crate::ErrorTag::Rusqlite)
+        let is_disk_full = matches!(
+            &value,
+            rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error {
+                    code: rusqlite::ffi::ErrorCode::DiskFull,
+                    ..
+                },
+                _
+            )
+        );
+        let error = crate::conversion::from_any_with_tag(value, crate::ErrorTag::Rusqlite);
+        if is_disk_full {
+            error.tag([crate::ErrorTag::IoStorageFull])
+        } else {
+            error
+        }
     }
 }
 

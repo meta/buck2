@@ -1,0 +1,8 @@
+load(":rules.bzl", "r", "tool")
+
+tool(name = "tool")
+
+r(
+    name = "t",
+    cmd = "$(exe :tool)",
+)

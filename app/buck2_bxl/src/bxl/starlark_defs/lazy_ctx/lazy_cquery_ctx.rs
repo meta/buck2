@@ -16,15 +16,17 @@ use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::environment::MethodsStatic;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::ValueOf;
+use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::lazy_ctx::operation::StarlarkLazy;
 use crate::bxl::starlark_defs::lazy_ctx::operation::cquery::LazyCqueryOperation;
@@ -38,7 +40,9 @@ use crate::bxl::starlark_defs::uquery::UnpackUnconfiguredQueryArgs;
     Trace,
     NoSerialize,
     Allocative,
-    Debug
+    Debug,
+    pagable::Pagable,
+    starlark::StarlarkPagableViaPagable
 )]
 #[display("bxl.LazyCqueryContext")]
 #[allocative(skip)]
@@ -56,11 +60,12 @@ impl StarlarkLazyCqueryCtx {
 
 starlark_simple_value!(StarlarkLazyCqueryCtx);
 
+starlark::methods_static!(LAZY_CQUERY_METHODS = lazy_cquery_methods);
+
 #[starlark_value(type = "bxl.LazyCqueryContext")]
 impl<'v> StarlarkValue<'v> for StarlarkLazyCqueryCtx {
     fn get_methods() -> Option<&'static Methods> {
-        static RES: MethodsStatic = MethodsStatic::new();
-        RES.methods(lazy_cquery_methods)
+        Some(LAZY_CQUERY_METHODS.methods())
     }
 }
 
@@ -90,19 +95,28 @@ fn lazy_cquery_methods(builder: &mut MethodsBuilder) {
             UnpackUnconfiguredQueryArgs<'v>,
         >,
         #[starlark(require = named, default = NoneOr::None)] target_universe: NoneOr<
-            UnpackListOrTuple<String>,
+            ValueOf<'v, ListOrTupleType<StarlarkStr>>,
         >,
-    ) -> starlark::Result<StarlarkLazy> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let query_args = match query_args {
             NoneOr::None => Vec::new(),
-            NoneOr::Other(query_args) => query_args.into_strings(),
+            NoneOr::Other(query_args) => query_args.into_strings()?,
         };
-        let target_universe = target_universe.into_option().map(|list| list.items.clone());
-        Ok(StarlarkLazy::new_cquery(LazyCqueryOperation::new_eval(
+        let target_universe = target_universe
+            .into_option()
+            .map(|list| {
+                list.try_items::<&str>()
+                    .map(|s| s.map(str::to_owned))
+                    .collect::<starlark::Result<Vec<_>>>()
+            })
+            .transpose()?;
+        let op = LazyCqueryOperation::new_eval(
             this.global_cfg_options_override.dupe(),
             query.to_owned(),
             query_args,
             target_universe,
-        )))
+        );
+        Ok(ValueOf::alloc(heap, StarlarkLazy::new_cquery(op)))
     }
 }

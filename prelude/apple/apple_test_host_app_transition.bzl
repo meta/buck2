@@ -31,7 +31,7 @@ apple_test_host_app_transition = transition(
     impl = _apple_test_host_app_transition_impl,
     refs = {
         "embed_xctest_frameworks_constraint_setting": "config//marker/apple/constraints:embed_xctest_frameworks",
-        "embed_xctest_frameworks_marker_constraint_value": "config//marker/apple/constraints:embed_xctest_frameworks_enabled",
+        "embed_xctest_frameworks_marker_constraint_value": "config//marker/apple/constraints:embed_xctest_frameworks[enabled]",
     },
     attrs = [
         "embed_xctest_frameworks_in_test_host_app",

@@ -1,8 +1,8 @@
-load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library_prost_0134")
+load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 
 oncall("build_infra")
 
-rust_protobuf_library_prost_0134(
+rust_protobuf_library(
     name = "buck2_action_metadata_proto",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",

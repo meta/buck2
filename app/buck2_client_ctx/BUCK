@@ -5,28 +5,25 @@ oncall("build_infra")
 rust_library(
     name = "buck2_client_ctx",
     srcs = glob(["src/**/*.rs"]),
-    os_deps = [
-        (
-            "linux",
-            [
-                "fbsource//third-party/rust:nix",
-                "fbsource//third-party/rust:termios",
-            ],
-        ),
-        (
-            "macos",
-            [
-                "fbsource//third-party/rust:nix",
-                "fbsource//third-party/rust:termios",
-            ],
-        ),
-        (
-            "windows",
-            [
-                "fbsource//third-party/rust:winapi",
-            ],
-        ),
-    ],
+    autocargo = {
+        "cargo_toml_config": {
+            # Only the process and memory APIs are used. sysinfo's default
+            # `gpu` feature calls `statx`, which the glibc of the release
+            # workflow's aarch64 and riscv64 cross images predates.
+            "dependencies_override": {
+                "dependencies": {
+                    "sysinfo": {"default-features": False, "features": ["system"]},
+                },
+            },
+            "extra_buck_dependencies": {
+                "dependencies": [
+                    (None, "//common/rust/shed/detect_eden:detect_eden"),
+                    (None, "//common/rust/shed/fbinit:fbinit"),
+                    "fbsource//third-party/rust:fbinit",
+                ],
+            },
+        },
+    },
     test_deps = [
         "fbsource//third-party/rust:assert_matches",
         "fbsource//third-party/rust:indoc",
@@ -35,30 +32,28 @@ rust_library(
         "fbsource//third-party/rust:tempfile",
     ],
     deps = [
+        "fbsource//third-party/rust:anyhow",
         "fbsource//third-party/rust:async-compression",
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:blake3",
         "fbsource//third-party/rust:bytes",
-        "fbsource//third-party/rust:chrono",
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:console",
         "fbsource//third-party/rust:crossterm",
         "fbsource//third-party/rust:csv",
         "fbsource//third-party/rust:derivative",
         "fbsource//third-party/rust:derive_more",
-        "fbsource//third-party/rust:fs4",
         "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:hex",
         "fbsource//third-party/rust:httparse",
         "fbsource//third-party/rust:humantime",
         "fbsource//third-party/rust:itertools",
+        "fbsource//third-party/rust:jiff",
         "fbsource//third-party/rust:libc",
         "fbsource//third-party/rust:memmap2",
         "fbsource//third-party/rust:object",
-        "fbsource//third-party/rust:once_cell",
-        "fbsource//third-party/rust:pin-project",
-        "fbsource//third-party/rust:prost-0-13-4",
-        "fbsource//third-party/rust:prost-types-0-13-4",
+        "fbsource//third-party/rust:prost",
+        "fbsource//third-party/rust:prost-types",
         "fbsource//third-party/rust:rand",
         "fbsource//third-party/rust:regex",
         "fbsource//third-party/rust:serde",
@@ -71,8 +66,12 @@ rust_library(
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tokio-stream",
         "fbsource//third-party/rust:tokio-util",
-        "fbsource//third-party/rust:tonic-0-12-3",
+        "fbsource//third-party/rust:toml",
+        "fbsource//third-party/rust:tonic",
         "fbsource//third-party/rust:tracing",
+        # @oss-disable[end= ]: "//artillery/artillery2/api/cpp/cli_lite/rust_native:art_cli_lite_rs_native",
+        "//buck2/app/buck2_action_parallelism:buck2_action_parallelism",
+        "//buck2/app/buck2_agent_interactive:buck2_agent_interactive",
         "//buck2/app/buck2_build_info:buck2_build_info",
         "//buck2/app/buck2_cli_proto:buck2_cli_proto",
         "//buck2/app/buck2_common:buck2_common",
@@ -83,14 +82,29 @@ rust_library(
         "//buck2/app/buck2_event_observer:buck2_event_observer",
         "//buck2/app/buck2_events:buck2_events",
         "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_hash:buck2_hash",
         "//buck2/app/buck2_health_check:buck2_health_check",
         "//buck2/app/buck2_resource_control:buck2_resource_control",
+        "//buck2/app/buck2_settings:buck2_settings",
         "//buck2/app/buck2_util:buck2_util",
         "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",
+        "//buck2/games:games",
         "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
+        "//buck2/gazebo/variant_name:variant_name",
         "//buck2/superconsole:superconsole",
         # @oss-disable[end= ]: "//common/rust/shed/detect_eden:detect_eden",
         "//common/rust/shed/fbinit:fbinit",
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:termios",
+            # @oss-disable[end= ]: "//common/rust/identity:identity_env",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:termios",
+        ],
+        "ovr_config//os:windows": [
+            "fbsource//third-party/rust:windows-sys",
+        ],
+    }),
 )

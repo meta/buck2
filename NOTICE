@@ -2,3 +2,5 @@ The code in `app/buck2_error_derive` is adapted from thiserror (https://github.c
 
 The code in `shed/completion_verify/src/runtime` is adapted from `complete_pty`
 (https://crates.io/crates/completest_pty).
+
+The code in `shed/setsketch/src` is adapted from `probminhash` (https://github.com/jean-pierreBoth/probminhash).

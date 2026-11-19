@@ -1,0 +1,21 @@
+load("@fbcode_macros//build_defs:go_package.bzl", "go_package")
+
+oncall("golang")
+
+prelude = native
+
+prelude.cxx_library(
+    name = "clib",
+    srcs = ["lib.c"],
+    public_include_directories = ["."],
+    raw_headers = glob([
+        "headers/*.h",
+    ]),
+)
+
+go_package(
+    name = "golib",
+    package_name = "buck2/tests/prelude/go/cgo/include_dir/golib",
+    cgo = True,
+    deps = [":clib"],
+)

@@ -15,9 +15,13 @@ use buck2_core::cells::name::CellName;
 use buck2_fs::paths::file_name::FileNameBuf;
 use dice::CancellationContext;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
-use gazebo::prelude::SliceExt as _;
-use gazebo::prelude::VecExt as _;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
+use dupe::ResultDupedErrExt;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
 use crate::legacy_configs::dice::HasLegacyConfigs;
 use crate::legacy_configs::key::BuckconfigKeyRef;
@@ -42,7 +46,10 @@ pub fn parse_buildfile_name(
             section: "buildfile",
             property: "name_v2",
         })? {
-        buildfiles_value.into_try_map(FileNameBuf::try_from)?
+        buildfiles_value
+            .into_iter()
+            .map(FileNameBuf::try_from)
+            .collect::<Result<Vec<_>, _>>()?
     } else if let Some(buildfiles_value) = config.parse_list::<String>(BuckconfigKeyRef {
         section: "buildfile",
         property: "name",
@@ -54,7 +61,10 @@ pub fn parse_buildfile_name(
         }
         buildfiles
     } else {
-        DEFAULT_BUILDFILES.map(|&n| FileNameBuf::try_from(n.to_owned()).unwrap())
+        DEFAULT_BUILDFILES
+            .iter()
+            .map(|&n| FileNameBuf::try_from(n.to_owned()).unwrap())
+            .collect::<Vec<_>>()
     };
 
     if let Some(buildfile) = config.parse::<String>(BuckconfigKeyRef {
@@ -67,11 +77,11 @@ pub fn parse_buildfile_name(
     Ok(base)
 }
 
-pub trait HasBuildfiles {
+pub trait HasBuildfiles<'d> {
     fn get_buildfiles(
         &mut self,
         cell: CellName,
-    ) -> impl Future<Output = buck2_error::Result<Arc<[FileNameBuf]>>>;
+    ) -> impl Future<Output = buck2_error::Result<&'d Arc<[FileNameBuf]>>>;
 }
 
 #[derive(
@@ -81,9 +91,11 @@ pub trait HasBuildfiles {
     Hash,
     Eq,
     PartialEq,
-    allocative::Allocative
+    allocative::Allocative,
+    Pagable
 )]
 #[display("BuildfilesKey({})", self.0)]
+#[pagable_typetag(dice::DiceKeyDyn)]
 struct BuildfilesKey(CellName);
 
 #[async_trait::async_trait]
@@ -99,24 +111,33 @@ impl Key for BuildfilesKey {
         Ok(parse_buildfile_name(config.view(ctx))?.into())
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
             (Ok(x), Ok(y)) => x == y,
             _ => false,
-        }
+        })
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
     }
 }
 
-impl HasBuildfiles for DiceComputations<'_> {
-    async fn get_buildfiles(&mut self, cell: CellName) -> buck2_error::Result<Arc<[FileNameBuf]>> {
-        self.compute(&BuildfilesKey(cell)).await?
+impl<'d> HasBuildfiles<'d> for DiceComputations<'d> {
+    async fn get_buildfiles(
+        &mut self,
+        cell: CellName,
+    ) -> buck2_error::Result<&'d Arc<[FileNameBuf]>> {
+        self.compute(&BuildfilesKey(cell))
+            .await?
+            .as_ref()
+            .duped_err()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use buck2_core::cells::name::CellName;
-    use gazebo::prelude::SliceExt;
     use indoc::indoc;
 
     use crate::buildfiles::parse_buildfile_name;
@@ -170,7 +191,10 @@ mod tests {
             .await?;
         assert_eq!(
             vec!["BUCK.v2", "BUCK"],
-            parse_buildfile_name(&config)?.map(|f| f.as_str()),
+            parse_buildfile_name(&config)?
+                .iter()
+                .map(|f| f.as_str())
+                .collect::<Vec<_>>(),
         );
 
         let config = cells
@@ -178,7 +202,10 @@ mod tests {
             .await?;
         assert_eq!(
             vec!["TARGETS.v2", "TARGETS", "TARGETS.test"],
-            parse_buildfile_name(&config)?.map(|f| f.as_str()),
+            parse_buildfile_name(&config)?
+                .iter()
+                .map(|f| f.as_str())
+                .collect::<Vec<_>>(),
         );
 
         let config = cells
@@ -186,7 +213,10 @@ mod tests {
             .await?;
         assert_eq!(
             vec!["OKAY"],
-            parse_buildfile_name(&config)?.map(|f| f.as_str()),
+            parse_buildfile_name(&config)?
+                .iter()
+                .map(|f| f.as_str())
+                .collect::<Vec<_>>(),
         );
 
         Ok(())

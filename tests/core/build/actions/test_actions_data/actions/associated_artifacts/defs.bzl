@@ -11,8 +11,8 @@
 Artifacts = provider(fields = ["associated", "artifacts"])
 
 def _artifacts(ctx: AnalysisContext) -> list[Provider]:
-    out1 = ctx.actions.write("out1", "")
-    out2 = ctx.actions.write("out2", "")
+    out1 = ctx.actions.write("out1", "", has_content_based_path = False)
+    out2 = ctx.actions.write("out2", "", has_content_based_path = False)
     return [
         DefaultInfo(),
         Artifacts(
@@ -43,7 +43,7 @@ def _check_all_exists(ctx: AnalysisContext) -> list[Provider]:
     (out1, out2) = dep2.artifacts
     inputs.append(out1.with_associated_artifacts([out2]))
 
-    check = ctx.actions.declare_output("check")
+    check = ctx.actions.declare_output("check", has_content_based_path = False)
     ctx.actions.run(
         [
             "fbpython",
@@ -69,11 +69,11 @@ check_all_exists = rule(impl = _check_all_exists, attrs = {"dep1": attrs.dep(), 
 def _check_dropped_artifacts(ctx: AnalysisContext) -> list[Provider]:
     # Describe a transitive chain of artifacts such that
     # third -> second -> first
-    first = ctx.actions.write("first", "")
-    second = ctx.actions.write("second", "").with_associated_artifacts([first])
-    third = ctx.actions.write("third", "").with_associated_artifacts([second])
+    first = ctx.actions.write("first", "", has_content_based_path = False)
+    second = ctx.actions.write("second", "", has_content_based_path = False).with_associated_artifacts([first])
+    third = ctx.actions.write("third", "", has_content_based_path = False).with_associated_artifacts([second])
 
-    check = ctx.actions.declare_output("check")
+    check = ctx.actions.declare_output("check", has_content_based_path = False)
     ctx.actions.run(
         [
             "fbpython",

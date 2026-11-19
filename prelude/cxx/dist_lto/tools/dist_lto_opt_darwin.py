@@ -17,7 +17,7 @@ import argparse
 import os
 import subprocess
 import sys
-
+import traceback
 from typing import List
 
 EXIT_SUCCESS, EXIT_FAILURE = 0, 1
@@ -25,18 +25,21 @@ EXIT_SUCCESS, EXIT_FAILURE = 0, 1
 
 def main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", help="The output native object file.")
-    parser.add_argument("--input", help="The input bitcode object file.")
-    parser.add_argument("--index", help="The thinlto index file.")
+    parser.add_argument("--out", help="The output native object file.", required=True)
+    parser.add_argument("--input", help="The input bitcode object file.", required=True)
+    parser.add_argument("--index", help="The thinlto index file.", required=True)
+    parser.add_argument(
+        "--compiler", help="The path to the Clang compiler binary.", required=True
+    )
     parser.add_argument(
         "--shared-args",
         help="The argsfile containing unfiltered and unprocessed flags, common to all opt actions in this link.",
+        required=True,
     )
     parser.add_argument(
         "--extra-outputs-args",
         help="The argsfile containing unfiltered and unprocessed flags, specifying extra outputs produced by this opt action.",
     )
-    parser.add_argument("--compiler", help="The path to the Clang compiler binary.")
     parser.add_argument(
         "--print-command",
         action="store_true",
@@ -48,29 +51,41 @@ def main(argv: List[str]) -> int:
         action="store_true",
     )
     parser.add_argument("--read-cgdata", help="Read cgdata from the provided file")
+    parser.add_argument(
+        "--save-precodegen-ir",
+        help="Save optimized pre-codegen IR to the specified path",
+    )
+    parser.add_argument(
+        "--codegen-only",
+        action="store_true",
+        help="Skip IR optimization passes (input is already optimized pre-codegen IR)",
+    )
     parser.add_argument("additional_opt_args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv[1:])
 
-    clang_invocation = (
-        [
-            args.compiler,
-            f"@{args.shared_args}",
-        ]
-        + [
-            "-o",
-            args.out,
-            "-x",
-            "ir",  # Without this the input file type is incorrectly inferred.
-            "-c",
-            args.input,
-            f"-fthinlto-index={args.index}",
-            # When lto_mode=thin/full all compile actions are passed `-flto=thin/full`. We
-            # want to generate a native object file here.
-            "-fno-lto",
-            "-Werror=unused-command-line-argument",
-        ]
-        + args.additional_opt_args[1:]
-    )
+    clang_invocation = [
+        args.compiler,
+        f"@{args.shared_args}",
+        "-o",
+        args.out,
+        "-x",
+        "ir",  # Without this the input file type is incorrectly inferred.
+        "-c",
+        args.input,
+        # When lto_mode=thin/full all compile actions are passed `-flto=thin/full`. We
+        # want to generate a native object file here.
+        "-fno-lto",
+        "-Werror=unused-command-line-argument",
+        f"-fthinlto-index={args.index}",
+    ]
+
+    if args.codegen_only:
+        clang_invocation.append("-fthinlto-codegen-only")
+
+    if args.save_precodegen_ir:
+        clang_invocation.append(f"-save-precodegen-ir={args.save_precodegen_ir}")
+
+    clang_invocation += args.additional_opt_args[1:]
 
     if args.generate_cgdata:
         clang_invocation.extend(["-mllvm", "-codegen-data-generate"])
@@ -95,8 +110,15 @@ def main(argv: List[str]) -> int:
     if os.stat(args.out).st_size == 0:
         print("error: clang produced empty file", file=sys.stderr)
         return EXIT_FAILURE
+    if args.save_precodegen_ir and os.stat(args.save_precodegen_ir).st_size == 0:
+        print("error: clang produced empty precodegen IR file", file=sys.stderr)
+        return EXIT_FAILURE
     return EXIT_SUCCESS
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    try:
+        sys.exit(main(sys.argv))
+    except subprocess.CalledProcessError as e:
+        traceback.print_exc()
+        sys.exit(e.returncode)

@@ -9,6 +9,7 @@
  */
 
 use allocative::Allocative;
+use pagable::Pagable;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -27,6 +28,7 @@ enum ConfigurationHashError {
     Eq,
     PartialEq,
     Hash,
+    Pagable,
     Allocative,
     derive_more::Display,
     Ord,

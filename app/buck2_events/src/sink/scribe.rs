@@ -8,9 +8,13 @@
  * above-listed licenses.
  */
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use async_trait::async_trait;
 use buck2_core::buck2_env;
 use buck2_data::ActionExecutionEnd;
 use buck2_data::InstantEvent;
@@ -74,7 +78,7 @@ impl RemoteEventSink {
         let messages = events
             .into_iter()
             .map(|e| {
-                let message_key = e.trace_id().unwrap().hash();
+                let message_key = message_key(&e);
                 scribe_client::Message {
                     category: self.category.clone(),
                     message: Self::encode_message(e),
@@ -90,7 +94,7 @@ impl RemoteEventSink {
 
     // Send this event by placing it on the internal message queue.
     pub fn offer(&self, event: BuckEvent) {
-        let message_key = event.trace_id().unwrap().hash();
+        let message_key = message_key(&event);
         self.client.offer(scribe_client::Message {
             category: self.category.clone(),
             message: Self::encode_message(event),
@@ -128,11 +132,12 @@ impl RemoteEventSink {
                                 backtrace: Vec::new(),
                                 quiet: false,
                                 task: Some(true),
-                                soft_error_category: Some(buck2_data::SoftError {category: "oversized_scribe".to_owned(), is_quiet:false}),
+                                soft_error_category: Some(buck2_data::SoftError {category: "oversized_scribe".to_owned(), is_quiet:false, is_deprecation: false}),
                                 daemon_in_memory_state_is_corrupted: false,
                                 daemon_materializer_state_is_corrupted: false,
                                 action_cache_is_corrupted: false,
-                                deprecation: false,
+                                error: None,
+                                daemon_restart_requested: false,
                             }
                             .into(),
                         ),
@@ -147,30 +152,40 @@ impl RemoteEventSink {
 
     fn prepare_event(event: &mut buck2_data::BuckEvent) {
         use buck2_data::buck_event::Data;
+        use buck2_data::span_end_event::Data as SpanEndData;
 
-        match &mut event.data {
-            Some(Data::SpanEnd(s)) => match &mut s.data {
-                Some(buck2_data::span_end_event::Data::ActionExecution(action)) => {
-                    let mut is_cache_hit = false;
+        let Some(Data::SpanEnd(s)) = &mut event.data else {
+            return;
+        };
+        match &mut s.data {
+            Some(SpanEndData::ActionExecution(action)) => {
+                action.run_action_timings = None;
+                action.graph_producers = None;
+                let mut is_cache_hit = false;
 
-                    for command in action.commands.iter_mut() {
-                        let Some(details) = command.details.as_mut() else {
-                            continue;
-                        };
+                for command in action.commands.iter_mut() {
+                    let Some(details) = command.details.as_mut() else {
+                        continue;
+                    };
 
-                        if get_is_cache_hit(details) {
-                            is_cache_hit = true;
-                            details.metadata = None;
-                        }
-                    }
-
-                    if is_cache_hit {
-                        action.dep_file_key = None;
-                        action.outputs.clear();
+                    clear_non_scribe_fields(details);
+                    if get_is_cache_hit(details) {
+                        is_cache_hit = true;
+                        details.metadata = None;
                     }
                 }
-                _ => {}
-            },
+
+                if is_cache_hit {
+                    action.dep_file_key = None;
+                    action.outputs.clear();
+                }
+            }
+            Some(SpanEndData::TestRun(run)) => {
+                clear_report_non_scribe_fields(&mut run.command_report)
+            }
+            Some(SpanEndData::TestDiscovery(discovery)) => {
+                clear_report_non_scribe_fields(&mut discovery.command_report)
+            }
             _ => {}
         }
     }
@@ -201,12 +216,10 @@ impl RemoteEventSink {
                                 Ok(ActionExecutionKind::Simple) => false,
                                 Ok(ActionExecutionKind::Deferred) => false,
                                 Ok(ActionExecutionKind::NotSet) => false,
-                                _ => {
-                                    match (action_has_cache_hit(a), self.schedule_type.is_diff()) {
-                                        (true, true) => false,
-                                        _ => true,
-                                    }
-                                }
+                                _ => !matches!(
+                                    (action_has_cache_hit(a), self.schedule_type.is_diff()),
+                                    (true, true)
+                                ),
                             }
                     }
                     Some(Data::Analysis(..)) => !self.schedule_type.is_diff(),
@@ -215,7 +228,7 @@ impl RemoteEventSink {
                     Some(Data::DepFileUpload(..)) => true,
                     Some(Data::Materialization(..)) => true,
                     Some(Data::TestDiscovery(..)) => true,
-                    Some(Data::TestEnd(..)) => true,
+                    Some(Data::TestRun(..)) => true,
                     None => false,
                     _ => false,
                 }
@@ -230,9 +243,11 @@ impl RemoteEventSink {
                     Some(Data::StructuredError(..)) => true,
                     Some(Data::PersistEventLogSubprocess(..)) => true,
                     Some(Data::CleanStaleResult(..)) => true,
+                    Some(Data::PageOutSummary(..)) => true,
                     Some(Data::ConfigurationCreated(..)) => true,
                     Some(Data::DetailedAggregatedMetrics(..)) => true,
-                    Some(Data::ResourceControlEvents(..)) => true,
+                    Some(Data::ResourceControlEvent(..)) => true,
+                    Some(Data::ActionDigestTrace(..)) => true,
                     None => false,
                     _ => false,
                 }
@@ -250,6 +265,7 @@ impl RemoteEventSink {
     }
 }
 
+#[async_trait]
 impl EventSink for RemoteEventSink {
     fn send(&self, event: Event) {
         match event {
@@ -262,6 +278,65 @@ impl EventSink for RemoteEventSink {
             Event::PartialResult(..) => {}
         }
     }
+
+    async fn send_now(&self, event: Event) {
+        match event {
+            Event::Buck(event) => {
+                if self.should_send_event(event.data()) {
+                    let _ignored = RemoteEventSink::send_now(self, event).await;
+                }
+            }
+            Event::CommandResult(..) => {}
+            Event::PartialResult(..) => {}
+        }
+    }
+}
+
+/// [`clear_non_scribe_fields`] for a test's command report, if it has one.
+fn clear_report_non_scribe_fields(report: &mut Option<buck2_data::CommandExecution>) {
+    if let Some(details) = report.as_mut().and_then(|r| r.details.as_mut()) {
+        clear_non_scribe_fields(details);
+    }
+}
+
+/// Clears the execution fields that go to the event log but not to Scribe.
+fn clear_non_scribe_fields(details: &mut buck2_data::CommandExecutionDetails) {
+    use buck2_data::command_execution_kind::Command;
+
+    match details
+        .command_kind
+        .as_mut()
+        .and_then(|k| k.command.as_mut())
+    {
+        Some(Command::RemoteCommand(remote)) => remote.re_worker = None,
+        Some(Command::LocalCommand(local)) => local.context = None,
+        _ => {}
+    }
+    if let Some(metadata) = details.metadata.as_mut() {
+        metadata.client_attempt = None;
+    }
+}
+
+/// The message key determines which Scribe consumer shard receives the
+/// message.
+///
+/// Events are keyed by trace id, so that one consumer shard sees an entire
+/// invocation. `ConfigurationCreated` events are the exception: they are keyed
+/// by the configuration's name. The same configurations are recreated by many
+/// invocations, and routing each configuration to a single consumer shard
+/// makes the consumer's in-memory deduplication of the resulting database
+/// writes effective fleet-wide, instead of once per consumer shard. Nothing
+/// downstream correlates these events with the rest of their invocation.
+fn message_key(event: &BuckEvent) -> i64 {
+    if let buck2_data::buck_event::Data::Instant(instant) = event.data()
+        && let Some(buck2_data::instant_event::Data::ConfigurationCreated(created)) = &instant.data
+        && let Some(cfg) = &created.cfg
+    {
+        let mut hasher = DefaultHasher::new();
+        cfg.full_name.hash(&mut hasher);
+        return hasher.finish() as i64;
+    }
+    event.trace_id().unwrap().hash()
 }
 
 fn action_has_cache_hit(action: &ActionExecutionEnd) -> bool {
@@ -357,6 +432,52 @@ mod tests {
     }
 
     #[test]
+    fn test_message_key() {
+        let configuration_created = |name: &str| {
+            BuckEvent::new(
+                SystemTime::now(),
+                TraceId::new(),
+                None,
+                None,
+                buck2_data::buck_event::Data::Instant(InstantEvent {
+                    data: Some(buck2_data::instant_event::Data::ConfigurationCreated(
+                        buck2_data::ConfigurationCreated {
+                            cfg: Some(buck2_data::ConfigurationWithConstraints {
+                                full_name: name.to_owned(),
+                                constraint: Vec::new(),
+                            }),
+                        },
+                    )),
+                }),
+            )
+        };
+
+        // Same configuration from different invocations shards identically;
+        // different configurations shard independently.
+        let a = configuration_created("cfg:linux-x86_64#abc123");
+        let b = configuration_created("cfg:linux-x86_64#abc123");
+        let c = configuration_created("cfg:linux-x86_64#def456");
+        assert_eq!(message_key(&a), message_key(&b));
+        assert_ne!(message_key(&a), message_key(&c));
+
+        // Everything else is keyed by its trace id.
+        let trace = TraceId::new();
+        let trace_key = trace.hash();
+        let other = BuckEvent::new(
+            SystemTime::now(),
+            trace,
+            None,
+            None,
+            buck2_data::buck_event::Data::Instant(InstantEvent {
+                data: Some(buck2_data::instant_event::Data::StructuredError(
+                    StructuredError::default(),
+                )),
+            }),
+        );
+        assert_eq!(message_key(&other), trace_key);
+    }
+
+    #[test]
     fn test_get_is_cache_hit() {
         // Case 1: Remote command with cache hit
         let details_cache_hit = CommandExecutionDetails {
@@ -381,5 +502,216 @@ mod tests {
             ..Default::default()
         };
         assert!(!get_is_cache_hit(&details_no_cache_hit));
+    }
+
+    #[test]
+    fn test_prepare_event_clears_non_scribe_fields() {
+        let report = || buck2_data::CommandExecution {
+            details: Some(CommandExecutionDetails {
+                command_kind: Some(CommandExecutionKind {
+                    command: Some(Command::RemoteCommand(RemoteCommand {
+                        action_digest: "digest".to_owned(),
+                        re_worker: Some(Box::new(buck2_data::ReWorkerDetails {
+                            elastic_capacity: true,
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    })),
+                }),
+                metadata: Some(buck2_data::CommandExecutionMetadata {
+                    execution_time: Some(Default::default()),
+                    execution_stats: Some(buck2_data::CommandExecutionStats {
+                        memory_peak: Some(1),
+                        ..Default::default()
+                    }),
+                    client_attempt: Some(buck2_data::ClientAttempt {
+                        start_time: Some(Default::default()),
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let span_ends = [
+            buck2_data::span_end_event::Data::ActionExecution(Box::new(
+                buck2_data::ActionExecutionEnd {
+                    commands: vec![report()],
+                    ..Default::default()
+                },
+            )),
+            buck2_data::span_end_event::Data::TestRun(Box::new(buck2_data::TestRunEnd {
+                command_report: Some(report()),
+                ..Default::default()
+            })),
+            buck2_data::span_end_event::Data::TestDiscovery(Box::new(
+                buck2_data::TestDiscoveryEnd {
+                    command_report: Some(report()),
+                    ..Default::default()
+                },
+            )),
+        ];
+        for span_end in span_ends {
+            let mut event = buck2_data::BuckEvent {
+                data: Some(buck2_data::buck_event::Data::SpanEnd(
+                    buck2_data::SpanEndEvent {
+                        data: Some(span_end),
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            };
+            RemoteEventSink::prepare_event(&mut event);
+
+            let report = match &event.data {
+                Some(buck2_data::buck_event::Data::SpanEnd(s)) => match &s.data {
+                    Some(buck2_data::span_end_event::Data::ActionExecution(a)) => {
+                        a.commands.first()
+                    }
+                    Some(buck2_data::span_end_event::Data::TestRun(t)) => t.command_report.as_ref(),
+                    Some(buck2_data::span_end_event::Data::TestDiscovery(t)) => {
+                        t.command_report.as_ref()
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+            .expect("prepare_event keeps the event shape and its command report");
+            let details = report.details.as_ref().unwrap();
+            assert_eq!(
+                details
+                    .command_kind
+                    .as_ref()
+                    .and_then(|k| k.command.clone()),
+                Some(Command::RemoteCommand(RemoteCommand {
+                    action_digest: "digest".to_owned(),
+                    ..Default::default()
+                })),
+                "the worker details are cleared, the rest still goes to Scribe"
+            );
+            let metadata = details.metadata.as_ref().unwrap();
+            assert!(
+                metadata.execution_time.is_some()
+                    && metadata
+                        .execution_stats
+                        .is_some_and(|s| s.memory_peak.is_some()),
+                "existing fields still go to Scribe"
+            );
+            assert_eq!(metadata.client_attempt, None, "the attempt is cleared");
+        }
+    }
+
+    #[test]
+    fn test_prepare_event_clears_local_and_action_groups() {
+        let mut event = buck2_data::BuckEvent {
+            data: Some(buck2_data::buck_event::Data::SpanEnd(
+                buck2_data::SpanEndEvent {
+                    data: Some(buck2_data::span_end_event::Data::ActionExecution(Box::new(
+                        buck2_data::ActionExecutionEnd {
+                            commands: vec![buck2_data::CommandExecution {
+                                details: Some(CommandExecutionDetails {
+                                    command_kind: Some(CommandExecutionKind {
+                                        command: Some(Command::LocalCommand(
+                                            buck2_data::LocalCommand {
+                                                argv: vec!["cc".to_owned()],
+                                                context: Some(buck2_data::LocalCommandContext {
+                                                    working_directory: Some("dir".to_owned()),
+                                                    ..Default::default()
+                                                }),
+                                                ..Default::default()
+                                            },
+                                        )),
+                                    }),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }],
+                            run_action_timings: Some(buck2_data::RunActionTimings {
+                                prepare_command_us: Some(1),
+                                finish_action_us: Some(1),
+                            }),
+                            graph_producers: Some(Default::default()),
+                            output_size: 7,
+                            ..Default::default()
+                        },
+                    ))),
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
+        RemoteEventSink::prepare_event(&mut event);
+        let Some(buck2_data::buck_event::Data::SpanEnd(s)) = &event.data else {
+            panic!("prepare_event keeps the span end");
+        };
+        let Some(buck2_data::span_end_event::Data::ActionExecution(a)) = &s.data else {
+            panic!("prepare_event keeps the action execution");
+        };
+        assert_eq!(
+            (&a.run_action_timings, &a.graph_producers, a.output_size),
+            (&None, &None, 7),
+            "the action's groups are cleared, its other fields still go to Scribe"
+        );
+        assert_eq!(
+            a.commands[0]
+                .details
+                .as_ref()
+                .and_then(|d| d.command_kind.as_ref())
+                .and_then(|k| k.command.clone()),
+            Some(Command::LocalCommand(buck2_data::LocalCommand {
+                argv: vec!["cc".to_owned()],
+                ..Default::default()
+            })),
+            "the local command's context is cleared, its argv still goes to Scribe"
+        );
+    }
+
+    #[test]
+    fn test_prepare_event_clears_non_scribe_fields_on_cache_hits() {
+        let mut event = buck2_data::BuckEvent {
+            data: Some(buck2_data::buck_event::Data::SpanEnd(
+                buck2_data::SpanEndEvent {
+                    data: Some(buck2_data::span_end_event::Data::ActionExecution(Box::new(
+                        buck2_data::ActionExecutionEnd {
+                            commands: vec![buck2_data::CommandExecution {
+                                details: Some(CommandExecutionDetails {
+                                    command_kind: Some(CommandExecutionKind {
+                                        command: Some(Command::RemoteCommand(RemoteCommand {
+                                            cache_hit: true,
+                                            re_worker: Some(Box::default()),
+                                            ..Default::default()
+                                        })),
+                                    }),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        },
+                    ))),
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
+        RemoteEventSink::prepare_event(&mut event);
+        let Some(buck2_data::buck_event::Data::SpanEnd(s)) = &event.data else {
+            panic!("prepare_event keeps the span end");
+        };
+        let Some(buck2_data::span_end_event::Data::ActionExecution(a)) = &s.data else {
+            panic!("prepare_event keeps the action execution");
+        };
+        assert_eq!(
+            a.commands[0]
+                .details
+                .as_ref()
+                .and_then(|d| d.command_kind.as_ref())
+                .and_then(|k| k.command.clone()),
+            Some(Command::RemoteCommand(RemoteCommand {
+                cache_hit: true,
+                ..Default::default()
+            })),
+            "a cache hit's worker details are cleared too"
+        );
     }
 }

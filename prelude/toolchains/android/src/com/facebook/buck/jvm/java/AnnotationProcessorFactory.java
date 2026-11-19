@@ -12,12 +12,14 @@ package com.facebook.buck.jvm.java;
 
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.util.ClassLoaderCache;
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import java.io.IOException;
 import java.util.List;
 import javax.annotation.processing.Processor;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 class AnnotationProcessorFactory implements AutoCloseable {
   private final ClassLoader compilerClassLoader;
   private final ClassLoaderCache globalClassLoaderCache;
@@ -53,7 +55,7 @@ class AnnotationProcessorFactory implements AutoCloseable {
   private Processor createProcessor(ClassLoader classLoader, String name) {
     try {
       Class<? extends Processor> aClass = classLoader.loadClass(name).asSubclass(Processor.class);
-      return new TracingProcessorWrapper(buildTargetName, aClass.newInstance());
+      return aClass.newInstance();
     } catch (ReflectiveOperationException e) {
       // If this happens, then the build is really in trouble. Better warn the user.
       throw new RuntimeException(

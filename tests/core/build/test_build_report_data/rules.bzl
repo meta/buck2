@@ -8,29 +8,35 @@
 
 def _touch_file_impl(ctx):
     if ctx.attrs.out != None:
-        out = ctx.actions.write(ctx.attrs.out, "")
+        out = ctx.actions.write(ctx.attrs.out, "", has_content_based_path = False)
         default_outputs = [out]
         named_outputs = {}
     elif ctx.attrs.outs != None:
         default_outputs = []
         named_outputs = {}
         default_out_paths = ctx.attrs.default_outs or []
-        for (name, path) in ctx.attrs.outs.items():
-            artifact = ctx.actions.write(path, "")
+        for name, path in ctx.attrs.outs.items():
+            artifact = ctx.actions.write(path, "", has_content_based_path = False)
             if path in default_out_paths:
                 default_outputs.append(artifact)
             named_outputs[name] = artifact
     else:
         fail("One of `out` or `outs` should be set.")
-    providers = [DefaultInfo(
-        default_outputs = default_outputs,
-        sub_targets = {k: [DefaultInfo(default_output = v)] for (k, v) in named_outputs.items()},
-    )]
+    providers = [
+        DefaultInfo(
+            default_outputs = default_outputs,
+            sub_targets = {k: [DefaultInfo(default_output = v)] for (k, v) in named_outputs.items()},
+        )
+    ]
     return providers
 
 def _mkdir_impl(ctx):
-    out = ctx.actions.declare_output("out", dir = True)
-    ctx.actions.run(cmd_args("fbpython", "-c", """
+    out = ctx.actions.declare_output("out", dir = True, has_content_based_path = False)
+    ctx.actions.run(
+        cmd_args(
+            "fbpython",
+            "-c",
+            """
 import sys
 import os
 
@@ -38,7 +44,11 @@ f = sys.argv[1]
 os.mkdir(f)
 with open(f + "/hello", "w") as f:
     f.write("hello")
-""", out.as_output()), category = "create_dir")
+""",
+            out.as_output(),
+        ),
+        category = "create_dir",
+    )
     return [DefaultInfo(out)]
 
 touch_file = rule(

@@ -31,6 +31,10 @@ pub(crate) fn register_set_starlark_peak_allocated_byte_limit(globals: &mut Glob
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let build_ctx = BuildContext::from_context(eval)?;
+        // Only a build file evaluation reads the limit; anywhere else it would be dropped.
+        build_ctx
+            .additional
+            .require_build("set_starlark_peak_allocated_byte_limit")?;
         let limit = &build_ctx.starlark_peak_allocated_byte_limit;
         if limit.get().is_some() || limit.set(Some(value)).is_err() {
             return Err(

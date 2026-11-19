@@ -1,0 +1,70 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+Clean Buck2 state for every known project and isolation directory
+
+Usage: buck2 cleanall [OPTIONS]
+
+Options:
+      --stale
+          Delete artifacts from buck-out using the configured clean-stale policy
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Event Log Options:
+      --event-log <PATH>
+          Write events to this log file
+
+      --write-build-id <PATH>
+          Write command invocation id into this file
+
+      --unstable-write-invocation-record <PATH>
+          Write the invocation record (as JSON) to this path. No guarantees whatsoever are made
+          regarding the stability of the format
+
+      --command-report-path <PATH>
+          Write the command report to this path. A command report is always written to
+          `buck-out/v2/<uuid>/command_report` even without this flag
+
+Universal Options:
+      --isolation-dir <ISOLATION_DIR>
+          The name of the directory that Buck2 creates within buck-out for writing outputs and
+          daemon information. If one is not provided, Buck2 creates a directory with the default
+          name.
+
+          Instances of Buck2 share a daemon if and only if their isolation directory is identical.
+          The isolation directory also influences the output paths provided by Buck2, and as a
+          result using a non-default isolation dir will cause cache misses (and slower builds).
+
+          [env: BUCK_ISOLATION_DIR=]
+          [default: v2]
+
+  -v, --verbose <VERBOSITY>
+          How verbose buck should be while logging.
+
+          Values: 0 = Quiet, errors only; 1 = Show status. Default; 2 = more info about errors; 3 =
+          more info about everything; 4 = more info about everything + stderr;
+
+          It can be combined with specific log items (stderr, full_failed_command, commands,
+          actions, status, stats, success) to fine-tune the verbosity of the log. Example usage
+          "-v=1,stderr"
+
+          [env: BUCK_VERBOSE=]
+          [default: 1]
+
+      --oncall <ONCALL>
+          The oncall executing this command
+
+      --client-metadata <CLIENT_METADATA>
+          Metadata key-value pairs to inject into Buck2's logging. Client metadata must be of the
+          form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
+          datasets
+
+      --setting <SECTION.KEY=VALUE>
+          Override a Buck setting using `section.key=value`
+
+      --agent-context <AGENT_CONTEXT>
+          Agent context key=value pairs for telemetry. Used by AI agents to pass structured
+          metadata. Schema is defined via buckconfig. Examples: --agent-context
+          intent=fix,attempt=2,prior_error=missing_target --agent-context intent=build
+          --agent-context attempt=1 --agent-context "reason=fix the build, then test"

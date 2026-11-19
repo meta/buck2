@@ -10,32 +10,34 @@
 
 package com.facebook.buck.testrunner;
 
-import com.android.ddmlib.AdbCommandRejectedException;
-import com.android.ddmlib.AndroidDebugBridge;
-import com.android.ddmlib.CollectingOutputReceiver;
-import com.android.ddmlib.IDevice;
-import com.android.ddmlib.ShellCommandUnresponsiveException;
-import com.android.ddmlib.TimeoutException;
-import com.google.common.annotations.VisibleForTesting;
+import com.facebook.buck.android.exopackage.AdbUtils;
+import com.facebook.buck.android.exopackage.AndroidDevice;
+import com.facebook.buck.android.exopackage.AndroidDeviceImpl;
+import com.facebook.infer.annotation.Nullsafe;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
+import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class DeviceRunner {
 
-  private static final long ADB_CONNECT_TIMEOUT_MS = 5000;
-  private static final long ADB_CONNECT_TIME_STEP_MS = ADB_CONNECT_TIMEOUT_MS / 10;
   private static final String ADB_PATH = "ADB_PATH";
   private static final String PWD = "PWD";
 
   static class DeviceArgs {
     final boolean autoRunOnConnectedDevice;
-    final String deviceSerial;
-    final String adbExecutablePath;
+    final @Nullable String deviceSerial;
+    final @Nullable String adbExecutablePath;
 
-    DeviceArgs(boolean autoRunOnConnectedDevice, String deviceSerial, String adbExecutablePath) {
+    DeviceArgs(
+        boolean autoRunOnConnectedDevice,
+        @Nullable String deviceSerial,
+        @Nullable String adbExecutablePath) {
       this.autoRunOnConnectedDevice = autoRunOnConnectedDevice;
       this.deviceSerial = deviceSerial;
       this.adbExecutablePath = adbExecutablePath;
@@ -43,9 +45,11 @@ public class DeviceRunner {
   }
 
   protected DeviceArgs deviceArgs;
+  protected final AdbUtils adbUtils;
 
   DeviceRunner(DeviceArgs args) {
     this.deviceArgs = args;
+    this.adbUtils = new AdbUtils(Objects.requireNonNull(getAdbPath()), 0);
   }
 
   static DeviceArgs getDeviceArgs(String[] args) {
@@ -112,112 +116,39 @@ public class DeviceRunner {
     return new String(Files.readAllBytes(inputPath));
   }
 
-  protected String executeAdbShellCommand(String command, IDevice device)
-      throws TimeoutException,
-          AdbCommandRejectedException,
-          ShellCommandUnresponsiveException,
-          IOException {
-    CollectingOutputReceiver receiver = new CollectingOutputReceiver();
-    device.executeShellCommand(command, receiver);
-    return receiver.getOutput();
-  }
-
-  @Nullable
-  private AndroidDebugBridge getADB() throws InterruptedException {
-    AndroidDebugBridge adb = createAdb();
-
-    if (adb == null) {
-      System.err.println("Unable to set up adb.");
-      System.exit(1);
-    }
-    return adb;
-  }
-
   /**
-   * Creates connection to adb and waits for this connection to be initialized and receive initial
-   * list of devices.
+   * Returns an {@link AndroidDevice} for the configured device. Uses {@link AdbUtils} for device
+   * discovery — no ddmlib dependency.
    */
-  @Nullable
-  @SuppressWarnings("PMD.EmptyCatchBlock")
-  private AndroidDebugBridge createAdb() throws InterruptedException {
-    AndroidDebugBridge.initIfNeeded(/* clientSupport */ false);
-    AndroidDebugBridge adb = AndroidDebugBridge.createBridge(getAdbPath(), false);
-    if (adb == null) {
-      System.err.println("Failed to connect to adb. Make sure adb server is running.");
-      return null;
-    }
-
-    long start = System.currentTimeMillis();
-    while (!isAdbInitialized(adb)) {
-      long timeLeft = start + ADB_CONNECT_TIMEOUT_MS - System.currentTimeMillis();
-      if (timeLeft <= 0) {
-        break;
-      }
-      Thread.sleep(ADB_CONNECT_TIME_STEP_MS);
-    }
-    return isAdbInitialized(adb) ? adb : null;
-  }
-
-  private boolean isAdbInitialized(AndroidDebugBridge adb) {
-    return adb.isConnected() && adb.hasInitialDeviceList();
-  }
-
-  @Nullable
-  private IDevice getDevice(String serial) throws InterruptedException {
-    AndroidDebugBridge adb = getADB();
-
-    IDevice[] allDevices = adb.getDevices();
-    for (IDevice device : allDevices) {
-      if (device.getSerialNumber().equals(serial)) {
-        return device;
-      }
-    }
-    return null;
-  }
-
-  @Nullable
-  private IDevice getFirstConnectedDevice() throws InterruptedException {
-    AndroidDebugBridge adb = getADB();
-
-    IDevice[] allDevices = adb.getDevices();
-    if (allDevices.length == 0) {
-      String hostname = null;
-      try {
-        hostname = InetAddress.getLocalHost().getHostName();
-      } catch (Exception _e) {
-        // no op
-      }
-      System.err.println(
-          String.format(
-              "Found 0 device %s-- please connect a device.",
-              hostname == null ? "" : String.format("on %s ", hostname)));
-      System.exit(1);
-    }
-    return allDevices[0];
-  }
-
-  @Nullable
-  @VisibleForTesting
-  IDevice getAndroidDevice(boolean autoRunOnConnectedDevice, String deviceSerial)
-      throws InterruptedException {
-    IDevice device = null;
+  @Nullable AndroidDevice getAndroidDevice(boolean autoRunOnConnectedDevice, String deviceSerial) {
     if (autoRunOnConnectedDevice) {
-      device = getFirstConnectedDevice();
-    } else {
-      device = getDevice(deviceSerial);
-      if (device == null) {
-        System.err.printf("Unable to get device/emulator with serial %s", deviceSerial);
+      List<AndroidDevice> devices = adbUtils.getDevices();
+      if (devices.isEmpty()) {
+        String hostname = null;
+        try {
+          hostname = InetAddress.getLocalHost().getHostName();
+        } catch (Exception _e) {
+          // no op
+        }
+        System.err.println(
+            String.format(
+                "Found 0 device %s-- please connect a device.",
+                hostname == null ? "" : String.format("on %s ", hostname)));
         System.exit(1);
+        return null;
       }
+      return devices.get(0);
+    } else {
+      if (deviceSerial == null) {
+        System.err.println("Unable to get device/emulator: no serial provided");
+        System.exit(1);
+        return null;
+      }
+      return new AndroidDeviceImpl(deviceSerial, adbUtils);
     }
-
-    return device;
   }
 
-  protected String getAdbPath() {
+  protected @Nullable String getAdbPath() {
     return deviceArgs.adbExecutablePath;
   }
-
-  /** We minimize external dependencies, but we'd like to have {@link javax.annotation.Nullable}. */
-  @interface Nullable {}
 }

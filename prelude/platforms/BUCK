@@ -1,5 +1,6 @@
 # Used by open source projects to provide a simple platform setting
 
+load("@prelude//configurations:constraint_alias.bzl", "constraint_with_aliases")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 load(":defs.bzl", "execution_platform", "host_configuration")
 
@@ -27,14 +28,13 @@ prelude.constraint_value(
     visibility = ["PUBLIC"],
 )
 
-prelude.constraint_setting(
+constraint_with_aliases(
     name = "runs_local",
-    visibility = ["PUBLIC"],
-)
-
-prelude.constraint_value(
-    name = "may_run_local",
-    constraint_setting = ":runs_local",
+    aliases = {
+        "may_run_local": "may_run_local",
+    },
+    default = "unspecified",
+    values = ["may_run_local", "unspecified"],
     visibility = ["PUBLIC"],
 )
 

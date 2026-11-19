@@ -10,6 +10,7 @@
 
 package com.facebook.buck.android.resources;
 
+import com.facebook.infer.annotation.Nullsafe;
 import com.google.common.base.Preconditions;
 import com.google.common.primitives.Shorts;
 import java.nio.ByteBuffer;
@@ -29,6 +30,7 @@ import java.util.Arrays;
  * https://android.googlesource.com/platform/frameworks/base/+/kitkat-release/include/androidfw/ResourceTypes.h
  * for full specification.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public abstract class ResChunk {
   public static final short CHUNK_STRING_POOL = 0x001;
   public static final short CHUNK_RESOURCE_TABLE = 0x002;
@@ -116,12 +118,29 @@ public abstract class ResChunk {
     void visit(int ref);
   }
 
+  /** Functional interface for processing a reference at a buffer offset. */
+  interface RefHandler {
+    void process(ByteBuffer buf, int offset);
+  }
+
+  static RefHandler transformHandler(RefTransformer transformer) {
+    return (buf, offset) -> transformEntryDataOffset(buf, offset, transformer);
+  }
+
+  static RefHandler visitHandler(RefVisitor visitor) {
+    return (buf, offset) -> visitEntryDataOffset(buf, offset, visitor);
+  }
+
   static void transformEntryDataOffset(ByteBuffer buf, int offset, RefTransformer visitor) {
     int oldValue = buf.getInt(offset);
     int newValue = visitor.transform(oldValue);
     if (oldValue != newValue) {
       buf.putInt(offset, newValue);
     }
+  }
+
+  static void visitEntryDataOffset(ByteBuffer buf, int offset, RefVisitor visitor) {
+    visitor.visit(buf.getInt(offset));
   }
 
   // These are some utilities used widely by subclasses for dealing with ByteBuffers.

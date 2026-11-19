@@ -1,0 +1,60 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+{
+  "error_category": "ENVIRONMENT",
+  "failures": {
+    "root//fail_action:fail_infra": "Action failed: root//fail_action:fail_infra (<unspecified>) (fail_infra)\nRemote command returned non-zero exit code 1\nRemote action, reproduce with: `frecli cas download-action <DIGEST>`\nStdout: <empty>\nStderr:\nerror: Transport endpoint is not connected\n"
+  },
+  "results": {
+    "root//fail_action:fail_infra": {
+      "configured": {
+        "<unspecified>": {
+          "configured_graph_size": null,
+          "errors": [
+            {
+              "action_error": {
+                "digest": "<DIGEST>",
+                "error_content": "<STRING_HASH>",
+                "error_diagnostics": null,
+                "key": {
+                  "owner": "root//fail_action:fail_infra (<unspecified>)"
+                },
+                "name": {
+                  "category": "fail_infra",
+                  "identifier": ""
+                },
+                "stderr_content": "<STRING_HASH>",
+                "stdout_content": "<STRING_HASH>"
+              },
+              "category_key": "IO_NOT_CONNECTED",
+              "cause_index": 0,
+              "error_category": "ENVIRONMENT",
+              "error_tags": [
+                "ACTION_COMMAND_INFRA_FAILURE",
+                "ANY_ACTION_EXECUTION",
+                "IO_NOT_CONNECTED"
+              ],
+              "message_content": "<STRING_HASH>"
+            }
+          ],
+          "other_outputs": {},
+          "outputs": {},
+          "success": "FAIL"
+        }
+      },
+      "configured_graph_size": null,
+      "errors": [],
+      "other_outputs": {},
+      "outputs": {},
+      "success": "FAIL"
+    }
+  },
+  "strings": {
+    "<STRING_HASH>": "",
+    "<STRING_HASH>": "Action failed: root//fail_action:fail_infra (<unspecified>) (fail_infra)\nRemote command returned non-zero exit code 1\nRemote action, reproduce with: `frecli cas download-action <DIGEST>`\nStdout: <empty>\nStderr:\nerror: Transport endpoint is not connected\n",
+    "<STRING_HASH>": "Remote command returned non-zero exit code 1",
+    "<STRING_HASH>": "error: Transport endpoint is not connected\n"
+  },
+  "success": false,
+  "truncated": false
+}

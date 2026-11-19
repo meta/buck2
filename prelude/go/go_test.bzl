@@ -6,7 +6,13 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo")
+load("@prelude//:prelude_rule.bzl", "prelude_rule")
+load("@prelude//cxx:attrs.bzl", "BUILD_INFO_ATTR", "cxx_common")
+load("@prelude//decls:common.bzl", "buck")
+load("@prelude//decls:re_test_common.bzl", "re_test_common")
+load("@prelude//decls:test_common.bzl", "test_common")
+load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
+load("@prelude//go/transitions:defs.bzl", "build_tags_attr", "cgo_enabled_attr", "coverage_mode_attr", "go_test_transition")
 load(
     "@prelude//linking:link_info.bzl",
     "LinkStyle",
@@ -18,23 +24,26 @@ load(
 )
 load(
     "@prelude//utils:utils.bzl",
+    "from_named_set",
     "map_val",
     "value_or",
 )
+load(":attrs.bzl", "BuildMode", "go_common")
 load(":cgo_builder.bzl", "get_cgo_build_context")
-load(":compile.bzl", "GoTestInfo", "get_inherited_compile_pkgs")
+load(":compile.bzl", "GoTestInfo")
 load(":coverage.bzl", "GoCoverageMode")
-load(":link.bzl", "GoBuildMode", "link")
-load(":package_builder.bzl", "build_package")
+load(":link.bzl", "GoBuildMode", "get_inherited_link_pkgs", "link")
+load(":package_builder.bzl", "GoBuildConfig", "GoSourceInputs", "declare_package_build")
 load(":packages.bzl", "go_attr_pkg_name")
-load(":toolchain.bzl", "evaluate_cgo_enabled")
+load(":toolchain.bzl", "GoToolchainInfo", "evaluate_cgo_enabled")
 
 def _gen_test_main(
-        ctx: AnalysisContext,
-        pkg_name: str,
-        coverage_mode: [GoCoverageMode, None],
-        coverage_vars: dict[str, cmd_args],
-        test_go_files: cmd_args) -> Artifact:
+    ctx: AnalysisContext,
+    pkg_import_path: str,
+    coverage_mode: [GoCoverageMode, None],
+    cover_packages: list[str],  # packages those are included for coverage
+    test_go_files_argsfile: Artifact,
+) -> Artifact:
     """
     Generate a `main.go` which calls tests from the given sources.
     """
@@ -43,88 +52,100 @@ def _gen_test_main(
     cmd.append(ctx.attrs._testmaingen[RunInfo])
 
     # if ctx.attrs.coverage_mode:
-    # cmd.append(cmd_args(ctx.attrs.coverage_mode, format = "--cover-mode={}"))
     cmd.append(cmd_args(output.as_output(), format = "--output={}"))
-    cmd.append(cmd_args(pkg_name, format = "--import-path={}"))
+    cmd.append(cmd_args(pkg_import_path, format = "--import-path={}"))
     if coverage_mode != None:
         cmd.extend(["--cover-mode", coverage_mode.value])
-    for _, vars in coverage_vars.items():
-        cmd.append(vars)
-    cmd.append(test_go_files)
-    ctx.actions.run(cmd_args(cmd), category = "go_test_main_gen")
+    if cover_packages:
+        cover_pkgs_argsfile = ctx.actions.declare_output("cover_pkgs_argsfile", has_content_based_path = True)
+        ctx.actions.write(cover_pkgs_argsfile, [["--cover-pkgs", pkg] for pkg in cover_packages])
+        cmd.append(cmd_args(cover_pkgs_argsfile, format = "@{}"))
+    cmd.append(cmd_args(test_go_files_argsfile, format = "@{}"))
+    ctx.actions.run(cmd_args(cmd), category = "go_test_main_gen", allow_cache_upload = ctx.attrs._go_toolchain[GoToolchainInfo].allow_cache_upload)
     return output
 
-def is_subpackage_of(other_pkg_name: str, pkg_name: str) -> bool:
-    return pkg_name == other_pkg_name or other_pkg_name.startswith(pkg_name + "/")
+def is_subpackage_of(other_pkg_import_path: str, pkg_import_path: str) -> bool:
+    return pkg_import_path == other_pkg_import_path or other_pkg_import_path.startswith(pkg_import_path + "/")
 
 def go_test_impl(ctx: AnalysisContext) -> list[Provider]:
-    cxx_toolchain_available = CxxToolchainInfo in ctx.attrs._cxx_toolchain
-    pkg_name = go_attr_pkg_name(ctx)
-    cgo_enabled = evaluate_cgo_enabled(cxx_toolchain_available, ctx.attrs.cgo_enabled)
+    pkg_import_path = go_attr_pkg_name(ctx)
+    cgo_enabled = evaluate_cgo_enabled(ctx.attrs._cgo_enabled)
 
     deps = ctx.attrs.deps
     srcs = ctx.attrs.srcs
+    coverage_enabled = ctx.attrs.coverage_enabled
 
-    # Copy the srcs, deps and pkg_name from the target library when set. The
+    # Copy the srcs, deps and pkg_import_path from the target library when set. The
     # library code gets compiled together with the tests.
     if ctx.attrs.target_under_test:
         lib = ctx.attrs.target_under_test[GoTestInfo]
         srcs += lib.srcs
         deps += lib.deps
 
-        # TODO: should we assert that pkg_name != None here?
-        pkg_name = lib.pkg_name
+        # TODO: should we assert that pkg_import_path != None here?
+        pkg_import_path = lib.pkg_import_path
+        coverage_enabled = coverage_enabled or lib.coverage_enabled
 
     # If coverage is enabled for this test, we need to preprocess the sources
     # with the Go cover tool.
     coverage_mode = GoCoverageMode(ctx.attrs._coverage_mode) if ctx.attrs._coverage_mode else None
     cgo_build_context = get_cgo_build_context(ctx)
-    coverage_vars = {}
     pkgs = {}
 
     # Compile all tests into a package.
-    tests, tests_pkg_info = build_package(
+    tests, tests_pkg_info, test_go_files_argsfile = declare_package_build(
         ctx = ctx,
-        pkg_name = pkg_name,
+        pkg_import_path = pkg_import_path,
         main = False,
-        srcs = srcs,
-        package_root = ctx.attrs.package_root,
+        sources = GoSourceInputs(
+            srcs = srcs,
+            embed_srcs = from_named_set(ctx.attrs.embed_srcs),
+            package_root = ctx.attrs.package_root,
+        ),
         cgo_build_context = cgo_build_context,
-        deps = deps,
+        config = GoBuildConfig(
+            compiler_flags = ctx.attrs.compiler_flags,
+            build_tags = ctx.attrs._build_tags,
+            coverage_enabled = coverage_enabled,
+            coverage_mode = coverage_mode,
+            with_tests = True,
+            cgo_enabled = cgo_enabled,
+        ),
         pkgs = pkgs,
-        compiler_flags = ctx.attrs.compiler_flags,
-        build_tags = ctx.attrs._build_tags,
-        coverage_mode = coverage_mode,
-        embedcfg = ctx.attrs.embedcfg,
-        with_tests = True,
-        cgo_enabled = cgo_enabled,
+        deps = deps,
     )
 
-    if coverage_mode != None:
-        coverage_vars[pkg_name] = tests.coverage_vars
+    cover_packages = []
 
-        # Get all packages that are linked to the test (i.e. the entire dependency tree)
-        for name, pkg in get_inherited_compile_pkgs(deps).items():
-            if ctx.label != None and is_subpackage_of(name, ctx.label.package):
-                coverage_vars[name] = pkg.coverage_vars
-                pkgs[name] = pkg
+    # Cover the test package itself
+    if tests.coverage_instrumented:
+        cover_packages.append(pkg_import_path)
 
-    pkgs[pkg_name] = tests
+    # Get all packages that are linked to the test (i.e. the entire dependency tree)
+    for import_path, pkg in get_inherited_link_pkgs(deps).items():
+        if pkg.coverage_instrumented:
+            # Cover dependencies with coverage instrumented
+            cover_packages.append(import_path)
+
+    pkgs[pkg_import_path] = tests
 
     # Generate a 'main.go' file (test runner) which runs the actual tests from the package above.
     # Build the it as a separate package (<foo>.test) - which imports and invokes the test package.
-    gen_main = _gen_test_main(ctx, pkg_name, coverage_mode, coverage_vars, tests.test_go_files)
-    main, _ = build_package(
+    gen_main = _gen_test_main(ctx, pkg_import_path, coverage_mode, cover_packages, test_go_files_argsfile)
+    main, _, _ = declare_package_build(
         ctx = ctx,
-        pkg_name = pkg_name + ".test",
+        pkg_import_path = pkg_import_path + ".test",
         main = True,
-        srcs = [gen_main],
-        package_root = "",
+        sources = GoSourceInputs(
+            srcs = [gen_main],
+            package_root = "",
+        ),
         cgo_build_context = None,
+        config = GoBuildConfig(
+            cgo_enabled = cgo_enabled,
+        ),
         pkgs = pkgs,
-        coverage_mode = None,
         cgo_gen_dir_name = "cgo_gen_test_main",
-        cgo_enabled = cgo_enabled,
     )
 
     # Link the above into a Go binary.
@@ -140,34 +161,225 @@ def go_test_impl(ctx: AnalysisContext) -> list[Provider]:
         external_linker_flags = ctx.attrs.external_linker_flags,
     )
 
-    # As per v1, copy in resources next to binary.
+    # Copy resources next to the binary. Dict keys are the copy
+    # destination; list entries are named by their short path.
     copied_resources = []
-    for resource in ctx.attrs.resources:
-        copied_resources.append(ctx.actions.copy_file(resource.short_path, resource))
+    for name, resource in from_named_set(ctx.attrs.resources).items():
+        copied_resources.append(ctx.actions.copy_file(name, resource, has_content_based_path = False))
 
     run_cmd = cmd_args(bin, hidden = [runtime_files, external_debug_info] + copied_resources)
 
     # Setup RE executors based on the `remote_execution` param.
-    re_executor, executor_overrides = get_re_executors_from_props(ctx)
+    re_executors = get_re_executors_from_props(ctx)
+
+    # Emit TPX_LIST_TESTS_COMMAND so TPX can enumerate tests via AST parsing
+    # of the *_test.go sources instead of running the compiled binary with
+    # -test.list. Eliminates cgo and TestMain startup costs from listing.
+    # The lister mirrors `go test -list <regex>`
+    env = dict(ctx.attrs.env)
+    env["TPX_LIST_TESTS_COMMAND"] = cmd_args(
+        [ctx.attrs._list_tests[RunInfo]],
+        "-match=^Test.*",
+        cmd_args(test_go_files_argsfile, format = "@{}"),
+    )
 
     return inject_test_run_info(
         ctx,
         ExternalRunnerTestInfo(
             type = "go",
             command = [run_cmd],
-            env = ctx.attrs.env,
+            env = env,
             labels = ctx.attrs.labels,
             contacts = ctx.attrs.contacts,
-            default_executor = re_executor,
-            executor_overrides = executor_overrides,
-            # FIXME: Consider setting to true
-            run_from_project_root = re_executor != None,
-            use_project_relative_paths = re_executor != None,
+            default_executor = re_executors.default_executor,
+            executor_overrides = re_executors.executor_overrides,
+            run_from_project_root = True,
+            use_project_relative_paths = re_executors.use_project_relative_paths,
+            supports_test_execution_caching = ctx.attrs.supports_test_execution_caching,
         ),
     ) + [
         DefaultInfo(
             default_output = bin,
-            other_outputs = [gen_main] + runtime_files + external_debug_info,
+            other_outputs = [gen_main] + runtime_files + external_debug_info + copied_resources,
         ),
         tests_pkg_info,
     ]
+
+go_test = prelude_rule(
+    name = "go_test",
+    impl = go_test_impl,
+    docs = """
+        A `go_test()` rule builds a native binary from the
+         specified Go source and resource files—and a generated main file. It's
+         similar to the `go test` command.
+
+         If your test requires static files you should specify these in
+         the **resources** argument. If you do not specify these
+         files, they won't be available when your test runs.
+    """,
+    examples = """
+        For more examples, check out our [integration tests](https://github.com/facebook/buck/tree/dev/test/com/facebook/buck/features/go/testdata).
+
+        ```
+        go_library(
+          name='greeting',
+          srcs=[
+            'greeting.go',
+          ],
+          deps=[
+            ':join',
+          ],
+        )
+
+        go_test(
+          name='greeting-test',
+          srcs=[
+            'greeting_ext_test.go',
+          ],
+          deps=[
+            ':greeting'
+          ],
+        )
+
+        go_test(
+          name='greeting-internal-test',
+          package_name='greeting',
+          srcs=[
+            'greeting.go',
+            'greeting_test.go',
+          ],
+          deps=[
+            ':join',
+          ],
+        )
+
+        # Or
+
+        go_test(
+          name='greeting-better-internal-test',
+          srcs=['greeting_test.go'],
+          target_under_test=':greeting',
+        )
+        ```
+    """,
+    further = None,
+    attrs = (
+        # @unsorted-dict-items
+        buck.inject_test_env_arg()
+        | go_common.srcs_arg()
+        | {
+            "package_name": attrs.option(
+                attrs.string(),
+                default = None,
+                doc = """
+                Sets the full name of the test package being compiled. This defaults to the path from the buck
+                 root with "\\_test" appended. (e.g. given a ./.buckconfig, a rule in ./a/b/BUCK defaults to package "a/b\\_test")
+
+                 Note: if you want to test packages internally (i.e. same package name), use the `target_under_test`
+                 parameter instead of setting `package_name` to include the tested source files.
+            """,
+            ),
+            "target_under_test": attrs.option(
+                attrs.dep(),
+                default = None,
+                doc = """
+                Specify the target_under_test that this internal test is testing. This will copy the `srcs`,
+                 `package_name` and `deps` from the target specified so you don't have
+                 to duplicate them.
+            """,
+            ),
+        }
+        | go_common.deps_arg()
+        | go_common.link_style_arg()
+        | go_common.coverage_enabled_arg()
+        | go_common.link_mode_arg()
+        | {
+            "build_mode": attrs.option(
+                attrs.enum(BuildMode),
+                doc = """
+                Determines the build mode (equivalent of `-buildmode`). Can be
+                 one of the following values: `exe`, `pie`.`
+            """,
+                default = None,
+            ),
+        }
+        | go_common.compiler_flags_arg()
+        | go_common.assembler_flags_arg()
+        | go_common.linker_flags_arg()
+        | go_common.external_linker_flags_arg()
+        | go_common.embed_srcs_arg()
+        | go_common.package_root_arg()
+        | go_common.cgo_enabled_arg()
+        | go_common.build_tags_arg()
+        | cxx_common.headers_arg()
+        | cxx_common.header_namespace_arg()
+        | go_common.cxx_preprocessor_flags_arg()
+        | go_common.cxx_compiler_flags_arg()
+        | buck.test_label_arg()
+        | buck.test_rule_timeout_ms()
+        | {
+            "env": attrs.dict(
+                key = attrs.string(),
+                value = attrs.arg(),
+                sorted = False,
+                default = {},
+                doc = """
+                A map of environment variables and values to set when running the test.
+            """,
+            ),
+        }
+        | buck.run_test_separately_arg(
+            run_test_separately_type = attrs.bool(
+                default = False,
+                doc = """
+            If set to True, the test(s) in this rule are run separately from
+             all other tests. This is useful for integration tests which
+             access a physical device or other limited resource. If unset,
+             the test(s) in this rule run in parallel with all other tests.
+        """,
+            )
+        )
+        | {
+            "platform": attrs.option(attrs.string(), default = None),
+            "runner": attrs.option(attrs.dep(), default = None),
+            "specs": attrs.option(attrs.arg(json = True), default = None),
+            "supports_test_execution_caching": attrs.bool(default = True),
+        }
+        | buck.licenses_arg()
+        | buck.contacts_arg()
+        | re_test_common.test_args()
+        | test_common.attributes()
+        | {
+            "coverage_mode": attrs.option(
+                attrs.enum(GoCoverageMode.values()),
+                default = None,
+                doc = """
+                Test coverage functionality will be included in the executable.
+            """,
+            ),
+            "resources": attrs.named_set(
+                attrs.source(allow_directory = True),
+                sorted = True,
+                default = [],
+                doc = """
+                Static files copied next to the test executable and symlinked into
+                 the working directory of the test. Pass a list to name entries by
+                 their short path, or a dict to choose each entry's destination
+                 path explicitly. Open them using relative paths, e.g.
+                 `os.ReadFile("testdata/input")`.
+            """,
+            ),
+            "_build_info": BUILD_INFO_ATTR,
+            "_build_tags": build_tags_attr,
+            "_cgo_enabled": cgo_enabled_attr,
+            "_coverage_mode": coverage_mode_attr,
+            "_cxx_toolchain": toolchains_common.cxx(),
+            "_exec_os_type": buck.exec_os_type_arg(),
+            "_go_stdlib": attrs.default_only(attrs.dep(default = "prelude//go/tools:stdlib")),
+            "_go_toolchain": toolchains_common.go(),
+            "_list_tests": attrs.default_only(attrs.dep(providers = [RunInfo], default = "prelude//go/tools:list_tests")),
+            "_testmaingen": attrs.default_only(attrs.exec_dep(providers = [RunInfo], default = "prelude//go/tools:testmaingen")),
+        }
+    ),
+    cfg = go_test_transition,
+)

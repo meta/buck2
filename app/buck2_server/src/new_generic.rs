@@ -17,7 +17,6 @@ use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
 use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 use crate::ctx::ServerCommandContext;
-use crate::materialize::materialize_command;
 
 pub(crate) async fn new_generic_command(
     context: &ServerCommandContext<'_>,
@@ -28,9 +27,6 @@ pub(crate) async fn new_generic_command(
     let req: NewGenericRequest = serde_json::from_str(&req)
         .buck_error_context("Could not deserialize `NewGenericRequest`")?;
     let resp = match req {
-        NewGenericRequest::Materialize(m) => {
-            NewGenericResponse::Materialize(materialize_command(context, m).await?)
-        }
         NewGenericRequest::Complete(e) => NewGenericResponse::Complete(
             OTHER_SERVER_COMMANDS
                 .get()?
@@ -39,6 +35,12 @@ pub(crate) async fn new_generic_command(
         ),
         NewGenericRequest::DebugEval(e) => NewGenericResponse::DebugEval(
             OTHER_SERVER_COMMANDS.get()?.debug_eval(context, e).await?,
+        ),
+        NewGenericRequest::DebugAnonTargets(e) => NewGenericResponse::DebugAnonTargets(
+            OTHER_SERVER_COMMANDS
+                .get()?
+                .debug_anon_targets(context, e)
+                .await?,
         ),
         NewGenericRequest::Explain(m) => NewGenericResponse::Explain(
             OTHER_SERVER_COMMANDS

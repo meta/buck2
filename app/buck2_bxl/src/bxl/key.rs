@@ -28,13 +28,16 @@ use buck2_core::global_cfg_options::GlobalCfgOptions;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_data::ToProtoMessage;
 use buck2_data::action_key_owner::BaseDeferredKeyProto;
-use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_hash::BuckFixedInsertionMap;
+use buck2_interpreter::dice::starlark_provider::DynEvalKindKey;
 use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
 use buck2_util::strong_hasher::Blake3StrongHasher;
 use cmp_any::PartialEqAny;
 use dupe::Dupe;
-use starlark_map::ordered_map::OrderedMap;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
 use crate::bxl::starlark_defs::cli_args::CliArgValue;
 use crate::bxl::starlark_defs::context::actions::BxlExecutionResolution;
@@ -47,17 +50,16 @@ use crate::bxl::starlark_defs::context::actions::BxlExecutionResolution;
     Eq,
     Hash,
     PartialEq,
-    Ord,
-    PartialOrd,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 pub(crate) struct BxlKey(Arc<BxlKeyData>);
 
 impl BxlKey {
     pub(crate) fn new(
         spec: BxlFunctionLabel,
-        bxl_args: Arc<OrderedMap<String, CliArgValue>>,
+        bxl_args: Arc<BuckFixedInsertionMap<String, CliArgValue>>,
         force_print_stacktrace: bool,
         global_cfg_options: GlobalCfgOptions,
     ) -> Self {
@@ -73,7 +75,7 @@ impl BxlKey {
         &self.0.spec
     }
 
-    pub(crate) fn cli_args(&self) -> &Arc<OrderedMap<String, CliArgValue>> {
+    pub(crate) fn cli_args(&self) -> &Arc<BuckFixedInsertionMap<String, CliArgValue>> {
         &self.0.bxl_args
     }
 
@@ -124,15 +126,17 @@ impl BxlKey {
     Eq,
     Hash,
     PartialEq,
-    Ord,
-    PartialOrd,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 #[display("{}", spec)]
+#[pagable_typetag(DynEvalKindKey)]
 struct BxlKeyData {
     spec: BxlFunctionLabel,
-    bxl_args: Arc<OrderedMap<String, CliArgValue>>,
+    /// In the order the bxl function declares its args, which is the field order of its
+    /// `cli_args` struct.
+    bxl_args: Arc<BuckFixedInsertionMap<String, CliArgValue>>,
     /// Overrides `fail_no_stacktrace` to print a stacktrace anyway. FIXME(JakobDegen): Might be
     /// better to put this on the `UserComputationData` instead, to keep this from invalidating the
     /// dice node. A bit hard to wire up though, so just leave it here for now.
@@ -161,7 +165,8 @@ impl BxlKeyData {
     Hash,
     PartialEq,
     Allocative,
-    strong_hash::StrongHash
+    strong_hash::StrongHash,
+    Pagable
 )]
 #[display("{}", key)]
 pub(crate) struct BxlDynamicKeyData {
@@ -187,6 +192,7 @@ impl BxlDynamicKey {
     }
 }
 
+#[pagable_typetag]
 impl BaseDeferredKeyDyn for BxlDynamicKeyData {
     fn eq_token(&self) -> PartialEqAny<'_> {
         PartialEqAny::new(self)
@@ -265,14 +271,12 @@ impl BaseDeferredKeyDyn for BxlDynamicKeyData {
             if action_key.is_none() { "" } else { "/" },
             if path_resolution_method == BuckOutPathKind::Configuration {
                 output_hash.as_str()
+            } else if let Some(content_hash) = content_hash {
+                content_hash.as_str()
             } else {
-                if let Some(content_hash) = content_hash {
-                    content_hash.as_str()
-                } else {
-                    return Err(PathResolutionError::ContentBasedPathWithNoContentHash(
-                        path.to_buf(),
-                    ))?;
-                }
+                return Err(PathResolutionError::ContentBasedPathWithNoContentHash(
+                    path.to_buf(),
+                ))?;
             },
             "/",
             path.as_str(),
@@ -282,6 +286,10 @@ impl BaseDeferredKeyDyn for BxlDynamicKeyData {
     }
 
     fn configured_label(&self) -> Option<ConfiguredTargetLabel> {
+        None
+    }
+
+    fn rule_type_name(&self) -> Option<&str> {
         None
     }
 

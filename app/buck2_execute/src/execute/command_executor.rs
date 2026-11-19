@@ -12,25 +12,29 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 
+use buck2_artifact::artifact::output_type::OutputType;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::execution_types::executor_config::CommandGenerationOptions;
+use buck2_core::execution_types::executor_config::ExecutorNetworkAccess;
 use buck2_core::execution_types::executor_config::OutputPathsBehavior;
+use buck2_core::execution_types::executor_config::ReGangWorker;
 use buck2_core::execution_types::executor_config::RemoteExecutorCafFbpkg;
 use buck2_core::execution_types::executor_config::RemoteExecutorCustomImage;
 use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_data::NetworkAccess;
 use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
+use buck2_hash::BuckFixedSortedMap;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use remote_execution as RE;
 use remote_execution::TActionResult2;
-use sorted_vector_map::SortedVectorMap;
 
-use super::cache_uploader::CacheUploadResult;
+use super::cache_uploader::CacheUploadResults;
 use crate::artifact::fs::ExecutorFs;
 use crate::digest::CasDigestToReExt;
 use crate::digest_config::DigestConfig;
@@ -45,30 +49,28 @@ use crate::execute::prepared::PreparedAction;
 use crate::execute::prepared::PreparedCommand;
 use crate::execute::prepared::PreparedCommandExecutor;
 use crate::execute::prepared::PreparedCommandOptionalExecutor;
+use crate::execute::request::ActionSalt;
 use crate::execute::request::CommandExecutionRequest;
 use crate::execute::request::ExecutorPreference;
-use crate::execute::request::OutputType;
 use crate::execute::request::RemoteWorkerSpec;
 use crate::execute::result::CommandExecutionMetadata;
 use crate::execute::result::CommandExecutionResult;
+use crate::execute::write_action_cache::WriteActionCache;
 
-#[derive(Copy, Dupe, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Dupe, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ActionExecutionTimingData {
     pub wall_time: Duration,
-}
-
-impl Default for ActionExecutionTimingData {
-    fn default() -> Self {
-        Self {
-            wall_time: Duration::ZERO,
-        }
-    }
+    /// For `run` actions, time spent before checking caches.
+    pub prepare_command: Option<Duration>,
+    /// For `run` actions, time spent after the result arrived.
+    pub finish_action: Option<Duration>,
 }
 
 impl From<CommandExecutionMetadata> for ActionExecutionTimingData {
     fn from(command: CommandExecutionMetadata) -> Self {
         Self {
-            wall_time: command.wall_time,
+            wall_time: command.time_span.duration(),
+            ..Default::default()
         }
     }
 }
@@ -84,6 +86,7 @@ struct CommandExecutorData {
     options: CommandGenerationOptions,
     re_platform: RE::Platform,
     cache_uploader: Arc<dyn UploadCache>,
+    write_action_cache: Option<Arc<dyn WriteActionCache>>,
 }
 
 impl CommandExecutor {
@@ -92,6 +95,7 @@ impl CommandExecutor {
         action_cache_checker: Arc<dyn PreparedCommandOptionalExecutor>,
         remote_dep_file_cache_checker: Arc<dyn PreparedCommandOptionalExecutor>,
         cache_uploader: Arc<dyn UploadCache>,
+        write_action_cache: Option<Arc<dyn WriteActionCache>>,
         artifact_fs: ArtifactFs,
         options: CommandGenerationOptions,
         re_platform: RE::Platform,
@@ -104,7 +108,13 @@ impl CommandExecutor {
             options,
             re_platform,
             cache_uploader,
+            write_action_cache,
         }))
+    }
+
+    /// The action cache as write actions use it; `None` where this executor reads no cache.
+    pub fn write_action_cache(&self) -> Option<&dyn WriteActionCache> {
+        self.0.write_action_cache.as_deref()
     }
 
     pub fn fs(&self) -> &ArtifactFs {
@@ -148,10 +158,10 @@ impl CommandExecutor {
         &self,
         info: &CacheUploadInfo<'_>,
         execution_result: &CommandExecutionResult,
-        re_result: Option<TActionResult2>,
+        re_result: Option<&mut TActionResult2>,
         dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
         action_digest_and_blobs: &ActionDigestAndBlobs,
-    ) -> buck2_error::Result<CacheUploadResult> {
+    ) -> buck2_error::Result<CacheUploadResults> {
         self.0
             .cache_uploader
             .upload(
@@ -226,6 +236,10 @@ impl CommandExecutor {
             } else {
                 request.all_args_vec()
             };
+            let network_access = request
+                .network_access()
+                .map(ExecutorNetworkAccess::from)
+                .or(self.0.options.network_access);
             let action = re_create_action(
                 request.args().to_vec(),
                 all_args,
@@ -238,14 +252,20 @@ impl CommandExecutor {
                 false,
                 digest_config,
                 self.0.options.output_paths_behavior,
+                network_access,
                 request.unique_input_inodes(),
                 request.remote_execution_dependencies(),
+                request.re_gang_workers(),
                 request.remote_execution_custom_image(),
                 &request
                     .meta_internal_extra_params()
                     .remote_execution_caf_fbpkgs,
                 request.remote_worker(),
                 re_outputs_required,
+                request
+                    .meta_internal_extra_params()
+                    .allow_unsandboxed_action_cache_uploads,
+                request.salt(),
             )?;
 
             buck2_error::Ok(action)
@@ -258,19 +278,23 @@ fn re_create_action(
     all_args: Vec<String>,
     outputs: &[(ProjectRelativePathBuf, OutputType)],
     working_directory: &ProjectRelativePath,
-    environment: &SortedVectorMap<String, String>,
+    environment: &BuckFixedSortedMap<String, String>,
     input_digest: &TrackedFileDigest,
     timeout: Option<Duration>,
     platform: RE::Platform,
     do_not_cache: bool,
     digest_config: DigestConfig,
     output_paths_behavior: OutputPathsBehavior,
+    network_access: Option<ExecutorNetworkAccess>,
     unique_input_inodes: bool,
     remote_execution_dependencies: &Vec<RemoteExecutorDependency>,
+    re_gang_workers: &Vec<ReGangWorker>,
     remote_execution_custom_image: &Option<RemoteExecutorCustomImage>,
     remote_execution_caf_fbpkgs: &[RemoteExecutorCafFbpkg],
     worker: &Option<RemoteWorkerSpec>,
     re_outputs_required: bool,
+    allow_unsandboxed_action_cache_uploads: bool,
+    salt: Option<&ActionSalt>,
 ) -> buck2_error::Result<PreparedAction> {
     let (worker_tool_init_action, command_args) = if let Some(worker) = worker {
         let mut action_and_blobs = ActionDigestAndBlobsBuilder::new(digest_config);
@@ -291,7 +315,8 @@ fn re_create_action(
         };
         let input_digest = worker.input_paths.input_directory().fingerprint();
 
-        let action = RE::Action {
+        #[allow(unused_mut)]
+        let mut action = RE::Action {
             input_root_digest: Some(input_digest.to_grpc()),
             command_digest: Some(action_and_blobs.add_command(&command).to_grpc()),
             timeout: timeout
@@ -301,6 +326,8 @@ fn re_create_action(
             do_not_cache,
             ..Default::default()
         };
+        #[cfg(fbcode_build)]
+        set_action_network_access(&mut action, network_access);
         let action_and_blobs = action_and_blobs.build(&action);
         (Some(action_and_blobs), args)
     } else {
@@ -380,6 +407,11 @@ fn re_create_action(
             .transpose()
             .buck_error_context("Cannot convert timeout to GRPC")?,
         do_not_cache,
+        salt: salt
+            .map(|salt| salt.as_bytes().to_vec())
+            .unwrap_or_default(),
+        #[cfg(fbcode_build)]
+        allow_unsandboxed_action_cache_uploads,
         #[cfg(fbcode_build)]
         worker_tool_action_digest: worker_tool_init_action.clone().map(|a| a.action.to_grpc()),
         ..Default::default()
@@ -431,6 +463,9 @@ fn re_create_action(
     }
 
     #[cfg(fbcode_build)]
+    set_action_network_access(&mut action, network_access);
+
+    #[cfg(fbcode_build)]
     {
         action.respect_exec_bit = true;
     }
@@ -443,6 +478,9 @@ fn re_create_action(
     #[cfg(not(fbcode_build))]
     {
         let _unused = &mut action;
+        let _unused = re_outputs_required;
+        let _unused = allow_unsandboxed_action_cache_uploads;
+        let _unused = network_access;
     }
 
     let action_and_blobs = action_and_blobs.build(&action);
@@ -454,6 +492,27 @@ fn re_create_action(
             .platform
             .expect("We did put a platform a few lines up"),
         remote_execution_dependencies: remote_execution_dependencies.to_owned(),
+        re_gang_workers: re_gang_workers.to_owned(),
         worker_tool_init_action,
+        network_access: network_access.map(NetworkAccess::from),
     })
+}
+
+#[cfg(fbcode_build)]
+fn set_action_network_access(
+    action: &mut RE::Action,
+    network_access: Option<ExecutorNetworkAccess>,
+) {
+    let Some(network_access) = network_access else {
+        return;
+    };
+
+    action.network_isolation = match network_access {
+        ExecutorNetworkAccess::All => RE::NetworkIsolationType::None,
+        ExecutorNetworkAccess::None | ExecutorNetworkAccess::Strict => {
+            RE::NetworkIsolationType::NetworkStrict
+        }
+        ExecutorNetworkAccess::Loopback => RE::NetworkIsolationType::Loopback,
+        ExecutorNetworkAccess::Private => RE::NetworkIsolationType::Private,
+    } as i32;
 }

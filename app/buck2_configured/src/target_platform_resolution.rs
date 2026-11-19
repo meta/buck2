@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-use std::sync::Arc;
-
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_common::dice::cells::HasCellResolver;
@@ -22,6 +20,7 @@ use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
 use buck2_error::BuckErrorContext;
 use buck2_node::cfg_constructor::CFG_CONSTRUCTOR_CALCULATION_IMPL;
+use buck2_node::cfg_constructor::CfgConstructorModifiers;
 use buck2_node::configuration::target_platform_detector::TargetPlatformDetector;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::nodes::unconfigured::RuleKind;
@@ -31,25 +30,32 @@ use buck2_node::target_calculation::CONFIGURED_TARGET_CALCULATION;
 use buck2_node::target_calculation::ConfiguredTargetCalculationImpl;
 use derive_more::Display;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use dupe::ResultDupedErrExt;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 
 use crate::configuration::get_platform_configuration;
 use crate::execution::get_execution_platform_toolchain_dep;
 
-async fn get_target_platform_detector(
-    ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<Arc<TargetPlatformDetector>> {
+async fn get_target_platform_detector<'d>(
+    ctx: &mut DiceComputations<'d>,
+) -> buck2_error::Result<&'d TargetPlatformDetector> {
     // This requires a bit of computation so cache it on the graph.
     // TODO(cjhopman): Should we construct this (and similar buckconfig-derived objects) as part of the buck config itself?
-    #[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative)]
+    #[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative, Pagable)]
     #[display("TargetPlatformDetectorKey")]
+    #[pagable_typetag(dice::DiceKeyDyn)]
     struct TargetPlatformDetectorKey;
 
     #[async_trait]
     impl Key for TargetPlatformDetectorKey {
-        type Value = buck2_error::Result<Arc<TargetPlatformDetector>>;
+        type Value = buck2_error::Result<TargetPlatformDetector>;
         async fn compute(
             &self,
             ctx: &mut DiceComputations,
@@ -61,7 +67,7 @@ async fn get_target_platform_detector(
             let root_cell = resolver.root_cell();
             let cell_alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
 
-            Ok(Arc::new(
+            Ok(
                 match ctx
                     .get_legacy_config_property(
                         root_cell,
@@ -80,18 +86,25 @@ async fn get_target_platform_detector(
                         &cell_alias_resolver,
                     )?,
                 },
-            ))
+            )
         }
 
-        fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-            match (x, y) {
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|x, y| match (x, y) {
                 (Ok(x), Ok(y)) => x == y,
                 _ => false,
-            }
+            })
+        }
+
+        fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+            OkPagableValueSerialize::<Self::Value>::new()
         }
     }
 
-    ctx.compute(&TargetPlatformDetectorKey).await?
+    ctx.compute(&TargetPlatformDetectorKey)
+        .await?
+        .as_ref()
+        .duped_err()
 }
 
 async fn get_default_platform(
@@ -100,9 +113,7 @@ async fn get_default_platform(
 ) -> buck2_error::Result<ConfigurationData> {
     let detector = get_target_platform_detector(ctx).await?;
     if let Some(target) = detector.detect(target) {
-        return get_platform_configuration(ctx, target)
-            .await
-            .map_err(buck2_error::Error::from);
+        return get_platform_configuration(ctx, target).await;
     }
     // TODO(cjhopman): This needs to implement buck1's approach to determining target platform, it's currently missing the fallback to buckconfig parser.target_platform.
     Ok(ConfigurationData::unspecified())
@@ -135,7 +146,7 @@ impl ConfiguredTargetCalculationImpl for ConfiguredTargetCalculationInstance {
                 Some(global_target_platform) => {
                     get_platform_configuration(ctx, global_target_platform).await?
                 }
-                None => match node.get_default_target_platform() {
+                None => match node.get_default_target_platform()? {
                     Some(target) => get_platform_configuration(ctx, target).await?,
                     None => get_default_platform(ctx, target).await?,
                 },
@@ -148,7 +159,9 @@ impl ConfiguredTargetCalculationImpl for ConfiguredTargetCalculationInstance {
                     node.as_ref(),
                     super_package,
                     current_cfg,
-                    &global_cfg_options.cli_modifiers,
+                    CfgConstructorModifiers::TargetPlatform(
+                        global_cfg_options.cli_modifiers.dupe(),
+                    ),
                     node.rule_type(),
                 )
                 .await

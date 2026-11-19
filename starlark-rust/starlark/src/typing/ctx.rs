@@ -51,6 +51,7 @@ use crate::typing::oracle::traits::TypingBinOp;
 use crate::typing::oracle::traits::TypingUnOp;
 use crate::typing::ty::Approximation;
 use crate::typing::ty::Ty;
+use crate::values::types::bytes::value::StarlarkBytes;
 
 pub(crate) struct TypingContext<'a> {
     pub(crate) oracle: TypingOracleCtx<'a>,
@@ -318,7 +319,7 @@ impl TypingContext<'_> {
         for pos in pos {
             pos_ty.push(Spanned {
                 span: pos.span,
-                node: self.expression_type(&pos.node.expr())?,
+                node: self.expression_type(pos.node.expr())?,
             });
         }
 
@@ -333,12 +334,12 @@ impl TypingContext<'_> {
             };
             named_ty.push(Spanned {
                 span: named.span,
-                node: (name, self.expression_type(&named.node.expr())?),
+                node: (name, self.expression_type(named.node.expr())?),
             });
         }
 
         let args_ty = if let Some(star) = star {
-            let ty = self.expression_type_spanned(&star.node.expr())?;
+            let ty = self.expression_type_spanned(star.node.expr())?;
             self.from_iterated(&ty, star.span);
             Some(ty)
         } else {
@@ -346,7 +347,7 @@ impl TypingContext<'_> {
         };
 
         let kwargs_ty = if let Some(star_star) = star_star {
-            let ty = self.expression_type_spanned(&star_star.node.expr())?;
+            let ty = self.expression_type_spanned(star_star.node.expr())?;
             self.validate_type(ty.as_ref(), &Ty::dict(Ty::string(), Ty::any()))?;
             Some(ty)
         } else {
@@ -366,13 +367,13 @@ impl TypingContext<'_> {
         self.validate_call(&f_ty, &args_ty, span)
     }
 
-    fn expr_slice(
+    fn expr_slice<'f>(
         &self,
         span: Span,
-        x: &CstExpr,
-        start: Option<&CstExpr>,
-        stop: Option<&CstExpr>,
-        stride: Option<&CstExpr>,
+        x: &CstExpr<'f>,
+        start: Option<&CstExpr<'f>>,
+        stop: Option<&CstExpr<'f>>,
+        stride: Option<&CstExpr<'f>>,
     ) -> Result<Ty, InternalError> {
         for e in [start, stop, stride].iter().copied().flatten() {
             self.validate_type(self.expression_type_spanned(e)?.as_ref(), &Ty::int())?;
@@ -397,7 +398,7 @@ impl TypingContext<'_> {
                     Ty::any()
                 }
             }
-            Some(ResolvedIdent::Global(g)) => Ty::of_value(g.to_value()),
+            Some(ResolvedIdent::Global(g)) => Ty::of_value(*g),
             None => {
                 // All identifiers must be resolved at this point,
                 // but we don't stop after scope resolution error,
@@ -437,6 +438,7 @@ impl TypingContext<'_> {
                 AstLiteral::Int(_) => Ok(Ty::int()),
                 AstLiteral::Float(_) => Ok(Ty::float()),
                 AstLiteral::String(_) => Ok(Ty::string()),
+                AstLiteral::Bytes(_) => Ok(Ty::starlark_value::<StarlarkBytes>()),
                 AstLiteral::Ellipsis => Ok(Ty::any()),
             },
             ExprP::Not(x) => {

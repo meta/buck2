@@ -8,19 +8,22 @@
  * above-listed licenses.
  */
 
-use std::time::Duration;
-use std::time::Instant;
-
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::cells::cell_path::CellPathRef;
+use buck2_core::cells::cell_path::CellPath;
 use buck2_core::package::PackageLabel;
 use buck2_events::dispatch::async_record_root_spans;
 use buck2_events::span::SpanId;
+use buck2_util::time_span::TimeSpan;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use smallvec::SmallVec;
 
 use crate::package_listing::interpreter::InterpreterPackageListingResolver;
@@ -35,12 +38,14 @@ use crate::package_listing::resolver::PackageListingResolver;
     Eq,
     Hash,
     PartialEq,
-    Allocative
+    Allocative,
+    Pagable
 )]
+#[pagable_typetag(dice::DiceKeyDyn)]
 pub struct PackageListingKey(pub PackageLabel);
 
 pub struct PackageListingKeyActivationData {
-    pub duration: Duration,
+    pub time_span: TimeSpan,
     pub spans: SmallVec<[SpanId; 1]>,
 }
 
@@ -52,7 +57,7 @@ impl Key for PackageListingKey {
         ctx: &mut DiceComputations,
         _cancellations: &CancellationContext,
     ) -> Self::Value {
-        let now = Instant::now();
+        let now = TimeSpan::start_now();
 
         let (result, spans) = async_record_root_spans(
             InterpreterPackageListingResolver::new(ctx).resolve(self.0.dupe()),
@@ -60,18 +65,22 @@ impl Key for PackageListingKey {
         .await;
 
         ctx.store_evaluation_data(PackageListingKeyActivationData {
-            duration: Instant::now() - now,
+            time_span: now.end_now(),
             spans,
         })?;
 
         result
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
             (Ok(x), Ok(y)) => x == y,
             _ => false,
-        }
+        })
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
     }
 }
 
@@ -80,13 +89,10 @@ pub struct DicePackageListingResolver<'compute, 'dice>(pub &'compute mut DiceCom
 #[async_trait]
 impl PackageListingResolver for DicePackageListingResolver<'_, '_> {
     async fn resolve(&mut self, package: PackageLabel) -> buck2_error::Result<PackageListing> {
-        self.0.compute(&PackageListingKey(package)).await?
+        self.0.compute(&PackageListingKey(package)).await?.dupe()
     }
 
-    async fn get_enclosing_package(
-        &mut self,
-        path: CellPathRef<'async_trait>,
-    ) -> buck2_error::Result<PackageLabel> {
+    async fn get_enclosing_package(&mut self, path: CellPath) -> buck2_error::Result<PackageLabel> {
         InterpreterPackageListingResolver::new(self.0)
             .get_enclosing_package(path)
             .await
@@ -94,8 +100,8 @@ impl PackageListingResolver for DicePackageListingResolver<'_, '_> {
 
     async fn get_enclosing_packages(
         &mut self,
-        path: CellPathRef<'async_trait>,
-        enclosing_violation_path: CellPathRef<'async_trait>,
+        path: CellPath,
+        enclosing_violation_path: CellPath,
     ) -> buck2_error::Result<Vec<PackageLabel>> {
         InterpreterPackageListingResolver::new(self.0)
             .get_enclosing_packages(path, enclosing_violation_path)
@@ -108,8 +114,15 @@ impl DicePackageListingResolver<'_, '_> {
         &mut self,
         package: PackageLabel,
     ) -> buck2_error::Result<PackageListing> {
-        self.resolve(package)
-            .await
-            .map_err(buck2_error::Error::from)
+        self.resolve(package).await
+    }
+
+    pub async fn resolve_package_listing_untracked(
+        &mut self,
+        package: PackageLabel,
+    ) -> buck2_error::Result<PackageListing> {
+        Ok(InterpreterPackageListingResolver::new(self.0)
+            .gather_package_listing(package)
+            .await?)
     }
 }

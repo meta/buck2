@@ -14,9 +14,9 @@ def h(tag, children, attrs = {}, indent_level = 0) -> cmd_args:
         attrs_list = [
             cmd_args(
                 key,
-                "=\"",
+                '="',
                 value,
-                "\"",
+                '"',
                 delimiter = "",
             )
             for key, value in attrs.items()
@@ -160,7 +160,7 @@ def get_mode_config_path(mode_name):
     if mode_name.startswith("//"):
         mode_name = mode_name[2:]
     elif mode_name.startswith("fbsource//"):
-        mode_name = mode_name[len("fbsource//"):]
+        mode_name = mode_name[len("fbsource//") :]
     return mode_name.replace("/", "_") + ".props"
 
 def get_root_path_relative_to(target_label):
@@ -271,14 +271,7 @@ def sanitize(input):
 # https://en.wikipedia.org/wiki/XML#Escaping
 # TODO: apply escape in more places.
 def escape_xml(input):
-    return (
-        input
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("'", "&apos;")
-            .replace('"', "&quot;")
-    )
+    return input.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&apos;").replace('"', "&quot;")
 
 def flatten_lists(list_list):
     final_list = []
@@ -304,7 +297,7 @@ def merge(input1, input2):
         return {item: True for item in input1 + input2}.keys()
 
     result = {}
-    for (key, value) in input1.items() + input2.items():
+    for key, value in input1.items() + input2.items():
         result[key] = merge(result.get(key), value)
     return result
 

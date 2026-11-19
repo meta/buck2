@@ -6,11 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//:paths.bzl", "paths")
-load(
-    ":erlang_build.bzl",
-    "erlang_build",
-)
 load(":erlang_info.bzl", "ErlangAppInfo", "ErlangAppOrTestInfo")
 load(
     ":erlang_toolchain.bzl",
@@ -21,47 +16,47 @@ load(
 # if new applications make it into OTP. New applications will not be available until
 # they are listed here.
 otp_applications = [
-    "stdlib",
-    "sasl",
-    "kernel",
-    "compiler",
-    "tools",
-    "common_test",
-    "runtime_tools",
-    "inets",
-    "parsetools",
-    "xmerl",
-    "edoc",
-    "erl_docgen",
-    "snmp",
-    "erl_interface",
     "asn1",
-    "jinterface",
-    "wx",
-    "debugger",
-    "reltool",
-    "mnesia",
+    "common_test",
+    "compiler",
     "crypto",
-    "os_mon",
-    "syntax_tools",
-    "public_key",
-    "ssl",
-    "observer",
-    "diameter",
-    "et",
-    "megaco",
-    "eunit",
-    "ssh",
-    "eldap",
+    "debugger",
     "dialyzer",
-    "ftp",
-    "tftp",
+    "diameter",
+    "edoc",
+    "eldap",
+    "erl_docgen",
+    "erl_interface",
     "erts",
+    "et",
+    "eunit",
+    "ftp",
+    "inets",
+    "jinterface",
+    "kernel",
+    "megaco",
+    "mnesia",
+    "observer",
+    "os_mon",
+    "parsetools",
+    "public_key",
+    "reltool",
+    "runtime_tools",
+    "sasl",
+    "snmp",
+    "ssh",
+    "ssl",
+    "stdlib",
+    "syntax_tools",
+    "tftp",
+    "tools",
+    "wx",
+    "xmerl",
 ]
 
 def gen_otp_applications() -> None:
     for name in otp_applications:
-        _erlang_otp_application_rule(name = name, version = "dynamic", visibility = ["PUBLIC"])
+        _erlang_otp_application_rule(name = name, visibility = ["PUBLIC"])
     return None
 
 def normalize_application(name: str) -> str:
@@ -70,53 +65,38 @@ def normalize_application(name: str) -> str:
     """
     if ":" not in name:
         if name in otp_applications:
+            # Known OTP application - convert to prelude target
             return "prelude//erlang/applications:{}".format(name)
         else:
-            fail('Unknown OTP application "{app}". If this is not supposed to be an OTP application,  did you mean ":{app}"?'.format(app = name))
-
+            # Not a known OTP app - might be a typo or user forgot the ":"
+            fail('Unknown OTP application "{app}". If this is not supposed to be an OTP application, did you mean ":{app}"?'.format(app = name))
     return name
 
 def _erlang_otp_application_impl(ctx: AnalysisContext) -> list[Provider]:
-    """virtual OTP application for referencing only
-    """
+    """virtual OTP application for referencing only"""
 
     toolchain = get_toolchain(ctx)
-
-    wildcard = paths.join("lib", ctx.attrs.name + "-*")
-
-    app_dir = ctx.actions.declare_output(
-        ctx.attrs.name,
-        dir = True,
-    )
-
-    erlang_build.utils.run_with_env(
-        ctx,
-        toolchain,
-        cmd_args(toolchain.extract_from_otp, wildcard, app_dir.as_output()),
-        identifier = ctx.attrs.name,
-        category = "extract_otp_app",
-    )
 
     return [
         DefaultInfo(),
         ErlangAppOrTestInfo(),
         ErlangAppInfo(
             name = ctx.attrs.name,
-            version = ctx.attrs.version,
+            version = "dynamic",
             beams = [],
             includes = [],
             dependencies = {},
+            code_path_tset = None,
             start_dependencies = None,
             include_dir = None,
             virtual = True,
-            app_folder = app_dir,
+            app_folder = toolchain.erts_toolchain_info.applications.get(ctx.attrs.name) if toolchain.erts_toolchain_info else None,
         ),
     ]
 
 _erlang_otp_application_rule = rule(
     impl = _erlang_otp_application_impl,
     attrs = {
-        "version": attrs.string(),
         "_toolchain": attrs.toolchain_dep(default = "toolchains//:erlang-default"),
     },
 )

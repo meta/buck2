@@ -21,6 +21,8 @@ use std::cmp::Ordering;
 use std::hash::Hash;
 
 use allocative::Allocative;
+#[cfg(feature = "pagable_dep")]
+use pagable::Pagable;
 use serde::Deserialize;
 use serde::Serialize;
 use strong_hash::StrongHash;
@@ -31,6 +33,7 @@ use crate::small_map::SmallMap;
 
 /// Wrapper for `SmallMap` which considers map equal if iteration order is equal.
 #[derive(Debug, Clone, Allocative)]
+#[cfg_attr(feature = "pagable_dep", derive(Pagable))]
 pub struct OrderedMap<K, V>(SmallMap<K, V>);
 
 impl<K, V> OrderedMap<K, V> {

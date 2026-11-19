@@ -134,7 +134,7 @@ pub(crate) fn string_repr(str: &str, buffer: &mut String) {
         unsafe {
             // `buffer` must have enough capacity to contain `val` if it does not need escaping
             // followed by trailing double quote.
-            debug_assert!(buffer.capacity() - buffer.len() >= val.len() + 1);
+            debug_assert!(buffer.capacity() - buffer.len() > val.len());
 
             if val.len() < mem::size_of::<V>() {
                 // Not enough length even for single SIMD iteration.

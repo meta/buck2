@@ -18,52 +18,42 @@
 // https://github.com/rust-lang/rust-clippy/issues/11142
 #![allow(clippy::needless_borrow)]
 
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use either::Either;
 use num_bigint::BigInt;
+use serde_json::value::RawValue;
 use starlark_derive::starlark_module;
 
 use crate as starlark;
-use crate::collections::SmallMap;
 use crate::environment::GlobalsBuilder;
-use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
 use crate::values::AllocValue;
 use crate::values::FrozenHeap;
-use crate::values::FrozenValue;
 use crate::values::Heap;
 use crate::values::Value;
+use crate::values::ValueOf;
 use crate::values::dict::AllocDict;
-use crate::values::type_repr::StarlarkTypeRepr;
+use crate::values::dict::DictType;
+use crate::values::float::StarlarkFloat;
+use crate::values::list::AllocList;
+use crate::values::string::str_type::StarlarkStr;
 use crate::values::types::int::int_or_big::StarlarkInt;
-
-impl StarlarkTypeRepr for serde_json::Number {
-    type Canonical = Either<i32, f64>;
-
-    fn starlark_type_repr() -> Ty {
-        Either::<i32, f64>::starlark_type_repr()
-    }
-}
-
-impl<'a> StarlarkTypeRepr for &'a serde_json::Number {
-    type Canonical = serde_json::Number;
-
-    fn starlark_type_repr() -> Ty {
-        serde_json::Number::starlark_type_repr()
-    }
-}
+use crate::values::types::int::view::IntView;
 
 impl<'v, 'a> AllocValue<'v> for &'a serde_json::Number {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
+    type Type = Either<IntView<'v>, StarlarkFloat>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         if let Some(x) = self.as_u64() {
-            heap.alloc(x)
+            ValueOf::left(x.alloc_value(heap))
         } else if let Some(x) = self.as_i64() {
-            heap.alloc(x)
+            ValueOf::left(x.alloc_value(heap))
         } else if let Some(x) = self.as_f64() {
-            heap.alloc(x)
+            ValueOf::right(x.alloc_value(heap))
         } else if let Ok(x) = BigInt::from_str(&self.to_string()) {
-            heap.alloc(StarlarkInt::from(x))
+            ValueOf::left(StarlarkInt::from(x).alloc_value(heap))
         } else {
             panic!("Unrepresentable number: {self:?}")
         }
@@ -71,140 +61,175 @@ impl<'v, 'a> AllocValue<'v> for &'a serde_json::Number {
 }
 
 impl<'v> AllocValue<'v> for serde_json::Number {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
+    type Type = Either<IntView<'v>, StarlarkFloat>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        (&self).alloc_value(heap)
     }
 }
 
-impl<'a> AllocFrozenValue for &'a serde_json::Number {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
+impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Number {
+    type Type = Either<IntView<'fv>, StarlarkFloat>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
         if let Some(x) = self.as_u64() {
-            heap.alloc(x)
+            ValueOf::left(x.alloc_frozen_value(heap))
         } else if let Some(x) = self.as_i64() {
-            heap.alloc(x)
+            ValueOf::left(x.alloc_frozen_value(heap))
         } else if let Some(x) = self.as_f64() {
-            heap.alloc(x)
+            ValueOf::right(x.alloc_frozen_value(heap))
         } else if let Ok(x) = BigInt::from_str(&self.to_string()) {
-            heap.alloc(StarlarkInt::from(x))
+            ValueOf::left(StarlarkInt::from(x).alloc_frozen_value(heap))
         } else {
             panic!("Unrepresentable number: {self:?}")
         }
     }
 }
 
-impl AllocFrozenValue for serde_json::Number {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
-    }
-}
+impl<'fv> AllocFrozenValue<'fv> for serde_json::Number {
+    type Type = Either<IntView<'fv>, StarlarkFloat>;
 
-impl<'a, K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for &'a serde_json::Map<K, V> {
-    type Canonical = <serde_json::Map<K, V> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        AllocDict::<SmallMap<K, V>>::starlark_type_repr()
-    }
-}
-
-impl<K: StarlarkTypeRepr, V: StarlarkTypeRepr> StarlarkTypeRepr for serde_json::Map<K, V> {
-    type Canonical = <SmallMap<K, V> as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        AllocDict::<SmallMap<K, V>>::starlark_type_repr()
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        (&self).alloc_frozen_value(heap)
     }
 }
 
 impl<'a, 'v> AllocValue<'v> for &'a serde_json::Map<String, serde_json::Value> {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
+    type Type = DictType<StarlarkStr, Value<'v>>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
         // For some reason `IntoIter` is implemented only for `String, Value` parameters,
         // so this implementation is limited.
-        heap.alloc(AllocDict(self))
+        AllocDict(self).alloc_value(heap)
     }
 }
 
 impl<'v> AllocValue<'v> for serde_json::Map<String, serde_json::Value> {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
+    type Type = DictType<StarlarkStr, Value<'v>>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        (&self).alloc_value(heap)
     }
 }
 
-impl<'a> AllocFrozenValue for &'a serde_json::Map<String, serde_json::Value> {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        heap.alloc(AllocDict(self.iter().map(|(k, v)| (k.as_str(), v))))
+impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Map<String, serde_json::Value> {
+    type Type = DictType<StarlarkStr, Value<'fv>>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        AllocDict(self.iter().map(|(k, v)| (k.as_str(), v))).alloc_frozen_value(heap)
     }
 }
 
-impl AllocFrozenValue for serde_json::Map<String, serde_json::Value> {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
-    }
-}
+impl<'fv> AllocFrozenValue<'fv> for serde_json::Map<String, serde_json::Value> {
+    type Type = DictType<StarlarkStr, Value<'fv>>;
 
-impl<'a> StarlarkTypeRepr for &'a serde_json::Value {
-    type Canonical = <serde_json::Value as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        // Any.
-        Value::starlark_type_repr()
-    }
-}
-
-impl StarlarkTypeRepr for serde_json::Value {
-    type Canonical = <FrozenValue as StarlarkTypeRepr>::Canonical;
-
-    fn starlark_type_repr() -> Ty {
-        // Any.
-        Value::starlark_type_repr()
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        (&self).alloc_frozen_value(heap)
     }
 }
 
 impl<'v, 'a> AllocValue<'v> for &'a serde_json::Value {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        match self {
+    type Type = Value<'v>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        ValueOf::from(match self {
             serde_json::Value::Null => Value::new_none(),
             serde_json::Value::Bool(x) => Value::new_bool(*x),
-            serde_json::Value::Number(x) => heap.alloc(x),
-            serde_json::Value::String(x) => heap.alloc(x.as_str()),
-            serde_json::Value::Array(x) => heap.alloc(x.as_slice()),
-            serde_json::Value::Object(x) => heap.alloc(x),
-        }
+            serde_json::Value::Number(x) => heap.alloc(x).to_value(),
+            serde_json::Value::String(x) => heap.alloc(x.as_str()).to_value(),
+            serde_json::Value::Array(x) => heap.alloc(AllocList(x)).to_value(),
+            serde_json::Value::Object(x) => heap.alloc(x).to_value(),
+        })
     }
 }
 
 impl<'v> AllocValue<'v> for serde_json::Value {
-    fn alloc_value(self, heap: &'v Heap) -> Value<'v> {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
+    type Type = Value<'v>;
+
+    fn alloc_value(self, heap: Heap<'v>) -> ValueOf<'v, Self::Type> {
+        (&self).alloc_value(heap)
     }
 }
 
-impl<'a> AllocFrozenValue for &'a serde_json::Value {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        match self {
-            serde_json::Value::Null => FrozenValue::new_none(),
-            serde_json::Value::Bool(x) => FrozenValue::new_bool(*x),
-            serde_json::Value::Number(x) => heap.alloc(x),
-            serde_json::Value::String(x) => heap.alloc(x.as_str()),
-            serde_json::Value::Array(x) => heap.alloc(x.as_slice()),
-            serde_json::Value::Object(x) => heap.alloc(x),
+impl<'fv, 'a> AllocFrozenValue<'fv> for &'a serde_json::Value {
+    type Type = Value<'fv>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        ValueOf::from(match self {
+            serde_json::Value::Null => Value::new_none(),
+            serde_json::Value::Bool(x) => Value::new_bool(*x),
+            serde_json::Value::Number(x) => heap.alloc(x).to_value(),
+            serde_json::Value::String(x) => heap.alloc(x.as_str()).to_value(),
+            serde_json::Value::Array(x) => heap.alloc(AllocList(x)).to_value(),
+            serde_json::Value::Object(x) => heap.alloc(x).to_value(),
+        })
+    }
+}
+
+impl<'fv> AllocFrozenValue<'fv> for serde_json::Value {
+    type Type = Value<'fv>;
+
+    fn alloc_frozen_value(self, heap: FrozenHeap<'fv>) -> ValueOf<'fv, Self::Type> {
+        (&self).alloc_frozen_value(heap)
+    }
+}
+
+/// Nesting `serde_json` allows when it decodes to `serde_json::Value`. Splitting a value into
+/// `RawValue`s does not count nesting, so `decode_raw` counts it itself.
+const DECODE_RECURSION_LIMIT: usize = 128;
+
+/// Decode a JSON value keeping every integer exact.
+///
+/// `serde_json::Number` has no integer form wider than 64 bits, so decoding through
+/// `serde_json::Value` turns a longer integer into the nearest float. Instead `serde_json`
+/// validates the value and splits off its elements as `RawValue`s, and each number is parsed
+/// from its own text here.
+fn decode_raw<'v>(
+    raw: &RawValue,
+    heap: Heap<'v>,
+    remaining_depth: usize,
+) -> anyhow::Result<Value<'v>> {
+    let text = raw.get();
+    let nested = || {
+        if remaining_depth > 1 {
+            Ok(remaining_depth - 1)
+        } else {
+            Err(anyhow::anyhow!("recursion limit exceeded"))
         }
-    }
-}
-
-impl AllocFrozenValue for serde_json::Value {
-    fn alloc_frozen_value(self, heap: &FrozenHeap) -> FrozenValue {
-        // If you follow this hint, it becomes infinite recursion
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        heap.alloc(&self)
+    };
+    match text.as_bytes().first() {
+        Some(b'[') => {
+            let remaining_depth = nested()?;
+            let items = serde_json::from_str::<Vec<&RawValue>>(text)?
+                .into_iter()
+                .map(|item| decode_raw(item, heap, remaining_depth))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            Ok(heap.alloc(AllocList(items)).to_value())
+        }
+        Some(b'{') => {
+            let remaining_depth = nested()?;
+            let members = serde_json::from_str::<BTreeMap<String, &RawValue>>(text)?
+                .into_iter()
+                .map(|(key, member)| Ok((key, decode_raw(member, heap, remaining_depth)?)))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            Ok(heap.alloc(AllocDict(members)).to_value())
+        }
+        Some(b'"') => Ok(heap.alloc(serde_json::from_str::<String>(text)?).to_value()),
+        // A number is an integer unless it has a fraction or an exponent.
+        Some(b'-' | b'0'..=b'9') => {
+            if text.bytes().any(|c| matches!(c, b'.' | b'e' | b'E')) {
+                Ok(heap.alloc(serde_json::from_str::<f64>(text)?).to_value())
+            } else if let Ok(i) = i32::from_str(text) {
+                Ok(heap.alloc(i).to_value())
+            } else {
+                // Not `BigInt::from_str`, which is quadratic in the number of digits.
+                let x = StarlarkInt::from_str_radix(text, 10).map_err(|e| e.into_anyhow())?;
+                Ok(heap.alloc(x).to_value())
+            }
+        }
+        _ => Ok(heap
+            .alloc(serde_json::from_str::<serde_json::Value>(text)?)
+            .to_value()),
     }
 }
 
@@ -217,9 +242,13 @@ pub(crate) fn json(globals: &mut GlobalsBuilder) {
 
         fn decode<'v>(
             #[starlark(require = pos)] x: &str,
-            heap: &'v Heap,
+            heap: Heap<'v>,
         ) -> anyhow::Result<Value<'v>> {
-            Ok(heap.alloc(serde_json::from_str::<serde_json::Value>(x)?))
+            decode_raw(
+                serde_json::from_str::<&RawValue>(x)?,
+                heap,
+                DECODE_RECURSION_LIMIT,
+            )
         }
     }
 
@@ -246,6 +275,35 @@ mod tests {
     }
 
     #[test]
+    fn test_json_encode_deeply_nested() {
+        let a = Assert::new();
+
+        // Deeply nested values are rejected rather than overflowing the native stack. How deep we
+        // get before that depends on how much stack is left, so this uses a value deep enough to
+        // be rejected on any stack we might run on.
+        a.fail(
+            "def f():\n    x = []\n    for _ in range(10000):\n        x = [x]\n    return json.encode(x)\nf()",
+            "nested too deeply",
+        );
+        a.fail(
+            "def f():\n    x = {}\n    for _ in range(10000):\n        x = {'a': x}\n    return json.encode(x)\nf()",
+            "nested too deeply",
+        );
+
+        // Ordinary nesting is unaffected.
+        a.eq(
+            "'%s0%s' % ('[' * 50, ']' * 50)",
+            "def f():\n    x = 0\n    for _ in range(50):\n        x = [x]\n    return json.encode(x)\nf()",
+        );
+
+        // A cycle is still reported as a cycle, not as excessive nesting.
+        a.fail(
+            "def f():\n    x = []\n    x.append(x)\n    return json.encode(x)\nf()",
+            "Cycle detected",
+        );
+    }
+
+    #[test]
     fn test_json_decode() {
         let a = Assert::new();
         a.eq(
@@ -257,6 +315,75 @@ mod tests {
         a.eq(
             "123456789123456789123456789",
             "json.decode('123456789123456789123456789')",
+        );
+    }
+
+    #[test]
+    fn test_json_decode_int_exact() {
+        let a = Assert::new();
+
+        // Checked through `str` and `type`: an int compares equal to the float it rounds to,
+        // so `==` would accept a rounded decode.
+        a.eq("'int'", "type(json.decode('18446744073709551616'))");
+        a.eq(
+            "'18446744073709551616'",
+            "str(json.decode('18446744073709551616'))",
+        );
+        a.eq(
+            "'-9223372036854775809'",
+            "str(json.decode('-9223372036854775809'))",
+        );
+        a.eq(
+            "'123456789123456789123456789'",
+            "str(json.decode('123456789123456789123456789'))",
+        );
+        a.eq(
+            "'{\"a\": [123456789123456789123456789]}'",
+            "str(json.decode('{\"a\": [123456789123456789123456789]}'))",
+        );
+        a.eq(
+            "'{\"a\": [123456789123456789123456789]}'",
+            "str(json.decode(' { \"a\" :\\n\\t[ 123456789123456789123456789 ] } '))",
+        );
+
+        // Numbers with a fraction or an exponent are still floats, and ints of every size
+        // are still ints.
+        a.eq("'float'", "type(json.decode('1e3'))");
+        a.eq("'float'", "type(json.decode('1.0'))");
+        a.eq(
+            "'1.8446744073709552e+19'",
+            "str(json.decode('1.8446744073709552e19'))",
+        );
+        a.eq("'int'", "type(json.decode('0'))");
+        a.eq("'0'", "str(json.decode('-0'))");
+        a.eq("'int'", "type(json.decode('9223372036854775807'))");
+
+        // Invalid or out-of-range numbers are still rejected.
+        a.fail("json.decode('1e999')", "number out of range");
+        a.fail("json.decode('01')", "invalid number");
+        a.fail("json.decode('[1,]')", "expected value");
+        a.fail("json.decode('[' * 200 + ']' * 200)", "recursion limit");
+        a.fail(
+            "json.decode('{\"a\":' * 200 + '0' + '}' * 200)",
+            "recursion limit",
+        );
+        a.eq(
+            "'[' * 50 + '0' + ']' * 50",
+            "str(json.decode('[' * 50 + '0' + ']' * 50))",
+        );
+    }
+
+    #[test]
+    fn test_json_decode_long_int() {
+        // Long enough for the digits to be parsed in parts.
+        let a = Assert::new();
+        a.pass(
+            r#"
+digits = "1234567890" * 3000 + "7"
+assert_eq(digits, str(json.decode(digits)))
+assert_eq("-" + digits, str(json.decode("-" + digits)))
+assert_eq(int(digits), json.decode("[" + digits + "]")[0])
+"#,
         );
     }
 
@@ -294,6 +421,31 @@ mod tests {
         a.eq(
             "-9223372036854775809",
             "json.decode('-9223372036854775809')",
+        );
+    }
+
+    #[test]
+    fn test_json_encode_int_beyond_64bit_exact() {
+        let a = Assert::new();
+        a.eq(
+            "'18446744073709551616'",
+            "json.encode(18446744073709551616)",
+        );
+        a.eq(
+            "'-9223372036854775809'",
+            "json.encode(-9223372036854775809)",
+        );
+        a.eq(
+            "'340282366920938463463374607431768211455'",
+            "json.encode(340282366920938463463374607431768211455)",
+        );
+        a.eq(
+            "'[115792089237316195423570985008687907853269984665640564039457584007913129639937]'",
+            "json.encode([(1 << 256) + 1])",
+        );
+        a.eq(
+            "'{\"k\":-1267650600228229401496703205377}'",
+            "json.encode({'k': -(1 << 100) - 1})",
         );
     }
 

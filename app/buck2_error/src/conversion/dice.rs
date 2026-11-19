@@ -9,7 +9,7 @@
  */
 
 use dice_error::DiceErrorImpl;
-use dice_error::result::CancellationReason;
+use dice_error::storage::PagableStorageBackendParseError;
 
 use crate::ErrorTag;
 
@@ -17,26 +17,24 @@ impl From<dice_error::DiceError> for crate::Error {
     #[cold]
     #[track_caller]
     fn from(value: dice_error::DiceError) -> Self {
-        let (error_tag, reason) = match *value.0 {
-            DiceErrorImpl::DuplicateChange(_) => (ErrorTag::DiceDuplicatedChange, None),
-            DiceErrorImpl::ChangedToInvalid(_) => (ErrorTag::DiceChangedToInvalid, None),
+        let error_tag = match *value.0 {
+            DiceErrorImpl::DuplicateChange(_) => ErrorTag::DiceDuplicatedChange,
+            DiceErrorImpl::ChangedToInvalid(_) => ErrorTag::DiceChangedToInvalid,
             DiceErrorImpl::InjectedKeyGotInvalidation(_) => {
-                (ErrorTag::DiceInjectedKeyGotInvalidation, None)
+                ErrorTag::DiceInjectedKeyGotInvalidation
             }
-            DiceErrorImpl::Cancelled(CancellationReason::Rejected) => {
-                (ErrorTag::DiceRejected, None)
-            }
-            DiceErrorImpl::Cancelled(reason) => (ErrorTag::DiceCancelled, Some(reason)),
-            DiceErrorImpl::UnexpectedCycleGuardType { .. } => {
-                (ErrorTag::DiceUnexpectedCycleGuardType, None)
-            }
-            DiceErrorImpl::DuplicateActivationData => (ErrorTag::DiceDuplicateActivationData, None),
+            DiceErrorImpl::PageInFailed { .. } => ErrorTag::Tier0,
+            DiceErrorImpl::DuplicateActivationData => ErrorTag::DiceDuplicateActivationData,
+            DiceErrorImpl::Cycle(_) => ErrorTag::DiceCycle,
         };
 
-        let mut error = crate::conversion::from_any_with_tag(value, error_tag);
-        if let Some(reason) = reason {
-            error = error.string_tag(&reason.to_string());
-        }
-        error
+        crate::conversion::from_any_with_tag(value, error_tag)
+    }
+}
+impl From<PagableStorageBackendParseError> for crate::Error {
+    #[cold]
+    #[track_caller]
+    fn from(value: PagableStorageBackendParseError) -> Self {
+        crate::conversion::from_any_with_tag(value, ErrorTag::Input)
     }
 }

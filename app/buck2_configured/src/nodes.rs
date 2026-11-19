@@ -10,48 +10,57 @@
 
 //! Calculations relating to 'TargetNode's that runs on Dice
 
+use std::hash::Hash;
 use std::iter;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::dep_only_incompatible_info::DepOnlyIncompatibleCustomSoftErrors;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::dep_only_incompatible_info::FrozenDepOnlyIncompatibleInfo;
 use buck2_build_api::transition::TRANSITION_ATTRS_PROVIDER;
 use buck2_build_api::transition::TRANSITION_CALCULATION;
 use buck2_build_signals::node_key::BuildSignalsNodeKey;
 use buck2_build_signals::node_key::BuildSignalsNodeKeyImpl;
 use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::cycles::CycleGuard;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
+use buck2_configuration_providers::dep_only_incompatible_info::DepOnlyIncompatibleCustomSoftErrors;
+use buck2_configuration_providers::dep_only_incompatible_info::DepOnlyIncompatibleInfo;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
 use buck2_core::configuration::compatibility::MaybeCompatible;
+use buck2_core::configuration::compatibility::ResultMaybeCompatible;
+use buck2_core::configuration::compatibility::ResultMaybeCompatibleValueSerialize;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::configuration::pair::ConfigurationNoExec;
 use buck2_core::configuration::pair::ConfigurationWithExec;
 use buck2_core::configuration::transition::applied::TransitionApplied;
 use buck2_core::configuration::transition::id::TransitionId;
+use buck2_core::deprecation;
+use buck2_core::execution_types::execution::ExecutionGroupResolutionPartial;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
+use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
+use buck2_core::execution_types::execution_group::NamedExecutionGroup;
+use buck2_core::package::PackageLabel;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::plugins::PluginKind;
 use buck2_core::plugins::PluginKindSet;
 use buck2_core::plugins::PluginListElemKind;
 use buck2_core::plugins::PluginLists;
+use buck2_core::plugins::PluginListsBuilder;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::soft_error;
 use buck2_core::target::configured_or_unconfigured::ConfiguredOrUnconfiguredTargetLabel;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
+use buck2_hash::BuckFixedSortedMap;
+use buck2_hash::BuckMutInsertionMap;
+use buck2_hash::BuckMutInsertionSet;
 use buck2_node::attrs::configuration_context::AttrConfigurationContext;
 use buck2_node::attrs::configuration_context::AttrConfigurationContextImpl;
 use buck2_node::attrs::configuration_context::PlatformConfigurationError;
@@ -73,25 +82,33 @@ use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculationImpl;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_node::nodes::unconfigured::TargetNodeRef;
+use buck2_node::package_visibility::HasPackageVisibilityDefaultIntersection;
+use buck2_node::rule::RuleExecutionGroup;
 use buck2_node::rule::RuleIncomingTransition;
-use buck2_node::visibility::VisibilityError;
+use buck2_settings::PackageVisibilityDefaultIntersection;
 use buck2_util::arc_str::ArcStr;
 use derive_more::Display;
 use dice::Demand;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use dupe::ResultDupedErrExt;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use itertools::Itertools;
-use starlark_map::ordered_map::OrderedMap;
-use starlark_map::small_map::SmallMap;
-use starlark_map::small_set::SmallSet;
+use pagable::Pagable;
+use pagable::StaticStr;
+use pagable::pagable_typetag;
 
 use crate::configuration::compute_platform_cfgs;
 use crate::configuration::get_matched_cfg_keys_for_node;
-use crate::cycle::ConfiguredGraphCycleDescriptor;
+use crate::execution::configure_exec_dep_with_modifiers;
 use crate::execution::find_execution_platform_by_configuration;
+use crate::execution::resolve_execution_group_platform;
 use crate::execution::resolve_execution_platform;
 
 #[derive(Debug, buck2_error::Error)]
@@ -159,17 +176,19 @@ enum PluginDepError {
 }
 
 fn unpack_target_compatible_with_attr(
+    target_label: &ConfiguredTargetLabel,
     target_node: TargetNodeRef,
     resolved_cfg: &MatchedConfigurationSettingKeysWithCfg,
     attr_id: AttributeId,
-) -> buck2_error::Result<Option<ConfiguredAttr>> {
+) -> buck2_error::Result<MaybeCompatible<Option<ConfiguredAttr>>> {
     let attr = target_node.known_attr_or_none(attr_id, AttrInspectOptions::All);
     let attr = match attr {
         Some(attr) => attr,
-        None => return Ok(None),
+        None => return Ok(MaybeCompatible::Compatible(None)),
     };
 
     struct AttrConfigurationContextToResolveCompatibleWith<'c> {
+        target_label: &'c ConfiguredTargetLabel,
         resolved_cfg: &'c MatchedConfigurationSettingKeysWithCfg,
     }
 
@@ -182,7 +201,7 @@ fn unpack_target_compatible_with_attr(
             self.resolved_cfg.cfg().dupe()
         }
 
-        fn exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
+        fn base_exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
             Err(internal_error!(
                 "exec_cfg() is not needed to resolve `{}` or `{}`",
                 TARGET_COMPATIBLE_WITH_ATTRIBUTE.name,
@@ -203,25 +222,48 @@ fn unpack_target_compatible_with_attr(
 
         fn resolved_transitions(
             &self,
-        ) -> buck2_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>> {
+        ) -> buck2_error::Result<&BuckFixedSortedMap<Arc<TransitionId>, Arc<TransitionApplied>>>
+        {
             Err(internal_error!(
                 "resolved_transitions() is not needed to resolve `{}` or `{}`",
                 TARGET_COMPATIBLE_WITH_ATTRIBUTE.name,
                 LEGACY_TARGET_COMPATIBLE_WITH_ATTRIBUTE.name
             ))
         }
+
+        fn incompatible_platform_reason(
+            &self,
+            cause: IncompatiblePlatformReasonCause,
+        ) -> Arc<IncompatiblePlatformReason> {
+            Arc::new(IncompatiblePlatformReason {
+                target: self.target_label.dupe(),
+                cause,
+            })
+        }
     }
 
-    let attr = attr
-        .configure(&AttrConfigurationContextToResolveCompatibleWith { resolved_cfg })
-        .with_buck_error_context(|| format!("Error configuring attribute `{}`", attr.name))?;
+    let attr = match attr
+        .configure(&AttrConfigurationContextToResolveCompatibleWith {
+            resolved_cfg,
+            target_label,
+        })
+        .with_buck_error_context(|| format!("Error configuring attribute `{}`", attr.name))
+    {
+        ResultMaybeCompatible::Compatible(attr) => attr,
+        // A `select_incompatible()` branch makes the target incompatible here as in any
+        // other attribute, rather than failing the build.
+        ResultMaybeCompatible::Incompatible(reason) => {
+            return Ok(MaybeCompatible::Incompatible(reason));
+        }
+        ResultMaybeCompatible::Err(e) => return Err(e),
+    };
 
     match attr.value.unpack_list() {
         Some(values) => {
             if !values.is_empty() {
-                Ok(Some(attr.value))
+                Ok(MaybeCompatible::Compatible(Some(attr.value)))
             } else {
-                Ok(None)
+                Ok(MaybeCompatible::Compatible(None))
             }
         }
         None => Err(NodeCalculationError::TargetCompatibleNotList(
@@ -237,16 +279,24 @@ fn check_compatible(
     target_node: TargetNodeRef,
     resolved_cfg: &MatchedConfigurationSettingKeysWithCfg,
 ) -> buck2_error::Result<MaybeCompatible<()>> {
-    let target_compatible_with = unpack_target_compatible_with_attr(
+    let target_compatible_with = match unpack_target_compatible_with_attr(
+        target_label,
         target_node,
         resolved_cfg,
         TARGET_COMPATIBLE_WITH_ATTRIBUTE.id,
-    )?;
-    let legacy_compatible_with = unpack_target_compatible_with_attr(
+    )? {
+        MaybeCompatible::Compatible(attr) => attr,
+        MaybeCompatible::Incompatible(reason) => return Ok(MaybeCompatible::Incompatible(reason)),
+    };
+    let legacy_compatible_with = match unpack_target_compatible_with_attr(
+        target_label,
         target_node,
         resolved_cfg,
         LEGACY_TARGET_COMPATIBLE_WITH_ATTRIBUTE.id,
-    )?;
+    )? {
+        MaybeCompatible::Compatible(attr) => attr,
+        MaybeCompatible::Incompatible(reason) => return Ok(MaybeCompatible::Incompatible(reason)),
+    };
 
     let compatibility_constraints = match (target_compatible_with, legacy_compatible_with) {
         (None, None) => return Ok(MaybeCompatible::Compatible(())),
@@ -327,6 +377,9 @@ async fn check_plugin_deps(
     target_label: &ConfiguredTargetLabel,
     plugin_deps: &PluginLists,
 ) -> buck2_error::Result<()> {
+    let package_visibility = ctx
+        .per_transaction_data()
+        .get_package_visibility_default_intersection();
     for (_, dep_label, elem_kind) in plugin_deps.iter() {
         if *elem_kind == PluginListElemKind::Direct {
             let dep_node = ctx
@@ -338,22 +391,55 @@ async fn check_plugin_deps(
             if dep_node.is_toolchain_rule() {
                 return Err(PluginDepError::PluginDepIsToolchainRule(dep_label.dupe()).into());
             }
-            if !dep_node.is_visible_to(target_label.unconfigured())? {
-                return Err(VisibilityError::NotVisibleTo(
-                    dep_label.dupe(),
-                    target_label.unconfigured().dupe(),
-                )
-                .into());
-            }
+            check_dep_visibility(&dep_node, *target_label.unconfigured(), package_visibility)?;
         }
     }
     Ok(())
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Under `audit`, a dep blocked only by `Default` intersection layers is reported
+/// as a soft error instead of failing. A dep whose own `visibility` or a
+/// `Marker` layer rejects the consumer fails in every mode, so `audit` is never
+/// weaker than `off`.
+fn check_dep_visibility(
+    dep: &TargetNode,
+    consumer: TargetLabel,
+    package_visibility: PackageVisibilityDefaultIntersection,
+) -> buck2_error::Result<()> {
+    if dep.is_visible_to(&consumer)? {
+        return Ok(());
+    }
+    let err = dep.not_visible_to_error(consumer);
+    if package_visibility == PackageVisibilityDefaultIntersection::Audit
+        && dep.is_visible_to_ignoring_default_layers(&consumer)?
+    {
+        deprecation!(
+            "package_visibility_audit_would_block",
+            err.into(),
+            owner: "dust", started: "2026-10-02",
+            low_cardinality_key_for_additional_logview_samples: Some(Box::new(dep.label().pkg())),
+        );
+        return Ok(());
+    }
+    Err(err.into())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum CheckVisibility {
     Yes,
     No,
+}
+
+/// Adds `dep` to `deps`. A dep already present keeps `Yes` if either entry checks visibility.
+fn insert_dep_keeping_stricter_visibility<K: Hash + Eq>(
+    deps: &mut BuckMutInsertionMap<K, CheckVisibility>,
+    dep: K,
+    check_visibility: CheckVisibility,
+) {
+    let entry = deps.entry(dep).or_insert(check_visibility);
+    if check_visibility == CheckVisibility::Yes {
+        *entry = CheckVisibility::Yes;
+    }
 }
 
 #[derive(Default)]
@@ -366,48 +452,50 @@ impl ErrorsAndIncompatibilities {
     fn unpack_dep_into(
         &mut self,
         target_label: &TargetConfiguredTargetLabel,
-        result: buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>>,
+        result: ResultMaybeCompatible<&ConfiguredTargetNode>,
         check_visibility: CheckVisibility,
+        package_visibility: PackageVisibilityDefaultIntersection,
         list: &mut Vec<ConfiguredTargetNode>,
     ) {
-        list.extend(self.unpack_dep(target_label, result, check_visibility));
+        list.extend(
+            self.unpack_dep(target_label, result, check_visibility, package_visibility)
+                .map(Dupe::dupe),
+        );
     }
 
-    fn unpack_dep(
+    fn unpack_dep<'x>(
         &mut self,
         target_label: &TargetConfiguredTargetLabel,
-        result: buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>>,
+        result: ResultMaybeCompatible<&'x ConfiguredTargetNode>,
         check_visibility: CheckVisibility,
-    ) -> Option<ConfiguredTargetNode> {
+        package_visibility: PackageVisibilityDefaultIntersection,
+    ) -> Option<&'x ConfiguredTargetNode> {
         match result {
-            Err(e) => {
+            ResultMaybeCompatible::Err(e) => {
                 self.errs.push(e);
             }
-            Ok(MaybeCompatible::Incompatible(reason)) => {
+            ResultMaybeCompatible::Incompatible(reason) => {
                 self.incompats.push(Arc::new(IncompatiblePlatformReason {
                     target: target_label.inner().dupe(),
                     cause: IncompatiblePlatformReasonCause::Dependency(reason.dupe()),
                 }));
             }
-            Ok(MaybeCompatible::Compatible(dep)) => {
+            ResultMaybeCompatible::Compatible(dep) => {
                 if CheckVisibility::No == check_visibility {
                     return Some(dep);
                 }
-                match dep.is_visible_to(target_label.unconfigured()) {
-                    Ok(true) => {
+                match dep.body().and_then(|body| {
+                    check_dep_visibility(
+                        body.target_node(),
+                        *target_label.unconfigured(),
+                        package_visibility,
+                    )
+                }) {
+                    Ok(()) => {
                         return Some(dep);
                     }
-                    Ok(false) => {
-                        self.errs.push(
-                            VisibilityError::NotVisibleTo(
-                                dep.label().unconfigured().dupe(),
-                                target_label.unconfigured().dupe(),
-                            )
-                            .into(),
-                        );
-                    }
                     Err(e) => {
-                        self.errs.push(e.into());
+                        self.errs.push(e);
                     }
                 }
             }
@@ -416,24 +504,37 @@ impl ErrorsAndIncompatibilities {
     }
 
     /// Returns an error/incompatibility to return, if any, and `None` otherwise
-    pub(crate) fn finalize<T>(mut self) -> Option<buck2_error::Result<MaybeCompatible<T>>> {
+    pub(crate) fn finalize(mut self) -> ResultMaybeCompatible<()> {
         // FIXME(JakobDegen): Report all incompatibilities
         if let Some(incompat) = self.incompats.pop() {
-            return Some(Ok(MaybeCompatible::Incompatible(incompat)));
+            return ResultMaybeCompatible::Incompatible(incompat);
         }
         if let Some(err) = self.errs.pop() {
-            return Some(Err(err.into()));
+            return ResultMaybeCompatible::Err(err);
         }
-        None
+        ResultMaybeCompatible::Compatible(())
     }
 }
 
 #[derive(Default)]
 pub(crate) struct GatheredDeps {
     pub(crate) deps: Vec<ConfiguredTargetNode>,
-    pub(crate) exec_deps: SmallMap<ConfiguredProvidersLabel, CheckVisibility>,
-    pub(crate) toolchain_deps: SmallSet<TargetConfiguredTargetLabel>,
+    /// Exec deps of the default execution group.
+    pub(crate) exec_deps: BuckMutInsertionMap<ConfiguredProvidersLabel, CheckVisibility>,
+    /// Toolchain deps of the default execution group.
+    pub(crate) toolchain_deps: BuckMutInsertionSet<TargetConfiguredTargetLabel>,
     pub(crate) plugin_lists: PluginLists,
+    /// Deps of named execution groups. Groups the rule declares but no attribute value uses are
+    /// absent.
+    pub(crate) execution_group_deps:
+        BuckMutInsertionMap<NamedExecutionGroup, GatheredExecutionGroupDeps>,
+}
+
+/// The deps that determine the execution platform of a named execution group.
+#[derive(Default)]
+pub(crate) struct GatheredExecutionGroupDeps {
+    pub(crate) exec_deps: BuckMutInsertionMap<ConfiguredProvidersLabel, CheckVisibility>,
+    pub(crate) toolchain_deps: BuckMutInsertionSet<TargetConfiguredTargetLabel>,
 }
 
 pub(crate) async fn gather_deps(
@@ -441,18 +542,19 @@ pub(crate) async fn gather_deps(
     target_node: TargetNodeRef<'_>,
     attr_cfg_ctx: &(dyn AttrConfigurationContext + Sync),
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<(GatheredDeps, ErrorsAndIncompatibilities)> {
+) -> ResultMaybeCompatible<(GatheredDeps, ErrorsAndIncompatibilities)> {
     #[derive(Default)]
     struct Traversal {
-        deps: OrderedMap<ConfiguredProvidersLabel, SmallSet<PluginKindSet>>,
-        exec_deps: SmallMap<ConfiguredProvidersLabel, CheckVisibility>,
-        toolchain_deps: SmallSet<TargetConfiguredTargetLabel>,
-        plugin_lists: PluginLists,
+        deps: BuckMutInsertionMap<ConfiguredProvidersLabel, BuckMutInsertionSet<PluginKindSet>>,
+        exec_deps: BuckMutInsertionMap<ConfiguredProvidersLabel, CheckVisibility>,
+        toolchain_deps: BuckMutInsertionSet<TargetConfiguredTargetLabel>,
+        plugin_lists: PluginListsBuilder,
+        execution_group_deps: BuckMutInsertionMap<NamedExecutionGroup, GatheredExecutionGroupDeps>,
     }
 
     impl ConfiguredAttrTraversal for Traversal {
         fn dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
-            self.deps.entry(dep.dupe()).or_insert_with(SmallSet::new);
+            self.deps.entry(dep.dupe()).or_default();
             Ok(())
         }
 
@@ -463,7 +565,7 @@ pub(crate) async fn gather_deps(
         ) -> buck2_error::Result<()> {
             self.deps
                 .entry(dep.dupe())
-                .or_insert_with(SmallSet::new)
+                .or_default()
                 .insert(plugin_kinds.dupe());
             Ok(())
         }
@@ -486,31 +588,65 @@ pub(crate) async fn gather_deps(
                 .insert(kind.dupe(), dep.dupe(), PluginListElemKind::Direct);
             Ok(())
         }
+
+        fn exec_dep_in_group(
+            &mut self,
+            dep: &ConfiguredProvidersLabel,
+            group: &NamedExecutionGroup,
+        ) -> buck2_error::Result<()> {
+            self.execution_group_deps
+                .entry(group.dupe())
+                .or_default()
+                .exec_deps
+                .insert(dep.dupe(), CheckVisibility::Yes);
+            Ok(())
+        }
+
+        fn toolchain_dep_in_group(
+            &mut self,
+            dep: &ConfiguredProvidersLabel,
+            group: &NamedExecutionGroup,
+        ) -> buck2_error::Result<()> {
+            self.execution_group_deps
+                .entry(group.dupe())
+                .or_default()
+                .toolchain_deps
+                .insert(TargetConfiguredTargetLabel::new_without_exec_cfg(
+                    dep.target().dupe(),
+                ));
+            Ok(())
+        }
     }
 
     let mut traversal = Traversal::default();
     for a in target_node.attrs(AttrInspectOptions::All) {
-        let configured_attr = a.configure(attr_cfg_ctx)?;
-        configured_attr.traverse(target_node.label().pkg(), &mut traversal)?;
+        a.traverse_configured(target_node.label().pkg(), attr_cfg_ctx, &mut traversal)?;
     }
 
     let dep_results = ctx
-        .compute_join(traversal.deps.iter(), |ctx, v| {
-            async move { ctx.get_internal_configured_target_node(v.0.target()).await }.boxed()
+        .compute_join(traversal.deps.iter(), async |ctx, v| {
+            ctx.get_internal_configured_target_node(v.0.target()).await
         })
         .await;
 
     let mut plugin_lists = traversal.plugin_lists;
     let mut deps = Vec::new();
     let mut errors_and_incompats = ErrorsAndIncompatibilities::default();
+    let package_visibility = ctx
+        .per_transaction_data()
+        .get_package_visibility_default_intersection();
     for (res, (_, plugin_kind_sets)) in dep_results.into_iter().zip(traversal.deps) {
-        let Some(dep) = errors_and_incompats.unpack_dep(target_label, res, CheckVisibility::Yes)
-        else {
+        let Some(dep) = errors_and_incompats.unpack_dep(
+            target_label,
+            res,
+            CheckVisibility::Yes,
+            package_visibility,
+        ) else {
             continue;
         };
 
         if !plugin_kind_sets.is_empty() {
-            for (kind, plugins) in dep.plugin_lists().iter_by_kind() {
+            for (kind, plugins) in dep.body()?.plugin_lists().iter_by_kind() {
                 let Some(should_propagate) = plugin_kind_sets
                     .iter()
                     .filter_map(|set| set.get(kind))
@@ -531,8 +667,9 @@ pub(crate) async fn gather_deps(
             }
         }
 
-        deps.push(dep);
+        deps.push(dep.dupe());
     }
+    let plugin_lists = plugin_lists.freeze();
 
     let mut exec_deps = traversal.exec_deps;
     for kind in target_node.uses_plugins() {
@@ -545,29 +682,196 @@ pub(crate) async fn gather_deps(
         }
     }
 
-    Ok((
+    ResultMaybeCompatible::Compatible((
         GatheredDeps {
             deps,
             exec_deps,
             toolchain_deps: traversal.toolchain_deps,
             plugin_lists,
+            execution_group_deps: traversal.execution_group_deps,
         },
         errors_and_incompats,
     ))
 }
 
+/// A named execution group's execution platform, and its exec deps and toolchain deps configured
+/// for that platform.
+struct ConfiguredExecutionGroup<'d> {
+    group: NamedExecutionGroup,
+    partial: ExecutionPlatformResolutionPartial,
+    toolchain_deps: Vec<ResultMaybeCompatible<&'d ConfiguredTargetNode>>,
+    exec_deps: Vec<(
+        ResultMaybeCompatible<&'d ConfiguredTargetNode>,
+        CheckVisibility,
+    )>,
+}
+
+/// Resolves the execution platform of every named execution group the rule declares, and
+/// configures the exec deps and toolchain deps of each group for its platform. The groups are resolved
+/// concurrently; the result is in declaration order, and its error is that of the first failing
+/// group in declaration order.
+async fn configure_execution_groups<'d>(
+    ctx: &mut DiceComputations<'d>,
+    target_node: TargetNodeRef<'_>,
+    resolved_configuration: &MatchedConfigurationSettingKeysWithCfg,
+    gathered_deps: &GatheredDeps,
+    attr_cfg_ctx: &(dyn AttrConfigurationContext + Sync),
+) -> buck2_error::Result<Vec<ConfiguredExecutionGroup<'d>>> {
+    ctx.compute_join(target_node.execution_groups(), async |ctx, group| {
+        configure_execution_group(
+            ctx,
+            target_node,
+            resolved_configuration,
+            gathered_deps,
+            group,
+            attr_cfg_ctx,
+        )
+        .boxed()
+        .await
+    })
+    .await
+    .into_iter()
+    .collect()
+}
+
+async fn configure_execution_group<'d>(
+    ctx: &mut DiceComputations<'d>,
+    target_node: TargetNodeRef<'_>,
+    resolved_configuration: &MatchedConfigurationSettingKeysWithCfg,
+    gathered_deps: &GatheredDeps,
+    rule_group: &RuleExecutionGroup,
+    attr_cfg_ctx: &(dyn AttrConfigurationContext + Sync),
+) -> buck2_error::Result<ConfiguredExecutionGroup<'d>> {
+    let group = &rule_group.group;
+    let partial = resolve_execution_group_platform(
+        ctx,
+        target_node,
+        resolved_configuration,
+        gathered_deps,
+        rule_group,
+        attr_cfg_ctx,
+    )
+    .await
+    .with_buck_error_context(|| {
+        format!("Error resolving the execution platform of execution group `{group}`")
+    })?;
+    let group_cfg = &partial.cfg();
+    let no_deps = GatheredExecutionGroupDeps::default();
+    let group_deps = gathered_deps
+        .execution_group_deps
+        .get(group)
+        .unwrap_or(&no_deps);
+
+    let get_toolchain_deps = DiceComputations::declare_closure(async |ctx| {
+        ctx.compute_join(
+            &group_deps.toolchain_deps,
+            async |ctx, target: &TargetConfiguredTargetLabel| {
+                ctx.get_internal_configured_target_node(
+                    &target.with_exec_cfg(group_cfg.cfg().dupe()),
+                )
+                .await
+            },
+        )
+        .await
+    });
+    let get_exec_deps = DiceComputations::declare_closure(async |ctx| {
+        ctx.compute_join(
+            &group_deps.exec_deps,
+            async |ctx, (target, check_visibility)| {
+                let result = configure_exec_dep_with_modifiers(
+                    ctx,
+                    target.target().unconfigured(),
+                    group_cfg.cfg(),
+                )
+                .await;
+                (result, *check_visibility)
+            },
+        )
+        .await
+    });
+    let (toolchain_deps, exec_deps) = ctx.compute2(get_toolchain_deps, get_exec_deps).await;
+    Ok(ConfiguredExecutionGroup {
+        group: group.dupe(),
+        partial,
+        toolchain_deps,
+        exec_deps,
+    })
+}
+
+/// Adds the toolchain deps of each configured execution group to the node's `deps` and its exec
+/// deps to the node's `exec_deps`, and returns each group's resolution. A dep configured
+/// identically in several groups is a dep of the node once.
+fn merge_execution_groups(
+    groups: Vec<ConfiguredExecutionGroup<'_>>,
+    partial_target_label: &TargetConfiguredTargetLabel,
+    package_visibility: PackageVisibilityDefaultIntersection,
+    errors_and_incompats: &mut ErrorsAndIncompatibilities,
+    deps: &mut Vec<ConfiguredTargetNode>,
+    exec_deps: &mut Vec<ConfiguredTargetNode>,
+) -> Vec<ExecutionGroupResolutionPartial> {
+    groups
+        .into_iter()
+        .map(|group| {
+            let mut group_toolchain_deps = Vec::with_capacity(group.toolchain_deps.len());
+            for dep in group.toolchain_deps {
+                errors_and_incompats.unpack_dep_into(
+                    partial_target_label,
+                    dep,
+                    CheckVisibility::Yes,
+                    package_visibility,
+                    &mut group_toolchain_deps,
+                );
+            }
+            push_new_deps(deps, group_toolchain_deps);
+
+            let mut group_exec_deps = Vec::with_capacity(group.exec_deps.len());
+            for (dep, check_visibility) in group.exec_deps {
+                errors_and_incompats.unpack_dep_into(
+                    partial_target_label,
+                    dep,
+                    check_visibility,
+                    package_visibility,
+                    &mut group_exec_deps,
+                );
+            }
+            let exec_dep_cfgs = group_exec_deps
+                .iter()
+                .map(|dep| (dep.label().unconfigured().dupe(), dep.label().cfg().dupe()))
+                .collect();
+            push_new_deps(exec_deps, group_exec_deps);
+            ExecutionGroupResolutionPartial {
+                group: group.group,
+                partial: group.partial,
+                exec_dep_cfgs,
+            }
+        })
+        .collect()
+}
+
+/// Appends the deps of `new` that `deps` does not already contain. A linear scan: a group has
+/// few deps, and this allocates nothing.
+fn push_new_deps(deps: &mut Vec<ConfiguredTargetNode>, new: Vec<ConfiguredTargetNode>) {
+    for dep in new {
+        if !deps.iter().any(|d| d.label() == dep.label()) {
+            deps.push(dep);
+        }
+    }
+}
+
 /// Resolves configured attributes of target node needed to compute transitions
-async fn resolve_transition_attrs<'a>(
+async fn resolve_transition_input_attrs<'a>(
+    target_label: &ConfiguredTargetLabel,
     transitions: impl Iterator<Item = &TransitionId>,
     target_node: &'a TargetNode,
     matched_cfg_keys: &MatchedConfigurationSettingKeysWithCfg,
-    platform_cfgs: &OrderedMap<TargetLabel, ConfigurationData>,
+    platform_cfgs: &BuckFixedSortedMap<TargetLabel, ConfigurationData>,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<OrderedMap<&'a str, Arc<ConfiguredAttr>>> {
+) -> ResultMaybeCompatible<BuckMutInsertionMap<&'a str, Arc<ConfiguredAttr>>> {
     struct AttrConfigurationContextToResolveTransitionAttrs<'c> {
+        target_label: &'c ConfiguredTargetLabel,
         matched_cfg_keys: &'c MatchedConfigurationSettingKeysWithCfg,
         toolchain_cfg: ConfigurationWithExec,
-        platform_cfgs: &'c OrderedMap<TargetLabel, ConfigurationData>,
+        platform_cfgs: &'c BuckFixedSortedMap<TargetLabel, ConfigurationData>,
     }
 
     impl AttrConfigurationContext for AttrConfigurationContextToResolveTransitionAttrs<'_> {
@@ -579,7 +883,7 @@ async fn resolve_transition_attrs<'a>(
             self.matched_cfg_keys.cfg().dupe()
         }
 
-        fn exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
+        fn base_exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
             Err(internal_error!(
                 "exec_cfg() is not needed in pre transition attribute resolution."
             ))
@@ -598,65 +902,80 @@ async fn resolve_transition_attrs<'a>(
 
         fn resolved_transitions(
             &self,
-        ) -> buck2_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>> {
+        ) -> buck2_error::Result<&BuckFixedSortedMap<Arc<TransitionId>, Arc<TransitionApplied>>>
+        {
+            // TODO(cjhopman): Why is this an internal error? Doesn't it indicate an error in the
+            // rule or the target definition? Do we enforce it somewhere else as an input error?
             Err(internal_error!(
                 "resolved_transitions() can't be used before transition execution."
             ))
         }
+
+        fn incompatible_platform_reason(
+            &self,
+            cause: IncompatiblePlatformReasonCause,
+        ) -> Arc<IncompatiblePlatformReason> {
+            Arc::new(IncompatiblePlatformReason {
+                target: self.target_label.dupe(),
+                cause,
+            })
+        }
     }
 
     let cfg_ctx = AttrConfigurationContextToResolveTransitionAttrs {
+        target_label,
         matched_cfg_keys,
         platform_cfgs,
         toolchain_cfg: matched_cfg_keys
             .cfg()
             .make_toolchain(&ConfigurationNoExec::unbound_exec()),
     };
-    let mut result = OrderedMap::default();
+    let mut result = BuckMutInsertionMap::default();
     for tr in transitions {
         let attrs = TRANSITION_ATTRS_PROVIDER
             .get()?
-            .transition_attrs(ctx, &tr)
+            .transition_attrs(ctx, tr)
             .await?;
         if let Some(attrs) = attrs {
-            for attr in attrs.as_ref() {
+            for attr in attrs {
                 // Multiple outgoing transitions may refer the same attribute.
                 if result.contains_key(attr.as_str()) {
                     continue;
                 }
 
-                if let Some(coerced_attr) = target_node.attr(&attr, AttrInspectOptions::All)? {
+                if let Some(coerced_attr) = target_node.attr(attr, AttrInspectOptions::All)? {
                     let configured_attr = coerced_attr.configure(&cfg_ctx)?;
                     if let Some(old_val) =
                         result.insert(configured_attr.name, Arc::new(configured_attr.value))
                     {
-                        return Err(internal_error!(
+                        return internal_error!(
                             "Found duplicated value `{}` for attr `{}` on target `{}`",
                             &old_val.as_display_no_ctx(),
                             attr,
                             target_node.label()
-                        ));
+                        )
+                        .into();
                     }
                 }
             }
         }
     }
-    Ok(result)
+    ResultMaybeCompatible::Compatible(result)
 }
 
 /// Verifies if configured node's attributes are equal to the same attributes configured with pre-transition configuration.
 /// Only check attributes used in transition.
 fn verify_transitioned_attrs(
     // Attributes resolved with pre-transition configuration
-    pre_transition_attrs: &OrderedMap<&str, Arc<ConfiguredAttr>>,
+    pre_transition_attrs: &BuckMutInsertionMap<&str, Arc<ConfiguredAttr>>,
     pre_transition_config: &ConfigurationData,
     node: &ConfiguredTargetNode,
 ) -> buck2_error::Result<()> {
+    let node = node.body()?;
     for (attr, attr_value) in pre_transition_attrs {
-        let transition_configured_attr = node
-            .get(attr, AttrInspectOptions::All)
-            .with_internal_error(|| {
-                format!(
+        let transition_configured_attr =
+            node.get(attr, AttrInspectOptions::All).ok_or_else(|| {
+                internal_error!(
                     "Attr {} was not found in transition for target {} ({})",
                     attr,
                     node.label(),
@@ -682,12 +1001,64 @@ fn verify_transitioned_attrs(
     Ok(())
 }
 
-/// Compute configured target node ignoring transition for this node.
-async fn compute_configured_target_node_no_transition(
+/// The prefix of configuring a target that must run before execution platform resolution:
+/// configuration-dep matching, the compatibility check, platform cfgs, transition resolution,
+/// and dependency gathering. Shared between the real configuration path and the audit
+/// diagnostic re-traversal.
+pub(crate) struct ConfiguredNodePreamble<'d> {
+    pub(crate) resolved_configuration: &'d MatchedConfigurationSettingKeysWithCfg,
+    pub(crate) platform_cfgs: BuckFixedSortedMap<TargetLabel, ConfigurationData>,
+    pub(crate) resolved_transitions: BuckFixedSortedMap<Arc<TransitionId>, Arc<TransitionApplied>>,
+    pub(crate) gathered_deps: GatheredDeps,
+    pub(crate) errors_and_incompats: ErrorsAndIncompatibilities,
+}
+
+impl ConfiguredNodePreamble<'_> {
+    /// The unspecified-exec attr configuration context, as used for dependency gathering.
+    /// Exec-dep and toolchain-dep cfgs from it are placeholders that callers replace once
+    /// execution platform resolution has run. The real configuration path builds this context
+    /// inline from the destructured pieces instead (see the size-assert comment there).
+    pub(crate) fn attr_cfg_ctx(
+        &self,
+        target_label: &ConfiguredTargetLabel,
+    ) -> AttrConfigurationContextImpl<'_> {
+        unspecified_attr_cfg_ctx(
+            target_label,
+            self.resolved_configuration,
+            &self.resolved_transitions,
+            &self.platform_cfgs,
+        )
+    }
+}
+
+/// The attr configuration context as it exists before execution platform resolution has run:
+/// exec-dep and toolchain-dep cfgs from it are placeholders that callers replace with the
+/// resolved exec cfg. Sole constructor for this context; the placeholder resolution and owner
+/// label are supplied in here, so construction sites cannot drift apart in them.
+pub(crate) fn unspecified_attr_cfg_ctx<'v>(
     target_label: &ConfiguredTargetLabel,
-    target_node: TargetNode,
-    ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>> {
+    resolved_configuration: &'v MatchedConfigurationSettingKeysWithCfg,
+    resolved_transitions: &'v BuckFixedSortedMap<Arc<TransitionId>, Arc<TransitionApplied>>,
+    platform_cfgs: &'v BuckFixedSortedMap<TargetLabel, ConfigurationData>,
+) -> AttrConfigurationContextImpl<'v> {
+    // A `static` rather than a promoted `&Unspecified` rvalue: the enum's other variant has
+    // drop glue, which rules out static promotion.
+    static UNSPECIFIED_RESOLUTION: ExecutionPlatformResolution =
+        ExecutionPlatformResolution::Unspecified;
+    AttrConfigurationContextImpl::new(
+        target_label.dupe(),
+        resolved_configuration,
+        &UNSPECIFIED_RESOLUTION,
+        resolved_transitions,
+        platform_cfgs,
+    )
+}
+
+pub(crate) async fn compute_configured_node_preamble<'d>(
+    ctx: &mut DiceComputations<'d>,
+    target_label: &ConfiguredTargetLabel,
+    target_node: &TargetNode,
+) -> ResultMaybeCompatible<ConfiguredNodePreamble<'d>> {
     let partial_target_label =
         &TargetConfiguredTargetLabel::new_without_exec_cfg(target_label.dupe());
     let target_cfg = target_label.cfg();
@@ -705,43 +1076,43 @@ async fn compute_configured_target_node_no_transition(
 
     // Must check for compatibility before evaluating non-compatibility attributes.
     if let MaybeCompatible::Incompatible(reason) =
-        check_compatible(target_label, target_node.as_ref(), &resolved_configuration)?
+        check_compatible(target_label, target_node.as_ref(), resolved_configuration)?
     {
-        return Ok(MaybeCompatible::Incompatible(reason));
+        return ResultMaybeCompatible::Incompatible(reason);
     }
 
     let platform_cfgs = compute_platform_cfgs(ctx, target_node.as_ref()).await?;
 
-    let mut resolved_transitions = OrderedMap::new();
-    let attrs = resolve_transition_attrs(
+    let attrs = resolve_transition_input_attrs(
+        target_label,
         target_node.transition_deps().map(|(_, tr)| tr.as_ref()),
-        &target_node,
-        &resolved_configuration,
+        target_node,
+        resolved_configuration,
         &platform_cfgs,
         ctx,
     )
     .boxed()
     .await?;
+    let mut resolved_transitions = Vec::new();
     for (_dep, tr) in target_node.transition_deps() {
         let resolved_cfg = TRANSITION_CALCULATION
             .get()?
             .apply_transition(ctx, &attrs, target_cfg, tr)
             .await?;
-        resolved_transitions.insert(tr.dupe(), resolved_cfg);
+        resolved_transitions.push((tr.dupe(), resolved_cfg));
     }
+    let resolved_transitions: BuckFixedSortedMap<_, _> = resolved_transitions.into_iter().collect();
 
     // We need to collect deps and to ensure that all attrs can be successfully
     // configured so that we don't need to support propagate configuration errors on attr access.
-    let attr_cfg_ctx = AttrConfigurationContextImpl::new(
-        &resolved_configuration,
-        // We have not yet done exec platform resolution so for now we just use `unbound_exec`
-        // here. We only use this when collecting exec deps and toolchain deps. In both of those
-        // cases, we replace the exec cfg later on in this function with the "proper" exec cfg.
-        ConfigurationNoExec::unbound_exec(),
+    let attr_cfg_ctx = unspecified_attr_cfg_ctx(
+        target_label,
+        resolved_configuration,
         &resolved_transitions,
         &platform_cfgs,
     );
-    let (gathered_deps, mut errors_and_incompats) = gather_deps(
+
+    let (gathered_deps, errors_and_incompats) = gather_deps(
         partial_target_label,
         target_node.as_ref(),
         &attr_cfg_ctx,
@@ -750,21 +1121,62 @@ async fn compute_configured_target_node_no_transition(
     .boxed()
     .await?;
 
+    ResultMaybeCompatible::Compatible(ConfiguredNodePreamble {
+        resolved_configuration,
+        platform_cfgs,
+        resolved_transitions,
+        gathered_deps,
+        errors_and_incompats,
+    })
+}
+
+/// Compute configured target node ignoring transition for this node.
+async fn compute_configured_target_node_no_transition(
+    target_label: &ConfiguredTargetLabel,
+    target_node: TargetNode,
+    ctx: &mut DiceComputations<'_>,
+) -> ResultMaybeCompatible<ConfiguredTargetNode> {
+    let target_cfg = target_label.cfg();
+    // Destructured immediately and the attr context rebuilt from the pieces: keeping the whole
+    // preamble alive across the awaits below grows this future past its size assert.
+    let ConfiguredNodePreamble {
+        resolved_configuration,
+        platform_cfgs,
+        resolved_transitions,
+        gathered_deps,
+        mut errors_and_incompats,
+    } = compute_configured_node_preamble(ctx, target_label, &target_node)
+        .boxed()
+        .await?;
+
     check_plugin_deps(ctx, target_label, &gathered_deps.plugin_lists)
         .boxed()
         .await?;
 
-    let execution_platform_resolution = if target_cfg.is_unbound() {
+    let attr_cfg_ctx = unspecified_attr_cfg_ctx(
+        target_label,
+        resolved_configuration,
+        &resolved_transitions,
+        &platform_cfgs,
+    );
+
+    let execution_platform_partial = if target_cfg.is_unbound() {
         // The unbound configuration is used when evaluation configuration nodes.
         // That evaluation is
         // (1) part of execution platform resolution and
         // (2) isn't allowed to do execution
         // And so we use an "unspecified" execution platform to avoid cycles and cause any attempts at execution to fail.
-        ExecutionPlatformResolution::unspecified()
+        None
+    } else if let Some(exec_cfg) = target_label.exec_cfg()
+        && exec_cfg == &ConfigurationData::unspecified_exec()
+    {
+        // The parent resolved to no execution platform (the `use_unspecified` fallback), and so
+        // does its toolchain dep.
+        Some(ExecutionPlatformResolutionPartial::new(None, Vec::new()))
     } else if let Some(exec_cfg) = target_label.exec_cfg() {
         // The label was produced by a toolchain_dep, so we use the execution platform of our parent
         // We need to convert that to an execution platform, so just find the one with the same configuration.
-        ExecutionPlatformResolution::new(
+        Some(ExecutionPlatformResolutionPartial::new(
             Some(
                 find_execution_platform_by_configuration(
                     ctx,
@@ -774,78 +1186,130 @@ async fn compute_configured_target_node_no_transition(
                 .await?,
             ),
             Vec::new(),
-        )
+        ))
     } else {
-        resolve_execution_platform(
+        Some(
+            resolve_execution_platform(
+                ctx,
+                target_node.as_ref(),
+                resolved_configuration,
+                &gathered_deps,
+                &attr_cfg_ctx,
+            )
+            .boxed()
+            .await?,
+        )
+    };
+
+    // Get the execution platform configuration - either from partial or use unspecified
+    let execution_platform_cfg = match &execution_platform_partial {
+        Some(partial) => partial.cfg(),
+        None => ConfigurationNoExec::unspecified_exec().dupe(),
+    };
+
+    // We now need to replace the dummy exec config we used above with the real one
+
+    let execution_platform_cfg = &execution_platform_cfg;
+    // An unbound node resolves no execution platforms, so the exec deps and toolchain deps of its
+    // named execution groups are configured with the unspecified execution configuration, like
+    // the default group's. Boxed to keep this future within its size assert.
+    let unbound_toolchain_deps: Box<BuckMutInsertionSet<TargetConfiguredTargetLabel>>;
+    let toolchain_deps =
+        if execution_platform_partial.is_none() && !gathered_deps.execution_group_deps.is_empty() {
+            let mut all = gathered_deps.toolchain_deps.clone();
+            for group_deps in gathered_deps.execution_group_deps.values() {
+                for dep in &group_deps.toolchain_deps {
+                    all.insert(dep.dupe());
+                }
+            }
+            unbound_toolchain_deps = Box::new(all);
+            &*unbound_toolchain_deps
+        } else {
+            &gathered_deps.toolchain_deps
+        };
+    let unbound_exec_deps: Box<BuckMutInsertionMap<ConfiguredProvidersLabel, CheckVisibility>>;
+    let exec_deps =
+        if execution_platform_partial.is_none() && !gathered_deps.execution_group_deps.is_empty() {
+            let mut all = gathered_deps.exec_deps.clone();
+            for group_deps in gathered_deps.execution_group_deps.values() {
+                for (dep, check_visibility) in &group_deps.exec_deps {
+                    insert_dep_keeping_stricter_visibility(&mut all, dep.dupe(), *check_visibility);
+                }
+            }
+            unbound_exec_deps = Box::new(all);
+            &*unbound_exec_deps
+        } else {
+            &gathered_deps.exec_deps
+        };
+
+    let get_toolchain_deps = DiceComputations::declare_closure(async move |ctx| {
+        ctx.compute_join(
+            toolchain_deps,
+            async |ctx, target: &TargetConfiguredTargetLabel| {
+                ctx.get_internal_configured_target_node(
+                    &target.with_exec_cfg(execution_platform_cfg.cfg().dupe()),
+                )
+                .await
+            },
+        )
+        .await
+    });
+
+    let get_exec_deps = DiceComputations::declare_closure(async |ctx| {
+        ctx.compute_join(exec_deps, async |ctx, (target, check_visibility)| {
+            // Apply modifiers to exec_dep before configuring
+            let result = configure_exec_dep_with_modifiers(
+                ctx,
+                target.target().unconfigured(),
+                execution_platform_cfg.cfg(),
+            )
+            .await;
+
+            (result, *check_visibility)
+        })
+        .await
+    });
+
+    let get_default_deps = DiceComputations::declare_closure(async |ctx| {
+        ctx.compute2(get_toolchain_deps, get_exec_deps).await
+    });
+    let resolve_execution_groups =
+        execution_platform_partial.is_some() && !target_node.execution_groups().is_empty();
+    let get_execution_groups = DiceComputations::declare_closure(async |ctx| {
+        if !resolve_execution_groups {
+            return Ok(Vec::new());
+        }
+        configure_execution_groups(
             ctx,
             target_node.as_ref(),
-            &resolved_configuration,
+            resolved_configuration,
             &gathered_deps,
             &attr_cfg_ctx,
         )
         .boxed()
-        .await?
-    };
-    let execution_platform = execution_platform_resolution.cfg();
-
-    // We now need to replace the dummy exec config we used above with the real one
-
-    let execution_platform = &execution_platform;
-    let toolchain_deps = &gathered_deps.toolchain_deps;
-    let exec_deps = &gathered_deps.exec_deps;
-
-    let get_toolchain_deps = DiceComputations::declare_closure(move |ctx| {
-        async move {
-            ctx.compute_join(
-                toolchain_deps,
-                |ctx, target: &TargetConfiguredTargetLabel| {
-                    async move {
-                        ctx.get_internal_configured_target_node(
-                            &target.with_exec_cfg(execution_platform.cfg().dupe()),
-                        )
-                        .await
-                    }
-                    .boxed()
-                },
-            )
-            .await
-        }
-        .boxed()
+        .await
     });
 
-    let get_exec_deps = DiceComputations::declare_closure(|ctx| {
-        async move {
-            ctx.compute_join(exec_deps, |ctx, (target, check_visibility)| {
-                async move {
-                    (
-                        ctx.get_internal_configured_target_node(
-                            &target
-                                .target()
-                                .unconfigured()
-                                .configure_pair(execution_platform.cfg_pair().dupe()),
-                        )
-                        .await,
-                        *check_visibility,
-                    )
-                }
-                .boxed()
-            })
-            .await
-        }
-        .boxed()
-    });
-
-    let (toolchain_dep_results, exec_dep_results): (Vec<_>, Vec<_>) =
-        ctx.compute2(get_toolchain_deps, get_exec_deps).await;
+    let ((toolchain_dep_results, exec_dep_results), execution_groups): ((Vec<_>, Vec<_>), _) =
+        ctx.compute2(get_default_deps, get_execution_groups).await;
 
     let mut deps = gathered_deps.deps;
     let mut exec_deps = Vec::with_capacity(gathered_deps.exec_deps.len());
 
+    // Derived here rather than at the top of the function: it is only needed after the last
+    // await, and deriving it early would keep the label value saved across every suspension
+    // point above.
+    let partial_target_label =
+        &TargetConfiguredTargetLabel::new_without_exec_cfg(target_label.dupe());
+    let package_visibility = ctx
+        .per_transaction_data()
+        .get_package_visibility_default_intersection();
     for dep in toolchain_dep_results {
         errors_and_incompats.unpack_dep_into(
             partial_target_label,
             dep,
             CheckVisibility::Yes,
+            package_visibility,
             &mut deps,
         );
     }
@@ -854,31 +1318,62 @@ async fn compute_configured_target_node_no_transition(
             partial_target_label,
             dep,
             check_visibility,
+            package_visibility,
             &mut exec_deps,
         );
     }
 
-    if let Some(ret) = errors_and_incompats.finalize() {
-        return ret;
-    }
+    // Build the exec_dep_cfgs mapping from exec_dep target labels to their actual cfgs.
+    // This is needed because modifiers may change the cfg of exec_deps, and we need to
+    // use the actual cfg when configuring exec_dep attributes during analysis.
+    let exec_dep_cfgs = exec_deps
+        .iter()
+        .map(|exec_dep| {
+            (
+                exec_dep.label().unconfigured().dupe(),
+                exec_dep.label().cfg().dupe(),
+            )
+        })
+        .collect();
 
-    Ok(MaybeCompatible::Compatible(ConfiguredTargetNode::new(
+    let execution_group_resolutions = merge_execution_groups(
+        execution_groups?,
+        partial_target_label,
+        package_visibility,
+        &mut errors_and_incompats,
+        &mut deps,
+        &mut exec_deps,
+    );
+
+    // Finalize the execution platform resolution with exec_dep_cfgs
+    let execution_platform_resolution = match execution_platform_partial {
+        Some(partial) => partial.finalize_with_execution_groups(
+            exec_dep_cfgs,
+            execution_group_resolutions,
+            target_node.default_execution_group(),
+        ),
+        None => ExecutionPlatformResolution::unspecified(),
+    };
+
+    errors_and_incompats.finalize()?;
+
+    ResultMaybeCompatible::Compatible(ConfiguredTargetNode::new(
         target_label.dupe(),
         target_node.dupe(),
-        resolved_configuration,
+        resolved_configuration.dupe(),
         resolved_transitions,
         execution_platform_resolution,
         deps,
         exec_deps,
         platform_cfgs,
         gathered_deps.plugin_lists,
-    )))
+    ))
 }
 
 async fn compute_configured_target_node(
     key: &ConfiguredTargetNodeKey,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>> {
+) -> ResultMaybeCompatible<ConfiguredTargetNode> {
     let target_node = ctx
         .get_target_node(key.0.unconfigured())
         .await
@@ -891,16 +1386,15 @@ async fn compute_configured_target_node(
 
     match key.0.exec_cfg() {
         None if target_node.is_toolchain_rule() => {
-            return Err(ToolchainDepError::ToolchainRuleUsedAsNormalDep(
-                key.0.unconfigured().dupe(),
-            )
-            .into());
+            return ResultMaybeCompatible::Err(
+                ToolchainDepError::ToolchainRuleUsedAsNormalDep(key.0.unconfigured().dupe()).into(),
+            );
         }
         Some(_) if !target_node.is_toolchain_rule() => {
-            return Err(ToolchainDepError::NonToolchainRuleUsedAsToolchainDep(
-                key.0.unconfigured().dupe(),
-            )
-            .into());
+            return ResultMaybeCompatible::Err(
+                ToolchainDepError::NonToolchainRuleUsedAsToolchainDep(key.0.unconfigured().dupe())
+                    .into(),
+            );
         }
         _ => {}
     }
@@ -910,11 +1404,10 @@ async fn compute_configured_target_node(
         RuleIncomingTransition::Fixed(transition_id) => Some(transition_id.dupe()),
         RuleIncomingTransition::FromAttribute => target_node
             .attr_or_none(INCOMING_TRANSITION_ATTRIBUTE.name, AttrInspectOptions::All)
-            .and_then(|v| match v.value {
-                CoercedAttr::None => None,
-                CoercedAttr::ConfigurationDep(l) => Some(Arc::new(TransitionId::Target(l.dupe()))),
-                _ => unreachable!("Verified by attr coercer"),
-            }),
+            .map(|v| v.value.unpack_configuration_dep())
+            .transpose()?
+            .flatten()
+            .map(|l| Arc::new(TransitionId::Target(l.dupe()))),
     };
 
     if let Some(transition_id) = transition_id {
@@ -931,7 +1424,7 @@ async fn compute_configured_forward_target_node(
     target_node: &TargetNode,
     transition_id: &TransitionId,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>> {
+) -> ResultMaybeCompatible<ConfiguredTargetNode> {
     let target_label_before_transition = &key.0;
     let platform_cfgs = compute_platform_cfgs(ctx, target_node.as_ref())
         .boxed()
@@ -947,10 +1440,11 @@ async fn compute_configured_forward_target_node(
         format!("Error resolving configuration deps of `{target_label_before_transition}`")
     })?;
 
-    let attrs = resolve_transition_attrs(
+    let attrs = resolve_transition_input_attrs(
+        target_label_before_transition,
         iter::once(transition_id),
         target_node,
-        &matched_cfg_keys,
+        matched_cfg_keys,
         &platform_cfgs,
         ctx,
     )
@@ -993,34 +1487,32 @@ async fn compute_configured_forward_target_node(
         // to introduce a cycle, we depend on the dice cycle detection to identify it. Alternatively we could directly recompute
         // the node and check the attrs, but we'd still need to request the real node from dice and it doesn't seem worth
         // that extra cost just for a slightly improved error message.
-        if let MaybeCompatible::Compatible(node) = &transitioned_node {
-            // check that the attrs weren't changed first. This should be the only way that we can hit non-idempotence
-            // here and gives a better error than if we just give the general idempotence error.
-            verify_transitioned_attrs(&attrs, matched_cfg_keys.cfg().cfg(), node)?;
 
-            if let Some(forward) = node.forward_target() {
-                return Err(NodeCalculationError::TransitionNotIdempotent(
+        // check that the attrs weren't changed first. This should be the only way that we can hit non-idempotence
+        // here and gives a better error than if we just give the general idempotence error.
+        verify_transitioned_attrs(&attrs, matched_cfg_keys.cfg().cfg(), transitioned_node)?;
+
+        if let Some(forward) = transitioned_node.forward_target() {
+            return ResultMaybeCompatible::Err(NodeCalculationError::TransitionNotIdempotent(
                     target_label_before_transition.unconfigured().dupe(),
                     target_label_before_transition.cfg().dupe(),
                     target_label_after_transition.cfg().dupe(),
                     forward.label().cfg().dupe(),
-                ))
+                ).into())
                 .internal_error("idempotence should have been enforced by transition idempotence and attr change checks");
-            }
         }
 
-        let configured_target_node = transitioned_node.try_map(|transitioned_node| {
-            ConfiguredTargetNode::new_forward(
-                target_label_before_transition.dupe(),
-                transitioned_node,
-            )
-        })?;
+        let configured_target_node = ConfiguredTargetNode::new_forward(
+            target_label_before_transition.dupe(),
+            transitioned_node.dupe(),
+        )?;
 
-        Ok(configured_target_node)
+        ResultMaybeCompatible::Compatible(configured_target_node)
     }
 }
 
-#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
 pub struct ConfiguredTargetNodeKey(pub ConfiguredTargetLabel);
 
 struct ConfiguredTargetNodeCalculationInstance;
@@ -1043,6 +1535,10 @@ impl buck2_error::TypedContext for LookingUpConfiguredNodeContext {
             None => false,
         }
     }
+
+    fn display(&self) -> Option<String> {
+        Some(format!("{}", self))
+    }
 }
 
 impl LookingUpConfiguredNodeContext {
@@ -1063,12 +1559,22 @@ impl LookingUpConfiguredNodeContext {
             || Self::new(target.dupe(), None),
         )
     }
+
+    pub(crate) fn add_context_rmc<T>(
+        res: ResultMaybeCompatible<T>,
+        target: ConfiguredTargetLabel,
+    ) -> ResultMaybeCompatible<T> {
+        res.compute_context(
+            |parent_ctx: Arc<Self>| Self::new(target.dupe(), Some(parent_ctx)),
+            || Self::new(target.dupe(), None),
+        )
+    }
 }
 
 impl std::fmt::Display for LookingUpConfiguredNodeContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.len == 1 {
-            write!(f, "Error looking up configured node {}", &self.target)?;
+            write!(f, "Error looking up configured node {}", self.target)?;
         } else {
             writeln!(
                 f,
@@ -1110,84 +1616,106 @@ impl std::fmt::Display for LookingUpConfiguredNodeContext {
 
 #[async_trait]
 impl Key for ConfiguredTargetNodeKey {
-    type Value = buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>>;
+    type Value = ResultMaybeCompatible<ConfiguredTargetNode>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
         _cancellation: &CancellationContext,
     ) -> Self::Value {
-        let res = CycleGuard::<ConfiguredGraphCycleDescriptor>::new(ctx)?
-            .guard_this(compute_configured_target_node(self, ctx))
-            .await
-            .into_result(ctx)
-            .await??;
-        Ok(LookingUpConfiguredNodeContext::add_context(
-            res,
-            self.0.dupe(),
-        )?)
+        let res = compute_configured_target_node(self, ctx).await;
+        LookingUpConfiguredNodeContext::add_context_rmc(res, self.0.dupe())
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
-            (Ok(x), Ok(y)) => x == y,
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| match (x, y) {
+            // A node whose body cannot be read counts as changed. The failed read is
+            // recorded where it happens and reported when the command ends.
+            (ResultMaybeCompatible::Compatible(x), ResultMaybeCompatible::Compatible(y)) => {
+                x.try_eq(y).unwrap_or(false)
+            }
+            (ResultMaybeCompatible::Incompatible(x), ResultMaybeCompatible::Incompatible(y)) => {
+                x == y
+            }
             _ => false,
-        }
+        })
     }
 
     fn provide<'a>(&'a self, demand: &mut Demand<'a>) {
         demand.provide_value_with(|| BuildSignalsNodeKey::new(self.dupe()))
     }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        ResultMaybeCompatibleValueSerialize::<ConfiguredTargetNode>::new()
+    }
 }
 
-impl BuildSignalsNodeKeyImpl for ConfiguredTargetNodeKey {}
+impl BuildSignalsNodeKeyImpl for ConfiguredTargetNodeKey {
+    fn kind(&self) -> &'static str {
+        "configure_target"
+    }
 
-#[async_trait]
+    fn package(&self) -> Option<PackageLabel> {
+        Some(self.0.unconfigured().pkg())
+    }
+}
+
 impl ConfiguredTargetNodeCalculationImpl for ConfiguredTargetNodeCalculationInstance {
-    async fn get_configured_target_node(
+    fn get_configured_target_node<'a, 'd>(
         &self,
-        ctx: &mut DiceComputations<'_>,
-        target: &ConfiguredTargetLabel,
+        ctx: &'a mut DiceComputations<'d>,
+        target: &'a ConfiguredTargetLabel,
         check_dependency_incompatibility: bool,
-    ) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>> {
-        let maybe_compatible_node = ctx
-            .compute(&ConfiguredTargetNodeKey(target.dupe()))
-            .await??;
-        if check_dependency_incompatibility {
-            if let MaybeCompatible::Incompatible(reason) = &maybe_compatible_node {
-                if matches!(
-                    &reason.cause,
-                    &IncompatiblePlatformReasonCause::Dependency(_)
-                ) {
-                    if check_error_on_incompatible_dep(ctx, target.unconfigured_label()).await? {
-                        return Err(reason.to_err().into());
-                    }
-                    soft_error!(
-                        "dep_only_incompatible_version_two", reason.to_soft_err().into(),
-                        quiet: false,
-                        // Log at least one sample per unique package.
-                        low_cardinality_key_for_additional_logview_samples: Some(Box::new(target.unconfigured().pkg())),
-                    )?;
-                    if let Some(custom_soft_errors) = get_dep_only_incompatible_custom_soft_error(
-                        ctx,
-                        target.unconfigured_label(),
-                    )
-                    .await?
-                    {
-                        for custom_soft_error in custom_soft_errors {
-                            soft_error!(
-                                &custom_soft_error,
-                                reason.to_soft_err().into(),
-                                quiet: true,
-                                task: false,
-                            )?;
+    ) -> BoxFuture<'a, ResultMaybeCompatible<&'d ConfiguredTargetNode>>
+    where
+        'd: 'a,
+    {
+        async move {
+            let maybe_compatible_result =
+                ctx.compute(&ConfiguredTargetNodeKey(target.dupe())).await?;
+            if check_dependency_incompatibility {
+                if let ResultMaybeCompatible::Incompatible(reason) = maybe_compatible_result {
+                    if matches!(
+                        &reason.cause,
+                        &IncompatiblePlatformReasonCause::Dependency(_)
+                    ) {
+                        if check_error_on_incompatible_dep(ctx, target.unconfigured_label()).await? {
+                            return ResultMaybeCompatible::Err(reason.to_err());
+                        }
+                        deprecation!(
+                            "dep_only_incompatible_version_two", reason.to_soft_err(),
+                            owner: "scottcao", started: "2024-06-20",
+                            // Log at least one sample per unique package.
+                            low_cardinality_key_for_additional_logview_samples: Some(Box::new(target.unconfigured().pkg())),
+                        );
+                        if let Some(custom_soft_errors) = get_dep_only_incompatible_custom_soft_error(
+                            ctx,
+                            target.unconfigured_label(),
+                        )
+                        .await?
+                        {
+                            for custom_soft_error in custom_soft_errors {
+                                deprecation!(
+                                    &custom_soft_error,
+                                    reason.to_soft_err(),
+                                    owner: "scottcao", started: "2025-03-17",
+                                    task: false,
+                                );
+                            }
                         }
                     }
                 }
             }
+            maybe_compatible_result.as_ref()
         }
-        Ok(maybe_compatible_node)
+        .boxed()
     }
 }
+
+pagable::static_str!(SECTION_BUCK2 = "buck2");
+pagable::static_str!(PROPERTY_ERROR_ON_DEP_ONLY_INCOMPATIBLE = "error_on_dep_only_incompatible");
+pagable::static_str!(
+    PROPERTY_ERROR_ON_DEP_ONLY_INCOMPATIBLE_EXCLUDED = "error_on_dep_only_incompatible_excluded"
+);
 
 async fn check_error_on_incompatible_dep(
     ctx: &mut DiceComputations<'_>,
@@ -1196,37 +1724,43 @@ async fn check_error_on_incompatible_dep(
     if check_target_enabled_for_config(
         ctx,
         target_label,
-        "buck2",
-        "error_on_dep_only_incompatible_excluded",
+        SECTION_BUCK2,
+        PROPERTY_ERROR_ON_DEP_ONLY_INCOMPATIBLE_EXCLUDED,
     )
     .await?
     {
         return Ok(false);
     }
-    check_target_enabled_for_config(ctx, target_label, "buck2", "error_on_dep_only_incompatible")
-        .await
+    check_target_enabled_for_config(
+        ctx,
+        target_label,
+        SECTION_BUCK2,
+        PROPERTY_ERROR_ON_DEP_ONLY_INCOMPATIBLE,
+    )
+    .await
 }
 
 async fn check_target_enabled_for_config(
     ctx: &mut DiceComputations<'_>,
     target_label: &TargetLabel,
-    section: &'static str,
-    property: &'static str,
+    section: StaticStr,
+    property: StaticStr,
 ) -> buck2_error::Result<bool> {
-    #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+    #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
     #[display("ConfigPatternCalculation({section}, {property})")]
+    #[pagable_typetag(dice::DiceKeyDyn)]
     struct ConfigPatternCalculation {
-        section: &'static str,
-        property: &'static str,
+        section: StaticStr,
+        property: StaticStr,
     }
 
     #[async_trait]
     impl Key for ConfigPatternCalculation {
-        type Value = buck2_error::Result<Arc<Vec<ParsedPattern<TargetPatternExtra>>>>;
+        type Value = buck2_error::Result<Vec<ParsedPattern<TargetPatternExtra>>>;
 
         async fn compute(
             &self,
-            mut ctx: &mut DiceComputations,
+            ctx: &mut DiceComputations,
             _cancellation: &CancellationContext,
         ) -> Self::Value {
             let cell_resolver = ctx.get_cell_resolver().await?;
@@ -1234,9 +1768,9 @@ async fn check_target_enabled_for_config(
             let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
             let root_conf = ctx.get_legacy_root_config_on_dice().await?;
             let patterns: Vec<String> = root_conf
-                .view(&mut ctx)
+                .view(ctx)
                 .parse_list(BuckconfigKeyRef {
-                    section: self.section,
+                    section: &self.section,
                     property: &self.property,
                 })?
                 .unwrap_or_default();
@@ -1250,20 +1784,29 @@ async fn check_target_enabled_for_config(
                     &alias_resolver,
                 )?);
             }
-            Ok(result.into())
+            Ok(result)
         }
 
-        fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-            match (x, y) {
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|x, y| match (x, y) {
                 (Ok(x), Ok(y)) => x == y,
                 _ => false,
-            }
+            })
+        }
+
+        fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+            OkPagableValueSerialize::<Self::Value>::new()
         }
     }
 
     let patterns = ctx
-        .compute(&ConfigPatternCalculation { section, property })
-        .await??;
+        .compute(&ConfigPatternCalculation {
+            section: section.into(),
+            property: property.into(),
+        })
+        .await?
+        .as_ref()
+        .duped_err()?;
     for pattern in patterns.iter() {
         if pattern.matches(target_label) {
             return Ok(true);
@@ -1277,23 +1820,24 @@ async fn get_dep_only_incompatible_custom_soft_error(
     ctx: &mut DiceComputations<'_>,
     target_label: &TargetLabel,
 ) -> buck2_error::Result<Option<Vec<ArcStr>>> {
-    #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative)]
+    #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+    #[pagable_typetag(dice::DiceKeyDyn)]
     struct GetDepOnlyIncompatibleInfo;
 
     #[async_trait]
     impl Key for GetDepOnlyIncompatibleInfo {
-        type Value = buck2_error::Result<Option<Arc<DepOnlyIncompatibleCustomSoftErrors>>>;
+        type Value = buck2_error::Result<Option<DepOnlyIncompatibleCustomSoftErrors>>;
 
         async fn compute(
             &self,
-            mut ctx: &mut DiceComputations,
+            ctx: &mut DiceComputations,
             _cancellation: &CancellationContext,
         ) -> Self::Value {
             let cell_resolver = ctx.get_cell_resolver().await?;
             let root_cell = cell_resolver.root_cell();
             let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
             let root_conf = ctx.get_legacy_root_config_on_dice().await?;
-            let Some(target) = root_conf.view(&mut ctx).parse::<String>(BuckconfigKeyRef {
+            let Some(target) = root_conf.view(ctx).parse::<String>(BuckconfigKeyRef {
                 section: "buck2",
                 property: "dep_only_incompatible_info",
             })?
@@ -1305,25 +1849,34 @@ async fn get_dep_only_incompatible_custom_soft_error(
             let providers = ctx.get_configuration_analysis_result(&target).await?;
             let dep_only_incompatible_info = providers
                 .provider_collection()
-                .builtin_provider::<FrozenDepOnlyIncompatibleInfo>()
+                .builtin_provider::<DepOnlyIncompatibleInfo>()?
                 .unwrap();
             let result = dep_only_incompatible_info.custom_soft_errors(
                 root_cell,
                 &cell_resolver,
                 &alias_resolver,
             )?;
-            Ok(Some(Arc::new(result)))
+            Ok(Some(result))
         }
 
-        fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-            match (x, y) {
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::Compare(|x, y| match (x, y) {
                 (Ok(x), Ok(y)) => x == y,
                 _ => false,
-            }
+            })
+        }
+
+        fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+            OkPagableValueSerialize::<Self::Value>::new()
         }
     }
 
-    let Some(custom_soft_errors) = ctx.compute(&GetDepOnlyIncompatibleInfo).await?? else {
+    let Some(custom_soft_errors) = ctx
+        .compute(&GetDepOnlyIncompatibleInfo)
+        .await?
+        .as_ref()
+        .duped_err()?
+    else {
         return Ok(None);
     };
     let soft_error_categories: Vec<_> = custom_soft_errors
@@ -1367,4 +1920,25 @@ fn _assert_compute_configured_forward_target_node_size() {
         sz(&compute_configured_forward_target_node) <= 700,
         "compute_configured_forward_target_node size is larger than 700 bytes",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_hash::BuckMutInsertionMap;
+
+    use super::CheckVisibility;
+    use super::insert_dep_keeping_stricter_visibility;
+
+    #[test]
+    fn test_insert_dep_keeping_stricter_visibility() {
+        let mut deps = BuckMutInsertionMap::default();
+        deps.insert("plugin", CheckVisibility::No);
+        deps.insert("tool", CheckVisibility::Yes);
+        insert_dep_keeping_stricter_visibility(&mut deps, "plugin", CheckVisibility::Yes);
+        insert_dep_keeping_stricter_visibility(&mut deps, "tool", CheckVisibility::No);
+        insert_dep_keeping_stricter_visibility(&mut deps, "new", CheckVisibility::No);
+        assert_eq!(deps.get("plugin"), Some(&CheckVisibility::Yes));
+        assert_eq!(deps.get("tool"), Some(&CheckVisibility::Yes));
+        assert_eq!(deps.get("new"), Some(&CheckVisibility::No));
+    }
 }

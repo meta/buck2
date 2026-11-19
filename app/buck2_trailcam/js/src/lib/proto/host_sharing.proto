@@ -1,0 +1,47 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is dual-licensed under either the MIT license found in the
+ * LICENSE-MIT file in the root directory of this source tree or the Apache
+ * License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+ * of this source tree. You may select, at your option, one of the
+ * above-listed licenses.
+ */
+
+syntax = "proto3";
+
+package buck.host_sharing;
+
+message HostSharingRequirements {
+  reserved 1, 3;
+
+  message Shared {
+    WeightClass weight_class = 1;
+  }
+
+  message ExclusiveAccess {}
+
+  message OnePerToken {
+    string identifier = 1;
+    WeightClass weight_class = 2;
+  }
+
+  message OnePerTokens {
+    repeated string identifiers = 1;
+    WeightClass weight_class = 2;
+  }
+
+  oneof requirements {
+    ExclusiveAccess exclusive_access = 2;
+    Shared shared = 4;
+    OnePerToken one_per_token = 5;
+    OnePerTokens one_per_tokens = 6;
+  }
+}
+
+message WeightClass {
+  oneof value {
+    uint64 permits = 1;
+    uint32 percentage = 2; // Between 0 and 100.
+  }
+}

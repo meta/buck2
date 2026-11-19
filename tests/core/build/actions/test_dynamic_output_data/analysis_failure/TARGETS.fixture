@@ -1,0 +1,3 @@
+load(":prelude.bzl", "analysis_failure_test")
+
+analysis_failure_test(name = "analysis_failure")

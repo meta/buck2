@@ -17,8 +17,6 @@ enum ResolveAliasError {
     StatFormatNotSupported,
 }
 
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fmt::Write;
 
 use buck2_cli_proto::TargetsRequest;
@@ -29,11 +27,12 @@ use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
+use buck2_hash::BuckMutMap;
+use buck2_hash::BuckMutSet;
 use buck2_node::nodes::attributes::PACKAGE;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use dice::DiceTransaction;
 use dupe::Dupe;
-use futures::FutureExt;
 
 use crate::json::QuotedJson;
 use crate::targets::fmt::JsonWriter;
@@ -49,7 +48,7 @@ trait ResolveAliasFormatter {
     fn separator(&self, buffer: &mut String);
 
     /// Emit an alias
-    fn emit(&self, alias: &str, label: &TargetLabel, buffer: &mut String);
+    fn emit(&self, alias: &str, label: TargetLabel, buffer: &mut String);
 }
 
 impl ResolveAliasFormatter for JsonWriter {
@@ -65,7 +64,7 @@ impl ResolveAliasFormatter for JsonWriter {
         self.separator(buffer);
     }
 
-    fn emit(&self, alias: &str, label: &TargetLabel, buffer: &mut String) {
+    fn emit(&self, alias: &str, label: TargetLabel, buffer: &mut String) {
         let mut first = true;
         self.entry_start(buffer);
         self.entry_item(buffer, &mut first, "alias", QuotedJson::quote_str(alias));
@@ -97,13 +96,13 @@ impl ResolveAliasFormatter for LinesWriter {
         buffer.push('\n');
     }
 
-    fn emit(&self, _alias: &str, label: &TargetLabel, buffer: &mut String) {
+    fn emit(&self, _alias: &str, label: TargetLabel, buffer: &mut String) {
         write!(buffer, "{label}").unwrap();
     }
 }
 
 pub(crate) async fn targets_resolve_aliases(
-    mut dice: DiceTransaction,
+    dice: &DiceTransaction,
     request: &TargetsRequest,
     parsed_target_patterns: Vec<ParsedPattern<TargetPatternExtra>>,
 ) -> buck2_error::Result<TargetsResponse> {
@@ -125,19 +124,17 @@ pub(crate) async fn targets_resolve_aliases(
     let packages = parsed_target_patterns
         .iter()
         .map(|(package, _name)| package.dupe())
-        .collect::<HashSet<_>>();
+        .collect::<BuckMutSet<_>>();
 
-    let packages: HashMap<_, _> = dice
-        .compute_join(packages, |ctx: &mut _, package| {
-            async move {
-                (
-                    package.dupe(),
-                    ctx.get_interpreter_results(package.dupe())
-                        .await
-                        .map_err(buck2_error::Error::from),
-                )
-            }
-            .boxed()
+    let packages: BuckMutMap<_, _> = dice
+        .ctx()
+        .compute_join(packages, async |ctx: &mut _, package| {
+            (
+                package.dupe(),
+                ctx.get_interpreter_results(package.dupe())
+                    .await
+                    .map(|r| r.dupe()),
+            )
         })
         .await
         .into_iter()
@@ -175,7 +172,13 @@ pub(crate) async fn targets_resolve_aliases(
         // validate it exists.
         let node = packages
             .get(package)
-            .with_buck_error_context(|| format!("Package does not exist: `{package}`"))
+            .ok_or_else(|| {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Package does not exist: `{}`",
+                    package
+                )
+            })
             .and_then(|package_data| {
                 package_data
                     .as_ref()
@@ -194,7 +197,7 @@ pub(crate) async fn targets_resolve_aliases(
             formatter.separator(&mut buffer);
         }
         needs_separator = true;
-        formatter.emit(&alias, node.label(), &mut buffer);
+        formatter.emit(alias, node.label().dupe(), &mut buffer);
     }
 
     formatter.end(&mut buffer);

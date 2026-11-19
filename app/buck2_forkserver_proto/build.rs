@@ -14,25 +14,22 @@ use std::io;
 fn main() -> io::Result<()> {
     let proto_files = &["forkserver.proto"];
 
-    let includes = if let Ok(path) = env::var("BUCK_PROTO_SRCS") {
-        vec![path]
+    let buck_proto_srcs = env::var("BUCK_PROTO_SRCS");
+    let includes = if let Ok(path) = &buck_proto_srcs {
+        vec![path.as_str()]
     } else {
-        vec![
-            ".".to_owned(),
-            "../buck2_data".to_owned(),
-            "../buck2_host_sharing_proto".to_owned(),
-        ]
+        vec![".", "../buck2_data", "../buck2_host_sharing_proto"]
     };
 
     let builder = buck2_protoc_dev::configure();
     unsafe { builder.setup_protoc() }
         .type_attribute(
             "buck.forkserver.RequestEvent.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName, ::gazebo::variants::UnpackVariants)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.forkserver.EnvDirective.data",
-            "#[derive(::derive_more::From, ::gazebo::variants::VariantName, ::gazebo::variants::UnpackVariants)]",
+            "#[derive(::derive_more::From, ::variant_name::VariantName)]",
         )
         .type_attribute(
             "buck.forkserver.RequestEvent.data",

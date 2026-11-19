@@ -15,8 +15,6 @@ User-Facing library for quick-iteration testing of Common Test
 -typing([eqwalizer]).
 -compile(warn_missing_spec_all).
 
--include_lib("common/include/buck_ct_records.hrl").
-
 %% Public API
 -export([
     start/0,
@@ -39,6 +37,8 @@ User-Facing library for quick-iteration testing of Common Test
 -export([
     list_impl/1
 ]).
+
+-include_lib("common/include/buck_ct_records.hrl").
 
 -define(raw_file_access, prim_file).
 
@@ -305,6 +305,33 @@ init_utility_app(StartedApps, UtilityApp) ->
             end
     end.
 
+-spec init_common_app_env(#{binary() => binary()}) -> ok.
+init_common_app_env(CommonAppEnv) ->
+    case map_size(CommonAppEnv) of
+        0 ->
+            ok;
+        _ ->
+            case application:load(common) of
+                ok -> ok;
+                {error, {already_loaded, common}} -> ok
+            end,
+            maps:foreach(
+                fun(Key, Value) ->
+                    KeyAtom = binary_to_atom(Key, utf8),
+                    % Only set the env if it's not already set to allow cli overrides
+                    case application:get_env(common, KeyAtom) of
+                        undefined ->
+                            ValueTerm = buck_ct_parser:parse_str(Value),
+                            application:set_env(common, KeyAtom, ValueTerm);
+                        _ ->
+                            ok
+                    end
+                end,
+                CommonAppEnv
+            ),
+            ok
+    end.
+
 -define(TYPE_IS_OK(Type), (Type =:= shortnames orelse Type =:= longnames)).
 
 -spec init_node() -> boolean().
@@ -314,7 +341,8 @@ init_node() ->
             false;
         false ->
             io:format("starting test node...~n", []),
-            #test_info{erl_cmd = ErlCmd} = get_provided_test_info(),
+            #test_info{erl_cmd = ErlCmd, common_app_env = CommonAppEnv} = get_provided_test_info(),
+            init_common_app_env(CommonAppEnv),
             case application:get_env(test_cli_lib, node_config) of
                 undefined ->
                     ct_daemon:start(ErlCmd);

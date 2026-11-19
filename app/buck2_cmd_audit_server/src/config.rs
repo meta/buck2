@@ -9,7 +9,6 @@
  */
 
 use std::collections::BTreeSet;
-use std::collections::HashMap;
 use std::io::Write;
 
 use async_trait::async_trait;
@@ -25,11 +24,12 @@ use buck2_common::legacy_configs::configs::LegacyBuckConfigValue;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::name::CellName;
+use buck2_hash::BuckMutMap;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::ctx::ServerCommandDiceContext;
 use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use buck2_server_ctx::stdout_partial_output::StdoutPartialOutput;
-use gazebo::prelude::*;
+use dupe::Dupe;
 use serde_json::json;
 
 use crate::ServerAuditSubcommand;
@@ -72,21 +72,28 @@ fn print_location(
 
 fn print_value(
     writer: &mut impl Write,
+    inline_section: Option<&str>,
     key: &str,
     value: &LegacyBuckConfigValue,
     style: ValueStyle,
 ) -> buck2_error::Result<()> {
+    let (prefix, sep) = match inline_section {
+        Some(section) => (section, "."),
+        None => ("    ", ""),
+    };
     match style {
         ValueStyle::Resolved => {
-            writeln!(writer, "    {} = {}", key, value.as_str())?;
+            writeln!(writer, "{}{}{} = {}", prefix, sep, key, value.as_str())?;
         }
         ValueStyle::Raw => {
-            writeln!(writer, "    {} = {}", key, value.raw_value())?;
+            writeln!(writer, "{}{}{} = {}", prefix, sep, key, value.raw_value())?;
         }
         ValueStyle::Both => {
             writeln!(
                 writer,
-                "    {} = {}\n        (raw {})",
+                "{}{}{} = {}\n        (raw {})",
+                prefix,
+                sep,
                 key,
                 value.as_str(),
                 value.raw_value()
@@ -152,7 +159,10 @@ struct Matches<'a> {
 impl<'a> Matches<'a> {
     fn parse(resolver: &CellAliasResolver, specs: &'a [String]) -> buck2_error::Result<Self> {
         Ok(Self {
-            matches: specs.try_map(|x| Match::parse(resolver, x))?,
+            matches: specs
+                .iter()
+                .map(|x| Match::parse(resolver, x))
+                .collect::<Result<Vec<_>, _>>()?,
         })
     }
 
@@ -200,6 +210,7 @@ struct SimpleCellConfigRenderer<'a> {
     render_cell_headers: bool,
     value_style: ValueStyle,
     location_style: LocationStyle,
+    inline_section: bool,
 }
 
 impl CellConfigRenderer for SimpleCellConfigRenderer<'_> {
@@ -212,7 +223,9 @@ impl CellConfigRenderer for SimpleCellConfigRenderer<'_> {
     }
 
     fn render_section_header(&mut self, section: &str) -> buck2_error::Result<()> {
-        writeln!(&mut self.stdout, "[{section}]")?;
+        if !self.inline_section {
+            writeln!(&mut self.stdout, "[{section}]")?;
+        }
 
         Ok(())
     }
@@ -221,11 +234,22 @@ impl CellConfigRenderer for SimpleCellConfigRenderer<'_> {
         &mut self,
         _spec: &str,
         _cell: CellName,
-        _section: &str,
+        section: &str,
         key: &str,
         value: LegacyBuckConfigValue<'_>,
     ) -> buck2_error::Result<()> {
-        print_value(&mut self.stdout, key, &value, self.value_style)?;
+        let inline_section = if self.inline_section {
+            Some(section)
+        } else {
+            None
+        };
+        print_value(
+            &mut self.stdout,
+            inline_section,
+            key,
+            &value,
+            self.value_style,
+        )?;
         print_location(&mut self.stdout, &value, self.location_style)?;
 
         Ok(())
@@ -239,7 +263,7 @@ impl CellConfigRenderer for SimpleCellConfigRenderer<'_> {
 struct JsonCellConfigRenderer<'a> {
     stdout: StdoutPartialOutput<'a>,
     scope_keys_to_cell: bool,
-    json_output: HashMap<String, String>,
+    json_output: BuckMutMap<String, String>,
 }
 
 impl CellConfigRenderer for JsonCellConfigRenderer<'_> {
@@ -316,10 +340,10 @@ impl ServerAuditSubcommand for AuditConfigCommand {
         _client_ctx: ClientContext,
     ) -> buck2_error::Result<()> {
         Ok(server_ctx
-            .with_dice_ctx(|server_ctx, mut ctx| async move {
+            .with_dice_ctx(|server_ctx, ctx| async move {
                 let cwd = server_ctx.working_dir();
-                let cell_resolver = ctx.get_cell_resolver().await?;
-                let cell_alias_resolver = ctx.get_cell_alias_resolver_for_dir(cwd).await?;
+                let cell_resolver = ctx.ctx().get_cell_resolver().await?;
+                let cell_alias_resolver = ctx.ctx().get_cell_alias_resolver_for_dir(cwd).await?;
 
                 let stdout = stdout.as_writer();
                 let mut renderer: Box<dyn CellConfigRenderer + Send> = match self.output_format() {
@@ -328,11 +352,19 @@ impl ServerAuditSubcommand for AuditConfigCommand {
                         render_cell_headers: self.all_cells,
                         value_style: self.value_style,
                         location_style: self.location_style,
+                        inline_section: false,
+                    }),
+                    OutputFormat::InlineSection => Box::new(SimpleCellConfigRenderer {
+                        stdout,
+                        render_cell_headers: self.all_cells,
+                        value_style: self.value_style,
+                        location_style: self.location_style,
+                        inline_section: true,
                     }),
                     OutputFormat::Json => Box::new(JsonCellConfigRenderer {
                         stdout,
                         scope_keys_to_cell: self.all_cells,
-                        json_output: HashMap::new(),
+                        json_output: BuckMutMap::default(),
                     }),
                 };
 
@@ -340,7 +372,7 @@ impl ServerAuditSubcommand for AuditConfigCommand {
 
                 if self.all_cells {
                     for (cell, _) in cell_resolver.cells() {
-                        let cell_config = ctx.get_legacy_config_for_cell(cell).await?;
+                        let cell_config = ctx.ctx().get_legacy_config_for_cell(cell).await?.dupe();
                         render_cell_config(renderer.as_mut(), None, cell, cell_config, &specs)?;
                     }
                 } else {
@@ -349,7 +381,7 @@ impl ServerAuditSubcommand for AuditConfigCommand {
 
                     {
                         // Render the target cell first
-                        let cell_config = ctx.get_legacy_config_for_cell(cell).await?;
+                        let cell_config = ctx.ctx().get_legacy_config_for_cell(cell).await?.dupe();
                         render_cell_config(
                             renderer.as_mut(),
                             Some(cell),
@@ -365,7 +397,7 @@ impl ServerAuditSubcommand for AuditConfigCommand {
                     let relevant_cell = Some(cell);
 
                     for cell in cells_to_render {
-                        let cell_config = ctx.get_legacy_config_for_cell(cell).await?;
+                        let cell_config = ctx.ctx().get_legacy_config_for_cell(cell).await?.dupe();
                         render_cell_config(
                             renderer.as_mut(),
                             relevant_cell,

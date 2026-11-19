@@ -8,9 +8,6 @@
  * above-listed licenses.
  */
 
-#![feature(error_generic_member_access)]
-#![feature(used_with_arg)]
-
 pub mod daemon;
 mod daemon_lower_priority;
 mod daemonize;

@@ -9,5 +9,6 @@ rust_library(
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:tracing",
         "//buck2/app/buck2_error:buck2_error",
+        "//buck2/app/buck2_hash:buck2_hash",
     ],
 )

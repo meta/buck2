@@ -1,4 +1,6 @@
+load("@fbcode_macros//build_defs:python_library.bzl", fbcode_python_library = "python_library")
 load("@prelude//utils:source_listing.bzl", "source_listing")
+load(":test_rules.bzl", "build_mode_alias")
 
 oncall("pyre")
 
@@ -8,9 +10,46 @@ python_library(
     name = "main",
     srcs = ["main.py"],
     deps = [
+        "prelude//python/sourcedb/tests/test_files/triton_collision:a_b_lib",
+        "prelude//python/sourcedb/tests/test_files/triton_collision/a:b_lib",
+        ":build_mode_alias",
         ":lib",
         ":my_extension_lib",
+        ":reexported_genrule_lib",
+        ":triton_test_lib",
     ],
+)
+
+build_mode_alias(
+    name = "build_mode_alias",
+    actual = ":alias_lib",
+)
+
+# Test that multi-output genrule srcs are cleared when a parent python_library
+# re-exports the files under namespaced module names. The genrule produces
+# bare names (e.g. "utils") that would shadow stdlib modules; the parent
+# provides proper names (e.g. "python.sourcedb.tests.test_files.utils").
+genrule(
+    name = "reexported_genrule",
+    srcs = ["gen.sh"],
+    outs = {
+        "helpers.py": [
+            "helpers.py",
+        ],
+        "utils.py": [
+            "utils.py",
+        ],
+    },
+    cmd = "touch ${OUT}/utils.py && touch ${OUT}/helpers.py",
+)
+
+python_library(
+    name = "reexported_genrule_lib",
+    srcs = {
+        "helpers.py": ":reexported_genrule[helpers.py]",
+        "utils.py": ":reexported_genrule[utils.py]",
+    },
+    deps = [":reexported_genrule"],
 )
 
 python_library(
@@ -48,6 +87,7 @@ python_library(
 
 genrule(
     name = "generated_files",
+    srcs = ["gen.sh"],
     outs = {
         "generated1.py": [
             "generated1.py",
@@ -77,8 +117,30 @@ cxx_python_extension(
     deps = [":my_extension_stub"],
 )
 
+cxx_python_extension(
+    name = "triton_test",
+    srcs = ["my_extension.cpp"],
+    base_module = "triton_test",
+)
+
 python_library(
     name = "my_extension_lib",
     srcs = ["my_extension.py"],
     deps = [":my_extension"],
+)
+
+# Test targets for Triton source DB filtering.
+
+fbcode_python_library(
+    name = "triton_test_py",
+    srcs = ["triton_kernel.py"],
+    # Real triton_kernel rules generate a *_py python_library with cpp_deps.
+    # The source DB should stub it to avoid materializing expensive AOT output.
+    cpp_deps = [":triton_test"],
+)
+
+python_library(
+    name = "triton_test_lib",
+    srcs = [],
+    deps = [":triton_test_py"],
 )

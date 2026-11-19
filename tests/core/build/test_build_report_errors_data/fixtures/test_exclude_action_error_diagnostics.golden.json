@@ -1,0 +1,59 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+{
+  "error_category": "USER",
+  "failures": {
+    "root//fail_action:fail_one_with_error_handler": "Action failed: root//fail_action:fail_one_with_error_handler (<unspecified>) (fail_one_with_error_handler)\nLocal command returned non-zero exit code 1\nLocal command: env -C \"$(buck2 root --kind project)\" -- 'BUCK_SCRATCH_PATH=buck-out/v2/tmp/root/<HASH>/fail_one_with_error_handler' fbpython fail_action/fail_compile.py buck-out/v2/art/root/<HASH>/fail_action/__fail_one_with_error_handler__/fail_compile.py\nStdout: <empty>\nStderr:\n  File \"fail_action/fail_compile.py\", line 9\n    does not compile\nIndentationError: unexpected indent\n"
+  },
+  "results": {
+    "root//fail_action:fail_one_with_error_handler": {
+      "configured": {
+        "<unspecified>": {
+          "configured_graph_size": null,
+          "errors": [
+            {
+              "action_error": {
+                "digest": "<DIGEST>",
+                "error_content": "<STRING_HASH>",
+                "error_diagnostics": null,
+                "key": {
+                  "owner": "root//fail_action:fail_one_with_error_handler (<unspecified>)"
+                },
+                "name": {
+                  "category": "fail_one_with_error_handler",
+                  "identifier": ""
+                },
+                "stderr_content": "<STRING_HASH>",
+                "stdout_content": "<STRING_HASH>"
+              },
+              "category_key": "ACTION_COMMAND_FAILURE:syntax",
+              "cause_index": 0,
+              "error_category": "USER",
+              "error_tags": [
+                "ACTION_COMMAND_FAILURE",
+                "ANY_ACTION_EXECUTION"
+              ],
+              "message_content": "<STRING_HASH>"
+            }
+          ],
+          "other_outputs": {},
+          "outputs": {},
+          "success": "FAIL"
+        }
+      },
+      "configured_graph_size": null,
+      "errors": [],
+      "other_outputs": {},
+      "outputs": {},
+      "success": "FAIL"
+    }
+  },
+  "strings": {
+    "<STRING_HASH>": "",
+    "<STRING_HASH>": "  File \"fail_action/fail_compile.py\", line 9\n    does not compile\nIndentationError: unexpected indent\n",
+    "<STRING_HASH>": "Action failed: root//fail_action:fail_one_with_error_handler (<unspecified>) (fail_one_with_error_handler)\nLocal command returned non-zero exit code 1\nLocal command: env -C \"$(buck2 root --kind project)\" -- 'BUCK_SCRATCH_PATH=buck-out/v2/tmp/root/<HASH>/fail_one_with_error_handler' fbpython fail_action/fail_compile.py buck-out/v2/art/root/<HASH>/fail_action/__fail_one_with_error_handler__/fail_compile.py\nStdout: <empty>\nStderr:\n  File \"fail_action/fail_compile.py\", line 9\n    does not compile\nIndentationError: unexpected indent\n",
+    "<STRING_HASH>": "Local command returned non-zero exit code 1"
+  },
+  "success": false,
+  "truncated": false
+}

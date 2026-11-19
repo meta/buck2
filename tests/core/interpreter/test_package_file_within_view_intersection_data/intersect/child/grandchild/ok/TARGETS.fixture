@@ -1,0 +1,5 @@
+# `root//intersect/child/lib:t` is in all three lists: allowed.
+stub(
+    name = "c",
+    deps = ["root//intersect/child/lib:t"],
+)

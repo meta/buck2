@@ -1,3 +1,4 @@
+load("@prelude//configurations:constraint_alias.bzl", "constraint_with_aliases")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 
 oncall("build_infra")
@@ -6,52 +7,24 @@ source_listing()
 
 # Used by open source projects to support `prelude//`
 
-constraint_setting(
+constraint_with_aliases(
     name = "cpu",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "x86_64",
-    constraint_setting = ":cpu",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "x86_32",
-    constraint_setting = ":cpu",
-    visibility = ["PUBLIC"],
-)
-
-# Represents various flavors of ARM64, e.g., arm64_32
-constraint_value(
-    name = "arm64",
-    constraint_setting = ":cpu",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "arm64_32",
-    constraint_setting = ":cpu",
-    visibility = ["PUBLIC"],
-)
-
-# Represents various flavors of ARM32, e.g., ARMv7k
-constraint_value(
-    name = "arm32",
-    constraint_setting = ":cpu",
-    visibility = ["PUBLIC"],
-)
-
-constraint_value(
-    name = "wasm32",
-    constraint_setting = ":cpu",
-    visibility = ["PUBLIC"],
-)
-
-# RISC-V 64-bit support
-constraint_value(
-    name = "riscv64",
-    constraint_setting = ":cpu",
+    aliases = {
+        "arm32": "arm32",
+        "arm64": "arm64",
+        "x86_32": "x86_32",
+        "x86_64": "x86_64",
+    },
+    default = "unspecified",
+    values = [
+        "x86_64",
+        "x86_32",
+        "arm64",
+        "arm64_32",
+        "arm32",
+        "wasm32",
+        "riscv64",
+        "unspecified",
+    ],
     visibility = ["PUBLIC"],
 )

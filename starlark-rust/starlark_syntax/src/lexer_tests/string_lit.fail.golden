@@ -14,7 +14,6 @@ error: Parse error: unfinished string literal
   |
 1 | '
   | ^
-  |
 
 
 Program:
@@ -27,7 +26,6 @@ error: Parse error: unfinished string literal
   |
 1 | "
   | ^
-  |
 
 
 Program:
@@ -39,7 +37,6 @@ error: Parse error: unfinished string literal
   |
 1 | this = a + test + r"
   |                   ^^
-  |
 
 
 Program:
@@ -51,7 +48,6 @@ error: Parse error: unfinished string literal
   |
 1 | test + ' of thing that
   |        ^^^^^^^^^^^^^^^
-  |
 
 
 Program:
@@ -64,4 +60,3 @@ error: Parse error: unfinished string literal
   |
 1 | test + ' of thing that
   |        ^^^^^^^^^^^^^^^
-  |

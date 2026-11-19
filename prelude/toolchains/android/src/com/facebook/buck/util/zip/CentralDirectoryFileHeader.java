@@ -25,7 +25,9 @@ import static java.util.zip.ZipEntry.CENOFF;
 import static java.util.zip.ZipEntry.CENSIG;
 import static java.util.zip.ZipEntry.CENSIZ;
 
+import com.facebook.infer.annotation.Nullsafe;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Class that represents a Central Directory File Header in a ZIP archive. It provides methods to
@@ -34,6 +36,7 @@ import java.util.Objects;
  * offset. Providing Accessors: The class provides accessor methods for the parsed header fields,
  * allowing users to retrieve the values.
  */
+@Nullsafe(Nullsafe.Mode.LOCAL)
 public class CentralDirectoryFileHeader {
 
   private int headerOffset;
@@ -168,7 +171,7 @@ public class CentralDirectoryFileHeader {
   }
 
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(@Nullable Object o) {
     if (this == o) {
       return true;
     }

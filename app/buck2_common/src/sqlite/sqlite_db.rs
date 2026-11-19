@@ -8,16 +8,17 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
+use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileName;
-use chrono::Utc;
+use buck2_hash::IntentionallyStdHashMap;
 use derive_more::Display;
 use derive_more::From;
 use dupe::Dupe;
@@ -39,8 +40,8 @@ enum SqliteDbError {
 
     #[error("Expected versions {:?}. Found versions {:?} in sqlite db at {}", .expected, .found, .path)]
     VersionMismatch {
-        expected: HashMap<String, String>,
-        found: HashMap<String, String>,
+        expected: IntentionallyStdHashMap<String, String>,
+        found: IntentionallyStdHashMap<String, String>,
         path: AbsNormPathBuf,
     },
 
@@ -77,14 +78,14 @@ pub trait SqliteDb {
 
     fn get_sqlite_db(
         db_dir: &AbsNormPathBuf,
-        versions: &HashMap<String, String>,
-        mut current_instance_metadata: HashMap<String, String>,
+        versions: &IntentionallyStdHashMap<String, String>,
+        mut current_instance_metadata: IntentionallyStdHashMap<String, String>,
         reject_identity: Option<&SqliteIdentity>,
     ) -> buck2_error::Result<Self>
     where
         Self: std::marker::Sized,
     {
-        let timestamp_on_initialization = Utc::now().to_rfc3339();
+        let timestamp_on_initialization = jiff::Timestamp::now().to_string();
         current_instance_metadata.insert(IDENTITY_KEY.to_owned(), timestamp_on_initialization);
 
         let db_path = db_dir.join(FileName::unchecked_new(Self::db_filename()));
@@ -122,13 +123,13 @@ pub trait SqliteDb {
     // Initialize a new db from scratch.
     fn create_sqlite_db(
         db_dir: AbsNormPathBuf,
-        versions: HashMap<String, String>,
-        mut current_instance_metadata: HashMap<String, String>,
+        versions: IntentionallyStdHashMap<String, String>,
+        mut current_instance_metadata: IntentionallyStdHashMap<String, String>,
     ) -> buck2_error::Result<Self>
     where
         Self: std::marker::Sized,
     {
-        let timestamp_on_initialization = Utc::now().to_rfc3339();
+        let timestamp_on_initialization = jiff::Timestamp::now().to_string();
         current_instance_metadata.insert(IDENTITY_KEY.to_owned(), timestamp_on_initialization);
 
         let db_path = db_dir.join(FileName::unchecked_new(Self::db_filename()));
@@ -137,7 +138,7 @@ pub trait SqliteDb {
         // We delete the entire directory and not just the db file because sqlite
         // can leave behind other files.
         if db_dir.exists() {
-            fs_util::remove_dir_all(&db_dir)?;
+            fs_util::remove_dir_all(&db_dir).categorize_internal()?;
         }
         fs_util::create_dir_all(&db_dir)?;
 
@@ -188,9 +189,7 @@ impl<T: SqliteTable> SqliteTables<T> {
             .get(IDENTITY_KEY)
             .buck_error_context("Error reading creation metadata")?
             .map(SqliteIdentity)
-            .with_buck_error_context(|| {
-                format!("Identity key is missing in db: `{IDENTITY_KEY}`")
-            })?;
+            .with_internal_error(|| format!("Identity key is missing in db: `{IDENTITY_KEY}`"))?;
 
         Ok(identity)
     }
@@ -237,11 +236,11 @@ impl<T: SqliteTable> SqliteTables<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     use buck2_core::fs::project::ProjectRootTemp;
     use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    use buck2_hash::IntentionallyStdHashMap;
     use dupe::Dupe;
     use parking_lot::Mutex;
     use rusqlite::Connection;
@@ -329,15 +328,15 @@ mod tests {
         }
     }
 
-    fn create_test_versions() -> HashMap<String, String> {
-        HashMap::from([
+    fn create_test_versions() -> IntentionallyStdHashMap<String, String> {
+        IntentionallyStdHashMap::from([
             ("schema_version".to_owned(), "1".to_owned()),
             ("app_version".to_owned(), "test".to_owned()),
         ])
     }
 
-    fn create_test_metadata() -> HashMap<String, String> {
-        HashMap::from([
+    fn create_test_metadata() -> IntentionallyStdHashMap<String, String> {
+        IntentionallyStdHashMap::from([
             ("created_by".to_owned(), "test_suite".to_owned()),
             ("test_run".to_owned(), "true".to_owned()),
         ])
@@ -420,8 +419,10 @@ mod tests {
             .path()
             .resolve(ProjectRelativePath::unchecked_new("test_db_dir"));
 
-        let v1_versions = HashMap::from([("schema_version".to_owned(), "1".to_owned())]);
-        let v2_versions = HashMap::from([("schema_version".to_owned(), "2".to_owned())]);
+        let v1_versions =
+            IntentionallyStdHashMap::from([("schema_version".to_owned(), "1".to_owned())]);
+        let v2_versions =
+            IntentionallyStdHashMap::from([("schema_version".to_owned(), "2".to_owned())]);
         let metadata = create_test_metadata();
 
         // Create database with version 1
@@ -502,7 +503,7 @@ mod tests {
         tables.create_all_tables()?;
 
         // Test version table functionality
-        let test_versions = HashMap::from([
+        let test_versions = IntentionallyStdHashMap::from([
             ("key1".to_owned(), "value1".to_owned()),
             ("key2".to_owned(), "value2".to_owned()),
         ]);
@@ -511,7 +512,7 @@ mod tests {
         assert_eq!(read_versions, test_versions);
 
         // Test created_by table functionality
-        let test_metadata = HashMap::from([
+        let test_metadata = IntentionallyStdHashMap::from([
             (
                 "timestamp_on_initialization".to_owned(),
                 "test_timestamp".to_owned(),

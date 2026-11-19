@@ -8,6 +8,8 @@ load(
     "conan_package",
 )
 
+oncall("build_infra")
+
 conan_package(
     name = '_package_zlib',
     lockfile = 'self//cpp/conan:lock',

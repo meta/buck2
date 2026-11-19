@@ -1,0 +1,19 @@
+load("@prelude//lean:rules.bzl", "lean_library", "lean_test")
+
+# The tests only query these targets: there is no Lean toolchain to build them.
+
+lean_library(
+    name = "spec",
+    srcs = ["Spec/Add.lean"],
+    covers = [
+        "code/add.txt",
+        "code/mul.txt",
+    ],
+    resources = ["Spec/notes.txt"],
+)
+
+lean_test(
+    name = "spec_check",
+    srcs = ["Main.lean"],
+    deps = [":spec"],
+)

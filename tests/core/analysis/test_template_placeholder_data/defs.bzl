@@ -18,7 +18,7 @@ CombinerTset = transitive_set(
 CombinerInfo = provider(fields = ["tset"])
 
 def _combiner(ctx):
-    output = ctx.actions.write("out", "")
+    output = ctx.actions.write("out", "", has_content_based_path = False)
 
     # the tset node's value will be our own output and the tset of ctx.attrs.extra_value if present
     # note that the normal way of combining tsets is by putting them in children and we want to be

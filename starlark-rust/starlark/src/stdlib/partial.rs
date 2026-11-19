@@ -29,8 +29,6 @@ use starlark_syntax::value_error;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
-use crate::coerce::Coerce;
-use crate::coerce::coerce;
 use crate::collections::symbol::symbol::Symbol;
 use crate::environment::GlobalsBuilder;
 use crate::eval::Arguments;
@@ -38,21 +36,36 @@ use crate::eval::Evaluator;
 use crate::eval::runtime::arguments::ArgNames;
 use crate::eval::runtime::arguments::ArgumentsFull;
 use crate::eval::runtime::rust_loc::rust_loc;
-use crate::starlark_complex_values;
+use crate::pagable::starlark_deserialize::StarlarkDeserialize;
+use crate::pagable::starlark_deserialize::StarlarkDeserializeContext;
+use crate::pagable::starlark_serialize::StarlarkSerialize;
+use crate::pagable::starlark_serialize::StarlarkSerializeContext;
+use crate::starlark_complex_value;
 use crate::values::Freeze;
 use crate::values::FreezeResult;
 use crate::values::Freezer;
-use crate::values::FrozenStringValue;
-use crate::values::FrozenValue;
+use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
-use crate::values::ValueLike;
+use crate::values::ValueOf;
 use crate::values::dict::DictRef;
 use crate::values::function::FUNCTION_TYPE;
-use crate::values::layout::typed::string::StringValueLike;
 use crate::values::types::tuple::value::Tuple;
+
+/// Build an index keyed by each symbol's hash, mapping to its position in the
+/// input. Shared between [`partial`] construction and
+/// [`PartialGen::starlark_deserialize`], where `names_index` is skipped on the
+/// wire and rebuilt from the symbols.
+fn build_names_index<'a>(symbols: impl IntoIterator<Item = &'a Symbol>) -> HashTable<usize> {
+    let symbols: Vec<&Symbol> = symbols.into_iter().collect();
+    let mut names_index = HashTable::with_capacity(symbols.len());
+    for (i, k) in symbols.iter().enumerate() {
+        names_index.insert_unique(k.hash(), i, |i| symbols[*i].hash());
+    }
+    names_index
+}
 
 #[starlark_module]
 pub fn partial(builder: &mut GlobalsBuilder) {
@@ -61,7 +74,8 @@ pub fn partial(builder: &mut GlobalsBuilder) {
         #[starlark(require = pos)] func: Value<'v>,
         #[starlark(args)] args: Value<'v>,
         #[starlark(kwargs)] kwargs: DictRef<'v>,
-    ) -> anyhow::Result<Partial<'v>> {
+        heap: Heap<'v>,
+    ) -> anyhow::Result<ValueOf<'v, Partial<'v>>> {
         debug_assert!(Tuple::from_value(args).is_some());
         let names: Vec<_> = kwargs
             .keys()
@@ -75,38 +89,35 @@ pub fn partial(builder: &mut GlobalsBuilder) {
                 )
             })
             .collect();
-        let mut names_index = HashTable::with_capacity(names.len());
-        for (i, (k, _)) in names.iter().enumerate() {
-            names_index.insert_unique(k.hash(), i, |i| names[*i].0.hash());
-        }
-        Ok(Partial {
+        let names_index = build_names_index(names.iter().map(|(s, _)| s));
+        Ok(heap.alloc(Partial {
             func,
             pos: args,
             named: kwargs.values().collect(),
             names,
             names_index,
-        })
+        }))
     }
 }
 
-#[derive(Debug, Coerce, Trace, NoSerialize, ProvidesStaticType, Allocative)]
+#[derive(Debug, Trace, NoSerialize, ProvidesStaticType, Allocative)]
 #[repr(C)]
-struct PartialGen<V, S> {
-    func: V,
+struct Partial<'v> {
+    func: Value<'v>,
     // Always references a tuple.
-    pos: V,
-    named: Vec<V>,
-    names: Vec<(Symbol, S)>,
+    pos: Value<'v>,
+    named: Vec<Value<'v>>,
+    names: Vec<(Symbol, StringValue<'v>)>,
     names_index: HashTable<usize>,
 }
 
-impl<'v, V: ValueLike<'v>, S> PartialGen<V, S> {
+impl<'v> Partial<'v> {
     fn pos_content(&self) -> &'v [Value<'v>] {
-        Tuple::from_value(self.pos.to_value()).unwrap().content()
+        Tuple::from_value(self.pos).unwrap().content()
     }
 }
 
-impl<'v, V: ValueLike<'v>, S> Display for PartialGen<V, S> {
+impl<'v> Display for Partial<'v> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "partial({}, *[", self.func)?;
         for (i, v) in self.pos_content().iter().enumerate() {
@@ -127,14 +138,12 @@ impl<'v, V: ValueLike<'v>, S> Display for PartialGen<V, S> {
     }
 }
 
-type Partial<'v> = PartialGen<Value<'v>, StringValue<'v>>;
-type FrozenPartial = PartialGen<FrozenValue, FrozenStringValue>;
-starlark_complex_values!(Partial);
+starlark_complex_value!(Partial);
 
-impl<'v> Freeze for Partial<'v> {
-    type Frozen = FrozenPartial;
-    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
-        Ok(FrozenPartial {
+impl<'v> Freeze<'v> for Partial<'v> {
+    type Frozen<'fv> = Partial<'fv>;
+    fn freeze<'fv>(self, freezer: &Freezer<'v, 'fv>) -> FreezeResult<Self::Frozen<'fv>> {
+        Ok(Partial {
             func: self.func.freeze(freezer)?,
             pos: freezer.freeze(self.pos)?,
             named: self.named.try_map(|x| x.freeze(freezer))?,
@@ -146,13 +155,39 @@ impl<'v> Freeze for Partial<'v> {
     }
 }
 
-#[starlark_value(type = FUNCTION_TYPE)]
-impl<'v, V: ValueLike<'v>, S: StringValueLike<'v>> StarlarkValue<'v> for PartialGen<V, S>
-where
-    Self: ProvidesStaticType<'v>,
-{
-    type Canonical = PartialGen<Value<'v>, StringValue<'v>>;
+impl<'v> StarlarkSerialize for Partial<'v> {
+    fn starlark_serialize(&self, ctx: &mut dyn StarlarkSerializeContext) -> crate::Result<()> {
+        self.func.starlark_serialize(ctx)?;
+        self.pos.starlark_serialize(ctx)?;
+        self.named.starlark_serialize(ctx)?;
+        self.names.starlark_serialize(ctx)?;
+        // names_index: skipped, rebuilt from names on deserialize.
+        Ok(())
+    }
+}
 
+impl<'v> StarlarkDeserialize<'v> for Partial<'v> {
+    fn starlark_deserialize(
+        ctx: &mut dyn StarlarkDeserializeContext<'_, 'v>,
+    ) -> crate::Result<Self> {
+        let func = Value::starlark_deserialize(ctx)?;
+        let pos = Value::starlark_deserialize(ctx)?;
+        let named = Vec::<Value>::starlark_deserialize(ctx)?;
+        let names: Vec<(Symbol, StringValue)> = Vec::starlark_deserialize(ctx)?;
+        // Rebuild names_index from names.
+        let names_index = build_names_index(names.iter().map(|(s, _)| s));
+        Ok(Partial {
+            func,
+            pos,
+            named,
+            names,
+            names_index,
+        })
+    }
+}
+
+#[starlark_value(type = FUNCTION_TYPE)]
+impl<'v> StarlarkValue<'v> for Partial<'v> {
     fn name_for_call_stack(&self, _me: Value<'v>) -> String {
         "partial".to_owned()
     }
@@ -166,8 +201,6 @@ where
         // apply the partial arguments first, then the remaining arguments I was given
 
         let self_pos = self.pos_content();
-        let self_named = coerce(&self.named);
-        let self_names = coerce(&self.names);
 
         for (symbol, _) in args.0.names.names() {
             if self
@@ -183,8 +216,8 @@ where
         }
 
         eval.alloca_concat(self_pos, args.0.pos, |pos, eval| {
-            eval.alloca_concat(self_named, args.0.named, |named, eval| {
-                eval.alloca_concat(self_names, args.0.names.names(), |names, eval| {
+            eval.alloca_concat(&self.named, args.0.named, |named, eval| {
+                eval.alloca_concat(&self.names, args.0.names.names(), |names, eval| {
                     let params = Arguments(ArgumentsFull {
                         pos,
                         named,
@@ -194,7 +227,7 @@ where
                     });
                     self.func
                         .to_value()
-                        .invoke_with_loc(Some(rust_loc!()), &params, eval)
+                        .invoke_with_loc(Some(rust_loc!().at()), &params, eval)
                 })
             })
         })

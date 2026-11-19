@@ -18,4 +18,3 @@ error: Unexpected parameter named `c`
   |
 4 |     Rec(c = [])
   |         ^^^^^^
-  |

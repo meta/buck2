@@ -20,4 +20,3 @@ error: Missing named-only parameter `b` for call to `RecFail`
   |
 3 | _x = RecFail(a = 1)
   |      ^^^^^^^^^^^^^^
-  |

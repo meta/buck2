@@ -9,20 +9,12 @@
  */
 
 use buck2_common::cas_digest::CasDigest;
-use buck2_common::cas_digest::CasDigestConfig;
 use buck2_common::cas_digest::CasDigestKind;
-use buck2_common::cas_digest::TrackedCasDigest;
 
 pub struct ActionDigestKind {
     _private: (),
 }
 
-impl CasDigestKind for ActionDigestKind {
-    fn empty_digest(_config: CasDigestConfig) -> Option<TrackedCasDigest<Self>> {
-        // No reason to optimize "empty" actions.
-        None
-    }
-}
+impl CasDigestKind for ActionDigestKind {}
 
 pub type ActionDigest = CasDigest<ActionDigestKind>;
-pub type TrackedActionDigest = TrackedCasDigest<ActionDigestKind>;

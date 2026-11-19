@@ -1,0 +1,35 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is dual-licensed under either the MIT license found in the
+# LICENSE-MIT file in the root directory of this source tree or the Apache
+# License, Version 2.0 found in the LICENSE-APACHE file in the root directory
+# of this source tree. You may select, at your option, one of the
+# above-listed licenses.
+
+def _main(ctx: bxl.Context):
+    actions = ctx.bxl_actions().actions
+    input = actions.write(
+        "input.txt",
+        ctx.cli_args.value,
+        has_content_based_path = False,
+    )
+    output = actions.declare_output("output.txt", has_content_based_path = False)
+
+    def dynamic_callback(ctx, artifacts, outputs):
+        content = artifacts[input].read_string()
+        ctx.bxl_actions().actions.write(outputs[output], content)
+
+    actions.dynamic_output(
+        dynamic = [input],
+        inputs = [],
+        outputs = [output.as_output()],
+        f = dynamic_callback,
+    )
+    ctx.output.ensure(output)
+
+main = bxl_main(
+    cli_args = {
+        "value": cli_args.string(),
+    },
+    impl = _main,
+)

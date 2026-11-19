@@ -12,6 +12,5 @@ def _audit_cell(ctx):
 
 audit_cell = bxl_main(
     impl = _audit_cell,
-    cli_args = {
-    },
+    cli_args = {},
 )

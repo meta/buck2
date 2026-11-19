@@ -2,4 +2,6 @@
 
 # AnalysisResult
 ## AnalysisResult.as\_dependency
+## AnalysisResult.label
 ## AnalysisResult.providers
+## AnalysisResult.providers\_info

@@ -1,0 +1,18 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+# Shared computation for buck2 action-parallelism (per-build concurrency
+# distribution). Consumed by the client-side InvocationRecorder (live path) and
+# the offline backfill binary so the two paths produce identical numbers.
+rust_library(
+    name = "buck2_action_parallelism",
+    srcs = glob(["src/**/*.rs"]),
+    test_deps = [
+        "fbsource//third-party/rust:prost-types",
+    ],
+    deps = [
+        "//buck2/app/buck2_data:buck2_data",
+        "//buck2/app/buck2_event_observer:buck2_event_observer",
+    ],
+)

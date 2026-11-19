@@ -1,0 +1,21 @@
+load(":defs.bzl", "test_equality", "test_startswith")
+
+test_startswith(
+    name = "test_startswith",
+    compiler_flags = [
+        "-Wall",
+        "-Werror",
+        "-Wno-global-constructors",
+        "-some-flag-with-macro=$(location :test_equality)",
+        "-fPIC",
+    ],
+)
+
+test_equality(
+    name = "test_equality",
+    compiler_flags = [
+        "-Wall",
+        "-Werror",
+        "-O2",
+    ],
+)

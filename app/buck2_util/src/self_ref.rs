@@ -54,7 +54,7 @@ impl<D: RefData> SelfRef<D> {
         let owner: Arc<O> = Arc::new(owner);
         let data = data(&owner)?;
         let data = unsafe { std::mem::transmute::<D::Data<'_>, D::Data<'static>>(data) };
-        Ok(SelfRef { owner, data })
+        Ok(SelfRef { data, owner })
     }
 
     pub fn new<O: Allocative + Send + Sync + 'static>(

@@ -47,8 +47,7 @@ fn server(dap: impl DebugServer) {
     }));
 
     log("DEBUG ADAPTER STARTING");
-    loop {
-        let recv = read();
+    while let Some(recv) = read() {
         let r: ds::Request = serde_json::from_value(recv).unwrap();
         assert_eq!(r.type_, "request");
         let resp = dispatch(&dap, &r);

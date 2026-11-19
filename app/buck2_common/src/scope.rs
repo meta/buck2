@@ -42,6 +42,12 @@ where
 }
 
 /// Wrap `async_scoped::TokioScope::scope_and_collect` propagating the event dispatcher.
+///
+/// # Safety
+///
+/// The caller must ensure that all futures spawned within the scope complete before
+/// the scope returns, or that any data referenced by the futures has a lifetime that
+/// extends beyond the scope. This is the same safety requirement as `async_scoped::TokioScope::scope_and_collect`.
 pub async unsafe fn scope_and_collect_with_dispatcher<'d, 'a, T, R, F>(
     dispatcher: EventDispatcher,
     f: F,
@@ -63,6 +69,12 @@ pub async unsafe fn scope_and_collect_with_dispatcher<'d, 'a, T, R, F>(
 }
 
 /// Wrap `async_scoped::TokioScope::scope_and_collect` propagating the event dispatcher.
+///
+/// # Safety
+///
+/// The caller must ensure that all futures spawned within the scope complete before
+/// the scope returns, or that any data referenced by the futures has a lifetime that
+/// extends beyond the scope. This is the same safety requirement as `async_scoped::TokioScope::scope_and_collect`.
 pub async unsafe fn scope_and_collect_with_dice<'c, 'd, 'a, T, R, F>(
     ctx: &'c mut DiceComputations<'d>,
     f: F,

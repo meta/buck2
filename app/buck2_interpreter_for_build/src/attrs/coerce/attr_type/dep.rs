@@ -8,13 +8,11 @@
  * above-listed licenses.
  */
 
+use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr_type::configured_dep::ExplicitConfiguredDepAttrType;
-use buck2_node::attrs::attr_type::configured_dep::UnconfiguredExplicitConfiguredDep;
 use buck2_node::attrs::attr_type::dep::DepAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
-use dupe::Dupe;
 use starlark::typing::Ty;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
@@ -23,15 +21,15 @@ use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
 impl AttrTypeCoerce for DepAttrType {
-    fn coerce_item(
+    fn coerce_item<'v>(
         &self,
         _configurable: AttrIsConfigurable,
-        ctx: &dyn AttrCoercionContext,
-        value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+        ctx: &dyn AttrCoercionContext<'v>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<AttrToken> {
         let label = ctx.coerce_providers_label(value.unpack_str_err()?)?;
 
-        Ok(CoercedAttr::Dep(label))
+        ctx.attr_arena().encode_dep(&label)
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {
@@ -40,25 +38,20 @@ impl AttrTypeCoerce for DepAttrType {
 }
 
 impl AttrTypeCoerce for ExplicitConfiguredDepAttrType {
-    fn coerce_item(
+    fn coerce_item<'v>(
         &self,
         _configurable: AttrIsConfigurable,
-        ctx: &dyn AttrCoercionContext,
-        value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+        ctx: &dyn AttrCoercionContext<'v>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<AttrToken> {
         let (label_string, platform_string): (&str, &str) = UnpackValue::unpack_value_err(value)?;
 
         let label = ctx.coerce_providers_label(label_string)?;
 
         let platform = ctx.coerce_target_label(platform_string)?;
 
-        Ok(CoercedAttr::ExplicitConfiguredDep(Box::new(
-            UnconfiguredExplicitConfiguredDep {
-                attr_type: self.dupe(),
-                label,
-                platform,
-            },
-        )))
+        ctx.attr_arena()
+            .encode_explicit_configured_dep(&label, &platform)
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {

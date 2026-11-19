@@ -8,34 +8,37 @@
  * above-listed licenses.
  */
 
-use std::collections::HashMap;
 use std::collections::hash_map;
 use std::process::Command;
 use std::process::ExitStatus;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_common::dice::data::HasIoProvider;
+use buck2_build_api::materialize::invocation_re_use_case;
+use buck2_common::dice::data::HasProjectRoot;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
-use buck2_common::file_ops::dice::ReadFileProxy;
 use buck2_common::file_ops::metadata::FileDigestConfig;
-use buck2_common::file_ops::metadata::RawDirEntry;
+use buck2_common::file_ops::metadata::FileType;
 use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::io::IoProvider;
 use buck2_common::io::fs::FsIoProvider;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::GitCellSetup;
+use buck2_core::cells::i_cell_relative_path::ICellRelativePath;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::fs::buck_out_path::BuckOutPathResolver;
+use buck2_core::fs::i_project_rel_path::IProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_directory::directory::directory::Directory;
 use buck2_error::BuckErrorContext;
+use buck2_error::BuckErrorOptionContext;
 use buck2_error::internal_error;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::HasDigestConfig;
@@ -46,16 +49,27 @@ use buck2_execute::execute::blocking::IoRequest;
 use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
 use buck2_execute::materialize::materializer::DeclareArtifactPayload;
 use buck2_execute::materialize::materializer::HasMaterializer;
+use buck2_execute::materialize::materializer::MaterializationPurpose;
+use buck2_execute::materialize::materializer::MaterializeRequest;
 use buck2_execute::materialize::materializer::Materializer;
+use buck2_execute::materialize::materializer::ReadLease;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_hash::BuckMutMap;
+use buck2_util::arc_str::PackedStringSlice;
+use buck2_util::arc_str::PackedStringSliceBuilder;
 use buck2_util::process::background_command;
-use cmp_any::PartialEqAny;
 use dice::CancellationContext;
 use dice::DiceComputations;
+use dice::EqualityBehavior;
 use dice::Key;
+use dice::OkPagableValueSerialize;
+use dice::ValueSerialize;
 use dupe::Dupe;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use tokio::sync::Semaphore;
 
 #[derive(buck2_error::Error, Debug)]
@@ -83,12 +97,48 @@ impl IoRequest for GitFetchIoRequest {
         let path = project_fs.resolve(&self.path);
         fs_util::create_dir_all(path.clone())?;
 
+        /// Remove some `GIT_` environment variables exposed by `git`.
+        ///
+        /// From `prek`. MIT-licensed, Copyright (c) 2024 j178.
+        ///
+        /// See: <https://github.com/j178/prek/blob/7780f1149565ff430b86be1f688dce7f680c6760/crates/prek/src/git.rs#L49-L77>
+        static GIT_ENV_TO_REMOVE: LazyLock<Vec<String>> = LazyLock::new(|| {
+            let keep = &[
+                "GIT_EXEC_PATH",
+                "GIT_SSH",
+                "GIT_SSH_COMMAND",
+                "GIT_SSL_CAINFO",
+                "GIT_SSL_NO_VERIFY",
+                "GIT_CONFIG_COUNT",
+                "GIT_CONFIG_PARAMETERS",
+                "GIT_HTTP_PROXY_AUTHMETHOD",
+                "GIT_ALLOW_PROTOCOL",
+                "GIT_ASKPASS",
+            ];
+
+            std::env::vars()
+                .map(|(key, _value)| key)
+                .filter(|key| {
+                    key.starts_with("GIT_")
+                        && !key.starts_with("GIT_CONFIG_KEY_")
+                        && !key.starts_with("GIT_CONFIG_VALUE_")
+                        && !keep.contains(&key.as_str())
+                })
+                .collect()
+        });
+
         // FIXME(JakobDegen): Ideally we'd use libgit2 directly here instead of shelling out, but
         // unfortunately the third party situation for that library in fbsource isn't great, so
         // let's do this for now
         fn run_git(cwd: &AbsNormPath, f: impl FnOnce(&mut Command)) -> buck2_error::Result<()> {
             let mut cmd = background_command("git");
             f(&mut cmd);
+            // If the user has Git environment variables set, they can cause this Git command to
+            // operate on the wrong repo.
+            for name in &*GIT_ENV_TO_REMOVE {
+                cmd.env_remove(name);
+            }
+
             let output = cmd
                 .current_dir(cwd)
                 .stderr(Stdio::piped())
@@ -118,14 +168,9 @@ impl IoRequest for GitFetchIoRequest {
         })?;
 
         run_git(&path, |c| {
-            c.arg("remote")
-                .arg("add")
-                .arg("origin")
-                .arg(self.setup.git_origin.as_ref());
-        })?;
-
-        run_git(&path, |c| {
-            c.arg("fetch").arg("origin").arg(self.setup.commit.as_ref());
+            c.arg("fetch")
+                .arg(self.setup.git_origin.as_ref())
+                .arg(self.setup.commit.as_ref());
         })?;
 
         run_git(&path, |c| {
@@ -144,6 +189,8 @@ async fn download_impl(
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<()> {
     let io = ctx.get_blocking_executor();
+    // Held until the fetched checkout is reported below.
+    let output_lease = materializer.prepare_outputs(vec![path.to_owned()]).await?;
     io.execute_io(
         Box::new(CleanOutputPaths {
             paths: vec![path.to_owned()],
@@ -175,12 +222,12 @@ async fn download_impl(
     // value. This work is kind of duplicated with the reading in the fileops, but only the first
     // time the contents are downloaded. On subsequent invocations of the daemon, we won't rerun
     // this however, so that case will still avoid doing unnecessary work.
-    let io_prov = ctx.global_data().get_io_provider();
-    let proj_root = io_prov.project_root().root();
+    let project_root = ctx.get_project_root().await?.dupe();
+    let proj_root = project_root.root();
     let abs_path = proj_root.join(path);
     let digest_config = ctx.global_data().get_digest_config();
     let file_digest_config = FileDigestConfig::build(digest_config.cas_digest_config());
-    let entry = build_entry_from_disk(abs_path, file_digest_config, &*io, proj_root)
+    let entry = build_entry_from_disk(abs_path, file_digest_config, io, proj_root)
         .await?
         .0
         .ok_or(GitError::NoDirectory)?;
@@ -191,11 +238,13 @@ async fn download_impl(
     });
 
     materializer
-        .declare_existing(vec![DeclareArtifactPayload {
-            path: path.to_owned(),
-            artifact: ArtifactValue::new(entry, None),
-            persist_full_directory_structure: false,
-        }])
+        .declare_existing(
+            &output_lease,
+            vec![DeclareArtifactPayload {
+                path: path.to_owned(),
+                artifact: ArtifactValue::new(entry, None),
+            }],
+        )
         .await?;
 
     Ok(())
@@ -215,7 +264,8 @@ async fn download_and_materialize(
 
     // A map of commit hashes to semaphores that are actually condvars which protect access to the
     // directory associated with that commit
-    static DIRECTORY_LICENSES: OnceLock<Mutex<HashMap<Arc<str>, Arc<Semaphore>>>> = OnceLock::new();
+    static DIRECTORY_LICENSES: OnceLock<Mutex<BuckMutMap<Arc<str>, Arc<Semaphore>>>> =
+        OnceLock::new();
 
     // We have to write this in a slightly funny way to convince the compiler that there's no
     // `map_guard` being held across an await point
@@ -272,7 +322,7 @@ async fn download_and_materialize(
     res
 }
 
-#[derive(allocative::Allocative)]
+#[derive(allocative::Allocative, Pagable)]
 pub(crate) struct GitFileOpsDelegate {
     buck_out_resolver: BuckOutPathResolver,
     cell: CellName,
@@ -283,12 +333,12 @@ pub(crate) struct GitFileOpsDelegate {
 }
 
 impl GitFileOpsDelegate {
-    fn resolve(&self, path: &CellRelativePath) -> ProjectRelativePathBuf {
+    fn resolve(&self, path: &CellRelativePath) -> IProjectRelativePath {
         self.buck_out_resolver
             .resolve_external_cell_source(path, ExternalCellOrigin::Git(self.setup.dupe()))
     }
 
-    fn get_base_path(&self) -> ProjectRelativePathBuf {
+    fn get_base_path(&self) -> IProjectRelativePath {
         self.resolve(CellRelativePath::empty())
     }
 }
@@ -298,41 +348,42 @@ impl FileOpsDelegate for GitFileOpsDelegate {
     async fn read_file_if_exists(
         &self,
         _ctx: &mut DiceComputations<'_>,
-        path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<ReadFileProxy> {
-        Ok(ReadFileProxy::new_with_captures(
-            (self.resolve(path), self.io.dupe()),
-            |(project_path, io)| async move {
-                (&io as &dyn IoProvider)
-                    .read_file_if_exists(project_path)
-                    .await
-            },
-        ))
+        path: ICellRelativePath,
+    ) -> buck2_error::Result<Option<String>> {
+        let project_path = self.resolve(&path);
+        (&self.io as &dyn IoProvider)
+            .read_file_if_exists(project_path)
+            .await
     }
 
     async fn read_dir(
         &self,
         _ctx: &mut DiceComputations<'_>,
-        path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
-        let project_path = self.resolve(path);
-        let mut entries = (&self.io as &dyn IoProvider)
+        path: ICellRelativePath,
+    ) -> buck2_error::Result<PackedStringSlice<FileName, FileType>> {
+        let project_path = self.resolve(&path);
+        let entries = (&self.io as &dyn IoProvider)
             .read_dir(project_path)
             .await
-            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
+            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?
+            .into_entries();
 
-        // Make sure entries are deterministic, since read_dir isn't.
-        entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
-
-        Ok(entries.into())
+        // Pack into a sorted compact representation. `read_dir` is not
+        // guaranteed to return entries in any particular order.
+        let mut builder: PackedStringSliceBuilder<FileName, FileType> =
+            PackedStringSliceBuilder::with_capacity(entries.len());
+        for e in &entries {
+            builder.push(&e.file_name, e.file_type);
+        }
+        Ok(builder.sort_and_build())
     }
 
     async fn read_path_metadata_if_exists(
         &self,
         _ctx: &mut DiceComputations<'_>,
-        path: &'async_trait CellRelativePath,
+        path: ICellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
-        let project_path = self.resolve(path);
+        let project_path = self.resolve(&path);
 
         let Some(metadata) = (&self.io as &dyn IoProvider)
             .read_path_metadata_if_exists(project_path)
@@ -343,7 +394,7 @@ impl FileOpsDelegate for GitFileOpsDelegate {
         };
         Ok(Some(metadata.try_map(
             |path| match path.strip_prefix_opt(self.get_base_path()) {
-                Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
+                Some(path) => Ok(CellPath::new(self.cell, CellRelativePath::new(path))),
                 None => Err(internal_error!(
                     "Non-cell internal symlink at `{}` in cell `{}`",
                     path,
@@ -351,10 +402,6 @@ impl FileOpsDelegate for GitFileOpsDelegate {
                 )),
             },
         )?))
-    }
-
-    fn eq_token(&self) -> PartialEqAny<'_> {
-        PartialEqAny::always_false()
     }
 }
 
@@ -371,9 +418,11 @@ pub(crate) async fn get_file_ops_delegate(
         PartialEq,
         Eq,
         Hash,
-        allocative::Allocative
+        allocative::Allocative,
+        Pagable
     )]
     #[display("({}, {})", _0, _1)]
+    #[pagable_typetag(dice::DiceKeyDyn)]
     struct GitFileOpsDelegateKey(CellName, GitCellSetup);
 
     #[async_trait::async_trait]
@@ -393,26 +442,56 @@ pub(crate) async fn get_file_ops_delegate(
                 io: FsIoProvider::new(
                     artifact_fs.fs().dupe(),
                     ctx.global_data().get_digest_config().cas_digest_config(),
+                    false,
                 ),
             };
             download_and_materialize(ctx, &ops.get_base_path(), &self.1, cancellations).await?;
             Ok(Arc::new(ops))
         }
 
-        fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-            false
+        fn equality_behavior() -> EqualityBehavior<Self::Value> {
+            EqualityBehavior::AlwaysUnequal
+        }
+
+        fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+            OkPagableValueSerialize::<Self::Value>::new()
         }
     }
 
-    ctx.compute(&GitFileOpsDelegateKey(cell, setup)).await?
+    ctx.compute(&GitFileOpsDelegateKey(cell, setup))
+        .await?
+        .dupe()
 }
 
+/// Puts the whole cell on disk and returns where, with the lease its reader holds.
 pub(crate) async fn materialize_all(
     ctx: &mut DiceComputations<'_>,
     cell: CellName,
     setup: GitCellSetup,
-) -> buck2_error::Result<ProjectRelativePathBuf> {
+) -> buck2_error::Result<(ProjectRelativePathBuf, ReadLease)> {
     // Get the `GitFileOpsDelegate` instance to make sure all the data is materialized.
     let ops = get_file_ops_delegate(ctx, cell, setup.dupe()).await?;
-    Ok(ops.get_base_path())
+    let path = ops.get_base_path().to_buf();
+    // The checkout is tracked as one root, whose value the materializer has; asking for it by
+    // that value is what holds it for the reader.
+    let materializer = ctx.per_transaction_data().get_materializer();
+    let entry = materializer
+        .get_artifact_entries_for_materialized_paths(vec![path.clone()], false)
+        .await?
+        .pop()
+        .flatten()
+        .map(|(_, entry)| entry)
+        .with_internal_error(|| {
+            format!("The git cell at `{path}` is not tracked after its download")
+        })?;
+    let re_use_case = invocation_re_use_case(ctx);
+    let response = materializer
+        .materialize(MaterializeRequest {
+            artifacts: vec![(path.clone(), ArtifactValue::new(entry, None))],
+            outputs: Vec::new(),
+            purpose: MaterializationPurpose::IntermediateOnly,
+            re_use_case,
+        })
+        .await?;
+    Ok((path, response.ensure_results_ok()?))
 }

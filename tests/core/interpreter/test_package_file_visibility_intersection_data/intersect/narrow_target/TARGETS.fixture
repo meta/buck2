@@ -1,0 +1,9 @@
+# Target declares its own non-PUBLIC list. The effective visibility is
+# the AND of `root//intersect/sub_b/...` (declared) and
+# `root//intersect/...` (intersection) = `root//intersect/sub_b/...`. A consumer
+# in `root//intersect/sub_a/...` matches the intersection but NOT the target's
+# own list, so it is rejected -- this is the footgun fix.
+stub(
+    name = "t",
+    visibility = ["root//intersect/sub_b/..."],
+)

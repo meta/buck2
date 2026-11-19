@@ -10,7 +10,6 @@
 import argparse
 import os
 import re
-from collections.abc import Iterable
 from io import TextIOWrapper
 
 
@@ -52,7 +51,7 @@ class Module:
 
         return self.submodules[name]
 
-    def render(self, f: TextIOWrapper, path_prefix: str, indent: int = 0) -> None:
+    def render(self, f: TextIOWrapper, indent: int = 0) -> None:
         space = " " * indent
         name = self.name
         if name in _RESERVED_KEYWORDS:
@@ -74,17 +73,21 @@ class Module:
             if sanitized_name[0].isdigit():
                 sanitized_name = "_" + sanitized_name
 
+            # a reserved keyword is renamed, so collisions must be checked against that name
+            if sanitized_name in _RESERVED_KEYWORDS:
+                sanitized_name = f"{sanitized_name}_"
+
             # avoid any collisions with other files
             while sanitized_name in submodule_names:
                 sanitized_name += "_"
 
             submodule_names.add(sanitized_name)
             submodule.name = sanitized_name
-            submodule.render(f, path_prefix, indent + 4)
+            submodule.render(f, indent + 4)
 
         header_space = " " * (indent + 4)
         for h in sorted(self.headers):
-            f.write(f'{header_space}header "{os.path.join(path_prefix, h)}"\n')
+            f.write(f'{header_space}header "{h}"\n')
 
         if self.headers:
             f.write(f"{header_space}export *\n")
@@ -95,29 +98,27 @@ class Module:
 def _write_single_module(
     f: TextIOWrapper,
     name: str,
-    headers: Iterable[str],
-    path_prefix: str,
+    headers: dict[str, str],
     is_framework: bool,
 ) -> None:
     module = Module(name, is_framework)
-    for h in headers:
-        module.add_header(h)
+    for path in headers.values():
+        module.add_header(path)
 
-    module.render(f, path_prefix)
+    module.render(f)
 
 
 def _write_submodules(
     f: TextIOWrapper,
     name: str,
-    headers: Iterable[str],
-    path_prefix: str,
+    headers: dict[str, str],
     is_framework: bool,
 ) -> None:
     # Create a tree of nested modules, one for each path component.
     root_module = Module(name, is_framework)
-    for h in headers:
+    for include_path, disk_path in headers.items():
         module = root_module
-        for i, component in enumerate(h.split(os.sep)):
+        for i, component in enumerate(include_path.split(os.sep)):
             if i == 0 and component == name:
                 # The common case is we have a single header path prefix that matches the module name.
                 # In this case we add the headers directly to the root module.
@@ -125,9 +126,9 @@ def _write_submodules(
             else:
                 module = module.get_submodule(component, is_framework)
 
-        module.add_header(h)
+        module.add_header(disk_path)
 
-    root_module.render(f, path_prefix)
+    root_module.render(f)
 
 
 def _write_swift_header(f: TextIOWrapper, name: str, swift_header_path: str) -> None:
@@ -156,41 +157,47 @@ def main() -> None:
         help="If set produce a modulemap with per-header submodules",
     )
     parser.add_argument(
-        "--symlink-tree",
-        required=True,
-    )
-    parser.add_argument(
         "--framework",
         help="This modulemap is for embedding in a framework.",
         action="store_true",
     )
     parser.add_argument(
-        "mappings", nargs="*", default=[], help="A list of import paths"
+        "mappings",
+        nargs="*",
+        default=[],
+        help="A list of tuples of include path to disk paths",
     )
     args = parser.parse_args()
 
-    output_dir = os.path.dirname(args.output)
-    symlink_tree_path = os.path.relpath(args.symlink_tree, output_dir)
-    if args.framework:
-        path_prefix = ""
-    else:
-        path_prefix = symlink_tree_path
+    if len(args.mappings) % 2 != 0:
+        raise RuntimeError(
+            "Mappings must be a list of pairs of include path to disk path"
+        )
+
+    headers = {}
+    for i in range(0, len(args.mappings), 2):
+        path = args.mappings[i + 1]
+        if args.framework:
+            pass
+        else:
+            # We need to relativize the path to the modulemap file
+            path = os.path.relpath(path, os.path.dirname(args.output))
+
+        headers[args.mappings[i]] = path
 
     with open(args.output, "w") as f:
         if args.use_submodules:
             _write_submodules(
                 f,
                 args.name,
-                args.mappings,
-                path_prefix,
+                headers,
                 args.framework,
             )
         else:
             _write_single_module(
                 f,
                 args.name,
-                args.mappings,
-                path_prefix,
+                headers,
                 args.framework,
             )
 
@@ -198,11 +205,7 @@ def main() -> None:
             _write_swift_header(
                 f,
                 args.name,
-                os.path.join(
-                    symlink_tree_path,
-                    args.name,
-                    os.path.basename(args.swift_header),
-                ),
+                os.path.relpath(args.swift_header, os.path.dirname(args.output)),
             )
 
 

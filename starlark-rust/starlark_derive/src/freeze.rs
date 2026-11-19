@@ -27,6 +27,7 @@ use syn::Token;
 use syn::WherePredicate;
 use syn::parse::ParseStream;
 use syn::parse_macro_input;
+use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 
 use crate::util::DeriveInputUtil;
@@ -45,16 +46,37 @@ impl Input<'_> {
         }
     }
 
+    /// The generics of the impl: the brand `'v` of `Freeze<'v>`, the parameters of
+    /// `impl<..>`, of the type, and of `Frozen<'fv>`.
+    ///
+    /// The brand is the type's lifetime parameter. A type without one holds no values, so it
+    /// implements the trait at every brand, which the impl names `'v`. A type with several is
+    /// rejected: the derive cannot tell which one is the heap's.
+    ///
+    /// Type parameters are frozen through their own `Freeze` impl, so they are bound by it and
+    /// mapped through `Frozen<'fv>`.
     fn format_impl_generics(
         &self,
-        bounds: bool,
-    ) -> syn::Result<(TokenStream, TokenStream, TokenStream)> {
+    ) -> syn::Result<(syn::Lifetime, TokenStream, TokenStream, TokenStream)> {
+        let trait_ = freeze_trait();
         let span = self.input.span();
+        let mut lifetimes = self.input.generics.lifetimes();
+        let brand = match (lifetimes.next(), lifetimes.next()) {
+            (None, _) => syn::Lifetime::new("'v", span),
+            (Some(lt), None) => lt.lifetime.clone(),
+            (Some(_), Some(second)) => {
+                return Err(syn::Error::new_spanned(
+                    second,
+                    "`#[derive(Freeze)]` cannot tell which lifetime parameter is the \
+                     heap's brand; implement `Freeze` by hand",
+                ));
+            }
+        };
         let mut impl_params = Vec::new();
         let mut input_params = Vec::new();
         let mut output_params = Vec::new();
-        if bounds {
-            impl_params.push(quote_spanned! { span=> 'freeze });
+        if self.input.generics.lifetimes().next().is_none() {
+            impl_params.push(quote_spanned! { span=> #brand });
         }
         for param in &self.input.generics.params {
             match param {
@@ -63,21 +85,21 @@ impl Input<'_> {
                     let bounds = t.bounds.iter();
                     impl_params.push(quote_spanned! {
                         span=>
-                        #name: #(#bounds +)* starlark::values::Freeze
+                        #name: #(#bounds +)* #trait_<#brand>
+                    });
+                    output_params.push(quote_spanned! {
+                        span=>
+                        <#name as #trait_<#brand>>::Frozen<'fv>
                     });
                     input_params.push(quote_spanned! {
                         span=>
                         #name
                     });
-                    output_params.push(quote_spanned! {
-                        span=>
-                        <#name as starlark::values::Freeze>::Frozen
-                    });
                 }
                 GenericParam::Lifetime(lt) => {
                     impl_params.push(quote_spanned! { span=> #lt });
                     input_params.push(quote_spanned! { span=> #lt });
-                    output_params.push(quote_spanned! { span=> 'static });
+                    output_params.push(quote! { 'fv });
                 }
                 GenericParam::Const(_) => {
                     return Err(syn::Error::new_spanned(
@@ -88,6 +110,7 @@ impl Input<'_> {
             }
         }
         Ok((
+            brand,
             self.angle_brankets(&impl_params),
             self.angle_brankets(&input_params),
             self.angle_brankets(&output_params),
@@ -114,8 +137,12 @@ fn derive_freeze_impl(input: DeriveInput) -> syn::Result<syn::ItemImpl> {
         ));
     }
 
-    let (impl_params, input_params, output_params) =
-        input.format_impl_generics(bounds.is_some())?;
+    let (brand, impl_params, input_params, output_params) = input.format_impl_generics()?;
+
+    let bounds_body = match bounds {
+        Some(bounds) => quote_spanned! { span=> where #bounds },
+        None => quote_spanned! { span=> },
+    };
 
     let validate_body = match validator {
         Some(validator) => quote_spanned! {
@@ -127,23 +154,22 @@ fn derive_freeze_impl(input: DeriveInput) -> syn::Result<syn::ItemImpl> {
         },
         None => quote_spanned! { span=> },
     };
-
-    let bounds_body = match bounds {
-        Some(bounds) => quote_spanned! { span=> where #bounds },
-        None => quote_spanned! { span=> },
+    let body = freeze_impl(input.input)?;
+    let body = quote_spanned! { span=>
+        let frozen = #body;
+        #validate_body
+        std::result::Result::Ok(frozen)
     };
 
-    let body = freeze_impl(input.input)?;
+    let trait_ = freeze_trait();
 
     let r#gen = syn::parse_quote_spanned! {
         span=>
-        impl #impl_params starlark::values::Freeze for #name #input_params #bounds_body {
-            type Frozen = #name #output_params;
+        impl #impl_params #trait_<#brand> for #name #input_params #bounds_body {
+            type Frozen<'fv> = #name #output_params;
             #[allow(unused_variables)]
-            fn freeze(self, freezer: &starlark::values::Freezer) -> starlark::values::FreezeResult<Self::Frozen> {
-                let frozen = #body;
-                #validate_body
-                std::result::Result::Ok(frozen)
+            fn freeze<'fv>(self, freezer: &starlark::values::Freezer<#brand, 'fv>) -> starlark::values::FreezeResult<Self::Frozen<'fv>> {
+                #body
             }
         }
     };
@@ -158,12 +184,12 @@ struct FreezeDeriveOptions {
     /// `#[freeze(validator = function)]`.
     validator: Option<Ident>,
     /// `#[freeze(bounds = ...)]`.
-    bounds: Option<WherePredicate>,
+    bounds: Option<Punctuated<WherePredicate, Token![,]>>,
     /// `#[freeze(identity)]`.
     identity: Option<identity>,
 }
 
-/// Parse a #[freeze(validator = function)] annotation.
+/// Parse a `#[freeze(...)]` annotation.
 fn extract_options(attrs: &[Attribute]) -> syn::Result<FreezeDeriveOptions> {
     syn::custom_keyword!(validator);
     syn::custom_keyword!(bounds);
@@ -192,7 +218,7 @@ fn extract_options(attrs: &[Attribute]) -> syn::Result<FreezeDeriveOptions> {
                     }
                     input.parse::<Token![=]>()?;
                     let bounds_input = input.parse::<LitStr>()?;
-                    opts.bounds = Some(bounds_input.parse()?);
+                    opts.bounds = Some(bounds_input.parse_with(Punctuated::parse_terminated)?);
                 } else if let Some(identity) = input.parse::<Option<identity>>()? {
                     if opts.identity.is_some() {
                         return Err(syn::Error::new_spanned(
@@ -218,6 +244,7 @@ fn extract_options(attrs: &[Attribute]) -> syn::Result<FreezeDeriveOptions> {
 }
 
 fn freeze_impl(derive_input: &DeriveInput) -> syn::Result<syn::Expr> {
+    let trait_ = freeze_trait();
     let derive_input = DeriveInputUtil::new(derive_input)?;
     derive_input.match_self(|struct_or_enum_variant, fields| {
         let fields: Vec<syn::Expr> = fields
@@ -249,13 +276,17 @@ fn freeze_impl(derive_input: &DeriveInput) -> syn::Result<syn::Expr> {
                     })
                 } else {
                     Ok(syn::parse_quote_spanned! { span=>
-                        starlark::values::Freeze::freeze(#ident, freezer)?
+                        #trait_::freeze(#ident, freezer)?
                     })
                 }
             })
             .collect::<syn::Result<_>>()?;
         struct_or_enum_variant.construct(fields)
     })
+}
+
+fn freeze_trait() -> TokenStream {
+    quote! { starlark::values::Freeze }
 }
 
 pub fn derive_freeze(input: proc_macro::TokenStream) -> proc_macro::TokenStream {

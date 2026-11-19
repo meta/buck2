@@ -54,6 +54,8 @@ cli() ->
                 handler => fun handle_list/1,
                 arguments => [
                     #{name => output_dir, long => "-output-dir", type => string, required => true},
+
+                    % --json flag is now a no-op, to be removed once all callers are fixed
                     #{name => json, long => "-json", type => boolean, required => false}
                 ]
             },
@@ -89,11 +91,18 @@ cli() ->
 -spec handle_list(Args) -> ok when
     Args :: list_args().
 handle_list(Args) ->
-    #{output_dir := OutputDir} = Args,
-    test_logger:set_up_logger(OutputDir, test_listing, capture_stdout),
-    ok = listing(Args),
-    ?LOG_DEBUG("Listing done"),
-    ok.
+    try
+        #{output_dir := OutputDir} = Args,
+        test_logger:set_up_logger(OutputDir, test_listing, no_capture_stdout),
+        ok = listing(Args),
+        ?LOG_DEBUG("Listing done"),
+        ok
+    catch
+        Class:Reason:StackTrace ->
+            ErrorMsg = erl_error:format_exception(Class, Reason, StackTrace),
+            io:format(standard_error, "Listing failed:~n~ts", [ErrorMsg]),
+            erlang:halt(1)
+    end.
 
 -spec handle_run(Args) -> ok when
     Args :: run_args().
@@ -169,12 +178,7 @@ listing(Args) ->
     #{test_info_file := TestInfoFile, output_dir := OutputDir} = Args,
     TestInfo = test_info:load_from_file(TestInfoFile),
     Listing = get_listing(TestInfo, OutputDir),
-    case Args of
-        #{json := true} ->
-            listing_interfacer:produce_json_file(OutputDir, Listing);
-        _ ->
-            listing_interfacer:produce_xml_file(OutputDir, Listing)
-    end.
+    listing_interfacer:produce_json_file(OutputDir, Listing).
 
 -spec running(Args) -> ok when
     Args :: run_args().
@@ -222,9 +226,20 @@ get_listing(TestInfo, OutputDir) ->
     HookModules = get_hooks(TestInfo),
     Providers1 = [buck_ct_provider:do_pre_listing(Provider) || Provider <- Providers0],
     Listing = list_test:list_tests(Suite, HookModules),
-    Providers2 = [buck_ct_provider:do_post_listing(Provider) || Provider <- Providers1],
+    TestNames = [TestCase#test_spec_test_info.name || TestCase <- Listing#test_spec_test_case.testcases],
+    {Providers2, FilteredTestNames} = lists:mapfoldl(
+        fun buck_ct_provider:do_post_listing/2,
+        TestNames,
+        Providers1
+    ),
     [buck_ct_provider:do_terminate(Provider) || Provider <- Providers2],
-    Listing.
+    SelectedTestNames = maps:from_keys(FilteredTestNames, true),
+    TestCases = [
+        TestCase
+     || TestCase <- Listing#test_spec_test_case.testcases,
+        is_map_key(TestCase#test_spec_test_info.name, SelectedTestNames)
+    ],
+    Listing#test_spec_test_case{testcases = TestCases}.
 
 %% rudimantary implementation for running tests with buck2 open-sourced test runner
 
@@ -237,7 +252,7 @@ list_and_run(Args, OutputDir) ->
     Listing = get_listing(TestInfo, OutputDir),
     Tests = listing_to_testnames(Listing),
     running(Args#{output_dir => OutputDir, tests => Tests}),
-    ResultsFile = filename:join(OutputDir, "result_exec.json"),
+    ResultsFile = test_result_output:output_file(OutputDir),
     print_results(ResultsFile).
 
 -spec listing_to_testnames(#test_spec_test_case{}) -> [string()].
@@ -295,38 +310,42 @@ stdout_streaming(_) -> output_to_stdout.
 -spec print_results(file:filename()) -> boolean().
 print_results(ResultsFile) ->
     {ok, Data} = file:read_file(ResultsFile, [raw]),
-    Results = json:decode(Data),
-    {Summary, AnyFailure} = lists:foldl(fun print_individual_results/2, {#{}, false}, Results),
+    Events = [json:decode(Line) || Line <- binary:split(Data, <<"\n">>, [global, trim_all])],
+    {Summary, AnyTestFailure} = lists:foldl(fun print_individual_results/2, {#{}, false}, Events),
     io:format("~n~10s: ~b~n~n", ["TOTAL", lists:sum(maps:values(Summary))]),
     [
-        io:format("~10ts: ~b~n", [json_interfacer:status_name(Result), Amount])
+        io:format("~10ts: ~b~n", [test_result_output:status_name(Result), Amount])
      || Result := Amount <- Summary
     ],
-    AnyFailure.
+    AnyTestFailure.
 
 -spec print_individual_results(map(), Acc) -> Acc when Acc :: {#{non_neg_integer() => non_neg_integer()}, boolean()}.
-print_individual_results(Result, {Summary, AnyFailure}) ->
-    #{<<"main">> := #{<<"details">> := Details, <<"status">> := Status, <<"std_out">> := StdOut}} = Result,
+print_individual_results(#{<<"start">> := _}, Acc) ->
+    Acc;
+print_individual_results(#{<<"run_failure">> := #{<<"details">> := Details}}, {Summary, _}) ->
+    print_details(Details),
+    {Summary, true};
+print_individual_results(
+    #{<<"finish">> := #{<<"status">> := Status, <<"message">> := Message}}, {Summary, AnyFailure}
+) ->
     NewAnyFailure =
-        case json_interfacer:status_name(Status) of
+        case test_result_output:status_name(Status) of
             passed ->
                 AnyFailure;
             skipped ->
-                print_details(StdOut, Details),
+                print_details(Message),
                 AnyFailure;
             omitted ->
                 AnyFailure;
             _NotPassed ->
-                print_details(StdOut, Details),
+                print_details(Message),
                 true
         end,
     {Summary#{Status => maps:get(Status, Summary, 0) + 1}, NewAnyFailure}.
 
--spec print_details(StdOut, Details) -> ok when
-    StdOut :: unicode:chardata(),
+-spec print_details(Details) -> ok when
     Details :: unicode:chardata().
-print_details(StdOut, Details) ->
-    io:format("~ts~n", [StdOut]),
+print_details(Details) ->
     io:format("~ts~n", [Details]),
     io:format("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -~n"),
     io:format("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -~n").

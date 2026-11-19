@@ -1,0 +1,25 @@
+[repositories]
+    root = .
+[repository_aliases]
+    prelude = root
+[buildfile]
+    name = TARGETS.fixture
+[buck2]
+  materializations = deferred
+
+[agent_context]
+  enforced_clients = test_enforced_client
+
+[agent_context#intent]
+  required = true
+  values = build|test|query|fix|investigate
+  description = The purpose of this buck2 invocation
+
+[agent_context#attempt]
+  required = true
+  description = Which attempt number this is for the same logical task
+
+[agent_context#prior_error]
+  required = false
+  values = kotlin_unresolved_reference|missing_target|starlark_error|action_command_failure
+  description = The error category from the previous failed build

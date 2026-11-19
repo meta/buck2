@@ -18,6 +18,6 @@ Instructions:
        # instrs.star.bzl:6:5-26
    0: ListNew ->&1
    8: Const 10 ->&2
-  32: DictNPop [&1, &2] ->&0
-  48: Return &0
-  56: End
+  32: DictNPop [&1, &2] ->&0 0
+  56: Return &0
+  64: End

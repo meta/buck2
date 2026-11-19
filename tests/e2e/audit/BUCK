@@ -1,9 +1,0 @@
-load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
-
-oncall("build_infra")
-
-buck2_e2e_test(
-    name = "test_audit_classpath",
-    srcs = ["test_audit_classpath.py"],
-    skip_for_os = ["windows"],
-)

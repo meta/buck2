@@ -1,0 +1,13 @@
+[buildfile]
+name = TARGETS.fixture
+
+[repositories]
+root = .
+
+[buck2]
+materializations = deferred
+digest_algorithms = SHA256
+
+[http]
+connect_timeout_ms = 1000
+read_timeout_ms = 1000

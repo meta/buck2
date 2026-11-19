@@ -12,15 +12,34 @@ load(
     "PythonToolchainInfo",
 )
 
-def _python_toolchain_impl(ctx):
+def _distribution_interpreter(ctx):
     distribution = ctx.attrs.distribution[DefaultInfo].default_outputs[0]
-    interpreter = cmd_args(distribution, absolute_suffix = "/python/bin/python")
+    return cmd_args(distribution, absolute_suffix = "/python/bin/python")
+
+def _python_interpreter_impl(ctx):
+    return [
+        DefaultInfo(),
+        RunInfo(args = [_distribution_interpreter(ctx)]),
+    ]
+
+# The interpreter from a Python distribution, as a runnable target. The
+# bootstrap toolchain runs prelude's own Python tools with it, so they do not
+# depend on whichever `python3` the executor's image happens to provide.
+python_interpreter = rule(
+    impl = _python_interpreter_impl,
+    attrs = {
+        "distribution": attrs.exec_dep(),
+    },
+)
+
+def _python_toolchain_impl(ctx):
+    interpreter = _distribution_interpreter(ctx)
     return [
         DefaultInfo(),
         PythonToolchainInfo(
             binary_linker_flags = ctx.attrs.binary_linker_flags,
             linker_flags = ctx.attrs.linker_flags,
-            host_interpreter = RunInfo(args = ["python3"]),
+            host_interpreter = RunInfo(args = [interpreter]),
             interpreter = RunInfo(args = [interpreter]),
             compile = RunInfo(args = ["echo", "COMPILEINFO"]),
             package_style = "inplace",

@@ -166,6 +166,7 @@ mod freeze_error;
 mod index;
 pub(crate) mod iter;
 pub(crate) mod layout;
+pub mod predicate;
 pub(crate) mod recursive_repr_or_json_guard;
 mod stack_guard;
 pub(crate) mod starlark_type_id;

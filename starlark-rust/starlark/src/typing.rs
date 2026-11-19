@@ -37,6 +37,7 @@ pub(crate) mod function;
 pub(crate) mod interface;
 pub(crate) mod mode;
 pub(crate) mod oracle;
+pub(crate) mod predicate;
 pub(crate) mod small_arc_vec;
 pub(crate) mod starlark_value;
 pub(crate) mod structs;

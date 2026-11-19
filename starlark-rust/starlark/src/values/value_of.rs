@@ -247,7 +247,8 @@ impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> Value
 }
 
 /// A type whose handle derefs to what a value of it is used as: a nominal type with one
-/// representation, to that representation.
+/// representation to that representation, a
+/// [predicate type](crate::values::predicate) to its trait object.
 pub trait DerefHandle<'v>: StarlarkTypeExprStable<'v> {
     /// What the handle derefs to.
     type Target: ?Sized + 'v;

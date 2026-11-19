@@ -19,6 +19,8 @@ use std::collections::HashMap;
 
 use quote::quote;
 
+use crate::membership::membership_items;
+use crate::membership::take_memberships;
 use crate::typed_behaviour::Typing;
 use crate::typed_behaviour::always_hashes_impl;
 use crate::typed_behaviour::derive_from_typed;
@@ -847,6 +849,7 @@ impl ImplStarlarkValue {
     /// what the typed methods say about the type.
     fn type_impl(&self, mut items: Vec<syn::ImplItem>) -> syn::Result<proc_macro2::TokenStream> {
         let lt = &self.lifetime_param;
+        let memberships = take_memberships(&mut items)?;
         let mut always_hashes = None;
         let mut typed = TypedMethods::new();
         for item in &mut items {
@@ -902,7 +905,8 @@ impl ImplStarlarkValue {
                 .chain(self.bin_op_signatures(&typed))
                 .chain(self.rbin_op_signatures(&typed))
                 .chain(self.un_op_result(&typed))
-                .chain(self.at_signature(&typed)),
+                .chain(self.at_signature(&typed))
+                .chain(membership_items(&memberships, lt)),
         );
         let has_fn_flags = self.has_fn_flags(&type_impl)?;
         type_impl.items.extend(has_fn_flags);

@@ -45,6 +45,7 @@ use crate::values::dict::value::FrozenDict;
 use crate::values::float::StarlarkFloat;
 use crate::values::list::value::FrozenList;
 use crate::values::none::NoneType;
+use crate::values::predicate::Predicate;
 use crate::values::set::value::FrozenSet;
 use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::string::str_type::StarlarkStr;
@@ -417,6 +418,11 @@ impl TyStarlarkValue {
 
     pub(crate) fn is_indexable(self) -> bool {
         self.vtable.vtable.HAS_at
+    }
+
+    /// The predicate types the type says it is a member of.
+    pub(crate) fn implemented_predicates(self) -> Vec<Predicate> {
+        (self.vtable.vtable.implemented_predicates)()
     }
 
     pub(crate) fn attr_from_methods(self, name: &str) -> Result<Ty, TypingNoContextError> {

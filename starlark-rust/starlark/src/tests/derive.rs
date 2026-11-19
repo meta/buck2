@@ -19,6 +19,7 @@ mod docs;
 mod freeze;
 mod macro_item;
 mod module;
+mod predicate;
 mod trace;
 mod typed_behaviour;
 mod unpack_value;

@@ -74,6 +74,7 @@ use crate::values::demand::Demand;
 use crate::values::error::ControlError;
 use crate::values::function::FUNCTION_TYPE;
 use crate::values::layout::vtable::StarlarkValueRawPtr;
+use crate::values::predicate::Predicate;
 
 /// A trait for values which are more complex - because they are either mutable
 /// (e.g. using [`RefCell`](std::cell::RefCell)), or contain references to other values.
@@ -1030,6 +1031,38 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// them, [`OperatorSignature::any`] if it is written as declared here.
     fn at_signature() -> Option<OperatorSignature> {
         None
+    }
+
+    /// Provides the handle of each [predicate type](crate::values::predicate) this type is a
+    /// member of, for the value `this`.
+    ///
+    /// This is not written by hand. A type is a member of a predicate type by a conversion
+    /// from its own handle to the predicate's, written in its
+    /// [`#[starlark_value]`](crate::values::starlark_value) block:
+    ///
+    /// ```ignore
+    /// #[starlark(implements = StarlarkCmdArgsLike)]
+    /// fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
+    ///     this.as_ref()
+    /// }
+    /// ```
+    ///
+    /// The parameter is the type's [`Get`](Self::Get): `ValueTyped<'v, Self>` for a type with
+    /// one representation, the view itself, by value, for a type with several. The result is
+    /// the predicate's handle, which lives as long as the heap, and that is why the conversion
+    /// starts from the handle and not from `&self`. The macro derives this function and
+    /// [`implemented_predicates`](Self::implemented_predicates) from the conversions of a
+    /// block, so a type is a member once, for every representation.
+    #[starlark_internal_vtable(skip)]
+    fn provide_predicate_handle(_this: Self::Get, _demand: &mut Demand<'_, 'v>) {}
+
+    /// The [predicate types](crate::values::predicate) this type says it is a member of, which
+    /// is what the typechecker and the documentation know of it.
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) generates this with
+    /// [`provide_predicate_handle`](Self::provide_predicate_handle).
+    fn implemented_predicates() -> Vec<Predicate> {
+        Vec::new()
     }
 
     /// Called when exporting a value under a specific name,

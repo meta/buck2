@@ -25,6 +25,7 @@ use proc_macro::TokenStream;
 mod any_lifetime;
 mod bc;
 mod freeze;
+mod membership;
 mod module;
 mod pagable_brand;
 mod representations;

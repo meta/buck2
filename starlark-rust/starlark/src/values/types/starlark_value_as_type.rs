@@ -27,12 +27,15 @@ use allocative::Allocative;
 use starlark_derive::NoSerialize;
 use starlark_derive::StarlarkPagablePanic;
 use starlark_derive::starlark_value;
+use starlark_map::small_map::SmallMap;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::docs::DocItem;
 use crate::docs::DocMember;
 use crate::docs::DocProperty;
+use crate::docs::DocString;
+use crate::docs::DocStringKind;
 use crate::docs::DocType;
 use crate::typing::Ty;
 use crate::values::AllocFrozenValue;
@@ -45,6 +48,8 @@ use crate::values::StarlarkValue;
 use crate::values::StaticValueRegistered;
 use crate::values::Value;
 use crate::values::ValueOf;
+use crate::values::predicate::StarlarkPredicate;
+use crate::values::predicate::predicate_ty;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::typing::TypeType;
 use crate::values::typing::ty::AbstractType;
@@ -207,6 +212,32 @@ impl<T> StarlarkValueAsType<T> {
                             docs: None,
                             typ: AbstractType::starlark_type_repr(),
                         }))
+                    },
+                ))
+            },
+            PhantomData,
+        )
+    }
+
+    /// The type object of the predicate type `T`, documented by what its declaration says.
+    pub const fn new_predicate() -> Self
+    where
+        T: StarlarkPredicate + AsTypeStaticRegistered,
+    {
+        StarlarkValueAsType(
+            &const {
+                AllocStaticSimple::alloc(StarlarkValueAsTypeStarlarkValue(
+                    predicate_ty::<T>,
+                    || {
+                        DocItem::Type(DocType {
+                            docs: DocString::from_docstring(
+                                DocStringKind::Rust,
+                                T::PREDICATE.docs(),
+                            ),
+                            members: SmallMap::new(),
+                            ty: predicate_ty::<T>(),
+                            constructor: None,
+                        })
                     },
                 ))
             },

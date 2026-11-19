@@ -30,6 +30,7 @@ use dice::DiceKeyDyn;
 use dice::DiceStorage;
 use dice::EqualityBehavior;
 use dice::EvictionPolicy;
+use dice::EvictionStrategy;
 use dice::Key;
 use dice::PagableStorageBackend;
 use dice::PageOutPolicy;
@@ -52,7 +53,7 @@ mod recovery;
 fn test_storage(path: &Path) -> anyhow::Result<DiceStorage> {
     let mut storage = DiceStorage::open(path, PagableStorageBackend::Sqlite)?;
     storage.set_page_out_policy(PageOutPolicy::OncePerKey);
-    storage.set_eviction_policy(EvictionPolicy::OnIdle);
+    storage.set_eviction_policy(EvictionPolicy::OnIdle(EvictionStrategy::Default));
     Ok(storage)
 }
 

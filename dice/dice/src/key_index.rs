@@ -10,18 +10,24 @@
 
 use std::array;
 use std::num::NonZeroU32;
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
 
 use allocative::Allocative;
+use dupe::Dupe;
 use lock_free_hashtable::raw::LockFreeRawTable;
 use lock_free_vec::LockFreeVec;
 use parking_lot::Mutex;
 use parking_lot::MutexGuard;
 
 use crate::Key;
+use crate::arc::Arc;
 use crate::key::CowDiceKeyHashed;
 use crate::key::DiceKey;
 use crate::key::DiceKeyErased;
 use crate::key::DiceKeyErasedRef;
+use crate::storage::DiceStorage;
 
 const KEY_BY_INDEX_BUCKETS: usize =
     lock_free_vec::buckets_for_max_capacity(DiceKeyIndex::MAX_INDEX_IN_SHARD as usize + 1);
@@ -80,19 +86,35 @@ impl Shard {
 #[derive(Allocative)]
 pub(crate) struct DiceKeyIndex {
     shards: [Shard; DiceKeyIndex::SHARDS as usize],
+    accesses: Option<Arc<AccessTracker>>,
 }
 
 impl Default for DiceKeyIndex {
     fn default() -> DiceKeyIndex {
-        DiceKeyIndex {
-            shards: array::from_fn(|_| Shard::default()),
-        }
+        Self::for_storage(None)
     }
 }
 
 impl DiceKeyIndex {
     pub(crate) const SHARDS: u32 = 64;
     pub(crate) const MAX_INDEX_IN_SHARD: u32 = u32::MAX / DiceKeyIndex::SHARDS;
+
+    pub(crate) fn for_storage(storage: Option<&DiceStorage>) -> Self {
+        let track_accesses = storage.is_some_and(DiceStorage::tracks_accesses);
+        Self {
+            shards: array::from_fn(|_| Shard::default()),
+            accesses: track_accesses.then(AccessTracker::new),
+        }
+    }
+
+    pub(crate) fn access_scope(&self) -> AccessScope {
+        AccessScope(self.accesses.as_ref().map(|accesses| {
+            Arc::new(AccessScopeInner {
+                accesses: accesses.dupe(),
+                batch: OnceLock::new(),
+            })
+        }))
+    }
 
     #[inline]
     fn shard_index_for_hash(hash: u64) -> u32 {
@@ -121,6 +143,14 @@ impl DiceKeyIndex {
         let index_in_shard = if let Some(index_in_shard) = shard.get(key.borrow(), hash) {
             index_in_shard
         } else {
+            // Publish the access slot before the key. A reader finding the key must be able
+            // to record demand immediately, without acquiring this shard's writer lock.
+            if let Some(accesses) = &self.accesses {
+                accesses.shards[shard_index as usize]
+                    .push_at(shard.key_by_index.len(), AtomicU32::new(0))
+                    .ok()
+                    .unwrap();
+            }
             shard.insert_unique_unchecked(&guard, key.into_owned(), hash)
         };
         DiceKeyUnpacked {
@@ -143,6 +173,92 @@ impl DiceKeyIndex {
     }
 }
 
+/// Only paging engines using LRU allocate this table. It contains no keys or values, so an
+/// in-flight eviction need not retain the key index to recheck concurrent accesses.
+#[derive(Allocative)]
+struct AccessTracker {
+    batches: Mutex<AccessBatches>,
+    shards: [LockFreeVec<AtomicU32, KEY_BY_INDEX_BUCKETS>; DiceKeyIndex::SHARDS as usize],
+}
+
+/// Engine-wide batches of overlapping payload demand. A new batch starts on the first
+/// demand after all previously registered scopes have dropped. Idle time and metadata-only
+/// transactions do not advance the batch ID.
+#[derive(Allocative, Default)]
+struct AccessBatches {
+    /// Most recently assigned batch ID, starting at one. Zero means no payload demand yet.
+    current: u32,
+    /// Registered scopes still held by a transaction, clone, or spawned computation.
+    /// Each scope counts once regardless of how many keys or owners it has.
+    active: usize,
+}
+
+impl AccessBatches {
+    /// Called once per scope, on its first payload demand.
+    fn register_scope(&mut self) -> u32 {
+        if self.active == 0 {
+            // Saturating keeps new demand protected instead of wrapping it into the
+            // oldest batch after u32::MAX distinct periods of transaction activity.
+            self.current = self.current.saturating_add(1);
+        }
+        self.active += 1;
+        self.current
+    }
+
+    /// Called when the last owner of a registered scope drops.
+    fn unregister_scope(&mut self) {
+        self.active -= 1;
+    }
+}
+
+/// Clones and computations spawned by a transaction share this scope. Registration is lazy:
+/// creating a transaction for metadata or maintenance must not age the payload working set.
+#[derive(Clone, Dupe)]
+pub(crate) struct AccessScope(Option<Arc<AccessScopeInner>>);
+
+struct AccessScopeInner {
+    accesses: Arc<AccessTracker>,
+    batch: OnceLock<u32>,
+}
+
+impl AccessScope {
+    pub(crate) fn record(&self, key: DiceKey) {
+        let Some(scope) = &self.0 else {
+            return;
+        };
+        let batch = *scope
+            .batch
+            .get_or_init(|| scope.accesses.batches.lock().register_scope());
+        let access = scope.accesses.access(key);
+        if access.load(Ordering::Relaxed) < batch {
+            access.fetch_max(batch, Ordering::Relaxed);
+        }
+    }
+}
+
+impl Drop for AccessScopeInner {
+    fn drop(&mut self) {
+        if self.batch.get().is_some() {
+            self.accesses.batches.lock().unregister_scope();
+        }
+    }
+}
+
+impl AccessTracker {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            batches: Mutex::new(AccessBatches::default()),
+            shards: array::from_fn(|_| LockFreeVec::new()),
+        })
+    }
+
+    fn access(&self, key: DiceKey) -> &AtomicU32 {
+        let unpack = DiceKeyUnpacked::unpack(key);
+        self.shards[unpack.shard_index as usize]
+            .get(unpack.index_in_shard as usize)
+            .expect("access slots are published before their keys")
+    }
+}
 mod introspect {
     use crate::HashMap;
     use crate::introspection::graph::AnyKey;

@@ -13,6 +13,7 @@ use buck2_fs::paths::file_name::FileName;
 use buck2_settings_derive::buck_settings_section;
 use buck2_wrapper_common::DEFAULT_ISOLATION_DIR;
 use dice::EvictionPolicy;
+use dice::EvictionStrategy;
 use dice::PagableStorageBackend;
 use dice::PageOutPolicy;
 use serde::Deserialize;
@@ -69,7 +70,7 @@ pub struct Hydration {
     page_out_policy: Option<PageOutPolicy>,
     /// When the values a page-out writes leave memory; see [`EvictionPolicy`].
     #[setting(
-        default = EvictionPolicy::OnMemoryPressure,
+        default = EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
         overridable_in(CommandLine, LocalSettings)
     )]
     eviction_policy: Option<EvictionPolicy>,
@@ -113,7 +114,7 @@ mod tests {
         assert_eq!(hydration.page_out_policy(), PageOutPolicy::OncePerValue);
         assert_eq!(
             hydration.eviction_policy(),
-            EvictionPolicy::OnMemoryPressure
+            EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default)
         );
         assert!(
             hydration.page_out_on_idle_applies_to_isolation_dir(
@@ -141,7 +142,10 @@ mod tests {
             PagableStorageBackend::Sled
         );
         assert_eq!(hydration.page_out_policy(), PageOutPolicy::OncePerKey);
-        assert_eq!(hydration.eviction_policy(), EvictionPolicy::OnIdle);
+        assert_eq!(
+            hydration.eviction_policy(),
+            EvictionPolicy::OnIdle(EvictionStrategy::Default)
+        );
         assert!(
             !hydration.page_out_on_idle_applies_to_isolation_dir(
                 FileName::new(DEFAULT_ISOLATION_DIR)
@@ -151,6 +155,30 @@ mod tests {
         assert!(hydration.page_out_on_idle_applies_to_isolation_dir(
             FileName::new("custom").expect("The test isolation dir should be valid")
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn eviction_policy_settings_preserve_names_and_strategies() -> buck2_error::Result<()> {
+        for (name, expected) in [
+            ("on_idle", EvictionPolicy::OnIdle(EvictionStrategy::Default)),
+            (
+                "on_memory_pressure",
+                EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
+            ),
+            ("on_idle_lru", EvictionPolicy::OnIdle(EvictionStrategy::Lru)),
+            (
+                "on_memory_pressure_lru",
+                EvictionPolicy::OnMemoryPressure(EvictionStrategy::Lru),
+            ),
+        ] {
+            let settings = resolve_setting_flags(vec![table(&format!(
+                "[hydration]\neviction_policy = \"{name}\"",
+            ))])?;
+            let actual = settings.daemon.hydration.eviction_policy();
+            assert_eq!(actual, expected);
+            assert_eq!(serde_json::to_value(actual).unwrap(), name);
+        }
         Ok(())
     }
 }

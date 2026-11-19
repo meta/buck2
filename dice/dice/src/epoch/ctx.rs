@@ -721,6 +721,7 @@ impl ComputeCtx {
             base.invalidation_sources,
             &self.transaction_data,
         );
+        self.transaction_data.record_access(dice_key);
         Ok((dice_key, value))
     }
 
@@ -796,6 +797,7 @@ impl<'d, K: Key> Future for ComputeOpaqueFuture<'d, K> {
                         }
                     };
                     if let Ok(resident) = value.try_as_resident() {
+                        compute.transaction_data.record_access(*key);
                         // Return from the poll that produced the resident value; the hot path
                         // needs neither a boxed future nor another future state transition.
                         return Poll::Ready(Ok(OpaqueValue::new(

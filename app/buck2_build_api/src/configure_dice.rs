@@ -254,6 +254,8 @@ pub async fn configure_dice_for_buck(
 
 #[cfg(test)]
 mod tests {
+    use dice::EvictionStrategy;
+
     use super::*;
 
     fn config() -> DiceEngineConfiguration {
@@ -288,7 +290,8 @@ mod tests {
         );
 
         let mut different_eviction_policy = config();
-        different_eviction_policy.eviction_policy = EvictionPolicy::OnIdle;
+        different_eviction_policy.eviction_policy =
+            EvictionPolicy::OnIdle(EvictionStrategy::Default);
         assert!(
             expected
                 .ensure_compatible(&different_eviction_policy)

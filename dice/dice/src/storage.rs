@@ -116,29 +116,92 @@ pub enum PageOutPolicy {
     OncePerValue,
 }
 
-/// When the values a page-out writes leave memory, from `hydration.eviction_policy`.
+/// How an eviction trigger selects resident values with committed backing.
+#[derive(Allocative, Clone, Copy, Debug, Default, Dupe, PartialEq, Eq)]
+pub enum EvictionStrategy {
+    /// Use the trigger's built-in rules: eviction on the first write for idle,
+    /// or all backed values in the snapshot for memory pressure.
+    #[default]
+    Default,
+    /// Prefer older transaction demand batches and protect recent demand. Recency is
+    /// per key, so demand on any branch protects every retained value of that key.
+    Lru,
+}
+
+/// When to release resident values and how to select them.
 #[derive(
     Allocative,
     Clone,
     Copy,
     Debug,
-    Default,
     Dupe,
     Serialize,
     Deserialize,
     PartialEq,
     Eq
 )]
-#[serde(rename_all = "snake_case")]
+#[serde(from = "EvictionPolicySetting", into = "EvictionPolicySetting")]
 pub enum EvictionPolicy {
-    /// A page-out evicts the values it writes that were never paged out before;
-    /// the idle page-out after a command is where memory is given back.
+    /// The default strategy evicts values on their first committed write. LRU keeps
+    /// writes resident until a separate idle reclaim selects cold backed values.
+    OnIdle(EvictionStrategy),
+    /// Writes stay resident until memory pressure invokes the selected strategy.
+    OnMemoryPressure(EvictionStrategy),
+}
+
+impl Default for EvictionPolicy {
+    fn default() -> Self {
+        Self::OnMemoryPressure(EvictionStrategy::Default)
+    }
+}
+
+impl EvictionPolicy {
+    pub fn strategy(self) -> EvictionStrategy {
+        match self {
+            Self::OnIdle(strategy) | Self::OnMemoryPressure(strategy) => strategy,
+        }
+    }
+
+    pub fn evicts_on_memory_pressure(self) -> bool {
+        matches!(self, Self::OnMemoryPressure(_))
+    }
+}
+
+// Keep daemon settings as flat strings so existing on_idle and on_memory_pressure
+// configurations retain their meaning when the runtime enum carries a strategy.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EvictionPolicySetting {
     OnIdle,
-    /// A page-out evicts nothing: what it writes stays resident, backed by its
-    /// row, until resource control sees memory pressure, which evicts every
-    /// backed value.
-    #[default]
     OnMemoryPressure,
+    OnMemoryPressureLru,
+    OnIdleLru,
+}
+
+impl From<EvictionPolicySetting> for EvictionPolicy {
+    fn from(setting: EvictionPolicySetting) -> Self {
+        match setting {
+            EvictionPolicySetting::OnIdle => Self::OnIdle(EvictionStrategy::Default),
+            EvictionPolicySetting::OnMemoryPressure => {
+                Self::OnMemoryPressure(EvictionStrategy::Default)
+            }
+            EvictionPolicySetting::OnIdleLru => Self::OnIdle(EvictionStrategy::Lru),
+            EvictionPolicySetting::OnMemoryPressureLru => {
+                Self::OnMemoryPressure(EvictionStrategy::Lru)
+            }
+        }
+    }
+}
+
+impl From<EvictionPolicy> for EvictionPolicySetting {
+    fn from(policy: EvictionPolicy) -> Self {
+        match policy {
+            EvictionPolicy::OnIdle(EvictionStrategy::Default) => Self::OnIdle,
+            EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default) => Self::OnMemoryPressure,
+            EvictionPolicy::OnIdle(EvictionStrategy::Lru) => Self::OnIdleLru,
+            EvictionPolicy::OnMemoryPressure(EvictionStrategy::Lru) => Self::OnMemoryPressureLru,
+        }
+    }
 }
 
 impl PagableStorageBackend {
@@ -252,6 +315,10 @@ impl DiceStorage {
     /// Sets when the values a page-out writes leave memory; see [`EvictionPolicy`].
     pub fn set_eviction_policy(&mut self, policy: EvictionPolicy) {
         self.eviction_policy = policy;
+    }
+
+    pub(crate) fn tracks_accesses(&self) -> bool {
+        self.eviction_policy.strategy() == EvictionStrategy::Lru
     }
 
     pub(crate) fn paging_setup(&self) -> PagingSetup {

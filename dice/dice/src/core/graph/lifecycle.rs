@@ -16,6 +16,7 @@ use dupe::Dupe;
 use pagable::DataKey;
 
 use crate::storage::EvictionPolicy;
+use crate::storage::EvictionStrategy;
 use crate::storage::PageOutPolicy;
 use crate::value::DiceValidValue;
 use crate::value::MaybeResident;
@@ -158,7 +159,7 @@ impl PagableValue {
     }
 
     /// The row at `data_key`, of `serialized_bytes`, now holds this value. A value never paged
-    /// out is evicted under [`EvictionPolicy::OnIdle`]; otherwise it, like a recomputed one,
+    /// out is evicted under `OnIdle(Default)`; otherwise it, like a recomputed one,
     /// stays resident, backed by the row.
     pub(crate) fn row_committed(
         &mut self,
@@ -169,14 +170,12 @@ impl PagableValue {
         let backed =
             |value| PagableValue::Backed(BackedValue::new(value, data_key, serialized_bytes));
         match std::mem::replace(self, PagableValue::PagedOut(data_key)) {
-            PagableValue::NeverPagedOut(value) => match policy {
-                EvictionPolicy::OnIdle => RowCommitted::Evicted,
-                EvictionPolicy::OnMemoryPressure => {
-                    *self = backed(value);
-                    RowCommitted::Backed
-                }
-            },
-            PagableValue::Recomputed(value) => {
+            PagableValue::NeverPagedOut(_)
+                if policy == EvictionPolicy::OnIdle(EvictionStrategy::Default) =>
+            {
+                RowCommitted::Evicted
+            }
+            PagableValue::NeverPagedOut(value) | PagableValue::Recomputed(value) => {
                 *self = backed(value);
                 RowCommitted::Backed
             }

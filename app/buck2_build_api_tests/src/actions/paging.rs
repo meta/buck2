@@ -38,6 +38,7 @@ use dice::DiceComputations;
 use dice::DynKey;
 use dice::EqualityBehavior;
 use dice::EvictionPolicy;
+use dice::EvictionStrategy;
 use dice::Key;
 use dice::NoValueSerialize;
 use dice::PageInPhase;
@@ -217,7 +218,7 @@ async fn check_output_equality(
             .get_or_init(|| DeferredFieldReadsEnabled);
     }
     storage.set_page_out_policy(PageOutPolicy::OncePerValue);
-    storage.set_eviction_policy(EvictionPolicy::OnIdle);
+    storage.set_eviction_policy(EvictionPolicy::OnIdle(EvictionStrategy::Default));
     let mut builder = Dice::builder();
     builder.set_pagable_storage(storage);
     let dice = builder.build(DetectCycles::Disabled);

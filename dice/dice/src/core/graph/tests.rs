@@ -40,6 +40,7 @@ use crate::deps::graph::SeriesParallelDeps;
 use crate::dice::PagableNodeCounts;
 use crate::key::DiceKey;
 use crate::storage::EvictionPolicy;
+use crate::storage::EvictionStrategy;
 use crate::storage::PageOutPolicy;
 use crate::updater::ChangeType;
 use crate::value::DiceKeyValue;
@@ -220,7 +221,12 @@ fn candidate_at(graph: &VersionedGraph, k: DiceKey, v: VersionNumber) -> Candida
 }
 
 fn page_out(graph: &mut VersionedGraph, k: DiceKey, data_key: u128) {
-    page_out_under(graph, k, data_key, EvictionPolicy::OnIdle);
+    page_out_under(
+        graph,
+        k,
+        data_key,
+        EvictionPolicy::OnIdle(EvictionStrategy::Default),
+    );
 }
 
 /// [`page_out`] committing under `policy`.
@@ -559,7 +565,12 @@ fn on_memory_pressure_page_out_keeps_the_values_it_writes_resident() {
     let (mut graph, root) = with_leaf();
     let v2 = graph.head(root);
     compute(&mut graph, key(1), v2, value(7));
-    page_out_under(&mut graph, key(1), 0x1, EvictionPolicy::OnMemoryPressure);
+    page_out_under(
+        &mut graph,
+        key(1),
+        0x1,
+        EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
+    );
     assert_eq!(
         graph.pagable_node_counts(),
         backed_counts(1, 0, 1, PAGED_OUT_BYTES)

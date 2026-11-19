@@ -671,6 +671,7 @@ impl DaemonStartupConfig {
 mod tests {
     use buck2_settings::parser::resolve_setting_flags;
     use buck2_settings::parser::table;
+    use dice::EvictionStrategy;
     use indoc::indoc;
 
     use super::*;
@@ -855,7 +856,10 @@ mod tests {
             .hydration
             .expect("enable_paging should enable pagable storage");
         assert_eq!(hydration.page_out_policy, PageOutPolicy::OncePerKey);
-        assert_eq!(hydration.eviction_policy, EvictionPolicy::OnIdle);
+        assert_eq!(
+            hydration.eviction_policy,
+            EvictionPolicy::OnIdle(EvictionStrategy::Default)
+        );
         Ok(())
     }
 

@@ -27,6 +27,7 @@ use dice::DiceKeyDyn;
 use dice::DiceStorage;
 use dice::EqualityBehavior;
 use dice::EvictionPolicy;
+use dice::EvictionStrategy;
 use dice::InjectedKey;
 use dice::Key;
 use dice::NoValueSerialize;
@@ -387,7 +388,7 @@ async fn page_in_scopes_starlark_heaps_by_dice_root_impl()
     let tmp = tempdir()?;
     let mut storage = DiceStorage::open(tmp.path(), PagableStorageBackend::Sqlite)?;
     storage.set_page_out_policy(PageOutPolicy::OncePerKey);
-    storage.set_eviction_policy(EvictionPolicy::OnIdle);
+    storage.set_eviction_policy(EvictionPolicy::OnIdle(EvictionStrategy::Default));
     let mut builder = Dice::builder();
     builder.set_pagable_storage(storage);
     let dice = builder.build(DetectCycles::Disabled);
@@ -706,7 +707,7 @@ async fn page_in_prefers_resident_heap_for_consistent_dice_root_impl()
     let tmp = tempdir()?;
     let mut storage = DiceStorage::open(tmp.path(), PagableStorageBackend::Sqlite)?;
     storage.set_page_out_policy(PageOutPolicy::OncePerKey);
-    storage.set_eviction_policy(EvictionPolicy::OnIdle);
+    storage.set_eviction_policy(EvictionPolicy::OnIdle(EvictionStrategy::Default));
     let mut builder = Dice::builder();
     builder.set_pagable_storage(storage);
     let dice = builder.build(DetectCycles::Disabled);

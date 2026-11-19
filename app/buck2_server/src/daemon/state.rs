@@ -126,6 +126,7 @@ use buck2_util::future::join_all;
 use buck2_wrapper_common::invocation_id::TraceId;
 use dice::Dice;
 use dice::EvictionPolicy;
+use dice::EvictionStrategy;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use fbinit::FacebookInit;
@@ -959,7 +960,10 @@ impl TenantState {
             .startup_options
             .hydration
             .as_ref()
-            .is_some_and(|hydration| hydration.eviction_policy == EvictionPolicy::OnMemoryPressure);
+            .is_some_and(|hydration| {
+                hydration.eviction_policy
+                    == EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default)
+            });
         // Under `on_memory_pressure` only the memory tracker evicts, so without one an idle
         // page-out would write rows for values that never leave memory.
         let evictions_impossible = evicts_on_memory_pressure && shared.memory_tracker.is_none();

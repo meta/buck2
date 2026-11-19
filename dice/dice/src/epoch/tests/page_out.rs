@@ -61,6 +61,7 @@ use crate::DiceProjectionDyn;
 use crate::DiceStorage;
 use crate::DynKey;
 use crate::EvictionPolicy;
+use crate::EvictionStrategy;
 use crate::PagableStorageBackend;
 use crate::PageOutPolicy;
 use crate::api::activation_tracker::ActivationData;
@@ -1084,7 +1085,12 @@ async fn make_dice(storage: DiceStorage) -> (Arc<Dice>, BranchId) {
 
 /// [`make_dice`] paging under `policy`.
 async fn make_dice_under(storage: DiceStorage, policy: PageOutPolicy) -> (Arc<Dice>, BranchId) {
-    make_dice_with(storage, policy, EvictionPolicy::OnIdle).await
+    make_dice_with(
+        storage,
+        policy,
+        EvictionPolicy::OnIdle(EvictionStrategy::Default),
+    )
+    .await
 }
 
 /// [`make_dice`] paging under both policies.
@@ -2301,7 +2307,7 @@ async fn page_out_under_memory_pressure_policy_evicts_nothing() -> anyhow::Resul
     let (dice, root) = make_dice_with(
         DiceStorage::open(tmp.path(), PagableStorageBackend::Sqlite)?,
         PageOutPolicy::OncePerKey,
-        EvictionPolicy::OnMemoryPressure,
+        EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
     )
     .await;
 
@@ -2808,7 +2814,7 @@ async fn cancelled_page_out_retains_durable_root_backing() -> anyhow::Result<()>
     let (dice, root) = make_dice_with(
         DiceStorage::new(storage.clone()),
         PageOutPolicy::OncePerValue,
-        EvictionPolicy::OnMemoryPressure,
+        EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
     )
     .await;
     let counter = ComputeCounter::new();
@@ -2865,7 +2871,7 @@ async fn cancelled_page_out_does_not_back_unwritten_root() -> anyhow::Result<()>
     let (dice, root) = make_dice_with(
         DiceStorage::new(storage.clone()),
         PageOutPolicy::OncePerValue,
-        EvictionPolicy::OnMemoryPressure,
+        EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
     )
     .await;
     let tx = dice.updater(root).commit().await;
@@ -2997,7 +3003,7 @@ async fn cancelled_page_out_waits_for_blocking_bind_workers() -> anyhow::Result<
     let (dice, root) = make_dice_with(
         DiceStorage::new(storage.clone()),
         PageOutPolicy::OncePerValue,
-        EvictionPolicy::OnMemoryPressure,
+        EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
     )
     .await;
     let tx = dice.updater(root).commit().await;
@@ -3055,7 +3061,7 @@ async fn cancelled_page_out_does_not_back_stale_root() -> anyhow::Result<()> {
     let (dice, root) = make_dice_with(
         DiceStorage::new(storage),
         PageOutPolicy::OncePerValue,
-        EvictionPolicy::OnMemoryPressure,
+        EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
     )
     .await;
     let mut updater = dice.updater(root);
@@ -3135,7 +3141,7 @@ impl SweepFixture {
         let (dice, root) = make_dice_with(
             DiceStorage::open(directory.path(), PagableStorageBackend::Sqlite)?,
             PageOutPolicy::OncePerValue,
-            EvictionPolicy::OnMemoryPressure,
+            EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
         )
         .await;
         let counter = ComputeCounter::new();
@@ -3247,7 +3253,7 @@ async fn eviction_sweep_cutoff_excludes_later_revision_on_original_key() -> anyh
     let (dice, root) = make_dice_with(
         DiceStorage::open(directory.path(), PagableStorageBackend::Sqlite)?,
         PageOutPolicy::OncePerValue,
-        EvictionPolicy::OnMemoryPressure,
+        EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
     )
     .await;
     let counter = ComputeCounter::new();

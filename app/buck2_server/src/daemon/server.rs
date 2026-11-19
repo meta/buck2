@@ -100,6 +100,7 @@ use buck2_wrapper_common::invocation_id::TraceId;
 use dice::BranchId;
 use dice::Dice;
 use dice::EvictionPolicy;
+use dice::EvictionStrategy;
 use dice_futures::cancellation::CancellationContext;
 use dice_futures::cancellation::DropcancelHandle;
 use dice_futures::drop::DropTogether;
@@ -366,7 +367,10 @@ impl TenantStateInitPreferences {
                 data,
                 lifetime_guard,
                 memory_pressure.filter(|_| {
-                    hydration.is_some_and(|h| h.eviction_policy == EvictionPolicy::OnMemoryPressure)
+                    hydration.is_some_and(|h| {
+                        h.eviction_policy
+                            == EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default)
+                    })
                 }),
             )
             .await

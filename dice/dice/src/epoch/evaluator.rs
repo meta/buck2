@@ -58,6 +58,7 @@ use crate::epoch::worker::state::DiceWorkerStateFinishedEvaluating;
 use crate::key::DiceKey;
 use crate::key::DiceKeyErased;
 use crate::key::ParentKey;
+use crate::key_index::AccessScope;
 use crate::value::DiceValidity;
 use crate::value::MaybeResidentComputedValue;
 use crate::value::MaybeValidDiceValue;
@@ -179,6 +180,7 @@ pub(crate) struct TransactionData {
     pub(super) user_data: Arc<UserComputationData>,
     pub(super) dice: StdArc<Dice>,
     pub(super) global_data: StdArc<DiceData>,
+    accesses: AccessScope,
 }
 
 #[derive(Clone, Dupe)]
@@ -194,12 +196,18 @@ impl TransactionData {
         dice: StdArc<Dice>,
         global_data: StdArc<DiceData>,
     ) -> Self {
+        let accesses = dice.key_index.access_scope();
         Self {
             version_state,
             user_data,
             dice,
             global_data,
+            accesses,
         }
+    }
+
+    pub(crate) fn record_access(&self, key: DiceKey) {
+        self.accesses.record(key);
     }
 
     /// Establish the key's revision without demanding its payload.
@@ -236,7 +244,10 @@ impl TransactionData {
         // Look up the descriptor here so recovery can only use this transaction's cache.
         let value = self.bring_up_to_date(demand.key, demand.parent_key).await?;
         let paged_out = match value.try_as_resident() {
-            Ok(value) => return Ok(value),
+            Ok(value) => {
+                self.record_access(demand.key);
+                return Ok(value);
+            }
             Err(paged_out) => paged_out,
         };
         let outcome = paged_out
@@ -244,7 +255,10 @@ impl TransactionData {
             .get_or_init(|| self.read_or_create_recovery(demand.key, value, paged_out))
             .await;
         // Await recovery outside initialization so every demander registers its own interest.
-        self.resolve_page_in(outcome, demand).await
+        let key = demand.key;
+        let value = self.resolve_page_in(outcome, demand).await?;
+        self.record_access(key);
+        Ok(value)
     }
 
     async fn read_or_create_recovery(
@@ -461,6 +475,7 @@ impl TransactionData {
         };
 
         let value = proj.proj().compute(base, &ctx);
+        self.record_access(proj.base());
 
         KeyEvaluationResult {
             value: MaybeValidDiceValue::new(value, base.validity()),

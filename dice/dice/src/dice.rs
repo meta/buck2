@@ -161,7 +161,7 @@ impl Dice {
         let global_data = StdArc::new(global_data);
 
         StdArc::new(Dice {
-            key_index: Default::default(),
+            key_index: DiceKeyIndex::for_storage(pagable_storage.as_ref()),
             state_handle,
             global_data,
             branch_data: StdArc::new(RwLock::new(HashMap::default())),

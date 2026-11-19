@@ -46,6 +46,7 @@ use crate::metrics::PagingMemorySnapshot;
 use crate::metrics::set_thread_alloc_counters;
 use crate::storage::DiceStorage;
 use crate::storage::EvictionPolicy;
+use crate::storage::EvictionStrategy;
 
 thread_local! {
     // The installed reader must not enable accounting for unrelated tests or DICE actors.
@@ -242,7 +243,10 @@ async fn backend_cleanup_bytes_are_counted_once_after_evicting_backed_values() -
     let _scope = FakeAllocScope::new();
     let backing = InMemoryPagableStorage::new();
     let backend = Arc::new(CacheRetainingStorage::new(backing.handle()));
-    let dice = make_dice(&backend, EvictionPolicy::OnMemoryPressure);
+    let dice = make_dice(
+        &backend,
+        EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
+    );
     compute_keys(&dice, 3).await?;
     dice.page_out().await?;
     assert_eq!(dice.pagable_node_counts().await.backed, 3);
@@ -297,7 +301,7 @@ async fn idle_page_out_cleanup_does_not_charge_pressure_eviction_bytes() -> anyh
     let _scope = FakeAllocScope::new();
     let backing = InMemoryPagableStorage::new();
     let backend = Arc::new(CacheRetainingStorage::new(backing.handle()));
-    let dice = make_dice(&backend, EvictionPolicy::OnIdle);
+    let dice = make_dice(&backend, EvictionPolicy::OnIdle(EvictionStrategy::Default));
     compute_keys(&dice, 2).await?;
     backend.cache_payload(1000);
     backend.cache_payload(3000);

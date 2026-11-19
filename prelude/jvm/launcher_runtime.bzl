@@ -31,6 +31,22 @@ def aot_jvm_args(aot_cache: Artifact | None, aot_mode: str = "on") -> list:
         return []
     return ["-XX:AOTMode={}".format(aot_mode), cmd_args(aot_cache, format = "-XX:AOTCache={}")]
 
+def in_aot_cache_arm(qualified_name: str, percent: int | None) -> bool:
+    """
+    Whether actions of the target `qualified_name` (`cell//path:name`, with or without a `[subtarget]`) get the AOT
+    cache when only `percent` percent of targets do, for an A/B comparison within the same builds. All of a target's
+    actions are in the same arm, and the split is stable across builds and hosts.
+
+    A target is in the cache arm when `hash(name) % 100 < percent`. Starlark's `hash` of a string is Java's
+    `String.hashCode`, a signed 32-bit value, and Starlark's `%` takes the sign of the divisor, so the bucket is
+    always in [0, 100). To recompute the arm offline, use the same floored modulo: `Math.floorMod(name.hashCode(),
+    100)` in Java or `h % 100` in Python. Java's `%` keeps the dividend's sign and puts every target with a negative
+    hash in the cache arm.
+    """
+    if percent == None:
+        return True
+    return hash(qualified_name.split("[")[0]) % 100 < percent
+
 def _jvm_launcher_runtime_impl(ctx: AnalysisContext) -> list[Provider]:
     java_toolchain = ctx.attrs._java_toolchain[JavaToolchainInfo]
     image = ctx.actions.declare_output("runtime", dir = True, has_content_based_path = False)

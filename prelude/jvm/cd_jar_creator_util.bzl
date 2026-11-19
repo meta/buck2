@@ -30,6 +30,7 @@ load(
     "@prelude//jvm:launcher_runtime.bzl",
     "JvmLauncherRuntimeInfo",  # @unused Used as type
     "aot_jvm_args",
+    "in_aot_cache_arm",
 )
 load("@prelude//utils:expect.bzl", "expect")
 
@@ -433,7 +434,14 @@ def prepare_cd_exe(
     launcher_runtime: JvmLauncherRuntimeInfo | None = None,
     aot_cache: Artifact | None = None,
     aot_mode: str = "on",
+    aot_cache_target_percent: int | None = None,
 ) -> tuple:
+    if aot_cache and not in_aot_cache_arm(qualified_name, aot_cache_target_percent):
+        # The control arm of an A/B split keeps the classpath launch, so its actions are those of a build without
+        # the cache.
+        launcher_runtime = None
+        aot_cache = None
+
     local_only = False
     jvm_args = compiler_daemon_base_jvm_args(java_runtime_version)
 

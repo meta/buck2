@@ -52,6 +52,8 @@ JavaToolchainInfo = provider(
         "javacd": provider_field(typing.Any, default = None),
         # Java AOT cache for one-shot javacd JVMs, trained with `javacd_launcher_runtime`.
         "javacd_aot_cache": provider_field(typing.Any, default = None),
+        # Percent of targets whose javacd actions get `javacd_aot_cache`, split by target label hash. None: all.
+        "javacd_aot_cache_target_percent": provider_field(int | None, default = None),
         "javacd_aot_mode": provider_field(str, default = "on"),
         "javacd_debug_port": provider_field(typing.Any, default = None),
         "javacd_debug_target": provider_field(typing.Any, default = None),

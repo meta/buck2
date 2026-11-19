@@ -324,6 +324,7 @@ def _define_javacd_action(
         launcher_runtime = java_toolchain.javacd_launcher_runtime[JvmLauncherRuntimeInfo] if java_toolchain.javacd_launcher_runtime else None,
         aot_cache = java_toolchain.javacd_aot_cache,
         aot_mode = java_toolchain.javacd_aot_mode,
+        aot_cache_target_percent = java_toolchain.javacd_aot_cache_target_percent,
     )
 
     post_build_params = {}

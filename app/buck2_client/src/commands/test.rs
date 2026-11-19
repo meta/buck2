@@ -79,6 +79,21 @@ fn print_error_counter(
     Ok(())
 }
 
+/// Whether no test ran. Omitted tests did not run.
+fn no_tests_ran(statuses: &buck2_cli_proto::test_response::TestStatuses) -> bool {
+    [
+        &statuses.passed,
+        &statuses.failed,
+        &statuses.timed_out,
+        &statuses.fatals,
+        &statuses.skipped,
+        &statuses.infra_failure,
+    ]
+    .into_iter()
+    .flatten()
+    .all(|counter| counter.count == 0)
+}
+
 /// Check if we should warn about potentially misplaced --include/--exclude flags.
 /// Returns Some(suspicious_labels) if warning should be shown, where suspicious_labels
 /// are label values that look like they might be target patterns (contain '/' or ':').
@@ -337,10 +352,6 @@ impl StreamingCommand for TestCommand {
             .listing_failed
             .as_ref()
             .internal_error("Missing `listing_failed`")?;
-        let passed = statuses
-            .passed
-            .as_ref()
-            .internal_error("Missing `passed`")?;
         let failed = statuses
             .failed
             .as_ref()
@@ -353,14 +364,6 @@ impl StreamingCommand for TestCommand {
             .fatals
             .as_ref()
             .internal_error("Missing `fatals`")?;
-        let skipped = statuses
-            .skipped
-            .as_ref()
-            .internal_error("Missing `skipped`")?;
-        let omitted = statuses
-            .omitted
-            .as_ref()
-            .internal_error("Missing `omitted`")?;
         let infra_failure = statuses
             .infra_failure
             .as_ref()
@@ -405,15 +408,7 @@ impl StreamingCommand for TestCommand {
         print_error_counter(&console, fatals, "TESTS FATALS", "⚠")?;
         print_error_counter(&console, infra_failure, "TESTS Infra Failed", "🛠")?;
 
-        if passed.count
-            + failed.count
-            + timeout.count
-            + fatals.count
-            + skipped.count
-            + omitted.count
-            + infra_failure.count
-            == 0
-        {
+        if no_tests_ran(statuses) {
             console.print_warning("NO TESTS RAN")?;
         }
 

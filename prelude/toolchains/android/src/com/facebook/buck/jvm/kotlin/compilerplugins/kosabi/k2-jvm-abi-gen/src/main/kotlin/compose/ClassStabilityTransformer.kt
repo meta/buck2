@@ -93,7 +93,8 @@ import org.jetbrains.kotlin.name.Name
  *   fields, after the marker check (whose supertype scope is versioned)
  * - A class combines the stability of its superclass, unless that superclass is only `Unknown`,
  *   which is dropped (2.4 on). A superclass from another file of the module, or from a compiled
- *   dependency, is runtime stability: never known stable
+ *   dependency, is runtime stability: never known stable. The superclass is the one the class had
+ *   before DataClassGenerate made it `DataClassSuper` ([DeclaredSuperclassRecorder])
  *
  * The two outputs use different encodings. $stable carries StabilityBits: 0 when known stable,
  * UNSTABLE.bitsForSlot(0) = 8 otherwise. @StabilityInferred(parameters) carries the type-parameter
@@ -101,7 +102,12 @@ import org.jetbrains.kotlin.name.Name
  * `@JvmField` when the compiler's Compose plugin writes it as a property's backing field (2.4 on).
  */
 @OptIn(UnsafeDuringIrConstructionAPI::class)
-internal class ClassStabilityTransformer(private val pluginContext: IrPluginContext) {
+internal class ClassStabilityTransformer(
+    private val pluginContext: IrPluginContext,
+    // The superclass of each module class before the plugin IR extensions ran
+    // ([DeclaredSuperclassRecorder]); a class missing here falls back to its current superclass.
+    private val declaredSuperclasses: Map<IrClass, IrClass?> = emptyMap(),
+) {
 
   companion object {
     private val COMPOSER_CLASS_ID =
@@ -385,8 +391,8 @@ internal class ClassStabilityTransformer(private val pluginContext: IrPluginCont
    */
   private fun superclassStability(irClass: IrClass): EmulatedStability {
     val superClass =
-        irClass.superTypes.mapNotNull { it.classOrNull?.owner }.firstOrNull { !it.isInterface }
-            ?: return EmulatedStability.Stable
+        (if (irClass in declaredSuperclasses) declaredSuperclasses[irClass]
+        else irClass.superclassOrNull()) ?: return EmulatedStability.Stable
     val superFqn = superClass.classFqName() ?: return EmulatedStability.Unstable
     if (superFqn == "kotlin.Any") return EmulatedStability.Stable
     if (superFqn in moduleClassFqns) {

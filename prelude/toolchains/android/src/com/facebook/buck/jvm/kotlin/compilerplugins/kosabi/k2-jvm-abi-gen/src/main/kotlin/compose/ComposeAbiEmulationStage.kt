@@ -15,6 +15,7 @@ package com.facebook
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isStub
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.com.intellij.psi.PsiElement
+import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.psi.KtFile
 
 /**
@@ -28,6 +29,8 @@ internal class ComposeAbiEmulationStage : AbiGenStage {
   override val name = "ComposeAbiEmulation"
 
   private var targetAnnotations: Map<PsiElement, ComposableTargetAnnotation> = emptyMap()
+
+  private val declaredSuperclasses = mutableMapOf<IrClass, IrClass?>()
 
   /**
    * Infers the applier annotations the Compose backend writes. Runs on the resolved FIR, before any
@@ -77,8 +80,15 @@ internal class ComposeAbiEmulationStage : AbiGenStage {
         }
   }
 
+  /**
+   * The extension that records each class's superclass for the stability emulation. It is
+   * registered before the plugin IR extensions abi-gen runs, which can change the superclass.
+   */
+  fun createDeclaredSuperclassRecorder(): IrGenerationExtension =
+      DeclaredSuperclassRecorder(declaredSuperclasses)
+
   /** Create the IR generation extension to be registered during FIR-to-IR conversion. */
   fun createExtension(): IrGenerationExtension {
-    return ComposeAbiEmulationExtension(targetAnnotations)
+    return ComposeAbiEmulationExtension(targetAnnotations, declaredSuperclasses)
   }
 }

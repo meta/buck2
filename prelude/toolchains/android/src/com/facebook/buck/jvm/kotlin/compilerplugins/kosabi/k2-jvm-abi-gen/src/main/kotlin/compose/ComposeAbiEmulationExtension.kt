@@ -15,6 +15,7 @@ package com.facebook
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.com.intellij.psi.PsiElement
+import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 
 /**
@@ -40,11 +41,12 @@ import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
  */
 internal class ComposeAbiEmulationExtension(
     private val composableTargets: Map<PsiElement, ComposableTargetAnnotation> = emptyMap(),
+    private val declaredSuperclasses: Map<IrClass, IrClass?> = emptyMap(),
 ) : IrGenerationExtension {
 
   override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
     // Pass 1: Add $stable field + @StabilityInferred to eligible classes.
-    ClassStabilityTransformer(pluginContext).transform(moduleFragment)
+    ClassStabilityTransformer(pluginContext, declaredSuperclasses).transform(moduleFragment)
 
     // Pass 2: Move the defaults of virtual @Composable functions into ComposeDefaultImpls wrappers.
     ComposableDefaultParamEmulator(pluginContext).transform(moduleFragment)

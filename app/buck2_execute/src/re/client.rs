@@ -1042,15 +1042,25 @@ impl RemoteExecutionClientImpl {
                 embedded_cas_daemon_config.force_enable_deduplicate_find_missing =
                     static_metadata.force_enable_deduplicate_find_missing;
 
-                // Will either choose the SOFT_COPY (on some linux fs like btrfs/extfs etc, on Mac if using APFS) or FULL_COPY otherwise
-                embedded_cas_daemon_config.copy_policy = CopyPolicy::BEST_AVAILABLE;
-                embedded_cas_daemon_config.materialization_mount_path = Some(
-                    re_config
-                        .buck_out_path
-                        .to_str()
-                        .buck_error_context("invalid meterialization_mount_path")?
-                        .to_owned(),
-                );
+                if cfg!(target_os = "linux") {
+                    // Reflink where a destination's filesystem can and copy where it cannot,
+                    // decided per copy: a shared daemon's client materializes into the buck-out
+                    // of every tenant, so no one path stands for the filesystems it writes to.
+                    embedded_cas_daemon_config.copy_policy = CopyPolicy::SOFT_COPY_WITH_FALLBACK;
+                } else {
+                    // The CAS client picks SOFT_COPY or FULL_COPY by probing the path's
+                    // filesystem once. Daemons are not shared on these platforms, and on Windows
+                    // the CAS client does not implement SOFT_COPY_WITH_FALLBACK: it skips
+                    // destinations that exist.
+                    embedded_cas_daemon_config.copy_policy = CopyPolicy::BEST_AVAILABLE;
+                    embedded_cas_daemon_config.materialization_mount_path = Some(
+                        re_config
+                            .buck_out_path
+                            .to_str()
+                            .buck_error_context("invalid meterialization_mount_path")?
+                            .to_owned(),
+                    );
+                }
 
                 if static_metadata.cas_thread_count_ratio == 0.0 {
                     embedded_cas_daemon_config.thread_count =

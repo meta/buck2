@@ -11,9 +11,9 @@
 package com.facebook.kotlin.compilerplugins.kosabi.stubsgen.generators
 
 import com.facebook.kotlin.compilerplugins.kosabi.common.FullTypeQualifier
+import com.facebook.kotlin.compilerplugins.kosabi.common.JavaLangDefaultImports
 import com.facebook.kotlin.compilerplugins.kosabi.common.outerClassOnlyQualifier
 import com.facebook.kotlin.compilerplugins.kosabi.common.stub.model.KStub
-import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.PlainJavaLangTypes
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.PlainKTBuiltInTypes
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.PlainKTJavaTypeAlias
 import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.util.PlainKTStdlibTypes
@@ -38,17 +38,17 @@ class SamePackageClassStubsGenerator : StubsGenerator {
         PlainKTStdlibTypes,
         PlainKTBuiltInTypes,
         PlainKTJavaTypeAlias,
-        PlainJavaLangTypes,
     )
         .flatMap { it.all() }
 
     allKnownSymbols.addAll(sdkInternalTypes)
+    // `java.lang` default imports: the static list and the classpath's `java.lang` types. The
+    // applicability checks read the same set (JavaLangDefaultImports).
+    allKnownSymbols.addAll(JavaLangDefaultImports.knownNames(context.externalTypeReferences))
 
-    // Imported types, declared types, and auto-imported external types from classpaths
-    // Only include auto-imported types (java.lang.*) from externalTypeReferences
-    // to avoid name collisions with non-auto-imported types that have the same simple name.
-    // Types like android.*, javax.*, etc. require explicit imports and should not be included here.
-    val autoImportedExternalTypes = context.externalTypeReferences.filter { it.isAutoImported() }
+    // Imported types and declared types. Other classpath types (android.*, javax.*, ...) need
+    // explicit imports and are not included here, so their simple names do not hide same-package
+    // types.
     val generatedTypesInModulePackage =
         context.knownGeneratedTypes.filter { it.pkgAsString() == modulePkgName }
     // A qualifier that carries no package (`Outer.Inner`) and whose outer no import,
@@ -62,7 +62,6 @@ class SamePackageClassStubsGenerator : StubsGenerator {
         }
     allKnownSymbols.addAll(
         (context.declaredTypes +
-                autoImportedExternalTypes +
                 generatedTypesInModulePackage +
                 (context.fullQualifierTypes - nestedSamePackageQualifiers.toSet()))
             .flatMap { it.segments + it.names },

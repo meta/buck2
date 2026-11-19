@@ -58,7 +58,7 @@ private fun getSegmentsFromJarEntry(jarEntry: JarEntry): List<String> {
   return jarEntry.name.replace(".class", "").split("/")
 }
 
-private fun shouldSkipLookup(path: String): Boolean {
+internal fun shouldSkipLookup(path: String): Boolean {
   // skip lookup in large kotlin/java libraries that doesn't have known CONST val exports used in
   // our codebase
   if (

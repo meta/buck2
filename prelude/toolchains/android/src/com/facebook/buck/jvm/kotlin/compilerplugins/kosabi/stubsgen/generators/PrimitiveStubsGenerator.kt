@@ -11,6 +11,7 @@
 package com.facebook.kotlin.compilerplugins.kosabi.stubsgen.generators
 
 import com.facebook.kotlin.compilerplugins.kosabi.common.FullTypeQualifier
+import com.facebook.kotlin.compilerplugins.kosabi.common.JavaLangDefaultImports
 import com.facebook.kotlin.compilerplugins.kosabi.common.filterDifferentOuterClassIn
 import com.facebook.kotlin.compilerplugins.kosabi.common.outerClassOnlyQualifier
 import com.facebook.kotlin.compilerplugins.kosabi.common.stub.model.KStub
@@ -52,7 +53,6 @@ class PrimitiveStubsGenerator(private val postfixToSkip: String?) : StubsGenerat
 
 private const val KOTLIN_STDLIB_PREFIX = "kotlin"
 private const val JAVA_STDLIB_PREFIX = "java"
-private const val JAVA_LANG_PREFIX = "java.lang"
 // `jdk.compiler` classes are loaded from JRT rather than `jvmClasspathRoots`. Generated stubs would
 // shadow the real classes and erase inherited member contracts used for JVM descriptor lowering.
 private val JDK_COMPILER_PACKAGE_PREFIXES = listOf(
@@ -82,6 +82,5 @@ fun FullTypeQualifier.isSdkQualifier(): Boolean {
   return isKotlinSdk(pkg) || isJavaSdk(pkg)
 }
 
-// Only `java.lang` itself is default-imported: `java.lang.reflect`, `.annotation`, `.ref` and
-// `.invoke` need an import like any other package.
-fun FullTypeQualifier.isAutoImported(): Boolean = pkgAsString() == JAVA_LANG_PREFIX
+// Types that don't require imports (auto-imported)
+fun FullTypeQualifier.isAutoImported(): Boolean = JavaLangDefaultImports.isAutoImported(this)

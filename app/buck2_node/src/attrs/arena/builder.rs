@@ -34,6 +34,7 @@ use crate::attrs::arena::storage::INLINE_PAYLOAD_MASK;
 use crate::attrs::arena::view::CoercedAttrRef;
 use crate::attrs::coerced::kinds::CoercedAttrKind;
 use crate::attrs::coerced::kinds::dispatch;
+use crate::attrs::coerced_path::CoercedDirectory;
 use crate::attrs::coerced_path::CoercedPath;
 
 /// Builds an [`CoercedAttrArena`], deduplicating structurally equal values and
@@ -79,9 +80,16 @@ pub struct CoercedAttrArenaBuilder {
     /// entry retains its `ArcS`, so a keyed address can never be freed — or
     /// reused — while the map lives. Files absent from the listing
     /// (missing-file soft error) carry fresh allocations and never hit.
-    /// Directories are excluded: their value includes the expanded file
-    /// list, so the dir pointer alone does not imply value equality.
+    /// Directories go through `dir_by_ptr`.
     pub(super) path_by_ptr: hashbrown::HashTable<(PackedStr<PackageRelativePath>, u32, u64)>,
+    /// Source-directory lookaside, probed by the directory path's data
+    /// address, with the same entries as `path_by_ptr`. A directory's value
+    /// includes its expanded file list, so the address alone does not imply
+    /// value equality: a probe hits only if its files are the same
+    /// allocations, in the same order, as those of the entry's path. Coercion
+    /// expands every reference to a directory from the one package listing,
+    /// so references to the same directory hit.
+    pub(super) dir_by_ptr: hashbrown::HashTable<(PackedStr<PackageRelativePath>, u32, u64)>,
     /// Whole-value tables' content dedup: value hash to table index.
     pub(super) visibility_dedup: hashbrown::HashTable<(u64, u32)>,
     pub(super) within_view_dedup: hashbrown::HashTable<(u64, u32)>,
@@ -92,7 +100,21 @@ pub struct CoercedAttrArenaBuilder {
     pub(super) roots: Vec<AttrWord>,
 }
 
-/// Bucket hash for the source-file lookaside: mixes the packed string's data
+/// Whether `path` is a directory whose files are the same allocations as
+/// `dir`'s, in the same order.
+fn same_files(path: &CoercedPath, dir: &CoercedDirectory) -> bool {
+    let CoercedPath::Directory(path) = path else {
+        return false;
+    };
+    path.files.len() == dir.files.len()
+        && path
+            .files
+            .iter()
+            .zip(&dir.files)
+            .all(|(a, b)| std::ptr::eq(a.as_str(), b.as_str()))
+}
+
+/// Bucket hash for the source path lookasides: mixes the packed string's data
 /// address (identity, not content).
 pub(super) fn path_addr_hash(f: &PackedStr<PackageRelativePath>) -> u64 {
     mix_addr(f.as_str().as_ptr().addr())
@@ -232,33 +254,36 @@ impl CoercedAttrArenaBuilder {
         dispatch(v.arena.kind_of(v.r), CopyParts { v, b: self })
     }
 
-    /// Path table index and content hash, via the data pointer lookaside
-    /// for files (see `path_by_ptr`).
+    /// Path table index and content hash, via the data pointer lookasides
+    /// (see `path_by_ptr` and `dir_by_ptr`).
     pub(crate) fn source_path_idx_and_hash(&mut self, p: &CoercedPath) -> (u32, u64) {
-        let file = match p {
-            CoercedPath::File(f) => {
-                let bucket = path_addr_hash(f);
-                if let Some((idx, hash)) = self
-                    .path_by_ptr
-                    .find(bucket, |(a, _, _)| {
-                        std::ptr::eq(a.as_str().as_ptr(), f.as_str().as_ptr())
-                    })
-                    .map(|&(_, idx, hash)| (idx, hash))
-                {
-                    return (idx, hash);
-                }
-                Some((f.dupe(), bucket))
-            }
-            CoercedPath::Directory(_) => None,
+        let key = p.path();
+        let bucket = path_addr_hash(key);
+        let same_addr = |a: &PackedStr<PackageRelativePath>| {
+            std::ptr::eq(a.as_str().as_ptr(), key.as_str().as_ptr())
         };
+        let paths = &self.arena.paths;
+        let found = match p {
+            CoercedPath::File(_) => self.path_by_ptr.find(bucket, |(a, _, _)| same_addr(a)),
+            CoercedPath::Directory(d) => self.dir_by_ptr.find(bucket, |(a, idx, _)| {
+                same_addr(a) && same_files(&paths[*idx as usize], d)
+            }),
+        };
+        if let Some(&(_, idx, hash)) = found {
+            return (idx, hash);
+        }
+
         let idx = self.arena.push_path(p.clone());
         let mut hasher = BuckHasher::default();
         p.hash(&mut hasher);
         let hash = hasher.finish();
-        if let Some((f, bucket)) = file {
-            self.path_by_ptr
-                .insert_unique(bucket, (f, idx, hash), |(a, _, _)| path_addr_hash(a));
-        }
+        let lookaside = match p {
+            CoercedPath::File(_) => &mut self.path_by_ptr,
+            CoercedPath::Directory(_) => &mut self.dir_by_ptr,
+        };
+        lookaside.insert_unique(bucket, (key.dupe(), idx, hash), |(a, _, _)| {
+            path_addr_hash(a)
+        });
         (idx, hash)
     }
 

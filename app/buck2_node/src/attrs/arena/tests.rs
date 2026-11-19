@@ -46,6 +46,7 @@ use crate::attrs::attr_type::query::QueryAttrBase;
 use crate::attrs::attr_type::query::QueryMacroBase;
 use crate::attrs::attr_type::query::ResolvedQueryLiterals;
 use crate::attrs::coerced::CoercedAttrRefKind;
+use crate::attrs::coerced_path::CoercedDirectory;
 use crate::attrs::coerced_path::CoercedPath;
 use crate::attrs::display::AttrDisplayWithContextExt;
 use crate::attrs::fmt_context::AttrFmtContext;
@@ -955,6 +956,37 @@ fn test_source_file_pointer_dedup() {
     assert_eq!(r1, r2, "same listing allocation should dedup by pointer");
     assert_eq!(h1, h2);
     assert_ne!(r1, r3);
+    assert_eq!(bld.arena.paths.len(), 2);
+}
+
+#[test]
+fn test_source_directory_pointer_dedup() {
+    use buck2_core::package::package_relative_path::PackageRelativePath;
+    let path = |s: &str| PackedStr::new(PackageRelativePath::new(s).unwrap());
+    let dir = path("models");
+    let files = [path("models/a.py"), path("models/b.py")];
+    let directory = |files: &[PackedStr<PackageRelativePath>]| {
+        source_file(CoercedPath::Directory(Box::new(CoercedDirectory {
+            dir: dir.dupe(),
+            files: files.into(),
+        })))
+    };
+    let a = directory(&files);
+    let b = directory(&files);
+    let fewer_files = directory(&files[..1]);
+    let mut bld = CoercedAttrArena::builder();
+    let AttrToken(r1, h1) = a(&mut bld).unwrap();
+    let AttrToken(r2, h2) = b(&mut bld).unwrap();
+    let AttrToken(r3, _) = fewer_files(&mut bld).unwrap();
+    assert_eq!(
+        r1, r2,
+        "the same directory and file allocations should dedup by pointer"
+    );
+    assert_eq!(h1, h2);
+    assert_ne!(
+        r1, r3,
+        "the same directory with other files is another value"
+    );
     assert_eq!(bld.arena.paths.len(), 2);
 }
 

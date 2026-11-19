@@ -225,6 +225,18 @@ pub fn username() -> buck2_error::Result<Option<String>> {
     }
 }
 
+pub fn is_devserver_placeholder_unixname(name: &str) -> bool {
+    #[cfg(fbcode_build)]
+    {
+        user::is_devserver_placeholder_unixname(name)
+    }
+    #[cfg(not(fbcode_build))]
+    {
+        let _unused = name;
+        false
+    }
+}
+
 /// The AI agent driving this process, as the launcher that started it declared in
 /// `BUCK2_CLIENT_METADATA`. `None` when no launcher set one.
 ///

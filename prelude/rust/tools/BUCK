@@ -23,6 +23,25 @@ get_rustc_host_tuple(
     visibility = ["PUBLIC"],
 )
 
+# Twin of `fbsource//third-party/rust-toolchain/constraints:dual-arch-qualification`
+# for `select()`s in rule attr defaults (defaults are `within_view`-exempt, but
+# the `fbsource` cell does not exist in OSS). Platforms set both in lockstep.
+prelude.constraint(
+    name = "dual-arch-qualification",
+    default = "disabled",
+    values = [
+        "disabled",
+        "enabled",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+prelude.alias(
+    name = "dual-arch-stage2-toolchain",
+    actual = "fbsource//third-party/rust-toolchain:dual-arch-stage2-toolchain",
+    visibility = ["PUBLIC"],
+)
+
 prelude.python_bootstrap_binary(
     name = "extract_link_action",
     has_content_based_path = True,

@@ -74,7 +74,10 @@ get_rustc_cfg = rule(
         "enable_nightly_cfgs": attrs.bool(default = False),
         "multi_arch_toolchain": attrs.option(
             attrs.dep(providers = [RustArchToolchainInfo]),
-            default = None,
+            default = select({
+                "DEFAULT": None,
+                "prelude//rust/tools:dual-arch-qualification[enabled]": "prelude//rust/tools:dual-arch-stage2-toolchain",
+            }),
         ),
         "_rust_toolchain": toolchains_common.rust(),
     },
@@ -111,7 +114,10 @@ get_rustc_host_tuple = rule(
     attrs = {
         "multi_arch_toolchain": attrs.option(
             attrs.dep(providers = [RustArchToolchainInfo]),
-            default = None,
+            default = select({
+                "DEFAULT": None,
+                "prelude//rust/tools:dual-arch-qualification[enabled]": "prelude//rust/tools:dual-arch-stage2-toolchain",
+            }),
         ),
         "_rust_toolchain": toolchains_common.rust(),
     },

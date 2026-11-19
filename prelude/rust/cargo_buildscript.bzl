@@ -481,7 +481,10 @@ _cargo_buildscript_rule = rule(
         "manifest_dir": attrs.option(attrs.dep(), default = None),
         "multi_arch_toolchain": attrs.option(
             attrs.dep(providers = [RustArchToolchainInfo]),
-            default = None,
+            default = select({
+                "DEFAULT": None,
+                "prelude//rust/tools:dual-arch-qualification[enabled]": "prelude//rust/tools:dual-arch-stage2-toolchain",
+            }),
         ),
         "package_name": attrs.string(),
         "runner": attrs.default_only(attrs.exec_dep(providers = [RunInfo], default = "prelude//rust/tools:buildscript_run")),

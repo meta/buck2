@@ -39,6 +39,7 @@ use crate::stats::HttpNetworkStats;
 use crate::x2p::X2PAgentError;
 
 mod builder;
+mod dns;
 pub use builder::HttpClientBuilder;
 
 const DEFAULT_USER_AGENT: &str = "Buck2";

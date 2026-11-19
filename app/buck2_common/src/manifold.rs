@@ -201,7 +201,10 @@ pub struct ManifoldClient {
 
 impl ManifoldClient {
     pub async fn new() -> buck2_error::Result<Self> {
-        let client = HttpClientBuilder::internal().await?.build();
+        let client = HttpClientBuilder::internal()
+            .await?
+            .with_absolute_dns_names()
+            .build();
         let manifold_url = upload_endpoint_url(client.supports_vpnless()).map(|s| s.to_owned());
 
         Ok(Self {

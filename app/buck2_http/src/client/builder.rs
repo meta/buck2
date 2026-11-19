@@ -37,6 +37,7 @@ use tower_service::Service as TowerService;
 
 use super::HttpClient;
 use super::RequestClient;
+use crate::client::dns::DnsResolver;
 use crate::proxy;
 use crate::stats::HttpNetworkStats;
 use crate::x2p;
@@ -69,6 +70,7 @@ pub struct HttpClientBuilder {
     proxies: Vec<Proxy>,
     max_redirects: Option<usize>,
     supports_vpnless: bool,
+    absolute_dns_names: bool,
     http2: bool,
     timeout_config: Option<TimeoutConfig>,
     max_concurrent_requests: Option<usize>,
@@ -108,6 +110,7 @@ impl HttpClientBuilder {
             proxies: Vec::new(),
             max_redirects: None,
             supports_vpnless: false,
+            absolute_dns_names: false,
             http2: true,
             timeout_config: None,
             max_concurrent_requests: None,
@@ -234,6 +237,13 @@ impl HttpClientBuilder {
         self
     }
 
+    /// Resolve local DNS lookups as absolute names without changing HTTP or TLS hostnames.
+    /// Destination lookup through a proxy remains the proxy's responsibility.
+    pub fn with_absolute_dns_names(&mut self) -> &mut Self {
+        self.absolute_dns_names = true;
+        self
+    }
+
     pub fn with_http2(&mut self, http2: bool) -> &mut Self {
         self.http2 = http2;
         self
@@ -276,7 +286,11 @@ impl HttpClientBuilder {
                 }
 
                 // Proxied http client with TLS.
-                let https_connector = build_https_connector(self.tls_config.clone(), self.http2);
+                let https_connector = build_https_connector(
+                    self.tls_config.clone(),
+                    self.http2,
+                    self.absolute_dns_names,
+                );
                 let timeout_connector = timeout_config.to_connector(https_connector);
                 // Re-use TLS config from https connection for communication with proxies.
                 let proxy_connector = build_proxy_connector(
@@ -304,7 +318,11 @@ impl HttpClientBuilder {
                     return Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector));
                 }
 
-                let https_connector = build_https_connector(self.tls_config.clone(), self.http2);
+                let https_connector = build_https_connector(
+                    self.tls_config.clone(),
+                    self.http2,
+                    self.absolute_dns_names,
+                );
                 let proxy_connector =
                     build_proxy_connector(proxies, https_connector, Some(self.tls_config.clone()));
                 Arc::new(Client::builder(TokioExecutor::new()).build(proxy_connector))
@@ -312,12 +330,20 @@ impl HttpClientBuilder {
 
             // Client with TLS only.
             ([], Some(timeout_config)) => {
-                let https_connector = build_https_connector(self.tls_config.clone(), self.http2);
+                let https_connector = build_https_connector(
+                    self.tls_config.clone(),
+                    self.http2,
+                    self.absolute_dns_names,
+                );
                 let timeout_connector = timeout_config.to_connector(https_connector);
                 Arc::new(Client::builder(TokioExecutor::new()).build(timeout_connector))
             }
             ([], None) => {
-                let https_connector = build_https_connector(self.tls_config.clone(), self.http2);
+                let https_connector = build_https_connector(
+                    self.tls_config.clone(),
+                    self.http2,
+                    self.absolute_dns_names,
+                );
                 Arc::new(Client::builder(TokioExecutor::new()).build(https_connector))
             }
         }
@@ -337,16 +363,22 @@ impl HttpClientBuilder {
     }
 }
 
-fn build_https_connector(tls_config: ClientConfig, http2: bool) -> HttpsConnector<HttpConnector> {
+fn build_https_connector(
+    tls_config: ClientConfig,
+    http2: bool,
+    absolute_dns_names: bool,
+) -> HttpsConnector<HttpConnector<DnsResolver>> {
+    let mut http_connector = HttpConnector::new_with_resolver(DnsResolver::new(absolute_dns_names));
+    http_connector.enforce_http(false);
     let builder = HttpsConnectorBuilder::new()
         .with_tls_config(tls_config)
         .https_or_http()
         .enable_http1();
 
     if http2 {
-        builder.enable_http2().build()
+        builder.enable_http2().wrap_connector(http_connector)
     } else {
-        builder.build()
+        builder.wrap_connector(http_connector)
     }
 }
 
@@ -403,6 +435,7 @@ mod tests {
         assert_eq!(None, builder.max_redirects);
         assert!(builder.proxies.is_empty());
         assert!(!builder.supports_vpnless);
+        assert!(!builder.absolute_dns_names);
         Ok(())
     }
 

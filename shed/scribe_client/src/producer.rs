@@ -436,6 +436,9 @@ impl ScribeProducer {
         let mut first_request_error: Option<RequestError> = None;
 
         let retry_intervals: Vec<Duration> = self.make_retry_intervals();
+        // Failed requests in a row. A request that fully succeeds resets it, so a send gives up only
+        // after `retry_attempts` consecutive failures. Every reset delivers at least one message, so
+        // the loop ends.
         let mut retry_count = 0;
         while retry_count < retry_intervals.len() {
             let cutoff_len = request_len(&messages, cc_state.current_cutoff);
@@ -552,6 +555,7 @@ impl ScribeProducer {
             } else if cutoff_len == success_count {
                 // Success; all the messages up to the cutoff were successfully processed.
                 cc_state.update_cutoff(false);
+                retry_count = 0;
             } else {
                 // Partial Success; there were some unretryable errors, or partial successes, or both
                 // not because of congestion. Try again with a longer interval.
@@ -1280,6 +1284,76 @@ mod tests {
         // 3 * 300 KiB fits in 1 MiB, 4 * 300 KiB does not. 7 requests exceed the 5 attempts.
         assert_eq!(*sizes.lock().unwrap(), vec![3, 3, 3, 3, 3, 3, 2]);
         assert_eq!(producer.export_counters().successes, 20);
+    }
+
+    /// A client whose `n`th `WriteMessages` call fails with an exception when `fails(n)`, and
+    /// accepts every message otherwise.
+    fn flaky_client(
+        fails: impl Fn(usize) -> bool + Send + Sync + 'static,
+        sizes: Arc<Mutex<Vec<usize>>>,
+    ) -> ProducerServiceClient {
+        let client = Arc::new(scribe_producer_service_mocks::new::<dyn ProducerService>());
+        client.WriteMessages.mock_result(move |req| {
+            let mut sizes = sizes.lock().unwrap();
+            let call = sizes.len();
+            sizes.push(req.messages.len());
+            if fails(call) {
+                return Err(WriteMessagesError::ApplicationException(
+                    ApplicationException::unknown_method(),
+                ));
+            }
+            Ok(WriteMessagesResponse {
+                results: (0..req.messages.len())
+                    .map(|_| ThriftWriteMessageResult {
+                        code: WriteMessageResultCode::OK,
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            })
+        });
+        client
+    }
+
+    /// Failures separated by successful requests do not use up the retry attempts.
+    #[fbinit::test]
+    async fn test_failures_between_successes_do_not_exhaust_retries(fb: FacebookInit) {
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let producer = make_ScribeProducer(
+            fb,
+            flaky_client(|call| call % 2 == 0, Arc::clone(&sizes)),
+            20,
+        );
+        let res = producer
+            .send_messages_now((0..20).map(|_| sized_message(300 * 1024)).collect())
+            .await;
+        assert!(res.is_ok(), "{res:?}");
+        // Each of the 7 requests fails once and then succeeds: 7 failures, more than the 5 attempts.
+        assert_eq!(
+            *sizes.lock().unwrap(),
+            vec![3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2]
+        );
+        assert_eq!(producer.export_counters().successes, 20);
+    }
+
+    /// A send gives up after `retry_attempts` consecutive failures.
+    #[fbinit::test]
+    async fn test_consecutive_failures_give_up(fb: FacebookInit) {
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let producer =
+            make_ScribeProducer(fb, flaky_client(|call| call >= 1, Arc::clone(&sizes)), 20);
+        let res = producer
+            .send_messages_now((0..20).map(|_| sized_message(300 * 1024)).collect())
+            .await;
+        assert!(
+            res.is_err(),
+            "the send should give up after 5 failures in a row"
+        );
+        // The first request succeeds, then the second one fails 5 times.
+        assert_eq!(*sizes.lock().unwrap(), vec![3, 3, 3, 3, 3, 3]);
+        let counters = producer.export_counters();
+        assert_eq!(counters.successes, 3);
+        assert_eq!(counters.failures(), 17);
     }
 
     /// A message larger than `MAX_REQUEST_BYTES` is still sent, alone in its request.

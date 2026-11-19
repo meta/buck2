@@ -23,6 +23,7 @@ def http_file_shared(
     unzip_tool: [RunInfo, None],
     sha1: [None, str],
     sha256: [None, str],
+    sha512: [None, str],
     size_bytes: [None, int],
     has_content_based_path: bool,
 ) -> list[Provider]:
@@ -35,6 +36,7 @@ def http_file_shared(
         is_executable = is_executable,
         sha1 = sha1,
         sha256 = sha256,
+        sha512 = sha512,
         size_bytes = size_bytes,
     )
 
@@ -73,6 +75,7 @@ def http_file_impl(ctx: AnalysisContext) -> list[Provider]:
         vpnless_url = vpnless_url,
         sha1 = ctx.attrs.sha1,
         sha256 = ctx.attrs.sha256,
+        sha512 = ctx.attrs.sha512,
         is_executable = ctx.attrs.executable or False,
         is_exploded_zip = False,
         unzip_tool = None,
@@ -151,6 +154,7 @@ http_file = prelude_rule(
         # @unsorted-dict-items
         remote_common.urls_arg()
         | remote_common.sha256_arg()
+        | remote_common.sha512_arg()
         | {
             "executable": attrs.option(
                 attrs.bool(),

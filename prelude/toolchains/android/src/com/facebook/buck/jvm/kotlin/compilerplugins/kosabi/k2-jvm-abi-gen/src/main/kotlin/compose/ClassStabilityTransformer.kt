@@ -28,9 +28,12 @@ import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
+import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.IrType
+import org.jetbrains.kotlin.ir.types.IrTypeArgument
+import org.jetbrains.kotlin.ir.types.IrTypeProjection
 import org.jetbrains.kotlin.ir.types.classFqName
 import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.types.isAny
@@ -313,7 +316,10 @@ internal class ClassStabilityTransformer(
 
   // Deliberately conservative: an unrecognised member type yields not-known-stable, so consumers
   // resolve stability at runtime rather than assume the wrong answer.
-  private fun computeStability(irClass: IrClass): Stability {
+  private fun computeStability(
+      irClass: IrClass,
+      substitutions: Map<IrTypeParameterSymbol, IrTypeArgument> = emptyMap(),
+  ): Stability {
     // Compose answers Stable here before it looks at any member, superclass or type parameter.
     if (hasStableMarkedDescendant(irClass)) {
       return Stability(0, EmulatedStability.Stable)
@@ -354,13 +360,13 @@ internal class ClassStabilityTransformer(
             val backingField = declaration.backingField
             if (backingField != null) {
               mask = mask or typeParamBits(backingField.type, irClass)
-              folded = folded.plus(stabilityOfType(backingField.type, analyzedFile))
+              folded = folded.plus(stabilityOfType(backingField.type, analyzedFile, substitutions))
             }
           }
           is IrField -> {
             if (!declaration.isStatic) {
               mask = mask or typeParamBits(declaration.type, irClass)
-              folded = folded.plus(stabilityOfType(declaration.type, analyzedFile))
+              folded = folded.plus(stabilityOfType(declaration.type, analyzedFile, substitutions))
             }
           }
           else -> {}
@@ -466,13 +472,30 @@ internal class ClassStabilityTransformer(
   }
 
   // The stability of a member type, following Compose's StabilityInferencer check order: markers
-  // and enums before interfaces, known-stable containers before the interface rule (an
-  // `ImmutableList` of unstable arguments takes the argument's stability, which normalize()
-  // keeps — it is never Unknown), and structural analysis last.
-  private fun stabilityOfType(type: IrType, analyzedFile: IrFile?): EmulatedStability {
+  // and enums before interfaces, known-stable containers before the interface rule, and structural
+  // analysis last.
+  //
+  // [substitutions] maps the type parameters of the in-module generic classes analysed on the way
+  // here to their arguments, as Compose's StabilityInferencer substitutes them: a member typed with
+  // one takes its argument's stability, once per parameter ([substituting] stops a cycle).
+  private fun stabilityOfType(
+      type: IrType,
+      analyzedFile: IrFile?,
+      substitutions: Map<IrTypeParameterSymbol, IrTypeArgument> = emptyMap(),
+      substituting: Set<IrTypeParameterSymbol> = emptySet(),
+  ): EmulatedStability {
     // Handle nullable — strip and check inner
     if (type.isNullable()) {
-      return stabilityOfType(type.makeNotNull(), analyzedFile)
+      return stabilityOfType(type.makeNotNull(), analyzedFile, substitutions, substituting)
+    }
+
+    val classifier = (type as? IrSimpleType)?.classifier
+    if (classifier is IrTypeParameterSymbol) {
+      val argument = substitutions[classifier]
+      if (argument == null || classifier in substituting) return EmulatedStability.Unstable
+      // A star projection carries no stability information.
+      val argumentType = (argument as? IrTypeProjection)?.type ?: return EmulatedStability.Unstable
+      return stabilityOfType(argumentType, analyzedFile, substitutions, substituting + classifier)
     }
 
     // Primitives
@@ -518,7 +541,7 @@ internal class ClassStabilityTransformer(
             else hasStableMarkedDescendant(owner)
         if (marked) return EmulatedStability.Stable
         if (fqn in KNOWN_STABLE_FQNS) {
-          return knownStableConstructStability(type, analyzedFile)
+          return knownStableConstructStability(type, analyzedFile, substitutions, substituting)
         }
         return valueClassStability(owner, analyzedFile)
       }
@@ -532,10 +555,10 @@ internal class ClassStabilityTransformer(
     // `Pair<String, MutableList<Int>>` matches on FQN alone but is not stable, and claiming it is
     // makes a consumer skip a recomposition it needed. A star projection or a type-parameter
     // argument is not known stable here either — that stability is carried by the type-parameter
-    // mask, which is a separate signal from this one. The arguments fold through plus(), so an
-    // `ImmutableList` of `Unknown` arguments stays `Unknown` rather than collapsing to stable.
+    // mask, which is a separate signal from this one. The arguments combine as Compose's
+    // `applyTypeParameterMask` combines them ([knownStableConstructStability]).
     if (fqn in KNOWN_STABLE_FQNS) {
-      return knownStableConstructStability(type, analyzedFile)
+      return knownStableConstructStability(type, analyzedFile, substitutions, substituting)
     }
 
     if (owner != null) {
@@ -565,7 +588,7 @@ internal class ClassStabilityTransformer(
                 ownerFqn in moduleClassFqns &&
                 (!COMPOSE_STABILITY_IS_FILE_SCOPED || owner.fileOrNull === analyzedFile)
         ) {
-          return computeStability(owner).folded
+          return computeStability(owner, substitutions + substitutionMap(type, owner)).folded
         }
       }
     }
@@ -573,22 +596,47 @@ internal class ClassStabilityTransformer(
     return EmulatedStability.Unstable
   }
 
-  /** A known-stable container folded over its type arguments through plus(). */
+  /**
+   * A known-stable container: Compose's `applyTypeParameterMask` combines the stability of its
+   * arguments into a `Combined` part, even when every argument is stable. A class holding one is
+   * then a `Combined`, so `normalize()` drops a single `Unknown` member beside it (an
+   * `ImmutableList<String>` and a `List<String>` member are known stable together). An unstable
+   * argument makes the class unstable.
+   */
   private fun knownStableConstructStability(
       type: IrType,
       analyzedFile: IrFile?,
+      substitutions: Map<IrTypeParameterSymbol, IrTypeArgument>,
+      substituting: Set<IrTypeParameterSymbol>,
   ): EmulatedStability {
-    var folded: EmulatedStability = EmulatedStability.Stable
-    for (arg in (type as? IrSimpleType)?.arguments.orEmpty()) {
-      val argType = (arg as? org.jetbrains.kotlin.ir.types.IrTypeProjection)?.type
+    val arguments = (type as? IrSimpleType)?.arguments.orEmpty()
+    if (arguments.isEmpty()) return EmulatedStability.Stable
+    val parts = arguments.map { arg ->
       // A star projection carries no stability information.
-      folded =
-          folded.plus(
-              if (argType == null) EmulatedStability.Unstable
-              else stabilityOfType(argType, analyzedFile),
-          )
+      (arg as? IrTypeProjection)?.type?.let {
+        stabilityOfType(it, analyzedFile, substitutions, substituting)
+      } ?: EmulatedStability.Unstable
     }
-    return folded
+    if (parts.any { it === EmulatedStability.Unstable }) return EmulatedStability.Unstable
+    return EmulatedStability.Combined(parts)
+  }
+
+  /**
+   * The type parameters of [owner] mapped to the arguments [type] gives them, as Compose's
+   * `substitutionMap`: a parameter whose argument is the parameter itself is left out.
+   */
+  private fun substitutionMap(
+      type: IrType,
+      owner: IrClass,
+  ): Map<IrTypeParameterSymbol, IrTypeArgument> {
+    val arguments = (type as? IrSimpleType)?.arguments ?: return emptyMap()
+    return owner.typeParameters
+        .map { it.symbol }
+        .zip(arguments)
+        .filter { (parameter, argument) ->
+          ((argument as? IrTypeProjection)?.type as? IrSimpleType)?.classifier != parameter
+        }
+        .toMap()
   }
 
   /**

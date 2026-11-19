@@ -9,21 +9,24 @@
 def _write_impl(ctx: AnalysisContext) -> list[Provider]:
     out = ctx.actions.declare_output("payload.txt", has_content_based_path = False)
     ctx.actions.run(
-        cmd_args(["sh", "-c", 'printf payload > "$1"', "--", out.as_output()]),
+        cmd_args(["fbpython", ctx.attrs.script, out.as_output()]),
         category = "write_payload",
         local_only = True,
     )
     return [DefaultInfo(default_output = out)]
 
-write_payload = rule(impl = _write_impl, attrs = {})
+write_payload = rule(impl = _write_impl, attrs = {"script": attrs.source()})
 
 def _consume_impl(ctx: AnalysisContext) -> list[Provider]:
     out = ctx.actions.declare_output("consumed.txt", has_content_based_path = False)
     ctx.actions.run(
-        cmd_args(["sh", "-c", 'cat "$1" > "$2"', "--", ctx.attrs.src, out.as_output()]),
+        cmd_args(["fbpython", ctx.attrs.script, ctx.attrs.src, out.as_output()]),
         category = "consume_payload",
         local_only = True,
     )
     return [DefaultInfo(default_output = out)]
 
-consume_payload = rule(impl = _consume_impl, attrs = {"src": attrs.source()})
+consume_payload = rule(
+    impl = _consume_impl,
+    attrs = {"script": attrs.source(), "src": attrs.source()},
+)

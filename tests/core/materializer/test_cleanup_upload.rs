@@ -118,7 +118,7 @@ async fn local_consumer_after_cleanup(buck: &Buck, cleanup: bool) -> anyhow::Res
     Ok(())
 }
 
-#[buck_test(skip_for_os = ["darwin", "windows"])]
+#[buck_test]
 #[expect(
     non_snake_case,
     reason = "the Python harness named the case after its id"
@@ -127,7 +127,9 @@ async fn test_local_consumer_after_cleanup_False(buck: &Buck) -> anyhow::Result<
     local_consumer_after_cleanup(buck, false).await
 }
 
-#[buck_test(skip_for_os = ["darwin", "windows"], meta_only = "remote execution: clean-stale uploads the payload to the CAS before it deletes it")]
+#[buck_test(
+    meta_only = "remote execution: clean-stale uploads the payload to the CAS before it deletes it"
+)]
 #[expect(
     non_snake_case,
     reason = "the Python harness named the case after its id"

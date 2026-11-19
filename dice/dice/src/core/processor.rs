@@ -204,8 +204,17 @@ impl StateProcessor {
             StateRequest::BackedSnapshot { resp } => {
                 resp.send(self.state.backed_snapshot(), replies);
             }
-            StateRequest::EvictBacked { keys, cutoff, resp } => {
-                resp.send(self.state.evict_backed(&keys, cutoff), replies);
+            StateRequest::EvictBacked {
+                keys,
+                residency_cutoff,
+                access_cutoff,
+                resp,
+            } => {
+                resp.send(
+                    self.state
+                        .evict_backed(&keys, residency_cutoff, access_cutoff.as_ref()),
+                    replies,
+                );
             }
             StateRequest::MarkNonPageable { keys } => {
                 self.state.mark_non_pageable(keys);

@@ -258,7 +258,26 @@ impl AccessTracker {
             .get(unpack.index_in_shard as usize)
             .expect("access slots are published before their keys")
     }
+
+    fn last_access(&self, key: DiceKey) -> u32 {
+        self.access(key).load(Ordering::Relaxed)
+    }
 }
+
+/// Rechecked on the core thread, after an eviction batch has waited in its queue. Accesses
+/// racing the check remain safe because the active transaction retains its own value.
+#[derive(Clone, Dupe)]
+pub(crate) struct AccessCutoff {
+    accesses: Arc<AccessTracker>,
+    stamp: u32,
+}
+
+impl AccessCutoff {
+    pub(crate) fn accessed_since(&self, key: DiceKey) -> bool {
+        self.accesses.last_access(key) >= self.stamp
+    }
+}
+
 mod introspect {
     use crate::HashMap;
     use crate::introspection::graph::AnyKey;

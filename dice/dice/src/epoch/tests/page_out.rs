@@ -3121,7 +3121,7 @@ async fn evict_snapshot_batches(
     {
         evicted += dice
             .state_handle
-            .evict_backed(keys.to_vec(), snapshot.cutoff)
+            .evict_backed_batch(keys.to_vec(), snapshot.cutoff, None)
             .await;
     }
     evicted

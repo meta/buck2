@@ -29,6 +29,7 @@ use crate::dice::PagableNodeCounts;
 use crate::epoch::cache::SharedCache;
 use crate::epoch::task::dice::DiceTask;
 use crate::key::DiceKey;
+use crate::key_index::AccessCutoff;
 use crate::metrics::AllocWindow;
 use crate::metrics::Metrics;
 use crate::metrics::PagingMemoryMetrics;
@@ -194,16 +195,23 @@ impl ActorState {
         self.graph.backed_snapshot()
     }
 
-    pub(super) fn evict_backed(&mut self, keys: &[DiceKey], cutoff: u64) -> u64 {
+    pub(super) fn evict_backed(
+        &mut self,
+        keys: &[DiceKey],
+        residency_cutoff: u64,
+        access_cutoff: Option<&AccessCutoff>,
+    ) -> u64 {
         let window = AllocWindow::open();
-        let evicted = self.graph.evict_backed(keys, cutoff);
+        let evicted_value_count =
+            self.graph
+                .evict_backed_if_unused(keys, residency_cutoff, access_cutoff);
+        let net_freed_bytes = window.net_freed();
         if let Some(metrics) = &self.paging_memory {
-            let freed = window.net_freed();
-            metrics.record_nodes_paged_out(evicted);
-            metrics.record_offloaded(freed);
-            metrics.record_evicted(evicted, freed);
+            metrics.record_nodes_paged_out(evicted_value_count);
+            metrics.record_offloaded(net_freed_bytes);
+            metrics.record_evicted(evicted_value_count, net_freed_bytes);
         }
-        evicted
+        evicted_value_count
     }
 
     /// Mark values that page-out considered but could not serialize, so they are

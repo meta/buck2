@@ -39,6 +39,7 @@ use crate::core::graph::types::VersionedGraphResult;
 use crate::deps::graph::SeriesParallelDeps;
 use crate::dice::PagableNodeCounts;
 use crate::key::DiceKey;
+use crate::key_index::AccessCutoff;
 use crate::storage::EvictionPolicy;
 use crate::storage::PageOutPolicy;
 use crate::updater::ChangeType;
@@ -743,12 +744,25 @@ impl VersionedGraph {
 
     /// Evicts the values of `keys` backed no later than `cutoff`,
     /// leaving their rows. Returns how many values were evicted.
+    #[cfg(test)]
     pub(crate) fn evict_backed(&mut self, keys: &[DiceKey], cutoff: u64) -> u64 {
+        self.evict_backed_if_unused(keys, cutoff, None)
+    }
+
+    pub(crate) fn evict_backed_if_unused(
+        &mut self,
+        keys: &[DiceKey],
+        residency_cutoff: u64,
+        access_cutoff: Option<&AccessCutoff>,
+    ) -> u64 {
         let mut evicted = 0u64;
         for &key in keys {
+            if access_cutoff.is_some_and(|cutoff| cutoff.accessed_since(key)) {
+                continue;
+            }
             self.with_values(key, |kv| {
                 for value in kv.values_mut() {
-                    if value.evict_backed(cutoff) {
+                    if value.evict_backed(residency_cutoff) {
                         evicted += 1;
                     }
                 }

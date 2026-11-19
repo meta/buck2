@@ -42,6 +42,7 @@ use crate::dice::PagableNodeCounts;
 use crate::epoch::evaluator::VersionState;
 use crate::epoch::task::dice::DiceTask;
 use crate::key::DiceKey;
+use crate::key_index::AccessCutoff;
 use crate::metrics::Metrics;
 use crate::storage::EvictionPolicy;
 use crate::storage::PagingSetup;
@@ -386,13 +387,21 @@ impl CoreStateHandle {
         self.call(|resp| StateRequest::BackedSnapshot { resp })
     }
 
-    /// Evict the values of `keys` backed no later than `cutoff`, returning how many were evicted.
-    pub(crate) fn evict_backed(
+    /// Evict values backed no later than `residency_cutoff`, protecting keys demanded since
+    /// `access_cutoff` when present. Returns the number of resident graph values evicted,
+    /// including multiple retained revisions of a key.
+    pub(crate) fn evict_backed_batch(
         &self,
         keys: Vec<DiceKey>,
-        cutoff: u64,
+        residency_cutoff: u64,
+        access_cutoff: Option<AccessCutoff>,
     ) -> impl Future<Output = u64> + use<> {
-        self.call(move |resp| StateRequest::EvictBacked { keys, cutoff, resp })
+        self.call(move |resp| StateRequest::EvictBacked {
+            keys,
+            residency_cutoff,
+            access_cutoff,
+            resp,
+        })
     }
 
     /// Mark nodes that page-out could not serialize so they are not offered as
@@ -626,10 +635,11 @@ pub(super) enum StateRequest {
     },
     /// The keys with a backed value now, and the residency cutoff of that moment.
     BackedSnapshot { resp: Responder<BackedSnapshot> },
-    /// Drop the values of `keys` backed no later than `cutoff`, leaving their rows.
+    /// Drop the values of `keys` backed no later than `residency_cutoff`, leaving their rows.
     EvictBacked {
         keys: Vec<DiceKey>,
-        cutoff: u64,
+        residency_cutoff: u64,
+        access_cutoff: Option<AccessCutoff>,
         resp: Responder<u64>,
     },
     /// Mark nodes that page-out could not serialize.

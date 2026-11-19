@@ -53,11 +53,13 @@ use serde::Serialize;
 use tokio::sync::watch;
 
 use crate::HashMap;
+use crate::core::graph::BackedSnapshot;
 use crate::core::state::CoreStateHandle;
 use crate::dice::PageOutCancel;
 use crate::dice::StorageIoSnapshot;
 use crate::key::DiceKey;
 use crate::key::DiceKeyErased;
+use crate::key_index::AccessCutoff;
 use crate::key_index::DiceKeyIndex;
 use crate::metrics::AllocWindow;
 use crate::metrics::EvictionSnapshot;
@@ -178,6 +180,18 @@ enum EvictionPolicySetting {
     OnIdleLru,
 }
 
+#[derive(Clone, Copy)]
+struct ReclaimStop {
+    started: Instant,
+    max_duration: Duration,
+    cancelled: PageOutCancel,
+}
+
+impl ReclaimStop {
+    fn should_stop(self) -> bool {
+        (self.cancelled)() || Instant::now() - self.started >= self.max_duration
+    }
+}
 impl From<EvictionPolicySetting> for EvictionPolicy {
     fn from(setting: EvictionPolicySetting) -> Self {
         match setting {
@@ -563,6 +577,18 @@ impl DiceStorage {
     /// become backed while it runs. Returns how many values were evicted. Runs alongside
     /// computations: a lookup of an evicted value reads it back.
     pub(crate) async fn evict_backed(&self, state_handle: &CoreStateHandle) -> u64 {
+        let snapshot = state_handle.backed_snapshot().await;
+        self.evict_candidates(state_handle, snapshot, None, None)
+            .await
+    }
+
+    async fn evict_candidates(
+        &self,
+        state_handle: &CoreStateHandle,
+        snapshot: BackedSnapshot,
+        access_cutoff: Option<AccessCutoff>,
+        stop: Option<ReclaimStop>,
+    ) -> u64 {
         // In batches of keys, so the core thread stays responsive between them.
         const EVICT_BATCH_KEYS: usize = 1000;
         // Bounded by what was backed at the start. Computations run meanwhile, and values that
@@ -570,26 +596,30 @@ impl DiceStorage {
         // likely in use. They are left for the next eviction.
         let start = Instant::now();
         self.paging_memory.record_eviction();
-        let snapshot = state_handle.backed_snapshot().await;
-        let mut evicted = 0;
+        let mut evicted_value_count = 0;
         for keys in snapshot.keys.chunks(EVICT_BATCH_KEYS) {
-            evicted += state_handle
-                .evict_backed(keys.to_vec(), snapshot.cutoff)
+            if stop.is_some_and(ReclaimStop::should_stop) {
+                break;
+            }
+            evicted_value_count += state_handle
+                .evict_backed_batch(keys.to_vec(), snapshot.cutoff, access_cutoff.dupe())
                 .await;
         }
-        let graph_done = Instant::now();
-        let (freed_bytes, arcs) = self.release_after_evictions();
-        self.paging_memory.record_evicted(0, freed_bytes);
-        tracing::info!(
-            values_evicted = evicted,
-            graph_ms = (graph_done - start).as_millis() as u64,
-            cleanup_ms = graph_done.elapsed().as_millis() as u64,
-            arc_cache_passes = arcs.passes,
-            arc_cache_removed = arcs.removed,
-            cleanup_freed_bytes = freed_bytes,
-            "Evicted backed DICE values",
-        );
-        evicted
+        if stop.is_none() || evicted_value_count != 0 {
+            let graph_done = Instant::now();
+            let (freed_bytes, arcs) = self.release_after_evictions();
+            self.paging_memory.record_evicted(0, freed_bytes);
+            tracing::info!(
+                values_evicted = evicted_value_count,
+                graph_ms = (graph_done - start).as_millis() as u64,
+                cleanup_ms = graph_done.elapsed().as_millis() as u64,
+                arc_cache_passes = arcs.passes,
+                arc_cache_removed = arcs.removed,
+                cleanup_freed_bytes = freed_bytes,
+                "Evicted backed DICE values",
+            );
+        }
+        evicted_value_count
     }
 
     /// Frees what evictions the core has applied left behind: the backend's caches and the

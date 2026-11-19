@@ -162,8 +162,10 @@ internal class ComposableTargetInference(
      * applier is still unbound when the enclosing call is inferred capture the caller's applier
      * (`ApplierInferencer.visitCall`). Code that does not resolve here can bind the lambda earlier
      * in the library compile, so for the lambdas [captureUncertainLambdas] returns the capture may
-     * not happen there. Lambdas the backend hoists into singletons are read after their call site
-     * either way, so they always capture and are never listed here.
+     * not happen there: code in the lambda's own region, or code hiding a binding of the callee's
+     * parameter, may bind it first. Lambdas the backend hoists into singletons are read after their
+     * call site either way, so only a callee with a parameter flowing into an unknown call lists
+     * them here.
      */
     private val nonCapturing: Set<FirAnonymousFunction> = emptySet(),
 ) {
@@ -190,6 +192,12 @@ internal class ComposableTargetInference(
 
   /** Owners with a call or read that does not resolve on this classpath. */
   private val unknownCalls = HashSet<FirFunction>()
+
+  /**
+   * Callees with a composable-lambda parameter flowing into an unknown call: hidden code there may
+   * bind the parameter before an argument is inferred in the library compile.
+   */
+  private val calleesWithParamIntoUnknown = HashSet<FirFunction>()
 
   /** Unresolved references recorded at the site, keyed by the owner attributed there. */
   private val unknownRefs = HashMap<FirFunction, MutableSet<UnresolvedApplierReference>>()
@@ -421,13 +429,18 @@ internal class ComposableTargetInference(
 
   /**
    * Lambdas whose capture of the caller's applier depends on code that does not resolve here: code
-   * in the lambda's own region may bind it before the call is inferred in the library compile.
-   * Lambdas the backend hoists into singletons ([deferredLambdas]) are read after their call site
-   * either way, so their capture does not depend on the classpath. Call after [analyze].
+   * in the lambda's own region, or code hiding a binding of the callee's parameter, may bind the
+   * lambda before the call is inferred in the library compile. Lambdas the backend hoists into
+   * singletons ([deferredLambdas]) are read after their call site either way, so their own region
+   * cannot bind them first; a callee with a parameter flowing into an unknown call
+   * ([calleesWithParamIntoUnknown]) still can, through the parameter. Call after [analyze].
    */
   fun captureUncertainLambdas(): Set<FirAnonymousFunction> =
       lambdaArguments
-          .filter { (lambda, _) -> lambda in uncertain && lambda !in deferredLambdas }
+          .filter { (lambda, callee) ->
+            (lambda in uncertain && lambda !in deferredLambdas) ||
+                (callee != null && callee in calleesWithParamIntoUnknown)
+          }
           .mapTo(HashSet()) { it.first }
 
   private fun markIncomplete(owner: FirFunction) {
@@ -846,8 +859,36 @@ internal class ComposableTargetInference(
         ) {
           markIncomplete(owner)
         }
+        // A parameter flowing into an unknown call may be bound by hidden
+        // code: the pre-binding of arguments to it is uncertain.
+        calleesWithParamIntoUnknown += paramOwnersIntoUnknown(expression)
       }
       visitCallChildren(call, arguments.toSet(), owner)
+    }
+
+    /**
+     * The functions whose composable-lambda parameter [expression] reads, following locals to their
+     * initializers: hidden code at this use could bind the argument through it.
+     */
+    private fun paramOwnersIntoUnknown(expression: FirExpression): Set<FirFunction> {
+      val found = HashSet<FirFunction>()
+      val seen = HashSet<FirElement>()
+      val queue = ArrayDeque<FirExpression>()
+      queue.add(expression)
+      while (queue.isNotEmpty()) {
+        val current = unwrap(queue.removeFirst())
+        if (!seen.add(current)) continue
+        when (val node = resolveExpressionOrNull(current)) {
+          is ResolvedParameterNode ->
+              (node.referenceContainer.element as? FirFunction)?.let { found += it }
+          is VariableNode -> {
+            val initializer = (node.element as? FirProperty)?.initializer
+            if (initializer != null) queue.add(initializer)
+          }
+          else -> {}
+        }
+      }
+      return found
     }
 
     /**

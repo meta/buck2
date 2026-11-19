@@ -160,6 +160,7 @@ use host_sharing::HostSharingStrategy;
 use crate::active_commands::ActiveCommandDropGuard;
 use crate::agent_config_guard::check_agent_config_change;
 use crate::agent_config_guard::tag_agent_interactive_arm;
+use crate::agent_context_validation::enforcement_client_id;
 use crate::agent_context_validation::validate_agent_context;
 use crate::agent_host_guard::check_agent_host_guard;
 use crate::daemon::common::CommandExecutorFactory;
@@ -881,11 +882,14 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             .await?;
 
         // Validate agent context against buckconfig schema if entries were provided.
+        // Enforcement looks at every asserted id, not just the last: an
+        // enforced id anywhere in the list (e.g. `-c client.id=claude_code`
+        // under a wrapper's `--client-metadata id=`) triggers validation.
         if !self.cmd_ctx.agent_context.is_empty() {
             let schema = AgentContextSchema::from_config(&cells_and_configs.root_config);
             validate_agent_context(
                 &schema,
-                self.cmd_ctx.client_id_from_client_metadata.as_deref(),
+                enforcement_client_id(&schema, &self.cmd_ctx.client_ids),
                 &self.cmd_ctx.agent_context,
             )?;
         }

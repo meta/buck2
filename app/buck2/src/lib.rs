@@ -43,6 +43,8 @@ use buck2_client_ctx::argfiles::expand_argv;
 use buck2_client_ctx::client_ctx::BuckSubcommand;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::client_metadata::ClientMetadata;
+use buck2_client_ctx::client_metadata::add_legacy_client_id_if_missing;
+use buck2_client_ctx::client_metadata::legacy_client_id_from_config_flags;
 use buck2_client_ctx::client_metadata::parse_client_metadata;
 use buck2_client_ctx::common::BuckArgMatches;
 use buck2_client_ctx::exit_result::ClientIoError;
@@ -55,6 +57,8 @@ use buck2_cmd_log_client::LogCommand;
 use buck2_cmd_rage_client::rage::RageCommand;
 use buck2_cmd_starlark_client::StarlarkCommand;
 use buck2_common::argv::Argv;
+use buck2_common::argv::ConfigFlagValue;
+use buck2_common::argv::parse_config_flags;
 use buck2_common::daemon_routing::DaemonRouting;
 use buck2_common::invocation_paths::RESERVED_BUCK_OUT_PREFIX;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
@@ -311,6 +315,15 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
         .collect();
     immediate_config.set_setting_arg_layers(setting_arg_layers)?;
 
+    let legacy_client_id = legacy_client_id_from_config_flags(
+        parse_config_flags(&opt.argv.expanded_argv)
+            .iter()
+            .filter_map(|(flag, _)| match flag {
+                ConfigFlagValue::ConfigFlag(value) => Some(value.as_str()),
+                _ => None,
+            }),
+    );
+
     let client_metadata = ClientMetadata::from_env()?;
     if !client_metadata.is_empty() {
         // insert the `client_metadata` at the beginning of the list, so that the client id metadata from the env var could be overridden by the cli arg
@@ -327,6 +340,16 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
             .agent_context
             .insert(0, AgentContextEntries(agent_env_metadata));
     }
+
+    // Forward the legacy `-c client.id=` value into the id list when it isn't
+    // already there, so every client id flows through `client_metadata` and
+    // the flattened `metadata["client"]` copy stays redundant. This must run
+    // before the fallback below: a `-c client.id=` id is a real client id and
+    // must suppress `terminal-fallback`/`vscode-fallback`.
+    add_legacy_client_id_if_missing(
+        &mut opt.opt.common_opts.client_metadata,
+        legacy_client_id.as_deref(),
+    );
 
     // If --client-metadata=? was not set and from_env did not find "id", then
     // if we are running in a terminal, we add id=terminal-fallback to
@@ -363,6 +386,7 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
             });
         }
     }
+
     opt.exec(process, &immediate_config)
 }
 

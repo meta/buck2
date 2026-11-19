@@ -77,6 +77,52 @@ fn add_session_id_if_missing(metadatas: &mut Vec<ClientMetadata>, fallback: Opti
     });
 }
 
+/// Prepend the legacy `-c client.id=` buckconfig value to the front of the id
+/// list when it isn't already there. `-c` predates `--client-metadata id=`
+/// and never lands in `client_metadata` on its own; without forwarding,
+/// dropping the flattened `metadata["client"]` copy would lose this id.
+/// Insert first so `-c` loses to `--client-metadata id=` in the daemon, where
+/// the last id wins.
+pub fn add_legacy_client_id_if_missing(
+    metadatas: &mut Vec<ClientMetadata>,
+    legacy_id: Option<&str>,
+) {
+    let Some(id) = legacy_id.map(str::trim).filter(|id| !id.is_empty()) else {
+        return;
+    };
+    if metadatas
+        .iter()
+        .any(|metadata| metadata.key == "id" && metadata.value == id)
+    {
+        return;
+    }
+    metadatas.insert(
+        0,
+        ClientMetadata {
+            key: "id".to_owned(),
+            value: id.to_owned(),
+        },
+    );
+}
+
+/// Extract the effective `-c client.id=` value from raw `-c`/`--config` flag
+/// values, in order. Later flags win, matching config override semantics, so a
+/// trailing blank value (`-c client.id=`) unsets an earlier one.
+/// Cell-qualified values (`cell//client.id=...`) don't match: they don't land
+/// in the root `client` section the daemon reads either.
+pub fn legacy_client_id_from_config_flags<'a>(
+    config_values: impl Iterator<Item = &'a str>,
+) -> Option<String> {
+    let id = config_values
+        .filter_map(|value| value.strip_prefix("client.id="))
+        .last()?
+        .trim();
+    if id.is_empty() {
+        return None;
+    }
+    Some(id.to_owned())
+}
+
 pub fn parse_client_metadata(value: &str) -> buck2_error::Result<ClientMetadata> {
     const REGEX_TEXT: &str = "^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$";
     static REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(REGEX_TEXT).unwrap());
@@ -191,5 +237,79 @@ mod tests {
         add_session_id_if_missing(&mut metadatas, Some("thread-1"));
         assert_eq!(metadatas.len(), 2);
         assert_eq!(metadatas[1], metadata("session_id", "thread-1"));
+    }
+
+    #[test]
+    fn test_add_legacy_client_id_when_absent() {
+        let mut metadatas = vec![metadata("id", "cli")];
+        add_legacy_client_id_if_missing(&mut metadatas, Some("legacy"));
+        assert_eq!(metadatas.len(), 2);
+        assert_eq!(metadatas[0], metadata("id", "legacy"));
+    }
+
+    #[test]
+    fn test_add_legacy_client_id_skips_when_present() {
+        let mut metadatas = vec![metadata("id", "legacy")];
+        add_legacy_client_id_if_missing(&mut metadatas, Some("legacy"));
+        assert_eq!(metadatas.len(), 1);
+    }
+
+    #[test]
+    fn test_add_legacy_client_id_skips_blank_or_missing() {
+        let mut metadatas = vec![metadata("id", "cli")];
+        add_legacy_client_id_if_missing(&mut metadatas, None);
+        add_legacy_client_id_if_missing(&mut metadatas, Some(""));
+        add_legacy_client_id_if_missing(&mut metadatas, Some("  "));
+        assert_eq!(metadatas.len(), 1);
+    }
+
+    #[test]
+    fn test_add_legacy_client_id_trims() {
+        let mut metadatas = vec![metadata("id", "cli")];
+        add_legacy_client_id_if_missing(&mut metadatas, Some("  legacy\n"));
+        assert_eq!(metadatas.len(), 2);
+        assert_eq!(metadatas[0], metadata("id", "legacy"));
+    }
+
+    #[test]
+    fn test_legacy_client_id_from_config_flags() {
+        assert_eq!(legacy_client_id_from_config_flags(vec![].into_iter()), None);
+        assert_eq!(
+            legacy_client_id_from_config_flags(vec!["foo=1", "client.id=outer"].into_iter()),
+            Some("outer".to_owned())
+        );
+        assert_eq!(
+            legacy_client_id_from_config_flags(
+                vec!["client.id=outer", "client.id=inner"].into_iter()
+            ),
+            Some("inner".to_owned())
+        );
+        assert_eq!(
+            legacy_client_id_from_config_flags(vec!["client.id=", "client.id= "].into_iter()),
+            None
+        );
+        // A trailing blank value unsets an earlier id, like buckconfig does.
+        assert_eq!(
+            legacy_client_id_from_config_flags(vec!["client.id=outer", "client.id="].into_iter()),
+            None
+        );
+        assert_eq!(
+            legacy_client_id_from_config_flags(vec!["client.id=outer", "client.id= "].into_iter()),
+            None
+        );
+        // A blank value followed by a real id still yields that id.
+        assert_eq!(
+            legacy_client_id_from_config_flags(vec!["client.id=", "client.id=inner"].into_iter()),
+            Some("inner".to_owned())
+        );
+        assert_eq!(
+            legacy_client_id_from_config_flags(vec!["fbcode//client.id=x"].into_iter()),
+            None
+        );
+        // Non-`client.id` keys are ignored.
+        assert_eq!(
+            legacy_client_id_from_config_flags(vec!["client.ids=x", "other=x"].into_iter()),
+            None
+        );
     }
 }

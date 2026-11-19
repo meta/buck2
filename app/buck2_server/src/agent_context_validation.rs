@@ -25,6 +25,26 @@ use buck2_common::legacy_configs::agent_context::AgentContextSchema;
 use buck2_data::AgentContextEntry;
 use buck2_hash::BuckMutSet;
 
+/// Pick the client id that agent-context schema enforcement applies to.
+///
+/// Tools wrap each other, so a command can assert several `id`s (with the
+/// `-c client.id=` legacy value first). Enforcement must
+/// not depend on which id happens to be last: if any asserted id is an
+/// enforced client, that id governs. Otherwise the last id is returned; it
+/// only feeds the enforced check inside `validate_agent_context`, which
+/// passes for unenforced clients.
+pub(crate) fn enforcement_client_id<'a>(
+    schema: &AgentContextSchema,
+    client_ids: &'a [String],
+) -> Option<&'a str> {
+    client_ids
+        .iter()
+        .rev()
+        .find(|id| schema.is_enforced(id.as_str()))
+        .or_else(|| client_ids.last())
+        .map(String::as_str)
+}
+
 /// Validate agent context entries against the schema.
 ///
 /// Returns `Ok(())` if validation passes or the client is not enforced.
@@ -266,5 +286,39 @@ mod tests {
             entry("bogus_key", "value"),
         ];
         assert!(validate_agent_context(&schema, Some("claude_code"), &entries).is_err());
+    }
+
+    #[test]
+    fn test_enforcement_client_id_prefers_enforced_id() {
+        let schema = schema_with_intent();
+        assert_eq!(
+            enforcement_client_id(&schema, &["claude_code".to_owned(), "wrapper".to_owned()]),
+            Some("claude_code")
+        );
+        assert_eq!(
+            enforcement_client_id(&schema, &["wrapper".to_owned(), "claude_code".to_owned()]),
+            Some("claude_code")
+        );
+        assert_eq!(
+            enforcement_client_id(&schema, &["outer".to_owned(), "wrapper".to_owned()]),
+            Some("wrapper")
+        );
+        assert_eq!(enforcement_client_id(&schema, &[]), None);
+    }
+
+    #[test]
+    fn test_legacy_unenforced_id_does_not_dodge_enforcement() {
+        let schema = schema_with_required_fields();
+        // Missing required field must fail even though an unenforced legacy
+        // `-c client.id=` value is also asserted.
+        let entries = [entry("intent", "")];
+        let ids = vec!["legacy-wrapper".to_owned(), "claude_code".to_owned()];
+        let error = validate_agent_context(&schema, enforcement_client_id(&schema, &ids), &entries)
+            .expect_err("enforced client must not dodge validation via legacy id");
+        assert!(
+            error
+                .to_string()
+                .contains("Missing required agent-context field")
+        );
     }
 }

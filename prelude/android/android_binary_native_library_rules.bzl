@@ -489,6 +489,8 @@ def get_android_binary_native_library_info(
                     for cc in node.compile_cmds:
                         compile_argsfiles[cc.cxx_compile_cmd.argsfile.file] = None
 
+    merge_linker_args_all_by_platform = {platform: list(native_library_merge_linker_args_all or []) for platform in linkable_nodes_by_platform}
+
     jni_onload_check_report = None
     if has_native_merging and ctx.attrs._android_toolchain[AndroidToolchainInfo].jni_onload_check:
         jni_onload_check_report = ctx.actions.declare_output("jni_onload_check.json", has_content_based_path = False)
@@ -568,7 +570,7 @@ def get_android_binary_native_library_info(
                 # @oss-disable[end= ]: None,
                 # @oss-disable[end= ]: apk_module_graph_file,
                 # @oss-disable[end= ]: native_library_merge_non_asset_libs,
-                # @oss-disable[end= ]: native_library_merge_linker_args_all or [],
+                # @oss-disable[end= ]: merge_linker_args_all_by_platform,
                 # @oss-disable[end= ]: native_library_merge_linker_args or {},
                 # @oss-disable[end= ]: native_library_merge_dir,
                 # @oss-disable[end= ]: native_build_command_entries,
@@ -647,7 +649,7 @@ def get_android_binary_native_library_info(
             # @oss-disable[end= ]: given_merge_map,
             # @oss-disable[end= ]: None,
             # @oss-disable[end= ]: False,
-            # @oss-disable[end= ]: native_library_merge_linker_args_all or [],
+            # @oss-disable[end= ]: merge_linker_args_all_by_platform,
             # @oss-disable[end= ]: native_library_merge_linker_args or {},
             # @oss-disable[end= ]: None,
             # @oss-disable[end= ]: native_build_command_entries,
@@ -706,7 +708,7 @@ def get_android_binary_native_library_info(
                     ctx = ctx,
                     cxx_toolchain = ctx.attrs._cxx_toolchain[platform][CxxToolchainInfo],
                     platform = platform if len(original_shared_libs_by_platform) > 1 else None,
-                    native_library_merge_linker_args_all = native_library_merge_linker_args_all,
+                    native_library_merge_linker_args_all = merge_linker_args_all_by_platform[platform],
                     glue_linkable = glue_linkables[platform] if glue_linkables else None,
                     default_shared_libs = original_shared_libs_by_platform[platform],
                     linkable_nodes = linkable_nodes_by_platform[platform],

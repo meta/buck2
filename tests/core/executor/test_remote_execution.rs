@@ -46,6 +46,26 @@ async fn assert_re_use_case(buck: &Buck, expected_use_case: &str) -> anyhow::Res
     Ok(())
 }
 
+#[buck_test(meta_only = "remote execution")]
+async fn test_re_session_names_its_log_directory(buck: &Buck) -> anyhow::Result<()> {
+    buck.build(&["root//:simple", "--remote-only", "--no-remote-cache"])
+        .await?;
+    let logs_dirs = filter_events(
+        buck,
+        &["Event", "data", "Instant", "data", "ReSession", "logs_dir"],
+    )
+    .await?;
+    let logs_dir = logs_dirs
+        .first()
+        .and_then(|logs_dir| logs_dir.as_str())
+        .expect("The command's RE session should name its log directory");
+    assert!(
+        Path::new(logs_dir).join("REClientFolly.log").is_file(),
+        "No RE client log in `{logs_dir}`"
+    );
+    Ok(())
+}
+
 #[buck_test(env = [("BUCK2_TEST_FAIL_CONNECT", "true")], meta_only = "remote execution")]
 async fn test_re_connection_failure_no_retry(buck: &Buck) {
     let out = buck

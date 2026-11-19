@@ -107,7 +107,6 @@ impl RageCommand {
         // Resolved before anything else borrows `ctx`; cheap, and it needs no daemon.
         let settings = ctx.settings_report().map(|report| report.render(true));
         let stderr_path = daemon_dir.buckd_stderr();
-        let re_logs_dir = ctx.paths()?.re_logs_dir();
         let logdir = paths.log_dir();
         let dice_dump_dir = paths.dice_dump_dir();
 
@@ -204,8 +203,8 @@ impl RageCommand {
         let re_logs_command = self.skippable_section(
             "RE logs upload",
             build_info
-                .get_field(|o| o.re_session_id.clone())
-                .map(|id| || upload_re_logs_impl(&manifold, &re_logs_dir, id)),
+                .get_field(|o| Some((o.re_session_id.clone()?, o.re_logs_dir.clone()?)))
+                .map(|(id, logs_dir)| || upload_re_logs_impl(&manifold, logs_dir, id)),
         );
 
         let (
@@ -527,12 +526,12 @@ async fn upload_event_logs(
 
 async fn upload_re_logs_impl(
     manifold: &ManifoldClient,
-    re_logs_dir: &AbsNormPath,
+    logs_dir: String,
     re_session_id: String,
 ) -> buck2_error::Result<String> {
     let bucket = Bucket::RAGE_DUMPS;
     let filename = format!("flat/{}-re_logs.zst", re_session_id);
-    upload_re_logs(manifold, bucket, re_logs_dir, &re_session_id, &filename).await?;
+    upload_re_logs(manifold, bucket, AbsNormPath::new(&logs_dir)?, &filename).await?;
 
     Ok(manifold_leads(&bucket, filename))
 }

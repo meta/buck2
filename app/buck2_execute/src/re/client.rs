@@ -41,6 +41,8 @@ use buck2_events::schedule_type::SandcastleScheduleType;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_hash::BuckMutMap;
 #[cfg(fbcode_build)]
 use buck2_re_configuration::CASdMode;
@@ -633,6 +635,11 @@ impl RemoteExecutionClient {
         self.data.persistent_cache_mode.clone()
     }
 
+    /// Where the RE client writes this session's logs, if it writes any.
+    pub fn get_logs_dir(&self) -> Option<&AbsNormPath> {
+        self.data.client.logs_dir.as_deref()
+    }
+
     pub fn get_experiment_name(&self) -> buck2_error::Result<Option<String>> {
         self.data
             .client
@@ -692,6 +699,8 @@ struct RemoteExecutionClientImpl {
     /// Preserve file symlinks as symlinks when uploading action result.
     respect_file_symlinks: bool,
     persistent_cache_mode: Option<String>,
+    /// Where the RE client writes this session's logs, if it writes any.
+    logs_dir: Option<AbsNormPathBuf>,
 }
 
 fn re_platform(x: &RE::Platform) -> remote_execution::TPlatform {
@@ -1233,6 +1242,15 @@ impl RemoteExecutionClientImpl {
                 }
             };
 
+            // Only the internal client writes logs: to a directory named after its session,
+            // under the one it is configured with.
+            let logs_dir = match &re_config.logs_dir_path {
+                Some(dir) if cfg!(fbcode_build) => {
+                    Some(dir.join(ForwardRelativePath::new(client.get_session_id())?))
+                }
+                _ => None,
+            };
+
             Self {
                 client: Some(client),
                 skip_remote_cache: re_config.skip_remote_cache,
@@ -1245,6 +1263,7 @@ impl RemoteExecutionClientImpl {
                 download_chunk_size,
                 respect_file_symlinks,
                 persistent_cache_mode,
+                logs_dir,
             }
         };
 

@@ -1938,6 +1938,7 @@ mod tests {
                             session_id: "reSessionID-123".to_owned(),
                             experiment_name: "".to_owned(),
                             persistent_cache_mode: None,
+                            logs_dir: None,
                         }
                         .into(),
                     ),
@@ -2120,6 +2121,7 @@ mod tests {
             session_id: "reSessionID-123".to_owned(),
             experiment_name: "".to_owned(),
             persistent_cache_mode: None,
+            logs_dir: None,
         });
         re_state.update(&buck2_data::Snapshot::default());
 

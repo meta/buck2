@@ -33,6 +33,7 @@ struct LogInfo {
     daemon_uptime_s: Option<u64>,
     timestamp_end: Option<SystemTime>,
     re_session_id: Option<String>,
+    re_logs_dir: Option<String>,
 }
 
 pub(crate) struct BuildInfo {
@@ -44,6 +45,8 @@ pub(crate) struct BuildInfo {
     pub command_duration: Option<Duration>,
     pub daemon_uptime_s: Option<u64>,
     pub re_session_id: Option<String>,
+    /// Where the RE client wrote the logs of `re_session_id`, if it wrote any.
+    pub re_logs_dir: Option<String>,
 }
 
 impl fmt::Display for BuildInfo {
@@ -94,6 +97,7 @@ pub(crate) async fn get(log: &EventLogPathBuf) -> buck2_error::Result<BuildInfo>
         daemon_uptime_s: None,
         timestamp_end: None,
         re_session_id: None,
+        re_logs_dir: None,
     };
     loop {
         let res = match filtered_events.try_next().await {
@@ -129,6 +133,7 @@ pub(crate) async fn get(log: &EventLogPathBuf) -> buck2_error::Result<BuildInfo>
         command_duration: duration,
         daemon_uptime_s: info.daemon_uptime_s,
         re_session_id: info.re_session_id,
+        re_logs_dir: info.re_logs_dir,
     };
 
     Ok(output)
@@ -147,8 +152,11 @@ fn extract_info(info: &mut LogInfo, event: Box<buck2_data::BuckEvent>) -> buck2_
     } else if let Some(buck2_data::buck_event::Data::Instant(span)) = &event.data {
         if let Some(buck2_data::instant_event::Data::Snapshot(snapshot)) = &span.data {
             info.daemon_uptime_s.get_or_insert(snapshot.daemon_uptime_s);
-        } else if let Some(buck2_data::instant_event::Data::ReSession(session)) = &span.data {
-            info.re_session_id.get_or_insert(session.session_id.clone());
+        } else if let Some(buck2_data::instant_event::Data::ReSession(session)) = &span.data
+            && info.re_session_id.is_none()
+        {
+            info.re_session_id = Some(session.session_id.clone());
+            info.re_logs_dir = session.logs_dir.clone();
         }
     }
     if let Some(timestamp) = event.timestamp {

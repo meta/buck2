@@ -24,15 +24,21 @@ use futures::Future;
 
 use crate::subscribers::subscriber::EventSubscriber;
 
+/// An RE session whose client logs are yet to be uploaded.
+struct ReSession {
+    id: String,
+    logs_dir: String,
+}
+
 pub(crate) struct ReLog {
-    re_session_id: Option<String>,
+    re_session: Option<ReSession>,
     isolation_dir: FileNameBuf,
 }
 
 impl ReLog {
     pub(crate) fn new(isolation_dir: FileNameBuf) -> Self {
         Self {
-            re_session_id: None,
+            re_session: None,
             isolation_dir,
         }
     }
@@ -40,13 +46,13 @@ impl ReLog {
     fn log_upload(
         &mut self,
     ) -> impl Future<Output = buck2_error::Result<()>> + 'static + Send + Sync + use<> {
-        // We put `None` in place of re_session_id which means we will only attempt to upload
+        // We put `None` in place of re_session which means we will only attempt to upload
         // the logs once no matter how many times this function is called
-        let session_id = self.re_session_id.take();
+        let session = self.re_session.take();
         let isolation_dir = self.isolation_dir.clone();
         async move {
-            if let Some(s_id) = session_id {
-                log_upload_impl(s_id, isolation_dir).await?;
+            if let Some(session) = session {
+                log_upload_impl(session, isolation_dir).await?;
             }
             Ok(())
         }
@@ -67,7 +73,10 @@ impl EventSubscriber for ReLog {
                 buck2_data::instant_event::Data::ReSession(session),
             ) = unpack_event(event)?
             {
-                self.re_session_id = Some(session.session_id.clone());
+                self.re_session = session.logs_dir.as_ref().map(|logs_dir| ReSession {
+                    id: session.session_id.clone(),
+                    logs_dir: logs_dir.clone(),
+                });
             }
         }
         Ok(())
@@ -79,7 +88,7 @@ impl EventSubscriber for ReLog {
 }
 
 async fn log_upload_impl(
-    session_id: String,
+    session: ReSession,
     isolation_dir: FileNameBuf,
 ) -> buck2_error::Result<()> {
     if !should_upload_log()? {
@@ -93,7 +102,9 @@ async fn log_upload_impl(
         .arg("debug")
         .arg("upload-re-logs")
         .arg("--session-id")
-        .arg(session_id)
+        .arg(session.id)
+        .arg("--logs-dir")
+        .arg(session.logs_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null());
     if should_block_on_log_upload()? {

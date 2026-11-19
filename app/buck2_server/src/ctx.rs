@@ -379,6 +379,7 @@ impl<'a> ServerCommandContext<'a> {
                         session_id: session_id.to_owned(),
                         experiment_name,
                         persistent_cache_mode: client.get_persistent_cache_mode(),
+                        logs_dir: client.get_logs_dir().map(|dir| dir.to_string()),
                     })
             }
         }

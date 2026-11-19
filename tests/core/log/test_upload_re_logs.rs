@@ -12,6 +12,7 @@ use anyhow::Context;
 use buck2_e2e::manifold::Bucket;
 use buck2_e2e::manifold::use_ssl_cert_file;
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::filter_events;
 use buck2_e2e::utils::json_get;
 use serde_json::Value;
 
@@ -49,6 +50,19 @@ async fn extract_re_session_id(buck: &Buck) -> anyhow::Result<String> {
         .to_owned())
 }
 
+async fn extract_re_logs_dir(buck: &Buck) -> anyhow::Result<String> {
+    let logs_dirs = filter_events(
+        buck,
+        &["Event", "data", "Instant", "data", "ReSession", "logs_dir"],
+    )
+    .await?;
+    Ok(logs_dirs
+        .first()
+        .and_then(|logs_dir| logs_dir.as_str())
+        .context("no RE log directory in the event log")?
+        .to_owned())
+}
+
 #[buck_test(env = [("SANDCASTLE", "1")])] // wait for logs to finish uploading
 async fn test_upload_re_logs(buck: &mut Buck) -> anyhow::Result<()> {
     use_ssl_cert_file(buck);
@@ -56,8 +70,15 @@ async fn test_upload_re_logs(buck: &mut Buck) -> anyhow::Result<()> {
     buck.build(&["root//:run"]).await?;
 
     let session_id = extract_re_session_id(buck).await?;
-    buck.debug(&["upload-re-logs", "--session-id", &session_id])
-        .await?;
+    let logs_dir = extract_re_logs_dir(buck).await?;
+    buck.debug(&[
+        "upload-re-logs",
+        "--session-id",
+        &session_id,
+        "--logs-dir",
+        &logs_dir,
+    ])
+    .await?;
     assert!(
         Bucket::new(BUCKET, APIKEY)
             .exists(&format!("flat/{session_id}.log.zst"))

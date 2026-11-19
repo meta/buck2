@@ -806,6 +806,8 @@ message RemoteExecutionSessionCreated {
   string session_id = 1;
   string experiment_name = 2;
   optional string persistent_cache_mode = 3;
+  // Directory the RE client writes this session's logs to, if it writes any.
+  optional string logs_dir = 4;
 }
 
 message Location {

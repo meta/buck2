@@ -15,12 +15,16 @@ use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::upload_re_logs::upload_re_logs;
 use buck2_common::manifold::Bucket;
 use buck2_common::manifold::ManifoldClient;
+use buck2_fs::paths::abs_norm_path::AbsNormPath;
 
 #[derive(Debug, clap::Parser)]
 #[clap(about = "upload RE logs")]
 pub struct UploadReLogsCommand {
     #[clap(long)]
     session_id: String,
+    /// Directory the RE client wrote the session's logs to.
+    #[clap(long)]
+    logs_dir: String,
 }
 
 impl BuckSubcommand for UploadReLogsCommand {
@@ -29,19 +33,16 @@ impl BuckSubcommand for UploadReLogsCommand {
     async fn exec_impl(
         self,
         _matches: BuckArgMatches<'_>,
-        ctx: ClientCommandContext<'_>,
+        _ctx: ClientCommandContext<'_>,
         events_ctx: &mut buck2_client_ctx::events_ctx::EventsCtx,
     ) -> ExitResult {
         buck2_core::facebook_only();
         events_ctx.log_invocation_record = false;
         let manifold = ManifoldClient::new().await?;
-        // TODO: This should receive the path from the caller.
-        let re_logs_dir = ctx.paths()?.re_logs_dir();
         upload_re_logs(
             &manifold,
             Bucket::RE_LOGS,
-            &re_logs_dir,
-            &self.session_id,
+            AbsNormPath::new(&self.logs_dir)?,
             &format!("flat/{}.log.zst", self.session_id),
         )
         .await?;

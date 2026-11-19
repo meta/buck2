@@ -195,6 +195,16 @@ def python_executable_attrs() -> dict[str, Attr]:
             "bolt_profile": attrs.option(attrs.source(), default = None),
             "compiler_flags": attrs.list(attrs.arg(anon_target_compatible = True), default = []),
             "cxx_main": attrs.source(default = "prelude//python/tools:embedded_main.cpp"),
+            "debuginfo_beside_par": attrs.bool(
+                default = True,
+                doc = """
+            Copy the PAR's separate debug info (debug info extracted under `strip_libpar = "extract"`,
+            the `.dwp` files packaged beside the PAR under `extract`, and HIP device sidecars) into a
+            `#debuginfo` directory beside the PAR. This makes the debug info an input of the PAR
+            action. When `False`, the debug info is still available through the `par-debuginfo`
+            subtarget.
+        """,
+            ),
             "enable_distributed_thinlto": attrs.bool(default = False),
             "exe_allow_cache_upload": attrs.bool(
                 default = False,

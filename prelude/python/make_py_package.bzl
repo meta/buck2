@@ -403,7 +403,6 @@ def make_py_package(
         preload_libraries,
         common_modules_args,
         dep_artifacts,
-        debug_artifacts,
         main,
         manifest_module,
         pex_modules,
@@ -426,7 +425,7 @@ def make_py_package(
             compile = pex_modules.compile,
         )
 
-        repl_common_modules_args, repl_dep_artifacts, repl_debug_artifacts = _pex_modules_common_args(
+        repl_common_modules_args, repl_dep_artifacts, _ = _pex_modules_common_args(
             ctx,
             repl_pex_modules,
             [startup_function] if startup_function else [],
@@ -450,7 +449,6 @@ def make_py_package(
                 preload_libraries,
                 repl_common_modules_args,
                 repl_dep_artifacts,
-                repl_debug_artifacts,
                 (EntryPointKind("function"), ctx.attrs.repl_main),
                 manifest_module,
                 repl_pex_modules,
@@ -477,7 +475,6 @@ def make_py_package(
                 preload_libraries,
                 common_modules_args,
                 dep_artifacts,
-                debug_artifacts,
                 main,
                 manifest_module,
                 pex_modules,
@@ -587,7 +584,6 @@ def _make_py_package_wrapper(
     preload_libraries: cmd_args,
     common_modules_args: cmd_args,
     dep_artifacts: list[ArgLike],
-    debug_artifacts: list[(str | (str, SharedLibrary, str), ArgLike)],
     main: EntryPoint,
     manifest_module: ManifestModule | None,
     pex_modules: PexModules,
@@ -626,7 +622,6 @@ def _make_py_package_wrapper(
         preload_libraries,
         common_modules_args,
         dep_artifacts,
-        debug_artifacts,
         main,
         manifest_module,
         pex_modules,
@@ -644,7 +639,6 @@ def _make_py_package_impl(
     preload_libraries: cmd_args,
     common_modules_args: cmd_args,
     dep_artifacts: list[ArgLike],
-    debug_artifacts: list[(str | (str, SharedLibrary, str), ArgLike)],
     main: EntryPoint,
     manifest_module: ManifestModule | None,
     pex_modules: PexModules,
@@ -693,7 +687,6 @@ def _make_py_package_impl(
         ctx,
         common_modules_args,
         runtime_artifacts,
-        debug_artifacts,
         package_style,
         include_bytecode,
         symlink_tree_path,
@@ -1271,13 +1264,14 @@ def _pex_modules_common_args(
     cmd.add(cmd_args(native_libraries, format = "@{}"))
 
     if debuginfo_files:
-        debuginfo_srcs_path = ctx.actions.write(
-            "__debuginfo___srcs{}.txt".format(suffix),
-            _srcs([src for _, src in debuginfo_files], format = "--debuginfo-src={}"),
-            has_content_based_path = False,
-        )
-        debuginfo_srcs_args = cmd_args(debuginfo_srcs_path)
-        cmd.add(cmd_args(debuginfo_srcs_args, format = "@{}"))
+        if ctx.attrs.debuginfo_beside_par:
+            debuginfo_srcs = [src for _, src in debuginfo_files]
+            debuginfo_srcs_path = ctx.actions.write(
+                "__debuginfo___srcs{}.txt".format(suffix),
+                _srcs(debuginfo_srcs, format = "--debuginfo-src={}"),
+                has_content_based_path = False,
+            )
+            cmd.add(cmd_args(debuginfo_srcs_path, format = "@{}", hidden = debuginfo_srcs))
         for name, artifact in debuginfo_files:
             if type(name) != type(""):
                 libdir, shlib, ext = name
@@ -1289,29 +1283,37 @@ def _pex_modules_common_args(
             dwp_ext = ".debuginfo.dwp"
         else:
             dwp_ext = ".dwp"
-        dwp_args = gen_shared_libs_action(
-            actions = ctx.actions,
-            out = "__dwp{}__.txt".format(suffix),
-            shared_libs = [shlib for shlib, _ in shared_libraries],
-            gen_action = lambda actions, output, shared_libs: actions.write(
-                output,
-                cmd_args(
-                    _srcs(
-                        [shlib.lib.dwp for shlib in shared_libs.values() if shlib.lib.dwp != None],
-                        format = "--dwp-src={}",
-                    ),
-                    _srcs(
-                        [paths.join(libdir, soname + dwp_ext) for soname, shlib, libdir in zip_shlibs(shared_libs, shared_libraries) if shlib.lib.dwp != None],
-                        format = "--dwp-dest={}",
-                    ),
-                ),
-            ),
-        )
-        cmd.add(cmd_args(dwp_args, format = "@{}"))
-
+        dwps = []
         for shlib, libdir in shared_libraries:
             if shlib.lib.dwp != None:
                 debug_artifacts.append(((libdir, shlib, dwp_ext), shlib.lib.dwp))
+                dwps.append(shlib.lib.dwp)
+
+        # Under `extract`, make_par copies these only beside the PAR, never into it.
+        if ctx.attrs.debuginfo_beside_par or ctx.attrs.strip_libpar != "extract":
+            dwp_args = gen_shared_libs_action(
+                actions = ctx.actions,
+                out = "__dwp{}__.txt".format(suffix),
+                shared_libs = [shlib for shlib, _ in shared_libraries],
+                gen_action = lambda actions, output, shared_libs: actions.write(
+                    output,
+                    cmd_args(
+                        _srcs(
+                            [shlib.lib.dwp for shlib in shared_libs.values() if shlib.lib.dwp != None],
+                            format = "--dwp-src={}",
+                        ),
+                        _srcs(
+                            [
+                                paths.join(libdir, soname + dwp_ext)
+                                for soname, shlib, libdir in zip_shlibs(shared_libs, shared_libraries)
+                                if shlib.lib.dwp != None
+                            ],
+                            format = "--dwp-dest={}",
+                        ),
+                    ),
+                ),
+            )
+            cmd.add(cmd_args(dwp_args, format = "@{}", hidden = dwps))
 
     for shlib, _ in shared_libraries:
         deps.append(shlib.lib.output)
@@ -1320,6 +1322,8 @@ def _pex_modules_common_args(
         ctx.actions,
         [shlib.lib.external_debug_info for shlib, _ in shared_libraries],
     )
+
+    cmd.add(cmd_args(hidden = external_debug_info))
 
     # HACK: external_debug_info has an empty path
     debug_artifacts.extend([("", d) for d in external_debug_info])
@@ -1330,7 +1334,6 @@ def _pex_modules_args(
     ctx: AnalysisContext,
     common_args: cmd_args,
     dep_artifacts: list[ArgLike],
-    debug_artifacts: list[(str | (str, SharedLibrary, str), ArgLike)],
     package_style: PackageStyle,
     include_bytecode: bool,
     symlink_tree_path: Artifact | None,
@@ -1385,8 +1388,6 @@ def _pex_modules_args(
         # Accumulate all the artifacts we depend on. Only add them to the command
         # if we are not going to create symlinks.
         hidden.append(dep_artifacts)
-
-    hidden.extend([s for _, s in debug_artifacts])
 
     resources = pex_modules.manifests.resource_manifests(mode = package_style.value)
     if resources:

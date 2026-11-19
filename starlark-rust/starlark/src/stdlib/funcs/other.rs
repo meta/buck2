@@ -37,6 +37,78 @@ use crate::values::typing::StarlarkIter;
 use crate::values::typing::never::StarlarkNever;
 use crate::values::typing::ty::AbstractType;
 
+/// Below this length a sort is an insertion sort, as in the standard library.
+const INSERTION_SORT_LEN: usize = 20;
+
+/// Stable sort by a comparison that can fail, which `slice::sort_by` cannot
+/// be given: it requires a total order, and since Rust 1.81 it aborts the
+/// process on a comparator that does not provide one. Values of different
+/// types do not compare at all, so their comparison errors have to propagate.
+/// On an error the order of `v` is unspecified.
+fn try_sort_by<T: Copy, E>(
+    v: &mut [T],
+    cmp: &mut impl FnMut(T, T) -> Result<Ordering, E>,
+) -> Result<(), E> {
+    if v.len() <= INSERTION_SORT_LEN {
+        return try_insertion_sort(v, cmp);
+    }
+    let mut buf = v.to_vec();
+    try_merge_sort(v, &mut buf, cmp)
+}
+
+fn try_insertion_sort<T: Copy, E>(
+    v: &mut [T],
+    cmp: &mut impl FnMut(T, T) -> Result<Ordering, E>,
+) -> Result<(), E> {
+    for i in 1..v.len() {
+        let mut j = i;
+        while j > 0 && cmp(v[j - 1], v[j])? == Ordering::Greater {
+            v.swap(j - 1, j);
+            j -= 1;
+        }
+    }
+    Ok(())
+}
+
+/// `buf` is scratch space of the same length as `v`.
+fn try_merge_sort<T: Copy, E>(
+    v: &mut [T],
+    buf: &mut [T],
+    cmp: &mut impl FnMut(T, T) -> Result<Ordering, E>,
+) -> Result<(), E> {
+    if v.len() <= INSERTION_SORT_LEN {
+        return try_insertion_sort(v, cmp);
+    }
+    let mid = v.len() / 2;
+    {
+        let (v_left, v_right) = v.split_at_mut(mid);
+        let (buf_left, buf_right) = buf.split_at_mut(mid);
+        try_merge_sort(v_left, buf_left, cmp)?;
+        try_merge_sort(v_right, buf_right, cmp)?;
+    }
+    buf.copy_from_slice(v);
+    let (left, right) = buf.split_at(mid);
+    let (mut i, mut j) = (0, 0);
+    for slot in v.iter_mut() {
+        // Taking from the left on a tie keeps the sort stable.
+        let take_left = if i == left.len() {
+            false
+        } else if j == right.len() {
+            true
+        } else {
+            cmp(left[i], right[j])? != Ordering::Greater
+        };
+        if take_left {
+            *slot = left[i];
+            i += 1;
+        } else {
+            *slot = right[j];
+            j += 1;
+        }
+    }
+    Ok(())
+}
+
 #[starlark_module]
 pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// fail: fail the execution
@@ -344,7 +416,7 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<AllocList<impl IntoIterator<Item = Value<'v>> + use<'v>>> {
         let it = x.to_value().iterate(eval.heap())?;
-        let mut it = match key {
+        let mut it: Vec<(Value, Value)> = match key {
             None => it.map(|x| (x, x)).collect(),
             Some(key) => {
                 let mut v = Vec::new();
@@ -355,24 +427,13 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
             }
         };
 
-        let mut compare_ok = Ok(());
-
-        it.sort_by(|x: &(Value, Value), y: &(Value, Value)| {
-            let ord_or_err = if reverse {
-                x.1.compare(y.1).map(Ordering::reverse)
+        try_sort_by(&mut it, &mut |a: (Value, Value), b: (Value, Value)| {
+            if reverse {
+                b.1.compare(a.1)
             } else {
-                x.1.compare(y.1)
-            };
-            match ord_or_err {
-                Ok(r) => r,
-                Err(e) => {
-                    compare_ok = Err(e);
-                    Ordering::Equal // does not matter
-                }
+                a.1.compare(b.1)
             }
-        });
-
-        compare_ok?;
+        })?;
 
         Ok(AllocList(it.into_iter().map(|x| x.0)))
     }
@@ -505,5 +566,35 @@ noop(hash)(foo)
         a.disable_static_typechecking();
         a.eq("(1, 2)", "tuple((1, 2))");
         a.eq("(1, 2)", "tuple([1, 2])");
+    }
+
+    #[test]
+    fn test_sorted_incomparable_items() {
+        assert::fail(
+            "sorted([5, 4, 3, 2, 1, 0, len, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, len, 9, 8, 7, 6])",
+            "compare",
+        );
+    }
+
+    #[test]
+    fn test_sorted_non_transitive() {
+        assert::fail("sorted([(1,), (1, 'a'), (1, 2)])", "not supported");
+    }
+
+    #[test]
+    fn test_sorted_long_lists() {
+        // Longer than `INSERTION_SORT_LEN`, so the merge path runs.
+        let a = Assert::new();
+        a.eq("list(range(1, 101))", "sorted(list(range(100, 0, -1)))");
+        a.eq(
+            "[(0, 'a'), (0, 'b')] * 25 + [(1, 'a'), (1, 'b')] * 25",
+            "sorted([(1, 'a'), (0, 'a'), (1, 'b'), (0, 'b')] * 25, key = lambda x: x[0])",
+        );
+        a.eq(
+            "[(1, 'a'), (1, 'b')] * 25 + [(0, 'a'), (0, 'b')] * 25",
+            "sorted([(1, 'a'), (0, 'a'), (1, 'b'), (0, 'b')] * 25, key = lambda x: x[0], reverse = True)",
+        );
+        a.fail("sorted(list(range(100)) + [len])", "not supported");
+        a.fail("sorted([(1,), (1, 'a'), (1, 2)] * 20)", "not supported");
     }
 }

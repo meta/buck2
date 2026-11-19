@@ -40,5 +40,8 @@ nix = { version = "0.31.3", features = ["fs"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { version = "0.31.3", features = ["fs"] }
 
+[patch."https://github.com/wezterm/wezterm.git"]
+filedescriptor = "0.8.3"
+
 [workspace]
 members = ["."]

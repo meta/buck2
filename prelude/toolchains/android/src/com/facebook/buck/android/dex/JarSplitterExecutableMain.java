@@ -17,8 +17,11 @@ import java.io.BufferedOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
@@ -31,8 +34,12 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
 /**
- * Main entry point for splitting a .jar into the .class files that should go into the primary .dex,
+ * Main entry point for splitting .jars into the .class files that should go into the primary .dex,
  * and the .class files that should go into a secondary .dex.
+ *
+ * <p>Accepts repeated input-jar / primary-dex-classes-jar / secondary-dex-classes-jar triples so
+ * one JVM launch can split a whole batch of jars (dex_rules.bzl batches them into stable hash
+ * buckets). A single triple behaves exactly as before.
  */
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class JarSplitterExecutableMain {
@@ -40,7 +47,7 @@ public class JarSplitterExecutableMain {
   private static final String CLASS_NAME_SUFFIX = ".class";
 
   @Option(name = "--input-jar", required = true)
-  private String inputJar;
+  private List<String> inputJars = new ArrayList<>();
 
   @Option(name = "--primary-dex-patterns", required = true)
   private String primaryDexPatterns;
@@ -54,10 +61,10 @@ public class JarSplitterExecutableMain {
   private String proguardMappingFileString = null;
 
   @Option(name = "--primary-dex-classes-jar", required = true)
-  private String primaryDexClassesJar;
+  private List<String> primaryDexClassesJars = new ArrayList<>();
 
   @Option(name = "--secondary-dex-classes-jar", required = true)
-  private String secondaryDexClassesJar;
+  private List<String> secondaryDexClassesJars = new ArrayList<>();
 
   public static void main(String[] args) throws IOException {
     JarSplitterExecutableMain main = new JarSplitterExecutableMain();
@@ -74,6 +81,17 @@ public class JarSplitterExecutableMain {
   }
 
   private void run() throws IOException {
+    if (inputJars.size() != primaryDexClassesJars.size()
+        || inputJars.size() != secondaryDexClassesJars.size()) {
+      throw new IOException(
+          "Mismatched jar_splitter batch: "
+              + inputJars.size()
+              + " inputs, "
+              + primaryDexClassesJars.size()
+              + " primary outputs, "
+              + secondaryDexClassesJars.size()
+              + " secondary outputs");
+    }
     ProguardTranslatorFactory proguardTranslatorFactory =
         ProguardTranslatorFactory.create(
             Optional.ofNullable(proguardConfigurationFileString).map(Paths::get),
@@ -84,15 +102,30 @@ public class JarSplitterExecutableMain {
     ClassNameFilter primaryDexClassNameFilter =
         ClassNameFilter.fromConfiguration(Files.readAllLines(Paths.get(primaryDexPatterns)));
 
+    for (int n = 0; n < inputJars.size(); n++) {
+      splitJar(
+          Paths.get(inputJars.get(n)),
+          Paths.get(primaryDexClassesJars.get(n)),
+          Paths.get(secondaryDexClassesJars.get(n)),
+          deobfuscateFunction,
+          primaryDexClassNameFilter);
+    }
+  }
+
+  private static void splitJar(
+      Path inputJar,
+      Path primaryDexClassesJar,
+      Path secondaryDexClassesJar,
+      Function<String, String> deobfuscateFunction,
+      ClassNameFilter primaryDexClassNameFilter)
+      throws IOException {
     try (JarOutputStream primaryJarOutputStream =
             new JarOutputStream(
-                new BufferedOutputStream(
-                    new FileOutputStream(Paths.get(primaryDexClassesJar).toFile())));
+                new BufferedOutputStream(new FileOutputStream(primaryDexClassesJar.toFile())));
         JarOutputStream secondaryJarOutputStream =
             new JarOutputStream(
-                new BufferedOutputStream(
-                    new FileOutputStream(Paths.get(secondaryDexClassesJar).toFile())));
-        ZipFile zipFile = new ZipFile(Paths.get(inputJar).toFile())) {
+                new BufferedOutputStream(new FileOutputStream(secondaryDexClassesJar.toFile())));
+        ZipFile zipFile = new ZipFile(inputJar.toFile())) {
       Enumeration<? extends ZipEntry> entries = zipFile.entries();
       while (entries.hasMoreElements()) {
         ZipEntry zipEntry = entries.nextElement();

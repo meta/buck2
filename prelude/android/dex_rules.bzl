@@ -319,6 +319,27 @@ def get_multi_dex(
         primary_dex_class_names = primary_dex_class_names,
     )
 
+# jar_splitter batching. Each jar is split independently (a class-name filter
+# into a primary and a secondary jar), so how jars are batched never changes
+# what is produced, and every jar keeps its own output path. Jars go into a
+# FIXED number of buckets chosen by a stable hash of the owning target label,
+# so a jar's bucket depends only on its own owner: adding or removing a library
+# changes the inputs of its own bucket and no other, and the other jar_splitter
+# actions keep their cache keys (contiguous chunks would shift every later
+# batch instead). 1024 buckets is about 60 jars per action on the largest apps
+# (~62k jars), which removes almost all of the fixed per-action cost (JVM start,
+# input fetch, output upload), while a one-library change re-splits only its
+# bucket's ~60 jars (tens of ms of execution each). Small apps end up with about
+# one jar per bucket, i.e. the old one-action-per-jar behavior.
+_JAR_SPLITTER_NUM_BUCKETS = 1024
+
+def _jar_splitter_bucket(owner_label: str) -> int:
+    # Starlark's hash() of a string is deterministic (the Java String.hashCode
+    # algorithm: the same value on every host, daemon and run, unlike Python's
+    # salted hash()), so bucket membership is stable across builds and machines.
+    # A positive divisor gives a non-negative result.
+    return hash(owner_label) % _JAR_SPLITTER_NUM_BUCKETS
+
 def _get_primary_dex_and_secondary_dex_jars(
     ctx: AnalysisContext,
     jars: list[Artifact],
@@ -328,38 +349,57 @@ def _get_primary_dex_and_secondary_dex_jars(
     proguard_mapping_output_file: Artifact | None,
     android_toolchain: AndroidToolchainInfo,
 ) -> (list[Artifact], list[Artifact]):
-    primary_dex_jars = []
-    secondary_dex_jars = []
-    for jar in jars:
+    # One jar_splitter action (one JVM launch, one RE scheduling round) per
+    # non-empty bucket instead of one per jar. Within a bucket, jars are ordered
+    # by (owner label, jar path), which does not depend on the order of the
+    # dependency graph. The returned lists keep input order.
+    owner_labels = [str(java_library_jars_to_owners[jar]) for jar in jars]
+    indices_by_bucket = {}
+    for i in range(len(jars)):
+        indices_by_bucket.setdefault(_jar_splitter_bucket(owner_labels[i]), []).append(i)
+
+    primary_by_index = {}
+    secondary_by_index = {}
+    for bucket in sorted(indices_by_bucket.keys()):
+        indices = sorted(
+            indices_by_bucket[bucket],
+            key = lambda i: (owner_labels[i], jars[i].short_path),
+        )
         jar_splitter_cmd = cmd_args(android_toolchain.jar_splitter_command[RunInfo])
-        owner = java_library_jars_to_owners[jar]
-        identifier = "{}/{}/{}".format(owner.package, owner.name, jar.short_path)
-        primary_dex_jar = ctx.actions.declare_output("root_module_primary_dex_jars/{}".format(identifier), has_content_based_path = True)
-        secondary_dex_jar = ctx.actions.declare_output("root_module_secondary_dex_jars/{}".format(identifier), has_content_based_path = True)
         jar_splitter_cmd.add([
-            "--input-jar",
-            jar,
             "--primary-dex-patterns",
             primary_dex_patterns_file,
-            "--primary-dex-classes-jar",
-            primary_dex_jar.as_output(),
-            "--secondary-dex-classes-jar",
-            secondary_dex_jar.as_output(),
         ])
         if proguard_configuration_output_file:
             jar_splitter_cmd.add("--proguard-configuration-file", proguard_configuration_output_file)
             jar_splitter_cmd.add("--proguard-mapping-file", proguard_mapping_output_file)
+        for i in indices:
+            jar = jars[i]
+            owner = java_library_jars_to_owners[jar]
+            jar_identifier = "{}/{}/{}".format(owner.package, owner.name, jar.short_path)
+            primary_dex_jar = ctx.actions.declare_output("root_module_primary_dex_jars/{}".format(jar_identifier), has_content_based_path = True)
+            secondary_dex_jar = ctx.actions.declare_output("root_module_secondary_dex_jars/{}".format(jar_identifier), has_content_based_path = True)
+            jar_splitter_cmd.add([
+                "--input-jar",
+                jar,
+                "--primary-dex-classes-jar",
+                primary_dex_jar.as_output(),
+                "--secondary-dex-classes-jar",
+                secondary_dex_jar.as_output(),
+            ])
+            primary_by_index[i] = primary_dex_jar
+            secondary_by_index[i] = secondary_dex_jar
 
         ctx.actions.run(
             jar_splitter_cmd,
             category = "jar_splitter",
-            identifier = identifier,
+            identifier = "bucket_{}".format(bucket),
             allow_cache_upload = True,
             error_handler = android_toolchain.android_error_handler,
         )
 
-        primary_dex_jars.append(primary_dex_jar)
-        secondary_dex_jars.append(secondary_dex_jar)
+    primary_dex_jars = [primary_by_index[i] for i in range(len(jars))]
+    secondary_dex_jars = [secondary_by_index[i] for i in range(len(jars))]
 
     return primary_dex_jars, secondary_dex_jars
 

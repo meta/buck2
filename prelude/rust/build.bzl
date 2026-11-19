@@ -1383,6 +1383,16 @@ def _check_restricted_rustc_flags(flags: list[str | ResolvedStringWithMacros | A
                         + "If you have a legitimate need, set `uses_restricted_rustc_flags = True` on your target.",
                     )
 
+def _codegen_option(flags: list[str | ResolvedStringWithMacros | Artifact], i: int) -> str | None:
+    flag = str(flags[i]).strip('"')
+    if flag in ("-C", "--codegen"):
+        return str(flags[i + 1]).strip('"') if i + 1 < len(flags) else None
+    if flag.startswith("--codegen="):
+        return flag.removeprefix("--codegen=")
+    if flag.startswith("-C"):
+        return flag.removeprefix("-C")
+    return None
+
 def _rustc_flags(flags: list[str | ResolvedStringWithMacros | Artifact], toolchain_info: RustToolchainInfo) -> list[str | ResolvedStringWithMacros | Artifact]:
     # Rustc's "-g" flag is documented as being exactly equivalent to
     # "-Cdebuginfo=2". Rustdoc supports the latter, it just doesn't have the
@@ -1391,42 +1401,38 @@ def _rustc_flags(flags: list[str | ResolvedStringWithMacros | Artifact], toolcha
         flag = str(flag).strip('"')
         if flag == "-g":
             flags[i] = "-Cdebuginfo=2"
+        option = _codegen_option(flags, i)
+        if option == None:
+            continue
         if toolchain_info.advanced_unstable_linking:
             # The extraction drops rustc's linker argv apart from its synthesized
             # inputs, so flags injected via `-Clink-arg` would be silently lost.
             # `uses_restricted_rustc_flags` does not exempt this: unlike the flags
             # that attribute normally guards, these would not merely be
             # unsupported, they would silently not happen.
-            if "-Clink-arg" in flag or (flag == "-C" and i + 1 < len(flags) and str(flags[i + 1]).strip('"').startswith("link-arg")):
+            if option.startswith("link-arg"):
                 fail("flags passed via `-Clink-arg` are dropped when linking through cxx; use the target's or toolchain's `linker_flags` instead")
 
             # Additional flags that rustc only forwards to the linker
-            if "-Cstrip" in flag or (flag == "-C" and i + 1 < len(flags) and str(flags[i + 1]).strip('"').startswith("strip")):
+            if option.startswith("strip"):
                 fail("`-Cstrip` has no effect when linking through cxx; use the `symbols` strip_mode, or `-Wl,--strip-all`/`-Wl,-S` in `linker_flags`, instead")
-            if "-Crpath" in flag or (flag == "-C" and i + 1 < len(flags) and str(flags[i + 1]).strip('"').startswith("rpath")):
+            if option.startswith("rpath"):
                 fail("`-Crpath` has no effect when linking through cxx; pass `-Wl,-rpath,...` in `linker_flags` instead")
-            if "-Clink-dead-code" in flag or (flag == "-C" and i + 1 < len(flags) and str(flags[i + 1]).strip('"').startswith("link-dead-code")):
+            if option.startswith("link-dead-code"):
                 fail("`-Clink-dead-code` has no effect when linking through cxx; pass `-Wl,--no-gc-sections` in `linker_flags` instead")
 
-        if toolchain_info.explicit_sysroot_deps:
+        if toolchain_info.explicit_sysroot_deps and option.startswith("link-self-contained"):
             # `-Clink-self-contained` selects linker inputs bundled in the
             # sysroot, and explicit sysroot deps point rustc at an empty one,
             # so everything it can enable is a dangling reference. Only the
             # subtractive forms make sense (the toolchain itself uses them to
             # keep rustc from consulting the empty sysroot).
-            value = None
-            if flag.startswith("-Clink-self-contained"):
-                value = flag.removeprefix("-Clink-self-contained").removeprefix("=")
-            elif flag == "-C" and i + 1 < len(flags):
-                next_flag = str(flags[i + 1]).strip('"')
-                if next_flag.startswith("link-self-contained"):
-                    value = next_flag.removeprefix("link-self-contained").removeprefix("=")
-            if value != None:
-                for part in value.split(","):
-                    if part == "" or part in ("y", "yes", "on", "true") or part.startswith("+"):
-                        fail(
-                            "`-Clink-self-contained` cannot enable bundled linker inputs: explicit sysroot deps leave the sysroot empty, so there is nothing there to link"
-                        )
+            value = option.removeprefix("link-self-contained").removeprefix("=")
+            for part in value.split(","):
+                if part == "" or part in ("y", "yes", "on", "true") or part.startswith("+"):
+                    fail(
+                        "`-Clink-self-contained` cannot enable bundled linker inputs: explicit sysroot deps leave the sysroot empty, so there is nothing there to link"
+                    )
 
     return flags
 

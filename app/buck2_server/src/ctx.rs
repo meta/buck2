@@ -9,6 +9,7 @@
  */
 
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::io::BufWriter;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -129,6 +130,7 @@ use buck2_resource_control::HasResourceControl;
 use buck2_server_ctx::bxl::InitBxlStreamingTracker;
 use buck2_server_ctx::concurrency::DiceUpdater;
 use buck2_server_ctx::ctx::DiceAccessor;
+use buck2_server_ctx::ctx::DispatcherEvents;
 use buck2_server_ctx::ctx::LockedPreviousCommandData;
 use buck2_server_ctx::ctx::PrivateStruct;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
@@ -711,6 +713,27 @@ async fn check_project_ignore(
 }
 
 impl ServerCommandContext<'_> {
+    fn is_nested_invocation(&self) -> bool {
+        self.daemon_uuid_from_client
+            .as_ref()
+            .is_some_and(|uuid| uuid == &self.base_context.daemon.daemon_id.to_string())
+    }
+
+    pub(crate) async fn with_shared_command_lock<Fut: Future + Send>(
+        &self,
+        exec: Fut,
+    ) -> Fut::Output {
+        self.base_context
+            .tenant
+            .dice_manager
+            .with_shared_command_lock(
+                DispatcherEvents(self.events().dupe()),
+                self.is_nested_invocation(),
+                exec,
+            )
+            .await
+    }
+
     async fn load_new_configs(
         &self,
         dice_ctx: &mut DiceComputations<'_>,
@@ -1465,16 +1488,10 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
     ) -> buck2_error::Result<DiceAccessor<'s>> {
         let (build_signals_installer, deferred_build_signals) = create_build_signals();
 
-        let is_nested_invocation = if let Some(uuid) = &self.daemon_uuid_from_client {
-            uuid == &self.base_context.daemon.daemon_id.to_string()
-        } else {
-            false
-        };
-
         Ok(DiceAccessor {
             dice_handler: self.base_context.tenant.dice_manager.dupe(),
             setup: Box::new(self.dice_updater(build_signals_installer).await?),
-            is_nested_invocation,
+            is_nested_invocation: self.is_nested_invocation(),
             sanitized_argv: self.sanitized_argv.clone(),
             preemptible: self.preemptible,
             build_signals: deferred_build_signals,

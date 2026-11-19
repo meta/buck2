@@ -33,12 +33,16 @@ pub enum HydrationCommand {
     PageIn(PageInCommand),
     /// Summarize which DICE node values are resident in memory vs paged out.
     Status(StatusCommand),
-    /// Drop the resident DICE values whose rows already hold them, as memory pressure would.
+    /// Drop resident DICE values whose rows already hold them.
     Evict(EvictCommand),
 }
 
 #[derive(Debug, clap::Parser)]
 pub struct EvictCommand {
+    /// Evict cold backed values using LRU. Requires an LRU paging policy.
+    #[clap(long)]
+    lru: bool,
+
     #[clap(flatten)]
     event_log_opts: CommonEventLogOptions,
 }
@@ -71,6 +75,7 @@ impl HydrationCommand {
             HydrationCommand::PageOut(_) => HydrationSubcommand::PageOut,
             HydrationCommand::PageIn(_) => HydrationSubcommand::PageIn,
             HydrationCommand::Status(_) => HydrationSubcommand::Status,
+            HydrationCommand::Evict(c) if c.lru => HydrationSubcommand::EvictLru,
             HydrationCommand::Evict(_) => HydrationSubcommand::Evict,
         }
     }

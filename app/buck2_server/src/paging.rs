@@ -803,6 +803,21 @@ pub(crate) async fn evict_backed_measured(dice: &Arc<Dice>) -> u64 {
     measure_eviction(dice, dice.evict_backed()).await
 }
 
+pub(crate) async fn evict_lru_measured(dice: &Arc<Dice>) -> buck2_error::Result<u64> {
+    if !dice
+        .eviction_policy()
+        .is_some_and(|policy| policy.strategy() == EvictionStrategy::Lru)
+    {
+        return Err(buck2_error::buck2_error!(
+            ErrorTag::Input,
+            "LRU eviction requires access tracking. Enable \
+             hydration.eviction_policy=on_idle_lru or on_memory_pressure_lru \
+             before building the graph."
+        ));
+    }
+    Ok(measure_eviction(dice, dice.reclaim(ReclaimOptions::default(), || false)).await)
+}
+
 async fn measure_eviction(dice: &Arc<Dice>, eviction: impl Future<Output = u64>) -> u64 {
     let (resident_before, allocated_before, _) = page_out_memory_snapshot(dice);
     let start = Instant::now();

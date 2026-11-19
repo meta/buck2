@@ -1093,8 +1093,10 @@ enum HydrationSubcommand {
   PAGE_OUT = 0;
   PAGE_IN = 1;
   STATUS = 2;
-  // Drop the resident values a row already holds, as memory pressure would.
+  // Drop all resident values whose rows already hold them.
   EVICT = 3;
+  // Drop cold backed values; requires LRU access tracking.
+  EVICT_LRU = 4;
 }
 
 message HydrationRequest {

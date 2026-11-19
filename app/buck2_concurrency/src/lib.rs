@@ -1631,6 +1631,55 @@ impl ConcurrencyHandler {
         CommandId(self.next_command_id.fetch_add(1, Ordering::Relaxed))
     }
 
+    /// Runs an operation without DICE admission while still respecting exclusive commands.
+    /// Use this for graph inspection or maintenance that must not run configuration setup.
+    /// Nested invocations inherit the parent's lock protection, as they do in `enter`.
+    pub async fn with_shared_command_lock<E, Fut>(
+        &self,
+        events: E,
+        is_nested_invocation: bool,
+        exec: Fut,
+    ) -> Fut::Output
+    where
+        E: CommandEvents,
+        Fut: Future + Send,
+    {
+        let _guard = self.command_lock(&events, None, is_nested_invocation).await;
+        exec.await
+    }
+
+    async fn command_lock<E: CommandEvents>(
+        &self,
+        events: &E,
+        exclusive_cmd: Option<String>,
+        is_nested_invocation: bool,
+    ) -> ExclusiveCommandLockGuard<'_> {
+        events
+            .span(
+                ExclusiveCommandWaitStart {
+                    command_name: self.exclusive_command_lock.owning_command(),
+                }
+                .into(),
+                Box::pin(async move {
+                    let guard = if let Some(cmd_name) = exclusive_cmd {
+                        let guard = self.exclusive_command_lock.exclusive_lock(cmd_name).await;
+                        self.dice.wait_for_idle().await;
+
+                        guard
+                    } else if is_nested_invocation {
+                        // A writer-preferring lock can deadlock a nested invocation behind a
+                        // writer waiting for its parent. Once a writer holds the gate, no parent
+                        // remains from which a nested invocation can originate.
+                        ExclusiveCommandLockGuard::Bypassed
+                    } else {
+                        self.exclusive_command_lock.shared_lock().await
+                    };
+                    (guard, ExclusiveCommandWaitEnd {}.into())
+                }),
+            )
+            .await
+    }
+
     /// Enters a critical section that requires concurrent command synchronization,
     /// and runs the given `exec` function in the critical section.
     pub async fn enter<F, Fut, R, E>(
@@ -1652,33 +1701,11 @@ impl ConcurrencyHandler {
         Fut: Future<Output = R> + Send,
         E: CommandEvents,
     {
-        let _exclusive_command_guard = events
-            .span(
-                ExclusiveCommandWaitStart {
-                    command_name: self.exclusive_command_lock.owning_command(),
-                }
-                .into(),
-                Box::pin({
-                    let early_command_timing = &mut early_command_timing;
-                    async move {
-                        let guard = if let Some(cmd_name) = exclusive_cmd {
-                            early_command_timing.start_span(EXCLUSIVE_COMMAND_WAIT.to_owned());
-                            let guard = self.exclusive_command_lock.exclusive_lock(cmd_name).await;
-                            self.dice.wait_for_idle().await;
-
-                            guard
-                        } else if is_nested_invocation {
-                            // A writer-preferring lock can deadlock a nested invocation behind a
-                            // writer waiting for its parent. Once a writer holds the gate, no parent
-                            // remains from which a nested invocation can originate.
-                            ExclusiveCommandLockGuard::Bypassed
-                        } else {
-                            self.exclusive_command_lock.shared_lock().await
-                        };
-                        (guard, ExclusiveCommandWaitEnd {}.into())
-                    }
-                }),
-            )
+        if exclusive_cmd.is_some() {
+            early_command_timing.start_span(EXCLUSIVE_COMMAND_WAIT.to_owned());
+        }
+        let _exclusive_command_guard = self
+            .command_lock(&events, exclusive_cmd, is_nested_invocation)
             .await;
 
         let command_id = self.allocate_command_id();
@@ -6144,6 +6171,102 @@ mod tests {
                 )
             })
             .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shared_command_operation_waits_for_exclusive_command() -> buck2_error::Result<()> {
+        let (dice, root) = make_default_dice().await;
+        let concurrency = ConcurrencyHandler::new(dice, root);
+        let exclusive = concurrency
+            .exclusive_command_lock
+            .exclusive_lock("hydration".to_owned())
+            .await;
+        let mut operation =
+            Box::pin(concurrency.with_shared_command_lock(TestEvents::new(), false, async { 42 }));
+        assert!(poll!(&mut operation).is_pending());
+        drop(exclusive);
+        assert_eq!(timeout(Duration::from_secs(10), operation).await?, 42);
+        // Completion must release the read guard before a later exclusive command can run.
+        let _exclusive = timeout(
+            Duration::from_secs(10),
+            concurrency
+                .exclusive_command_lock
+                .exclusive_lock("next".to_owned()),
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_shared_command_operation_releases_lock() -> buck2_error::Result<()> {
+        for cancel_while_waiting in [false, true] {
+            let (dice, root) = make_default_dice().await;
+            let concurrency = ConcurrencyHandler::new(dice, root);
+            let held = if cancel_while_waiting {
+                Some(
+                    concurrency
+                        .exclusive_command_lock
+                        .exclusive_lock("held".to_owned())
+                        .await,
+                )
+            } else {
+                None
+            };
+            let mut operation = Box::pin(concurrency.with_shared_command_lock(
+                TestEvents::new(),
+                false,
+                future::pending::<()>(),
+            ));
+            assert!(poll!(&mut operation).is_pending());
+            if !cancel_while_waiting {
+                assert_eq!(
+                    concurrency
+                        .with_shared_command_lock(TestEvents::new(), false, async {})
+                        .now_or_never(),
+                    Some(()),
+                    "shared operations can run together"
+                );
+            }
+            let mut exclusive = Box::pin(
+                concurrency
+                    .exclusive_command_lock
+                    .exclusive_lock("next".to_owned()),
+            );
+            assert!(poll!(&mut exclusive).is_pending());
+            drop(operation);
+            drop(held);
+            let _exclusive = timeout(Duration::from_secs(10), exclusive).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn nested_shared_command_bypasses_queued_writer() -> buck2_error::Result<()> {
+        let (dice, root) = make_default_dice().await;
+        let concurrency = ConcurrencyHandler::new(dice, root);
+        let mut parent = Box::pin(concurrency.with_shared_command_lock(
+            TestEvents::new(),
+            false,
+            future::pending::<()>(),
+        ));
+        assert!(poll!(&mut parent).is_pending());
+        let mut exclusive = Box::pin(
+            concurrency
+                .exclusive_command_lock
+                .exclusive_lock("hydration".to_owned()),
+        );
+        assert!(poll!(&mut exclusive).is_pending());
+        assert_eq!(
+            concurrency
+                .with_shared_command_lock(TestEvents::new(), true, async { 42 })
+                .now_or_never(),
+            Some(42),
+            "a queued writer must not block a command nested under its reader"
+        );
+        assert!(poll!(&mut exclusive).is_pending());
+        drop(parent);
+        let _exclusive = timeout(Duration::from_secs(10), exclusive).await?;
         Ok(())
     }
 

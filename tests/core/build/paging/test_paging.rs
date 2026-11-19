@@ -345,7 +345,7 @@ async fn test_eviction_on_memory_pressure_keeps_paged_out_values_resident(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     // Under the default `on_memory_pressure` a page-out writes the values but
-    // evicts none; `buck2 debug hydration evict`, what memory pressure triggers,
+    // evicts none; explicit all-backed eviction
     // drops them without another write. A daemon with no memory tracker could
     // never see pressure, so it does not page out on idle at all: the test host
     // decides which of the two this daemon is.
@@ -373,6 +373,12 @@ async fn test_eviction_on_memory_pressure_keeps_paged_out_values_resident(
         backed > 0,
         "the written values stay resident, backed by their rows"
     );
+
+    buck.debug(&["hydration", "evict", "--lru"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("LRU eviction requires access tracking");
+    assert_eq!(backed_count(buck).await?, backed);
 
     let out = buck.debug(&["hydration", "evict"]).await?.stdout;
     assert!(
@@ -440,11 +446,143 @@ async fn test_idle_lru_reclaims_cold_values_without_new_writes(buck: &Buck) -> a
 }
 
 #[buck_test(data_dir = "paging", write_invocation_record = true)]
+async fn test_lru_eviction_with_pressure_policy(buck: &Buck) -> anyhow::Result<()> {
+    lru_eviction_reclaims_all_cold_values(buck, "on_memory_pressure_lru").await
+}
+
+#[buck_test(data_dir = "paging", write_invocation_record = true)]
+async fn test_lru_eviction_with_idle_policy(buck: &Buck) -> anyhow::Result<()> {
+    lru_eviction_reclaims_all_cold_values(buck, "on_idle_lru").await
+}
+
+async fn lru_eviction_reclaims_all_cold_values(
+    buck: &Buck,
+    policy: &'static str,
+) -> anyhow::Result<()> {
+    hydration_settings(
+        buck,
+        &[
+            ("page_out_on_idle", Bool(false)),
+            ("page_out_policy", Str("once_per_value")),
+            ("eviction_policy", Str(policy)),
+        ],
+    )?;
+    let mut targets = vec!["providers".to_owned(), "-p".to_owned(), "MyInfo".to_owned()];
+    targets.extend((0..16).map(|i| format!("//lru:node_{i}")));
+    let targets: Vec<_> = targets.iter().map(String::as_str).collect();
+    let original = buck.audit(&targets).await?;
+    assert_eq!(backed_count(buck).await?, 0);
+    let empty = buck.debug(&["hydration", "evict", "--lru"]).await?;
+    assert!(empty.stdout.contains("evicted 0 backed DICE values"));
+    page_out(buck).await?;
+    buck.audit(&["providers", "-p", "MyInfo", "//lru:node_0"])
+        .await?;
+
+    // Inspection and manual reclaim must not age the working set themselves.
+    assert!(backed_count(buck).await? > 2);
+    let (analyses_before, paged_before) =
+        hydration_counts_for_key_type(buck, "AnalysisKey").await?;
+    assert!(analyses_before >= 16);
+    assert_eq!(paged_before, 0);
+    let eviction = buck.debug(&["hydration", "evict", "--lru"]).await?;
+    // Only node_0 was recently demanded; setup may also leave a platform analysis.
+    // Every cold analysis must be reclaimed, regardless of its share of the backed graph.
+    let (resident, paged_out) = hydration_counts_for_key_type(buck, "AnalysisKey").await?;
+    assert_eq!((resident, paged_out), (1, analyses_before - 1));
+    assert!(data_key_io(&eviction, "paging_")?.values().all(|n| *n == 0));
+    let hot = buck
+        .audit(&["providers", "-p", "MyInfo", "//lru:node_0"])
+        .await?;
+    assert_eq!(paged_in_count_for_key_type(&hot, "AnalysisKey")?, 0);
+    let restored = buck.audit(&targets).await?;
+    assert_eq!(restored.stdout, original.stdout);
+    assert!(paged_in_count_for_key_type(&restored, "AnalysisKey")? >= 15);
+    assert_eq!(restored.invocation_record()?["analysis_count"], 0);
+    Ok(())
+}
+
+#[buck_test(data_dir = "paging", write_invocation_record = true)]
+async fn test_lru_eviction_keeps_recent_shared_heap_values(buck: &Buck) -> anyhow::Result<()> {
+    hydration_settings(
+        buck,
+        &[
+            ("page_out_on_idle", Bool(false)),
+            ("page_out_policy", Str("once_per_value")),
+            ("eviction_policy", Str("on_memory_pressure_lru")),
+        ],
+    )?;
+    let mut targets = vec!["providers".to_owned(), "-p".to_owned(), "MyInfo".to_owned()];
+    targets.extend((0..16).map(|i| format!("//lru:node_{i}")));
+    buck.audit(&targets.iter().map(String::as_str).collect::<Vec<_>>())
+        .await?;
+    page_out(buck).await?;
+    assert_eq!(paged_out_count(buck).await?, 0);
+
+    // Leave only node_1's payload cold. All other target payloads share one recent
+    // demand batch, so their shared module heap must survive node_1's eviction.
+    let refresh: Vec<_> = targets
+        .iter()
+        .map(String::as_str)
+        .filter(|target| *target != "//lru:node_1")
+        .collect();
+    let hot = buck.audit(&refresh).await?;
+    assert_eq!(paged_in_count_for_key_type(&hot, "AnalysisKey")?, 0);
+    let before = backed_count(buck).await?;
+    let paged_before = paged_out_count(buck).await?;
+    let eviction = buck.debug(&["hydration", "evict", "--lru"]).await?;
+    let rows = page_out_summaries(buck).await?;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let evicted = count(&rows[0]["command_evicted_count"])?;
+    assert!(evicted > 0 && evicted < before, "{rows:?}, backed={before}");
+    assert_eq!(count(&rows[0]["command_evictions"])?, 1);
+    assert_eq!(paged_out_count(buck).await?, paged_before + evicted);
+    assert_eq!(backed_count(buck).await?, before - evicted);
+    assert!(
+        data_key_io(&eviction, "paging_")?.values().all(|n| *n == 0),
+        "eviction should neither read nor write storage"
+    );
+    assert_eq!(
+        hydration_counts_for_key_type(buck, "AnalysisKey").await?.0,
+        15
+    );
+    let still_hot = buck.audit(&refresh).await?;
+    assert_eq!(still_hot.stdout, hot.stdout);
+    assert_eq!(paged_in_count_for_key_type(&still_hot, "AnalysisKey")?, 0);
+    assert_eq!(still_hot.invocation_record()?["analysis_count"], 0);
+    let status = buck.debug(&["hydration", "status"]).await?.stdout;
+    let cold = buck
+        .audit(&["providers", "-p", "MyInfo", "//lru:node_1"])
+        .await?;
+    assert_eq!(
+        paged_in_count_for_key_type(&cold, "AnalysisKey")?,
+        1,
+        "status before cold demand: {status}"
+    );
+    assert_eq!(cold.invocation_record()?["analysis_count"], 0);
+
+    // MyInfo does not demand the large payload. A new consumer validates every
+    // item, forcing any lazily restored data to be read without recomputing node_1.
+    let reader = buck
+        .audit(&["providers", "-p", "MyInfo", "//lru:read_node_1"])
+        .await?;
+    assert!(reader.stdout.contains("value=1000"), "{}", reader.stdout);
+    assert_eq!(reader.invocation_record()?["analysis_count"], 1);
+
+    // Explicit eviction still drops the whole backed set under the LRU policy.
+    buck.debug(&["hydration", "evict"]).await?;
+    assert_eq!(backed_count(buck).await?, 0);
+    let restored = buck.audit(&refresh).await?;
+    assert_eq!(restored.stdout, hot.stdout);
+    assert!(paged_in_count_for_key_type(&restored, "AnalysisKey")? >= 15);
+    assert_eq!(restored.invocation_record()?["analysis_count"], 0);
+    Ok(())
+}
+
+#[buck_test(data_dir = "paging", write_invocation_record = true)]
 async fn test_evict_drops_values_rows_already_hold(buck: &Buck) -> anyhow::Result<()> {
     hydration_settings(buck, &[])?;
     // Values read back from storage stay resident, backed by their rows, and
-    // `buck2 debug hydration evict`, what memory pressure triggers, drops them
-    // without a write.
+    // `buck2 debug hydration evict` drops them without a write.
     // Read-back values are backed only under `once_per_value`; idle page-out is
     // off so the page-outs below are the explicit ones.
     hydration_settings(
@@ -463,6 +601,13 @@ async fn test_evict_drops_values_rows_already_hold(buck: &Buck) -> anyhow::Resul
     let result = build(buck).await?;
     let read_back = paged_in_count(&result)?;
     assert!(read_back > 0);
+    assert_eq!(backed_count(buck).await?, read_back);
+    assert_eq!(paged_out_count(buck).await?, paged_out - read_back);
+
+    buck.debug(&["hydration", "evict", "--lru"])
+        .await
+        .expect_failure()
+        .assert_stderr_matches("LRU eviction requires access tracking");
     assert_eq!(backed_count(buck).await?, read_back);
     assert_eq!(paged_out_count(buck).await?, paged_out - read_back);
 

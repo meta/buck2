@@ -451,7 +451,7 @@ def resolve_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[Ru
 def resolve_rust_deps_inner(all_deps: list[RustOrNativeDependency]) -> list[RustDependency]:
     rust_deps = []
     for dep in all_deps:
-        info = dep.dep.get(RustProcMacroInfo) or dep.dep.get(RustLinkInfo)
+        info = dep.dep.get(RustProcMacroInfo) or dep.dep.get(RustProcMacroArchInfo) or dep.dep.get(RustLinkInfo)
         if info == None:
             continue
 

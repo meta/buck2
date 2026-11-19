@@ -1194,6 +1194,16 @@ def dependency_args(
     transitive_deps = []
     crate_targets = []
     available_proc_macros = get_available_proc_macros(ctx)
+
+    # Scalar compiles (no arch-split toolchain) can still meet dual-arch
+    # proc-macro deps in single-arch final-arch configurations. Those
+    # compiles run on the execution host, so pick the variant matching the
+    # execution platform's cpu.
+    scalar_arch = arch
+    if scalar_arch == None:
+        exec_os_type = getattr(ctx.attrs, "_exec_os_type", None)
+        if exec_os_type != None:
+            scalar_arch = exec_os_type[OsLookup].cpu
     for dep in deps:
         if dep.name:
             crate = CrateName(
@@ -1204,8 +1214,15 @@ def dependency_args(
             crate = dep.info.crate
 
         if isinstance(dep.info, RustProcMacroArchInfo):
-            asserts.true(arch != None)
-            variant = dep.info.arch_variants[arch]
+            if scalar_arch == None or scalar_arch not in dep.info.arch_variants:
+                fail(
+                    "dependency `{}` resolved to dual-arch proc-macro variants {}, but this compile's execution platform has no matching arch variant (execution cpu `{}`)".format(
+                        dep.dep.label,
+                        dep.info.arch_variants.keys(),
+                        scalar_arch or "unknown",
+                    ),
+                )
+            variant = dep.info.arch_variants[scalar_arch]
             artifact = variant.dylib
             singleton_tset = variant.singleton_tset
             transitive_artifacts = None
@@ -1235,7 +1252,20 @@ def dependency_args(
             for label in strategy.transitive_proc_macro_deps:
                 proc_macro = available_proc_macros[label]
                 if arch == None:
-                    transitive_deps.append(proc_macro[RustProcMacroInfo].singleton_tset)
+                    scalar_info = proc_macro.get(RustProcMacroInfo)
+                    if scalar_info != None:
+                        transitive_deps.append(scalar_info.singleton_tset)
+                    else:
+                        arch_info = proc_macro.get(RustProcMacroArchInfo)
+                        if arch_info == None or scalar_arch == None or scalar_arch not in arch_info.arch_variants:
+                            fail(
+                                "transitive proc-macro dependency `{}` resolved to dual-arch proc-macro variants {}, but this compile's execution platform has no matching arch variant (execution cpu `{}`)".format(
+                                    label,
+                                    arch_info.arch_variants.keys() if arch_info != None else [],
+                                    scalar_arch or "unknown",
+                                ),
+                            )
+                        transitive_deps.append(arch_info.arch_variants[scalar_arch].singleton_tset)
                 else:
                     arch_info = proc_macro.get(RustProcMacroArchInfo)
                     transitive_deps.append(arch_info.arch_variants[arch].singleton_tset)

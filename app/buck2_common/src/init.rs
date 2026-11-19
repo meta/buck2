@@ -33,6 +33,7 @@ use serde::Serialize;
 
 use crate::daemon_routing::DaemonRouting;
 use crate::legacy_configs::configs::LegacyBuckConfig;
+use crate::legacy_configs::dice::CONFIGS_INVISIBLE_TO_DICE;
 use crate::legacy_configs::key::BuckconfigKeyRef;
 
 /// Helper enum to categorize the kind of timeout we get from the startup config.
@@ -518,6 +519,11 @@ pub struct DaemonStartupOptions {
     /// its `ROLLOUT_VERSION` is at least this, and the deferred one when this is unset. A shared
     /// daemon runs the disk-state materializer whatever this says.
     pub materializer_v2_version: Option<u32>,
+    /// Identifies how tenants of this daemon configure their RE clients, so that a daemon serves
+    /// only tenants that configure them the same way. A digest rather than the configuration:
+    /// the startup config is passed on the daemon's command line and shown by `buck2 status`,
+    /// and RE client configuration can hold credentials.
+    pub re_client_config_digest: String,
     pub http: HttpConfig,
     pub resource_control: ResourceControlConfig,
     pub log_download_method: LogDownloadMethod,
@@ -525,6 +531,35 @@ pub struct DaemonStartupOptions {
     pub daemon_idle_timeout_s: Option<u64>,
     /// Pagable DICE storage settings, or `None` when paging is disabled.
     pub hydration: Option<HydrationConfig>,
+}
+
+const RE_CLIENT_CONFIG_SECTION: &str = "buck2_re_client";
+
+/// Digest of the `[buck2_re_client]` section, which a tenant's RE client is configured from.
+///
+/// Keys invisible to DICE are left out: they are meant to change between commands without
+/// invalidating anything, let alone the daemon.
+///
+/// The client reads its root config without following includes, so a key set through an included
+/// file is not covered, though the daemon honors it when it configures a tenant's RE client.
+fn re_client_config_digest(config: &LegacyBuckConfig) -> String {
+    let mut hasher = blake3::Hasher::new_derive_key("buck2.daemon_startup.re_client_config.v1");
+    if let Some(section) = config.get_section(RE_CLIENT_CONFIG_SECTION) {
+        for (property, value) in section.iter() {
+            let key = BuckconfigKeyRef {
+                section: RE_CLIENT_CONFIG_SECTION,
+                property,
+            };
+            if CONFIGS_INVISIBLE_TO_DICE.contains(&key) {
+                continue;
+            }
+            for field in [property, value.as_str()] {
+                hasher.update(&(field.len() as u64).to_le_bytes());
+                hasher.update(field.as_bytes());
+            }
+        }
+    }
+    hasher.finalize().to_hex().as_str().to_owned()
 }
 
 impl DaemonStartupConfig {
@@ -589,6 +624,7 @@ impl DaemonStartupConfig {
                 section: "buck2",
                 property: "materializer_v2_version",
             })?,
+            re_client_config_digest: re_client_config_digest(config),
             http: HttpConfig::from_settings(&settings.http, config)?,
             resource_control: ResourceControlConfig::from_settings(
                 &settings.resource_control,
@@ -649,6 +685,7 @@ impl DaemonStartupConfig {
             paranoid: false,
             materializations: None,
             materializer_v2_version: None,
+            re_client_config_digest: re_client_config_digest(&LegacyBuckConfig::empty()),
             http: HttpConfig::default(),
             resource_control: ResourceControlConfig::testing_default(),
             log_download_method: if cfg!(fbcode_build) {
@@ -733,6 +770,30 @@ mod tests {
             treatment.startup_options,
             DaemonStartupConfig::deserialize(&treatment.serialize()?)?.startup_options
         );
+        Ok(())
+    }
+
+    #[test]
+    fn re_client_config_is_a_daemon_startup_option() -> buck2_error::Result<()> {
+        let startup_config = |config: &str| -> buck2_error::Result<DaemonStartupConfig> {
+            let config = parse(&[("config", config)], "config")?;
+            DaemonStartupConfig::new(&config, &DaemonBuckSettings::default(), false)
+        };
+        let options = |config: &str| startup_config(config).map(|startup| startup.startup_options);
+
+        let control = options("[buck2_re_client]\nengine_tier = a")?;
+        assert_eq!(control, options("[buck2_re_client]\nengine_tier = a")?);
+        assert_ne!(control, options("[buck2_re_client]\nengine_tier = b")?);
+        assert_ne!(control, options("")?);
+        assert_eq!(
+            control,
+            options("[buck2_re_client]\nengine_tier = a\noverride_use_case = buck2-user")?,
+            "a use case override applies to a command, not to the daemon's RE clients"
+        );
+
+        let serialized = startup_config("[buck2_re_client]\nhttp_headers = authorization:hunter2")?
+            .serialize()?;
+        assert!(!serialized.contains("hunter2"));
         Ok(())
     }
 

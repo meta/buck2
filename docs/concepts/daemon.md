@@ -49,7 +49,9 @@ daemon for its own key. A client of the same release connects to the same proxy
 to learn which namespace and generation serve the tenant, and sends that
 generation with every command; the proxy's connection files are the only
 record of the tenant. Routing is a daemon startup setting, so a daemon only
-serves tenants routed the same way.
+serves tenants routed the same way. So is the `[buck2_re_client]` section of
+the root `.buckconfig`, apart from `override_use_case`: tenants that configure
+remote execution differently do not share a daemon.
 
 `buck2 kill` evicts the selected tenant from the daemon and cancels its work.
 Eviction waits for cancellation and cleanup before returning. A later command

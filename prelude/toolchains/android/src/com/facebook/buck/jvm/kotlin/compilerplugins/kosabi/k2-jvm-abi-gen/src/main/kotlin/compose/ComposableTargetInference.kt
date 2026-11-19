@@ -90,7 +90,6 @@ import org.jetbrains.kotlin.fir.types.ConeDefinitelyNotNullType
 import org.jetbrains.kotlin.fir.types.ConeErrorType
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.ConeKotlinTypeProjection
-import org.jetbrains.kotlin.fir.types.ConeLookupTagBasedType
 import org.jetbrains.kotlin.fir.types.ConeTypeParameterType
 import org.jetbrains.kotlin.fir.types.ConeTypeProjection
 import org.jetbrains.kotlin.fir.types.classId
@@ -266,7 +265,11 @@ internal class ComposableTargetInference(
   )
 
   fun analyze(files: List<FirFile>) {
-    val sourceFiles = files.filter { it.sourceFile?.path !in stubSourcePaths }
+    // The backend reads files in name-sorted order, so a callee sorts before its
+    // caller exactly when its file name does: visit in the same order so calls see
+    // the same inferred-or-pristine callee schemes the backend saw.
+    val sourceFiles =
+        files.filter { it.sourceFile?.path !in stubSourcePaths }.sortedBy { it.sourceFile?.name }
     for (file in sourceFiles) file.accept(FileIndexer(file))
     for (file in sourceFiles) file.accept(InferenceVisitor())
     propagateIncompleteness()
@@ -590,7 +593,19 @@ internal class ComposableTargetInference(
                   function.status.visibility == DescriptorVisibilities.PROTECTED)
       if (publicInline) publicInlineDepth++
       if (!tracked) {
-        function.acceptChildren(this)
+        // A body that already has a scheme (pre-bound by its call, or annotated)
+        // still runs under its own owner: calls in it unify with this function,
+        // not the enclosing caller. Without this, a lambda argument the call
+        // pre-bound visits its deferred body under the caller and binds it directly.
+        // Bodies without a scheme keep the caller's owner, as before.
+        if (hasSchemeNow(symbol)) {
+          val oldUntrackedOwner = currentOwner
+          currentOwner = function
+          function.acceptChildren(this)
+          currentOwner = oldUntrackedOwner
+        } else {
+          function.acceptChildren(this)
+        }
         if (publicInline) publicInlineDepth--
         return
       }
@@ -884,19 +899,6 @@ internal class ComposableTargetInference(
       }
       if (publicInlineDepth > 0) return false
       if (isInlineLambdaTarget(callee, argIndex, hasReceiver)) return false
-      // A lambda passed to a nullable parameter is not deferred: the backend
-      // bridges it so its use-site node is not a lambda and it never
-      // captures the caller. (The exact backend condition is follow-up work;
-      // this matches the observed use-site kind rule. Known over-broad:
-      // direct calls with nullable params bind in the backend; narrow when
-      // the true rule is derived.)
-      val function = runCatching { callee.fir as? FirFunction }.getOrNull()
-      if (function != null) {
-        val paramIndex = argIndex - (if (hasReceiver) 1 else 0)
-        function.valueParameters.getOrNull(paramIndex)?.returnTypeRef?.coneTypeOrNull?.let {
-          if ((it as? ConeLookupTagBasedType)?.isMarkedNullable == true) return false
-        }
-      }
       return !lambdaCapturesOuterValues(lambda)
     }
 

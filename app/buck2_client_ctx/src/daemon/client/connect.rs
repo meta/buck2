@@ -911,6 +911,7 @@ impl BootstrapBuckdClient {
     ) -> LocalBoxFuture<'a, buck2_error::Result<Self>> {
         Box::pin(async move {
             let shared = paths.routing()?.is_shared();
+            let deadline = StartupDeadline::duration_from_now(buckd_startup_init_timeout()?)?;
             let tenant_lifecycle = if shared && matches!(&options, BuckdConnectOptions::Options(_))
             {
                 Some(
@@ -978,12 +979,25 @@ impl BootstrapBuckdClient {
                         let reuse = proxy.is_some_and(|proxy| proxy.key == key);
                         drop(slot);
                         if !reuse && let Some(lifecycle) = &tenant_lifecycle {
+                            let had_owner =
+                                BuckdProcessInfo::load_if_exists(lifecycle.daemon_dir())?.is_some();
                             kill::kill_unidaemon_tenant(
                                 lifecycle,
                                 kill::TenantShutdownCommand::Replace,
                                 None,
                             )
                             .await?;
+                            // A vacant slot can be a shared tenant whose first registration is
+                            // still publishing its proxy. Its disk ownership must be joined, not
+                            // waited out while holding the lifecycle lock needed for publication.
+                            if had_owner {
+                                paths
+                                    .tenant_paths()
+                                    .wait_until_disk_unowned(deadline.rem_duration(
+                                        "waiting for the previous daemon to release its outputs",
+                                    )?)
+                                    .await??;
+                            }
                         }
                         key
                     }

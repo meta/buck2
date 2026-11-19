@@ -1698,6 +1698,39 @@ async fn test_host_killall_isolation_filter_preserves_other_daemons(
     result
 }
 
+/// The tenant's disk lock can still be held once the client has seen the checkout's daemon go:
+/// the process is reported gone when its leader exits, while its other threads are still
+/// releasing the file table. The first shared command waits for the lock rather than starting a
+/// daemon that gives up on it. Skipped on macOS, where the harness never shares daemons.
+#[buck_test(skip_for_os = ["windows", "darwin"])]
+async fn test_shared_routing_waits_for_the_tenants_disk(
+    buck: &mut Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    buck.set_env("BUCK2_TEST_HOME_DIR", tmp_path.join("home"));
+    buck.build(&["//:rule"]).await?;
+    buck.kill().await?;
+    // Stands in for the exited daemon's last threads, for longer than the shared daemon waits for
+    // the lock by itself.
+    let lock = std::fs::File::open(
+        proxy_slot(buck)
+            .parent()
+            .context("The slot has no parent")?
+            .join("._buck2_tenant_locks")
+            .join(buck.isolation_prefix().unwrap_or("v2")),
+    )?;
+    lock.lock()?;
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        drop(lock);
+    });
+    buck.set_daemon_routing(true)?;
+    let result = buck.build(&["//:rule"]).await;
+    release.await?;
+    result?;
+    Ok(())
+}
+
 #[buck_test(skip_for_os = ["windows"], share_daemon = true)]
 async fn test_clean_cannot_unlink_sibling_disk_lock(buck: &mut Buck) -> anyhow::Result<()> {
     let sibling = isolated_buck(buck, "sibling");

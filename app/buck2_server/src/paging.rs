@@ -18,9 +18,10 @@
 //! Automatic page-out is enabled with `hydration.page_out_on_idle = true`. When
 //! enabled, a finishing command schedules a background task (see
 //! [`spawn_page_out_on_idle`]) that waits for DICE to go idle and then pages out
-//! to reclaim memory — but only when there is something to page out and there is
-//! disk headroom (see [`should_page_out_decision`], configurable via
-//! `hydration.page_out_min_free_disk_gb` / [`PageOutThresholds`]).
+//! when there are write candidates and disk headroom (see [`should_page_out_decision`],
+//! configurable via `hydration.page_out_min_free_disk_gb` / [`PageOutThresholds`]).
+//! With `on_idle_lru`, the same task then reclaims cold backed values. Reclaim can
+//! also run alone, without write candidates or disk headroom.
 //!
 //! Concurrency: automatic page-out deliberately does *not* take the DICE
 //! exclusivity lock the explicit command uses, so it never blocks an incoming
@@ -31,6 +32,7 @@
 //! cancel it — with `--wait` it instead blocks until the page-out finishes. A
 //! partially paged-out graph is valid — paged-out values hydrate back on demand.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Weak;
@@ -48,12 +50,14 @@ use buck2_events::dispatch::EventDispatcher;
 use buck2_events::dispatch::with_dispatcher_async;
 use buck2_events::metadata;
 use buck2_hash::IntentionallyStdHashMap;
-use buck2_server_ctx::concurrency::ConcurrencyHandler;
 use buck2_util::process_stats::process_stats;
 use dice::Dice;
+use dice::EvictionPolicy;
 use dice::EvictionSnapshot;
+use dice::EvictionStrategy;
 use dice::PagableNodeCounts;
 use dice::PageOutCancel;
+use dice::ReclaimOptions;
 use dice::StorageIoSnapshot;
 use dupe::Dupe;
 use parking_lot::Mutex;
@@ -188,7 +192,7 @@ impl PagingManager {
                 self.tenant.dupe(),
                 dispatcher.dupe(),
                 free_disk_bytes,
-                counts.candidates,
+                &counts,
                 command_evictions,
             )
             .await
@@ -297,25 +301,64 @@ fn compute_page_in_delta(
         .collect()
 }
 
-/// Page DICE node values out to the configured on-disk storage, then return the
-/// freed memory to the OS. `cancelled` lets automatic idle page-out stop promptly
-/// when a command arrives; pass `|| false` for an uninterruptible page-out.
-pub(crate) async fn page_out(
+/// Work performed under one idle guard and one measurement/purge window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PagingWork {
+    PageOut,
+    Reclaim,
+    PageOutAndReclaim,
+}
+
+impl PagingWork {
+    fn on_idle(
+        policy: Option<EvictionPolicy>,
+        counts: &PagableNodeCounts,
+        write_blocked: Option<buck2_data::PageOutStarted>,
+    ) -> Result<Option<Self>, buck2_data::PageOutStarted> {
+        let lru = policy == Some(EvictionPolicy::OnIdle(EvictionStrategy::Lru));
+        if write_blocked.is_none() && counts.candidates > 0 {
+            return Ok(Some(if lru {
+                Self::PageOutAndReclaim
+            } else {
+                Self::PageOut
+            }));
+        }
+        // Committed backing needs no new writes, so reclaim can run without disk
+        // headroom or fresh serialization candidates.
+        if lru && counts.backed > 0 {
+            return Ok(Some(Self::Reclaim));
+        }
+        match write_blocked {
+            Some(reason) => Err(reason),
+            None => Ok(None),
+        }
+    }
+}
+
+async fn run_paging(
     dice: &Arc<Dice>,
     cancelled: PageOutCancel,
+    work: PagingWork,
 ) -> buck2_error::Result<()> {
-    if buck2_env!("BUCK2_TEST_FAIL_PAGE_OUT", bool, applicability = testing).unwrap() {
-        return Err(buck2_error::buck2_error!(
-            ErrorTag::TestOnly,
-            "Injected page-out failure (BUCK2_TEST_FAIL_PAGE_OUT)"
-        ));
+    if matches!(work, PagingWork::PageOut | PagingWork::PageOutAndReclaim) {
+        if buck2_env!("BUCK2_TEST_FAIL_PAGE_OUT", bool, applicability = testing).unwrap() {
+            return Err(buck2_error::buck2_error!(
+                ErrorTag::TestOnly,
+                "Injected page-out failure (BUCK2_TEST_FAIL_PAGE_OUT)"
+            ));
+        }
+        dice.page_out_cancellable(cancelled)
+            .await
+            .map_err(|e| from_any_with_tag(e, ErrorTag::Environment))?;
     }
-    dice.page_out_cancellable(cancelled)
-        .await
-        .map_err(|e| from_any_with_tag(e, ErrorTag::Environment))?;
+    if matches!(work, PagingWork::Reclaim | PagingWork::PageOutAndReclaim) {
+        let evicted = dice.reclaim(ReclaimOptions::default(), cancelled).await;
+        if work == PagingWork::Reclaim && evicted == 0 {
+            return Ok(());
+        }
+    }
 
-    // Waiting for metrics drains the DICE state queue, ensuring evictions have
-    // processed before we purge.
+    // Drain queued state changes before returning freed memory to the OS.
     let _ = dice.metrics();
     memory::purge_jemalloc()?;
     Ok(())
@@ -426,7 +469,7 @@ pub(crate) async fn spawn_page_out_on_idle(
     tenant: Arc<TenantState>,
     dispatcher: EventDispatcher,
     free_disk_bytes: Option<u64>,
-    pagable_candidates: usize,
+    counts: &PagableNodeCounts,
     command_evictions: Option<EvictionSnapshot>,
 ) -> buck2_data::PageOutStarted {
     use buck2_data::PageOutStarted;
@@ -443,9 +486,14 @@ pub(crate) async fn spawn_page_out_on_idle(
         return PageOutStarted::OtherCommandsActive;
     }
 
-    if let Some(reason) = should_page_out_decision(free_disk_bytes, thresholds) {
-        return reason;
-    }
+    let work = match PagingWork::on_idle(
+        tenant.dice_manager.unsafe_dice().eviction_policy(),
+        counts,
+        should_page_out_decision(free_disk_bytes, thresholds),
+    ) {
+        Ok(work) => work,
+        Err(reason) => return reason,
+    };
 
     let Some(guard) = PageOutGuard::acquire() else {
         return PageOutStarted::AlreadyRunning;
@@ -457,18 +505,19 @@ pub(crate) async fn spawn_page_out_on_idle(
     if !is_only_active_command(dispatcher.trace_id()) {
         return PageOutStarted::OtherCommandsActive;
     }
-    if pagable_candidates == 0 {
+    let Some(work) = work else {
         return PageOutStarted::NothingToPageOut;
-    }
+    };
 
     let context_dispatcher = dispatcher.clone();
     tokio::spawn(with_dispatcher_async(context_dispatcher, async move {
+        let _guard = guard;
         let _tenant = tenant;
         if let Err(e) = page_out_on_idle(
-            guard,
-            _tenant.dice_manager.dupe(),
+            _tenant.dice_manager.unsafe_dice(),
             dispatcher,
             command_evictions,
+            work,
         )
         .await
         {
@@ -511,21 +560,19 @@ fn should_page_out_decision(
 }
 
 async fn page_out_on_idle(
-    _guard: PageOutGuard,
-    dice_manager: Arc<ConcurrencyHandler>,
+    dice: &Arc<Dice>,
     dispatcher: EventDispatcher,
     command_evictions: Option<EvictionSnapshot>,
+    work: PagingWork,
 ) -> buck2_error::Result<()> {
-    let dice = dice_manager.unsafe_dice().dupe();
-
     // Let the residual DICE tasks from the command that triggered this page-out
     // drain first.
     dice.wait_for_idle().await;
 
-    // A command may have arrived (and cancelled us) while we waited for idle. That's
-    // rare, so don't check here — `page_out` observes the flag and stops promptly.
-    tracing::info!("Daemon is idle; paging DICE out to reclaim memory");
-    let (result, mut summary) = page_out_measured(&dice, page_out_cancelled, &dispatcher).await;
+    // Both writing and reclaim observe cancellation if a command arrived while
+    // residual work was draining. Neither step takes the command exclusivity lock.
+    tracing::info!(?work, "Daemon is idle; paging DICE to reclaim memory");
+    let (result, mut summary) = paging_measured(dice, page_out_cancelled, &dispatcher, work).await;
     summary.page_out_started = Some(buck2_data::PageOutStarted::Started as i32);
     set_command_evictions(&mut summary, command_evictions);
     if result.is_err() {
@@ -552,6 +599,15 @@ pub(crate) async fn page_out_measured(
     cancelled: PageOutCancel,
     dispatcher: &EventDispatcher,
 ) -> (buck2_error::Result<()>, buck2_data::PageOutSummary) {
+    paging_measured(dice, cancelled, dispatcher, PagingWork::PageOut).await
+}
+
+async fn paging_measured(
+    dice: &Arc<Dice>,
+    cancelled: PageOutCancel,
+    dispatcher: &EventDispatcher,
+    work: PagingWork,
+) -> (buck2_error::Result<()>, buck2_data::PageOutSummary) {
     let (resident_bytes_before, allocated_bytes_before, db_size_bytes_before) =
         page_out_memory_snapshot(dice);
     let io_before = dice.storage_io_metrics();
@@ -559,7 +615,7 @@ pub(crate) async fn page_out_measured(
     let nodes_before = dice.paged_out_node_total();
     let evictions_before = dice.eviction_metrics();
     let start = Instant::now();
-    let result = page_out(dice, cancelled).await;
+    let result = run_paging(dice, cancelled, work).await;
     let duration_ms = (Instant::now() - start).as_millis() as u64;
     let (resident_bytes_after, allocated_bytes_after, db_size_bytes_after) =
         page_out_memory_snapshot(dice);
@@ -587,7 +643,7 @@ pub(crate) async fn page_out_measured(
         Ok(()) => None,
         Err(e) => Some(e.into()),
     };
-    // Read after `page_out` has drained the state queue, so every eviction it
+    // Read after `run_paging` has drained the state queue, so every eviction it
     // queued has been applied. A daemon-lifetime total, so differenced like the
     // memory counters beside it.
     let paged_out_count = dice
@@ -671,7 +727,7 @@ fn set_command_evictions(
     summary.command_evicted_bytes = command_evictions.and_then(|e| e.bytes_evicted);
 }
 
-/// Limits a tenant's memory-pressure evictions to one per command. While a command runs, an onset
+/// Limits an engine's memory-pressure evictions to one per command. While a command runs, an onset
 /// evicts only if no eviction has run since the most recent command started. With no command
 /// running, every onset evicts.
 #[derive(Default)]
@@ -716,10 +772,9 @@ impl Drop for EvictionGateCommand {
     }
 }
 
-/// Evicts an engine's backed DICE values, those a row already holds, when resource control starts
-/// seeing memory pressure (the default `hydration.eviction_policy`, `on_memory_pressure`, under
-/// which a page-out evicts nothing and these are the only evictions), at most once per command
-/// (see [`EvictionGate`]). Only the onset triggers it. Ends with the engine or the tracker.
+/// Applies the engine's configured eviction policy at each memory-pressure onset, subject to
+/// [`EvictionGate`]. An idle engine can evict again on a later onset; active commands allow only
+/// one sweep since the most recent command started. Ends with the engine or the tracker.
 pub(crate) fn spawn_evict_on_memory_pressure(
     dice: Weak<Dice>,
     gate: Arc<EvictionGate>,
@@ -737,7 +792,7 @@ pub(crate) fn spawn_evict_on_memory_pressure(
                 tracing::debug!("Skipping eviction: this command has already evicted once");
                 continue;
             }
-            evict_backed_measured(&dice).await;
+            measure_eviction(&dice, dice.evict_backed_on_memory_pressure()).await;
         }
     });
 }
@@ -745,17 +800,23 @@ pub(crate) fn spawn_evict_on_memory_pressure(
 /// Evicts backed values and returns the freed memory to the OS, logging what it moved. Returns
 /// how many values were evicted.
 pub(crate) async fn evict_backed_measured(dice: &Arc<Dice>) -> u64 {
+    measure_eviction(dice, dice.evict_backed()).await
+}
+
+async fn measure_eviction(dice: &Arc<Dice>, eviction: impl Future<Output = u64>) -> u64 {
     let (resident_before, allocated_before, _) = page_out_memory_snapshot(dice);
     let start = Instant::now();
-    let evicted = dice.evict_backed().await;
+    let evicted = eviction.await;
+    let eviction_us = (Instant::now() - start).as_micros() as u64;
     let purge_start = Instant::now();
     if let Err(e) = memory::purge_jemalloc() {
         soft_error_or_panic!("jemalloc_purge_failed", e);
     }
-    let purge_ms = (Instant::now() - purge_start).as_millis() as u64;
+    let purge_us = (Instant::now() - purge_start).as_micros() as u64;
     let (resident_after, allocated_after, _) = page_out_memory_snapshot(dice);
     tracing::info!(
-        purge_ms,
+        eviction_us,
+        purge_us,
         "Evicted {evicted} backed DICE values in {:?}; \
          RSS {resident_before:?} -> {resident_after:?} bytes, \
          allocated {allocated_before:?} -> {allocated_after:?} bytes",
@@ -781,11 +842,16 @@ fn page_out_memory_snapshot(dice: &Arc<Dice>) -> (Option<u64>, Option<u64>, Opti
 mod tests {
     use std::sync::Arc;
 
+    use buck2_data::PageOutStarted;
     use buck2_hash::IntentionallyStdHashMap;
+    use dice::EvictionPolicy;
+    use dice::EvictionStrategy;
+    use dice::PagableNodeCounts;
 
     use super::EvictionGate;
     use super::PageOutGuard;
     use super::PageOutThresholds;
+    use super::PagingWork;
     use super::cancel_active_page_out;
     use super::compute_page_in_delta;
     use super::page_out_cancelled;
@@ -891,6 +957,62 @@ mod tests {
         assert!(
             !delta.contains_key("C"),
             "a key type with no new page-ins is omitted"
+        );
+    }
+
+    #[test]
+    fn idle_lru_can_reclaim_existing_backing_without_writes() {
+        let counts = PagableNodeCounts {
+            backed: 3,
+            candidates: 0,
+            resident: 3,
+            paged_out: 0,
+            backed_bytes: 0,
+        };
+        let idle_lru = Some(EvictionPolicy::OnIdle(EvictionStrategy::Lru));
+        for blocked in [
+            None,
+            Some(PageOutStarted::InsufficientDiskHeadroom),
+            Some(PageOutStarted::FreeDiskUnknown),
+        ] {
+            assert_eq!(
+                PagingWork::on_idle(idle_lru, &counts, blocked),
+                Ok(Some(PagingWork::Reclaim))
+            );
+            for policy in [
+                EvictionPolicy::OnIdle(EvictionStrategy::Default),
+                EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
+                EvictionPolicy::OnMemoryPressure(EvictionStrategy::Lru),
+            ] {
+                assert_eq!(
+                    PagingWork::on_idle(Some(policy), &counts, blocked),
+                    blocked.map_or(Ok(None), Err)
+                );
+            }
+        }
+        let counts = PagableNodeCounts {
+            candidates: 1,
+            ..counts
+        };
+        assert_eq!(
+            PagingWork::on_idle(idle_lru, &counts, None),
+            Ok(Some(PagingWork::PageOutAndReclaim))
+        );
+        assert_eq!(
+            PagingWork::on_idle(Some(EvictionPolicy::default()), &counts, None),
+            Ok(Some(PagingWork::PageOut))
+        );
+        let counts = PagableNodeCounts {
+            backed: 0,
+            ..counts
+        };
+        assert_eq!(
+            PagingWork::on_idle(
+                idle_lru,
+                &counts,
+                Some(PageOutStarted::InsufficientDiskHeadroom)
+            ),
+            Err(PageOutStarted::InsufficientDiskHeadroom)
         );
     }
 

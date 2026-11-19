@@ -1,0 +1,5 @@
+load(":rules.bzl", "memory_node", "memory_reader")
+
+[memory_node(name = "node_{}".format(i)) for i in range(16)]
+
+memory_reader(name = "read_node_1", dep = ":node_1")

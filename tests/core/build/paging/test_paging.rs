@@ -385,6 +385,61 @@ async fn test_eviction_on_memory_pressure_keeps_paged_out_values_resident(
 }
 
 #[buck_test(data_dir = "paging", write_invocation_record = true)]
+async fn test_idle_lru_reclaims_cold_values_without_new_writes(buck: &Buck) -> anyhow::Result<()> {
+    hydration_settings(
+        buck,
+        &[
+            ("page_out_on_idle", Bool(true)),
+            ("page_out_policy", Str("once_per_value")),
+            ("eviction_policy", Str("on_idle_lru")),
+        ],
+    )?;
+    let mut targets = vec!["providers".to_owned(), "-p".to_owned(), "MyInfo".to_owned()];
+    targets.extend((0..16).map(|i| format!("//lru:node_{i}")));
+    let targets: Vec<_> = targets.iter().map(String::as_str).collect();
+    let original = buck.audit(&targets).await?;
+    wait_for_page_out_idle(buck).await?;
+    assert_eq!(candidate_count(buck).await?, 0);
+    assert!(backed_count(buck).await? >= 16);
+
+    // The unchanged graph needs no serialization. A new demand batch for node_0
+    // must still schedule idle reclaim of the older, already-backed payloads.
+    let paged_before = paged_out_count(buck).await?;
+    let hot = buck
+        .audit(&["providers", "-p", "MyInfo", "//lru:node_0"])
+        .await?;
+    assert_eq!(paged_in_count_for_key_type(&hot, "AnalysisKey")?, 0);
+    assert_eq!(page_out_started(&hot)?, PAGE_OUT_STARTED_STARTED);
+    let paged_after = wait_for_page_out_idle(buck).await?;
+    assert!(paged_after > paged_before);
+    assert_eq!(candidate_count(buck).await?, 0);
+    let resident = hydration_counts_for_key_type(buck, "AnalysisKey").await?.0;
+    assert_eq!(
+        resident, 1,
+        "only the recently demanded analysis stays resident"
+    );
+
+    let still_hot = buck
+        .audit(&["providers", "-p", "MyInfo", "//lru:node_0"])
+        .await?;
+    assert_eq!(still_hot.stdout, hot.stdout);
+    assert_eq!(paged_in_count_for_key_type(&still_hot, "AnalysisKey")?, 0);
+    assert_eq!(still_hot.invocation_record()?["analysis_count"], 0);
+    assert_eq!(
+        still_hot.invocation_record()?["paging_daemon_data_keys_out"],
+        hot.invocation_record()?["paging_daemon_data_keys_out"]
+    );
+    wait_for_page_out_idle(buck).await?;
+
+    let restored = buck.audit(&targets).await?;
+    assert_eq!(restored.stdout, original.stdout);
+    assert!(paged_in_count_for_key_type(&restored, "AnalysisKey")? > 0);
+    assert_eq!(restored.invocation_record()?["analysis_count"], 0);
+    wait_for_page_out_idle(buck).await?;
+    Ok(())
+}
+
+#[buck_test(data_dir = "paging", write_invocation_record = true)]
 async fn test_evict_drops_values_rows_already_hold(buck: &Buck) -> anyhow::Result<()> {
     hydration_settings(buck, &[])?;
     // Values read back from storage stay resident, backed by their rows, and

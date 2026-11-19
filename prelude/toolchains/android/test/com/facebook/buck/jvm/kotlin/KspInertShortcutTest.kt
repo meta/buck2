@@ -51,6 +51,36 @@ class KspInertShortcutTest {
     )
   }
 
+  /** A shortcut that answers with the mode named by its `answer.mode` option, if any. */
+  object ModeShortcut {
+    @JvmStatic
+    fun inertOutputs(
+        sources: List<String>,
+        options: Map<String, String>,
+    ): Map<String, Any?> = mapOf(
+        "outputs" to mapOf("res/answer.bin" to byteArrayOf(1)),
+        "depFile" to null,
+        "mode" to options["answer.mode"],
+    )
+  }
+
+  /**
+   * A shortcut that answers only when kotlincd honors an answer's mode, and records its options.
+   */
+  object CapabilityShortcut {
+    var seen: Map<String, String>? = null
+
+    @JvmStatic
+    fun inertOutputs(sources: List<String>, options: Map<String, String>): Map<String, Any?> {
+      seen = options
+      return if (options[KspInertShortcut.ANSWER_MODE_OPTION] == KspInertShortcut.ANSWER_MODE_V1) {
+        mapOf("outputs" to mapOf("res/answer.bin" to byteArrayOf(1)), "mode" to "shadow")
+      } else {
+        mapOf("declined" to "kotlincd ignores answer modes")
+      }
+    }
+  }
+
   /** A shortcut whose answer holds a value that is not bytes. */
   object WrongTypeShortcut {
     @JvmStatic
@@ -165,6 +195,80 @@ class KspInertShortcutTest {
             loaderWith(properties("skip")),
             listOf(provider, "com.example.Other"),
         ),
+    )
+  }
+
+  private fun foundMode(resourceMode: String, answerMode: String?): KspInertShortcut.Lookup {
+    val loader = loaderWith(properties(resourceMode, ModeShortcut::class.java))
+    val options = answerMode?.let { mapOf("answer.mode" to it) }.orEmpty()
+    return KspInertShortcut.lookup(loader, listOf(provider), emptyList(), options)
+  }
+
+  @Test
+  fun `an answer's mode lowers the resource's, never raises it`() {
+    val modes = listOf("skip", "verify", "shadow")
+    for (resource in modes) {
+      for (answer in modes) {
+        val found = foundMode(resource, answer) as KspInertShortcut.Lookup.Found
+        val expected = modes[maxOf(modes.indexOf(resource), modes.indexOf(answer))]
+        assertEquals("$resource + $answer", expected, found.mode.name.lowercase())
+      }
+    }
+  }
+
+  @Test
+  fun `a shadow resource with a skip answer stays shadow`() {
+    val found = foundMode("shadow", "skip") as KspInertShortcut.Lookup.Found
+    assertEquals(KspInertShortcut.Mode.SHADOW, found.mode)
+  }
+
+  @Test
+  fun `a skip resource with a shadow answer becomes shadow`() {
+    val found = foundMode("skip", "shadow") as KspInertShortcut.Lookup.Found
+    assertEquals(KspInertShortcut.Mode.SHADOW, found.mode)
+  }
+
+  @Test
+  fun `an answer without a mode runs in the resource's`() {
+    for ((name, mode) in
+        listOf(
+            "skip" to KspInertShortcut.Mode.SKIP,
+            "verify" to KspInertShortcut.Mode.VERIFY,
+            "shadow" to KspInertShortcut.Mode.SHADOW,
+        )) {
+      val found = foundMode(name, null) as KspInertShortcut.Lookup.Found
+      assertNull(found.answer.mode)
+      assertEquals(mode, found.mode)
+    }
+  }
+
+  @Test
+  fun `an unknown answer mode declines`() {
+    val found = foundMode("skip", "fast") as KspInertShortcut.Lookup.Found
+    assertEquals("unknown answer mode fast", found.answer.declined)
+    assertTrue(found.answer.outputs.isEmpty())
+  }
+
+  @Test
+  fun `kotlincd tells shortcuts it honors answer modes`() {
+    val loader = loaderWith(properties("skip", CapabilityShortcut::class.java))
+    val found =
+        KspInertShortcut.lookup(loader, listOf(provider), emptyList(), mapOf("a" to "b"))
+            as KspInertShortcut.Lookup.Found
+    assertEquals(
+        mapOf("a" to "b", KspInertShortcut.ANSWER_MODE_OPTION to KspInertShortcut.ANSWER_MODE_V1),
+        CapabilityShortcut.seen,
+    )
+    assertNull(found.answer.declined)
+    assertEquals(KspInertShortcut.Mode.SHADOW, found.mode)
+  }
+
+  @Test
+  fun `a shortcut asked without the capability option declines`() {
+    // An older kotlincd calls the shortcut without the option and would ignore the answer's mode.
+    assertEquals(
+        mapOf("declined" to "kotlincd ignores answer modes"),
+        CapabilityShortcut.inertOutputs(emptyList(), emptyMap()),
     )
   }
 

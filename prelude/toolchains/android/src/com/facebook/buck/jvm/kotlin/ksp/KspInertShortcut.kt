@@ -29,6 +29,12 @@ import java.util.Properties
  * (for a census), `shadow` only records the outcome in the step's telemetry and keeps KSP2's
  * outputs (for a fleet-wide stage before `skip`). Without a resource, or with an unknown mode, KSP2
  * runs as before.
+ *
+ * An answer may also carry a `mode`, which can only lower the resource's (`skip` to `verify` to
+ * `shadow`), never raise it: a shortcut whose resource skips for one kind of answer can keep a
+ * newer kind in shadow. kotlincd passes [ANSWER_MODE_OPTION] to shortcuts that may use it, so a
+ * shortcut can tell an older kotlincd, which ignores an answer's `mode`, and decline there. An
+ * unknown answer mode declines.
  */
 class KspInertShortcut
 private constructor(
@@ -37,17 +43,25 @@ private constructor(
     val mode: Mode,
 ) {
 
+  /** From most to least trusting of an answer: a mode lowers another by coming later. */
   enum class Mode {
     SKIP,
     VERIFY,
-    SHADOW,
+    SHADOW;
+
+    /** The lower of this mode and [other] ([other] null leaves this one). */
+    fun loweredTo(other: Mode?): Mode = if (other != null && other > this) other else this
   }
 
-  /** A shortcut's answer: [declined] or the [outputs] and [depFile] text. */
+  /**
+   * A shortcut's answer: [declined] or the [outputs] and [depFile] text, and the [mode] it asks for
+   * (null for the resource's).
+   */
   class Answer(
       val declined: String?,
       val outputs: Map<String, ByteArray>,
       val depFile: String?,
+      val mode: Mode? = null,
   )
 
   /**
@@ -109,7 +123,14 @@ private constructor(
       }
       outputs[key] = value
     }
-    return Answer(result["declined"] as String?, outputs, result["depFile"] as String?)
+    val mode =
+        when (val value = result["mode"]) {
+          null -> null
+          else ->
+              modeOf(value as String)
+                  ?: return Answer("unknown answer mode $value", emptyMap(), null)
+        }
+    return Answer(result["declined"] as String?, outputs, result["depFile"] as String?, mode)
   }
 
   /**
@@ -195,13 +216,24 @@ private constructor(
 
     class Failed(val error: Throwable) : Lookup()
 
-    class Found(val shortcut: KspInertShortcut, val answer: Answer) : Lookup()
+    class Found(val shortcut: KspInertShortcut, val answer: Answer) : Lookup() {
+      /** The mode the step runs in: the resource's, lowered by the answer's. */
+      val mode: Mode
+        get() = shortcut.mode.loweredTo(answer.mode)
+    }
   }
 
   companion object {
     const val RESOURCE = "META-INF/kotlincd/ksp-inert-shortcut"
     const val FINAL_ROUND_PLACEHOLDER = "com/facebook/Dummy.java"
     const val MISMATCH = "KOTLINCD_KSP_INERT_SHORTCUT_MISMATCH"
+
+    /**
+     * The option kotlincd adds to a shortcut's options when it honors an answer's `mode`, with
+     * value [ANSWER_MODE_V1].
+     */
+    const val ANSWER_MODE_OPTION = "kotlincd.ksp_inert_shortcut.answer_mode"
+    const val ANSWER_MODE_V1 = "v1"
 
     /** Key prefix of files in KSP2's Kotlin and Java output directories ([OutputDirs]). */
     const val KOTLIN_SOURCES = "ksp-kotlin-sources:"
@@ -220,13 +252,7 @@ private constructor(
         if (properties.getProperty("provider") != provider) {
           continue
         }
-        val mode =
-            when (properties.getProperty("mode")) {
-              "skip" -> Mode.SKIP
-              "verify" -> Mode.VERIFY
-              "shadow" -> Mode.SHADOW
-              else -> return null
-            }
+        val mode = modeOf(properties.getProperty("mode")) ?: return null
         val shortcut = Class.forName(properties.getProperty("shortcut"), true, classLoader)
         return KspInertShortcut(provider, shortcut, mode)
       }
@@ -249,7 +275,18 @@ private constructor(
     ): Lookup =
         guarded({ Lookup.Failed(it) }) {
           val shortcut = find(classLoader, providerNames) ?: return@guarded Lookup.None
-          Lookup.Found(shortcut, shortcut.ask(sources, options))
+          Lookup.Found(
+              shortcut,
+              shortcut.ask(sources, options + (ANSWER_MODE_OPTION to ANSWER_MODE_V1)),
+          )
+        }
+
+    private fun modeOf(name: String?): Mode? =
+        when (name) {
+          "skip" -> Mode.SKIP
+          "verify" -> Mode.VERIFY
+          "shadow" -> Mode.SHADOW
+          else -> null
         }
 
     /** [block], or [onFailure] of what it threw; a [VirtualMachineError] propagates. */

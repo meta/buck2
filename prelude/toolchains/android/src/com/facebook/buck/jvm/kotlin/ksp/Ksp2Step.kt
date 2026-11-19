@@ -206,11 +206,13 @@ class Ksp2Step(
     }
     val shortcut = (lookup as? KspInertShortcut.Lookup.Found)?.shortcut
     val answer = (lookup as? KspInertShortcut.Lookup.Found)?.answer
+    // The resource's mode, lowered by the answer's.
+    val shortcutMode = (lookup as? KspInertShortcut.Lookup.Found)?.mode
     if (shortcut != null && answer != null) {
       val outcome =
-          answer.declined?.let { "declined: ${it.take(200)}" } ?: shortcut.mode.name.lowercase()
+          answer.declined?.let { "declined: ${it.take(200)}" } ?: shortcutMode!!.name.lowercase()
       inertShortcutResult = "$outcome; ask $askMs ms"
-      if (answer.declined == null && shortcut.mode == KspInertShortcut.Mode.SKIP) {
+      if (answer.declined == null && shortcutMode == KspInertShortcut.Mode.SKIP) {
         val written =
             KspInertShortcut.guarded(
                 { error ->
@@ -237,7 +239,7 @@ class Ksp2Step(
         shortcut != null &&
             answer != null &&
             answer.declined == null &&
-            shortcut.mode != KspInertShortcut.Mode.SKIP
+            shortcutMode != KspInertShortcut.Mode.SKIP
     val reportBefore =
         if (!compare) {
           null
@@ -246,7 +248,7 @@ class Ksp2Step(
               { error ->
                 compare = false
                 inertShortcutResult =
-                    "${shortcut!!.mode.name.lowercase()}-error: report ${error.toString().take(200)}; ask $askMs ms"
+                    "${shortcutMode!!.name.lowercase()}-error: report ${error.toString().take(200)}; ask $askMs ms"
                 null
               },
           ) {
@@ -311,13 +313,13 @@ class Ksp2Step(
     val kotlinSymbolProcessing =
         KotlinSymbolProcessing(kspConfig, noOpDetector.wrap(processorProviders), logger)
     val exitCode = kotlinSymbolProcessing.execute()
-    if (shortcut == null || shortcut.mode == KspInertShortcut.Mode.SKIP) {
+    if (shortcut == null || shortcutMode == KspInertShortcut.Mode.SKIP) {
       return exitCode
     }
     if (!compare || answer == null) {
       return exitCode
     }
-    val mode = shortcut.mode.name.lowercase()
+    val mode = shortcutMode!!.name.lowercase()
     if (exitCode != KotlinSymbolProcessing.ExitCode.OK) {
       inertShortcutResult = "$mode-not-compared: KSP exit $exitCode; ask $askMs ms"
       return exitCode
@@ -345,7 +347,7 @@ class Ksp2Step(
     val mismatchLine =
         "${KspInertShortcut.MISMATCH}|${invokingRule.fullyQualifiedName}|${comparison.mismatch}"
     inertShortcutResult = "$mode-mismatch: ${comparison.mismatch.take(300)}; $timing"
-    if (shortcut.mode == KspInertShortcut.Mode.VERIFY) {
+    if (shortcutMode == KspInertShortcut.Mode.VERIFY) {
       stdErr.println(mismatchLine)
       return KotlinSymbolProcessing.ExitCode.PROCESSING_ERROR
     }

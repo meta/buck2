@@ -20,7 +20,15 @@ load(
     "@prelude//rust:dep_context.bzl",
     "DepCollectionContext",  # @unused Used as a type
 )
-load("@prelude//rust:link_info.bzl", "RustLinkInfo", "RustProcMacroMarker", "attr_crate", "get_available_proc_macros", "resolve_listed_deps")
+load(
+    "@prelude//rust:link_info.bzl",
+    "RustLinkInfo",
+    "RustProcMacroArchInfo",
+    "RustProcMacroMarker",
+    "attr_crate",
+    "get_available_proc_macros",
+    "resolve_listed_deps",
+)
 
 RustAnalyzerInfo = provider(
     fields = {
@@ -76,6 +84,9 @@ def _compute_transitive_target_set(ctx: AnalysisContext, first_order_deps: list[
     transitive_targets = set([ctx.label.configured_target()])
     for dep in first_order_deps:
         if RustProcMacroMarker in dep:
+            continue
+        # Dual-arch proc-macro aggregates carry arch info, not analyzer info.
+        if RustProcMacroArchInfo in dep:
             continue
         target_sets = dep[RustAnalyzerInfo].transitive_target_set
         for target_set in target_sets:

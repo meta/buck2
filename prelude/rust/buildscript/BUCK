@@ -5,6 +5,14 @@ oncall("build_infra")
 
 source_listing()
 
+prelude = native
+
+prelude.export_file(
+    name = "buildscript_platform.bzl",
+    has_content_based_path = True,
+    visibility = ["PUBLIC"],
+)
+
 constraint(
     name = "buildscript_for_platform",
     default = "none",

@@ -39,11 +39,14 @@ load(
     "require_rust_arch_variants",
 )
 load("@prelude//rust:targets.bzl", "targets")
-load("@prelude//rust/buildscript:buildscript_platform.bzl", "transition_alias")
+# Local alias for arch transitions: inlined from
+# `rust/buildscript/buildscript_platform.bzl` so OSS and isolated graphs do
+# not need the `rust/buildscript` package to exist as a BUCK package.
+# Same behavior as the shared rule: forwards providers with an incoming transition.
 load("@prelude//rust/tools:attrs.bzl", "RustInternalToolsInfo")
 load("@prelude//utils:cmd_script.bzl", "cmd_script")
 load("@prelude//utils:selects.bzl", "selects")
-load(":arch_action.bzl", "rust_arch_program_action")
+load(":arch_action.bzl", "rust_arch_program_action", "rust_arch_run_aggregate")
 load(":build.bzl", "dependency_args")
 load(":build_params.bzl", "MetadataKind")
 load(
@@ -61,6 +64,16 @@ load(
     "resolve_rust_deps_inner",
 )
 load(":rust_toolchain.bzl", "PanicRuntime")
+
+transition_alias = rule(
+    impl = lambda ctx: ctx.attrs.actual.providers,
+    attrs = {
+        "actual": attrs.dep(),
+        "labels": attrs.list(attrs.string(), default = []),
+    },
+    supports_incoming_transition = True,
+)
+_DUAL_ARCH = "fbsource//third-party/rust-toolchain/constraints:dual-arch-qualification[enabled]"
 
 def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact, arch: str | None = None) -> cmd_args:
     # Build scripts expect to receive a `rustc` which "just works." However,
@@ -486,6 +499,18 @@ _cargo_buildscript_rule = rule(
     uses_plugins = [RustProcMacroPlugin],
 )
 
+def _dual_arch_eligible_for_package() -> bool:
+    if get_cell_name() == "fbcode":
+        return True
+    # Only fbsource third-party/fbcode paths are eligible. OSS and isolated
+    # graphs (different cell) must stay scalar even when their base path
+    # happens to start with `third-party/`, since they lack the
+    # `fbsource//third-party/rust-toolchain/constraints` package.
+    if get_cell_name() != "fbsource":
+        return False
+    base_path = get_base_path()
+    return base_path.startswith("fbcode/") or base_path.startswith("third-party/")
+
 def buildscript_run(
     name,
     buildscript_rule,
@@ -501,6 +526,24 @@ def buildscript_run(
     **kwargs,
 ):
     kwargs = apply_platform_attrs(platform, kwargs)
+
+    if arch_buildscript_rule == None and _dual_arch_eligible_for_package():
+        arch_variants = {}
+        for arch in ["x86_64", "arm64"]:
+            arch_name = "_{}-dual-arch-buildscript-{}".format(name, arch)
+            transition_alias(
+                name = arch_name,
+                actual = buildscript_rule,
+                incoming_transition = "@fbsource//third-party/rust-toolchain/platforms:final-arch-{}".format(arch),
+                visibility = [],
+            )
+            arch_variants[arch] = ":" + arch_name
+        aggregate_name = "_{}-dual-arch-buildscript".format(name)
+        rust_arch_run_aggregate(
+            name = aggregate_name,
+            arch_variants = arch_variants,
+        )
+        arch_buildscript_rule = ":" + aggregate_name
 
     if manifest_dir == None and local_manifest_dir == None:
         existing_filegroup_name = "{}-{}.crate".format(package_name, version)
@@ -540,12 +583,24 @@ def buildscript_run(
         lambda plat: buildscript_rule if plat == None else ":{}".format(platform_buildscript_build_name(plat)),
     )
 
+    # Scalar build script always available: scalar-only toolchains
+    # (stage1/stage2 sysroot builds) occur under qualification too.
+    # The dual-arch aggregate stays qualification-gated so
+    # default-config graphs stay small. Only gate behind the
+    # fbsource constraint when eligible; OSS and isolated graphs have no
+    # fbsource cell, so referencing it would break them.
+    if _dual_arch_eligible_for_package():
+        buildscript_arch_value = select({
+            "DEFAULT": None,
+            _DUAL_ARCH: arch_buildscript_rule,
+        })
+    else:
+        buildscript_arch_value = arch_buildscript_rule
+
     _cargo_buildscript_rule(
         name = name,
-        # Single-arch build script by default; arch selection via the
-        # qualification constraint lands later in the stack.
         buildscript = buildscript_rule,
-        buildscript_arch = arch_buildscript_rule,
+        buildscript_arch = buildscript_arch_value,
         package_name = package_name,
         version = version,
         filegroup_for_manifest_dir = filegroup_for_manifest_dir,

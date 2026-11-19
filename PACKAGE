@@ -146,7 +146,7 @@ modifiers_list.extend([
 ])
 
 set_cfg_modifiers(
-    cfg_modifiers = modifiers_list + ["ovr_config//project/folly:folly[xplat]"],
+    cfg_modifiers = modifiers_list + ["ovr_config//project/folly:folly[xplat]", "fbsource//third-party/fmt:12_2_0"],
 )
 
 nvcc_build.set_nvcc_host_compiler("clang")

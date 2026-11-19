@@ -800,6 +800,11 @@ impl BuckdServer {
 
         let cert_state = CertState::new().await;
         certs_validation_background_job(cert_state.dupe()).await;
+        #[cfg(unix)]
+        executable_cache::keep_cached_background_job()?;
+        // Keeps the variable in `buck2 help-env` on platforms without the job.
+        #[cfg(not(unix))]
+        buck2_core::buck2_env_name!("DOTSLASH_ARTIFACT_DIR");
 
         let inactivity_config = DaemonInactivityConfig::try_new(
             init_ctx
@@ -2860,6 +2865,68 @@ async fn inactivity_timeout(
         callers: Vec::new(),
         error_tag: Some(ErrorTag::DaemonInactivityTimeout as i32),
     })
+}
+
+// Unix only: Windows refuses to delete an executable that is running.
+#[cfg(unix)]
+mod executable_cache {
+    use std::env;
+    use std::path::Path;
+    use std::time::Duration;
+    use std::time::SystemTime;
+
+    use buck2_core::buck2_env;
+    use buck2_core::soft_error;
+    use buck2_core::soft_error_or_panic;
+    use buck2_fs::async_fs_util;
+    use buck2_fs::paths::abs_path::AbsPathBuf;
+
+    /// The directory whose mtime the launcher that cached this binary reads to tell whether the
+    /// binary is in use.
+    fn cache_dir() -> buck2_error::Result<Option<AbsPathBuf>> {
+        let Some(dir) = buck2_env!("DOTSLASH_ARTIFACT_DIR")? else {
+            return Ok(None);
+        };
+        // Every descendant of a launched program inherits the variable, so it may name the
+        // directory of a different binary.
+        let holds_this_binary = env::current_exe().is_ok_and(|exe| exe.starts_with(Path::new(dir)));
+        if !holds_this_binary {
+            return Ok(None);
+        }
+        Ok(Some(AbsPathBuf::new(dir)?))
+    }
+
+    /// A cache cleaner that judges use by mtime takes a daemon no client has run through the
+    /// launcher for a while to be unused, and deletes the binary it is running.
+    pub(super) fn keep_cached_background_job() -> buck2_error::Result<()> {
+        let dir = match cache_dir() {
+            Ok(Some(dir)) => dir,
+            Ok(None) => return Ok(()),
+            Err(e) => {
+                soft_error!("daemon_executable_cache_dir_invalid", e);
+                return Ok(());
+            }
+        };
+
+        tokio::task::spawn(async move {
+            const INTERVAL: Duration = Duration::from_secs(60 * 60);
+            let mut reported = false;
+            loop {
+                tokio::time::sleep(INTERVAL).await;
+                let touched = async_fs_util::set_modified(&dir, SystemTime::now()).await;
+                if let Err(e) = touched
+                    && !reported
+                {
+                    reported = true;
+                    soft_error_or_panic!(
+                        "daemon_executable_cache_dir_touch_failed",
+                        e.categorize_internal()
+                    );
+                }
+            }
+        });
+        Ok(())
+    }
 }
 
 async fn certs_validation_background_job(cert_state: CertState) {

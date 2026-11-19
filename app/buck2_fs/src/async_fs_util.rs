@@ -10,6 +10,8 @@
 
 use std::fs::Metadata;
 use std::io::Read;
+#[cfg(unix)]
+use std::time::SystemTime;
 
 use buck2_env::soft_error::capture_soft_error_context;
 use buck2_env::soft_error::with_soft_error_context;
@@ -85,6 +87,14 @@ pub async fn create_dir_all<P: AsRef<AbsPath>>(dir: P) -> buck2_error::Result<()
 pub async fn metadata<P: AsRef<AbsPath>>(path: P) -> Result<Metadata, IoError> {
     let path = path.as_ref().to_owned();
     spawn_blocking(move || fs_util::metadata(path))
+        .await
+        .map_err(IoError::from_join)?
+}
+
+#[cfg(unix)]
+pub async fn set_modified<P: AsRef<AbsPath>>(path: P, time: SystemTime) -> Result<(), IoError> {
+    let path = path.as_ref().to_owned();
+    spawn_blocking(move || fs_util::set_modified(path, time))
         .await
         .map_err(IoError::from_join)?
 }

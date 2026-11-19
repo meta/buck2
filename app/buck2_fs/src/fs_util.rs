@@ -24,6 +24,8 @@ use std::os::fd::AsFd;
 use std::os::fd::BorrowedFd;
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::time::SystemTime;
 
 use buck2_env::soft_error::soft_error_or_panic;
 use buck2_error::BuckErrorContext;
@@ -915,6 +917,14 @@ pub fn set_permissions<P: AsRef<AbsPath>>(path: P, perm: fs::Permissions) -> Res
                 .context(format!("set_permissions({}, _)", path.as_ref().display()))
                 .check_eden(path.as_ref())
         })
+}
+
+/// Unix only: Windows does not open a directory as a plain file.
+#[cfg(unix)]
+pub fn set_modified<P: AsRef<AbsPath>>(path: P, time: SystemTime) -> Result<(), IoError> {
+    let _guard = IoCounterKey::Chmod.guard();
+    with_retries(|| File::open(path.as_ref().as_maybe_relativized())?.set_modified(time))
+        .map_err(|e| IoError::new_with_path("set_modified", path, e))
 }
 
 pub fn set_executable<P: AsRef<AbsPath>>(path: P, executable: bool) -> Result<(), IoError> {

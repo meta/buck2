@@ -94,6 +94,7 @@ BUCK_WRAPPER_START_TIME                        u64
 CI                                             bool                   false
 CODING_AGENT_METADATA                          String
 COMPLETION_VERIFY_LOCKFILE                     String
+DOTSLASH_ARTIFACT_DIR                          String
 ENFORCE_DISPATCHER_SET                         bool                   false
 FAAS_CONTAINER_MEM_SOFT_LIMIT                  u64
 FORCE_WANT_RESTART                             bool                   false

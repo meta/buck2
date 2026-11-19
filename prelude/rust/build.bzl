@@ -1285,7 +1285,7 @@ def dependency_args(
 
     prefix = "{}-{}-deps{}".format(subdir, arch, dep_metadata_kind.value)
     transitive_deps = ctx.actions.tset(TransitiveDeps, children = transitive_deps)
-    argsfile = symlinked_dirs(ctx, internal_tools_info, transitive_dependency_dirs, prefix, transitive_deps, cwd)
+    argsfile = symlinked_dirs(ctx, internal_tools_info, transitive_dependency_dirs, prefix, transitive_deps, arch, cwd)
 
     return (args, argsfile, crate_targets)
 
@@ -1295,6 +1295,7 @@ def symlinked_dirs(
     transitive_dependency_dirs: set,
     prefix: str,
     transitive_deps: TransitiveDeps,
+    arch: str | None,
     cwd: Artifact | None,
 ) -> cmd_args:
     name = "{}-symlinked_dirs".format(prefix)
@@ -1339,7 +1340,7 @@ def symlinked_dirs(
     ctx.actions.run(
         arguments,
         category = "deps",
-        identifier = "{}-{}".format(prefix, len(transitive_dependency_dirs)),
+        identifier = str(len(transitive_dependency_dirs)) if arch == None else "{}-{}".format(arch, len(transitive_dependency_dirs)),
     )
 
     transitive_dependency_dirs.add(transitive_dependency_dir)

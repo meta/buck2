@@ -90,6 +90,7 @@ import org.jetbrains.kotlin.fir.types.ConeDefinitelyNotNullType
 import org.jetbrains.kotlin.fir.types.ConeErrorType
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.ConeKotlinTypeProjection
+import org.jetbrains.kotlin.fir.types.ConeLookupTagBasedType
 import org.jetbrains.kotlin.fir.types.ConeTypeParameterType
 import org.jetbrains.kotlin.fir.types.ConeTypeProjection
 import org.jetbrains.kotlin.fir.types.classId
@@ -883,6 +884,19 @@ internal class ComposableTargetInference(
       }
       if (publicInlineDepth > 0) return false
       if (isInlineLambdaTarget(callee, argIndex, hasReceiver)) return false
+      // A lambda passed to a nullable parameter is not deferred: the backend
+      // bridges it so its use-site node is not a lambda and it never
+      // captures the caller. (The exact backend condition is follow-up work;
+      // this matches the observed use-site kind rule. Known over-broad:
+      // direct calls with nullable params bind in the backend; narrow when
+      // the true rule is derived.)
+      val function = runCatching { callee.fir as? FirFunction }.getOrNull()
+      if (function != null) {
+        val paramIndex = argIndex - (if (hasReceiver) 1 else 0)
+        function.valueParameters.getOrNull(paramIndex)?.returnTypeRef?.coneTypeOrNull?.let {
+          if ((it as? ConeLookupTagBasedType)?.isMarkedNullable == true) return false
+        }
+      }
       return !lambdaCapturesOuterValues(lambda)
     }
 

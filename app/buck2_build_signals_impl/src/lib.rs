@@ -993,6 +993,7 @@ where
             num_edges,
             backend_name: Some(T::name().to_string()),
             top_level_targets,
+            client_ids: ctx.client_ids,
         });
         Ok(())
     }

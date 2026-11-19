@@ -230,6 +230,9 @@ pub trait ServerCommandContextTrait: Send + Sync {
         &self,
     ) -> buck2_error::Result<IntentionallyStdHashMap<String, String>>;
 
+    /// The `id` values from `--client-metadata`, in order.
+    fn client_ids(&self) -> &[String];
+
     async fn config_metadata(
         &self,
         ctx: &mut DiceComputations<'_>,
@@ -360,6 +363,7 @@ impl ServerCommandDiceContext for dyn ServerCommandContextTrait + '_ {
                                                             }),
                                                         )
                                                         .collect(),
+                                                    client_ids: self.client_ids().to_owned(),
                                                     isolation_prefix: self
                                                         .isolation_prefix()
                                                         .to_owned(),

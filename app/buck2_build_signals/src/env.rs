@@ -195,6 +195,7 @@ impl FromStr for CriticalPathBackendName {
 pub struct BuildSignalsContext {
     pub command_name: String,
     pub metadata: IntentionallyStdHashMap<String, String>,
+    pub client_ids: Vec<String>,
     pub isolation_prefix: FileNameBuf,
     pub early_command_timing: EarlyCommandTiming,
 }

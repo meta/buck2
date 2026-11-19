@@ -1171,6 +1171,12 @@ message BuildGraphExecutionInfo {
 
   // The slowest path in the build, in chronological order.
   repeated CriticalPathEntry2 slowest_path = 11;
+
+  // The `id` values from `--client-metadata`, in order. Forwarded so ingress
+  // can log the full `clients` union on the critical/slowest path tables.
+  // Carries only ids rather than the whole metadata list to send less data
+  // over the network.
+  repeated string client_ids = 12;
 }
 
 // An event capturing information from the test discovery phase.

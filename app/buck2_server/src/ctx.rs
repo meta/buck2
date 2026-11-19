@@ -260,6 +260,11 @@ pub struct ServerCommandContext<'a> {
     pub oncall: Option<String>,
     /// The client ID, if one was provided via --client-metadata.
     pub client_id_from_client_metadata: Option<String>,
+    /// The `id` values from `--client-metadata`, in order. Forwarded onto
+    /// `BuildGraphExecutionInfo` so ingress can log the full `clients` union
+    /// on the critical/slowest path tables. Carries only ids rather than the
+    /// whole metadata list to send less data over the network.
+    pub client_ids: Vec<String>,
 
     host_platform_override: HostPlatformOverride,
     host_arch_override: HostArchOverride,
@@ -408,6 +413,15 @@ impl<'a> ServerCommandContext<'a> {
             .find(|m| m.key == "id")
             .map(|m| m.value.clone());
 
+        // Forward just the `id` entries; ingress unions them with
+        // `metadata["client"]`. Other keys stay on `InvocationRecord` only.
+        let client_ids = client_context
+            .client_metadata
+            .iter()
+            .filter(|m| m.key == "id" && !m.value.is_empty())
+            .map(|m| m.value.clone())
+            .collect();
+
         let heartbeat_guard_handle =
             HeartbeatGuard::new(base_context.events.dupe(), snapshot_collector);
 
@@ -444,6 +458,7 @@ impl<'a> ServerCommandContext<'a> {
             config_overrides: client_context.config_overrides.clone(),
             oncall,
             client_id_from_client_metadata,
+            client_ids,
             re_connection_handle,
             cert_state,
             starlark_profiling_manager,
@@ -1529,6 +1544,10 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
             cli_args: self.sanitized_argv.clone(),
             tags: self.base_context.repo().tags.clone(),
         })
+    }
+
+    fn client_ids(&self) -> &[String] {
+        &self.client_ids
     }
 
     /// Gathers metadata to attach to events for when a command starts and stops.

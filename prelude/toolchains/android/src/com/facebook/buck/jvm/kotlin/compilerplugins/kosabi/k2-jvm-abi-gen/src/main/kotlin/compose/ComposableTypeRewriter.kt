@@ -26,6 +26,7 @@ import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
+import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
 import org.jetbrains.kotlin.ir.expressions.IrDelegatingConstructorCall
@@ -59,6 +60,7 @@ import org.jetbrains.kotlin.name.Name
  * - Value parameter types
  * - Return types
  * - Supertype declarations
+ * - Type-parameter bounds
  * - The signatures of the external functions that the module overrides or calls, as the real
  *   plugin's `ComposableTypeTransformer` remaps them (see [TypeRewriterVisitor.remapExternal])
  *
@@ -264,6 +266,18 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
         declaration.superTypes = declaration.superTypes.map { rewriteTypeIfComposable(it) }
       }
       super.visitClass(declaration)
+    }
+
+    /**
+     * The bounds of the type parameters of classes, functions and property accessors, as the real
+     * plugin's `ComposableTypeTransformer.visitTypeParameter` remaps them: a bound fixes the
+     * erasure of the type parameter in descriptors and is written in generic signatures.
+     */
+    override fun visitTypeParameter(declaration: IrTypeParameter) {
+      if (declarations) {
+        declaration.superTypes = declaration.superTypes.map { rewriteTypeIfComposable(it) }
+      }
+      super.visitTypeParameter(declaration)
     }
 
     /** Rewrite composable function types in a function's value parameters and return type. */

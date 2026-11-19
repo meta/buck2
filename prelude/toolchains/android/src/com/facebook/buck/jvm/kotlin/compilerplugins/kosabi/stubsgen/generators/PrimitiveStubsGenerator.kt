@@ -82,9 +82,6 @@ fun FullTypeQualifier.isSdkQualifier(): Boolean {
   return isKotlinSdk(pkg) || isJavaSdk(pkg)
 }
 
-// Types that don't require imports (auto-imported)
-fun FullTypeQualifier.isAutoImported(): Boolean {
-  val pkgStr = pkgAsString()
-  // java.lang.* types are auto-imported
-  return pkgStr == JAVA_LANG_PREFIX || pkgStr.startsWith("$JAVA_LANG_PREFIX.")
-}
+// Only `java.lang` itself is default-imported: `java.lang.reflect`, `.annotation`, `.ref` and
+// `.invoke` need an import like any other package.
+fun FullTypeQualifier.isAutoImported(): Boolean = pkgAsString() == JAVA_LANG_PREFIX

@@ -9,10 +9,15 @@
  */
 
 use std::path::Path;
+use std::path::PathBuf;
+use std::time::Duration;
+use std::time::Instant;
 
+use buck2_e2e::BuckProcess;
 use buck2_e2e::prelude::*;
 use buck2_e2e::utils::filter_events;
 use buck2_e2e::utils::random_string;
+use serde_json::Value;
 use serde_json::json;
 
 const RE_USE_CASE_STAGES: [&str; 4] = ["Queue", "WorkerDownload", "Execute", "WorkerUpload"];
@@ -46,23 +51,121 @@ async fn assert_re_use_case(buck: &Buck, expected_use_case: &str) -> anyhow::Res
     Ok(())
 }
 
+/// The RE session the last command of `buck` ran in, as its event log announces it.
+async fn re_session(buck: &Buck) -> anyhow::Result<Value> {
+    filter_events(buck, &["Event", "data", "Instant", "data", "ReSession"])
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("The command announced no RE session"))
+}
+
+/// The directory `session` names for its logs, checked to hold the RE client's log. A shared
+/// daemon removes its logs when it exits.
+fn logs_dir(session: &Value) -> anyhow::Result<PathBuf> {
+    let logs_dir = PathBuf::from(
+        session["logs_dir"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("The RE session names no log directory: {session}"))?,
+    );
+    anyhow::ensure!(
+        logs_dir.join("REClientFolly.log").is_file(),
+        "No RE client log in `{}`",
+        logs_dir.display()
+    );
+    Ok(logs_dir)
+}
+
+async fn wait_for(path: &Path, build: &mut BuckProcess) -> anyhow::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(300);
+    while !path.exists() {
+        anyhow::ensure!(
+            build.try_wait().is_none(),
+            "The build exited without creating `{}`",
+            path.display()
+        );
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "Timed out waiting for `{}`",
+            path.display()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    Ok(())
+}
+
 #[buck_test(meta_only = "remote execution")]
 async fn test_re_session_names_its_log_directory(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&["root//:simple", "--remote-only", "--no-remote-cache"])
         .await?;
-    let logs_dirs = filter_events(
-        buck,
-        &["Event", "data", "Instant", "data", "ReSession", "logs_dir"],
-    )
-    .await?;
-    let logs_dir = logs_dirs
-        .first()
-        .and_then(|logs_dir| logs_dir.as_str())
-        .expect("The command's RE session should name its log directory");
-    assert!(
-        Path::new(logs_dir).join("REClientFolly.log").is_file(),
-        "No RE client log in `{logs_dir}`"
-    );
+    logs_dir(&re_session(buck).await?)?;
+    Ok(())
+}
+
+/// Commands that run at the same time in two tenants of a shared daemon use one RE session,
+/// which logs outside the buck-out of either.
+#[buck_test(meta_only = "remote execution", skip_for_os = ["windows", "darwin"])]
+async fn test_shared_daemon_tenants_share_an_re_session(
+    buck: &mut Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    buck.set_daemon_routing(true)?;
+    let mut one = buck.clone();
+    one.set_isolation_prefix("one");
+    let mut two = buck.clone();
+    two.set_isolation_prefix("two");
+
+    // `:blocked` runs locally once `:simple` has run remotely, and keeps the first tenant's
+    // command, and with it that command's hold on the session, until it is released.
+    let started = tmp_path.join("started");
+    let release = tmp_path.join("release");
+    let gate = tmp_path.join("gate.bcfg");
+    std::fs::write(
+        &gate,
+        format!(
+            "[blocked]\nstarted = {}\nrelease = {}\n",
+            started.display(),
+            release.display()
+        ),
+    )?;
+    let mut first = one
+        .build(&[
+            "root//:blocked",
+            "--prefer-remote",
+            "--no-remote-cache",
+            "--config-file",
+            &gate.to_string_lossy(),
+        ])
+        .spawn();
+    let second_session = async {
+        wait_for(&started, &mut first).await?;
+        two.build(&["root//:simple", "--remote-only", "--no-remote-cache"])
+            .await?;
+        re_session(&two).await
+    }
+    .await;
+    std::fs::write(&release, "")?;
+    let first = first.wait().await;
+    let sessions = async {
+        let second_session = second_session?;
+        first?;
+        let first_session = re_session(&one).await?;
+        let logs_dir = logs_dir(&first_session)?;
+        anyhow::Ok((first_session, second_session, logs_dir))
+    }
+    .await;
+    one.kill().await?;
+    two.kill().await?;
+    let (first_session, second_session, logs_dir) = sessions?;
+
+    assert_eq!(first_session["session_id"], second_session["session_id"]);
+    for tenant in ["one", "two"] {
+        assert!(
+            !logs_dir.starts_with(buck.cwd().join("buck-out").join(tenant)),
+            "The shared daemon logs RE to `{}`, in a tenant's buck-out",
+            logs_dir.display()
+        );
+    }
     Ok(())
 }
 

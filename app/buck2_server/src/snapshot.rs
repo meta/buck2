@@ -428,7 +428,7 @@ impl SnapshotCollector {
         }
 
         // Nothing we can do if we get an error, unfortunately.
-        if let Err(e) = inner(snapshot, &self.tenant.repo.re_client_manager) {
+        if let Err(e) = inner(snapshot, &self.daemon.re_client_manager) {
             tracing::debug!("Error collecting network stats: {:#}", e);
         }
     }

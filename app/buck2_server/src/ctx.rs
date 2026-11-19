@@ -384,7 +384,7 @@ impl<'a> ServerCommandContext<'a> {
             }
         }
 
-        let mut re_connection_handle = base_context.repo().re_client_manager.get_re_connection();
+        let mut re_connection_handle = base_context.daemon.re_client_manager.get_re_connection();
 
         re_connection_handle.set_observer(Arc::new(Observer {
             events: base_context.events.dupe(),
@@ -594,7 +594,7 @@ impl<'a> ServerCommandContext<'a> {
 
     pub fn get_re_connection(&self) -> ReConnectionHandle {
         self.base_context
-            .repo()
+            .daemon
             .re_client_manager
             .get_re_connection()
     }
@@ -1251,7 +1251,7 @@ impl DiceCommandUpdater<'_, '_> {
         let cas_configured = self
             .cmd_ctx
             .base_context
-            .repo()
+            .daemon
             .re_client_manager
             .cas_configured();
         let invocation_re_settings = InvocationReSettings {

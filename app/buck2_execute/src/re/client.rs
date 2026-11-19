@@ -984,7 +984,7 @@ impl RemoteExecutionClientImpl {
                             }),
                             destination_path_hint: Some(
                                 re_config
-                                    .buck_out_path
+                                    .materialization_path_hint
                                     .to_str()
                                     .buck_error_context("invalid destination path")?
                                     .to_owned(),
@@ -1064,7 +1064,7 @@ impl RemoteExecutionClientImpl {
                     embedded_cas_daemon_config.copy_policy = CopyPolicy::BEST_AVAILABLE;
                     embedded_cas_daemon_config.materialization_mount_path = Some(
                         re_config
-                            .buck_out_path
+                            .materialization_path_hint
                             .to_str()
                             .buck_error_context("invalid meterialization_mount_path")?
                             .to_owned(),

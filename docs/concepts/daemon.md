@@ -125,7 +125,11 @@ directory of the checkout that started the daemon, keyed by the daemon id,
 outside every disposable tenant tree. So is the disk-state materializer's
 stash of local content, keyed by namespace next to the forkserver state, so
 that cleaning or evicting any tenant leaves what the others are served from in
-place; the CAS TTL refresh runs through whichever tenant is live.
+place; the CAS TTL refresh runs under the use case of whichever tenant is live.
+The remote execution connection is the daemon's as well: commands of every
+tenant share one session, the client-side limits in `[buck2_re_client]` bound
+the daemon rather than each tenant, and the session's client logs are kept
+next to the stash.
 Evicting a tenant releases its roots after admitted commands finish; other
 tenants keep running on the shared engine.
 

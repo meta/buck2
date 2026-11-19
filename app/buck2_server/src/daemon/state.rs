@@ -333,12 +333,8 @@ pub struct RepoState {
     /// If enabled, paranoid RE downloads.
     pub paranoid: Option<ParanoidDownloader>,
 
-    /// The RE connection for this repo, managed such that all concurrently active build commands
-    /// use the same connection. Once there are no active build commands, the connection is
-    /// terminated.
-    pub re_client_manager: Arc<ReConnectionManager>,
     /// The use case this repo's own RE traffic runs under, such as the daemon's TTL refresh
-    /// when it asks the CAS through this repo's connection.
+    /// when it asks the CAS on this repo's behalf.
     pub(crate) re_use_case: RemoteExecutorUseCase,
 
     /// Executor for blocking I/O against this repo's project root.
@@ -424,6 +420,7 @@ impl IoRequest for TenantInitializationGate {
 }
 
 struct DaemonSharedServices<'a> {
+    re_client_manager: &'a Arc<ReConnectionManager>,
     blocking_executor_factory: &'a BlockingExecutorFactory,
     scribe_sink: Option<&'a Arc<dyn EventSinkWithStats>>,
     memory_tracker: Option<&'a MemoryTrackerHandle>,
@@ -591,11 +588,6 @@ impl TenantState {
         let digest_config = DigestConfig::leak_new(digest_algorithms, preferred_source_algorithm)
             .buck_error_context("Error initializing DigestConfig")?;
         init_induced_cache_misses(digest_config.cas_digest_config())?;
-
-        // TODO(rafaelc): merge configs from all cells once they are consistent
-        let static_metadata = Arc::new(RemoteExecutionStaticMetadata::from_legacy_config(
-            root_config,
-        )?);
 
         let mut cell_configs: BuckMutMap<CellName, _> = BuckMutMap::default();
         for (cell, _) in cells.cells() {
@@ -811,15 +803,7 @@ impl TenantState {
         let incremental_db_state = Arc::new(incremental_db_state);
         let materializer_state_identity = materializer_db.as_ref().map(|d| d.identity().clone());
 
-        let re_client_manager = Arc::new(ReConnectionManager::new(
-            fb,
-            false,
-            10,
-            static_metadata.dupe(),
-            Some(paths.re_logs_dir()),
-            paths.buck_out_path(),
-            init_ctx.daemon_startup_config.startup_options.paranoid,
-        ));
+        let re_client_manager = shared.re_client_manager.dupe();
         // Used only to dispatch events to scribe that are not associated with a specific command
         // (ex. materializer clean up events).
         let daemon_dispatcher = if let Some(sink) = shared.scribe_sink {
@@ -992,7 +976,7 @@ impl TenantState {
             #[cfg(fbcode_build)]
             format!(
                 "respect-file-symlinks:{}",
-                static_metadata.respect_file_symlinks
+                re_client_manager.static_metadata().respect_file_symlinks
             ),
             "disable-eager-write-dispatch-v2:true".to_owned(),
             format!("use-eden-thrift-read:{}", use_eden_thrift_read),
@@ -1024,7 +1008,6 @@ impl TenantState {
             persisted_dep_file_cache,
             dep_file_cache,
             paranoid,
-            re_client_manager,
             re_use_case: invocation_re_use_case(root_config)?,
             blocking_executor,
             buckconfig_metadata: parse_buckconfig_metadata(root_config),
@@ -1898,27 +1881,23 @@ fn tenant_paths_from_client_context(
     )))
 }
 
-/// Asks the CAS through whichever tenant the daemon serves at the time of the pass. The walk
-/// over the digest interner is the daemon's, not a tenant's: a shared daemon outlives the
-/// tenant it started with, and that tenant's RE connection and log directory go with it when
-/// it is cleaned.
+/// Asks the CAS under the use case of whichever tenant the daemon serves at the time of the
+/// pass. The walk over the digest interner is the daemon's, not a tenant's: a shared daemon
+/// outlives the tenant it started with.
 struct LiveTenantPresenceChecker {
     data: Arc<OnceLock<Weak<DaemonStateData>>>,
 }
 
 impl PresenceChecker for LiveTenantPresenceChecker {
     fn begin_pass(&self) -> Box<dyn PassPresenceChecker> {
-        let tenant = self
-            .data
-            .get()
-            .and_then(Weak::upgrade)
-            .and_then(|data| data.tenants.live_tenant());
+        let data = self.data.get().and_then(Weak::upgrade);
+        let tenant = data
+            .as_ref()
+            .and_then(|data| Some((data, data.tenants.live_tenant()?)));
         match tenant {
-            Some(tenant) => ReChecker::new(
-                tenant.repo.re_client_manager.dupe(),
-                tenant.repo.re_use_case,
-            )
-            .begin_pass(),
+            Some((data, tenant)) => {
+                ReChecker::new(data.re_client_manager.dupe(), tenant.repo.re_use_case).begin_pass()
+            }
             None => Box::new(NoTenantPresenceChecker),
         }
     }
@@ -1947,6 +1926,12 @@ impl PassPresenceChecker for NoTenantPresenceChecker {
 pub struct DaemonStateData {
     tenants: TenantStateRegistry,
     tenant_state_factory: TenantStateFactory,
+
+    /// The daemon's RE connection, shared by the commands of every tenant so that they use one
+    /// RE client: constructing an RE client reconfigures logging for the whole process, taking
+    /// it away from any other that is live. The connection is open while a command of any
+    /// tenant holds it, and closed once none does.
+    pub(crate) re_client_manager: Arc<ReConnectionManager>,
 
     /// Daemon-wide scheduling resources for repo-scoped blocking executors.
     pub blocking_executor_factory: Arc<BlockingExecutorFactory>,
@@ -2001,6 +1986,7 @@ fn _assert_send_sync(
     DaemonStateData {
         tenants,
         tenant_state_factory,
+        re_client_manager,
         blocking_executor_factory,
         forkserver,
         scribe_sink,
@@ -2019,6 +2005,7 @@ fn _assert_send_sync(
     fn assert<T: Send + Sync>(_: &T) {}
     assert(tenants);
     assert(tenant_state_factory);
+    assert(re_client_manager);
     assert(blocking_executor_factory);
     assert(forkserver);
     assert(scribe_sink);
@@ -2079,6 +2066,7 @@ impl DaemonStateData {
 
     fn repo_shared_services(&self) -> DaemonSharedServices<'_> {
         DaemonSharedServices {
+            re_client_manager: &self.re_client_manager,
             blocking_executor_factory: &self.blocking_executor_factory,
             scribe_sink: self.scribe_sink.as_ref(),
             memory_tracker: self.memory_tracker.as_ref(),
@@ -2543,6 +2531,20 @@ impl DaemonState {
                 .startup_options
                 .routing
                 .is_shared();
+            // Configured from the tenant the daemon starts with: every tenant of a daemon
+            // configures RE the same way, which is part of what selects the daemon.
+            // TODO(rafaelc): merge configs from all cells once they are consistent
+            let re_client_manager = Arc::new(ReConnectionManager::new(
+                fb,
+                false,
+                10,
+                Arc::new(RemoteExecutionStaticMetadata::from_legacy_config(
+                    root_config,
+                )?),
+                Some(invocation_paths.re_logs_dir()?),
+                invocation_paths.daemon_working_dir()?,
+                init_ctx.daemon_startup_config.startup_options.paranoid,
+            ));
             let shared_stash = unidaemon
                 .then(|| -> buck2_error::Result<_> {
                     Ok(SharedStash {
@@ -2574,6 +2576,7 @@ impl DaemonState {
                     &legacy_cells,
                     root_config,
                     DaemonSharedServices {
+                        re_client_manager: &re_client_manager,
                         blocking_executor_factory: &blocking_executor_factory,
                         scribe_sink: scribe_sink.as_ref(),
                         memory_tracker: memory_tracker.as_ref(),
@@ -2609,6 +2612,7 @@ impl DaemonState {
             let data = Arc::new(DaemonStateData {
                 tenants,
                 tenant_state_factory,
+                re_client_manager,
                 blocking_executor_factory,
                 forkserver,
                 scribe_sink,

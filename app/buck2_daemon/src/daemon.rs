@@ -258,12 +258,13 @@ fn verify_buck_out_dir(paths: &InvocationPaths) -> buck2_error::Result<()> {
 }
 
 /// Removes the namespace directory of a shared daemon that has exited normally, so that no record
-/// names it, and the daemon's forkserver and stash state, which nothing else removes; a daemon that failed
-/// leaves its error report there for its client to read. The daemon still holds the namespace's
-/// lifetime lock here, so no replacement runs yet; a client that holds the lifecycle lock is
-/// about to start one over the directory and keeps it, which is why this is best effort. The
-/// namespace's lock files stay: unlinking one while a daemon of the key waits on it would leave
-/// that daemon holding a lock on an unlinked file, which every later probe reads as "no daemon".
+/// names it, and the daemon's forkserver state, stash state and RE logs, which nothing else
+/// removes; a daemon that failed leaves its error report there for its client to read. The daemon
+/// still holds the namespace's lifetime lock here, so no replacement runs yet; a client that holds
+/// the lifecycle lock is about to start one over the directory and keeps it, which is why this is
+/// best effort. The namespace's lock files stay: unlinking one while a daemon of the key waits on
+/// it would leave that daemon holding a lock on an unlinked file, which every later probe reads as
+/// "no daemon".
 fn remove_exited_namespace(daemon_dir: &DaemonDir, namespace_state: &[AbsNormPathBuf]) {
     for state in namespace_state {
         if let Err(error) = fs_util::remove_all(state) {
@@ -773,6 +774,7 @@ impl DaemonCommand {
                 Ok(vec![
                     paths.forkserver_state_dir()?,
                     paths.shared_stash_state_dir()?,
+                    paths.re_logs_dir()?,
                 ])
             })
             .transpose()?;

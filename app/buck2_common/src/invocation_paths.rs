@@ -145,12 +145,6 @@ impl TenantPaths {
         &self.isolation
     }
 
-    /// Directory containing remote-execution logs for this tenant.
-    pub fn re_logs_dir(&self) -> AbsNormPathBuf {
-        self.buck_out_path()
-            .join(ForwardRelativePath::unchecked_new("re_logs"))
-    }
-
     /// Top-level directory name under the project root used for Buck outputs.
     pub fn buck_out_dir_prefix() -> &'static ProjectRelativePath {
         ProjectRelativePath::unchecked_new("buck-out")
@@ -622,11 +616,6 @@ impl InvocationPaths {
             .join(ForwardRelativePath::unchecked_new("tmp"))
     }
 
-    pub fn re_logs_dir(&self) -> AbsNormPathBuf {
-        self.buck_out_path()
-            .join(ForwardRelativePath::unchecked_new("re_logs"))
-    }
-
     pub fn build_count_dir(&self) -> AbsNormPathBuf {
         self.buck_out_path()
             .join(ForwardRelativePath::unchecked_new("build_count"))
@@ -788,6 +777,27 @@ impl InvocationPaths {
             .join(key.file_name()))
     }
 
+    /// Where the daemon's RE client keeps its logs, one directory per session. An unshared
+    /// daemon keeps them in its tenant's buck-out, where they have always been. A shared daemon
+    /// has one RE client for all of its tenants, which are cleaned and evicted independently of
+    /// it, so its logs live with its forkserver state, under its namespace beside its working
+    /// directory. Clients learn a session's directory from the daemon rather than from here: a
+    /// shared daemon's is in the checkout that started it.
+    pub fn re_logs_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
+        if !self.routing()?.is_shared() {
+            return Ok(self
+                .buck_out_path()
+                .join(FileName::unchecked_new("re_logs")));
+        }
+        let key = self
+            .unidaemon_key()
+            .internal_error("A shared daemon serves a namespace")?;
+        Ok(self
+            .daemon_state_dir()
+            .join(FileName::unchecked_new("re_logs"))
+            .join(key.file_name()))
+    }
+
     fn materializer_state_dir_name(&self) -> &FileName {
         FileName::unchecked_new("materializer_state")
     }
@@ -929,6 +939,12 @@ mod tests {
             shared.daemon_state_dir()
         );
         assert_eq!(paths.daemon_working_dir().unwrap(), paths.buck_out_path());
+        assert!(
+            paths
+                .re_logs_dir()
+                .unwrap()
+                .starts_with(paths.buck_out_path())
+        );
 
         // Commands that never select a daemon leave routing unresolved; anything that depends on
         // it reports that instead of guessing.
@@ -960,6 +976,12 @@ mod tests {
             paths.unidaemon_dir(&key).unwrap().path,
             other_checkout.unidaemon_dir(&key).unwrap().path,
         );
+
+        // A shared daemon's RE logs are its own, outside the buck-out of any tenant.
+        shared.select_unidaemon(key);
+        let shared_re_logs = shared.re_logs_dir().unwrap();
+        assert!(shared_re_logs.starts_with(shared.daemon_state_dir()));
+        assert!(!shared_re_logs.starts_with(shared.buck_out_path()));
 
         let expected_path = if cfg!(windows) {
             "C:\\my\\project"
@@ -1023,7 +1045,6 @@ mod tests {
         let tenant_paths = paths.tenant_paths();
         assert_eq!(tenant_paths.project_root(), paths.project_root());
         assert_eq!(tenant_paths.isolation().as_str(), paths.isolation.as_str());
-        assert_eq!(tenant_paths.re_logs_dir(), paths.re_logs_dir());
         assert_eq!(tenant_paths.buck_out_dir(), paths.buck_out_dir());
         assert_eq!(tenant_paths.buck_out_path(), paths.buck_out_path());
         assert_eq!(tenant_paths.cache_dir(), paths.cache_dir());

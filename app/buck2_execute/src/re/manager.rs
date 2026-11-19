@@ -100,7 +100,11 @@ pub struct RemoteExecutionConfig {
     pub connection_retries: usize,
     pub static_metadata: Arc<RemoteExecutionStaticMetadata>,
     pub logs_dir_path: Option<AbsNormPathBuf>,
-    pub buck_out_path: AbsNormPathBuf,
+    /// A path on the filesystem outputs are materialized to, which the CAS client may inspect
+    /// to tune itself for that filesystem: the daemon's working directory. That is the tenant's
+    /// buck-out for an unshared daemon. A shared daemon's is in the checkout that started it,
+    /// and stands in for the buck-outs of all of its tenants.
+    pub materialization_path_hint: AbsNormPathBuf,
     /// Whether Buck is running in paranoid mode.
     pub is_paranoid_mode: bool,
 }
@@ -206,7 +210,7 @@ impl ReConnectionManager {
         connection_retries: usize,
         static_metadata: Arc<RemoteExecutionStaticMetadata>,
         logs_dir_path: Option<AbsNormPathBuf>,
-        buck_out_path: AbsNormPathBuf,
+        materialization_path_hint: AbsNormPathBuf,
         is_paranoid_mode: bool,
     ) -> Self {
         Self {
@@ -217,10 +221,14 @@ impl ReConnectionManager {
                 connection_retries,
                 static_metadata,
                 logs_dir_path,
-                buck_out_path,
+                materialization_path_hint,
                 is_paranoid_mode,
             },
         }
+    }
+
+    pub fn static_metadata(&self) -> &RemoteExecutionStaticMetadata {
+        &self.config.static_metadata
     }
 
     /// Whether there is a CAS to talk to at all; see `RemoteExecutionStaticMetadataImpl`.

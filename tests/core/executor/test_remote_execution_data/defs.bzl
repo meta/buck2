@@ -27,3 +27,27 @@ def _simple(ctx):
     return [DefaultInfo(default_output = output)]
 
 simple = rule(impl = _simple, attrs = {"input": attrs.source()})
+
+def _blocked(ctx):
+    output = ctx.actions.declare_output("output", has_content_based_path = False)
+    ctx.actions.run(
+        cmd_args([
+            "fbpython",
+            "-c",
+            "import pathlib, sys, time; out, started, release = sys.argv[1:4]\npathlib.Path(started).touch()\nwhile not pathlib.Path(release).exists():\n time.sleep(0.05)\npathlib.Path(out).touch()",
+            output.as_output(),
+            ctx.attrs.started,
+            ctx.attrs.release,
+            ctx.attrs.after[DefaultInfo].default_outputs,
+        ]),
+        category = "blocked",
+        local_only = True,
+    )
+
+    return [DefaultInfo(default_output = output)]
+
+# Runs locally once `after` is built: creates `started`, then waits for `release` to exist.
+blocked = rule(
+    impl = _blocked,
+    attrs = {"after": attrs.dep(), "release": attrs.string(), "started": attrs.string()},
+)

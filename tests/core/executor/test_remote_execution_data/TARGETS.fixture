@@ -1,6 +1,13 @@
-load(":defs.bzl", "simple")
+load(":defs.bzl", "blocked", "simple")
 
 simple(
     name = "simple",
     input = "input.txt",
+)
+
+blocked(
+    name = "blocked",
+    after = ":simple",
+    started = read_config("blocked", "started", "unset"),
+    release = read_config("blocked", "release", "unset"),
 )

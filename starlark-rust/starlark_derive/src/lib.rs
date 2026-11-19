@@ -190,7 +190,7 @@ pub fn derive_unpack_value(input: proc_macro::TokenStream) -> proc_macro::TokenS
 /// Derive the glue of a Starlark type's view over its representations: an enum with one
 /// `ValueTyped<'v, Rep>` variant per representation. Generates `ProvidesStaticType`, `Display`,
 /// `From` of each variant's `ValueTyped` (which `#[starlark_value]` builds a representation's
-/// `with_type` on), the view's `get` (the representations tried in order), and `UnpackValue`
+/// `get_typed` on), the view's `get` (the representations tried in order), and `UnpackValue`
 /// of the view as itself. The first variant's representation is the canonical one, whose type
 /// id is the type's.
 #[proc_macro_derive(StarlarkRepresentations)]

@@ -116,8 +116,8 @@ impl<'v> StarlarkValue<'v> for StarlarkBool {
     type Type = bool;
 
     #[inline]
-    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&bool) -> R) -> R {
-        f(&this.as_ref().0)
+    fn get_typed(this: ValueTyped<'v, Self>) -> bool {
+        this.as_ref().0
     }
 
     fn is_special(_: Private) -> bool

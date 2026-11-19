@@ -1074,23 +1074,27 @@ pub trait StarlarkValue<'v>:
     /// representation, otherwise the view the type implements [`StarlarkType`] for.
     type Type: StarlarkType<'v>;
 
-    /// Call `f` on this value as the receiver of its type's methods: the payload itself for a
-    /// type with one representation, the view a type with several builds here.
-    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R;
+    /// This value as its type's [`Get`](StarlarkType::Get): what [`get`](StarlarkType::get)
+    /// gives for a value of this representation, for a caller that already knows the
+    /// representation. That is the handle itself for a type with one representation, and the
+    /// type's view of this representation for a type with several.
+    ///
+    /// [`#[starlark_value]`](crate::values::starlark_value) writes this, except for a type
+    /// that writes its own `Get` and for a representation whose type is not a view that
+    /// `#[derive(StarlarkRepresentations)]` wrote; those write it by hand.
+    fn get_typed(this: ValueTyped<'v, Self>) -> <Self::Type as StarlarkType<'v>>::Get;
 
-    /// [`with_type`](Self::with_type) for a caller that already holds the payload, which is
-    /// every vtable entry; a type with one representation hands it straight to `f` instead of
-    /// deriving it from the value again.
+    /// Calls `f` on the receiver of the type's methods for this value. This is for the vtable
+    /// entries, which hold the payload and the value, and `#[starlark_value]` writes it: the
+    /// payload for a type that is its own representation, and what
+    /// [`get_typed`](Self::get_typed) gives for a representation of another type, whose `Get`
+    /// is the type.
     #[doc(hidden)]
-    #[inline]
-    fn with_type_at<R>(
+    fn with_receiver<R>(
         payload: &'v Self,
         this: ValueTyped<'v, Self>,
         f: impl FnOnce(&Self::Type) -> R,
-    ) -> R {
-        let _ = payload;
-        Self::with_type(this, f)
-    }
+    ) -> R;
 
     /// [`StarlarkType::TYPE`] of [`Type`](Self::Type), for code generic over representations.
     const TYPE: &'static str = <Self::Type as StarlarkType<'v>>::TYPE;

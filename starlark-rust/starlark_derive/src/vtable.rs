@@ -45,8 +45,8 @@ struct Gen {
 /// a type parameter `T`; which trait bounds it depends on the dispatch.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Dispatch {
-    /// A `StarlarkType` method with a receiver: `T` is the representation, the entry builds the
-    /// receiver with `T::with_type` and calls the method on `T::Type`.
+    /// A `StarlarkType` method with a receiver: `T` is the representation, the entry gets the
+    /// receiver from `T::with_receiver` and calls the method on `T::Type`.
     ViaRepresentation,
     /// A `StarlarkType` function without a receiver: `T` is the type itself.
     OnType,
@@ -238,7 +238,7 @@ impl Gen {
                 (
                     quote! { StarlarkValue<'v2> },
                     syn::parse_quote_spanned! {method.sig.span()=>
-                        T::with_type_at(#payload, #value, |receiver| {
+                        T::with_receiver(#payload, #value, |receiver| {
                             <T::Type as StarlarkType<'v2>>::#fn_name(receiver, #(#args),*)
                         })
                     },

@@ -200,7 +200,7 @@ fn is_representation_item(item: &syn::ImplItem) -> bool {
         syn::ImplItem::Type(t) => t.ident == "Type",
         syn::ImplItem::Fn(f) => matches!(
             f.sig.ident.to_string().as_str(),
-            "provide" | "type_matches_value" | "is_special" | "with_type"
+            "provide" | "type_matches_value" | "is_special" | "get_typed"
         ),
         _ => false,
     }
@@ -925,45 +925,67 @@ impl ImplStarlarkValue {
         })
     }
 
-    /// `with_type` for a representation whose `Type` is a view that
-    /// `#[derive(StarlarkRepresentations)]` wrote.
-    fn with_type_via_from(&self) -> syn::ImplItem {
+    /// `get_typed` for a representation whose `Type` is a view that
+    /// `#[derive(StarlarkRepresentations)]` wrote: the view of this representation.
+    fn get_typed_via_from(&self) -> syn::ImplItem {
         let lt = &self.lifetime_param;
         syn::parse_quote! {
             #[inline]
-            fn with_type<StarlarkWithTypeResult>(
+            fn get_typed(
                 this: starlark::values::ValueTyped<#lt, Self>,
-                f: impl FnOnce(&Self::Type) -> StarlarkWithTypeResult,
-            ) -> StarlarkWithTypeResult {
-                f(&<Self::Type as std::convert::From<starlark::values::ValueTyped<#lt, Self>>>::from(this))
+            ) -> <Self::Type as starlark::values::StarlarkType<#lt>>::Get {
+                <Self::Type as std::convert::From<starlark::values::ValueTyped<#lt, Self>>>::from(this)
             }
         }
     }
 
-    /// `with_type` and `with_type_at` for a representation that is its own type.
-    fn with_type_identity(&self) -> [syn::ImplItem; 2] {
+    /// `with_receiver` for a representation of another type: the type is its own `Get`, so
+    /// the receiver is what `get_typed` gives.
+    fn with_receiver_via_get_typed(&self) -> syn::ImplItem {
         let lt = &self.lifetime_param;
-        [
-            syn::parse_quote! {
-                #[inline]
-                fn with_type<StarlarkWithTypeResult>(
-                    this: starlark::values::ValueTyped<#lt, Self>,
-                    f: impl FnOnce(&Self::Type) -> StarlarkWithTypeResult,
-                ) -> StarlarkWithTypeResult {
-                    f(this.as_ref())
-                }
-            },
-            syn::parse_quote! {
-                #[inline]
-                fn with_type_at<StarlarkWithTypeResult>(
-                    payload: &#lt Self,
-                    _this: starlark::values::ValueTyped<#lt, Self>,
-                    f: impl FnOnce(&Self::Type) -> StarlarkWithTypeResult,
-                ) -> StarlarkWithTypeResult {
-                    f(payload)
-                }
-            },
-        ]
+        syn::parse_quote! {
+            #[inline]
+            fn with_receiver<StarlarkWithReceiverResult>(
+                _payload: &#lt Self,
+                this: starlark::values::ValueTyped<#lt, Self>,
+                f: impl FnOnce(&Self::Type) -> StarlarkWithReceiverResult,
+            ) -> StarlarkWithReceiverResult {
+                f(&<Self as starlark::values::StarlarkValue<#lt>>::get_typed(this))
+            }
+        }
+    }
+
+    /// `get_typed` for a representation that is its own type: the handle to the
+    /// representation is the type's `Get`. A block that writes a `Get` of its own writes
+    /// `get_typed` as well.
+    fn get_typed_identity(&self) -> syn::Result<Option<syn::ImplItem>> {
+        if self.get_items()?.is_empty() {
+            return Ok(None);
+        }
+        let lt = &self.lifetime_param;
+        Ok(Some(syn::parse_quote! {
+            #[inline]
+            fn get_typed(
+                this: starlark::values::ValueTyped<#lt, Self>,
+            ) -> <Self::Type as starlark::values::StarlarkType<#lt>>::Get {
+                this
+            }
+        }))
+    }
+
+    /// `with_receiver` for a representation that is its own type: the payload.
+    fn with_receiver_identity(&self) -> syn::ImplItem {
+        let lt = &self.lifetime_param;
+        syn::parse_quote! {
+            #[inline]
+            fn with_receiver<StarlarkWithReceiverResult>(
+                payload: &#lt Self,
+                _this: starlark::values::ValueTyped<#lt, Self>,
+                f: impl FnOnce(&Self::Type) -> StarlarkWithReceiverResult,
+            ) -> StarlarkWithReceiverResult {
+                f(payload)
+            }
+        }
     }
 }
 
@@ -1018,16 +1040,18 @@ fn derive_starlark_value_impl(
                 "the `type()` string is the `Type`'s; it is not given on a representation",
             ));
         }
-        let with_type = if impl_starlark_value.has_fn("with_type") {
+        let get_typed = if impl_starlark_value.has_fn("get_typed") {
             None
         } else {
-            Some(impl_starlark_value.with_type_via_from())
+            Some(impl_starlark_value.get_typed_via_from())
         };
+        let with_receiver = impl_starlark_value.with_receiver_via_get_typed();
         rep_impl.items.splice(
             0..0,
             [please_use_starlark_type_macro]
                 .into_iter()
-                .chain(with_type),
+                .chain(get_typed)
+                .chain([with_receiver]),
         );
         return Ok(quote! {
             #rep_impl
@@ -1042,12 +1066,14 @@ fn derive_starlark_value_impl(
     let type_self: syn::ImplItem = syn::parse_quote! {
         type Type = Self;
     };
-    let with_type = impl_starlark_value.with_type_identity();
+    let get_typed = impl_starlark_value.get_typed_identity()?;
+    let with_receiver = impl_starlark_value.with_receiver_identity();
     rep_impl.items.splice(
         0..0,
         [please_use_starlark_type_macro, type_self]
             .into_iter()
-            .chain(with_type),
+            .chain(get_typed)
+            .chain([with_receiver]),
     );
 
     Ok(quote! {

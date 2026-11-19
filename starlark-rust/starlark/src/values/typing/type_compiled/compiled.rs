@@ -261,8 +261,9 @@ where
 {
     type Type = TypeCompiled<'v>;
 
-    fn with_type<R>(this: ValueTyped<'v, Self>, f: impl FnOnce(&Self::Type) -> R) -> R {
-        f(&TypeCompiled(this.to_value()))
+    #[inline]
+    fn get_typed(this: ValueTyped<'v, Self>) -> TypeCompiled<'v> {
+        TypeCompiled(this.to_value())
     }
 
     fn type_matches_value(&self, value: Value<'v>, _private: Private) -> bool {

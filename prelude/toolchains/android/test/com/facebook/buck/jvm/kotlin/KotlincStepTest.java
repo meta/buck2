@@ -135,10 +135,14 @@ public class KotlincStepTest {
     int restores;
     int discards;
     @Nullable IOException failure;
+    @Nullable IOException copyFailure;
 
     @Override
-    public KotlincStep.StateCopy copy() {
+    public KotlincStep.StateCopy copy() throws IOException {
       copies++;
+      if (copyFailure != null) {
+        throw copyFailure;
+      }
       return new KotlincStep.StateCopy() {
         @Override
         public void restore() throws IOException {
@@ -211,6 +215,23 @@ public class KotlincStepTest {
     assertEquals(
         1, compileCheckingAgainInFull(incrementalRound(), new FakeCompilation(1, 1), true, copier));
     assertEquals(1, copier.restores);
+  }
+
+  @Test
+  public void aFailedRecheckWithoutAStateBackupDropsTheCompilerCaches() throws Exception {
+    AbsPath workingDir = temporaryPaths.newFolder("round-nocopy", "kotlinc_working_dir");
+    Files.writeString(workingDir.resolve("shrunk-classpath-snapshot.bin").getPath(), "");
+    KotlincMode.Incremental mode = incrementalMode(workingDir, null);
+    FakeCompilation compilation = new FakeCompilation(1, 1);
+    FakeStateCopier copier = new FakeStateCopier();
+    copier.copyFailure = new IOException("disk full");
+
+    assertEquals(1, compileCheckingAgainInFull(mode, compilation, true, copier));
+
+    assertEquals(1, copier.copies);
+    assertEquals(0, copier.restores);
+    assertEquals(0, copier.discards);
+    assertFalse(Files.exists(workingDir.getPath()));
   }
 
   @Test

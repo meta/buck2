@@ -17,6 +17,7 @@ import com.facebook.buck.core.build.execution.context.IsolatedExecutionContext;
 import com.facebook.buck.core.filesystems.AbsPath;
 import com.facebook.buck.core.filesystems.RelPath;
 import com.facebook.buck.core.util.log.Logger;
+import com.facebook.buck.io.file.MostFiles;
 import com.facebook.buck.jvm.cd.command.kotlin.LanguageVersion;
 import com.facebook.buck.jvm.core.BuildTargetValue;
 import com.facebook.buck.jvm.java.CompilerClassToSourceMap;
@@ -434,6 +435,11 @@ public class KotlincStep implements IsolatedStep {
     try {
       if (fullResult == StepExecutionResults.SUCCESS_EXIT_CODE) {
         copy.discard();
+      } else if (copy == NO_COPY) {
+        // No backup to restore: drop the compiler caches so the next round
+        // compiles in full instead of starting from a possibly partial state.
+        LOG.warn("No backup of the incremental state of %s; dropping the compiler caches", target);
+        MostFiles.deleteRecursivelyIfExists(((KotlincMode.Incremental) mode).getKotlicWorkingDir());
       } else {
         copy.restore();
       }

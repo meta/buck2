@@ -324,6 +324,52 @@ public class KotlincModeFactoryTest {
   }
 
   @Test
+  public void
+      when_validatorForcesFull_then_applicabilityStateStillRecordedAndPendingLedgerDiscarded()
+          throws IOException {
+    AbsPath stateDir = temporaryPaths.newFolder("incremental_state");
+    AbsPath reducedJar = temporaryPaths.getRoot().resolve("reduced.jar");
+    // Round 1 commits the classpath of v1.
+    writeJar(reducedJar, "p/A.class");
+    KotlincMode first = createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+    assertEquals(
+        RebuildReason.APPLICABILITY_CLASSPATH_CHANGED,
+        ((KotlincMode.Incremental) first).getRebuildReason());
+    succeedRound(stateDir);
+
+    // Round 2 is already forced full by the validator, with a changed classpath and a
+    // stale pending ledger: recording and discarding must still run.
+    writeJar(reducedJar, "p/A.class", "p/B.class");
+    Path stalePending = stateDir.resolve(ApplicabilityLedgerFiles.PENDING_FILE).getPath();
+    Files.writeString(stalePending, "stale");
+    KotlincMode second =
+        createApplicabilityModeWithConfig(
+            true,
+            "same",
+            "same",
+            stateDir,
+            reducedJar,
+            ImmutableMap.of(),
+            ImmutableMap.of(),
+            "config-old",
+            "config-new");
+    assertEquals(
+        RebuildReason.BUILD_CONFIGURATION_CHANGED,
+        ((KotlincMode.Incremental) second).getRebuildReason());
+    assertFalse(Files.exists(stalePending));
+    assertTrue(
+        Files.exists(stateDir.resolve(ApplicabilityClasspathState.PENDING_STATE_FILE).getPath()));
+    succeedRound(stateDir);
+
+    // Round 3 reverts the classpath: the committed record is v2, so this round is full.
+    writeJar(reducedJar, "p/A.class");
+    KotlincMode third = createApplicabilityMode(true, "same", "same", stateDir, reducedJar);
+    assertEquals(
+        RebuildReason.APPLICABILITY_CLASSPATH_CHANGED,
+        ((KotlincMode.Incremental) third).getRebuildReason());
+  }
+
+  @Test
   public void when_applicabilityPlugin_has_no_digest_then_rebuild() throws IOException {
     KotlincMode kotlincMode = createApplicabilityMode(true, "same", "same");
     assertNull(((KotlincMode.Incremental) kotlincMode).getRebuildReason());
@@ -541,6 +587,28 @@ public class KotlincModeFactoryTest {
       AbsPath reducedJar,
       Map<Path, String> previousExtra,
       Map<Path, String> currentExtra) {
+    return createApplicabilityModeWithConfig(
+        verifiesApplicability,
+        previousPluginDigest,
+        currentPluginDigest,
+        stateDir,
+        reducedJar,
+        previousExtra,
+        currentExtra,
+        "config",
+        "config");
+  }
+
+  private KotlincMode createApplicabilityModeWithConfig(
+      boolean verifiesApplicability,
+      String previousPluginDigest,
+      String currentPluginDigest,
+      AbsPath stateDir,
+      AbsPath reducedJar,
+      Map<Path, String> previousExtra,
+      Map<Path, String> currentExtra,
+      String previousConfig,
+      String currentConfig) {
     AbsPath root = temporaryPaths.getRoot();
     AbsPath plugin = root.resolve("applicability.jar");
 
@@ -555,8 +623,8 @@ public class KotlincModeFactoryTest {
         .thenReturn(ImmutableMap.of(KosabiConfig.PROPERTY_KOSABI_APPLICABILITY_PLUGIN, plugin));
     when(mockKotlinExtraParams.getApplicabilityClasspath())
         .thenReturn(ImmutableList.of(reducedJar));
-    when(mockActionMetadata.getPreviousIncrementalConfigDigest()).thenReturn("config");
-    when(mockActionMetadata.getCurrentIncrementalConfigDigest()).thenReturn("config");
+    when(mockActionMetadata.getPreviousIncrementalConfigDigest()).thenReturn(previousConfig);
+    when(mockActionMetadata.getCurrentIncrementalConfigDigest()).thenReturn(currentConfig);
     Path pluginKey = root.relativize(plugin).getPath();
     Map<Path, String> previousDigest = new HashMap<>(previousExtra);
     previousDigest.put(pluginKey, previousPluginDigest);

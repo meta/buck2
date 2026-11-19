@@ -37,6 +37,8 @@ use crate::metrics::Metrics;
 use crate::metrics::PageInKeyTypeMetrics;
 use crate::metrics::PagingMemorySnapshot;
 use crate::storage::DiceStorage;
+use crate::storage::EvictionPolicy;
+use crate::storage::ReclaimOptions;
 use crate::updater::TransactionUpdater;
 
 /// Cancellation check for [`Dice::page_out_cancellable`]: returns `true` when the
@@ -529,6 +531,46 @@ impl Dice {
     pub async fn evict_backed(&self) -> u64 {
         match self.pagable_storage.as_ref() {
             Some(storage) => storage.evict_backed(&self.state_handle).await,
+            None => 0,
+        }
+    }
+
+    /// The configured eviction trigger and strategy, or `None` without pagable storage.
+    pub fn eviction_policy(&self) -> Option<EvictionPolicy> {
+        self.pagable_storage
+            .as_ref()
+            .map(DiceStorage::eviction_policy)
+    }
+
+    /// Apply the configured memory-pressure policy. LRU reclaims cold backed values while
+    /// protecting the active demand batch and the latest completed batch. Values backed or
+    /// keys accessed during the sweep stay resident.
+    pub async fn evict_backed_on_memory_pressure(&self) -> u64 {
+        match self.pagable_storage.as_ref() {
+            Some(storage) => {
+                storage
+                    .evict_backed_on_memory_pressure(&self.state_handle, &self.key_index)
+                    .await
+            }
+            None => 0,
+        }
+    }
+
+    /// Reclaims cold backed values using the LRU engine's policy, independently of pressure
+    /// detection. An idle scheduler can protect recent batches and supply a work budget and cancellation
+    /// check without serializing anything or waiting for more page-out candidates.
+    ///
+    /// No-op unless storage uses [`crate::EvictionStrategy::Lru`]. See [`crate::ReclaimOptions`] for
+    /// budget semantics. A command arriving during an idle reclaim should cancel further work;
+    /// already queued batches may finish, and committed backing remains valid.
+    /// Returns the number of graph values evicted.
+    pub async fn reclaim(&self, options: ReclaimOptions, cancelled: PageOutCancel) -> u64 {
+        match self.pagable_storage.as_ref() {
+            Some(storage) => {
+                storage
+                    .reclaim(&self.state_handle, &self.key_index, options, cancelled)
+                    .await
+            }
             None => 0,
         }
     }

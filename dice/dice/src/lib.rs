@@ -266,6 +266,7 @@ pub use crate::storage::EvictionPolicy;
 pub use crate::storage::EvictionStrategy;
 pub use crate::storage::PagableStorageBackend;
 pub use crate::storage::PageOutPolicy;
+pub use crate::storage::ReclaimOptions;
 pub use crate::value::DiceValueDyn;
 pub use crate::versions::VersionNumber;
 

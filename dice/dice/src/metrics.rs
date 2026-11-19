@@ -64,7 +64,7 @@ pub fn set_thread_alloc_counters(f: ThreadAllocCountersFn) {
 /// measurement of zero from never having measured. Calls the reader rather than
 /// just checking one is installed, since an installed reader still yields
 /// nothing when the allocator does not supply the counters.
-fn thread_alloc_counters_available() -> bool {
+pub(crate) fn thread_alloc_counters_available() -> bool {
     THREAD_ALLOC_COUNTERS.get().and_then(|f| f()).is_some()
 }
 

@@ -180,6 +180,33 @@ enum EvictionPolicySetting {
     OnIdleLru,
 }
 
+/// Limits a cold-value reclaim independently of what scheduled it (pressure, idle, or a
+/// manual request). Only values with committed backing can be reclaimed.
+#[derive(Clone, Copy, Debug)]
+pub struct ReclaimOptions {
+    /// Completed demand batches to protect in addition to the active batch. Defaults to one
+    /// to preserve the latest completed working set. Zero allows the newest batch to be
+    /// reclaimed once its transactions and spawned computations close.
+    /// Idle grace periods belong to the scheduler and do not advance these batches.
+    pub keep_recent_batches: u32,
+    /// Maximum keys to inspect from the snapshot. Successive calls rotate their starting
+    /// point so a small budget cannot get stuck repeatedly inspecting the same hot keys.
+    pub max_candidates: usize,
+    /// Soft time budget, checked during selection and between eviction batches. Snapshot
+    /// creation and queued core batches are not interruptible.
+    pub max_duration: Duration,
+}
+
+impl Default for ReclaimOptions {
+    fn default() -> Self {
+        Self {
+            keep_recent_batches: 1,
+            max_candidates: usize::MAX,
+            max_duration: Duration::MAX,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ReclaimStop {
     started: Instant,
@@ -192,6 +219,62 @@ impl ReclaimStop {
         (self.cancelled)() || Instant::now() - self.started >= self.max_duration
     }
 }
+
+/// Freeze age classes before rearranging keys. A one-byte class per candidate plus the
+/// existing key vector replaces timestamp/key tuples and a comparison sort. The fixed
+/// buckets cover logarithmic ages of a u32 batch history, with oldest classes first.
+fn order_by_generation(
+    keys: &mut [DiceKey],
+    classify: impl Fn(DiceKey) -> usize,
+    stop: ReclaimStop,
+) -> Option<usize> {
+    let started = Instant::now();
+    let mut classes = Vec::with_capacity(keys.len());
+    let mut ends = [0usize; AccessCutoff::AGE_BUCKETS];
+    for (i, &key) in keys.iter().enumerate() {
+        if i % 1000 == 0 && stop.should_stop() {
+            return None;
+        }
+        let class = classify(key);
+        classes.push(class as u8);
+        ends[class] += 1;
+    }
+    let classified = Instant::now();
+    for class in 1..ends.len() {
+        ends[class] += ends[class - 1];
+    }
+    let mut next = [0usize; AccessCutoff::AGE_BUCKETS];
+    next[1..].copy_from_slice(&ends[..ends.len() - 1]);
+    let mut moved = 0;
+    for class in 0..ends.len() - 1 {
+        while next[class] < ends[class] {
+            if moved % 1000 == 0 && stop.should_stop() {
+                return None;
+            }
+            moved += 1;
+            let i = next[class];
+            let actual = classes[i] as usize;
+            if actual == class {
+                next[class] += 1;
+            } else {
+                keys.swap(i, next[actual]);
+                classes.swap(i, next[actual]);
+                next[actual] += 1;
+            }
+        }
+    }
+    tracing::info!(
+        inspected_keys = keys.len(),
+        eligible_keys = ends[AccessCutoff::AGE_BUCKETS - 2],
+        classification_us = (classified - started).as_micros() as u64,
+        partition_us = classified.elapsed().as_micros() as u64,
+        "Ordered LRU eviction candidates",
+    );
+    // The final class has age zero: it is already protected by the access cutoff. Avoid
+    // allocating batches and waking the core for keys that cannot be evicted.
+    (!stop.should_stop()).then_some(ends[AccessCutoff::AGE_BUCKETS - 2])
+}
+
 impl From<EvictionPolicySetting> for EvictionPolicy {
     fn from(setting: EvictionPolicySetting) -> Self {
         match setting {
@@ -329,6 +412,10 @@ impl DiceStorage {
     /// Sets when the values a page-out writes leave memory; see [`EvictionPolicy`].
     pub fn set_eviction_policy(&mut self, policy: EvictionPolicy) {
         self.eviction_policy = policy;
+    }
+
+    pub(crate) fn eviction_policy(&self) -> EvictionPolicy {
+        self.eviction_policy
     }
 
     pub(crate) fn tracks_accesses(&self) -> bool {
@@ -611,8 +698,8 @@ impl DiceStorage {
             self.paging_memory.record_evicted(0, freed_bytes);
             tracing::info!(
                 values_evicted = evicted_value_count,
-                graph_ms = (graph_done - start).as_millis() as u64,
-                cleanup_ms = graph_done.elapsed().as_millis() as u64,
+                graph_us = (graph_done - start).as_micros() as u64,
+                cleanup_us = graph_done.elapsed().as_micros() as u64,
                 arc_cache_passes = arcs.passes,
                 arc_cache_removed = arcs.removed,
                 cleanup_freed_bytes = freed_bytes,
@@ -620,6 +707,80 @@ impl DiceStorage {
             );
         }
         evicted_value_count
+    }
+
+    pub(crate) async fn evict_backed_on_memory_pressure(
+        &self,
+        state_handle: &CoreStateHandle,
+        key_index: &DiceKeyIndex,
+    ) -> u64 {
+        match self.eviction_policy {
+            EvictionPolicy::OnIdle(_) => return 0,
+            EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default) => {
+                return self.evict_backed(state_handle).await;
+            }
+            EvictionPolicy::OnMemoryPressure(EvictionStrategy::Lru) => {}
+        }
+        self.reclaim(state_handle, key_index, ReclaimOptions::default(), || false)
+            .await
+    }
+
+    pub(crate) async fn reclaim(
+        &self,
+        state_handle: &CoreStateHandle,
+        key_index: &DiceKeyIndex,
+        options: ReclaimOptions,
+        cancelled: PageOutCancel,
+    ) -> u64 {
+        let stop = ReclaimStop {
+            started: Instant::now(),
+            max_duration: options.max_duration,
+            cancelled,
+        };
+        if !self.tracks_accesses() || options.max_candidates == 0 || stop.should_stop() {
+            return 0;
+        }
+        // Selection and every queued core batch must use the same retention boundary.
+        let access_cutoff = key_index
+            .access_cutoff()
+            .keep_recent_batches(options.keep_recent_batches);
+        let mut snapshot = state_handle.backed_snapshot().await;
+        if snapshot.keys.is_empty() || stop.should_stop() {
+            return 0;
+        }
+        let selection_cutoff = access_cutoff.dupe();
+        let submitted = Instant::now();
+        snapshot.keys = tokio::task::spawn_blocking(move || {
+            let selection_queue_us = submitted.elapsed().as_micros() as u64;
+            let mut keys = snapshot.keys;
+            let inspect = options.max_candidates.min(keys.len());
+            if inspect < keys.len() {
+                let offset = selection_cutoff.candidate_offset(inspect, keys.len());
+                keys = keys[offset..]
+                    .iter()
+                    .chain(&keys[..offset])
+                    .take(inspect)
+                    .copied()
+                    .collect();
+            }
+            let eligible =
+                order_by_generation(&mut keys, |key| selection_cutoff.age_bucket(key), stop)
+                    .unwrap_or(0);
+            keys.truncate(eligible);
+            tracing::info!(
+                selection_queue_us,
+                selected_keys = keys.len(),
+                "Selected LRU eviction candidates",
+            );
+            keys
+        })
+        .await
+        .expect("LRU candidate selection panicked");
+        if snapshot.keys.is_empty() || stop.should_stop() {
+            return 0;
+        }
+        self.evict_candidates(state_handle, snapshot, Some(access_cutoff), Some(stop))
+            .await
     }
 
     /// Frees what evictions the core has applied left behind: the backend's caches and the
@@ -1151,7 +1312,10 @@ mod cleanup_tests;
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::sync::Arc;
+    use std::time::Duration;
+    use std::time::Instant;
 
     use dupe::Dupe;
     use pagable::PagableDeserialize;
@@ -1164,12 +1328,61 @@ mod tests {
     use pagable::storage::traits::PagableStorage;
     use pagable::storage::traits::WriteTicket;
 
+    use crate::key::DiceKey;
+    use crate::key_index::AccessCutoff;
     use crate::storage::DiceStorage;
     use crate::storage::MeteredPagableStorage;
     use crate::storage::PagableStorageBackend;
     use crate::storage::PageInMetrics;
     use crate::storage::PageInSample;
+    use crate::storage::ReclaimStop;
     use crate::storage::StorageIoMetrics;
+    use crate::storage::order_by_generation;
+
+    #[test]
+    fn generation_partition_preserves_keys_and_excludes_protected_class() {
+        for len in [0u32, 1, AccessCutoff::AGE_BUCKETS as u32, 2053] {
+            for mode in 0..3 {
+                let class = |key: DiceKey| match mode {
+                    0 => 0,
+                    1 => AccessCutoff::AGE_BUCKETS - 1,
+                    _ => (key.index as usize * 17 + 5) % AccessCutoff::AGE_BUCKETS,
+                };
+                let mut keys: Vec<_> = (0..len).rev().map(|index| DiceKey { index }).collect();
+                let reads = Cell::new(0);
+                let eligible = order_by_generation(
+                    &mut keys,
+                    |key| {
+                        reads.set(reads.get() + 1);
+                        class(key)
+                    },
+                    ReclaimStop {
+                        started: Instant::now(),
+                        max_duration: Duration::MAX,
+                        cancelled: || false,
+                    },
+                )
+                .unwrap();
+                assert_eq!(reads.get(), len, "freeze each access class exactly once");
+                assert!(keys.windows(2).all(|pair| class(pair[0]) <= class(pair[1])));
+                assert!(
+                    keys[..eligible]
+                        .iter()
+                        .all(|&key| class(key) < AccessCutoff::AGE_BUCKETS - 1)
+                );
+                assert!(
+                    keys[eligible..]
+                        .iter()
+                        .all(|&key| class(key) == AccessCutoff::AGE_BUCKETS - 1)
+                );
+                keys.sort_unstable_by_key(|key| key.index);
+                assert_eq!(
+                    keys.iter().map(|key| key.index).collect::<Vec<_>>(),
+                    (0..len).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
 
     #[test]
     fn page_in_metrics_breakdown() {

@@ -12,6 +12,7 @@ use std::array;
 use std::num::NonZeroU32;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU32;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use allocative::Allocative;
@@ -116,6 +117,25 @@ impl DiceKeyIndex {
         }))
     }
 
+    #[cfg(test)]
+    pub(crate) fn last_access(&self, key: DiceKey) -> u32 {
+        self.accesses
+            .as_ref()
+            .map_or(0, |accesses| accesses.last_access(key))
+    }
+
+    pub(crate) fn access_cutoff(&self) -> AccessCutoff {
+        let accesses = self
+            .accesses
+            .as_ref()
+            .expect("LRU eviction requires access tracking");
+        let batches = accesses.batches.lock();
+        AccessCutoff {
+            stamp: batches.eviction_cutoff(),
+            accesses: accesses.dupe(),
+        }
+    }
+
     #[inline]
     fn shard_index_for_hash(hash: u64) -> u32 {
         // `LockFreeRawTable` uses low bits to select bucket.
@@ -178,6 +198,7 @@ impl DiceKeyIndex {
 #[derive(Allocative)]
 struct AccessTracker {
     batches: Mutex<AccessBatches>,
+    reclaim_cursor: AtomicUsize,
     shards: [LockFreeVec<AtomicU32, KEY_BY_INDEX_BUCKETS>; DiceKeyIndex::SHARDS as usize],
 }
 
@@ -208,6 +229,16 @@ impl AccessBatches {
     /// Called when the last owner of a registered scope drops.
     fn unregister_scope(&mut self) {
         self.active -= 1;
+    }
+
+    /// Protect the active batch, or the next batch when idle. The latter lets completed
+    /// batches be reclaimed while protecting scopes that start during an eviction sweep.
+    fn eviction_cutoff(&self) -> u32 {
+        if self.active == 0 {
+            self.current.saturating_add(1)
+        } else {
+            self.current
+        }
     }
 }
 
@@ -248,6 +279,7 @@ impl AccessTracker {
     fn new() -> Arc<Self> {
         Arc::new(Self {
             batches: Mutex::new(AccessBatches::default()),
+            reclaim_cursor: AtomicUsize::new(0),
             shards: array::from_fn(|_| LockFreeVec::new()),
         })
     }
@@ -273,8 +305,31 @@ pub(crate) struct AccessCutoff {
 }
 
 impl AccessCutoff {
+    // The newest 16 batch ages stay distinct; older batches use eight bins per doubling.
+    // This ranks a u32 history with one temporary byte per candidate and linear selection.
+    pub(crate) const AGE_BUCKETS: usize = 16 + (u32::BITS as usize - 4) * 8;
+
+    pub(crate) fn candidate_offset(&self, count: usize, total: usize) -> usize {
+        self.accesses
+            .reclaim_cursor
+            .fetch_add(count, Ordering::Relaxed)
+            % total
+    }
+
+    pub(crate) fn age_bucket(&self, key: DiceKey) -> usize {
+        let age = self.stamp.saturating_sub(self.accesses.last_access(key));
+        let shift = (u32::BITS - age.leading_zeros()).saturating_sub(4);
+        let bucket = (age >> shift) as usize + shift as usize * 8;
+        Self::AGE_BUCKETS - 1 - bucket
+    }
+
     pub(crate) fn accessed_since(&self, key: DiceKey) -> bool {
         self.accesses.last_access(key) >= self.stamp
+    }
+
+    pub(crate) fn keep_recent_batches(mut self, count: u32) -> Self {
+        self.stamp = self.stamp.saturating_sub(count);
+        self
     }
 }
 
@@ -331,6 +386,8 @@ impl DiceKeyUnpacked {
 #[cfg(test)]
 mod tests {
     use std::cmp;
+    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::Ordering;
 
     use allocative::Allocative;
     use async_trait::async_trait;
@@ -345,8 +402,47 @@ mod tests {
     use crate::api::key::Key;
     use crate::api::key::NoValueSerialize;
     use crate::api::key::ValueSerialize;
+    use crate::key::DiceKey;
+    use crate::key_index::AccessCutoff;
+    use crate::key_index::AccessTracker;
     use crate::key_index::DiceKeyIndex;
     use crate::key_index::DiceKeyUnpacked;
+
+    #[test]
+    fn age_buckets_preserve_recent_order_and_cover_the_batch_range() {
+        let accesses = AccessTracker::new();
+        accesses.shards[0]
+            .push_at(0, AtomicU32::new(u32::MAX))
+            .unwrap();
+        let key = DiceKey { index: 0 };
+        let cutoff = AccessCutoff {
+            accesses,
+            stamp: u32::MAX,
+        };
+        let bucket = |age| {
+            cutoff
+                .accesses
+                .access(key)
+                .store(u32::MAX - age, Ordering::Relaxed);
+            cutoff.age_bucket(key)
+        };
+
+        assert_eq!(bucket(0), AccessCutoff::AGE_BUCKETS - 1);
+        assert_eq!(bucket(u32::MAX), 0);
+        // Distinct recent batch ages must stay ordered. A power-of-two-only bin would
+        // merge separate working sets even while the history is short.
+        for age in 0..16 {
+            assert!(bucket(age) > bucket(age + 1));
+        }
+        let mut ages: Vec<_> = (0..1024).collect();
+        for bit in 10..32 {
+            ages.extend([(1u32 << bit) - 1, 1u32 << bit, (1u32 << bit) + 1]);
+        }
+        ages.push(u32::MAX);
+        for pair in ages.windows(2) {
+            assert!(bucket(pair[0]) >= bucket(pair[1]));
+        }
+    }
 
     #[test]
     fn test_max_index_in_shard() {

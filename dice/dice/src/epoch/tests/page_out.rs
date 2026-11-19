@@ -2329,6 +2329,164 @@ async fn page_out_under_memory_pressure_policy_evicts_nothing() -> anyhow::Resul
     Ok(())
 }
 
+#[tokio::test]
+async fn lru_default_retains_latest_completed_batch() -> anyhow::Result<()> {
+    for active in [true, false] {
+        let storage = InMemoryPagableStorage::new();
+        let (dice, root) = make_dice_with(
+            DiceStorage::new(storage.handle()),
+            PageOutPolicy::OncePerValue,
+            EvictionPolicy::OnMemoryPressure(EvictionStrategy::Lru),
+        )
+        .await;
+        for ids in [&[0, 1, 2][..], &[1]] {
+            let tx = dice.updater(root).commit().await;
+            for &id in ids {
+                tx.compute(&PagableKey(id)).await?;
+            }
+            drop(tx);
+            dice.wait_for_idle().await;
+        }
+        dice.page_out().await?;
+        let tx = dice.updater(root).commit().await;
+        tx.compute(&PagableKey(2)).await?;
+        let active_tx = if active {
+            Some(tx)
+        } else {
+            drop(tx);
+            dice.wait_for_idle().await;
+            None
+        };
+
+        // Each key now belongs to a different demand batch. While batch 3 is active,
+        // batch 2 must also survive; once idle, only batch 3 remains protected.
+        assert_eq!(
+            dice.evict_backed_on_memory_pressure().await,
+            if active { 1 } else { 2 }
+        );
+        assert_eq!(dice.evict_backed_on_memory_pressure().await, 0);
+        let tx = dice.updater(root).commit().await;
+        tx.compute(&PagableKey(2)).await?;
+        assert_eq!(page_in_count::<PagableKey>(&dice), 0);
+        tx.compute(&PagableKey(1)).await?;
+        assert_eq!(
+            page_in_count::<PagableKey>(&dice),
+            if active { 0 } else { 1 }
+        );
+        tx.compute(&PagableKey(0)).await?;
+        assert_eq!(
+            page_in_count::<PagableKey>(&dice),
+            if active { 1 } else { 2 }
+        );
+        drop(active_tx);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn lru_eviction_preserves_recent_payload_demands_without_writing() -> anyhow::Result<()> {
+    let counter = ComputeCounter::new();
+    let storage = InMemoryPagableStorage::new();
+    let (dice, root) = make_dice_with(
+        DiceStorage::new(storage.handle()),
+        PageOutPolicy::OncePerValue,
+        EvictionPolicy::OnMemoryPressure(EvictionStrategy::Lru),
+    )
+    .await;
+    let tx = dice
+        .updater_with_data(root, user_data_with_counter(&counter))
+        .commit()
+        .await;
+    for key in 0..6 {
+        assert_eq!(*tx.compute(&PagableKey(key)).await?, u64::from(key) * 100);
+    }
+    drop(tx);
+    dice.wait_for_idle().await;
+    dice.page_out().await?;
+
+    let tx = dice
+        .updater_with_data(root, user_data_with_counter(&counter))
+        .commit()
+        .await;
+    for key in [0, 2, 1] {
+        tx.compute(&PagableKey(key)).await?;
+    }
+    drop(tx);
+    dice.wait_for_idle().await;
+    let before = dice.storage_io_metrics().unwrap();
+
+    // The three values from the older demand batch are cold; no new writes are needed.
+    assert_eq!(dice.evict_backed_on_memory_pressure().await, 3);
+    let counts = dice.pagable_node_counts().await;
+    assert_eq!((counts.backed, counts.paged_out), (3, 3));
+    assert_eq!(
+        dice.storage_io_metrics().unwrap().data_keys_out,
+        before.data_keys_out
+    );
+    let tx = dice
+        .updater_with_data(root, user_data_with_counter(&counter))
+        .commit()
+        .await;
+    for key in [0, 1, 2] {
+        assert_eq!(*tx.compute(&PagableKey(key)).await?, u64::from(key) * 100);
+    }
+    assert_eq!(
+        page_in_count::<PagableKey>(&dice),
+        0,
+        "the recent half stayed resident"
+    );
+    for key in [3, 4, 5] {
+        assert_eq!(*tx.compute(&PagableKey(key)).await?, u64::from(key) * 100);
+    }
+    assert_eq!(page_in_count::<PagableKey>(&dice), 3);
+    assert_eq!(
+        counter.count(),
+        6,
+        "eviction preserves the computed values on disk"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn lru_idle_and_empty_transactions_do_not_age_payloads() -> anyhow::Result<()> {
+    let storage = InMemoryPagableStorage::new();
+    let (dice, root) = make_dice_with(
+        DiceStorage::new(storage.handle()),
+        PageOutPolicy::OncePerValue,
+        EvictionPolicy::OnMemoryPressure(EvictionStrategy::Lru),
+    )
+    .await;
+    for id in 0..2 {
+        let tx = dice.updater(root).commit().await;
+        tx.compute(&PagableKey(id)).await?;
+        drop(tx);
+        dice.wait_for_idle().await;
+    }
+    dice.page_out().await?;
+    let keys = [0, 1].map(|id| dice.key_index.index_key(PagableKey(id)));
+    let before = keys.map(|key| dice.key_index.access_cutoff().age_bucket(key));
+    let latest = dice.key_index.last_access(keys[1]);
+    assert!(dice.key_index.last_access(keys[0]) < latest);
+
+    // Cross several former timer ticks without new payload demand. Neither elapsed time,
+    // metadata-only transactions nor paging maintenance may consume a usage batch.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    for _ in 0..20 {
+        drop(dice.updater(root).commit().await);
+        dice.pagable_node_counts().await;
+    }
+    dice.wait_for_idle().await;
+    dice.page_out().await?;
+    assert_eq!(
+        keys.map(|key| dice.key_index.access_cutoff().age_bucket(key)),
+        before,
+    );
+    let tx = dice.updater(root).commit().await;
+    tx.compute(&PagableKey(0)).await?;
+    assert_eq!(dice.key_index.last_access(keys[0]), latest + 1);
+    Ok(())
+}
+
 /// A value read back from its row stays resident, backed by the row, until evicted on demand,
 /// which writes nothing; the next lookup reads it back rather than recomputing it.
 #[tokio::test]

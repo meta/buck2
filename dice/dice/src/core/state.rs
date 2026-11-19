@@ -11,6 +11,7 @@
 use std::fmt;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 use allocative::Allocative;
 use dice_core::BranchId;
@@ -384,7 +385,19 @@ impl CoreStateHandle {
 
     /// The keys with a backed value now, and the residency cutoff of that moment.
     pub(crate) fn backed_snapshot(&self) -> impl Future<Output = BackedSnapshot> + use<> {
-        self.call(|resp| StateRequest::BackedSnapshot { resp })
+        // Include queue time: a cheap graph walk can still delay eviction when the
+        // core is busy. Enqueue before returning, as for the other state requests.
+        let start = Instant::now();
+        let response = self.call(|resp| StateRequest::BackedSnapshot { resp });
+        async move {
+            let snapshot = response.await;
+            tracing::info!(
+                backed_keys = snapshot.keys.len(),
+                snapshot_us = start.elapsed().as_micros() as u64,
+                "Snapshotted backed DICE keys",
+            );
+            snapshot
+        }
     }
 
     /// Evict values backed no later than `residency_cutoff`, protecting keys demanded since

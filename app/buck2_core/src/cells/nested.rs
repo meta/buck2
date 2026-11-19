@@ -69,6 +69,17 @@ impl NestedCells {
         self.paths.is_empty()
     }
 
+    /// The cells rooted directly under `dir`, by name. Directory listings leave nested cell
+    /// roots out, so a caller walking a directory uses this to descend into them.
+    pub fn cells_rooted_under<'a>(
+        &'a self,
+        dir: &'a CellRelativePath,
+    ) -> impl Iterator<Item = CellName> + 'a {
+        self.paths
+            .iter()
+            .filter_map(move |(root, name)| (root.parent() == Some(dir)).then_some(*name))
+    }
+
     pub fn matches<'a, 'b>(
         &'a self,
         path: &'b CellRelativePath,

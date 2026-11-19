@@ -1935,7 +1935,6 @@ dependencies = [
  "buck2_data",
  "buck2_error",
  "buck2_events",
- "buck2_fs",
  "buck2_hash",
  "buck2_interpreter",
  "buck2_interpreter_for_build",

@@ -134,28 +134,21 @@ fn symlink_dir(target: &str, link: &std::path::Path) -> std::io::Result<()> {
 
 #[buck_test]
 async fn test_typecheck_bundled_cell(buck: &Buck) -> anyhow::Result<()> {
-    // Bundled cells have no files on disk. Typechecking a project file that loads a bundled
-    // cell fails with `File not found ... (internal error)`, and typechecking a bundled file
-    // directly fails with `... does not exist`: both reads go straight off disk.
-    buck.starlark(&["typecheck", "uses_prelude.bzl"])
-        .await
-        .expect_failure()
-        .assert_stderr_matches("File not found");
+    // Bundled cells have no files on disk. Typechecking must read their materialized files
+    // when a project file loads them and when a bundled file is checked directly.
+    buck.starlark(&["typecheck", "uses_prelude.bzl"]).await?;
     buck.starlark(&["typecheck", "nano_prelude/prelude.bzl"])
-        .await
-        .expect_failure()
-        .assert_stderr_matches("does not exist");
+        .await?;
     Ok(())
 }
 
 #[buck_test]
 async fn test_lint_bundled_cell(buck: &Buck) -> anyhow::Result<()> {
-    // A bundled cell has no directory on disk. Linting the cell fails with `... does not
-    // exist` instead of listing its materialized files.
+    // A bundled cell has no directory on disk. Linting the cell must materialize its files:
+    // success over zero files would pass vacuously, so assert a file was linted.
     buck.starlark(&["lint", "nano_prelude"])
-        .await
-        .expect_failure()
-        .assert_stderr_matches("does not exist");
+        .await?
+        .assert_stderr_matches("Found no lints in [1-9]");
     Ok(())
 }
 

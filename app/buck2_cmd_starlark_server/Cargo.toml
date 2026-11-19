@@ -18,7 +18,6 @@ buck2_core.workspace = true
 buck2_data.workspace = true
 buck2_error.workspace = true
 buck2_events.workspace = true
-buck2_fs.workspace = true
 buck2_hash.workspace = true
 buck2_interpreter.workspace = true
 buck2_interpreter_for_build.workspace = true

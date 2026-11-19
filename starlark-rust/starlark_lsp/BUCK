@@ -26,7 +26,7 @@ rust_library(
                 "keywords": ["starlark", "skylark", "language", "interpreter"],
                 "license": "Apache-2.0",
                 "repository": "https://github.com/facebook/starlark-rust",
-                "version": "0.15.0",
+                "version": "0.14.2",
             },
         },
     },

@@ -2,7 +2,7 @@
 
 [package]
 name = "starlark_map"
-version = "0.15.0"
+version = "0.14.2"
 authors = ["Facebook"]
 edition.workspace = true
 description = "Map implementation with starlark-rust specific optimizations"

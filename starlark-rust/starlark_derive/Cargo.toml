@@ -2,7 +2,7 @@
 
 [package]
 name = "starlark_derive"
-version = "0.15.0"
+version = "0.14.2"
 authors = ["Facebook"]
 edition.workspace = true
 description = "Derive helpers for the starlark package."

@@ -30,7 +30,7 @@ buck_rust_binary(
                 "license": "Apache-2.0",
                 "name": "starlark_bin",
                 "repository": "https://github.com/facebook/starlark-rust",
-                "version": "0.15.0",
+                "version": "0.14.2",
             },
         },
     },

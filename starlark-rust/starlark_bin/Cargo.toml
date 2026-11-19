@@ -2,7 +2,7 @@
 
 [package]
 name = "starlark_bin"
-version = "0.15.0"
+version = "0.14.2"
 authors = ["Damien Martin-Guillerez <dmarting@google.com>", "Facebook"]
 edition.workspace = true
 description = "starlark binary"

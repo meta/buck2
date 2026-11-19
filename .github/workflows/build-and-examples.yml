@@ -74,9 +74,6 @@ jobs:
     - uses: ./.github/actions/build_example_persistent_worker
       with:
         buildbuddyApiKey: ${{ secrets.BUILDBUDDY_API_KEY }}
-    - uses: ./.github/actions/build_example_nativelink
-      with:
-        NATIVELINK_HEADER_RW_KEY_SECRET: ${{ secrets.NATIVELINK_HEADER_RW_KEY_SECRET }}
     - uses: ./.github/actions/setup_reindeer
     - uses: ./.github/actions/build_bootstrap
       with:

@@ -125,8 +125,12 @@ impl Buck2TestRunner {
         &self,
         spec: ExternalRunnerSpec,
     ) -> buck2_error::Result<ExecuteResponse> {
+        let suite = format!(
+            "{}//{}:{}",
+            spec.target.cell, spec.target.package, spec.target.target
+        );
         let stage = TestStage::Testing {
-            suite: spec.target.target,
+            suite,
             testcases: Vec::new(),
             variant: None,
             repeat_count: None,

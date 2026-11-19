@@ -639,7 +639,7 @@ impl<'f> FrozenProviderCollectionValueRef<'f> {
     ) -> buck2_error::Result<FrozenProviderCollectionValueRef<'f>> {
         match label.name() {
             ProvidersName::Default => buck2_error::Ok(self),
-            ProvidersName::NonDefault(flavor) => match flavor.as_ref() {
+            ProvidersName::NonDefault(non_default) => match non_default.as_ref() {
                 NonDefaultProvidersName::Named(provider_names) => {
                     let inner = self.inner.try_map::<FrozenValueTyped<
                         'static,

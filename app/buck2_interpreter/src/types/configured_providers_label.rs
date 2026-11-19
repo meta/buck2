@@ -138,7 +138,7 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneOr<AllocList<Vec<&'v str>>>> {
         Ok(match this.label.name() {
             ProvidersName::Default => NoneOr::None,
-            ProvidersName::NonDefault(flavor) => match flavor.as_ref() {
+            ProvidersName::NonDefault(non_default) => match non_default.as_ref() {
                 NonDefaultProvidersName::Named(names) => {
                     NoneOr::Other(AllocList(names.iter().map(|p| p.as_str()).collect()))
                 }
@@ -291,7 +291,7 @@ fn label_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneOr<AllocList<Vec<&'v str>>>> {
         Ok(match this.label.name() {
             ProvidersName::Default => NoneOr::None,
-            ProvidersName::NonDefault(flavor) => match flavor.as_ref() {
+            ProvidersName::NonDefault(non_default) => match non_default.as_ref() {
                 NonDefaultProvidersName::Named(names) => {
                     NoneOr::Other(AllocList(names.iter().map(|p| p.as_str()).collect()))
                 }

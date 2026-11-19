@@ -1168,7 +1168,7 @@ fn update_artifact_info(
 fn report_providers_name(label: &ConfiguredProvidersLabel) -> String {
     match label.name() {
         ProvidersName::Default => "DEFAULT".to_owned(),
-        ProvidersName::NonDefault(flavor) => match flavor.as_ref() {
+        ProvidersName::NonDefault(non_default) => match non_default.as_ref() {
             NonDefaultProvidersName::Named(names) => names.iter().join("|"),
         },
     }

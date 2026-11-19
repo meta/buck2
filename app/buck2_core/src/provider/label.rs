@@ -145,7 +145,7 @@ impl Display for ProvidersName {
             ProvidersName::Default => {
                 write!(f, "")
             }
-            ProvidersName::NonDefault(flavor) => match flavor.as_ref() {
+            ProvidersName::NonDefault(non_default) => match non_default.as_ref() {
                 NonDefaultProvidersName::Named(names) => {
                     for name in &**names {
                         write!(f, "[{name}]")?;

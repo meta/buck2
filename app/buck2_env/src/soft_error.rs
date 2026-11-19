@@ -163,7 +163,7 @@ pub macro soft_error_or_panic($category:expr, $err:expr $(, $k:ident : $v:expr)*
 /// ## Example
 ///
 /// ```ignore
-/// deprecation!("platform_flavor", err, owner: "yournamehere", started: "2023-03-09");
+/// deprecation!("old_syntax", err, owner: "yournamehere", started: "2023-03-09");
 /// ```
 pub macro deprecation($category:expr, $err:expr, owner: $owner:expr, started: $started:expr $(, $k:ident : $v:expr)* $(,)?) {
     {

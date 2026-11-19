@@ -27,17 +27,20 @@ import org.jetbrains.kotlin.KtPsiSourceElement
 import org.jetbrains.kotlin.KtRealSourceElementKind
 import org.jetbrains.kotlin.com.intellij.psi.PsiElement
 import org.jetbrains.kotlin.descriptors.ClassKind
+import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess
 import org.jetbrains.kotlin.fir.declarations.FirAnonymousFunction
+import org.jetbrains.kotlin.fir.declarations.FirClass
 import org.jetbrains.kotlin.fir.declarations.FirConstructor
 import org.jetbrains.kotlin.fir.declarations.FirDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.declarations.FirFunction
 import org.jetbrains.kotlin.fir.declarations.FirProperty
 import org.jetbrains.kotlin.fir.declarations.FirPropertyAccessor
+import org.jetbrains.kotlin.fir.declarations.FirValueParameter
 import org.jetbrains.kotlin.fir.declarations.impl.FirDefaultPropertyAccessor
 import org.jetbrains.kotlin.fir.declarations.toAnnotationClassIdSafe
 import org.jetbrains.kotlin.fir.declarations.utils.isFun
@@ -46,6 +49,7 @@ import org.jetbrains.kotlin.fir.expressions.FirAnnotation
 import org.jetbrains.kotlin.fir.expressions.FirAnonymousFunctionExpression
 import org.jetbrains.kotlin.fir.expressions.FirAnonymousObjectExpression
 import org.jetbrains.kotlin.fir.expressions.FirBlock
+import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirCheckedSafeCallSubject
 import org.jetbrains.kotlin.fir.expressions.FirElvisExpression
 import org.jetbrains.kotlin.fir.expressions.FirExpression
@@ -58,6 +62,8 @@ import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
 import org.jetbrains.kotlin.fir.expressions.FirResolvedQualifier
 import org.jetbrains.kotlin.fir.expressions.FirSafeCallExpression
 import org.jetbrains.kotlin.fir.expressions.FirSmartCastExpression
+import org.jetbrains.kotlin.fir.expressions.FirSuperReceiverExpression
+import org.jetbrains.kotlin.fir.expressions.FirThisReceiverExpression
 import org.jetbrains.kotlin.fir.expressions.FirTypeOperatorCall
 import org.jetbrains.kotlin.fir.expressions.FirVarargArgumentsExpression
 import org.jetbrains.kotlin.fir.expressions.FirWhenExpression
@@ -156,7 +162,8 @@ internal class ComposableTargetInference(
      * applier is still unbound when the enclosing call is inferred capture the caller's applier
      * (`ApplierInferencer.visitCall`). Code that does not resolve here can bind the lambda earlier
      * in the library compile, so for the lambdas [captureUncertainLambdas] returns the capture may
-     * not happen there.
+     * not happen there. Lambdas the backend hoists into singletons are read after their call site
+     * either way, so they always capture and are never listed here.
      */
     private val nonCapturing: Set<FirAnonymousFunction> = emptySet(),
 ) {
@@ -209,6 +216,9 @@ internal class ComposableTargetInference(
 
   /** Composable lambdas passed as arguments, with the in-module declaration they are passed to. */
   private val lambdaArguments = ArrayList<Pair<FirAnonymousFunction, FirFunction?>>()
+
+  /** Argument lambdas visited after their call, as the backend reads its singletons. */
+  private val deferredLambdas = HashSet<FirAnonymousFunction>()
   private val declarations = LinkedHashMap<FirBasedSymbol<*>, FirFunction>()
   private val enclosingOwner = HashMap<FirFunction, FirFunction>()
 
@@ -407,14 +417,13 @@ internal class ComposableTargetInference(
 
   /**
    * Lambdas whose capture of the caller's applier depends on code that does not resolve here: code
-   * in the lambda's region, or in the declaration it is passed to, may bind the lambda before the
-   * call is inferred in the library compile. Call after [analyze].
+   * in the lambda's own region may bind it before the call is inferred in the library compile.
+   * Lambdas the backend hoists into singletons ([deferredLambdas]) are read after their call site
+   * either way, so their capture does not depend on the classpath. Call after [analyze].
    */
   fun captureUncertainLambdas(): Set<FirAnonymousFunction> =
       lambdaArguments
-          .filter { (lambda, callee) ->
-            lambda in uncertain || (callee != null && callee in uncertain)
-          }
+          .filter { (lambda, _) -> lambda in uncertain && lambda !in deferredLambdas }
           .mapTo(HashSet()) { it.first }
 
   private fun markIncomplete(owner: FirFunction) {
@@ -534,6 +543,9 @@ internal class ComposableTargetInference(
   }
 
   private inner class InferenceVisitor : FirVisitorVoid() {
+    /** Enclosing public-API inline functions: their lambdas stay inline at the use site. */
+    private var publicInlineDepth = 0
+
     override fun visitElement(element: FirElement) {
       when (element) {
         is FirFunction -> handleFunctionDeclaration(element)
@@ -571,8 +583,14 @@ internal class ComposableTargetInference(
               (isComposableFunction(function) || hasComposableParameter(symbol)) &&
               !hasOverlyWideParameters(symbol) &&
               !hasOpenTypeParameters(symbol)
+      val publicInline =
+          function.status.isInline &&
+              (function.status.visibility == DescriptorVisibilities.PUBLIC ||
+                  function.status.visibility == DescriptorVisibilities.PROTECTED)
+      if (publicInline) publicInlineDepth++
       if (!tracked) {
         function.acceptChildren(this)
+        if (publicInline) publicInlineDepth--
         return
       }
       trackedFunctions += function
@@ -588,6 +606,7 @@ internal class ComposableTargetInference(
       if (signatureHasErrors(symbol)) tainted += function
       function.acceptChildren(this)
       currentOwner = oldOwner
+      if (publicInline) publicInlineDepth--
     }
 
     private fun handleLocalVariable(variable: FirProperty) {
@@ -719,21 +738,35 @@ internal class ComposableTargetInference(
       var alignmentUnknown = false
       val unknownContexts = HashSet<FirExpression>()
       val included = ArrayList<FirExpression>()
+      // Lambdas the backend hoists into singletons are read after their call site: their bodies
+      // are visited after the call below, so the call still sees them unbound and they capture.
+      val deferred = HashSet<FirExpression>()
+      val hasReceiver = receiverTypeOf(callee) != null
       arguments.forEachIndexed { index, argument ->
         if (argument == null) return@forEachIndexed
         val expression = unwrap(argument)
         val parameterType = parameterTypes.getOrNull(index)
         if (parameterType == null || parameterType.isUnknown()) unknownContexts += expression
         when (includeArgument(expression, parameterType)) {
-          true -> included += expression
+          true -> {
+            included += expression
+            (expression as? FirAnonymousFunctionExpression)?.let {
+              if (isSingletonizable(it.anonymousFunction, callee, index, hasReceiver)) {
+                deferred += expression
+              }
+            }
+          }
           false -> {}
           null -> alignmentUnknown = true
         }
       }
       if (alignmentUnknown) markIncomplete(owner)
       ownerMap[call] = owner
-      visitCallChildren(call, unknownContexts, owner)
-      if (alignmentUnknown) return
+      visitCallChildren(call, unknownContexts, owner, deferred)
+      if (alignmentUnknown) {
+        visitDeferred(deferred)
+        return
+      }
 
       val isInvoke = call is FirFunctionCall && isInvoke(call, callee)
       val receiverType = receiver?.resolvedType
@@ -741,7 +774,10 @@ internal class ComposableTargetInference(
           (if (isInvoke || (receiverType != null && isSamComposable(receiverType)))
               receiver?.let { resolveExpressionOrNull(it) }
           else null) ?: CallTargetNode(call, callee)
-      if (target.isOverlyWide()) return
+      if (target.isOverlyWide()) {
+        visitDeferred(deferred)
+        return
+      }
       target.referenceContainer?.let { container ->
         (container.element as? FirFunction)?.let {
           sharedCallees.getOrPut(owner) { HashSet() } += it
@@ -760,6 +796,7 @@ internal class ComposableTargetInference(
       for (argument in linked) {
         (argument as? FirAnonymousFunctionExpression)?.let {
           lambdaArguments += it.anonymousFunction to calleeDeclaration
+          if (it in deferred) deferredLambdas += it.anonymousFunction
         }
       }
       infer.visitCall(
@@ -767,6 +804,7 @@ internal class ComposableTargetInference(
           target,
           linked.map { resolveExpressionOrNull(it) ?: inferenceNodeOf(it) },
       )
+      visitDeferred(deferred)
     }
 
     /**
@@ -800,22 +838,66 @@ internal class ComposableTargetInference(
      * Visits the receivers and arguments of [call]. An argument in [unknownContexts] flows into a
      * parameter whose type is unknown here, so lambdas in it (directly, or through `if`, `when` and
      * the like) have an unknown expected type: they are not attributed and leave [owner]
-     * incomplete. Calls nested in such an argument are visited normally.
+     * incomplete. Calls nested in such an argument are visited normally. Arguments in [deferred]
+     * are skipped here and visited by [visitDeferred] after the call is inferred.
      */
     private fun visitCallChildren(
         call: FirQualifiedAccessExpression,
         unknownContexts: Set<FirExpression>,
         owner: FirFunction,
+        deferred: Set<FirExpression> = emptySet(),
     ) {
       val receivers =
           listOfNotNull(call.explicitReceiver, call.dispatchReceiver, call.extensionReceiver)
-      receivers.distinctBy { System.identityHashCode(it) }.forEach { it.accept(this) }
+      receivers
+          .distinctBy { System.identityHashCode(it) }
+          .forEach { if (it !in deferred) it.accept(this) }
       val argumentList = (call as? FirFunctionCall)?.argumentList ?: return
       for (argument in argumentList.arguments) {
         val expression = unwrap(argument)
         if (expression in unknownContexts) visitUnknownContext(expression, owner)
-        else expression.accept(this)
+        else if (expression !in deferred) expression.accept(this)
       }
+    }
+
+    /** Visits lambdas [visitCallChildren] skipped, with the call inferred before them. */
+    private fun visitDeferred(deferred: Set<FirExpression>) {
+      deferred.forEach { it.accept(this) }
+    }
+
+    /**
+     * Whether the backend hoists the lambda argument into a file-level singleton
+     * (`ComposerLambdaMemoization`): a composable Unit-returning lambda that captures nothing,
+     * passed to a non-inlined parameter outside a public inline function's scope. The backend reads
+     * singletons after their call site, so the deferred body still finds the call unbound.
+     */
+    private fun isSingletonizable(
+        lambda: FirAnonymousFunction,
+        callee: FirCallableSymbol<*>,
+        argIndex: Int,
+        hasReceiver: Boolean,
+    ): Boolean {
+      if (!isComposableFunction(lambda)) return false
+      if (lambda.returnTypeRef.coneTypeOrNull?.let { expand(it).classId != UNIT } != false) {
+        return false
+      }
+      if (publicInlineDepth > 0) return false
+      if (isInlineLambdaTarget(callee, argIndex, hasReceiver)) return false
+      return !lambdaCapturesOuterValues(lambda)
+    }
+
+    /** Whether the argument is passed to an inlined parameter of an inline call. */
+    private fun isInlineLambdaTarget(
+        callee: FirCallableSymbol<*>,
+        argIndex: Int,
+        hasReceiver: Boolean,
+    ): Boolean {
+      val function = runCatching { callee.fir as? FirFunction }.getOrNull() ?: return true
+      if (!function.status.isInline) return false
+      val paramIndex = argIndex - (if (hasReceiver) 1 else 0)
+      if (paramIndex < 0) return false
+      val parameter = function.valueParameters.getOrNull(paramIndex) ?: return true
+      return !parameter.isNoinline
     }
 
     private fun visitUnknownContext(expression: FirExpression, owner: FirFunction) {
@@ -1232,6 +1314,68 @@ internal class ComposableTargetInference(
           (function is FirAnonymousFunction &&
               function.typeRef.coneTypeOrNull?.let { isComposableFunctionType(it) } == true)
 
+  /**
+   * Whether the lambda references a value declared outside it, as `ComposerLambdaMemoization`
+   * counts captures: a value parameter or local resolves to its declaration, while a call to a
+   * local function or the construction of a local class always captures. Unresolved references
+   * cannot be values declared outside, so they capture nothing.
+   */
+  private fun lambdaCapturesOuterValues(lambda: FirAnonymousFunction): Boolean {
+    val declared = HashSet<FirBasedSymbol<*>>()
+    lambda.accept(
+        object : FirVisitorVoid() {
+          override fun visitElement(element: FirElement) {
+            when (element) {
+              is FirValueParameter -> declared += element.symbol
+              is FirProperty -> declared += element.symbol
+              is FirFunction -> declared += element.symbol
+              is FirClass -> declared += element.symbol
+              else -> {}
+            }
+            element.acceptChildren(this)
+          }
+        },
+    )
+    var captures = false
+    lambda.accept(
+        object : FirVisitorVoid() {
+          override fun visitElement(element: FirElement) {
+            if (captures) return
+            when (element) {
+              is FirThisReceiverExpression -> {
+                val bound: FirBasedSymbol<*>? = element.calleeReference.boundSymbol
+                if (bound == null || bound !in declared) captures = true
+              }
+              is FirSuperReceiverExpression -> captures = true
+              is FirPropertyAccessExpression -> captures = captures || capturesValue(element)
+              is FirFunctionCall -> captures = captures || capturesLocal(element)
+              is FirCallableReferenceAccess ->
+                  captures = captures || capturesValue(element) || capturesLocal(element)
+              else -> {}
+            }
+            element.acceptChildren(this)
+          }
+
+          private fun capturesValue(access: FirQualifiedAccessExpression): Boolean {
+            val symbol =
+                (access.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol
+                    ?: return false
+            return symbol is FirValueParameterSymbol && symbol !in declared ||
+                symbol is FirPropertySymbol && symbol.isLocalCallable() && symbol !in declared
+          }
+
+          private fun capturesLocal(access: FirQualifiedAccessExpression): Boolean {
+            val symbol =
+                (access.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol
+                    ?: return false
+            return symbol is FirNamedFunctionSymbol && symbol.isLocalCallable() ||
+                symbol is FirConstructorSymbol && symbol.callableId?.classId?.isLocal == true
+          }
+        },
+    )
+    return captures
+  }
+
   private fun hasComposableParameter(symbol: FirCallableSymbol<*>): Boolean =
       targetParameters(symbol).any { (_, type) ->
         isComposableLambda(type) || isSamComposable(type)
@@ -1571,6 +1715,7 @@ internal class ComposableTargetInference(
     val APPLIER = Name.identifier("applier")
     val INDEX = Name.identifier("index")
     val SCHEME = Name.identifier("scheme")
+    val UNIT = ClassId(KOTLIN, Name.identifier("Unit"))
 
     /** Stable order for reported references: file, then kind, then the reference itself. */
     val REF_ORDER = compareBy<UnresolvedApplierReference>(

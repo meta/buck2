@@ -66,6 +66,12 @@ class KStub(val pkg: String?, val name: String) {
   var stubImports: List<String> = emptyList()
 
   var abstract: Boolean = false
+
+  // A final CLASS renders without `open` on the class and on its non-override members.
+  var isFinal: Boolean = false
+
+  // An internal CLASS renders with the `internal` modifier.
+  var isInternal: Boolean = false
   var doNotRenderAsKotlinObject: Boolean = false
 
   // TODO: We might want to optimise [innerStubs] for find operation

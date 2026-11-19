@@ -60,6 +60,9 @@ class GenerationContext {
    * on modules with no such imports.
    */
   val kotlinClasspathDeclarations: KotlinClasspathDeclarations
+
+  /** The module's classpath, as the stub generator was given it. */
+  val classpath: List<File>
   val importedDeclarations: Set<FullTypeQualifier>
   val importedTypes: Set<FullTypeQualifier>
 
@@ -188,6 +191,7 @@ class GenerationContext {
     this.projectFiles = projectFiles
     this.stubsContainer = StubsContainerImpl()
     this.kotlinClasspathDeclarations = KotlinClasspathDeclarations(classpath)
+    this.classpath = classpath
     this.knownGeneratedTypes = knownGeneratedTypes
 
     if (lightweight) {

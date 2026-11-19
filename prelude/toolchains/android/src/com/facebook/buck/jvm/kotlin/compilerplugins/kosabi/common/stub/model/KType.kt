@@ -34,6 +34,13 @@ internal constructor(
   fun parametriseWith(generics: List<Type>): KType = KType(ftq, nullable, generics)
 
   companion object {
+    /**
+     * A class by its package and its class names, outermost first. Case does not decide where the
+     * package ends: the caller knows the split from the declaration or the class file.
+     */
+    fun ofClass(pkg: List<String>, names: List<String>, nullable: Boolean = false): KType =
+        KType(FullTypeQualifier.unsafeBuildQualifier(pkg + names, pkg, names), nullable)
+
     val ANY_NULLABLE: KType = Any::class.asNullableKType()
     val UNIT: KType = Unit::class.asKType()
     val BOOLEAN: KType = Boolean::class.asKType()

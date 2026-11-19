@@ -94,8 +94,9 @@ private fun KStub.renderType(stubType: KStub.Type): TypeSpec {
   return when (stubType) {
         CLASS ->
             TypeSpec.classBuilder(name).stubDefaultCtor(ctor).also {
-              if (!abstract) it.addModifiers(KModifier.OPEN)
-              else it.addModifiers(KModifier.ABSTRACT)
+              if (abstract) it.addModifiers(KModifier.ABSTRACT)
+              else if (!isFinal) it.addModifiers(KModifier.OPEN)
+              if (isInternal) it.addModifiers(KModifier.INTERNAL)
             }
         INTERFACE -> TypeSpec.interfaceBuilder(name)
         ANNOTATION -> TypeSpec.annotationBuilder(name).stubAnnotationCtor(ctor)
@@ -134,6 +135,7 @@ private fun KStub.renderType(stubType: KStub.Type): TypeSpec {
               )
             }
             .forEach { addType(it) }
+        val openMembers = !(stubType == CLASS && isFinal)
         val staticFunctions = funStubs.filter { it.static }
         if (
             stubType == CLASS && (staticFunctions.isNotEmpty() || companionProperties.isNotEmpty())
@@ -142,12 +144,14 @@ private fun KStub.renderType(stubType: KStub.Type): TypeSpec {
           staticFunctions.map { it.renderFunction() }.forEach { companionObject.addFunction(it) }
           companionProperties.map { it.render() }.forEach { companionObject.addProperty(it) }
           addType(companionObject.build())
-          funStubs.filterNot { it.static }.forEach { addFunction(it.renderFunction()) }
+          funStubs
+              .filterNot { it.static }
+              .forEach { addFunction(it.renderFunction(isOpen = openMembers)) }
         } else {
           if (stubType == OBJECT) {
             funStubs.filterNot { it.isConstructor }.map { addFunction(it.renderFunction()) }
           } else {
-            funStubs.map { addFunction(it.renderFunction()) }
+            funStubs.map { addFunction(it.renderFunction(isOpen = openMembers)) }
           }
         }
       }

@@ -152,6 +152,7 @@ pub use crate::values::unpack::UnpackValueError;
 pub use crate::values::unpack::UnpackValueErrorInfallible;
 pub(crate) use crate::values::unpack::expected_type_error;
 pub(crate) use crate::values::unpack::unpack_then;
+pub use crate::values::value_of::DerefHandle;
 pub use crate::values::value_of::ValueOf;
 
 mod alloc_value;

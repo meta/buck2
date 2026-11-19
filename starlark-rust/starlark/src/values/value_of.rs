@@ -246,14 +246,31 @@ impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> Value
     }
 }
 
-impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> Deref
-    for ValueOf<'v, T>
-{
+/// A type whose handle derefs to what a value of it is used as: a nominal type with one
+/// representation, to that representation.
+pub trait DerefHandle<'v>: StarlarkTypeExprStable<'v> {
+    /// What the handle derefs to.
+    type Target: ?Sized + 'v;
+
+    /// What `value` is used as.
+    fn deref_handle(value: ValueOf<'v, Self>) -> &'v Self::Target;
+}
+
+impl<'v, T: StarlarkValue<'v> + StarlarkType<'v, Get = ValueTyped<'v, T>>> DerefHandle<'v> for T {
     type Target = T;
 
     #[inline]
-    fn deref(&self) -> &T {
-        self.as_ref()
+    fn deref_handle(value: ValueOf<'v, T>) -> &'v T {
+        value.as_ref()
+    }
+}
+
+impl<'v, T: DerefHandle<'v>> Deref for ValueOf<'v, T> {
+    type Target = T::Target;
+
+    #[inline]
+    fn deref(&self) -> &T::Target {
+        T::deref_handle(*self)
     }
 }
 

@@ -601,6 +601,11 @@ class K2JvmAbiFirAnalysisHandlerExtension(
         add(pipeline.inlineBodies.createExtension(configuration.messageCollector))
       }
       add(pipeline.irSanitizer.createExtension(sourceFiles))
+      // The calls in the restored inline bodies and in the constructor delegations the sanitizer
+      // synthesizes name the remapped Compose signatures.
+      if (composeAbiEnabled) {
+        add(pipeline.composeAbi.createCallSiteExtension())
+      }
     }
 
     val (moduleFragment, components, pluginContext, irActualizedResult, _, symbolTable) =

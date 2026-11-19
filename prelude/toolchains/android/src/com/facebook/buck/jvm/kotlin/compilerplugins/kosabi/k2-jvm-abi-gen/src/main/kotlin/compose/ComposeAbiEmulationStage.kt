@@ -14,8 +14,10 @@ package com.facebook
 
 import com.facebook.buck.jvm.kotlin.compilerplugins.common.isStub
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
+import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.com.intellij.psi.PsiElement
 import org.jetbrains.kotlin.ir.declarations.IrClass
+import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.psi.KtFile
 
 /**
@@ -91,4 +93,16 @@ internal class ComposeAbiEmulationStage : AbiGenStage {
   fun createExtension(): IrGenerationExtension {
     return ComposeAbiEmulationExtension(targetAnnotations, declaredSuperclasses)
   }
+
+  /**
+   * The extension that remaps the external functions that bodies call
+   * ([ComposableTypeRewriter.transformCallSites]). It is registered after the IR sanitizer, so it
+   * sees the restored inline bodies and the constructor delegations the sanitizer synthesizes.
+   */
+  fun createCallSiteExtension(): IrGenerationExtension =
+      object : IrGenerationExtension {
+        override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
+          ComposableTypeRewriter(pluginContext).transformCallSites(moduleFragment)
+        }
+      }
 }

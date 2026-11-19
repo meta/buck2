@@ -18,12 +18,19 @@ import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
+import org.jetbrains.kotlin.ir.declarations.IrExternalPackageFragment
 import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
+import org.jetbrains.kotlin.ir.expressions.IrCall
+import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
+import org.jetbrains.kotlin.ir.expressions.IrDelegatingConstructorCall
+import org.jetbrains.kotlin.ir.expressions.IrTypeOperator
+import org.jetbrains.kotlin.ir.expressions.IrTypeOperatorCall
 import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
@@ -31,7 +38,9 @@ import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.types.defaultType
 import org.jetbrains.kotlin.ir.types.isMarkedNullable
 import org.jetbrains.kotlin.ir.types.makeNullable
+import org.jetbrains.kotlin.ir.types.typeOrNull
 import org.jetbrains.kotlin.ir.types.typeWith
+import org.jetbrains.kotlin.ir.util.getPackageFragment
 import org.jetbrains.kotlin.ir.util.hasAnnotation
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
@@ -50,6 +59,8 @@ import org.jetbrains.kotlin.name.Name
  * - Value parameter types
  * - Return types
  * - Supertype declarations
+ * - The signatures of the external functions that the module overrides or calls, as the real
+ *   plugin's `ComposableTypeTransformer` remaps them (see [TypeRewriterVisitor.remapExternal])
  *
  * After rewriting, the @Composable annotation is removed from the type since the synthetic
  * parameters now encode the composable nature.
@@ -85,20 +96,132 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
   /** Run the type rewriting on the entire module. */
   fun transform(moduleFragment: IrModuleFragment) {
     val composerIrType = composerType ?: return
-    moduleFragment.accept(TypeRewriterVisitor(composerIrType), null)
+    moduleFragment.accept(TypeRewriterVisitor(composerIrType, declarations = true), null)
+  }
+
+  /**
+   * Remap only the external functions that bodies call. Kept inline bodies are restored, and
+   * stripped constructors get a synthesized delegation, after [transform] runs; their calls must
+   * name the remapped signatures, as the real plugin's do.
+   */
+  fun transformCallSites(moduleFragment: IrModuleFragment) {
+    val composerIrType = composerType ?: return
+    moduleFragment.accept(TypeRewriterVisitor(composerIrType, declarations = false), null)
   }
 
   private inner class TypeRewriterVisitor(
       private val composerIrType: IrType,
+      private val declarations: Boolean,
   ) : IrElementVisitorVoidCompat() {
 
     override fun visitElement(element: IrElement) {
       element.acceptChildren(this, null)
     }
 
+    /** The external functions already remapped (`externalTransformedDecls` of the real plugin). */
+    private val remappedExternals = mutableSetOf<IrFunction>()
+
     override fun visitSimpleFunction(declaration: IrSimpleFunction) {
-      rewriteFunctionSignatureTypes(declaration)
+      if (declarations) {
+        rewriteFunctionSignatureTypes(declaration)
+        remapOverriddenFunctionTypes(declaration)
+      }
       super.visitSimpleFunction(declaration)
+    }
+
+    override fun visitCall(expression: IrCall) {
+      val callee = expression.symbol.owner
+      remapExternal(callee)
+      if (isExternalFunction(callee)) {
+        callee.correspondingPropertySymbol?.owner?.let { property ->
+          property.getter?.let { remapExternal(it, always = true) }
+          property.setter?.let { remapExternal(it, always = true) }
+        }
+      }
+      super.visitCall(expression)
+    }
+
+    override fun visitConstructorCall(expression: IrConstructorCall) {
+      remapExternal(expression.symbol.owner)
+      super.visitConstructorCall(expression)
+    }
+
+    override fun visitDelegatingConstructorCall(expression: IrDelegatingConstructorCall) {
+      remapExternal(expression.symbol.owner)
+      super.visitDelegatingConstructorCall(expression)
+    }
+
+    override fun visitTypeOperator(expression: IrTypeOperatorCall) {
+      if (expression.operator == IrTypeOperator.SAM_CONVERSION) {
+        val samClass = expression.typeOperand.classOrNull
+        if (
+            samClass != null &&
+                samClass.isBound &&
+                samClass.owner.origin == IrDeclarationOrigin.IR_EXTERNAL_DECLARATION_STUB &&
+                samClass.owner.isFun
+        ) {
+          samClass.owner.declarations.filterIsInstance<IrSimpleFunction>().forEach {
+            remapExternal(it)
+          }
+        }
+      }
+      super.visitTypeOperator(expression)
+    }
+
+    /**
+     * The real plugin's `ComposableTypeTransformer.remapOverriddenFunctionTypes`: every function
+     * that [function] overrides, directly or transitively, has its signature types remapped when it
+     * is external. kotlinc's bridges then see the lowered `FunctionN+2` types of the overridden
+     * function instead of the synthetic `ComposableFunctionN` kind.
+     */
+    private fun remapOverriddenFunctionTypes(function: IrSimpleFunction) {
+      for (symbol in function.overriddenSymbols) {
+        if (!symbol.isBound) continue
+        val overridden = symbol.owner
+        remapExternal(overridden)
+        remapOverriddenFunctionTypes(overridden)
+      }
+    }
+
+    /**
+     * The real plugin's `ComposableTypeTransformer.visitFunctionIfExternal`: an external function
+     * (`isExternalFunction`) whose return or parameter types carry `@Composable`
+     * (`needsComposableRemapping`) has every parameter type, its return type and its type
+     * parameters' bounds remapped, once. [always] skips the `@Composable` check, as the real
+     * plugin's transform of an external property's accessors does.
+     */
+    private fun remapExternal(function: IrFunction, always: Boolean = false) {
+      if (!isExternalFunction(function)) return
+      if (!always && !needsComposableRemapping(function)) return
+      if (!remappedExternals.add(function)) return
+      function.returnType = rewriteTypeIfComposable(function.returnType)
+      for (parameter in function.parameters) {
+        parameter.type = rewriteTypeIfComposable(parameter.type)
+        parameter.varargElementType =
+            parameter.varargElementType?.let { rewriteTypeIfComposable(it) }
+      }
+      for (typeParameter in function.typeParameters) {
+        typeParameter.superTypes = typeParameter.superTypes.map { rewriteTypeIfComposable(it) }
+      }
+      if (function is IrSimpleFunction) remapOverriddenFunctionTypes(function)
+    }
+
+    /** `isExternalFunction` of the real plugin (AbstractComposeLowering.kt). */
+    private fun isExternalFunction(function: IrFunction): Boolean =
+        function.origin == IrDeclarationOrigin.IR_EXTERNAL_DECLARATION_STUB ||
+            function.origin == IrDeclarationOrigin.FAKE_OVERRIDE &&
+                function.getPackageFragment() is IrExternalPackageFragment
+
+    /** `needsComposableRemapping` of the real plugin (ComposableTypeRemapper.kt). */
+    private fun needsComposableRemapping(function: IrFunction): Boolean =
+        containsComposableAnnotation(function.returnType) ||
+            function.parameters.any { containsComposableAnnotation(it.type) }
+
+    private fun containsComposableAnnotation(type: IrType?): Boolean {
+      if (type == null) return false
+      if (type.hasAnnotation(COMPOSABLE_FQ_NAME)) return true
+      return type is IrSimpleType &&
+          type.arguments.any { containsComposableAnnotation(it.typeOrNull) }
     }
 
     /**
@@ -109,13 +232,15 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
      * constructor.
      */
     override fun visitConstructor(declaration: IrConstructor) {
-      rewriteFunctionSignatureTypes(declaration)
+      if (declarations) rewriteFunctionSignatureTypes(declaration)
       super.visitConstructor(declaration)
     }
 
     override fun visitProperty(declaration: IrProperty) {
-      declaration.getter?.let { rewriteFunctionSignatureTypes(it) }
-      declaration.setter?.let { rewriteFunctionSignatureTypes(it) }
+      if (declarations) {
+        declaration.getter?.let { rewriteFunctionSignatureTypes(it) }
+        declaration.setter?.let { rewriteFunctionSignatureTypes(it) }
+      }
       super.visitProperty(declaration)
     }
 
@@ -127,7 +252,7 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
      */
     override fun visitField(declaration: IrField) {
       val rewritten = rewriteTypeIfComposable(declaration.type)
-      if (rewritten !== declaration.type) {
+      if (declarations && rewritten !== declaration.type) {
         declaration.type = rewritten
       }
       super.visitField(declaration)
@@ -135,7 +260,9 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
 
     override fun visitClass(declaration: IrClass) {
       // Rewrite @Composable function types in supertypes.
-      declaration.superTypes = declaration.superTypes.map { rewriteTypeIfComposable(it) }
+      if (declarations) {
+        declaration.superTypes = declaration.superTypes.map { rewriteTypeIfComposable(it) }
+      }
       super.visitClass(declaration)
     }
 

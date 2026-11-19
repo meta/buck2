@@ -122,15 +122,14 @@ internal class ClassStabilityTransformer(
     private val KNOWN_STABLE_MARKER_FQ_NAMES =
         setOf(FqName("com.google.errorprone.annotations.Immutable"))
 
-    // Known stable FQNs beyond primitives/String/Unit
+    // Known stable FQNs beyond primitives/String/Unit, from Compose's
+    // KnownStableConstructs.stableTypes. The ranges (classes of a compiled dependency without a
+    // stability bitmask, so Unstable) and `CoroutineContext.Key` (an interface, so Unknown) are not
+    // in it.
     private val KNOWN_STABLE_FQNS = setOf(
         "kotlin.Pair",
         "kotlin.Triple",
         "kotlin.Result",
-        "kotlin.ranges.IntRange",
-        "kotlin.ranges.LongRange",
-        "kotlin.ranges.CharRange",
-        "kotlin.coroutines.CoroutineContext.Key",
         "kotlinx.collections.immutable.ImmutableList",
         "kotlinx.collections.immutable.ImmutableSet",
         "kotlinx.collections.immutable.ImmutableMap",

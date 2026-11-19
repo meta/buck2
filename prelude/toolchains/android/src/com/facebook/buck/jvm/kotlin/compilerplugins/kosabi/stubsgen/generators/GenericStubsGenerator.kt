@@ -112,6 +112,22 @@ class GenericStubsGenerator : StubsGenerator {
           it.typeArgumentList != null || (it.parent !is KtUserType && !it.isCastOrCheckTarget())
         }
         .mapNotNullTo(writtenStubs) { findStub(it.containingKtFile, it.calculateQualifierList()) }
+    // A Java source writes the arity of a type in its own type positions
+    // (`Output<DataSource<Void>>`), which the Kotlin usages above never see. A Java usage without
+    // type arguments proves nothing, since Java has raw types. As for a call, a Java arity reaches
+    // only a stub that no Kotlin type names, and only when all the Java usages agree. A Java usage
+    // is a written type, so no call overrides it.
+    val javaArities = IdentityHashMap<KStub, MutableSet<Int>>()
+    for ((type, arity) in context.javaGenericTypeUsages) {
+      val stub =
+          context.stubsContainer.find(type.pkgAsString(), type.names.first(), type.names.drop(1))
+      if (stub != null && stub !in writtenStubs) {
+        javaArities.getOrPut(stub) { HashSet() }.add(arity)
+      }
+    }
+    for ((stub, arities) in javaArities) {
+      if (arities.size == 1) stub.genericTypes = arities.single()
+    }
     val functionPackages = HashMap<String, MutableSet<String>>()
     for (file in context.projectFiles) {
       for (function in file.declarations.filterIsInstance<KtNamedFunction>()) {
@@ -141,7 +157,7 @@ class GenericStubsGenerator : StubsGenerator {
       val name = callee.getReferencedName()
       if (mayCallFunction(file, name)) continue
       val stub = findStub(file, listOf(name)) ?: continue
-      if (stub !in writtenStubs) {
+      if (stub !in writtenStubs && stub !in javaArities) {
         callArities.getOrPut(stub) { HashSet() }.add(call.typeArguments.size)
       }
     }

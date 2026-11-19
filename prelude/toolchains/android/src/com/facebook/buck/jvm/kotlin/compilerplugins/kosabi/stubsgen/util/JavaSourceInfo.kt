@@ -16,10 +16,14 @@ import com.sun.source.tree.CompilationUnitTree
 import com.sun.source.tree.ExpressionTree
 import com.sun.source.tree.IdentifierTree
 import com.sun.source.tree.MemberSelectTree
+import com.sun.source.tree.ParameterizedTypeTree
+import com.sun.source.tree.Tree
 import com.sun.source.util.JavacTask
 import com.sun.source.util.TreeScanner
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.util.Collections
+import java.util.IdentityHashMap
 import javax.tools.Diagnostic
 import javax.tools.DiagnosticCollector
 import javax.tools.JavaFileObject
@@ -50,6 +54,26 @@ data class JavaSourceInfo(
      * expression positions never resolve against stub types.
      */
     val fullQualifierTypes: Set<FullTypeQualifier>,
+    /**
+     * Each parameterized type the source writes, by the names it is written with, paired with its
+     * type-argument count: `Box<String>` gives `[Box] to 1`, and `Outer<A, B>.Inner<C>` gives
+     * `[Outer] to 2` and `[Outer, Inner] to 1`. A type that only Java writes with type arguments
+     * gets its stub's arity from here. A use in the body of a class that may inherit member types
+     * (one with a supertype, an enum, or an anonymous class) is left out: a name there may denote
+     * an inherited member type that no source shows.
+     */
+    val genericTypeUsages: Set<Pair<List<String>, Int>> = emptySet(),
+    /**
+     * The static ones among [imports]. A static import binds members, which may be fields or
+     * methods, so only the other imports bind a type name for sure.
+     */
+    val staticImports: Set<FullTypeQualifier> = emptySet(),
+    /**
+     * The simple name of every type the source declares, nested and local ones included, as
+     * written. [declaredTypes] splits package, type and member names by casing, which reads an
+     * all-caps or lower-case nested name (`Use.BOX`) as a member.
+     */
+    val declaredSimpleNames: Set<String> = emptySet(),
 )
 
 private val systemJavaCompiler by
@@ -132,13 +156,16 @@ private fun parseJavaSourceAst(
 private fun readJavaCompilationUnit(file: File, unit: CompilationUnitTree): JavaSourceInfo {
   val pkg = unit.packageName?.toString()?.split(".").orEmpty().filter { it.isNotEmpty() }
   val imports = mutableListOf<FullTypeQualifier>()
+  val staticImports = mutableSetOf<FullTypeQualifier>()
   val stars = mutableListOf<String>()
   for (importTree in unit.imports) {
     val path = importTree.qualifiedIdentifier.toString()
     if (path.endsWith(".*")) {
       stars += "import ${if (importTree.isStatic) "static " else ""}$path;"
     } else {
-      imports += FullTypeQualifier(path.split("."))
+      val qualifier = FullTypeQualifier(path.split("."))
+      imports += qualifier
+      if (importTree.isStatic) staticImports += qualifier
     }
   }
   val usages = JavaUsageCollector()
@@ -150,6 +177,9 @@ private fun readJavaCompilationUnit(file: File, unit: CompilationUnitTree): Java
       stars,
       usages.declaredTypes(pkg),
       usages.fullQualifierTypes,
+      usages.genericTypeUsages,
+      staticImports,
+      usages.declaredSimpleNames(),
   )
 }
 
@@ -157,21 +187,85 @@ private class JavaUsageCollector : TreeScanner<Unit, Unit>() {
   private val enclosing = ArrayDeque<String>()
   private val declared = mutableSetOf<List<String>>()
   val fullQualifierTypes = mutableSetOf<FullTypeQualifier>()
+  val genericTypeUsages = mutableSetOf<Pair<List<String>, Int>>()
+
+  /**
+   * For each class being visited, innermost last: its members when it may inherit member types,
+   * else nothing. Only the members are in its body; its header (type parameters, `extends`,
+   * `implements`) is in the scope around it.
+   */
+  private val inheritingClassMembers = ArrayDeque<Set<Tree>>()
+
+  /** How many bodies of classes that may inherit member types enclose the node being scanned. */
+  private var inheritingBodies = 0
 
   fun declaredTypes(pkg: List<String>) =
       declared.mapTo(mutableSetOf()) { FullTypeQualifier(pkg + it) }
 
-  override fun visitClass(node: ClassTree, p: Unit) {
-    val name = node.simpleName.toString()
-    if (name.isEmpty()) return super.visitClass(node, p)
-    declared += enclosing + name
-    enclosing.addLast(name)
+  fun declaredSimpleNames() = declared.mapTo(mutableSetOf()) { it.last() }
+
+  override fun scan(tree: Tree?, p: Unit?): Unit? {
+    val entersInheritingBody =
+        tree != null && inheritingClassMembers.lastOrNull()?.contains(tree) == true
+    if (entersInheritingBody) inheritingBodies++
     try {
-      super.visitClass(node, p)
+      return super.scan(tree, p)
     } finally {
-      enclosing.removeLast()
+      if (entersInheritingBody) inheritingBodies--
     }
   }
+
+  override fun visitClass(node: ClassTree, p: Unit) {
+    val name = node.simpleName.toString()
+    // `Enum` declares a member type, and an anonymous class always has a supertype.
+    val mayInheritMemberTypes =
+        name.isEmpty() ||
+            node.kind == Tree.Kind.ENUM ||
+            node.extendsClause != null ||
+            node.implementsClause.isNotEmpty()
+    inheritingClassMembers.addLast(
+        if (mayInheritMemberTypes) {
+          Collections.newSetFromMap(IdentityHashMap<Tree, Boolean>()).apply {
+            addAll(node.members)
+          }
+        } else {
+          emptySet()
+        },
+    )
+    try {
+      if (name.isEmpty()) return super.visitClass(node, p)
+      declared += enclosing + name
+      enclosing.addLast(name)
+      try {
+        super.visitClass(node, p)
+      } finally {
+        enclosing.removeLast()
+      }
+    } finally {
+      inheritingClassMembers.removeLast()
+    }
+  }
+
+  override fun visitParameterizedType(node: ParameterizedTypeTree, p: Unit) {
+    // A diamond (`new Box<>()`) writes no type arguments, so it says nothing about the arity, and
+    // in a body that may inherit member types the name may denote one that no source shows.
+    if (node.typeArguments.isNotEmpty() && inheritingBodies == 0) {
+      typeSegments(node.type)?.let { genericTypeUsages += it to node.typeArguments.size }
+    }
+    super.visitParameterizedType(node, p)
+  }
+
+  /**
+   * The names a type is written with. An outer written with type arguments of its own
+   * (`Outer<String>.Inner`) gives its names here and its own arity when the scan reaches it.
+   */
+  private fun typeSegments(tree: Tree): List<String>? =
+      when (tree) {
+        is IdentifierTree -> listOf(tree.name.toString())
+        is MemberSelectTree -> typeSegments(tree.expression)?.plus(tree.identifier.toString())
+        is ParameterizedTypeTree -> typeSegments(tree.type)
+        else -> null
+      }
 
   override fun visitMemberSelect(node: MemberSelectTree, p: Unit) {
     dottedPath(node)?.let {

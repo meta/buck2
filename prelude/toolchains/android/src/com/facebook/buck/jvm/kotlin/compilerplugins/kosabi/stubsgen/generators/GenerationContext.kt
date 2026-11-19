@@ -75,6 +75,13 @@ class GenerationContext {
   val javaFullQualifierTypes: Set<FullTypeQualifier>
 
   /**
+   * Each type a Java source writes with type arguments through a name that only a single-type
+   * import can bind, resolved through that import, with its type-argument count. Read only to give
+   * an existing stub its arity.
+   */
+  val javaGenericTypeUsages: Set<Pair<FullTypeQualifier, Int>>
+
+  /**
    * [importedTypes] split by the file that wrote the import. A usage must be attributed against its
    * own file's imports: the pooled set resolves a simple name to whichever file imported it first,
    * which is the wrong type as soon as two files import different types of the same name.
@@ -190,6 +197,7 @@ class GenerationContext {
       this.importedTypes = emptySet()
       this.javaImportedTypes = emptySet()
       this.javaFullQualifierTypes = emptySet()
+      this.javaGenericTypeUsages = emptySet()
       this.importedTypesByFile = emptyMap()
       this.companionCallableImports = emptySet()
       this.interfaceTypes = emptyList()
@@ -274,6 +282,12 @@ class GenerationContext {
           javaSources.flatMap { it.imports }.filterNot { it.isTopLevelDeclaration() }.toSet()
       this.javaFullQualifierTypes =
           javaSources.flatMap { it.fullQualifierTypes }.filterNot { it.isSdkQualifier() }.toSet()
+      this.javaGenericTypeUsages =
+          javaSources.flatMapTo(mutableSetOf()) { source ->
+            source.genericTypeUsages.mapNotNull { (written, arity) ->
+              source.qualifierOf(written)?.let { it to arity }
+            }
+          }
 
       // Single-pass PSI traversal: one DFS per file collects everything the generators need,
       // replacing 9 separate whole-tree collectDescendantsOfType walks. Semantics are preserved
@@ -672,6 +686,27 @@ private fun KtImportDirective.renames(): Boolean {
 
 /** The last name of the imported FQN: the name an import without an alias binds. */
 private fun KtImportDirective.plainName(): String? = importedFqName?.shortName()?.asString()
+
+/**
+ * The type a name written in a type position of this Java source denotes when javac must bind it
+ * through a single-type import: exactly one non-static import binds the name's first segment, and
+ * no type declared in the source has that name. Any other first segment may denote a type that no
+ * source shows: one of the source's own package, one an on-demand or a static import brings in, or
+ * a type named like a package, which obscures it (`a.Box` is a nested `Box` when a type `a` is in
+ * scope). Such a name stays unresolved.
+ */
+private fun JavaSourceInfo.qualifierOf(written: List<String>): FullTypeQualifier? {
+  val head = written.first()
+  if (head in declaredSimpleNames) return null
+  val imported =
+      imports
+          .filter { it !in staticImports && it.segments.last() == head }
+          .distinct()
+          .singleOrNull() ?: return null
+  return FullTypeQualifier(imported.segments + written.drop(1)).withMemberAsNestedName().takeIf {
+    it.names.isNotEmpty()
+  }
+}
 
 private fun FullTypeQualifier.isThroughCompanion(): Boolean {
   for (i in 0 until names.size - 1) {

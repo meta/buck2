@@ -1333,6 +1333,7 @@ internal class BytecodeSanitizerStage(preserveDeclarationOrder: Boolean = true) 
   private val transformers = listOfNotNull(
       ThrowsAnnotationStripper(),
       PrivateMetadataStripper(),
+      SuspendInlineDispatchStubber(),
       StubLineNumberStripper(),
       JvmAbiGenMemberSorter().takeUnless { preserveDeclarationOrder },
   )

@@ -29,9 +29,12 @@ import org.jetbrains.org.objectweb.asm.ClassWriter
 import org.jetbrains.org.objectweb.asm.FieldVisitor
 import org.jetbrains.org.objectweb.asm.MethodVisitor
 import org.jetbrains.org.objectweb.asm.Opcodes
+import org.jetbrains.org.objectweb.asm.Type
 import org.jetbrains.org.objectweb.asm.tree.AnnotationNode
 import org.jetbrains.org.objectweb.asm.tree.ClassNode
 import org.jetbrains.org.objectweb.asm.tree.FieldNode
+import org.jetbrains.org.objectweb.asm.tree.InsnList
+import org.jetbrains.org.objectweb.asm.tree.InsnNode
 import org.jetbrains.org.objectweb.asm.tree.LineNumberNode
 import org.jetbrains.org.objectweb.asm.tree.MethodNode
 
@@ -326,6 +329,61 @@ class PrivateMetadataStripper : BytecodeTransformer {
 
     reader.accept(visitor, 0)
     return writer.toByteArray()
+  }
+}
+
+/**
+ * Stubs the state-machine method of a suspend inline function as jvm-abi-gen does in a class ABI.
+ *
+ * kotlinc generates a suspend inline function twice: `name`, with a state machine, which runs only
+ * for a call that is not inlined, and `name$$forInline`, which the inliner copies to each call
+ * site. jvm-abi-gen keeps the twin and replaces the body of `name` with `aconst_null; athrow`.
+ */
+class SuspendInlineDispatchStubber : BytecodeTransformer {
+  override fun transform(bytes: ByteArray): ByteArray? {
+    val node = ClassNode()
+    ClassReader(bytes).accept(node, 0)
+    // The inliner copies local and anonymous classes (which have an EnclosingMethod attribute) to
+    // each call site whole, so jvm-abi-gen leaves them unchanged.
+    if (node.outerClass != null) {
+      return null
+    }
+    val twins =
+        node.methods
+            .filter { it.name.endsWith(FOR_INLINE_SUFFIX) }
+            .mapTo(HashSet()) { it.name.removeSuffix(FOR_INLINE_SUFFIX) + it.desc }
+    if (twins.isEmpty()) {
+      return null
+    }
+    var stubbed = false
+    for (method in node.methods) {
+      if (method.name + method.desc !in twins || method.instructions.size() == 0) {
+        continue
+      }
+      val static = method.access and Opcodes.ACC_STATIC != 0
+      method.instructions =
+          InsnList().apply {
+            add(InsnNode(Opcodes.ACONST_NULL))
+            add(InsnNode(Opcodes.ATHROW))
+          }
+      method.tryCatchBlocks = mutableListOf()
+      method.localVariables = null
+      method.visibleLocalVariableAnnotations = null
+      method.invisibleLocalVariableAnnotations = null
+      method.maxStack = 1
+      method.maxLocals = (Type.getArgumentsAndReturnSizes(method.desc) shr 2) - if (static) 1 else 0
+      stubbed = true
+    }
+    if (!stubbed) {
+      return null
+    }
+    val writer = ClassWriter(0)
+    node.accept(writer)
+    return writer.toByteArray()
+  }
+
+  private companion object {
+    const val FOR_INLINE_SUFFIX = "\$\$forInline"
   }
 }
 

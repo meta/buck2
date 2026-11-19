@@ -35,7 +35,6 @@ import org.jetbrains.kotlin.fir.declarations.utils.effectiveVisibility
 import org.jetbrains.kotlin.fir.declarations.utils.isConst
 import org.jetbrains.kotlin.fir.declarations.utils.isInline
 import org.jetbrains.kotlin.fir.declarations.utils.isInlineOrValue
-import org.jetbrains.kotlin.fir.declarations.utils.isSuspend
 import org.jetbrains.kotlin.fir.expressions.FirAnnotation
 import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirErrorExpression
@@ -160,22 +159,21 @@ class InlineBodyKeepability(
   fun keepRejectReason(function: FirFunction): String? = rejectDetails[function]
 
   /**
-   * Shapes that the ABI cannot carry as one plain method body: `suspend` (a state-machine twin),
-   * members of value classes or interfaces, and, in the body (see [Visitor]), anonymous objects and
-   * local declarations, callable references, `when` over an enum and `entries` of a library enum
-   * (classes generated next to the caller), non-Kotlin annotations (compiler plugins rewrite
-   * annotated code), reads of own `const val`s whose value did not survive (unresolvable
-   * initializers) and own inline properties, calls to own inline functions that are not kept, and
-   * own declarations the ABI does not carry with the same signature (private ones, and protected
-   * ones reached through a synthetic accessor). Default argument values are checked by the same
-   * visitor as ordinary body expressions instead (safe ones are kept with real values; the backend
-   * emits the `$default` bridge from them).
+   * Shapes that the ABI cannot carry as one plain method body: members of value classes or
+   * interfaces, and, in the body (see [Visitor]), anonymous objects and local declarations,
+   * callable references, `when` over an enum and `entries` of a library enum (classes generated
+   * next to the caller), non-Kotlin annotations (compiler plugins rewrite annotated code), reads of
+   * own `const val`s whose value did not survive (unresolvable initializers) and own inline
+   * properties, calls to own inline functions that are not kept, and own declarations the ABI does
+   * not carry with the same signature (private ones, and protected ones reached through a synthetic
+   * accessor). Default argument values are checked by the same visitor as ordinary body expressions
+   * instead (safe ones are kept with real values; the backend emits the `$default` bridge from
+   * them).
    */
   private fun hasLowerableShape(function: FirFunction): Boolean =
       shapeRejectReason(function) == null
 
   private fun shapeRejectReason(function: FirFunction): String? {
-    if (function.isSuspend) return "not lowerable: suspend function"
     // Default values are checked by the body visitor below with the same rules as the body
     // itself, so unsafe ones still fail loud; the backend emits the `$default` bridge from them.
     val owner = function.symbol.callableId?.classId?.let(::regularClass)

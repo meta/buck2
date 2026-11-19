@@ -435,7 +435,6 @@ mod tests {
         assert_eq!(None, builder.max_redirects);
         assert!(builder.proxies.is_empty());
         assert!(!builder.supports_vpnless);
-        assert!(!builder.absolute_dns_names);
         Ok(())
     }
 

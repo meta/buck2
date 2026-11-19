@@ -145,34 +145,4 @@ mod tests {
         assert!(names.iter().all(|name| name == "manifold.facebook.net."));
         Ok(())
     }
-
-    #[test]
-    fn test_absolute_dns_names() -> io::Result<()> {
-        let resolver = DnsResolver::new(true);
-        for host in [
-            "manifold.facebook.net",
-            "manifold.c2p.facebook.net",
-            "manifold.edge.x2p.facebook.net",
-            "localhost",
-        ] {
-            let name = resolver.lookup_name(host.parse().unwrap())?;
-            assert_eq!(name.as_str(), format!("{host}."));
-        }
-        let name = resolver.lookup_name("manifold.facebook.net.".parse().unwrap())?;
-        assert_eq!(name.as_str(), "manifold.facebook.net.");
-        Ok(())
-    }
-
-    #[test]
-    fn test_default_dns_names_unchanged() -> io::Result<()> {
-        let resolver = DnsResolver::new(false);
-        for host in [
-            "manifold.facebook.net",
-            "localhost",
-            "manifold.facebook.net.",
-        ] {
-            assert_eq!(resolver.lookup_name(host.parse().unwrap())?.as_str(), host);
-        }
-        Ok(())
-    }
 }

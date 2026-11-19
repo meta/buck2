@@ -128,7 +128,7 @@ def merge_class_to_source_map_from_jar(
     cmd = cmd_args(
         java_toolchain.merge_class_to_source_maps[RunInfo],
         cmd_args(output.as_output(), format = "--output={}"),
-        cmd_args(str(relative_to), format = "--relative-to={}") if relative_to != None else [],
+        cmd_args(relative_to, format = "--relative-to={}") if relative_to != None else [],
         ["--mappings", mappings_file],
         hidden = class_to_source_files,
     )

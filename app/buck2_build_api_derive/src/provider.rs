@@ -21,12 +21,16 @@ pub(crate) struct InternalProviderArgs {
     /// A `#[starlark_module]` of methods for the provider, replacing the generated attribute
     /// lookup; it must then define the attributes itself.
     methods_func: Option<syn::Ident>,
+    /// The predicate types the provider is a member of, each of whose handles is a trait
+    /// object of a trait the provider implements.
+    implements: Vec<syn::Path>,
 }
 
 impl syn::parse::Parse for InternalProviderArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::parse::Result<Self> {
         let creator_func = syn::Ident::parse(input)?;
         let mut methods_func = None;
+        let mut implements = Vec::new();
         while input.peek(syn::Token![,]) {
             input.parse::<syn::Token![,]>()?;
             if !input.peek(syn::Ident) {
@@ -36,13 +40,20 @@ impl syn::parse::Parse for InternalProviderArgs {
             if key == "methods" {
                 input.parse::<syn::Token![=]>()?;
                 methods_func = Some(syn::Ident::parse(input)?);
+            } else if key == "implements" {
+                input.parse::<syn::Token![=]>()?;
+                implements.push(input.parse::<syn::Path>()?);
             } else {
-                return Err(syn::Error::new_spanned(key, "expected `methods`"));
+                return Err(syn::Error::new_spanned(
+                    key,
+                    "expected `methods` or `implements`",
+                ));
             }
         }
         Ok(InternalProviderArgs {
             creator_func,
             methods_func,
+            implements,
         })
     }
 }
@@ -484,6 +495,24 @@ impl ProviderCodegen {
                     ],
                 ),
             };
+        // The provider has one representation, so its handle to a predicate type is the
+        // provider itself as the trait object.
+        let memberships = self
+            .args
+            .implements
+            .iter()
+            .enumerate()
+            .map(|(i, predicate)| {
+                let member = format_ident!("member_{}", i);
+                quote::quote_spanned! { self.span=>
+                    #[starlark(implements = #predicate)]
+                    fn #member(
+                        this: starlark::values::ValueTyped<'v, Self>,
+                    ) -> <#predicate as starlark::values::StarlarkTypeExpr<'v>>::Get {
+                        this.as_ref()
+                    }
+                }
+            });
         Ok(vec![syn::parse_quote_spanned! { self.span=>
             starlark::starlark_complex_value!(#vis #name);
         }]
@@ -493,6 +522,7 @@ impl ProviderCodegen {
             #starlark_value_attr
             impl<'v> starlark::values::StarlarkValue<'v> for #name<'v> {
                 #(#attrs)*
+                #(#memberships)*
                 fn provide(&'v self, demand: &mut starlark::values::Demand<'_, 'v>) {
                     demand.provide_value::<
                         &dyn buck2_build_api::interpreter::rule_defs::provider::ProviderLike>(self);

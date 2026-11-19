@@ -83,7 +83,7 @@ rust_library(
                 "keywords": ["starlark", "skylark", "bazel", "language", "interpreter"],
                 "license": "Apache-2.0",
                 "repository": "https://github.com/facebook/starlark-rust",
-                "version": "0.14.2",
+                "version": "0.15.0",
             },
         },
         # The `features` attribute is a `select`, which autocargo cannot read.

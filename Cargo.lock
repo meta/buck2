@@ -10583,7 +10583,7 @@ dependencies = [
 
 [[package]]
 name = "starlark"
-version = "0.14.2"
+version = "0.15.0"
 dependencies = [
  "allocative",
  "anyhow",
@@ -10630,7 +10630,7 @@ dependencies = [
 
 [[package]]
 name = "starlark_bin"
-version = "0.14.2"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "argfile",
@@ -10652,7 +10652,7 @@ dependencies = [
 
 [[package]]
 name = "starlark_derive"
-version = "0.14.2"
+version = "0.15.0"
 dependencies = [
  "dupe",
  "proc-macro2",
@@ -10699,7 +10699,7 @@ dependencies = [
 
 [[package]]
 name = "starlark_lsp"
-version = "0.14.2"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "derivative",
@@ -10721,7 +10721,7 @@ dependencies = [
 
 [[package]]
 name = "starlark_map"
-version = "0.14.2"
+version = "0.15.0"
 dependencies = [
  "allocative",
  "dupe",
@@ -10736,7 +10736,7 @@ dependencies = [
 
 [[package]]
 name = "starlark_syntax"
-version = "0.14.2"
+version = "0.15.0"
 dependencies = [
  "allocative",
  "annotate-snippets",

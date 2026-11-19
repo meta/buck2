@@ -2,7 +2,7 @@
 
 [package]
 name = "starlark"
-version = "0.14.2"
+version = "0.15.0"
 authors = ["Damien Martin-Guillerez <dmarting@google.com>", "Stepan Koltsov <stepan.koltsov@gmail.com>", "Facebook"]
 edition.workspace = true
 description = "An implementation of the Starlark language in Rust."

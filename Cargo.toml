@@ -497,11 +497,11 @@ slog = { version = "2.8.2", features = ["max_level_trace", "nested-values"] }
 smallvec = { version = "1.16.5", features = ["const_generics", "impl_bincode", "serde", "specialization", "union", "write"] }
 sorted_vector_map = "0.2.1"
 stacker = "0.1.25"
-starlark = { version = "0.14.2", path = "starlark-rust/starlark", features = ["pagable"] }
-starlark_derive = { version = "0.14.2", path = "starlark-rust/starlark_derive" }
-starlark_lsp = { version = "0.14.2", path = "starlark-rust/starlark_lsp" }
-starlark_map = { version = "0.14.2", path = "starlark-rust/starlark_map", features = ["pagable_dep"] }
-starlark_syntax = { version = "0.14.2", path = "starlark-rust/starlark_syntax" }
+starlark = { version = "0.15.0", path = "starlark-rust/starlark", features = ["pagable"] }
+starlark_derive = { version = "0.15.0", path = "starlark-rust/starlark_derive" }
+starlark_lsp = { version = "0.15.0", path = "starlark-rust/starlark_lsp" }
+starlark_map = { version = "0.15.0", path = "starlark-rust/starlark_map", features = ["pagable_dep"] }
+starlark_syntax = { version = "0.15.0", path = "starlark-rust/starlark_syntax" }
 static_assertions = "1.1.0"
 static_interner = { version = "0.1.3", path = "shed/static_interner", features = ["allocative", "dupe", "strong_hash"] }
 strong_hash = { version = "0.1.0", path = "gazebo/strong_hash", features = ["compact_str", "num-bigint", "triomphe"] }

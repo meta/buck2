@@ -132,6 +132,7 @@ use tonic::service::InterceptorLayer;
 use crate::active_commands::ActiveCommand;
 use crate::active_commands::ActiveCommandStateWriter;
 use crate::clean_stale::clean_stale_command;
+use crate::command_observer::ObservedCommand;
 use crate::ctx::ServerCommandContext;
 use crate::daemon::crash::crash;
 use crate::daemon::dice::TenantDiceProvider;
@@ -1004,7 +1005,21 @@ impl BuckdServer {
             }
 
             let data = daemon_state.data();
-            let tenant = data.tenant_for_client_context(client_ctx).await?;
+            // Observed before the tenant is set up, so a command whose tenant fails to set up, or
+            // whose client goes away meanwhile, is reported too.
+            let observed_command = ObservedCommand::start(
+                dispatch.trace_id(),
+                client_ctx,
+                &data.tenant_paths_for_client_context(client_ctx)?,
+            )?;
+            let tenant = match data.tenant_for_client_context(client_ctx).await {
+                Ok(tenant) => tenant,
+                Err(e) => {
+                    let e = error_before_stream(self.0.cert_state.dupe(), e).await;
+                    observed_command.end(&error_to_command_result(e.dupe()));
+                    return Ok(error_to_response_stream(e));
+                }
+            };
             let repo = tenant.repo.dupe();
 
             // The total disk space on `buck-out`, effectively fixed for the daemon's life.
@@ -1107,6 +1122,7 @@ impl BuckdServer {
             let resp = streaming(
                 events,
                 state,
+                observed_command,
                 dispatch.dupe(),
                 daemon_shutdown_channel,
                 &cancellation,
@@ -1252,16 +1268,9 @@ impl BuckdServer {
 
         match self.run_streaming_erased(command).await {
             Ok(resp) => Ok(resp),
-            Err(e) => {
-                // There is no event stream to send a hint on yet, so a user error gets the cert
-                // error as context, which does not change its classification.
-                let e = match check_cert_state_for(self.0.cert_state.dupe(), [&e]).await {
-                    CertStateReport::Valid => e,
-                    CertStateReport::Explains(err) => err.context(format!("{e:?}")),
-                    CertStateReport::Hint(err) => e.context(err.to_string()),
-                };
-                Ok(error_to_response_stream(e))
-            }
+            Err(e) => Ok(error_to_response_stream(
+                error_before_stream(self.0.cert_state.dupe(), e).await,
+            )),
         }
     }
 
@@ -1346,6 +1355,17 @@ fn convert_positive_duration(proto_duration: &prost_types::Duration) -> Result<D
         + Duration::from_nanos(proto_duration.nanos as u64))
 }
 
+/// The error a streaming command that fails before its event stream starts reports to its client.
+async fn error_before_stream(cert_state: CertState, e: buck2_error::Error) -> buck2_error::Error {
+    // There is no event stream to send a hint on yet, so a user error gets the cert
+    // error as context, which does not change its classification.
+    match check_cert_state_for(cert_state, [&e]).await {
+        CertStateReport::Valid => e,
+        CertStateReport::Explains(err) => err.context(format!("{e:?}")),
+        CertStateReport::Hint(err) => e.context(err.to_string()),
+    }
+}
+
 fn error_to_command_result(e: buck2_error::Error) -> CommandResult {
     CommandResult {
         result: Some(command_result::Result::Error(
@@ -1406,6 +1426,7 @@ impl<T: Stream + Send> Stream for SyncStream<T> {
 fn pump_events(
     mut events: ChannelEventSource,
     mut state: ActiveCommandStateWriter,
+    observed_command: ObservedCommand,
     output_send: tokio::sync::mpsc::UnboundedSender<
         Result<buck2_cli_proto::CommandProgress, tonic::Status>,
     >,
@@ -1420,6 +1441,7 @@ fn pump_events(
             // The CommandResult event indicates that the spawned
             // computation won't be producing any more events.
             Event::CommandResult(result) => {
+                observed_command.end(&result);
                 let _ignore = output_send.send(Ok(CommandProgress {
                     progress: Some(command_progress::Progress::Result(result)),
                 }));
@@ -1446,6 +1468,7 @@ fn pump_events(
 fn streaming<F>(
     events: ChannelEventSource,
     state: ActiveCommandStateWriter,
+    observed_command: ObservedCommand,
     dispatcher: EventDispatcher,
     daemon_shutdown_channel: oneshot::Receiver<buck2_data::DaemonShutdown>,
     cancellation_scope: &CancellationScope,
@@ -1490,7 +1513,7 @@ where
     // another tokio task in its lifo task slot. See T96012305 and https://github.com/tokio-rs/tokio/issues/4323 for more
     // information.
     let merge_task = thread_spawn("pump-events", move || {
-        pump_events(events, state, output_send);
+        pump_events(events, state, observed_command, output_send);
     });
     if let Err(e) = merge_task {
         return error_to_response_stream(
@@ -2430,6 +2453,7 @@ impl DaemonApi for BuckdServer {
         Ok(streaming(
             event_source,
             state,
+            ObservedCommand::default(),
             dispatcher.dupe(),
             daemon_shutdown_channel,
             &cancellation,
@@ -3190,6 +3214,7 @@ mod tests {
             let response = streaming(
                 ChannelEventSource::new(recv),
                 state,
+                ObservedCommand::default(),
                 dispatcher.dupe(),
                 daemon_shutdown_channel,
                 &scope,
@@ -3604,6 +3629,7 @@ mod tests {
                 let response = streaming(
                     self.events,
                     state,
+                    ObservedCommand::default(),
                     self.dispatcher,
                     daemon_shutdown_channel,
                     scope,

@@ -2130,6 +2130,17 @@ impl DaemonStateData {
             .await
     }
 
+    /// The paths of the tenant a client command addresses, without setting that tenant up.
+    pub(crate) fn tenant_paths_for_client_context(
+        &self,
+        client_context: &ClientContext,
+    ) -> buck2_error::Result<TenantPaths> {
+        match tenant_paths_from_client_context(client_context)? {
+            Some(paths) => Ok(paths),
+            None => Ok(self.tenant_for_legacy_client()?.repo.paths.without_lease()),
+        }
+    }
+
     /// Select a tenant for an RPC added before requests carried a client context.
     pub async fn tenant_for_optional_client_context(
         self: &Arc<Self>,

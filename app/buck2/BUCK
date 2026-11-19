@@ -162,6 +162,7 @@ buck_rust_binary(
             "//buck2/app/buck2_external_cells:buck2_external_cells",
             "//buck2/app/buck2_interpreter_for_build:buck2_interpreter_for_build",
             "//buck2/app/buck2_query_impls:buck2_query_impls",
+            "//buck2/app/buck2_server:buck2_server",
             "//buck2/app/buck2_server_commands:buck2_server_commands",
             "//buck2/app/buck2_test:buck2_test",
             "//buck2/app/buck2_transition:buck2_transition",

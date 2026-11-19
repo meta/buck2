@@ -15,6 +15,7 @@ mod agent_config_guard;
 mod agent_context_validation;
 mod agent_host_guard;
 mod clean_stale;
+pub mod command_observer;
 mod cpu_usage_collector;
 mod ctx;
 pub mod daemon;

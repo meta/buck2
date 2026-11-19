@@ -210,13 +210,6 @@ impl Allocative for Infallible {
     }
 }
 
-#[cfg(rust_nightly)]
-impl Allocative for ! {
-    fn visit<'a, 'b: 'a>(&self, _visitor: &'a mut Visitor<'b>) {
-        match *self {}
-    }
-}
-
 impl<T: Allocative> Allocative for [T] {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter(Key::for_type_name::<T>(), mem::size_of_val::<[T]>(self));

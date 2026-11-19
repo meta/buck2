@@ -43,11 +43,6 @@
 //! [bumpalo]: https://github.com/fitzgen/bumpalo
 
 #![cfg_attr(rust_nightly, feature(const_type_name))]
-#![cfg_attr(rust_nightly, feature(never_type))]
-// Used so that we can have `rustc_trivial_field_reads`. If it in any way becomes a problem for a
-// rustc upgrade, just delete it
-#![cfg_attr(rust_nightly, allow(internal_features))]
-#![cfg_attr(rust_nightly, feature(rustc_attrs))]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![allow(clippy::empty_enums)]
 

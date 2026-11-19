@@ -36,6 +36,9 @@ fn make_golden<T: Allocative>(value: &T) -> (String, String) {
     let flamegraph = builder.finish_and_write_flame_graph();
     // Because crate name is `allocative_unittest` in fbcode buck2 tests.
     let flamegraph = flamegraph.replace("allocative_unittest::", "allocative::");
+    // Newer Rust nightlies report Arc under `alloc::rcs::arc`.
+    // Keep the goldens comparable with stable and older nightlies.
+    let flamegraph = flamegraph.replace("alloc::rcs::arc::Arc<", "alloc::sync::Arc<");
     let mut flamegraph_svg: Vec<u8> = Vec::new();
     let mut inferno_options = inferno::flamegraph::Options::default();
     inferno_options.deterministic = true;

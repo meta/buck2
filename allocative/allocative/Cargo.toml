@@ -5,8 +5,8 @@ documentation = "https://docs.rs/allocative"
 edition = "2024"
 license = { workspace = true }
 name = "allocative"
-repository = "https://github.com/facebookexperimental/allocative"
-version = "0.3.6"
+repository = "https://github.com/facebook/buck2"
+version = "0.3.7"
 
 [dependencies]
 allocative_derive = { path = "../allocative_derive", version = "=0.3.6" }

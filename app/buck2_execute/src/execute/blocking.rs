@@ -332,6 +332,8 @@ struct DirectIoExecutor {
     inline: Arc<InlineIoCounters>,
     #[allocative(skip)]
     project_fs: ProjectRoot,
+    #[allocative(skip)]
+    io_semaphore: Arc<Semaphore>,
 }
 
 #[async_trait]
@@ -351,17 +353,25 @@ impl BlockingExecutor for DirectIoExecutor {
     ) -> BoxFuture<'a, buck2_error::Result<()>> {
         let project_fs = self.project_fs.dupe();
         let dispatcher = get_dispatcher_opt();
+        let io_semaphore = self.io_semaphore.dupe();
 
-        cancellations
-            .critical_section(|| async move {
-                // Execute IO operation in Tokio's blocking thread pool
-                tokio::task::spawn_blocking(move || {
-                    with_dispatcher_opt(dispatcher, || io.execute(&project_fs))
+        async move {
+            // Waiting for admission does not need to prevent cancellation.
+            let permit = io_semaphore
+                .acquire_owned()
+                .await
+                .expect("This semaphore is never closed");
+            cancellations
+                .critical_section(|| {
+                    tokio::task::spawn_blocking(move || {
+                        let _permit = permit;
+                        with_dispatcher_opt(dispatcher, || io.execute(&project_fs))
+                    })
                 })
                 .await
                 .buck_error_context("Direct IO spawn_blocking failed")?
-            })
-            .boxed()
+        }
+        .boxed()
     }
 
     fn queue_size(&self) -> usize {
@@ -374,7 +384,7 @@ impl BlockingExecutor for DirectIoExecutor {
 #[derive(Allocative)]
 enum BlockingExecutorFactoryKind {
     Pooled(Arc<BuckBlockingExecutorShared>),
-    Direct,
+    Direct(#[allocative(skip)] Arc<Semaphore>),
 }
 
 /// Owns the daemon-wide scheduling resources used to create repo-bound blocking executors.
@@ -387,7 +397,10 @@ pub struct BlockingExecutorFactory {
 impl BlockingExecutorFactory {
     pub fn create() -> buck2_error::Result<Self> {
         let kind = if cfg!(any(target_os = "macos", target_os = "windows")) {
-            BlockingExecutorFactoryKind::Direct
+            // Match the pooled executor's default directory-mutation concurrency.
+            BlockingExecutorFactoryKind::Direct(Arc::new(Semaphore::new(
+                directory_mutation_parallelism(),
+            )))
         } else {
             BlockingExecutorFactoryKind::Pooled(Arc::new(
                 BuckBlockingExecutorShared::default_concurrency()?,
@@ -407,9 +420,10 @@ impl BlockingExecutorFactory {
                 inline: self.inline.dupe(),
                 project_fs,
             }),
-            BlockingExecutorFactoryKind::Direct => Arc::new(DirectIoExecutor {
+            BlockingExecutorFactoryKind::Direct(io_semaphore) => Arc::new(DirectIoExecutor {
                 inline: self.inline.dupe(),
                 project_fs,
+                io_semaphore: io_semaphore.dupe(),
             }),
         }
     }
@@ -417,7 +431,7 @@ impl BlockingExecutorFactory {
     pub fn queue_size(&self) -> usize {
         match &self.kind {
             BlockingExecutorFactoryKind::Pooled(shared) => shared.command_sender.len(),
-            BlockingExecutorFactoryKind::Direct => 0,
+            BlockingExecutorFactoryKind::Direct(_) => 0,
         }
     }
 
@@ -569,6 +583,7 @@ mod tests {
         assert_cancelled_io_retains_ownership(Arc::new(DirectIoExecutor {
             inline: Arc::new(InlineIoCounters::default()),
             project_fs: root.path().dupe(),
+            io_semaphore: Arc::new(Semaphore::new(1)),
         }))
         .await
     }
@@ -688,6 +703,7 @@ mod tests {
         let direct = DirectIoExecutor {
             inline: Arc::new(InlineIoCounters::default()),
             project_fs: root.path().dupe(),
+            io_semaphore: Arc::new(Semaphore::new(1)),
         };
         assert_propagates_soft_error_context(&direct).await?;
 

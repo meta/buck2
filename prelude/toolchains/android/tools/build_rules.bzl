@@ -79,9 +79,9 @@ def _set_versioned_java_srcs(**kwargs):
         return kwargs
     java_version = select({
         "DEFAULT": native.read_config("java", "buck2_java_version", "21"),
-        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-11": "11",
-        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-17": "17",
-        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-21": "21",
+        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-setting-version[11]": "11",
+        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-setting-version[17]": "17",
+        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-setting-version[21]": "21",
     })
     versioned_srcs = selects.apply(
         java_version,

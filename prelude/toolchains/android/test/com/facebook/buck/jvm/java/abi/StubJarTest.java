@@ -51,6 +51,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -9598,6 +9599,27 @@ public class StubJarTest {
       String source,
       File outputDir)
       throws IOException {
+    return compileToJar(
+        classpath,
+        processors,
+        additionalOptions,
+        manifest,
+        fileName,
+        source,
+        Collections.emptyMap(),
+        outputDir);
+  }
+
+  private AbsPath compileToJar(
+      SortedSet<Path> classpath,
+      List<Processor> processors,
+      List<String> additionalOptions,
+      DeterministicManifest manifest,
+      String fileName,
+      String source,
+      Map<String, String> extraSources,
+      File outputDir)
+      throws IOException {
     try (TestCompiler compiler = new TestCompiler()) {
       compiler.init();
       compiler.addCompilerOptions(additionalOptions);
@@ -9605,6 +9627,9 @@ public class StubJarTest {
         compiler.setManifest(manifest);
       }
       compiler.addSourceFileContents(fileName, source);
+      for (Map.Entry<String, String> extra : extraSources.entrySet()) {
+        compiler.addSourceFileContents(extra.getKey(), extra.getValue());
+      }
       compiler.addClasspath(classpath);
       compiler.setSourceLevel(sourceVersion);
       compiler.setTargetLevel(sourceVersion);
@@ -10055,6 +10080,1066 @@ public class StubJarTest {
    * bridge. With {@code stripBridges}, `Layout`'s class file lacks it, as a source-only ABI that
    * could not compute it does.
    */
+  @Test
+  public void shouldNotIncludeBridgeWhenKotlinSuperclassGetterPrecedesTheOverride()
+      throws IOException {
+    compileKotlinSameErasureJar(true);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Async;",
+            "import com.example.buck.dep.Attached;",
+            "public class A extends Attached implements Async { }")
+        .addExpectedFullAbi("com/example/buck/A", KOTLIN_SAME_ERASURE_SUBCLASS_ABI)
+        .addExpectedStub("com/example/buck/A", KOTLIN_SAME_ERASURE_SUBCLASS_ABI)
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeToKotlinSuperclassGetterThatFollowsTheOverride()
+      throws IOException {
+    // javac takes the first method of the class that overrides the bridged one, in reverse
+    // class-file order: here the getter, whose return type is narrower.
+    compileKotlinSameErasureJar(false);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Async;",
+            "import com.example.buck.dep.Attached;",
+            "public class A extends Attached implements Async { }")
+        .addExpectedFullAbi("com/example/buck/A", KOTLIN_SAME_ERASURE_SUBCLASS_WITH_BRIDGE_ABI)
+        .addExpectedStub("com/example/buck/A", KOTLIN_SAME_ERASURE_SUBCLASS_WITH_BRIDGE_ABI)
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldKeepBridgeWhenLocalKotlinStubPutsOverrideBeforeGetter() throws IOException {
+    // kotlinc writes the getter first, so javac writes no bridge; the stub's member order is not
+    // kotlinc's, so source-only ABI generation cannot tell and keeps the bridge.
+    checkLocalKotlinStubWithReorderedMembers(true, KOTLIN_SAME_ERASURE_SUBCLASS_ABI);
+  }
+
+  @Test
+  public void shouldKeepBridgeWhenLocalKotlinStubPutsGetterBeforeOverride() throws IOException {
+    checkLocalKotlinStubWithReorderedMembers(false, KOTLIN_SAME_ERASURE_SUBCLASS_WITH_BRIDGE_ABI);
+  }
+
+  /**
+   * Source-only ABI generation reads the module's Kotlin classes as stubs whose member order need
+   * not be kotlinc's, while the library compilation reads kotlinc's classes.
+   */
+  private void checkLocalKotlinStubWithReorderedMembers(boolean getterFirst, String[] fullAbi)
+      throws IOException {
+    if (!testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)) {
+      return;
+    }
+    Path attachedJar = compileKotlinSameErasureJar(getterFirst);
+    tester.universalClasspath =
+        tester.universalClasspath.stream()
+            .filter(path -> !path.equals(attachedJar))
+            .collect(ImmutableSortedSet.toImmutableSortedSet(Comparator.naturalOrder()));
+    tester.classpath =
+        ImmutableSortedSet.<Path>naturalOrder().addAll(tester.classpath).add(attachedJar).build();
+    Path stubJar = temp.newFolder().toPath().resolve("attached.jar");
+    Files.copy(attachedJar.toFile(), stubJar.toFile());
+    rewriteClasses(stubJar, node -> Collections.reverse(node.methods));
+    Path stubDirectory = temp.newFolder().toPath();
+    extractJar(stubJar, stubDirectory);
+    tester
+        .addLocalClassDirectory(stubDirectory)
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Async;",
+            "import com.example.buck.dep.Attached;",
+            "public class A extends Attached implements Async { }")
+        .addExpectedFullAbi("com/example/buck/A", fullAbi)
+        .addExpectedStub("com/example/buck/A", KOTLIN_SAME_ERASURE_SUBCLASS_WITH_BRIDGE_ABI)
+        .createAndCheckStubJar();
+  }
+
+  /**
+   * A Kotlin class with a property getter and an override that have one name and parameter list and
+   * differ only in their return type, as {@code AttachedBanner.getBannerContainer()} in WhatsApp.
+   */
+  private Path compileKotlinSameErasureJar(boolean getterFirst) throws IOException {
+    String getter = "  val container: GroupLike = GroupLike()";
+    String override = "  override fun getContainer(): ViewLike = container";
+    tester
+        .setLanguage(Language.KOTLIN)
+        .setSourceFile(
+            "Attached.kt",
+            "package com.example.buck.dep",
+            "open class ViewLike",
+            "class GroupLike : ViewLike()",
+            "interface Async { fun getContainer(): ViewLike }",
+            "abstract class Banner { abstract fun getContainer(): ViewLike }",
+            "abstract class Attached : Banner() {",
+            getterFirst ? getter : override,
+            getterFirst ? override : getter,
+            "}")
+        .compileFullJar();
+    Path attachedJar = tester.fullJarPath.getPath();
+    stripKotlinNullabilityAnnotations(attachedJar);
+    tester.addFullJarToClasspathAlways().setLanguage(Language.JAVA);
+    return attachedJar;
+  }
+
+  /** The JetBrains nullability annotations are not on the test compiler's classpath. */
+  private static void stripKotlinNullabilityAnnotations(Path jar) throws IOException {
+    rewriteClasses(
+        jar,
+        node -> {
+          node.invisibleAnnotations = null;
+          node.methods.forEach(
+              method -> {
+                method.invisibleAnnotations = null;
+                method.invisibleParameterAnnotations = null;
+              });
+          node.fields.forEach(field -> field.invisibleAnnotations = null);
+        });
+  }
+
+  @Test
+  public void shouldNotIncludeBridgeForBuilderMethodBesideKotlinSetter() throws IOException {
+    tester
+        .setLanguage(Language.KOTLIN)
+        .setSourceFile(
+            "Frame.kt",
+            "package com.example.buck.dep",
+            "interface FrameLike { val matrix: FloatArray? }",
+            "open class Frame : FrameLike {",
+            "  override var matrix: FloatArray? = null",
+            "  fun setMatrix(matrix: FloatArray): Frame {",
+            "    this.matrix = matrix",
+            "    return this",
+            "  }",
+            "}")
+        .compileFullJar();
+    stripKotlinNullabilityAnnotations(tester.fullJarPath.getPath());
+    tester
+        .addFullJarToClasspathAlways()
+        .setLanguage(Language.JAVA)
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Frame;",
+            "public class A extends Frame { }")
+        .addExpectedFullAbi("com/example/buck/A", FRAME_SUBCLASS_ABI)
+        .addExpectedStub("com/example/buck/A", FRAME_SUBCLASS_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] FRAME_SUBCLASS_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Frame {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "}"
+  };
+
+  private static final String[] KOTLIN_SAME_ERASURE_SUBCLASS_WITH_BRIDGE_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Attached implements"
+        + " com/example/buck/dep/Async {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge getContainer()Lcom/example/buck/dep/ViewLike;",
+    "}"
+  };
+
+  private static final String[] KOTLIN_SAME_ERASURE_SUBCLASS_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Attached implements"
+        + " com/example/buck/dep/Async {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "}"
+  };
+
+  @Test
+  public void shouldNotIncludeBridgeForOverloadWhoseParameterTypeIsMissing() throws IOException {
+    tester
+        .setSourceFile("Tri.java", "package com.example.buck.dep;", "public class Tri { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Editor.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Tri;",
+            "interface Writer {",
+            "  Writer set(int key, boolean value);",
+            "  Writer set(int key, Tri value);",
+            "}",
+            "public abstract class Editor implements Writer {",
+            "  public Editor set(int key, boolean value) { return this; }",
+            "  public Editor set(int key, Tri value) { return this; }",
+            "}",
+            "class Impl extends Editor { }")
+        .addExpectedFullAbi("com/example/buck/Editor", OVERLOAD_MISSING_TYPE_EDITOR_ABI)
+        .addExpectedStub(
+            "com/example/buck/Editor",
+            // Writer.set(int, Tri) names a missing class; its bridge cannot be computed.
+            testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)
+                ? new String[0]
+                : OVERLOAD_MISSING_TYPE_EDITOR_ABI)
+        .addExpectedFullAbi("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Writer")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldNotIncludeBridgeForOverloadWhoseParameterTypeIsMissingDeclaredFirst()
+      throws IOException {
+    // The shape of `GatekeeperEditor.override`: the overload that names a missing class comes
+    // first,
+    // so javac does not enter the one that follows.
+    tester
+        .setSourceFile("Tri.java", "package com.example.buck.dep;", "public class Tri { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Editor.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Tri;",
+            "interface Writer {",
+            "  Writer set(int key, boolean value);",
+            "  Writer set(int key, Tri value);",
+            "}",
+            "public abstract class Editor implements Writer {",
+            "  public Editor set(int key, Tri value) { return this; }",
+            "  public Editor set(int key, boolean value) { return this; }",
+            "}",
+            "class Impl extends Editor { }")
+        .addExpectedFullAbi("com/example/buck/Editor", OVERLOAD_MISSING_TYPE_FIRST_EDITOR_ABI)
+        .addExpectedStub(
+            "com/example/buck/Editor",
+            // Writer.set(int, Tri) names a missing class; its bridge cannot be computed.
+            testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)
+                ? OVERLOAD_MISSING_TYPE_FIRST_EDITOR_STUB
+                : OVERLOAD_MISSING_TYPE_FIRST_EDITOR_ABI)
+        .addExpectedFullAbi("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Writer")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldNotIncludeBridgeInSubclassForInterleavedOverloadsWithMissingType()
+      throws IOException {
+    // The shape of `GatekeeperStoreImpl.Editor`: javac drops a different overload of each pair, so
+    // the superclass must keep the bridge for the overload it entered.
+    tester
+        .setSourceFile("Tri.java", "package com.example.buck.dep;", "public class Tri { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Editor.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Tri;",
+            "interface Writer {",
+            "  Writer override(int key, Tri value);",
+            "  Writer override(int key, boolean value);",
+            "  Writer override(String key, boolean value);",
+            "  Writer override(String key, Tri value);",
+            "}",
+            "public abstract class Editor implements Writer {",
+            "  public Editor override(int key, Tri value) { return this; }",
+            "  public Editor override(int key, boolean value) { return this; }",
+            "  public Editor override(String key, boolean value) { return this; }",
+            "  public Editor override(String key, Tri value) { return this; }",
+            "}",
+            "class Impl extends Editor { }")
+        .addExpectedStub("com/example/buck/Editor")
+        .addExpectedFullAbi("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Impl", OVERLOAD_MISSING_TYPE_IMPL_ABI)
+        .addExpectedStub("com/example/buck/Writer")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeForGenericOverrideBesideOverloadWhoseParameterTypeIsMissing()
+      throws IOException {
+    // javac does not enter `f(T)` beside `f(Missing)`; the dropped override's parameter erases to
+    // `Object`, which its source spelling does not show.
+    tester
+        .setSourceFile(
+            "Base.java",
+            "package com.example.buck.dep;",
+            "public class Base<T> {",
+            "  public Base<T> f(T value) { return this; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Missing.java", "package com.example.buck.missing;", "public class Missing { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Base;",
+            "import com.example.buck.missing.Missing;",
+            "public class A<T> extends Base<T> {",
+            "  public A<T> f(Missing value) { return this; }",
+            "  @Override",
+            "  public A<T> f(T value) { return this; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", GENERIC_OVERRIDE_BESIDE_MISSING_OVERLOAD_ABI)
+        .addExpectedStub("com/example/buck/A", GENERIC_OVERRIDE_BESIDE_MISSING_OVERLOAD_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] GENERIC_OVERRIDE_BESIDE_MISSING_OVERLOAD_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature <T:Ljava/lang/Object;>Lcom/example/buck/dep/Base<TT;>;",
+    "// declaration: com/example/buck/A<T> extends com.example.buck.dep.Base<T>",
+    "public class com/example/buck/A extends com/example/buck/dep/Base {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  // signature (Lcom/example/buck/missing/Missing;)Lcom/example/buck/A<TT;>;",
+    "  // declaration: com.example.buck.A<T> f(com.example.buck.missing.Missing)",
+    "  public f(Lcom/example/buck/missing/Missing;)Lcom/example/buck/A;",
+    "",
+    "  // access flags 0x1",
+    "  // signature (TT;)Lcom/example/buck/A<TT;>;",
+    "  // declaration: com.example.buck.A<T> f(T)",
+    "  public f(Ljava/lang/Object;)Lcom/example/buck/A;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge f(Ljava/lang/Object;)Lcom/example/buck/dep/Base;",
+    "}"
+  };
+
+  @Test
+  public void shouldNotIncludeBridgeForOverloadWhoseMissingParameterClassHasTheSameSimpleName()
+      throws IOException {
+    // `p1.Token` and `p2.Token` are both missing: the same simple name is not the same class.
+    tester
+        .setSourceFile("Token.java", "package com.example.buck.p1;", "public class Token { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile("Token.java", "package com.example.buck.p2;", "public class Token { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Parent.java",
+            "package com.example.buck.dep;",
+            "public class Parent {",
+            "  public Parent f(com.example.buck.p1.Token token) { return this; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Parent;",
+            "import com.example.buck.p2.Token;",
+            "public class A extends Parent {",
+            "  public A f(Token token) { return this; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", SAME_SIMPLE_NAME_OVERLOAD_ABI)
+        .addExpectedStub("com/example/buck/A", SAME_SIMPLE_NAME_OVERLOAD_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] SAME_SIMPLE_NAME_OVERLOAD_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Parent {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public f(Lcom/example/buck/p2/Token;)Lcom/example/buck/A;",
+    "}"
+  };
+
+  @Test
+  public void shouldIncludeBridgeToInheritedGenericImplementationOfMissingTypeArgument()
+      throws IOException {
+    // The shape of `CompanionRegistrationManagerImpl.registerObserver`: an interface method that
+    // names a missing class is implemented by a generic superclass method taking it as type
+    // argument.
+    tester
+        .setSourceFile(
+            "Observable.java",
+            "package com.example.buck.dep;",
+            "public class Observable<T> {",
+            "  public boolean registerObserver(T observer) { return true; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Observer.java", "package com.example.buck.missing;", "public interface Observer { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Manager.java",
+            "package com.example.buck.dep;",
+            "public interface Manager {",
+            "  boolean registerObserver(com.example.buck.missing.Observer observer);",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Manager;",
+            "import com.example.buck.dep.Observable;",
+            "import com.example.buck.missing.Observer;",
+            "public class A extends Observable<Observer> implements Manager { }")
+        .addExpectedFullAbi("com/example/buck/A", INHERITED_GENERIC_IMPLEMENTATION_ABI)
+        .addExpectedStub("com/example/buck/A", INHERITED_GENERIC_IMPLEMENTATION_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] INHERITED_GENERIC_IMPLEMENTATION_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature"
+        + " Lcom/example/buck/dep/Observable<Lcom/example/buck/missing/Observer;>;Lcom/example/buck/dep/Manager;",
+    "// declaration: com/example/buck/A extends"
+        + " com.example.buck.dep.Observable<com.example.buck.missing.Observer> implements"
+        + " com.example.buck.dep.Manager",
+    "public class com/example/buck/A extends com/example/buck/dep/Observable implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+
+  /** {@code Observable<T>} and {@code Manager}, whose method names {@code q.Observer}. */
+  private void compileObservableAndManager(boolean managerDefault) throws IOException {
+    tester
+        .setSourceFile(
+            "Observable.java",
+            "package com.example.buck.dep;",
+            "public class Observable<T> {",
+            "  public boolean registerObserver(T observer) { return true; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Observer.java", "package com.example.buck.missing;", "public interface Observer { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Manager.java",
+            "package com.example.buck.dep;",
+            "public interface Manager {",
+            managerDefault
+                ? "  default boolean registerObserver(com.example.buck.missing.Observer o) { return"
+                    + " false; }"
+                : "  boolean registerObserver(com.example.buck.missing.Observer observer);",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways();
+  }
+
+  @Test
+  public void shouldIncludeBridgeWhenTypeArgumentIsWrittenInAnotherSourceAncestor()
+      throws IOException {
+    // `Mid` writes `Observable<Observer>` with an import of `Observer`; `A`'s file does not import
+    // it, so `Observer` is resolved where `Mid` wrote it.
+    compileObservableAndManager(false);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Manager;",
+            "public class A extends Mid implements Manager { }")
+        .addSourceFile(
+            "Mid.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Observable;",
+            "import com.example.buck.missing.Observer;",
+            "public class Mid extends Observable<Observer> { }")
+        .addExpectedFullAbi("com/example/buck/A", TYPE_ARGUMENT_IN_ANCESTOR_ABI)
+        .addExpectedStub("com/example/buck/A", TYPE_ARGUMENT_IN_ANCESTOR_ABI)
+        .addExpectedStub("com/example/buck/Mid")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeWhenTypeArgumentIsWrittenTwoSourceAncestorsUp()
+      throws IOException {
+    compileObservableAndManager(false);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Manager;",
+            "public class A extends Upper<String> implements Manager { }")
+        .addSourceFile(
+            "Upper.java", "package com.example.buck;", "public class Upper<U> extends Mid { }")
+        .addSourceFile(
+            "Mid.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Observable;",
+            "import com.example.buck.missing.Observer;",
+            "public class Mid extends Observable<Observer> { }")
+        .addExpectedFullAbi("com/example/buck/A", TYPE_ARGUMENT_TWO_UP_ABI)
+        .addExpectedStub("com/example/buck/A", TYPE_ARGUMENT_TWO_UP_ABI)
+        .addExpectedStub("com/example/buck/Mid")
+        .addExpectedStub("com/example/buck/Upper")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeWhenTypeArgumentNameIsUndecidable() throws IOException {
+    // An on-demand import leaves the qualified name of `Observer` unknown; the bridge is kept.
+    compileObservableAndManager(false);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.*;",
+            "import com.example.buck.missing.*;",
+            "public class A extends Observable<Observer> implements Manager { }")
+        .addExpectedFullAbi("com/example/buck/A", TYPE_ARGUMENT_ON_DEMAND_ABI)
+        .addExpectedStub(
+            "com/example/buck/A",
+            // The class signature names the missing class in the class's own package, as
+            // source-only
+            // ABI generation does for a simple name it cannot resolve; the interface validator
+            // rejects such a source in a build.
+            testingMode.equals(MODE_SOURCE_BASED_MISSING_DEPS)
+                ? Arrays.stream(TYPE_ARGUMENT_ON_DEMAND_ABI)
+                    .map(
+                        line ->
+                            line.startsWith("// ")
+                                ? line.replace("buck/missing/Observer", "buck/Observer")
+                                    .replace("buck.missing.Observer", "buck.Observer")
+                                : line)
+                    .toArray(String[]::new)
+                : TYPE_ARGUMENT_ON_DEMAND_ABI)
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldMatchJavacWhenInterfaceDefaultNamesTheMissingTypeArgument() throws IOException {
+    compileObservableAndManager(true);
+    tester
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Manager;",
+            "public class A extends Mid implements Manager { }")
+        .addSourceFile(
+            "Mid.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Observable;",
+            "import com.example.buck.missing.Observer;",
+            "public class Mid extends Observable<Observer> { }")
+        .addExpectedFullAbi("com/example/buck/A", TYPE_ARGUMENT_INTERFACE_DEFAULT_ABI)
+        .addExpectedStub("com/example/buck/A", TYPE_ARGUMENT_INTERFACE_DEFAULT_ABI)
+        .addExpectedStub("com/example/buck/Mid")
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldNotTakeOverloadWithOwnBoundOfAnotherMissingClassAsImplementation()
+      throws IOException {
+    // `registerObserver(U)` erases to the missing `Other`, written as `U`'s bound in `A`; it does
+    // not
+    // override `registerObserver(Observer)`, so javac bridges the interface method to the inherited
+    // `Observable.registerObserver(T)`.
+    checkOwnTypeVariableBound(
+        "public class A<U extends com.example.buck.missing.Other>", OWN_BOUND_ABI);
+  }
+
+  @Test
+  public void shouldNotTakeOverloadWithOwnIntersectionBoundOfAnotherMissingClassAsImplementation()
+      throws IOException {
+    checkOwnTypeVariableBound(
+        "public class A<U extends com.example.buck.missing.Other & java.io.Serializable>",
+        OWN_INTERSECTION_BOUND_ABI);
+  }
+
+  private void checkOwnTypeVariableBound(String classHeader, String[] abi) throws IOException {
+    tester
+        .setSourceFile(
+            "Observable.java",
+            "package com.example.buck.dep;",
+            "public class Observable<T> {",
+            "  public boolean registerObserver(T observer) { return true; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Observer.java", "package com.example.buck.missing;", "public interface Observer { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Other.java", "package com.example.buck.missing;", "public interface Other { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Manager.java",
+            "package com.example.buck.dep;",
+            "public interface Manager {",
+            "  boolean registerObserver(com.example.buck.missing.Observer observer);",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Manager;",
+            "import com.example.buck.dep.Observable;",
+            classHeader,
+            "    extends Observable<com.example.buck.missing.Observer> implements Manager {",
+            "  public boolean registerObserver(U observer) { return false; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", abi)
+        .addExpectedStub("com/example/buck/A", abi)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] OWN_BOUND_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature"
+        + " <U::Lcom/example/buck/missing/Other;>Lcom/example/buck/dep/Observable<Lcom/example/buck/missing/Observer;>;Lcom/example/buck/dep/Manager;",
+    "// declaration: com/example/buck/A<U extends com.example.buck.missing.Other> extends"
+        + " com.example.buck.dep.Observable<com.example.buck.missing.Observer> implements"
+        + " com.example.buck.dep.Manager",
+    "public class com/example/buck/A extends com/example/buck/dep/Observable implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  // signature (TU;)Z",
+    "  // declaration: boolean registerObserver(U)",
+    "  public registerObserver(Lcom/example/buck/missing/Other;)Z",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+  private static final String[] OWN_INTERSECTION_BOUND_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature"
+        + " <U::Lcom/example/buck/missing/Other;:Ljava/io/Serializable;>Lcom/example/buck/dep/Observable<Lcom/example/buck/missing/Observer;>;Lcom/example/buck/dep/Manager;",
+    "// declaration: com/example/buck/A<U extends com.example.buck.missing.Other,"
+        + " java.io.Serializable> extends"
+        + " com.example.buck.dep.Observable<com.example.buck.missing.Observer> implements"
+        + " com.example.buck.dep.Manager",
+    "public class com/example/buck/A extends com/example/buck/dep/Observable implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  // signature (TU;)Z",
+    "  // declaration: boolean registerObserver(U)",
+    "  public registerObserver(Lcom/example/buck/missing/Other;)Z",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+
+  private static final String[] TYPE_ARGUMENT_IN_ANCESTOR_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/Mid implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+  private static final String[] TYPE_ARGUMENT_TWO_UP_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature Lcom/example/buck/Upper<Ljava/lang/String;>;Lcom/example/buck/dep/Manager;",
+    "// declaration: com/example/buck/A extends com.example.buck.Upper<java.lang.String> implements"
+        + " com.example.buck.dep.Manager",
+    "public class com/example/buck/A extends com/example/buck/Upper implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+  private static final String[] TYPE_ARGUMENT_ON_DEMAND_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "// signature"
+        + " Lcom/example/buck/dep/Observable<Lcom/example/buck/missing/Observer;>;Lcom/example/buck/dep/Manager;",
+    "// declaration: com/example/buck/A extends"
+        + " com.example.buck.dep.Observable<com.example.buck.missing.Observer> implements"
+        + " com.example.buck.dep.Manager",
+    "public class com/example/buck/A extends com/example/buck/dep/Observable implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+  private static final String[] TYPE_ARGUMENT_INTERFACE_DEFAULT_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/Mid implements"
+        + " com/example/buck/dep/Manager {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge registerObserver(Lcom/example/buck/missing/Observer;)Z",
+    "}"
+  };
+
+  private static final String[] OVERLOAD_MISSING_TYPE_FIRST_EDITOR_STUB = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x421",
+    "public abstract class com/example/buck/Editor implements com/example/buck/Writer {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public set(ILcom/example/buck/dep/Tri;)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1",
+    "  public set(IZ)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge set(IZ)Lcom/example/buck/Writer;",
+    "}"
+  };
+
+  private static final String[] OVERLOAD_MISSING_TYPE_FIRST_EDITOR_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x421",
+    "public abstract class com/example/buck/Editor implements com/example/buck/Writer {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public set(ILcom/example/buck/dep/Tri;)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1",
+    "  public set(IZ)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge set(ILcom/example/buck/dep/Tri;)Lcom/example/buck/Writer;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge set(IZ)Lcom/example/buck/Writer;",
+    "}"
+  };
+
+  private static final String[] OVERLOAD_MISSING_TYPE_EDITOR_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x421",
+    "public abstract class com/example/buck/Editor implements com/example/buck/Writer {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public set(IZ)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1",
+    "  public set(ILcom/example/buck/dep/Tri;)Lcom/example/buck/Editor;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge set(ILcom/example/buck/dep/Tri;)Lcom/example/buck/Writer;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge set(IZ)Lcom/example/buck/Writer;",
+    "}"
+  };
+
+  private static final String[] OVERLOAD_MISSING_TYPE_IMPL_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x20",
+    "class com/example/buck/Impl extends com/example/buck/Editor {",
+    "",
+    "",
+    "  // access flags 0x0",
+    "  <init>()V",
+    "}"
+  };
+
+  @Test
+  public void shouldNotIncludeBridgeForOverloadWhoseParameterSubtypeIsMissing() throws IOException {
+    tester
+        .setSourceFile("Client.java", "package com.example.buck.dep;", "public class Client { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "View.java",
+            "package com.example.buck.dep;",
+            "public class View {",
+            "  public void setClient(Client client) { }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "SecureClient.java",
+            "package com.example.buck.missing;",
+            "public class SecureClient extends com.example.buck.dep.Client { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.View;",
+            "import com.example.buck.missing.SecureClient;",
+            "public class A extends View {",
+            "  public final A setClient(SecureClient client) { return this; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", OVERLOAD_MISSING_SUBTYPE_ABI)
+        .addExpectedStub("com/example/buck/A", OVERLOAD_MISSING_SUBTYPE_ABI)
+        .createAndCheckStubJar();
+  }
+
+  @Test
+  public void shouldIncludeBridgeWhenOverrideNamesMissingParameterClassBySimpleName()
+      throws IOException {
+    // The shape of `BaseGraphQLRequest.setAcsToken`: the source names the missing class by its
+    // simple name, the class file by its binary name.
+    tester
+        .setSourceFile("Token.java", "package com.example.buck.missing;", "public class Token { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "Request.java",
+            "package com.example.buck.dep;",
+            "public interface Request {",
+            "  Request setToken(com.example.buck.missing.Token token);",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Request;",
+            "import com.example.buck.missing.Token;",
+            "public class A implements Request {",
+            "  public A setToken(Token token) { return this; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", MISSING_PARAMETER_SIMPLE_NAME_ABI)
+        .addExpectedStub("com/example/buck/A", MISSING_PARAMETER_SIMPLE_NAME_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] MISSING_PARAMETER_SIMPLE_NAME_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A implements com/example/buck/dep/Request {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public setToken(Lcom/example/buck/missing/Token;)Lcom/example/buck/A;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge"
+        + " setToken(Lcom/example/buck/missing/Token;)Lcom/example/buck/dep/Request;",
+    "}"
+  };
+
+  @Test
+  public void shouldIncludeCovariantBridgeWhoseReturnTypeHasAMissingSuperclass()
+      throws IOException {
+    // The shape of `FbDraweeControllerBuilder.build`: the override returns a class of this target
+    // whose superclass is off the reduced classpath, so the return types cannot be related there.
+    tester
+        .setSourceFile(
+            "Controller.java", "package com.example.buck.dep;", "public class Controller { }")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Builder.java",
+            "package com.example.buck.dep;",
+            "public abstract class Builder {",
+            "  public abstract Controller build();",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "PipelineController.java",
+            "package com.example.buck.missing;",
+            "public class PipelineController extends com.example.buck.dep.Controller { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.Builder;",
+            "import com.example.buck.missing.PipelineController;",
+            "public class A extends Builder {",
+            "  @Override",
+            "  public FbController build() { return null; }",
+            "}",
+            "class FbController extends PipelineController { }")
+        .addExpectedFullAbi("com/example/buck/A", MISSING_RETURN_SUPERCLASS_ABI)
+        .addExpectedStub("com/example/buck/A", MISSING_RETURN_SUPERCLASS_ABI)
+        .addExpectedStub("com/example/buck/FbController")
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] MISSING_RETURN_SUPERCLASS_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/Builder {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public build()Lcom/example/buck/FbController;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge build()Lcom/example/buck/dep/Controller;",
+    "}"
+  };
+
+  @Test
+  public void shouldIncludeCovariantBridgeBesideOverloadWhoseParameterTypeIsMissing()
+      throws IOException {
+    // The shape of `LocationUpsellLaunchParams.Builder.setSource`: an overload that names a missing
+    // class precedes the covariant override.
+    tester
+        .setSourceFile(
+            "BaseBuilder.java",
+            "package com.example.buck.dep;",
+            "public class BaseBuilder {",
+            "  public BaseBuilder setSource(String source) { return this; }",
+            "}")
+        .compileFullJar()
+        .addFullJarToClasspathAlways()
+        .setSourceFile(
+            "Source.java", "package com.example.buck.missing;", "public class Source { }")
+        .compileFullJar()
+        .addFullJarToClasspath()
+        .setSourceFile(
+            "A.java",
+            "package com.example.buck;",
+            "import com.example.buck.dep.BaseBuilder;",
+            "import com.example.buck.missing.Source;",
+            "public class A extends BaseBuilder {",
+            "  public A setSource(Source source) { return this; }",
+            "  @Override",
+            "  public A setSource(String source) { return this; }",
+            "}")
+        .addExpectedFullAbi("com/example/buck/A", OVERLOAD_BESIDE_COVARIANT_ABI)
+        .addExpectedStub("com/example/buck/A", OVERLOAD_BESIDE_COVARIANT_ABI)
+        .createAndCheckStubJar();
+  }
+
+  private static final String[] OVERLOAD_BESIDE_COVARIANT_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/BaseBuilder {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x1",
+    "  public setSource(Lcom/example/buck/missing/Source;)Lcom/example/buck/A;",
+    "",
+    "  // access flags 0x1",
+    "  public setSource(Ljava/lang/String;)Lcom/example/buck/A;",
+    "",
+    "  // access flags 0x1041",
+    "  public synthetic bridge setSource(Ljava/lang/String;)Lcom/example/buck/dep/BaseBuilder;",
+    "}"
+  };
+
+  private static final String[] OVERLOAD_MISSING_SUBTYPE_ABI = {
+    "JDK8:// class version 52.0 (52)",
+    "JDK11:// class version 55.0 (55)",
+    "// access flags 0x21",
+    "public class com/example/buck/A extends com/example/buck/dep/View {",
+    "",
+    "",
+    "  // access flags 0x1",
+    "  public <init>()V",
+    "",
+    "  // access flags 0x11",
+    "  public final setClient(Lcom/example/buck/missing/SecureClient;)Lcom/example/buck/A;",
+    "}"
+  };
+
   private Path compileLayoutJar(boolean stripBridges) throws IOException {
     tester
         .setSourceFile("Params.java", "package com.example.buck.dep;", "public class Params { }")
@@ -10139,6 +11224,12 @@ public class StubJarTest {
   }
 
   private static void stripBridgeMethods(Path jar) throws IOException {
+    rewriteClasses(
+        jar, node -> node.methods.removeIf(method -> (method.access & Opcodes.ACC_BRIDGE) != 0));
+  }
+
+  private static void rewriteClasses(Path jar, java.util.function.Consumer<ClassNode> rewrite)
+      throws IOException {
     Map<String, byte[]> entries = new java.util.LinkedHashMap<>();
     try (JarFile jarFile = new JarFile(jar.toFile())) {
       Enumeration<JarEntry> jarEntries = jarFile.entries();
@@ -10152,7 +11243,7 @@ public class StubJarTest {
           if (entry.getName().endsWith(".class")) {
             ClassNode node = new ClassNode(Opcodes.ASM9);
             new ClassReader(bytes).accept(node, 0);
-            node.methods.removeIf(method -> (method.access & Opcodes.ACC_BRIDGE) != 0);
+            rewrite.accept(node);
             ClassWriter writer = new ClassWriter(0);
             node.accept(writer);
             bytes = writer.toByteArray();
@@ -10223,6 +11314,7 @@ public class StubJarTest {
     private List<String> actualStubManifest;
     private String sourceFileName = "";
     private String sourceFileContents = "";
+    private final Map<String, String> extraSourceFiles = new LinkedHashMap<>();
     private ImmutableSortedSet<Path> universalClasspath = EMPTY_CLASSPATH;
     private ImmutableSortedSet<Path> classpath = EMPTY_CLASSPATH;
     private final List<Path> localClassDirectories = new ArrayList<>();
@@ -10268,6 +11360,13 @@ public class StubJarTest {
     public Tester setSourceFile(String fileName, String... lines) {
       sourceFileName = fileName;
       sourceFileContents = Joiner.on('\n').join(lines);
+      extraSourceFiles.clear();
+      return this;
+    }
+
+    /** Adds another compilation unit to the sources set by {@link #setSourceFile}. */
+    public Tester addSourceFile(String fileName, String... lines) {
+      extraSourceFiles.put(fileName, Joiner.on('\n').join(lines));
       return this;
     }
 
@@ -10417,6 +11516,9 @@ public class StubJarTest {
             testCompiler.useFrontendOnlyJavacTask();
           }
           testCompiler.addSourceFileContents(sourceFileName, sourceFileContents);
+          for (Map.Entry<String, String> extra : extraSourceFiles.entrySet()) {
+            testCompiler.addSourceFileContents(extra.getKey(), extra.getValue());
+          }
           testCompiler.addClasspath(classpath1);
           testCompiler.setSourceLevel(sourceVersion);
           testCompiler.setTargetLevel(sourceVersion);
@@ -10503,6 +11605,7 @@ public class StubJarTest {
                 manifest,
                 sourceFileName,
                 sourceFileContents,
+                extraSourceFiles,
                 outputDir);
       }
 

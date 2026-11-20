@@ -93,6 +93,7 @@ use crate::materializers::deferred::clean_stale::CleanResult;
 use crate::materializers::deferred::clean_stale::CleanStaleArtifactsCommand;
 use crate::materializers::deferred::clean_stale::CleanStaleConfig;
 use crate::materializers::deferred::clean_stale::FinishUnmaterializationUpload;
+use crate::materializers::deferred::clean_stale::NextAdaptiveCleanRound;
 use crate::materializers::deferred::clean_stale::disk_space_probe_path;
 use crate::materializers::deferred::extension::ExtensionCommand;
 use crate::materializers::deferred::io_handler::IoHandler;
@@ -311,6 +312,11 @@ pub(super) enum LowPriorityMaterializerCommand {
         command: FinishUnmaterializationUpload,
         dispatcher: Option<EventDispatcher>,
     },
+
+    NextAdaptiveCleanRound {
+        command: Box<NextAdaptiveCleanRound>,
+        dispatcher: Option<EventDispatcher>,
+    },
 }
 
 impl LowPriorityMaterializerCommand {
@@ -318,7 +324,8 @@ impl LowPriorityMaterializerCommand {
         match self {
             Self::MaterializationFinished { dispatcher, .. }
             | Self::CleanupFinished { dispatcher, .. }
-            | Self::FinishUnmaterializationUpload { dispatcher, .. } => dispatcher.clone(),
+            | Self::FinishUnmaterializationUpload { dispatcher, .. }
+            | Self::NextAdaptiveCleanRound { dispatcher, .. } => dispatcher.clone(),
         }
     }
 }
@@ -816,6 +823,10 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 self.tree.cleanup_finished(path, version, result);
             }
             LowPriorityMaterializerCommand::FinishUnmaterializationUpload {
+                command,
+                dispatcher: _,
+            } => command.execute(self),
+            LowPriorityMaterializerCommand::NextAdaptiveCleanRound {
                 command,
                 dispatcher: _,
             } => command.execute(self),

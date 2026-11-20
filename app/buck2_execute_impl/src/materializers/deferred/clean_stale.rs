@@ -9,6 +9,7 @@
  */
 
 use std::io::ErrorKind;
+use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -739,6 +740,7 @@ impl CleanStaleArtifactsCommand {
             AdaptiveOutcome::Disabled
         };
         let mut record_unmaterialization_ineligibility = false;
+        let mut adaptive_rounds = None;
 
         let mut artifact_dirs = Vec::new();
         let mut scan_error: Option<PendingCleanFailure> = None;
@@ -857,6 +859,8 @@ impl CleanStaleArtifactsCommand {
                         stats.adaptive_bytes_needed = adaptive.bytes_needed;
                         stats.adaptive_shortfall_bytes = adaptive.shortfall_bytes;
                         record_unmaterialization_ineligibility = adaptive.reached_unmaterialization;
+                        adaptive_rounds = AdaptiveRounds::follow(params, &adaptive)
+                            .map(|rounds| (rounds, buck_out_abs_path.dupe()));
                         adaptive.outcome
                     }
                     Err(e) => {
@@ -937,7 +941,13 @@ impl CleanStaleArtifactsCommand {
                 ))),
             }
         } else {
-            Ok(PendingCleanResult::Pending(create_clean_fut(
+            let (candidates, found_paths) = match adaptive_rounds {
+                Some(_) => found_paths
+                    .into_iter()
+                    .partition(FoundPath::is_adaptive_candidate),
+                None => (Vec::new(), found_paths),
+            };
+            let first_round = create_clean_fut(
                 found_paths,
                 stats,
                 tree,
@@ -945,14 +955,30 @@ impl CleanStaleArtifactsCommand {
                 io,
                 materializer_stats,
                 cancellations,
-                liveliness_observer,
+                liveliness_observer.dupe(),
                 rematerialization_ttl,
                 upload_config,
                 cleaning_version,
-                command_sender,
+                command_sender.dupe(),
                 scan_error,
                 adaptive_outcome,
-            )?))
+            )?;
+            Ok(PendingCleanResult::Pending(match adaptive_rounds {
+                Some((rounds, buck_out_abs_path)) => run_adaptive_rounds(
+                    first_round,
+                    AdaptiveCleanContinuation {
+                        rounds,
+                        candidates,
+                        liveliness_observer,
+                        upload_config: upload_config.cloned(),
+                        buck_out_abs_path,
+                    },
+                    io.dupe(),
+                    command_sender,
+                )
+                .boxed(),
+                None => first_round,
+            }))
         }
     }
 }
@@ -982,7 +1008,6 @@ pub(crate) trait CleanStaleStatsExt {
 
     /// Moves what a later adaptive round promoted among the retained `paths` from the retained
     /// to the stale and unmaterialization totals. Returns whether the round promoted anything.
-    #[cfg_attr(not(test), expect(dead_code, reason = "wired in child D131942143"))]
     fn record_adaptive_round(
         &mut self,
         paths: &[FoundPath],
@@ -1248,6 +1273,192 @@ impl CleanStaleStatsExt for CleanStaleStats {
             }
         }
     }
+}
+
+/// What an adaptive clean carries from one deletion round to the next.
+pub(super) struct AdaptiveCleanContinuation {
+    rounds: AdaptiveRounds,
+    /// What the scan found that a later round may still promote.
+    candidates: Vec<FoundPath>,
+    liveliness_observer: Arc<dyn LivelinessObserverSync>,
+    upload_config: Option<UnmaterializationUploadConfig>,
+    buck_out_abs_path: Arc<AbsPathBuf>,
+}
+
+/// Runs the rounds of an adaptive clean that follow `first_round`, each on the free space measured
+/// after the previous one, for as long as `AdaptiveRounds` has another one.
+async fn run_adaptive_rounds<T: IoHandler>(
+    first_round: BoxFuture<'static, CleanOutcome>,
+    mut continuation: AdaptiveCleanContinuation,
+    io: Arc<T>,
+    command_sender: Arc<MaterializerSender<T>>,
+) -> CleanOutcome {
+    let mut result = first_round.await?;
+    let mut clean_duration_s = result.stats.clean_duration_s;
+    while result.kind == CleanStaleResultKind::Finished
+        && continuation.liveliness_observer.is_alive_sync()
+    {
+        let disk = match io
+            .synced_disk_space_stats(continuation.buck_out_abs_path.dupe())
+            .await
+        {
+            Ok(disk) => disk,
+            Err(e) => {
+                soft_error_or_panic!("disk_space_stats", e);
+                break;
+            }
+        };
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let command = Box::new(NextAdaptiveCleanRound {
+            continuation,
+            disk,
+            stats: *result.stats,
+            adaptive_outcome: result.adaptive_outcome,
+            sender,
+        });
+        if !command_sender.send_low_priority(
+            LowPriorityMaterializerCommand::NextAdaptiveCleanRound {
+                command,
+                dispatcher: get_dispatcher_opt(),
+            },
+        ) {
+            break;
+        }
+        let Ok(reply) = receiver.await else {
+            break;
+        };
+        match reply {
+            NextAdaptiveCleanRoundReply::Round(round, next) => {
+                result = round.await?;
+                clean_duration_s += result.stats.clean_duration_s;
+                continuation = next;
+            }
+            NextAdaptiveCleanRoundReply::Done(stats, adaptive_outcome) => {
+                result.stats = stats;
+                result.adaptive_outcome = adaptive_outcome;
+                break;
+            }
+            NextAdaptiveCleanRoundReply::Failed(failure) => return Err(failure),
+        }
+    }
+    result.stats.clean_duration_s = clean_duration_s;
+    Ok(result)
+}
+
+/// Starts the next round of an adaptive clean on the command thread, which owns the tree, or
+/// finishes the clean when no round follows.
+#[derive(Derivative)]
+#[derivative(Debug)]
+pub(super) struct NextAdaptiveCleanRound {
+    #[derivative(Debug = "ignore")]
+    continuation: AdaptiveCleanContinuation,
+    #[derivative(Debug = "ignore")]
+    disk: DiskSpaceStats,
+    stats: CleanStaleStats,
+    adaptive_outcome: AdaptiveOutcome,
+    #[derivative(Debug = "ignore")]
+    sender: Sender<NextAdaptiveCleanRoundReply>,
+}
+
+pub(super) enum NextAdaptiveCleanRoundReply {
+    Round(BoxFuture<'static, CleanOutcome>, AdaptiveCleanContinuation),
+    Done(Box<CleanStaleStats>, AdaptiveOutcome),
+    Failed(CleanFailure),
+}
+
+impl NextAdaptiveCleanRound {
+    pub(super) fn execute<T: IoHandler>(
+        self,
+        processor: &mut DeferredMaterializerCommandProcessor<T>,
+    ) {
+        let Self {
+            mut continuation,
+            disk,
+            mut stats,
+            adaptive_outcome,
+            sender,
+        } = self;
+        let cleaning_version = processor.next_version();
+        let reply = match processor.sqlite_db.as_mut() {
+            // A command sent since the previous round has interrupted the clean, so a live clean
+            // finds the tree as its scan did; the candidates are checked against it all the same.
+            Some(sqlite_db) if continuation.liveliness_observer.is_alive_sync() => {
+                continuation
+                    .candidates
+                    .retain(|path| is_still_candidate(&processor.tree, path));
+                match continuation
+                    .rounds
+                    .next(&mut continuation.candidates, &disk, &mut stats)
+                {
+                    Some(round) => {
+                        let (candidates, promoted) = mem::take(&mut continuation.candidates)
+                            .into_iter()
+                            .partition(FoundPath::is_adaptive_candidate);
+                        continuation.candidates = candidates;
+                        match create_clean_fut(
+                            promoted,
+                            stats,
+                            &mut processor.tree,
+                            sqlite_db,
+                            &processor.io,
+                            &processor.stats,
+                            processor.cancellations,
+                            continuation.liveliness_observer.dupe(),
+                            processor.rematerialization_ttl,
+                            continuation.upload_config.as_ref(),
+                            cleaning_version,
+                            processor.command_sender.dupe(),
+                            None,
+                            round.outcome,
+                        ) {
+                            Ok(round) => NextAdaptiveCleanRoundReply::Round(round, continuation),
+                            Err(failure) => NextAdaptiveCleanRoundReply::Failed(failure),
+                        }
+                    }
+                    None => {
+                        let adaptive_outcome =
+                            continuation
+                                .rounds
+                                .finish(adaptive_outcome, &disk, &mut stats);
+                        NextAdaptiveCleanRoundReply::Done(Box::new(stats), adaptive_outcome)
+                    }
+                }
+            }
+            _ => NextAdaptiveCleanRoundReply::Done(Box::new(stats), adaptive_outcome),
+        };
+        let _ignored = sender.send(reply);
+    }
+}
+
+/// Whether the tree still holds `path` as the scan found it: materialized, accessed at the same
+/// time, and as active as it was.
+fn is_still_candidate(tree: &ArtifactTree, path: &FoundPath) -> bool {
+    let FoundPath::Tracked { path, state, .. } = path else {
+        return false;
+    };
+    let (found_access_time, found_active) = match state {
+        TrackedState::Retained {
+            last_access_time, ..
+        } => (*last_access_time, false),
+        TrackedState::ActiveRetained {
+            last_access_time, ..
+        } => (*last_access_time, true),
+        TrackedState::Stale(_) | TrackedState::Unmaterialize => return false,
+    };
+    let mut components = path.iter();
+    let data = tree.prefix_get(&mut components).map(|data| &**data);
+    components.next().is_none()
+        && matches!(
+            data,
+            Some(ArtifactMaterializationData {
+                stage: ArtifactMaterializationStage::Materialized {
+                    last_access_time,
+                    active,
+                    ..
+                },
+                ..
+            }) if *last_access_time == found_access_time && *active == found_active
+        )
 }
 
 fn create_clean_fut<T: IoHandler>(
@@ -1879,7 +2090,6 @@ pub(crate) enum FoundPath {
 
 impl FoundPath {
     /// Whether a later adaptive round may still promote this path.
-    #[cfg_attr(not(test), expect(dead_code, reason = "wired in child D131942143"))]
     pub(crate) fn is_adaptive_candidate(&self) -> bool {
         matches!(
             self,
@@ -2364,7 +2574,6 @@ pub(crate) const DEFAULT_MAX_ADAPTIVE_ROUNDS: u32 = 1;
 /// from the free space measured once the previous round's deletions are synced, and promotes the
 /// next-oldest of the artifacts the first scan found. The caller must keep commands from running
 /// between rounds, or revalidate what a round promotes, since the scan's view of them is reused.
-#[cfg_attr(not(test), expect(dead_code, reason = "wired in child D131942143"))]
 pub(crate) struct AdaptiveRounds {
     params: AdaptiveLowDiskParams,
     rounds: u32,
@@ -2372,7 +2581,6 @@ pub(crate) struct AdaptiveRounds {
     recorded_unmaterialization_ineligibility: bool,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "wired in child D131942143"))]
 impl AdaptiveRounds {
     /// Follows the first round, whose promotion is `first`; `None` when that promoted nothing
     /// because the disk did not need it.

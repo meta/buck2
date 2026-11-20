@@ -108,7 +108,7 @@ clean_stale_start_offset_hours = 12
   TTL to use while free disk is at or below the threshold.
 - `clean_stale_low_disk_adaptive_enabled` (default false) replaces the fixed
   shorter TTL with adaptive cleaning: buck2 keeps promoting the oldest retained
-  artifacts to stale until projected free disk rises back above the threshold,
+  artifacts to stale until measured free disk rises back above the threshold,
   while protecting any artifact younger than
   `clean_stale_low_disk_adaptive_min_ttl_hours` (default 12).
 - `clean_stale_low_disk_adaptive_max_rounds` (default 1) caps how many deletion

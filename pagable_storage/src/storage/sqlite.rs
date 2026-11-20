@@ -10,7 +10,10 @@
 
 use std::collections::VecDeque;
 use std::env;
+use std::fs::File;
+use std::io;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Condvar;
 use std::sync::Mutex;
@@ -335,11 +338,90 @@ struct ConnectionPool {
     read_timeout_ms: AtomicU64,
 }
 
+/// Where the key file of the shard whose value file is `path` lives.
+fn key_file_path(path: &Path) -> PathBuf {
+    path.with_extension("keys.db")
+}
+
+/// Creates a shard's key file, asking the file system not to compress it.
+///
+/// A key file is hashes, which hardly compress, and a key lookup wants one page of it.
+/// BTRFS reads a whole compressed extent to return any page of it, so a compressed key
+/// file makes each lookup read many times the page it wants.
+///
+/// BTRFS leaves a file uncompressed only if the file is made no-copy-on-write while
+/// it is still empty, which leaves it without checksums too. A file system with no such
+/// flag refuses it, and the file is created all the same.
+fn create_key_file(key_file: &Path) -> anyhow::Result<()> {
+    let file = File::options()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(key_file)?;
+    if file.metadata()?.len() == 0 {
+        let _ignored = set_no_copy_on_write(&file);
+    }
+    Ok(())
+}
+
+/// `FS_NOCOW_FL` in `linux/fs.h`: the file's data is written in place.
+#[cfg(target_os = "linux")]
+const FS_NOCOW_FL: libc::c_int = 0x0080_0000;
+
+/// The file's `FS_*_FL` flags, as `lsattr` shows them.
+#[cfg(target_os = "linux")]
+fn file_flags(file: &File) -> io::Result<libc::c_int> {
+    use std::os::fd::AsRawFd;
+
+    let mut flags: libc::c_int = 0;
+    // SAFETY: `FS_IOC_GETFLAGS` writes an `int` through its argument, which points at one;
+    // the descriptor is open.
+    match unsafe { libc::ioctl(file.as_raw_fd(), libc::FS_IOC_GETFLAGS, &mut flags) } {
+        0 => Ok(flags),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
+/// `FS_COMPR_FL` and `FS_NOCOMP_FL` in `linux/fs.h`: compress the file's data, or do not.
+/// A new file takes either from its directory.
+#[cfg(target_os = "linux")]
+const FS_COMPRESSION_FLAGS: libc::c_int = 0x0000_0004 | 0x0000_0400;
+
+#[cfg(target_os = "linux")]
+fn set_file_flags(file: &File, flags: libc::c_int) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    // SAFETY: `FS_IOC_SETFLAGS` reads an `int` through its argument, which points at one;
+    // the descriptor is open.
+    match unsafe { libc::ioctl(file.as_raw_fd(), libc::FS_IOC_SETFLAGS, &flags) } {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn set_no_copy_on_write(file: &File) -> io::Result<()> {
+    // BTRFS refuses the flag to a file that has a compression flag, going by the flags
+    // the file has before the call, so those are cleared in a call of their own.
+    let flags = file_flags(file)?;
+    let uncompressed = flags & !FS_COMPRESSION_FLAGS;
+    if uncompressed != flags {
+        set_file_flags(file, uncompressed)?;
+    }
+    set_file_flags(file, uncompressed | FS_NOCOW_FL)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_no_copy_on_write(_file: &File) -> io::Result<()> {
+    Ok(())
+}
+
 impl ConnectionPool {
     fn open(path: &Path, num_readers: usize) -> anyhow::Result<Self> {
         let writer = Connection::open(path)?;
         Self::init_pragmas(&writer)?;
         Self::init_writer_pragmas(&writer)?;
+        create_key_file(&key_file_path(path))?;
         Self::attach_key_file(&writer, path)?;
         writer.execute_batch(CREATE_TABLES_SQL)?;
 
@@ -373,7 +455,7 @@ impl ConnectionPool {
     /// Makes the shard's key file, which sits beside its value file as `<shard>.keys.db`,
     /// part of `conn` under the name `keys`.
     fn attach_key_file(conn: &Connection, path: &Path) -> anyhow::Result<()> {
-        let key_file = path.with_extension("keys.db");
+        let key_file = key_file_path(path);
         let key_file = key_file
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("key file path {key_file:?} is not UTF-8"))?;
@@ -1824,6 +1906,47 @@ mod tests {
             let recorded: usize =
                 key_file.query_row("SELECT COUNT(*) FROM pagable_keys", [], |row| row.get(0))?;
             assert_eq!(recorded, in_shard, "shard {shard_id}");
+        }
+        Ok(())
+    }
+
+    /// Where the file system has a no-copy-on-write flag, a shard's key file carries it and
+    /// its value file does not, whether or not the store's directory hands its files a
+    /// compression flag. Elsewhere there is nothing to check.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sqlite_key_files_are_not_copy_on_write() -> anyhow::Result<()> {
+        let probe_dir = TempStorageDir::new("key_file_no_cow_probe")?;
+        let probe = File::create(probe_dir.path.join("probe"))?;
+        if set_no_copy_on_write(&probe).is_err() {
+            return Ok(());
+        }
+        // No flag, `FS_COMPR_FL`, `FS_NOCOMP_FL`.
+        for directory_flag in [0, 0x0000_0004, 0x0000_0400] {
+            let dir = TempStorageDir::new("key_file_no_cow")?;
+            let directory = File::open(&dir.path)?;
+            if set_file_flags(&directory, file_flags(&directory)? | directory_flag).is_err() {
+                continue;
+            }
+            let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+            storage.store_data(pagable_data(b"value", Vec::new()))?;
+            storage.flush()?;
+
+            for shard_id in 0..NUM_SHARDS {
+                let value_file = dir.path.join(format!("pagable.{shard_id}.db"));
+                let flags = file_flags(&File::open(key_file_path(&value_file))?)?;
+                assert_ne!(
+                    flags & FS_NOCOW_FL,
+                    0,
+                    "key file of shard {shard_id}, directory flag {directory_flag:#x}"
+                );
+                let flags = file_flags(&File::open(&value_file)?)?;
+                assert_eq!(
+                    flags & FS_NOCOW_FL,
+                    0,
+                    "value file of shard {shard_id}, directory flag {directory_flag:#x}"
+                );
+            }
         }
         Ok(())
     }

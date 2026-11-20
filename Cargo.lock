@@ -8328,6 +8328,7 @@ dependencies = [
  "async-trait",
  "bytemuck",
  "bytesize",
+ "libc",
  "pagable",
  "parking_lot 0.13.0",
  "rusqlite",

@@ -19,6 +19,9 @@ rusqlite = { version = "0.40.0", features = ["bundled", "limits"] }
 sled.workspace = true
 tokio = { workspace = true, optional = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
 [features]
 default = []
 tokio = ["dep:tokio"]

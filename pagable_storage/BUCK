@@ -47,5 +47,10 @@ rust_library(
         "fbsource//third-party/rust:sled",
         "fbsource//third-party/rust:tokio",
         "//buck2/pagable:pagable",
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:libc",
+        ],
+    }),
 )

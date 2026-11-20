@@ -88,6 +88,7 @@ run(Args) when is_list(Args) ->
     os:putenv("HOME", CWDDir),
     ExitCode =
         try
+            ok = add_code_path(),
             {CtExecutorArgs, CtRunArgs} = parse_arguments(Args),
             debug_print("~tp", [#{ct_exec_args => CtExecutorArgs, ct_run_args => CtRunArgs}]),
             [OutputDir | _] = [OutputDir || {output_dir, OutputDir} <- CtExecutorArgs],
@@ -147,6 +148,18 @@ run(Args) when is_list(Args) ->
                 1
         end,
     erlang:halt(ExitCode).
+
+-doc """
+Adds the directories given with `-ct_code_path` to the code path, as `-pa` would but with caching enabled, so that
+the code server lists the contents of each directory once instead of searching all of them on every lookup. A `.beam`
+file added to one of these directories while the test runs is only found after `code:clear_cache/0`.
+""".
+-spec add_code_path() -> ok.
+add_code_path() ->
+    case init:get_argument(ct_code_path) of
+        {ok, Dirs} -> code:add_pathsa(lists:append(Dirs), cache);
+        error -> ok
+    end.
 
 -spec ct_run_exit_code(ct_run_result()) -> 0 | 2.
 ct_run_exit_code({error, Reason}) ->

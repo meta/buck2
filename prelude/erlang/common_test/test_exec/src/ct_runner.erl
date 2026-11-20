@@ -224,7 +224,9 @@ run_test(
     CommonAppEnv1 = CommonAppEnv0#{~"raw_target" => unicode_characters_to_binary(io_lib:format("~0p", [RawTarget]))},
     {ok, ServerPort} = ct_executor_watchdog:start_server(),
 
-    Args = build_run_args(OutputDir, ServerPort, Providers, Suite, TestSpecFile, CommonAppEnv1),
+    Args =
+        ["-ct_code_path" | CodePath] ++
+            build_run_args(OutputDir, ServerPort, Providers, Suite, TestSpecFile, CommonAppEnv1),
 
     {ok, ProjectRoot} = prim_file:get_cwd(),
 
@@ -232,7 +234,7 @@ run_test(
         ErlCmd,
         Trampolines,
         ExtraFlags,
-        CodePath,
+        boot_code_path(),
         ConfigFiles,
         OutputDir,
         [
@@ -243,6 +245,19 @@ run_test(
             ]}
         ]
     ).
+
+-doc """
+Returns the directories that the test node needs before `ct_executor` adds the code path given with `-ct_code_path`.
+""".
+-spec boot_code_path() -> [file:filename_all()].
+boot_code_path() ->
+    [filename:absname(ebin_dir(Module)) || Module <- [ct_executor, buck_ct_parser]].
+
+-spec ebin_dir(module()) -> file:filename().
+ebin_dir(Module) ->
+    case code:which(Module) of
+        Beam when is_list(Beam) -> filename:dirname(Beam)
+    end.
 
 -spec build_common_args(
     CodePath :: [file:filename_all()],

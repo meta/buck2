@@ -449,6 +449,8 @@ rules_attributes = {
                 Will specify what config files the erlang beam machine running test with should load, for reference look at
                 [OTP documentation](https://www.erlang.org/doc/man/config.html). These ones should consist of default_output of
                 some targets. In general, this field is filled with target coming from then `export_file` rule, as in the example below.
+                Modules that the configuration makes the node load at boot, such as logger handlers, must come from OTP: the
+                test's dependencies are added to the code path only when the test starts.
             """,
         ),
         "deps": attrs.list(
@@ -462,6 +464,8 @@ rules_attributes = {
                 If some applications are included as dependencies of this target, their private include will automatically
                 be pulled and made available for the test. That allows tests to access the private header files from the
                 applications under test.
+                The test node caches the contents of the suite's and its dependencies' code directories: a `.beam` file
+                that a test writes into one of them is only found after `code:clear_cache/0`.
             """,
         ),
         "env": attrs.dict(
@@ -493,7 +497,9 @@ rules_attributes = {
             default = [],
             doc = """
                 List of additional command line arguments given to the erl command invocation. These
-                arguments are added to the front of the argument list.
+                arguments are added to the front of the argument list. Code that they run before the test starts, for
+                example with `-s` or `-eval`, can only use OTP modules: the test's dependencies are added to the code path
+                only when the test starts.
             """,
         ),
         "resources": attrs.list(

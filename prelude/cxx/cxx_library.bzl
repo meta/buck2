@@ -855,6 +855,11 @@ def cxx_library_parameterized(ctx: AnalysisContext, impl_params: CxxRuleConstruc
 
             if impl_params.generate_sub_targets.link_style_outputs:
                 if output:
+                    # Expose non-default flavor outputs (e.g. `optimized`) as nested
+                    # sub-targets: `:lib[static-pic][optimized]`.
+                    for flavor, flavor_output in library_outputs.outputs.get(output_style, {}).items():
+                        if flavor != LinkableFlavor("default") and flavor_output.default != None:
+                            output_style_sub_targets[flavor.value] = [DefaultInfo(default_output = flavor_output.default)]
                     sub_targets[subtarget_for_output_style(output_style)] = [
                         DefaultInfo(
                             default_output = output.default,

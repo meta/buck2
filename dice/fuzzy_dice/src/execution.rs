@@ -1103,7 +1103,7 @@ impl Arbitrary for DiceExecutionOrder {
                         if gen_out_of_order {
                             *g.choose(&ctx_ids).unwrap()
                         } else {
-                            cmp::max(ctx_ids.len() - 1, 0)
+                            *ctx_ids.last().unwrap()
                         }
                     },
                     var: active_vars[i],

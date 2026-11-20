@@ -467,7 +467,7 @@ re_grpc_proto = { path = "remote_execution/oss/re_grpc_proto" }
 ref-cast = "1.0.27"
 regex = "1.13.1"
 remote_execution = { path = "remote_execution/oss/re_grpc" }
-rfd = "0.17.2"
+rfd = "0.18.0"
 ruff_formatter = "0.0.21"
 ruff_python_ast = "0.0.21"
 ruff_python_formatter = "0.0.21"

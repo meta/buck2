@@ -158,6 +158,7 @@ This will lead to overbuilding and is not supported. Configuration {} not found 
         native_library_merge_non_asset_libs = apk_under_test_info.native_library_merge_non_asset_libs,
         native_library_merge_sequence = apk_under_test_info.native_library_merge_sequence,
         native_library_merge_sequence_blocklist = apk_under_test_info.native_library_merge_sequence_blocklist,
+        java_packaging_deps = all_java_packaging_deps,
     )
 
     output_apk = build_apk(

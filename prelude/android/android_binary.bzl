@@ -101,6 +101,7 @@ def get_binary_info(ctx: AnalysisContext, use_proto_format: bool) -> AndroidBina
         native_library_merge_linker_args_all = getattr(ctx.attrs, "native_library_merge_linker_args_all", None),
         native_library_merge_code_generator = getattr(ctx.attrs, "native_library_merge_code_generator", None),
         native_library_merge_sequence_blocklist = getattr(ctx.attrs, "native_library_merge_sequence_blocklist", None),
+        java_packaging_deps = java_packaging_deps,
     )
     java_packaging_deps.extend([
         create_java_packaging_dep(

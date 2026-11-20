@@ -19,6 +19,16 @@ AidlToolchainInfo = provider(
     }
 )
 
+# Extra inputs an Android binary links into some of its native libraries on one
+# platform (`AndroidToolchainInfo.native_library_link_extras`).
+NativeLibraryLinkExtras = record(
+    # Linker args the binary adds to the link of each native library it links.
+    link_args = list,
+    # The libraries that need `link_args`. A binary that does not merge its
+    # native libraries relinks these, and the libraries that depend on them.
+    libraries = dict[Label, None],
+)
+
 AndroidToolchainInfo = provider(
     fields = {
         "aapt2": provider_field(typing.Any, default = None),
@@ -74,6 +84,12 @@ AndroidToolchainInfo = provider(
         "multi_dex_command": provider_field(typing.Any, default = None),
         # JVM max heap (`-Xmx` value, e.g. "28g") for `multi_dex_command`. When None, the JVM picks its default.
         "multi_dex_max_heap_size": provider_field(str | None, default = None),
+        # A function `(ctx, java_packaging_deps: list[JavaPackagingDep] | None, deps_by_platform:
+        # dict[str, list[Dependency]], linkable_nodes_by_platform: dict[str, dict[Label, LinkableNode]])
+        # -> dict[str, NativeLibraryLinkExtras]` that an Android binary calls with the Java it packages,
+        # its deps and its native graph, to link extra inputs into some of its native libraries, by platform.
+        # `java_packaging_deps` is None for a caller that does not pass the Java it packages.
+        "native_library_link_extras": provider_field(typing.Any, default = None),
         "native_libs_as_assets_metadata": provider_field(typing.Any, default = None),
         "optimized_proguard_config": provider_field(typing.Any, default = None),
         "p7zip": provider_field(typing.Any, default = None),

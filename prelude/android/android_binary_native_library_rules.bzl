@@ -264,6 +264,7 @@ def get_android_binary_native_library_info(
     native_library_merge_linker_args_all: list | None = None,
     native_library_merge_code_generator: Dependency | None = None,
     native_library_merge_sequence_blocklist: list | None = None,
+    java_packaging_deps: list | None = None,
 ) -> AndroidBinaryNativeLibsInfo:
     ctx = enhance_ctx.ctx
 
@@ -414,7 +415,23 @@ def get_android_binary_native_library_info(
     late_gatorade_products = ctx.actions.declare_output("late_gatorade_products", dir = True, has_content_based_path = False)
     dynamic_outputs.append(late_gatorade_products)
 
-    has_native_merging = native_library_merge_sequence or native_library_merge_map
+    # Extra inputs the toolchain links into some of the binary's native
+    # libraries (`AndroidToolchainInfo.native_library_link_extras`). The binary
+    # links its native libraries itself only when it merges them, so without
+    # merging it relinks the libraries that need the extras, alone, and those
+    # that depend on them, and packages the others as they are.
+    native_library_link_extras_func = ctx.attrs._android_toolchain[AndroidToolchainInfo].native_library_link_extras
+    precomputed_nodes_by_platform = {}
+    native_library_link_extras = {}
+    if native_library_link_extras_func != None:
+        precomputed_nodes_by_platform = _linkable_nodes_by_platform(ctx, deps_by_platform)
+        native_library_link_extras = native_library_link_extras_func(ctx, java_packaging_deps, deps_by_platform, precomputed_nodes_by_platform)
+    uses_link_extras = len(native_library_link_extras) > 0
+    merges_native_libraries = bool(native_library_merge_sequence or native_library_merge_map)
+    if uses_link_extras and not native_library_merge_sequence and not native_library_merge_map:
+        native_library_merge_map = {}
+
+    has_native_merging = merges_native_libraries or uses_link_extras
     enable_relinker = getattr(ctx.attrs, "enable_relinker", False)
     # An exopackage build is installed as this binary, which no combine step follows, and the
     # combine step would also replace a library a pick-first prebuilt shadows in the APK.
@@ -479,8 +496,10 @@ def get_android_binary_native_library_info(
         for platform, deps in deps_by_platform.items():
             if platform == CPU_FILTER_FOR_PRIMARY_PLATFORM and platform not in ctx.attrs.cpu_filters and len(ctx.attrs.cpu_filters) != 0:
                 continue
-            linkable_graph = create_linkable_graph(ctx, deps = deps)
-            graph_node_map = get_linkable_graph_node_map_func(linkable_graph)()
+            if platform in precomputed_nodes_by_platform:
+                graph_node_map = precomputed_nodes_by_platform[platform]
+            else:
+                graph_node_map = get_linkable_graph_node_map_func(create_linkable_graph(ctx, deps = deps))()
             linkables_debug = ctx.actions.write("linkables." + platform, list(graph_node_map.keys()), has_content_based_path = False)
             enhance_ctx.debug_output("linkables." + platform, linkables_debug)
             linkable_nodes_by_platform[platform] = graph_node_map
@@ -490,6 +509,8 @@ def get_android_binary_native_library_info(
                         compile_argsfiles[cc.cxx_compile_cmd.argsfile.file] = None
 
     merge_linker_args_all_by_platform = {platform: list(native_library_merge_linker_args_all or []) for platform in linkable_nodes_by_platform}
+    for platform, link_extras in native_library_link_extras.items():
+        merge_linker_args_all_by_platform[platform] = merge_linker_args_all_by_platform[platform] + link_extras.link_args
 
     jni_onload_check_report = None
     if has_native_merging and ctx.attrs._android_toolchain[AndroidToolchainInfo].jni_onload_check:
@@ -692,7 +713,7 @@ def get_android_binary_native_library_info(
                 merge_map_by_platform = artifacts[native_library_merge_map].read_json()
                 split_groups = artifacts[split_groups_map].read_json()
                 native_library_merge_debug_outputs["merge_sequence_output"] = native_library_merge_dir
-            elif native_library_merge_map:
+            elif native_library_merge_map or (uses_link_extras and not merges_native_libraries):
                 merge_map_by_platform = _merge_map_from_regexes(native_library_merge_map, linkable_nodes_by_platform)
                 merge_map = ctx.actions.write_json("merge.map", merge_map_by_platform, pretty = True, has_content_based_path = False)
                 native_library_merge_debug_outputs["merge_map_output"] = merge_map
@@ -716,6 +737,10 @@ def get_android_binary_native_library_info(
                     merge_linker_args = merge_linker_args_for_platform(native_library_merge_linker_args or {}, platform),
                     apk_module_graph = get_module_from_target,
                     jni_onload_check_inputs = jni_onload_check_inputs,
+                    relink_only_with = (native_library_link_extras[platform].libraries if platform in native_library_link_extras else {})
+                    if uses_link_extras and not merges_native_libraries
+                    else None,
+                    excluded_targets = shared_libraries_to_exclude | apk_under_test_shared_libraries,
                 )
                 debug_info_by_platform[platform] = debug_info
                 merged_shared_libs_by_platform[platform] = merged_shared_libs
@@ -1040,7 +1065,7 @@ def get_android_binary_native_library_info(
                 middle_gatorade_relinked_libraries_by_platform,
             )
 
-        if ctx.attrs._android_toolchain[AndroidToolchainInfo].cross_module_native_deps_check and (has_native_merging or enable_relinker):
+        if ctx.attrs._android_toolchain[AndroidToolchainInfo].cross_module_native_deps_check and (merges_native_libraries or enable_relinker):
             # note: can only detect these if linkable_nodes_by_platform is created, ie. if using relinker or merging.
             # EMIT_NATIVE_BUILD_COMMANDS also builds it on apps that do neither; those apps never ran
             # this check, so it stays gated on merging/relinking.
@@ -2354,6 +2379,14 @@ def _link_info_object_artifacts(link_info: LinkInfo) -> list[Artifact]:
             artifacts.extend(linkable.objects or [])
     return artifacts
 
+def _linkable_nodes_by_platform(ctx: AnalysisContext, deps_by_platform: dict[str, list[Dependency]]) -> dict[str, dict[Label, LinkableNode]]:
+    nodes_by_platform = {}
+    for platform, deps in deps_by_platform.items():
+        if platform == CPU_FILTER_FOR_PRIMARY_PLATFORM and platform not in ctx.attrs.cpu_filters and len(ctx.attrs.cpu_filters) != 0:
+            continue
+        nodes_by_platform[platform] = get_linkable_graph_node_map_func(create_linkable_graph(ctx, deps = deps))()
+    return nodes_by_platform
+
 def _merge_map_from_regexes(native_library_merge_map: dict, linkable_nodes_by_platform: dict[str, dict[Label, LinkableNode]]) -> dict[str, dict[str, str]]:
     # Each target whose raw label one of a library's patterns matches merges
     # into that library, the first library in the map winning.
@@ -2387,6 +2420,8 @@ def _get_merged_linkables_for_platform(
     merge_linker_args: dict[str, typing.Any],
     apk_module_graph: typing.Callable,
     jni_onload_check_inputs: list | None = None,
+    relink_only_with: dict[Label, None] | None = None,
+    excluded_targets: set[TargetLabel] = set(),
 ) -> (dict[str, MergedSharedLibrary], MergedLinkablesDebugInfo):
     """
     This takes the merge mapping and constructs the resulting merged shared libraries.
@@ -2428,6 +2463,11 @@ def _get_merged_linkables_for_platform(
     1. all primary constituents are public nodes, non primary ones are only public if they are transitively exported_deps
     of a primary constituent. A public node is linked via "link whole".
     2. linker_flags of primary constituents are included in the link, for non primary they are not
+
+    With `relink_only_with`, the result has the shared libraries an unmerged link has: a target that is not actually
+    merged keeps its own shared library unless it, or a target it depends on, is in `relink_only_with`, and a target
+    without one is linked statically into the libraries that are relinked. A target in `excluded_targets` has no
+    default shared library but stays a shared library, which the caller leaves out of the package.
     """
     debug_info = MergedLinkablesDebugInfo(
         unmerged_statics = [],
@@ -2514,9 +2554,18 @@ def _get_merged_linkables_for_platform(
 
     # Now we will traverse from the leaves up the graph (the link groups graph). As we traverse, we will produce
     # a link group linkablenode for each group.
+    relinked = {}
     for group in post_order_traversal(link_groups_graph, edge_explainer = edge_explainer):
         group_data = link_groups[group]
         is_actually_merged = len(group_data.constituents) > 1
+        if relink_only_with != None:
+            relinked[group] = False
+            for target in group_data.constituents:
+                if target in relink_only_with:
+                    relinked[group] = True
+            for dep in link_groups_graph.get(group, []):
+                if relinked[dep]:
+                    relinked[group] = True
 
         non_asset_constituents = [target for target in group_data.constituents if not linkable_nodes[target].can_be_asset]
         can_be_asset = len(non_asset_constituents) == 0
@@ -2560,6 +2609,40 @@ def _get_merged_linkables_for_platform(
                     apk_module = group_data.apk_module,
                     solib_constituents = [],
                     solib_constituent_targets = [],
+                    is_actually_merged = False,
+                    primary_constituents = [target],
+                )
+                continue
+
+            original_shared_lib = default_shared_libs.get(node_data.default_soname)
+            if relink_only_with != None and not original_shared_lib and target.raw_target() not in excluded_targets:
+                # Without merging, the target is not a shared library of its own either.
+                debug_info.unmerged_statics.append(target)
+                link_group_linkable_nodes[group] = LinkGroupLinkableNode(
+                    link = node_data.link_infos[archive_output_style].default,
+                    deps = dedupe_by_value([target_to_link_group[t] for t in node_data.deps]),
+                    exported_deps = dedupe_by_value([target_to_link_group[t] for t in node_data.exported_deps]),
+                    shared_lib = None,
+                    exported_linker_flags = (node_data.linker_flags.exported_flags, node_data.linker_flags.exported_post_flags),
+                )
+                continue
+            if relink_only_with != None and original_shared_lib and not relinked[group]:
+                included_default_solibs[node_data.default_soname] = True
+                link_group_linkable_nodes[group] = LinkGroupLinkableNode(
+                    link = node_data.link_infos[shlib_output_style].default,
+                    deps = dedupe_by_value([target_to_link_group[t] for t in node_data.deps]),
+                    exported_deps = dedupe_by_value([target_to_link_group[t] for t in node_data.exported_deps]),
+                    shared_lib = original_shared_lib,
+                    # exported linker flags for shared libs are in their linkinfo itself and are not exported from dependents
+                    exported_linker_flags = None,
+                )
+                in_mergemap = node_data.include_in_android_mergemap
+                group_shared_libs[node_data.default_soname] = MergedSharedLibrary(
+                    soname = node_data.default_soname,
+                    lib = original_shared_lib,
+                    apk_module = group_data.apk_module,
+                    solib_constituents = [node_data.default_soname] if in_mergemap else [],
+                    solib_constituent_targets = [target] if in_mergemap else [],
                     is_actually_merged = False,
                     primary_constituents = [target],
                 )

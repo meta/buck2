@@ -87,16 +87,19 @@ def _get_xctrunner_frameworks(ctx: AnalysisContext) -> list[AppleBundlePart]:
             codesign_on_copy = True,
         )
 
+    xcode_version = int(ctx.attrs._apple_toolchain[AppleToolchainInfo].xcode_version)
     runner_frameworks = [
         "Developer/Library/Frameworks/XCTest.framework",
         "Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework",
         "Developer/Library/PrivateFrameworks/XCTestCore.framework",
         "Developer/Library/PrivateFrameworks/XCTestSupport.framework",
-        "Developer/Library/PrivateFrameworks/XCUnit.framework",
     ]
 
+    # Xcode 27.2 removes XCUnit.framework from the platform
+    if xcode_version < 2720:
+        runner_frameworks.append("Developer/Library/PrivateFrameworks/XCUnit.framework")
+
     # From Xcode 16.3 XCUIAutomation is in Frameworks, not PrivateFrameworks
-    xcode_version = int(ctx.attrs._apple_toolchain[AppleToolchainInfo].xcode_version)
     if xcode_version >= 1630:
         runner_frameworks.append("Developer/Library/Frameworks/XCUIAutomation.framework")
     else:

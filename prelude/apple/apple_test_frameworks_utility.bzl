@@ -18,9 +18,12 @@ def get_test_frameworks_bundle_parts(ctx: AnalysisContext, swift_support_needed:
         _get_object_from_platform_path(ctx, "Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework"),
         _get_object_from_platform_path(ctx, "Developer/Library/PrivateFrameworks/XCTestCore.framework"),
         _get_object_from_platform_path(ctx, "Developer/Library/PrivateFrameworks/XCTestSupport.framework"),
-        _get_object_from_platform_path(ctx, "Developer/Library/PrivateFrameworks/XCUnit.framework"),
         _get_object_from_platform_path(ctx, "Developer/usr/lib/libXCTestBundleInject.dylib"),
     ]
+
+    # Xcode 27.2 removes XCUnit.framework from the platform
+    if xcode_version < 2720:
+        paths.append(_get_object_from_platform_path(ctx, "Developer/Library/PrivateFrameworks/XCUnit.framework"))
 
     # From Xcode 16.3 XCUIAutomation is in Frameworks, not PrivateFrameworks
     if xcode_version >= 1630:

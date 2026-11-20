@@ -497,8 +497,11 @@ class InlineBodyKeepability(
     )
 
     // FQN-level allowlist for harmless annotations inside otherwise-mixed packages.
-    // Empty: add entries only with per-annotation no-reader evidence.
-    val KEEPABLE_ANNOTATIONS = setOf<String>()
+    // Add entries only with per-annotation no-reader evidence.
+    val KEEPABLE_ANNOTATIONS = setOf<String>(
+        // Lint-only (`@Retention(CLASS)` in android.jar); no compiler plugin reads it.
+        "android.annotation.SuppressLint",
+    )
 
     // Whether an annotation may ride along on a kept inline body: allowlisted by
     // package or FQN, and not named as a trigger in this compilation's plugin options

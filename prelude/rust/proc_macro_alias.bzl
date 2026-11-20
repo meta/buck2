@@ -8,7 +8,6 @@
 
 # Helper rule which introduces proc macros into the dependency graph
 
-load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
 load(
     ":link_info.bzl",
     "RustProcMacroArchInfo",
@@ -52,7 +51,6 @@ rust_proc_macro_alias = rule(
     attrs = {
         "actual": attrs.option(attrs.transition_dep(cfg = _without_top_level_marker), default = None),
         "actual_plugin": attrs.plugin_dep(kind = RustProcMacroPlugin),
-        "_rust_toolchain": toolchains_common.rust(),
     },
 )
 

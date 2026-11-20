@@ -77,3 +77,29 @@ stat_path = rule(
         "project": attrs.option(attrs.string(), default = None),
     },
 )
+
+def _copy_tree_impl(ctx: AnalysisContext):
+    # `copy_dir` lays the directory out from its recorded digest, so a symlink only survives this
+    # if the digest recorded it as a symlink.
+    copied = ctx.actions.copy_dir("copied", ctx.attrs.src, has_content_based_path = False)
+    out = ctx.actions.declare_output("out", dir = True, has_content_based_path = False)
+    ctx.actions.run(
+        cmd_args(
+            "fbpython",
+            "-c",
+            "import shutil, sys; shutil.copytree(sys.argv[1], sys.argv[2], symlinks = True)",
+            copied,
+            out.as_output(),
+        ),
+        category = "copy_tree",
+    )
+    return [
+        DefaultInfo(default_output = out),
+    ]
+
+copy_tree = rule(
+    impl = _copy_tree_impl,
+    attrs = {
+        "src": attrs.source(allow_directory = True),
+    },
+)

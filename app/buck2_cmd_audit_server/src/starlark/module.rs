@@ -13,12 +13,14 @@ use std::io::Write;
 use buck2_cli_proto::ClientContext;
 use buck2_cmd_audit_client::starlark::module::StarlarkModuleCommand;
 use buck2_common::dice::cells::HasCellResolver;
+use buck2_core::bzl::ImportPath;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_interpreter::dice::bzl_eval_cell::HasBzlEvalCell;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::parse_import::ParseImportOptions;
 use buck2_interpreter::parse_import::RelativeImports;
-use buck2_interpreter::parse_import::parse_bzl_path_with_config;
+use buck2_interpreter::parse_import::parse_import_with_config;
 use buck2_interpreter::paths::module::StarlarkModulePath;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::ctx::ServerCommandDiceContext;
@@ -41,7 +43,7 @@ pub(crate) async fn server_execute(
                 .get_cell_alias_resolver(current_cell_path.cell())
                 .await?;
 
-            let import_path = parse_bzl_path_with_config(
+            let path = parse_import_with_config(
                 &cell_alias_resolver,
                 &command.import_path,
                 &ParseImportOptions {
@@ -54,7 +56,12 @@ pub(crate) async fn server_execute(
                     // Otherwise `@arg` is expanded as mode file.
                     allow_missing_at_symbol: true,
                 },
+            )?;
+            // The module as a file in the current cell would load it.
+            let import_path = ImportPath::new_for_load(
+                path,
                 current_cell,
+                dice_ctx.ctx().get_bzl_eval_cell().await?,
             )?;
 
             let loaded_module = dice_ctx

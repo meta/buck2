@@ -15,6 +15,7 @@ use buck2_cli_proto::new_generic::DocsResponse;
 use buck2_cli_proto::new_generic::DocsStarlarkRequest;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_core::bxl::BxlFilePath;
+use buck2_core::bzl::BzlEvalCell;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::build_file_cell::BuildFileCell;
@@ -22,6 +23,7 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use buck2_core::cells::name::CellName;
 use buck2_hash::BuckMutSet;
+use buck2_interpreter::dice::bzl_eval_cell::HasBzlEvalCell;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::parse_import::ParseImportOptions;
 use buck2_interpreter::parse_import::RelativeImports;
@@ -76,6 +78,7 @@ fn parse_starlark_paths(
     cell_resolver: &CellAliasResolver,
     current_dir: &CellPath,
     symbol_patterns: &[String],
+    bzl_eval_cell: BzlEvalCell,
 ) -> buck2_error::Result<BuckMutSet<StarlarkFilePath>> {
     let parse_options = ParseImportOptions {
         allow_missing_at_symbol: true,
@@ -95,9 +98,12 @@ fn parse_starlark_paths(
             if path.path().extension() == Some("bxl") {
                 Ok(StarlarkFilePath::Bxl(BxlFilePath::new(path)?))
             } else {
-                Ok(StarlarkFilePath::Bzl(
-                    ImportPath::new_with_build_file_cells(path, current_cell)?,
-                ))
+                // The module as a file in the current cell would load it.
+                Ok(StarlarkFilePath::Bzl(ImportPath::new_for_load(
+                    path,
+                    current_cell,
+                    bzl_eval_cell,
+                )?))
             }
         })
         .collect()
@@ -120,6 +126,7 @@ pub(crate) async fn docs_starlark(
         &cell_alias_resolver,
         &current_cell_path,
         &request.symbol_patterns,
+        dice_ctx.ctx().get_bzl_eval_cell().await?,
     )?;
 
     let docs: Vec<_> = dice_ctx

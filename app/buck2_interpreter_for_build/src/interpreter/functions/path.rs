@@ -108,12 +108,13 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
     }
 
     /// `get_cell_name()` can be called from either a `BUCK` file or a `.bzl` file,
-    /// and returns the name of the cell where the `BUCK` file that started the call
-    /// lives.
+    /// and returns the name of the cell of the file that is being evaluated.
     ///
-    /// For example, inside `foo//bar/baz/BUCK` the output will be `foo`.
-    /// If that `BUCK` file does a `load("hello//world.bzl", "something")` then
-    /// the result in that `.bzl` file will also be `foo`.
+    /// For example, inside `foo//bar/baz/BUCK` the output will be `foo`, also in a function
+    /// that the `BUCK` file gets with `load("hello//world.bzl", "something")` and calls.
+    ///
+    /// At the top level of `hello//world.bzl` the output is `hello` if the root cell sets
+    /// `buck2.eval_bzl_in_own_cell = true`, and `foo` otherwise.
     fn get_cell_name(eval: &mut Evaluator) -> starlark::Result<String> {
         Ok(BuildContext::from_context(eval)?
             .cell_info()

@@ -13,7 +13,9 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_common::dice::cells::HasCellResolver;
+use buck2_core::bzl::BzlEvalCell;
 use buck2_core::cells::CellResolver;
+use buck2_interpreter::dice::bzl_eval_cell::HasBzlEvalCell;
 use buck2_interpreter::dice::starlark_types::GetStarlarkTypes;
 use dice::DiceComputations;
 use dice::EqualityBehavior;
@@ -52,6 +54,8 @@ pub struct GlobalInterpreterState {
 
     /// Static typechecking for bzl and bxl files.
     pub unstable_typecheck: bool,
+
+    pub bzl_eval_cell: BzlEvalCell,
 }
 
 impl GlobalInterpreterState {
@@ -60,6 +64,7 @@ impl GlobalInterpreterState {
         interpreter_configuror: Arc<BuildInterpreterConfiguror>,
         disable_starlark_types: bool,
         unstable_typecheck: bool,
+        bzl_eval_cell: BzlEvalCell,
     ) -> buck2_error::Result<Self> {
         let global_env = base_globals()
             .with(|g| {
@@ -77,6 +82,7 @@ impl GlobalInterpreterState {
             configuror: interpreter_configuror,
             disable_starlark_types,
             unstable_typecheck,
+            bzl_eval_cell,
         })
     }
 
@@ -128,12 +134,14 @@ impl<'d> HasGlobalInterpreterState<'d> for DiceComputations<'d> {
                 let cell_resolver = ctx.get_cell_resolver().await?.dupe();
                 let disable_starlark_types = ctx.get_disable_starlark_types().await?;
                 let unstable_typecheck = ctx.get_unstable_typecheck().await?;
+                let bzl_eval_cell = ctx.get_bzl_eval_cell().await?;
 
                 Ok(Arc::new(GlobalInterpreterState::new(
                     cell_resolver,
                     interpreter_configuror,
                     disable_starlark_types,
                     unstable_typecheck,
+                    bzl_eval_cell,
                 )?))
             }
 

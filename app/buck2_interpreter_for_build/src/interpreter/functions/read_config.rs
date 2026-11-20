@@ -19,10 +19,15 @@ use crate::interpreter::build_context::BuildContext;
 
 #[starlark_module]
 pub(crate) fn register_read_config(globals: &mut GlobalsBuilder) {
-    /// Read a configuration value from the .buckconfig for the current
-    /// cell of the `BUCK` file that started evaluation of this code.
+    /// Read a configuration value from the `.buckconfig` of the cell of the file that is
+    /// being evaluated: the `BUCK`, `PACKAGE` or `bxl` file, also when the call is in a
+    /// function that the file loaded from another cell.
     ///
-    /// As an example, if the current cell's .buckconfig contains:
+    /// At the top level of a `.bzl` file, that is the cell of the `.bzl` file if the root
+    /// cell sets `buck2.eval_bzl_in_own_cell = true`. Otherwise it is the cell of the file
+    /// that loads the `.bzl` file, and the `.bzl` file is evaluated once for each such cell.
+    ///
+    /// As an example, if that cell's .buckconfig contains:
     ///
     /// ```toml
     /// [package_options]

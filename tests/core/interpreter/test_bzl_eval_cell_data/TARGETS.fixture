@@ -1,0 +1,5 @@
+load("@other//:defs.bzl", "TOP_LEVEL", "in_function", "record")
+
+record(name = "top_level", cells = TOP_LEVEL)
+
+record(name = "in_function", cells = in_function())

@@ -1,0 +1,9 @@
+[cells]
+  root = .
+  other = other
+
+[buildfile]
+  name = TARGETS.fixture
+
+[fixture]
+  cell = root

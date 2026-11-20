@@ -17,6 +17,7 @@
 //! implements InterpreterFileOps by basically putting DefaultInterpreterFileOps
 //! onto the dice graph).
 
+pub mod bzl_eval_cell;
 pub mod starlark_debug;
 pub mod starlark_provider;
 pub mod starlark_types;

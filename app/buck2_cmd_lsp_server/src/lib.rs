@@ -24,7 +24,6 @@ use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_core::bxl::BxlFilePath;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::CellResolver;
-use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
@@ -379,16 +378,9 @@ impl<'a> BuckLspContext<'a> {
             Some(e) if e == "bxl" => Ok(OwnedStarlarkModulePath::BxlFile(BxlFilePath::new(
                 cell_path,
             )?)),
-            _ => {
-                // Instantiating a BuildFileCell off of the path of the file being originally evaluated.
-                // Unlike the build commands and such, there is no meaningful "build file cell" versus
-                // the cell of the file being currently evaluated.
-                let bfc = BuildFileCell::new(cell_path.cell());
-
-                Ok(OwnedStarlarkModulePath::LoadFile(
-                    ImportPath::new_hack_for_lsp(cell_path, bfc)?,
-                ))
-            }
+            _ => Ok(OwnedStarlarkModulePath::LoadFile(
+                ImportPath::new_hack_for_lsp(cell_path)?,
+            )),
         }
     }
 

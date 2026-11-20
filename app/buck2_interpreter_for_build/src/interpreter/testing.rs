@@ -16,6 +16,7 @@ use buck2_common::legacy_configs::configs::testing::parse_with_config_args;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_common::package_listing::listing::testing::PackageListingExt;
 use buck2_core::build_file_path::BuildFilePath;
+use buck2_core::bzl::BzlEvalCell;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::CellResolver;
@@ -204,6 +205,7 @@ impl Tester {
             &self.root_config,
             build_file_cell,
             &self.cell_alias_resolver,
+            BzlEvalCell::Loader,
         )?;
         let additional_globals = self.additional_globals.clone();
         let cell_info = InterpreterCellInfo::new(
@@ -233,6 +235,7 @@ impl Tester {
                 )?,
                 false,
                 true,
+                BzlEvalCell::Loader,
             )?),
             Arc::new(import_paths),
             self.current_dir_with_allowed_relative_dirs.dupe(),

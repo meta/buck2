@@ -152,19 +152,14 @@ impl PerFileTypeContext {
 /// their implementation.
 #[derive(ProvidesStaticType, Debug)]
 pub struct BuildContext<'a> {
-    /// The CellInfo for the top-level module being interpreted. Note that this
-    /// is not necessarily the same as the file currently being processed
-    /// (i.e. if `cell1//BUCK` loads `cell2//defs.bzl` the cell info when
-    /// loading `cell2//defs.bzl` will be based on `cell1`).
+    /// Names the cell that the module is evaluated for, which under `BzlEvalCell::Loader`
+    /// is not the cell that a `bzl` file is in: if `cell1//BUCK` loads `cell2//defs.bzl`,
+    /// the name is `cell1` while the top level of `cell2//defs.bzl` runs.
     ///
-    /// This cell_info is used only for things that should be resolved in the
-    /// context of the top-level module. The most important of these is the
-    /// `read_config()` implementation.
-    ///
-    /// For example of where this isn't used, it is not used for resolving
-    /// `load()` statements.
+    /// The alias resolver is always the one of the cell that the module is in.
     pub cell_info: &'a InterpreterCellInfo,
 
+    /// The buckconfig of the cell that `cell_info` names, and of the root cell.
     pub(crate) buckconfigs: LegacyBuckConfigsForStarlark<'a>,
 
     pub(crate) host_info: &'a HostInfo,

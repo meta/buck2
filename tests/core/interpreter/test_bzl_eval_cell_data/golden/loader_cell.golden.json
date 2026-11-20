@@ -1,0 +1,32 @@
+# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
+
+{
+  "root//:top_level": {
+    "buck.type": "record",
+    "cells": {
+      "get_cell_name": "root",
+      "read_config": "root"
+    }
+  },
+  "root//:in_function": {
+    "buck.type": "record",
+    "cells": {
+      "get_cell_name": "root",
+      "read_config": "root"
+    }
+  },
+  "other//:top_level": {
+    "buck.type": "record",
+    "cells": {
+      "get_cell_name": "other",
+      "read_config": "other"
+    }
+  },
+  "other//:in_function": {
+    "buck.type": "record",
+    "cells": {
+      "get_cell_name": "other",
+      "read_config": "other"
+    }
+  }
+}

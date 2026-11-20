@@ -257,7 +257,11 @@ impl LoadResolver for InterpreterLoadResolver {
                 }
             }
         }
-        let import_path = ImportPath::new_with_build_file_cells(path, self.build_file_cell)?;
+        let import_path = ImportPath::new_for_load(
+            path,
+            self.build_file_cell,
+            self.config.global_state.bzl_eval_cell,
+        )?;
         Ok(match import_path.path().path().extension() {
             Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
             Some("toml") => OwnedStarlarkModulePath::TomlFile(import_path),

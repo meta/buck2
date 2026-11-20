@@ -31,12 +31,23 @@ import unittest
 from importlib.resources import as_file, files
 
 from android.tools import sort_pre_dexed_files
-from android.tools.filter_dex import _parse_ref_counts, DexUnit
+from android.tools.filter_dex import (
+    _parse_ref_counts,
+    DexUnit,
+    encode_dex_unit,
+    ENCODED_DEX_UNIT_CLASS_NAMES_START,
+    EncodedDexUnit,
+)
 from android.tools.sort_pre_dexed_files import (
     _flatten_groups,
     _parse_module_graph,
     _sort_pre_dexed_files,
-    FilterDexInfo,
+    _UNIT_CLASS_NAMES_START,
+    _UNIT_FIELD_REFS,
+    _UNIT_METHOD_REFS,
+    _UNIT_PRIMARY,
+    _UNIT_TYPE_REFS,
+    _UNIT_WEIGHT,
 )
 from android.tools.tests.generate_mobileconfig_fixture import fixture_expectations
 
@@ -620,26 +631,33 @@ def _unit(
     }
 
 
-def _unit_filter_info(units: list[DexUnit]) -> FilterDexInfo:
-    return {
-        "primary_dex_class_names": [
-            name for unit in units if unit["primary"] for name in unit["class_names"]
-        ],
-        "secondary_dex_class_names": [
-            name
-            for unit in units
-            if not unit["primary"]
-            for name in unit["class_names"]
-        ],
-        "weight_estimate": str(sum(unit["weight_estimate"] for unit in units)),
-        "method_ref_count": str(sum(unit["method_ref_count"] for unit in units)),
-        "field_ref_count": str(sum(unit["field_ref_count"] for unit in units)),
-        "type_ref_count": str(sum(unit["type_ref_count"] for unit in units)),
-        "dex_units": units,
-    }
+def _unit_filter_info(units: list[DexUnit]) -> dict[str, list[EncodedDexUnit]]:
+    """filter_dex.py's output for a library with dex units."""
+    return {"dex_units": [encode_dex_unit(unit) for unit in units]}
 
 
 class DexUnitPackingTest(unittest.TestCase):
+    def test_unit_positions_match_filter_dex_encoding(self) -> None:
+        encoded = encode_dex_unit(
+            _unit(
+                ["a/Foo.class", "z/one.class"],
+                primary=True,
+                weight_estimate=1,
+                method_ref_count=2,
+                field_ref_count=3,
+                type_ref_count=4,
+            )
+        )
+        self.assertEqual(encoded[_UNIT_WEIGHT], 1)
+        self.assertEqual(encoded[_UNIT_METHOD_REFS], 2)
+        self.assertEqual(encoded[_UNIT_FIELD_REFS], 3)
+        self.assertEqual(encoded[_UNIT_TYPE_REFS], 4)
+        self.assertIs(encoded[_UNIT_PRIMARY], True)
+        self.assertEqual(_UNIT_CLASS_NAMES_START, ENCODED_DEX_UNIT_CLASS_NAMES_START)
+        self.assertEqual(
+            encoded[_UNIT_CLASS_NAMES_START:], ["a/Foo.class", "z/one.class"]
+        )
+
     def test_context_and_multiple_companions_survive_weight_splitting(self) -> None:
         companions = ["a/Context.class", "z/one.class", "z/two.class", "z/three.class"]
         units = [
@@ -1130,6 +1148,45 @@ class ParseModuleGraphTest(unittest.TestCase):
         self.assertEqual(target_to_module["//apps:last_target"], "dex")
 
 
+# Plans written by the tool before dex units were encoded as lists, for the inputs of
+# EndToEndToolTest.test_dex_unit_plan_bytes_match_the_previous_input_format.
+_PREVIOUS_FORMAT_PLANS: dict[str, str] = {
+    "default": (
+        '{"modules": [{"module": "dex", "primary_groups": [{"lib_ids": ["a:a de'
+        'x/a.jar.dex.jar", "c:c dex/c.jar.dex.jar"], "class_names": ["a/Main.cl'
+        'ass", "a/Main$$ExternalSyntheticLambda0.class", "c/Boot.class"]}], "se'
+        'condary_groups": [{"lib_ids": ["a:a dex/a.jar.dex.jar"], "class_names"'
+        ': ["a/Foo.class"]}, {"lib_ids": ["a:a dex/a.jar.dex.jar", "b:b dex/b.j'
+        'ar.dex.jar"], "class_names": ["a/Bar.class", "b/Baz.class", "b/Baz$1.c'
+        'lass"]}, {"lib_ids": ["b:b dex/b.jar.dex.jar"], "class_names": ["b/Qux'
+        '\\u00e9.class"]}]}], "module_metadata": {}}'
+    ),
+    "bootstrap": (
+        '{"modules": [{"module": "dex", "primary_groups": [{"lib_ids": ["a:a de'
+        'x/a.jar.dex.jar"], "class_names": ["a/Main.class", "a/Main$$ExternalSy'
+        'ntheticLambda0.class"]}, {"lib_ids": ["c:c dex/c.jar.dex.jar"], "class'
+        '_names": ["c/Boot.class"]}], "secondary_groups": [{"lib_ids": ["a:a de'
+        'x/a.jar.dex.jar"], "class_names": ["a/Foo.class"]}, {"lib_ids": ["a:a '
+        'dex/a.jar.dex.jar", "b:b dex/b.jar.dex.jar"], "class_names": ["a/Bar.c'
+        'lass", "b/Baz.class", "b/Baz$1.class"]}, {"lib_ids": ["b:b dex/b.jar.d'
+        'ex.jar"], "class_names": ["b/Qux\\u00e9.class"]}]}], "module_metadata":'
+        " {}}"
+    ),
+    "graph_bootstrap": (
+        '{"modules": [{"module": "dex", "primary_groups": [{"lib_ids": ["a:a de'
+        'x/a.jar.dex.jar"], "class_names": ["a/Main.class", "a/Main$$ExternalSy'
+        'ntheticLambda0.class"]}, {"lib_ids": ["c:c dex/c.jar.dex.jar"], "class'
+        '_names": ["c/Boot.class"]}], "secondary_groups": [{"lib_ids": ["a:a de'
+        'x/a.jar.dex.jar"], "class_names": ["a/Foo.class"]}, {"lib_ids": ["a:a '
+        'dex/a.jar.dex.jar"], "class_names": ["a/Bar.class"]}]}, {"module": "m1'
+        '", "primary_groups": [], "secondary_groups": [{"lib_ids": ["b:b dex/b.'
+        'jar.dex.jar"], "class_names": ["b/Baz.class", "b/Baz$1.class", "b/Qux\\'
+        'u00e9.class"]}]}], "module_metadata": {"m1": {"canary_class_name": "se'
+        'condary.m1.Canary", "module_deps": ["dex"]}}}'
+    ),
+}
+
+
 class EndToEndToolTest(unittest.TestCase):
     """Integration tests running sort_pre_dexed_files.py as a subprocess.
 
@@ -1194,6 +1251,68 @@ class EndToEndToolTest(unittest.TestCase):
 
         with open(output_path) as f:
             return json.load(f)
+
+    def test_dex_unit_plan_bytes_match_the_previous_input_format(self):
+        """The plans for these inputs are pinned from the tool before dex units were encoded
+        as lists, which read each unit as a dict from indented JSON."""
+
+        def unit(names, primary=False, weight=1, methods=0, fields=0, types=0):
+            return encode_dex_unit(
+                _unit(names, primary, weight, methods, fields, types)
+            )
+
+        filter_data = {
+            "a:a dex/a.jar.dex.jar": {
+                "dex_units": [
+                    unit(
+                        ["a/Main.class", "a/Main$$ExternalSyntheticLambda0.class"],
+                        True,
+                        300,
+                        10,
+                        5,
+                        7,
+                    ),
+                    unit(["a/Foo.class"], False, 600, 40000, 2, 3),
+                    unit(["a/Bar.class"], False, 500, 30000, 1, 2),
+                ]
+            },
+            "b:b dex/b.jar.dex.jar": {
+                "dex_units": [
+                    unit(["b/Baz.class", "b/Baz$1.class"], False, 450, 10, 10, 10),
+                    unit([]),
+                    unit(["b/Qux\u00e9.class"], False, 100, 1, 1, 1),
+                ]
+            },
+            "c:c dex/c.jar.dex.jar": {
+                "dex_units": [unit(["c/Boot.class"], True, 900, 1, 1, 1)]
+            },
+        }
+        lib_metadata = {
+            "a:a dex/a.jar.dex.jar": "//a:a",
+            "b:b dex/b.jar.dex.jar": "//b:b",
+            "c:c dex/c.jar.dex.jar": "//c:c",
+        }
+        for name, kwargs in [
+            ("default", {}),
+            ("bootstrap", {"enable_bootstrap_dexes": True}),
+            (
+                "graph_bootstrap",
+                {
+                    "enable_bootstrap_dexes": True,
+                    "module_graph": "1\nm1 secondary.m1.Canary dex\n//b:b m1\n",
+                },
+            ),
+        ]:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmpdir:
+                self._run_tool(
+                    tmpdir,
+                    [json.loads(json.dumps(filter_data))],
+                    lib_metadata,
+                    weight_limit=1000,
+                    **kwargs,
+                )
+                with open(os.path.join(tmpdir, "plan.json")) as f:
+                    self.assertEqual(f.read(), _PREVIOUS_FORMAT_PLANS[name])
 
     def test_basic_plan_output(self):
         """Two libs with primary and secondary classes produce a valid plan

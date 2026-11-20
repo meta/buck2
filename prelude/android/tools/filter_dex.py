@@ -16,7 +16,8 @@ classifies metadata; it does not read or split dex bytecode.
 With --dex-units, each library also supplies a TSV manifest of indivisible
 class-owned dex units, including synthetic companions and measured counts. If
 any member or its synthesizing context matches a primary pattern, the whole
-unit is primary. Unit membership and counts are forwarded for atomic packing.
+unit is primary. Unit membership and counts are forwarded for atomic packing as
+encoded units (see encode_dex_unit), in JSON without indentation.
 
 Without --dex-units, the legacy path classifies individual class names and
 forwards library totals plus any available per-class reference counts. In both
@@ -31,7 +32,7 @@ import json
 import pathlib
 import re
 from collections.abc import Iterable
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class DexUnit(TypedDict):
@@ -41,6 +42,24 @@ class DexUnit(TypedDict):
     method_ref_count: int
     field_ref_count: int
     type_ref_count: int
+
+
+# An encoded dex unit: [weight_estimate, method_ref_count, field_ref_count,
+# type_ref_count, primary, class_name, ...], read by position in
+# sort_pre_dexed_files.py.
+EncodedDexUnit = list[Any]
+ENCODED_DEX_UNIT_CLASS_NAMES_START = 5
+
+
+def encode_dex_unit(unit: DexUnit) -> EncodedDexUnit:
+    return [
+        unit["weight_estimate"],
+        unit["method_ref_count"],
+        unit["field_ref_count"],
+        unit["type_ref_count"],
+        unit["primary"],
+        *unit["class_names"],
+    ]
 
 
 PREFIX_MARKER = "^"
@@ -164,7 +183,7 @@ def _parse_args():
         "--output",
         type=pathlib.Path,
         required=True,
-        help="a path to an output. The output is a JSON mapping of dex target names to a map of primary dex classes, secondary dex classes, and weight estimate.",
+        help="a path to an output. The output is a JSON mapping of dex target names to a map of primary dex classes, secondary dex classes, and weight estimate, or, with --dex-units, to a map holding only the encoded dex units.",
     )
 
     return parser.parse_args()
@@ -369,33 +388,26 @@ def main():
             else {}
         )
 
-        dex_units = (
-            _parse_dex_units(
+        if dex_units_paths:
+            # The dex-unit path of sort_pre_dexed_files.py reads only the units, so the
+            # library totals and class lists are not written.
+            dex_units = _parse_dex_units(
                 dex_units_paths[i],
                 all_class_names,
                 class_name_filter,
                 synthetic_to_context,
             )
-            if dex_units_paths
-            else None
-        )
-        primary_unit_members = {
-            name
-            for unit in dex_units or []
-            if unit["primary"]
-            for name in unit["class_names"]
-        }
+            json_output[dex_target_name] = {
+                "dex_units": [encode_dex_unit(unit) for unit in dex_units]
+            }
+            continue
+
         primary_dex_class_names = []
         secondary_dex_class_names = []
         for java_class in all_class_names:
-            is_primary = (
-                java_class + ".class" in primary_unit_members
-                if dex_units is not None
-                else _belongs_in_primary_dex(
-                    java_class, class_name_filter, synthetic_to_context
-                )
-            )
-            if is_primary:
+            if _belongs_in_primary_dex(
+                java_class, class_name_filter, synthetic_to_context
+            ):
                 primary_dex_class_names.append(java_class + ".class")
             else:
                 secondary_dex_class_names.append(java_class + ".class")
@@ -410,11 +422,12 @@ def main():
         }
         if class_ref_counts:
             json_output[dex_target_name]["class_ref_counts"] = class_ref_counts
-        if dex_units is not None:
-            json_output[dex_target_name]["dex_units"] = dex_units
 
     with open(output, "w") as output_file:
-        json.dump(json_output, output_file, indent=4)
+        if dex_units_paths:
+            output_file.write(json.dumps(json_output, separators=(",", ":")))
+        else:
+            json.dump(json_output, output_file, indent=4)
 
 
 if __name__ == "__main__":

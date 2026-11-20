@@ -30,6 +30,8 @@ from android.tools.filter_dex import (
     _parse_synthetic_contexts,
     _resolve_synthesizing_context,
     ClassNameFilter,
+    encode_dex_unit,
+    ENCODED_DEX_UNIT_CLASS_NAMES_START,
     main,
 )
 
@@ -254,6 +256,8 @@ class ParseDexUnitsTest(unittest.TestCase):
 
 
 class FilterDexToolTest(unittest.TestCase):
+    last_output_text: str = ""
+
     def _run_filter(self, libraries: list[dict[str, str]], patterns: str = ""):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -287,7 +291,8 @@ class FilterDexToolTest(unittest.TestCase):
                     argv.extend([flag, *paths])
             with patch.object(sys, "argv", argv):
                 main()
-            return json.loads(output_path.read_text())
+            self.last_output_text = output_path.read_text()
+            return json.loads(self.last_output_text)
 
     def test_context_and_multiple_companions_are_primary_together(self) -> None:
         result = self._run_filter(
@@ -303,17 +308,25 @@ class FilterDexToolTest(unittest.TestCase):
             ],
             "^a/Foo^\n",
         )["lib0"]
+        # Only the encoded units: [weight, methods, fields, types, primary, members...].
         self.assertEqual(
-            result["primary_dex_class_names"],
-            ["z/one.class", "a/Foo.class", "z/two.class"],
+            result,
+            {
+                "dex_units": [
+                    [
+                        100,
+                        10,
+                        20,
+                        30,
+                        True,
+                        "a/Foo.class",
+                        "z/one.class",
+                        "z/two.class",
+                    ],
+                    [23, 1, 2, 3, False, "a/Other.class"],
+                ]
+            },
         )
-        self.assertEqual(result["secondary_dex_class_names"], ["a/Other.class"])
-        self.assertTrue(result["dex_units"][0]["primary"])
-        self.assertFalse(result["dex_units"][1]["primary"])
-        self.assertEqual(result["weight_estimate"], "123")
-        self.assertEqual(result["method_ref_count"], "11")
-        self.assertEqual(result["field_ref_count"], "12")
-        self.assertEqual(result["type_ref_count"], "13")
 
     def test_synthetic_only_pattern_moves_whole_unit(self) -> None:
         result = self._run_filter(
@@ -327,11 +340,9 @@ class FilterDexToolTest(unittest.TestCase):
             "^z/two^\n",
         )["lib0"]
         self.assertEqual(
-            result["primary_dex_class_names"],
-            ["a/Foo.class", "z/one.class", "z/two.class"],
+            result["dex_units"],
+            [[123, 11, 12, 13, True, "a/Foo.class", "z/one.class", "z/two.class"]],
         )
-        self.assertEqual(result["secondary_dex_class_names"], [])
-        self.assertTrue(result["dex_units"][0]["primary"])
 
     def test_member_context_rule_moves_whole_unit(self) -> None:
         result = self._run_filter(
@@ -345,10 +356,9 @@ class FilterDexToolTest(unittest.TestCase):
             "^a/Entry^\n",
         )["lib0"]
         self.assertEqual(
-            result["primary_dex_class_names"],
-            ["b/Holder.class", "z/one.class", "z/two.class"],
+            result["dex_units"],
+            [[123, 11, 12, 13, True, "b/Holder.class", "z/one.class", "z/two.class"]],
         )
-        self.assertTrue(result["dex_units"][0]["primary"])
 
     def test_multiple_library_unit_inputs_stay_aligned(self) -> None:
         result = self._run_filter(
@@ -358,10 +368,12 @@ class FilterDexToolTest(unittest.TestCase):
             ],
             "^b/Bar^\n",
         )
-        self.assertEqual(result["lib0"]["dex_units"][0]["weight_estimate"], 1)
-        self.assertFalse(result["lib0"]["dex_units"][0]["primary"])
-        self.assertEqual(result["lib1"]["dex_units"][0]["method_ref_count"], 6)
-        self.assertTrue(result["lib1"]["dex_units"][0]["primary"])
+        self.assertEqual(
+            result["lib0"], {"dex_units": [[1, 2, 3, 4, False, "a/Foo.class"]]}
+        )
+        self.assertEqual(
+            result["lib1"], {"dex_units": [[5, 6, 7, 8, True, "b/Bar.class"]]}
+        )
 
     def test_mismatched_per_library_unit_inputs_are_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "same number of dex unit files"):
@@ -387,6 +399,32 @@ class FilterDexToolTest(unittest.TestCase):
                 "field_ref_count": "12",
                 "type_ref_count": "13",
             },
+        )
+
+    def test_unit_output_is_compact_and_legacy_output_is_indented(self) -> None:
+        self._run_filter(
+            [{"classes": "a/Foo\n", "units": "a/Foo\t1\t2\t3\t4\ta/Foo\n"}]
+        )
+        self.assertEqual(
+            self.last_output_text,
+            '{"lib0":{"dex_units":[[1,2,3,4,false,"a/Foo.class"]]}}',
+        )
+        legacy = self._run_filter([{"classes": "a/Foo\n"}])
+        self.assertEqual(self.last_output_text, json.dumps(legacy, indent=4))
+
+    def test_encode_dex_unit_puts_counts_and_primary_before_members(self) -> None:
+        unit = {
+            "class_names": ["a/Foo.class", "z/one.class"],
+            "primary": True,
+            "weight_estimate": 1,
+            "method_ref_count": 2,
+            "field_ref_count": 3,
+            "type_ref_count": 4,
+        }
+        encoded = encode_dex_unit(unit)
+        self.assertEqual(encoded, [1, 2, 3, 4, True, "a/Foo.class", "z/one.class"])
+        self.assertEqual(
+            encoded[ENCODED_DEX_UNIT_CLASS_NAMES_START:], unit["class_names"]
         )
 
     def test_empty_unit_metadata_is_not_legacy_fallback(self) -> None:

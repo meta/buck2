@@ -26,12 +26,13 @@ merge_dexes actions.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import pathlib
 from typing import NotRequired, Optional, TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
-    from android.tools.filter_dex import DexUnit
+    from android.tools.filter_dex import EncodedDexUnit
 
 
 ROOT_MODULE: str = "dex"
@@ -51,6 +52,14 @@ DEX_REF_LIMIT: int = 65536
 # Each secondary dex merge also gets a canary interface: no methods or fields, and up to two
 # types (the canary and java/lang/Object).
 CANARY_TYPE_REF_COUNT: int = 2
+
+# Positions in a dex unit as filter_dex.py's encode_dex_unit writes it.
+_UNIT_WEIGHT = 0
+_UNIT_METHOD_REFS = 1
+_UNIT_FIELD_REFS = 2
+_UNIT_TYPE_REFS = 3
+_UNIT_PRIMARY = 4
+_UNIT_CLASS_NAMES_START = 5
 
 
 # Type aliases for the data structures used throughout.
@@ -77,7 +86,8 @@ class FilterDexInfo(_OptionalFilterDexInfo):
     method_ref_count: str
     field_ref_count: str
     type_ref_count: str
-    dex_units: NotRequired[list[DexUnit]]
+    # An entry with dex units holds no other key.
+    dex_units: NotRequired[list[EncodedDexUnit]]
 
 
 # Filter dex data: identifier -> filter info
@@ -374,7 +384,7 @@ def _organize_dex_units(
     dest: list[DexGroup],
     module: str,
     lib_id: str,
-    dex_units: list[DexUnit],
+    dex_units: list[EncodedDexUnit],
     current_size_map: dict[str, int],
     current_inputs_map: dict[str, DexGroup],
     dex_weight_limit: int | None,
@@ -383,34 +393,56 @@ def _organize_dex_units(
     current_type_refs_map: dict[str, int],
     reserved_types: int,
 ) -> None:
+    """Assign each unit to the current dex group, as _assign_to_dex does for a lib."""
+    if not dex_units:
+        return
+    type_limit = DEX_REF_LIMIT - reserved_types
+    size = current_size_map.get(module, 0)
+    method_refs = current_method_refs_map.get(module, 0)
+    field_refs = current_field_refs_map.get(module, 0)
+    type_refs = current_type_refs_map.get(module, 0)
+    current_inputs = current_inputs_map.get(module, [])
+    assigned = False
     for unit in dex_units:
+        weight = unit[_UNIT_WEIGHT]
+        unit_method_refs = unit[_UNIT_METHOD_REFS]
+        unit_field_refs = unit[_UNIT_FIELD_REFS]
+        unit_type_refs = unit[_UNIT_TYPE_REFS]
         for ref_kind, count, limit in (
-            ("method_ref_count", unit["method_ref_count"], DEX_REF_LIMIT),
-            ("field_ref_count", unit["field_ref_count"], DEX_REF_LIMIT),
-            ("type_ref_count", unit["type_ref_count"], DEX_REF_LIMIT - reserved_types),
+            ("method_ref_count", unit_method_refs, DEX_REF_LIMIT),
+            ("field_ref_count", unit_field_refs, DEX_REF_LIMIT),
+            ("type_ref_count", unit_type_refs, type_limit),
         ):
             if count > limit:
                 raise ValueError(
-                    f"Indivisible dex unit in {lib_id} ({unit['class_names']!r}) "
+                    f"Indivisible dex unit in {lib_id} ({unit[_UNIT_CLASS_NAMES_START:]!r}) "
                     f"exceeds DEX 64K {ref_kind} limit: {count} > {limit}"
                 )
-        _assign_to_dex(
-            dest,
-            module,
-            lib_id,
-            unit["weight_estimate"],
-            unit["class_names"],
-            current_size_map,
-            current_inputs_map,
-            dex_weight_limit,
-            unit["method_ref_count"],
-            unit["field_ref_count"],
-            unit["type_ref_count"],
-            current_method_refs_map,
-            current_field_refs_map,
-            current_type_refs_map,
-            reserved_types,
-        )
+        class_names = unit[_UNIT_CLASS_NAMES_START:]
+        if not class_names:
+            continue
+        if dex_weight_limit is not None and (
+            size + weight > dex_weight_limit
+            or method_refs + unit_method_refs > DEX_REF_LIMIT
+            or field_refs + unit_field_refs > DEX_REF_LIMIT
+            or type_refs + unit_type_refs + reserved_types > DEX_REF_LIMIT
+        ):
+            size = method_refs = field_refs = type_refs = 0
+            current_inputs = []
+        if not current_inputs:
+            dest.append(current_inputs)
+        size += weight
+        method_refs += unit_method_refs
+        field_refs += unit_field_refs
+        type_refs += unit_type_refs
+        current_inputs.append({"id": lib_id, "class_names": class_names})
+        assigned = True
+    if assigned:
+        current_inputs_map[module] = current_inputs
+        current_size_map[module] = size
+        current_method_refs_map[module] = method_refs
+        current_field_refs_map[module] = field_refs
+        current_type_refs_map[module] = type_refs
 
 
 def _sort_pre_dexed_files(
@@ -459,8 +491,8 @@ def _sort_pre_dexed_files(
         module_inputs = sorted_inputs[module]
         if "dex_units" in filter_info:
             units = filter_info["dex_units"]
-            primary_units = [unit for unit in units if unit["primary"]]
-            secondary_units = [unit for unit in units if not unit["primary"]]
+            primary_units = [unit for unit in units if unit[_UNIT_PRIMARY]]
+            secondary_units = [unit for unit in units if not unit[_UNIT_PRIMARY]]
             if module != ROOT_MODULE:
                 secondary_units += primary_units
                 primary_units = []
@@ -563,6 +595,9 @@ def _flatten_groups(groups: list[DexGroup]) -> list[FlatGroup]:
 
 
 def main() -> None:
+    # The inputs hold about a million small lists, which garbage collection rescans
+    # repeatedly and never frees in this short-lived process.
+    gc.disable()
     args = _parse_args()
 
     # Read all filter_dex JSON outputs and merge them
@@ -605,7 +640,8 @@ def main() -> None:
     }
 
     with open(args.output, "w") as f:
-        json.dump(plan, f)
+        # json.dump writes many small chunks; one write is faster.
+        f.write(json.dumps(plan))
 
 
 if __name__ == "__main__":

@@ -27,11 +27,9 @@ rust_library(
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:linux": [
-            "fbsource//third-party/rust:assert_matches",
             "//buck2/app/buck2_util:buck2_util",
         ],
         "ovr_config//os:macos": [
-            "fbsource//third-party/rust:assert_matches",
             "//buck2/app/buck2_util:buck2_util",
         ],
     }),

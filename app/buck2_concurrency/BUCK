@@ -7,7 +7,6 @@ rust_library(
     name = "buck2_concurrency",
     srcs = glob(["src/**/*.rs"]),
     test_deps = [
-        "fbsource//third-party/rust:assert_matches",
         "fbsource//third-party/rust:derivative",
         "//buck2/pagable:pagable",
     ],

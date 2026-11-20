@@ -27,7 +27,6 @@ strong_hash.workspace = true
 take_mut.workspace = true
 
 [dev-dependencies]
-assert_matches.workspace = true
 serde_json.workspace = true
 
 [lints]

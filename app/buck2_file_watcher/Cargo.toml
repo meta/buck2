@@ -38,11 +38,9 @@ watchman_client.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-assert_matches.workspace = true
 buck2_util.workspace = true
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-assert_matches.workspace = true
 buck2_util.workspace = true
 
 [lints]

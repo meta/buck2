@@ -70,7 +70,6 @@ tracing.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
-assert_matches.workspace = true
 prost-types.workspace = true
 
 [lints]

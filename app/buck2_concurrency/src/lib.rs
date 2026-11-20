@@ -2309,6 +2309,7 @@ impl fmt::Display for ConcurrentTraces {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
     use std::task::Poll;
@@ -2316,7 +2317,6 @@ mod tests {
     use std::time::Instant;
 
     use allocative::Allocative;
-    use assert_matches::assert_matches;
     use async_trait::async_trait;
     use buck2_core::is_open_source;
     use buck2_util::early_command_timing::EXCLUSIVE_COMMAND_WAIT;

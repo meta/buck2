@@ -772,7 +772,7 @@ mod tests {
     #[cfg(unix)]
     mod unix {
 
-        use assert_matches::assert_matches;
+        use std::assert_matches;
 
         use super::super::*;
 

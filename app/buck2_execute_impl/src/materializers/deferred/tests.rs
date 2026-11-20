@@ -165,6 +165,7 @@ fn test_remove_path() {
 
 #[cfg(test)]
 pub(crate) mod state_machine {
+    use std::assert_matches;
     #[cfg(all(unix, not(target_os = "macos")))]
     use std::ffi::OsString;
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -175,7 +176,6 @@ pub(crate) mod state_machine {
     use std::sync::Barrier;
     use std::thread;
 
-    use assert_matches::assert_matches;
     use buck2_common::file_ops::metadata::Symlink;
     use buck2_core::error::SoftErrorContext;
     use buck2_core::error::with_soft_error_context;

@@ -584,7 +584,7 @@ pub fn validate_logview_category(category: &str) -> buck2_error::Result<()> {
 #[cfg(test)]
 pub(crate) mod tests {
 
-    use assert_matches::assert_matches;
+    use std::assert_matches;
 
     use super::*;
 

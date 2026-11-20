@@ -97,9 +97,8 @@ impl Claim for MutexClaim {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::task::Poll;
-
-    use assert_matches::assert_matches;
 
     use super::*;
 

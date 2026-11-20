@@ -29,7 +29,6 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-assert_matches.workspace = true
 derivative.workspace = true
 pagable.workspace = true
 

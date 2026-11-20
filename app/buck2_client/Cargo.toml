@@ -47,7 +47,6 @@ uuid.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
-assert_matches.workspace = true
 tempfile.workspace = true
 
 [lints]

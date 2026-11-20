@@ -512,7 +512,8 @@ impl fmt::Display for MaybeResponseDebugInfo {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use std::assert_matches;
+
     use buck2_common::cas_digest::testing;
     use futures::stream;
 

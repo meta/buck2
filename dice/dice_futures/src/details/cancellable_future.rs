@@ -144,6 +144,7 @@ impl<T> Future for ExplicitlyCancellableFutureInner<T> {
 // epoll.
 #[cfg(all(test, any(not(miri), target_os = "linux")))]
 mod tests {
+    use std::assert_matches;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;
@@ -153,7 +154,6 @@ mod tests {
     use std::task::Poll;
     use std::time::Duration;
 
-    use assert_matches::assert_matches;
     use dupe::Dupe;
     use futures::FutureExt;
     use futures::future::BoxFuture;

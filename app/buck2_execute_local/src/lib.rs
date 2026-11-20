@@ -516,6 +516,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::process::Command;
     use std::str;
     use std::str::FromStr;
@@ -523,7 +524,6 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Instant;
 
-    use assert_matches::assert_matches;
     use buck2_error::buck2_error;
     use buck2_util::process::background_command;
     use dupe::Dupe;

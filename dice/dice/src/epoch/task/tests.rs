@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
+use std::assert_matches;
 use std::hash::Hash;
 use std::sync::Barrier as ThreadBarrier;
 use std::task::Poll;
 use std::thread;
 
 use allocative::Allocative;
-use assert_matches::assert_matches;
 use async_trait::async_trait;
 use derive_more::Display;
 use dice_futures::cancellation::CancellationContext;

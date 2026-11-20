@@ -15,7 +15,6 @@ path = "src/lib.rs"
 [dev-dependencies]
 allocative.workspace = true
 anyhow.workspace = true
-assert_matches.workspace = true
 async-trait.workspace = true
 buck2_action_impl.workspace = true
 buck2_analysis.workspace = true

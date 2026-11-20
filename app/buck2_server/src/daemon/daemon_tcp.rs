@@ -31,7 +31,8 @@ pub fn create_listener() -> buck2_error::Result<(
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use std::assert_matches;
+
     use buck2_common::buckd_connection::ConnectionType;
 
     use crate::daemon::daemon_tcp::create_listener;

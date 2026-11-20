@@ -1199,7 +1199,6 @@ name = "buck2_artifact"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "assert_matches",
  "buck2_common",
  "buck2_core",
  "buck2_data",
@@ -1300,7 +1299,6 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "anyhow",
- "assert_matches",
  "async-trait",
  "buck2_action_impl",
  "buck2_analysis",
@@ -1525,7 +1523,6 @@ dependencies = [
 name = "buck2_client"
 version = "0.1.0"
 dependencies = [
- "assert_matches",
  "async-recursion",
  "async-trait",
  "buck2_agent_interactive",
@@ -2056,7 +2053,6 @@ name = "buck2_concurrency"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "assert_matches",
  "async-trait",
  "buck2_cli_proto",
  "buck2_core",
@@ -2320,7 +2316,6 @@ dependencies = [
 name = "buck2_env"
 version = "0.1.0"
 dependencies = [
- "assert_matches",
  "buck2_error",
  "buck2_hash",
  "dupe",
@@ -2512,7 +2507,6 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "anyhow",
- "assert_matches",
  "async-condvar-fair",
  "async-recursion",
  "async-trait",
@@ -2693,7 +2687,6 @@ name = "buck2_file_watcher"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "assert_matches",
  "async-trait",
  "blake3",
  "buck2_certs",
@@ -2769,7 +2762,6 @@ name = "buck2_fs"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "assert_matches",
  "buck2_env",
  "buck2_error",
  "buck2_hash",
@@ -3211,7 +3203,6 @@ name = "buck2_query_impls"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "assert_matches",
  "async-trait",
  "buck2_artifact",
  "buck2_build_api",
@@ -3600,7 +3591,6 @@ name = "buck2_test_api"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "assert_matches",
  "async-trait",
  "buck2_core",
  "buck2_data",
@@ -4822,7 +4812,6 @@ dependencies = [
 name = "dice_futures"
 version = "0.1.0"
 dependencies = [
- "assert_matches",
  "dupe",
  "futures 0.3.34",
  "mini_vec",

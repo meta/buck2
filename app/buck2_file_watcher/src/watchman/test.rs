@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::assert_matches;
 use std::fs;
 use std::fs::File;
 use std::path::Path;
@@ -15,7 +16,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
-use assert_matches::assert_matches;
 use async_trait::async_trait;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;

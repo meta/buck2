@@ -1938,10 +1938,10 @@ mod unix {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::cell::Cell;
     use std::str;
 
-    use assert_matches::assert_matches;
     use buck2_common::liveliness_observer::NoopLivelinessObserver;
     use buck2_core::cells::CellResolver;
     use buck2_core::cells::cell_root_path::CellRootPathBuf;

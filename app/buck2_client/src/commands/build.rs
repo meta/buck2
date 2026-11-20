@@ -490,7 +490,8 @@ pub(crate) fn print_outputs(
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use std::assert_matches;
+
     use build_providers::Action;
     use clap::Parser;
 

@@ -794,9 +794,9 @@ fn result_code_into_result(code: WriteMessageResultCode) -> Result<(), WriteMess
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::sync::Arc;
 
-    use assert_matches::assert_matches;
     use fbthrift::ApplicationExceptionErrorCode;
     use fbthrift::application_exception::ApplicationException;
     use scribe_producer_service::WriteMessageResult as ThriftWriteMessageResult;

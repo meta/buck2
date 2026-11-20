@@ -6,7 +6,6 @@ rust_library(
     name = "buck2_artifact",
     srcs = glob(["src/**/*.rs"]),
     test_deps = [
-        "fbsource//third-party/rust:assert_matches",
         "fbsource//third-party/rust:serde_json",
     ],
     deps = [

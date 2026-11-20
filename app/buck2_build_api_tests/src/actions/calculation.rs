@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
+use std::assert_matches;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use assert_matches::assert_matches;
 use buck2_analysis::analysis::calculation::AnalysisKey;
 use buck2_artifact::actions::key::ActionIndex;
 use buck2_artifact::actions::key::ActionKey;

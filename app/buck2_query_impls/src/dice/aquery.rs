@@ -696,12 +696,12 @@ impl QueryLiterals<ActionQueryNode> for AqueryData {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::future::pending;
     use std::future::ready;
     use std::sync::Arc;
     use std::task::Poll;
 
-    use assert_matches::assert_matches;
     use dupe::Dupe;
     use futures::pin_mut;
     use futures::poll;

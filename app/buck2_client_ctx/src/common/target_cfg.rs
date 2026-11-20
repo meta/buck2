@@ -83,7 +83,8 @@ pub struct TargetCfgWithUniverseOptions {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use std::assert_matches;
+
     use clap::CommandFactory;
     use clap::Parser;
 

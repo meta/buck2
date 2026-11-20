@@ -225,7 +225,7 @@ pub(crate) mod introspection {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use std::assert_matches;
 
     use crate::core::versions::VersionTracker;
     use crate::versions::VersionNumber;

@@ -876,7 +876,8 @@ impl MaterializerStateSqliteTable {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use std::assert_matches;
+
     use buck2_common::file_ops::metadata::TrackedFileDigest;
     use buck2_directory::directory::builder::DirectoryBuilder;
     use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;

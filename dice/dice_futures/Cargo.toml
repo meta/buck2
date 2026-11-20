@@ -17,8 +17,5 @@ smallvec.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
-[dev-dependencies]
-assert_matches.workspace = true
-
 [lints]
 workspace = true

@@ -197,7 +197,8 @@ fn rate(val: f64) -> buck2_error::Result<f64> {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use std::assert_matches;
+
     use rand::distr::Alphanumeric;
     use rand::distr::SampleString;
 

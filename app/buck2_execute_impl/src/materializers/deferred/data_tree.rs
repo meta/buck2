@@ -567,9 +567,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::collections::BTreeMap;
 
-    use assert_matches::assert_matches;
     use buck2_fs::paths::file_name::FileNameBuf;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 

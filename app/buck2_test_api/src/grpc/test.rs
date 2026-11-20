@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
+use std::assert_matches;
 use std::time::Duration;
 
-use assert_matches::assert_matches;
 use buck2_error::BuckErrorContext as _;
 use buck2_grpc::DuplexChannel;
 use tokio::io::AsyncRead;

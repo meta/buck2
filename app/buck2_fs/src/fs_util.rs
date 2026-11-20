@@ -1553,13 +1553,13 @@ pub mod uncategorized {
 // Exercises the real filesystem, which Miri's isolation has none of.
 #[cfg(all(test, not(miri)))]
 mod tests {
+    use std::assert_matches;
     use std::fs;
     use std::fs::File;
     use std::io;
     use std::path::Path;
     use std::path::PathBuf;
 
-    use assert_matches::assert_matches;
     use buck2_error::ErrorTag;
     use buck2_hash::BuckMutMap;
 

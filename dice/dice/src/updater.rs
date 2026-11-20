@@ -242,8 +242,9 @@ pub(crate) enum ChangeType {
 #[cfg(test)]
 mod tests {
 
+    use std::assert_matches;
+
     use allocative::Allocative;
-    use assert_matches::assert_matches;
     use async_trait::async_trait;
     use derive_more::Display;
     use dice_futures::cancellation::CancellationContext;

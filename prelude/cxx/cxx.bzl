@@ -31,6 +31,8 @@ load("@prelude//cxx:cxx_flags.bzl", "cxx_attr_flags")
 load("@prelude//cxx:cxx_sources.bzl", "get_srcs_with_flags")
 load(
     "@prelude//cxx:cxx_toolchain_types.bzl",
+    "CxxToolchainInfo",
+    "MultiArchFatCompile",
     "RuntimeDependencyHandling",
     "ShlibInterfacesMode",
 )
@@ -145,7 +147,7 @@ load(
     "cxx_platform_supported",
     "cxx_use_shlib_intfs_mode",
 )
-load(":cxx_types.bzl", "CxxRuleConstructorParams", "CxxRuleProviderParams", "CxxRuleSubTargetParams", "xcode_data_enabled")
+load(":cxx_types.bzl", "CxxRuleConstructorParams", "CxxRuleExecGroupParams", "CxxRuleProviderParams", "CxxRuleSubTargetParams", "xcode_data_enabled")
 load(":gcno.bzl", "GcnoFilesInfo")
 load(
     ":groups_types.bzl",
@@ -279,6 +281,7 @@ def cxx_library_generate(ctx: AnalysisContext, rule_type: str) -> list[Provider]
         precompiled_header = ctx.attrs.precompiled_header,
         prefix_header = ctx.attrs.prefix_header,
         _cxx_toolchain = ctx.attrs._cxx_toolchain,
+        _cxx_exec_group = _exec_group_params(ctx),
         use_content_based_paths = cxx_attr_use_content_based_paths(ctx),
         coverage_instrumentation_compiler_flags = ctx.attrs.coverage_instrumentation_compiler_flags,
         coverage_profile_list = ctx.attrs.coverage_profile_list[DefaultInfo].default_outputs[0] if ctx.attrs.coverage_profile_list else None,
@@ -292,6 +295,58 @@ def cxx_library_generate(ctx: AnalysisContext, rule_type: str) -> list[Provider]
     )
     output = cxx_library_parameterized(ctx, params)
     return output.providers + graphql_providers(ctx)
+
+def cxx_exec_group_attrs():
+    # Alternate execution-group toolchain for C/C++ compiles. The build
+    # defs select a toolchain here to route a target's `cxx_compile`
+    # actions onto the group's execution platform; the default selects
+    # nothing, so compiles stay local unless opted in.
+    # `exec_group_constraints` carries the group's execution constraints
+    # (likewise defaulted by the build defs for opted-in targets).
+    # The toolchain resolves through the `toolchains//` cell (same mechanism
+    # as the default `_cxx_toolchain` in `toolchains_common.cxx()`), so
+    # targets in restricted-view packages can carry the edge: those packages
+    # already allow `toolchains//` deps, while an explicit `fbcode//` edge
+    # fails `within_view`.
+    return {
+        "exec_group_constraints": attrs.exec_compatible_with(
+            exec_group = MultiArchFatCompile,
+            default = [],
+        ),
+        "_cxx_kernel_headers_for_exec_group": attrs.option(
+            attrs.dep(),
+            default = None,
+        ),
+        "_cxx_sysroot_for_exec_group": attrs.option(
+            attrs.dep(),
+            default = None,
+        ),
+        "_cxx_toolchain_for_exec_group": attrs.option(
+            attrs.toolchain_dep(
+                providers = [CxxToolchainInfo],
+                exec_group = MultiArchFatCompile,
+            ),
+            default = None,
+        ),
+    }
+
+def _dep_output(ctx, name):
+    dep = getattr(ctx.attrs, name, None)
+    if dep == None:
+        return None
+    return dep[DefaultInfo].default_outputs[0]
+
+# Bundle the alternate-group toolchain attrs into a CxxRuleExecGroupParams
+# (None unless the build defs selected a group toolchain for the target).
+def _exec_group_params(ctx):
+    toolchain = getattr(ctx.attrs, "_cxx_toolchain_for_exec_group", None)
+    if toolchain == None:
+        return None
+    return CxxRuleExecGroupParams(
+        cxx_toolchain = toolchain,
+        sysroot = _dep_output(ctx, "_cxx_sysroot_for_exec_group"),
+        kernel_headers = _dep_output(ctx, "_cxx_kernel_headers_for_exec_group"),
+    )
 
 def _only_shared_mappings(group: Group) -> bool:
     """
@@ -363,6 +418,7 @@ def cxx_binary_impl(ctx: AnalysisContext) -> list[Provider]:
         precompiled_header = ctx.attrs.precompiled_header,
         prefix_header = ctx.attrs.prefix_header,
         _cxx_toolchain = ctx.attrs._cxx_toolchain,
+        _cxx_exec_group = _exec_group_params(ctx),
         use_content_based_paths = cxx_attr_use_content_based_paths(ctx),
         coverage_instrumentation_compiler_flags = ctx.attrs.coverage_instrumentation_compiler_flags,
         coverage_profile_list = ctx.attrs.coverage_profile_list[DefaultInfo].default_outputs[0] if ctx.attrs.coverage_profile_list else None,
@@ -1087,6 +1143,7 @@ def cxx_test_impl(ctx: AnalysisContext) -> list[Provider]:
         precompiled_header = ctx.attrs.precompiled_header,
         prefix_header = ctx.attrs.prefix_header,
         _cxx_toolchain = ctx.attrs._cxx_toolchain,
+        _cxx_exec_group = _exec_group_params(ctx),
         use_content_based_paths = cxx_attr_use_content_based_paths(ctx),
         coverage_instrumentation_compiler_flags = ctx.attrs.coverage_instrumentation_compiler_flags,
         coverage_profile_list = ctx.attrs.coverage_profile_list[DefaultInfo].default_outputs[0] if ctx.attrs.coverage_profile_list else None,
@@ -1239,11 +1296,13 @@ cxx_binary = prelude_rule(
         ```
     """,
     further = None,
+    exec_groups = [DefaultExecGroup, MultiArchFatCompile],
     attrs = (
         cxx_binary_base_attrs()
+        | cxx_exec_group_attrs()
         | {
             "build_info_as_shared_library": attrs.bool(default = False),
-            "_gen_build_info": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
+            "_gen_build_info": attrs.option(attrs.exec_dep(providers = [RunInfo], exec_group = DefaultExecGroup), default = None),
             "_generated_build_info_data": attrs.option(attrs.source(), default = None),
             "_generated_build_info_enabled": attrs.bool(default = False),
             "_generated_build_info_mode": attrs.enum(["full", "stable"], default = "stable"),
@@ -1326,7 +1385,8 @@ cxx_library = prelude_rule(
         ```
     """,
     further = None,
-    attrs = cxx_library_base_attrs() | cxx_library_extra_attrs(),
+    exec_groups = [DefaultExecGroup, MultiArchFatCompile],
+    attrs = cxx_library_base_attrs() | cxx_library_extra_attrs() | cxx_exec_group_attrs(),
 )
 
 cxx_precompiled_header = prelude_rule(

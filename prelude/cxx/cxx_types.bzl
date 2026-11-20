@@ -139,6 +139,17 @@ CxxRuleAdditionalParams = record(
 # or additional linking flags to support usage of platform frameworks) of are
 # different and need to be specified. The following record holds the data which
 # is needed to specialize user-facing rule from generic implementation.
+# Alternate-group toolchain selection for a rule's `cxx_compile` actions:
+# the group toolchain edge plus the sysroot and kernel headers it compiles
+# against. None unless the build defs selected a group toolchain for the
+# target (edge presence is opt-in).
+CxxRuleExecGroupParams = record(
+    # Group toolchain edge, stored as "Dependency" like "_cxx_toolchain".
+    cxx_toolchain = field(Dependency | None, None),
+    # Sysroot and kernel headers the group toolchain compiles against.
+    sysroot = field(Artifact | None, None),
+    kernel_headers = field(Artifact | None, None),
+)
 CxxRuleConstructorParams = record(
     # Required
     # Name of the top level rule utilizing the cxx rule.
@@ -296,6 +307,9 @@ CxxRuleConstructorParams = record(
     prefix_header = field(Artifact | None, None),
     # Store "_cxx_toolchain" as "Dependency" for use in "anon_target"
     _cxx_toolchain = field(Dependency | None, None),
+    # Alternate-group toolchain selection (None unless the build defs selected
+    # a group toolchain for the target; edge presence is opt-in).
+    _cxx_exec_group = field(CxxRuleExecGroupParams | None, None),
     # Use content-based filepaths for artifacts
     use_content_based_paths = field(bool, False),
     # Coverage instrumentation compiler flags

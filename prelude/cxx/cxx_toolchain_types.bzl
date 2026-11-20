@@ -16,6 +16,16 @@ load(
 load("@prelude//cxx:debug.bzl", "SplitDebugMode")
 load("@prelude//target_stats:target_stats_tools.bzl", "TargetStatsToolsInfo")
 
+# The named execution group that carries C/C++ compile actions onto an
+# alternate execution platform with an alternate C++ toolchain. `cxx_library`
+# and `cxx_binary` declare this group alongside the default group;
+# `compile.bzl` assigns only `cxx_compile` actions to it when the build defs
+# selected a group toolchain for the target. Every other action class stays
+# in the default group on the ordinary platform. The group itself is just a
+# name: which toolchain backs it and which targets opt in are chosen by the
+# build defs, not the prelude.
+MultiArchFatCompile = exec_group()
+
 CXX_COMPILER_TYPES = ["clang", "clang_cl", "clang_windows", "gcc", "windows", "windows_ml64"]
 
 LinkerType = enum("gnu", "darwin", "windows", "wasm")

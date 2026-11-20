@@ -98,6 +98,10 @@ CxxCompileCommand = record(
     category = field(str),
     allow_cache_upload = field(bool),
     allow_content_based_paths = field(bool),
+    # True when the build defs selected an alternate-group toolchain for this
+    # command's target. The action sites below schedule such compiles in the
+    # group's execution group instead of the default group.
+    uses_group_toolchain = field(bool),
 )
 
 # Declared index store output and metadata

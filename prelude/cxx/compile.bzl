@@ -33,7 +33,7 @@ load(
     "cuda_compile",
     "declare_cuda_dist_compile_output",
 )
-load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo")
+load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo", "MultiArchFatCompile")
 load("@prelude//cxx:hip.bzl", "hip_compile_weight")
 load("@prelude//cxx:hip_debug_extract.bzl", "hip_debug_extract_available", "hip_debug_extract_compile_object")
 load(
@@ -837,16 +837,21 @@ def _compile_single_cxx(
     else:
         is_producing_compiled_pch = bool(compile_pch)
         is_consuming_compiled_pch = bool(precompiled_header and precompiled_header[CPrecompiledHeaderInfo].compiled)
+        is_compiled_pch = is_producing_compiled_pch or is_consuming_compiled_pch
         actions.run(
             cmd,
             category = cxx_compile_cmd.category,
+            # Compiled PCH actions must stay local (the AST records absolute
+            # source paths), so they bypass the fat exec group, whose
+            # executors are remote-only.
+            exec_group = None if is_compiled_pch else (MultiArchFatCompile if cxx_compile_cmd.uses_group_toolchain else None),
             identifier = identifier,
             dep_files = action_dep_files,
             allow_cache_upload = cxx_compile_cmd.allow_cache_upload,
             allow_dep_file_cache_upload = toolchain.allow_dep_file_cache_upload,
             error_handler = shared_info.error_handler,
             outputs_for_error_handler = outputs_for_error_handler,
-            local_only = is_producing_compiled_pch or is_consuming_compiled_pch,
+            local_only = is_compiled_pch,
             weight = info.weight,
             expect_eligible_for_dedupe = shared_info.expect_eligible_for_dedupe,
         )
@@ -863,6 +868,7 @@ def _compile_single_cxx(
         actions.run(
             assembly_cmd,
             category = cxx_compile_cmd.category,
+            exec_group = MultiArchFatCompile if cxx_compile_cmd.uses_group_toolchain else None,
             identifier = identifier + " (assembly)",
             allow_cache_upload = cxx_compile_cmd.allow_cache_upload,
             allow_dep_file_cache_upload = False,
@@ -1699,6 +1705,7 @@ def _precompile_single_cxx(
     actions.run(
         cmd,
         category = "cxx_modules_precompile",
+        exec_group = MultiArchFatCompile if cxx_cmd.uses_group_toolchain else None,
         identifier = identifier,
         allow_cache_upload = cxx_cmd.allow_cache_upload,
         low_pass_filter = False,
@@ -1732,6 +1739,7 @@ def _precompile_single_cxx(
                 check_cmd,
             ],
             category = "check",
+            exec_group = MultiArchFatCompile if cxx_cmd.uses_group_toolchain else None,
             identifier = identifier + " (header-unit)",
             allow_cache_upload = cxx_cmd.allow_cache_upload,
             low_pass_filter = False,
@@ -1749,6 +1757,7 @@ def _precompile_single_cxx(
     actions.run(
         stub_cmd,
         category = "cxx_modules_precompile_stub",
+        exec_group = MultiArchFatCompile if cxx_cmd.uses_group_toolchain else None,
         identifier = identifier,
         allow_cache_upload = cxx_cmd.allow_cache_upload,
         low_pass_filter = False,
@@ -1773,12 +1782,20 @@ def precompile_cxx(
     header_preprocessor_info: CPreprocessorInfo,
 ) -> (list[CPreprocessor], list[CxxSrcPrecompileCommand]):
     """Produces header units and returns their preprocessors and commands."""
+    group_params = impl_params._cxx_exec_group
+    group_toolchain = group_params.cxx_toolchain.get(CxxToolchainInfo) if group_params != None and group_params.cxx_toolchain != None else None
+    if group_toolchain != None:
+        toolchain = group_toolchain
     compiler_info = toolchain.cxx_compiler_info
     if not _compiler_supports_header_units(compiler_info):
         return [], []
 
     def mk_base_cmd():
         base_compile_cmd = _get_compile_base(toolchain, compiler_info, use_wrapper = True)
+        if group_toolchain != None:
+            for sysroot in (group_params.sysroot, group_params.kernel_headers):
+                if sysroot != None:
+                    base_compile_cmd = cmd_args(base_compile_cmd, "-idirafter", sysroot)
         ext = CxxExtension(".cpp")
         headers_tag = actions.artifact_tag()  # Currently ignored
         argsfile = _mk_argsfiles(
@@ -1821,6 +1838,7 @@ def precompile_cxx(
             headers_dep_files = None,
             compiler_type = compiler_info.compiler_type,
             category = "cxx_modules_precompile",
+            uses_group_toolchain = group_toolchain != None,
             allow_cache_upload = impl_params.allow_cache_upload,
             allow_content_based_paths = True,  # Unused: we always use content-based paths for precompile
         )
@@ -2695,8 +2713,28 @@ def _generate_base_compile_command(
     with a given extension.
     """
     compiler_info = _get_compiler_info(toolchain, ext)
+    # Alternate-group compiles build their command from the group toolchain,
+    # so the compiler, flags and helper tools resolve for the group's
+    # execution platform. Scheduling still flips per action at the
+    # actions.run sites below. The params record is None unless the build
+    # defs selected a group toolchain for this target, so only opted-in
+    # targets route there.
+    group_params = impl_params._cxx_exec_group
+    group_toolchain = group_params.cxx_toolchain.get(CxxToolchainInfo) if group_params != None and group_params.cxx_toolchain != None else None
+    # C, asm and HIP sources stay on the target toolchain: asm is
+    # arch-specific (and the fat assembler's fbcc wrapper misdetects the
+    # trampoline compiler, emitting a cc1 invocation the clang driver
+    # rejects), and the fat construction toolchain has no HIP compiler.
+    use_group_toolchain = group_toolchain != None and ext.value not in (".c", ".s", ".sx", ".S", ".asm", ".asmpp", ".hip")
+    if use_group_toolchain:
+        toolchain = group_toolchain
+        compiler_info = _get_compiler_info(toolchain, ext)
 
     base_compile_cmd = _get_compile_base(toolchain, compiler_info, impl_params.use_fbcc_rust_wrapper)
+    if use_group_toolchain:
+        for sysroot in (group_params.sysroot, group_params.kernel_headers):
+            if sysroot != None:
+                base_compile_cmd = cmd_args(base_compile_cmd, "-idirafter", sysroot)
     category = _get_category(ext)
 
     headers_dep_files = None
@@ -2771,6 +2809,7 @@ def _generate_base_compile_command(
         category = category,
         allow_cache_upload = impl_params.allow_cache_upload,
         allow_content_based_paths = allow_content_based_paths,
+        uses_group_toolchain = use_group_toolchain,
     )
 
 def _get_use_pch_args(

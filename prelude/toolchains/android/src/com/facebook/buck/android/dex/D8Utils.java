@@ -570,11 +570,18 @@ public class D8Utils {
     }
   }
 
+  /** Thrown when D8 produced more than one DEX file where a single output was expected. */
+  static final class MultipleDexOutputException extends IllegalStateException {
+    MultipleDexOutputException(String message) {
+      super(message);
+    }
+  }
+
   /**
    * Moves a single DEX file from a D8 output directory to the final destination. When {@link
    * D8Options#FAIL_ON_MULTIPLE_DEX} is present in the options set, throws {@link
-   * IllegalStateException} if D8 produced multiple DEX files. Otherwise, silently moves the first
-   * file (sorted lexicographically).
+   * MultipleDexOutputException} if D8 produced multiple DEX files. Otherwise, silently moves the
+   * first file (sorted lexicographically).
    *
    * <p>This is package-visible for testing.
    */
@@ -589,7 +596,7 @@ public class D8Utils {
       for (File f : outputs) {
         fileList.append("\n  ").append(f.getName());
       }
-      throw new IllegalStateException(
+      throw new MultipleDexOutputException(
           "D8 produced "
               + outputs.length
               + " DEX files but only a single output was expected:"

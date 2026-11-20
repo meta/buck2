@@ -13,6 +13,7 @@ package com.facebook.buck.android.dex;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -106,6 +107,21 @@ public class D8UtilsTest {
           "Error should suggest use_split_dex: " + e.getMessage(),
           e.getMessage().contains("use_split_dex = True"));
     }
+  }
+
+  @Test
+  public void testMoveSingleDexOutput_multipleFiles_throwsMultipleDexOutputException()
+      throws Exception {
+    Path d8OutputDir = tmp.newFolder("d8-multi-type").toPath();
+    Files.write(d8OutputDir.resolve("classes.dex"), new byte[] {1});
+    Files.write(d8OutputDir.resolve("classes2.dex"), new byte[] {2});
+
+    Path dest = tmp.getRoot().toPath().resolve("final.dex");
+
+    assertThrows(
+        D8Utils.MultipleDexOutputException.class,
+        () -> D8Utils.moveSingleDexOutput(d8OutputDir, dest, FAIL_ON_MULTIPLE));
+    assertFalse("Destination should not be written on error", Files.exists(dest));
   }
 
   @Test

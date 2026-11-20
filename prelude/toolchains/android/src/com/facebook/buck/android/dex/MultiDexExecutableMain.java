@@ -269,7 +269,7 @@ public class MultiDexExecutableMain {
                 new D8Utils.D8DiagnosticsHandler(),
                 Paths.get(primaryDexString),
                 primaryDexFilesToDex,
-                noOptimize ? EnumSet.of(D8Options.NO_OPTIMIZE) : EnumSet.noneOf(D8Options.class),
+                getMinimizedPrimaryDexD8Options(noOptimize),
                 Optional.empty(),
                 Paths.get(androidJar),
                 primaryDexClasspath,
@@ -277,6 +277,11 @@ public class MultiDexExecutableMain {
                 D8_THREAD_COUNT);
           } catch (CompilationFailedException e) {
             throw new IOException(e);
+          } catch (D8Utils.MultipleDexOutputException e) {
+            throw new IllegalStateException(
+                "The classes matching primary_dex_patterns do not fit in one primary dex."
+                    + " Remove classes from primary_dex_patterns until they fit.",
+                e);
           }
           moduleDexFilesEmitted = 1;
         }
@@ -392,6 +397,19 @@ public class MultiDexExecutableMain {
           "BUCK_SCRATCH_PATH environment variable must be set and non-empty");
     }
     return Paths.get(scratchPath);
+  }
+
+  /**
+   * Returns the D8 options for dexing the minimized primary dex. The primary dex is one file, so
+   * these make D8 fail when the classes do not fit in it, rather than drop the classes that would
+   * spill into a second dex.
+   */
+  static Set<D8Options> getMinimizedPrimaryDexD8Options(boolean noOptimize) {
+    Set<D8Options> options = EnumSet.of(D8Options.FAIL_ON_MULTIPLE_DEX);
+    if (noOptimize) {
+      options.add(D8Options.NO_OPTIMIZE);
+    }
+    return options;
   }
 
   static ImmutableList<Path> readInputPaths(Path inputList) throws IOException {

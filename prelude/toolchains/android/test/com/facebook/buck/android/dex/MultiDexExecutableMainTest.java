@@ -17,6 +17,7 @@ import com.google.common.collect.ImmutableList;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.EnumSet;
 import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
 import org.junit.Rule;
@@ -60,6 +61,16 @@ public class MultiDexExecutableMainTest {
     Path inputs = writeInputList(tmp.getRoot().toPath().resolve("missing.jar"));
 
     assertThrows(IOException.class, () -> MultiDexExecutableMain.readInputPaths(inputs));
+  }
+
+  @Test
+  public void minimizedPrimaryDexFailsOnMultipleDexOutputs() {
+    assertEquals(
+        EnumSet.of(D8Options.FAIL_ON_MULTIPLE_DEX),
+        MultiDexExecutableMain.getMinimizedPrimaryDexD8Options(false));
+    assertEquals(
+        EnumSet.of(D8Options.FAIL_ON_MULTIPLE_DEX, D8Options.NO_OPTIMIZE),
+        MultiDexExecutableMain.getMinimizedPrimaryDexD8Options(true));
   }
 
   private Path writeInputList(Path... paths) throws IOException {

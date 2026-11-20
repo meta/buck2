@@ -13,12 +13,17 @@ use buck2_build_api::interpreter::rule_defs::register_rule_defs;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::configs::testing::TestConfigParserFileOps;
+use buck2_common::legacy_configs::configs::testing::parse_with_config_args;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_common::package_listing::listing::testing::PackageListingExt;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bzl::ImportPath;
+use buck2_core::cells::CellAliasResolver;
+use buck2_core::cells::CellResolver;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::cells::cell_root_path::CellRootPathBuf;
+use buck2_core::cells::name::CellName;
 use buck2_interpreter::file_loader::LoadedModules;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_interpreter::paths::path::StarlarkPath;
@@ -401,6 +406,9 @@ fn eval() -> buck2_error::Result<()> {
 
                 assert_eq(package_name(), get_base_path())
 
+                assert_eq("root", get_cell_name())
+                assert_eq("root", get_root_cell_name())
+
                 export_file(name = "rule_name")
                 assert_eq(True, rule_exists("rule_name"))
                 assert_eq(False, rule_exists("not_rule_name"))
@@ -410,6 +418,73 @@ fn eval() -> buck2_error::Result<()> {
             "#
     );
     tester.run_starlark_test(content)?;
+    Ok(())
+}
+
+fn multi_cell_tester() -> buck2_error::Result<Tester> {
+    let resolver = CellResolver::testing_with_names_and_paths(&[
+        (
+            CellName::testing_new("root"),
+            CellRootPathBuf::testing_new(""),
+        ),
+        (
+            CellName::testing_new("foo"),
+            CellRootPathBuf::testing_new("foo"),
+        ),
+    ]);
+    let config = parse_with_config_args(
+        &[(
+            "root",
+            indoc!(
+                r#"
+                    [section]
+                        key = value
+                "#
+            ),
+        )],
+        "root",
+        &[],
+    )?;
+    let cell_alias_resolver = CellAliasResolver::new_for_non_root_cell(
+        CellName::testing_new("foo"),
+        resolver.root_cell_cell_alias_resolver(),
+        [],
+    )?;
+    Tester::with_cells((
+        cell_alias_resolver,
+        resolver,
+        config,
+        CellPathWithAllowedRelativeDir::new(CellPath::testing_new("foo//some/package"), None),
+    ))
+}
+
+#[test]
+fn multi_cell_names() -> buck2_error::Result<()> {
+    let mut tester = multi_cell_tester()?;
+    tester.add_import(
+        &ImportPath::testing_new("foo//some/package:defs.bzl"),
+        indoc!(
+            r#"
+            def assert_eq(a, b):
+                if a != b:
+                    fail("expected: %s got %s" % (a, b))
+
+            def test():
+                assert_eq("foo", get_cell_name())
+                assert_eq("root", get_root_cell_name())
+            "#
+        ),
+    )?;
+    tester.eval_build_file(
+        &BuildFilePath::testing_new("foo//some/package:BUCK"),
+        indoc!(
+            r#"
+            load(":defs.bzl", "test")
+            test()
+            "#
+        ),
+        PackageListing::testing_files(&["file1.java"]),
+    )?;
     Ok(())
 }
 

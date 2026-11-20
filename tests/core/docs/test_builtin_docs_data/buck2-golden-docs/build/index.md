@@ -16,6 +16,7 @@
 ## get\_base\_path
 ## get\_cell\_name
 ## get\_parent\_modifiers
+## get\_root\_cell\_name
 ## glob
 ## host\_info
 ## load\_symbols

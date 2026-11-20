@@ -121,4 +121,12 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
             .name()
             .to_string())
     }
+
+    /// `get_root_cell_name()` returns the name of the root cell.
+    fn get_root_cell_name(eval: &mut Evaluator) -> starlark::Result<String> {
+        Ok(BuildContext::from_context(eval)?
+            .cell_resolver()
+            .root_cell()
+            .to_string())
+    }
 }

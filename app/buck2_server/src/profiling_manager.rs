@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use buck2_cli_proto::client_context::ProfilePatternOptions;
 use buck2_common::manifold::Bucket;
-use buck2_common::manifold::ManifoldClient;
+use buck2_common::manifold::SharedManifoldClient;
 use buck2_error::BuckErrorContext;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_fs::paths::abs_path::AbsPath;
@@ -38,6 +38,7 @@ pub struct StarlarkProfilingManager {
     pub(crate) configuration: StarlarkProfilerConfiguration,
     pub(crate) profile_event_listener: Option<Arc<FileWritingProfileEventListener>>,
     trace_id: TraceId,
+    manifold: SharedManifoldClient,
 }
 
 impl StarlarkProfilingManager {
@@ -45,6 +46,7 @@ impl StarlarkProfilingManager {
         profile_pattern_opts: Option<&ProfilePatternOptions>,
         starlark_profile_override: StarlarkProfilerConfiguration,
         events: &EventDispatcher,
+        manifold_client: SharedManifoldClient,
     ) -> buck2_error::Result<Self> {
         let starlark_profile_patterns_opts = match profile_pattern_opts {
             Some(ProfilePatternOptions {
@@ -89,6 +91,7 @@ impl StarlarkProfilingManager {
             configuration,
             profile_event_listener,
             trace_id: events.trace_id().dupe(),
+            manifold: manifold_client,
         })
     }
 
@@ -114,7 +117,7 @@ impl StarlarkProfilingManager {
     }
 
     async fn upload_profile_to_manifold(&self, svg_path: &AbsPath) -> buck2_error::Result<String> {
-        let manifold = ManifoldClient::new().await?;
+        let manifold = self.manifold.manifold_client().await?;
         let manifold_filename = format!("flat/{}-profile-merged.svg", self.trace_id);
         manifold
             .upload_file(

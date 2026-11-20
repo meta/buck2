@@ -1152,6 +1152,7 @@ impl BuckdServer {
                                 client_ctx.profile_pattern_opts.as_ref(),
                                 instrumentation,
                                 &base_context.events,
+                                base_context.manifold_client.clone(),
                             )?;
 
                             let context = ServerCommandContext::new(

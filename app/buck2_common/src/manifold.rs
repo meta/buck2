@@ -9,6 +9,7 @@
  */
 
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -21,12 +22,14 @@ use buck2_http::retries::HttpErrorForRetry;
 use buck2_http::retries::IntoBuck2Error;
 use buck2_http::retries::http_retry;
 use bytes::Bytes;
+use dice::UserComputationData;
 use dupe::Dupe;
 use futures::stream::BoxStream;
 use futures::stream::StreamExt;
 use hyper::Response;
 use tokio::fs::File;
 use tokio::io::AsyncRead;
+use tokio::sync::OnceCell;
 
 use crate::chunk_reader::ChunkReader;
 
@@ -205,12 +208,18 @@ impl ManifoldClient {
             .await?
             .with_absolute_dns_names()
             .build();
+        Ok(Self::from_client(&client))
+    }
+
+    /// Shares a caller-provided client so uploads reuse its pooled connections
+    /// instead of building a client per upload.
+    pub fn from_client(client: &HttpClient) -> Self {
         let manifold_url = upload_endpoint_url(client.supports_vpnless()).map(|s| s.to_owned());
 
-        Ok(Self {
-            client,
+        Self {
+            client: client.dupe(),
             manifold_url,
-        })
+        }
     }
 
     pub async fn write(
@@ -340,6 +349,57 @@ impl ManifoldClient {
             .await?;
 
         Ok(manifold_explorer_url(&bucket, filename))
+    }
+}
+
+/// One `HttpClient` shared by a command's Manifold uploads. Created with the command context and
+/// dropped with it, mirroring the RE connection's lifetime: uploads within a command reuse pooled
+/// connections, while a fresh client (and fresh TLS cert reads) is built for the next command.
+#[derive(Clone, Default)]
+pub struct SharedManifoldClient {
+    cell: Arc<OnceCell<HttpClient>>,
+}
+
+impl SharedManifoldClient {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The command's shared client, building it on first use.
+    pub async fn http_client(&self) -> buck2_error::Result<HttpClient> {
+        self.cell
+            .get_or_try_init(|| async {
+                HttpClientBuilder::internal()
+                    .await
+                    .map(|mut builder| builder.with_absolute_dns_names().build())
+            })
+            .await
+            .map(|client| client.dupe())
+    }
+
+    pub async fn manifold_client(&self) -> buck2_error::Result<ManifoldClient> {
+        Ok(ManifoldClient::from_client(&self.http_client().await?))
+    }
+}
+
+/// Dice implementations so commands can share one Manifold client for the command's lifetime.
+pub trait HasManifoldClient {
+    fn manifold_client(&self) -> Option<&SharedManifoldClient>;
+}
+
+pub trait SetManifoldClient {
+    fn set_manifold_client(&mut self, client: SharedManifoldClient);
+}
+
+impl HasManifoldClient for UserComputationData {
+    fn manifold_client(&self) -> Option<&SharedManifoldClient> {
+        self.data.get::<SharedManifoldClient>().ok()
+    }
+}
+
+impl SetManifoldClient for UserComputationData {
+    fn set_manifold_client(&mut self, client: SharedManifoldClient) {
+        self.data.set(client);
     }
 }
 

@@ -63,6 +63,8 @@ use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
 use buck2_common::legacy_configs::file_ops::ConfigPath;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+use buck2_common::manifold::SetManifoldClient;
+use buck2_common::manifold::SharedManifoldClient;
 use buck2_common::tenant::tenant_instance_id;
 use buck2_core::buck2_env;
 use buck2_core::cells::name::CellName;
@@ -211,6 +213,9 @@ pub struct BaseServerCommandContext {
     pub(crate) tenant: Arc<TenantState>,
     /// Underlying data that isn't command-level. Read `tenant` instead for tenant or repo state.
     pub(crate) daemon: Arc<DaemonStateData>,
+    /// Per-command shared client for Manifold uploads. Built lazily on first upload and dropped
+    /// with the command, mirroring the RE connection's lifetime.
+    pub(crate) manifold_client: SharedManifoldClient,
     /// Removes this command from the set of active commands when dropped.
     pub _drop_guard: ActiveCommandDropGuard,
 }
@@ -226,6 +231,7 @@ fn _assert_send_sync(
         events,
         tenant,
         daemon,
+        manifold_client,
         _drop_guard,
     }: &BaseServerCommandContext,
 ) {
@@ -234,6 +240,7 @@ fn _assert_send_sync(
     assert(events);
     assert(tenant);
     assert(daemon);
+    assert(manifold_client);
     assert(_drop_guard);
 }
 
@@ -1298,6 +1305,7 @@ impl DiceCommandUpdater<'_, '_> {
         )));
         data.set_blocking_executor(self.cmd_ctx.base_context.repo().blocking_executor.dupe());
         data.set_http_client(self.cmd_ctx.base_context.daemon.http_client.dupe());
+        data.set_manifold_client(self.cmd_ctx.base_context.manifold_client.clone());
         data.set_materializer(self.cmd_ctx.base_context.repo().materializer.dupe());
         data.set_dep_file_cache(self.cmd_ctx.base_context.repo().dep_file_cache.dupe());
         data.set_incremental_store(Some(

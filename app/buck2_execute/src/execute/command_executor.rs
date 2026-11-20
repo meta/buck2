@@ -211,10 +211,7 @@ impl CommandExecutor {
                 && let Some(worker) = request.worker()
                 && let Some(key) = worker.remote_key.as_ref()
             {
-                platform.properties.push(RE::Property {
-                    name: "persistentWorkerKey".to_owned(),
-                    value: key.to_string(),
-                });
+                set_persistent_worker_key(&mut platform, key.to_string());
                 // TODO[AH] Ideally, Buck2 could generate an argfile on the fly.
                 for arg in request.args() {
                     if !(arg.starts_with("@")
@@ -271,6 +268,29 @@ impl CommandExecutor {
             buck2_error::Ok(action)
         })
     }
+}
+
+/// Routes the action to the remote persistent worker for `key`.
+///
+/// REAPI requires the properties of a platform to be sorted by name, and servers such as
+/// Buildbarn reject a platform where they are not.
+fn set_persistent_worker_key(platform: &mut RE::Platform, key: String) {
+    const NAME: &str = "persistentWorkerKey";
+    // BuildBuddy ignores the case of a name and takes the last value, so a
+    // `persistentworkerkey` of the platform's own would win over this one.
+    platform
+        .properties
+        .retain(|p| !p.name.eq_ignore_ascii_case(NAME));
+    let index = platform
+        .properties
+        .partition_point(|p| p.name.as_str() < NAME);
+    platform.properties.insert(
+        index,
+        RE::Property {
+            name: NAME.to_owned(),
+            value: key,
+        },
+    );
 }
 
 fn re_create_action(
@@ -515,4 +535,60 @@ fn set_action_network_access(
         ExecutorNetworkAccess::Loopback => RE::NetworkIsolationType::Loopback,
         ExecutorNetworkAccess::Private => RE::NetworkIsolationType::Private,
     } as i32;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn property(name: &str, value: &str) -> RE::Property {
+        RE::Property {
+            name: name.to_owned(),
+            value: value.to_owned(),
+        }
+    }
+
+    #[test]
+    fn test_persistent_worker_key_is_inserted_in_order() {
+        let mut platform = RE::Platform {
+            properties: vec![
+                property("OSFamily", "linux"),
+                property("recycle-runner", "true"),
+            ],
+        };
+
+        set_persistent_worker_key(&mut platform, "key".to_owned());
+
+        assert_eq!(
+            platform.properties,
+            vec![
+                property("OSFamily", "linux"),
+                property("persistentWorkerKey", "key"),
+                property("recycle-runner", "true"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_persistent_worker_key_replaces_the_platforms_own() {
+        let mut platform = RE::Platform {
+            properties: vec![
+                property("OSFamily", "linux"),
+                property("persistentWorkerKey", "from the platform"),
+                property("persistentworkerkey", "from the platform"),
+                property("recycle-runner", "true"),
+            ],
+        };
+
+        set_persistent_worker_key(&mut platform, "key".to_owned());
+
+        assert_eq!(
+            platform.properties,
+            vec![
+                property("OSFamily", "linux"),
+                property("persistentWorkerKey", "key"),
+                property("recycle-runner", "true"),
+            ]
+        );
+    }
 }

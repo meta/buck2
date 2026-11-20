@@ -987,6 +987,8 @@ def _get_shared_compile_command_args(
     cxx_compile_cmd: CxxCompileCommand,
     flavors: set[CxxCompileFlavor],
     flavor_flags: dict[str, list[str]],
+    flavor_lang_compiler_flags: dict[str, dict[str, list[str]]],
+    extension: str,
     use_header_units: UseHeaderUnitsMode = UseHeaderUnitsMode("none"),
     cuda_dryrun: bool = False,
 ) -> CxxSharedCompileCommandArgs:
@@ -1008,6 +1010,9 @@ def _get_shared_compile_command_args(
         flags = flavor_flags.get(flavor.value)
         if flags:
             before_src.add(flags)
+        lang_compiler_flags = flavor_lang_compiler_flags.get(flavor.value)
+        if lang_compiler_flags:
+            before_src.add(cxx_by_language_ext(lang_compiler_flags, extension))
 
     return CxxSharedCompileCommandArgs(
         before_src = before_src,
@@ -1015,7 +1020,9 @@ def _get_shared_compile_command_args(
     )
 
 def toolchain_supports_flavor(toolchain: CxxToolchainInfo, flavor: CxxCompileFlavor) -> bool:
-    return flavor.value in toolchain.supported_compile_flavors and toolchain.compiler_flavor_flags.get(flavor.value) != None
+    return flavor.value in toolchain.supported_compile_flavors and (
+        toolchain.compiler_flavor_flags.get(flavor.value) != None or toolchain.compiler_flavor_lang_compiler_flags.get(flavor.value) != None
+    )
 
 # Fallback when the toolchain configures no flavor flags at all, for clang and
 # gcc. Ideally this would be a default value in the toolchain definition itself,
@@ -1108,6 +1115,8 @@ def _cxx_dynamic_compile(
             cxx_compile_cmd = shared_info.cxx_compile_cmd,
             flavors = flavors_set,
             flavor_flags = flavor_flags,
+            flavor_lang_compiler_flags = toolchain.compiler_flavor_lang_compiler_flags,
+            extension = extension,
             use_header_units = use_header_units,
         )
         shared_auxiliary_args[extension] = _get_shared_compile_command_args(
@@ -1115,6 +1124,8 @@ def _cxx_dynamic_compile(
             cxx_compile_cmd = shared_info.cxx_compile_cmd,
             flavors = flavors_set,
             flavor_flags = toolchain.compiler_flavor_flags,
+            flavor_lang_compiler_flags = toolchain.compiler_flavor_lang_compiler_flags,
+            extension = extension,
         )
         if extension == ".cu" and cuda_compile_style == CudaCompileStyle("dist"):
             shared_dryrun_args[extension] = _get_shared_compile_command_args(
@@ -1122,6 +1133,8 @@ def _cxx_dynamic_compile(
                 cxx_compile_cmd = shared_info.cxx_compile_cmd,
                 flavors = flavors_set,
                 flavor_flags = flavor_flags,
+                flavor_lang_compiler_flags = toolchain.compiler_flavor_lang_compiler_flags,
+                extension = extension,
                 use_header_units = use_header_units,
                 cuda_dryrun = True,
             )

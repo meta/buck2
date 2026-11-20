@@ -300,6 +300,10 @@ CxxToolchainInfo = provider(
         # Produce a time profiler JSON report by calling clang with `-ftime-trace`.
         "clang_trace": provider_field(bool, default = False),
         "compiler_flavor_flags": provider_field(typing.Any, default = {}),
+        # Per-language compile-flavor flags: flavor -> `lang_compiler` key
+        # (e.g. "c_cpp_output") -> flags. Unlike `compiler_flavor_flags`,
+        # these apply only to matching languages.
+        "compiler_flavor_lang_compiler_flags": provider_field(typing.Any, default = {}),
         "cpp_dep_tracking_mode": provider_field(typing.Any, default = None),
         "cuda_compiler_info": provider_field(typing.Any, default = None),
         "cuda_dep_tracking_mode": provider_field(typing.Any, default = None),
@@ -408,6 +412,7 @@ def cxx_toolchain_infos(
     lipo = None,
     remap_cwd = False,
     compiler_flavor_flags = {},
+    compiler_flavor_lang_compiler_flags = {},
     supported_compile_flavors = ["pic"],
     objc_compiler_info = None,
     objcxx_compiler_info = None,
@@ -469,6 +474,7 @@ def cxx_toolchain_infos(
         object_format = object_format,
         pass_plugin = pass_plugin,
         compiler_flavor_flags = compiler_flavor_flags,
+        compiler_flavor_lang_compiler_flags = compiler_flavor_lang_compiler_flags,
         pic_behavior = pic_behavior,
         raw_headers_as_headers_mode = raw_headers_as_headers_mode,
         rc_compiler_info = rc_compiler_info,

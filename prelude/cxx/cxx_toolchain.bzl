@@ -294,6 +294,7 @@ def cxx_toolchain_impl(ctx):
         object_format = CxxObjectFormat(object_format),
         pass_plugin = ctx.attrs.pass_plugin[DefaultInfo].default_outputs[0] if ctx.attrs.pass_plugin else None,
         compiler_flavor_flags = ctx.attrs.compiler_flavor_flags,
+        compiler_flavor_lang_compiler_flags = ctx.attrs.compiler_flavor_lang_compiler_flags,
         pic_behavior = PicBehavior(ctx.attrs.pic_behavior),
         platform_deps_aliases = ctx.attrs.platform_deps_aliases,
         platform_name = platform_name,
@@ -331,6 +332,9 @@ def cxx_toolchain_extra_attributes(is_toolchain_rule):
         "clang_remarks": attrs.option(attrs.string(), default = None),
         "clang_trace": attrs.option(attrs.bool(), default = None),
         "compiler_flavor_flags": attrs.dict(key = attrs.string(), value = attrs.list(attrs.string()), default = {}),
+        "compiler_flavor_lang_compiler_flags": attrs.dict(
+            key = attrs.string(), value = attrs.dict(key = attrs.string(), value = attrs.list(attrs.string())), default = {}
+        ),
         "cpp_dep_tracking_mode": attrs.enum(DepTrackingMode.values(), default = "makefile"),
         "cuda_compiler": attrs.option(dep_type(providers = [RunInfo]), default = None),
         "cuda_compiler_for_dryrun": attrs.option(dep_type(providers = [RunInfo]), default = None),

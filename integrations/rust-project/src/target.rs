@@ -240,6 +240,7 @@ pub(crate) struct ExpandedAndResolved {
     pub(crate) expanded_targets: Vec<Target>,
     pub(crate) queried_proc_macros: FxHashMap<Target, MacroOutput>,
     pub(crate) resolved_deps: FxHashMap<Target, TargetInfo>,
+    pub(crate) aliases: Option<FxHashMap<Target, Target>>,
 }
 
 fn deserialize_named_deps<'de, D>(deserializer: D) -> Result<FxHashMap<String, Target>, D::Error>

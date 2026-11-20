@@ -6,12 +6,18 @@ rust_library(
     name = "c",
     srcs = ["lib.rs"],
     visibility = ["PUBLIC"],
-    deps = ["//buck2/integrations/rust-project/tests/targets/foo:e"],
+    deps = [
+        "//buck2/integrations/rust-project/tests/targets/alias:l_alias",
+        "//buck2/integrations/rust-project/tests/targets/foo:e",
+    ],
 )
 
 rust_library(
     name = "d",
     srcs = ["lib.rs"],
     visibility = ["PUBLIC"],
-    deps = ["//buck2/integrations/rust-project/tests/targets/foo:e"],
+    deps = [
+        "//buck2/integrations/rust-project/tests/targets/alias:l_alias",
+        "//buck2/integrations/rust-project/tests/targets/foo:e",
+    ],
 )

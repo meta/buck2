@@ -83,6 +83,7 @@ pub(crate) fn to_project_json(
         expanded_targets: _,
         queried_proc_macros: proc_macros,
         resolved_deps: target_map,
+        aliases: _,
     } = expanded_and_resolved;
 
     let target_index = merge_unit_test_targets(target_map);
@@ -688,6 +689,8 @@ impl Buck {
 
     /// Given a list of `targets`, find all the aliases in their transitive dependencies, and
     /// expand all those aliases to the final target.
+    ///
+    /// Fallback for a prelude whose `resolve_targets` does not report `aliases`.
     pub(crate) fn query_aliased_libraries(
         &self,
         targets: &[Target],
@@ -826,8 +829,6 @@ impl Buck {
         targets: &[Target],
         universe_targets: &[Target],
     ) -> Result<FxHashMap<Target, AliasedTargetInfo>, anyhow::Error> {
-        // FIXME: Do this in bxl as well instead of manually writing a separate query
-
         let mut command = self.command(["cquery"]);
 
         // Fetch all aliases used by transitive deps. This is so we

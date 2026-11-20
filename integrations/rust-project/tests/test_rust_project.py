@@ -55,6 +55,12 @@ class RustProjectTest(BuckTestCase):
             "fbcode//buck2/integrations/rust-project/tests/targets/foo:f": True,
         }
         assert expected_subset.items() <= target_and_in_workspace.items()
+        assert (
+            result["aliases"][
+                "fbcode//buck2/integrations/rust-project/tests/targets/alias:l_alias"
+            ]
+            == "fbcode//buck2/integrations/rust-project/tests/targets/alias:l"
+        )
 
         # The target being edited is not in any workspaces
         result_raw = await buck.bxl(
@@ -89,9 +95,21 @@ class RustProjectTest(BuckTestCase):
         )
         result: Dict[str, Any] = json.load(open(result_raw.stdout.rstrip()))
         assert result["expanded_targets"] == [
+            "fbcode//buck2/integrations/rust-project/tests/targets/alias:empty_alias",
+            "fbcode//buck2/integrations/rust-project/tests/targets/alias:empty_alias_alias",
             "fbcode//buck2/integrations/rust-project/tests/targets/alias:l",
             "fbcode//buck2/integrations/rust-project/tests/targets/alias:l_alias",
         ]
+        aliases = {
+            alias: actual
+            for alias, actual in result["aliases"].items()
+            if alias.startswith(
+                "fbcode//buck2/integrations/rust-project/tests/targets/alias:"
+            )
+        }
+        assert aliases == {
+            "fbcode//buck2/integrations/rust-project/tests/targets/alias:l_alias": "fbcode//buck2/integrations/rust-project/tests/targets/alias:l",
+        }
 
     @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
     async def test_semantic_target_kinds(self, buck: Buck) -> None:

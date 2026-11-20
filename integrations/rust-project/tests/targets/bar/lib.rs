@@ -11,3 +11,4 @@
 //! Empty library
 
 use e as _;
+use l as _;

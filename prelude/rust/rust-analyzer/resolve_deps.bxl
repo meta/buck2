@@ -18,6 +18,7 @@ MacroOutput = record(
 )
 
 ExpandedAndResolved = record(
+    aliases = dict[TargetLabel, TargetLabel],
     expanded_targets = list[TargetLabel],
     queried_proc_macros = dict[TargetLabel, MacroOutput],
     resolved_deps = dict[TargetLabel, TargetInfo],
@@ -286,6 +287,24 @@ def expand_proc_macros(ctx: bxl.Context, target_analysis: dict[Label, bxl.Analys
         )
     return out
 
+def resolve_aliases(ctx: bxl.Context, target_analysis: dict[Label, bxl.AnalysisResult]) -> dict[TargetLabel, TargetLabel]:
+    targets = [label.configured_target() for label in target_analysis]
+    actual_of = {}
+    for alias in ctx.cquery().kind("^alias$", ctx.cquery().deps(targets)):
+        actual = alias.attrs_lazy().get("actual").value()
+        actual_of[alias.label.raw_target()] = actual.raw_target() if actual != None else None
+
+    out = {}
+    for label in actual_of:
+        actual = actual_of[label]
+        for _ in range(len(actual_of)):
+            if actual not in actual_of:
+                break
+            actual = actual_of[actual]
+        if actual != None and actual not in actual_of:
+            out[label] = actual
+    return out
+
 # Returns a list of all the expanded targets including any workspaces, followed by just the workspaces
 def expand_targets(ctx: bxl.Context, targets: list[TargetLabel], exclude_workspaces: bool) -> (dict[Label, bxl.AnalysisResult], list[TargetLabel]):
     # keep_going skips targets that can't be configured here, such as one with an Apple-only toolchain dep on Linux.
@@ -355,6 +374,7 @@ def resolve_targets_impl(ctx: bxl.Context) -> None:
     target_analysis, workspaces = expand_targets(ctx, targets, ctx.cli_args.exclude_workspaces)
     queried_proc_macros = expand_proc_macros(ctx, target_analysis)
     resolved_deps = gather_deps(ctx, target_analysis, workspaces, ctx.cli_args.exclude_workspaces)
+    aliases = resolve_aliases(ctx, target_analysis)
 
     expanded_targets = [t.raw_target() for t in target_analysis.keys()]
 
@@ -374,6 +394,7 @@ def resolve_targets_impl(ctx: bxl.Context) -> None:
     artifacts = actions.write_json(
         artifact,
         ExpandedAndResolved(
+            aliases = aliases,
             expanded_targets = expanded_targets,
             queried_proc_macros = queried_proc_macros,
             resolved_deps = resolved_deps,

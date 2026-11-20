@@ -30,6 +30,7 @@ use crate::project_json::Sysroot;
 use crate::sysroot::SysrootConfig;
 use crate::sysroot::resolve_buckconfig_sysroot;
 use crate::sysroot::resolve_rustup_sysroot;
+use crate::target::AliasedTargetInfo;
 use crate::target::Target;
 
 #[derive(Debug)]
@@ -379,8 +380,20 @@ pub(crate) fn develop_with_sysroot(
     let expanded_and_resolved = buck.expand_and_resolve(&targets, exclude_workspaces)?;
 
     info!(kind = "progress", "resolving aliased libraries");
-    let aliased_libraries =
-        buck.query_aliased_libraries(&expanded_and_resolved.expanded_targets, &targets)?;
+    let aliased_libraries = match &expanded_and_resolved.aliases {
+        Some(aliases) => aliases
+            .iter()
+            .map(|(alias, actual)| {
+                (
+                    alias.clone(),
+                    AliasedTargetInfo {
+                        actual: Some(actual.clone()),
+                    },
+                )
+            })
+            .collect(),
+        None => buck.query_aliased_libraries(&expanded_and_resolved.expanded_targets, &targets)?,
+    };
 
     info!(kind = "progress", "generating rust-project.json");
     let rust_project = to_project_json(

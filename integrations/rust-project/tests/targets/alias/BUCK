@@ -13,3 +13,16 @@ alias(
     name = "l_alias",
     actual = ":l",
 )
+
+alias(
+    name = "empty_alias",
+    actual = select({
+        "DEFAULT": None,
+        "ovr_config//cpu/constraints:riscv64": ":l",
+    }),
+)
+
+alias(
+    name = "empty_alias_alias",
+    actual = ":empty_alias",
+)

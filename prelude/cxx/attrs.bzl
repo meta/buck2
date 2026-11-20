@@ -252,7 +252,7 @@ def _linker_extra_outputs_arg():
 def _linker_flags_arg():
     return {
         "linker_flags": attrs.list(
-            attrs.arg(anon_target_compatible = True),
+            attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup),
             default = [],
             doc = """
     Flags to add to the linker command line whenever the output from this
@@ -294,7 +294,7 @@ def _local_linker_script_flags_arg():
 def _exported_linker_flags_arg():
     return {
         "exported_linker_flags": attrs.list(
-            attrs.arg(anon_target_compatible = True),
+            attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup),
             default = [],
             doc = """
     Flags to add to the linker command line when the output from this
@@ -307,7 +307,7 @@ def _exported_linker_flags_arg():
 def _exported_post_linker_flags_arg():
     return {
         "exported_post_linker_flags": attrs.list(
-            attrs.arg(anon_target_compatible = True),
+            attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup),
             default = [],
             doc = """
     Flags to add to the linker command line when the output from this
@@ -589,7 +589,7 @@ def cxx_binary_and_test_attrs():
             # Linker flags that only apply to the executable link, used for link
             # strategies (e.g. link groups) which may link shared libraries from
             # top-level binary context.
-            "binary_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True), default = []),
+            "binary_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup), default = []),
             "bolt_flags": attrs.list(attrs.arg(), default = []),
             "bolt_profile": attrs.option(attrs.source(), default = None),
             # These flags will only be used to instrument a target
@@ -614,7 +614,7 @@ def cxx_binary_and_test_attrs():
             "separate_debug_info": attrs.bool(default = False),
             "_build_info": BUILD_INFO_ATTR,
             "_cxx_hacks": attrs.dep(default = "prelude//cxx/tools:cxx_hacks"),
-            "_cxx_toolchain": toolchains_common.cxx(),
+            "_cxx_toolchain": toolchains_common.cxx(DefaultExecGroup),
         }
         | cxx_common.flags_arg()
         | validation_common.attrs_validators_arg()
@@ -745,7 +745,7 @@ _library_attrs = (
         "link_group": attrs.option(attrs.string(), default = None),
         "link_group_map": LINK_GROUP_MAP_ATTR,
         "module_name": attrs.option(attrs.string(), default = None),
-        "post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True), default = []),
+        "post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup), default = []),
         "prefix_header": attrs.option(attrs.source(), default = None),
         "resources": attrs.named_set(attrs.source(), sorted = True, default = []),
         "sdk_modules": attrs.list(attrs.string(), default = []),
@@ -818,7 +818,7 @@ def cxx_library_extra_attrs() -> dict[str, Attr]:
             "supports_shlib_interfaces": attrs.bool(default = True),
             "third_party_project": attrs.option(attrs.string(), default = None),
             "_cxx_hacks": attrs.default_only(attrs.dep(default = "prelude//cxx/tools:cxx_hacks")),
-            "_cxx_toolchain": toolchains_common.cxx(),
+            "_cxx_toolchain": toolchains_common.cxx(DefaultExecGroup),
             "_emit_native_build_commands": attrs.default_only(attrs.bool(default = EMIT_NATIVE_BUILD_COMMANDS)),
             "_is_building_android_binary": is_building_android_binary_attr(),
         }
@@ -868,7 +868,7 @@ def cxx_binary_base_attrs() -> dict[str, Attr]:
             "link_deps_query_whole": attrs.bool(default = False),
             "link_group": attrs.option(attrs.string(), default = None),
             "link_group_map": LINK_GROUP_MAP_ATTR,
-            "post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True), default = []),
+            "post_linker_flags": attrs.list(attrs.arg(anon_target_compatible = True, exec_group = DefaultExecGroup), default = []),
             "prefer_stripped_objects": attrs.bool(default = False),
             "prefix_header": attrs.option(attrs.source(), default = None),
             "resources": attrs.named_set(attrs.source(), sorted = True, default = []),

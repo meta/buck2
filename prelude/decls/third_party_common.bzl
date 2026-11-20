@@ -13,8 +13,13 @@ def _create_third_party_build_root_attr():
             attrs.exec_dep(
                 default = select({
                     "DEFAULT": "prelude//third-party/tools:create_build-full",
+                    # Neutral linux-fat configs take the construction build root;
+                    # the key is a platform-only constraint value that never
+                    # appears in OSS configurations.
+                    # @oss-disable[end= ]: "fbcode//buck2/platform/execution/linux_fat:linux-fat": "prelude//third-party/tools:create_build-construction",
                     # @oss-disable[end= ]: "prelude//third-party/tools:purpose[construction]": "prelude//third-party/tools:create_build-construction",
-                })
+                }),
+                exec_group = DefaultExecGroup,
             )
         ),
     )

@@ -49,7 +49,7 @@ def _csharp_toolchain():
 def _cython_toolchain():
     return _toolchain("cython", [CythonToolchainInfo])
 
-def _cxx_toolchain():
+def _cxx_toolchain(exec_group = None):
     # `CxxToolchainInfo, CxxPlatformInfo`, but python doesn't require it
     lang = "cxx"
 
@@ -59,7 +59,10 @@ def _cxx_toolchain():
     # this by ensuring the `within_deps` checks inside buck see either of the
     # toolchains below as a possible default value, even though one of them is
     # never able to be selected in this expression.
-    return _toolchain(lang, [], default = select({"DEFAULT": "toolchains//:" + lang, "config//:none": "toolchains//:cxx_no_default_deps"}))
+    toolchain_default = select({"DEFAULT": "toolchains//:" + lang, "config//:none": "toolchains//:cxx_no_default_deps"})
+    if exec_group == None:
+        return _toolchain(lang, [], default = toolchain_default)
+    return attrs.toolchain_dep(default = toolchain_default, providers = [], exec_group = exec_group)
 
 def _dex_toolchain():
     return _toolchain("dex", [DexToolchainInfo])

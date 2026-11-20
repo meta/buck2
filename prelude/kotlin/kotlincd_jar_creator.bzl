@@ -797,7 +797,7 @@ def _create_incremental_config(
     if applicability:
         optional_fields["applicability"] = applicability
     incremental_meta_data = struct(
-        version = 3,
+        version = 4,
         track_class_usage = kotlin_build_command.buildCommand.baseJarCommand.trackClassUsage,
         should_use_jvm_abi_gen = kotlin_extra_params.shouldUseJvmAbiGen,
         extra_kotlinc_arguments = kotlin_extra_params.extraKotlincArguments,

@@ -152,6 +152,27 @@ pub(crate) unsafe fn init_with_len<K, V>(
     mem::forget(guard);
 }
 
+/// Drop the keys and values of a map written by [`init`] into memory the caller owns.
+///
+/// Counterpart to [`init`] for callers that embed a map in an allocation of their own: the memory
+/// is theirs to free afterwards, the entries are dropped here.
+///
+/// # Safety
+///
+/// `ptr` must hold a map initialized by [`init`] for the same `K`, `V` and `len`, whose entries
+/// have not been dropped or moved out, and nothing may read the map afterwards.
+pub unsafe fn drop_in_place<K, V>(ptr: NonNull<u8>, len: usize) {
+    if len == 0 {
+        return;
+    }
+    // SAFETY: the caller's allocation has the layout of `len` entries, all initialized.
+    unsafe {
+        Raw::<K, V>::new(ptr, len, is_large(len))
+            .arrays()
+            .drop_entries(len)
+    }
+}
+
 /// Write the header and index of a large map whose entries are in place. Cannot panic.
 unsafe fn finish<K, V>(raw: Raw<K, V>, len: usize) {
     if is_large(len) {

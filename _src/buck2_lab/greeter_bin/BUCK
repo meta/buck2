@@ -1,0 +1,14 @@
+# @oss-disable[end= ]: load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
+
+oncall("build_infra")
+
+rust_binary(
+    name = "main",
+    srcs = ["src/main.rs"],
+    deps = [
+        # @oss-disable[end= ]: "fbcode//buck2/docs/buck2_lab/greeter_lib:library",
+        # @oss-disable[end= ]: "fbcode//buck2/docs/buck2_lab/logging_lib:logging_lib",
+        "//docs/buck2_lab/greeter_lib:library",  # @oss-enable
+        "//docs/buck2_lab/logging_lib:logging_lib",  # @oss-enable
+    ],
+)

@@ -623,21 +623,65 @@ internal class KotlinCompilationServiceTest {
   }
 
   @Test
-  fun `prebuilt snapshot generator selects the registered compiler version`() {
+  fun `prebuilt snapshot generator bundles the compiler version`() {
     val compilerVersion = checkNotNull(System.getenv("KOTLIN_COMPILER_VERSION"))
     assertEquals(
         compilerVersion,
         CompilationService.loadImplementation(javaClass.classLoader).getCompilerVersion(),
     )
-    val expectedGeneratorVersion =
-        if (compilerVersion in setOf("2.5.0-Beta2", "2.5.0-RC")) compilerVersion else "2.0.20"
+    // An older generator cannot read the compiler's Kotlin metadata and snapshots Kotlin classes as
+    // Java classes, which leaves inline function bodies out of the snapshot.
     val generatorVersion =
         JarFile(checkNotNull(System.getenv("CP_SNAPSHOT_GENERATOR_JAR"))).use { jar ->
           jar.getInputStream(jar.getJarEntry("META-INF/compiler.version")).bufferedReader().use {
             it.readText().trim()
           }
         }
-    assertEquals(expectedGeneratorVersion, generatorVersion)
+    assertEquals(compilerVersion, generatorVersion)
+  }
+
+  @Test
+  fun `prebuilt Kotlin snapshots see a body-only change to an inline function`() {
+    val dependency = KotlinSourceFile(
+        sourcesDir.resolve("Probe.kt"),
+        "@Suppress(\"NOTHING_TO_INLINE\") inline fun probe(): String = \"before\"",
+    )
+    val consumer =
+        KotlinSourceFile(sourcesDir.resolve("Consumer.kt"), "fun consume(): String = probe()")
+    fun compileDependency() {
+      assertEquals(
+          CompilationResult.COMPILATION_SUCCESS,
+          kotlinCompilationService.compile(
+              ProjectId.ProjectUUID(UUID.randomUUID()),
+              createCompilerArgs(listOf(dependency), librariesDir),
+              KotlincMode.NonIncremental,
+          ),
+      )
+    }
+    fun compileConsumer() {
+      val snapshot = generateClasspathSnapshot(librariesDir, SnapshotGranularity.CLASS_MEMBER_LEVEL)
+      assertEquals(
+          CompilationResult.COMPILATION_SUCCESS,
+          kotlinCompilationService.compile(
+              ProjectId.ProjectUUID(UUID.randomUUID()),
+              createCompilerArgs(listOf(consumer), classesDir, listOf(librariesDir)),
+              createIncrementalMode(
+                  ClasspathChanges.ToBeComputedByIncrementalCompiler(ImmutableList.of(snapshot)),
+              ),
+          ),
+      )
+    }
+    fun consumerConstants(): String =
+        String(Files.readAllBytes(classesDir.resolve("ConsumerKt.class").path), Charsets.ISO_8859_1)
+
+    compileDependency()
+    compileConsumer()
+    assertTrue(consumerConstants().contains("before"))
+
+    dependency.changeContent("\"before\"", "\"after\"")
+    compileDependency()
+    compileConsumer()
+    assertTrue(consumerConstants().contains("after"))
   }
 
   @Test

@@ -68,12 +68,12 @@ dist_lto_tools(
     visibility = ["PUBLIC"],
 )
 
-CONSTRUCTION_INTERPRETER = "fbcode//buck2/platform/python:interpreter-linux-stage0-{}".format(DEFAULT_PY_VERSION)
+NEUTRAL_INTERPRETER = "fbcode//buck2/platform/python:interpreter-linux-neutral-{}".format(DEFAULT_PY_VERSION)
 
 [
     prelude.python_bootstrap_binary_stage0(
-        name = name + "-construction",
-        interpreter = CONSTRUCTION_INTERPRETER,
+        name = name + "-neutral",
+        interpreter = NEUTRAL_INTERPRETER,
         main = name + ".py",
     )
     for name in [
@@ -90,21 +90,21 @@ CONSTRUCTION_INTERPRETER = "fbcode//buck2/platform/python:interpreter-linux-stag
 ]
 
 dist_lto_tools(
-    name = "dist_lto_tools-construction",
-    archive_mapper = ":dist_lto_archive_mapper-construction",
-    compiler_stats_merger = ":dist_lto_compiler_stats_merger-construction",
-    copy = ":dist_lto_copy-construction",
+    name = "dist_lto_tools-neutral",
+    archive_mapper = ":dist_lto_archive_mapper-neutral",
+    compiler_stats_merger = ":dist_lto_compiler_stats_merger-neutral",
+    copy = ":dist_lto_copy-neutral",
     opt = {
-        "darwin": ":dist_lto_opt_darwin-construction",
-        "gnu": ":dist_lto_opt_gnu-construction",
+        "darwin": ":dist_lto_opt_darwin-neutral",
+        "gnu": ":dist_lto_opt_gnu-neutral",
     },
     planner = {
-        "darwin": ":dist_lto_planner_darwin-construction",
-        "gnu": ":dist_lto_planner_gnu-construction",
+        "darwin": ":dist_lto_planner_darwin-neutral",
+        "gnu": ":dist_lto_planner_gnu-neutral",
     },
     prepare = {
-        "darwin": ":dist_lto_prepare_darwin-construction",
-        "gnu": ":dist_lto_prepare_gnu-construction",
+        "darwin": ":dist_lto_prepare_darwin-neutral",
+        "gnu": ":dist_lto_prepare_gnu-neutral",
     },
     visibility = ["PUBLIC"],
 )

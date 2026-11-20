@@ -22,7 +22,7 @@ prelude.python_bootstrap_binary(
 
 # @oss-disable[end= ]: prelude.python_bootstrap_binary_stage0(
     # @oss-disable[end= ]: name = "create_build-construction",
-    # @oss-disable[end= ]: interpreter = "fbcode//buck2/platform/python:interpreter-linux-stage0-{}".format(DEFAULT_PY_VERSION),
+    # @oss-disable[end= ]: interpreter = "fbcode//buck2/platform/python:interpreter-linux-neutral-{}".format(DEFAULT_PY_VERSION),
     # @oss-disable[end= ]: main = "create_build.py",
     # @oss-disable[end= ]: visibility = ["PUBLIC"],
 # @oss-disable[end= ]: )

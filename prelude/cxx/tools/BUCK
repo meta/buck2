@@ -14,12 +14,12 @@ cxx_internal_tools(
     visibility = ["PUBLIC"],
 )
 
-CONSTRUCTION_INTERPRETER = "fbcode//buck2/platform/python:interpreter-linux-stage0-{}".format(DEFAULT_PY_VERSION)
+NEUTRAL_INTERPRETER = "fbcode//buck2/platform/python:interpreter-linux-neutral-{}".format(DEFAULT_PY_VERSION)
 
 [
     prelude.python_bootstrap_binary_stage0(
-        name = name + "-construction",
-        interpreter = CONSTRUCTION_INTERPRETER,
+        name = name + "-neutral",
+        interpreter = NEUTRAL_INTERPRETER,
         main = name + ".py",
     )
     for name in [
@@ -36,42 +36,42 @@ CONSTRUCTION_INTERPRETER = "fbcode//buck2/platform/python:interpreter-linux-stag
 ]
 
 prelude.python_bootstrap_binary_stage0(
-    name = "dep_file_processor-construction",
-    interpreter = CONSTRUCTION_INTERPRETER,
+    name = "dep_file_processor-neutral",
+    interpreter = NEUTRAL_INTERPRETER,
     main = "dep_file_processor.py",
     deps = [":dep_file_processors"],
 )
 
 prelude.python_bootstrap_binary_stage0(
-    name = "hmap_wrapper.py-construction",
-    interpreter = CONSTRUCTION_INTERPRETER,
+    name = "hmap_wrapper.py-neutral",
+    interpreter = NEUTRAL_INTERPRETER,
     main = "hmap_wrapper.py",
 )
 
 prelude.command_alias(
-    name = "hmap_wrapper-construction",
+    name = "hmap_wrapper-neutral",
     args = [
         "--hmap-tool=$(location prelude//third-party/hmaptool:hmaptool)",
     ],
-    exe = ":hmap_wrapper.py-construction",
+    exe = ":hmap_wrapper.py-neutral",
     labels = ["buck2-only"],
 )
 
 cxx_internal_tools(
     name = "internal_tools-construction",
-    check_nonempty_output = ":check_nonempty_output-construction",
-    clang_tidy_wrapper = ":clang_tidy_wrapper-construction",
-    concatenate_diagnostics = ":concatenate_diagnostics-construction",
-    dep_file_processor = ":dep_file_processor-construction",
-    dist_lto = "prelude//cxx/dist_lto/tools:dist_lto_tools-construction",
-    filter_argsfile = ":filter_argsfile-construction",
-    hmap_wrapper = ":hmap_wrapper-construction",
-    make_comp_db = ":make_comp_db-construction",
-    remap_cwd = ":remap_cwd-construction",
+    check_nonempty_output = ":check_nonempty_output-neutral",
+    clang_tidy_wrapper = ":clang_tidy_wrapper-neutral",
+    concatenate_diagnostics = ":concatenate_diagnostics-neutral",
+    dep_file_processor = ":dep_file_processor-neutral",
+    dist_lto = "prelude//cxx/dist_lto/tools:dist_lto_tools-neutral",
+    filter_argsfile = ":filter_argsfile-neutral",
+    hmap_wrapper = ":hmap_wrapper-neutral",
+    make_comp_db = ":make_comp_db-neutral",
+    remap_cwd = ":remap_cwd-neutral",
     serialized_diagnostics_to_json_wrapper = ":serialized_diagnostics_to_json_wrapper",
-    shlib_interface_link_wrapper = ":shlib_interface_link_wrapper-construction",
-    stderr_to_file = ":stderr_to_file-construction",
-    stub_header_unit = ":stub_header_unit-construction",
+    shlib_interface_link_wrapper = ":shlib_interface_link_wrapper-neutral",
+    stderr_to_file = ":stderr_to_file-neutral",
+    stub_header_unit = ":stub_header_unit-neutral",
     visibility = ["PUBLIC"],
 )
 

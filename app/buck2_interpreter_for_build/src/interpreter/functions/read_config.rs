@@ -39,7 +39,10 @@ pub(crate) fn register_read_config(globals: &mut GlobalsBuilder) {
     ///
     /// In general the use of `.buckconfig` is discouraged in favour of `select`,
     /// but it can still be useful.
-    #[starlark(speculative_exec_safe)]
+    ///
+    /// Only available while a file is loaded. A rule implementation, a transition or the
+    /// implementation of a `bxl` script cannot call it; read the value at the top level of the
+    /// file instead, or pass it in through an attribute.
     fn read_config<'v>(
         section: StringValue,
         key: StringValue,

@@ -43,6 +43,47 @@ class KotlinClasspathDeclarations(private val classpath: List<File>) {
     return hasClassEntry(pkgPath, name) || hasKotlinTopLevelName(pkgPath, name)
   }
 
+  /**
+   * The binary names (`a/b/proto$Event`) of the classpath classes whose qualified name is
+   * [qualifiedName] (`a.b.proto.Event`), read from every class entry of every jar (skip-listed jars
+   * included), with `/` and `$` both read as name separators. A qualified name does not tell its
+   * package from its outer classes; a binary name does, so this answers what a written name can
+   * denote whatever the letter case of its segments.
+   */
+  fun binaryNamesOf(qualifiedName: String): Set<String> =
+      qualifiedNameIndex[qualifiedName].orEmpty()
+
+  /** True when a class entry of the classpath lies in package [pkgPath] (`a/b`) or below it. */
+  fun hasPackage(pkgPath: String): Boolean = pkgPath in packageIndex
+
+  private val packageIndex: Set<String> by lazy {
+    val packages = mutableSetOf<String>()
+    for (jar in classpath) {
+      for (entry in entriesOf(jar)) {
+        if (!entry.endsWith(".class") || entry.startsWith("META-INF/")) continue
+        var dir = entry.substringBeforeLast('/', "")
+        while (dir.isNotEmpty() && packages.add(dir)) {
+          dir = dir.substringBeforeLast('/', "")
+        }
+      }
+    }
+    packages
+  }
+
+  private val qualifiedNameIndex: Map<String, Set<String>> by lazy {
+    val index = mutableMapOf<String, MutableSet<String>>()
+    for (jar in classpath) {
+      for (entry in entriesOf(jar)) {
+        if (!entry.endsWith(".class") || entry.startsWith("META-INF/")) continue
+        val binaryName = entry.removeSuffix(".class")
+        index
+            .getOrPut(binaryName.replace('/', '.').replace('$', '.')) { sortedSetOf() }
+            .add(binaryName)
+      }
+    }
+    index
+  }
+
   private fun entriesOf(jar: File): Set<String> {
     val key = jar.path
     return jarEntriesCache.getOrPut(key) {

@@ -85,7 +85,13 @@ open class StubsGenAPI(
         lightweight = false,
         javaSources,
     )
-    val stubs = generateStubs(stubsGenerators + configureExtraGenerators(), context)
+    val stubs = StubShadowGuard(
+        context.kotlinClasspathDeclarations,
+        (additionalSrcs + knownSources).map { file ->
+          file.packageFqName.pathSegments().map { it.asString() }
+        } + javaSources.map { it.packageSegments },
+    )
+        .filter(generateStubs(stubsGenerators + configureExtraGenerators(), context))
     val enableBytecodeStub = stubsClassOutputDir != null
     val renderedStubs: List<RenderedKStub> =
         stubs

@@ -1303,6 +1303,7 @@ async fn test_clean_stale_dry_run_deletes_nothing() -> buck2_error::Result<()> {
 
 #[tokio::test]
 async fn test_an_active_root_stays_when_its_upload_fails() -> buck2_error::Result<()> {
+    use crate::materializers::deferred::clean_stale::DEFAULT_MAX_ADAPTIVE_ROUNDS;
     use crate::materializers::deferred::clean_stale::LowDiskCleanConfig;
     use crate::materializers::deferred::clean_stale::LowDiskCleanMode;
     use crate::materializers::deferred::clean_stale::UnmaterializationUploadConfig;
@@ -1324,6 +1325,7 @@ async fn test_an_active_root_stays_when_its_upload_fails() -> buck2_error::Resul
                     delete_intermediate_within_min_ttl: true,
                     unmaterialize_active: true,
                     unmaterialization_threshold_percent: 100.0,
+                    max_rounds: DEFAULT_MAX_ADAPTIVE_ROUNDS,
                 },
             }),
             unmaterialize_upload: Some(UnmaterializationUploadConfig {

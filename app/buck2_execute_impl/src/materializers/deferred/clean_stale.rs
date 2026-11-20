@@ -129,6 +129,8 @@ pub struct AdaptiveLowDiskParams {
     /// Whether active, remote-backed intermediate artifacts may be
     /// unmaterialized as a final escalation step.
     pub unmaterialize_active: bool,
+    /// Most deletion rounds one adaptive clean runs, including the first.
+    pub max_rounds: u32,
 }
 
 impl CleanStaleArtifactsCommand {
@@ -191,6 +193,7 @@ impl CleanStaleArtifactsCommand {
                     .unwrap_or(Timestamp::MIN),
                 delete_intermediate_within_min_ttl: true,
                 unmaterialize_active: adaptive_unmaterialize_active,
+                max_rounds: DEFAULT_MAX_ADAPTIVE_ROUNDS,
             }
         });
         Self {
@@ -275,6 +278,7 @@ pub(crate) fn resolve_clean_stale_params(
             delete_intermediate_within_min_ttl,
             unmaterialize_active,
             unmaterialization_threshold_percent,
+            max_rounds,
         } => (
             default_ttl,
             Some(AdaptiveLowDiskParams {
@@ -287,6 +291,7 @@ pub(crate) fn resolve_clean_stale_params(
                 delete_intermediate_within_min_ttl: *delete_intermediate_within_min_ttl,
                 unmaterialize_active: *unmaterialize_active,
                 unmaterialization_threshold_percent: *unmaterialization_threshold_percent,
+                max_rounds: *max_rounds,
             }),
         ),
         LowDiskCleanMode::Fixed(duration) => {
@@ -975,6 +980,15 @@ pub(crate) trait CleanStaleStatsExt {
 
     fn record_paths(&mut self, paths: &[FoundPath], record_unmaterialization_ineligibility: bool);
 
+    /// Moves what a later adaptive round promoted among the retained `paths` from the retained
+    /// to the stale and unmaterialization totals. Returns whether the round promoted anything.
+    #[cfg_attr(not(test), expect(dead_code, reason = "wired in child D131942143"))]
+    fn record_adaptive_round(
+        &mut self,
+        paths: &[FoundPath],
+        record_unmaterialization_ineligibility: bool,
+    ) -> bool;
+
     fn record_unmaterialization_result(&mut self, result: &UnmaterializeArtifactsResult) -> u64;
 
     fn record_unmaterialization_ineligibility_reason(
@@ -1070,6 +1084,52 @@ impl CleanStaleStatsExt for CleanStaleStats {
                 }
             }
         }
+    }
+
+    fn record_adaptive_round(
+        &mut self,
+        paths: &[FoundPath],
+        record_unmaterialization_ineligibility: bool,
+    ) -> bool {
+        let mut promoted = false;
+        for path in paths {
+            let FoundPath::Tracked { size, state, .. } = path else {
+                continue;
+            };
+            match state {
+                TrackedState::Stale(_) => {
+                    promoted = true;
+                    self.retained_artifact_count = self.retained_artifact_count.saturating_sub(1);
+                    self.retained_bytes = self.retained_bytes.saturating_sub(*size);
+                    self.retained_inactive_artifact_count =
+                        self.retained_inactive_artifact_count.saturating_sub(1);
+                    self.retained_inactive_bytes =
+                        self.retained_inactive_bytes.saturating_sub(*size);
+                    self.stale_artifact_count += 1;
+                    self.stale_bytes += *size;
+                    self.adaptive_stale_artifact_count += 1;
+                    self.adaptive_stale_bytes += *size;
+                }
+                TrackedState::Unmaterialize => {
+                    promoted = true;
+                    self.retained_active_artifact_count =
+                        self.retained_active_artifact_count.saturating_sub(1);
+                    self.retained_active_bytes = self.retained_active_bytes.saturating_sub(*size);
+                    self.adaptive_unmaterialization_selected_artifact_count += 1;
+                    self.adaptive_unmaterialization_selected_bytes += *size;
+                }
+                TrackedState::ActiveRetained {
+                    unmaterialization_eligibility: UnmaterializationEligibility::Ineligible(reason),
+                    ..
+                } if record_unmaterialization_ineligibility => {
+                    self.adaptive_unmaterialization_statically_ineligible_artifact_count += 1;
+                    self.adaptive_unmaterialization_statically_ineligible_bytes += *size;
+                    self.record_unmaterialization_ineligibility_reason(*reason, *size);
+                }
+                TrackedState::Retained { .. } | TrackedState::ActiveRetained { .. } => {}
+            }
+        }
+        promoted
     }
 
     fn record_unmaterialization_result(&mut self, result: &UnmaterializeArtifactsResult) -> u64 {
@@ -1817,6 +1877,20 @@ pub(crate) enum FoundPath {
     },
 }
 
+impl FoundPath {
+    /// Whether a later adaptive round may still promote this path.
+    #[cfg_attr(not(test), expect(dead_code, reason = "wired in child D131942143"))]
+    pub(crate) fn is_adaptive_candidate(&self) -> bool {
+        matches!(
+            self,
+            FoundPath::Tracked {
+                state: TrackedState::Retained { .. } | TrackedState::ActiveRetained { .. },
+                ..
+            }
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum TrackedState {
     /// Will be invalidated in the materializer.
@@ -2129,8 +2203,8 @@ pub(crate) fn apply_adaptive_low_disk(
         };
     }
 
-    let target_free = (params.threshold_percent / 100.0 * total_space as f64).ceil() as u64;
-    let bytes_needed = target_free.saturating_sub(free_space);
+    let bytes_needed =
+        target_free_bytes(params.threshold_percent, total_space).saturating_sub(free_space);
     if bytes_needed == 0 {
         return AdaptiveCleanupResult {
             outcome: AdaptiveOutcome::NoBytesNeeded,
@@ -2204,7 +2278,7 @@ pub(crate) fn apply_adaptive_low_disk(
         })
         .fold(free_space, u64::saturating_add);
     let unmaterialization_target_free =
-        (params.unmaterialization_threshold_percent / 100.0 * total_space as f64).ceil() as u64;
+        target_free_bytes(params.unmaterialization_threshold_percent, total_space);
     let unmaterialization_bytes_needed =
         unmaterialization_target_free.saturating_sub(projected_free);
     if unmaterialization_bytes_needed == 0 {
@@ -2274,6 +2348,102 @@ pub(crate) fn apply_adaptive_low_disk(
     }
 }
 
+fn target_free_bytes(threshold_percent: f64, total_space: u64) -> u64 {
+    (threshold_percent / 100.0 * total_space as f64).ceil() as u64
+}
+
+/// Default cap on the deletion rounds one adaptive clean runs, including the first.
+/// 1 preserves the legacy single-pass behavior; raise it to let follow-up rounds
+/// promote more artifacts while the disk stays short.
+pub(crate) const DEFAULT_MAX_ADAPTIVE_ROUNDS: u32 = 1;
+
+/// Carries an adaptive clean from one deletion round to the next.
+///
+/// Promotion adds up logical sizes, and a filesystem that compresses, shares or sparsely stores
+/// files frees less than that when they are deleted. Each round after the first therefore starts
+/// from the free space measured once the previous round's deletions are synced, and promotes the
+/// next-oldest of the artifacts the first scan found. The caller must keep commands from running
+/// between rounds, or revalidate what a round promotes, since the scan's view of them is reused.
+#[cfg_attr(not(test), expect(dead_code, reason = "wired in child D131942143"))]
+pub(crate) struct AdaptiveRounds {
+    params: AdaptiveLowDiskParams,
+    rounds: u32,
+    free_bytes_before_round: u64,
+    recorded_unmaterialization_ineligibility: bool,
+}
+
+#[cfg_attr(not(test), expect(dead_code, reason = "wired in child D131942143"))]
+impl AdaptiveRounds {
+    /// Follows the first round, whose promotion is `first`; `None` when that promoted nothing
+    /// because the disk did not need it.
+    pub(crate) fn follow(
+        params: AdaptiveLowDiskParams,
+        first: &AdaptiveCleanupResult,
+    ) -> Option<Self> {
+        match first.outcome {
+            AdaptiveOutcome::SatisfiedByStaleDeletion
+            | AdaptiveOutcome::SatisfiedByUnmaterialization
+            | AdaptiveOutcome::InsufficientCandidates => Some(Self {
+                params,
+                rounds: 1,
+                free_bytes_before_round: first.free_bytes_before,
+                recorded_unmaterialization_ineligibility: first.reached_unmaterialization,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Promotes the next round's artifacts among the candidates left in `found`, given the disk
+    /// as measured after the previous round, and records them in `stats`. Returns `None` when no
+    /// round follows: free space is above the threshold, the previous round freed nothing, no
+    /// candidate is left, or the clean has run its configured `max_rounds` rounds.
+    pub(crate) fn next(
+        &mut self,
+        found: &mut Vec<FoundPath>,
+        disk: &DiskSpaceStats,
+        stats: &mut CleanStaleStats,
+    ) -> Option<AdaptiveCleanupResult> {
+        found.retain(FoundPath::is_adaptive_candidate);
+        if self.rounds >= self.params.max_rounds || disk.free_space <= self.free_bytes_before_round
+        {
+            return None;
+        }
+        let result =
+            apply_adaptive_low_disk(found, disk.free_space, disk.total_space, &self.params);
+        let record_unmaterialization_ineligibility =
+            result.reached_unmaterialization && !self.recorded_unmaterialization_ineligibility;
+        if !stats.record_adaptive_round(found, record_unmaterialization_ineligibility) {
+            return None;
+        }
+        self.rounds += 1;
+        self.free_bytes_before_round = disk.free_space;
+        self.recorded_unmaterialization_ineligibility |= result.reached_unmaterialization;
+        Some(result)
+    }
+
+    /// The outcome of the whole clean, given the last round's outcome and the disk as measured
+    /// after its deletions; records the shortfall that measurement leaves in `stats`.
+    pub(crate) fn finish(
+        &self,
+        outcome: AdaptiveOutcome,
+        disk: &DiskSpaceStats,
+        stats: &mut CleanStaleStats,
+    ) -> AdaptiveOutcome {
+        stats.adaptive_shortfall_bytes =
+            target_free_bytes(self.params.threshold_percent, disk.total_space)
+                .saturating_sub(disk.free_space);
+        match outcome {
+            AdaptiveOutcome::SatisfiedByStaleDeletion
+            | AdaptiveOutcome::SatisfiedByUnmaterialization
+                if stats.adaptive_shortfall_bytes > 0 =>
+            {
+                AdaptiveOutcome::InsufficientCandidates
+            }
+            outcome => outcome,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CleanStaleConfig {
     pub schedule: Option<CleanStaleSchedule>,
@@ -2324,6 +2494,8 @@ pub enum LowDiskCleanMode {
         delete_intermediate_within_min_ttl: bool,
         unmaterialize_active: bool,
         unmaterialization_threshold_percent: f64,
+        /// Most deletion rounds one adaptive clean runs, including the first.
+        max_rounds: u32,
     },
 }
 
@@ -2430,6 +2602,19 @@ impl CleanStaleConfig {
                 property: "clean_stale_low_disk_adaptive_unmaterialize_active",
             })?
             .unwrap_or(false);
+        let adaptive_max_rounds: u32 = root_config
+            .parse(BuckconfigKeyRef {
+                section: "buck2",
+                property: "clean_stale_low_disk_adaptive_max_rounds",
+            })?
+            .unwrap_or(DEFAULT_MAX_ADAPTIVE_ROUNDS);
+        if adaptive_max_rounds < 1 {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid value `{}` for `buck2.clean_stale_low_disk_adaptive_max_rounds`: expected at least 1",
+                adaptive_max_rounds,
+            ));
+        }
         let unmaterialization_threshold_percent: Option<f64> =
             root_config.parse(BuckconfigKeyRef {
                 section: "buck2",
@@ -2479,6 +2664,7 @@ impl CleanStaleConfig {
                         delete_intermediate_within_min_ttl,
                         unmaterialize_active,
                         unmaterialization_threshold_percent,
+                        max_rounds: adaptive_max_rounds,
                     }
                 } else {
                     let hours = low_disk_artifact_ttl_hours.unwrap_or(48.0);
@@ -2555,6 +2741,7 @@ impl CleanStaleConfig {
                         delete_intermediate_within_min_ttl,
                         unmaterialize_active,
                         unmaterialization_threshold_percent,
+                        max_rounds,
                     },
             }) => vec![
                 "adaptive-clean-stale:true".to_owned(),
@@ -2578,6 +2765,7 @@ impl CleanStaleConfig {
                     "adaptive-clean-stale-unmaterialization-threshold-percent:{}",
                     unmaterialization_threshold_percent
                 ),
+                format!("adaptive-clean-stale-max-rounds:{}", max_rounds),
             ],
             _ => vec!["adaptive-clean-stale:false".to_owned()],
         }
@@ -2594,6 +2782,7 @@ mod tests {
     use buck2_error::internal_error;
     use buck2_events::daemon_id::DaemonId;
     use buck2_fs::fs_util;
+    use buck2_fs::fs_util::DiskSpaceStats;
     use jiff::Timestamp;
 
     use crate::materializers::deferred::artifact_tree::ArtifactClassification;
@@ -2602,11 +2791,13 @@ mod tests {
     use crate::materializers::deferred::artifact_tree::UnmaterializationIneligibleArtifact;
     use crate::materializers::deferred::artifact_tree::UnmaterializeArtifactsResult;
     use crate::materializers::deferred::clean_stale::AdaptiveLowDiskParams;
+    use crate::materializers::deferred::clean_stale::AdaptiveRounds;
     use crate::materializers::deferred::clean_stale::CleanDiskSpace;
     use crate::materializers::deferred::clean_stale::CleanFailure;
     use crate::materializers::deferred::clean_stale::CleanFailurePhase;
     use crate::materializers::deferred::clean_stale::CleanResult;
     use crate::materializers::deferred::clean_stale::CleanStaleStatsExt;
+    use crate::materializers::deferred::clean_stale::DEFAULT_MAX_ADAPTIVE_ROUNDS;
     use crate::materializers::deferred::clean_stale::FoundPath;
     use crate::materializers::deferred::clean_stale::StaleOrigin;
     use crate::materializers::deferred::clean_stale::TrackedState;
@@ -2879,6 +3070,7 @@ mod tests {
             min_access_time: no_min_ttl(),
             delete_intermediate_within_min_ttl: false,
             unmaterialize_active: false,
+            max_rounds: DEFAULT_MAX_ADAPTIVE_ROUNDS,
         }
     }
 
@@ -2905,30 +3097,191 @@ mod tests {
         }
     }
 
-    #[test]
-    fn clean_on_a_disk_that_frees_less_than_it_deletes() {
-        // Three retained artifacts of 300 bytes on a 1000-byte disk with 100 bytes free, so a 50%
-        // threshold needs 400 more.
+    fn disk(free_space: u64) -> DiskSpaceStats {
+        DiskSpaceStats {
+            free_space,
+            total_space: 1000,
+        }
+    }
+
+    /// Three retained artifacts of 300 bytes on a 1000-byte disk with 100 bytes free, and a
+    /// first round that promoted the two oldest to recover the 400 bytes a 50% threshold needs.
+    /// Rounds are opted into explicitly: the default config preserves single-pass behavior.
+    fn after_first_round() -> (Vec<FoundPath>, AdaptiveRounds, CleanStaleStats) {
+        let params = AdaptiveLowDiskParams {
+            max_rounds: 8,
+            ..adaptive_params(50.0)
+        };
         let mut paths = vec![
             retained("a", 100, 300),
             retained("b", 200, 300),
             retained("c", 300, 300),
         ];
-        let result = apply_adaptive_low_disk(&mut paths, 100, 1000, &adaptive_params(50.0));
-        assert_eq!(result.outcome, AdaptiveOutcome::SatisfiedByStaleDeletion);
-        assert!(is_stale(&paths[0], 300) && is_stale(&paths[1], 300));
+        let first = apply_adaptive_low_disk(&mut paths, 100, 1000, &params);
+        assert_eq!(first.outcome, AdaptiveOutcome::SatisfiedByStaleDeletion);
+        let mut stats = CleanStaleStats::default();
+        stats.record_paths(&paths, false);
+        let rounds = AdaptiveRounds::follow(params, &first)
+            .expect("a first round that promoted artifacts should be followed");
+        (paths, rounds, stats)
+    }
+
+    #[test]
+    fn next_round_promotes_what_the_measured_disk_still_needs() {
+        let (mut paths, mut rounds, mut stats) = after_first_round();
+        // Deleting 600 logical bytes freed only 200: the disk is still 200 bytes short of 500.
+        let round = rounds
+            .next(&mut paths, &disk(300), &mut stats)
+            .expect("the disk is still under the threshold, so another round should follow");
+        assert_eq!(round.outcome, AdaptiveOutcome::SatisfiedByStaleDeletion);
+        assert_eq!(round.bytes_needed, 200);
+        assert_eq!(
+            paths.len(),
+            1,
+            "the first round's deletions should be dropped, leaving only `c`"
+        );
+        assert!(is_stale(&paths[0], 300), "`c` should be promoted to stale");
+        assert_eq!(stats.adaptive_stale_artifact_count, 3);
+        assert_eq!(stats.adaptive_stale_bytes, 900);
+        assert_eq!(
+            stats.retained_artifact_count, 0,
+            "`c` should move from the retained to the stale totals"
+        );
+        assert_eq!(stats.retained_inactive_bytes, 0);
+    }
+
+    #[test]
+    fn no_round_follows_once_the_disk_is_above_the_threshold() {
+        let (mut paths, mut rounds, mut stats) = after_first_round();
+        assert!(rounds.next(&mut paths, &disk(600), &mut stats).is_none());
+        assert!(is_retained(&paths[0]), "`c` should stay retained");
+        assert_eq!(stats.adaptive_stale_artifact_count, 2);
+    }
+
+    #[test]
+    fn no_round_follows_one_that_freed_nothing() {
+        let (mut paths, mut rounds, mut stats) = after_first_round();
+        assert!(
+            rounds.next(&mut paths, &disk(100), &mut stats).is_none(),
+            "free space did not rise from the 100 bytes the first round started at"
+        );
+        assert!(is_retained(&paths[0]), "`c` should stay retained");
+    }
+
+    #[test]
+    fn no_round_follows_once_the_candidates_run_out() {
+        let (mut paths, mut rounds, mut stats) = after_first_round();
+        assert!(rounds.next(&mut paths, &disk(300), &mut stats).is_some());
+        assert!(
+            rounds.next(&mut paths, &disk(400), &mut stats).is_none(),
+            "every candidate has been promoted"
+        );
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn rounds_stop_at_the_maximum() {
+        // Each artifact alone covers what any round needs, so each round promotes one, and there
+        // are more of them than rounds.
+        let mut paths = (0..=DEFAULT_MAX_ADAPTIVE_ROUNDS)
+            .map(|i| retained(&format!("p{i}"), i64::from(i), 1000))
+            .collect::<Vec<_>>();
+        let first = apply_adaptive_low_disk(&mut paths, 100, 1000, &adaptive_params(50.0));
+        let mut rounds = AdaptiveRounds::follow(adaptive_params(50.0), &first).unwrap();
+        let mut stats = CleanStaleStats::default();
+        let mut later_rounds = 0;
+        // Every round frees a byte, which leaves the disk under the threshold.
+        while rounds
+            .next(&mut paths, &disk(101 + later_rounds), &mut stats)
+            .is_some()
+        {
+            later_rounds += 1;
+        }
+        assert_eq!(
+            later_rounds,
+            u64::from(DEFAULT_MAX_ADAPTIVE_ROUNDS - 1),
+            "the first round counts toward the maximum"
+        );
+        assert!(
+            paths.iter().any(is_retained),
+            "an artifact should be left, so the maximum is what stopped the rounds"
+        );
+    }
+
+    #[test]
+    fn rounds_stop_at_configured_maximum() {
+        // A clean configured for two rounds runs the first plus one more, then stops
+        // with a candidate still retained.
+        let mut paths = vec![
+            retained("a", 100, 300),
+            retained("b", 200, 300),
+            retained("c", 300, 300),
+            retained("d", 400, 300),
+        ];
+        let params = AdaptiveLowDiskParams {
+            max_rounds: 2,
+            ..adaptive_params(50.0)
+        };
+        let first = apply_adaptive_low_disk(&mut paths, 100, 1000, &params);
+        assert_eq!(first.outcome, AdaptiveOutcome::SatisfiedByStaleDeletion);
+        let mut stats = CleanStaleStats::default();
+        stats.record_paths(&paths, false);
+        let mut rounds = AdaptiveRounds::follow(params, &first).unwrap();
+        // Deleting 600 logical bytes freed only 200, so a second round follows.
+        assert!(rounds.next(&mut paths, &disk(300), &mut stats).is_some());
+        // The disk is still short, but the configured maximum stops the clean with
+        // `d` retained.
+        assert!(rounds.next(&mut paths, &disk(400), &mut stats).is_none());
+        assert!(paths.iter().any(is_retained));
+    }
+
+    #[test]
+    fn finish_reports_the_measured_shortfall() {
+        let (_, rounds, mut stats) = after_first_round();
+        assert_eq!(
+            rounds.finish(
+                AdaptiveOutcome::SatisfiedByStaleDeletion,
+                &disk(450),
+                &mut stats
+            ),
+            AdaptiveOutcome::InsufficientCandidates,
+            "the promotion projected enough, but the disk is still 50 bytes short"
+        );
+        assert_eq!(stats.adaptive_shortfall_bytes, 50);
+
+        assert_eq!(
+            rounds.finish(
+                AdaptiveOutcome::SatisfiedByStaleDeletion,
+                &disk(500),
+                &mut stats
+            ),
+            AdaptiveOutcome::SatisfiedByStaleDeletion
+        );
+        assert_eq!(stats.adaptive_shortfall_bytes, 0);
+    }
+
+    #[test]
+    fn clean_on_a_disk_that_frees_less_than_it_deletes() {
+        let (mut paths, mut rounds, mut stats) = after_first_round();
 
         // Deleting `a` and `b` frees only 200 of their 600 logical bytes on a filesystem that
-        // compresses them, leaving the disk at 300 free, 200 short of 500. The clean promotes only
-        // once, from the projection: `c` stays retained, and the clean reports success with no
-        // shortfall while the disk is still short.
-        assert!(
-            is_retained(&paths[2]),
-            "`c` currently stays retained although the disk is still short"
+        // compresses them, leaving the disk at 300 free, 200 short of 500. The clean measures that
+        // and runs another round, which promotes `c`.
+        let round = rounds
+            .next(&mut paths, &disk(300), &mut stats)
+            .expect("the disk is still under the threshold, so another round should follow");
+        assert!(is_stale(&paths[0], 300), "`c` should be promoted to stale");
+
+        // Deleting `c` frees only 100 more, so the disk is still 100 short with nothing left to
+        // promote, and the clean reports that shortfall from the disk.
+        assert!(rounds.next(&mut paths, &disk(400), &mut stats).is_none());
+        assert_eq!(
+            rounds.finish(round.outcome, &disk(400), &mut stats),
+            AdaptiveOutcome::InsufficientCandidates
         );
         assert_eq!(
-            result.shortfall_bytes, 0,
-            "the shortfall currently comes from the projection, not the disk"
+            stats.adaptive_shortfall_bytes, 100,
+            "the shortfall should come from the disk, not the projection"
         );
     }
 

@@ -111,6 +111,11 @@ clean_stale_start_offset_hours = 12
   artifacts to stale until projected free disk rises back above the threshold,
   while protecting any artifact younger than
   `clean_stale_low_disk_adaptive_min_ttl_hours` (default 12).
+- `clean_stale_low_disk_adaptive_max_rounds` (default 1) caps how many deletion
+  rounds one adaptive clean runs, including the first. Raise it to let follow-up
+  rounds promote more artifacts: after each round buck2 syncs the filesystem
+  and re-measures free disk, promoting more artifacts while the disk is still
+  below the threshold.
 - `clean_stale_low_disk_adaptive_delete_intermediate_within_min_ttl` (default
   false) allows adaptive cleaning to delete non-active artifacts marked as
   intermediate-only even when they are below the adaptive minimum TTL.

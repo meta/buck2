@@ -562,6 +562,7 @@ mod tests {
             page_out_policy: Default::default(),
             eviction_policy: Default::default(),
             defer_field_reads: false,
+            key_read_ahead: false,
         })
         .unwrap()
     }
@@ -706,6 +707,7 @@ mod tests {
             page_out_policy: Default::default(),
             eviction_policy: Default::default(),
             defer_field_reads: false,
+            key_read_ahead: false,
         })?;
         let (manager, _) = provider.create(configuration, DiceData::new()).await?;
         assert!(path.is_dir());

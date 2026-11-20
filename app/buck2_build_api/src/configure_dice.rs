@@ -56,6 +56,7 @@ pub struct DiceEngineConfiguration {
     page_out_policy: PageOutPolicy,
     eviction_policy: EvictionPolicy,
     defer_field_reads: bool,
+    key_read_ahead: bool,
 }
 
 /// Inputs used to resolve the settings shared by every root in an engine.
@@ -65,6 +66,8 @@ pub struct DiceEngineConfigurationInputs<'a> {
     pub page_out_policy: PageOutPolicy,
     pub eviction_policy: EvictionPolicy,
     pub defer_field_reads: bool,
+    /// `hydration.key_read_ahead`.
+    pub key_read_ahead: bool,
 }
 
 impl DiceEngineConfiguration {
@@ -76,25 +79,29 @@ impl DiceEngineConfiguration {
             page_out_policy,
             eviction_policy,
             defer_field_reads,
+            key_read_ahead,
         } = inputs;
         let dice_state_path = match std::env::var_os("BUCK2_DICE_DB_PATH") {
             Some(path) => Some(PathBuf::from(path)),
             None => dice_state_path.map(Path::to_path_buf),
         };
-        // Backend overrides and deferred reads apply only when paging is enabled.
-        let (pagable_storage_backend, defer_field_reads) = if dice_state_path.is_some() {
-            (
-                pagable_storage_backend.with_env_override().map_err(|e| {
-                    buck2_error::conversion::from_any_with_tag(
-                        e,
-                        buck2_error::ErrorTag::Environment,
-                    )
-                })?,
-                defer_field_reads,
-            )
-        } else {
-            (PagableStorageBackend::default(), false)
-        };
+        // Backend overrides, deferred reads and key read-ahead apply only when paging is
+        // enabled.
+        let (pagable_storage_backend, defer_field_reads, key_read_ahead) =
+            if dice_state_path.is_some() {
+                (
+                    pagable_storage_backend.with_env_override().map_err(|e| {
+                        buck2_error::conversion::from_any_with_tag(
+                            e,
+                            buck2_error::ErrorTag::Environment,
+                        )
+                    })?,
+                    defer_field_reads,
+                    key_read_ahead,
+                )
+            } else {
+                (PagableStorageBackend::default(), false, false)
+            };
 
         Ok(Self {
             page_out_policy: if dice_state_path.is_some() {
@@ -110,6 +117,7 @@ impl DiceEngineConfiguration {
             dice_state_path,
             pagable_storage_backend,
             defer_field_reads,
+            key_read_ahead,
         })
     }
 
@@ -129,13 +137,14 @@ impl DiceEngineConfiguration {
         // under buck-out). The `BUCK2_DICE_DB_PATH` override (used by benchmarks)
         // takes precedence and picks the path.
         if let Some(path) = &self.dice_state_path {
-            let mut storage =
-                DiceStorage::open(path, self.pagable_storage_backend).map_err(|e| {
-                    buck2_error::conversion::from_any_with_tag(
-                        e,
-                        buck2_error::ErrorTag::Environment,
-                    )
-                })?;
+            let mut storage = DiceStorage::open_with_key_read_ahead(
+                path,
+                self.pagable_storage_backend,
+                self.key_read_ahead,
+            )
+            .map_err(|e| {
+                buck2_error::conversion::from_any_with_tag(e, buck2_error::ErrorTag::Environment)
+            })?;
             storage.set_page_out_policy(self.page_out_policy);
             storage.set_eviction_policy(self.eviction_policy);
             if self.defer_field_reads {
@@ -222,6 +231,8 @@ pub async fn configure_dice_for_buck(
     // When the values a page-out writes leave memory (`hydration.eviction_policy`).
     eviction_policy: EvictionPolicy,
     defer_field_reads: bool,
+    // Whether the paging store reads its key files ahead (`hydration.key_read_ahead`).
+    key_read_ahead: bool,
 ) -> buck2_error::Result<(Arc<Dice>, BranchId)> {
     let engine_config = DiceEngineConfiguration::resolve(DiceEngineConfigurationInputs {
         dice_state_path,
@@ -229,6 +240,7 @@ pub async fn configure_dice_for_buck(
         page_out_policy,
         eviction_policy,
         defer_field_reads,
+        key_read_ahead,
     })?;
 
     let data = configure_dice_data_for_buck(DiceRootConfiguration {
@@ -265,6 +277,7 @@ mod tests {
             page_out_policy: PageOutPolicy::default(),
             eviction_policy: EvictionPolicy::default(),
             defer_field_reads: false,
+            key_read_ahead: false,
         }
     }
 
@@ -305,5 +318,30 @@ mod tests {
                 .ensure_compatible(&different_deferred_reads)
                 .is_err()
         );
+
+        let mut different_key_read_ahead = config();
+        different_key_read_ahead.key_read_ahead = true;
+        assert!(
+            expected
+                .ensure_compatible(&different_key_read_ahead)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn key_read_ahead_needs_a_paging_store() -> buck2_error::Result<()> {
+        let resolve = |dice_state_path: Option<&Path>| {
+            DiceEngineConfiguration::resolve(DiceEngineConfigurationInputs {
+                dice_state_path,
+                pagable_storage_backend: PagableStorageBackend::Sqlite,
+                page_out_policy: PageOutPolicy::default(),
+                eviction_policy: EvictionPolicy::default(),
+                defer_field_reads: false,
+                key_read_ahead: true,
+            })
+        };
+        assert!(resolve(Some(Path::new("dice-state")))?.key_read_ahead);
+        assert!(!resolve(None)?.key_read_ahead);
+        Ok(())
     }
 }

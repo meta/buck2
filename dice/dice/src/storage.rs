@@ -481,10 +481,22 @@ impl DiceStorage {
     /// Open (or create) a `DiceStorage` rooted at the given directory, using the
     /// given on-disk `backend`.
     pub fn open(path: &Path, backend: PagableStorageBackend) -> anyhow::Result<Self> {
+        Self::open_with_key_read_ahead(path, backend, false)
+    }
+
+    /// As [`Self::open`]. `key_read_ahead` is `hydration.key_read_ahead`, which the SQLite
+    /// backend acts on; the other backends have no key files to read ahead.
+    pub fn open_with_key_read_ahead(
+        path: &Path,
+        backend: PagableStorageBackend,
+        key_read_ahead: bool,
+    ) -> anyhow::Result<Self> {
         let storage: Arc<dyn PagableStorage> = match backend {
             PagableStorageBackend::Sled => Arc::new(SledBackedPagableStorage::try_new(path)?),
             PagableStorageBackend::Noop => Arc::new(NoopPagableStorage::new()),
-            PagableStorageBackend::Sqlite => Arc::new(SqliteBackedPagableStorage::try_new(path)?),
+            PagableStorageBackend::Sqlite => Arc::new(
+                SqliteBackedPagableStorage::try_new_with_key_read_ahead(path, key_read_ahead)?,
+            ),
         };
         // The store is empty until the first page-out, so the size cache starts at 0
         // and is populated there rather than walked here on the async startup path.

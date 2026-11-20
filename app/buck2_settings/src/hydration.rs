@@ -80,6 +80,10 @@ pub struct Hydration {
         overridable_in(CommandLine, LocalSettings)
     )]
     pagable_storage_backend: Option<PagableStorageBackend>,
+    /// Whether the SQLite backend reads a shard's key file into the page cache
+    /// whole once key lookups in it have started going to disk.
+    #[setting(default = true, overridable_in(CommandLine, LocalSettings))]
+    key_read_ahead: Option<bool>,
 }
 
 impl Hydration {
@@ -116,6 +120,7 @@ mod tests {
             hydration.eviction_policy(),
             EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default)
         );
+        assert!(hydration.key_read_ahead());
         assert!(
             hydration.page_out_on_idle_applies_to_isolation_dir(
                 FileName::new(DEFAULT_ISOLATION_DIR)
@@ -130,7 +135,7 @@ mod tests {
     #[test]
     fn test_hydration_settings() -> buck2_error::Result<()> {
         let settings = resolve_setting_flags(vec![table(
-            "[hydration]\nenable_paging = true\ndefer_field_reads = true\npage_out_on_idle = false\npage_out_on_idle_isolation_dir_scope = \"non_default\"\npage_out_min_free_disk_gb = 0\npage_out_policy = \"once_per_key\"\neviction_policy = \"on_idle\"\npagable_storage_backend = \"sled\"",
+            "[hydration]\nenable_paging = true\ndefer_field_reads = true\npage_out_on_idle = false\npage_out_on_idle_isolation_dir_scope = \"non_default\"\npage_out_min_free_disk_gb = 0\npage_out_policy = \"once_per_key\"\neviction_policy = \"on_idle\"\npagable_storage_backend = \"sled\"\nkey_read_ahead = false",
         )])?;
         let hydration = &settings.daemon.hydration;
         assert!(hydration.enable_paging());
@@ -146,6 +151,7 @@ mod tests {
             hydration.eviction_policy(),
             EvictionPolicy::OnIdle(EvictionStrategy::Default)
         );
+        assert!(!hydration.key_read_ahead());
         assert!(
             !hydration.page_out_on_idle_applies_to_isolation_dir(
                 FileName::new(DEFAULT_ISOLATION_DIR)

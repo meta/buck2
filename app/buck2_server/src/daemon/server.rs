@@ -351,6 +351,11 @@ impl TenantStateInitPreferences {
                 .daemon_buck_settings()
                 .hydration
                 .defer_field_reads(),
+            key_read_ahead: self
+                .daemon_startup_config
+                .daemon_buck_settings()
+                .hydration
+                .key_read_ahead(),
         })?;
         let data = configure_dice_data_for_buck(DiceRootConfiguration {
             io,

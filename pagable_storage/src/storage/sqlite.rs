@@ -12,6 +12,9 @@ use std::collections::VecDeque;
 use std::env;
 use std::fs::File;
 use std::io;
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,6 +28,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::thread::JoinHandle;
 use std::time::Duration;
+use std::time::Instant;
 
 use bytesize::ByteSize;
 use pagable::ReadTimedOut;
@@ -186,8 +190,8 @@ fn retain_read_transactions() -> bool {
 const INSERT_KEY_SQL: &str =
     "INSERT OR IGNORE INTO keys.pagable_keys (key_lo, key_hi, id) VALUES (?1, ?2, ?3)";
 const INSERT_VALUE_SQL: &str = "INSERT INTO pagable_data (id, value) VALUES (?1, ?2)";
-const FETCH_SQL: &str = "SELECT value FROM pagable_data WHERE id = \
-    (SELECT id FROM keys.pagable_keys WHERE key_lo = ?1 AND key_hi = ?2)";
+const FIND_ID_SQL: &str = "SELECT id FROM keys.pagable_keys WHERE key_lo = ?1 AND key_hi = ?2";
+const FETCH_VALUE_SQL: &str = "SELECT value FROM pagable_data WHERE id = ?1";
 const CREATE_TABLES_SQL: &str = "CREATE TABLE IF NOT EXISTS pagable_data (
         id INTEGER PRIMARY KEY,
         value BLOB NOT NULL
@@ -198,6 +202,115 @@ const CREATE_TABLES_SQL: &str = "CREATE TABLE IF NOT EXISTS pagable_data (
         id INTEGER NOT NULL,
         PRIMARY KEY (key_hi, key_lo)
     ) WITHOUT ROWID;";
+
+/// A key lookup the page cache served takes a few microseconds; one that read the disk, the
+/// length of a read.
+const SLOW_KEY_LOOKUP: Duration = Duration::from_micros(80);
+const SLOW_KEY_LOOKUPS_BEFORE_READ_AHEAD: usize = 4;
+const KEY_READ_AHEAD_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Reads a shard's key file into the page cache whole once key lookups in it have started
+/// going to disk.
+///
+/// A page-in of many rows looks its keys up in hash order, which on disk is no order at all,
+/// so each lookup that misses the page cache is a read of its own. Reading the file front to
+/// back costs less than a few hundred of those.
+struct KeyReadAhead {
+    /// Opened with the shard and kept for as long as it is open. Closing any descriptor of a
+    /// file drops every lock the process holds on it, and SQLite holds locks on this one.
+    key_file: Arc<File>,
+    /// How many of the latest lookups in a row were slow, counted from zero again after each
+    /// run long enough to ask for a read-ahead.
+    slow_streak: AtomicUsize,
+    /// No read-ahead starts before this. Lookups that are slow again straight after one mean
+    /// the pages are being reclaimed as fast as they are read, and reading the file again
+    /// only adds to that.
+    not_before: Mutex<Instant>,
+    /// Whether a read-ahead is under way.
+    reading: Arc<AtomicBool>,
+    /// Tells a read-ahead under way to stop, because the shard is closing.
+    closing: Arc<AtomicBool>,
+    /// The latest read-ahead's thread. Joined when the shard closes, so that the key file is
+    /// not still open on that thread afterwards.
+    thread: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl KeyReadAhead {
+    fn new(key_file: File) -> Self {
+        Self {
+            key_file: Arc::new(key_file),
+            slow_streak: AtomicUsize::new(0),
+            not_before: Mutex::new(Instant::now()),
+            reading: Arc::new(AtomicBool::new(false)),
+            closing: Arc::new(AtomicBool::new(false)),
+            thread: Mutex::new(None),
+        }
+    }
+
+    /// Call after each key lookup, with how long it took.
+    fn after_lookup(&self, took: Duration) {
+        if self.is_due(took, Instant::now()) && !self.reading.swap(true, Ordering::Relaxed) {
+            self.start();
+        }
+    }
+
+    /// Whether the lookup that took `took` completes a run of slow ones long enough to read
+    /// ahead for, with the last read-ahead far enough behind.
+    fn is_due(&self, took: Duration, now: Instant) -> bool {
+        if took < SLOW_KEY_LOOKUP {
+            self.slow_streak.store(0, Ordering::Relaxed);
+            return false;
+        }
+        if self.slow_streak.fetch_add(1, Ordering::Relaxed) + 1 < SLOW_KEY_LOOKUPS_BEFORE_READ_AHEAD
+        {
+            return false;
+        }
+        self.slow_streak.store(0, Ordering::Relaxed);
+        let mut not_before = self.not_before.lock().expect("lock poisoned");
+        if now < *not_before {
+            return false;
+        }
+        *not_before = now + KEY_READ_AHEAD_INTERVAL;
+        true
+    }
+
+    fn start(&self) {
+        let key_file = self.key_file.clone();
+        let reading = self.reading.clone();
+        let closing = self.closing.clone();
+        let spawned = std::thread::Builder::new()
+            .name("page-key-ra".to_owned())
+            .spawn(move || {
+                // One read-ahead runs at a time, so nothing else moves the file's position.
+                // An error is not reported: the lookups that follow read what this did not.
+                let mut file = &*key_file;
+                if file.seek(SeekFrom::Start(0)).is_ok() {
+                    let mut chunk = vec![0u8; 1 << 20];
+                    while !closing.load(Ordering::Relaxed)
+                        && matches!(file.read(&mut chunk), Ok(n) if n > 0)
+                    {}
+                }
+                // Before `reading` clears: a thread that is no longer reading no longer holds
+                // the file.
+                drop(key_file);
+                reading.store(false, Ordering::Relaxed);
+            });
+        match spawned {
+            Ok(thread) => *self.thread.lock().expect("lock poisoned") = Some(thread),
+            Err(_) => self.reading.store(false, Ordering::Relaxed),
+        }
+    }
+}
+
+impl Drop for KeyReadAhead {
+    fn drop(&mut self) {
+        self.closing.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.get_mut().expect("lock poisoned").take() {
+            // A read-ahead that panicked read less; there is nothing to report.
+            drop(thread.join());
+        }
+    }
+}
 
 /// SQLite-backed storage backend for pagable data.
 ///
@@ -336,6 +449,9 @@ struct ConnectionPool {
     /// How long a read waits for the shard, in milliseconds: for a reader connection, and
     /// then for SQLite's lock on the file. `BUSY_TIMEOUT`, except in tests.
     read_timeout_ms: AtomicU64,
+    /// Present when the store was opened with key read-ahead. Declared last: it holds the key
+    /// file open, and lets go of it only after the connections above have closed.
+    key_read_ahead: Option<KeyReadAhead>,
 }
 
 /// Where the key file of the shard whose value file is `path` lives.
@@ -417,7 +533,7 @@ fn set_no_copy_on_write(_file: &File) -> io::Result<()> {
 }
 
 impl ConnectionPool {
-    fn open(path: &Path, num_readers: usize) -> anyhow::Result<Self> {
+    fn open(path: &Path, num_readers: usize, key_read_ahead: bool) -> anyhow::Result<Self> {
         let writer = Connection::open(path)?;
         Self::init_pragmas(&writer)?;
         Self::init_writer_pragmas(&writer)?;
@@ -440,7 +556,8 @@ impl ConnectionPool {
             )?;
             Self::init_pragmas(&reader)?;
             Self::attach_key_file(&reader, path)?;
-            reader.prepare_cached(FETCH_SQL)?;
+            reader.prepare_cached(FIND_ID_SQL)?;
+            reader.prepare_cached(FETCH_VALUE_SQL)?;
             readers.push(parking_lot::Mutex::new(reader));
         }
 
@@ -449,6 +566,9 @@ impl ConnectionPool {
             readers,
             next_reader: AtomicUsize::new(0),
             read_timeout_ms: AtomicU64::new(BUSY_TIMEOUT.as_millis() as u64),
+            key_read_ahead: key_read_ahead
+                .then(|| File::open(key_file_path(path)).map(KeyReadAhead::new))
+                .transpose()?,
         })
     }
 
@@ -554,8 +674,9 @@ impl Shard {
         shard_id: usize,
         queue_depth: usize,
         next_seq: Arc<AtomicU64>,
+        key_read_ahead: bool,
     ) -> anyhow::Result<Self> {
-        let conns = ConnectionPool::open(path, num_readers)?;
+        let conns = ConnectionPool::open(path, num_readers, key_read_ahead)?;
         let next_id: i64 = conns.get_readwrite().query_row(
             "SELECT COALESCE(MAX(id), 0) + 1 FROM pagable_data",
             [],
@@ -830,6 +951,12 @@ fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
 impl SqliteBackedPagableStorage {
     /// Creates a new SQLite-backed storage in the given directory.
     pub fn try_new(path: &Path) -> anyhow::Result<Self> {
+        Self::try_new_with_key_read_ahead(path, false)
+    }
+
+    /// As [`Self::try_new`]. With `key_read_ahead`, a shard's key file is read into the page
+    /// cache whole once key lookups in it have started going to disk.
+    pub fn try_new_with_key_read_ahead(path: &Path, key_read_ahead: bool) -> anyhow::Result<Self> {
         std::fs::create_dir_all(path)?;
 
         // Readers only serve page-in. Keep the total connection count bounded
@@ -850,6 +977,7 @@ impl SqliteBackedPagableStorage {
                     i,
                     queue_depth,
                     next_seq.clone(),
+                    key_read_ahead,
                 )
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
@@ -896,8 +1024,26 @@ impl SqliteBackedPagableStorage {
                 conn.execute_batch("BEGIN")
                     .map_err(|e| ("begin read transaction", e))?;
             }
-            let mut stmt = conn.prepare_cached(FETCH_SQL).map_err(|e| ("prepare", e))?;
-            stmt.query_row(rusqlite::params![key_lo, key_hi], |row| row.get(0))
+            let mut find_id = conn
+                .prepare_cached(FIND_ID_SQL)
+                .map_err(|e| ("prepare", e))?;
+            let key_read_ahead = shard.inner.conns.key_read_ahead.as_ref();
+            let started = key_read_ahead.map(|_| Instant::now());
+            let id: Option<i64> = find_id
+                .query_row(rusqlite::params![key_lo, key_hi], |row| row.get(0))
+                .optional()
+                .map_err(|e| ("find", e))?;
+            if let (Some(key_read_ahead), Some(started)) = (key_read_ahead, started) {
+                key_read_ahead.after_lookup(Instant::now().duration_since(started));
+            }
+            let Some(id) = id else {
+                return Ok(None);
+            };
+            let mut fetch_value = conn
+                .prepare_cached(FETCH_VALUE_SQL)
+                .map_err(|e| ("prepare", e))?;
+            fetch_value
+                .query_row([id], |row| row.get(0))
                 .optional()
                 .map_err(|e| ("fetch", e))
         };
@@ -1824,6 +1970,132 @@ mod tests {
         Ok(())
     }
 
+    /// A store reads its key files ahead only when opened to, and reads back what it stored
+    /// either way.
+    #[test]
+    fn sqlite_reads_key_files_ahead_only_when_asked() -> anyhow::Result<()> {
+        for key_read_ahead in [false, true] {
+            let dir = TempStorageDir::new("key_read_ahead_setting")?;
+            let storage = if key_read_ahead {
+                SqliteBackedPagableStorage::try_new_with_key_read_ahead(&dir.path, true)?
+            } else {
+                SqliteBackedPagableStorage::try_new(&dir.path)?
+            };
+            for shard in &storage.shards {
+                assert_eq!(shard.inner.conns.key_read_ahead.is_some(), key_read_ahead);
+            }
+            let key = storage.store_data(pagable_data(b"value", Vec::new()))?;
+            assert_eq!(storage.fetch_data_blocking(&key)?.data, b"value");
+        }
+        Ok(())
+    }
+
+    /// A read-ahead leaves SQLite's locks on the key file in place. Closing any descriptor of
+    /// a file drops every lock the process holds on it, SQLite's included.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn key_read_ahead_keeps_sqlite_locks_on_the_key_file() -> anyhow::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+
+        fn holds_lock_on(inode: u64) -> anyhow::Result<bool> {
+            let pid = std::process::id().to_string();
+            let inode = inode.to_string();
+            Ok(std::fs::read_to_string("/proc/locks")?.lines().any(|line| {
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                fields.get(1) == Some(&"POSIX")
+                    && fields.get(4) == Some(&pid.as_str())
+                    && fields.get(5).and_then(|file| file.rsplit(':').next())
+                        == Some(inode.as_str())
+            }))
+        }
+
+        let dir = TempStorageDir::new("key_read_ahead_locks")?;
+        let storage = SqliteBackedPagableStorage::try_new_with_key_read_ahead(&dir.path, true)?;
+        let conns = &storage.shards[0].inner.conns;
+        let inode = std::fs::metadata(key_file_path(&dir.path.join("pagable.0.db")))?.ino();
+
+        let mut conn = conns.get_readwrite();
+        let tx = conn.transaction()?;
+        tx.execute(INSERT_KEY_SQL, rusqlite::params![1, 1, 1])?;
+        assert!(
+            holds_lock_on(inode)?,
+            "a write in progress should hold a lock on the key file"
+        );
+
+        let read_ahead = conns
+            .key_read_ahead
+            .as_ref()
+            .expect("the store was opened with key read-ahead");
+        read_ahead.reading.store(true, Ordering::Relaxed);
+        read_ahead.start();
+        while read_ahead.reading.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            holds_lock_on(inode)?,
+            "the read-ahead should leave the lock in place"
+        );
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Closing a shard ends a read-ahead under way and waits for it, so the key file is not
+    /// left open on the read-ahead's thread.
+    #[test]
+    fn key_read_ahead_is_over_once_dropped() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("key_read_ahead_drop")?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dir.path.join("keys"))?;
+        // Long enough to read that the read-ahead is still going when it is dropped.
+        file.set_len(1 << 30)?;
+        let read_ahead = KeyReadAhead::new(file);
+        let key_file = Arc::downgrade(&read_ahead.key_file);
+        read_ahead.reading.store(true, Ordering::Relaxed);
+        read_ahead.start();
+        drop(read_ahead);
+        assert!(
+            key_file.upgrade().is_none(),
+            "nothing should hold the key file once the read-ahead is dropped"
+        );
+        Ok(())
+    }
+
+    /// The key file is due a read-ahead after four slow lookups in a row, and not again
+    /// until the interval has passed.
+    #[test]
+    fn key_read_ahead_waits_for_a_run_of_slow_lookups() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("key_read_ahead_runs")?;
+        let read_ahead = KeyReadAhead::new(File::create(dir.path.join("keys"))?);
+        let slow = SLOW_KEY_LOOKUP * 2;
+        let fast = SLOW_KEY_LOOKUP / 2;
+        let start = Instant::now() + KEY_READ_AHEAD_INTERVAL;
+
+        for took in [slow, slow, slow, fast, slow, slow, slow] {
+            assert!(
+                !read_ahead.is_due(took, start),
+                "three slow lookups either side of a fast one are not a run of four"
+            );
+        }
+        assert!(read_ahead.is_due(slow, start));
+
+        let run_of_slow_lookups = |now: Instant| {
+            (0..SLOW_KEY_LOOKUPS_BEFORE_READ_AHEAD)
+                .map(|_| read_ahead.is_due(slow, now))
+                .last()
+                .expect("a run is at least one lookup")
+        };
+        assert!(
+            !run_of_slow_lookups(start + KEY_READ_AHEAD_INTERVAL / 2),
+            "lookups slow again within the interval do not make another due"
+        );
+        assert!(run_of_slow_lookups(start + KEY_READ_AHEAD_INTERVAL));
+        Ok(())
+    }
+
     /// A shard's values take row ids in the order they were handed to it.
     #[test]
     fn sqlite_values_keep_the_order_they_arrive_in() -> anyhow::Result<()> {
@@ -1967,10 +2239,10 @@ mod tests {
         let conn = Connection::open(&path)?;
         ConnectionPool::attach_key_file(&conn, &path)?;
         let (key_lo, key_hi) = data_key_parts(key);
-        let value: Vec<u8> =
-            conn.query_row(FETCH_SQL, rusqlite::params![key_lo, key_hi], |row| {
-                row.get(0)
-            })?;
+        let id: i64 = conn.query_row(FIND_ID_SQL, rusqlite::params![key_lo, key_hi], |row| {
+            row.get(0)
+        })?;
+        let value: Vec<u8> = conn.query_row(FETCH_VALUE_SQL, [id], |row| row.get(0))?;
         let fetched = SqliteBackedPagableStorage::decode_pagable_data(&value, &key)?;
         assert_eq!(b"drop drains payload", fetched.data.as_slice());
         assert_eq!(vec![DataKey::testing_new(7)], fetched.arcs);

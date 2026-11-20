@@ -51,7 +51,6 @@ use buck2_execute::materialize::materializer::CleanStaleArtifactsArgs;
 use buck2_execute::materialize::materializer::MaterializerBackgroundCleanupGuard;
 use buck2_execute::re::presence::NegativeCache;
 use buck2_fs::fs_util;
-use buck2_fs::fs_util::disk_space_stats;
 use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_fs::paths::file_name::FileName;
 use buck2_util::future::join_all;
@@ -398,7 +397,11 @@ impl<T: IoHandler> Cleaner<T> {
         let mut adaptive_rounds = None;
         if let Some(params) = command.adaptive_low_disk.as_ref() {
             adaptive_outcome = match self.buck_out_abs_path.as_ref() {
-                Some(buck_out_abs_path) => match disk_space_stats(&**buck_out_abs_path) {
+                Some(buck_out_abs_path) => match self
+                    .io
+                    .synced_disk_space_stats(buck_out_abs_path.dupe())
+                    .await
+                {
                     Ok(disk_stats) => {
                         let mut params = params.clone();
                         params.unmaterialize_active &= self.rematerialization_ttl.is_some();

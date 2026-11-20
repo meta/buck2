@@ -48,6 +48,7 @@ use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::materialize::produce::Produced;
 use buck2_execute::materialize::produce::produce_locally;
 use buck2_execute::materialize::produce::write_locally;
+use buck2_fs::fs_util::DiskSpaceStats;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_hash::BuckMutMap;
@@ -1356,6 +1357,113 @@ async fn test_an_active_root_stays_when_its_upload_fails() -> buck2_error::Resul
         assert_eq!(stats.unmaterialization_upload_failed_artifact_count, 1);
         assert_eq!(stats.cleaned_artifact_count, 0);
         assert!(dm.has_artifact_at(p).await?, "still tracked, still there");
+        abort(dm);
+        Ok(())
+    })
+    .await
+}
+
+/// An interrupt in a later adaptive round ends the clean on that round's outcome: the disk
+/// re-measured before the round only feeds `finish` when no round follows, so the stale
+/// measurement must not rewrite the outcome and shortfall.
+#[tokio::test]
+async fn test_interrupted_second_round_skips_finish() -> buck2_error::Result<()> {
+    use crate::materializers::deferred::clean_stale::LowDiskCleanConfig;
+    use crate::materializers::deferred::clean_stale::LowDiskCleanMode;
+
+    ignore_stack_overflow_checks_for_future(async {
+        let temp = ProjectRootTemp::new()?;
+        let fs = temp.path().dupe();
+        // Three 300-byte retained artifacts. The scripted disk reports 100 bytes free of 1000
+        // before the clean and 300 after the first round, against a 35% threshold that needs
+        // 250 then 50 more: the first round promotes `a`, the second `b`, and the interrupt
+        // lands in the second round's sweep.
+        let contents = "x".repeat(300);
+        let (a, b, c) = (
+            path("buck-out/v2/gen/a"),
+            path("buck-out/v2/gen/b"),
+            path("buck-out/v2/gen/c"),
+        );
+        let (db, _) = testing_materializer_state_sqlite_db(&fs, versions(), metadata(), None)?;
+        let (dm, _) = make(&fs, Some(db), None);
+        for p in [&a, &b, &c] {
+            drop(report(&dm, p, file(&contents)).await?);
+            fs.write_file(p, contents.clone(), false)?;
+        }
+        abort(dm);
+
+        let (deletions_tx, mut deletions_rx) = tokio::sync::mpsc::unbounded_channel();
+        let io = StubIoHandler::new(fs.dupe())
+            .with_clean_rendezvous(deletions_tx)
+            .with_synced_disk_space_stats(vec![
+                DiskSpaceStats {
+                    free_space: 100,
+                    total_space: 1000,
+                },
+                DiskSpaceStats {
+                    free_space: 300,
+                    total_space: 1000,
+                },
+            ]);
+        let mut configs = configs();
+        configs.clean_stale_config = CleanStaleConfig {
+            low_disk: Some(LowDiskCleanConfig {
+                threshold_percent: 35.0,
+                mode: LowDiskCleanMode::Adaptive {
+                    min_ttl: Duration::ZERO,
+                    delete_intermediate_within_min_ttl: true,
+                    unmaterialize_active: false,
+                    unmaterialization_threshold_percent: 35.0,
+                    max_rounds: 8,
+                },
+            }),
+            ..CleanStaleConfig::default()
+        };
+        let (db, state) = testing_materializer_state_sqlite_db(&fs, versions(), metadata(), None)?;
+        let (dm, _) = make_with_configs(&fs, io, Some(db), Some(state?), configs);
+
+        let args = CleanStaleArtifactsArgs {
+            policy: CleanStaleArtifactsPolicy::Configured,
+            dry_run: false,
+            tracked_only: false,
+            origin: buck2_data::clean_stale_result::Origin::CleanCommand,
+        };
+        // Drives the deletions the sweeps hand over: the first round deletes `a` and goes
+        // through, the second round reaches `b` and waits while the clean is interrupted.
+        // Everything here is async, so this works on any executor.
+        let driver = tokio::spawn({
+            let dm = dm.dupe();
+            async move {
+                deletions_rx
+                    .recv()
+                    .await
+                    .expect("the first round should delete")
+                    .send(())
+                    .expect("the first deletion should release");
+                let release = deletions_rx
+                    .recv()
+                    .await
+                    .expect("the second round should delete");
+                let _guard = dm.prevent_background_cleanup().await;
+                release
+                    .send(())
+                    .expect("the second deletion should release");
+            }
+        });
+        let stats = dm
+            .clean_stale_artifacts(args)
+            .await?
+            .stats
+            .expect("clean-stale should return stats");
+        driver.await.expect("the rendezvous driver should finish");
+        // The interrupt ends the clean on the second round's `Satisfied` outcome: no `finish`
+        // from the 300-byte measurement the round started at, which is still 50 bytes short.
+        assert_eq!(
+            stats.adaptive_shortfall_bytes, 0,
+            "the stale pre-round measurement must not become the shortfall"
+        );
+        assert_eq!(stats.adaptive_stale_artifact_count, 2);
+        assert_eq!(stats.retained_artifact_count, 1);
         abort(dm);
         Ok(())
     })

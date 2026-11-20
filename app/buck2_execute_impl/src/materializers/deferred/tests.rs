@@ -166,6 +166,7 @@ fn test_remove_path() {
 #[cfg(test)]
 pub(crate) mod state_machine {
     use std::assert_matches;
+    use std::collections::VecDeque;
     #[cfg(all(unix, not(target_os = "macos")))]
     use std::ffi::OsString;
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -241,6 +242,14 @@ pub(crate) mod state_machine {
         read_dir_barriers: Option<Arc<(Barrier, Barrier)>>,
         #[allocative(skip)]
         clean_barriers: Option<Arc<(Barrier, Barrier)>>,
+        /// Async per-deletion rendezvous; see the use in `clean_invalidated_path`.
+        #[allocative(skip)]
+        clean_rendezvous:
+            Option<tokio::sync::mpsc::UnboundedSender<tokio::sync::oneshot::Sender<()>>>,
+        /// Scripted `synced_disk_space_stats` responses, popped per call; when empty the stub
+        /// stats the real filesystem.
+        #[allocative(skip)]
+        synced_disk_space_stats: Mutex<VecDeque<DiskSpaceStats>>,
         digest_config: DigestConfig,
         buck_out_path: ProjectRelativePathBuf,
         fs: ProjectRoot,
@@ -308,6 +317,8 @@ pub(crate) mod state_machine {
                 block_materialization: None,
                 read_dir_barriers: None,
                 clean_barriers: None,
+                clean_rendezvous: None,
+                synced_disk_space_stats: Default::default(),
                 digest_config: DigestConfig::testing_default(),
                 buck_out_path: make_path("buck-out/v2"),
                 fs,
@@ -332,6 +343,19 @@ pub(crate) mod state_machine {
 
         pub fn with_clean_barriers(mut self, clean_barriers: Arc<(Barrier, Barrier)>) -> Self {
             self.clean_barriers = Some(clean_barriers);
+            self
+        }
+
+        pub(crate) fn with_clean_rendezvous(
+            mut self,
+            rendezvous: tokio::sync::mpsc::UnboundedSender<tokio::sync::oneshot::Sender<()>>,
+        ) -> Self {
+            self.clean_rendezvous = Some(rendezvous);
+            self
+        }
+
+        pub(crate) fn with_synced_disk_space_stats(self, stats: Vec<DiskSpaceStats>) -> Self {
+            *self.synced_disk_space_stats.lock() = stats.into_iter().collect();
             self
         }
     }
@@ -403,6 +427,18 @@ pub(crate) mod state_machine {
                 barriers.as_ref().0.wait();
                 barriers.as_ref().1.wait();
             }
+            if let Some(rendezvous) = self.clean_rendezvous.as_ref() {
+                // Hand each deletion to the test, parked until it releases it. Unlike the
+                // barriers above this never blocks a runtime thread, so it works on any
+                // executor. A test that arms this must drain it, or deletions hang.
+                let (release, released) = tokio::sync::oneshot::channel();
+                rendezvous
+                    .send(release)
+                    .expect("a test that arms clean rendezvous must drain it");
+                released
+                    .await
+                    .expect("a test that arms clean rendezvous must release every deletion");
+            }
             Box::new(request).execute(&self.fs)
         }
 
@@ -464,6 +500,9 @@ pub(crate) mod state_machine {
             self: &Arc<Self>,
             path: Arc<AbsPathBuf>,
         ) -> buck2_error::Result<DiskSpaceStats> {
+            if let Some(stats) = self.synced_disk_space_stats.lock().pop_front() {
+                return Ok(stats);
+            }
             disk_space_stats(&*path)
         }
 

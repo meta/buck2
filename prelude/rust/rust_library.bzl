@@ -1333,9 +1333,13 @@ def rust_library_macro_wrapper(rust_library: typing.Callable) -> typing.Callable
 
             rust_proc_macro_alias(
                 name = name,
-                actual_exec = actual,
+                actual = select({
+                    "prelude//rust/constraints:proc_macro_alias_top_level[false]": None,
+                    "prelude//rust/constraints:proc_macro_alias_top_level[true]": actual,
+                }),
                 actual_plugin = actual,
                 default_target_platform = kwargs.get("default_target_platform", None),
+                modifiers = (kwargs.get("modifiers") or []) + ["prelude//rust/constraints:proc_macro_alias_top_level[true]"],
                 visibility = kwargs.pop("visibility", []),
                 _rust_toolchain = kwargs.get("_rust_toolchain", None),
             )

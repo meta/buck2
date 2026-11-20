@@ -43,7 +43,8 @@ RustAnalyzerInfo = provider(
         "env": dict[str, cmd_args | str | ResolvedStringWithMacros],
         "features": list[str],
         # The list of rust deps needed for RustAnalyzer to function. Namely, this excludes things like
-        # exec deps used as inputs to genrules and other non-rust dependencies.
+        # exec deps used as inputs to genrules and other non-rust dependencies. Proc macro deps are
+        # their aliases, which only carry `RustProcMacroMarker`, and `available_proc_macros` follow.
         "rust_deps": list[Dependency],
         "rustc_flags": cmd_args,
         "target_kind": RustAnalyzerTargetKind,
@@ -76,9 +77,11 @@ def _compute_rust_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> l
         panic_runtime = dep_ctx.panic_runtime,
     )
 
-    first_order_deps = [dep.dep for dep in resolve_listed_deps(ctx, dep_ctx) if RustLinkInfo in dep.dep or RustProcMacroMarker in dep.dep]
+    first_order_deps = [
+        dep.dep for dep in resolve_listed_deps(ctx, dep_ctx) if (RustLinkInfo in dep.dep and RustAnalyzerInfo in dep.dep) or RustProcMacroMarker in dep.dep
+    ]
 
-    return [dep for dep in first_order_deps + get_available_proc_macros(ctx).values() if RustAnalyzerInfo in dep]
+    return first_order_deps + [dep for dep in get_available_proc_macros(ctx).values() if RustAnalyzerInfo in dep]
 
 def _compute_transitive_target_set(ctx: AnalysisContext, first_order_deps: list[Dependency]) -> set[ConfiguredTargetLabel]:
     transitive_targets = set([ctx.label.configured_target()])

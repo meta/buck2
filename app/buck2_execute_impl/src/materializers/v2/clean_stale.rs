@@ -69,6 +69,7 @@ use crate::materializers::deferred::artifact_tree::ArtifactClassification;
 use crate::materializers::deferred::artifact_tree::UnmaterializationEligibility;
 use crate::materializers::deferred::artifact_tree::UnmaterializationIneligibilityReason;
 use crate::materializers::deferred::artifact_tree::UnmaterializationIneligibleArtifact;
+use crate::materializers::deferred::clean_stale::AdaptiveRounds;
 use crate::materializers::deferred::clean_stale::CleanDiskSpace;
 use crate::materializers::deferred::clean_stale::CleanFailure;
 use crate::materializers::deferred::clean_stale::CleanFailurePhase;
@@ -352,7 +353,7 @@ impl<T: IoHandler> Cleaner<T> {
         let rules = Rules {
             started: self.started,
             keep_since_time: command.keep_since_time,
-            rematerialization_deadline: rematerialization_deadline(self.rematerialization_ttl),
+            rematerialization_ttl: self.rematerialization_ttl,
             upload_enabled: command.unmaterialize_upload.is_some(),
             store: self.store,
         };
@@ -394,6 +395,7 @@ impl<T: IoHandler> Cleaner<T> {
         }
 
         let mut record_unmaterialization_ineligibility = false;
+        let mut adaptive_rounds = None;
         if let Some(params) = command.adaptive_low_disk.as_ref() {
             adaptive_outcome = match self.buck_out_abs_path.as_ref() {
                 Some(buck_out_abs_path) => match disk_space_stats(&**buck_out_abs_path) {
@@ -411,6 +413,8 @@ impl<T: IoHandler> Cleaner<T> {
                         stats.adaptive_bytes_needed = adaptive.bytes_needed;
                         stats.adaptive_shortfall_bytes = adaptive.shortfall_bytes;
                         record_unmaterialization_ineligibility = adaptive.reached_unmaterialization;
+                        adaptive_rounds = AdaptiveRounds::follow(params, &adaptive)
+                            .map(|rounds| (rounds, buck_out_abs_path.dupe()));
                         adaptive.outcome
                     }
                     Err(e) => {
@@ -483,16 +487,50 @@ impl<T: IoHandler> Cleaner<T> {
         }
 
         let clean_start = Instant::now();
-        let plan = plan(command, &index, &rules, found, &mut stats);
-        let outcomes = self.dupe().sweep(plan, observer.dupe()).await;
-        stats.record_materialized_sizes_after(self.shared.sizes());
         let mut first_error = scan_error;
-        for (outcome, origin) in outcomes {
-            let failure = stats.record_clean_outcome(outcome, origin);
-            if first_error.is_none() {
-                first_error = failure;
+        let mut measured_disk = None;
+        loop {
+            // TODO(scottcao): Properly fix this in the clean-stale rewrite for materializer v2:
+            // drop retained candidates before the sweep when adaptive rounds are off, so the
+            // retained scan does not stay alive across the deletion workload.
+            let deleted = found.extract_if(.., |path| !path.is_adaptive_candidate());
+            let plan = plan(command, &index, &rules, deleted, &mut stats);
+            for (outcome, origin) in self.dupe().sweep(plan, observer.dupe()).await {
+                let failure = stats.record_clean_outcome(outcome, origin);
+                if first_error.is_none() {
+                    first_error = failure;
+                }
+            }
+
+            let Some((rounds, buck_out_abs_path)) = adaptive_rounds.as_mut() else {
+                break;
+            };
+            if first_error.is_some() || !observer.is_alive_sync() {
+                break;
+            }
+            let disk = match self
+                .io
+                .synced_disk_space_stats(buck_out_abs_path.dupe())
+                .await
+            {
+                Ok(disk) => disk,
+                Err(e) => {
+                    soft_error_or_panic!("disk_space_stats", e);
+                    break;
+                }
+            };
+            match rounds.next(&mut found, &disk, &mut stats) {
+                Some(round) => adaptive_outcome = round.outcome,
+                None => {
+                    measured_disk = Some(disk);
+                    break;
+                }
             }
         }
+        if let (Some((rounds, _)), Some(disk)) = (adaptive_rounds.as_ref(), measured_disk) {
+            adaptive_outcome = rounds.finish(adaptive_outcome, &disk, &mut stats);
+        }
+        stats.record_materialized_sizes_after(self.shared.sizes());
         stats.clean_duration_s = (Instant::now() - clean_start).as_secs();
         let kind = if observer.is_alive_sync() {
             CleanStaleResultKind::Finished
@@ -718,7 +756,7 @@ fn plan(
     command: &CleanStaleArtifactsCommand,
     index: &DiskTree<()>,
     rules: &Rules,
-    found: Vec<FoundPath>,
+    found: impl IntoIterator<Item = FoundPath>,
     stats: &mut CleanStaleStats,
 ) -> Plan {
     let mut plan = Plan {
@@ -828,7 +866,7 @@ struct Upload {
 struct Rules {
     started: Timestamp,
     keep_since_time: Timestamp,
-    rematerialization_deadline: Timestamp,
+    rematerialization_ttl: Option<SignedDuration>,
     upload_enabled: bool,
     store: &'static BlobStore,
 }
@@ -895,13 +933,15 @@ enum Backing {
 }
 
 impl Rules {
-    /// Where `entry`'s content can come back from, by what the CAS has said about each file.
+    /// Where `entry`'s content can come back from, by what the CAS has said about each file,
+    /// against the deadline as of this call: the answer holds only for deleting right away.
     fn backing(&self, entry: &DiskEntry) -> Backing {
+        let deadline = rematerialization_deadline(self.rematerialization_ttl);
         let mut backing = Backing::Cas;
         let mut local_only = false;
         entry.files(&mut |_, file| match self.store.cas_expiry(&file.digest) {
             None => local_only = true,
-            Some(expires) if expires < self.rematerialization_deadline => {
+            Some(expires) if expires < deadline => {
                 backing = Backing::Expiring;
             }
             Some(_) => {}

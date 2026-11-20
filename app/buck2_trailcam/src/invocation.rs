@@ -38,7 +38,6 @@ pub struct InvocationInfo {
     pub command_outcome: Option<String>,
     pub username: Option<String>,
     pub hostname: Option<String>,
-    pub client: Option<String>,
     pub clients: Vec<String>,
     pub duration_ms: Option<f64>,
     pub command_duration_ms: Option<f64>,

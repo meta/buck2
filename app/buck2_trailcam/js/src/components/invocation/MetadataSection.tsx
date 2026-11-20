@@ -38,7 +38,6 @@ export function MetaRow({
 export default function MetadataSection({
   username,
   hostname,
-  client,
   clients,
   buck2Revision,
   remoteExecutionId,
@@ -46,7 +45,6 @@ export default function MetadataSection({
 }: {
   username: string | null;
   hostname: string | null;
-  client: string | null;
   clients: readonly string[];
   buck2Revision: string | null;
   remoteExecutionId: string | null;
@@ -67,7 +65,6 @@ export default function MetadataSection({
             {hostname ?? '—'}
           </span>
         </MetaRow>
-        <MetaRow label="Client">{client || 'None'}</MetaRow>
         <MetaRow label="Clients">
           {clients.length > 0 ? clients.join(', ') : 'None'}
         </MetaRow>

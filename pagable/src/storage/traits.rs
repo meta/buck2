@@ -565,10 +565,11 @@ pub trait PagableStorage: Send + Sync + 'static {
     /// Backends that write through return [`CommitFrontier::everything`].
     fn commit_frontier(&self) -> CommitFrontier;
 
-    /// Drops every row stored but not yet committed, cutting a write in
-    /// progress short at its next statement. Only sound while nothing refers
-    /// to those rows: no value evicted against them and no arc bound to them.
-    /// Backends that write through have nothing to drop.
+    /// Drops every row stored but not yet committed. A write in progress
+    /// takes no further row and commits the ones it has taken, at most one
+    /// write buffer. Only sound while nothing refers to those rows: no value
+    /// evicted against them and no arc bound to them. Backends that write
+    /// through have nothing to drop.
     fn discard_unwritten(&self);
 
     /// Commit any buffered writes to persistent storage.

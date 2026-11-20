@@ -211,7 +211,8 @@ const CREATE_TABLES_SQL: &str = "CREATE TABLE IF NOT EXISTS pagable_data (
 /// what finds a value from its `DataKey` and tells a value already stored from a
 /// new one. Keys are content hashes, so looking one up lands anywhere in the key
 /// file; keeping them out of the value file keeps those pages together, and leaves
-/// the value file free to hold values in whatever order suits reading them.
+/// the value file free to hold values in the order they were handed to the shard,
+/// which keeps values that were written together next to each other.
 pub struct SqliteBackedPagableStorage {
     shards: Vec<Shard>,
     /// Shared with every shard; see [`ShardInner::next_seq`].
@@ -678,7 +679,7 @@ impl ShardInner {
 
                 // Write the items to the database, catching any panics so that we can clean up.
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.write_items_impl(&mut items)
+                    self.write_items_impl(&items)
                 }))
                 .map_err(|payload| {
                     format!(
@@ -708,11 +709,10 @@ impl ShardInner {
         }
     }
 
-    fn write_items_impl(&self, items: &mut [(DataKey, Vec<u8>)]) -> anyhow::Result<()> {
+    fn write_items_impl(&self, items: &[(DataKey, Vec<u8>)]) -> anyhow::Result<()> {
         if items.is_empty() {
             return Ok(());
         }
-        items.sort_unstable_by_key(|(key, _bytes)| key.get());
 
         let mut conn = self.conns.get_readwrite();
         // Declared before the transaction, so released after it has committed.
@@ -995,26 +995,41 @@ fn data_key_parts(key: DataKey) -> (i64, i64) {
     ((key.get() as u64) as i64, ((key.get() >> 64) as u64) as i64)
 }
 
-/// Gives `items` the row ids from `first_id` on, records each key with its row id, and
-/// writes the value of every key the shard did not already hold. Stops after the current
-/// row once `stop` is set; the transaction stays committable either way.
+/// Gives `items` the row ids from `first_id` on, in the order given, records each key with
+/// its row id, and writes the value of every key the shard did not already hold.
+///
+/// Once `stop` is set no further key is recorded. The transaction stays committable either
+/// way.
 fn insert_items(
     tx: &rusqlite::Transaction<'_>,
     items: &[(DataKey, Vec<u8>)],
     first_id: u64,
     stop: &AtomicBool,
 ) -> anyhow::Result<()> {
+    let id = |i: usize| (first_id + i as u64) as i64;
+
+    // Keys are content hashes. Recording them in key order writes each page of the key file
+    // once, whatever order their values are in.
+    let mut by_key: Vec<usize> = (0..items.len()).collect();
+    by_key.sort_unstable_by_key(|&i| items[i].0.get());
+    let mut is_new = vec![false; items.len()];
     let mut insert_key = tx.prepare_cached(INSERT_KEY_SQL)?;
-    let mut insert_value = tx.prepare_cached(INSERT_VALUE_SQL)?;
-    for (id, (key, bytes)) in (first_id as i64..).zip(items) {
+    for i in by_key {
         if stop.load(Ordering::Relaxed) {
-            return Ok(());
+            break;
         }
-        let (key_lo, key_hi) = data_key_parts(*key);
-        let is_new = insert_key.execute(rusqlite::params![key_lo, key_hi, id])? == 1;
-        if is_new {
+        let (key_lo, key_hi) = data_key_parts(items[i].0);
+        is_new[i] = insert_key.execute(rusqlite::params![key_lo, key_hi, id(i)])? == 1;
+    }
+
+    // Every key recorded above gets its value, `stop` or not: a later page-out skips a value
+    // whose key it finds, so a key without one would stay that way. Taking the keys back out
+    // instead is another pass over the key file, which costs more than writing the values.
+    let mut insert_value = tx.prepare_cached(INSERT_VALUE_SQL)?;
+    for (i, (key, bytes)) in items.iter().enumerate() {
+        if is_new[i] {
             insert_value
-                .execute(rusqlite::params![id, bytes])
+                .execute(rusqlite::params![id(i), bytes])
                 .map_err(|error| insert_error(tx, error, key, bytes.len()))?;
         }
     }
@@ -1724,6 +1739,61 @@ mod tests {
         let fetched = storage.fetch_data_blocking(&key)?;
         assert_eq!(b"duplicate payload", fetched.data.as_slice());
         assert_eq!(vec![DataKey::testing_new(11)], fetched.arcs);
+        Ok(())
+    }
+
+    /// A shard's values take row ids in the order they were handed to it.
+    #[test]
+    fn sqlite_values_keep_the_order_they_arrive_in() -> anyhow::Result<()> {
+        let dir = TempStorageDir::new("arrival_order")?;
+        let storage = SqliteBackedPagableStorage::try_new(&dir.path)?;
+        let in_shard_0: Vec<PagableData> = (0..2000)
+            .map(|i| pagable_data(format!("value-{i}").as_bytes(), Vec::new()))
+            .filter(|data| data.compute_key().get() % NUM_SHARDS as u128 == 0)
+            .collect();
+        assert!(
+            in_shard_0.len() > 50,
+            "fixture should put many rows in shard 0"
+        );
+        let handed_over: Vec<Vec<u8>> = in_shard_0
+            .iter()
+            .map(SqliteBackedPagableStorage::encode_pagable_data)
+            .collect();
+        for data in in_shard_0 {
+            storage.store_data(data)?;
+        }
+        storage.flush()?;
+
+        let conn = storage.shards[0].inner.conns.get_readwrite();
+        let stored: Vec<Vec<u8>> = conn
+            .prepare("SELECT value FROM pagable_data ORDER BY id")?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        assert_eq!(stored, handed_over);
+        Ok(())
+    }
+
+    /// Asked to stop before it starts, a write records no key and so writes no value.
+    #[test]
+    fn sqlite_insert_asked_to_stop_records_nothing() -> anyhow::Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        conn.execute_batch("ATTACH DATABASE ':memory:' AS keys;")?;
+        conn.execute_batch(CREATE_TABLES_SQL)?;
+        let items = vec![
+            (DataKey::testing_new(1), vec![1]),
+            (DataKey::testing_new(2), vec![2]),
+        ];
+        let tx = conn.transaction()?;
+        insert_items(&tx, &items, 1, &AtomicBool::new(true))?;
+        tx.commit()?;
+
+        for table in ["keys.pagable_keys", "pagable_data"] {
+            let rows: usize =
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(rows, 0, "{table}");
+        }
         Ok(())
     }
 

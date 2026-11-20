@@ -639,6 +639,10 @@ impl LocalExecutor {
             // TODO: Release here.
             let manager = manager.claim().boxed().await;
 
+            if let Err(e) = self.materializer.start_writing(&outputs_lease).await {
+                return manager.error("start_writing_failed", e);
+            }
+
             if let Some(incremental) = incremental {
                 let start = Instant::now();
                 let prepared = executor_stage_async(

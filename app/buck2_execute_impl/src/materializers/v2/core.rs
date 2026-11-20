@@ -867,6 +867,11 @@ impl<T: IoHandler + Allocative> Materializer for DiskStateMaterializer<T> {
         Ok(WriteLease::new(self.take_all_for_writing(paths).await?))
     }
 
+    /// Nothing to do: this core keeps no declarations for an unused lease to cost its paths.
+    async fn start_writing(&self, _lease: &WriteLease) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
     async fn make_outputs_writable(
         &self,
         paths: Vec<ProjectRelativePathBuf>,

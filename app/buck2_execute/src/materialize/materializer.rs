@@ -164,10 +164,11 @@ pub struct MaterializeRequest {
     /// Each value is materialized at its path. The exhaustiveness markings inside a value are
     /// honored; the paths themselves say nothing about their parents, which are left alone.
     pub artifacts: Vec<(ProjectRelativePathBuf, ArtifactValue)>,
-    /// Paths the caller is about to produce content at: its outputs and scratch paths. They stop
-    /// being tracked, and the response's `outputs` lease holds them for writing. It is granted
-    /// together with the read lease over `artifacts`, which is what lets one unit of work hold
-    /// everything it needs without ever waiting while holding (problem-path-locking.md).
+    /// Paths the caller may go on to produce content at: its outputs and scratch paths. The
+    /// response's `outputs` lease holds them for writing, and they stop being tracked no later
+    /// than the caller's [`Materializer::start_writing`]. It is granted together with the read
+    /// lease over `artifacts`, which is what lets one unit of work hold everything it needs
+    /// without ever waiting while holding (problem-path-locking.md).
     pub outputs: Vec<ProjectRelativePathBuf>,
     pub purpose: MaterializationPurpose,
     /// Attributed with any CAS traffic this request causes.
@@ -415,6 +416,13 @@ pub trait Materializer: TrackedPaths + Allocative + Send + Sync + 'static {
         &self,
         paths: Vec<ProjectRelativePathBuf>,
     ) -> buck2_error::Result<WriteLease>;
+
+    /// Called by the holder of a [`Materializer::materialize`] request's `outputs` lease once it
+    /// is certain to produce them, before it deletes or writes anything under the lease. An
+    /// executor racing another one takes the lease before it has claimed its action and drops
+    /// it unused when it loses: a lease this was never called for must not cost its paths what
+    /// the winner declared there.
+    async fn start_writing(&self, lease: &WriteLease) -> buck2_error::Result<()>;
 
     /// Makes every file under `paths` one the caller may write in place, for an incremental
     /// action's previous outputs: an inode of its own, where a materializer keeps buck-out

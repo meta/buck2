@@ -1000,6 +1000,52 @@ pub(crate) mod state_machine {
         .await
     }
 
+    /// An executor that loses its action to another one drops the outputs lease of its
+    /// request unused, after the winner declared the outputs.
+    #[tokio::test]
+    async fn test_outputs_stay_declared_until_start_writing() -> buck2_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let io = Arc::new(StubIoHandler::new(temp_root()));
+            let path = make_path("foo/bar");
+            let value = ArtifactValue::file(io.digest_config().empty_file());
+            let (dm, _daemon_dispatcher_events) = make_materializer(io.dupe(), None).await;
+            let outputs_lease = async || {
+                let response = dm
+                    .materialize(MaterializeRequest {
+                        artifacts: vec![],
+                        outputs: vec![path.clone()],
+                        purpose: MaterializationPurpose::IntermediateOnly,
+                        re_use_case: RemoteExecutorUseCase::buck2_default(),
+                    })
+                    .await?;
+                let (_inputs, outputs) = response.into_leases()?;
+                buck2_error::Ok(outputs.expect("A request with outputs has a lease over them"))
+            };
+
+            dm.declare_cas_many_impl(
+                Arc::new(CasDownloadInfo::new_declared(
+                    RemoteExecutorUseCase::buck2_default(),
+                )),
+                vec![DeclareArtifactPayload {
+                    path: path.clone(),
+                    artifact: value,
+                }],
+            )
+            .await?;
+
+            drop(outputs_lease().await?);
+            assert!(dm.has_artifact_at(path.clone()).await?);
+
+            let lease = outputs_lease().await?;
+            dm.start_writing(&lease).await?;
+            assert!(!dm.has_artifact_at(path).await?);
+
+            dm.abort();
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_fill_forgets_what_it_failed_to_fetch() -> buck2_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {

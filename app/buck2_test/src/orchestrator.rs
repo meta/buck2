@@ -1249,6 +1249,9 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
             output_paths(fs, &execution_request)?,
         )
         .await?;
+        if let Some(outputs) = &materialized_inputs.outputs {
+            materializer.start_writing(outputs).await?;
+        }
 
         prep_scratch_path(&materialized_inputs.scratch, fs).await?;
 
@@ -1276,6 +1279,9 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
                 output_paths(fs, &local_resource_setup_command.execution_request)?,
             )
             .await?;
+            if let Some(outputs) = &materialized_inputs.outputs {
+                materializer.start_writing(outputs).await?;
+            }
             let blocking_executor = self.dice.ctx().get_blocking_executor();
 
             prep_scratch_path(&materialized_inputs.scratch, fs).await?;

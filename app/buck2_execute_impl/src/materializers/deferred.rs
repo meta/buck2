@@ -455,10 +455,29 @@ impl From<MaterializeEntryError> for SharedMaterializingError {
     }
 }
 
-/// What a write lease of this core carries: the content that was materialized at each of its
-/// paths when `prepare_outputs` forgot them, for a fill to keep rather than remake.
+/// What a write lease of this core carries.
 struct PreparedOutputs {
+    /// The paths of a `materialize` request's lease, still tracked until `start_writing` takes
+    /// them.
+    unstarted: Mutex<Vec<ProjectRelativePathBuf>>,
+    /// The content that was materialized at each of the lease's paths when they were forgotten,
+    /// for a fill to keep rather than remake.
     displaced: Mutex<BuckMutMap<ProjectRelativePathBuf, ArtifactMetadata>>,
+}
+
+impl PreparedOutputs {
+    fn of(lease: &WriteLease) -> Option<&Self> {
+        lease.guard().and_then(|guard| guard.downcast_ref())
+    }
+
+    /// What is produced under a lease that still tracks its paths would sit under their stale
+    /// entries.
+    fn check_started(lease: &WriteLease) -> buck2_error::Result<()> {
+        if Self::of(lease).is_some_and(|outputs| !outputs.unstarted.lock().is_empty()) {
+            return Err(internal_error!("Write lease used before `start_writing`"));
+        }
+        Ok(())
+    }
 }
 
 /// Stops tracking the path a `fill` declared in order to fetch it, however the fill ends: with
@@ -535,9 +554,10 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
 
     async fn declare_existing(
         &self,
-        _lease: &WriteLease,
+        lease: &WriteLease,
         artifacts: Vec<DeclareArtifactPayload>,
     ) -> buck2_error::Result<()> {
+        PreparedOutputs::check_started(lease)?;
         buck2_util::future::try_join_all(artifacts.iter().map(
             |DeclareArtifactPayload { path, artifact }| {
                 self.io.seal(path.clone(), artifact.entry().dupe())
@@ -565,21 +585,17 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
             re_use_case: _,
         } = request;
 
-        // The outputs' preparation and the inputs' materialization are independent here, and
-        // the executor used to run them side by side.
-        let prepare = async {
-            if outputs.is_empty() {
-                Ok(None)
-            } else {
-                self.prepare_outputs(outputs).await.map(Some)
-            }
-        };
-        let ensure = async {
-            if purpose == (MaterializationPurpose::FinalOutput { required: false })
-                && !self.materialize_final_artifacts
-            {
-                return buck2_error::Ok(artifacts.iter().map(|_| Ok(())).collect());
-            }
+        let outputs = (!outputs.is_empty()).then(|| {
+            WriteLease::new(PreparedOutputs {
+                unstarted: Mutex::new(outputs),
+                displaced: Mutex::default(),
+            })
+        });
+        let results = if purpose == (MaterializationPurpose::FinalOutput { required: false })
+            && !self.materialize_final_artifacts
+        {
+            artifacts.iter().map(|_| Ok(())).collect()
+        } else {
             let paths = artifacts.into_iter().map(|(path, _)| path).collect();
             let (sender, recv) = oneshot::channel();
             self.command_sender
@@ -594,9 +610,8 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
             let materialization_fut = recv
                 .await
                 .buck_error_context("Receiving materialization future from command thread.")?;
-            Ok(materialization_fut.collect::<Vec<_>>().await)
+            materialization_fut.collect::<Vec<_>>().await
         };
-        let (outputs, results) = futures::future::try_join(prepare, ensure).await?;
 
         Ok(MaterializeResponse {
             results,
@@ -770,8 +785,21 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
     ) -> buck2_error::Result<WriteLease> {
         let displaced = self.invalidate_many(paths).await?;
         Ok(WriteLease::new(PreparedOutputs {
+            unstarted: Mutex::default(),
             displaced: Mutex::new(displaced.into_iter().collect()),
         }))
+    }
+
+    async fn start_writing(&self, lease: &WriteLease) -> buck2_error::Result<()> {
+        let Some(outputs) = PreparedOutputs::of(lease) else {
+            return Ok(());
+        };
+        let paths = std::mem::take(&mut *outputs.unstarted.lock());
+        if !paths.is_empty() {
+            let displaced = self.invalidate_many(paths).await?;
+            outputs.displaced.lock().extend(displaced);
+        }
+        Ok(())
     }
 
     /// This materializer neither shares an inode with buck-out nor makes a file read-only.
@@ -791,10 +819,9 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         re_use_case: RemoteExecutorUseCase,
         _cancellations: &CancellationContext,
     ) -> buck2_error::Result<()> {
-        let displaced = lease
-            .guard()
-            .and_then(|guard| guard.downcast_ref::<PreparedOutputs>())
-            .and_then(|outputs| outputs.displaced.lock().remove(&path));
+        PreparedOutputs::check_started(lease)?;
+        let displaced =
+            PreparedOutputs::of(lease).and_then(|outputs| outputs.displaced.lock().remove(&path));
         if displaced
             .is_some_and(|displaced| artifact_metadata_matches_entry(&displaced, value.entry()))
         {

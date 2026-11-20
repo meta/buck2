@@ -27,11 +27,17 @@ import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
+import org.jetbrains.kotlin.ir.declarations.IrValueParameter
+import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.expressions.IrCall
-import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
-import org.jetbrains.kotlin.ir.expressions.IrDelegatingConstructorCall
+import org.jetbrains.kotlin.ir.expressions.IrClassReference
+import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
+import org.jetbrains.kotlin.ir.expressions.IrMemberAccessExpression
+import org.jetbrains.kotlin.ir.expressions.IrRichFunctionReference
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperator
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperatorCall
+import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
@@ -95,25 +101,19 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
     pluginContext.referenceClass(COMPOSER_CLASS_ID)?.defaultType?.makeNullable()
   }
 
-  /** Run the type rewriting on the entire module. */
+  /**
+   * Run the type rewriting on the entire module. The rewrite is idempotent: a rewritten type names
+   * no composable function type. The emulation runs it again after kept inline bodies are restored
+   * and stripped constructors get a synthesized delegation, whose types and calls must be lowered
+   * too.
+   */
   fun transform(moduleFragment: IrModuleFragment) {
     val composerIrType = composerType ?: return
-    moduleFragment.accept(TypeRewriterVisitor(composerIrType, declarations = true), null)
-  }
-
-  /**
-   * Remap only the external functions that bodies call. Kept inline bodies are restored, and
-   * stripped constructors get a synthesized delegation, after [transform] runs; their calls must
-   * name the remapped signatures, as the real plugin's do.
-   */
-  fun transformCallSites(moduleFragment: IrModuleFragment) {
-    val composerIrType = composerType ?: return
-    moduleFragment.accept(TypeRewriterVisitor(composerIrType, declarations = false), null)
+    moduleFragment.accept(TypeRewriterVisitor(composerIrType), null)
   }
 
   private inner class TypeRewriterVisitor(
       private val composerIrType: IrType,
-      private val declarations: Boolean,
   ) : IrElementVisitorVoidCompat() {
 
     override fun visitElement(element: IrElement) {
@@ -124,16 +124,29 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
     private val remappedExternals = mutableSetOf<IrFunction>()
 
     override fun visitSimpleFunction(declaration: IrSimpleFunction) {
-      if (declarations) {
-        rewriteFunctionSignatureTypes(declaration)
-        remapOverriddenFunctionTypes(declaration)
-      }
+      rewriteFunctionSignatureTypes(declaration)
+      remapOverriddenFunctionTypes(declaration)
       super.visitSimpleFunction(declaration)
+    }
+
+    /** The real plugin's `visitExpression`: every expression's type. */
+    override fun visitExpression(expression: IrExpression) {
+      expression.type = rewriteTypeIfComposable(expression.type)
+      super.visitExpression(expression)
+    }
+
+    /**
+     * The real plugin's `visitMemberAccess`: the type arguments of every call, constructor call,
+     * delegating call and callable reference, and the signature of its target when it is external.
+     */
+    override fun visitMemberAccess(expression: IrMemberAccessExpression<*>) {
+      expression.typeArguments.replaceAll { it?.let(::rewriteTypeIfComposable) }
+      (expression.symbol.owner as? IrFunction)?.let { remapExternal(it) }
+      super.visitMemberAccess(expression)
     }
 
     override fun visitCall(expression: IrCall) {
       val callee = expression.symbol.owner
-      remapExternal(callee)
       if (isExternalFunction(callee)) {
         callee.correspondingPropertySymbol?.owner?.let { property ->
           property.getter?.let { remapExternal(it, always = true) }
@@ -143,17 +156,41 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
       super.visitCall(expression)
     }
 
-    override fun visitConstructorCall(expression: IrConstructorCall) {
-      remapExternal(expression.symbol.owner)
-      super.visitConstructorCall(expression)
+    /** The real plugin's `visitFunctionReference`: the reflection target of a reference. */
+    override fun visitFunctionReference(expression: IrFunctionReference) {
+      expression.reflectionTarget?.owner?.let { remapExternal(it) }
+      super.visitFunctionReference(expression)
     }
 
-    override fun visitDelegatingConstructorCall(expression: IrDelegatingConstructorCall) {
-      remapExternal(expression.symbol.owner)
-      super.visitDelegatingConstructorCall(expression)
+    /** The real plugin's `visitRichFunctionReference`: the function a reference implements. */
+    override fun visitRichFunctionReference(expression: IrRichFunctionReference) {
+      remapExternal(expression.overriddenFunctionSymbol.owner)
+      super.visitRichFunctionReference(expression)
+    }
+
+    override fun visitVariable(declaration: IrVariable) {
+      declaration.type = rewriteTypeIfComposable(declaration.type)
+      super.visitVariable(declaration)
+    }
+
+    override fun visitValueParameter(declaration: IrValueParameter) {
+      declaration.type = rewriteTypeIfComposable(declaration.type)
+      declaration.varargElementType = declaration.varargElementType?.let(::rewriteTypeIfComposable)
+      super.visitValueParameter(declaration)
+    }
+
+    override fun visitVararg(expression: IrVararg) {
+      expression.varargElementType = rewriteTypeIfComposable(expression.varargElementType)
+      super.visitVararg(expression)
+    }
+
+    override fun visitClassReference(expression: IrClassReference) {
+      expression.classType = rewriteTypeIfComposable(expression.classType)
+      super.visitClassReference(expression)
     }
 
     override fun visitTypeOperator(expression: IrTypeOperatorCall) {
+      expression.typeOperand = rewriteTypeIfComposable(expression.typeOperand)
       if (expression.operator == IrTypeOperator.SAM_CONVERSION) {
         val samClass = expression.typeOperand.classOrNull
         if (
@@ -234,15 +271,13 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
      * constructor.
      */
     override fun visitConstructor(declaration: IrConstructor) {
-      if (declarations) rewriteFunctionSignatureTypes(declaration)
+      rewriteFunctionSignatureTypes(declaration)
       super.visitConstructor(declaration)
     }
 
     override fun visitProperty(declaration: IrProperty) {
-      if (declarations) {
-        declaration.getter?.let { rewriteFunctionSignatureTypes(it) }
-        declaration.setter?.let { rewriteFunctionSignatureTypes(it) }
-      }
+      declaration.getter?.let { rewriteFunctionSignatureTypes(it) }
+      declaration.setter?.let { rewriteFunctionSignatureTypes(it) }
       super.visitProperty(declaration)
     }
 
@@ -254,7 +289,7 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
      */
     override fun visitField(declaration: IrField) {
       val rewritten = rewriteTypeIfComposable(declaration.type)
-      if (declarations && rewritten !== declaration.type) {
+      if (rewritten !== declaration.type) {
         declaration.type = rewritten
       }
       super.visitField(declaration)
@@ -262,9 +297,7 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
 
     override fun visitClass(declaration: IrClass) {
       // Rewrite @Composable function types in supertypes.
-      if (declarations) {
-        declaration.superTypes = declaration.superTypes.map { rewriteTypeIfComposable(it) }
-      }
+      declaration.superTypes = declaration.superTypes.map { rewriteTypeIfComposable(it) }
       super.visitClass(declaration)
     }
 
@@ -274,9 +307,7 @@ internal class ComposableTypeRewriter(private val pluginContext: IrPluginContext
      * erasure of the type parameter in descriptors and is written in generic signatures.
      */
     override fun visitTypeParameter(declaration: IrTypeParameter) {
-      if (declarations) {
-        declaration.superTypes = declaration.superTypes.map { rewriteTypeIfComposable(it) }
-      }
+      declaration.superTypes = declaration.superTypes.map { rewriteTypeIfComposable(it) }
       super.visitTypeParameter(declaration)
     }
 

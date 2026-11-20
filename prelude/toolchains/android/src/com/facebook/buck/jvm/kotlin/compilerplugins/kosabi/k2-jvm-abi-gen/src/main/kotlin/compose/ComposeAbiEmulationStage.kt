@@ -95,14 +95,13 @@ internal class ComposeAbiEmulationStage : AbiGenStage {
   }
 
   /**
-   * The extension that remaps the external functions that bodies call
-   * ([ComposableTypeRewriter.transformCallSites]). It is registered after the IR sanitizer, so it
-   * sees the restored inline bodies and the constructor delegations the sanitizer synthesizes.
+   * The extension that runs [ComposableTypeRewriter] again after the IR sanitizer, so the restored
+   * inline bodies and the constructor delegations the sanitizer synthesizes are lowered too.
    */
   fun createCallSiteExtension(): IrGenerationExtension =
       object : IrGenerationExtension {
         override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
-          ComposableTypeRewriter(pluginContext).transformCallSites(moduleFragment)
+          ComposableTypeRewriter(pluginContext).transform(moduleFragment)
         }
       }
 }

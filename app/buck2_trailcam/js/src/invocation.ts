@@ -59,6 +59,7 @@ export interface InvocationInfo {
   username: string | null;
   hostname: string | null;
   client: string | null;
+  clients: readonly string[];
   durationMs: number | null;
   commandDurationMs: number | null;
   /** Unix seconds. */

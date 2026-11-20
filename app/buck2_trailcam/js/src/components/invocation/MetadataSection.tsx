@@ -39,6 +39,7 @@ export default function MetadataSection({
   username,
   hostname,
   client,
+  clients,
   buck2Revision,
   remoteExecutionId,
   children,
@@ -46,6 +47,7 @@ export default function MetadataSection({
   username: string | null;
   hostname: string | null;
   client: string | null;
+  clients: readonly string[];
   buck2Revision: string | null;
   remoteExecutionId: string | null;
   /** Extra `MetaRow`s appended by the host. */
@@ -66,6 +68,9 @@ export default function MetadataSection({
           </span>
         </MetaRow>
         <MetaRow label="Client">{client || 'None'}</MetaRow>
+        <MetaRow label="Clients">
+          {clients.length > 0 ? clients.join(', ') : 'None'}
+        </MetaRow>
         <MetaRow label="Buck2 Rev" copyText={buck2Revision ?? undefined}>
           {buck2Revision ? (
             <code className="text-xs">{buck2Revision.slice(0, 10)}</code>

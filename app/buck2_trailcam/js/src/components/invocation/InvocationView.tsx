@@ -148,6 +148,7 @@ export default function InvocationView({
                 username={info.username}
                 hostname={info.hostname}
                 client={info.client}
+                clients={info.clients}
                 buck2Revision={info.buck2Revision}
                 remoteExecutionId={info.remoteExecutionId}>
                 {metadataRows}

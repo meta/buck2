@@ -18,6 +18,8 @@ pub mod event_log;
 pub(crate) mod health_check_subscriber;
 #[cfg(target_os = "linux")]
 pub(crate) mod oom;
+#[cfg(target_os = "macos")]
+pub(crate) mod oom_macos;
 // Only the internal RE client writes REClientFolly.log for this subscriber to upload.
 #[cfg(fbcode_build)]
 pub mod re_log;

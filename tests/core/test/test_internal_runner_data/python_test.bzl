@@ -12,12 +12,14 @@ def _impl(ctx):
         ExternalRunnerTestInfo(
             command = ["fbpython", "-c", ctx.attrs.script],
             type = "custom",
+            labels = ctx.attrs.labels,
         ),
     ]
 
 python_test = rule(
     impl = _impl,
     attrs = {
+        "labels": attrs.list(attrs.string(), default = []),
         "script": attrs.string(),
     },
 )

@@ -1025,6 +1025,24 @@ def toolchain_supports_flavor(toolchain: CxxToolchainInfo, flavor: CxxCompileFla
         toolchain.compiler_flavor_flags.get(flavor.value) != None or toolchain.compiler_flavor_lang_compiler_flags.get(flavor.value) != None
     )
 
+def toolchain_has_flavor_flags(toolchain: CxxToolchainInfo, flavor: CxxCompileFlavor, extensions: list[CxxExtension]) -> bool:
+    """Returns True if there exists a flavor flag for the given flavor."""
+    compiler_flavor_flags = toolchain.compiler_flavor_flags.get(flavor.value)
+    if compiler_flavor_flags:
+        return True
+
+    compiler_flavor_lang_compiler_flags = toolchain.compiler_flavor_lang_compiler_flags.get(flavor.value)
+    if not compiler_flavor_lang_compiler_flags:
+        return False
+
+    for extension in extensions:
+        flags_for_extension = cxx_by_language_ext(compiler_flavor_lang_compiler_flags, extension.value)
+        for flag_for_extension in flags_for_extension:
+            if flag_for_extension:
+                return True
+
+    return False
+
 # Fallback when the toolchain configures no flavor flags at all, for clang and
 # gcc. Ideally this would be a default value in the toolchain definition itself,
 # but it is compiler-dependent so we can't have it there. Module-level so every

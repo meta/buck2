@@ -207,4 +207,9 @@ CxxCompileFlavor = enum(
     # Produces position independent compile outputs
     # using debug flags from toolchain
     "debug",
+    # Light Optimization (experimental).
+    # Produces position independent compile outputs
+    # using the light_opt_exp flags from toolchain.
+    # Light meaning a reduced level of optimizations.
+    "light_opt_exp",
 )

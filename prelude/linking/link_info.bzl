@@ -440,6 +440,9 @@ LinkableFlavor = enum(
     # Provides compile outputs
     # stripped of debug symbols
     "stripped",
+    # Provides compile outputs
+    # using light_opt_exp flags from toolchain.
+    "light_opt_exp",
 )
 
 # Encapsulate all `LinkInfo`s provided by a given rule's link style.
@@ -455,6 +458,8 @@ LinkInfos = record(
     optimized = field([LinkInfo, None], None),
     # Link info for objects compiler with debug optimizations (-g2 + -O0)
     debuggable = field([LinkInfo, None], None),
+    # Link info for objects compiled with lighter/reduced optimizations (EXPERIMENTAL)
+    light_opt_exp = field([LinkInfo, None], None),
     # Link info stripped of debug symbols.
     stripped = field([LinkInfo, None], None),
 )
@@ -601,6 +606,13 @@ def wrap_link_infos(inner: LinkInfos, pre_flags: list[typing.Any] = [], post_fla
         if inner.stripped == None
         else wrap_link_info(
             inner.stripped,
+            pre_flags = pre_flags,
+            post_flags = post_flags,
+        ),
+        light_opt_exp = None
+        if inner.light_opt_exp == None
+        else wrap_link_info(
+            inner.light_opt_exp,
             pre_flags = pre_flags,
             post_flags = post_flags,
         ),
@@ -974,6 +986,19 @@ def _get_non_transformed_info(link_infos: LinkInfos, prefer_stripped: bool) -> L
         return link_infos.stripped or link_infos.default
     return link_infos.default
 
+def get_link_info_for_kind(link_infos: LinkInfos, kind: TransformationKind) -> [LinkInfo, None]:
+    """
+    The `LinkInfo` variant selected by a transformation kind, or `None` when
+    the rule builds no such variant.
+    """
+    if kind == TransformationKind("debug"):
+        return link_infos.debuggable
+    elif kind == TransformationKind("optimized"):
+        return link_infos.optimized
+    elif kind == TransformationKind("light_opt_exp"):
+        return link_infos.light_opt_exp
+    return None
+
 def get_link_info_for_transformation(
     transformation_spec_context: TransformationSpecContext, link_infos: LinkInfos, label: Label | None, prefer_stripped: bool
 ) -> LinkInfo:
@@ -982,10 +1007,7 @@ def get_link_info_for_transformation(
     if label:
         transformation_kind = transformation_spec_context.provider.determine_transformation(label, transformation_spec_context.graph_info)
         if transformation_kind:
-            if transformation_kind == TransformationKind("debug"):
-                info = link_infos.debuggable
-            elif transformation_kind == TransformationKind("optimized"):
-                info = link_infos.optimized
+            info = get_link_info_for_kind(link_infos, transformation_kind)
 
     return info or _get_non_transformed_info(link_infos, prefer_stripped)
 

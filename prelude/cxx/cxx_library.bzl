@@ -163,6 +163,7 @@ load(
     "create_compile_cmds",
     "cxx_objects_sub_targets",
     "precompile_cxx",
+    "toolchain_has_flavor_flags",
     "toolchain_supports_flavor",
 )
 load(
@@ -377,6 +378,8 @@ _CxxCompiledSourcesOutput = record(
     pic_optimized = field([_CxxLibraryCompileOutput, None]),
     # PIC debuggable compile outputs
     pic_debuggable = field([_CxxLibraryCompileOutput, None]),
+    # PIC compile outputs built with light/reduced optimizations (Experimental)
+    pic_light_opt_exp = field([_CxxLibraryCompileOutput, None]),
     # Non PIC compile outputs
     non_pic = field([_CxxLibraryCompileOutput, None]),
     # Header unit outputs
@@ -1224,6 +1227,31 @@ def cxx_library_parameterized(ctx: AnalysisContext, impl_params: CxxRuleConstruc
                     hip_arch_debug_files = compiled_srcs.pic.hip_arch_debug_files,
                     metadata = cxx_attr_dep_metadata(ctx),
                 ),
+                light_opt_exp = LinkInfo(
+                    pre_flags = linker_flags.flags + linker_flags.exported_flags,
+                    post_flags = linker_flags.post_flags + linker_flags.exported_post_flags,
+                    linkables = [
+                        ObjectsLinkable(
+                            objects = compiled_srcs.pic_light_opt_exp.objects,
+                            linker_type = linker_type,
+                            link_whole = True,
+                        )
+                    ],
+                    external_debug_info = make_artifact_tset(
+                        actions = ctx.actions,
+                        label = ctx.label,
+                        artifacts = (
+                            compiled_srcs.pic_light_opt_exp.external_debug_info
+                            + (compiled_srcs.pic_light_opt_exp.objects if compiled_srcs.pic_light_opt_exp.objects_have_external_debug_info else [])
+                        ),
+                        children = impl_params.additional.static_external_debug_info,
+                    ),
+                    has_hip_device_debug = compiled_srcs.pic_light_opt_exp.has_hip_device_debug,
+                    hip_arch_debug_files = compiled_srcs.pic_light_opt_exp.hip_arch_debug_files,
+                    metadata = cxx_attr_dep_metadata(ctx),
+                )
+                if compiled_srcs.pic_light_opt_exp
+                else None,
             ),
             deps = deps_all_non_exported_first,
         )
@@ -1728,6 +1756,35 @@ def cxx_compile_srcs(
                 has_content_based_path = impl_params.use_content_based_paths,
             )
 
+    # Only create the light_opt_exp compile outputs if there are flags for it.
+    # For example, some flags may not work on the .cu extensions.
+    pic_light_opt_exp = None
+    if toolchain_supports_flavor(cxx_toolchain_info, CxxCompileFlavor("light_opt_exp")) and toolchain_has_flavor_flags(
+        cxx_toolchain_info, CxxCompileFlavor("light_opt_exp"), extensions = compile_cmd_output.base_compile_cmds.keys()
+    ):
+        light_opt_exp_cxx_outs = compile_cxx(
+            actions = actions,
+            target_label = target_label,
+            toolchain = cxx_toolchain_info,
+            src_compile_cmds = compile_cmd_output.src_compile_cmds,
+            flavors = set([CxxCompileFlavor("pic"), CxxCompileFlavor("light_opt_exp")]),
+            # Diagnostics from the pic and non-pic compilation would be
+            # identical. We can avoid instantiating a second set of actions.
+            provide_syntax_only = False,
+            separate_debug_info = impl_params.separate_debug_info,
+            use_header_units = impl_params.use_header_units,
+            cuda_compile_style = impl_params.cuda_compile_style,
+        )
+        pic_light_opt_exp = _get_library_compile_output(
+            actions = actions,
+            cxx_toolchain_info = cxx_toolchain_info,
+            src_compile_cmds = compile_cmd_output.src_compile_cmds,
+            outs = light_opt_exp_cxx_outs,
+            extra_link_input = impl_params.extra_link_input,
+            supports_stripping = impl_params.supports_stripping,
+            has_content_based_path = impl_params.use_content_based_paths,
+        )
+
     pic_debuggable = None
     if toolchain_supports_flavor(cxx_toolchain_info, CxxCompileFlavor("debug")):
         debuggable_cxx_outs = compile_cxx(
@@ -1757,6 +1814,7 @@ def cxx_compile_srcs(
         pic = pic,
         pic_optimized = pic_optimized,
         pic_debuggable = pic_debuggable,
+        pic_light_opt_exp = pic_light_opt_exp,
         non_pic = non_pic,
         header_unit_preprocessors = header_unit_preprocessors,
         precompile_cmds = precompile_cmds,
@@ -1798,7 +1856,7 @@ def _form_library_outputs(
         )
 
     def build_static_library(
-        compile_output: _CxxLibraryCompileOutput | None, pic: bool, optimized: bool, debuggable: bool, pch: bool, stripped: bool
+        compile_output: _CxxLibraryCompileOutput | None, pic: bool, optimized: bool, debuggable: bool, pch: bool, stripped: bool, light_opt_exp: bool = False
     ) -> (CxxLibraryOutput | None, LinkInfo | None):
         if not compile_output:
             return (None, None)
@@ -1823,6 +1881,7 @@ def _form_library_outputs(
             optimized = optimized,
             debuggable = debuggable,
             stripped = stripped,
+            light_opt_exp = light_opt_exp,
             extra_linkables = extra_static_linkables,
             bitcode_objects = compile_output.bitcode_objects,
             has_hip_device_debug = compile_output.has_hip_device_debug,
@@ -1931,6 +1990,7 @@ def _form_library_outputs(
         outputs_for_style = {}
         optimized_info = None
         debuggable_info = None
+        light_opt_exp_info = None
         stripped = None
         info = None
 
@@ -1974,6 +2034,23 @@ def _form_library_outputs(
             )
             if debuggable_output:
                 outputs_for_style[LinkableFlavor("debug")] = debuggable_output
+
+            if pic:
+                # Similar to optimized and debuggable (see comment above), there is only a PIC variant of light_opt_exp.
+                # This saves memory and light_opt_exp's use case is intended for link groups which only need PIC.
+                # Unlike optimized and debuggable, light_op_exp won't have an output for `LibOutputStyle("static")`,
+                # so it isn't avaliable to non-PIE static executables and the default/fallback (i.e., non-pic) will be used.
+                light_opt_exp_output, light_opt_exp_info = build_static_library(
+                    compile_output = compiled_srcs.pic_light_opt_exp,
+                    pic = pic,
+                    optimized = False,
+                    debuggable = False,
+                    pch = False,
+                    stripped = False,
+                    light_opt_exp = True,
+                )
+                if light_opt_exp_output:
+                    outputs_for_style[LinkableFlavor("light_opt_exp")] = light_opt_exp_output
 
             # Only generate an archive if we have objects to include
             if lib_compile_output.objects or (compile_pch and lib_compile_output.pch_object_output):
@@ -2059,6 +2136,15 @@ def _form_library_outputs(
                 outputs_for_style[LinkableFlavor("debug")] = debug_output
                 solibs[LinkableFlavor("debug")] = debug_solib
 
+            if compiled_srcs.pic_light_opt_exp and (compiled_srcs.pic_light_opt_exp.objects or impl_params.build_empty_so):
+                light_opt_exp_output, light_opt_exp_result, light_opt_exp_solib = build_shared_library(
+                    compile_output = compiled_srcs.pic_light_opt_exp,
+                    flavor = LinkableFlavor("light_opt_exp"),
+                )
+                light_opt_exp_info = light_opt_exp_result.info
+                outputs_for_style[LinkableFlavor("light_opt_exp")] = light_opt_exp_output
+                solibs[LinkableFlavor("light_opt_exp")] = light_opt_exp_solib
+
         if outputs_for_style:
             outputs[output_style] = outputs_for_style
 
@@ -2069,6 +2155,7 @@ def _form_library_outputs(
             default = ldflags(info),
             optimized = ldflags(optimized_info) if optimized_info != None else None,
             debuggable = ldflags(debuggable_info) if debuggable_info != None else None,
+            light_opt_exp = ldflags(light_opt_exp_info) if light_opt_exp_info != None else None,
             stripped = ldflags(stripped) if stripped != None else None,
         )
 
@@ -2276,6 +2363,7 @@ def _static_library(
     bitcode_objects: [list[Artifact], None] = None,
     has_hip_device_debug: bool = False,
     hip_arch_debug_files: dict[str, list[Artifact]] = {},
+    light_opt_exp: bool = False,
 ) -> (CxxLibraryOutput, LinkInfo):
     if optimized and debuggable:
         fail("Pls pick optimized OR debuggable")
@@ -2291,14 +2379,14 @@ def _static_library(
     linker_info = get_cxx_toolchain_info(ctx).linker_info
     linker_type = linker_info.type
 
-    base_name = _base_static_library_name(ctx, optimized, debuggable, stripped)
+    base_name = _base_static_library_name(ctx, optimized, debuggable, stripped, light_opt_exp)
     name = _archive_name(base_name, pic = pic, extension = linker_info.static_library_extension)
 
     # If we have extra hidden deps of this target add them to the archive action
     # so they are forced to build for static library output.
     archive = make_archive(ctx, name, objects, impl_params.extra_hidden)
 
-    bitcode_bundle = _bitcode_bundle(ctx, bitcode_objects, optimized, debuggable, pic, stripped)
+    bitcode_bundle = _bitcode_bundle(ctx, bitcode_objects, optimized, debuggable, pic, stripped, light_opt_exp = light_opt_exp)
     if False:
         # TODO(nga): bitcode_bundle.artifact
         def unknown():
@@ -2388,12 +2476,19 @@ def _static_library(
 # A bitcode bundle is very much like a static library and is generated from object file
 # inputs, except the output is a combined bitcode file, which is not machine code.
 def _bitcode_bundle(
-    ctx: AnalysisContext, objects: [list[Artifact], None], optimized: bool, debuggable: bool, pic: bool, stripped: bool, name_extra = ""
+    ctx: AnalysisContext,
+    objects: [list[Artifact], None],
+    optimized: bool,
+    debuggable: bool,
+    pic: bool,
+    stripped: bool,
+    name_extra = "",
+    light_opt_exp: bool = False,
 ) -> [BitcodeBundle, None]:
     if objects == None or len(objects) == 0:
         return None
 
-    base_name = _base_static_library_name(ctx, optimized, debuggable, stripped = False)
+    base_name = _base_static_library_name(ctx, optimized, debuggable, stripped = False, light_opt_exp = light_opt_exp)
     name = name_extra + _bitcode_bundle_name(base_name, pic, stripped)
     return make_bitcode_bundle(ctx, name, objects)
 
@@ -2428,6 +2523,7 @@ def _shared_library(
         objects,
         optimized = flavor == LinkableFlavor("optimized"),
         debuggable = flavor == LinkableFlavor("debug"),
+        light_opt_exp = flavor == LinkableFlavor("light_opt_exp"),
         pic = False,
         stripped = flavor == LinkableFlavor("stripped"),
         name_extra = "objects-",
@@ -2571,8 +2667,14 @@ def _soname(ctx: AnalysisContext, impl_params) -> str:
         return get_shared_library_name_for_param(linker_info, explicit_soname)
     return get_default_shared_library_name(linker_info, ctx.label)
 
-def _base_static_library_name(ctx: AnalysisContext, optimized: bool, debuggable: bool, stripped: bool) -> str:
-    return "{}{}{}{}".format(ctx.label.name, ".optimized" if optimized else "", ".debuggable" if debuggable else "", ".stripped" if stripped else "")
+def _base_static_library_name(ctx: AnalysisContext, optimized: bool, debuggable: bool, stripped: bool, light_opt_exp: bool = False) -> str:
+    return "{}{}{}{}{}".format(
+        ctx.label.name,
+        ".optimized" if optimized else "",
+        ".debuggable" if debuggable else "",
+        ".light_opt_exp" if light_opt_exp else "",
+        ".stripped" if stripped else "",
+    )
 
 def _archive_name(name: str, pic: bool, extension: str) -> str:
     return "lib{}{}.{}".format(name, ".pic" if pic else "", extension)

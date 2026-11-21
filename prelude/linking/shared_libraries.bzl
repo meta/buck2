@@ -250,6 +250,9 @@ def traverse_shared_library_info(info: SharedLibraryInfo, transformation_provide
                 elif transformation_kind == TransformationKind("optimized") and LinkableFlavor("optimized") in libs.flavored_libraries:
                     libraries.append(libs.flavored_libraries[LinkableFlavor("optimized")])
                     fallback_to_default = False
+                elif transformation_kind == TransformationKind("light_opt_exp") and LinkableFlavor("light_opt_exp") in libs.flavored_libraries:
+                    libraries.append(libs.flavored_libraries[LinkableFlavor("light_opt_exp")])
+                    fallback_to_default = False
 
             if fallback_to_default:
                 libraries.extend(libs.libraries)

@@ -26,6 +26,7 @@ load(
 TransformationKind = enum(
     "debug",
     "optimized",
+    "light_opt_exp",
 )
 
 TransformationResultProvider = provider(

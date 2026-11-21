@@ -121,7 +121,7 @@ download_with_content_based_path(
 )
 
 download_with_content_based_path(
-    name = "download_with_content_based_path_and_no_metadata",
+    name = "download_with_content_based_path_and_sha512",
     defer_download = False,
 )
 

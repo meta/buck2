@@ -47,6 +47,11 @@ impl TempPath {
         self.path.as_deref().unwrap()
     }
 
+    /// Returns the path and leaves whatever is written there in place.
+    pub fn keep(mut self) -> AbsNormPathBuf {
+        mem::take(&mut self.path).unwrap()
+    }
+
     /// Delete temp file explicitly, because this returns error
     /// and `drop` can only panic or ignore error.
     pub fn close(mut self) -> buck2_error::Result<()> {
@@ -85,5 +90,20 @@ mod tests {
         temp_path.close().unwrap();
 
         assert!(!path.try_exists().unwrap());
+    }
+
+    #[test]
+    fn test_temp_path_keep() {
+        // A kept path is not removed when the `TempPath` goes away. Write a file at a temp path,
+        // keep it, and check that the file is still there.
+        let temp_path = TempPath::new().unwrap();
+        let path = temp_path.path().to_path_buf();
+        fs::write(&path, "hello").unwrap();
+
+        let kept = temp_path.keep();
+
+        assert_eq!(kept.as_path(), path.as_path());
+        assert!(path.try_exists().unwrap());
+        fs::remove_file(&path).unwrap();
     }
 }

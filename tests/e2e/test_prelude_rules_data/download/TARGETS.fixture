@@ -1,0 +1,12 @@
+# What a test declares about the download comes from the config.
+http_file(
+    name = "http_file",
+    urls = [read_config("test", "url")],
+    sha512 = read_config("test", "sha512"),
+)
+
+remote_file(
+    name = "remote_file",
+    url = read_config("test", "url"),
+    sha512 = read_config("test", "sha512"),
+)

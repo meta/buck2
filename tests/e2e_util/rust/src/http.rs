@@ -256,8 +256,8 @@ pub fn sha1_hex(content: &[u8]) -> String {
     hex::encode(sha1::Sha1::digest(content))
 }
 
-/// `-c` arguments for fixtures whose `download_file` rules read `test.url`, `test.sha1` and
-/// `test.sha256` from the config.
+/// `-c` arguments for fixtures whose `download_file` rules read `test.url`, `test.sha1`,
+/// `test.sha256` and `test.sha512` from the config.
 pub fn download_configs(url: &str, content: &[u8]) -> Vec<String> {
     vec![
         "-c".to_owned(),
@@ -266,6 +266,8 @@ pub fn download_configs(url: &str, content: &[u8]) -> Vec<String> {
         format!("test.sha1={}", sha1_hex(content)),
         "-c".to_owned(),
         format!("test.sha256={}", hex::encode(sha2::Sha256::digest(content))),
+        "-c".to_owned(),
+        format!("test.sha512={}", hex::encode(sha2::Sha512::digest(content))),
     ]
 }
 

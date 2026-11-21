@@ -31,6 +31,8 @@
 //! DICE state thread back to real work. The read-only `status` command does not
 //! cancel it — with `--wait` it instead blocks until the page-out finishes. A
 //! partially paged-out graph is valid — paged-out values hydrate back on demand.
+//! Evicting the tenant generation that a page-out runs for cancels it too, without
+//! waiting for it: the page-out holds the generation's engine and not its disk lease.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -41,6 +43,7 @@ use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
+use buck2_common::liveliness_observer::LivelinessObserverSync;
 use buck2_common::memory;
 use buck2_core::buck2_env;
 use buck2_core::soft_error_or_panic;
@@ -67,6 +70,7 @@ use tokio::sync::Notify;
 use tokio::sync::watch;
 
 use crate::active_commands::is_only_active_command;
+use crate::daemon::state::DropOnOwnThread;
 use crate::daemon::state::TenantState;
 use crate::jemalloc_stats::get_allocator_stats;
 
@@ -189,7 +193,7 @@ impl PagingManager {
         let page_out_started = if triggers_idle_page_out {
             spawn_page_out_on_idle(
                 self.page_out_on_idle,
-                self.tenant.dupe(),
+                &self.tenant,
                 dispatcher.dupe(),
                 free_disk_bytes,
                 &counts,
@@ -416,7 +420,8 @@ pub(crate) async fn wait_for_idle_page_out() {
 
 /// Cancel the in-progress idle page-out, if any. Called when a command that
 /// contends for the graph starts (from `run_streaming`, gated by
-/// `triggers_idle_page_out`), and by the manual page-out / page-in subcommands.
+/// `triggers_idle_page_out`), by the manual page-out / page-in subcommands, and by
+/// the page-out itself when its tenant generation is evicted.
 pub(crate) fn cancel_active_page_out() {
     let _ = PAGE_OUT.compare_exchange(RUNNING, CANCELLED, Ordering::Relaxed, Ordering::Relaxed);
 }
@@ -466,7 +471,7 @@ pub(crate) struct PageOutThresholds {
 /// finish still sees itself as the sole active command, so only it starts one.
 pub(crate) async fn spawn_page_out_on_idle(
     thresholds: Option<PageOutThresholds>,
-    tenant: Arc<TenantState>,
+    tenant: &TenantState,
     dispatcher: EventDispatcher,
     free_disk_bytes: Option<u64>,
     counts: &PagableNodeCounts,
@@ -510,14 +515,20 @@ pub(crate) async fn spawn_page_out_on_idle(
     };
 
     let context_dispatcher = dispatcher.clone();
+    // The page-out takes the engine and not the tenant: evicting the tenant waits for
+    // everything that holds it, and a page-out is too slow to stop to be waited for. An
+    // evicted tenant's engine may then go with the page-out's reference, which is too much
+    // to free on one of the runtime's threads.
+    let dice_manager = DropOnOwnThread::new(tenant.dice_manager.dupe());
+    let generation = tenant.cancellation.observer();
     tokio::spawn(with_dispatcher_async(context_dispatcher, async move {
         let _guard = guard;
-        let _tenant = tenant;
         if let Err(e) = page_out_on_idle(
-            _tenant.dice_manager.unsafe_dice(),
+            dice_manager.unsafe_dice(),
             dispatcher,
             command_evictions,
             work,
+            generation,
         )
         .await
         {
@@ -559,20 +570,39 @@ fn should_page_out_decision(
     }
 }
 
+/// `generation` is the liveness of the tenant generation that `dice` serves. Once the
+/// generation is evicted the paging is cancelled, and this returns when it has stopped.
 async fn page_out_on_idle(
     dice: &Arc<Dice>,
     dispatcher: EventDispatcher,
     command_evictions: Option<EvictionSnapshot>,
     work: PagingWork,
+    generation: Arc<dyn LivelinessObserverSync>,
 ) -> buck2_error::Result<()> {
+    let evicted = generation.while_alive();
+    tokio::pin!(evicted);
+
     // Let the residual DICE tasks from the command that triggered this page-out
     // drain first.
-    dice.wait_for_idle().await;
+    tokio::select! {
+        () = dice.wait_for_idle() => {}
+        () = &mut evicted => return Ok(()),
+    }
 
     // Both writing and reclaim observe cancellation if a command arrived while
     // residual work was draining. Neither step takes the command exclusivity lock.
     tracing::info!(?work, "Daemon is idle; paging DICE to reclaim memory");
-    let (result, mut summary) = paging_measured(dice, page_out_cancelled, &dispatcher, work).await;
+    let paging = paging_measured(dice, page_out_cancelled, &dispatcher, work);
+    tokio::pin!(paging);
+    let (result, mut summary) = tokio::select! {
+        finished = &mut paging => finished,
+        () = &mut evicted => {
+            // Stopped as a starting command stops it, not dropped: the paging has to
+            // drain what it queued before the storage it writes to can go away.
+            cancel_active_page_out();
+            paging.await
+        }
+    };
     summary.page_out_started = Some(buck2_data::PageOutStarted::Started as i32);
     set_command_evictions(&mut summary, command_evictions);
     if result.is_err() {

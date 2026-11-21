@@ -129,6 +129,23 @@ fn tstatus_ok() -> TStatus {
     }
 }
 
+/// The error a failed GetActionResult call returns. A NotFound is the server's answer for an
+/// action it has no result for, so it is an REClientError with NOT_FOUND, which
+/// buck2_execute's action-cache lookup reads as a plain miss. As a bare tonic::Status its
+/// code read as UNKNOWN there, and every miss was reported as a failed lookup.
+fn action_cache_status_error(status: tonic::Status) -> anyhow::Error {
+    if status.code() == tonic::Code::NotFound {
+        REClientError {
+            code: TCode::NOT_FOUND,
+            message: status.message().to_owned(),
+            group: TCodeReasonGroup::UNKNOWN,
+        }
+        .into()
+    } else {
+        status.into()
+    }
+}
+
 fn check_status(status: Status) -> Result<(), REClientError> {
     if status.code == 0 {
         return Ok(());
@@ -1062,7 +1079,8 @@ impl REClient {
                             ..Default::default()
                         },
                     ))
-                    .await?;
+                    .await
+                    .map_err(action_cache_status_error)?;
 
                 Ok(ActionResultResponse {
                     action_result: convert_action_result(
@@ -2363,6 +2381,26 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn test_an_action_cache_not_found_is_a_not_found_re_error() {
+        let err = action_cache_status_error(tonic::Status::not_found("no action result"));
+        let re_err = err
+            .downcast_ref::<REClientError>()
+            .expect("a NotFound becomes an REClientError");
+        assert_eq!(re_err.code, TCode::NOT_FOUND);
+        assert_eq!(re_err.message, "no action result");
+    }
+
+    #[test]
+    fn test_any_other_action_cache_status_stays_a_status() {
+        let err = action_cache_status_error(tonic::Status::unavailable("down"));
+        assert!(err.downcast_ref::<REClientError>().is_none());
+        assert_eq!(
+            err.downcast_ref::<tonic::Status>().map(|s| s.code()),
+            Some(tonic::Code::Unavailable)
+        );
     }
 
     fn done_op() -> Operation {

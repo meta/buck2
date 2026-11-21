@@ -139,6 +139,15 @@ config_setting(
     visibility = ["PUBLIC"],
 )
 
+# UEFI applications
+config_setting(
+    name = "uefi",
+    constraint_values = [
+        "//os/constraints:uefi",
+    ],
+    visibility = ["PUBLIC"],
+)
+
 # For platforms with no OS, like microcontrollers.
 config_setting(
     name = "none",

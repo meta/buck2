@@ -46,4 +46,7 @@ object K2JvmAbiConfigurationKeys {
 
   val PRESERVE_DECLARATION_ORDER: CompilerConfigurationKey<Boolean> =
       CompilerConfigurationKey.create("keep ABI class members in the order kotlinc generates them")
+
+  val UNCOMPUTED_APPLIER_SEVERITY: CompilerConfigurationKey<String> =
+      CompilerConfigurationKey.create("severity for uncomputed-applier diagnostics")
 }

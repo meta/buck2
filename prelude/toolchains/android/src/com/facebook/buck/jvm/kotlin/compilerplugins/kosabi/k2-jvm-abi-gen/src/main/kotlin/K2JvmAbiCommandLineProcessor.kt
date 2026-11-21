@@ -110,6 +110,16 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
             "preserveDeclarationOrder option is not set.",
         false,
     )
+
+    val UNCOMPUTED_APPLIER_SEVERITY_OPTION: CliOption = CliOption(
+        "uncomputedApplierSeverity",
+        "info|warning",
+        "Severity for KOSABI_UNCOMPUTED_APPLIER diagnostics. Default is info: the lines " +
+            "stay out of build output. `warning` surfaces them for diagnostic builds " +
+            "whose stderr is parsed; never pass it on real builds, where `-Werror` " +
+            "would fail the compile.",
+        false,
+    )
   }
 
   override val pluginId: String
@@ -128,6 +138,7 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
         SKIP_NON_ABI_BODIES_OPTION,
         KEPT_BODY_STUB_CHECK_OPTION,
         PRESERVE_DECLARATION_ORDER_OPTION,
+        UNCOMPUTED_APPLIER_SEVERITY_OPTION,
     )
 
   override fun processOption(
@@ -160,6 +171,15 @@ class K2JvmAbiCommandLineProcessor : CommandLineProcessor {
           configuration.put(K2JvmAbiConfigurationKeys.KEPT_BODY_STUB_CHECK, value != "false")
       PRESERVE_DECLARATION_ORDER_OPTION ->
           configuration.put(K2JvmAbiConfigurationKeys.PRESERVE_DECLARATION_ORDER, value != "false")
+      UNCOMPUTED_APPLIER_SEVERITY_OPTION -> {
+        val severity = value.lowercase()
+        if (severity != "info" && severity != "warning") {
+          throw CliOptionProcessingException(
+              "Unknown uncomputedApplierSeverity: $value (expected info|warning)",
+          )
+        }
+        configuration.put(K2JvmAbiConfigurationKeys.UNCOMPUTED_APPLIER_SEVERITY, severity)
+      }
       else -> throw CliOptionProcessingException("Unknown option: ${option.optionName}")
     }
   }

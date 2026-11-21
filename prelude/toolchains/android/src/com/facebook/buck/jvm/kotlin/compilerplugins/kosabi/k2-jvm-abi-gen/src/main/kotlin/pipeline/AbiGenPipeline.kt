@@ -1427,6 +1427,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
       policy: AbiRepairPolicy,
       inputs: AbiValidationInputs,
       keptBodyStubCheck: Boolean = true,
+      uncomputedApplierSeverity: String? = null,
   ) {
     for (output in inputs.outputFiles) {
       if (!output.relativePath.endsWith(".class")) continue
@@ -1572,7 +1573,11 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
     // policy is set. INFO never fails a build under `-Werror`, and the KOSABI_ prefix keeps the
     // lines greppable. Each reference names the import it resolves through, so tooling can map it
     // to the target that provides it; the compiler has no view of the build graph, so no target
-    // is named or guessed here.
+    // is named or guessed here. Diagnostic builds opt into WARNING via
+    // `kosabi.uncomputed_applier_severity=warning`, which surfaces the lines in stderr.
+    val applierSeverity =
+        if (uncomputedApplierSeverity == "warning") CompilerMessageSeverity.WARNING
+        else CompilerMessageSeverity.INFO
     for (entry in repairLog.uncomputedAppliers) {
       val refs =
           entry.references.joinToString("; ") { ref ->
@@ -1581,7 +1586,7 @@ internal class ValidationStage(private val repairLog: AbiGenRepairLog) : AbiGenS
                 "file=${ref.file ?: "-"}"
           }
       messageCollector.report(
-          CompilerMessageSeverity.INFO,
+          applierSeverity,
           "KOSABI_UNCOMPUTED_APPLIER declaration=`${entry.declaration}` " +
               "reason=`${entry.reason}` refs=`$refs`. To fix, add the target that provides each " +
               "reference to this target's `source_only_abi_deps`, or write the applier " +

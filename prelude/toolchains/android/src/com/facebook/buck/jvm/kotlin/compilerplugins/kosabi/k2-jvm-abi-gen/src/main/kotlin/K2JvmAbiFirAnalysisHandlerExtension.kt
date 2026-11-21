@@ -704,6 +704,8 @@ class K2JvmAbiFirAnalysisHandlerExtension(
         AbiRepairPolicy.parse(configuration.get(K2JvmAbiConfigurationKeys.ABI_VALIDATION_MODE)),
         AbiValidationInputs(outputFiles, configuration.jvmClasspathRoots),
         keptBodyStubCheck = configuration.get(K2JvmAbiConfigurationKeys.KEPT_BODY_STUB_CHECK, true),
+        uncomputedApplierSeverity =
+            configuration.get(K2JvmAbiConfigurationKeys.UNCOMPUTED_APPLIER_SEVERITY),
     )
 
     // Generate .kotlin_module file

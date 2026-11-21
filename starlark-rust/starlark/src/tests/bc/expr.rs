@@ -56,6 +56,16 @@ fn test_spec_exec_list() {
 }
 
 #[test]
+fn test_spec_exec_long_list_not_folded() {
+    // Folding turns every item into an expression, so long results are left to runtime, like
+    // long strings.
+    bc_golden_test(
+        "expr_spec_exec_long_list_not_folded",
+        "def test(): return list(range(1001)), (0,) * 1001",
+    );
+}
+
+#[test]
 fn test_call_maybe_known_method() {
     bc_golden_test("expr_call_maybe_known_method", "def test(x): x.append(1)");
 }

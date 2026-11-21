@@ -1,0 +1,22 @@
+# @generated
+# To regenerate, run:
+# ```
+# STARLARK_RUST_REGENERATE_GOLDEN_TESTS=1 cargo test -p starlark --lib
+# ```
+
+def test(): return list(range(1001)), (0,) * 1001
+
+# Bytecode:
+
+Max stack size: 5
+Instructions:
+        # instrs.star.bzl:1:13-50
+    0: Const range(1001) ->&2
+   24: CallFrozenNativePos list &2..&3 instrs.star.bzl:1:20-37 ->&1
+        # instrs.star.bzl:1:13-50
+   72: Const (0,) ->&3
+   96: Const 1001 ->&4
+  120: Multiply &3 &4 ->&2
+  136: TupleNPop [&1, &2] ->&0
+  152: Return &0
+  160: End

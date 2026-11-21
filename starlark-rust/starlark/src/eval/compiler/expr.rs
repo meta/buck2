@@ -871,9 +871,17 @@ impl<'f> ExprCompiled<'f> {
         } else if let Some(v) = ListRef::from_value(v) {
             // When spec-safe function returned a non-frozen list,
             // we try to convert that list to a list of constants instruction.
+            // Every item becomes an expression, so like long strings,
+            // long lists and tuples are left to runtime.
+            if v.len() > 1000 {
+                return None;
+            }
             let items = Self::try_values(span, v.content(), ctx)?;
             Some(ExprCompiled::List(items))
         } else if let Some(v) = Tuple::from_value(v) {
+            if v.len() > 1000 {
+                return None;
+            }
             let items = Self::try_values(span, v.content(), ctx)?;
             Some(Self::tuple(items, heap))
         } else {

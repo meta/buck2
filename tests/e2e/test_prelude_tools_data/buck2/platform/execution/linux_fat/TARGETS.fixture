@@ -1,0 +1,7 @@
+constraint_setting(name = "cpu")
+
+constraint_value(
+    name = "linux-fat",
+    constraint_setting = ":cpu",
+    visibility = ["PUBLIC"],
+)

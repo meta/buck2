@@ -571,7 +571,7 @@ message ConfigurationCreated {
 
 // The Buck settings a daemon runs under, sent once per daemon per distinct
 // value. Ingress stores these keyed by `hash`; invocation records carry the
-// same hash as `buck_settings_hash`.
+// same hash as `settings_hash`.
 message BuckSettingsObserved {
   // `buck2settings-` followed by the hex digest of `settings_json`.
   string hash = 1;

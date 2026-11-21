@@ -50,6 +50,7 @@ const MIN_SWEEP_LENGTH: usize = 64;
 
 struct TrackedWork {
     owner: Weak<CancellationScopeGuard>,
+    /// Present for spawned work, absent for a registered resource.
     cancellation: Option<Weak<DropcancelHandle>>,
     completed: Shared<BoxFuture<'static, ()>>,
 }
@@ -165,14 +166,26 @@ impl CancellationScope {
         }
     }
 
-    /// Waits for registered work and retained resources after admission has been stopped.
+    /// Waits for spawned work and retained resources after admission has been stopped.
     pub async fn wait(&self) {
+        self.wait_for(|_| true).await
+    }
+
+    /// Waits for spawned work alone after admission has been stopped. The owner's resources
+    /// may be registered by state that the spawned work shares, which can then be released
+    /// knowing that the work no longer refers to it.
+    pub async fn wait_for_spawned(&self) {
+        self.wait_for(|work| work.cancellation.is_some()).await
+    }
+
+    async fn wait_for(&self, awaited: impl Fn(&TrackedWork) -> bool) {
         let completed = {
             let state = self.state.lock();
             assert!(state.guard.is_none(), "cancel the scope before waiting");
             state
                 .work
                 .iter()
+                .filter(|work| awaited(work))
                 .map(|work| work.completed.clone())
                 .collect::<Vec<_>>()
         };
@@ -238,6 +251,33 @@ mod tests {
         assert!(futures::poll!(&mut stopped).is_pending());
         release.send(()).unwrap();
         assert_eq!(Err(WeakFutureError::Cancelled), task.await);
+        stopped.await;
+    }
+
+    #[tokio::test]
+    async fn spawned_work_is_awaited_apart_from_registered_resources() {
+        let scope = CancellationScope::new();
+        let resource = scope.register().unwrap();
+        let (started, ready) = oneshot::channel();
+        let (release, proceed) = oneshot::channel();
+        let (_task, _) = scope.spawn(&Handle::current(), move |cancellations| {
+            cancellations
+                .critical_section(move || async move {
+                    started.send(()).unwrap();
+                    proceed.await.unwrap();
+                })
+                .boxed()
+        });
+        ready.await.unwrap();
+        scope.cancel();
+        let spawned = scope.wait_for_spawned();
+        let stopped = scope.wait();
+        futures::pin_mut!(spawned, stopped);
+        assert!(futures::poll!(&mut spawned).is_pending());
+        release.send(()).unwrap();
+        spawned.await;
+        assert!(futures::poll!(&mut stopped).is_pending());
+        drop(resource);
         stopped.await;
     }
 

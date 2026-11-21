@@ -9,6 +9,7 @@
  */
 
 use std::future::Future;
+use std::ops::Deref;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -124,6 +125,7 @@ use buck2_server_ctx::ctx::LockedPreviousCommandData;
 use buck2_settings::DaemonBuckSettings;
 use buck2_settings::PackageVisibilityDefaultIntersection;
 use buck2_util::future::join_all;
+use buck2_util::threads::thread_spawn;
 use buck2_wrapper_common::invocation_id::TraceId;
 use dice::Dice;
 use dice_futures::cancellation::CancellationContext;
@@ -190,6 +192,9 @@ pub(crate) struct PersistedDepFileCache {
 /// to be shared independently of tenant-specific DICE state.
 #[derive(Allocative)]
 pub struct TenantState {
+    /// Ahead of `dice_manager`, because fields drop in this order and this one holds the
+    /// generation's disk lease: an eviction waits for the lease, and must not wait for the
+    /// engine's memory behind it.
     pub repo: Arc<RepoState>,
 
     /// Which generation of which tenant this is. Reported in command telemetry.
@@ -204,6 +209,37 @@ pub struct TenantState {
     pub(crate) eviction_gate: Arc<EvictionGate>,
     #[allocative(skip)]
     disk_ownership: Arc<Semaphore>,
+}
+
+/// Drops its value on a thread of its own.
+///
+/// For a tenant generation's state and engine, where they may be the last reference. Freeing
+/// them can take seconds, and longer once they have been swapped out, which is too long for a
+/// thread of either runtime.
+pub(crate) struct DropOnOwnThread<T: Send + 'static>(Option<T>);
+
+impl<T: Send + 'static> DropOnOwnThread<T> {
+    pub(crate) fn new(value: T) -> Self {
+        Self(Some(value))
+    }
+}
+
+impl<T: Send + 'static> Deref for DropOnOwnThread<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.0.as_ref().expect("Present until dropped")
+    }
+}
+
+impl<T: Send + 'static> Drop for DropOnOwnThread<T> {
+    fn drop(&mut self) {
+        let value = self.0.take();
+        // A closure that gets no thread is dropped here, and the value with it.
+        if let Err(error) = thread_spawn("buck2-tenant-drop", move || drop(value)) {
+            tracing::warn!("Dropped tenant state without a thread for it: {error:#}");
+        }
+    }
 }
 
 /// Identity of one tenant generation.
@@ -1745,7 +1781,18 @@ impl TenantStateRegistry {
                     )
                 })
                 .collect();
-            drop(entries);
+            // The generations' work refers to their state too. Waiting for it first makes
+            // the references given up below the last ones, so that the state is dropped
+            // there and not by whichever task ends last.
+            futures::stream::iter(scopes.clone())
+                .map(|scope| async move { scope.wait_for_spawned().await })
+                .buffer_unordered(16)
+                .collect::<Vec<_>>()
+                .await;
+            // This releases the generations' disk leases part of the way through: a
+            // `TenantState` drops what holds its lease first. The rest is memory, which the
+            // eviction does not wait for.
+            drop(DropOnOwnThread::new(entries));
             futures::stream::iter(scopes)
                 .map(|scope| async move { scope.wait().await })
                 .buffer_unordered(16)

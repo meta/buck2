@@ -1,0 +1,5 @@
+load("//:defs.bzl", "init_cfg_constructor")
+
+# This call to set_cfg_constructor should be silently ignored
+# because this is an external cell, not the root cell.
+init_cfg_constructor()

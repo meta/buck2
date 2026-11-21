@@ -1,0 +1,3 @@
+load("//:defs.bzl", "init_cfg_constructor")
+
+init_cfg_constructor()

@@ -11,7 +11,6 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_CFG_CONSTRUCTOR_GLOBALS;
 use buck2_interpreter_for_build::interpreter::build_context::BuildContext;
@@ -40,8 +39,8 @@ use crate::CfgConstructor;
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum RegisterCfgConstructorError {
-    #[error("`set_cfg_constructor()` can only be called from the repository root `PACKAGE` file")]
-    NotPackageRoot,
+    #[error("`set_cfg_constructor()` can only be called from the root `PACKAGE` file of a cell")]
+    NotCellRoot,
     #[error("`set_cfg_constructor()` can only be called at most once")]
     AlreadyRegistered,
 }
@@ -91,7 +90,11 @@ fn make_cfg_constructor(
 pub(crate) fn register_set_cfg_constructor(globals: &mut GlobalsBuilder) {
     /// Register global cfg constructor.
     ///
-    /// This function can only be called from the repository root `PACKAGE` file.
+    /// This function can only be called from the root `PACKAGE` file of a cell.
+    /// When called from a non-root cell (e.g., an external cell), the call is
+    /// silently ignored. This allows repositories to include `set_cfg_constructor`
+    /// in their PACKAGE/BUCK_TREE files while still being consumable as external
+    /// cells by other repositories.
     ///
     /// Parameters:
     ///   * `stage0`: The first cfg constructor that will be invoked before configuration rules are analyzed.
@@ -113,20 +116,33 @@ pub(crate) fn register_set_cfg_constructor(globals: &mut GlobalsBuilder) {
             PerFileTypeContext::Package(ctx) => ctx,
             _ => {
                 return Err(
-                    buck2_error::Error::from(RegisterCfgConstructorError::NotPackageRoot).into(),
+                    buck2_error::Error::from(RegisterCfgConstructorError::NotCellRoot).into(),
                 );
             }
         };
-        if ctx.path.dir()
-            != CellPath::new(
-                build_context.cell_info.cell_resolver().root_cell(),
-                CellRelativePath::empty(),
-            )
-        {
+
+        // Check if this is being called from the root of the current cell
+        let current_cell = ctx.path.dir().cell();
+        let is_cell_root = ctx.path.dir().path() == CellRelativePath::empty();
+
+        if !is_cell_root {
+            // Not at cell root - this is an error
             return Err(
-                buck2_error::Error::from(RegisterCfgConstructorError::NotPackageRoot).into(),
+                buck2_error::Error::from(RegisterCfgConstructorError::NotCellRoot).into(),
             );
         }
+
+        // Check if this cell is the root cell
+        let is_root_cell = current_cell == build_context.cell_info.cell_resolver().root_cell();
+
+        if !is_root_cell {
+            // Called from an external cell's root PACKAGE - silently ignore.
+            // This allows repos to have set_cfg_constructor in their PACKAGE/BUCK_TREE
+            // while still being usable as external cells.
+            return Ok(NoneType);
+        }
+
+        // This is the root cell's root PACKAGE - register the cfg constructor
         let package_file_extra: &PackageFileExtra = PackageFileExtra::get_or_init(eval)?;
         if package_file_extra.cfg_constructor.get().is_some() {
             return Err(

@@ -1,0 +1,7 @@
+[buildfile]
+name = TARGETS.fixture
+
+[cells]
+root = .
+prelude = prelude
+external_cell = external_cell

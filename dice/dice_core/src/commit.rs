@@ -14,7 +14,6 @@ use std::collections::VecDeque;
 
 use crate::arc::Arc;
 use crate::cert::Cert;
-use crate::collections::KeyMap;
 use crate::collections::KeySet;
 use crate::env::Env;
 use crate::history::Entry;
@@ -149,19 +148,23 @@ impl<E: Env> CoreState<E> {
             let dependents = self.branch_mut(b).take_rdeps(key);
             queue.extend(dependents.iter().copied());
         }
-        // Every visited key had its edges drained; what remains are the closed keys' entries
-        // under premises the walk did not reach. Grouped by premise so each edge list is
-        // scanned once per commit. In a full invalidation there are none, so this costs nothing then.
-        let mut removals: KeyMap<KeySet> = KeyMap::default();
-        for (key, cert) in &closed {
+        // The walk drained reverse edges under visited premises. Collect the remaining
+        // lists to filter, then use one set of closed keys for all of them.
+        let mut residual_premises = KeySet::default();
+        for (_, cert) in &closed {
             for premise in cert.premises() {
                 if !visited.contains(&premise.key) {
-                    removals.entry(premise.key).or_default().insert(*key);
+                    residual_premises.insert(premise.key);
                 }
             }
         }
-        for (dep, dependents) in removals {
-            self.branch_mut(b).remove_edges(dep, &dependents);
+        if !residual_premises.is_empty() {
+            // Reverse edges are exact: any closed key in these lists must be removed.
+            let closed_keys: KeySet = closed.into_iter().map(|(key, _)| key).collect();
+            let branch = self.branch_mut(b);
+            for premise in residual_premises {
+                branch.remove_edges(premise, &closed_keys);
+            }
         }
     }
 }

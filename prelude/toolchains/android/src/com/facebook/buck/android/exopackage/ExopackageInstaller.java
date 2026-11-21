@@ -195,6 +195,8 @@ public class ExopackageInstaller {
       if (metadataChanged(filesOnDevice, metadata)) {
         stopApp();
         installMetadata(metadata);
+        // The system may restart the app during the push; that process holds the old files.
+        appStopped = false;
       }
     }
     if (buck2BuildUuid.isPresent()) {
@@ -235,7 +237,7 @@ public class ExopackageInstaller {
     return false;
   }
 
-  /** Stops the running app, at most once per install. */
+  /** Stops the running app unless it was already stopped since the last metadata write. */
   private void stopApp() throws Exception {
     if (!appStopped) {
       device.stopPackage(packageName);

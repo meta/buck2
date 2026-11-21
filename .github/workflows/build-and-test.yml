@@ -25,25 +25,51 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
+  select_platforms:
+    name: Select the platforms to test
+    runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.select_platforms.outputs.platforms }}
+    steps:
+      - name: Select platforms
+        id: select_platforms
+        env:
+          # Runner labels are repository (owner) specific, so the Meta larger runners
+          # (16-core-ubuntu, macos-15-xlarge, windows-8-core) don't exist on forks and
+          # jobs requesting them would sit queued forever waiting for a runner that
+          # isn't available. Fall back to the standard GitHub-hosted runners there.
+          LINUX_RUNNER: ${{ github.repository_owner == 'meta' && '16-core-ubuntu' || 'ubuntu-latest' }}
+          MACOS_RUNNER: ${{ github.repository_owner == 'meta' && 'macos-15-xlarge' || 'macos-15' }}
+          WINDOWS_RUNNER: ${{ github.repository_owner == 'meta' && 'windows-8-core' || 'windows-latest' }}
+          # build_buck2.yml documents the repository variable BUCK2_RELEASE_TARGETS. When a
+          # fork sets it, GitHub only queues jobs for the operating systems of the listed
+          # targets. A fork without macOS or Windows runners can then still pass the run.
+          RELEASE_TARGETS: ${{ vars.BUCK2_RELEASE_TARGETS }}
+        run: |
+          # GitHub rejects a matrix without entries, and its error doesn't name the variable.
+          # The jq program below fails first with an error that names BUCK2_RELEASE_TARGETS.
+          platforms=$(jq -nc --arg targets "$RELEASE_TARGETS" \
+            --arg linux "$LINUX_RUNNER" --arg macos "$MACOS_RUNNER" --arg windows "$WINDOWS_RUNNER" '
+            [
+              {name: "linux", "runs-on": $linux, pattern: "-linux-"},
+              {name: "macos", "runs-on": $macos, pattern: "-apple-darwin"},
+              {name: "windows", "runs-on": $windows, pattern: "-windows-"}
+            ]
+            | map(select(.pattern as $p | $targets == "" or ($targets | contains($p))) | del(.pattern))
+            | if . == [] then error("BUCK2_RELEASE_TARGETS names no target") else . end
+          ')
+          echo "Testing: $(jq -r 'map(.name) | join(" ")' <<< "$platforms")"
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+
   # Clippy and rustdoc check the crates; the tests build them. The two share no
   # artifacts, so they run as separate jobs for wall time.
-  #
-  # Runner labels are repository (owner) specific, so the Meta larger runners
-  # (16-core-ubuntu, macos-15-xlarge, windows-8-core) don't exist on forks and
-  # jobs requesting them would sit queued forever waiting for a runner that
-  # isn't available. Fall back to the standard GitHub-hosted runners there.
   lint:
     name: lint (${{ matrix.name }})
+    needs: select_platforms
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: linux
-            runs-on: ${{ github.repository_owner == 'meta' && '16-core-ubuntu' || 'ubuntu-latest' }}
-          - name: macos
-            runs-on: ${{ github.repository_owner == 'meta' && 'macos-15-xlarge' || 'macos-15' }}
-          - name: windows
-            runs-on: ${{ github.repository_owner == 'meta' && 'windows-8-core' || 'windows-latest' }}
+        include: ${{ fromJSON(needs.select_platforms.outputs.platforms) }}
     runs-on: ${{ matrix.runs-on }}
     steps:
     - uses: actions/checkout@v6
@@ -63,16 +89,11 @@ jobs:
       shell: bash
   test:
     name: test (${{ matrix.name }})
+    needs: select_platforms
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: linux
-            runs-on: ${{ github.repository_owner == 'meta' && '16-core-ubuntu' || 'ubuntu-latest' }}
-          - name: macos
-            runs-on: ${{ github.repository_owner == 'meta' && 'macos-15-xlarge' || 'macos-15' }}
-          - name: windows
-            runs-on: ${{ github.repository_owner == 'meta' && 'windows-8-core' || 'windows-latest' }}
+        include: ${{ fromJSON(needs.select_platforms.outputs.platforms) }}
     runs-on: ${{ matrix.runs-on }}
     steps:
     - uses: actions/checkout@v6

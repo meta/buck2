@@ -20,6 +20,7 @@ load("@prelude//decls:genrule_common.bzl", "genrule_common")
 load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup")
 load("@prelude//transitions:constraint_overrides.bzl", "constraint_overrides")
 load("@prelude//utils:expect.bzl", "expect")
+load("@prelude//utils:script.bzl", "write_script")
 load("@prelude//utils:utils.bzl", "flatten", "value_or")
 
 GENRULE_OUT_DIR = "out"
@@ -351,14 +352,12 @@ def process_genrule(
             ),
             cmd_args('if NOT "%TEMP%" == "" set "TMP=%TEMP%"'),
         ]
-        script_extension = "bat"
     else:
         script = [
             # Use a somewhat unique exit code so this can get retried on RE (T99656531).
             cmd_args(out_prepare, format = "mkdir -p {} || exit 99"),
             cmd_args("export TMP=${TMPDIR:-/tmp}"),
         ]
-        script_extension = "sh"
 
     # Actually define the operation, relative to where we changed to
     script.append(cmd)
@@ -420,17 +419,13 @@ def process_genrule(
         # Odd, why is this a single string. How does it not end up getting quoted and being weird?
         script = [cmd_args("@echo off")] + script
 
-    sh_script, _ = ctx.actions.write(
-        "sh/genrule.{}".format(script_extension) if not identifier else "sh/{}-genrule.{}".format(identifier, script_extension),
+    script_args = write_script(
+        ctx.actions,
+        "sh/genrule" if not identifier else "sh/{}-genrule".format(identifier),
         script,
-        is_executable = True,
-        allow_args = True,
+        "bat" if is_windows else "sh",
         has_content_based_path = content_based,
     )
-    if is_windows:
-        script_args = ["cmd.exe", "/v:off", "/c", sh_script]
-    else:
-        script_args = ["/usr/bin/env", "bash", "-e", sh_script]
 
     # Only set metadata arguments when they are non-null
     metadata_args = {}

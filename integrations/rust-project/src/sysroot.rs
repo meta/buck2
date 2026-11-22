@@ -26,7 +26,10 @@ use crate::target::Target;
 
 #[derive(Debug)]
 pub(crate) enum SysrootConfig {
-    Sysroot(PathBuf),
+    Sysroot {
+        sysroot: PathBuf,
+        sysroot_src: PathBuf,
+    },
     BuckConfig,
     Rustup,
 }

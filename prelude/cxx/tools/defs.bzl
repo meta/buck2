@@ -7,6 +7,8 @@
 # above-listed licenses.
 
 load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxInternalTools", "DistLtoToolsInfo")
+load("@prelude//decls:common.bzl", "buck")
+load("@prelude//os_lookup:defs.bzl", "OsLookup")
 
 def _cxx_internal_tools_impl(ctx: AnalysisContext) -> list[Provider]:
     return [
@@ -17,6 +19,7 @@ def _cxx_internal_tools_impl(ctx: AnalysisContext) -> list[Provider]:
             concatenate_diagnostics = ctx.attrs.concatenate_diagnostics[RunInfo],
             dep_file_processor = ctx.attrs.dep_file_processor[RunInfo],
             dist_lto = ctx.attrs.dist_lto[DistLtoToolsInfo],
+            script_language = ctx.attrs._exec_os_type[OsLookup].script.value,
             filter_argsfile = ctx.attrs.filter_argsfile[RunInfo],
             hmap_wrapper = ctx.attrs.hmap_wrapper[RunInfo],
             make_comp_db = ctx.attrs.make_comp_db[RunInfo],
@@ -44,6 +47,7 @@ cxx_internal_tools = rule(
         "shlib_interface_link_wrapper": attrs.dep(providers = [RunInfo], default = "prelude//cxx/tools:shlib_interface_link_wrapper"),
         "stderr_to_file": attrs.dep(providers = [RunInfo], default = "prelude//cxx/tools:stderr_to_file"),
         "stub_header_unit": attrs.dep(providers = [RunInfo], default = "prelude//cxx/tools:stub_header_unit"),
+        "_exec_os_type": buck.exec_os_type_arg(),
     },
 )
 

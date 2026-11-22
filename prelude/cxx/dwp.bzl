@@ -9,7 +9,22 @@
 load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo")
 load("@prelude//utils:actions.bzl", "ActionExecutionAttributes")
 load("@prelude//utils:arglike.bzl", "ArgLike")  # @unused Used as a type
+load("@prelude//utils:script.bzl", "write_script")
 load(":debug.bzl", "SplitDebugMode")
+
+def _dwp_batch_arg(arg):
+    return cmd_args(
+        arg,
+        replace_regex = [
+            (regex('(\\\\*)"'), '${1}${1}""'),
+            (regex("(\\\\+)$"), "${1}${1}"),
+            ("%", "%%"),
+        ],
+        format = '"{}"',
+    )
+
+def _dwp_batch_command(command):
+    return cmd_args(_dwp_batch_arg(command), delimiter = " ")
 
 def dwp_available(toolchain: CxxToolchainInfo):
     dwp = toolchain.binary_utilities_info.dwp
@@ -28,23 +43,60 @@ def run_dwp_action(
     from_exe = True,
 ):
     dwp = toolchain.binary_utilities_info.dwp
+    script_name = "dwp{}{}".format(
+        "_" + category_suffix if category_suffix else "",
+        "_" + identifier if identifier else "",
+    )
 
     if from_exe:
+        language = toolchain.internal_tools.script_language
+        primary = cmd_args([dwp, "-o", dwp_output.as_output(), "-e", obj] + getattr(ctx.attrs, "extra_dwp_flags", []))
+        fallback = cmd_args([dwp, "-o", dwp_output.as_output(), obj] + getattr(ctx.attrs, "extra_dwp_flags", []))
+        if language == "sh":
+            helper_scripts = []
+            script = [
+                cmd_args(primary, delimiter = " ", quote = "shell"),
+                cmd_args(cmd_args(dwp_output.as_output(), quote = "shell"), format = "if [ ! -e {} ]; then"),
+                cmd_args(fallback, delimiter = " ", quote = "shell"),
+                "fi",
+                cmd_args(cmd_args(dwp_output.as_output(), quote = "shell"), format = "test -e {}"),
+            ]
+        elif language == "bat":
+            primary_script, _ = ctx.actions.write(
+                script_name + ".primary.bat",
+                ["@echo off", _dwp_batch_command(primary)],
+                allow_args = True,
+                has_content_based_path = False,
+            )
+            fallback_script, _ = ctx.actions.write(
+                script_name + ".fallback.bat",
+                ["@echo off", _dwp_batch_command(fallback)],
+                allow_args = True,
+                has_content_based_path = False,
+            )
+            script = [
+                "@echo off",
+                cmd_args(_dwp_batch_arg(primary_script), format = "cmd.exe /v:off /c {}"),
+                'if not "%errorlevel%"=="0" exit /b %errorlevel%',
+                cmd_args(_dwp_batch_arg(dwp_output.as_output()), format = "if exist {} exit /b 0"),
+                cmd_args(_dwp_batch_arg(fallback_script), format = "cmd.exe /v:off /c {}"),
+                'if not "%errorlevel%"=="0" exit /b %errorlevel%',
+                cmd_args(_dwp_batch_arg(dwp_output.as_output()), format = "if exist {} exit /b 0"),
+                "exit /b 1",
+            ]
+            helper_scripts = [primary_script, fallback_script]
+        else:
+            fail("Unsupported DWP script language: {}".format(language))
         args = cmd_args(
-            [dwp, "-o", dwp_output.as_output(), "-e", obj] + getattr(ctx.attrs, "extra_dwp_flags", []),
-            # All object/dwo files referenced in the library/executable are implicitly
-            # processed by dwp.
-            hidden = referenced_objects,
+            write_script(ctx.actions, script_name, script, language),
+            hidden = [primary, fallback, referenced_objects] + helper_scripts,
         )
     else:
         args = cmd_args(
             [dwp, "-o", dwp_output.as_output()] + getattr(ctx.attrs, "extra_dwp_flags", []),
         )
         argsfile, _ = ctx.actions.write(
-            "dwp{}{}.argsfile".format(
-                "_" + category_suffix if category_suffix else "",
-                "_" + identifier if identifier else "",
-            ),
+            script_name + ".argsfile",
             referenced_objects,
             allow_args = True,
             has_content_based_path = False,

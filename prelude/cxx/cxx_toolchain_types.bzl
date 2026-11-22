@@ -225,6 +225,7 @@ CxxInternalTools = provider(
         concatenate_diagnostics = RunInfo,
         dep_file_processor = RunInfo,
         dist_lto = DistLtoToolsInfo,
+        script_language = str,
         filter_argsfile = RunInfo,
         hmap_wrapper = RunInfo,
         make_comp_db = RunInfo,

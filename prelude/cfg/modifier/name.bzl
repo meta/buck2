@@ -53,6 +53,19 @@ def cfg_name(cfg: ConfigurationInfo) -> str:
         if constraint_name:
             name_list.append(constraint_name)
 
+    # Append any remaining constraints not covered by NAMED_CONSTRAINT_SETTINGS,
+    # sorted by constraint setting for determinism. Prefer the subtarget name
+    # (e.g. `debug` in `:compile_mode[debug]`) when present, since with the
+    # unified `constraint()` rule the target name is the constraint setting.
+    for constraint_setting in sorted(constraints):
+        if constraint_setting in NAMED_CONSTRAINT_SETTINGS:
+            continue
+        label = constraints[constraint_setting].label
+        if label.sub_target:
+            name_list.append(str(label.sub_target[0]))
+        else:
+            name_list.append(str(label.name))
+
     if len(name_list) == 0:
         name = _EMPTY_CFG_NAME
     else:

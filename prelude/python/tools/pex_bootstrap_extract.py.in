@@ -1,0 +1,191 @@
+import binascii
+import fcntl
+import hashlib
+import os
+import shutil
+import sys
+import tempfile
+import time
+import zipfile
+
+IS_DARWIN = sys.platform == "darwin"
+
+MAIN_MODULE = <MAIN_MODULE>
+MAIN_FUNCTION = <MAIN_FUNCTION>
+MAIN_RUNNER_MODULE = "<MAIN_RUNNER_MODULE>"
+MAIN_RUNNER_FUNCTION = "<MAIN_RUNNER_FUNCTION>"
+PRELOAD_BASENAMES = <PRELOAD_BASENAMES>
+NATIVE_RUNTIME_PATHS = <NATIVE_RUNTIME_PATHS>
+RUNTIME_ENV = <RUNTIME_ENV>
+
+
+def _par_path():
+    return os.path.abspath(sys.argv[0])
+
+
+def _cache_dir(par):
+    st = os.stat(par)
+    key = "{}:{}:{}".format(par, st.st_size, st.st_mtime_ns)
+    digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+    base = os.environ.get("PAR_TEMP_DIR")
+    if not base:
+        home = os.path.expanduser("~")
+        if home == "~":
+            # No HOME and no passwd entry.
+            home = tempfile.gettempdir()
+        base = os.path.join(home, ".cache", "par")
+    # The cache ends up in PYTHONPATH and the library path, so it must not depend
+    # on the cwd.
+    base = os.path.abspath(base)
+    return os.path.join(base, "{}--{}".format(os.path.basename(par), digest))
+
+
+class _ExclusiveLock(object):
+    """Blocking exclusive lock on a file, held for the duration of a `with` block."""
+
+    def __init__(self, path):
+        self.path = path
+        self.fd = None
+
+    def __enter__(self):
+        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            # fcntl.lockf wraps POSIX fcntl() locks; prefer it over flock() which is
+            # not in POSIX. See https://apenwarr.ca/log/20101213
+            fcntl.lockf(self.fd, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(self.fd)
+            raise
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            fcntl.lockf(self.fd, fcntl.LOCK_UN)
+        finally:
+            os.close(self.fd)
+
+
+def _fsync_path(path):
+    fd = os.open(path, os.O_RDWR)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _fsync_dir(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _extract_to(par, root):
+    with zipfile.ZipFile(par, "r") as zf:
+        for info in zf.infolist():
+            path = zf.extract(info, root)
+            if info.is_dir():
+                continue
+            # extract() does not apply the modes stored in the zip. Keep the owner
+            # able to write, so the cache can be deleted (and so we can fsync below).
+            mode = (info.external_attr >> 16) & 0o777
+            if mode:
+                os.chmod(path, mode | 0o600)
+            _fsync_path(path)
+    for dirpath, _dirs, _files in os.walk(root):
+        _fsync_dir(dirpath)
+
+
+def _extract(par, dest):
+    # dest only ever appears by renaming a fully extracted and fsynced directory into
+    # place, so if it exists it is complete.
+    if os.path.isdir(dest):
+        return
+
+    parent = os.path.dirname(dest)
+    os.makedirs(parent, exist_ok=True)
+    tmp_prefix = os.path.basename(dest) + ".tmp."
+    # The lock only stops concurrent launches from all extracting the same pex.
+    with _ExclusiveLock(dest + ".lock"):
+        if os.path.isdir(dest):
+            return
+        # Holding the lock, any leftover temp dir belongs to an extraction that died.
+        for name in os.listdir(parent):
+            if name.startswith(tmp_prefix):
+                shutil.rmtree(os.path.join(parent, name), ignore_errors=True)
+        # Not tempfile.mkdtemp: its 0o700 mode would carry over to dest through the
+        # rename. Plain mkdir follows the umask.
+        tmp = os.path.join(parent, tmp_prefix + binascii.hexlify(os.urandom(4)).decode())
+        os.mkdir(tmp)
+        try:
+            _extract_to(par, tmp)
+            os.rename(tmp, dest)
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+        _fsync_dir(parent)
+
+
+def main():
+    os.environ["PAR_LAUNCH_TIMESTAMP"] = str(time.time())
+
+    par = _par_path()
+    cache = _cache_dir(par)
+    _extract(par, cache)
+
+    for k, v in RUNTIME_ENV.items():
+        os.environ[k] = v
+
+    if IS_DARWIN:
+        native_env = "DYLD_LIBRARY_PATH"
+    else:
+        native_env = "LD_LIBRARY_PATH"
+
+    lib_dirs = [cache] + NATIVE_RUNTIME_PATHS
+    old_lib_path = os.environ.get(native_env, "")
+    if old_lib_path:
+        os.environ["FB_SAVED_" + native_env] = old_lib_path
+    os.environ[native_env] = os.pathsep.join(
+        d for d in lib_dirs + [old_lib_path] if d
+    )
+
+    if PRELOAD_BASENAMES:
+        if IS_DARWIN:
+            preload_env = "DYLD_INSERT_LIBRARIES"
+        else:
+            preload_env = "LD_PRELOAD"
+        preload_paths = [os.path.join(cache, b) for b in PRELOAD_BASENAMES]
+        old_preload = os.environ.get(preload_env, "")
+        if old_preload:
+            os.environ["FB_SAVED_" + preload_env] = old_preload
+        os.environ[preload_env] = os.pathsep.join(
+            p for p in preload_paths + [old_preload] if p
+        )
+
+    old_pythonpath = os.environ.get("PYTHONPATH", "")
+    if old_pythonpath:
+        os.environ["FB_SAVED_PYTHONPATH"] = old_pythonpath
+    os.environ["PYTHONPATH"] = cache
+
+    os.environ["PAR_INVOKED_NAME_TAG"] = sys.argv[0]
+
+    startup = (
+        "# " + sys.argv[0] + "\n"
+        "def __run():\n"
+        "    import sys\n"
+        "    assert sys.argv[0] == \"-c\"\n"
+        "    sys.argv[0] = " + repr(sys.argv[0]) + "\n"
+        "    if \"\" in sys.path:\n"
+        "        sys.path.remove(\"\")\n"
+        "    from <MAIN_RUNNER_MODULE> import <MAIN_RUNNER_FUNCTION> as run_as_main\n"
+        "    run_as_main(" + repr(MAIN_MODULE) + ", " + repr(MAIN_FUNCTION) + ")\n"
+        "__run()\n"
+    )
+
+    args = [sys.executable, "-c", startup] + sys.argv[1:]
+
+    os.execv(sys.executable, args)
+
+
+main()

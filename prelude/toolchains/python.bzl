@@ -116,6 +116,8 @@ def _system_python_toolchain_impl(ctx):
             host_interpreter = RunInfo(args = [host_interpreter]),
             interpreter = RunInfo(args = [ctx.attrs.interpreter]),
             compile = RunInfo(args = ["echo", "COMPILEINFO"]),
+            make_py_package_standalone = ctx.attrs.make_py_package_standalone[RunInfo],
+            build_standalone_binaries_locally = ctx.attrs.build_standalone_binaries_locally,
             package_style = "inplace",
             pex_extension = ctx.attrs.pex_extension,
             native_link_strategy = "separate",
@@ -128,6 +130,7 @@ system_python_toolchain = rule(
     impl = _system_python_toolchain_impl,
     attrs = {
         "binary_linker_flags": attrs.default_only(attrs.list(attrs.arg(), default = [])),
+        "build_standalone_binaries_locally": attrs.bool(default = False),
         "host_interpreter": attrs.option(
             attrs.string(),
             default = None,
@@ -135,6 +138,7 @@ system_python_toolchain = rule(
         ),
         "interpreter": attrs.string(default = _INTERPRETER),
         "linker_flags": attrs.default_only(attrs.list(attrs.arg(), default = [])),
+        "make_py_package_standalone": attrs.exec_dep(default = "prelude//python/tools:make_py_package_standalone", providers = [RunInfo]),
         "pex_extension": attrs.string(default = ".pex"),
         "type_checker": attrs.option(
             attrs.exec_dep(providers = [RunInfo]),

@@ -105,7 +105,11 @@ impl ChannelConfig {
     }
 
     async fn create_tls_config(opts: &Buck2OssReConfiguration) -> anyhow::Result<ClientTlsConfig> {
-        let config = ClientTlsConfig::new().with_enabled_roots();
+        // use_key_log(): store the session keys to a file when SSLKEYLOGFILE
+        // is set in env, to allow decrypting PCAP files for debugging. See:
+        // - https://www.ietf.org/archive/id/draft-thomson-tls-keylogfile-00.html
+        // - https://wiki.wireshark.org/TLS
+        let config = ClientTlsConfig::new().with_enabled_roots().use_key_log();
 
         let config = match opts.tls_ca_certs.as_ref() {
             Some(tls_ca_certs) => {

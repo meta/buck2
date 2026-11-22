@@ -147,6 +147,58 @@ async fn test_package_value_parent_dir_package_file() {
 }
 
 #[tokio::test]
+async fn test_get_root_cell_name_in_package_file() {
+    let fs = ProjectRootTemp::new().unwrap();
+
+    fs.write_file("rules.bzl", RULES);
+    fs.write_file(
+        "headphones/PACKAGE",
+        "write_package_value('root.cell', get_root_cell_name())",
+    );
+    fs.write_file(
+        "headphones/BUCK",
+        indoc!(
+            r#"
+                load("//:rules.bzl", "rrr")
+                rrr(
+                    name = "headphones",
+                    value = read_package_value("root.cell"),
+                )
+        "#
+        ),
+    );
+
+    let package_label = PackageLabel::testing_parse("root//headphones");
+
+    let ctx = calculation(&fs).await;
+    let mut dice = ctx.ctx();
+    let mut interpreter = dice
+        .get_interpreter_calculator_for_package(package_label)
+        .await
+        .unwrap();
+
+    let result = interpreter
+        .eval_build_file(package_label, CancellationContext::testing())
+        .await
+        .1
+        .unwrap();
+
+    let target_nodes: Vec<_> = result.targets().values().collect();
+    assert_eq!(1, target_nodes.len());
+    let target_node = &target_nodes[0];
+    assert_eq!(
+        "\"root\"",
+        target_node
+            .attr("value", AttrInspectOptions::DefinedOnly)
+            .unwrap()
+            .unwrap()
+            .value
+            .as_display_no_ctx()
+            .to_string()
+    );
+}
+
+#[tokio::test]
 async fn test_overwrite_package_value_not_allowed_without_overwrite_flag() {
     let fs = ProjectRootTemp::new().unwrap();
 

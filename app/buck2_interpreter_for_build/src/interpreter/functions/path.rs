@@ -123,6 +123,7 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
     }
 
     /// `get_root_cell_name()` returns the name of the root cell.
+    /// It can be called from `BUCK` files, `PACKAGE` files, or `.bzl` files.
     fn get_root_cell_name(eval: &mut Evaluator) -> starlark::Result<String> {
         Ok(BuildContext::from_context(eval)?
             .cell_resolver()

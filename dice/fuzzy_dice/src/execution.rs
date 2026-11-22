@@ -40,6 +40,7 @@ use parking_lot::Mutex;
 use quickcheck::Arbitrary;
 use quickcheck::Gen;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 use uuid::Uuid;
@@ -742,9 +743,21 @@ where
     serializer.serialize_str(&uuid.to_string())
 }
 
+fn uuid_deserializer<'de, D>(deserializer: D) -> Result<Uuid, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let uuid = String::deserialize(deserializer)?;
+    Uuid::parse_str(&uuid).map_err(serde::de::Error::custom)
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DiceExecutionOrder {
-    #[serde(skip_deserializing, serialize_with = "uuid_serializer")]
+    #[serde(
+        default,
+        deserialize_with = "uuid_deserializer",
+        serialize_with = "uuid_serializer"
+    )]
     pub uuid: Uuid,
     /// A list of operations that initialize each var, in order, to a literal.
     pub init_vars: Vec<Operation>,

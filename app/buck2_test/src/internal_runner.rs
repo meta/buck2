@@ -52,6 +52,7 @@ pub async fn run_internal_test(
 ) -> buck2_error::Result<()> {
     let target_handle = spec.target.handle;
     let suite = spec.target.target.clone();
+    let host_sharing_requirements = spec.host_sharing_requirements()?;
 
     // `'v`-branded views of the provider must not be held across awaits (only the `OwnedFrozen`
     // may be), so views are derived in scopes that end before the next await.
@@ -154,6 +155,7 @@ pub async fn run_internal_test(
 
         let entry_name = entry.name.clone();
         let env = build_env_from_spec(&spec);
+        let host_sharing_requirements = host_sharing_requirements.clone();
         let required_local_resources = required_local_resources.clone();
 
         futures.push(async move {
@@ -164,7 +166,7 @@ pub async fn run_internal_test(
                     test_command,
                     env,
                     timeout,
-                    HostSharingRequirements::default(),
+                    host_sharing_requirements,
                     Vec::new(),
                     None,
                     required_local_resources.clone(),

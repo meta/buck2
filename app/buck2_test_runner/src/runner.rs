@@ -82,8 +82,26 @@ impl Buck2TestRunner {
                 );
                 let target_handle = spec.target.handle.to_owned();
 
+                let host_sharing_requirements = match spec.host_sharing_requirements() {
+                    Ok(requirements) => requirements,
+                    Err(e) => {
+                        self.report_test_result(TestResult {
+                            target: target_handle,
+                            name,
+                            status: TestStatus::FATAL,
+                            msg: None,
+                            duration: None,
+                            details: format!("{e:#}"),
+                            max_memory_used_bytes: None,
+                        })
+                        .await
+                        .buck_error_context("Test result reporting failed")?;
+                        return Ok(TestStatus::FATAL);
+                    }
+                };
+
                 let execution_response = self
-                    .execute_test_from_spec(spec)
+                    .execute_test_from_spec(spec, host_sharing_requirements)
                     .await
                     .buck_error_context("Test execution request failed")?;
 
@@ -124,6 +142,7 @@ impl Buck2TestRunner {
     async fn execute_test_from_spec(
         &self,
         spec: ExternalRunnerSpec,
+        host_sharing_requirements: HostSharingRequirements,
     ) -> buck2_error::Result<ExecuteResponse> {
         let suite = format!(
             "{}//{}:{}",
@@ -187,7 +206,6 @@ impl Buck2TestRunner {
             .collect();
 
         let target_handle = spec.target.handle;
-        let host_sharing_requirements = HostSharingRequirements::default();
         let pre_create_dirs = Vec::new();
         let executor_override = None;
 

@@ -720,7 +720,7 @@ pub(crate) fn spawn_prepared_task<'d, S, T: Send + Sync + 'static>(
     task_spawner.spawn_cancellable(
         |cancellations| {
             let handle = DiceTaskHandle::new(completion_handle, cancellations);
-            OwningFuture::new(handle, f).boxed()
+            OwningFuture::new(handle, f)
         },
         spawner,
         ctx,

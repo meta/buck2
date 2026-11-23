@@ -393,7 +393,8 @@ def python_library_impl(ctx: AnalysisContext) -> list[Provider]:
 
     lazy_imports_analyzer = get_lazy_imports_analyzer(ctx)
     lazy_imports_cache_output = None
-    if lazy_imports_analyzer != None and getattr(ctx.attrs, "use_lifeguard_incremental", False):
+    if lazy_imports_analyzer != None:
+        # Declared for every library; the action only runs when an incrementally analyzed binary reads it.
         lazy_imports_cache_output = ctx.actions.declare_output("safer_lazy_imports/library-cache.bin")
 
     library_info = create_python_library_info(

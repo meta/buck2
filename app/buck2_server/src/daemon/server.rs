@@ -1016,6 +1016,7 @@ impl BuckdServer {
                 dispatch.trace_id(),
                 client_ctx,
                 &data.tenant_paths_for_client_context(client_ctx)?,
+                &data.daemon_buck_settings().event_forwarding,
             )?;
             let tenant = match data.tenant_for_client_context(client_ctx).await {
                 Ok(tenant) => tenant,

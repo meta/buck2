@@ -25,6 +25,7 @@ use buck2_cli_proto::ClientContext;
 use buck2_cli_proto::CommandResult;
 use buck2_common::invocation_paths::TenantPaths;
 use buck2_core::fs::project::ProjectRoot;
+use buck2_settings::EventForwarding;
 use buck2_util::late_binding::LateBinding;
 use buck2_wrapper_common::invocation_id::TraceId;
 
@@ -59,6 +60,8 @@ pub struct StartedCommand<'a> {
     pub project_root: &'a ProjectRoot,
     /// The opaque event forwarding keys the client sent with the command.
     pub event_forwarding_keys: &'a [String],
+    /// The daemon's `event_forwarding` Buck settings.
+    pub event_forwarding_settings: &'a EventForwarding,
     pub start_time: SystemTime,
 }
 
@@ -73,6 +76,7 @@ impl ObservedCommand {
         trace_id: &TraceId,
         client_ctx: &ClientContext,
         paths: &TenantPaths,
+        event_forwarding_settings: &EventForwarding,
     ) -> buck2_error::Result<Self> {
         let Some(observer) = *COMMAND_LIFECYCLE_OBSERVER.get()? else {
             return Ok(Self::default());
@@ -83,6 +87,7 @@ impl ObservedCommand {
             working_dir: &client_ctx.working_dir,
             project_root: paths.project_root(),
             event_forwarding_keys: &client_ctx.event_forwarding_keys,
+            event_forwarding_settings,
             start_time: SystemTime::now(),
         })))
     }

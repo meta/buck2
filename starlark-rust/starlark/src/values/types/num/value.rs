@@ -23,6 +23,8 @@ use std::ops::Sub;
 
 use dupe::Dupe;
 use either::Either;
+use num_bigint::BigInt;
+use num_traits::Signed;
 
 use crate::collections::StarlarkHashValue;
 use crate::values::AllocFrozenValue;
@@ -209,6 +211,57 @@ impl<'v> NumRef<'v> {
     }
 }
 
+fn cmp_int_float(a: StarlarkIntRef, b: f64) -> Ordering {
+    match a {
+        StarlarkIntRef::Small(a) => StarlarkFloat::compare_impl(a.to_f64(), b),
+        StarlarkIntRef::Big(a) => cmp_big_float(a.get(), b),
+    }
+}
+
+fn cmp_big_float(a: &BigInt, b: f64) -> Ordering {
+    if !b.is_finite() {
+        return StarlarkFloat::compare_impl(0.0, b);
+    }
+    let a_negative = a.is_negative();
+    if a_negative != (b < 0.0) {
+        return if a_negative {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        };
+    }
+    let ord = cmp_magnitude_float(a, b.abs());
+    if a_negative { ord.reverse() } else { ord }
+}
+
+fn cmp_magnitude_float(a: &BigInt, b: f64) -> Ordering {
+    let raw = b.to_bits();
+    let a_bits = a.bits();
+    let whole_bits = (raw >> 52).saturating_sub(1022);
+    if a_bits != whole_bits {
+        return a_bits.cmp(&whole_bits);
+    }
+    let mut digits = a.iter_u64_digits();
+    let Some(top) = digits.next_back() else {
+        return StarlarkFloat::compare_impl(0.0, b);
+    };
+    let next = digits.next_back().unwrap_or(0);
+    let shift = top.leading_zeros();
+    let (a_top, a_rest) = if shift == 0 {
+        (top, next)
+    } else {
+        ((top << shift) | (next >> (64 - shift)), next << shift)
+    };
+    let b_top = (raw << 11) | (1 << 63);
+    a_top.cmp(&b_top).then_with(|| {
+        if a_rest != 0 || digits.any(|digit| digit != 0) {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    })
+}
+
 impl<'v> From<f64> for NumRef<'v> {
     fn from(f: f64) -> Self {
         Self::Float(StarlarkFloat(f))
@@ -221,7 +274,7 @@ impl<'v> PartialEq for NumRef<'v> {
         if let (NumRef::Int(a), NumRef::Int(b)) = (self, other) {
             a == b
         } else {
-            StarlarkFloat::compare_impl(self.as_float(), other.as_float()) == Ordering::Equal
+            self.cmp(other) == Ordering::Equal
         }
     }
 }
@@ -236,10 +289,11 @@ impl<'v> PartialOrd for NumRef<'v> {
 
 impl<'v> Ord for NumRef<'v> {
     fn cmp(&self, other: &Self) -> Ordering {
-        if let (NumRef::Int(a), NumRef::Int(b)) = (self, other) {
-            a.cmp(b)
-        } else {
-            StarlarkFloat::compare_impl(self.as_float(), other.as_float())
+        match (self, other) {
+            (NumRef::Int(a), NumRef::Int(b)) => a.cmp(b),
+            (NumRef::Float(a), NumRef::Float(b)) => StarlarkFloat::compare_impl(a.0, b.0),
+            (NumRef::Int(a), NumRef::Float(b)) => cmp_int_float(*a, b.0),
+            (NumRef::Float(a), NumRef::Int(b)) => cmp_int_float(*b, a.0).reverse(),
         }
     }
 }
@@ -279,9 +333,10 @@ impl<'v> Mul for NumRef<'v> {
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigInt;
+    use num_traits::FromPrimitive;
 
     use super::*;
+    use crate::assert;
     use crate::values::StringValue;
     use crate::values::Value;
     use crate::values::types::int::inline_int::InlineInt;
@@ -427,5 +482,102 @@ mod tests {
             NumRef::Int(StarlarkIntRef::Small(InlineInt::testing_new(10))),
             NumRef::Float(StarlarkFloat(10.0))
         );
+    }
+
+    #[test]
+    fn test_int_float_comparison_is_exact() {
+        assert::all_true(
+            r#"
+float((1 << 53) + 1) != (1 << 53) + 1
+float((1 << 53) + 1) == 1 << 53
+float((1 << 53) + 1) < (1 << 53) + 1
+(1 << 53) + 1 > float((1 << 53) + 1)
+float(1 << 100) == 1 << 100
+1 << 100 == float(1 << 100)
+float(1 << 100) != (1 << 100) + 1
+(1 << 100) + 1 > float(1 << 100)
+(1 << 100) - 1 < float(1 << 100)
+float(1 << 100) < (1 << 100) + 1
+-(1 << 100) - 1 < -float(1 << 100)
+-(1 << 100) + 1 > -float(1 << 100)
+1 << 40 < (1 << 40) + 0.5
+(1 << 40) + 1 > (1 << 40) + 0.5
+-(1 << 40) > -(1 << 40) - 0.5
+-(1 << 40) - 1 < -(1 << 40) - 0.5
+1 << 40 == (1 << 40) + 0.0
+"#,
+        );
+    }
+
+    #[test]
+    fn test_int_compared_to_non_finite_float() {
+        assert::all_true(
+            r#"
+1 << 2000 < float("inf")
+1 << 2000 != float("inf")
+-(1 << 2000) > float("-inf")
+-(1 << 2000) != float("-inf")
+1 << 2000 < float("nan")
+1 << 100 < float("inf")
+1 << 100 > float("-inf")
+1 < float("inf")
+1 > float("-inf")
+1 < float("nan")
+"#,
+        );
+    }
+
+    #[test]
+    fn test_int_float_equality_is_transitive() {
+        assert::all_true(
+            r#"
+len(dict([(1 << 100, 1), ((1 << 100) + 1, 2), (float(1 << 100), 3)])) == 2
+len(dict([(float(1 << 100), 1), (1 << 100, 2), ((1 << 100) + 1, 3)])) == 2
+len(set([float(1 << 100), 1 << 100, (1 << 100) + 1])) == 2
+[type(x) for x in sorted([(1 << 100) + 1, float(1 << 100), (1 << 100) - 1])] == ["int", "float", "int"]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_cmp_big_float_matches_conversion_to_big_int() {
+        fn reference(a: &BigInt, b: f64) -> Ordering {
+            let whole = BigInt::from_f64(b.trunc()).unwrap();
+            a.cmp(&whole)
+                .then(StarlarkFloat::compare_impl(b.trunc(), b))
+        }
+
+        let mantissas: [u64; 6] = [
+            1,
+            3,
+            0x0001_2345_6789_abcd,
+            1 << 52,
+            (1 << 52) + 1,
+            (1 << 53) - 1,
+        ];
+        for exponent in -1074..=971 {
+            for mantissa in mantissas {
+                for sign in [1.0, -1.0] {
+                    let b = sign * mantissa as f64 * 2f64.powi(exponent);
+                    assert!(b.is_finite());
+                    let whole = BigInt::from_f64(b.trunc()).unwrap();
+                    let neighbours = (-2..=2).map(|delta| &whole + delta);
+                    let others = [
+                        -&whole,
+                        &whole << 1,
+                        &whole >> 1,
+                        &whole << 64,
+                        &whole >> 64,
+                    ];
+                    for a in neighbours.chain(others) {
+                        assert_eq!(
+                            cmp_big_float(&a, b),
+                            reference(&a, b),
+                            "comparing {a} with {b:e}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

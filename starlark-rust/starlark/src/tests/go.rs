@@ -110,22 +110,7 @@ fn test_go() {
         &[],
     );
 
-    assert.conformance(&ignore_bad_lines(
-        test_case!("float.star"),
-        &[
-            // int's outside our range
-            "1229999999999999973",
-            "9223372036854775808",
-            "1000000000000000000",
-            "1230000000000000049",
-            "9223372036854775807",
-            "p53",
-            "maxint64",
-            "int(1e100)",
-            "1000000 * 1000000 * 1000000",
-            "int overflow in starlark-rust",
-        ],
-    ));
+    assert.conformance(test_case!("float.star"));
     assert.conformance(&ignore_bad_lines(
         test_case!("function.star"),
         &[

@@ -78,6 +78,12 @@ answers which question:
 - On Windows there is no jemalloc, so only the RSS, CPU and wall-time columns exist, and "buckd
   Max RSS" is the peak working set. The raw per-process fields (`ru_*` from `wait4` on Linux and
   macOS, `process_*` on Windows) are in `samples.json`.
+- A command that needs state in the daemon first (a rebuild after a page-out, say) gets it from
+  `--setup '<buck args>'`, repeatable: each runs before the measured command in every sample, in
+  the same daemon, with its own "Setup N Wall Time" and "Setup N buckd CPU Time" columns, and the
+  measured command's CPU leaves theirs out. `--settle-seconds` waits after each command before
+  the daemon snapshot, for what the command releases on its way out, and the daemon's CPU
+  meanwhile counts toward that command. See `agent-instructions` for a paging example.
 
 ## Reading the output
 

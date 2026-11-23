@@ -437,6 +437,17 @@ fn re_create_action(
         ..Default::default()
     };
 
+    // REAPI 2.2 moved the platform from the `Command` to the `Action`. Servers differ in which
+    // one they read, so both carry it. Meta RE's `Action` has no platform field.
+    #[cfg(not(fbcode_build))]
+    #[expect(
+        deprecated,
+        reason = "`Command.platform` is still sent, for servers that read it"
+    )]
+    {
+        action.platform = command.platform.clone();
+    }
+
     #[cfg(fbcode_build)]
     if let Some(custom_image) = remote_execution_custom_image {
         action.caf_image_fbpkg = Some(RE::CafImageFbpkg {
@@ -539,6 +550,8 @@ fn set_action_network_access(
 
 #[cfg(test)]
 mod tests {
+    use prost::Message;
+
     use super::*;
 
     fn property(name: &str, value: &str) -> RE::Property {
@@ -590,5 +603,63 @@ mod tests {
                 property("recycle-runner", "true"),
             ]
         );
+    }
+
+    fn decode<M: Message + Default>(prepared: &ActionDigestAndBlobs, digest: &RE::Digest) -> M {
+        let (_, blob) = prepared
+            .blobs
+            .iter()
+            .find(|(blob_digest, _)| blob_digest.to_grpc() == *digest)
+            .expect("the message should be among the blobs");
+        M::decode(blob.0.as_slice()).expect("the blob should decode")
+    }
+
+    #[test]
+    fn test_platform_is_on_the_command_and_the_action() {
+        let digest_config = DigestConfig::testing_default();
+        let platform = RE::Platform {
+            properties: vec![property("OSFamily", "linux")],
+        };
+        let prepared = re_create_action(
+            Vec::new(),
+            vec!["true".to_owned()],
+            &[],
+            ProjectRelativePath::empty(),
+            &BuckFixedSortedMap::default(),
+            &TrackedFileDigest::empty(digest_config.cas_digest_config()),
+            None,
+            platform.clone(),
+            false,
+            digest_config,
+            OutputPathsBehavior::Compatibility,
+            None,
+            false,
+            &Vec::new(),
+            &Vec::new(),
+            &None,
+            &[],
+            &None,
+            false,
+            false,
+            None,
+        )
+        .expect("the action should be created")
+        .action_and_blobs;
+
+        let action: RE::Action = decode(&prepared, &prepared.action.to_grpc());
+        let command_digest = action.command_digest.as_ref().expect("a command digest");
+        let command: RE::Command = decode(&prepared, command_digest);
+
+        #[cfg_attr(
+            not(fbcode_build),
+            expect(
+                deprecated,
+                reason = "`Command.platform` is still sent, for servers that read it"
+            )
+        )]
+        let command_platform = command.platform.as_ref();
+        assert_eq!(command_platform, Some(&platform));
+        #[cfg(not(fbcode_build))]
+        assert_eq!(action.platform.as_ref(), Some(&platform));
     }
 }

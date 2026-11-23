@@ -110,6 +110,13 @@ class SamePackageClassStubsGenerator : StubsGenerator {
                             FullTypeQualifier(pkgSegments + name).outerClassOnlyQualifier()
                         candidate != null && context.externalTypeReferences.contains(candidate)
                       }
+                      .filterNot { name ->
+                        // A same-package typealias of a dependency has no class file, so the
+                        // check above misses it, and a class stub with its FQN wins over the
+                        // typealias: the ABI then names the stub where kotlinc writes the
+                        // expanded type.
+                        context.kotlinClasspathDeclarations.isProvided(pkgSegments, name)
+                      }
                       .toSet()
             }
             .groupBy({ (pkg, _) -> pkg }, { (_, names) -> names })

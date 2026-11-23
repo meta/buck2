@@ -100,20 +100,26 @@ class KotlinClasspathDeclarations(private val classpath: List<File>) {
     return classpath.any { jar -> entriesOf(jar).contains(entry) }
   }
 
-  private fun hasKotlinTopLevelName(pkgPath: String, name: String): Boolean {
-    for (jar in classpath) {
-      val entries = entriesOf(jar)
-      // Exact-package match only: a `startsWith` prefix also matches facades in
-      // subpackages, whose same-named declarations belong to another package and
-      // must not mark the import provided.
-      val facades = entries.filter {
-        it.substringBeforeLast('/') == pkgPath && isLikelyFileFacade(it)
+  private fun hasKotlinTopLevelName(pkgPath: String, name: String): Boolean =
+      facadesByPackage[pkgPath].orEmpty().any { (jar, facade) ->
+        facadeD2Names(jar, facade).contains(name)
       }
-      for (facade in facades) {
-        if (facadeD2Names(jar, facade).contains(name)) return true
+
+  /**
+   * The file facades of every classpath entry, keyed by their exact package path (`a/b`): a facade
+   * in a subpackage declares names of another package and must not mark an import provided. Built
+   * once, so a lookup does not scan every entry of every jar.
+   */
+  private val facadesByPackage: Map<String, List<Pair<File, String>>> by lazy {
+    val index = mutableMapOf<String, MutableList<Pair<File, String>>>()
+    for (jar in classpath) {
+      for (entry in entriesOf(jar)) {
+        if (isLikelyFileFacade(entry)) {
+          index.getOrPut(entry.substringBeforeLast('/')) { mutableListOf() }.add(jar to entry)
+        }
       }
     }
-    return false
+    index
   }
 
   private fun isLikelyFileFacade(entry: String): Boolean {

@@ -56,7 +56,7 @@ front. In practice many actions do not read all the files in the input root.
 
 If you do not want FUSE workers you can instead switch to hardlinking workers
 The example deployments have two worker kinds "fuse", and "hardlinking", you can
-see the queues in the `Buildbarn` scheduler, http://localhost:7982.
+see the queues in the `Buildbarn` portal, http://localhost:8081.
 
 ```
 Buildbarn Scheduler
@@ -67,9 +67,9 @@ Instance name                                    Platform properties            
    prefix                                                                                               class
 
 "fuse"        OSFamily="linux" container-image="docker://ghcr.io/catthehacker/                          0     ∞
-              ubuntu:act-22.04@sha256:5f9c35c25db1d51a8ddaae5c0ba8d3c163c5e9a4a6cc97acd409ac7eae239448"
+              ubuntu:act-22.04@sha256:dd7654ffb01d5b7b54b23b9ce928a1f7f2d08c7b3d7e320b6574b55d7ccde78b"
 "hardlinking" OSFamily="linux" container-image="docker://ghcr.io/catthehacker/                          0     ∞
-              ubuntu:act-22.04@sha256:5f9c35c25db1d51a8ddaae5c0ba8d3c163c5e9a4a6cc97acd409ac7eae239448"
+              ubuntu:act-22.04@sha256:dd7654ffb01d5b7b54b23b9ce928a1f7f2d08c7b3d7e320b6574b55d7ccde78b"
 ```
 
 More information is available in the
@@ -96,3 +96,10 @@ TLS is not used in this example.
 
 `Buildbarn` takes in a Docker image and `OSFamily` in its RE properties to
 select a worker. This is configured in `root//platforms:platforms`.
+
+In this deployment the properties must be exactly the ones a worker registered
+with: the portal lists them, and so does the worker's config in
+`docker-compose/config`. Otherwise the build fails with
+`No workers exist for instance name prefix "fuse" platform {...}`. The image
+here is the one `bb-deployments` used in November 2026: update
+`remote_execution_properties` when your deployment uses another.

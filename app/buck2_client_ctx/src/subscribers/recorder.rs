@@ -225,6 +225,7 @@ pub struct InvocationRecorder {
     build_phase_end: Option<(SystemTime, buck2_data::BuildStatus)>,
     installer_log_url: Option<String>,
     installer_name: Option<String>,
+    initial_swap_in_bytes_allprocs: Option<u64>,
     initial_re_upload_bytes: Option<u64>,
     initial_re_download_bytes: Option<u64>,
     initial_zdb_download_queries: Option<u64>,
@@ -459,6 +460,7 @@ impl InvocationRecorder {
             build_phase_end: None,
             installer_log_url: None,
             installer_name: None,
+            initial_swap_in_bytes_allprocs: None,
             initial_re_upload_bytes: None,
             initial_re_download_bytes: None,
             initial_zdb_download_queries: None,
@@ -833,6 +835,7 @@ impl InvocationRecorder {
         let mut sink_failure_count = None;
         let mut sink_dropped_count = None;
         let mut sink_bytes_written = None;
+        let mut swap_in_bytes_allprocs = None;
         let mut re_upload_bytes = None;
         let mut re_download_bytes = None;
 
@@ -913,6 +916,13 @@ impl InvocationRecorder {
             sink_bytes_written = calculate_diff_if_some(
                 &snapshot.sink_bytes_written,
                 &self.initial_sink_bytes_written,
+            );
+            swap_in_bytes_allprocs = calculate_diff_if_some(
+                &snapshot
+                    .allprocs_cgroup
+                    .as_ref()
+                    .and_then(|cgroup| cgroup.swap_in_bytes),
+                &self.initial_swap_in_bytes_allprocs,
             );
             re_upload_bytes = calculate_diff_if_some(
                 &Some(snapshot.re_upload_bytes),
@@ -1394,6 +1404,7 @@ impl InvocationRecorder {
             memory_max_total_allprocs: self.memory_max_total_allprocs,
             memory_max_total_forkserver_actions: self.memory_max_total_forkserver_actions,
             memory_max_swap_bytes_allprocs: self.memory_max_swap_bytes_allprocs,
+            swap_in_bytes_allprocs,
             memory_max_pressure_10s_avg_allprocs: self.memory_max_pressure_10s_avg_allprocs,
             memory_max_pressure_60s_avg_allprocs: self.memory_max_pressure_60s_avg_allprocs,
             command_options: self.command_options,
@@ -2415,6 +2426,9 @@ impl InvocationRecorder {
 
         // Track maximum buck2 daemon memory usage from cgroup
         if let Some(allprocs_cgroup) = &update.allprocs_cgroup {
+            if self.initial_swap_in_bytes_allprocs.is_none() {
+                self.initial_swap_in_bytes_allprocs = allprocs_cgroup.swap_in_bytes;
+            }
             self.memory_max_anon_allprocs =
                 max(self.memory_max_anon_allprocs, Some(allprocs_cgroup.anon));
             let total_daemon_memory =
@@ -3228,6 +3242,45 @@ mod tests {
             .await
             .unwrap();
         record_of(&recorder.create_record_event())
+    }
+
+    /// The record's `swap_in_bytes_allprocs` after snapshots whose `allprocs` cgroup had read
+    /// these totals back from swap.
+    async fn swap_in_after(totals: &[Option<u64>]) -> Option<u64> {
+        let trace_id = TraceId::new();
+        let start = SystemTime::now();
+        let mut recorder = InvocationRecorder::new(trace_id.clone(), None, start, vec![]);
+        let events: Vec<_> = totals
+            .iter()
+            .enumerate()
+            .map(|(i, total)| {
+                snapshot_event(
+                    &trace_id,
+                    start + Duration::from_secs(i as u64),
+                    buck2_data::Snapshot {
+                        allprocs_cgroup: Some(buck2_data::UnixCgroupMemoryStats {
+                            swap_in_bytes: *total,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        recorder.handle_events(&events).await.unwrap();
+        record_of(&recorder.create_record_event()).swap_in_bytes_allprocs
+    }
+
+    #[tokio::test]
+    async fn test_swap_in_is_the_growth_from_the_first_snapshot_to_the_last() {
+        assert_eq!(
+            swap_in_after(&[Some(10), Some(15), Some(40)]).await,
+            Some(30)
+        );
+        assert_eq!(swap_in_after(&[Some(10), Some(10)]).await, Some(0));
+        // One snapshot leaves nothing to compare, and neither does a kernel that does not count.
+        assert_eq!(swap_in_after(&[Some(10)]).await, None);
+        assert_eq!(swap_in_after(&[None, None]).await, None);
     }
 
     /// With no local cache lookups between the snapshots there is no average: the field is

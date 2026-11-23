@@ -3932,6 +3932,10 @@ message InvocationRecord {
   // Peak swap usage (bytes) of all Buck2 processes during the invocation,
   // from allprocs cgroup memory.swap.current.
   optional uint64 memory_max_swap_bytes_allprocs = 434;
+  // Memory that all Buck2 processes read back from swap during the invocation:
+  // how much `allprocs_cgroup.swap_in_bytes` grew from the first snapshot to
+  // the last. Absent if fewer than two snapshots have that total.
+  optional uint64 swap_in_bytes_allprocs = 777;
   // Peak memory pressure (PSI full avg10 %) of all Buck2
   // processes during the invocation, from allprocs cgroup memory.pressure.
   optional double memory_max_pressure_10s_avg_allprocs = 435;

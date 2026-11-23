@@ -390,6 +390,13 @@ impl WriteEventLog {
     }
 }
 
+impl Invocation {
+    /// Appends this header to `buf` as an uncompressed protobuf event log (`.pb`) starts.
+    pub fn encode_for_protobuf_log(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()> {
+        self.serialize_to_protobuf_length_delimited(buf)
+    }
+}
+
 impl SerializeForLog for Invocation {
     fn serialize_to_json(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()> {
         serde_json::to_writer(buf, &self.clone().to_proto())
@@ -413,6 +420,13 @@ impl SerializeForLog for Invocation {
 pub enum StreamValueForWrite<'a> {
     Result(&'a CommandResult),
     Event(&'a buck2_data::BuckEvent),
+}
+
+impl StreamValueForWrite<'_> {
+    /// Appends this value to `buf` as an uncompressed protobuf event log (`.pb`) holds it.
+    pub fn encode_for_protobuf_log(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()> {
+        self.serialize_to_protobuf_length_delimited(buf)
+    }
 }
 
 impl SerializeForLog for StreamValueForWrite<'_> {

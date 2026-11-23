@@ -840,6 +840,7 @@ dependencies = [
  "buck2_daemon",
  "buck2_data",
  "buck2_error",
+ "buck2_event_forwarding",
  "buck2_event_log",
  "buck2_event_observer",
  "buck2_events",
@@ -2223,6 +2224,30 @@ dependencies = [
  "buck2_error",
  "fancy-regex 0.20.0",
  "nom 8.0.0",
+ "tracing",
+]
+
+[[package]]
+name = "buck2_event_forwarding"
+version = "0.1.0"
+dependencies = [
+ "async-compression",
+ "buck2_cli_proto",
+ "buck2_core",
+ "buck2_data",
+ "buck2_event_log",
+ "buck2_fs",
+ "buck2_server",
+ "buck2_settings",
+ "buck2_util",
+ "buck2_wrapper_common",
+ "dupe",
+ "futures 0.3.34",
+ "nix 0.31.3",
+ "prost",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "tracing",
 ]
 

@@ -44,6 +44,7 @@ buck2_core.workspace = true
 buck2_daemon.workspace = true
 buck2_data.workspace = true
 buck2_error.workspace = true
+buck2_event_forwarding.workspace = true
 buck2_event_log.workspace = true
 buck2_event_observer.workspace = true
 buck2_events.workspace = true

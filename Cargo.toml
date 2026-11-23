@@ -98,6 +98,7 @@ members = [
   "app/buck2_error_derive",
   "app/buck2_error_tests",
   "app/buck2_errorformat",
+  "app/buck2_event_forwarding",
   "app/buck2_event_log",
   "app/buck2_event_log_format",
   "app/buck2_event_observer",
@@ -275,6 +276,7 @@ buck2_env = { path = "app/buck2_env" }
 buck2_error = { path = "app/buck2_error" }
 buck2_error_derive = { path = "app/buck2_error_derive" }
 buck2_errorformat = { path = "app/buck2_errorformat" }
+buck2_event_forwarding = { path = "app/buck2_event_forwarding" }
 buck2_event_log = { path = "app/buck2_event_log" }
 buck2_event_log_format = { path = "app/buck2_event_log_format" }
 buck2_event_observer = { path = "app/buck2_event_observer" }

@@ -1,0 +1,37 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "buck2_event_forwarding",
+    srcs = glob(["src/**/*.rs"]),
+    test_deps = [
+        "fbsource//third-party/rust:prost",
+        "fbsource//third-party/rust:serde_json",
+        "fbsource//third-party/rust:tempfile",
+        "//buck2/app/buck2_core:buck2_core",
+        "//buck2/app/buck2_data:buck2_data",
+        "//buck2/app/buck2_settings:buck2_settings",
+        "//buck2/app/buck2_wrapper_common:buck2_wrapper_common",
+    ],
+    deps = [
+        "fbsource//third-party/rust:async-compression",
+        "fbsource//third-party/rust:futures",
+        "fbsource//third-party/rust:tokio",
+        "fbsource//third-party/rust:tracing",
+        "//buck2/app/buck2_cli_proto:buck2_cli_proto",
+        "//buck2/app/buck2_event_log:buck2_event_log",
+        "//buck2/app/buck2_fs:buck2_fs",
+        "//buck2/app/buck2_server:buck2_server",
+        "//buck2/app/buck2_util:buck2_util",
+        "//buck2/gazebo/dupe:dupe",
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "fbsource//third-party/rust:nix",
+        ],
+        "ovr_config//os:macos": [
+            "fbsource//third-party/rust:nix",
+        ],
+    }),
+)

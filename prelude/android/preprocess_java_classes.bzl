@@ -27,9 +27,17 @@ def get_preprocessed_java_classes(
     output_dir = ctx.actions.declare_output("preprocessed_java_classes/output_dir", has_content_based_path = False)
     input_jars_to_owners = {}
 
-    for i, (input_jar, target_label) in enumerate(input_jars.items()):
+    # Name each jar by a hash of its owner and its basename, numbered only among the jars that share
+    # both, so that adding or removing an unrelated library does not rename it. Basenames alone are
+    # not enough: most prebuilt AAR jars are called `classes.jar`. Starlark's hash() of a string is
+    # deterministic, and the count keeps names unique even if two owners' hashes collide.
+    name_counts = {}
+    for input_jar, target_label in input_jars.items():
         expect(input_jar.extension == ".jar", "Expected {} to have extension .jar!".format(input_jar))
-        jar_name = "{}_{}".format(i, input_jar.basename)
+        name = "{}_{}".format(hash(str(target_label)) & 0xFFFFFFFF, input_jar.basename)
+        count = name_counts.get(name, 0)
+        name_counts[name] = count + 1
+        jar_name = "{}_{}".format(count, name)
         input_srcs[jar_name] = input_jar
         input_jars_to_owners[jar_name] = target_label
         output_jar = output_dir.project(jar_name)

@@ -51,6 +51,8 @@ pub(crate) enum ReplayError {
     InvalidSpeed(f64),
     #[error("Invalid seek {0}")]
     InvalidSeek(f64),
+    #[error("Seek timestamp `{0}` is out of range")]
+    SeekAbsoluteOutOfRange(String),
 }
 
 enum Seek {
@@ -126,7 +128,13 @@ impl BuckSubcommand for ReplayCommand {
             };
             Seek::Relative(seek)
         } else if let Some(seek_absolute) = seek_absolute {
-            Seek::Absolute(buck2_event_log::utils::timestamp::parse(seek_absolute.as_str())?.into())
+            let timestamp = buck2_event_log::utils::timestamp::parse(seek_absolute.as_str())?;
+            let Ok(time) = SystemTime::try_from(timestamp) else {
+                return ExitResult::from(buck2_error::Error::from(
+                    ReplayError::SeekAbsoluteOutOfRange(seek_absolute),
+                ));
+            };
+            Seek::Absolute(time)
         } else {
             Seek::Relative(Duration::from_secs(0))
         };

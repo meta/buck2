@@ -485,7 +485,7 @@ pub fn fmt_when_local(us: i64) -> String {
     let Ok(ts) = jiff::Timestamp::from_microsecond(us) else {
         return analyses::fmt_when_utc(us);
     };
-    let z = ts.to_zoned(jiff::tz::TimeZone::system());
+    let z = ts.to_zoned_datetime(jiff::tz::TimeZone::system());
     jiff::fmt::strtime::format("%a %Y-%m-%d %H:%M:%S %Z", &z)
         .unwrap_or_else(|_| analyses::fmt_when_utc(us))
 }

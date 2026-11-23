@@ -73,6 +73,7 @@ use buck2_common::convert::ProstDurationExt;
 use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::buck2_error;
+use buck2_error::conversion::from_any_with_tag;
 use buck2_event_log::read::EventLogPathBuf;
 use buck2_event_log::stream_value::StreamValue;
 use buck2_event_log::utils::Invocation;
@@ -2328,7 +2329,9 @@ impl ChromeTraceCommand {
         let datetime = buck2_event_log::utils::timestamp::parse(time)?;
         Ok(ChromeTraceInstant {
             name: name.to_owned(),
-            timestamp: datetime.into(),
+            timestamp: datetime
+                .try_into()
+                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))?,
             scope: ChromeTraceInstantScope::Global,
             args: None,
         })

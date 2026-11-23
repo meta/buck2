@@ -225,8 +225,11 @@ fn recent_label(l: &ingest::RecentLog) -> String {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .and_then(|d| jiff::Timestamp::from_second(d.as_secs() as i64).ok())
         .and_then(|ts| {
-            jiff::fmt::strtime::format("%Y-%m-%d %H:%M", &ts.to_zoned(jiff::tz::TimeZone::system()))
-                .ok()
+            jiff::fmt::strtime::format(
+                "%Y-%m-%d %H:%M",
+                &ts.to_zoned_datetime(jiff::tz::TimeZone::system()),
+            )
+            .ok()
         })
         .unwrap_or_else(|| "?".to_owned());
     let what = if l.command.is_empty() {

@@ -79,7 +79,7 @@ impl StarlarkProfilingManager {
             Some(Arc::new(FileWritingProfileEventListener::new(
                 output_path.join(format!(
                     "{}-{}",
-                    jiff::Zoned::now().strftime("%Y-%m-%d-%H-%M"),
+                    jiff::ZonedDateTime::now().strftime("%Y-%m-%d-%H-%M"),
                     events.trace_id()
                 )),
             )))

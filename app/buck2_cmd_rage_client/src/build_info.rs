@@ -38,7 +38,7 @@ struct LogInfo {
 
 pub(crate) struct BuildInfo {
     uuid: TraceId,
-    pub timestamp: jiff::Zoned,
+    pub timestamp: jiff::ZonedDateTime,
     pub command: String,
     working_dir: String,
     pub buck2_revision: String,
@@ -122,7 +122,7 @@ pub(crate) async fn get(log: &EventLogPathBuf) -> buck2_error::Result<BuildInfo>
 
     let t_start = jiff::Timestamp::try_from(timestamp_start)
         .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
-        .to_zoned(jiff::tz::TimeZone::system());
+        .to_zoned_datetime(jiff::tz::TimeZone::system());
 
     let output = BuildInfo {
         uuid: first_event.trace_id()?,

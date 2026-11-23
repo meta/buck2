@@ -98,7 +98,7 @@ fn is_agent_invocation() -> bool {
 fn now_display() -> impl Display {
     // Millisecond precision with a numeric offset, like the rfc3339 formatting this had
     // historically.
-    jiff::Zoned::now()
+    jiff::ZonedDateTime::now()
         .strftime("%Y-%m-%dT%H:%M:%S%.3f%:z")
         .to_string()
 }

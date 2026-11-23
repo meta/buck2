@@ -322,8 +322,8 @@ impl RageCommand {
         let daemon_uptime_s = build_info.get_field(|o| o.daemon_uptime_s);
         insert_if_some(&mut int_data, "daemon_uptime_s", daemon_uptime_s);
 
-        let timestamp =
-            build_info.get_field(|o| Some(SystemTime::from(o.timestamp.timestamp()).into()));
+        let timestamp = build_info
+            .get_field(|o| Some(SystemTime::try_from(o.timestamp.timestamp()).ok()?.into()));
         let command_duration = build_info.get_field(|o| {
             Some(prost_types::Duration {
                 seconds: o.command_duration?.as_secs() as i64,
@@ -667,7 +667,7 @@ fn print_log_summary(
 
         let timestamp = jiff::Timestamp::try_from(log_summary.timestamp)
             .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
-            .to_zoned(jiff::tz::TimeZone::system());
+            .to_zoned_datetime(jiff::tz::TimeZone::system());
         Ok(buck2_client_ctx::eprintln!(
             "{:<7} {}    {}",
             format!("[{}].", index),

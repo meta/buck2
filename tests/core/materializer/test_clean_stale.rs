@@ -155,7 +155,7 @@ async fn test_artifact_access_time(buck: &Buck) -> anyhow::Result<()> {
             .captures(entry)
             .unwrap_or_else(|| panic!("no timestamp in `{entry}`"));
         Ok(DateTime::strptime("%Y-%m-%dT%H:%M:%SZ", &captures[1])?
-            .to_zoned(TimeZone::UTC)?
+            .to_zoned_datetime(TimeZone::UTC)?
             .timestamp())
     }
 

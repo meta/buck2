@@ -46,6 +46,15 @@ prelude.constraint(
     visibility = ["PUBLIC"],
 )
 
+# Matches `-c android.app_modularity_class_lists_from_jars=true`, the exact string `true` only.
+prelude.config_setting(
+    name = "app_modularity_class_lists_from_jars",
+    values = {
+        "android.app_modularity_class_lists_from_jars": "true",
+    },
+    visibility = ["PUBLIC"],
+)
+
 prelude.filegroup(
     name = "files",
     srcs = glob(

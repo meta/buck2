@@ -12,7 +12,7 @@ load("@prelude//android:android_toolchain.bzl", "AndroidToolchainInfo")
 load("@prelude//android:build_only_native_code.bzl", "is_build_only_native_code")
 load("@prelude//decls:common.bzl", "buck")
 load("@prelude//decls:toolchains_common.bzl", "toolchains_common")
-load("@prelude//java:java_providers.bzl", "get_all_java_packaging_deps")
+load("@prelude//java:java_providers.bzl", "JavaPackagingDep", "get_all_java_packaging_deps")
 load(
     "@prelude//linking:shared_libraries.bzl",
     "SharedLibrary",  # @unused Used as type
@@ -87,12 +87,21 @@ def android_app_modularity_impl(ctx: AnalysisContext) -> list[Provider]:
             for packaging_dep in get_all_java_packaging_deps(ctx, all_deps)
             if packaging_dep.dex and packaging_dep.dex.dex.owner.raw_target() not in no_dx_target_labels
         ]
-        targets_to_jars_args = [cmd_args([str(packaging_dep.label.raw_target()), packaging_dep.jar], delimiter = " ") for packaging_dep in java_packaging_deps]
-        targets_to_jars = argfile(actions = ctx.actions, name = "targets_to_jars.txt", args = targets_to_jars_args)
-        cmd.add([
-            "--targets-to-jars",
-            targets_to_jars,
-        ])
+        if ctx.attrs._class_lists_from_jars:
+            class_list_batches = _class_list_batches(ctx.actions, ctx.attrs._android_toolchain[AndroidToolchainInfo], java_packaging_deps)
+            cmd.add([
+                "--targets-to-class-names-json",
+                argfile(actions = ctx.actions, name = "targets_to_class_names_json.txt", args = class_list_batches),
+            ])
+        else:
+            targets_to_jars_args = [
+                cmd_args([str(packaging_dep.label.raw_target()), packaging_dep.jar], delimiter = " ") for packaging_dep in java_packaging_deps
+            ]
+            targets_to_jars = argfile(actions = ctx.actions, name = "targets_to_jars.txt", args = targets_to_jars_args)
+            cmd.add([
+                "--targets-to-jars",
+                targets_to_jars,
+            ])
 
     if ctx.attrs.should_include_libraries:
         targets_to_so_names_args = [
@@ -125,6 +134,49 @@ def android_app_modularity_impl(ctx: AnalysisContext) -> list[Provider]:
     ctx.actions.run(cmd, category = "apk_module_graph")
 
     return [DefaultInfo(default_output = output)]
+
+# Batches read the class names files that javacd and kotlincd write next to library jars, and list the `.class` entries
+# of the other library jars. A hash of the target picks the batch, so adding or removing a library re-runs one batch; a
+# batch output changes only when its class lists change, and a body edit leaves the class names file unchanged.
+_CLASS_LIST_BATCHES = 128
+
+def _class_list_batches(actions: AnalysisActions, android_toolchain: AndroidToolchainInfo, packaging_deps: list[JavaPackagingDep]) -> list[Artifact]:
+    buckets = [[] for _ in range(_CLASS_LIST_BATCHES)]
+    for dep in packaging_deps:
+        buckets[hash(str(dep.label.raw_target())) % _CLASS_LIST_BATCHES].append(dep)
+    batches = []
+    for bucket, deps in enumerate(buckets):
+        if not deps:
+            continue
+        jars = {}
+        class_names = {}
+        for dep in sorted(deps, key = lambda dep: str(dep.label.raw_target())):
+            if dep.class_names:
+                class_names.setdefault(str(dep.label.raw_target()), []).append(dep.class_names)
+            else:
+                jars.setdefault(str(dep.label.raw_target()), []).append(dep.jar)
+        mapping_file = actions.write_json("class_list_batch_{}_input.json".format(bucket), jars, has_content_based_path = False)
+        class_names_mapping_file = actions.write_json("class_list_batch_{}_class_names.json".format(bucket), class_names, has_content_based_path = False)
+        output = actions.declare_output("class_list_batch_{}.json".format(bucket), has_content_based_path = True)
+        actions.run(
+            cmd_args(
+                android_toolchain.consolidate_class_names[RunInfo],
+                "--skip-duplicate-check",
+                "--input-jars",
+                "--input-mapping-file",
+                mapping_file,
+                "--class-names-mapping-file",
+                class_names_mapping_file,
+                "--output-file",
+                output.as_output(),
+                hidden = [dep.class_names or dep.jar for dep in deps],
+            ),
+            category = "app_modularity_class_lists",
+            identifier = "batch_{}".format(bucket),
+            allow_cache_upload = True,
+        )
+        batches.append(output)
+    return batches
 
 def get_target_to_module_mapping(ctx: AnalysisContext, deps_by_platform: dict[str, list[Dependency]]) -> Artifact | None:
     if not ctx.attrs.application_module_configs:
@@ -381,6 +433,14 @@ for how to resolve duplicate classes using this attribute.""",
             "should_include_libraries": attrs.bool(default = False, doc = ""),
             "_android_toolchain": toolchains_common.android(),
             "_build_only_native_code": attrs.default_only(attrs.bool(default = is_build_only_native_code())),
+            "_class_lists_from_jars": attrs.default_only(
+                attrs.bool(
+                    default = select({
+                        "DEFAULT": False,
+                        "prelude//android/constraints:app_modularity_class_lists_from_jars": True,
+                    })
+                ),
+            ),
         }
         | buck.licenses_arg()
         | buck.labels_arg()

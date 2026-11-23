@@ -13,8 +13,9 @@ use buck2_settings_derive::buck_settings_section;
 /// The daemon's materializer.
 #[buck_settings_section(name = "materializer", version = 0, scope = daemon)]
 pub struct Materializer {
-    /// Which outputs a build materializes: `all`, `deferred` (the default
-    /// when unset) or `deferred_skip_final_artifacts`.
+    /// Whether a build writes its final outputs to disk: `deferred` (the
+    /// default when unset) and `all` do, `deferred_skip_final_artifacts` does
+    /// not.
     // FIXME(jakobdegen): This configures the daemon although materialization
     // is chosen per build; it is here because it was in the startup config.
     #[setting(

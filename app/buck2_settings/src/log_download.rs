@@ -10,10 +10,10 @@
 
 use buck2_settings_derive::buck_settings_section;
 
-/// Where the daemon's event logs go.
+/// Where `buck2 log` commands fetch an event log that is not on this machine.
 #[buck_settings_section(name = "log_download", version = 0, scope = daemon)]
 pub struct LogDownload {
-    /// Whether event logs are kept in Manifold.
+    /// Whether such logs are fetched from Manifold, Meta's blob store.
     #[setting(
         buckconfig_fallback = "buck2.log_use_manifold",
         internal_default = true,
@@ -21,7 +21,8 @@ pub struct LogDownload {
         overridable_in(CommandLine, LocalSettings)
     )]
     log_use_manifold: Option<bool>,
-    /// Where event logs are uploaded when not kept in Manifold.
+    /// With `log_use_manifold` off, the base URL such logs are fetched from,
+    /// as `<log_url>/v1/logs/get/<trace id>`.
     #[setting(
         buckconfig_fallback = "buck2.log_url",
         overridable_in(CommandLine, LocalSettings)

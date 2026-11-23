@@ -10,24 +10,33 @@
 
 use buck2_settings_derive::buck_settings_section;
 
-/// Guards on operations an agent runs interactively. Each guard needs both
-/// the master switch and its own.
+/// Guards on operations an AI agent runs directly (commands given
+/// `--agent-context direct_call=true`). A guard stops the operation and
+/// explains the alternatives until the agent retries with an acknowledgement
+/// and a reason. Each guard needs both the master switch and its own.
 #[buck_settings_section(name = "agent_interactive", version = 1, scope = invocation)]
 pub struct AgentInteractive {
+    /// The master switch: no guard of this section runs without it.
     #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
     enabled: Option<bool>,
+    /// Guards `buck2 killall`, which discards every daemon's state and can
+    /// interrupt other work.
     #[setting(
         default = false,
         overridable_in(CommandLine, LocalSettings),
         accessor = killall_switch
     )]
     killall_enabled: Option<bool>,
+    /// Guards `buck2 clean`, which removes build state and outputs that later
+    /// commands would reuse.
     #[setting(
         default = false,
         overridable_in(CommandLine, LocalSettings),
         accessor = clean_switch
     )]
     clean_enabled: Option<bool>,
+    /// Guards starting a daemon for a new isolation directory, which costs
+    /// memory and starts without the existing daemon's state.
     #[setting(
         default = false,
         overridable_in(CommandLine, LocalSettings),

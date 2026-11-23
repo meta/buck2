@@ -18,12 +18,14 @@ use crate::help_doc::MarkdownHelpDocCommand;
 use crate::query::DocsAqueryCommand;
 use crate::query::DocsCqueryCommand;
 use crate::query::DocsUqueryCommand;
+use crate::settings::DocsSettingsCommand;
 use crate::starlark::DocsStarlarkCommand;
 use crate::starlark_builtins::StarlarkBuiltinsCommand;
 
 mod agent;
 mod help_doc;
 mod query;
+mod settings;
 mod starlark;
 mod starlark_builtins;
 
@@ -36,6 +38,7 @@ enum DocsKind {
     Uquery(DocsUqueryCommand),
     Cquery(DocsCqueryCommand),
     Aquery(DocsAqueryCommand),
+    Settings(DocsSettingsCommand),
     MarkdownHelpDoc(MarkdownHelpDocCommand),
 }
 
@@ -71,6 +74,7 @@ impl DocsCommand {
             DocsKind::Uquery(cmd) => cmd.exec(submatches, ctx),
             DocsKind::Cquery(cmd) => cmd.exec(submatches, ctx),
             DocsKind::Aquery(cmd) => cmd.exec(submatches, ctx),
+            DocsKind::Settings(cmd) => cmd.exec(submatches, ctx),
             DocsKind::MarkdownHelpDoc(cmd) => cmd.exec(top_level_cmd),
         }
     }

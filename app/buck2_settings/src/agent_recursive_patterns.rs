@@ -10,10 +10,15 @@
 
 use buck2_settings_derive::buck_settings_section;
 
-/// Require explicit intent for recursive build/test scopes in direct agent calls.
-/// Independent of the interactive master switch so the rollout has its own control group.
+/// Requires explicit intent for recursive build and test patterns in the
+/// commands an AI agent runs directly (those given `--agent-context
+/// direct_call=true`). This guard does not need `agent_interactive.enabled`.
+// Independent of the interactive master switch so the rollout has its own control group.
 #[buck_settings_section(name = "agent_recursive_patterns", version = 0, scope = invocation)]
 pub struct AgentRecursivePatterns {
+    /// Stops an AI agent's direct `buck2 build` or `buck2 test` of a
+    /// recursive pattern such as `//dir/...` until the agent acknowledges
+    /// that it needs the whole scope.
     #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
     enabled: Option<bool>,
 }

@@ -25,7 +25,7 @@ enum OutputFormatArg {
 }
 
 #[derive(Debug, clap::Parser)]
-struct OutputFormatOptions {
+pub(crate) struct OutputFormatOptions {
     /// How to format the documentation
     #[clap(
         long = "format",
@@ -37,7 +37,7 @@ struct OutputFormatOptions {
 }
 
 impl OutputFormatOptions {
-    fn emit_markdown(&self, markdown: &str) -> buck2_error::Result<()> {
+    pub(crate) fn emit_markdown(&self, markdown: &str) -> buck2_error::Result<()> {
         match self.format {
             OutputFormatArg::Markdown => {
                 buck2_client_ctx::println!("{}", markdown)?;

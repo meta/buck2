@@ -38,22 +38,27 @@ pub enum PageOutOnIdleIsolationDirScope {
     All,
 }
 
-/// Settings controlling hydration/paging behavior.
+/// Paging the values of the daemon's dependency graph (DICE) out to disk,
+/// and reading them back as commands need them.
 // A bump of the version must ship with a `[hydration.<version>]` rollout
 // stanza carrying every key of the previous one; this section is the one that
 // has lost its rollout to a bump before.
 #[buck_settings_section(name = "hydration", version = 4, scope = daemon)]
 pub struct Hydration {
     /// Whether DICE values can be paged out to on-disk storage. Implied by
-    /// [`Self::page_out_on_idle`].
+    /// `page_out_on_idle`.
     #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
     enable_paging: Option<bool>,
-    /// Materialize deferred Starlark fields on first access after page-in.
+    /// Whether values read back from disk (registered actions, analysis
+    /// results and, in Meta-internal builds, Starlark fields) are decoded
+    /// when they are first used, instead of all at once.
     #[setting(default = true, overridable_in(CommandLine, LocalSettings))]
     defer_field_reads: Option<bool>,
     /// Whether the daemon pages DICE out when it goes idle.
     #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
     page_out_on_idle: Option<bool>,
+    /// Which daemons page out when idle: `all`, or `non_default` to leave the
+    /// daemon of the default isolation directory alone.
     #[setting(
         default = PageOutOnIdleIsolationDirScope::All,
         overridable_in(CommandLine, LocalSettings)
@@ -62,19 +67,29 @@ pub struct Hydration {
     /// Idle page-out runs only when at least this many GiB of disk are free.
     #[setting(default = 100, overridable_in(CommandLine, LocalSettings))]
     page_out_min_free_disk_gb: Option<u64>,
-    /// Which values a page-out writes; see [`PageOutPolicy`].
+    /// Which values a page-out writes. `once_per_value` writes each value
+    /// once, so a value recomputed or read back from disk stays backed by a
+    /// row and can leave memory again without a write. `once_per_key` pages a
+    /// key out at most once: a value recomputed or read back afterwards stays
+    /// in memory.
     #[setting(
         default = PageOutPolicy::OncePerValue,
         overridable_in(CommandLine, LocalSettings)
     )]
     page_out_policy: Option<PageOutPolicy>,
-    /// When the values a page-out writes leave memory; see [`EvictionPolicy`].
+    /// When the values a page-out writes leave memory. `on_idle` evicts them
+    /// as they are written; `on_memory_pressure` keeps them in memory, backed
+    /// by their rows, until the daemon sees memory pressure. `on_idle_lru`
+    /// and `on_memory_pressure_lru` evict the values least recently used
+    /// first, and `on_idle_lru` leaves writes in memory for a later idle
+    /// reclaim.
     #[setting(
         default = EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
         overridable_in(CommandLine, LocalSettings)
     )]
     eviction_policy: Option<EvictionPolicy>,
-    /// The on-disk backend for pagable DICE storage.
+    /// The on-disk backend for pagable DICE storage: `sqlite`, `sled`, or
+    /// `noop`, which serializes values and discards them.
     #[setting(
         default = PagableStorageBackend::Sqlite,
         overridable_in(CommandLine, LocalSettings)

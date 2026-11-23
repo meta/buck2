@@ -14,7 +14,9 @@ use buck2_settings_derive::buck_settings_section;
 #[buck_settings_section(name = "digest", version = 0, scope = daemon)]
 pub struct Digest {
     /// The algorithms the daemon accepts, most preferred first, as a
-    /// comma-separated list of `BLAKE3-KEYED`, `BLAKE3`, `SHA1` and `SHA256`.
+    /// comma-separated list, without spaces, of `SHA256`, `SHA1`, `BLAKE3`
+    /// and, in Meta-internal builds only, `BLAKE3-KEYED`. Unset, it is
+    /// `SHA256` in open source builds and `SHA1` in Meta-internal builds.
     #[setting(
         buckconfig_fallback = "buck2.digest_algorithms",
         overridable_in(CommandLine, LocalSettings)

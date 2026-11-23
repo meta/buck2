@@ -11,8 +11,9 @@
 use buck2_settings_derive::buck_settings_section;
 
 /// The cgroups the daemon and its actions run in, and what happens under
-/// memory pressure. Every key keeps its buckconfig fallback: these are set in
-/// repositories, by CI, and in local configs.
+/// memory pressure. Linux only.
+// Every key keeps its buckconfig fallback: these are set in repositories, by
+// CI, and in local configs.
 #[buck_settings_section(name = "resource_control", version = 0, scope = daemon)]
 pub struct ResourceControl {
     /// `off`, `if_available` (when systemd can provide a cgroup) or
@@ -29,8 +30,9 @@ pub struct ResourceControl {
         overridable_in(CommandLine, LocalSettings)
     )]
     init: Option<String>,
-    /// Memory limit for everything buck2 manages, as bytes or a percentage of
-    /// the machine's memory.
+    /// Memory limit for everything buck2 manages, as bytes or as a percentage
+    /// (`50%`) of the limit of the cgroup buck2 starts in; a percentage sets
+    /// no limit when that cgroup has none.
     #[setting(
         buckconfig_fallback = "buck2_resource_control.memory_max",
         overridable_in(CommandLine, LocalSettings)
@@ -42,7 +44,7 @@ pub struct ResourceControl {
         overridable_in(CommandLine, LocalSettings)
     )]
     memory_high: Option<String>,
-    /// Memory any one action may allocate.
+    /// Has no effect at present.
     #[setting(
         buckconfig_fallback = "buck2_resource_control.memory_max_per_action",
         overridable_in(CommandLine, LocalSettings)
@@ -89,7 +91,8 @@ pub struct ResourceControl {
         overridable_in(CommandLine, LocalSettings)
     )]
     enable_suspension_if_min_algo_version: Option<u32>,
-    /// Selects an experimental variant of the suspension algorithm.
+    /// Selects an experimental variant of the suspension algorithm. There is
+    /// none at present, so it has no effect.
     #[setting(
         buckconfig_fallback = "buck2_resource_control.experimental_suspension_algo_variant",
         overridable_in(CommandLine, LocalSettings)

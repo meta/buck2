@@ -10,8 +10,9 @@ runs, where logs go, which checks are enforced. They are separate from
 [`.buckconfig`](buckconfig.md), which holds the values that rules and macros
 read.
 
-- Every setting is declared in Buck2 with its type and documentation. A key
-  Buck2 does not know, or a value of the wrong type, is an error.
+- Every setting is declared in Buck2 with its type and documentation, which the
+  [Buck settings reference](../buck_settings_reference) lists. A key Buck2 does
+  not know, or a value of the wrong type, is an error.
 - Settings are not readable from Starlark.
 - Each setting says where it may be overridden, so a repository can keep a
   setting out of reach of local files and command lines.
@@ -155,5 +156,6 @@ Layers, lowest priority first:
 ```
 
 - `--detailed` adds each setting's documentation, type, defaults and where it
-  may be overridden. This is the list of every section and setting.
+  may be overridden, as the
+  [Buck settings reference](../buck_settings_reference) lists them.
 - `--json` prints the same report as JSON.

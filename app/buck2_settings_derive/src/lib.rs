@@ -68,6 +68,10 @@ use syn::spanned::Spanned;
 /// - `accessor = <name>`: the accessor's name when the field's name is taken
 ///   by a hand-written one.
 ///
+/// The struct and every key need a doc comment, written for someone setting
+/// the key: `buck2 docs settings` publishes them as the settings reference,
+/// and `buck2 audit settings --detailed` prints them.
+///
 /// The struct gets the serde and `Allocative` derives, an accessor per key,
 /// and an implementation of `SettingsSection` whose metadata carries the doc
 /// comments, types, defaults, fallbacks, and policies. `version` selects the
@@ -315,6 +319,13 @@ fn expand(
         ));
     };
     let section_doc = docs(&item.attrs);
+    if section_doc.trim().is_empty() {
+        return Err(syn::Error::new(
+            item.ident.span(),
+            "a settings section needs a doc comment: it is the section's entry in the settings \
+            reference (`buck2 docs settings`) and in `buck2 audit settings --detailed`",
+        ));
+    }
     let struct_name = item.ident.clone();
     let scope = Ident::new(
         if scope == "daemon" {
@@ -349,6 +360,13 @@ fn expand(
             .cloned()
             .collect();
         let doc = docs(&field.attrs);
+        if doc.trim().is_empty() {
+            return Err(syn::Error::new(
+                name.span(),
+                "a setting needs a doc comment: it is the key's entry in the settings reference \
+                (`buck2 docs settings`) and in `buck2 audit settings --detailed`",
+            ));
+        }
         let name_str = name.to_string();
         let accessor = setting.accessor.clone().unwrap_or_else(|| name.clone());
         let sources = setting.overridable_in.expect("checked when parsing");
@@ -583,5 +601,52 @@ fn dice_projection(struct_name: &Ident, section_name: &str) -> proc_macro2::Toke
                 #key_name
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rejection(item: proc_macro2::TokenStream) -> String {
+        expand(
+            quote!(name = "probe", version = 0, scope = invocation),
+            item,
+        )
+        .expect_err("the declaration should be rejected")
+        .to_string()
+    }
+
+    #[test]
+    fn test_doc_comments_are_required() {
+        let section = rejection(quote! {
+            pub struct Probe {
+                /// A key.
+                #[setting(default = false, overridable_in())]
+                flag: Option<bool>,
+            }
+        });
+        assert!(
+            section.contains("a settings section needs a doc comment"),
+            "{section}"
+        );
+        let key = rejection(quote! {
+            /// A section.
+            pub struct Probe {
+                #[setting(default = false, overridable_in())]
+                flag: Option<bool>,
+            }
+        });
+        assert!(key.contains("a setting needs a doc comment"), "{key}");
+        let blank = rejection(quote! {
+            /// A section.
+            pub struct Probe {
+                ///
+                ///
+                #[setting(default = false, overridable_in())]
+                flag: Option<bool>,
+            }
+        });
+        assert!(blank.contains("a setting needs a doc comment"), "{blank}");
     }
 }

@@ -14,8 +14,9 @@ use buck2_settings_derive::buck_settings_section;
 #[buck_settings_section(name = "execution_platforms", version = 0, scope = dice)]
 pub struct ExecutionPlatforms {
     /// The target whose `ExecutionPlatformRegistrationInfo` lists the
-    /// execution platforms, as a label relative to the root cell. Unset means
-    /// no execution platforms are configured.
+    /// execution platforms, as a label relative to the root cell. Unset,
+    /// every target runs its actions on one implicit execution platform in
+    /// the target's own configuration.
     #[setting(
         buckconfig_fallback = "build.execution_platforms",
         overridable_in(CommandLine, LocalSettings)

@@ -54,8 +54,8 @@ pub struct Daemon {
         overridable_in(CommandLine, LocalSettings)
     )]
     buster: Option<String>,
-    /// Seconds without a command after which the daemon exits; the daemon's
-    /// own default when unset.
+    /// Seconds without a command after which the daemon exits; 4 days
+    /// (`345600`) when unset.
     #[setting(
         buckconfig_fallback = "buck2.daemon_idle_timeout_s",
         overridable_in(CommandLine, LocalSettings)
@@ -69,7 +69,9 @@ pub struct Daemon {
         overridable_in(CommandLine, LocalSettings)
     )]
     num_tokio_workers: Option<usize>,
-    /// `utility` when unset.
+    /// The macOS QoS class the daemon lowers itself to when it starts:
+    /// `utility`, `background`, or `skip_lowering` to stay at the system
+    /// default. `utility` when unset.
     // FIXME(jakobdegen): drop the fallback once fbsource sets this in `.bucksettings.toml`.
     #[setting(
         buckconfig_fallback = "buck2.macos_qos_class",

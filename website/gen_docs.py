@@ -46,13 +46,14 @@ Re-generate by running `fbcode/buck2/website/gen_docs.py`.
 
 def buck_command(args: argparse.Namespace) -> str:
     if args.buck2:
-        return args.buck2
+        buck = args.buck2
     elif args.prod:
-        return "buck2"
+        buck = "buck2"
     elif args.cargo:
-        return "cargo run --bin=buck2 --"
+        buck = "cargo run --bin=buck2 --"
     else:
-        return "./buck2.py"
+        buck = "./buck2.py"
+    return buck + " --client-metadata id=buck2_gen_docs"
 
 
 def generate_prelude_rules_docs(buck: str) -> None:
@@ -246,6 +247,22 @@ def generate_query_docs(buck: str) -> None:
         )
 
 
+def generate_settings_docs(buck: str) -> None:
+    cmd = buck + " docs settings --format=markdown"
+    print("Running " + cmd + " ...")
+    res = subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE)
+    write_file(
+        Path("docs") / "concepts" / "buck_settings_reference.generated.md",
+        "---\n"
+        + "id: buck_settings_reference\n"
+        + "title: Buck settings reference\n"
+        + "---\n\n"
+        + "Every Buck setting, by section. For the files settings are read from and how they "
+        + "override each other, see [Buck settings](buck_settings.md).\n\n"
+        + res.stdout.decode(),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -282,6 +299,7 @@ def main() -> None:
     generate_bxl_utils_api_docs(buck)
     generate_help_docs(buck)
     generate_query_docs(buck)
+    generate_settings_docs(buck)
 
 
 if __name__ == "__main__":

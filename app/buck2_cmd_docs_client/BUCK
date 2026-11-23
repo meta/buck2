@@ -15,6 +15,7 @@ rust_library(
         "//buck2/app/buck2_common:buck2_common",
         "//buck2/app/buck2_error:buck2_error",
         "//buck2/app/buck2_query:buck2_query",
+        "//buck2/app/buck2_settings:buck2_settings",
         "//buck2/gazebo/dupe:dupe",
     ],
 )

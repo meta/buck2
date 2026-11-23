@@ -91,6 +91,7 @@ export const sidebars: SidebarsConfig = {
         'concepts/isolation_dir',
         'concepts/buckconfig',
         'concepts/buck_settings',
+        'concepts/buck_settings_reference',
         'concepts/configurations',
         'concepts/modifiers',
         'concepts/transitions',

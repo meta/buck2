@@ -11,6 +11,8 @@ Commands:
   uquery             Print documentation for query/uquery
   cquery             Print documentation for cquery
   aquery             Print documentation for aquery
+  settings           Print every Buck setting (`.bucksettings.toml`, `--setting`), with its type,
+                     default and description
   markdown-help-doc  Print out the buck2 subcommand markdown docs
   help               Print this message or the help of the given subcommand(s)
 

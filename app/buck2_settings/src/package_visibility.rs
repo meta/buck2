@@ -47,7 +47,9 @@ pub enum PackageVisibilityDefaultIntersection {
 #[buck_settings_section(name = "package_visibility", version = 0, scope = daemon)]
 pub struct PackageVisibility {
     /// Whether ordinary `package(visibility=...)` declarations contribute to
-    /// the visibility intersection: `off`, `audit` or `enforce`.
+    /// the visibility intersection: `off` leaves them out, `audit` reports
+    /// the dependencies they would block without failing, and `enforce`
+    /// fails those dependencies.
     // Enforcement control: overrides must not be able to weaken it.
     #[setting(
         default = PackageVisibilityDefaultIntersection::Off,

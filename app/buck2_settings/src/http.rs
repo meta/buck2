@@ -13,22 +13,21 @@ use buck2_settings_derive::buck_settings_section;
 /// The HTTP client the daemon downloads with.
 #[buck_settings_section(name = "http", version = 0, scope = daemon)]
 pub struct Http {
-    /// Milliseconds to establish a connection; `0` for no limit, unset for
-    /// the client's default.
+    /// Milliseconds to establish a connection; `0` for no limit, `5000` when
+    /// unset.
     #[setting(
         buckconfig_fallback = "http.connect_timeout_ms",
         overridable_in(CommandLine, LocalSettings)
     )]
     connect_timeout_ms: Option<u64>,
-    /// Milliseconds to wait for response data; `0` for no limit, unset for
-    /// the client's default.
+    /// Milliseconds to wait for response data; `0` for no limit, `10000`
+    /// when unset.
     #[setting(
         buckconfig_fallback = "http.read_timeout_ms",
         overridable_in(CommandLine, LocalSettings)
     )]
     read_timeout_ms: Option<u64>,
-    /// Milliseconds to send request data; `0` for no limit, unset for the
-    /// client's default.
+    /// Milliseconds to send request data; `0` or unset for no limit.
     #[setting(
         buckconfig_fallback = "http.write_timeout_ms",
         overridable_in(CommandLine, LocalSettings)
@@ -41,7 +40,7 @@ pub struct Http {
         overridable_in(CommandLine, LocalSettings)
     )]
     http2: Option<bool>,
-    /// Redirects followed per request; unset for the client's default.
+    /// Redirects followed per request; `10` when unset.
     #[setting(
         buckconfig_fallback = "http.max_redirects",
         overridable_in(CommandLine, LocalSettings)

@@ -28,6 +28,7 @@ pub mod buckconfig;
 mod daemon;
 pub mod dice;
 mod digest;
+pub mod docs;
 mod event_forwarding;
 mod event_log;
 mod execution_platforms;

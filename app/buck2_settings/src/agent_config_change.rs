@@ -10,13 +10,15 @@
 
 use buck2_settings_derive::buck_settings_section;
 
-/// Block direct agent calls whose buckconfig would invalidate the daemon's state.
-///
-/// This is its own section rather than a key in `agent_interactive` so it can roll out without
-/// bumping that section's version: rollouts are selected by exact version, so a bump would stop
-/// the existing rollouts of the other guards from applying. The guard also ignores the
-/// `agent_interactive.enabled` master switch, so this section alone controls it and its GK can
-/// be A/B tested on its own.
+/// Blocks a command an AI agent runs directly (one given `--agent-context
+/// direct_call=true`) when it drops `--config` or `--config-file` arguments
+/// that the daemon's configuration uses, which would invalidate the daemon's
+/// state. This guard does not need `agent_interactive.enabled`.
+// This is its own section rather than a key in `agent_interactive` so it can roll out without
+// bumping that section's version: rollouts are selected by exact version, so a bump would stop
+// the existing rollouts of the other guards from applying. The guard also ignores the
+// `agent_interactive.enabled` master switch, so this section alone controls it and its GK can
+// be A/B tested on its own.
 #[buck_settings_section(name = "agent_config_change", version = 0, scope = invocation)]
 pub struct AgentConfigChange {
     /// The guard's only switch.

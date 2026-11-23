@@ -10,10 +10,15 @@
 
 use buck2_settings_derive::buck_settings_section;
 
-/// Enable rule-specific check/test advice for direct builds without artifact requests.
-/// A separate section preserves the exact-version rollouts of `agent_interactive`.
+/// Rule-specific check and test advice for the builds an AI agent runs
+/// directly (commands given `--agent-context direct_call=true`) that request
+/// no artifacts.
+// A separate section preserves the exact-version rollouts of `agent_interactive`.
 #[buck_settings_section(name = "agent_build", version = 0, scope = invocation)]
 pub struct AgentBuild {
+    /// Stops an AI agent's direct `buck2 build` that asks for no outputs when
+    /// the rule of a target has a check or test to recommend instead, until
+    /// the agent acknowledges the advice.
     #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
     enabled: Option<bool>,
 }

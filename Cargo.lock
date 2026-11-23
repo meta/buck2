@@ -1576,6 +1576,7 @@ dependencies = [
  "buck2_common",
  "buck2_error",
  "buck2_query",
+ "buck2_settings",
  "clap",
  "dupe",
  "regex",

@@ -14,6 +14,7 @@ use buck2_settings_derive::buck_settings_section;
 #[buck_settings_section(name = "health_check", version = 0, scope = invocation)]
 pub struct HealthCheck {
     /// Whether the client runs health checks and shows what they find.
+    /// Meta-internal builds only: open source builds have no health checks.
     // FIXME(jakobdegen): drop the fallback once fbsource sets this in `.bucksettings.toml`.
     #[setting(
         buckconfig_fallback = "buck2_health_check.enable_health_checks",

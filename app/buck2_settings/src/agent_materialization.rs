@@ -10,10 +10,12 @@
 
 use buck2_settings_derive::buck_settings_section;
 
-/// Skip final build output materialization for direct agent calls that do not
-/// request outputs.
+/// Skips materializing the final outputs of builds an AI agent runs directly
+/// (commands given `--agent-context direct_call=true`) without requesting
+/// outputs.
 #[buck_settings_section(name = "agent_materialization", version = 0, scope = invocation)]
 pub struct AgentMaterialization {
+    /// Whether such a build leaves its final outputs unmaterialized.
     #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
     enabled: Option<bool>,
 }

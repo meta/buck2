@@ -68,6 +68,15 @@ public class APKModuleGraphExecutableMain {
   @Nullable
   private String targetsToJarsPath = null;
 
+  /**
+   * File listing JSON files that map targets to the classes of their library jars ({@code
+   * consolidate_class_names --input-jars} batches). Their classes are added to those of the {@code
+   * --targets-to-jars} jars; either option may also be given alone.
+   */
+  @Option(name = "--targets-to-class-names-json")
+  @Nullable
+  private String targetsToClassNamesJsonPath = null;
+
   @Option(name = "--targets-to-so-names")
   @Nullable
   private String targetsToSoNamesPath = null;
@@ -162,28 +171,40 @@ public class APKModuleGraphExecutableMain {
       return;
     }
 
-    Optional<ImmutableMultimap<APKModule, String>> apkModuleToClassesMap = Optional.empty();
+    ImmutableMultimap.Builder<APKModule, String> classesBuilder = ImmutableSetMultimap.builder();
     if (targetsToJarsPath != null) {
       ImmutableMultimap.Builder<APKModule, Path> builder = ImmutableSetMultimap.builder();
       for (String line : Files.readAllLines(Paths.get(targetsToJarsPath))) {
         String[] parts = line.split(" ");
         Preconditions.checkState(parts.length == 2);
-        ExternalTargetGraph.ExternalBuildTarget target = targetGraph.getBuildTarget(parts[0]);
-        APKModule module =
-            target != null
-                ? apkModuleGraph.findModuleForTarget(target)
-                : apkModuleGraph.getRootAPKModule();
-        builder.put(module, Paths.get(parts[1]));
+        builder.put(findModule(apkModuleGraph, targetGraph, parts[0]), Paths.get(parts[1]));
       }
 
-      apkModuleToClassesMap =
-          Optional.of(
-              APKModuleGraph.getAPKModuleToClassesMap(
-                  builder.build(),
-                  Function.identity(),
-                  AbsPath.of(Paths.get(".").normalize().toAbsolutePath()),
-                  ImmutableSet.of()));
+      classesBuilder.putAll(
+          APKModuleGraph.getAPKModuleToClassesMap(
+              builder.build(),
+              Function.identity(),
+              AbsPath.of(Paths.get(".").normalize().toAbsolutePath()),
+              ImmutableSet.of()));
     }
+    if (targetsToClassNamesJsonPath != null) {
+      for (String jsonPath : Files.readAllLines(Paths.get(targetsToClassNamesJsonPath))) {
+        Map<String, List<String>> targetToClasses =
+            Objects.requireNonNull(
+                ObjectMappers.READER.readValue(
+                    ObjectMappers.createParser(Paths.get(jsonPath)),
+                    new TypeReference<Map<String, List<String>>>() {}),
+                "Expected non-null class names from " + jsonPath);
+        for (Map.Entry<String, List<String>> entry : targetToClasses.entrySet()) {
+          classesBuilder.putAll(
+              findModule(apkModuleGraph, targetGraph, entry.getKey()), entry.getValue());
+        }
+      }
+    }
+    Optional<ImmutableMultimap<APKModule, String>> apkModuleToClassesMap =
+        targetsToJarsPath == null && targetsToClassNamesJsonPath == null
+            ? Optional.empty()
+            : Optional.of(classesBuilder.build());
 
     ImmutableMultimap.Builder<APKModule, String> builder = ImmutableSetMultimap.builder();
     if (targetsToSoNamesPath != null) {
@@ -237,6 +258,16 @@ public class APKModuleGraphExecutableMain {
                 : Optional.of(apkModuleToNativeLibraryMap));
 
     Files.write(Paths.get(outputPath), metadataLines);
+  }
+
+  private static APKModule findModule(
+      APKModuleGraph<ExternalTargetGraph.ExternalBuildTarget> apkModuleGraph,
+      ExternalTargetGraph targetGraph,
+      String targetName) {
+    ExternalTargetGraph.ExternalBuildTarget target = targetGraph.getBuildTarget(targetName);
+    return target != null
+        ? apkModuleGraph.findModuleForTarget(target)
+        : apkModuleGraph.getRootAPKModule();
   }
 
   private ExternalTargetGraph buildTargetGraph(

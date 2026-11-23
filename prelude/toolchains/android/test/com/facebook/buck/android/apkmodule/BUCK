@@ -9,6 +9,7 @@ standard_java_test(
     name = "apkmodule",
     deps = [
         "prelude//toolchains/android/src/com/facebook/buck/android/apkmodule:apkmodule",
+        "prelude//toolchains/android/src/com/facebook/buck/android/apkmodule:apkmodule-binary-lib",
         "prelude//toolchains/android/src/com/facebook/buck/core/util/graph:graph",
         "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:junit",

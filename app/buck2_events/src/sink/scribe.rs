@@ -190,7 +190,10 @@ impl RemoteEventSink {
         }
     }
 
-    fn should_send_event(&self, data: &buck2_data::buck_event::Data) -> bool {
+    fn should_send_event(
+        schedule_type: &SandcastleScheduleType,
+        data: &buck2_data::buck_event::Data,
+    ) -> bool {
         use buck2_data::buck_event::Data;
 
         match data {
@@ -217,12 +220,12 @@ impl RemoteEventSink {
                                 Ok(ActionExecutionKind::Deferred) => false,
                                 Ok(ActionExecutionKind::NotSet) => false,
                                 _ => !matches!(
-                                    (action_has_cache_hit(a), self.schedule_type.is_diff()),
+                                    (action_has_cache_hit(a), schedule_type.is_diff()),
                                     (true, true)
                                 ),
                             }
                     }
-                    Some(Data::Analysis(..)) => !self.schedule_type.is_diff(),
+                    Some(Data::Analysis(..)) => !schedule_type.is_diff(),
                     Some(Data::Load(..)) => true,
                     Some(Data::CacheUpload(..)) => true,
                     Some(Data::DepFileUpload(..)) => true,
@@ -248,6 +251,7 @@ impl RemoteEventSink {
                     Some(Data::DetailedAggregatedMetrics(..)) => true,
                     Some(Data::ResourceControlEvent(..)) => true,
                     Some(Data::ActionDigestTrace(..)) => true,
+                    Some(Data::BuckSettingsObserved(..)) => true,
                     None => false,
                     _ => false,
                 }
@@ -270,7 +274,7 @@ impl EventSink for RemoteEventSink {
     fn send(&self, event: Event) {
         match event {
             Event::Buck(event) => {
-                if self.should_send_event(event.data()) {
+                if Self::should_send_event(&self.schedule_type, event.data()) {
                     self.offer(event);
                 }
             }
@@ -282,7 +286,7 @@ impl EventSink for RemoteEventSink {
     async fn send_now(&self, event: Event) {
         match event {
             Event::Buck(event) => {
-                if self.should_send_event(event.data()) {
+                if Self::should_send_event(&self.schedule_type, event.data()) {
                     let _ignored = RemoteEventSink::send_now(self, event).await;
                 }
             }
@@ -475,6 +479,27 @@ mod tests {
             }),
         );
         assert_eq!(message_key(&other), trace_key);
+    }
+
+    #[test]
+    fn test_observed_settings_are_sent() {
+        // Ingress fills the `buck2_settings` table from these events.
+        let observed = buck2_data::buck_event::Data::Instant(InstantEvent {
+            data: Some(buck2_data::instant_event::Data::BuckSettingsObserved(
+                buck2_data::BuckSettingsObserved {
+                    hash: "buck2settings-0".to_owned(),
+                    settings_json: "{}".to_owned(),
+                },
+            )),
+        });
+        assert!(RemoteEventSink::should_send_event(
+            &SandcastleScheduleType::testing_empty(),
+            &observed,
+        ));
+        assert!(RemoteEventSink::should_send_event(
+            &SandcastleScheduleType::testing_new("diff"),
+            &observed,
+        ));
     }
 
     #[test]

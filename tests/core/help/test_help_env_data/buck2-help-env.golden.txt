@@ -12,6 +12,7 @@ BUCK2_DISABLE_FILE_ATTR          bool                  false
 BUCK2_DISABLE_MACOS_QOS          bool                  false
 BUCK2_EDEN_SEMAPHORE             usize                 DEFAULT_MAX_OUTSTANDING_REQUESTS
 BUCK2_ENABLE_EDEN_THRIFT_READ    bool                  false
+BUCK2_EVENT_FORWARDING_KEY       String
 BUCK2_HARD_ERROR                 String
 BUCK2_INSTALLER_SEND_TIMEOUT_S   u64
 BUCK2_INSTALLER_TIMEOUT_S        u64

@@ -80,6 +80,7 @@ pub struct ClientCommandContext<'a> {
     pub(crate) client_metadata: Vec<ClientMetadata>,
     pub(crate) isolation: FileNameBuf,
     agent_invocation_info: AgentInvocationInfo,
+    event_forwarding_keys: Vec<String>,
 }
 
 /// A client-side guard's verdict on one operation, together with what to record about it.
@@ -134,6 +135,7 @@ impl<'a> ClientCommandContext<'a> {
         client_metadata: Vec<ClientMetadata>,
         isolation: FileNameBuf,
         agent_invocation_info: AgentInvocationInfo,
+        event_forwarding_keys: Vec<String>,
     ) -> Self {
         ClientCommandContext {
             init,
@@ -151,6 +153,7 @@ impl<'a> ClientCommandContext<'a> {
             client_metadata,
             isolation,
             agent_invocation_info,
+            event_forwarding_keys,
         }
     }
 
@@ -444,6 +447,7 @@ impl<'a> ClientCommandContext<'a> {
             invocation_settings: None,
             dice_settings: None,
             coding_agent_metadata: coding_agent_metadata_env()?.map(str::to_owned),
+            event_forwarding_keys: self.event_forwarding_keys.clone(),
         })
     }
 

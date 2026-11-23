@@ -26,6 +26,7 @@ pub mod common;
 pub mod console_interaction_stream;
 pub mod daemon;
 pub mod daemon_constraints;
+pub mod event_forwarding_key;
 pub mod event_log_options;
 pub mod events_ctx;
 pub mod exit_result;

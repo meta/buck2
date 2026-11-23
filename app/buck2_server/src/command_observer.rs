@@ -57,6 +57,8 @@ pub struct StartedCommand<'a> {
     /// The client's working directory.
     pub working_dir: &'a str,
     pub project_root: &'a ProjectRoot,
+    /// The opaque event forwarding keys the client sent with the command.
+    pub event_forwarding_keys: &'a [String],
     pub start_time: SystemTime,
 }
 
@@ -80,6 +82,7 @@ impl ObservedCommand {
             sanitized_argv: &client_ctx.sanitized_argv,
             working_dir: &client_ctx.working_dir,
             project_root: paths.project_root(),
+            event_forwarding_keys: &client_ctx.event_forwarding_keys,
             start_time: SystemTime::now(),
         })))
     }

@@ -47,6 +47,8 @@ use buck2_client_ctx::client_metadata::add_legacy_client_id_if_missing;
 use buck2_client_ctx::client_metadata::legacy_client_id_from_config_flags;
 use buck2_client_ctx::client_metadata::parse_client_metadata;
 use buck2_client_ctx::common::BuckArgMatches;
+use buck2_client_ctx::event_forwarding_key::event_forwarding_keys;
+use buck2_client_ctx::event_forwarding_key::parse_event_forwarding_key;
 use buck2_client_ctx::exit_result::ClientIoError;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::immediate_config::ImmediateConfigContext;
@@ -150,6 +152,17 @@ struct BeforeSubcommandOptions {
     /// datasets.
     #[clap(long, global = true, value_parser = buck_error_clap_parser(parse_client_metadata))]
     client_metadata: Vec<ClientMetadata>,
+
+    /// An opaque key for this command, which the daemon gives to the event forwarding helper that
+    /// Buck settings name, after the keys in `BUCK2_EVENT_FORWARDING_KEY`. Repeat the flag to give
+    /// several keys. A key cannot contain a comma.
+    #[clap(
+        long,
+        global = true,
+        value_name = "KEY",
+        value_parser = buck_error_clap_parser(parse_event_forwarding_key)
+    )]
+    event_forwarding_key: Vec<String>,
 
     /// Override a Buck setting using `section.key=value`.
     #[clap(
@@ -656,6 +669,7 @@ impl CommandKind {
                     .flat_map(|entries| entries.0)
                     .collect(),
             )),
+            event_forwarding_keys(&common_opts.event_forwarding_key)?,
         );
         if let Some(recorder) = events_ctx.recorder.as_mut() {
             recorder.update_for_client_ctx(&command_ctx, self.command_name());

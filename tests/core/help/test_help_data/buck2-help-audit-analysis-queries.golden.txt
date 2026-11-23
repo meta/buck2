@@ -233,6 +233,11 @@ Universal Options:
           form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
           datasets
 
+      --event-forwarding-key <KEY>
+          An opaque key for this command, which the daemon gives to the event forwarding helper that
+          Buck settings name, after the keys in `BUCK2_EVENT_FORWARDING_KEY`. Repeat the flag to
+          give several keys. A key cannot contain a comma
+
       --setting <SECTION.KEY=VALUE>
           Override a Buck setting using `section.key=value`
 

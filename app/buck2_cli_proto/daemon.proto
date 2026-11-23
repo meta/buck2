@@ -232,6 +232,11 @@ message ClientContext {
 
   // The client's `CODING_AGENT_METADATA`, inherited by its local tests.
   optional string coding_agent_metadata = 31;
+
+  // The command's opaque event forwarding keys, from
+  // `BUCK2_EVENT_FORWARDING_KEY` and `--event-forwarding-key`. The daemon
+  // gives them to the event forwarding helper that Buck settings name.
+  repeated string event_forwarding_keys = 32;
 }
 
 message TargetsRequest {

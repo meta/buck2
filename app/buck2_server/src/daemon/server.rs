@@ -1433,7 +1433,7 @@ impl<T: Stream + Send> Stream for SyncStream<T> {
 fn pump_events(
     mut events: ChannelEventSource,
     mut state: ActiveCommandStateWriter,
-    observed_command: ObservedCommand,
+    mut observed_command: ObservedCommand,
     output_send: tokio::sync::mpsc::UnboundedSender<
         Result<buck2_cli_proto::CommandProgress, tonic::Status>,
     >,
@@ -1461,6 +1461,7 @@ fn pump_events(
             }
             Event::Buck(buck_event) => {
                 state.peek_event(&buck_event);
+                observed_command.event(&buck_event);
 
                 let _ignore = output_send.send(Ok(CommandProgress {
                     progress: Some(command_progress::Progress::Event(buck_event.into())),

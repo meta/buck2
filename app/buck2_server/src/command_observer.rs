@@ -25,6 +25,7 @@ use buck2_cli_proto::ClientContext;
 use buck2_cli_proto::CommandResult;
 use buck2_common::invocation_paths::TenantPaths;
 use buck2_core::fs::project::ProjectRoot;
+use buck2_events::BuckEvent;
 use buck2_settings::EventForwarding;
 use buck2_util::late_binding::LateBinding;
 use buck2_wrapper_common::invocation_id::TraceId;
@@ -45,6 +46,9 @@ pub trait CommandLifecycleObserver: Send + Sync {
 
 /// Watches one command after it started.
 pub trait CommandObserver: Send {
+    /// Called with each of the command's events, in the order the client gets them.
+    fn event(&mut self, event: &BuckEvent);
+
     /// Called with the command's result, the last thing the daemon sends its client. A command
     /// that stops without a result, because its client went away, drops its observer instead.
     fn command_ended(self: Box<Self>, result: &CommandResult);
@@ -90,6 +94,13 @@ impl ObservedCommand {
             event_forwarding_settings,
             start_time: SystemTime::now(),
         })))
+    }
+
+    /// Gives the observer one of the command's events.
+    pub(crate) fn event(&mut self, event: &BuckEvent) {
+        if let Some(observer) = &mut self.0 {
+            observer.event(event);
+        }
     }
 
     /// Gives the observer the command's result, which the daemon sends its client.

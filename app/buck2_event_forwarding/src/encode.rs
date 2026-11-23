@@ -15,6 +15,7 @@ use async_compression::tokio::write::ZstdEncoder;
 use buck2_cli_proto::CommandResult;
 use buck2_event_log::utils::Invocation;
 use buck2_event_log::write::StreamValueForWrite;
+use buck2_events::BuckEvent;
 use buck2_server::command_observer::StartedCommand;
 use dupe::Dupe;
 use tokio::io::AsyncWrite;
@@ -38,6 +39,10 @@ pub(crate) fn header(command: &StartedCommand<'_>) -> Vec<u8> {
         .encode_for_protobuf_log(&mut buf)
         .expect("encoding into a `Vec` should not fail");
     buf
+}
+
+pub(crate) fn event(event: &BuckEvent) -> Vec<u8> {
+    encode(StreamValueForWrite::Event(event.event()))
 }
 
 pub(crate) fn result(result: &CommandResult) -> Vec<u8> {
@@ -107,11 +112,30 @@ mod tests {
         }
     }
 
+    fn console_message(trace_id: &TraceId, message: &str) -> BuckEvent {
+        BuckEvent::new(
+            start_time(),
+            trace_id.dupe(),
+            None,
+            None,
+            buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
+                data: Some(
+                    buck2_data::ConsoleMessage {
+                        message: message.to_owned(),
+                    }
+                    .into(),
+                ),
+            }),
+        )
+    }
+
     #[tokio::test]
     async fn the_messages_make_an_event_log_that_buck2_reads() {
         let trace_id = TraceId::new();
+        let message = console_message(&trace_id, "hello");
         let mut log = compressed(Vec::new());
         log.write_all(&header_of(&trace_id)).await.unwrap();
+        log.write_all(&event(&message)).await.unwrap();
         log.write_all(&result(&build_result())).await.unwrap();
         log.shutdown().await.unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -146,6 +170,12 @@ mod tests {
                 Some(start_time()),
             )
         );
-        assert_eq!(values, vec![Progress::Result(Box::new(build_result())),]);
+        assert_eq!(
+            values,
+            vec![
+                Progress::Event(Box::new(message.event().clone())),
+                Progress::Result(Box::new(build_result())),
+            ]
+        );
     }
 }

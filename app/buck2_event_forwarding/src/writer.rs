@@ -14,9 +14,12 @@
 use std::collections::VecDeque;
 use std::io;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use buck2_cli_proto::CommandResult;
+use buck2_events::BuckEvent;
 use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_server::command_observer::CommandLifecycleObserver;
 use buck2_server::command_observer::CommandObserver;
@@ -26,6 +29,8 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
@@ -38,6 +43,11 @@ use crate::helper::LaunchHelper;
 const WRITE_AFTER_END: Duration = Duration::from_secs(60);
 /// How long a helper may keep running after its input closed before it is killed.
 const RUN_AFTER_CLOSE: Duration = Duration::from_secs(300);
+/// The most bytes of a command's events that wait for its helper to read them. A helper that
+/// falls further behind misses the command's later events, but still gets its result.
+const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
+/// The most bytes of events written together, in one batch.
+const MAX_BATCH_BYTES: usize = 1024 * 1024;
 
 /// Starts the helper that the daemon's `event_forwarding` settings name for each command with
 /// event forwarding keys, and writes it the command's event log.
@@ -71,9 +81,22 @@ impl CommandLifecycleObserver for EventForwarder {
             keys: command.event_forwarding_keys.join(","),
             header: encode::header(command),
         };
-        let (result_tx, result_rx) = oneshot::channel();
-        runtime.spawn(forward(self.0.dupe(), run, result_rx));
-        Some(Box::new(Forwarding { result: result_tx }))
+        let (items_tx, items_rx) = mpsc::unbounded_channel();
+        let (ended_tx, ended_rx) = oneshot::channel();
+        let queued = Arc::new(AtomicUsize::new(0));
+        runtime.spawn(forward(
+            self.0.dupe(),
+            run,
+            items_rx,
+            queued.dupe(),
+            ended_rx,
+        ));
+        Some(Box::new(Forwarding {
+            items: items_tx,
+            queued,
+            forwarding_events: true,
+            _ended: ended_tx,
+        }))
     }
 }
 
@@ -87,22 +110,57 @@ struct Run {
     header: Vec<u8>,
 }
 
-/// Hands a keyed command's result to its forwarder. Dropping it without a result tells the
-/// forwarder that the command stopped without one.
+/// What a keyed command hands its forwarder, in order: its events, then its result.
+enum Item {
+    Event(Vec<u8>),
+    Result(Vec<u8>),
+}
+
+/// Hands a keyed command's events and result to its forwarder. Dropping it, as the command ends
+/// or stops without a result, tells the forwarder that the command is over.
 struct Forwarding {
-    result: oneshot::Sender<Vec<u8>>,
+    items: mpsc::UnboundedSender<Item>,
+    /// The bytes of the events that wait for the forwarder to take them.
+    queued: Arc<AtomicUsize>,
+    /// Whether events still go to the forwarder: not once the helper fell `MAX_QUEUED_BYTES`
+    /// behind, nor once the forwarder stopped.
+    forwarding_events: bool,
+    _ended: oneshot::Sender<()>,
 }
 
 impl CommandObserver for Forwarding {
+    fn event(&mut self, event: &BuckEvent) {
+        if !self.forwarding_events {
+            return;
+        }
+        let event = encode::event(event);
+        if self.queued.load(Ordering::Relaxed) + event.len() > MAX_QUEUED_BYTES {
+            tracing::debug!(
+                "The event forwarding helper fell behind, so it misses the command's later events"
+            );
+            self.forwarding_events = false;
+            return;
+        }
+        self.queued.fetch_add(event.len(), Ordering::Relaxed);
+        // Fails only when the forwarder already stopped.
+        self.forwarding_events = self.items.send(Item::Event(event)).is_ok();
+    }
+
     fn command_ended(self: Box<Self>, result: &CommandResult) {
         // Fails only when the forwarder already stopped, and then nobody needs the result.
-        let _ignored = self.result.send(encode::result(result));
+        let _ignored = self.items.send(Item::Result(encode::result(result)));
     }
 }
 
 /// Starts a run's helper, writes it the command's event log, closes its input, and ends it if it
 /// does not exit by itself in time.
-async fn forward(shared: Arc<Shared>, run: Run, mut result: oneshot::Receiver<Vec<u8>>) {
+async fn forward(
+    shared: Arc<Shared>,
+    run: Run,
+    mut items: mpsc::UnboundedReceiver<Item>,
+    queued: Arc<AtomicUsize>,
+    mut ended: oneshot::Receiver<()>,
+) {
     let Some(Helper { input, mut process }) = launch(&shared, &run).await else {
         return;
     };
@@ -110,10 +168,11 @@ async fn forward(shared: Arc<Shared>, run: Run, mut result: oneshot::Receiver<Ve
     input.give(run.header);
     input.start();
 
+    // Whether the forwarder took every item the helper is to get.
+    let mut taken_all = false;
     let mut give_up_at = None;
     let exited = loop {
-        if give_up_at.is_some() && !input.is_writing() {
-            // The result, if the command has one, is written, and the stream ended.
+        if taken_all && !input.is_writing() {
             break false;
         }
         tokio::select! {
@@ -125,24 +184,67 @@ async fn forward(shared: Arc<Shared>, run: Run, mut result: oneshot::Receiver<Ve
                     break false;
                 }
             }
-            ended = &mut result, if give_up_at.is_none() => {
-                // An error means the command stopped without a result.
-                if let Ok(result) = ended {
-                    input.give(result);
-                }
-                input.finish();
+            // Items are taken only while nothing is being written, so that the events still
+            // waiting count against `MAX_QUEUED_BYTES`.
+            item = items.recv(), if !taken_all && !input.is_writing() => {
+                taken_all = take(item, &mut items, &mut input, &queued);
+            }
+            _ = &mut ended, if give_up_at.is_none() => {
                 give_up_at = Some(Instant::now() + WRITE_AFTER_END);
             }
             () = sleep_until(give_up_at) => break false,
         }
     };
 
+    // Stops the command's later events from being encoded.
+    drop(items);
     drop(input);
     if !exited {
         let _still_running = tokio::time::timeout(RUN_AFTER_CLOSE, process.exited()).await;
     }
     // Kills the helper if it still runs, and ends whatever it left behind.
     process.kill().await;
+}
+
+/// Queues `first` and the items ready after it, up to `MAX_BATCH_BYTES` of events, then starts
+/// writing them. Returns whether the forwarder took every item the helper is to get.
+fn take(
+    first: Option<Item>,
+    items: &mut mpsc::UnboundedReceiver<Item>,
+    input: &mut Input,
+    queued: &AtomicUsize,
+) -> bool {
+    let mut item = first;
+    let mut batch_bytes = 0;
+    loop {
+        match item {
+            Some(Item::Event(event)) => {
+                queued.fetch_sub(event.len(), Ordering::Relaxed);
+                batch_bytes += event.len();
+                input.give(event);
+            }
+            Some(Item::Result(result)) => {
+                input.give(result);
+                input.finish();
+                return true;
+            }
+            // The command stopped without a result.
+            None => {
+                input.finish();
+                return true;
+            }
+        }
+        if batch_bytes >= MAX_BATCH_BYTES {
+            break;
+        }
+        item = match items.try_recv() {
+            Ok(next) => Some(next),
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => None,
+        };
+    }
+    input.start();
+    false
 }
 
 /// Starts a run's helper on a thread of its own, as starting a process can block, never on a
@@ -280,8 +382,6 @@ mod tests {
     use std::pin::Pin;
     use std::sync::Mutex;
     use std::sync::atomic::AtomicBool;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering;
     use std::task::Context;
     use std::task::Poll;
     use std::time::SystemTime;
@@ -299,7 +399,6 @@ mod tests {
     use tokio::io::AsyncReadExt;
     use tokio::io::BufReader;
     use tokio::io::DuplexStream;
-    use tokio::sync::mpsc;
     use tokio::sync::watch;
 
     use super::*;
@@ -634,6 +733,22 @@ mod tests {
         }
     }
 
+    fn console_message(message: String) -> BuckEvent {
+        BuckEvent::new(
+            start_time(),
+            TraceId::new(),
+            None,
+            None,
+            buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
+                data: Some(buck2_data::ConsoleMessage { message }.into()),
+            }),
+        )
+    }
+
+    fn event_item(event: &BuckEvent) -> Progress {
+        Progress::Event(Box::new(event.event().clone()))
+    }
+
     #[tokio::test(start_paused = true)]
     async fn an_unkeyed_command_starts_no_helper() {
         let mut harness = Harness::new();
@@ -728,13 +843,57 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn every_event_reaches_the_helper_in_order_before_the_result() {
+        let mut harness = Harness::new();
+        let mut observer = TestCommand::new().start(&harness).unwrap();
+        let events: Vec<_> = (0..100)
+            .map(|i| console_message(format!("event {i}")))
+            .collect();
+        for event in &events {
+            observer.event(event);
+        }
+        observer.command_ended(&build_result());
+
+        let mut helper = harness.helper().await;
+        helper.header().await;
+        let mut expected: Vec<_> = events.iter().map(event_item).collect();
+        expected.push(Progress::Result(Box::new(build_result())));
+        assert_eq!(helper.items_until_closed().await, expected);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_helper_that_falls_too_far_behind_misses_later_events_but_gets_the_result() {
+        let mut harness = Harness::new();
+        let mut observer = TestCommand::new().start(&harness).unwrap();
+        // The events wait for the helper, which has not started yet.
+        let events: Vec<_> = (0..20)
+            .map(|i| console_message(format!("{i:02} {}", "x".repeat(1024 * 1024))))
+            .collect();
+        for event in &events {
+            observer.event(event);
+        }
+        observer.command_ended(&build_result());
+
+        let mut helper = harness.helper().await;
+        helper.header().await;
+        let fitting = MAX_QUEUED_BYTES / encode::event(&events[0]).len();
+        let mut expected: Vec<_> = events[..fitting].iter().map(event_item).collect();
+        expected.push(Progress::Result(Box::new(build_result())));
+        assert_eq!(helper.items_until_closed().await, expected);
+        assert!(fitting < events.len(), "some events should not fit");
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_hung_helper_never_holds_up_the_command() {
         // The helper never reads: its input takes one byte, then every write waits.
         let mut harness = Harness::with(vec![Launch::Pipe(1)]);
-        let observer = TestCommand::new().start(&harness).unwrap();
+        let mut observer = TestCommand::new().start(&harness).unwrap();
         let helper = harness.helper().await;
 
         // The observer's calls return while the forwarder still waits for the helper.
+        for i in 0..100 {
+            observer.event(&console_message(format!("event {i}")));
+        }
         observer.command_ended(&build_result());
         assert_eq!(*helper.exit.borrow(), None);
     }
@@ -818,12 +977,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_helper_that_exited_gets_no_more_writes() {
         let mut harness = Harness::new();
-        let observer = TestCommand::new().start(&harness).unwrap();
+        let mut observer = TestCommand::new().start(&harness).unwrap();
         let mut helper = harness.helper().await;
         helper.header().await;
         let exited_at = Instant::now();
         helper.exit();
 
+        observer.event(&console_message("after the exit".to_owned()));
         observer.command_ended(&build_result());
         helper.released().await;
         assert_eq!(

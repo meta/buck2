@@ -11,6 +11,7 @@ license.workspace = true
 async-compression.workspace = true
 buck2_cli_proto.workspace = true
 buck2_event_log.workspace = true
+buck2_events.workspace = true
 buck2_fs.workspace = true
 buck2_server.workspace = true
 buck2_util.workspace = true

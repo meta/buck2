@@ -21,6 +21,7 @@ rust_library(
         "fbsource//third-party/rust:tracing",
         "//buck2/app/buck2_cli_proto:buck2_cli_proto",
         "//buck2/app/buck2_event_log:buck2_event_log",
+        "//buck2/app/buck2_events:buck2_events",
         "//buck2/app/buck2_fs:buck2_fs",
         "//buck2/app/buck2_server:buck2_server",
         "//buck2/app/buck2_util:buck2_util",

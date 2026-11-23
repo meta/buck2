@@ -2236,6 +2236,7 @@ dependencies = [
  "buck2_core",
  "buck2_data",
  "buck2_event_log",
+ "buck2_events",
  "buck2_fs",
  "buck2_server",
  "buck2_settings",

@@ -32,7 +32,9 @@
 //! 1. A `buck.data.Invocation`: the command line, sanitized, the client's working directory, the
 //!    trace ID and the start time. `expanded_command_line_args` is empty, as the daemon does not
 //!    see how the client expands `@` arguments.
-//! 2. The command's result, as the client gets it: a `buck.daemon.CommandProgress` holding a
+//! 2. Each of the command's events, as the client gets them: a `buck.daemon.CommandProgress`
+//!    holding a `buck.data.BuckEvent`.
+//! 3. The command's result, as the client gets it: a `buck.daemon.CommandProgress` holding a
 //!    `buck.daemon.CommandResult`. A command whose client went away ends without one.
 //!
 //! Then the frame ends and the input closes. The daemon flushes the stream after each batch of
@@ -54,6 +56,9 @@
 //! Starting the helper and writing to it never holds up a command: a helper that does not start,
 //! reads slowly, or exits early only misses messages. The daemon gives up on writing the result
 //! 60 seconds after the command ended, and then the input closes without the frame's end.
+//!
+//! A helper that falls more than 16 MiB of events behind misses the command's later events, but
+//! still gets its result.
 
 mod encode;
 mod helper;

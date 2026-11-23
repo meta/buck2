@@ -21,12 +21,15 @@ use std::time::Duration;
 use buck2_cli_proto::CommandResult;
 use buck2_events::BuckEvent;
 use buck2_fs::paths::abs_path::AbsPathBuf;
+use buck2_hash::BuckMutSet;
 use buck2_server::command_observer::CommandLifecycleObserver;
 use buck2_server::command_observer::CommandObserver;
 use buck2_server::command_observer::StartedCommand;
+use buck2_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use parking_lot::Mutex;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -48,6 +51,8 @@ const RUN_AFTER_CLOSE: Duration = Duration::from_secs(300);
 const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
 /// The most bytes of events written together, in one batch.
 const MAX_BATCH_BYTES: usize = 1024 * 1024;
+/// The most helpers that run at once. A keyed command that starts past it gets none.
+const MAX_HELPERS: usize = 16;
 
 /// Starts the helper that the daemon's `event_forwarding` settings name for each command with
 /// event forwarding keys, and writes it the command's event log.
@@ -55,11 +60,17 @@ pub(crate) struct EventForwarder(Arc<Shared>);
 
 struct Shared {
     launcher: Box<dyn LaunchHelper>,
+    /// The trace IDs of the runs that have a helper. Commands can share a trace ID, but each
+    /// trace gets at most one helper at a time.
+    runs: Mutex<BuckMutSet<TraceId>>,
 }
 
 impl EventForwarder {
     pub(crate) fn new(launcher: Box<dyn LaunchHelper>) -> Self {
-        Self(Arc::new(Shared { launcher }))
+        Self(Arc::new(Shared {
+            launcher,
+            runs: Mutex::new(BuckMutSet::default()),
+        }))
     }
 }
 
@@ -74,6 +85,7 @@ impl CommandLifecycleObserver for EventForwarder {
         }
         let helper = settings.helper().filter(|helper| !helper.is_empty())?;
         let runtime = tokio::runtime::Handle::try_current().ok()?;
+        let slot = RunSlot::take(&self.0, command.trace_id)?;
         let working_dir = command.project_root.root().as_abs_path().to_owned();
         let run = Run {
             program: working_dir.join(helper),
@@ -84,19 +96,39 @@ impl CommandLifecycleObserver for EventForwarder {
         let (items_tx, items_rx) = mpsc::unbounded_channel();
         let (ended_tx, ended_rx) = oneshot::channel();
         let queued = Arc::new(AtomicUsize::new(0));
-        runtime.spawn(forward(
-            self.0.dupe(),
-            run,
-            items_rx,
-            queued.dupe(),
-            ended_rx,
-        ));
+        runtime.spawn(forward(slot, run, items_rx, queued.dupe(), ended_rx));
         Some(Box::new(Forwarding {
             items: items_tx,
             queued,
             forwarding_events: true,
             _ended: ended_tx,
         }))
+    }
+}
+
+/// A run's place among the `MAX_HELPERS`, held until the forwarder is done with its helper.
+struct RunSlot {
+    shared: Arc<Shared>,
+    trace_id: TraceId,
+}
+
+impl RunSlot {
+    /// `None` when `MAX_HELPERS` runs have a helper, or when the trace already has one.
+    fn take(shared: &Arc<Shared>, trace_id: &TraceId) -> Option<Self> {
+        let mut runs = shared.runs.lock();
+        if runs.len() >= MAX_HELPERS || !runs.insert(trace_id.dupe()) {
+            return None;
+        }
+        Some(Self {
+            shared: shared.dupe(),
+            trace_id: trace_id.dupe(),
+        })
+    }
+}
+
+impl Drop for RunSlot {
+    fn drop(&mut self) {
+        self.shared.runs.lock().remove(&self.trace_id);
     }
 }
 
@@ -155,13 +187,13 @@ impl CommandObserver for Forwarding {
 /// Starts a run's helper, writes it the command's event log, closes its input, and ends it if it
 /// does not exit by itself in time.
 async fn forward(
-    shared: Arc<Shared>,
+    slot: RunSlot,
     run: Run,
     mut items: mpsc::UnboundedReceiver<Item>,
     queued: Arc<AtomicUsize>,
     mut ended: oneshot::Receiver<()>,
 ) {
-    let Some(Helper { input, mut process }) = launch(&shared, &run).await else {
+    let Some(Helper { input, mut process }) = launch(&slot.shared, &run).await else {
         return;
     };
     let mut input = Input::new(Box::new(encode::compressed(input)));
@@ -380,7 +412,6 @@ fn write(
 mod tests {
     use std::path::PathBuf;
     use std::pin::Pin;
-    use std::sync::Mutex;
     use std::sync::atomic::AtomicBool;
     use std::task::Context;
     use std::task::Poll;
@@ -394,7 +425,6 @@ mod tests {
     use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
     use buck2_fs::paths::abs_path::AbsPath;
     use buck2_settings::EventForwarding;
-    use buck2_wrapper_common::invocation_id::TraceId;
     use prost::Message;
     use tokio::io::AsyncReadExt;
     use tokio::io::BufReader;
@@ -434,7 +464,7 @@ mod tests {
             working_dir: &AbsPath,
             keys: &str,
         ) -> io::Result<Helper> {
-            let launch = self.launches.lock().unwrap().pop_front();
+            let launch = self.launches.lock().pop_front();
             let capacity = match launch {
                 None => ROOMY_PIPE,
                 Some(Launch::Pipe(capacity)) => capacity,
@@ -992,6 +1022,67 @@ mod tests {
                 *helper.exit.borrow()
             ),
             (0, Some(Exit::Exited(exited_at)))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_run_past_the_concurrent_bound_starts_no_helper() {
+        let mut harness = Harness::new();
+        // Each of these commands keeps its helper while it runs.
+        let commands: Vec<_> = (0..MAX_HELPERS).map(|_| TestCommand::new()).collect();
+        let mut observers: Vec<_> = commands
+            .iter()
+            .map(|command| command.start(&harness).unwrap())
+            .collect();
+        let mut helpers = Vec::new();
+        for _ in 0..MAX_HELPERS {
+            helpers.push(harness.helper().await);
+        }
+
+        let past_the_bound = TestCommand::new().start(&harness);
+
+        // Once one run's helper is done, a new run gets a helper again. Helpers start on
+        // blocking threads, in any order, so the first helper's header names its command.
+        let first = &mut helpers[0];
+        let first_trace_id = first.header().await.trace_id;
+        let first_command = commands
+            .iter()
+            .position(|command| Some(command.trace_id.to_string()) == first_trace_id)
+            .expect("the helper belongs to one of the commands");
+        observers
+            .remove(first_command)
+            .command_ended(&build_result());
+        first.items_until_closed().await;
+        first.exit();
+        first.released().await;
+        let after_one_ended = TestCommand::new().start(&harness);
+        let _its_helper = harness.helper().await;
+        assert_eq!(
+            (past_the_bound.is_none(), after_one_ended.is_some()),
+            (true, true)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_trace_with_a_helper_starts_no_second_one() {
+        let mut harness = Harness::new();
+        let command = TestCommand::new();
+        let observer = command.start(&harness).unwrap();
+        let mut helper = harness.helper().await;
+
+        let second = command.start(&harness);
+
+        // Once the trace's helper is done, the trace can get a helper again.
+        observer.command_ended(&build_result());
+        helper.header().await;
+        helper.items_until_closed().await;
+        helper.exit();
+        helper.released().await;
+        let after_the_first_ended = command.start(&harness);
+        let _its_helper = harness.helper().await;
+        assert_eq!(
+            (second.is_none(), after_the_first_ended.is_some()),
+            (true, true)
         );
     }
 

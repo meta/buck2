@@ -59,6 +59,9 @@
 //!
 //! A helper that falls more than 16 MiB of events behind misses the command's later events, but
 //! still gets its result.
+//!
+//! A command that starts while 16 helpers run gets none, nor does one whose trace ID already has
+//! a helper.
 
 mod encode;
 mod helper;

@@ -23,6 +23,14 @@ prelude.python_test(
 )
 
 prelude.python_test(
+    name = "test_consolidate_class_names",
+    srcs = ["test_consolidate_class_names.py"],
+    deps = [
+        "prelude//android/tools:consolidate_class_names_lib",
+    ],
+)
+
+prelude.python_test(
     name = "test_filter_dex",
     srcs = ["test_filter_dex.py"],
     deps = [

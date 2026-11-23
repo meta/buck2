@@ -27,6 +27,12 @@ prelude.python_bootstrap_binary(
     visibility = ["PUBLIC"],
 )
 
+prelude.python_library(
+    name = "consolidate_class_names_lib",
+    srcs = ["consolidate_class_names.py"],
+    visibility = ["PUBLIC"],
+)
+
 prelude.python_bootstrap_binary(
     name = "unpack_aar",
     main = "unpack_aar.py",

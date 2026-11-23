@@ -1,0 +1,4 @@
+load(":defs.bzl", "fail_build", "pass_test")
+
+fail_build(name = "failed_build")
+pass_test(name = "passing_test")

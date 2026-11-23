@@ -58,7 +58,27 @@ async fn test_metrics_cgroup_resource_control(buck: &Buck) -> anyhow::Result<()>
     assert!(allprocs("anon") >= forkserver_actions("anon") + 500000);
     assert!(allprocs("file") >= forkserver_actions("file"));
     assert!(allprocs("kernel") >= forkserver_actions("kernel"));
+
+    assert_eq!(
+        snapshot["forkserver_actions_cgroup"]["swap_in_bytes"],
+        Value::Null
+    );
+    let swapped_in = &snapshot["allprocs_cgroup"]["swap_in_bytes"];
+    match kernel_counts_swap_ins() {
+        Some(true) => assert!(swapped_in.is_u64(), "{swapped_in}"),
+        Some(false) => assert!(swapped_in.is_null(), "{swapped_in}"),
+        None => {}
+    }
     Ok(())
+}
+
+/// Whether the kernel counts, for each cgroup, what it reads back from swap. `None` if this
+/// process is in no cgroup that says.
+fn kernel_counts_swap_ins() -> Option<bool> {
+    let cgroups = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let path = cgroups.lines().find_map(|line| line.strip_prefix("0::"))?;
+    let stat = std::fs::read_to_string(format!("/sys/fs/cgroup{path}/memory.stat")).ok()?;
+    Some(stat.lines().any(|line| line.starts_with("pswpin ")))
 }
 
 #[buck_test(skip_for_os = ["darwin", "windows"])]

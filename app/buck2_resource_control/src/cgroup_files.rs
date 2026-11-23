@@ -263,11 +263,16 @@ pub struct MemoryStat {
     pub inactive_file: u64,
     /// Kernel memory.
     pub kernel: u64,
+    /// Pages read back from swap since the cgroup was created, from a swap device (`pswpin`)
+    /// or from zswap (`zswpin`). `None` on a kernel that does not count `pswpin` per cgroup.
+    pub swapped_in_pages: Option<u64>,
 }
 
 impl MemoryStat {
     fn parse(content: &str) -> buck2_error::Result<Self> {
         let mut res = MemoryStat::default();
+        let mut pswpin = None;
+        let mut zswpin = 0;
         parse_flat_keyed(content, |key, value| match key {
             "anon" => res.anon = value,
             "inactive_anon" => res.inactive_anon = value,
@@ -276,9 +281,12 @@ impl MemoryStat {
             "active_file" => res.active_file = value,
             "inactive_file" => res.inactive_file = value,
             "kernel" => res.kernel = value,
+            "pswpin" => pswpin = Some(value),
+            "zswpin" => zswpin = value,
             // Ignore other keys
             _ => {}
         })?;
+        res.swapped_in_pages = pswpin.map(|pswpin| pswpin + zswpin);
         Ok(res)
     }
 
@@ -417,6 +425,17 @@ slab 262144"#;
         assert_eq!(stat.inactive_file, 1048576);
         assert_eq!(stat.active_file, 1048576);
         assert_eq!(stat.page_cache(), 2 * 1048576);
+        assert_eq!(stat.swapped_in_pages, None, "The kernel reports no pswpin");
+    }
+
+    #[test]
+    fn test_parse_swapped_in_pages() {
+        let swapped_in = |stat: &str| MemoryStat::parse(stat).unwrap().swapped_in_pages;
+        assert_eq!(swapped_in("anon 4096\npswpin 3\nzswpin 4"), Some(7));
+        assert_eq!(swapped_in("anon 4096\npswpin 3"), Some(3));
+        assert_eq!(swapped_in("anon 4096\npswpin 0\nzswpin 0"), Some(0));
+        // Without `pswpin`, `zswpin` alone would leave out what came from a swap device.
+        assert_eq!(swapped_in("anon 4096\nzswpin 4"), None);
     }
 
     #[test]

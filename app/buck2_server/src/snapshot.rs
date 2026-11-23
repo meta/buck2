@@ -720,12 +720,14 @@ impl SnapshotCollector {
         #[cfg(unix)]
         {
             use buck2_resource_control::cgroup_files::MemoryStat;
+            use buck2_util::os::unix_like::sc_page_size::sc_page_size;
 
             fn convert_stats(
                 stats: &MemoryStat,
                 swap_bytes: u64,
                 memory_pressure_10s_avg: f64,
                 memory_pressure_60s_avg: f64,
+                swap_in_bytes: Option<u64>,
             ) -> buck2_data::UnixCgroupMemoryStats {
                 buck2_data::UnixCgroupMemoryStats {
                     anon: stats.anon,
@@ -734,6 +736,7 @@ impl SnapshotCollector {
                     swap_bytes,
                     memory_pressure_10s_avg,
                     memory_pressure_60s_avg,
+                    swap_in_bytes,
                 }
             }
 
@@ -748,8 +751,16 @@ impl SnapshotCollector {
                 )
                 .await;
                 if let (Ok(stat), Ok(swap), Ok(pressure)) = (stat, swap, pressure) {
-                    let cgroup_stats =
-                        convert_stats(&stat, swap, pressure.full.avg10, pressure.full.avg60);
+                    let swap_in_bytes = stat
+                        .swapped_in_pages
+                        .and_then(|pages| Some(pages * sc_page_size().ok()? as u64));
+                    let cgroup_stats = convert_stats(
+                        &stat,
+                        swap,
+                        pressure.full.avg10,
+                        pressure.full.avg60,
+                        swap_in_bytes,
+                    );
                     snapshot.allprocs_cgroup = Some(cgroup_stats);
                 }
 
@@ -760,8 +771,10 @@ impl SnapshotCollector {
                 )
                 .await;
                 if let (Ok(stat), Ok(swap), Ok(pressure)) = (stat, swap, pressure) {
+                    // No swap-in here: every field of a snapshot is stored for every daemon
+                    // every second, and the total above includes this cgroup.
                     let cgroup_stats =
-                        convert_stats(&stat, swap, pressure.full.avg10, pressure.full.avg60);
+                        convert_stats(&stat, swap, pressure.full.avg10, pressure.full.avg60, None);
                     snapshot.forkserver_actions_cgroup = Some(cgroup_stats);
                 }
             }

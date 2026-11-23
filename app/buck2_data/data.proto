@@ -1730,6 +1730,11 @@ message UnixCgroupMemoryStats {
   // Memory pressure (PSI full avg60 %) from cgroup memory.pressure.
   // Kernel-maintained 60-second EWMA.
   double memory_pressure_60s_avg = 6;
+  // Memory read back from swap since the cgroup was created, from pswpin and
+  // zswpin of memory.stat: a running total, so what a command swapped in is
+  // the difference between two snapshots. Set for `allprocs_cgroup` only.
+  // Absent if the kernel does not count pswpin per cgroup.
+  optional uint64 swap_in_bytes = 7;
 }
 
 message UnixSystemStats {

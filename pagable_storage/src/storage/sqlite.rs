@@ -1995,44 +1995,52 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn key_read_ahead_keeps_sqlite_locks_on_the_key_file() -> anyhow::Result<()> {
-        use std::os::unix::fs::MetadataExt;
+        use std::os::fd::AsRawFd;
 
-        fn holds_lock_on(inode: u64) -> anyhow::Result<bool> {
-            let pid = std::process::id().to_string();
-            let inode = inode.to_string();
-            Ok(std::fs::read_to_string("/proc/locks")?.lines().any(|line| {
-                let fields: Vec<&str> = line.split_whitespace().collect();
-                fields.get(1) == Some(&"POSIX")
-                    && fields.get(4) == Some(&pid.as_str())
-                    && fields.get(5).and_then(|file| file.rsplit(':').next())
-                        == Some(inode.as_str())
-            }))
+        /// Whether this process holds a lock on `file`. The kernel is asked which lock stands
+        /// in the way of locking the file through `file` alone, which the process's own
+        /// locks do. `/proc/locks` would not do: a read of it can miss a lock while other
+        /// locks are taken and released, as the tests running beside this one do.
+        fn process_holds_lock_on(file: &File) -> io::Result<bool> {
+            let mut lock = libc::flock {
+                l_type: libc::F_WRLCK as libc::c_short,
+                l_whence: libc::SEEK_SET as libc::c_short,
+                l_start: 0,
+                l_len: 0,
+                l_pid: 0,
+            };
+            // SAFETY: `F_OFD_GETLK` reads and writes a `flock` through its argument, which
+            // points at one; the descriptor is open.
+            match unsafe { libc::fcntl(file.as_raw_fd(), libc::F_OFD_GETLK, &mut lock) } {
+                0 => Ok(lock.l_type != libc::F_UNLCK as libc::c_short
+                    && lock.l_pid == std::process::id() as libc::pid_t),
+                _ => Err(io::Error::last_os_error()),
+            }
         }
 
         let dir = TempStorageDir::new("key_read_ahead_locks")?;
         let storage = SqliteBackedPagableStorage::try_new_with_key_read_ahead(&dir.path, true)?;
         let conns = &storage.shards[0].inner.conns;
-        let inode = std::fs::metadata(key_file_path(&dir.path.join("pagable.0.db")))?.ino();
+        let read_ahead = conns
+            .key_read_ahead
+            .as_ref()
+            .expect("the store was opened with key read-ahead");
 
         let mut conn = conns.get_readwrite();
         let tx = conn.transaction()?;
         tx.execute(INSERT_KEY_SQL, rusqlite::params![1, 1, 1])?;
         assert!(
-            holds_lock_on(inode)?,
+            process_holds_lock_on(&read_ahead.key_file)?,
             "a write in progress should hold a lock on the key file"
         );
 
-        let read_ahead = conns
-            .key_read_ahead
-            .as_ref()
-            .expect("the store was opened with key read-ahead");
         read_ahead.reading.store(true, Ordering::Relaxed);
         read_ahead.start();
         while read_ahead.reading.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(
-            holds_lock_on(inode)?,
+            process_holds_lock_on(&read_ahead.key_file)?,
             "the read-ahead should leave the lock in place"
         );
         tx.commit()?;

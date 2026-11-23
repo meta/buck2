@@ -284,8 +284,10 @@ message PageOutSummary {
   /// than in-memory bytes, excluding nested PagableArc sub-values. A lower
   /// bound; see `PagableNodeCounts::backed_bytes`.
   optional uint64 evictable_bytes = 34;
-  /// `STARTED` on a row for an idle page-out. Any other value marks a row for a
-  /// command that evicted without starting one, and says why it did not; on
+  /// `STARTED` on a row for an idle page-out. A page-out that starts and whose
+  /// tenant is then evicted before DICE goes idle logs no row. Any other value
+  /// marks a row for a command that evicted or paged values in without starting
+  /// one, and says why it did not; on
   /// those rows the page-out fields are unset or zero (`paged_out_count`,
   /// `duration_ms`, `cancelled`). Absent from manual page-outs.
   optional PageOutStarted page_out_started = 35;
@@ -294,6 +296,15 @@ message PageOutSummary {
   optional uint64 command_evictions = 36;
   optional uint64 command_evicted_count = 37;
   optional int64 command_evicted_bytes = 38;
+  /// What was paged in during the command that triggered this row, summed over
+  /// the key types of `PagingSummary.dice_page_in_by_key_type`: the values, the
+  /// time to fetch and to deserialize them, and the memory rebuilding them
+  /// added. Like those, it counts what other commands of the repository paged
+  /// in at the same time. Absent from manual page-outs.
+  optional uint64 command_page_in_count = 39;
+  optional uint64 command_page_in_fetch_us = 40;
+  optional uint64 command_page_in_deser_us = 41;
+  optional int64 command_page_in_restored_bytes = 42;
 }
 
 // An event that represents a single point in time.

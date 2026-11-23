@@ -635,11 +635,10 @@ async fn test_evict_drops_values_rows_already_hold(buck: &Buck) -> anyhow::Resul
         read_back,
         "evicted values are read back"
     );
-    assert_eq!(
-        page_out_summaries(buck).await?,
-        Vec::<Value>::new(),
-        "a command that neither evicts nor pages out logs no row"
-    );
+    // It neither evicts nor pages out, but it paged values in, so it logs a row too.
+    let rows = page_out_summaries(buck).await?;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(count(&rows[0]["command_page_in_count"])?, read_back);
     Ok(())
 }
 
@@ -1214,6 +1213,51 @@ async fn test_data_key_io_in_invocation_record(buck: &Buck) -> anyhow::Result<()
             .all(|(field, value)| settled_cumulative[field] >= *value),
         "the running totals must carry the earlier commands' work forward, got {settled_cumulative:?} after {cumulative:?}"
     );
+    Ok(())
+}
+
+#[buck_test(data_dir = "paging", write_invocation_record = true)]
+async fn test_page_in_reaches_page_outs_without_a_page_out(buck: &Buck) -> anyhow::Result<()> {
+    // With idle page-out off, no command starts a page-out, and none here evicts.
+    hydration_settings(buck, &[("page_out_on_idle", Bool(false))])?;
+    write_src(buck, "content-0\n")?;
+    build(buck).await?;
+    assert_eq!(page_out_summaries(buck).await?, Vec::<Value>::new());
+    page_out(buck).await?;
+
+    let rebuild = build(buck).await?;
+    let rows = page_out_summaries(buck).await?;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    let record = rebuild.invocation_record()?;
+    assert!(count(&row["command_page_in_count"])? > 0, "{row}");
+    for (column, field) in [
+        ("command_page_in_count", "page_in_count"),
+        ("command_page_in_fetch_us", "page_in_fetch_us"),
+        ("command_page_in_deser_us", "page_in_deser_us"),
+    ] {
+        assert_eq!(
+            count(&row[column])?,
+            count_or_zero(&record[field])?,
+            "{column}"
+        );
+    }
+    let restored: i64 = record["page_in_by_key_type"]
+        .as_object()
+        .context("no page-in by key type")?
+        .values()
+        .map(|stats| stats["restored_bytes"].as_i64().unwrap_or(0))
+        .sum();
+    assert_eq!(
+        row["command_page_in_restored_bytes"].as_i64(),
+        Some(restored)
+    );
+    assert_eq!(count_or_zero(&row["command_evictions"])?, 0);
+    assert_eq!(count_or_zero(&row["paged_out_count"])?, 0);
+
+    // Everything is resident again: a command that pages nothing in gets no row.
+    build(buck).await?;
+    assert_eq!(page_out_summaries(buck).await?, Vec::<Value>::new());
     Ok(())
 }
 

@@ -119,6 +119,10 @@ impl PagingManager {
         &self,
         counts: &PagableNodeCounts,
         page_out_started: buck2_data::PageOutStarted,
+        dice_page_in_by_key_type: IntentionallyStdHashMap<
+            String,
+            buck2_data::DicePageInKeyTypeStats,
+        >,
     ) -> buck2_data::PagingSummary {
         let dice = self.tenant.dice_manager.unsafe_dice();
         // The delta is this command's work, matching the `page_in_*` fields beside
@@ -128,10 +132,7 @@ impl PagingManager {
         let delta = cumulative.map(|c| c.since(self.data_key_io_baseline.unwrap_or(c)));
         let evictions = self.command_evictions();
         buck2_data::PagingSummary {
-            dice_page_in_by_key_type: compute_page_in_delta(
-                &self.page_in_baseline,
-                &page_in_proto_map(&self.tenant),
-            ),
+            dice_page_in_by_key_type,
             paging_db_size_bytes: measured_db_size_bytes(dice.paging_db_size_bytes()),
             resident_node_count: Some(counts.resident as u64),
             paged_out_node_count: Some(counts.paged_out as u64),
@@ -170,7 +171,9 @@ impl PagingManager {
 
     /// Called at command end: schedule a background idle page-out (if
     /// `triggers_idle_page_out`) and emit this command's paging telemetry. A command that evicted
-    /// always gets a `buck2_page_outs` row: the idle page-out's if one started, else its own.
+    /// or paged values in gets a `buck2_page_outs` row: the idle page-out's if one started, else
+    /// its own. The exception is a started page-out whose tenant is evicted before DICE goes
+    /// idle: it logs no row.
     pub(crate) async fn maybe_trigger_page_out_on_idle(
         &self,
         dispatcher: &EventDispatcher,
@@ -190,6 +193,9 @@ impl PagingManager {
             self.total_disk_space_bytes,
         );
         let command_evictions = self.command_evictions();
+        let page_in_by_key_type =
+            compute_page_in_delta(&self.page_in_baseline, &page_in_proto_map(&self.tenant));
+        let command_page_in = page_in_total(&page_in_by_key_type);
         let page_out_started = if triggers_idle_page_out {
             spawn_page_out_on_idle(
                 self.page_out_on_idle,
@@ -198,24 +204,25 @@ impl PagingManager {
                 free_disk_bytes,
                 &counts,
                 command_evictions,
+                command_page_in,
             )
             .await
         } else {
             buck2_data::PageOutStarted::CommandOptedOut
         };
         if page_out_started != buck2_data::PageOutStarted::Started
-            && let Some(evictions) = command_evictions
-            && evictions.evictions > 0
+            && (command_evictions.is_some_and(|e| e.evictions > 0) || command_page_in.count > 0)
         {
-            dispatcher.instant_event(eviction_only_page_out_summary(
+            dispatcher.instant_event(command_only_page_out_summary(
                 self.tenant.dice_manager.unsafe_dice(),
                 dispatcher,
                 page_out_started,
-                evictions,
+                command_evictions,
+                command_page_in,
                 counts.backed_bytes,
             ));
         }
-        dispatcher.instant_event(self.summary(&counts, page_out_started));
+        dispatcher.instant_event(self.summary(&counts, page_out_started, page_in_by_key_type));
     }
 }
 
@@ -277,6 +284,21 @@ fn page_in_proto_map(
             )
         })
         .collect()
+}
+
+/// The sum over the key types.
+fn page_in_total(
+    by_key_type: &IntentionallyStdHashMap<String, buck2_data::DicePageInKeyTypeStats>,
+) -> buck2_data::DicePageInKeyTypeStats {
+    let mut total = buck2_data::DicePageInKeyTypeStats::default();
+    for stats in by_key_type.values() {
+        total.count += stats.count;
+        total.fetch_us += stats.fetch_us;
+        total.deser_us += stats.deser_us;
+        total.bytes += stats.bytes;
+        total.restored_bytes += stats.restored_bytes;
+    }
+    total
 }
 
 /// Per-key-type delta of the cumulative page-in counters between the command's
@@ -476,6 +498,7 @@ pub(crate) async fn spawn_page_out_on_idle(
     free_disk_bytes: Option<u64>,
     counts: &PagableNodeCounts,
     command_evictions: Option<EvictionSnapshot>,
+    command_page_in: buck2_data::DicePageInKeyTypeStats,
 ) -> buck2_data::PageOutStarted {
     use buck2_data::PageOutStarted;
 
@@ -527,6 +550,7 @@ pub(crate) async fn spawn_page_out_on_idle(
             dice_manager.unsafe_dice(),
             dispatcher,
             command_evictions,
+            command_page_in,
             work,
             generation,
         )
@@ -576,6 +600,7 @@ async fn page_out_on_idle(
     dice: &Arc<Dice>,
     dispatcher: EventDispatcher,
     command_evictions: Option<EvictionSnapshot>,
+    command_page_in: buck2_data::DicePageInKeyTypeStats,
     work: PagingWork,
     generation: Arc<dyn LivelinessObserverSync>,
 ) -> buck2_error::Result<()> {
@@ -605,6 +630,7 @@ async fn page_out_on_idle(
     };
     summary.page_out_started = Some(buck2_data::PageOutStarted::Started as i32);
     set_command_evictions(&mut summary, command_evictions);
+    set_command_page_in(&mut summary, command_page_in);
     if result.is_err() {
         // Set before this function returns (dropping the single-flight guard) so a
         // `status --wait` that unblocks on guard release already sees the flag.
@@ -719,18 +745,23 @@ async fn paging_measured(
         command_evictions: None,
         command_evicted_count: None,
         command_evicted_bytes: None,
+        command_page_in_count: None,
+        command_page_in_fetch_us: None,
+        command_page_in_deser_us: None,
+        command_page_in_restored_bytes: None,
     };
     (result, summary)
 }
 
-/// The `buck2_page_outs` row for a command that evicted backed values but started no idle
-/// page-out, so that every command's evictions reach the table. `page_out_started` says why no
-/// page-out ran; the page-out fields are left unset.
-fn eviction_only_page_out_summary(
+/// The `buck2_page_outs` row for a command that evicted backed values or paged values in but
+/// started no idle page-out, so that its evictions and page-ins reach the table.
+/// `page_out_started` says why no page-out ran; the page-out fields are left unset.
+fn command_only_page_out_summary(
     dice: &Arc<Dice>,
     dispatcher: &EventDispatcher,
     page_out_started: buck2_data::PageOutStarted,
-    command_evictions: EvictionSnapshot,
+    command_evictions: Option<EvictionSnapshot>,
+    command_page_in: buck2_data::DicePageInKeyTypeStats,
     evictable_bytes: u64,
 ) -> buck2_data::PageOutSummary {
     let daemon = dice.eviction_metrics();
@@ -744,7 +775,8 @@ fn eviction_only_page_out_summary(
         page_out_started: Some(page_out_started as i32),
         ..Default::default()
     };
-    set_command_evictions(&mut summary, Some(command_evictions));
+    set_command_evictions(&mut summary, command_evictions);
+    set_command_page_in(&mut summary, command_page_in);
     summary
 }
 
@@ -755,6 +787,16 @@ fn set_command_evictions(
     summary.command_evictions = command_evictions.map(|e| e.evictions);
     summary.command_evicted_count = command_evictions.map(|e| e.values_evicted);
     summary.command_evicted_bytes = command_evictions.and_then(|e| e.bytes_evicted);
+}
+
+fn set_command_page_in(
+    summary: &mut buck2_data::PageOutSummary,
+    command_page_in: buck2_data::DicePageInKeyTypeStats,
+) {
+    summary.command_page_in_count = Some(command_page_in.count);
+    summary.command_page_in_fetch_us = Some(command_page_in.fetch_us);
+    summary.command_page_in_deser_us = Some(command_page_in.deser_us);
+    summary.command_page_in_restored_bytes = Some(command_page_in.restored_bytes);
 }
 
 /// Limits an engine's memory-pressure evictions to one per command. While a command runs, an onset
@@ -899,6 +941,7 @@ mod tests {
     use super::PagingWork;
     use super::cancel_active_page_out;
     use super::compute_page_in_delta;
+    use super::page_in_total;
     use super::page_out_cancelled;
     use super::page_out_in_progress;
     use super::should_page_out_decision;
@@ -989,6 +1032,7 @@ mod tests {
             2,
             "only key types with page-ins during the command are kept"
         );
+        assert_eq!(page_in_total(&delta), stat(5, 60, 120, 600, 6000));
         let a = delta.get("A").expect("A had new page-ins");
         assert_eq!(
             (a.count, a.fetch_us, a.deser_us, a.bytes, a.restored_bytes),

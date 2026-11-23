@@ -48,4 +48,5 @@ message PostBuildParams {
   string postProcessorCmd = 13;
   string filesWhichSkippedCompilation = 14;
   string jvmAbiFilesWhichSkippedCompilation = 15;
+  string classNamesFile = 16;
 }

@@ -99,6 +99,8 @@ JavaClasspathEntry = record(
     # Source and source-only ABIs can be produced independently of the full library.
     full_library_compiler_depth = field(JavaCompilerDepth | None, None),
     abi_compiler_depth = field(JavaCompilerDepth | None, None),
+    # The `.class` entries of `full_library`, one per line without the suffix, when the compiler writes them.
+    class_names = field(Artifact | None, None),
 )
 
 def _args_for_ast_dumper(entry: JavaClasspathEntry):
@@ -178,6 +180,8 @@ JavaPackagingDep = record(
     output_for_classpath_macro = Artifact,
     sources_jar = Artifact | None,
     compiler_depth = field(JavaCompilerDepth | None, None),
+    # The `.class` entries of `jar`, one per line without the suffix, when the compiler writes them.
+    class_names = field(Artifact | None, None),
 )
 
 def _full_jar_args(dep: JavaPackagingDep):
@@ -330,6 +334,7 @@ def make_compile_outputs(
     full_library_compiler_depth: JavaCompilerDepth | None = None,
     abi_compiler_depth: JavaCompilerDepth | None = None,
     command_proto_json: Artifact | None = None,
+    class_names: Artifact | None = None,
 ) -> JavaCompileOutputs:
     expect(classpath_abi != None or classpath_abi_dir == None, "A classpath_abi_dir should only be provided if a classpath_abi is provided!")
     return JavaCompileOutputs(
@@ -345,6 +350,7 @@ def make_compile_outputs(
             abi_jar_snapshot = abi_jar_snapshot,
             full_library_compiler_depth = full_library_compiler_depth,
             abi_compiler_depth = abi_compiler_depth,
+            class_names = class_names,
         ),
         annotation_processor_output = annotation_processor_output,
         preprocessed_library = preprocessed_library,
@@ -468,6 +474,7 @@ def create_java_packaging_dep(
     proguard_config: Artifact | None = None,
     gwt_module: Artifact | None = None,
     compiler_depth: JavaCompilerDepth | None = None,
+    class_names: Artifact | None = None,
 ) -> JavaPackagingDep:
     if library_jar != None and has_srcs and _is_dexing_enabled(ctx):
         dex = get_dex_produced_from_java_library(
@@ -493,6 +500,7 @@ def create_java_packaging_dep(
         output_for_classpath_macro = output_for_classpath_macro or library_jar,
         sources_jar = sources_jar,
         compiler_depth = compiler_depth,
+        class_names = class_names,
     )
 
 def get_all_java_packaging_deps(ctx: AnalysisContext, deps: list[Dependency]) -> list[JavaPackagingDep]:
@@ -709,6 +717,7 @@ def _create_non_template_providers(
         gwt_module = gwt_module,
         dex_weight_factor = dex_weight_factor,
         compiler_depth = library_output.full_library_compiler_depth if library_output else None,
+        class_names = library_output.class_names if library_output else None,
     )
 
     java_packaging_info = get_java_packaging_info(

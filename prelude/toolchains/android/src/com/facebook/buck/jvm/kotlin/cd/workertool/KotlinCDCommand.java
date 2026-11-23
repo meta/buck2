@@ -456,6 +456,8 @@ public class KotlinCDCommand implements JvmCDCommand {
             .collect(Collectors.toList()));
     maybeCreateIncrementalStateDir();
     maybeRunPostProcessor();
+    postBuildParams.maybeWriteClassNamesFile(
+        buildKotlinCommand.getBaseJarCommand().getJarParameters());
     maybeWriteClassAbi();
     maybeWriteAbiDir();
     kotlinClassesTracker.writeSkippedFiles();

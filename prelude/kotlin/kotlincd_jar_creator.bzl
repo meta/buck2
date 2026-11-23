@@ -117,6 +117,7 @@ def create_jar_artifact_kotlincd(
         label,
         uses_content_based_paths = True,
         emit_compiler_class_to_source_map = not is_creating_subtarget,
+        emit_class_names = not is_creating_subtarget,
     )
 
     # Only create class-abi inline for class-mode targets. For source_only targets,
@@ -362,6 +363,7 @@ def create_jar_artifact_kotlincd(
                 abi_jar_snapshot = abi_jar_snapshot,
                 used_jars_json = used_jars_json,
                 compiler_class_to_source_map = output_paths.compiler_class_to_source_map,
+                class_names = output_paths.class_names,
             ),
             proto,
             tracking_outputs,
@@ -682,6 +684,9 @@ def _define_kotlincd_action(
         if "libraryJar" not in post_build_params:
             post_build_params["libraryJar"] = output_paths.jar.as_output()
         post_build_params["postProcessorCmd"] = cmd_args(jar_postprocessor, delimiter = " ")
+
+    if output_paths.class_names:
+        post_build_params["classNamesFile"] = output_paths.class_names.as_output()
 
     dep_files = {}
     used_jars_json_output = None

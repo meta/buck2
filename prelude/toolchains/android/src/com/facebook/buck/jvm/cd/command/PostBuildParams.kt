@@ -11,8 +11,10 @@
 package com.facebook.buck.jvm.cd.command
 
 import com.facebook.buck.cd.model.common.PostBuildParams as PostBuildParamsProto
+import com.facebook.buck.jvm.java.JarParameters
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.zip.ZipFile
 
 class PostBuildParams(
     val libraryJar: Path?,
@@ -28,7 +30,28 @@ class PostBuildParams(
     val postProcessorCmd: String?,
     val filesWhichSkippedCompilation: Path?,
     val jvmAbiFilesWhichSkippedCompilation: Path?,
+    val classNamesFile: Path?,
 ) {
+  /**
+   * Writes the names of the `.class` entries of the jar, without the suffix, one per line, in entry
+   * order, if [classNamesFile] is set.
+   */
+  fun maybeWriteClassNamesFile(jarParameters: JarParameters?) {
+    if (classNamesFile == null) {
+      return
+    }
+    val jar = checkNotNull(jarParameters) { "classNamesFile needs jarParameters" }.jarPath.path
+    val names =
+        ZipFile(jar.toFile()).use { zip ->
+          zip.entries()
+              .asSequence()
+              .map { it.name }
+              .filter { it.endsWith(".class") }
+              .joinToString("") { it.removeSuffix(".class") + "\n" }
+        }
+    classNamesFile.toFile().writeText(names)
+  }
+
   companion object {
     fun fromProto(model: PostBuildParamsProto): PostBuildParams = PostBuildParams(
         model.libraryJar.takeIf { it.isNotEmpty() }?.let(Paths::get),
@@ -44,6 +67,7 @@ class PostBuildParams(
         model.postProcessorCmd.takeIf { it.isNotEmpty() },
         model.filesWhichSkippedCompilation.takeIf { it.isNotEmpty() }?.let(Paths::get),
         model.jvmAbiFilesWhichSkippedCompilation.takeIf { it.isNotEmpty() }?.let(Paths::get),
+        model.classNamesFile.takeIf { it.isNotEmpty() }?.let(Paths::get),
     )
   }
 }

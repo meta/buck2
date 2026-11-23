@@ -51,6 +51,7 @@ public class JavaCDCommand implements JvmCDCommand {
   @Option(name = "--logging-level")
   private int loggingLevel = 0;
 
+  private final BuildJavaCommand buildJavaCommand;
   private final JavaStepsBuilder stepsBuilder;
   private final ImmutableMap<Path, Path> jarToJarDirMap;
   private final PostBuildParams postBuildParams;
@@ -76,7 +77,7 @@ public class JavaCDCommand implements JvmCDCommand {
         RelPath.get(Objects.requireNonNull(env.get(WORKING_DIRECTORY_ENV_VAR)));
 
     com.facebook.buck.cd.model.java.BuildJavaCommand proto = builder.build();
-    BuildJavaCommand buildJavaCommand =
+    this.buildJavaCommand =
         BuildJavaCommand.Companion.fromProto(proto.getBuildCommand(), Optional.of(buckScratchPath));
     this.postBuildParams = PostBuildParams.Companion.fromProto(proto.getPostBuildParams());
     this.stepsBuilder = new JavaStepsBuilder(buildJavaCommand);
@@ -164,5 +165,7 @@ public class JavaCDCommand implements JvmCDCommand {
     maybeWriteAbiDir();
     maybeWriteDepFile();
     maybeWriteUsedJarsFile();
+    postBuildParams.maybeWriteClassNamesFile(
+        buildJavaCommand.getBaseJarCommand().getJarParameters());
   }
 }

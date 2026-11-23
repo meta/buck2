@@ -13,8 +13,12 @@ buck_kotlin_test(
         ],
     ),
     deps = [
+        "prelude//toolchains/android/src/com/facebook/buck/core/filesystems:filesystems",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/cd:cd",
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/cd/command:command",
+        "prelude//toolchains/android/src/com/facebook/buck/jvm/java:support",
         "prelude//toolchains/android/src/com/facebook/buck/util/json:json",
+        "prelude//toolchains/android/third-party:guava",
         "prelude//toolchains/android/third-party:junit",
     ],
 )

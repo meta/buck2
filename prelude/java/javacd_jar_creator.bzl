@@ -106,12 +106,15 @@ def create_jar_artifact_javacd(
         class_abi_jar = None
         class_abi_output_dir = None
 
+    jar_postprocessor = ctx.attrs.jar_postprocessor[RunInfo] if hasattr(ctx.attrs, "jar_postprocessor") and ctx.attrs.jar_postprocessor else None
     output_paths = define_output_paths(
         actions,
         actions_identifier,
         label,
         uses_content_based_paths,
         emit_compiler_class_to_source_map = not is_creating_subtarget,
+        # The class names describe the compiler's jar, so only when it is the final jar.
+        emit_class_names = not is_creating_subtarget and not additional_compiled_srcs and not jar_postprocessor,
     )
 
     compiling_deps_tset = get_compiling_deps_tset(actions, deps, [additional_classpath_entries] if additional_classpath_entries else [])
@@ -167,7 +170,6 @@ def create_jar_artifact_javacd(
         target_type = TargetType("library"),
         is_creating_subtarget = is_creating_subtarget,
     )
-    jar_postprocessor = ctx.attrs.jar_postprocessor[RunInfo] if hasattr(ctx.attrs, "jar_postprocessor") and ctx.attrs.jar_postprocessor else None
     final_jar_output = prepare_final_jar(
         actions = actions,
         actions_identifier = actions_identifier,
@@ -222,6 +224,7 @@ def create_jar_artifact_javacd(
             used_jars_json = used_jars_json,
             compiler_class_to_source_map = output_paths.compiler_class_to_source_map,
             command_proto_json = proto,
+            class_names = output_paths.class_names,
         )
     else:
         full_jar_snapshot = generate_java_classpath_snapshot(
@@ -338,6 +341,9 @@ def _define_javacd_action(
     if target_type == TargetType("source_abi") or target_type == TargetType("source_only_abi"):
         post_build_params["abiJar"] = output_paths.jar.as_output()
         post_build_params["abiOutputDir"] = abi_dir.as_output()
+
+    if output_paths.class_names:
+        post_build_params["classNamesFile"] = output_paths.class_names.as_output()
 
     dep_files = {}
     used_jars_json_output = None

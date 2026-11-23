@@ -102,6 +102,7 @@ OutputPaths = record(
     jar = Artifact,
     annotations = Artifact | None,
     compiler_class_to_source_map = field(Artifact | None, default = None),
+    class_names = field(Artifact | None, default = None),
 )
 
 def qualified_name_with_subtarget(label: Label) -> str:
@@ -128,6 +129,7 @@ def define_output_paths(
     uses_content_based_paths: bool,
     declare_annotations: bool = True,
     emit_compiler_class_to_source_map: bool = False,
+    emit_class_names: bool = False,
 ) -> OutputPaths:
     # currently, javacd requires that at least some outputs are in the root
     # output dir. so we put all of them there. If javacd is updated we
@@ -138,6 +140,7 @@ def define_output_paths(
         if emit_compiler_class_to_source_map
         else None,
         annotations = declare_prefixed_output(actions, prefix, "__gen__", uses_content_based_paths, dir = True) if declare_annotations else None,
+        class_names = declare_prefixed_output(actions, prefix, "class_names.txt", uses_content_based_paths) if emit_class_names else None,
     )
 
 def encode_output_paths(label: Label, paths: OutputPaths, target_type: TargetType) -> struct:

@@ -76,11 +76,14 @@ def get_extra_build_params(args: argparse.Namespace) -> List[str]:
     return params
 
 
+def _buck_command() -> list[str]:
+    return ["buck2", "--client-metadata", "id=buck2_py"]
+
+
 def build_command(
     args: argparse.Namespace, extra_args: List[str], cwd: Optional[str]
 ) -> List[str]:
-    cmd = [
-        "buck2",
+    cmd = _buck_command() + [
         "run",
         # @oss-disable[end= ]: "fbcode//buck2:buck2_bundle",
         "//:buck2_bundle", # @oss-enable
@@ -134,7 +137,7 @@ def ensure_stable_tpx(stable_path: str) -> None:
     if os.path.exists(building):
         os.remove(building)
     subprocess.run(
-        ["buck2", "build", tpx_build_mode(), TPX_TARGET, "--out", building],
+        _buck_command() + ["build", tpx_build_mode(), TPX_TARGET, "--out", building],
         check=True,
     )
     os.chmod(building, 0o755)

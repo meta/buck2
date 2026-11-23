@@ -316,7 +316,7 @@ def _miri_test_sub_targets(
     # `-Zunstable-options` to unlock `--force-run-in-process`; the test
     # info omits it because TPX supplies it.
     launcher_cmd = miri_direct_cmd
-    if toolchain_info.panic_runtime == PanicRuntime("abort"):
+    if toolchain_info.panic_runtime in [PanicRuntime("abort"), PanicRuntime("immediate-abort")]:
         launcher_cmd = cmd_args(miri_direct_cmd, "-Zunstable-options")
     return _miri_launcher(ctx, compile_ctx, launcher_cmd) + [
         _miri_test_info(ctx, miri_direct_cmd, re_executors),

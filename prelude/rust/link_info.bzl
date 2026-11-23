@@ -380,8 +380,8 @@ def gather_explicit_sysroot_deps(dep_ctx: DepCollectionContext) -> list[RustOrNa
         )
 
     # When advanced_unstable_linking is on, we only add the dep that matches the
-    # panic runtime. Without advanced_unstable_linking, we just let rustc deal
-    # with it
+    # panic runtime, and neither for immediate-abort, which links no runtime.
+    # Without advanced_unstable_linking, we just let rustc deal with it
     if explicit_sysroot_deps.panic_unwind:
         if not dep_ctx.advanced_unstable_linking or dep_ctx.panic_runtime == PanicRuntime("unwind"):
             out.append(

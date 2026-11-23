@@ -32,7 +32,7 @@ RustExplicitSysrootDeps = record(
 
 RustSysrootInfo = provider(fields = {"sysroot_deps": RustExplicitSysrootDeps | None})
 
-PanicRuntime = enum("unwind", "abort", "none")
+PanicRuntime = enum("unwind", "abort", "immediate-abort", "none")
 
 RustSanitizer = enum("address", "cfi", "hwaddress", "kcfi", "leak", "memory", "memtag", "safestack", "shadow-call-stack", "thread")
 
@@ -190,6 +190,10 @@ rust_toolchain_attrs = {
     #  - Otherwise can typically be safely defaulted to `"unwind"`. It is,
     #    however, still the preferred way of configuring `-Cpanic=abort`, since
     #    it makes sure that the flag is consistent across the crate graph.
+    #  - `"immediate-abort"` passes the unstable `-Cpanic=immediate-abort`: a
+    #    panic aborts before any panic hook runs, and no panic runtime is linked.
+    #    rustc requires every crate in the graph, the standard library included,
+    #    to be built with it, and the toolchain to set `nightly_features`.
     #
     # It's worth pointing out that the way that rustc handles this is a bit
     # weird. It requires the panic runtime to be a nostd crate, despite the fact

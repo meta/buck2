@@ -723,7 +723,7 @@ def miri_command(
     # runs from the program tail: in the driver prefix Miri/rustc would
     # consume the flag instead of libtest.
     program_args = []
-    if is_test and toolchain_info.panic_runtime == PanicRuntime("abort"):
+    if is_test and toolchain_info.panic_runtime in [PanicRuntime("abort"), PanicRuntime("immediate-abort")]:
         program_args = ["--force-run-in-process"]
 
     wrapped_command = _long_command(
@@ -1436,6 +1436,18 @@ def _rustc_flags(flags: list[str | ResolvedStringWithMacros | Artifact], toolcha
 
     return flags
 
+def _panic_flags(toolchain_info: RustToolchainInfo) -> list[str]:
+    # `-Zpanic-abort-tests` makes the test harness work despite the abort
+    # runtime. Without nightly features it can't be passed; test targets
+    # will be rejected by rustc.
+    if toolchain_info.panic_runtime == PanicRuntime("abort"):
+        return ["-Cpanic=abort"] + (["-Zpanic-abort-tests=yes"] if toolchain_info.nightly_features else [])
+    if toolchain_info.panic_runtime == PanicRuntime("immediate-abort"):
+        if not toolchain_info.nightly_features:
+            fail('`panic_runtime = "immediate-abort"` passes the unstable `-Cpanic=immediate-abort` and requires a toolchain with `nightly_features = True`')
+        return ["-Cpanic=immediate-abort", "-Zunstable-options", "-Zpanic-abort-tests=yes"]
+    return []
+
 # Differently parameterized build outputs need to be assigned nonoverlapping
 # output paths. For example the pic and non-pic rlib cannot both be written to
 # libfoo.rlib. We place artifacts into a unique subdirectory for each
@@ -1738,12 +1750,7 @@ def _compute_common_args(
         ["--target={}".format(toolchain_info.rustc_target_triple)] if toolchain_info.rustc_target_triple else [],
         split_debuginfo_flags,
         compile_ctx.sysroot_args,
-        # `-Zpanic-abort-tests` makes the test harness work despite the abort
-        # runtime. Without nightly features it can't be passed; test targets
-        # will be rejected by rustc.
-        (["-Cpanic=abort"] + (["-Zpanic-abort-tests=yes"] if toolchain_info.nightly_features else []))
-        if toolchain_info.panic_runtime == PanicRuntime("abort")
-        else [],
+        _panic_flags(toolchain_info),
         ["-Zsanitizer={}".format(toolchain_info.sanitizer.value)] if toolchain_info.sanitizer else [],
         ["-Cprofile-generate={}".format(toolchain_info.pgo_generate_dir), "-Zno-profiler-runtime"]
         if toolchain_info.pgo_generate_dir and toolchain_info.explicit_sysroot_deps and toolchain_info.explicit_sysroot_deps.core

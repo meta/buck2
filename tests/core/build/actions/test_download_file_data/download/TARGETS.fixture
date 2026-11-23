@@ -7,6 +7,7 @@ download(
     url = read_config("test", "url"),
     sha1 = read_config("test", "sha1"),
     sha256 = read_config("test", "sha256"),
+    sha512 = read_config("test", "sha512"),
     size_bytes = declared_size(),
 )
 

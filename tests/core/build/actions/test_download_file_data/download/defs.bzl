@@ -12,6 +12,8 @@ def declared_size():
     return int(size) if size != None else None
 
 def _download_impl(ctx: AnalysisContext):
+    # `sha512` is passed only when the target declares one.
+    checksums = {"sha512": ctx.attrs.sha512} if ctx.attrs.sha512 != None else {}
     output = ctx.actions.download_file(
         "download",
         ctx.attrs.url,
@@ -19,6 +21,7 @@ def _download_impl(ctx: AnalysisContext):
         sha256 = ctx.attrs.sha256,
         size_bytes = ctx.attrs.size_bytes,
         has_content_based_path = ctx.attrs.has_content_based_path,
+        **checksums
     )
     return [DefaultInfo(default_output = output)]
 
@@ -28,6 +31,7 @@ download = rule(
         "has_content_based_path": attrs.bool(default = False),
         "sha1": attrs.option(attrs.string(), default = None),
         "sha256": attrs.option(attrs.string(), default = None),
+        "sha512": attrs.option(attrs.string(), default = None),
         "size_bytes": attrs.option(attrs.int(), default = None),
         "url": attrs.string(),
     },

@@ -383,17 +383,20 @@ async fn test_download_with_content_based_path(buck: &Buck) -> anyhow::Result<()
 }
 
 #[buck_test]
-async fn test_download_with_content_based_path_and_no_metadata(buck: &Buck) {
-    buck.build(&[
-        "root//:download_with_content_based_path_and_no_metadata",
-        "-c",
-        "test.url=http://localhost:1/archive",
-    ])
+async fn test_download_with_content_based_path_and_sha512(buck: &Buck) -> anyhow::Result<()> {
+    // A download with only a sha512 gets its content-based path from the hash of the downloaded
+    // file. Build it for the platforms p_default and p_cat, and check that the outputs of the two
+    // builds resolve to the same content-based path.
+    let content = archive()?;
+    let server = StaticHttpServer::start([("/archive", content.clone())]).await?;
+    let config = download_configs(&server.url("/archive"), &content);
+    let config: Vec<&str> = config.iter().map(String::as_str).collect();
+    build_target_with_different_platforms_and_verify_output_paths_are_identical(
+        buck,
+        "root//:download_with_content_based_path_and_sha512",
+        &config,
+    )
     .await
-    .expect_failure()
-    .assert_stderr_matches(
-        r"Downloads using content-based path .* must supply metadata \(usually in the form of a sha1\)!",
-    );
 }
 
 // The offline build reads the cache the traced build left behind, at paths nothing leases, as

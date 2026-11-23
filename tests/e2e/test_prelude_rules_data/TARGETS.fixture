@@ -1,0 +1,7 @@
+load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
+
+# `remote_file` depends on the prelude's unzip tool, which is a python_bootstrap_binary.
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    visibility = ["PUBLIC"],
+)

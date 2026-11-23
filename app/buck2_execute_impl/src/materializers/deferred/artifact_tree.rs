@@ -423,6 +423,32 @@ impl ArtifactTree {
                 (entry.dupe(), method.dupe())
             }
         };
+        // A materialization task resolves its future before the command thread moves the
+        // artifact to `Materialized`. The command thread moves the artifact only when it
+        // processes the `MaterializationFinished` command, which waits in the low priority queue
+        // behind every high priority command. Until then, the artifact stays `Declared` after
+        // `ensure_materialized` has returned. For a `LocalCopy`, the code below would resolve the
+        // path to the copy source, and the code that called `publish` may already have deleted
+        // the copy source.
+        if let Some(active) = materialization_data.processing.active_ref()
+            && let ProcessingFuture::Materializing(future) = &active.future
+        {
+            match future.peek() {
+                Some(Ok(())) => return Ok(path),
+                // A copy that is still running would also resolve to its source. A caller of
+                // `publish` that writes its source only once deletes the source as soon as the
+                // copy is done, so a reader that reads the source later finds nothing. The reader
+                // waits for the copy instead.
+                None if matches!(
+                    method.as_ref(),
+                    ArtifactMaterializationMethod::LocalCopy(..)
+                ) =>
+                {
+                    return Err(ArtifactNotMaterializedReason::RequiresMaterialization { path });
+                }
+                _ => {}
+            }
+        }
         match method.as_ref() {
             ArtifactMaterializationMethod::CasDownload { info } => {
                 let path_iter = path_iter.peekable();

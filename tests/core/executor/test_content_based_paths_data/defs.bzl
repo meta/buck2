@@ -26,6 +26,7 @@
 _CBP_RACE_SEED = read_config("cbp_race", "seed", "0")
 _TEST_URL = read_config("test", "url")
 _TEST_SHA1 = read_config("test", "sha1")
+_TEST_SHA512 = read_config("test", "sha512")
 
 def _rust_pattern_producer_impl(ctx):
     # Stable content that does NOT depend on configuration. A per-test-run
@@ -316,15 +317,13 @@ def _download_with_content_based_path_impl(ctx: AnalysisContext):
     url = _TEST_URL
 
     if ctx.attrs.defer_download:
-        sha1 = _TEST_SHA1
-        dummy_sha_256 = None
+        checksums = {"sha1": _TEST_SHA1}
     else:
-        # The digest config only accepts sha1 here, so a sha256 alone gives the action no usable
-        # digest, which is the path this case wants to exercise.
-        sha1 = None
-        dummy_sha_256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        # The CAS doesn't use sha512 digests, so the action can't defer the download. It hashes
+        # the downloaded file to find the output path instead.
+        checksums = {"sha512": _TEST_SHA512}
 
-    download = ctx.actions.download_file("download", url, sha1 = sha1, sha256 = dummy_sha_256, has_content_based_path = True)
+    download = ctx.actions.download_file("download", url, has_content_based_path = True, **checksums)
     return [
         DefaultInfo(default_output = download),
     ]

@@ -166,13 +166,20 @@ def get_proguard_output(
         seeds = None
         usage = None
     else:
-        input_jars_to_output_jars = {
-            input_jar: ctx.actions.declare_output(
-                "proguard_output_jars/{}_{}_obfuscated.jar".format(input_jar.short_path, i),
+        # Name each jar by a hash of its owner and its short path, numbered only among the jars that
+        # share both, so that adding or removing an unrelated library does not rename it. Starlark's
+        # hash() of a string is deterministic, and the count keeps names unique even if two owners'
+        # hashes collide.
+        input_jars_to_output_jars = {}
+        name_counts = {}
+        for input_jar, owner in input_jars.items():
+            name = "{}/{}".format(hash(str(owner)) & 0xFFFFFFFF, input_jar.short_path)
+            count = name_counts.get(name, 0)
+            name_counts[name] = count + 1
+            input_jars_to_output_jars[input_jar] = ctx.actions.declare_output(
+                "proguard_output_jars/{}_{}_obfuscated.jar".format(name, count),
                 has_content_based_path = False,
             )
-            for i, input_jar in enumerate(input_jars.keys())
-        }
         mapping = ctx.actions.declare_output("proguard/mapping.txt", has_content_based_path = True)
         configuration = ctx.actions.declare_output("proguard/configuration.txt", has_content_based_path = True)
         seeds = ctx.actions.declare_output("proguard/seeds.txt", has_content_based_path = True)

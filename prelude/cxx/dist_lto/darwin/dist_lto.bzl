@@ -287,6 +287,9 @@ def complete_distributed_link_with_expanded_archive_link_data(
                     )
                     archive_contents_mapper_cmd.add("--object_to_map", object_basename, input_object_file.as_output())
                     debug_info_symlink_map["debug_info_file_{}".format(len(debug_info_symlink_map))] = final_native_object_file_output
+
+                    # A native member is linked as extracted, so the debug map names the extracted object.
+                    debug_info_symlink_map["debug_info_file_{}".format(len(debug_info_symlink_map))] = input_object_file
                 ctx.actions.run(archive_contents_mapper_cmd, category = make_cat("thin_lto_map_archive"), identifier = archive_name)
 
             elif isinstance(linkable, SharedLibLinkable):

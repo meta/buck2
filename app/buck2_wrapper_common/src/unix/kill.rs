@@ -171,7 +171,12 @@ mod tests {
             process_exists(pid).unwrap(),
             "a zombie leader with a live thread is still a process"
         );
+        assert!(
+            crate::kill::leader_exited(pid).unwrap(),
+            "a zombie leader has exited, whatever its threads still do"
+        );
         drop(child);
         assert!(!process_exists(pid).unwrap(), "process shouldn't exist");
+        assert!(crate::kill::leader_exited(pid).unwrap());
     }
 }

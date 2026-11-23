@@ -164,7 +164,7 @@ pub(crate) async fn kill_with_timeout(
         Ok(inner_result) => {
             match inner_result {
                 Ok(_) => loop {
-                    if !kill::process_exists(pid)? {
+                    if kill::leader_exited(pid)? {
                         return Ok(());
                     }
                     if Instant::now() - time_req_sent > graceful {
@@ -236,7 +236,7 @@ async fn hard_kill_impl(
     };
     let timestamp_after_kill = Instant::now();
     while Instant::now() - start_at < deadline {
-        if handle.has_exited()? {
+        if handle.has_exited()? || kill::leader_exited(pid)? {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -245,7 +245,7 @@ async fn hard_kill_impl(
     // Last chance: we do logging this time.
     let status = kill::get_sysinfo_status(pid).map(|s| s.to_string());
     let status = status.unwrap_or_else(|| "<unknown>".to_owned());
-    if handle.has_exited()? {
+    if handle.has_exited()? || kill::leader_exited(pid)? {
         return Ok(());
     }
 

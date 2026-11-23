@@ -33,6 +33,27 @@ pub fn process_exists(pid: Pid) -> buck2_error::Result<bool> {
     imp::process_exists(pid)
 }
 
+/// Whether the process is gone or, on Linux, its thread-group leader has exited. A daemon whose
+/// leader has exited serves nothing more; its other threads can go on releasing a large process's
+/// memory for seconds, and its file table with its locks last, during which `process_exists`
+/// still counts it. A caller that needs the process's locks waits for them separately.
+pub fn leader_exited(pid: Pid) -> buck2_error::Result<bool> {
+    if !process_exists(pid)? {
+        return Ok(true);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Ok(matches!(
+            get_sysinfo_status(pid),
+            Some(sysinfo::ProcessStatus::Zombie)
+        ))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(false)
+    }
+}
+
 /// Start time of the given process in seconds since the unix epoch, with 1
 /// second precision, or `None` if the process does not exist or its start
 /// time cannot be read.

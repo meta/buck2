@@ -24,6 +24,7 @@ use crate::analysis::Analysis;
 use crate::buckconfig::BuckconfigSource;
 use crate::daemon::Daemon;
 use crate::digest::Digest;
+use crate::event_forwarding::EventForwarding;
 use crate::event_log::EventLog;
 use crate::execution_platforms::ExecutionPlatforms;
 use crate::health_check::HealthCheck;
@@ -199,6 +200,7 @@ buck_settings! {
         analysis: Analysis,
         daemon: Daemon,
         digest: Digest,
+        event_forwarding: EventForwarding,
         http: Http,
         hydration: Hydration,
         log_download: LogDownload,

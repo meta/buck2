@@ -132,6 +132,143 @@ public class CrashAnalyzerTest {
   }
 
   @Test
+  public void testIgnoresSigmuxSignalRedirectForSIGILL() {
+    String logcatOutput =
+        "11-17 21:51:26.453  3732  3732 W runtime-internals: redirecting sigaction to"
+            + " sigmux_sigaction for signal 4\n"
+            + "I/TestRunner(9012): Test passed successfully\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertTrue(
+        "Should always print analysis header", errorOutput.contains("=== AIT CRASH ANALYSIS ==="));
+    assertTrue("Should print no crashes detected", errorOutput.contains("No crashes detected"));
+    assertFalse(
+        "Should not report SIGILL for ART sigmux signal redirection",
+        errorOutput.contains("SIGILL signal detected"));
+  }
+
+  @Test
+  public void testDetectsRealSIGILLAlongsideSigmuxRedirect() {
+    String logcatOutput =
+        "11-17 21:51:26.453  3732  3732 W runtime-internals: redirecting sigaction to"
+            + " sigmux_sigaction for signal 4\n"
+            + "F/libc(12345): Fatal signal 4 (SIGILL), code 1 (ILL_ILLOPC), fault addr"
+            + " 0x12345678\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertTrue(
+        "Should still detect a real SIGILL",
+        errorOutput.contains("SIGILL signal detected (illegal instruction)"));
+  }
+
+  @Test
+  public void testIgnoresSignalTokenUnderLibcPrefixedTag() {
+    String logcatOutput =
+        "11-17 21:51:26.453  3732  3732 W libcore : redirecting sigaction to sigmux_sigaction"
+            + " for signal 4\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertTrue("Should print no crashes detected", errorOutput.contains("No crashes detected"));
+    assertFalse(
+        "A tag that merely starts with libc is not the libc crash reporter",
+        errorOutput.contains("SIGILL signal detected"));
+  }
+
+  @Test
+  public void testIgnoresSignalTokenInMessageMentioningDebug() {
+    String logcatOutput =
+        "11-17 21:51:26.453  3732  3732 I SignalSetup: DEBUG build, chaining handler for"
+            + " signal 11\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertTrue("Should print no crashes detected", errorOutput.contains("No crashes detected"));
+    assertFalse(
+        "DEBUG in the message is not the debuggerd crash reporter",
+        errorOutput.contains("SIGSEGV signal detected"));
+  }
+
+  @Test
+  public void testDetectsThreadtimeLibcFatalSignal() {
+    String logcatOutput =
+        "11-17 21:51:26.453  3732  3732 F libc    : Fatal signal 11 (SIGSEGV), code 1"
+            + " (SEGV_MAPERR), fault addr 0x0 in tid 3732 (main), pid 3732 (main)\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertTrue(
+        "Should detect SIGSEGV reported by libc in threadtime format",
+        errorOutput.contains("SIGSEGV signal detected (native crash)"));
+  }
+
+  @Test
+  public void testDetectsThreadtimeDebuggerdSignalLine() {
+    String logcatOutput =
+        "11-17 21:51:26.700  3800  3800 F DEBUG   : signal 4 (SIGILL), code 1 (ILL_ILLOPC),"
+            + " fault addr 0x7f12345678\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertTrue(
+        "Should detect SIGILL reported by debuggerd in threadtime format",
+        errorOutput.contains("SIGILL signal detected (illegal instruction)"));
+  }
+
+  @Test
+  public void testIgnoresCrashReporterTagQuotedInsideAnotherTagsMessage() {
+    String logcatOutput =
+        "11-17 21:51:26.453  3732  3732 I SignalSetup: configured F/libc(0): handler for"
+            + " signal 4\n"
+            + "I/SignalSetup(3732): configured F DEBUG : handler for signal 11\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertTrue("Should print no crashes detected", errorOutput.contains("No crashes detected"));
+    assertFalse(
+        "Crash-reporter text inside another tag's message is not a crash report",
+        errorOutput.contains("signal detected"));
+  }
+
+  @Test
+  public void testIgnoresQuotedHeaderWhenRealTagContainsSpace() {
+    String logcatOutput =
+        "I [arfx][[ASSET_SYNC] AtlasXORAssetStorageDelegate]: configured F/libc(0): handler"
+            + " for signal 4\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertTrue("Should print no crashes detected", errorOutput.contains("No crashes detected"));
+    assertFalse(
+        "A header-like token quoted in the message is not a crash report",
+        errorOutput.contains("SIGILL signal detected"));
+  }
+
+  @Test
+  public void testDetectsTimeFormatPaddedLibcTag() {
+    String logcatOutput =
+        "11-17 21:51:26.453 F/libc    ( 3732): Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR),"
+            + " fault addr 0x0\n";
+
+    crashAnalyzer.analyzeCrashInformation(logcatOutput);
+
+    String errorOutput = errContent.toString();
+    assertTrue(
+        "Should detect SIGSEGV reported by libc in time format",
+        errorOutput.contains("SIGSEGV signal detected (native crash)"));
+  }
+
+  @Test
   public void testOutputContainsEndMarker() {
     String logcatOutput =
         "E/AndroidRuntime(12345): java.lang.OutOfMemoryError: Test error\n"

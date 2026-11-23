@@ -93,6 +93,11 @@ public class CrashAnalyzer {
         false),
   };
 
+  private static final Pattern LOGCAT_HEADER_TAG =
+      Pattern.compile(
+          "^(?:\\d\\d-\\d\\d\\s+\\d\\d:\\d\\d:\\d\\d\\.\\d+\\s+)?(?:\\d+\\s+){0,2}[VDIWEFA][/"
+              + " ]\\s*([^\\s(:]+)\\s*[(:]");
+
   /**
    * Analyzes logcat output for crash information and forwards it to stdout/stderr so the enhanced
    * crash detection system can detect specific crash types.
@@ -111,7 +116,13 @@ public class CrashAnalyzer {
       Matcher matcher = crashType.pattern.matcher(logcatOutput);
       boolean matched;
       if (crashType.isSignal) {
-        matched = matcher.find();
+        matched = false;
+        while (matcher.find()) {
+          if (isSignalCrashContext(logcatOutput, matcher.start())) {
+            matched = true;
+            break;
+          }
+        }
       } else {
         // A Java-exception token only indicates a crash when it is surfaced by the crash
         // reporter, not when some component merely logs a caught exception (see
@@ -141,6 +152,39 @@ public class CrashAnalyzer {
       System.err.println("No crashes detected");
     }
     System.err.println("=== END AIT CRASH ANALYSIS ===");
+  }
+
+  /**
+   * Decides whether a matched native-signal token represents an actual crash rather than a
+   * component merely logging a signal number. A match counts only when its line was logged under a
+   * crash-reporter tag (libc, DEBUG or debuggerd), which is where Android reports native crashes; a
+   * token under any other tag, e.g. ART's routine "redirecting sigaction to sigmux_sigaction for
+   * signal 4" line, is not counted. Detection therefore relies on the libc/debuggerd report that
+   * accompanies a native crash, not on secondary reports such as Zygote's "exited due to signal".
+   *
+   * <p>The tag is the line's first logcat header token, compared exactly, so tags such as libcore
+   * and crash-reporter text quoted inside another tag's message do not qualify. The match is
+   * anchored to the line start (past the optional date/time and pid/tid prefix), so a header-like
+   * token quoted inside the message never qualifies, even when the real tag contains a space and
+   * the header itself does not parse. This holds for the brief ("F/libc(pid):"), time and
+   * threadtime ("... F libc :") logcat formats.
+   *
+   * @param logcatOutput The raw logcat output
+   * @param matchStart Offset of the signal token match within {@code logcatOutput}
+   * @return true if the match is on a crash-reporter line
+   */
+  private static boolean isSignalCrashContext(String logcatOutput, int matchStart) {
+    int lineStart = logcatOutput.lastIndexOf('\n', matchStart) + 1;
+    int lineEnd = logcatOutput.indexOf('\n', matchStart);
+    if (lineEnd == -1) {
+      lineEnd = logcatOutput.length();
+    }
+    Matcher header = LOGCAT_HEADER_TAG.matcher(logcatOutput.substring(lineStart, lineEnd));
+    if (!header.find()) {
+      return false;
+    }
+    String tag = header.group(1);
+    return "libc".equals(tag) || "DEBUG".equals(tag) || "debuggerd".equals(tag);
   }
 
   /**

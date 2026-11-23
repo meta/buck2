@@ -22,5 +22,6 @@
   },
   "strings": {},
   "success": true,
+  "test_exit_code": 0,
   "truncated": false
 }

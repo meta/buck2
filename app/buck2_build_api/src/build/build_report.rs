@@ -136,6 +136,9 @@ pub struct BuildReport {
     total_configured_graph_sketch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error_category: Option<String>,
+    /// The test verdict before build errors take precedence in the CLI exit status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    test_exit_code: Option<i32>,
 }
 
 /// The fields that stored in the unconfigured `BuildReportEntry` for buck1 backcompat.
@@ -689,6 +692,7 @@ impl<'a> BuildReportCollector<'a> {
                 .map(|m| Self::convert_all_target_build_metrics(&m.all_targets_build_metrics)),
             total_configured_graph_sketch,
             error_category,
+            test_exit_code: None,
         })
     }
 
@@ -1248,8 +1252,9 @@ pub fn write_build_report(
     detailed_metrics: Option<DetailedAggregatedMetrics>,
     action_graph_sketch_result: Option<ActionGraphSketchResult>,
     artifact_path_sketch_result: Option<ArtifactPathSketchResult>,
+    test_exit_code: Option<i32>,
 ) -> Result<Option<String>, buck2_error::Error> {
-    let build_report = BuildReportCollector::convert(
+    let mut build_report = BuildReportCollector::convert(
         trace_id,
         artifact_fs,
         cell_resolver,
@@ -1269,6 +1274,7 @@ pub fn write_build_report(
         artifact_path_sketch_result,
         opts.graph_properties_opts,
     )?;
+    build_report.test_exit_code = test_exit_code;
 
     write_or_serialize_build_report(
         &build_report,

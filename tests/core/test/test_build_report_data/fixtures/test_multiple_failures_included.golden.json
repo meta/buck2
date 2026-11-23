@@ -70,5 +70,6 @@
     "<STRING_HASH>": "Error running analysis for <IRRELEVANT>"
   },
   "success": false,
+  "test_exit_code": 0,
   "truncated": false
 }

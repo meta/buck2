@@ -691,6 +691,7 @@ async fn test_inner(
             supplemental_data.detailed_metrics,
             supplemental_data.action_graph_sketch_result,
             supplemental_data.artifact_path_sketch_result,
+            Some(executor_exit_code),
         )?
     } else {
         None

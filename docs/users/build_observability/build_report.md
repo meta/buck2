@@ -10,7 +10,10 @@ _successful_ ones; usually, most use cases that only need to care about
 successful outcomes are well served by direct usage of the CLI.
 
 To request a build report, pass `--build-report <path>` to `buck build` on the
-CLI.
+CLI. `buck test` also supports `--build-report <path>`. Its final report includes
+`test_exit_code`, the test verdict before build errors take precedence in the
+command's exit status. The report's `success` field still describes the build,
+not the tests. Streaming reports do not include the test verdict.
 
 You can also pass `--build-report-options` with a comma-separated list of
 options to customize the build report:
@@ -49,6 +52,10 @@ BuildReport {
     # covers that target and any errors not associated with a target, and it
     # only means that no error has been recorded for them yet.
     success: bool,
+
+    # Test verdict before build errors take precedence in the CLI exit status.
+    # Only present in the final report from `buck test`.
+    test_exit_code: Optional[int],
 
     # The error category for the build, in case it failed. One of "USER", "INFRA", "ENVIRONMENT".
     error_category: str,

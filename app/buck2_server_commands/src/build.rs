@@ -390,6 +390,7 @@ async fn process_build_result(
             detailed_metrics,
             action_graph_sketch_result,
             artifact_path_sketch_result,
+            None,
         )?
     } else {
         None

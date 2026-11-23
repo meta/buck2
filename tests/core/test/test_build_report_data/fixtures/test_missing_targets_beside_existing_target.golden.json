@@ -67,5 +67,6 @@
     "<STRING_HASH>": "Unknown target `<TARGET>` from package <IRRELEVANT>"
   },
   "success": false,
+  "test_exit_code": 0,
   "truncated": false
 }

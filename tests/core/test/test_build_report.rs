@@ -147,6 +147,38 @@ async fn test_failed_build_has_build_report(buck: &Buck, tmp_path: &Path) -> any
 }
 
 #[buck_test]
+async fn test_exit_code_in_build_report(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
+    let report = tmp_path.join("build-report.json");
+    let streaming_report = tmp_path.join("streaming-build-report.jsonl");
+    let failure = buck
+        .test(&[
+            "//:fail_build1",
+            "//:fail_test",
+            "--build-report",
+            &report.to_string_lossy(),
+            "--streaming-build-report",
+            &streaming_report.to_string_lossy(),
+        ])
+        .await
+        .expect_failure();
+
+    assert_eq!(failure.exit_code(), Some(3), "build error wins on the CLI");
+    let report: Value = serde_json::from_str(&std::fs::read_to_string(report)?)?;
+    assert_eq!(
+        report["test_exit_code"], 32,
+        "the sibling test ran and failed"
+    );
+    assert_eq!(report["success"], false);
+    assert_eq!(report["results"]["root//:fail_build1"]["success"], "FAIL");
+    assert_eq!(report["results"]["root//:fail_test"]["success"], "SUCCESS");
+
+    let reports = read_streaming_report(&streaming_report)?;
+    assert!(!reports.is_empty());
+    assert!(reports.iter().all(|r| r.get("test_exit_code").is_none()));
+    Ok(())
+}
+
+#[buck_test]
 async fn test_target_doesnt_exist(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     build_report_test(
         buck,

@@ -54,5 +54,6 @@
   },
   "strings": {},
   "success": true,
+  "test_exit_code": 32,
   "truncated": false
 }

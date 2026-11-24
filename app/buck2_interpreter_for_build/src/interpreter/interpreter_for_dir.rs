@@ -17,8 +17,6 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bxl::BxlFilePath;
@@ -693,18 +691,6 @@ impl InterpreterForDir {
         BuckStarlarkModule::with_profiling(|env| {
             let (env, internals) =
                 self.create_build_env(env, build_file, &listing, super_package, &loaded_modules)?;
-            let buckconfig_key = BuckconfigKeyRef {
-                section: "buck2",
-                property: "check_starlark_peak_memory",
-            };
-            let starlark_peak_mem_config_enabled = LegacyBuckConfig::parse_value(
-                buckconfig_key,
-                buckconfigs
-                    .read_root_cell_config(buckconfig_key)?
-                    .as_deref(),
-            )?
-            .unwrap_or(false);
-
             let (finished_eval, eval_result) = self.eval(
                 &env,
                 ast,
@@ -718,8 +704,7 @@ impl InterpreterForDir {
 
             let internals = eval_result.additional.into_build()?;
             let starlark_peak_allocated_bytes = env.heap().peak_allocated_bytes() as u64;
-            let starlark_peak_mem_check_enabled =
-                !eval_result.is_profiling_enabled && starlark_peak_mem_config_enabled;
+            let starlark_peak_mem_check_enabled = !eval_result.is_profiling_enabled;
             let starlark_mem_limit = eval_result
                 .starlark_peak_allocated_byte_limit
                 .get()

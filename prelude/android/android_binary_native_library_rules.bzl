@@ -245,6 +245,15 @@ def _materialize_middle_gatorade_products(
         relinked_libraries = relinked_libraries_by_platform[platform]
         for soname in sorted(relinked_libraries):
             entries["{}/relinked/{}".format(platform, soname)] = relinked_libraries[soname].lib.output
+
+            # The argsfiles the library's final links read and the stamps that
+            # put their inputs on the machine, when the build keeps them
+            # (gator.monogatorade_final_link_argsfiles and
+            # gator.monogatorade_final_link_inputs).
+            for kind in ("final-link-argsfiles", "final-link-inputs"):
+                for info in relinked_libraries[soname].extra_outputs.get(kind, []):
+                    for kept in info.default_outputs:
+                        entries["{}/{}/{}".format(platform, kind, kept.basename)] = kept
     ctx.actions.symlinked_dir(output, entries)
 
 def get_android_binary_native_library_info(
@@ -565,6 +574,8 @@ def get_android_binary_native_library_info(
     # @oss-disable[end= ]: )
 
     monogatorade_products = None
+    monogatorade_step_commands = {}
+    monogatorade_plans = {}
     if native_library_merge_sequence:
         native_library_merge_input_file = ctx.actions.write_json(
             "mergemap.input",
@@ -596,6 +607,8 @@ def get_android_binary_native_library_info(
                 # @oss-disable[end= ]: native_library_merge_dir,
                 # @oss-disable[end= ]: native_build_command_entries,
                 # @oss-disable[end= ]: prebuilt_dir_symbols_by_platform,
+                # @oss-disable[end= ]: monogatorade_step_commands,
+                # @oss-disable[end= ]: plans_by_platform = monogatorade_plans,
             # @oss-disable[end= ]: )
         elif not "early" in getattr(ctx.attrs, "gatorade_phases", []):
             mergemap_cmd = cmd_args(ctx.attrs._android_toolchain[AndroidToolchainInfo].mergemap_tool)
@@ -675,6 +688,8 @@ def get_android_binary_native_library_info(
             # @oss-disable[end= ]: None,
             # @oss-disable[end= ]: native_build_command_entries,
             # @oss-disable[end= ]: prebuilt_dir_symbols_by_platform,
+            # @oss-disable[end= ]: monogatorade_step_commands,
+            # @oss-disable[end= ]: plans_by_platform = monogatorade_plans,
         # @oss-disable[end= ]: )
 
     mergemap_gencode_jar = None
@@ -904,6 +919,8 @@ def get_android_binary_native_library_info(
                 monogatorade_products,
                 excluded_shared_libs_by_platform,
                 prebuilt_dir_symbols_by_platform,
+                monogatorade_step_commands,
+                monogatorade_plans = monogatorade_plans,
             )
             middle_gatorade_relinked_libraries_by_platform = final_shared_libs_by_platform
             relinked_libs_for_extra_outputs = final_shared_libs_by_platform
@@ -949,6 +966,8 @@ def get_android_binary_native_library_info(
                 monogatorade_products,
                 excluded_shared_libs_by_platform,
                 prebuilt_dir_symbols_by_platform,
+                monogatorade_step_commands,
+                monogatorade_plans = monogatorade_plans,
             )
             # This branch deliberately leaves final_shared_libs_by_platform unrelinked for the
             # [unrelinked] subtargets below. Final diagnostic reports must instead reuse the
@@ -960,7 +979,12 @@ def get_android_binary_native_library_info(
             # Under monogatorade nothing else reads a merge link, so the APK packages stand-ins
             # and only the [unrelinked] and [unrelinked_libs] subtargets link the merge links.
             # @oss-disable[end= ]: if monogatorade_products != None:
-                # @oss-disable[end= ]: deferred_packaged_libs_by_platform = monogatorade_redex_stand_ins(ctx, final_shared_libs_by_platform, monogatorade_products)
+                # @oss-disable[end= ]: deferred_packaged_libs_by_platform = monogatorade_redex_stand_ins(
+                    # @oss-disable[end= ]: ctx,
+                    # @oss-disable[end= ]: final_shared_libs_by_platform,
+                    # @oss-disable[end= ]: monogatorade_products,
+                    # @oss-disable[end= ]: monogatorade_plans,
+                # @oss-disable[end= ]: )
 
             if False: # @oss-enable
             # @oss-disable[end= ]: if is_late_gatorade_enabled(ctx):
@@ -3263,10 +3287,18 @@ def _relink_for_native_libs(
     monogatorade_products: dict[str, Artifact] | None = None,
     excluded_libraries_by_platform: dict[str, dict[str, SharedLibrary]] = {},
     prebuilt_dir_symbols_by_platform: dict[str, Artifact] = {},
+    monogatorade_step_commands: dict[str, typing.Any] = {},
+    monogatorade_plans: dict = {},
 ) -> tuple:
     return (relink_libraries(ctx, libraries_by_platform, native_cmd_entries, excluded_libraries_by_platform, prebuilt_dir_symbols_by_platform), {}) # @oss-enable
     # @oss-disable[end= ]: relink = relink_for_native_libs
-    # @oss-disable[end= ]: products = (monogatorade_products, excluded_libraries_by_platform, prebuilt_dir_symbols_by_platform)
+    # @oss-disable[end= ]: products = (
+        # @oss-disable[end= ]: monogatorade_products,
+        # @oss-disable[end= ]: excluded_libraries_by_platform,
+        # @oss-disable[end= ]: prebuilt_dir_symbols_by_platform,
+        # @oss-disable[end= ]: monogatorade_step_commands,
+        # @oss-disable[end= ]: monogatorade_plans,
+    # @oss-disable[end= ]: )
     # @oss-disable[end= ]: return relink(ctx, libraries_by_platform, relink_libraries, create_shared_lib, native_cmd_entries, check_report, *products)
 
 def extract_provided_symbols(ctx: AnalysisContext, toolchain: CxxToolchainInfo, lib: Artifact) -> Artifact:

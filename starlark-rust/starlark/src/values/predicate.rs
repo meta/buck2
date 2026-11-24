@@ -323,6 +323,8 @@ macro_rules! starlark_predicate_type {
 
             impl $marker {
                 /// The value that stands for this type in Starlark.
+                // Not every predicate type is given a global.
+                #[allow(dead_code)]
                 $vis fn global() -> $crate::values::starlark_value_as_type::StarlarkValueAsType<$marker> {
                     TYPE
                 }

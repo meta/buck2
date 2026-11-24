@@ -16,8 +16,9 @@
  */
 
 //! A predicate type and its members: a type with one representation, a type with two, an
-//! upstream member, and a `TyUser` that names the predicate type as a supertype. And a
-//! recursive type over the predicate type.
+//! upstream member, and a `TyUser` that names the predicate type as a supertype. A second
+//! predicate type, with other members and some of the same, and a third with the name of the
+//! first. And a recursive type over the predicate type.
 
 use std::sync::OnceLock;
 
@@ -89,6 +90,30 @@ starlark_recursive_type! {
     StarlarkFlags<'v>;
     name "Flags";
     is Either<bool, TupleType<StarlarkFlags>>;
+}
+
+/// What something painted is used through.
+trait PaintedLike<'v> {
+    fn colour(&self) -> &'static str;
+}
+
+starlark_predicate_type! {
+    /// Something with a colour.
+    StarlarkPainted<'v>;
+    name "Painted";
+    get &'v dyn PaintedLike<'v>;
+}
+
+/// What a shape of the other kind is used through.
+trait OtherShapeLike<'v> {
+    fn corners(&self) -> usize;
+}
+
+starlark_predicate_type! {
+    /// Another type that is called `Shape` in Starlark.
+    StarlarkOtherShape<'v>;
+    name "Shape";
+    get &'v dyn OtherShapeLike<'v>;
 }
 
 /// A member that cannot say so itself.
@@ -166,10 +191,31 @@ enum PolygonView<'v> {
     ManySided(ValueTyped<'v, ManySided>),
 }
 
+impl<'v> PaintedLike<'v> for Triangle {
+    fn colour(&self) -> &'static str {
+        "green"
+    }
+}
+
+impl<'v> PaintedLike<'v> for ManySided {
+    fn colour(&self) -> &'static str {
+        "blue"
+    }
+}
+
+/// A member of two predicate types.
 #[starlark_value(type = "polygon")]
 impl<'v> StarlarkType<'v> for PolygonView<'v> {
     #[starlark(implements = StarlarkShape)]
     fn shape(this: Self) -> &'v dyn ShapeLike<'v> {
+        match this {
+            PolygonView::Triangle(x) => x.as_ref(),
+            PolygonView::ManySided(x) => x.as_ref(),
+        }
+    }
+
+    #[starlark(implements = StarlarkPainted)]
+    fn painted(this: Self) -> &'v dyn PaintedLike<'v> {
         match this {
             PolygonView::Triangle(x) => x.as_ref(),
             PolygonView::ManySided(x) => x.as_ref(),
@@ -185,6 +231,60 @@ impl<'v> StarlarkValue<'v> for Triangle {
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for ManySided {
     type Type = PolygonView<'v>;
+}
+
+/// A member of the second predicate type only.
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("paint")]
+struct Paint;
+starlark_simple_value!(Paint);
+
+impl<'v> PaintedLike<'v> for Paint {
+    fn colour(&self) -> &'static str {
+        "red"
+    }
+}
+
+#[starlark_value(type = "paint")]
+impl<'v> StarlarkValue<'v> for Paint {
+    #[starlark(implements = StarlarkPainted)]
+    fn painted(this: ValueTyped<'v, Self>) -> &'v dyn PaintedLike<'v> {
+        this.as_ref()
+    }
+}
+
+/// A member of the predicate type that shares the name of the first.
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("oval")]
+struct Oval;
+starlark_simple_value!(Oval);
+
+impl<'v> OtherShapeLike<'v> for Oval {
+    fn corners(&self) -> usize {
+        0
+    }
+}
+
+#[starlark_value(type = "oval")]
+impl<'v> StarlarkValue<'v> for Oval {
+    #[starlark(implements = StarlarkOtherShape)]
+    fn other_shape(this: ValueTyped<'v, Self>) -> &'v dyn OtherShapeLike<'v> {
+        this.as_ref()
+    }
 }
 
 /// Not a member, with a static type that says it is one: a `TyUser` that names the predicate
@@ -323,6 +423,59 @@ fn test_handle() {
     });
 }
 
+/// A type that is a member of several predicate types has one handle for each, whichever of
+/// its representations the value is, and a type is of the predicate types it says and of no
+/// other.
+#[test]
+fn test_handle_of_each_predicate() {
+    fn colour_of<'v>(value: Value<'v>) -> Option<&'static str> {
+        <StarlarkPainted as StarlarkTypeExpr>::get(value).map(|painted| painted.colour())
+    }
+
+    Heap::temp(|heap| {
+        let triangle = heap.alloc_simple(Triangle).to_value();
+        let many_sided = heap.alloc_simple(ManySided(7)).to_value();
+        assert_eq!(Some(3), sides_of(triangle));
+        assert_eq!(Some("green"), colour_of(triangle));
+        assert_eq!(Some(7), sides_of(many_sided));
+        assert_eq!(Some("blue"), colour_of(many_sided));
+
+        let paint = heap.alloc_simple(Paint).to_value();
+        assert_eq!(None, sides_of(paint));
+        assert_eq!(Some("red"), colour_of(paint));
+
+        let square = heap.alloc_simple(Square).to_value();
+        assert_eq!(Some(4), sides_of(square));
+        assert_eq!(None, colour_of(square));
+
+        // No upstream member, so a string is not one.
+        assert_eq!(None, colour_of(heap.alloc_str("abc").to_value()));
+        assert_eq!(None, colour_of(heap.alloc(1i32).to_value()));
+    });
+}
+
+/// A predicate type is told from another by its declaration, not by its name in Starlark.
+#[test]
+fn test_predicate_types_of_one_name() {
+    fn corners_of<'v>(value: Value<'v>) -> Option<usize> {
+        <StarlarkOtherShape as StarlarkTypeExpr>::get(value).map(|shape| shape.corners())
+    }
+
+    assert_eq!(
+        StarlarkShape::PREDICATE.name(),
+        StarlarkOtherShape::PREDICATE.name()
+    );
+    Heap::temp(|heap| {
+        let oval = heap.alloc_simple(Oval).to_value();
+        let square = heap.alloc_simple(Square).to_value();
+        assert_eq!(Some(0), corners_of(oval));
+        assert_eq!(None, sides_of(oval));
+        assert_eq!(None, corners_of(square));
+        assert_eq!(Some(4), sides_of(square));
+        assert_eq!(None, corners_of(heap.alloc_str("abc").to_value()));
+    });
+}
+
 /// The matcher of the type is the check that gives the handle.
 #[test]
 fn test_matcher() {
@@ -351,23 +504,33 @@ fn test_ty() {
     assert_eq!(ty, StarlarkShape::starlark_type_repr());
 }
 
-/// A type says once which predicate types it is a member of, whatever its representations.
+/// A type says once which predicate types it is a member of, whatever its representations,
+/// and the typechecker knows them in the order the block has them.
 #[test]
 fn test_implemented_predicates() {
     assert_eq!(
         vec![StarlarkShape::PREDICATE],
-        <Square as StarlarkType>::implemented_predicates()
+        TyStarlarkValue::new::<Square>().implemented_predicates()
     );
-    assert_eq!(
-        vec![StarlarkShape::PREDICATE],
-        <PolygonView as StarlarkType>::implemented_predicates()
+    for polygon in [
+        TyStarlarkValue::new::<Triangle>(),
+        TyStarlarkValue::new::<ManySided>(),
+    ] {
+        assert_eq!(
+            vec![StarlarkShape::PREDICATE, StarlarkPainted::PREDICATE],
+            polygon.implemented_predicates()
+        );
+    }
+    assert!(
+        TyStarlarkValue::new::<Blot>()
+            .implemented_predicates()
+            .is_empty()
     );
-    assert_eq!(
-        vec![StarlarkShape::PREDICATE],
-        TyStarlarkValue::new::<ManySided>().implemented_predicates()
+    assert!(
+        TyStarlarkValue::new::<StarlarkStr>()
+            .implemented_predicates()
+            .is_empty()
     );
-    assert!(<Blot as StarlarkType>::implemented_predicates().is_empty());
-    assert!(<StarlarkStr as StarlarkType>::implemented_predicates().is_empty());
 }
 
 #[test]

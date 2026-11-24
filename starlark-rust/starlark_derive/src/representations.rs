@@ -119,6 +119,17 @@ fn derive_starlark_representations_impl(
             }
         )*
 
+        impl #impl_generics std::convert::From<#ident #type_generics>
+            for starlark::values::Value<#lt> #where_clause
+        {
+            #[inline]
+            fn from(x: #ident #type_generics) -> Self {
+                match x {
+                    #( #ident::#variant_idents(x) => x.to_value(), )*
+                }
+            }
+        }
+
         impl #impl_generics starlark::__derive_refs::ViewOfRepresentations<#lt>
             for #ident #type_generics #where_clause
         {

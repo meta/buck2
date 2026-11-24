@@ -70,7 +70,11 @@ impl<'v> Namespace<'v> {
 
     /// Get a member of this namespace.
     pub fn get(&self, key: &str) -> Option<Value<'v>> {
-        self.fields.get_hashed(Hashed::new(key)).map(|v| v.value)
+        self.member(Hashed::new(key))
+    }
+
+    fn member(&self, key: Hashed<&str>) -> Option<Value<'v>> {
+        self.fields.get_hashed(key).map(|v| v.value)
     }
 }
 
@@ -94,12 +98,12 @@ impl<'v> StarlarkValue<'v> for Namespace<'v> {
         collector.push_str("namespace(...)");
     }
 
-    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
-        self.get_attr_hashed(Hashed::new(attribute), heap)
+    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        self.member(Hashed::new(attribute))
     }
 
     fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.fields.get_hashed(attribute).map(|v| v.value)
+        self.member(attribute)
     }
 
     fn dir_attr(&self) -> Vec<String> {

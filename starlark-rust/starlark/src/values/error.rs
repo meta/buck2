@@ -122,6 +122,21 @@ impl ValueError {
         Self::unsupported_owned(V::TYPE, op, None)
     }
 
+    /// [`unsupported`](Self::unsupported) for the type `V`, without a value of it.
+    #[cold]
+    pub fn unsupported_for<'v, T, V: StarlarkType<'v>>(op: &str) -> crate::Result<T> {
+        Self::unsupported_owned(V::TYPE, op, None)
+    }
+
+    /// [`unsupported_with`](Self::unsupported_with) for the type `V`, without a value of it.
+    #[cold]
+    pub fn unsupported_with_for<'v, T, V: StarlarkType<'v>>(
+        op: &str,
+        right: Value,
+    ) -> crate::Result<T> {
+        Self::unsupported_owned(V::TYPE, op, Some(right.get_type()))
+    }
+
     #[cold]
     pub(crate) fn unsupported_type<T>(left: Value, op: &str) -> crate::Result<T> {
         Self::unsupported_owned(left.get_type(), op, None)

@@ -183,7 +183,6 @@ mod tests {
     use crate::assert;
     use crate::collections::StarlarkHasher;
     use crate::values::Heap;
-    use crate::values::StarlarkType;
     use crate::values::float::StarlarkFloat;
     use crate::values::types::bigint::StarlarkBigInt;
 
@@ -585,8 +584,11 @@ mod tests {
     fn test_hash() {
         let mut hash1 = StarlarkHasher::new();
         let mut hash2 = StarlarkHasher::new();
-        StarlarkFloat(1e20).write_hash(&mut hash1).unwrap();
         Heap::temp(|heap| {
+            heap.alloc(StarlarkFloat(1e20))
+                .to_value()
+                .write_hash(&mut hash1)
+                .unwrap();
             heap.alloc(StarlarkBigInt::unchecked_new(BigInt::from(10).pow(20)))
                 .to_value()
                 .write_hash(&mut hash2)

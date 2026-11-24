@@ -244,11 +244,12 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     }
 
     /// What a value of this type is read through: `ValueTyped<'v, Self>` for a type with one
-    /// representation, the view itself for a type with several.
+    /// representation, the view itself for a type with several. It is a handle: it is copied
+    /// freely and converts back into the value it was read from.
     ///
     /// This can be only implemented by the [`#[starlark_value]`](crate::values::starlark_value)
     /// proc macro.
-    type Get;
+    type Get: Copy + Into<Value<'v>>;
 
     /// `value` as this type's [`Get`](Self::Get), if it is of this type.
     ///
@@ -487,7 +488,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// operand's type gets the default's error, that the two types do not compare. The
     /// operand's type is also what the typechecker takes `<` and its like to accept.
     fn compare(&self, other: Value<'v>) -> crate::Result<Ordering> {
-        compare_unsupported(self, other)
+        compare_unsupported::<Self>(other)
     }
 
     /// Directly invoke a function.
@@ -503,7 +504,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
         _args: &Arguments<'v, '_>,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        ValueError::unsupported(self, "call()")
+        ValueError::unsupported_for::<_, Self>("call()")
     }
 
     /// Return the result of `a[index]` if `a` is indexable.
@@ -528,7 +529,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// ("Expected `int`, but got ..") rather than what this default answers: the type is
     /// indexed, and was given the wrong kind of index.
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported_with(self, "[]", index)
+        ValueError::unsupported_with_for::<_, Self>("[]", index)
     }
 
     /// Return the result of `a[index0, index1]` if `a` is indexable by two parameters.
@@ -539,7 +540,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
         _heap: Heap<'v>,
         _private: Private,
     ) -> crate::Result<Value<'v>> {
-        ValueError::unsupported(self, "[,]")
+        ValueError::unsupported_for::<_, Self>("[,]")
     }
 
     /// Extract a slice of the underlying object if the object is indexable. The
@@ -573,14 +574,14 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
         _stride: Option<Value<'v>>,
         _heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
-        ValueError::unsupported(self, "[::]")
+        ValueError::unsupported_for::<_, Self>("[::]")
     }
 
     /// Implement iteration over the value of this container by providing
     /// the values in a `Vec`.
     #[starlark_internal_vtable(skip)]
     fn iterate_collect(&self, _heap: Heap<'v>) -> crate::Result<Vec<Value<'v>>> {
-        ValueError::unsupported(self, "(iter)")
+        ValueError::unsupported_for::<_, Self>("(iter)")
     }
 
     /// Returns an iterator over the value of this container if this value holds
@@ -654,7 +655,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// In a `#[starlark_value]` block, a length that cannot fail is written
     /// `fn length(&self) -> i32`.
     fn length(&self) -> crate::Result<i32> {
-        ValueError::unsupported(self, "len()")
+        ValueError::unsupported_for::<_, Self>("len()")
     }
 
     /// Attribute type, for the typechecker.
@@ -751,7 +752,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// In a `#[starlark_value]` block it is written with the type of its result, as
     /// [`add`](Self::add) is with its types.
     fn plus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported(self, "+")
+        ValueError::unsupported_for::<_, Self>("+")
     }
 
     /// Apply the `-` unary operator to the current value.
@@ -767,7 +768,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// In a `#[starlark_value]` block it is written with the type of its result, as
     /// [`add`](Self::add) is with its types.
     fn minus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported(self, "-")
+        ValueError::unsupported_for::<_, Self>("-")
     }
 
     /// Add with the arguments the other way around.
@@ -839,7 +840,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     ///
     /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn sub(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        sub_unsupported(self, other)
+        sub_unsupported::<Self>(other)
     }
 
     /// Called on `rhs` of `lhs * rhs` when `lhs.mul` returns `None`.
@@ -883,7 +884,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     ///
     /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        div_unsupported(self, other)
+        div_unsupported::<Self>(other)
     }
 
     /// Apply the percent operator between the current value and `other`. Usually used on
@@ -916,7 +917,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     ///
     /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn percent(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        percent_unsupported(self, other)
+        percent_unsupported::<Self>(other)
     }
 
     /// Floor division between the current value and `other`.
@@ -939,14 +940,14 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     ///
     /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn floor_div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        floor_div_unsupported(self, other)
+        floor_div_unsupported::<Self>(other)
     }
 
     /// Bitwise `&` operator.
     ///
     /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn bit_and(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        bit_and_unsupported(self, other)
+        bit_and_unsupported::<Self>(other)
     }
 
     /// Bitwise `|` operator.
@@ -964,14 +965,14 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     ///
     /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn bit_or(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        bit_or_unsupported(self, other)
+        bit_or_unsupported::<Self>(other)
     }
 
     /// Bitwise `^` operator.
     ///
     /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn bit_xor(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        bit_xor_unsupported(self, other)
+        bit_xor_unsupported::<Self>(other)
     }
 
     /// Bitwise `~` operator.
@@ -979,21 +980,21 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// In a `#[starlark_value]` block it is written with the type of its result, as
     /// [`add`](Self::add) is with its types.
     fn bit_not(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        ValueError::unsupported(self, "~")
+        ValueError::unsupported_for::<_, Self>("~")
     }
 
     /// Bitwise `<<` operator.
     ///
     /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn left_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        left_shift_unsupported(self, other)
+        left_shift_unsupported::<Self>(other)
     }
 
     /// Bitwise `>>` operator.
     ///
     /// In a `#[starlark_value]` block it is written with its types, as [`add`](Self::add) is.
     fn right_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        right_shift_unsupported(self, other)
+        right_shift_unsupported::<Self>(other)
     }
 
     /// The typing of `this op rhs`: the signatures of the operator, each with the type of
@@ -1065,7 +1066,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// Set the attribute named `attribute` of the current value to
     /// `value` (e.g. `a.attribute = value`).
     fn set_attr(&self, attribute: &str, _new_value: Value<'v>) -> crate::Result<()> {
-        ValueError::unsupported(self, &format!(".{attribute}="))
+        ValueError::unsupported_for::<_, Self>(&format!(".{attribute}="))
     }
 }
 

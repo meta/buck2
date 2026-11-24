@@ -111,7 +111,6 @@ where
 /// not compare: [`compare_unsupported`].
 #[inline(always)]
 pub fn typed_compare<'v, T, O, R>(
-    this: &T,
     other: Value<'v>,
     typed: impl FnOnce(O) -> R,
 ) -> crate::Result<Ordering>
@@ -123,7 +122,7 @@ where
     unpack_then(
         other,
         |other| typed(other).into_result(),
-        || compare_unsupported(this, other),
+        || compare_unsupported::<T>(other),
         Err,
     )
 }
@@ -132,11 +131,8 @@ where
 /// [`StarlarkType::compare`], and the answer of a typed `compare` for a value that is not of
 /// its operand's type.
 #[cold]
-pub fn compare_unsupported<'v, T: StarlarkType<'v>>(
-    this: &T,
-    other: Value<'v>,
-) -> crate::Result<Ordering> {
-    ValueError::unsupported_with(this, "compare", other)
+pub fn compare_unsupported<'v, T: StarlarkType<'v>>(other: Value<'v>) -> crate::Result<Ordering> {
+    ValueError::unsupported_with_for::<_, T>("compare", other)
 }
 
 /// [`StarlarkType::write_hash`] from a body that cannot fail.
@@ -199,7 +195,6 @@ macro_rules! typed_operators {
             )]
             #[inline(always)]
             pub fn $typed<'v, T, O, R>(
-                this: &T,
                 other: Value<'v>,
                 heap: Heap<'v>,
                 typed: impl FnOnce(O, Heap<'v>) -> R,
@@ -212,7 +207,7 @@ macro_rules! typed_operators {
                 unpack_then(
                     other,
                     |other| typed(other, heap).alloc_result(heap),
-                    || $unsupported(this, other),
+                    || $unsupported::<T>(other),
                     Err,
                 )
             }
@@ -224,10 +219,9 @@ macro_rules! typed_operators {
             )]
             #[cold]
             pub fn $unsupported<'v, T: StarlarkType<'v>>(
-                this: &T,
                 other: Value<'v>,
             ) -> crate::Result<Value<'v>> {
-                ValueError::unsupported_with(this, $symbol, other)
+                ValueError::unsupported_with_for::<_, T>($symbol, other)
             }
         )*
     };

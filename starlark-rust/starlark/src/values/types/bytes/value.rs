@@ -177,7 +177,7 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
 
     /// repr(b"...") — byte literal syntax.
     fn collect_repr(&self, collector: &mut String) {
-        write!(collector, "{self}").unwrap()
+        write!(collector, "{}", self).unwrap()
     }
 
     /// str(b"...") — UTF-8 decode, replacing invalid sequences with U+FFFD.

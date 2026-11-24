@@ -208,6 +208,13 @@ crate::register_ty_starlark_value!(TypeCompiledImplAsStarlarkValue<DummyTypeMatc
 
 starlark::methods_static!(TYPE_COMPILED_METHODS = type_compiled_methods);
 
+impl<'v> From<TypeCompiled<'v>> for Value<'v> {
+    #[inline]
+    fn from(x: TypeCompiled<'v>) -> Value<'v> {
+        x.to_inner()
+    }
+}
+
 /// The behaviour of a compiled type, whose representations are one per matcher.
 #[starlark_value(type = "type")]
 impl<'v> StarlarkType<'v> for TypeCompiled<'v> {

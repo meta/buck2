@@ -162,6 +162,11 @@ impl<'v> Record<'v> {
         self.get_record_type().fields()
     }
 
+    fn field(&self, name: Hashed<&str>) -> Option<Value<'v>> {
+        let i = self.get_record_fields().get_index_of_hashed(name)?;
+        Some(self.content()[i].to_value())
+    }
+
     /// Iterate over the elements in the record.
     pub fn iter<'a>(&'a self) -> impl ExactSizeIterator<Item = (&'v str, Value<'v>)> + 'a
     where
@@ -206,13 +211,12 @@ impl<'v> StarlarkValue<'v> for Record<'v> {
         }
     }
 
-    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
-        self.get_attr_hashed(Hashed::new(attribute), heap)
+    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        self.field(Hashed::new(attribute))
     }
 
     fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
-        let i = self.get_record_fields().get_index_of_hashed(attribute)?;
-        Some(self.content()[i].to_value())
+        self.field(attribute)
     }
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {

@@ -74,7 +74,11 @@ impl<'v> Struct<'v> {
 
     /// The field named `name`, if there is one.
     pub fn get(&self, name: &str) -> Option<Value<'v>> {
-        self.fields.get_hashed(Hashed::new(name)).copied()
+        self.field(Hashed::new(name))
+    }
+
+    fn field(&self, name: Hashed<&str>) -> Option<Value<'v>> {
+        self.fields.get_hashed(name).copied()
     }
 
     /// The number of fields.
@@ -153,12 +157,12 @@ impl<'v> StarlarkValue<'v> for Struct<'v> {
         )
     }
 
-    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
-        self.get_attr_hashed(Hashed::new(attribute), heap)
+    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        self.field(Hashed::new(attribute))
     }
 
     fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.fields.get_hashed(attribute).copied()
+        self.field(attribute)
     }
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {

@@ -30,7 +30,6 @@ use crate::any::ProvidesStaticType;
 use crate::starlark_simple_value;
 use crate::typing::Ty;
 use crate::values::Heap;
-use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueError;
@@ -78,8 +77,8 @@ impl Range {
     }
 
     fn equals_range(&self, other: &Range) -> crate::Result<bool> {
-        let self_length = self.length()?;
-        let other_length = other.length()?;
+        let self_length = self.len()?;
+        let other_length = other.len()?;
         if self_length == 0 || other_length == 0 {
             return Ok(self_length == other_length);
         }
@@ -98,28 +97,12 @@ impl Range {
         }
     }
 
-    fn rem_range_at_iter(&self, index: usize) -> Option<Range> {
-        let index = i64::try_from(index).ok()?;
-
-        let start =
-            (self.start as i64).saturating_add(index.saturating_mul(self.step.get() as i64));
-
-        Some(Range {
-            start: i32::try_from(start).ok()?,
-            stop: self.stop,
-            step: self.step,
-        })
-    }
-}
-
-#[starlark_value(type = Range::TYPE)]
-impl<'v> StarlarkValue<'v> for Range {
-    fn to_bool(&self) -> bool {
+    fn is_non_empty(&self) -> bool {
         (self.start < self.stop && self.step.get() > 0)
             || (self.start > self.stop && self.step.get() < 0)
     }
 
-    fn length(&self) -> crate::Result<i32> {
+    fn len(&self) -> crate::Result<i32> {
         if self.start == self.stop {
             return Ok(0);
         }
@@ -151,8 +134,32 @@ impl<'v> StarlarkValue<'v> for Range {
         }
     }
 
+    fn rem_range_at_iter(&self, index: usize) -> Option<Range> {
+        let index = i64::try_from(index).ok()?;
+
+        let start =
+            (self.start as i64).saturating_add(index.saturating_mul(self.step.get() as i64));
+
+        Some(Range {
+            start: i32::try_from(start).ok()?,
+            stop: self.stop,
+            step: self.step,
+        })
+    }
+}
+
+#[starlark_value(type = Range::TYPE)]
+impl<'v> StarlarkValue<'v> for Range {
+    fn to_bool(&self) -> bool {
+        self.is_non_empty()
+    }
+
+    fn length(&self) -> crate::Result<i32> {
+        self.len()
+    }
+
     fn at(&self, index: i32) -> crate::Result<i32> {
-        let index = convert_index(index, self.length()?)?;
+        let index = convert_index(index, self.len()?)?;
         // The element itself fits in `i32`, but `step * index` can leave the range
         // on the way there, so compute in `i64` like `slice` and the iterator do.
         let element = self.start as i64 + self.step.get() as i64 * index as i64;
@@ -170,7 +177,7 @@ impl<'v> StarlarkValue<'v> for Range {
         stride: Option<Value>,
         heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
-        let (start, stop, step) = convert_slice_indices(self.length()?, start, stop, stride)?;
+        let (start, stop, step) = convert_slice_indices(self.len()?, start, stop, stride)?;
         // The stop index is one past the last element, so the raw endpoint can leave `i32`
         // although every element of the result is an element of `self`: compute in `i64` and
         // build an equal range that fits.
@@ -220,7 +227,7 @@ impl<'v> StarlarkValue<'v> for Range {
     unsafe fn iter_next(&self, index: usize, heap: Heap<'v>) -> Option<Value<'v>> {
         let rem_range = self.rem_range_at_iter(index)?;
 
-        if !rem_range.to_bool() {
+        if !rem_range.is_non_empty() {
             return None;
         }
 
@@ -231,7 +238,7 @@ impl<'v> StarlarkValue<'v> for Range {
         let Some(rem_range) = self.rem_range_at_iter(index) else {
             return (0, Some(0));
         };
-        match rem_range.length() {
+        match rem_range.len() {
             Ok(length) => (length as usize, Some(length as usize)),
             Err(_) => (0, None),
         }
@@ -251,7 +258,7 @@ impl<'v> StarlarkValue<'v> for Range {
                 return Ok(false);
             }
         };
-        if !self.to_bool() {
+        if !self.is_non_empty() {
             return Ok(false);
         }
         if self.start == other {
@@ -289,7 +296,6 @@ mod tests {
 
     use crate::assert;
     use crate::values::Heap;
-    use crate::values::StarlarkType;
     use crate::values::Value;
     use crate::values::range::Range;
     use crate::values::types::int::inline_int::InlineInt;
@@ -312,26 +318,26 @@ mod tests {
 
     #[test]
     fn length_stop() {
-        assert_eq!(Some(0), range_stop(0).length().ok());
-        assert_eq!(Some(17), range_stop(17).length().ok());
+        assert_eq!(Some(0), range_stop(0).len().ok());
+        assert_eq!(Some(17), range_stop(17).len().ok());
     }
 
     #[test]
     fn length_start_stop() {
-        assert_eq!(Some(20), range_start_stop(10, 30).length().ok());
-        assert_eq!(Some(0), range_start_stop(10, -30).length().ok());
-        assert_eq!(Some(i32::MAX), range_start_stop(0, i32::MAX).length().ok());
-        assert!(range_start_stop(-1, i32::MAX).length().is_err());
+        assert_eq!(Some(20), range_start_stop(10, 30).len().ok());
+        assert_eq!(Some(0), range_start_stop(10, -30).len().ok());
+        assert_eq!(Some(i32::MAX), range_start_stop(0, i32::MAX).len().ok());
+        assert!(range_start_stop(-1, i32::MAX).len().is_err());
     }
 
     #[test]
     fn length_start_stop_step() {
-        assert_eq!(Some(5), range(0, 10, 2).length().ok());
-        assert_eq!(Some(5), range(0, 9, 2).length().ok());
-        assert_eq!(Some(0), range(0, 10, -2).length().ok());
-        assert_eq!(Some(5), range(10, 0, -2).length().ok());
-        assert_eq!(Some(5), range(9, 0, -2).length().ok());
-        assert_eq!(Some(1), range(4, 14, 10).length().ok());
+        assert_eq!(Some(5), range(0, 10, 2).len().ok());
+        assert_eq!(Some(5), range(0, 9, 2).len().ok());
+        assert_eq!(Some(0), range(0, 10, -2).len().ok());
+        assert_eq!(Some(5), range(10, 0, -2).len().ok());
+        assert_eq!(Some(5), range(9, 0, -2).len().ok());
+        assert_eq!(Some(1), range(4, 14, 10).len().ok());
     }
 
     /// A slice of a range near the `i32` limits is an equal range that fits.
@@ -424,12 +430,9 @@ mod tests {
     fn test_length_spanning_full_i32_range() {
         // `stop - start` exceeds `i32::MAX` here, so the distance must be computed in
         // a wider type. The resulting length still fits in `i32`.
-        assert_eq!(Some(4294968), range(i32::MIN, i32::MAX, 1000).length().ok());
-        assert_eq!(Some(613566757), range(i32::MIN, i32::MAX, 7).length().ok());
-        assert_eq!(
-            Some(4294968),
-            range(i32::MAX, i32::MIN, -1000).length().ok()
-        );
+        assert_eq!(Some(4294968), range(i32::MIN, i32::MAX, 1000).len().ok());
+        assert_eq!(Some(613566757), range(i32::MIN, i32::MAX, 7).len().ok());
+        assert_eq!(Some(4294968), range(i32::MAX, i32::MIN, -1000).len().ok());
     }
 
     #[test]

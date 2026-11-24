@@ -102,6 +102,13 @@ impl<'v> StarlarkType<'v> for bool {
     }
 }
 
+impl<'v> From<bool> for Value<'v> {
+    #[inline]
+    fn from(x: bool) -> Value<'v> {
+        Value::new_bool(x)
+    }
+}
+
 impl<'v> ViewOfRepresentations<'v> for bool {
     type Canonical = StarlarkBool;
 

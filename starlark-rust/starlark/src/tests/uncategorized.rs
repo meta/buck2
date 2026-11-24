@@ -352,7 +352,7 @@ fn test_radd() {
             Some(Ok(heap.alloc(self.clone().add(&rhs)).to_value()))
         }
         fn collect_repr(&self, collector: &mut String) {
-            write!(collector, "{self}").unwrap()
+            write!(collector, "{}", self).unwrap()
         }
     }
 

@@ -381,6 +381,6 @@ impl<'v> StarlarkValue<'v> for BoundMethod<'v> {
     }
 
     fn documentation(&self) -> DocItem {
-        self.method.documentation()
+        self.method.to_value().documentation()
     }
 }

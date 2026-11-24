@@ -396,7 +396,7 @@ pub(crate) fn derive_from_typed(
         (Shape::Compare, [operand]) => {
             let other = derived_parameter(Some(operand), "other");
             let call = quote_spanned! { sig.span() =>
-                starlark::__derive_refs::behaviour::#glue(self, #other, |#operand| #output #block)
+                starlark::__derive_refs::behaviour::#glue::<Self, _, _>(#other, |#operand| #output #block)
             };
             let derived = syn::parse_quote! {
                 #( #attrs )*
@@ -436,10 +436,9 @@ pub(crate) fn derive_from_typed(
             let (heap, typed_heap) = heap_parameter(typed_heap.first().copied());
             // The error for a value that is not of the operand's type names the type of the
             // receiver, so the glue of an operator that answers with it takes the receiver.
-            let this = (method.shape == Shape::Operator).then(|| quote! { self, });
+            let of_type = (method.shape == Shape::Operator).then(|| quote! { ::<Self, _, _> });
             let call = quote_spanned! { sig.span() =>
-                starlark::__derive_refs::behaviour::#glue(
-                    #this
+                starlark::__derive_refs::behaviour::#glue #of_type (
                     #other,
                     #heap,
                     |#operand, #typed_heap| #output #block,

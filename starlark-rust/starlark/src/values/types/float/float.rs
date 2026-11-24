@@ -280,7 +280,7 @@ impl<'v> StarlarkValue<'v> for StarlarkFloat {
     }
 
     fn collect_repr(&self, s: &mut String) {
-        write!(s, "{self}").unwrap()
+        write!(s, "{}", self).unwrap()
     }
 
     fn to_bool(&self) -> bool {

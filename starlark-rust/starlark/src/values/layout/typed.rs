@@ -335,6 +335,13 @@ impl<'v, T: StarlarkValue<'v>> FrozenValueTyped<'v, T> {
     }
 }
 
+impl<'v, T: StarlarkValue<'v>> From<ValueTyped<'v, T>> for Value<'v> {
+    #[inline]
+    fn from(value: ValueTyped<'v, T>) -> Value<'v> {
+        value.to_value()
+    }
+}
+
 unsafe impl<'v, T: StarlarkValue<'v>> Trace<'v> for ValueTyped<'v, T> {
     fn trace(&mut self, tracer: &Tracer<'v>) {
         tracer.trace(&mut self.0);

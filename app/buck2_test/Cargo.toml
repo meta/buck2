@@ -30,6 +30,7 @@ buck2_interpreter_for_build.workspace = true
 buck2_node.workspace = true
 buck2_resource_control.workspace = true
 buck2_server_ctx.workspace = true
+buck2_settings.workspace = true
 buck2_test_api.workspace = true
 buck2_util.workspace = true
 derive_more.workspace = true

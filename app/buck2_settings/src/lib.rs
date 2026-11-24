@@ -52,6 +52,7 @@ mod source;
 mod starlark;
 mod target_platforms;
 pub mod telemetry;
+mod test;
 
 pub use agent_build::AgentBuild;
 pub use agent_config_change::AgentConfigChange;
@@ -93,3 +94,4 @@ pub use settings::InvocationBuckSettings;
 pub use source::Source;
 pub use starlark::Starlark;
 pub use target_platforms::TargetPlatforms;
+pub use test::Test;

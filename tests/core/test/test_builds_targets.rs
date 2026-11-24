@@ -28,12 +28,12 @@ async fn check_build_and_skip_override(
 }
 
 #[buck_test]
-async fn test_builds_targets_from_command_line_config(buck: &Buck) -> anyhow::Result<()> {
+async fn test_builds_targets_from_setting(buck: &Buck) -> anyhow::Result<()> {
     check_build_and_skip_override(
         buck,
         "//:failing_default_info",
         "--skip-default-info",
-        &["-c", "buck2.test_builds_targets=true"],
+        &["--setting", "test.build_targets=true"],
         "failing_default_info",
     )
     .await?;
@@ -41,19 +41,19 @@ async fn test_builds_targets_from_command_line_config(buck: &Buck) -> anyhow::Re
         buck,
         "//:failing_run_info",
         "--skip-run-info",
-        &["-c", "buck2.test_builds_targets=true"],
+        &["--setting", "test.build_targets=true"],
         "failing_run_info",
     )
     .await
 }
 
 #[buck_test]
-async fn test_explicit_build_flags_override_disabled_config(buck: &Buck) {
+async fn test_explicit_build_flags_override_disabled_setting(buck: &Buck) {
     let default_result = buck
         .test(&[
             "//:failing_default_info",
-            "-c",
-            "buck2.test_builds_targets=false",
+            "--setting",
+            "test.build_targets=false",
             "--build-default-info",
         ])
         .await
@@ -63,8 +63,8 @@ async fn test_explicit_build_flags_override_disabled_config(buck: &Buck) {
     let run_result = buck
         .test(&[
             "//:failing_run_info",
-            "-c",
-            "buck2.test_builds_targets=false",
+            "--setting",
+            "test.build_targets=false",
             "--build-run-info",
         ])
         .await

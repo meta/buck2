@@ -23,8 +23,8 @@ async fn test_timed_out_test_reports_on_sigterm(buck: &Buck) {
 async fn test_no_grace_period_kills_without_sigterm(buck: &Buck) {
     let output = buck
         .test(&[
-            "-c",
-            "buck2.test_timeout_grace_period_s=0",
+            "--setting",
+            "test.timeout_grace_period_s=0",
             ":reports_on_sigterm",
             "--",
             "--timeout",

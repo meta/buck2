@@ -43,6 +43,7 @@ use crate::section::Section;
 use crate::source::Source;
 use crate::starlark::Starlark;
 use crate::target_platforms::TargetPlatforms;
+use crate::test::Test;
 
 /// Assembles `BuckSettings` from the sections, each listed under its scope.
 ///
@@ -219,6 +220,7 @@ buck_settings! {
         agent_recursive_patterns: AgentRecursivePatterns,
         event_log: EventLog,
         health_check: HealthCheck,
+        test: Test,
     }
     dice {
         execution_platforms: ExecutionPlatforms,

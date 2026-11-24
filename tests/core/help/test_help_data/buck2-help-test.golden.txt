@@ -70,22 +70,22 @@ Options:
       --build-default-info
           Also build DefaultInfo provider, which is what `buck2 build` builds.
 
-          This overrides the `buck2.test_builds_targets` buckconfig.
+          This overrides the `test.build_targets` setting.
 
       --skip-default-info
           Do not build DefaultInfo provider.
 
-          This overrides the `buck2.test_builds_targets` buckconfig.
+          This overrides the `test.build_targets` setting.
 
       --build-run-info
           Also build RunInfo provider, which builds artifacts needed for `buck2 run`.
 
-          This overrides the `buck2.test_builds_targets` buckconfig.
+          This overrides the `test.build_targets` setting.
 
       --skip-run-info
           Do not build RunInfo provider.
 
-          This overrides the `buck2.test_builds_targets` buckconfig.
+          This overrides the `test.build_targets` setting.
 
       --build-report <PATH>
           Print a build report

@@ -8,9 +8,10 @@
  * above-listed licenses.
  */
 
-//! How settings reach DICE: the daemon's sections as global data, read
-//! untracked, and the `dice` sections as an injected key per command, read
-//! through projections that record the dependency.
+//! How settings reach DICE: the daemon's sections as global data and the
+//! invocation's as per-transaction data, both read untracked, and the `dice`
+//! sections as an injected key per command, read through projections that
+//! record the dependency.
 
 use allocative::Allocative;
 use derive_more::Display;
@@ -22,6 +23,7 @@ use dice::EqualityBehavior;
 use dice::InjectedKey;
 use dice::NoValueSerialize;
 use dice::ProjectionKey;
+use dice::UserComputationData;
 use dice::ValueSerialize;
 use dupe::Dupe;
 use pagable::Pagable;
@@ -29,6 +31,7 @@ use pagable::pagable_typetag;
 
 use crate::DaemonBuckSettings;
 use crate::DiceBuckSettings;
+use crate::InvocationBuckSettings;
 use crate::Section;
 use crate::metadata::SettingsSection;
 
@@ -63,6 +66,35 @@ impl SetBuckSettings for DiceDataBuilder {
 impl SetBuckSettings for DiceData {
     fn set_buck_settings(&mut self, settings: DaemonBuckSettings) {
         self.set(settings)
+    }
+}
+
+/// Reads the command's invocation sections from inside a transaction. A plain
+/// lookup: a computation that reads one does not depend on it, so a cached
+/// result does not notice a changed value. A setting whose change must
+/// recompute things belongs in a `dice` section instead.
+pub trait HasInvocationBuckSettings {
+    /// The invocation sections of the command this transaction belongs to;
+    /// defaults when none were installed (in-process tests).
+    fn get_invocation_buck_settings(&self) -> InvocationBuckSettings;
+}
+
+pub trait SetInvocationBuckSettings {
+    fn set_invocation_buck_settings(&mut self, settings: InvocationBuckSettings);
+}
+
+impl HasInvocationBuckSettings for UserComputationData {
+    fn get_invocation_buck_settings(&self) -> InvocationBuckSettings {
+        match self.data.get::<InvocationBuckSettings>() {
+            Ok(settings) => settings.dupe(),
+            Err(_) => InvocationBuckSettings::default(),
+        }
+    }
+}
+
+impl SetInvocationBuckSettings for UserComputationData {
+    fn set_invocation_buck_settings(&mut self, settings: InvocationBuckSettings) {
+        self.data.set(settings)
     }
 }
 

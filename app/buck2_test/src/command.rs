@@ -50,7 +50,6 @@ use buck2_cli_proto::representative_config_flag;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::events::HasEvents;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::liveliness_observer::LivelinessGuard;
 use buck2_common::liveliness_observer::LivelinessObserver;
 use buck2_common::liveliness_observer::LivelinessObserverExt;
@@ -106,6 +105,7 @@ use buck2_server_ctx::template::ServerCommandTemplate;
 use buck2_server_ctx::template::run_server_command;
 use buck2_server_ctx::test_command::TEST_COMMAND;
 use buck2_server_ctx::tpx_experiment_util::get_tpx_experiments;
+use buck2_settings::dice::HasInvocationBuckSettings;
 use buck2_test_api::data::TestResult;
 use buck2_test_api::data::TestStatus;
 use buck2_test_api::protocol::TestExecutor;
@@ -399,21 +399,20 @@ async fn test_inner(
     let cell_resolver = ctx.ctx().get_cell_resolver().await?;
     let working_dir_cell = cell_resolver.find(cwd);
 
-    let test_builds_targets =
-        if request.build_default_info.is_none() || request.build_run_info.is_none() {
-            ctx.ctx()
-                .parse_legacy_config_property::<bool>(
-                    cell_resolver.root_cell(),
-                    BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "test_builds_targets",
-                    },
-                )
-                .await?
-                .unwrap_or(false)
-        } else {
-            false
-        };
+    // Where a setting is unset, its buckconfig fallback is read from the root cell's config
+    // through DICE.
+    let (test_builds_targets, test_executor_config) = {
+        let settings = &server_ctx.buck_settings().invocation.test;
+        let mut dice = ctx.ctx();
+        let root_config = dice.get_legacy_root_config_on_dice().await?;
+        let mut buckconfig = root_config.view(&mut dice);
+        (
+            settings.build_targets(&mut buckconfig)?,
+            settings
+                .executor(&mut buckconfig)?
+                .filter(|s| !s.is_empty()),
+        )
+    };
     let build_default_info = request.build_default_info.unwrap_or(test_builds_targets);
     let build_run_info = request.build_run_info.unwrap_or(test_builds_targets);
 
@@ -428,24 +427,10 @@ async fn test_inner(
     )
     .await?;
 
-    // Get the test runner from the config. Note that we use a different key from v1 since the API
-    // is completely different, so there is not expectation that the same binary works for both.
-    let test_executor_config = ctx
-        .ctx()
-        .get_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "test",
-                property: "v2_test_executor",
-            },
-        )
-        .await?
-        .filter(|s| !s.is_empty());
-
     let (test_executor, test_executor_args) = match test_executor_config {
         Some(config) => {
-            let test_executor = post_process_test_executor(config.as_ref())
-                .with_buck_error_context(|| format!("Invalid `test.v2_test_executor`: {config}"))?;
+            let test_executor = post_process_test_executor(&config)
+                .with_buck_error_context(|| format!("Invalid test executor `{config}`"))?;
             let mut test_executor_args =
                 vec!["--buck-trace-id".to_owned(), client_ctx.trace_id.clone()];
             let platform = match ctx
@@ -787,32 +772,19 @@ async fn test_targets(
 
     let (test_status_sender, test_status_receiver) = mpsc::unbounded();
 
-    let internal_test_timeout = ctx
-        .ctx()
-        .get_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "test",
-                property: "timeout_default_s",
-            },
+    let (internal_test_timeout, internal_runner_config) = {
+        let settings = ctx
+            .per_transaction_data()
+            .get_invocation_buck_settings()
+            .test;
+        let mut dice = ctx.ctx();
+        let root_config = dice.get_legacy_root_config_on_dice().await?;
+        let mut buckconfig = root_config.view(&mut dice);
+        (
+            Duration::from_secs(settings.default_timeout_s(&mut buckconfig)?),
+            InternalRunnerConfig::parse(settings.internal_runner(&mut buckconfig)?.as_deref()),
         )
-        .await?
-        .and_then(|s| s.parse::<u64>().ok())
-        .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(600));
-
-    let internal_runner_config = InternalRunnerConfig::parse(
-        ctx.ctx()
-            .get_legacy_config_property(
-                cell_resolver.root_cell(),
-                BuckconfigKeyRef {
-                    section: "test",
-                    property: "use_internal_runner",
-                },
-            )
-            .await?
-            .as_deref(),
-    );
+    };
 
     let internal_test_status_sender = test_status_sender.clone();
 

@@ -109,8 +109,8 @@ async fn test_registered_resource_release_and_failure_compensation(
         let target = format!(":registered_{mode}");
         let command = buck.test(&[
             &target,
-            "-c",
-            "buck2.local_resource_cleanup_registration=true",
+            "--setting",
+            "test.local_resource_cleanup_registration=true",
         ]);
         if mode == "success" {
             command.await?;
@@ -147,8 +147,8 @@ async fn test_pending_ack_keeps_other_setups_running(buck: &mut Buck) -> anyhow:
     use_internal_test_executor(buck);
     buck.test(&[
         ":concurrent_registered",
-        "-c",
-        "buck2.local_resource_cleanup_registration=true",
+        "--setting",
+        "test.local_resource_cleanup_registration=true",
     ])
     .await?;
     let events = read_lines(&buck.cwd().join("registration-events"))?;
@@ -171,8 +171,8 @@ async fn test_subtarget_aliases_share_one_registered_pool(buck: &mut Buck) -> an
     use_internal_test_executor(buck);
     buck.test(&[
         ":registered_aliases",
-        "-c",
-        "buck2.local_resource_cleanup_registration=true",
+        "--setting",
+        "test.local_resource_cleanup_registration=true",
     ])
     .await?;
     let event_file = buck.cwd().join("registration-events");

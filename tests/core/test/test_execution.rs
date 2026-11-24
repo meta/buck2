@@ -344,8 +344,8 @@ async fn test_local_tests_inherit_the_coding_agent_metadata_of_each_command(
     let mut buck = buck.clone();
     buck.remove_env(CODING_AGENT_METADATA);
     let args = [
-        "-c",
-        "buck2.tests_inherit_client_coding_agent_metadata=true",
+        "--setting",
+        "test.inherit_client_coding_agent_metadata=true",
         "-c",
         "test.local_enabled=true",
         "-c",
@@ -394,8 +394,8 @@ async fn test_test_env_overrides_the_clients_coding_agent_metadata(
     buck: &Buck,
 ) -> anyhow::Result<()> {
     buck.test(&[
-        "-c",
-        "buck2.tests_inherit_client_coding_agent_metadata=true",
+        "--setting",
+        "test.inherit_client_coding_agent_metadata=true",
         "-c",
         "test.local_enabled=true",
         "-c",

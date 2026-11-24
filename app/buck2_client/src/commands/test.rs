@@ -199,25 +199,25 @@ If any include pattern without a `!` prefix is present, regardless of whether ex
 
     /// Also build DefaultInfo provider, which is what `buck2 build` builds.
     ///
-    /// This overrides the `buck2.test_builds_targets` buckconfig.
+    /// This overrides the `test.build_targets` setting.
     #[clap(long, group = "default-info")]
     build_default_info: bool,
 
     /// Do not build DefaultInfo provider.
     ///
-    /// This overrides the `buck2.test_builds_targets` buckconfig.
+    /// This overrides the `test.build_targets` setting.
     #[clap(long, group = "default-info")]
     skip_default_info: bool,
 
     /// Also build RunInfo provider, which builds artifacts needed for `buck2 run`.
     ///
-    /// This overrides the `buck2.test_builds_targets` buckconfig.
+    /// This overrides the `test.build_targets` setting.
     #[clap(long, group = "run-info")]
     build_run_info: bool,
 
     /// Do not build RunInfo provider.
     ///
-    /// This overrides the `buck2.test_builds_targets` buckconfig.
+    /// This overrides the `test.build_targets` setting.
     #[clap(long, group = "run-info")]
     skip_run_info: bool,
 

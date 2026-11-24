@@ -3429,6 +3429,7 @@ dependencies = [
  "buck2_node",
  "buck2_resource_control",
  "buck2_server_ctx",
+ "buck2_settings",
  "buck2_test_api",
  "buck2_util",
  "derive_more 2.1.1",

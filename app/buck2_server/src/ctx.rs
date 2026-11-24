@@ -143,6 +143,7 @@ use buck2_server_starlark_debug::create_debugger_handle;
 use buck2_settings::BuckSettings;
 use buck2_settings::DiceBuckSettings;
 use buck2_settings::InvocationBuckSettings;
+use buck2_settings::dice::SetInvocationBuckSettings;
 use buck2_settings::telemetry::observe_settings;
 use buck2_test::local_resource_registry::InitLocalResourceRegistry;
 use buck2_util::arc_str::ArcS;
@@ -1115,12 +1116,11 @@ impl DiceCommandUpdater<'_, '_> {
             self.cmd_ctx.base_context.daemon.memory_tracker.is_some(),
         ));
 
-        let tests_inherit_client_coding_agent_metadata = root_config
-            .parse::<bool>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "tests_inherit_client_coding_agent_metadata",
-            })?
-            .unwrap_or(false);
+        let invocation_settings = &self.cmd_ctx.buck_settings.invocation;
+        let mut buckconfig = root_config;
+        let tests_inherit_client_coding_agent_metadata = invocation_settings
+            .test
+            .inherit_client_coding_agent_metadata(&mut buckconfig)?;
         data.set(ClientCodingAgentMetadata::new(
             self.cmd_ctx
                 .client_coding_agent_metadata
@@ -1324,6 +1324,7 @@ impl DiceCommandUpdater<'_, '_> {
         data.set_run_action_knobs(run_action_knobs);
         data.set_graph_recorder(GraphRecorder::default());
         data.set_invocation_re_settings(invocation_re_settings);
+        data.set_invocation_buck_settings(self.cmd_ctx.buck_settings.invocation.dupe());
         data.set_create_unhashed_symlink_lock(
             self.cmd_ctx
                 .base_context

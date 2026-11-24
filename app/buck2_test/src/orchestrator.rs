@@ -61,7 +61,6 @@ use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::events::HasEvents;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::liveliness_observer::LivelinessObserver;
 use buck2_common::local_resource_state::LocalResourceState;
 use buck2_core::cells::cell_root_path::CellRootPathBuf;
@@ -154,6 +153,7 @@ use buck2_hash::buck_mut_insertion_set;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
 use buck2_resource_control::HasResourceControl;
+use buck2_settings::dice::HasInvocationBuckSettings;
 use buck2_test_api::data::ArgValue;
 use buck2_test_api::data::ArgValueContent;
 use buck2_test_api::data::CasDigest;
@@ -413,31 +413,21 @@ pub struct BuckTestOrchestrator<'a: 'static> {
     internal_runner_config: InternalRunnerConfig,
 }
 
-/// Reads the root cell's full buckconfig, which follows `<file:...>` includes. The daemon's
-/// per-command config parse does not, so it would miss a setting that only an include delivers.
+/// The buckconfig fallbacks are read from the root cell's full buckconfig, which follows
+/// `<file:...>` includes. The daemon's per-command config parse does not, so it would miss a
+/// value that only an include delivers.
 async fn test_kill_policy(dice: &mut DiceComputations<'_>) -> buck2_error::Result<TestKillPolicy> {
-    let root = dice.get_cell_resolver().await?.root_cell();
-    let timeout_grace_period = dice
-        .parse_legacy_config_property::<u64>(
-            root,
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "test_timeout_grace_period_s",
-            },
-        )
-        .await?
+    let settings = dice
+        .per_transaction_data()
+        .get_invocation_buck_settings()
+        .test;
+    let root_config = dice.get_legacy_root_config_on_dice().await?;
+    let mut buckconfig = root_config.view(dice);
+    let timeout_grace_period = settings
+        .timeout_grace_period_s(&mut buckconfig)?
         .filter(|s| *s > 0)
         .map(Duration::from_secs);
-    let kill_detached_processes = dice
-        .parse_legacy_config_property::<bool>(
-            root,
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "kill_detached_test_processes",
-            },
-        )
-        .await?
-        .unwrap_or(false);
+    let kill_detached_processes = settings.kill_detached_processes(&mut buckconfig)?;
     Ok(TestKillPolicy {
         timeout_grace_period,
         kill_detached_processes,
@@ -870,18 +860,19 @@ impl Key for TestExecutionKey {
         ctx: &mut DiceComputations,
         cancellations: &CancellationContext,
     ) -> Self::Value {
-        let cell_resolver = ctx.get_cell_resolver().await.map_err(ExecuteError::Error)?;
-        let config = InternalRunnerConfig::parse(
-            ctx.get_legacy_config_property(
-                cell_resolver.root_cell(),
-                BuckconfigKeyRef {
-                    section: "test",
-                    property: "use_internal_runner",
-                },
-            )
+        let settings = ctx
+            .per_transaction_data()
+            .get_invocation_buck_settings()
+            .test;
+        let root_config = ctx
+            .get_legacy_root_config_on_dice()
             .await
-            .map_err(ExecuteError::Error)?
-            .as_deref(),
+            .map_err(ExecuteError::Error)?;
+        let config = InternalRunnerConfig::parse(
+            settings
+                .internal_runner(&mut root_config.view(ctx))
+                .map_err(ExecuteError::Error)?
+                .as_deref(),
         );
         cancellations
             .with_structured_cancellation(|observer| {
@@ -2270,26 +2261,12 @@ impl BuckTestOrchestrator<'_> {
         default_timeout: Duration,
     ) -> buck2_error::Result<PreparedLocalResourceSetupContext> {
         let digest_config = dice.global_data().get_digest_config();
-        let root = dice.get_cell_resolver().await?.root_cell();
-        let enabled = dice
-            .get_legacy_config_property(
-                root,
-                BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "local_resource_cleanup_registration",
-                },
-            )
-            .await?;
-        let enabled = enabled
-            .as_deref()
-            .unwrap_or("false")
-            .parse::<bool>()
-            .map_err(|_| {
-                buck2_error::buck2_error!(
-                    ErrorTag::LocalResourceSetup,
-                    "Invalid cleanup registration buckconfig value"
-                )
-            })?
+        let settings = dice
+            .per_transaction_data()
+            .get_invocation_buck_settings()
+            .test;
+        let root_config = dice.get_legacy_root_config_on_dice().await?;
+        let enabled = settings.local_resource_cleanup_registration(&mut root_config.view(dice))?
             && cfg!(target_os = "linux");
         let cleanup_setup = if enabled {
             Some(spawn_blocking(CleanupSetup::create).await??)

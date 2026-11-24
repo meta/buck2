@@ -625,12 +625,12 @@ message TestRequest {
 
   // Whether `DefaultInfo` providers for targets matching `target_patterns`
   // should be built instead of only test providers. When unset, this defaults
-  // to the `buck2.test_builds_targets` buckconfig.
+  // to the `test.build_targets` setting.
   optional bool build_default_info = 15;
 
   // Whether `RunInfo` providers for targets matching `target_patterns`
   // should be built instead of only test providers. When unset, this defaults
-  // to the `buck2.test_builds_targets` buckconfig.
+  // to the `test.build_targets` setting.
   optional bool build_run_info = 16;
 }
 

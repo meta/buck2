@@ -75,6 +75,7 @@ load(
     "get_link_group_info",
 )
 load("@prelude//cxx:link_types.bzl", "ExtraLinkerOutputCategory")
+load("@prelude//ide_integrations/xcode:data.bzl", "XcodeDataInfoKeys")
 load(
     "@prelude//linking:link_info.bzl",
     "CxxSanitizerRuntimeInfo",
@@ -95,7 +96,7 @@ load(":apple_bundle_types.bzl", "AppleBundleLinkerMapInfo", "AppleMinDeploymentV
 load(":apple_bundle_utility.bzl", "get_bundle_infos_from_graph", "merge_bundle_linker_maps_info")
 load(":apple_code_signing_types.bzl", "AppleEntitlementsInfo")
 load(":apple_dsym.bzl", "DSYM_SUBTARGET", "get_apple_dsym")
-load(":apple_entitlements.bzl", "entitlements_link_flags")
+load(":apple_entitlements.bzl", "embeds_entitlements_in_binary", "entitlements_link_flags")
 load(":apple_error_handler.bzl", "apple_build_error_handler", "cxx_error_deserializer", "cxx_error_handler")
 load(":apple_frameworks.bzl", "get_framework_search_path_flags")
 load(":apple_rpaths.bzl", "get_rpath_flags_for_apple_binary")
@@ -194,7 +195,7 @@ def apple_binary_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
             extra_preprocessors = swift_preprocessor,
             strip_executable = stripped,
             strip_args_factory = apple_strip_args,
-            cxx_populate_xcode_attributes_func = lambda local_ctx, **kwargs: apple_populate_xcode_attributes(
+            cxx_populate_xcode_attributes_func = lambda local_ctx, **kwargs: _xcode_populate_attributes(
                 local_ctx, contains_swift_sources = contains_swift_sources, **kwargs
             ),
             link_group_info = link_group_info,
@@ -434,3 +435,8 @@ def _get_bridging_header_flags(ctx: AnalysisContext) -> list[ArgLike]:
         return objc_bridging_header_flags + private_headers_args
     else:
         return []
+
+def _xcode_populate_attributes(ctx: AnalysisContext, **kwargs) -> dict[str, typing.Any]:
+    data = apple_populate_xcode_attributes(ctx, **kwargs)
+    data[XcodeDataInfoKeys.ENTITLEMENTS_IN_BINARY] = embeds_entitlements_in_binary(ctx)
+    return data

@@ -54,7 +54,7 @@ load(
     "get_apple_dsym_info_json",
     "get_deps_debuggable_infos",
 )
-load(":apple_entitlements.bzl", "entitlements_link_flags")
+load(":apple_entitlements.bzl", "embeds_entitlements_in_binary", "entitlements_link_flags")
 load(":apple_rpaths.bzl", "get_rpath_flags_for_tests")
 load(":apple_sdk.bzl", "get_apple_sdk_name")
 load(":apple_sdk_metadata.bzl", "WatchSimulatorSdkMetadata")
@@ -372,6 +372,7 @@ def _xcode_populate_attributes(
 ) -> dict[str, typing.Any]:
     data = apple_populate_xcode_attributes(ctx = ctx, srcs = srcs, argsfiles = argsfiles, product_name = ctx.attrs.name)
     data[XcodeDataInfoKeys.OUTPUT] = xctest_bundle
+    data[XcodeDataInfoKeys.ENTITLEMENTS_IN_BINARY] = embeds_entitlements_in_binary(ctx)
 
     # TODO: We should be able to extract this information in BXL. XcodeData is primarily necessary for derived data from the rules.
     if ctx.attrs.ui_test_target_app:

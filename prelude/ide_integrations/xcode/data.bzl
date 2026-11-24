@@ -23,6 +23,7 @@ XcodeDataInfoKeys = struct(
     CONTAINS_SWIFT_SOURCES = "contains_swift_sources",
     DEFAULT_TARGET_PLATFORM = "default_target_platform",
     DEPLOYMENT_VERSION = "deployment_version",
+    ENTITLEMENTS_IN_BINARY = "entitlements_in_binary",
     EXPORTED_HEADERS = "exported_headers",
     EXTRA_XCODE_FILES = "extra_xcode_files",
     HEADERS = "headers",

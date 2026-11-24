@@ -55,6 +55,11 @@ def _needs_entitlements_in_binary(ctx: AnalysisContext) -> bool:
     apple_toolchain_info = ctx.attrs._apple_toolchain[AppleToolchainInfo]
     return apple_toolchain_info.sdk_name in _SDK_NAMES_NEED_ENTITLEMENTS_IN_BINARY
 
+def embeds_entitlements_in_binary(ctx: AnalysisContext) -> bool:
+    """Whether the binary carries its entitlements as an `__entitlements` section: the simulator
+    and Catalyst SDKs of `_SDK_NAMES_NEED_ENTITLEMENTS_IN_BINARY`, when it has an entitlements file."""
+    return bool(ctx.attrs.entitlements_file) and _needs_entitlements_in_binary(ctx)
+
 def entitlements_link_flags(ctx: AnalysisContext) -> list[typing.Any]:
     return (
         [
@@ -67,6 +72,6 @@ def entitlements_link_flags(ctx: AnalysisContext) -> list[typing.Any]:
             "-Xlinker",
             ctx.attrs.entitlements_file,
         ]
-        if (ctx.attrs.entitlements_file and _needs_entitlements_in_binary(ctx))
+        if embeds_entitlements_in_binary(ctx)
         else []
     )

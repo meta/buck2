@@ -299,19 +299,12 @@ async fn start_persist_event_log_subprocess(
     })?;
     let pipe = child.stdin.take().expect("stdin was piped");
 
-    // Only spawn this if we are going to wait.
-    let process_to_wait_for = if block {
-        Some(FutureChildOutput::new(child))
-    } else {
-        None
-    };
-
     Ok(NamedEventLogWriter::new(
         path,
         pipe,
         bytes_written,
         EventLogType::System,
-        process_to_wait_for,
+        Some(FutureChildOutput::new(child, block)),
     ))
 }
 

@@ -109,7 +109,7 @@ async fn log_upload_impl(
         .stdout(Stdio::null());
     if should_block_on_log_upload()? {
         let child = command.stderr(Stdio::piped()).spawn()?;
-        wait_for_child_and_log(FutureChildOutput::new(child), "RE Log").await;
+        wait_for_child_and_log(FutureChildOutput::new(child, true), "RE Log").await;
     } else {
         command.stderr(Stdio::null()).spawn()?;
     };

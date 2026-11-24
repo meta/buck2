@@ -90,9 +90,8 @@ pub(crate) struct NamedEventLogWriter {
     path: EventLogPathBuf,
     file: EventLogWriter,
     event_log_type: EventLogType,
-    /// If this writing is done by a subprocess, that process's output, assuming we intend to wait
-    /// for it to exit.
-    process_to_wait_for: Option<FutureChildOutput>,
+    /// If this writing is done by a subprocess, that process.
+    process: Option<FutureChildOutput>,
 }
 
 impl NamedEventLogWriter {
@@ -101,7 +100,7 @@ impl NamedEventLogWriter {
         file: impl AsyncWrite + std::marker::Send + std::marker::Unpin + std::marker::Sync + 'static,
         bytes_written: Option<Arc<AtomicU64>>,
         event_log_type: EventLogType,
-        process_to_wait_for: Option<FutureChildOutput>,
+        process: Option<FutureChildOutput>,
     ) -> Self {
         let file = match path.encoding.compression {
             Compression::None => {
@@ -120,7 +119,7 @@ impl NamedEventLogWriter {
             path,
             file,
             event_log_type,
-            process_to_wait_for,
+            process,
         }
     }
 
@@ -157,7 +156,7 @@ impl NamedEventLogWriter {
     }
 
     pub(crate) fn child(mut self) -> Option<FutureChildOutput> {
-        self.process_to_wait_for.take()
+        self.process.take()
     }
 
     fn serialize_event<'b, T>(&self, buf: &mut Vec<u8>, event: &T) -> buck2_error::Result<()>

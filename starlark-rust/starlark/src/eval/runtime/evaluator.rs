@@ -1368,6 +1368,9 @@ mod tests {
                 matches!(err.kind(), ErrorKind::TickLimitExceeded(_)),
                 "{err:#?}"
             );
+            // The error says where evaluation was when it went over.
+            assert_eq!(err.span().unwrap().to_string(), "test.bzl:2:5-4:1");
+            assert!(!err.call_stack().is_empty());
 
             Ok(())
         })

@@ -165,10 +165,7 @@ impl<'v, 'a, 'e> Evaluator<'v, 'a, 'e> {
         #[cfg(not(target_arch = "wasm32"))]
         self.module_env.add_eval_duration(start.elapsed());
 
-        self.run_infrequent_instr_checks()?;
-
-        // Return the result of evaluation
-        res.map_err(|e| e.into_error())
+        self.check_at_end(res.map_err(|e| e.into_error()))
     }
 
     /// Evaluate a function stored in a [`Value`], passing in `positional` and `named` arguments.
@@ -197,8 +194,17 @@ impl<'v, 'a, 'e> Evaluator<'v, 'a, 'e> {
             function.invoke(&params, this)
         });
 
-        self.run_infrequent_instr_checks()?;
+        self.check_at_end(res)
+    }
 
-        res
+    /// Checks cancellation and the limits for an evaluation that got to its end, since while it
+    /// ran they were only checked every so often.
+    ///
+    /// An evaluation that failed keeps its own error. One that failed for being over a limit
+    /// would fail this check too, with an error that doesn't say where it happened.
+    fn check_at_end<T>(&mut self, res: crate::Result<T>) -> crate::Result<T> {
+        let res = res?;
+        self.run_infrequent_instr_checks()?;
+        Ok(res)
     }
 }

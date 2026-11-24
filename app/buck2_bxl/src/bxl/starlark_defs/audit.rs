@@ -31,7 +31,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -171,7 +171,7 @@ fn audit_methods(builder: &mut MethodsBuilder) {
         // TODO(nga): parameters should be either positional or named, not both.
         #[starlark(default = ValueOf::empty_list())] aliases_to_resolve: ValueOf<
             'v,
-            ListOrTupleType<StarlarkStr>,
+            StarlarkListOrTuple<'v, StarlarkStr>,
         >,
         #[starlark(require = named, default = false)] aliases: bool,
         eval: &mut Evaluator<'v, '_, '_>,

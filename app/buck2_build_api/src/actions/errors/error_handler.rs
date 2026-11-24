@@ -31,8 +31,8 @@ use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListType;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list::StarlarkList;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -40,7 +40,7 @@ use starlark::values::string::StarlarkStr;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 
-pub(crate) type ActionSubErrorResult<'a> = ValueOf<'a, ListType<StarlarkActionSubError>>;
+pub(crate) type ActionSubErrorResult<'a> = ValueOf<'a, StarlarkList<'a, StarlarkActionSubError>>;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Tier0)]
@@ -262,7 +262,10 @@ fn action_error_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] _this: &'v StarlarkActionErrorContext,
         #[starlark(require = named)] category: &str,
         #[starlark(require = named)] error: &str,
-        #[starlark(require = named)] errorformats: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+        #[starlark(require = named)] errorformats: ValueOf<
+            'v,
+            StarlarkListOrTuple<'v, StarlarkStr>,
+        >,
         heap: Heap<'v>,
     ) -> starlark::Result<AllocList<Vec<ValueOf<'v, StarlarkActionSubError>>>> {
         let error_lines = buck2_errorformat::split_lines(error);

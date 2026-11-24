@@ -36,7 +36,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -220,7 +220,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
 
     fn with_associated_artifacts(
         &'v self,
-        artifacts: ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
+        artifacts: ValueOf<'v, StarlarkList<'v, StarlarkArtifactView<'v>>>,
     ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
         let artifacts = artifacts
             .try_items::<StarlarkArtifactView>()

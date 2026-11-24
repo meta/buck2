@@ -24,7 +24,7 @@ use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
 
@@ -53,7 +53,7 @@ enum ExecutionPlatformRegistrationTypeError {
 #[repr(C)]
 pub struct ExecutionPlatformRegistrationInfo<'v> {
     /// The list of execution platforms that are available for the build.
-    platforms: ValueOf<'v, ListType<ExecutionPlatformInfo<'v>>>,
+    platforms: ValueOf<'v, StarlarkList<'v, ExecutionPlatformInfo<'v>>>,
     /// Specifies the behavior when no compatible execution platform is found from the `platforms` list.
     /// Can be one of:
     /// - `None` or `"use_unspecified"`: Proceed with an unspecified execution platform.
@@ -105,7 +105,10 @@ fn fallback_from_str(word: StringValue) -> buck2_error::Result<ExecutionPlatform
 #[starlark_module]
 fn info_creator(globals: &mut GlobalsBuilder) {
     fn ExecutionPlatformRegistrationInfo<'v>(
-        #[starlark(require = named)] platforms: ValueOf<'v, ListType<ExecutionPlatformInfo<'v>>>,
+        #[starlark(require = named)] platforms: ValueOf<
+            'v,
+            StarlarkList<'v, ExecutionPlatformInfo<'v>>,
+        >,
         #[starlark(require = named, default = NoneOr::None)] fallback: NoneOr<Fallback<'v>>,
         #[starlark(require = named, default = NoneOr::None)] exec_marker_constraint: NoneOr<
             StringValue<'v>,

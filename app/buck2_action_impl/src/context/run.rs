@@ -54,8 +54,8 @@ use starlark::values::StringValue;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
-use starlark::values::list::ListType;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list::StarlarkList;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
@@ -275,11 +275,14 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             ValueOf<'v, DictType<StarlarkStr, ArtifactTag>>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())]
-        dep_file_fingerprints: ValueOf<'v, ListOrTupleType<StarlarkDepFileFingerprint<'v>>>,
+        dep_file_fingerprints: ValueOf<
+            'v,
+            StarlarkListOrTuple<'v, StarlarkDepFileFingerprint<'v>>,
+        >,
         #[starlark(require = named)] metadata_env_var: Option<&str>,
         #[starlark(require = named)] metadata_path: Option<&str>,
         #[starlark(require = named, default = ValueOf::empty_list())]
-        incremental_metadata_ignore_tags: ValueOf<'v, ListOrTupleType<ArtifactTag>>,
+        incremental_metadata_ignore_tags: ValueOf<'v, StarlarkListOrTuple<'v, ArtifactTag>>,
         // TODO(scottcao): Refactor `no_outputs_cleanup` to `outputs_cleanup`
         #[starlark(require = named, default = false)] no_outputs_cleanup: bool,
         #[starlark(require = named, default = false)] incremental_remote_outputs: bool,
@@ -298,11 +301,11 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = ValueOf::empty_list())]
         remote_execution_dependencies: ValueOf<
             'v,
-            ListType<DictType<StarlarkStr, StarlarkStr>>,
+            StarlarkList<'v, DictType<StarlarkStr, StarlarkStr>>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())] re_gang_workers: ValueOf<
             'v,
-            ListType<DictType<StarlarkStr, StarlarkStr>>,
+            StarlarkList<'v, DictType<StarlarkStr, StarlarkStr>>,
         >,
         #[starlark(default = NoneOr::None, require = named)] remote_execution_dynamic_image: NoneOr<
             DictRef<'v>,
@@ -314,7 +317,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = ValueOf::empty_list())]
         outputs_for_error_handler: ValueOf<
             'v,
-            ListOrTupleType<StarlarkOutputArtifactView<'v>>,
+            StarlarkListOrTuple<'v, StarlarkOutputArtifactView<'v>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] expect_eligible_for_dedupe: NoneOr<
             bool,

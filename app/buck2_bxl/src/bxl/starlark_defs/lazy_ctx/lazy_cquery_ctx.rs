@@ -23,7 +23,7 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -95,7 +95,7 @@ fn lazy_cquery_methods(builder: &mut MethodsBuilder) {
             UnpackUnconfiguredQueryArgs<'v>,
         >,
         #[starlark(require = named, default = NoneOr::None)] target_universe: NoneOr<
-            ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+            ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {

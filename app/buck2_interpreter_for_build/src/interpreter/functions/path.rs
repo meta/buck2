@@ -13,8 +13,8 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::ValueOf;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListType;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list::StarlarkList;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::build_context::BuildContext;
@@ -52,13 +52,13 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
     /// Currently `glob` is evaluated case-insensitively on all file systems, but we expect
     /// that to change to case sensitive in the near future.
     fn glob<'v>(
-        include: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+        include: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         #[starlark(require = named, default = ValueOf::empty_list())] exclude: ValueOf<
             'v,
-            ListOrTupleType<StarlarkStr>,
+            StarlarkListOrTuple<'v, StarlarkStr>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<ValueOf<'v, ListType<StarlarkStr>>> {
+    ) -> starlark::Result<ValueOf<'v, StarlarkList<'v, StarlarkStr>>> {
         let extra = ModuleInternals::from_context(eval, "glob")?;
         let spec = GlobSpec::new(
             &include.try_to_vec::<&str>()?,
@@ -68,7 +68,7 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
         let res = extra
             .resolve_glob(&spec)
             .map(|path| heap.alloc(path.as_str()));
-        Ok(heap.alloc(AllocList(res)))
+        Ok(heap.alloc(AllocList(res)).into())
     }
 
     /// `package_name()` can only be called in buildfiles (e.g. BUCK files) or PACKAGE files, and returns the name of the package.

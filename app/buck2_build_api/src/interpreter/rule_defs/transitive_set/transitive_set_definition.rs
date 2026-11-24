@@ -51,7 +51,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
@@ -114,7 +114,7 @@ pub type Projection<'v> = StarlarkCallable<'v, (Value<'static>,), Value<'static>
 pub type ProjectionCallable<'v> = ValueOf<'v, Projection<'v>>;
 /// The type of a reduction: `def(children, value) -> value`.
 pub type Reduction<'v> =
-    StarlarkCallable<'v, (ListType<Value<'static>>, Value<'static>), Value<'static>>;
+    StarlarkCallable<'v, (StarlarkList<'static>, Value<'static>), Value<'static>>;
 /// A reduction of a definition; `transitive_set()` checked its signature.
 pub type ReductionCallable<'v> = ValueOf<'v, Reduction<'v>>;
 

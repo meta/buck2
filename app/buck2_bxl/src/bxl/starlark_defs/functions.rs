@@ -34,7 +34,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
 use starlark::values::tuple::TupleType;
@@ -64,7 +64,7 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
     ///     ctx.output.print(len(targets))
     /// ```
     fn ctarget_set<'v>(
-        nodes: Option<ValueOf<'v, ListType<StarlarkConfiguredTargetNode>>>,
+        nodes: Option<ValueOf<'v, StarlarkList<'v, StarlarkConfiguredTargetNode>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>> {
         let nodes = match nodes {
@@ -88,7 +88,7 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
     ///     ctx.output.print(len(targets))
     /// ```
     fn utarget_set<'v>(
-        nodes: Option<ValueOf<'v, ListType<StarlarkTargetNode>>>,
+        nodes: Option<ValueOf<'v, StarlarkList<'v, StarlarkTargetNode>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<TargetNode>>> {
         let nodes = match nodes {
@@ -111,7 +111,7 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
     ///     ctx.output.print(len(remaining))
     /// ```
     fn atarget_set<'v>(
-        nodes: Option<ValueOf<'v, ListType<StarlarkActionQueryNode>>>,
+        nodes: Option<ValueOf<'v, StarlarkList<'v, StarlarkActionQueryNode>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetSet<ActionQueryNode>>> {
         let nodes = match nodes {

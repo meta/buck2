@@ -35,7 +35,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneType;
 use starlark::values::typing::StarlarkCallable;
 
@@ -102,14 +102,14 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
         this: &'v AnalysisActions<'v>,
         #[starlark(require = named)] dynamic: ValueOf<
             'v,
-            ListOrTupleType<StarlarkArtifactView<'v>>,
+            StarlarkListOrTuple<'v, StarlarkArtifactView<'v>>,
         >,
         #[starlark(require = named)] inputs: Option<
-            ValueOf<'v, ListOrTupleType<StarlarkArtifactView<'v>>>,
+            ValueOf<'v, StarlarkListOrTuple<'v, StarlarkArtifactView<'v>>>,
         >,
         #[starlark(require = named)] outputs: ValueOf<
             'v,
-            ListOrTupleType<StarlarkOutputArtifactView<'v>>,
+            StarlarkListOrTuple<'v, StarlarkOutputArtifactView<'v>>,
         >,
         #[starlark(require = named)] f: StarlarkCallable<
             'v,

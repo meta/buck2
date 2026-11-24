@@ -60,7 +60,7 @@ use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
 use starlark::values::record::Record;
 use starlark::values::set::SetType;
@@ -469,7 +469,7 @@ impl StarlarkOutputStream {
         enum SerializedHere<'v> {
             EnsuredArtifact(ValueOf<'v, EnsuredArtifact>),
             EnsuredArtifactGroup(ValueOf<'v, EnsuredArtifactGroup<'v>>),
-            List(ValueOf<'v, ListType<Value<'v>>>),
+            List(ValueOf<'v, StarlarkList<'v>>),
             Tuple(ValueOf<'v, TupleType<Value<'v>>>),
             Set(ValueOf<'v, SetType<Value<'v>>>),
             Dict(ValueOf<'v, DictType<Value<'v>, Value<'v>>>),
@@ -525,7 +525,7 @@ impl StarlarkOutputStream {
                         seq_ser.end()
                     }
                     Some(SerializedHere::List(x)) => {
-                        serializer.collect_seq(x.list().iter().map(|v| self.with_value(v)))
+                        serializer.collect_seq(x.values().map(|v| self.with_value(v)))
                     }
                     Some(SerializedHere::Tuple(x)) => {
                         serializer.collect_seq(x.tuple().iter().map(|v| self.with_value(v)))
@@ -585,7 +585,7 @@ impl<'v> StarlarkValue<'v> for StarlarkOutputStream {
 #[derive(UnpackValue)]
 enum EnsureMultipleArtifactsArg<'v> {
     None(NoneType),
-    EnsuredArtifactArgs(ValueOf<'v, ListType<StarlarkArtifactView<'v>>>),
+    EnsuredArtifactArgs(ValueOf<'v, StarlarkList<'v, StarlarkArtifactView<'v>>>),
     ProvidersArtifactIterable(ValueOf<'v, StarlarkProvidersArtifactIterable<'v>>),
     BxlBuildResult(ValueOf<'v, StarlarkBxlBuildResult>),
     Dict(ValueOf<'v, DictType<Value<'v>, StarlarkBxlBuildResult>>),
@@ -693,7 +693,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         #[starlark(default = " ")] sep: &'v str,
         #[starlark(require = named, default = ValueOf::empty_list())] wait_on: ValueOf<
             'v,
-            ListType<Either<EnsuredArtifact, EnsuredArtifactGroup<'v>>>,
+            StarlarkList<'v, Either<EnsuredArtifact, EnsuredArtifactGroup<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
@@ -756,7 +756,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
         #[starlark(require=named, default=true)] pretty: bool,
         #[starlark(require = named, default = ValueOf::empty_list())] wait_on: ValueOf<
             'v,
-            ListType<Either<EnsuredArtifact, EnsuredArtifactGroup<'v>>>,
+            StarlarkList<'v, Either<EnsuredArtifact, EnsuredArtifactGroup<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {

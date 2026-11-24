@@ -30,7 +30,7 @@ use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::string::StarlarkStr;
 
 use crate::dep_only_incompatible_rollout::DepOnlyIncompatibleRollout;
@@ -131,7 +131,7 @@ impl<'v> DepOnlyIncompatibleInfo<'v> {
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
     ) -> buck2_error::Result<DepOnlyIncompatibleCustomSoftErrors> {
-        let patterns = |patterns: ValueOf<'v, ListType<StarlarkStr>>| {
+        let patterns = |patterns: ValueOf<'v, StarlarkList<'v, StarlarkStr>>| {
             patterns
                 .iter()
                 .map(|pattern| {

@@ -13,7 +13,7 @@ use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 use starlark::values::Heap;
 use starlark::values::ValueOf;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::string::StarlarkStr;
 
 #[starlark_module]
@@ -47,10 +47,10 @@ pub(crate) fn register_target_name_glob(builder: &mut GlobalsBuilder) {
     /// ```
     #[starlark(as_type = StarlarkTargetNameGlob)]
     fn target_name_glob<'v>(
-        #[starlark(require = pos)] name_globs: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+        #[starlark(require = pos)] name_globs: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         #[starlark(require = named, default = ValueOf::empty_list())] within: ValueOf<
             'v,
-            ListOrTupleType<StarlarkStr>,
+            StarlarkListOrTuple<'v, StarlarkStr>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetNameGlob>> {

@@ -64,7 +64,7 @@ use starlark::values::any_complex::StarlarkAnyComplex;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::list::StarlarkList;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::starlark_value;
 use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 use starlark::values::string::StarlarkStr;
@@ -653,7 +653,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
     fn provider<'v>(
         #[starlark(require=named, default = "")] doc: &str,
         #[starlark(require=named)] fields: Either<
-            ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+            ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
             ValueOf<'v, DictType<StarlarkStr, Value<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,

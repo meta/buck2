@@ -18,7 +18,7 @@ use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::string::StarlarkStr;
 
 /// A provider that is used to signal the targets that we want to soft error on
@@ -36,16 +36,16 @@ use starlark::values::string::StarlarkStr;
 #[repr(C)]
 pub struct DepOnlyIncompatibleRollout<'v> {
     /// A list of target patterns (minus exclusions) that we want to soft error on.
-    pub target_patterns: ValueOf<'v, ListType<StarlarkStr>>,
+    pub target_patterns: ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
     /// A list of target patterns that we want to exclude from the soft error.
-    pub exclusions: ValueOf<'v, ListType<StarlarkStr>>,
+    pub exclusions: ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
 }
 
 #[starlark_module]
 fn dep_only_incompatible_custom_soft_error_creator(globals: &mut GlobalsBuilder) {
     fn DepOnlyIncompatibleRollout<'v>(
-        #[starlark(require = named)] target_patterns: ValueOf<'v, ListType<StarlarkStr>>,
-        #[starlark(require = named)] exclusions: ValueOf<'v, ListType<StarlarkStr>>,
+        #[starlark(require = named)] target_patterns: ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
+        #[starlark(require = named)] exclusions: ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, DepOnlyIncompatibleRollout<'v>>> {
         Ok(heap.alloc(DepOnlyIncompatibleRollout {

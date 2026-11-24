@@ -37,7 +37,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
@@ -111,11 +111,11 @@ pub(crate) async fn get_aquery_env(
 
 #[derive(UnpackValue)]
 enum UnpackActionNodes<'v> {
-    ActionQueryNodes(ValueOf<'v, ListType<StarlarkActionQueryNode>>),
+    ActionQueryNodes(ValueOf<'v, StarlarkList<'v, StarlarkActionQueryNode>>),
     ActionQueryNodesSet(ValueOf<'v, StarlarkTargetSet<ActionQueryNode>>),
     ConfiguredProviders(AnyProvidersExprArg<'v>),
     ConfiguredTargets(ConfiguredTargetListExprArg<'v>),
-    StarlarkActions(ValueOf<'v, ListType<StarlarkAction>>),
+    StarlarkActions(ValueOf<'v, StarlarkList<'v, StarlarkAction>>),
 }
 
 // Aquery operates on `ActionQueryNode`s. Under the hood, the target set of action query nodes is obtained

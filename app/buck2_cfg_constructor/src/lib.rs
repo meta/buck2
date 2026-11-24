@@ -52,7 +52,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
 
@@ -134,13 +134,14 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
         ];
 
         // Type check + unpack
-        let (refs, params) = <(ValueOf<ListOrTupleType<StarlarkStr>>, Value)>::unpack_value_err(
-            eval.eval_function(
-                cfg_constructor_pre_constraint_analysis,
-                &[],
-                &pre_constraint_analysis_args,
-            )?,
-        )?;
+        let (refs, params) =
+            <(ValueOf<StarlarkListOrTuple<'v, StarlarkStr>>, Value)>::unpack_value_err(
+                eval.eval_function(
+                    cfg_constructor_pre_constraint_analysis,
+                    &[],
+                    &pre_constraint_analysis_args,
+                )?,
+            )?;
 
         // `params` Value lives on eval.heap() so we need to move eval out of the closure to keep it alive
         let refs = refs

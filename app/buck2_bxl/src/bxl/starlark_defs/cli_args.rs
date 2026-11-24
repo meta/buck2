@@ -68,7 +68,7 @@ use starlark::values::dict::AllocDict;
 use starlark::values::float::StarlarkFloat;
 use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -1105,7 +1105,7 @@ pub(crate) fn cli_args_module(registry: &mut GlobalsBuilder) {
     /// buck2 bxl //my.bxl:target -- --mode debug
     /// ```
     fn r#enum<'v>(
-        #[starlark(require = pos)] variants: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+        #[starlark(require = pos)] variants: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         default: Option<&str>,
         #[starlark(default = "")] doc: &str,
         #[starlark(require = named)] short: Option<&str>,

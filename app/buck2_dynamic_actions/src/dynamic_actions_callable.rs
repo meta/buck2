@@ -44,7 +44,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableParamSpec;
@@ -85,7 +85,7 @@ impl StarlarkCallableParamSpec for DynamicActionsCallbackParamSpec {
     }
 }
 
-pub type DynamicActionsCallbackReturnType = ListType<StarlarkProvider>;
+pub type DynamicActionsCallbackReturnType = StarlarkList<'static, StarlarkProvider>;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]

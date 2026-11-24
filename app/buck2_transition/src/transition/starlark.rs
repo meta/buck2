@@ -59,7 +59,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 use starlark::values::structs::Struct;
@@ -337,7 +337,9 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             Either<ImplSingleReturnTy<'static>, ImplSplitReturnTy<'static>>,
         >,
         #[starlark(require = named)] refs: ValueOf<'v, DictType<StarlarkStr, StarlarkStr>>,
-        #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
+        #[starlark(require = named)] attrs: Option<
+            ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
+        >,
         #[starlark(require = named, default = false)] split: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, TransitionView<'v>>> {

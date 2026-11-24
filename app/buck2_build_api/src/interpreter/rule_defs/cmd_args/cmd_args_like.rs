@@ -16,7 +16,7 @@ use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use either::Either;
 use starlark::starlark_predicate_type;
 use starlark::starlark_recursive_type;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -51,5 +51,5 @@ starlark_recursive_type! {
     /// the command line.
     pub StarlarkCmdArgsInput<'v>;
     name "CmdArgsInput";
-    is Either<ListType<StarlarkCmdArgsInput>, StarlarkCmdArgsLike>;
+    is Either<StarlarkList<'v, StarlarkCmdArgsInput>, StarlarkCmdArgsLike>;
 }

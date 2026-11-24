@@ -32,7 +32,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
@@ -555,7 +555,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
         query: &'v str,
         #[starlark(default = NoneOr::None)] query_args: NoneOr<UnpackUnconfiguredQueryArgs<'v>>,
         #[starlark(default = NoneOr::None)] target_universe: NoneOr<
-            ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+            ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {

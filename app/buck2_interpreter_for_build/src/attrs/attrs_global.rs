@@ -36,7 +36,7 @@ use starlark::values::Heap;
 use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
 use starlark::values::tuple::TupleType;
@@ -127,7 +127,7 @@ pub(crate) fn init_coerce_providers_label_for_bzl() {
 
 /// Common code to handle `providers` argument of dep-like attrs.
 fn dep_like_attr_handle_providers_arg<'v>(
-    providers: ValueOf<'v, ListOrTupleType<StarlarkProviderCallable>>,
+    providers: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkProviderCallable>>,
 ) -> buck2_error::Result<ProviderIdSet> {
     Ok(ProviderIdSet::from(
         providers
@@ -196,7 +196,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn exec_dep<'v>(
         #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
             'v,
-            ListOrTupleType<StarlarkProviderCallable>,
+            StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
@@ -259,7 +259,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn toolchain_dep<'v>(
         #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
             'v,
-            ListOrTupleType<StarlarkProviderCallable>,
+            StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
@@ -288,7 +288,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn transition_dep<'v>(
         #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
             'v,
-            ListOrTupleType<StarlarkProviderCallable>,
+            StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
         #[starlark(require = named)] cfg: Option<Either<StringValue<'v>, &'v dyn TransitionValue>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
@@ -328,7 +328,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn configured_dep<'v>(
         #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
             'v,
-            ListOrTupleType<StarlarkProviderCallable>,
+            StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
@@ -345,7 +345,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn split_transition_dep<'v>(
         #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
             'v,
-            ListOrTupleType<StarlarkProviderCallable>,
+            StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
         #[starlark(require = named)] cfg: &'v dyn TransitionValue,
         #[starlark(require = named)] default: Option<Value<'v>>,
@@ -410,15 +410,15 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn dep<'v>(
         #[starlark(require = named, default = ValueOf::empty_list())] providers: ValueOf<
             'v,
-            ListOrTupleType<StarlarkProviderCallable>,
+            StarlarkListOrTuple<'v, StarlarkProviderCallable>,
         >,
         #[starlark(require = named, default = ValueOf::empty_list())] pulls_plugins: ValueOf<
             'v,
-            ListOrTupleType<StarlarkPluginKindView<'v>>,
+            StarlarkListOrTuple<'v, StarlarkPluginKindView<'v>>,
         >,
         #[starlark(require = named, default = Either::Left(ValueOf::empty_list()))]
         pulls_and_pushes_plugins: Either<
-            ValueOf<'v, ListOrTupleType<StarlarkPluginKindView<'v>>>,
+            ValueOf<'v, StarlarkListOrTuple<'v, StarlarkPluginKindView<'v>>>,
             ValueOf<'v, AllPlugins>,
         >,
         #[starlark(require = named)] default: Option<Value<'v>>,
@@ -608,7 +608,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// Takes a string from one of the variants given, and gives that string to the rule.
     /// Strings are matched case-insensitively, and always passed to the rule lowercase.
     fn r#enum<'v>(
-        #[starlark(require = pos)] variants: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+        #[starlark(require = pos)] variants: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         #[starlark(require = named)] default: Option<
             ValueOf<'v, Either<StarlarkStr, StarlarkSelector<'v>>>,
         >,

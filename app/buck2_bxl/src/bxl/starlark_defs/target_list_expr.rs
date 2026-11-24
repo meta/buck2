@@ -45,7 +45,7 @@ use starlark::values::Heap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
@@ -144,14 +144,14 @@ pub(crate) enum ConfiguredTargetNodeArg<'v> {
 #[derive(UnpackValue)]
 pub(crate) enum TargetSetOrTargetList<'v> {
     TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
-    TargetList(ValueOf<'v, ListType<TargetNodeOrTargetLabelOrStr<'v>>>),
+    TargetList(ValueOf<'v, StarlarkList<'v, TargetNodeOrTargetLabelOrStr<'v>>>),
 }
 
 #[derive(UnpackValue)]
 pub(crate) enum ConfiguredTargetListArg<'v> {
     ConfiguredTargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
     TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
-    TargetList(ValueOf<'v, ListType<ConfiguredTargetNodeArg<'v>>>),
+    TargetList(ValueOf<'v, StarlarkList<'v, ConfiguredTargetNodeArg<'v>>>),
 }
 
 #[derive(UnpackValue)]

@@ -23,7 +23,7 @@ use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::validation_spec::StarlarkValidationSpec;
@@ -91,7 +91,7 @@ pub struct ValidationInfo<'v> {
     /// See the [Validations guide](https://buck2.build/docs/rule_authors/validation/)
     /// for how to declare validations end-to-end and write the validator
     /// action that produces each spec's `validation_result`.
-    validations: ValueOf<'v, ListType<StarlarkValidationSpec<'v>>>,
+    validations: ValueOf<'v, StarlarkList<'v, StarlarkValidationSpec<'v>>>,
 }
 
 fn validate_validation_info<'v>(info: &ValidationInfo<'v>) -> buck2_error::Result<()> {
@@ -111,7 +111,10 @@ fn validate_validation_info<'v>(info: &ValidationInfo<'v>) -> buck2_error::Resul
 #[starlark_module]
 fn validation_info_creator(globals: &mut GlobalsBuilder) {
     fn ValidationInfo<'v>(
-        #[starlark(require = named)] validations: ValueOf<'v, ListType<StarlarkValidationSpec<'v>>>,
+        #[starlark(require = named)] validations: ValueOf<
+            'v,
+            StarlarkList<'v, StarlarkValidationSpec<'v>>,
+        >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, ValidationInfo<'v>>> {
         let result = ValidationInfo { validations };

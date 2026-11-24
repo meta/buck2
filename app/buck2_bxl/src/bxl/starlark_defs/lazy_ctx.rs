@@ -27,7 +27,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -140,7 +140,7 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn join_all<'v>(
         #[starlark(this)] _this: &'v StarlarkLazyCtx,
-        #[starlark(require = pos)] operations: ValueOf<'v, ListType<StarlarkLazy>>,
+        #[starlark(require = pos)] operations: ValueOf<'v, StarlarkList<'v, StarlarkLazy>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
         let operations = operations
@@ -254,7 +254,7 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
         target_platform: ValueAsStarlarkTargetLabel<'v>,
         #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
             'v,
-            ListType<StarlarkStr>,
+            StarlarkList<'v, StarlarkStr>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazy>> {
@@ -361,7 +361,7 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
         target_platform: ValueAsStarlarkTargetLabel<'v>,
         #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
             'v,
-            ListType<StarlarkStr>,
+            StarlarkList<'v, StarlarkStr>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkLazyCqueryCtx>> {

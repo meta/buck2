@@ -29,7 +29,7 @@ use dupe::Dupe;
 use itertools::Either;
 use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::string::StarlarkStr;
 
 use crate::bxl::starlark_defs::context::BxlContext;
@@ -57,7 +57,7 @@ pub(crate) enum ProvidersLabelArg<'v> {
 
 #[derive(UnpackValue)]
 pub(crate) enum ProvidersLabelListArg<'v> {
-    List(ValueOf<'v, ListType<ProvidersLabelArg<'v>>>),
+    List(ValueOf<'v, StarlarkList<'v, ProvidersLabelArg<'v>>>),
     TargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
 }
 
@@ -80,7 +80,7 @@ pub(crate) enum ConfiguredProvidersLabelArg<'v> {
 /// a list of configured provider labels
 #[derive(UnpackValue)]
 pub(crate) enum ConfiguredProvidersLabelListArg<'v> {
-    List(ValueOf<'v, ListType<ConfiguredProvidersLabelArg<'v>>>),
+    List(ValueOf<'v, StarlarkList<'v, ConfiguredProvidersLabelArg<'v>>>),
     TargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
 }
 
@@ -104,7 +104,7 @@ pub(crate) enum AnyProvidersLabelArg<'v> {
 pub(crate) enum AnyProvidersLabelListArg<'v> {
     StarlarkTargetSet(ValueOf<'v, StarlarkTargetSet<TargetNode>>),
     StarlarkConfiguredTargetSet(ValueOf<'v, StarlarkTargetSet<ConfiguredTargetNode>>),
-    List(ValueOf<'v, ListType<AnyProvidersLabelArg<'v>>>),
+    List(ValueOf<'v, StarlarkList<'v, AnyProvidersLabelArg<'v>>>),
 }
 
 #[derive(UnpackValue)]

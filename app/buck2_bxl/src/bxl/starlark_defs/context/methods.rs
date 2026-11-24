@@ -45,7 +45,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::string::StarlarkStr;
@@ -155,7 +155,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(default = ValueAsStarlarkTargetLabel::NONE)]
         target_platform: ValueAsStarlarkTargetLabel<'v>,
         #[starlark(require = named, default = NoneOr::None)] modifiers: NoneOr<
-            ValueOf<'v, ListType<StarlarkStr>>,
+            ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<
@@ -307,7 +307,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] keep_going: bool,
         #[starlark(require = named, default = ValueOf::empty_list())] modifiers: ValueOf<
             'v,
-            ListType<StarlarkStr>,
+            StarlarkList<'v, StarlarkStr>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOf<'v, StarlarkTargetUniverse<'v>>> {

@@ -25,7 +25,7 @@ use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::ValueOf;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -75,7 +75,7 @@ impl StarlarkBuckRegex {
     /// without matching the remaining elements.
     fn multi_match<'v>(
         &self,
-        strings: ValueOf<'v, ListType<StarlarkStr>>,
+        strings: ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
         any: bool,
     ) -> starlark::Result<bool> {
         for string in strings.iter() {
@@ -131,7 +131,7 @@ fn regex_methods(builder: &mut MethodsBuilder) {
     /// lists because it crosses from Starlark into native code only once.
     fn any_match<'v>(
         this: &StarlarkBuckRegex,
-        #[starlark(require = pos)] strings: ValueOf<'v, ListType<StarlarkStr>>,
+        #[starlark(require = pos)] strings: ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
     ) -> starlark::Result<bool> {
         this.multi_match(strings, true)
     }
@@ -144,7 +144,7 @@ fn regex_methods(builder: &mut MethodsBuilder) {
     /// lists because it crosses from Starlark into native code only once.
     fn all_match<'v>(
         this: &StarlarkBuckRegex,
-        #[starlark(require = pos)] strings: ValueOf<'v, ListType<StarlarkStr>>,
+        #[starlark(require = pos)] strings: ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
     ) -> starlark::Result<bool> {
         this.multi_match(strings, false)
     }

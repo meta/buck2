@@ -56,7 +56,7 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 
 use crate::actions::testings::SimpleUnregisteredAction;
 
@@ -197,7 +197,7 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
     fn declared_bound_artifact_with_associated_artifacts<'v>(
         // TODO(nga): parameters should be either positional or named, not both.
         artifact: OutputArtifactArg<'v>,
-        associated_artifacts: ValueOf<'v, ListOrTupleType<StarlarkArtifactView<'v>>>,
+        associated_artifacts: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkArtifactView<'v>>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let target_label = get_label(eval, "//foo:bar")?;

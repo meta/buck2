@@ -34,7 +34,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
@@ -48,7 +48,7 @@ use crate::bxl::starlark_defs::context::BxlContextCoreData;
 #[derive(UnpackValue)]
 pub(crate) enum FileSetExpr<'v> {
     Literal(ValueOf<'v, StarlarkStr>),
-    Literals(ValueOf<'v, ListOrTupleType<StarlarkStr>>),
+    Literals(ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>),
     FileSet(ValueOf<'v, StarlarkFileSet>),
 }
 

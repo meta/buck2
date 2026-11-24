@@ -37,7 +37,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::ValueOf;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 use starlark::values::string::AllocStrIntern;
 use starlark::values::string::StarlarkStr;
@@ -330,7 +330,7 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
 
 #[derive(UnpackValue)]
 enum SubtargetNameArg<'v> {
-    List(ValueOf<'v, ListType<StarlarkStr>>),
+    List(ValueOf<'v, StarlarkList<'v, StarlarkStr>>),
     Str(ValueOf<'v, StarlarkStr>),
 }
 

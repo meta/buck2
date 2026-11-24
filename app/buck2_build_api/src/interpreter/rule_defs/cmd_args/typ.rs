@@ -59,8 +59,6 @@ use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListOf;
-use starlark::values::list::ListType;
 use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 use starlark::values::starlark_value_as_type::StarlarkValueAsType;
@@ -903,7 +901,7 @@ fn wrong_param_error<'v, T: StarlarkTypeExpr<'v>>(
 /// A [`StarlarkCmdArgsInput`] read one level in: the list, whose items `cmd_args` reads the same
 /// way as it copies them out, or the one argument.
 pub enum StarlarkCommandLineValueUnpack<'v> {
-    List(ValueOf<'v, ListType<StarlarkCmdArgsInput>>),
+    List(ValueOf<'v, StarlarkList<'v, StarlarkCmdArgsInput>>),
     CommandLineArg(CommandLineArg<'v>),
 }
 
@@ -914,7 +912,7 @@ impl<'v> UnpackValue<'v> for StarlarkCommandLineValueUnpack<'v> {
     #[inline]
     fn unpack(
         value: ValueOf<'v, StarlarkCmdArgsInput>,
-        get: Either<ListOf<'v, StarlarkCmdArgsInput>, &'v dyn CommandLineArgLike<'v>>,
+        get: Either<StarlarkList<'v, StarlarkCmdArgsInput>, &'v dyn CommandLineArgLike<'v>>,
     ) -> Result<Self, Infallible> {
         Ok(match get {
             Either::Left(list) => StarlarkCommandLineValueUnpack::List(list.handle()),
@@ -1338,7 +1336,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
         >,
         #[starlark(default = Either::Right(ValueOf::empty_list()))] replace_regex: Either<
             (CmdArgsRegex<'v>, StringValue<'v>),
-            ValueOf<'v, ListType<(CmdArgsRegex<'v>, StarlarkStr)>>,
+            ValueOf<'v, StarlarkList<'v, (CmdArgsRegex<'v>, StarlarkStr)>>,
         >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkCmdArgsView<'v>>> {

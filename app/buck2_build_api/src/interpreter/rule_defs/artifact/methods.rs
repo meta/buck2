@@ -18,7 +18,7 @@ use starlark::environment::MethodsBuilder;
 use starlark::values::Heap;
 use starlark::values::StringValue;
 use starlark::values::ValueOf;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
 use starlark::values::string::AllocStrConcat;
 
@@ -163,7 +163,7 @@ fn input_artifact_methods(builder: &mut MethodsBuilder) {
     /// potentially additional artifacts. The artifacts must be bound.
     fn with_associated_artifacts<'v>(
         this: StarlarkArtifactView<'v>,
-        artifacts: ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
+        artifacts: ValueOf<'v, StarlarkList<'v, StarlarkArtifactView<'v>>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkArtifactView<'v>>> {
         Ok(this

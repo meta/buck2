@@ -26,7 +26,7 @@ use starlark::values::StarlarkPagable;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
@@ -70,7 +70,7 @@ impl StarlarkCallableParamSpec for TransitionImplParams {
 pub(crate) struct TransitionInfo<'v> {
     pub(crate) r#impl:
         ValueOf<'v, StarlarkCallable<'v, TransitionImplParams, ImplSingleReturnTy<'static>>>,
-    pub(crate) attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
+    pub(crate) attrs: Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>>,
 }
 
 /// A `TransitionInfo` kept alive by its owning frozen heap; usable across threads and awaits.
@@ -84,7 +84,9 @@ fn transition_info_creator(globals: &mut GlobalsBuilder) {
             TransitionImplParams,
             ImplSingleReturnTy<'static>,
         >,
-        #[starlark(require = named)] attrs: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
+        #[starlark(require = named)] attrs: Option<
+            ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
+        >,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, TransitionInfo<'v>>> {
         Ok(heap.alloc(TransitionInfo {

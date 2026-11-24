@@ -29,7 +29,7 @@ use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictType;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
 
@@ -64,18 +64,18 @@ pub struct ExternalRunnerTestInfo<'v> {
 
     /// The command for this test. The external test runner is what gives meaning to this
     /// command.
-    command: Option<ValueOf<'v, ListOrTupleType<StarlarkCmdArgsLike>>>,
+    command: Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkCmdArgsLike>>>,
 
     /// The environment for this test. Here again, the external test runner is what gives this
     /// meaning.
     env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
 
     /// The labels for this test.
-    labels: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
+    labels: Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>>,
 
     /// The contacts for this test. This is largely expected to be an oncall, though it's not
     /// validated in any way.
-    contacts: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
+    contacts: Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>>,
 
     /// Whether this test should use relative paths
     use_project_relative_paths: Option<ValueOf<'v, bool>>,
@@ -114,7 +114,7 @@ pub struct ExternalRunnerTestInfo<'v> {
     /// List of local resource types which should be set up additionally to those which are
     /// passed from test runner. Allows specifying local resources on a per-rule basis.
     required_local_resources:
-        Option<ValueOf<'v, ListOrTupleType<StarlarkRequiredTestLocalResource>>>,
+        Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkRequiredTestLocalResource>>>,
 
     /// Configuration needed to spawn a new worker. This worker will be used to run every single
     /// command related to test execution, including listing.
@@ -254,15 +254,15 @@ impl<'v> TestCommandMember<'v> {
 // The field types `ExternalRunnerTestInfo` and `InternalRunnerTestInfo` share, and the readers
 // over them. (The provider macro reads field types syntactically, so the structs spell them out.)
 
-pub(super) type TestCommand<'v> = ValueOf<'v, ListOrTupleType<StarlarkCmdArgsLike>>;
+pub(super) type TestCommand<'v> = ValueOf<'v, StarlarkListOrTuple<'v, StarlarkCmdArgsLike>>;
 pub(super) type TestEnv<'v> = ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>;
-pub(super) type StrSeq<'v> = ValueOf<'v, ListOrTupleType<StarlarkStr>>;
+pub(super) type StrSeq<'v> = ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>;
 pub(super) type ExecutorOverrides<'v> =
     ValueOf<'v, DictType<StarlarkStr, StarlarkCommandExecutorConfig>>;
 pub(super) type LocalResources<'v> =
     ValueOf<'v, DictType<StarlarkStr, NoneOr<StarlarkConfiguredProvidersLabel>>>;
 pub(super) type RequiredLocalResources<'v> =
-    ValueOf<'v, ListOrTupleType<StarlarkRequiredTestLocalResource>>;
+    ValueOf<'v, StarlarkListOrTuple<'v, StarlarkRequiredTestLocalResource>>;
 
 pub(super) fn command_members<'v>(
     command: Option<TestCommand<'v>>,

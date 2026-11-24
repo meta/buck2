@@ -61,7 +61,7 @@ impl syn::parse::Parse for InternalProviderArgs {
 /// The wrapper a provider field is declared with.
 ///
 /// `ValueOf<'v, T>` holds a value checked to be a `T` when the provider is constructed, for any
-/// `T` that is a parameter binding (a view, a `ValueTyped`, `ListType<T>`, a union), and reads
+/// `T` that is a parameter binding (a view, a `ValueTyped`, `StarlarkList<'v, T>`, a union), and reads
 /// never re-check. `ValueTyped<'v, T>` is the same for a type that is exactly one `StarlarkValue`
 /// implementation.
 ///

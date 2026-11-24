@@ -38,9 +38,8 @@ use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::float::StarlarkFloat;
 use starlark::values::int::IntView;
-use starlark::values::list::ListType;
 use starlark::values::list::StarlarkList;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::StarlarkCallable;
@@ -90,23 +89,23 @@ pub struct InternalRunnerTestInfo<'v> {
     test_type: StringValue<'v>,
 
     /// The command for this test. The test runner is what gives meaning to this command.
-    command: Option<ValueOf<'v, ListOrTupleType<StarlarkCmdArgsLike>>>,
+    command: Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkCmdArgsLike>>>,
 
     /// The command used for test discovery (listing). This is the command that runs the test
     /// binary with framework-specific listing flags (e.g., `["binary", "--gtest_list_tests"]`
     /// for GTest). The internal runner uses this for the listing step, while `command` is used
     /// for execution.
-    listing_command: ValueOf<'v, ListOrTupleType<StarlarkCmdArgsLike>>,
+    listing_command: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkCmdArgsLike>>,
 
     /// The environment for this test.
     env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
 
     /// The labels for this test.
-    labels: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
+    labels: Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>>,
 
     /// The contacts for this test. This is largely expected to be an oncall, though it's not
     /// validated in any way.
-    contacts: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
+    contacts: Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>>,
 
     /// Whether this test should use relative paths
     use_project_relative_paths: Option<ValueOf<'v, bool>>,
@@ -145,7 +144,7 @@ pub struct InternalRunnerTestInfo<'v> {
     /// List of local resource types which should be set up additionally to those which are
     /// passed from test runner. Allows specifying local resources on a per-rule basis.
     required_local_resources:
-        Option<ValueOf<'v, ListOrTupleType<StarlarkRequiredTestLocalResource>>>,
+        Option<ValueOf<'v, StarlarkListOrTuple<'v, StarlarkRequiredTestLocalResource>>>,
 
     /// Configuration needed to spawn a new worker. This worker will be used to run every single
     /// command related to test execution, including listing.
@@ -163,7 +162,11 @@ pub struct InternalRunnerTestInfo<'v> {
     /// ```
     parse_test_listing: ValueOf<
         'v,
-        StarlarkCallable<'v, (StarlarkStr,), ListType<DictType<StarlarkStr, Value<'static>>>>,
+        StarlarkCallable<
+            'v,
+            (StarlarkStr,),
+            StarlarkList<'static, DictType<StarlarkStr, Value<'static>>>,
+        >,
     >,
 
     /// A Starlark callable that parses test execution output into structured
@@ -184,7 +187,7 @@ pub struct InternalRunnerTestInfo<'v> {
         StarlarkCallable<
             'v,
             (StarlarkStr, StarlarkStr, IntView<'static>),
-            ListType<DictType<StarlarkStr, Value<'static>>>,
+            StarlarkList<'static, DictType<StarlarkStr, Value<'static>>>,
         >,
     >,
 }
@@ -505,14 +508,18 @@ fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
         r#type: StringValue<'v>,
         parse_test_listing: ValueOf<
             'v,
-            StarlarkCallable<'v, (StarlarkStr,), ListType<DictType<StarlarkStr, Value<'static>>>>,
+            StarlarkCallable<
+                'v,
+                (StarlarkStr,),
+                StarlarkList<'static, DictType<StarlarkStr, Value<'static>>>,
+            >,
         >,
         parse_test_result: ValueOf<
             'v,
             StarlarkCallable<
                 'v,
                 (StarlarkStr, StarlarkStr, IntView<'static>),
-                ListType<DictType<StarlarkStr, Value<'static>>>,
+                StarlarkList<'static, DictType<StarlarkStr, Value<'static>>>,
             >,
         >,
         listing_command: TestCommand<'v>,

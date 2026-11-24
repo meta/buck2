@@ -32,7 +32,7 @@ use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictType;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
 
@@ -136,13 +136,13 @@ pub struct DefaultInfo<'v> {
     /// A list of `Artifact`s that are built by default if this rule is requested
     /// explicitly (via CLI or `$(location)` etc), or depended on as as a "source"
     /// (i.e., `attrs.source()`).
-    default_outputs: ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
+    default_outputs: ValueOf<'v, StarlarkList<'v, StarlarkArtifactView<'v>>>,
     /// A list of `ArtifactTraversable`. The underlying `Artifact`s they define will
     /// be built by default if this rule is requested (via CLI or `$(location)` etc),
     /// but _not_ when it's depended on as as a "source" (i.e., `attrs.source()`).
     /// `ArtifactTraversable` can be an `Artifact` (which yields itself), or
     /// `cmd_args`, which expand to all their inputs.
-    other_outputs: ValueOf<'v, ListType<StarlarkCmdArgsLike>>,
+    other_outputs: ValueOf<'v, StarlarkList<'v, StarlarkCmdArgsLike>>,
 }
 
 fn validate_default_info<'v>(info: &DefaultInfo<'v>) -> buck2_error::Result<()> {
@@ -161,8 +161,8 @@ impl<'v> DefaultInfo<'v> {
     pub fn empty(heap: Heap<'v>) -> Self {
         DefaultInfo {
             sub_targets: heap.alloc(AllocDict::empty()),
-            default_outputs: heap.alloc(AllocList::empty()),
-            other_outputs: heap.alloc(AllocList::empty()),
+            default_outputs: heap.alloc(AllocList::empty()).into(),
+            other_outputs: heap.alloc(AllocList::empty()).into(),
         }
     }
 
@@ -197,7 +197,7 @@ impl<'v> DefaultInfo<'v> {
         self.default_outputs_impl().collect()
     }
 
-    pub fn default_outputs_raw(&self) -> ValueOf<'v, ListType<StarlarkArtifactView<'v>>> {
+    pub fn default_outputs_raw(&self) -> ValueOf<'v, StarlarkList<'v, StarlarkArtifactView<'v>>> {
         self.default_outputs
     }
 
@@ -314,10 +314,10 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             ValueOf<'v, StarlarkArtifactView<'v>>,
         >,
         #[starlark(default = NoneOr::None)] default_outputs: NoneOr<
-            ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
+            ValueOf<'v, StarlarkList<'v, StarlarkArtifactView<'v>>>,
         >,
         #[starlark(default = ValueOf::new_unchecked(Value::new_empty_list()))]
-        other_outputs: ValueOf<'v, ListType<StarlarkCmdArgsLike>>,
+        other_outputs: ValueOf<'v, StarlarkList<'v, StarlarkCmdArgsLike>>,
         #[starlark(default = ValueOf::empty_dict())] sub_targets: ValueOf<
             'v,
             DictType<StarlarkStr, Value<'v>>,
@@ -329,8 +329,8 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         // support both list and singular options for now until we migrate all the rules.
         let default_outputs = match (default_outputs.into_option(), default_output.into_option()) {
             (Some(list), None) => list,
-            (None, Some(default_output)) => heap.alloc(AllocList([default_output])),
-            (None, None) => heap.alloc(AllocList::empty()),
+            (None, Some(default_output)) => heap.alloc(AllocList([default_output])).into(),
+            (None, None) => heap.alloc(AllocList::empty()).into(),
             (Some(_), Some(_)) => {
                 return Err(
                     buck2_error::Error::from(DefaultOutputError::ConflictingArguments).into(),

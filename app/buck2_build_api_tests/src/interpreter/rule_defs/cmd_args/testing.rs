@@ -35,7 +35,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list::AllocList;
-use starlark::values::list_or_tuple::ListOrTupleType;
+use starlark::values::list_or_tuple::StarlarkListOrTuple;
 use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
@@ -85,7 +85,7 @@ pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
 
     /// A hash of `parts` in order, in hex; prefix-free, so moving a boundary changes it.
     fn blake3_hex<'v>(
-        parts: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+        parts: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
     ) -> starlark::Result<String> {
         let mut hasher = Blake3StrongHasher::new();
         for part in parts.try_items::<&str>() {
@@ -108,7 +108,7 @@ pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
 #[starlark_module]
 pub(crate) fn inputs_helper(builder: &mut GlobalsBuilder) {
     fn make_inputs<'v>(
-        values: ValueOf<'v, ListOrTupleType<Value<'v>>>,
+        values: ValueOf<'v, StarlarkListOrTuple<'v>>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, StarlarkCommandLineInputs>> {
         let mut visitor = SimpleCommandLineArtifactVisitor::new();

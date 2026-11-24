@@ -112,7 +112,7 @@ impl Display for StarlarkBuckRegex {
 
 starlark_simple_value!(StarlarkBuckRegex);
 
-/// Type created by the [`regex`](../regex) function.
+/// Type created by the [`regex`](../#regex) function.
 #[starlark_module]
 fn regex_methods(builder: &mut MethodsBuilder) {
     /// Determine if the regex matches any substring of the given string.
@@ -176,7 +176,7 @@ fn regex_methods(builder: &mut MethodsBuilder) {
 pub fn register_buck_regex(builder: &mut GlobalsBuilder) {
     /// Compile a regular expression from a string.
     ///
-    /// ## Fanciness
+    /// ### Fanciness
     ///
     /// Buck2 regexes support two backing implementations:
     ///
@@ -189,7 +189,6 @@ pub fn register_buck_regex(builder: &mut GlobalsBuilder) {
     ///   crate](https://docs.rs/fancy-regex/latest/fancy_regex/#syntax) is used, which does support
     ///   look-around and backreferences, but is slower to match (exponential time in the worst
     ///   case).
-    #[starlark(as_type = StarlarkBuckRegex)]
     fn regex<'v>(
         #[starlark(require = pos)] regex: &str,
         #[starlark(require = named, default = false)] fancy: bool,
@@ -280,11 +279,11 @@ str(regex("foo")) == 'regex("foo")'
     }
 
     #[test]
-    fn test_as_type() {
+    fn test_type() {
         let mut a = Assert::new();
         a.globals_add(register_buck_regex);
-        a.is_true("isinstance(regex('foo'), regex)");
-        a.is_false("isinstance(1, regex)");
+        a.is_true("isinstance(regex('foo'), BuckRegex)");
+        a.is_false("isinstance(1, BuckRegex)");
     }
 
     #[test]

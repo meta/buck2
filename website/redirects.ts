@@ -52,8 +52,8 @@ const globalsBasedApiDocs = [
     to: '/docs/api/build/Artifact',
   },
   {
-    from: ['/docs/api/build/buck_regex', '/docs/api/bxl/buck_regex'],
-    to: '/docs/api/build/regex',
+    from: ['/docs/api/build/buck_regex', '/docs/api/bxl/buck_regex', '/docs/api/build/regex'],
+    to: '/docs/api/build/BuckRegex',
   },
   {
     from: ['/docs/api/build/configured_target_label', '/docs/api/bxl/configured_target_label'],

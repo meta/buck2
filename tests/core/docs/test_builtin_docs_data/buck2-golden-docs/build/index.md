@@ -26,6 +26,7 @@
 ## read\_package\_value
 ## read\_parent\_package\_value
 ## read\_root\_config
+## regex
 ## regex\_match
 ## repository\_name
 ## rule

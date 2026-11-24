@@ -255,27 +255,20 @@ impl<'v> StarlarkValue<'v> for StarlarkSelector<'v> {
         true
     }
 
-    fn radd(this: &Self, left: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
-        let right = heap
-            .alloc(match this {
-                StarlarkSelector::Primary(x) => StarlarkSelector::Primary(*x),
-                StarlarkSelector::Sum(x, y) => StarlarkSelector::Sum(x.to_value(), y.to_value()),
-            })
-            .to_value();
-        Some(Ok(StarlarkSelector::sum(left, right, heap)))
+    fn radd(
+        this: ValueOf<'v, Self>,
+        left: Value<'v>,
+        heap: Heap<'v>,
+    ) -> Option<starlark::Result<Value<'v>>> {
+        Some(Ok(StarlarkSelector::sum(left, this.to_value(), heap)))
     }
 
-    fn add(&self, other: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
-        match self {
-            Self::Primary(v) => {
-                let this = heap.alloc(StarlarkSelector::new(*v)).to_value();
-                Some(Ok(StarlarkSelector::sum(this, other, heap)))
-            }
-            Self::Sum(l, r) => {
-                let this = StarlarkSelector::sum(l.to_value(), r.to_value(), heap);
-                Some(Ok(StarlarkSelector::sum(this, other, heap)))
-            }
-        }
+    fn add(
+        this: ValueOf<'v, Self>,
+        other: Value<'v>,
+        heap: Heap<'v>,
+    ) -> Option<starlark::Result<Value<'v>>> {
+        Some(Ok(StarlarkSelector::sum(this.to_value(), other, heap)))
     }
 
     // used to provide the type documentation here

@@ -51,6 +51,8 @@ import org.jetbrains.kotlin.fir.expressions.FirExpression
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.references.FirNamedReference
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertyAccessorSymbol
+import org.jetbrains.kotlin.fir.types.ConeKotlinType
+import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.fir.visitors.FirVisitorVoid
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.declarations.IrClass
@@ -335,8 +337,11 @@ internal class InlineBodyStage : AbiGenStage {
   }
 
   // Entry to fir2ir's expression converter across compiler versions (via its `$default` bridge
-  // when it has trailing defaulted parameters). Null keeps the old behavior: a loud skip.
-  private fun defaultExpressionConverter(): ((Any, Any) -> IrExpression?)? {
+  // when it has trailing defaulted parameters). Null keeps the old behavior: a loud skip. The third
+  // argument is the expected type, which fir2ir passes for a default value (the parameter's type):
+  // it inserts the implicit not-null check of a platform-typed value. Dropped where the converter
+  // takes none.
+  private fun defaultExpressionConverter(): ((Any, Any, ConeKotlinType?) -> IrExpression?)? {
     val visitorClass = Fir2IrVisitor::class.java
     val instance =
         visitorClass.methods.singleOrNull {
@@ -348,7 +353,7 @@ internal class InlineBodyStage : AbiGenStage {
               it.parameterTypes[0] == FirExpression::class.java
         } ?: return null
     if (instance.parameterTypes.size == 1) {
-      return { visitor, expression -> instance.invoke(visitor, expression) as? IrExpression }
+      return { visitor, expression, _ -> instance.invoke(visitor, expression) as? IrExpression }
     }
     val bridge =
         visitorClass.methods.singleOrNull {
@@ -373,8 +378,16 @@ internal class InlineBodyStage : AbiGenStage {
             else -> null
           }
         }
-    return { visitor, expression ->
-      bridge.invoke(null, visitor, expression, *dummies.toTypedArray(), mask, null) as? IrExpression
+    val expectedTypeIndex = instance.parameterTypes.indexOf(ConeKotlinType::class.java)
+    return { visitor, expression, expectedType ->
+      val arguments = dummies.toMutableList()
+      var argumentMask = mask
+      if (expectedType != null && expectedTypeIndex > 0) {
+        arguments[expectedTypeIndex - 1] = expectedType
+        argumentMask = argumentMask and (1 shl expectedTypeIndex).inv()
+      }
+      bridge.invoke(null, visitor, expression, *arguments.toTypedArray(), argumentMask, null)
+          as? IrExpression
     }
   }
 
@@ -384,7 +397,7 @@ internal class InlineBodyStage : AbiGenStage {
       irFunction: IrFunction,
       firFunction: FirFunction,
       firDefaults: List<org.jetbrains.kotlin.fir.expressions.FirExpression?>,
-      converter: (Any, Any) -> IrExpression?,
+      converter: (Any, Any, ConeKotlinType?) -> IrExpression?,
   ): Boolean {
     val storage =
         Fir2IrPluginContext::class.java.declaredField("c").get(pluginContext)
@@ -415,7 +428,12 @@ internal class InlineBodyStage : AbiGenStage {
                 irParameter.defaultValue = null
                 continue
               }
-              val converted = converter.invoke(storage.fir2IrVisitor, firDefault) as? IrExpression
+              val converted =
+                  converter.invoke(
+                      storage.fir2IrVisitor,
+                      firDefault,
+                      firFunction.valueParameters[index].returnTypeRef.coneType,
+                  )
               if (converted == null) {
                 ok = false
                 break

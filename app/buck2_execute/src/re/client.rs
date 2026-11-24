@@ -1370,14 +1370,10 @@ impl RemoteExecutionClientImpl {
         use buck2_data::ReWorkerUpload;
         use buck2_data::re_stage;
 
-        let action_key = if knobs.log_action_keys {
-            metadata
-                .action_history_info
-                .as_ref()
-                .map(|h| h.action_key.clone())
-        } else {
-            None
-        };
+        let action_key = metadata
+            .action_history_info
+            .as_ref()
+            .map(|h| h.action_key.clone());
 
         let re_use_case = metadata.use_case_id.clone();
 

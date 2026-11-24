@@ -17,10 +17,6 @@ use dupe::Dupe;
 pub struct ExecutorGlobalKnobs {
     pub enable_miniperf: bool,
 
-    /// Whether to emit action keys to execution logs (thos are pretty verbose and omitted by
-    /// default).
-    pub log_action_keys: bool,
-
     /// Maximum duration in seconds that an execution can remain in the RE queue state before it is cancelled.
     pub re_cancel_on_estimated_queue_time_exceeds: Option<Duration>,
 

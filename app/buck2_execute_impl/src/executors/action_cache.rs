@@ -86,7 +86,6 @@ async fn query_action_cache_and_download_result(
     manager: CommandExecutionManager,
     cancellations: &CancellationContext,
     upload_all_actions: bool,
-    log_action_keys: bool,
     details: RemoteCommandExecutionDetails,
     output_trees_download_config: &OutputTreesDownloadConfig,
 ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
@@ -206,11 +205,7 @@ async fn query_action_cache_and_download_result(
         &identity,
         buck2_data::CacheHit {
             action_digest: digest.to_string(),
-            action_key: if log_action_keys {
-                Some(identity.action_key.clone())
-            } else {
-                None
-            },
+            action_key: Some(identity.action_key.clone()),
             cache_type: cache_type.to_proto().into(),
         }
         .into(),
@@ -289,7 +284,6 @@ impl PreparedCommandOptionalExecutor for ActionCacheChecker {
             manager,
             cancellations,
             self.upload_all_actions,
-            self.knobs.log_action_keys,
             details,
             &self.output_trees_download_config,
         )
@@ -358,7 +352,6 @@ impl PreparedCommandOptionalExecutor for RemoteDepFileCacheChecker {
             manager,
             cancellations,
             self.upload_all_actions,
-            self.knobs.log_action_keys,
             details,
             &self.output_trees_download_config,
         )

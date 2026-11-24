@@ -1047,14 +1047,6 @@ impl DiceCommandUpdater<'_, '_> {
             .unwrap_or_else(RolloutPercentage::always)
             .roll();
 
-        let log_action_keys = root_config
-            .parse::<RolloutPercentage>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_action_keys",
-            })?
-            .unwrap_or_else(RolloutPercentage::always)
-            .roll();
-
         let log_configured_graph_size = root_config
             .parse::<bool>(BuckconfigKeyRef {
                 section: "buck2",
@@ -1081,7 +1073,6 @@ impl DiceCommandUpdater<'_, '_> {
 
         let executor_global_knobs = ExecutorGlobalKnobs {
             enable_miniperf,
-            log_action_keys,
             re_cancel_on_estimated_queue_time_exceeds,
             re_fallback_on_estimated_queue_time_exceeds,
         };

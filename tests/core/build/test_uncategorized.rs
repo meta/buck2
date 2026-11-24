@@ -401,14 +401,8 @@ async fn test_log_action_keys(buck: &Buck) -> anyhow::Result<()> {
     let action_key = "executor root//:test (<unspecified>) touch";
 
     // Run on RE
-    buck.build(&[
-        ":test",
-        "-c",
-        &format!("test.seed={seed}"),
-        "-c",
-        "buck2.log_action_keys=true",
-    ])
-    .await?;
+    buck.build(&[":test", "-c", &format!("test.seed={seed}")])
+        .await?;
     assert_eq!(
         read_action_keys(buck).await?,
         [("Re".to_owned(), action_key.to_owned())]
@@ -417,14 +411,8 @@ async fn test_log_action_keys(buck: &Buck) -> anyhow::Result<()> {
     buck.kill().await?;
 
     // Run on RE again, get a cache hit this time
-    buck.build(&[
-        ":test",
-        "-c",
-        &format!("test.seed={seed}"),
-        "-c",
-        "buck2.log_action_keys=true",
-    ])
-    .await?;
+    buck.build(&[":test", "-c", &format!("test.seed={seed}")])
+        .await?;
 
     assert_eq!(
         read_action_keys(buck).await?,

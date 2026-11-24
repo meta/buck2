@@ -985,17 +985,22 @@ impl<'v> Value<'v> {
         } else {
             match self.0.unpack_ptr() {
                 None => false,
-                Some(entry) => match entry.state() {
+                Some(entry) => {
+                    // A forward or a reservation is not a `T`, and which of the two it is
+                    // does not matter here. Decoding it with `state` in every downcast,
+                    // together with the panic of `state` on a tag that is neither, was 2%
+                    // of the CPU time of an analysis. A debug build decodes it all the
+                    // same, for that panic.
+                    debug_assert!(
+                        entry.is_value()
+                            || !matches!(entry.state(), AValueHeapEntryState::Value(_))
+                    );
                     // SAFETY: just checked to be a live value.
-                    AValueHeapEntryState::Value(_) => {
-                        unsafe { self.0.value_header_ptr_unchecked() }
+                    entry.is_value()
+                        && unsafe { self.0.value_header_ptr_unchecked() }
                             .unpack()
                             .is::<T>()
-                    }
-                    AValueHeapEntryState::Forward(_) | AValueHeapEntryState::Reservation(_) => {
-                        false
-                    }
-                },
+                }
             }
         }
     }

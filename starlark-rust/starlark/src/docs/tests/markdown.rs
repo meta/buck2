@@ -374,6 +374,16 @@ fn globals_render_signature_at_bottom_with_linked_type() {
     test_globals_docs_render(true, true);
 }
 
+/// An item rendered alone that is a type is headed "`name` type", and its constructor is
+/// printed with the type's name.
+#[test]
+fn constructor_of_a_type_rendered_alone_has_the_name_of_the_type() {
+    let docs = get_globals().get("Magic").unwrap().documentation();
+    let res = render_doc_item_no_link("Magic", &docs);
+    assert!(res.starts_with("# `Magic` type"), "{res}");
+    assert!(res.contains("def Magic("), "{res}");
+}
+
 #[test]
 fn golden_docs_object() {
     let docs = DocType::from_starlark_value::<Obj>();

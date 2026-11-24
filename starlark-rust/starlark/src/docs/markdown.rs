@@ -284,11 +284,12 @@ pub(super) fn render_members<'a>(
     format!("{header}{summary}\n\n{members_details}")
 }
 
-/// `relations` is the section that ends the page, after the members: what
-/// [`render_implemented_by`] or [`render_implements`] gives.
+/// `title` heads the page, and `name` is the type's name, which its constructor and its
+/// members are printed with. `relations` is the section that ends the page, after the members:
+/// what [`render_implemented_by`] or [`render_implements`] gives.
 pub(super) fn render_doc_type(
+    title: &str,
     name: &str,
-    prefix: &str,
     t: &DocType,
     relations: Option<String>,
     render_config: &RenderConfig,
@@ -298,9 +299,9 @@ pub(super) fn render_doc_type(
         .as_ref()
         .map(|c| render_function(name, c, false, render_config));
     render_members(
-        name,
+        title,
         &t.docs,
-        prefix,
+        &format!("{name}."),
         t.members.iter().map(|(n, m)| (&**n, m.clone())),
         constructor
             .into_iter()
@@ -382,13 +383,9 @@ pub fn render_doc_item(name: &str, item: &DocItem, render_config: &RenderConfig)
             None,
             render_config,
         ),
-        DocItem::Type(o) => render_doc_type(
-            &format!("`{name}` type"),
-            &format!("{name}."),
-            o,
-            None,
-            render_config,
-        ),
+        DocItem::Type(o) => {
+            render_doc_type(&format!("`{name}` type"), name, o, None, render_config)
+        }
         DocItem::Member(DocMember::Function(f)) => render_function(name, f, true, render_config),
         DocItem::Member(DocMember::Property(p)) => render_property(name, p, render_config),
     }
@@ -495,7 +492,7 @@ impl DocType {
         relations: Option<String>,
         render_config: &RenderConfig,
     ) -> String {
-        render_doc_type(name, &format!("{name}."), self, relations, render_config)
+        render_doc_type(name, name, self, relations, render_config)
     }
 }
 

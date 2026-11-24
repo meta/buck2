@@ -20,6 +20,11 @@ use crate::values::Value;
 use crate::values::ValueError;
 
 // Helper for convert_slice_indices
+//
+// Called for each bound of every slice. Out of line it costs 50 instructions per `xs[1:3]`
+// (the crate as one codegen unit), and left to the inliner it is taken or not by the size of
+// the integer conversion in it.
+#[inline(always)]
 fn convert_index_aux(
     len: i32,
     v1: Option<Value>,

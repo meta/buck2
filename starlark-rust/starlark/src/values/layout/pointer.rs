@@ -184,10 +184,7 @@ impl RawPointer {
     #[inline]
     pub(crate) unsafe fn unpack_ptr_no_int_unchecked_raw<T>(self) -> *const T {
         debug_assert!(!self.is_int());
-        self.0
-            .as_ptr()
-            .map_addr(|addr| addr & !(TAG_STR | TAG_UNFROZEN))
-            .cast()
+        clear_bits(self.0.as_ptr(), TAG_STR | TAG_UNFROZEN).cast()
     }
 
     /// # Safety
@@ -209,6 +206,23 @@ impl RawPointer {
         let ptr = unsafe { self.unpack_ptr_no_int_unchecked_raw::<AValueHeapEntry>() };
         // SAFETY: untagging a non-null pointer leaves it non-null.
         unsafe { NonNull::new_unchecked(ptr.cast_mut()) }
+    }
+}
+
+/// `ptr` with `bits` cleared, keeping its provenance.
+#[inline(always)]
+fn clear_bits(ptr: *mut (), bits: usize) -> *mut () {
+    // Every read of a heap value untags its pointer, so this is counted in instructions per
+    // operation of the interpreter. `mask` is one `and`. `map_addr` computes an offset from
+    // the address, which the code generator folds back into one `and` at most uses and
+    // leaves as three instructions and an indexed address at the rest.
+    #[cfg(rust_nightly)]
+    {
+        ptr.mask(!bits)
+    }
+    #[cfg(not(rust_nightly))]
+    {
+        ptr.map_addr(|addr| addr & !bits)
     }
 }
 

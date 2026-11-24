@@ -19,7 +19,6 @@ use buck2_build_api::actions::execute::dice_data::HasFallbackExecutorConfig;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_configuration_providers::constraint_value_info::ConstraintValueInfo;
 use buck2_configuration_providers::execution_platform_registration_info::ExecutionPlatformRegistrationInfo;
 use buck2_core::configuration::compatibility::MaybeCompatible;
@@ -624,14 +623,10 @@ async fn compute_execution_platforms(
         None
     };
 
-    let root_config = ctx.get_legacy_root_config_on_dice().await?;
-    let preserve_exec_platform_marker = root_config
-        .view(ctx)
-        .parse::<bool>(BuckconfigKeyRef {
-            section: "buck2",
-            property: "preserve_exec_platform_marker",
-        })?
-        .unwrap_or(false);
+    let preserve_exec_platform_marker = ctx
+        .dice_settings::<ExecutionPlatformsSettings>()
+        .await?
+        .preserve_marker(&mut root_config.view(ctx))?;
 
     let registration_info = registration_info.as_ref().value().as_ref();
     let mut platforms = Vec::new();

@@ -22,4 +22,13 @@ pub struct ExecutionPlatforms {
         overridable_in(CommandLine, LocalSettings)
     )]
     target: Option<String>,
+    /// Whether the marker constraint the registration declares stays a
+    /// marker on each execution platform's configuration, rather than being
+    /// folded into the platform's constraints.
+    #[setting(
+        buckconfig_fallback = "buck2.preserve_exec_platform_marker",
+        default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
+    preserve_marker: Option<bool>,
 }

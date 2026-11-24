@@ -20,6 +20,7 @@ use buck2_common::file_ops::io::FileChangeTracker;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_core::fs::i_project_rel_path::IProjectRelativePath;
 use buck2_core::fs::project::ProjectRoot;
+use buck2_core::warn_user;
 use buck2_data::FileWatcherEventType;
 use buck2_data::FileWatcherKind;
 use buck2_error::conversion::from_any_with_tag;
@@ -137,7 +138,7 @@ impl NotifyFileData {
                     cleared_dep_files: false,
                 }),
                 incomplete_events_reason: Some(
-                    "notify dropped events (kernel queue overflow)".to_owned(),
+                    "notify event history incomplete; starting over with a fresh state".to_owned(),
                 ),
                 ..Default::default()
             }
@@ -278,7 +279,19 @@ impl NotifyFileWatcher {
             let mut guard = self.data.lock().unwrap();
             mem::replace(&mut *guard, Ok(NotifyFileData::new()))
         };
-        let (stats, changes) = old?.sync();
+        let (old, error) = match old {
+            Ok(old) => (old, None),
+            // The callback drops events while the buffer is errored, so incremental changes
+            // cannot account for everything that changed since the previous sync.
+            Err(e) => (
+                NotifyFileData {
+                    missed_events: true,
+                    ..NotifyFileData::new()
+                },
+                Some(e),
+            ),
+        };
+        let (stats, changes) = old.sync();
         let mut baseline = self.baseline.lock().unwrap();
         if let Some(changes) = changes {
             changes.write_to_dice(&mut dice)?;
@@ -288,6 +301,14 @@ impl NotifyFileWatcher {
             *baseline = FileSystemBaseline::unique();
         }
         dice.set_file_system_baseline(baseline.dupe())?;
+        if let Some(e) = error {
+            // Keep the renewed baseline even if the warning becomes a hard error and this
+            // updater is dropped: the next sync must not reuse state from before the error.
+            warn_user!(
+                "notify_watch_error",
+                e.context("File watcher error; starting over with a fresh state")
+            );
+        }
         Ok((stats, dice))
     }
 }
@@ -388,7 +409,41 @@ mod tests {
             .fresh_instance_data
             .expect("fresh instance data populated");
         assert!(fresh.cleared_dice);
-        assert!(stats.incomplete_events_reason.is_some());
+        assert_eq!(
+            stats.incomplete_events_reason.as_deref(),
+            Some("notify event history incomplete; starting over with a fresh state")
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_after_error_renews_and_keeps_baseline() -> buck2_error::Result<()> {
+        let (root, ignores, _t) = fixture();
+        let watcher = NotifyFileWatcher::new(&root, ignores)?;
+        let dice = dice::Dice::builder().build(dice::DetectCycles::Enabled);
+        let branch = dice.new_root().await;
+        let initial = watcher.baseline.lock().unwrap().dupe();
+
+        *watcher.data.lock().unwrap() = Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::NotifyWatcher,
+            "watch failed"
+        ));
+        let (stats, updater) = watcher.sync2(dice.updater(branch))?;
+        assert_eq!(SyncOutcome::reported_by(&stats), SyncOutcome::FreshInstance);
+        assert_eq!(
+            stats.incomplete_events_reason.as_deref(),
+            Some("notify event history incomplete; starting over with a fresh state")
+        );
+        let renewed = watcher.baseline.lock().unwrap().dupe();
+        assert_ne!(renewed, initial);
+        assert!(watcher.data.lock().unwrap().is_ok());
+
+        // A command can fail after sync and drop its updater without committing. Recovery
+        // must survive that, so the next sync still injects the renewed baseline.
+        drop(updater);
+        let (stats, _) = watcher.sync2(dice.updater(branch))?;
+        assert_eq!(SyncOutcome::reported_by(&stats), SyncOutcome::Incremental);
+        assert_eq!(*watcher.baseline.lock().unwrap(), renewed);
+        Ok(())
     }
 
     #[test]

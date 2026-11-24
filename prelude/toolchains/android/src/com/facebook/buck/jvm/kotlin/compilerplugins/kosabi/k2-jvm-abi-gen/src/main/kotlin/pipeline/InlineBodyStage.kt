@@ -171,6 +171,7 @@ internal class InlineBodyStage : AbiGenStage {
               },
               null,
           )
+          resolveFakeOverrideSymbols(restoredIrFunctions)
           // Module-scope bodies can carry calls whose callee is an unbound fake override
           // (inherited member): nothing downstream can resolve the owner and the JVM
           // backend crashes reading it. Rebind such callees to the matching declared
@@ -201,6 +202,44 @@ internal class InlineBodyStage : AbiGenStage {
           )
         }
       }
+
+  /**
+   * Restored bodies are converted after fir2ir resolved its special fake-override symbols, so a
+   * call to an inherited member (a fake override of a library class, for example) still names an
+   * unbound [org.jetbrains.kotlin.ir.symbols.impl.IrFakeOverrideSymbolBase], and the JVM backend
+   * crashes reading its owner. Runs the compiler's own resolver over those bodies, as fir2ir does
+   * for the rest of the module. Reflective because its constructor differs across compiler
+   * versions; anything it cannot resolve is left to [bindCallee].
+   */
+  private fun resolveFakeOverrideSymbols(functions: Collection<IrSimpleFunction>) {
+    if (functions.isEmpty()) return
+    val visitor =
+        try {
+          val resolverClass =
+              Class.forName(
+                  "org.jetbrains.kotlin.backend.common.actualizer.SpecialFakeOverrideSymbolsResolver",
+              )
+          val visitorClass =
+              Class.forName(
+                  "org.jetbrains.kotlin.backend.common.actualizer.SpecialFakeOverrideSymbolsResolverVisitor",
+              )
+          val constructor =
+              resolverClass.constructors.firstOrNull { it.parameterCount == 0 } ?: return
+          visitorClass.getConstructor(resolverClass).newInstance(constructor.newInstance())
+              as IrElementVisitorVoidCompat
+        } catch (_: ReflectiveOperationException) {
+          return
+        } catch (_: ClassCastException) {
+          return
+        }
+    for (function in functions) {
+      try {
+        function.accept(visitor, null)
+      } catch (_: IllegalStateException) {
+        // No override found for some symbol: bindCallee gets the remaining ones.
+      }
+    }
+  }
 
   private fun restore(
       function: IrSimpleFunction,

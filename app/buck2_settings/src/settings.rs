@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::action_cache::ActionCache;
 use crate::agent_build::AgentBuild;
 use crate::agent_config_change::AgentConfigChange;
 use crate::agent_interactive::AgentInteractive;
@@ -40,6 +41,7 @@ use crate::metadata::SectionScope;
 use crate::metadata::SettingsSection;
 use crate::package_visibility::PackageVisibility;
 use crate::paths::Paths;
+use crate::remote_execution::RemoteExecution;
 use crate::resource_control::ResourceControl;
 use crate::section::Section;
 use crate::source::Source;
@@ -215,6 +217,7 @@ buck_settings! {
         resource_control: ResourceControl,
     }
     invocation {
+        action_cache: ActionCache,
         agent_build: AgentBuild,
         agent_config_change: AgentConfigChange,
         agent_interactive: AgentInteractive,
@@ -224,6 +227,7 @@ buck_settings! {
         event_log: EventLog,
         execution: Execution,
         health_check: HealthCheck,
+        remote_execution: RemoteExecution,
         test: Test,
     }
     dice {

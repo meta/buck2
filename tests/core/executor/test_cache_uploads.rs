@@ -88,8 +88,8 @@ async fn test_re_uploads_default(buck: &Buck) -> anyhow::Result<()> {
         "root//:write_default",
         "-c",
         &text,
-        "-c",
-        "buck2.default_allow_cache_upload=true",
+        "--setting",
+        "action_cache.default_allow_upload=true",
     ])
     .await?;
     assert_locally_executed_upload_attempted(buck, 1).await

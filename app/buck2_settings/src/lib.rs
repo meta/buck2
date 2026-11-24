@@ -17,6 +17,7 @@
 // The declaration macro refers to this crate by name, including from here.
 extern crate self as buck2_settings;
 
+mod action_cache;
 mod agent_build;
 mod agent_config_change;
 pub mod agent_interactive;
@@ -44,6 +45,7 @@ mod package_visibility;
 pub mod parser;
 mod path;
 mod paths;
+mod remote_execution;
 pub mod report;
 mod resource_control;
 #[cfg(fbcode_build)]
@@ -56,6 +58,7 @@ mod target_platforms;
 pub mod telemetry;
 mod test;
 
+pub use action_cache::ActionCache;
 pub use agent_build::AgentBuild;
 pub use agent_config_change::AgentConfigChange;
 pub use agent_interactive::AgentInteractive;
@@ -87,6 +90,7 @@ pub use parser::ResolvedSettings;
 pub use parser::SettingOrigin;
 pub use parser::SettingsLayerReport;
 pub use paths::Paths;
+pub use remote_execution::RemoteExecution;
 pub use report::SettingsReport;
 pub use resource_control::ResourceControl;
 pub use section::Section;

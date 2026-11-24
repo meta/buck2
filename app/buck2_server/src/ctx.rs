@@ -1052,17 +1052,12 @@ impl DiceCommandUpdater<'_, '_> {
             .execution
             .persistent_worker_shutdown_timeout_s(&mut buckconfig)?;
 
-        let re_cancel_on_estimated_queue_time_exceeds = root_config
-            .parse::<u64>(BuckconfigKeyRef {
-                section: "build",
-                property: "remote_execution_cancel_on_estimated_queue_time_exceeds_s",
-            })?
+        let remote_execution = &invocation_settings.remote_execution;
+        let re_cancel_on_estimated_queue_time_exceeds = remote_execution
+            .cancel_on_estimated_queue_time_exceeds_s(&mut buckconfig)?
             .map(Duration::from_secs);
-        let re_fallback_on_estimated_queue_time_exceeds = root_config
-            .parse::<u64>(BuckconfigKeyRef {
-                section: "build",
-                property: "remote_execution_fallback_on_estimated_queue_time_exceeds_s",
-            })?
+        let re_fallback_on_estimated_queue_time_exceeds = remote_execution
+            .fallback_on_estimated_queue_time_exceeds_s(&mut buckconfig)?
             .map(Duration::from_secs);
 
         let executor_global_knobs = ExecutorGlobalKnobs {
@@ -1117,12 +1112,9 @@ impl DiceCommandUpdater<'_, '_> {
                 property: "use_network_action_output_cache",
             })?
             .unwrap_or(false);
-        run_action_knobs.default_allow_cache_upload |= root_config
-            .parse::<bool>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "default_allow_cache_upload",
-            })?
-            .unwrap_or(false);
+        run_action_knobs.default_allow_cache_upload |= invocation_settings
+            .action_cache
+            .default_allow_upload(&mut buckconfig)?;
 
         // A write whose content the CAS already has is declared as a CAS download, so its bytes
         // then exist nowhere but the CAS. That pays only when the content would not have gone to
@@ -1165,13 +1157,9 @@ impl DiceCommandUpdater<'_, '_> {
             })?
             .unwrap_or(false);
 
-        let output_trees_download_semaphore_size = root_config.parse::<u32>(BuckconfigKeyRef {
-            section: "buck2",
-            property: "output_trees_download_semaphore_size",
-        })?;
-
-        let output_trees_download_config =
-            OutputTreesDownloadConfig::new(output_trees_download_semaphore_size);
+        let output_trees_download_config = OutputTreesDownloadConfig::new(
+            remote_execution.output_trees_download_max_concurrent_bytes(&mut buckconfig)?,
+        );
 
         let dice = self
             .cmd_ctx

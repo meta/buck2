@@ -560,8 +560,8 @@ async fn test_hybrid_executor_remote_queuing_fallback(buck: &Buck) -> anyhow::Re
         buck,
         "slower_remotely_and_works_on_both_fallback_only",
         &[
-            "-c",
-            "build.remote_execution_fallback_on_estimated_queue_time_exceeds_s=10",
+            "--setting",
+            "remote_execution.fallback_on_estimated_queue_time_exceeds_s=10",
         ],
         &[("BUCK2_TEST_RE_QUEUE_ESTIMATE_S", "100")],
     )

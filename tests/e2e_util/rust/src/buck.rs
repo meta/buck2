@@ -102,6 +102,9 @@ impl Buck {
             share_daemon: false,
         };
         buck.set_env("NO_BUCKD", "0");
+        // An agent's session marks what it runs with this variable, and buck2 treats a command
+        // that carries it differently. What a test sees must not depend on who started it.
+        buck.remove_env("CODING_AGENT_METADATA");
         buck
     }
 

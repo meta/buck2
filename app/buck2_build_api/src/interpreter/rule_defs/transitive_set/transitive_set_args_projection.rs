@@ -32,7 +32,7 @@ use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -109,7 +109,7 @@ impl<'v> TransitiveSetArgsProjection<'v> {
     ) -> buck2_error::Result<impl CommandLineArgLike<'v> + 'v> {
         enum Impl<'v> {
             Item(&'v dyn CommandLineArgLike<'v>),
-            List(&'v [Value<'v>]),
+            List(StarlarkList<'v>),
         }
         impl<'v> CommandLineArgLike<'v> for Impl<'v> {
             fn add_to_command_line(
@@ -119,8 +119,8 @@ impl<'v> TransitiveSetArgsProjection<'v> {
                 match self {
                     Impl::Item(v) => v.add_to_command_line(fmt),
                     Impl::List(items) => {
-                        for v in *items {
-                            <&dyn CommandLineArgLike>::unpack_value_err(*v)?
+                        for v in items.values() {
+                            <&dyn CommandLineArgLike>::unpack_value_err(v)?
                                 .add_to_command_line(fmt)?;
                         }
                         Ok(())
@@ -132,8 +132,8 @@ impl<'v> TransitiveSetArgsProjection<'v> {
                 match self {
                     Impl::Item(v) => v.contains_arg_attr(),
                     Impl::List(items) => {
-                        for v in *items {
-                            if <&dyn CommandLineArgLike>::unpack_value_err(*v)
+                        for v in items.values() {
+                            if <&dyn CommandLineArgLike>::unpack_value_err(v)
                                 .unwrap()
                                 .contains_arg_attr()
                             {
@@ -153,8 +153,8 @@ impl<'v> TransitiveSetArgsProjection<'v> {
                 match self {
                     Impl::Item(v) => v.visit_write_to_file_macros(visitor, artifact_path_mapping),
                     Impl::List(items) => {
-                        for v in *items {
-                            <&dyn CommandLineArgLike>::unpack_value_err(*v)?
+                        for v in items.values() {
+                            <&dyn CommandLineArgLike>::unpack_value_err(v)?
                                 .visit_write_to_file_macros(visitor, artifact_path_mapping)?;
                         }
                         Ok(())
@@ -169,8 +169,8 @@ impl<'v> TransitiveSetArgsProjection<'v> {
                 match self {
                     Impl::Item(v) => v.visit_artifacts(visitor),
                     Impl::List(items) => {
-                        for v in *items {
-                            <&dyn CommandLineArgLike>::unpack_value_err(*v)?
+                        for v in items.values() {
+                            <&dyn CommandLineArgLike>::unpack_value_err(v)?
                                 .visit_artifacts(visitor)?;
                         }
                         Ok(())
@@ -180,11 +180,11 @@ impl<'v> TransitiveSetArgsProjection<'v> {
         }
 
         let value = v.to_value();
-        if let Some(values) = ListRef::from_value(value) {
-            for v in values.content() {
-                <&dyn CommandLineArgLike>::unpack_value_err(*v)?;
+        if let Some(values) = StarlarkList::from_value(value) {
+            for v in values.values() {
+                <&dyn CommandLineArgLike>::unpack_value_err(v)?;
             }
-            Ok(Impl::List(values.content()))
+            Ok(Impl::List(values))
         } else {
             Ok(Impl::Item(<&dyn CommandLineArgLike>::unpack_value_err(
                 value,

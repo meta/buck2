@@ -36,7 +36,7 @@ use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictRef;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::tuple::TupleRef;
 use static_interner::Intern;
 use static_interner::interner;
@@ -427,11 +427,11 @@ impl<'v> ModifierSource<'v> for Value<'v> {
     }
 
     fn list(self) -> Option<Vec<Self>> {
-        let items = <Either<&ListRef, &TupleRef>>::unpack_value_opt(self)?;
         Some(
-            items
-                .either(|list| list.content(), |tuple| tuple.content())
-                .to_vec(),
+            match <Either<StarlarkList, &TupleRef>>::unpack_value_opt(self)? {
+                Either::Left(list) => list.content().to_vec(),
+                Either::Right(tuple) => tuple.content().to_vec(),
+            },
         )
     }
 

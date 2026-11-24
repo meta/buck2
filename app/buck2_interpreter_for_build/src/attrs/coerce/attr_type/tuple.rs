@@ -17,7 +17,7 @@ use buck2_node::attrs::configurable::AttrIsConfigurable;
 use dupe::IterDupedExt;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::tuple::TupleRef;
 
 use crate::attrs::coerce::AttrTypeCoerce;
@@ -55,7 +55,7 @@ impl AttrTypeCoerce for TupleAttrType {
                 Err(TupleError::TooManyElements(self.xs.len()).into())
             }
         };
-        if let Some(list) = ListRef::from_value(value) {
+        if let Some(list) = StarlarkList::from_value(value) {
             coerce(list.content())
         } else {
             coerce(<&TupleRef>::unpack_value_err(value)?.content())

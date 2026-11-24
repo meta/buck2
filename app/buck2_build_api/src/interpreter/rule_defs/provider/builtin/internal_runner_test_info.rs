@@ -38,8 +38,8 @@ use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::float::StarlarkFloat;
 use starlark::values::int::IntView;
-use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneOr;
 use starlark::values::string::StarlarkStr;
@@ -299,7 +299,7 @@ impl<'v> InternalRunnerTestInfo<'v> {
                 .eval_function(callback, &[listing_arg], &[])
                 .map_err(|e| buck2_error!(buck2_error::ErrorTag::Input, "{}", e))?;
 
-            let list = ListRef::from_value(result).ok_or_else(|| {
+            let list = StarlarkList::from_value(result).ok_or_else(|| {
                 buck2_error!(
                     buck2_error::ErrorTag::Input,
                     "parse_test_listing must return a list, got: `{}`",
@@ -307,7 +307,7 @@ impl<'v> InternalRunnerTestInfo<'v> {
                 )
             })?;
 
-            list.iter()
+            list.values()
                 .map(|item| {
                     let dict = DictRef::from_value(item).ok_or_else(|| {
                         buck2_error!(
@@ -386,7 +386,7 @@ impl<'v> InternalRunnerTestInfo<'v> {
                 .eval_function(callback, &[stdout_arg, stderr_arg, exit_code_arg], &[])
                 .map_err(|e| buck2_error!(buck2_error::ErrorTag::Input, "{}", e))?;
 
-            let list = ListRef::from_value(result).ok_or_else(|| {
+            let list = StarlarkList::from_value(result).ok_or_else(|| {
                 buck2_error!(
                     buck2_error::ErrorTag::Input,
                     "parse_test_result must return a list, got: `{}`",
@@ -394,7 +394,7 @@ impl<'v> InternalRunnerTestInfo<'v> {
                 )
             })?;
 
-            list.iter()
+            list.values()
                 .map(|item| {
                     let dict = DictRef::from_value(item).ok_or_else(|| {
                         buck2_error!(

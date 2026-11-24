@@ -12,9 +12,10 @@ use buck2_node::attrs::arena::AttrToken;
 use buck2_node::attrs::attr_type::list::ListAttrType;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
+use either::Either;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::tuple::TupleRef;
 
 use crate::attrs::coerce::AttrTypeCoerce;
@@ -30,6 +31,7 @@ impl AttrTypeCoerce for ListAttrType {
     ) -> buck2_error::Result<AttrToken> {
         let list = coerce_list(value)?;
         let items = list
+            .items()
             .iter()
             .map(|v| (self.inner).coerce(configurable, ctx, *v))
             .collect::<Result<Vec<_>, _>>()?;
@@ -41,10 +43,25 @@ impl AttrTypeCoerce for ListAttrType {
     }
 }
 
-pub(crate) fn coerce_list<'v>(value: Value<'v>) -> buck2_error::Result<&'v [Value<'v>]> {
-    if let Some(list) = TupleRef::from_value(value) {
-        Ok(list.content())
+/// The list or tuple that a list attribute is coerced from.
+pub(crate) struct ListOrTuple<'v>(Either<StarlarkList<'v>, &'v TupleRef<'v>>);
+
+impl<'v> ListOrTuple<'v> {
+    /// The items. Coercion runs no Starlark code, so a list does not change under the slice.
+    pub(crate) fn items(&self) -> &[Value<'v>] {
+        match &self.0 {
+            Either::Left(list) => list.content(),
+            Either::Right(tuple) => tuple.content(),
+        }
+    }
+}
+
+pub(crate) fn coerce_list<'v>(value: Value<'v>) -> buck2_error::Result<ListOrTuple<'v>> {
+    if let Some(tuple) = TupleRef::from_value(value) {
+        Ok(ListOrTuple(Either::Right(tuple)))
     } else {
-        Ok(<&ListRef>::unpack_value_err(value)?.content())
+        Ok(ListOrTuple(Either::Left(<StarlarkList>::unpack_value_err(
+            value,
+        )?)))
     }
 }

@@ -60,8 +60,8 @@ use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListOf;
-use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::starlark_value;
 use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 use starlark::values::string::StarlarkStr;
@@ -867,7 +867,7 @@ impl<'v> StarlarkCmdArgs<'v> {
 fn first_wrong_item<'v>(values: &[Value<'v>]) -> Option<Value<'v>> {
     values
         .iter()
-        .find_map(|value| match ListRef::from_value(*value) {
+        .find_map(|value| match StarlarkList::from_value(*value) {
             Some(list) => first_wrong_item(list.content()),
             None if CommandLineArg::new(*value).is_some() => None,
             None => Some(*value),
@@ -941,10 +941,11 @@ impl<'v> UnpackValue<'v> for StarlarkCommandLineValueUnpack<'v> {
     #[inline]
     fn unpack_named_param(value: Value<'v>, param_name: &str) -> starlark::Result<Self> {
         Self::unpack_value(value)?.ok_or_else(|| {
+            let list = StarlarkList::from_value(value);
             wrong_param_error::<StarlarkCmdArgsInput>(
                 value,
                 param_name,
-                ListRef::from_value(value).map(|list| list.content()),
+                list.as_ref().map(|list| list.content()),
             )
         })
     }

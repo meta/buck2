@@ -48,7 +48,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::dict::DictRef;
 use starlark::values::int::IntView;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
 use starlark::values::string::STRING_TYPE;
 use starlark::values::tuple::TupleRef;
@@ -323,7 +323,7 @@ enum AnyLiteral<'v> {
     Int(IntView<'v>),
     Dict(DictRef<'v>),
     Tuple(&'v TupleRef<'v>),
-    List(&'v ListRef<'v>),
+    List(StarlarkList<'v>),
     Str(&'v str),
 }
 
@@ -346,7 +346,7 @@ fn to_anon_target_any(value: Value, ctx: &AnonAttrCtx) -> buck2_error::Result<An
         ))),
         // TODO(wendyy) intern attr
         Some(AnyLiteral::List(x)) => Ok(AnonTargetAttr::List(ListLiteral(
-            x.iter()
+            x.values()
                 .map(|v| to_anon_target_any(v, ctx))
                 .collect::<buck2_error::Result<Vec<_>>>()?
                 .into(),
@@ -425,10 +425,13 @@ fn to_anon_target_tuple(
     ctx: &AnonAttrCtx,
     value: Value,
 ) -> buck2_error::Result<AnonTargetAttr> {
-    let Some(items) = <Either<&TupleRef, &ListRef>>::unpack_value_opt(value) else {
+    let Some(tuple_or_list) = <Either<&TupleRef, StarlarkList>>::unpack_value_opt(value) else {
         return Err(AnonTargetCoercionError::type_error("tuple", value).into());
     };
-    let items = items.either(|tuple| tuple.content(), |list| list.content());
+    let items = match &tuple_or_list {
+        Either::Left(tuple) => tuple.content(),
+        Either::Right(list) => list.content(),
+    };
     // Use comparison rather than equality below. If the tuple is too short,
     // it is implicitly extended using None.
     if items.len() <= tuple_attr_type.xs.len() {
@@ -457,10 +460,13 @@ fn to_anon_target_list(
     ctx: &AnonAttrCtx,
     value: Value,
 ) -> buck2_error::Result<AnonTargetAttr> {
-    let Some(items) = <Either<&ListRef, &TupleRef>>::unpack_value_opt(value) else {
+    let Some(list_or_tuple) = <Either<StarlarkList, &TupleRef>>::unpack_value_opt(value) else {
         return Err(AnonTargetCoercionError::type_error("list", value).into());
     };
-    let items = items.either(|list| list.content(), |tuple| tuple.content());
+    let items = match &list_or_tuple {
+        Either::Left(list) => list.content(),
+        Either::Right(tuple) => tuple.content(),
+    };
     Ok(AnonTargetAttr::List(ListLiteral(
         // TODO(wendyy) intern attr
         items

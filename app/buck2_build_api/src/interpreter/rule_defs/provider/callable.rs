@@ -63,7 +63,7 @@ use starlark::values::ValueTyped;
 use starlark::values::any_complex::StarlarkAnyComplex;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
 use starlark::values::starlark_value_as_type::StarlarkValueAsType;
@@ -608,7 +608,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                 // the immutable empty list or dict.
                 if x.is_frozen() {
                     Some(x)
-                } else if ListRef::from_value(x).is_some_and(|x| x.is_empty()) {
+                } else if StarlarkList::from_value(x).is_some_and(|x| x.is_empty()) {
                     Some(Value::new_empty_list())
                 } else if DictRef::from_value(x).is_some_and(|x| x.is_empty()) {
                     Some(Value::new_empty_dict())

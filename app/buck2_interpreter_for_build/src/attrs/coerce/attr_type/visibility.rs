@@ -74,6 +74,7 @@ pub(crate) fn parse_visibility_with_view<'v>(
         }
     };
 
+    let list = list.items();
     let mut builder = VisibilityWithinViewBuilder::with_capacity(list.len());
     for item in list {
         if let Some(s) = item.unpack_str() {

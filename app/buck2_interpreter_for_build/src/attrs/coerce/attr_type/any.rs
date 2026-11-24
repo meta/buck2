@@ -18,7 +18,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::dict::DictRef;
 use starlark::values::int::IntView;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneType;
 use starlark::values::tuple::TupleRef;
 
@@ -40,7 +40,7 @@ enum Literal<'v> {
     Int(IntView<'v>),
     Dict(DictRef<'v>),
     Tuple(&'v TupleRef<'v>),
-    List(&'v ListRef<'v>),
+    List(StarlarkList<'v>),
     Str(&'v str),
 }
 
@@ -68,7 +68,7 @@ fn to_literal<'v>(
         }
         Some(Literal::List(x)) => {
             let items = x
-                .iter()
+                .values()
                 .map(|v| to_literal(v, ctx))
                 .collect::<buck2_error::Result<Vec<_>>>()?;
             ctx.attr_arena().encode_list(&items)

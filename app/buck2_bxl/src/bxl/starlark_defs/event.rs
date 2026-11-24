@@ -28,7 +28,7 @@ use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::float::UnpackFloat;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::string::StarlarkStr;
 
 use super::artifacts::EnsuredArtifact;
@@ -122,9 +122,9 @@ impl<'v> StarlarkUserEventParser<'v> {
             Ok(StarlarkUserMetadataValue {
                 value: Some(DictValue(dict)),
             })
-        } else if let Some(v) = ListRef::from_value(v) {
+        } else if let Some(v) = StarlarkList::from_value(v) {
             let list = v
-                .iter()
+                .values()
                 .map(|e| self.get_metadata_value(k, e))
                 .collect::<buck2_error::Result<Vec<_>>>()?;
             let list = StarlarkUserMetadataListValue { value: list };

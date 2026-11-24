@@ -49,8 +49,8 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
-use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
@@ -135,9 +135,9 @@ fn parse_remote_execution_properties(
             properties
                 .iter()
                 .map(|(name, value)| {
-                    let values = ListRef::from_value(value).map_or_else(
+                    let values = StarlarkList::from_value(value).map_or_else(
                         || vec![value.to_str()],
-                        |values| values.iter().map(Value::to_str).collect(),
+                        |values| values.values().map(Value::to_str).collect(),
                     );
                     (name.to_str(), values)
                 })
@@ -469,8 +469,8 @@ pub fn parse_custom_re_image(
     fn list_ref<'v>(
         field_name: &'static str,
         value: Value<'v>,
-    ) -> buck2_error::Result<&'v ListRef<'v>> {
-        match ListRef::from_value(value) {
+    ) -> buck2_error::Result<StarlarkList<'v>> {
+        match StarlarkList::from_value(value) {
             Some(list_ref) => Ok(list_ref),
             None => Err(CommandExecutorConfigErrors::InvalidField(field_name).into()),
         }
@@ -517,7 +517,7 @@ pub fn parse_custom_re_image(
     let mount_globs_value = get_value(&dict, "drop_host_mount_globs")?;
     let mount_globs = list_ref("drop_host_mount_globs", mount_globs_value)?;
     let mut drop_host_mount_globs = vec![];
-    for item in mount_globs.iter() {
+    for item in mount_globs.values() {
         drop_host_mount_globs.push(item.to_str());
     }
 
@@ -589,7 +589,7 @@ fn parse_remote_execution_caf_fbpkgs(
         None => Ok(vec![]),
         Some(caf_fbpkgs) => {
             let re_caf_fbpkgs_list =
-                ListRef::from_value(caf_fbpkgs.to_value()).ok_or_else(|| {
+                StarlarkList::from_value(caf_fbpkgs.to_value()).ok_or_else(|| {
                     buck2_error::Error::from(CommandExecutorConfigErrors::ReCafFbpkgsNotAList(
                         caf_fbpkgs.to_value().to_repr(),
                         caf_fbpkgs.to_value().get_type().to_owned(),
@@ -597,7 +597,7 @@ fn parse_remote_execution_caf_fbpkgs(
                 })?;
 
             Ok(re_caf_fbpkgs_list
-                .iter()
+                .values()
                 .map(|caf_fbpkg| match DictRef::from_value(caf_fbpkg) {
                     Some(dict_ref) => {
                         let name = dict_ref

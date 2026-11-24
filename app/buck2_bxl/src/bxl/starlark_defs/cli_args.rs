@@ -67,7 +67,7 @@ use starlark::values::ValueOf;
 use starlark::values::dict::AllocDict;
 use starlark::values::float::StarlarkFloat;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
@@ -489,11 +489,11 @@ impl CliArgType {
                 }
             }
             CliArgType::List(inner) => {
-                let list = ListRef::from_value(value).ok_or_else(|| {
+                let list = StarlarkList::from_value(value).ok_or_else(|| {
                     CliArgError::DefaultValueTypeError(self.dupe(), value.get_type().to_owned())
                 })?;
                 let mut result = vec![];
-                for item in list.iter() {
+                for item in list.values() {
                     result.push(inner.coerce_value(item)?);
                 }
 

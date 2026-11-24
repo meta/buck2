@@ -58,7 +58,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark_map::Hashed;
@@ -241,7 +241,7 @@ impl<'v> ProviderCollection<'v> {
         // Sometimes we might have a resolved promise here, in which case see through that
         value = StarlarkPromise::get_recursive(value);
 
-        let list = match ListRef::from_value(value) {
+        let list = match StarlarkList::from_value(value) {
             Some(v) => v,
             None => {
                 return Err(ProviderCollectionError::CollectionNotAList {
@@ -252,7 +252,7 @@ impl<'v> ProviderCollection<'v> {
         };
 
         let mut providers = BuckMutInsertionMap::with_capacity(list.len());
-        for value in list.iter() {
+        for value in list.values() {
             match <&dyn ProviderLike>::unpack_value_opt(value) {
                 Some(provider) => {
                     if let Some(existing_value) =

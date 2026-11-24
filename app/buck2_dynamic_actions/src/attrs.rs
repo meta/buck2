@@ -35,7 +35,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::DictRef;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::tuple::TupleRef;
 use starlark::values::typing::TypeCompiled;
 
@@ -332,9 +332,9 @@ impl<'v> DynamicAttrType<'v> {
                 Ok(DynamicAttrValue::Value(value))
             }
             DynamicAttrType::List(elem_ty) => {
-                let list = <&ListRef>::unpack_value_err(value)?;
+                let list = <StarlarkList>::unpack_value_err(value)?;
                 let mut res = Vec::with_capacity(list.len());
-                for elem in list.iter() {
+                for elem in list.values() {
                     res.push(elem_ty.coerce(elem)?);
                 }
                 Ok(DynamicAttrValue::List(res.into()))

@@ -40,7 +40,11 @@ use syn::spanned::Spanned;
 /// #[buck_settings_section(name = "hydration", version = 3, scope = daemon)]
 /// pub struct Hydration {
 ///     /// What the setting does.
-///     #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
+///     #[setting(
+///         internal_default = false,
+///         oss_default = false,
+///         overridable_in(CommandLine, LocalSettings)
+///     )]
 ///     defer_field_reads: Option<bool>,
 /// }
 /// ```
@@ -54,9 +58,12 @@ use syn::spanned::Spanned;
 ///   key, from `CommandLine` and `LocalSettings`. The repository file and
 ///   rollouts always may. `overridable_in()` makes the key an enforcement
 ///   control nothing local can change.
-/// - `default = <expr>`: the value when no layer set the key, in both
-///   internal and OSS builds. `internal_default` and `oss_default` set one
-///   side. A key with both defaults gets an accessor returning `T`; a key
+/// - `internal_default = <expr>` and `oss_default = <expr>`: the values when
+///   no layer set the key, for internal and OSS builds respectively. Fill
+///   them out separately: the two builds migrate differently, so an internal
+///   default that preserves existing behavior during a migration usually
+///   differs from the OSS default, which typically flips to the new behavior
+///   at once. A key with both defaults gets an accessor returning `T`; a key
 ///   missing either gets one returning `Option<T>`, for keys whose unset
 ///   value means "fall back to buckconfig".
 /// - `buckconfig_fallback = "section.property"`: the buckconfig key read,
@@ -168,9 +175,6 @@ fn parse_setting_args(attrs: &[Attribute], field: &Ident) -> syn::Result<Setting
             ));
         }
         found = true;
-        // Explicit sides win over `default`, whatever the order they are written in.
-        let mut internal_explicit = false;
-        let mut oss_explicit = false;
         attr.parse_args_with(|input: ParseStream| {
             while !input.is_empty() {
                 let key: Ident = input.parse()?;
@@ -194,25 +198,13 @@ fn parse_setting_args(attrs: &[Attribute], field: &Ident) -> syn::Result<Setting
                         args.buckconfig_fallback =
                             Some((fallback, option == "oss_buckconfig_fallback"));
                     }
-                    "default" => {
-                        input.parse::<Token![=]>()?;
-                        let expr: Expr = input.parse()?;
-                        if !internal_explicit {
-                            args.internal_default = Some(expr.clone());
-                        }
-                        if !oss_explicit {
-                            args.oss_default = Some(expr);
-                        }
-                    }
                     "internal_default" => {
                         input.parse::<Token![=]>()?;
                         args.internal_default = Some(input.parse()?);
-                        internal_explicit = true;
                     }
                     "oss_default" => {
                         input.parse::<Token![=]>()?;
                         args.oss_default = Some(input.parse()?);
-                        oss_explicit = true;
                     }
                     "overridable_in" => {
                         let content;
@@ -236,7 +228,7 @@ fn parse_setting_args(attrs: &[Attribute], field: &Ident) -> syn::Result<Setting
                         return Err(syn::Error::new(
                             key.span(),
                             format!(
-                                "unknown setting option `{other}`; expected `default`, \
+                                "unknown setting option `{other}`; expected \
                                 `internal_default`, `oss_default`, `overridable_in`, \
                                 `buckconfig_fallback`, `oss_buckconfig_fallback` or `accessor`"
                             ),
@@ -641,7 +633,7 @@ mod tests {
         let section = rejection(quote! {
             pub struct Probe {
                 /// A key.
-                #[setting(default = false, overridable_in())]
+                #[setting(internal_default = false, oss_default = false, overridable_in())]
                 flag: Option<bool>,
             }
         });
@@ -652,7 +644,7 @@ mod tests {
         let key = rejection(quote! {
             /// A section.
             pub struct Probe {
-                #[setting(default = false, overridable_in())]
+                #[setting(internal_default = false, oss_default = false, overridable_in())]
                 flag: Option<bool>,
             }
         });
@@ -662,7 +654,7 @@ mod tests {
             pub struct Probe {
                 ///
                 ///
-                #[setting(default = false, overridable_in())]
+                #[setting(internal_default = false, oss_default = false, overridable_in())]
                 flag: Option<bool>,
             }
         });

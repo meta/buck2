@@ -6044,16 +6044,19 @@ starlark_simple_value!(GateKey);
 
 #[starlark_value(type = "GateKey")]
 impl<'v> StarlarkValue<'v> for GateKey {
-    fn write_hash(&self, hasher: &mut crate::collections::StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(
+        this: &Self,
+        hasher: &mut crate::collections::StarlarkHasher,
+    ) -> crate::Result<()> {
         use std::hash::Hasher;
-        hasher.write_u32(self.id);
+        hasher.write_u32(this.id);
         Ok(())
     }
 
-    fn equals(&self, other: crate::values::Value<'v>) -> crate::Result<bool> {
+    fn equals(this: &Self, other: crate::values::Value<'v>) -> crate::Result<bool> {
         Ok(other
             .downcast_ref::<GateKey>()
-            .is_some_and(|o| o.id == self.id))
+            .is_some_and(|o| o.id == this.id))
     }
 }
 

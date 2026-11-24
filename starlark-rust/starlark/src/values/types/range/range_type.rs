@@ -150,40 +150,40 @@ impl Range {
 
 #[starlark_value(type = Range::TYPE)]
 impl<'v> StarlarkValue<'v> for Range {
-    fn to_bool(&self) -> bool {
-        self.is_non_empty()
+    fn to_bool(this: &Self) -> bool {
+        this.is_non_empty()
     }
 
-    fn length(&self) -> crate::Result<i32> {
-        self.len()
+    fn length(this: &Self) -> crate::Result<i32> {
+        this.len()
     }
 
-    fn at(&self, index: i32) -> crate::Result<i32> {
-        let index = convert_index(index, self.len()?)?;
+    fn at(this: &Self, index: i32) -> crate::Result<i32> {
+        let index = convert_index(index, this.len()?)?;
         // The element itself fits in `i32`, but `step * index` can leave the range
         // on the way there, so compute in `i64` like `slice` and the iterator do.
-        let element = self.start as i64 + self.step.get() as i64 * index as i64;
+        let element = this.start as i64 + this.step.get() as i64 * index as i64;
         i32::try_from(element).map_err(|_| ValueError::IntegerOverflow.into())
     }
 
-    fn equals(&self, other: &Self) -> crate::Result<bool> {
-        self.equals_range(other)
+    fn equals(this: &Self, other: &Self) -> crate::Result<bool> {
+        this.equals_range(other)
     }
 
     fn slice(
-        &self,
+        this: &Self,
         start: Option<Value>,
         stop: Option<Value>,
         stride: Option<Value>,
         heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
-        let (start, stop, step) = convert_slice_indices(self.len()?, start, stop, stride)?;
+        let (start, stop, step) = convert_slice_indices(this.len()?, start, stop, stride)?;
         // The stop index is one past the last element, so the raw endpoint can leave `i32`
         // although every element of the result is an element of `self`: compute in `i64` and
         // build an equal range that fits.
-        let self_step = i64::from(self.step.get());
-        let first = i64::from(self.start) + i64::from(start) * self_step;
-        let end = i64::from(self.start) + i64::from(stop) * self_step;
+        let self_step = i64::from(this.step.get());
+        let first = i64::from(this.start) + i64::from(start) * self_step;
+        let end = i64::from(this.start) + i64::from(stop) * self_step;
         let step = i64::from(step) * self_step;
         let len = if step > 0 {
             if end > first {
@@ -220,12 +220,12 @@ impl<'v> StarlarkValue<'v> for Range {
         Ok(heap.alloc(range).to_value())
     }
 
-    unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(_this: &Self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(me)
     }
 
-    unsafe fn iter_next(&self, index: usize, heap: Heap<'v>) -> Option<Value<'v>> {
-        let rem_range = self.rem_range_at_iter(index)?;
+    unsafe fn iter_next(this: &Self, index: usize, heap: Heap<'v>) -> Option<Value<'v>> {
+        let rem_range = this.rem_range_at_iter(index)?;
 
         if !rem_range.is_non_empty() {
             return None;
@@ -234,8 +234,8 @@ impl<'v> StarlarkValue<'v> for Range {
         Some(heap.alloc(rem_range.start).to_value())
     }
 
-    unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        let Some(rem_range) = self.rem_range_at_iter(index) else {
+    unsafe fn iter_size_hint(this: &Self, index: usize) -> (usize, Option<usize>) {
+        let Some(rem_range) = this.rem_range_at_iter(index) else {
             return (0, Some(0));
         };
         match rem_range.len() {
@@ -244,9 +244,9 @@ impl<'v> StarlarkValue<'v> for Range {
         }
     }
 
-    unsafe fn iter_stop(&self) {}
+    unsafe fn iter_stop(_this: &Self) {}
 
-    fn is_in(&self, other: Value) -> crate::Result<bool> {
+    fn is_in(this: &Self, other: Value) -> crate::Result<bool> {
         let other = match other.unpack_num().and_then(|n| n.as_int()) {
             Some(other) => other,
             None => {
@@ -258,23 +258,23 @@ impl<'v> StarlarkValue<'v> for Range {
                 return Ok(false);
             }
         };
-        if !self.is_non_empty() {
+        if !this.is_non_empty() {
             return Ok(false);
         }
-        if self.start == other {
+        if this.start == other {
             return Ok(true);
         }
-        if self.step.get() > 0 {
-            if other < self.start || other >= self.stop {
+        if this.step.get() > 0 {
+            if other < this.start || other >= this.stop {
                 return Ok(false);
             }
-            Ok(((other as i64 - self.start as i64) as u64).is_multiple_of(self.step.get() as u64))
+            Ok(((other as i64 - this.start as i64) as u64).is_multiple_of(this.step.get() as u64))
         } else {
-            if other > self.start || other <= self.stop {
+            if other > this.start || other <= this.stop {
                 return Ok(false);
             }
-            Ok(((self.start as i64 - other as i64) as u64)
-                .is_multiple_of((self.step.get() as i64).unsigned_abs()))
+            Ok(((this.start as i64 - other as i64) as u64)
+                .is_multiple_of((this.step.get() as i64).unsigned_abs()))
         }
     }
 

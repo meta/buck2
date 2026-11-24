@@ -66,7 +66,7 @@ pub(crate) struct TypingNever;
 
 #[starlark_value(type = "typing.Never", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for TypingNever {
-    fn documentation(&self) -> DocItem {
+    fn documentation(_this: &Self) -> DocItem {
         DocItem::Type(DocType {
             docs: DocString::from_docstring(
                 crate::docs::DocStringKind::Rust,
@@ -86,7 +86,7 @@ See also [`typing.Never` in the Python documentation][1].
         })
     }
 
-    fn eval_type(&self) -> Option<Ty> {
+    fn eval_type(_this: &Self) -> Option<Ty> {
         Some(Ty::never())
     }
 }

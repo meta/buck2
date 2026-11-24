@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -54,6 +55,7 @@ use crate::values::StarlarkValue;
 use crate::values::StaticValueRegistered;
 use crate::values::StringValue;
 use crate::values::Trace;
+use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
@@ -215,6 +217,16 @@ impl<'v> From<TypeCompiled<'v>> for Value<'v> {
     }
 }
 
+impl<'v> UnpackValue<'v> for TypeCompiled<'v> {
+    type Type = Self;
+    type Error = Infallible;
+
+    #[inline]
+    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
+        Ok(get)
+    }
+}
+
 /// The behaviour of a compiled type, whose representations are one per matcher.
 #[starlark_value(type = "type")]
 impl<'v> StarlarkType<'v> for TypeCompiled<'v> {
@@ -232,22 +244,22 @@ impl<'v> StarlarkType<'v> for TypeCompiled<'v> {
             .then_some(TypeCompiled(value))
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        Hash::hash(self.as_ty(), hasher);
+    fn write_hash(this: Self, hasher: &mut StarlarkHasher) {
+        Hash::hash(this.as_ty(), hasher);
     }
 
-    fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
+    fn equals(this: Self, other: Value<'v>) -> crate::Result<bool> {
         let Some(other) = other.get_ref().as_type_compiled_dyn() else {
             return Ok(false);
         };
-        Ok(self.as_ty() == other.as_ty_dyn())
+        Ok(this.as_ty() == other.as_ty_dyn())
     }
 
-    fn eval_type(&self) -> Option<Ty> {
+    fn eval_type(this: Self) -> Option<Ty> {
         // `TypeCompiled::new` handles this type explicitly,
         // but implement this function to make proc-macro generate `bit_or`.
         // Also safer to be explicit here.
-        Some(self.as_ty().clone())
+        Some(this.as_ty().clone())
     }
 
     fn get_methods() -> Option<&'static Methods>

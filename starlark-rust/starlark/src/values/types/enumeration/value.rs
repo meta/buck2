@@ -103,8 +103,8 @@ starlark::methods_static!(ENUM_VALUE_METHODS = enum_value_methods);
 
 #[starlark_value(type = EnumValue::TYPE)]
 impl<'v> StarlarkValue<'v> for EnumValue<'v> {
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        self.value.write_hash(hasher)
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+        this.value.write_hash(hasher)
     }
 
     fn get_methods() -> Option<&'static Methods>
@@ -114,8 +114,8 @@ impl<'v> StarlarkValue<'v> for EnumValue<'v> {
         Some(ENUM_VALUE_METHODS.methods())
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(self.get_enum_type().ty_enum_data()?.ty_enum_value.dupe())
+    fn typechecker_ty(this: &Self) -> Option<Ty> {
+        Some(this.get_enum_type().ty_enum_data()?.ty_enum_value.dupe())
     }
 }
 

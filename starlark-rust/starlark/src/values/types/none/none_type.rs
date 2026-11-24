@@ -70,15 +70,15 @@ impl<'v> StarlarkValue<'v> for NoneType {
         true
     }
 
-    fn to_bool(&self) -> bool {
+    fn to_bool(_this: &Self) -> bool {
         false
     }
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+    fn write_hash(_this: &Self, hasher: &mut StarlarkHasher) {
         // just took the result of hash(None) in macos python 2.7.10 interpreter.
         hasher.write_u64(9_223_380_832_852_120_682);
     }
 
-    fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {
+    fn get_hash(_this: &Self, _private: Private) -> crate::Result<StarlarkHashValue> {
         // Just a random number.
         Ok(StarlarkHashValue::new_unchecked(0xf9c2263d))
     }
@@ -87,7 +87,7 @@ impl<'v> StarlarkValue<'v> for NoneType {
         Ty::none()
     }
 
-    fn eval_type(&self) -> Option<Ty> {
+    fn eval_type(_this: &Self) -> Option<Ty> {
         Some(Ty::none())
     }
 }

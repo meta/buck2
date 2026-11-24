@@ -84,10 +84,10 @@ impl<'v> Field<'v> {
 
 #[starlark_value(type = "field")]
 impl<'v> StarlarkValue<'v> for Field<'v> {
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        self.typ.write_hash(hasher)?;
-        self.default.is_some().hash(hasher);
-        if let Some(d) = self.default {
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+        this.typ.write_hash(hasher)?;
+        this.default.is_some().hash(hasher);
+        if let Some(d) = this.default {
             d.write_hash(hasher)?;
         }
         Ok(())

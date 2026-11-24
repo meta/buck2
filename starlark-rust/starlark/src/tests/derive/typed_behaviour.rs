@@ -76,16 +76,16 @@ starlark_simple_value!(Plain);
 
 #[starlark_value(type = "plain")]
 impl<'v> StarlarkValue<'v> for Plain {
-    fn equals(&self, other: &Self) -> bool {
-        self.0 == other.0
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.0 == other.0
     }
 
-    fn compare(&self, other: &Self) -> Ordering {
-        self.0.cmp(&other.0)
+    fn compare(this: &Self, other: &Self) -> Ordering {
+        this.0.cmp(&other.0)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.0.hash(hasher)
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.0.hash(hasher)
     }
 }
 
@@ -163,20 +163,20 @@ struct Negative;
 
 #[starlark_value(type = "count")]
 impl<'v> StarlarkValue<'v> for Count {
-    fn equals(&self, other: Either<&Self, &str>) -> starlark::Result<bool> {
+    fn equals(this: &Self, other: Either<&Self, &str>) -> starlark::Result<bool> {
         match other {
-            Either::Left(other) => Ok(self.0 == other.0),
+            Either::Left(other) => Ok(this.0 == other.0),
             Either::Right(other) => {
-                Ok(self.0 == other.parse::<i32>().map_err(starlark::Error::new_other)?)
+                Ok(this.0 == other.parse::<i32>().map_err(starlark::Error::new_other)?)
             }
         }
     }
 
-    fn compare(&self, other: i32) -> starlark::Result<Ordering> {
+    fn compare(this: &Self, other: i32) -> starlark::Result<Ordering> {
         if other < 0 {
             return Err(starlark::Error::new_other(Negative));
         }
-        Ok(self.0.cmp(&other))
+        Ok(this.0.cmp(&other))
     }
 }
 
@@ -242,11 +242,11 @@ starlark_simple_value!(AnyOperand);
 
 #[starlark_value(type = "any_operand")]
 impl<'v> StarlarkValue<'v> for AnyOperand {
-    fn equals(&self, other: Value<'v>) -> bool {
+    fn equals(_this: &Self, other: Value<'v>) -> bool {
         other.is_none()
     }
 
-    fn compare(&self, other: Value<'v>) -> starlark::Result<Ordering> {
+    fn compare(_this: &Self, other: Value<'v>) -> starlark::Result<Ordering> {
         if other.is_none() {
             Ok(Ordering::Greater)
         } else {
@@ -254,7 +254,7 @@ impl<'v> StarlarkValue<'v> for AnyOperand {
         }
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+    fn write_hash(_this: &Self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         hasher.write_u8(0);
         Ok(())
     }
@@ -306,17 +306,17 @@ impl<'v, T: Tag> StarlarkValue<'v> for Tagged<T>
 where
     Self: HasTyVTable + ProvidesStaticType<'v>,
 {
-    fn equals(&self, other: &Self) -> bool {
-        self.0 == other.0
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.0 == other.0
     }
 
-    fn compare(&self, other: &Tagged<T>) -> Ordering {
-        self.0.cmp(&other.0)
+    fn compare(this: &Self, other: &Tagged<T>) -> Ordering {
+        this.0.cmp(&other.0)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
         hasher.write_u8(T::SALT);
-        self.0.hash(hasher)
+        this.0.hash(hasher)
     }
 }
 
@@ -380,31 +380,31 @@ impl<'v> SizedView<'v> {
 
 #[starlark_value(type = "sized")]
 impl<'v> StarlarkType<'v> for SizedView<'v> {
-    fn equals(&self, other: SizedView<'v>) -> bool {
-        self.get() == other.get()
+    fn equals(this: Self, other: SizedView<'v>) -> bool {
+        this.get() == other.get()
     }
 
-    fn compare(&self, other: Self) -> Ordering {
-        self.get().cmp(&other.get())
+    fn compare(this: Self, other: Self) -> Ordering {
+        this.get().cmp(&other.get())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.get().hash(hasher)
+    fn write_hash(this: Self, hasher: &mut StarlarkHasher) {
+        this.get().hash(hasher)
     }
 
-    fn at(&self, index: i32, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(self.get() as i32 + index).to_value()
+    fn at(this: Self, index: i32, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc(this.get() as i32 + index).to_value()
     }
 
-    fn is_in(&self, other: Self) -> starlark::Result<bool> {
+    fn is_in(this: Self, other: Self) -> starlark::Result<bool> {
         if other.get() == 0 {
             return Err(starlark::Error::new_other(Negative));
         }
-        Ok(other.get() <= self.get())
+        Ok(other.get() <= this.get())
     }
 
-    fn length(&self) -> i32 {
-        self.get() as i32
+    fn length(this: Self) -> i32 {
+        this.get() as i32
     }
 }
 
@@ -463,13 +463,13 @@ starlark_simple_value!(Holder);
 
 #[starlark_value(type = "holder")]
 impl<'v> StarlarkValue<'v> for Holder {
-    fn equals(&self, other: &Self) -> starlark::Result<bool> {
-        Ok(self.name.try_equals(other.name)? && self.flag.try_equals(other.flag)?)
+    fn equals(this: &Self, other: &Self) -> starlark::Result<bool> {
+        Ok(this.name.try_equals(other.name)? && this.flag.try_equals(other.flag)?)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.name.write_hash(hasher);
-        self.flag.write_hash(hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.name.write_hash(hasher);
+        this.flag.write_hash(hasher);
     }
 }
 
@@ -544,66 +544,66 @@ struct NegativeSpan;
 
 #[starlark_value(type = "seconds")]
 impl<'v> StarlarkValue<'v> for Seconds {
-    fn add(&self, other: &Self) -> Seconds {
-        Seconds(self.0 + other.0)
+    fn add(this: &Self, other: &Self) -> Seconds {
+        Seconds(this.0 + other.0)
     }
 
-    fn radd(&self, minutes: &str) -> starlark::Result<Seconds> {
+    fn radd(this: &Self, minutes: &str) -> starlark::Result<Seconds> {
         let minutes: i32 = minutes.parse().map_err(starlark::Error::new_other)?;
-        Ok(Seconds(minutes * 60 + self.0))
+        Ok(Seconds(minutes * 60 + this.0))
     }
 
-    fn mul(&self, times: i32, _heap: Heap<'v>) -> Seconds {
-        Seconds(self.0 * times)
+    fn mul(this: &Self, times: i32, _heap: Heap<'v>) -> Seconds {
+        Seconds(this.0 * times)
     }
 
-    fn rmul(&self, times: i32) -> Seconds {
-        Seconds(times * self.0)
+    fn rmul(this: &Self, times: i32) -> Seconds {
+        Seconds(times * this.0)
     }
 
-    fn sub(&self, other: &Self) -> starlark::Result<Seconds> {
-        if other.0 > self.0 {
+    fn sub(this: &Self, other: &Self) -> starlark::Result<Seconds> {
+        if other.0 > this.0 {
             return Err(starlark::Error::new_other(NegativeSpan));
         }
-        Ok(Seconds(self.0 - other.0))
+        Ok(Seconds(this.0 - other.0))
     }
 
-    fn div(&self, by: Either<&Self, i32>, _heap: Heap<'v>) -> Either<f64, Seconds> {
+    fn div(this: &Self, by: Either<&Self, i32>, _heap: Heap<'v>) -> Either<f64, Seconds> {
         match by {
-            Either::Left(other) => Either::Left(self.0 as f64 / other.0 as f64),
-            Either::Right(parts) => Either::Right(Seconds(self.0 / parts)),
+            Either::Left(other) => Either::Left(this.0 as f64 / other.0 as f64),
+            Either::Right(parts) => Either::Right(Seconds(this.0 / parts)),
         }
     }
 
-    fn percent(&self, unit: Value<'v>, heap: Heap<'v>) -> StringValue<'v> {
-        heap.alloc_str(&format!("{}{}", self.0, unit.to_str()))
+    fn percent(this: &Self, unit: Value<'v>, heap: Heap<'v>) -> StringValue<'v> {
+        heap.alloc_str(&format!("{}{}", this.0, unit.to_str()))
     }
 
     /// Without the heap this is not the trait's signature, whatever its types are.
-    fn bit_xor(&self, other: Value<'v>) -> starlark::Result<Value<'v>> {
+    fn bit_xor(_this: &Self, other: Value<'v>) -> starlark::Result<Value<'v>> {
         Ok(other)
     }
 
-    fn floor_div(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+    fn floor_div(this: &Self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         match other.unpack_i32() {
-            Some(parts) => Ok(heap.alloc(Seconds(self.0 / parts)).to_value()),
+            Some(parts) => Ok(heap.alloc(Seconds(this.0 / parts)).to_value()),
             None => Ok(Value::new_none()),
         }
     }
 
-    fn minus(&self) -> starlark::Result<Seconds> {
-        if self.0 > 0 {
+    fn minus(this: &Self) -> starlark::Result<Seconds> {
+        if this.0 > 0 {
             return Err(starlark::Error::new_other(NegativeSpan));
         }
         Ok(Seconds(0))
     }
 
-    fn plus(&self, heap: Heap<'v>) -> Value<'v> {
-        heap.alloc(self.0).to_value()
+    fn plus(this: &Self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc(this.0).to_value()
     }
 
-    fn bit_not(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        Ok(heap.alloc(Seconds(!self.0)).to_value())
+    fn bit_not(this: &Self, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        Ok(heap.alloc(Seconds(!this.0)).to_value())
     }
 }
 
@@ -800,15 +800,15 @@ impl<'v, T: Tag> StarlarkValue<'v> for Scaled<T>
 where
     Self: HasTyVTable + ProvidesStaticType<'v>,
 {
-    fn bit_and(&self, other: &Scaled<T>) -> bool {
-        self.0 == other.0
+    fn bit_and(this: &Self, other: &Scaled<T>) -> bool {
+        this.0 == other.0
     }
 
-    fn mul(&self, times: i32, _heap: Heap<'v>) -> i32 {
+    fn mul(_this: &Self, times: i32, _heap: Heap<'v>) -> i32 {
         times * T::SALT as i32
     }
 
-    fn minus(&self, _heap: Heap<'v>) -> i32 {
+    fn minus(_this: &Self, _heap: Heap<'v>) -> i32 {
         -(T::SALT as i32)
     }
 }
@@ -817,12 +817,12 @@ crate::register_avalue_simple_frozen!(Scaled<ByNumber>);
 
 #[starlark_value(type = "length")]
 impl<'v> StarlarkType<'v> for LengthView<'v> {
-    fn add(&self, other: LengthView<'v>) -> Metres {
-        Metres(self.get() + other.get())
+    fn add(this: Self, other: LengthView<'v>) -> Metres {
+        Metres(this.get() + other.get())
     }
 
-    fn sub(&self, other: Self, _heap: Heap<'v>) -> starlark::Result<Metres> {
-        match self.get().checked_sub(other.get()) {
+    fn sub(this: Self, other: Self, _heap: Heap<'v>) -> starlark::Result<Metres> {
+        match this.get().checked_sub(other.get()) {
             Some(metres) => Ok(Metres(metres)),
             None => Err(starlark::Error::new_other(NegativeSpan)),
         }
@@ -949,19 +949,19 @@ struct NoLetter(i32);
 
 #[starlark_value(type = "word")]
 impl<'v> StarlarkValue<'v> for Word {
-    fn at(&self, index: i32) -> starlark::Result<char> {
+    fn at(this: &Self, index: i32) -> starlark::Result<char> {
         usize::try_from(index)
             .ok()
-            .and_then(|i| self.0.chars().nth(i))
+            .and_then(|i| this.0.chars().nth(i))
             .ok_or_else(|| starlark::Error::new_other(NoLetter(index)))
     }
 
-    fn is_in(&self, other: &str) -> bool {
-        self.0.contains(other)
+    fn is_in(this: &Self, other: &str) -> bool {
+        this.0.contains(other)
     }
 
-    fn length(&self) -> i32 {
-        self.0.len() as i32
+    fn length(this: &Self) -> i32 {
+        this.0.len() as i32
     }
 }
 

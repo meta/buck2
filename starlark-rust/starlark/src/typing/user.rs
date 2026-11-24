@@ -396,16 +396,16 @@ mod tests {
             Ty::starlark_value::<Self>()
         }
 
-        fn typechecker_ty(&self) -> Option<Ty> {
-            Some(self.ty_fruit_callable.dupe())
+        fn typechecker_ty(this: &Self) -> Option<Ty> {
+            Some(this.ty_fruit_callable.dupe())
         }
 
-        fn eval_type(&self) -> Option<Ty> {
-            Some(self.ty_fruit.dupe())
+        fn eval_type(this: &Self) -> Option<Ty> {
+            Some(this.ty_fruit.dupe())
         }
 
         fn invoke(
-            &self,
+            _this: &Self,
             _me: Value<'v>,
             _args: &Arguments<'v, '_>,
             _eval: &mut Evaluator<'v, '_, '_>,
@@ -460,7 +460,7 @@ mod tests {
             )
         }
 
-        fn add(&self, _other: &Self) -> Coin {
+        fn add(_this: &Self, _other: &Self) -> Coin {
             unreachable!("only typechecked in tests")
         }
     }

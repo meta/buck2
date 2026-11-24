@@ -275,77 +275,77 @@ impl Display for StarlarkFloat {
 
 #[starlark_value(type = StarlarkFloat::TYPE)]
 impl<'v> StarlarkValue<'v> for StarlarkFloat {
-    fn equals(&self, other: Value) -> crate::Result<bool> {
-        Ok(Some(NumRef::Float(StarlarkFloat(self.0))) == other.unpack_num())
+    fn equals(this: &Self, other: Value) -> crate::Result<bool> {
+        Ok(Some(NumRef::Float(StarlarkFloat(this.0))) == other.unpack_num())
     }
 
-    fn collect_repr(&self, s: &mut String) {
-        write!(s, "{}", self).unwrap()
+    fn collect_repr(this: &Self, s: &mut String) {
+        write!(s, "{}", this).unwrap()
     }
 
-    fn to_bool(&self) -> bool {
-        self.0 != 0.0
+    fn to_bool(this: &Self) -> bool {
+        this.0 != 0.0
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        hasher.write_u64(NumRef::from(self.0).get_hash_64());
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+        hasher.write_u64(NumRef::from(this.0).get_hash_64());
         Ok(())
     }
 
-    fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {
-        Ok(NumRef::Float(*self).get_hash())
+    fn get_hash(this: &Self, _private: Private) -> crate::Result<StarlarkHashValue> {
+        Ok(NumRef::Float(*this).get_hash())
     }
 
-    fn plus(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(*self).to_value())
+    fn plus(this: &Self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(heap.alloc(*this).to_value())
     }
 
-    fn minus(&self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(heap.alloc(StarlarkFloat(-self.0)).to_value())
+    fn minus(this: &Self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(heap.alloc(StarlarkFloat(-this.0)).to_value())
     }
 
-    fn add(&self, other: Value, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+    fn add(this: &Self, other: Value, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         Some(
-            (NumRef::Float(*self) + other.unpack_num()?)
+            (NumRef::Float(*this) + other.unpack_num()?)
                 .map(|x| heap.alloc(x).to_value())
                 .map_err(Into::into),
         )
     }
 
-    fn sub(&self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn sub(this: &Self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
-            None => ValueError::unsupported_with(self, "-", other),
-            Some(other) => Ok(heap.alloc((NumRef::Float(*self) - other)?).to_value()),
+            None => ValueError::unsupported_with(this, "-", other),
+            Some(other) => Ok(heap.alloc((NumRef::Float(*this) - other)?).to_value()),
         }
     }
 
-    fn mul(&self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+    fn mul(this: &Self, other: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         Some(
-            (NumRef::Float(*self) * other.unpack_num()?)
+            (NumRef::Float(*this) * other.unpack_num()?)
                 .map(|x| heap.alloc(x).to_value())
                 .map_err(Into::into),
         )
     }
 
-    fn div(&self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn div(this: &Self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
-            None => ValueError::unsupported_with(self, "/", other),
-            Some(other) => Ok(heap.alloc(NumRef::Float(*self).div(other)?).to_value()),
+            None => ValueError::unsupported_with(this, "/", other),
+            Some(other) => Ok(heap.alloc(NumRef::Float(*this).div(other)?).to_value()),
         }
     }
 
-    fn percent(&self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn percent(this: &Self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
-            Some(other) => Ok(heap.alloc(NumRef::Float(*self).percent(other)?).to_value()),
-            None => ValueError::unsupported_with(self, "%", other),
+            Some(other) => Ok(heap.alloc(NumRef::Float(*this).percent(other)?).to_value()),
+            None => ValueError::unsupported_with(this, "%", other),
         }
     }
 
-    fn floor_div(&self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn floor_div(this: &Self, other: Value, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match other.unpack_num() {
-            None => ValueError::unsupported_with(self, "//", other),
+            None => ValueError::unsupported_with(this, "//", other),
             Some(other) => Ok(heap
-                .alloc(NumRef::Float(*self).floor_div(other)?)
+                .alloc(NumRef::Float(*this).floor_div(other)?)
                 .to_value()),
         }
     }
@@ -354,10 +354,10 @@ impl<'v> StarlarkValue<'v> for StarlarkFloat {
         num_bin_op_signatures(NumTy::Float, op)
     }
 
-    fn compare(&self, other: Value) -> crate::Result<Ordering> {
+    fn compare(this: &Self, other: Value) -> crate::Result<Ordering> {
         match other.unpack_num() {
-            None => ValueError::unsupported_with(self, "compare", other),
-            Some(other) => Ok(NumRef::Float(*self).cmp(&other)),
+            None => ValueError::unsupported_with(this, "compare", other),
+            Some(other) => Ok(NumRef::Float(*this).cmp(&other)),
         }
     }
 }

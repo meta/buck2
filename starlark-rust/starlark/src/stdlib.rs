@@ -218,10 +218,10 @@ mod tests {
                 Some(BOOL2_METHODS.methods())
             }
 
-            fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
+            fn equals(this: &Self, other: Value<'v>) -> crate::Result<bool> {
                 match other.downcast_ref::<Bool2>() {
                     None => Ok(false),
-                    Some(v) => Ok(*v == *self),
+                    Some(v) => Ok(*v == *this),
                 }
             }
         }

@@ -188,24 +188,24 @@ impl<'v> StarlarkDeserialize<'v> for Partial<'v> {
 
 #[starlark_value(type = FUNCTION_TYPE)]
 impl<'v> StarlarkValue<'v> for Partial<'v> {
-    fn name_for_call_stack(&self, _me: Value<'v>) -> String {
+    fn name_for_call_stack(_this: &Self, _me: Value<'v>) -> String {
         "partial".to_owned()
     }
 
     fn invoke(
-        &self,
+        this: &Self,
         _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
         // apply the partial arguments first, then the remaining arguments I was given
 
-        let self_pos = self.pos_content();
+        let self_pos = this.pos_content();
 
         for (symbol, _) in args.0.names.names() {
-            if self
+            if this
                 .names_index
-                .find(symbol.hash(), |i| &self.names[*i].0 == symbol)
+                .find(symbol.hash(), |i| &this.names[*i].0 == symbol)
                 .is_some()
             {
                 return Err(value_error!(
@@ -216,8 +216,8 @@ impl<'v> StarlarkValue<'v> for Partial<'v> {
         }
 
         eval.alloca_concat(self_pos, args.0.pos, |pos, eval| {
-            eval.alloca_concat(&self.named, args.0.named, |named, eval| {
-                eval.alloca_concat(&self.names, args.0.names.names(), |names, eval| {
+            eval.alloca_concat(&this.named, args.0.named, |named, eval| {
+                eval.alloca_concat(&this.names, args.0.names.names(), |names, eval| {
                     let params = Arguments(ArgumentsFull {
                         pos,
                         named,
@@ -225,7 +225,7 @@ impl<'v> StarlarkValue<'v> for Partial<'v> {
                         args: args.0.args,
                         kwargs: args.0.kwargs,
                     });
-                    self.func
+                    this.func
                         .to_value()
                         .invoke_with_loc(Some(rust_loc!().at()), &params, eval)
                 })

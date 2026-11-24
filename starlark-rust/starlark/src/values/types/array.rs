@@ -322,22 +322,22 @@ impl<'v> StarlarkValue<'v> for Array<'v> {
         true
     }
 
-    fn length(&self) -> i32 {
-        self.len() as i32
+    fn length(this: &Self) -> i32 {
+        this.len() as i32
     }
 
-    unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
-        debug_assert!(self.len() == 0 || self.iter_count_is_non_zero());
-        self.content().get(index).copied()
+    unsafe fn iter_next(this: &Self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
+        debug_assert!(this.len() == 0 || this.iter_count_is_non_zero());
+        this.content().get(index).copied()
     }
 
-    unsafe fn iter_stop(&self) {
-        self.dec_iter_count();
+    unsafe fn iter_stop(this: &Self) {
+        this.dec_iter_count();
     }
 
-    unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        debug_assert!(index <= self.len());
-        let rem = self.len() - index;
+    unsafe fn iter_size_hint(this: &Self, index: usize) -> (usize, Option<usize>) {
+        debug_assert!(index <= this.len());
+        let rem = this.len() - index;
         (rem, Some(rem))
     }
 }

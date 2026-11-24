@@ -45,10 +45,10 @@ impl<'v> StarlarkValue<'v> for AbstractType {
         Ty::basic(TyBasic::Type)
     }
 
-    fn eval_type(&self) -> Option<Ty> {
+    fn eval_type(this: &Self) -> Option<Ty> {
         // This is unreachable, but this function is needed
         // so `TyStarlarkValue` could think this is a type".
-        match *self {}
+        match *this {}
     }
 }
 

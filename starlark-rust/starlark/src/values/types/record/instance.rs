@@ -203,36 +203,36 @@ impl<'v> StarlarkValue<'v> for Record<'v> {
         true
     }
 
-    fn equals(&self, other: &Self) -> crate::Result<bool> {
-        if self.typ.equals(other.typ)? {
-            equals_slice(self.content(), other.content(), |x, y| x.equals(*y))
+    fn equals(this: &Self, other: &Self) -> crate::Result<bool> {
+        if this.typ.equals(other.typ)? {
+            equals_slice(this.content(), other.content(), |x, y| x.equals(*y))
         } else {
             Ok(false)
         }
     }
 
-    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.field(Hashed::new(attribute))
+    fn get_attr(this: &Self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.field(Hashed::new(attribute))
     }
 
-    fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.field(attribute)
+    fn get_attr_hashed(this: &Self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.field(attribute)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
-        self.typ.write_hash(hasher)?;
-        for v in self.content() {
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+        this.typ.write_hash(hasher)?;
+        for v in this.content() {
             v.write_hash(hasher)?;
         }
         Ok(())
     }
 
-    fn dir_attr(&self) -> Vec<String> {
-        self.get_record_fields().keys().cloned().collect()
+    fn dir_attr(this: &Self) -> Vec<String> {
+        this.get_record_fields().keys().cloned().collect()
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(self.get_record_type().instance_ty())
+    fn typechecker_ty(this: &Self) -> Option<Ty> {
+        Some(this.get_record_type().instance_ty())
     }
 }
 

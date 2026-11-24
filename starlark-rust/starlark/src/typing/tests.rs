@@ -103,79 +103,79 @@ struct EveryOperator;
 
 #[starlark_value(type = "every_operator")]
 impl<'v> StarlarkValue<'v> for EveryOperator {
-    fn add(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+    fn add(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         Some(Ok(other))
     }
 
-    fn radd(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+    fn radd(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         Some(Ok(other))
     }
 
-    fn mul(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+    fn mul(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         Some(Ok(other))
     }
 
-    fn rmul(&self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+    fn rmul(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
         Some(Ok(other))
     }
 
-    fn sub(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn sub(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(other)
     }
 
-    fn div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn div(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(other)
     }
 
-    fn percent(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn percent(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(other)
     }
 
-    fn floor_div(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn floor_div(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(other)
     }
 
-    fn bit_and(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn bit_and(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(other)
     }
 
-    fn bit_or(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn bit_or(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(other)
     }
 
-    fn bit_xor(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn bit_xor(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(other)
     }
 
-    fn left_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn left_shift(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(other)
     }
 
-    fn right_shift(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn right_shift(_this: &Self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(other)
     }
 
-    fn plus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn plus(_this: &Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(Value::new_none())
     }
 
-    fn minus(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn minus(_this: &Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(Value::new_none())
     }
 
-    fn bit_not(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn bit_not(_this: &Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(Value::new_none())
     }
 
-    fn compare(&self, _other: Value<'v>) -> crate::Result<Ordering> {
+    fn compare(_this: &Self, _other: Value<'v>) -> crate::Result<Ordering> {
         Ok(Ordering::Equal)
     }
 
-    fn is_in(&self, _other: Value<'v>) -> crate::Result<bool> {
+    fn is_in(_this: &Self, _other: Value<'v>) -> crate::Result<bool> {
         Ok(true)
     }
 
-    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn at(_this: &Self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(index)
     }
 }
@@ -228,7 +228,7 @@ impl<'v> StarlarkValue<'v> for WithSignatures {
         }
     }
 
-    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    fn at(_this: &Self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(index)
     }
 

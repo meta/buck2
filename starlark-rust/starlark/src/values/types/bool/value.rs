@@ -70,35 +70,35 @@ pub(crate) static VALUE_FALSE_TRUE: [&AllocStaticSimple<StarlarkBool>; 2] =
 
 #[starlark_value(type = BOOL_TYPE)]
 impl<'v> StarlarkType<'v> for bool {
-    fn collect_repr(&self, s: &mut String) {
+    fn collect_repr(this: Self, s: &mut String) {
         // The default writes the receiver's `Display`, which for a Rust `bool` is `true`.
         // repr() for bool is also quite hot, so optimise it
-        if *self {
+        if this {
             s.push_str("True")
         } else {
             s.push_str("False")
         }
     }
 
-    fn to_bool(&self) -> bool {
-        *self
+    fn to_bool(this: Self) -> bool {
+        this
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        hasher.write_u8(if *self { 1 } else { 0 });
+    fn write_hash(this: Self, hasher: &mut StarlarkHasher) {
+        hasher.write_u8(if this { 1 } else { 0 });
     }
 
-    fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {
+    fn get_hash(this: Self, _private: Private) -> crate::Result<StarlarkHashValue> {
         // These constants are just two random numbers.
-        Ok(StarlarkHashValue::new_unchecked(if *self {
+        Ok(StarlarkHashValue::new_unchecked(if this {
             0xa4acba08
         } else {
             0x71e8ba71
         }))
     }
 
-    fn compare(&self, other: bool) -> Ordering {
-        self.cmp(&other)
+    fn compare(this: Self, other: bool) -> Ordering {
+        this.cmp(&other)
     }
 }
 

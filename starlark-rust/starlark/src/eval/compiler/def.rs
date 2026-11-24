@@ -739,46 +739,46 @@ impl<'v> Def<'v> {
 
 #[starlark_value(type = FUNCTION_TYPE, frozen_vtable, alloc = complex)]
 impl<'v> StarlarkValue<'v> for Def<'v> {
-    fn name_for_call_stack(&self, _me: Value<'v>) -> String {
-        self.def_info.value.name.as_str().to_owned()
+    fn name_for_call_stack(this: &Self, _me: Value<'v>) -> String {
+        this.def_info.value.name.as_str().to_owned()
     }
 
     fn invoke(
-        &self,
+        this: &Self,
         me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        self.invoke_impl(me, &args.0, eval)
+        this.invoke_impl(me, &args.0, eval)
     }
 
-    fn documentation(&self) -> DocItem {
-        let mut parameter_types = vec![Ty::any(); self.parameters.len()];
-        for pt in self.def_info.value.parameter_types.iter() {
+    fn documentation(this: &Self) -> DocItem {
+        let mut parameter_types = vec![Ty::any(); this.parameters.len()];
+        for pt in this.def_info.value.parameter_types.iter() {
             // Local slot number for parameter is the same as parameter index.
             parameter_types[pt.slot.0 as usize] = pt.ty.as_ty().clone();
         }
 
-        let return_type = self.return_type.map_or(Ty::any(), |r| r.as_ty().clone());
+        let return_type = this.return_type.map_or(Ty::any(), |r| r.as_ty().clone());
 
         let function_docs = DocFunction::from_docstring(
             DocStringKind::Starlark,
-            self.parameters
+            this.parameters
                 .documentation(parameter_types, HashMap::new()),
             return_type,
-            self.def_info.value.docstring.as_ref().map(String::as_ref),
+            this.def_info.value.docstring.as_ref().map(String::as_ref),
         );
 
         DocItem::Member(DocMember::Function(function_docs))
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(self.def_info.value.ty.clone())
+    fn typechecker_ty(this: &Self) -> Option<Ty> {
+        Some(this.def_info.value.ty.clone())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
         // It's hard to come up with a good hash here, but let's at least make an effort.
-        self.def_info.value.name.write_hash(hasher)
+        this.def_info.value.name.write_hash(hasher)
     }
 }
 

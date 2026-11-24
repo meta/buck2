@@ -343,16 +343,16 @@ fn test_radd() {
 
     #[starlark_value(type = "select")]
     impl<'v> StarlarkValue<'v> for Select {
-        fn radd(&self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        fn radd(this: &Self, lhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
             let lhs: Select = Select::unpack_value(lhs).unwrap().unwrap();
-            Some(Ok(heap.alloc(lhs.add(self)).to_value()))
+            Some(Ok(heap.alloc(lhs.add(this)).to_value()))
         }
-        fn add(&self, rhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        fn add(this: &Self, rhs: Value<'v>, heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
             let rhs: Select = UnpackValue::unpack_value(rhs).unwrap().unwrap();
-            Some(Ok(heap.alloc(self.clone().add(&rhs)).to_value()))
+            Some(Ok(heap.alloc(this.clone().add(&rhs)).to_value()))
         }
-        fn collect_repr(&self, collector: &mut String) {
-            write!(collector, "{}", self).unwrap()
+        fn collect_repr(this: &Self, collector: &mut String) {
+            write!(collector, "{}", this).unwrap()
         }
     }
 
@@ -798,17 +798,20 @@ fn test_label_assign() {
 
     #[starlark_value(type = "wrapper")]
     impl<'v> StarlarkType<'v> for WrapperView<'v> {
-        fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
-            match self {
-                WrapperView::Unfrozen(this) => Some(*this.0.borrow().get(attribute).unwrap()),
+        fn get_attr(this: Self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+            match this {
+                WrapperView::Unfrozen(wrapper) => Some(*wrapper.0.borrow().get(attribute).unwrap()),
                 WrapperView::Frozen(_) => None,
             }
         }
 
-        fn set_attr(&self, attribute: &str, new_value: Value<'v>) -> starlark::Result<()> {
-            match self {
-                WrapperView::Unfrozen(this) => {
-                    this.0.borrow_mut().insert(attribute.to_owned(), new_value);
+        fn set_attr(this: Self, attribute: &str, new_value: Value<'v>) -> starlark::Result<()> {
+            match this {
+                WrapperView::Unfrozen(wrapper) => {
+                    wrapper
+                        .0
+                        .borrow_mut()
+                        .insert(attribute.to_owned(), new_value);
                     Ok(())
                 }
                 WrapperView::Frozen(_) => Err(starlark::Error::new_other(

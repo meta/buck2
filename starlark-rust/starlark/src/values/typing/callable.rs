@@ -78,7 +78,7 @@ pub(crate) struct TypingCallable;
 
 #[starlark_value(type = "typing.Callable", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for TypingCallable {
-    fn documentation(&self) -> DocItem {
+    fn documentation(_this: &Self) -> DocItem {
         DocItem::Type(DocType {
             docs: DocString::from_docstring(
                 crate::docs::DocStringKind::Rust,
@@ -106,12 +106,12 @@ See also [`typing.Callable` in the Python documentation][1].
         })
     }
 
-    fn eval_type(&self) -> Option<Ty> {
+    fn eval_type(_this: &Self) -> Option<Ty> {
         Some(StarlarkCallable::<StarlarkCallableParamAny, Value<'static>>::starlark_type_repr())
     }
 
     fn at2(
-        &self,
+        _this: &Self,
         param_types: Value<'v>,
         ret: Value<'v>,
         heap: Heap<'v>,
@@ -165,8 +165,8 @@ pub(crate) struct TypingCallableAt2 {
 
 #[starlark_value(type = "typing.Callable")]
 impl<'v> StarlarkValue<'v> for TypingCallableAt2 {
-    fn eval_type(&self) -> Option<Ty> {
-        Some(Ty::basic(TyBasic::Callable(self.callable.dupe())))
+    fn eval_type(this: &Self) -> Option<Ty> {
+        Some(Ty::basic(TyBasic::Callable(this.callable.dupe())))
     }
 }
 

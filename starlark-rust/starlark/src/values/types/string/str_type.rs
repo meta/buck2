@@ -242,74 +242,74 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         Some(STRING_METHODS.methods())
     }
 
-    fn collect_repr(&self, buffer: &mut String) {
+    fn collect_repr(this: &Self, buffer: &mut String) {
         // String repr() is quite hot, so optimise it
-        string_repr(self, buffer)
+        string_repr(this, buffer)
     }
 
-    fn collect_str(&self, buffer: &mut String) {
-        buffer.push_str(self.as_str())
+    fn collect_str(this: &Self, buffer: &mut String) {
+        buffer.push_str(this.as_str())
     }
 
-    fn to_bool(&self) -> bool {
-        !self.is_empty()
+    fn to_bool(this: &Self) -> bool {
+        !this.is_empty()
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
         // Don't defer to str because we cache the Hash in StarlarkStr
-        hasher.write_u32(self.get_hash().get());
+        hasher.write_u32(this.get_hash().get());
     }
 
-    fn get_hash(&self, _private: Private) -> crate::Result<StarlarkHashValue> {
-        Ok(self.get_hash())
+    fn get_hash(this: &Self, _private: Private) -> crate::Result<StarlarkHashValue> {
+        Ok(this.get_hash())
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self == other
+    fn equals(this: &Self, other: &Self) -> bool {
+        this == other
     }
 
-    fn compare(&self, other: &Self) -> Ordering {
-        self.as_str().cmp(other.as_str())
+    fn compare(this: &Self, other: &Self) -> Ordering {
+        this.as_str().cmp(other.as_str())
     }
 
-    fn at(&self, index: i32) -> crate::Result<char> {
+    fn at(this: &Self, index: i32) -> crate::Result<char> {
         // This method is disturbingly hot. Use the logic from `convert_index`,
         // but modified to be UTF8 string friendly.
         if index >= 0 {
-            match fast_string::at(self, CharIndex(index as usize)) {
+            match fast_string::at(this, CharIndex(index as usize)) {
                 None => Err(ValueError::IndexOutOfBound(index).into()),
                 Some(c) => Ok(c),
             }
         } else {
-            let len_chars = fast_string::len(self);
+            let len_chars = fast_string::len(this);
             let ind = CharIndex(index.unsigned_abs() as usize); // Index from the end, minimum of 1
             if ind > len_chars {
                 Err(ValueError::IndexOutOfBound(index).into())
-            } else if len_chars.0 == self.len() {
+            } else if len_chars.0 == this.len() {
                 // We are a 7bit ASCII string, so take the fast-path
-                Ok(self.as_bytes()[(len_chars - ind).0] as char)
+                Ok(this.as_bytes()[(len_chars - ind).0] as char)
             } else {
-                Ok(fast_string::at(self, len_chars - ind).unwrap())
+                Ok(fast_string::at(this, len_chars - ind).unwrap())
             }
         }
     }
 
-    fn length(&self) -> i32 {
-        fast_string::len(self).0 as i32
+    fn length(this: &str) -> i32 {
+        fast_string::len(this).0 as i32
     }
 
-    fn is_in(&self, other: &str) -> bool {
-        fast_string::contains(self, other)
+    fn is_in(this: &str, other: &str) -> bool {
+        fast_string::contains(this, other)
     }
 
     fn slice(
-        &self,
+        this: &Self,
         start: Option<Value<'v>>,
         stop: Option<Value<'v>>,
         stride: Option<Value<'v>>,
         heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
-        let s = self;
+        let s = this;
         if matches!(stride, Some(stride) if stride.unpack_i32() != Some(1)) {
             // The stride case is super rare and super complex, so let's do something inefficient but safe
             let xs = s.chars().collect::<Vec<_>>();
@@ -327,30 +327,30 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
 
         let (start, stop) = (start_stop_to_none_or(start)?, start_stop_to_none_or(stop)?);
 
-        match fast_string::convert_str_indices(self, start.into_option(), stop.into_option()) {
+        match fast_string::convert_str_indices(this, start.into_option(), stop.into_option()) {
             Some(StrIndices { haystack, .. }) => Ok(heap.alloc_str(haystack).to_value()),
             None => Ok(heap.alloc_str("").to_value()),
         }
     }
 
-    fn add(&self, other: StringValue<'v>, heap: Heap<'v>) -> StringValue<'v> {
-        if self.is_empty() {
+    fn add(this: &Self, other: StringValue<'v>, heap: Heap<'v>) -> StringValue<'v> {
+        if this.is_empty() {
             other
         } else {
-            heap.alloc_str_concat(self, other.as_str())
+            heap.alloc_str_concat(this, other.as_str())
         }
     }
 
-    fn mul(&self, times: i32) -> String {
-        self.repeated(times)
+    fn mul(this: &Self, times: i32) -> String {
+        this.repeated(times)
     }
 
-    fn rmul(&self, times: i32) -> String {
-        self.repeated(times)
+    fn rmul(this: &Self, times: i32) -> String {
+        this.repeated(times)
     }
 
-    fn percent(&self, other: Value<'v>) -> crate::Result<String> {
-        interpolation::percent(self, other)
+    fn percent(this: &Self, other: Value<'v>) -> crate::Result<String> {
+        interpolation::percent(this, other)
     }
 }
 

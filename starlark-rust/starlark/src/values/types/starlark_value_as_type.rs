@@ -94,20 +94,20 @@ impl<'v> StarlarkValue<'v> for StarlarkValueAsTypeStarlarkValue {
         <AbstractType as StarlarkType>::get_type_starlark_repr()
     }
 
-    fn eval_type(&self) -> Option<Ty> {
-        Some((self.0)())
+    fn eval_type(this: &Self) -> Option<Ty> {
+        Some((this.0)())
     }
 
-    fn at(&self, _index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        let base_ty = (self.0)();
+    fn at(this: &Self, _index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        let base_ty = (this.0)();
         Err(crate::Error::new_other(anyhow::anyhow!(
             "Type `{}` does not support type parameters",
             base_ty,
         )))
     }
 
-    fn documentation(&self) -> DocItem {
-        (self.1)()
+    fn documentation(this: &Self) -> DocItem {
+        (this.1)()
     }
 }
 

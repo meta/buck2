@@ -126,16 +126,16 @@ pub(crate) struct NativeFunction<'v> {
 #[starlark_value(type = FUNCTION_TYPE, frozen_vtable)]
 impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
     fn invoke(
-        &self,
+        this: &Self,
         _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        self.function.invoke(eval, args)
+        this.function.invoke(eval, args)
     }
 
-    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
-        if let Some(s) = self.as_type.as_ref().and_then(|t| t.as_name()) {
+    fn get_attr(this: &Self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+        if let Some(s) = this.as_type.as_ref().and_then(|t| t.as_name()) {
             if attribute == "type" {
                 return Some(heap.alloc(s).to_value());
             }
@@ -143,33 +143,33 @@ impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
         None
     }
 
-    fn eval_type(&self) -> Option<Ty> {
-        self.as_type.clone()
+    fn eval_type(this: &Self) -> Option<Ty> {
+        this.as_type.clone()
     }
 
-    fn has_attr(&self, _attribute: &str, _heap: Heap<'v>) -> bool {
+    fn has_attr(_this: &Self, _attribute: &str, _heap: Heap<'v>) -> bool {
         // TODO(nga): implement properly.
         false
     }
 
-    fn dir_attr(&self) -> Vec<String> {
-        if self.as_type.is_some() {
+    fn dir_attr(this: &Self) -> Vec<String> {
+        if this.as_type.is_some() {
             vec!["type".to_owned()]
         } else {
             Vec::new()
         }
     }
 
-    fn documentation(&self) -> DocItem {
-        self.docs.clone()
+    fn documentation(this: &Self) -> DocItem {
+        this.docs.clone()
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(self.ty.dupe())
+    fn typechecker_ty(this: &Self) -> Option<Ty> {
+        Some(this.ty.dupe())
     }
 
-    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        match &self.special_builtin_function {
+    fn at(this: &Self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        match &this.special_builtin_function {
             Some(SpecialBuiltinFunction::List) => {
                 let index = TypeCompiled::new(index, heap)?;
                 Ok(TypeCompiled::type_list_of(index, heap).to_inner())
@@ -184,18 +184,18 @@ impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
                 let elem = TypeCompiled::new(index, heap)?;
                 Ok(TypeCompiled::from_ty(&Ty::tuple(vec![elem.as_ty().clone()]), heap).to_inner())
             }
-            _ => ValueError::unsupported(self, "[]"),
+            _ => ValueError::unsupported(this, "[]"),
         }
     }
 
     fn at2(
-        &self,
+        this: &Self,
         index0: Value<'v>,
         index1: Value<'v>,
         heap: Heap<'v>,
         _private: Private,
     ) -> crate::Result<Value<'v>> {
-        match &self.special_builtin_function {
+        match &this.special_builtin_function {
             Some(SpecialBuiltinFunction::Dict) => {
                 let index0 = TypeCompiled::new(index0, heap)?;
                 let index1 = TypeCompiled::new(index1, heap)?;
@@ -220,7 +220,7 @@ impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
                     .to_inner())
                 }
             }
-            _ => ValueError::unsupported(self, "[,]"),
+            _ => ValueError::unsupported(this, "[,]"),
         }
     }
 }
@@ -282,12 +282,12 @@ pub(crate) struct NativeMethod<'v> {
 
 #[starlark_value(type = "native_method", frozen_vtable)]
 impl<'v> StarlarkValue<'v> for NativeMethod<'v> {
-    fn documentation(&self) -> DocItem {
-        self.docs.clone()
+    fn documentation(this: &Self) -> DocItem {
+        this.docs.clone()
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(self.ty.clone())
+    fn typechecker_ty(this: &Self) -> Option<Ty> {
+        Some(this.ty.clone())
     }
 }
 
@@ -330,12 +330,12 @@ impl<'v> NativeAttribute<'v> {
 
 #[starlark_value(type = "attribute", frozen_vtable)]
 impl<'v> StarlarkValue<'v> for NativeAttribute<'v> {
-    fn documentation(&self) -> DocItem {
-        let ds = self
+    fn documentation(this: &Self) -> DocItem {
+        let ds = this
             .docstring
             .as_ref()
             .and_then(|ds| DocString::from_docstring(DocStringKind::Rust, ds));
-        let typ = self.typ.clone();
+        let typ = this.typ.clone();
         DocItem::Member(DocMember::Property(DocProperty { docs: ds, typ }))
     }
 }
@@ -372,15 +372,15 @@ impl<'v> BoundMethod<'v> {
 #[starlark_value(type = FUNCTION_TYPE)]
 impl<'v> StarlarkValue<'v> for BoundMethod<'v> {
     fn invoke(
-        &self,
+        this: &Self,
         _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        self.method.function.invoke(eval, self.this, args)
+        this.method.function.invoke(eval, this.this, args)
     }
 
-    fn documentation(&self) -> DocItem {
-        self.method.to_value().documentation()
+    fn documentation(this: &Self) -> DocItem {
+        this.method.to_value().documentation()
     }
 }

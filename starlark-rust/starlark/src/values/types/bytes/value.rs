@@ -176,55 +176,55 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
     }
 
     /// repr(b"...") — byte literal syntax.
-    fn collect_repr(&self, collector: &mut String) {
-        write!(collector, "{}", self).unwrap()
+    fn collect_repr(this: &Self, collector: &mut String) {
+        write!(collector, "{}", this).unwrap()
     }
 
     /// str(b"...") — UTF-8 decode, replacing invalid sequences with U+FFFD.
-    fn collect_str(&self, collector: &mut String) {
-        collector.push_str(&String::from_utf8_lossy(&self.content))
+    fn collect_str(this: &Self, collector: &mut String) {
+        collector.push_str(&String::from_utf8_lossy(&this.content))
     }
 
-    fn to_bool(&self) -> bool {
-        !self.content.is_empty()
+    fn to_bool(this: &Self) -> bool {
+        !this.content.is_empty()
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.content.hash(hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.content.hash(hasher);
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.content == other.content
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.content == other.content
     }
 
-    fn compare(&self, other: &Self) -> Ordering {
-        self.content.cmp(&other.content)
+    fn compare(this: &Self, other: &Self) -> Ordering {
+        this.content.cmp(&other.content)
     }
 
-    fn length(&self) -> i32 {
-        self.content.len() as i32
+    fn length(this: &Self) -> i32 {
+        this.content.len() as i32
     }
 
     /// `bytes[i]` returns the integer value of byte at index `i`.
-    fn at(&self, index: i32) -> crate::Result<i32> {
-        let i = convert_index(index, self.content.len() as i32)? as usize;
-        Ok(self.content[i] as i32)
+    fn at(this: &Self, index: i32) -> crate::Result<i32> {
+        let i = convert_index(index, this.content.len() as i32)? as usize;
+        Ok(this.content[i] as i32)
     }
 
     /// `bytes[i:j:k]` returns a new bytes object.
     fn slice(
-        &self,
+        this: &Self,
         start: Option<Value<'v>>,
         stop: Option<Value<'v>>,
         stride: Option<Value<'v>>,
         heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
-        let sliced = apply_slice(&self.content, start, stop, stride)?;
+        let sliced = apply_slice(&this.content, start, stop, stride)?;
         Ok(heap.alloc(StarlarkBytes::from_vec(sliced)).to_value())
     }
 
     /// `x in bytes`: supports both int (byte value) and bytes (subsequence).
-    fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
+    fn is_in(this: &Self, other: Value<'v>) -> crate::Result<bool> {
         if let Some(n) = other.unpack_i32() {
             if n < 0 || n > 255 {
                 return Err(crate::Error::new_other(anyhow::anyhow!(
@@ -232,13 +232,13 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
                     n
                 )));
             }
-            Ok(self.content.contains(&(n as u8)))
+            Ok(this.content.contains(&(n as u8)))
         } else if let Some(other_bytes) = StarlarkBytes::from_value(other) {
             let needle = &other_bytes.content;
             if needle.is_empty() {
                 return Ok(true);
             }
-            Ok(memchr::memmem::find(&self.content, needle).is_some())
+            Ok(memchr::memmem::find(&this.content, needle).is_some())
         } else {
             Err(crate::Error::new_other(anyhow::anyhow!(
                 "argument to 'in bytes' must be an int or bytes, not '{}'",
@@ -248,19 +248,19 @@ impl<'v> StarlarkValue<'v> for StarlarkBytes {
     }
 
     /// `bytes + bytes` — concatenation.
-    fn add(&self, other: &Self) -> StarlarkBytes {
-        let mut result = Vec::with_capacity(self.content.len() + other.content.len());
-        result.extend_from_slice(&self.content);
+    fn add(this: &Self, other: &Self) -> StarlarkBytes {
+        let mut result = Vec::with_capacity(this.content.len() + other.content.len());
+        result.extend_from_slice(&this.content);
         result.extend_from_slice(&other.content);
         StarlarkBytes::from_vec(result)
     }
 
     /// `bytes * n` — repetition.
-    fn mul(&self, times: i32) -> StarlarkBytes {
-        self.repeated(times)
+    fn mul(this: &Self, times: i32) -> StarlarkBytes {
+        this.repeated(times)
     }
 
-    fn rmul(&self, times: i32) -> StarlarkBytes {
-        self.repeated(times)
+    fn rmul(this: &Self, times: i32) -> StarlarkBytes {
+        this.repeated(times)
     }
 }

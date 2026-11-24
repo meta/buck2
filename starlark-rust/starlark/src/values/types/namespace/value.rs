@@ -94,26 +94,26 @@ impl<'v> Display for Namespace<'v> {
 
 #[starlark_value(type = "namespace")]
 impl<'v> StarlarkValue<'v> for Namespace<'v> {
-    fn collect_repr_cycle(&self, collector: &mut String) {
+    fn collect_repr_cycle(_this: &Self, collector: &mut String) {
         collector.push_str("namespace(...)");
     }
 
-    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.member(Hashed::new(attribute))
+    fn get_attr(this: &Self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.member(Hashed::new(attribute))
     }
 
-    fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.member(attribute)
+    fn get_attr_hashed(this: &Self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.member(attribute)
     }
 
-    fn dir_attr(&self) -> Vec<String> {
-        self.fields.keys().map(|x| x.as_str().to_owned()).collect()
+    fn dir_attr(this: &Self) -> Vec<String> {
+        this.fields.keys().map(|x| x.as_str().to_owned()).collect()
     }
 
-    fn documentation(&self) -> DocItem {
+    fn documentation(this: &Self) -> DocItem {
         DocItem::Module(DocModule {
             docs: None,
-            members: self
+            members: this
                 .fields
                 .iter()
                 .filter(|(_, v)| !v.doc_hidden)
@@ -129,9 +129,9 @@ impl<'v> StarlarkValue<'v> for Namespace<'v> {
         })
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
+    fn typechecker_ty(this: &Self) -> Option<Ty> {
         Some(Ty::custom(TyNamespace {
-            fields: self
+            fields: this
                 .fields
                 .iter()
                 .map(|(name, value)| (ArcStr::from(name.as_str()), Ty::of_value(value.value)))

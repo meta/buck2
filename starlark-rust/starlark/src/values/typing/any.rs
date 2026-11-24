@@ -47,7 +47,7 @@ pub(crate) struct TypingAny;
 
 #[starlark_value(type = "typing.Any", alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for TypingAny {
-    fn documentation(&self) -> DocItem {
+    fn documentation(_this: &Self) -> DocItem {
         DocItem::Type(DocType {
             docs: DocString::from_docstring(
                 crate::docs::DocStringKind::Rust,
@@ -63,7 +63,7 @@ See also [`typing.Any` in the Python documentation][1].
         })
     }
 
-    fn eval_type(&self) -> Option<Ty> {
+    fn eval_type(_this: &Self) -> Option<Ty> {
         Some(Ty::any())
     }
 }

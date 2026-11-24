@@ -356,83 +356,83 @@ impl<'v> StarlarkType<'v> for EnumTypeView<'v> {
     // TODO(nga): replace `Color("RED")` with `Color.RED`.
     //   https://www.internalfb.com/tasks/?t=183515013
     fn invoke(
-        &self,
+        this: Self,
         _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
         args.no_named_args()?;
         let val = args.positional1(eval.heap())?;
-        Ok(self.as_dyn().construct(val)?.to_value())
+        Ok(this.as_dyn().construct(val)?.to_value())
     }
 
-    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.as_dyn()
+    fn get_attr(this: Self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.as_dyn()
             .elements()
             .get(&ValueStr(attribute))
             .map(|v| v.to_value())
     }
 
-    fn dir_attr(&self) -> Vec<String> {
+    fn dir_attr(this: Self) -> Vec<String> {
         // The unwrap here is safe because the new() method requires the elements be
         // of type StringValue<'v>
-        self.as_dyn()
+        this.as_dyn()
             .elements()
             .keys()
             .map(|key| key.to_value().unpack_str().unwrap().to_owned())
             .collect()
     }
 
-    fn length(&self) -> i32 {
-        self.as_dyn().elements().len() as i32
+    fn length(this: Self) -> i32 {
+        this.as_dyn().elements().len() as i32
     }
 
-    fn at(&self, index: i32) -> crate::Result<Value<'v>> {
-        let elements = self.as_dyn().elements();
+    fn at(this: Self, index: i32) -> crate::Result<Value<'v>> {
+        let elements = this.as_dyn().elements();
         let i = convert_index(index, elements.len() as i32)? as usize;
         // Must be in the valid range since convert_index checks that, so just unwrap
         Ok(elements.get_index(i).map(|x| *x.1).unwrap().to_value())
     }
 
-    unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(_this: Self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(me)
     }
 
-    unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        let len = self.as_dyn().elements().len();
+    unsafe fn iter_size_hint(this: Self, index: usize) -> (usize, Option<usize>) {
+        let len = this.as_dyn().elements().len();
         debug_assert!(index <= len);
         let rem = len - index;
         (rem, Some(rem))
     }
 
-    unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.as_dyn()
+    unsafe fn iter_next(this: Self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.as_dyn()
             .elements()
             .values()
             .nth(index)
             .map(|v| v.to_value())
     }
 
-    unsafe fn iter_stop(&self) {}
+    unsafe fn iter_stop(_this: Self) {}
 
     fn get_methods() -> Option<&'static Methods> {
         Some(ENUM_TYPE_METHODS.methods())
     }
 
-    fn eval_type(&self) -> Option<Ty> {
-        self.as_dyn().ty_enum_data().map(|t| t.ty_enum_value.dupe())
+    fn eval_type(this: Self) -> Option<Ty> {
+        this.as_dyn().ty_enum_data().map(|t| t.ty_enum_value.dupe())
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        self.as_dyn().ty_enum_data().map(|t| t.ty_enum_type.dupe())
+    fn typechecker_ty(this: Self) -> Option<Ty> {
+        this.as_dyn().ty_enum_data().map(|t| t.ty_enum_type.dupe())
     }
 
     fn export_as(
-        &self,
+        this: Self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<()> {
-        self.as_dyn().export_as(variable_name)
+        this.as_dyn().export_as(variable_name)
     }
 }
 

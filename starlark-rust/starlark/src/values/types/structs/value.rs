@@ -140,37 +140,37 @@ impl<'v> Display for Struct<'v> {
 
 #[starlark_value(type = Struct::TYPE)]
 impl<'v> StarlarkValue<'v> for Struct<'v> {
-    fn collect_repr_cycle(&self, collector: &mut String) {
+    fn collect_repr_cycle(_this: &Self, collector: &mut String) {
         collector.push_str("struct(...)");
     }
 
-    fn equals(&self, other: &Self) -> crate::Result<bool> {
-        equals_small_map(&self.fields, &other.fields, |x, y| x.equals(*y))
+    fn equals(this: &Self, other: &Self) -> crate::Result<bool> {
+        equals_small_map(&this.fields, &other.fields, |x, y| x.equals(*y))
     }
 
-    fn compare(&self, other: &Self) -> crate::Result<Ordering> {
+    fn compare(this: &Self, other: &Self) -> crate::Result<Ordering> {
         compare_small_map(
-            &self.fields,
+            &this.fields,
             &other.fields,
             |k| k.as_str(),
             |x, y| x.compare(*y),
         )
     }
 
-    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.field(Hashed::new(attribute))
+    fn get_attr(this: &Self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.field(Hashed::new(attribute))
     }
 
-    fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.field(attribute)
+    fn get_attr_hashed(this: &Self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.field(attribute)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) -> crate::Result<()> {
         // Must use unordered hash because equality is unordered,
         // and `a = b  =>  hash(a) = hash(b)`.
         let mut unordered_hasher = UnorderedHasher::new();
 
-        for (k, v) in self.fields.iter_hashed() {
+        for (k, v) in this.fields.iter_hashed() {
             // Should hash key and value together, so two structs
             // `a=1 b=2` and `a=2 b=1` would produce different hashes.
             let mut entry_hasher = StarlarkHasher::new();
@@ -184,16 +184,16 @@ impl<'v> StarlarkValue<'v> for Struct<'v> {
         Ok(())
     }
 
-    fn dir_attr(&self) -> Vec<String> {
-        self.fields.keys().map(|x| x.as_str().to_owned()).collect()
+    fn dir_attr(this: &Self) -> Vec<String> {
+        this.fields.keys().map(|x| x.as_str().to_owned()).collect()
     }
 
-    fn documentation(&self) -> DocItem {
+    fn documentation(this: &Self) -> DocItem {
         // This treats structs as being value-like, and intentionally generates bad docs in the case
         // of namespace-like usage. See
         // <https://fb.workplace.com/groups/starlark/permalink/1463680027654154/> for some
         // additional discussion
-        let typ = self.self_ty();
+        let typ = this.self_ty();
         DocItem::Member(DocMember::Property(DocProperty { docs: None, typ }))
     }
 
@@ -201,8 +201,8 @@ impl<'v> StarlarkValue<'v> for Struct<'v> {
         Ty::any_struct()
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        Some(self.self_ty())
+    fn typechecker_ty(this: &Self) -> Option<Ty> {
+        Some(this.self_ty())
     }
 }
 

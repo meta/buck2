@@ -334,26 +334,25 @@ impl<'v> RecordTypeView<'v> {
 
 #[starlark_value(type = FUNCTION_TYPE)]
 impl<'v> StarlarkType<'v> for RecordTypeView<'v> {
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
+    fn write_hash(this: Self, hasher: &mut StarlarkHasher) {
         // Record types compare by identity, so the identity is enough, and unlike the fields it
         // cannot fail to hash (a field default may be a list or a dict).
-        with_record_type!(self, |r| r.id.hash(hasher));
+        with_record_type!(&this, |r| r.id.hash(hasher));
     }
 
     fn invoke(
-        &self,
+        this: Self,
         me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        let Some(ty_record_data) = self.ty_record_data() else {
+        let Some(ty_record_data) = this.ty_record_data() else {
             return Err(crate::Error::new_other(
                 RecordTypeError::RecordTypeNotAssigned,
             ));
         };
 
-        let this = me;
-        let fields = self.fields();
+        let fields = this.fields();
 
         ParametersSpec::<Value<'v>>::from_prototype(
             ty_record_data.parameter_spec_prototype.clone(),
@@ -385,7 +384,7 @@ impl<'v> StarlarkType<'v> for RecordTypeView<'v> {
                         }
                     };
                 }
-                Ok(eval.heap().alloc_record(this, values))
+                Ok(eval.heap().alloc_record(me, values))
             })
         })
     }
@@ -397,20 +396,20 @@ impl<'v> StarlarkType<'v> for RecordTypeView<'v> {
         Some(RECORD_TYPE_METHODS.methods())
     }
 
-    fn eval_type(&self) -> Option<Ty> {
-        self.ty_record_data().map(|t| t.ty_record.dupe())
+    fn eval_type(this: Self) -> Option<Ty> {
+        this.ty_record_data().map(|t| t.ty_record.dupe())
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        self.ty_record_data().map(|t| t.ty_record_type.dupe())
+    fn typechecker_ty(this: Self) -> Option<Ty> {
+        this.ty_record_data().map(|t| t.ty_record_type.dupe())
     }
 
     fn export_as(
-        &self,
+        this: Self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<()> {
-        with_record_type!(self, |r| r.export_as(variable_name))
+        with_record_type!(&this, |r| r.export_as(variable_name))
     }
 }
 

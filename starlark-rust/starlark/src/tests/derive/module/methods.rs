@@ -71,7 +71,7 @@ impl<'v> StarlarkValue<'v> for Applaud {
     }
 
     fn invoke(
-        &self,
+        _this: &Self,
         _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,

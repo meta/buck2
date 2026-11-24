@@ -52,10 +52,10 @@ starlark_simple_value!(BytesElems);
 
 #[starlark_value(type = "bytes.elems")]
 impl<'v> StarlarkValue<'v> for BytesElems {
-    unsafe fn iterate(&self, _me: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(this: &Self, _me: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(heap
             .alloc_tuple_iter(
-                self.bytes
+                this.bytes
                     .as_bytes()
                     .iter()
                     .map(|&b| heap.alloc(i32::from(b))),

@@ -739,17 +739,16 @@ impl<'v> Def<'v> {
 
 #[starlark_value(type = FUNCTION_TYPE, frozen_vtable, alloc = complex)]
 impl<'v> StarlarkValue<'v> for Def<'v> {
-    fn name_for_call_stack(this: &Self, _me: Value<'v>) -> String {
+    fn name_for_call_stack(this: &Self) -> String {
         this.def_info.value.name.as_str().to_owned()
     }
 
     fn invoke(
-        this: &Self,
-        me: Value<'v>,
+        this: ValueTyped<'v, Self>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        this.invoke_impl(me, &args.0, eval)
+        this.invoke_impl(this.to_value(), &args.0, eval)
     }
 
     fn documentation(this: &Self) -> DocItem {

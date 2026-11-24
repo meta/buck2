@@ -204,8 +204,8 @@ impl<'v> StarlarkValue<'v> for Tuple<'v> {
             .to_value())
     }
 
-    unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(me)
+    unsafe fn iterate(this: ValueOf<'v, Self>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(this.to_value())
     }
 
     unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {

@@ -645,7 +645,6 @@ impl ProviderCodegen {
                 {
                     fn invoke(
                         _this: &Self,
-                        _me: starlark::values::Value<'v>,
                         args: &starlark::eval::Arguments<'v, '_>,
                         eval: &mut starlark::eval::Evaluator<'v, '_, '_>,
                     ) -> starlark::Result<starlark::values::Value<'v>> {

@@ -72,7 +72,6 @@ impl<'v> StarlarkValue<'v> for Applaud {
 
     fn invoke(
         _this: &Self,
-        _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {

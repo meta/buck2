@@ -406,7 +406,6 @@ mod tests {
 
         fn invoke(
             _this: &Self,
-            _me: Value<'v>,
             _args: &Arguments<'v, '_>,
             _eval: &mut Evaluator<'v, '_, '_>,
         ) -> crate::Result<Value<'v>> {

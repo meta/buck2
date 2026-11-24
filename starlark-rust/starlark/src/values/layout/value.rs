@@ -858,7 +858,7 @@ impl<'v> Value<'v> {
     }
 
     pub(crate) fn name_for_call_stack(self) -> String {
-        self.get_ref().name_for_call_stack(self)
+        self.get_ref().name_for_call_stack()
     }
 
     /// Convert the value to JSON.
@@ -891,7 +891,7 @@ impl<'v> Value<'v> {
     /// Produce an iterable from a value.
     #[inline]
     pub fn iterate(self, heap: Heap<'v>) -> crate::Result<StarlarkIterator<'v>> {
-        let iter = self.get_ref().iterate(self, heap)?;
+        let iter = self.get_ref().iterate(heap)?;
         Ok(StarlarkIterator::new(iter, heap))
     }
 

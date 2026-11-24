@@ -298,10 +298,10 @@ impl<'v> StarlarkType<'v> for SetView<'v> {
         Some(SET_METHODS.methods())
     }
 
-    unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         unsafe {
             with_set!(self, |s| s.iter_start())?;
-            Ok(me)
+            Ok((*self).into())
         }
     }
 

@@ -391,8 +391,8 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     }
 
     /// String used when printing call stack. `repr(self)` by default.
-    fn name_for_call_stack(_this: Self::Get, me: Value<'v>) -> String {
-        me.to_repr()
+    fn name_for_call_stack(this: Self::Get) -> String {
+        this.into().to_repr()
     }
 
     /// Convert self to a boolean, as returned by the bool() function.
@@ -518,13 +518,10 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// Directly invoke a function.
     /// The number of `named` and `names` arguments are guaranteed to be equal.
     ///
-    /// # Parameters
-    ///
-    /// * `me` - `self` as the [`Value`] it is stored in, for putting on the call stack or in
-    ///   other values.
+    /// A body that puts the function itself on the call stack or into another value takes it
+    /// as a receiver that is the value: `this: ValueOf<'v, Self>`, or `ValueTyped<'v, Self>`.
     fn invoke(
         _this: Self::Get,
-        _me: Value<'v>,
         _args: &Arguments<'v, '_>,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
@@ -633,7 +630,7 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     /// So implementations of iterators may acquire mutation lock in `iterate`,
     /// assume that it is held in `iter_next`, and release it in `iter_stop`.
     /// Obviously, there are no such guarantees if these functions are called directly.
-    unsafe fn iterate(this: Self::Get, _me: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(this: Self::Get, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         Ok(heap
             .alloc_tuple(&Self::iterate_collect(this, heap)?)
             .to_value())

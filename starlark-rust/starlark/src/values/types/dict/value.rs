@@ -541,10 +541,10 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
             .contains_key_hashed_by_value(other.get_hashed()?))
     }
 
-    unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         unsafe {
             with_dict!(self, |d| d.iter_start())?;
-            Ok(me)
+            Ok((*self).into())
         }
     }
 

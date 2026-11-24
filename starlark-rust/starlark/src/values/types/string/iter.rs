@@ -81,7 +81,7 @@ pub(crate) fn iterate_codepoints<'v>(
 
 #[starlark_value(type = "iterator")]
 impl<'v> StarlarkValue<'v> for StringIterable<'v> {
-    unsafe fn iterate(this: &Self, _me: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+    unsafe fn iterate(this: &Self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         // Lazy implementation: we allocate a tuple and then iterate over it.
         let iter = if this.produce_char {
             heap.alloc_tuple_iter(this.string.as_str().chars().map(|c| heap.alloc(c)))

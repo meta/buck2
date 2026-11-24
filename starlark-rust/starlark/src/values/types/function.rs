@@ -127,7 +127,6 @@ pub(crate) struct NativeFunction<'v> {
 impl<'v> StarlarkValue<'v> for NativeFunction<'v> {
     fn invoke(
         this: &Self,
-        _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
@@ -373,7 +372,6 @@ impl<'v> BoundMethod<'v> {
 impl<'v> StarlarkValue<'v> for BoundMethod<'v> {
     fn invoke(
         this: &Self,
-        _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {

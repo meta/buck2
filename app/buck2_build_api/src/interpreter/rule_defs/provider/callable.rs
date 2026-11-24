@@ -483,7 +483,6 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
 
     fn invoke(
         this: Self,
-        _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {

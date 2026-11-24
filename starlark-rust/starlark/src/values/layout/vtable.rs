@@ -475,7 +475,7 @@ impl<'v> AValueDynFull<'v> {
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
-        (self.avalue.vtable.starlark_value.invoke)(self.value, self.value, args, eval)
+        (self.avalue.vtable.starlark_value.invoke)(self.value, args, eval)
     }
 
     #[inline]
@@ -572,8 +572,8 @@ impl<'v> AValueDynFull<'v> {
     }
 
     #[inline]
-    pub(crate) fn iterate(self, me: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        (self.avalue.vtable.starlark_value.iterate)(self.value, me, heap)
+    pub(crate) fn iterate(self, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        (self.avalue.vtable.starlark_value.iterate)(self.value, heap)
     }
 
     #[inline]
@@ -682,8 +682,8 @@ impl<'v> AValueDynFull<'v> {
     }
 
     #[inline]
-    pub(crate) fn name_for_call_stack(self, me: Value<'v>) -> String {
-        (self.avalue.vtable.starlark_value.name_for_call_stack)(self.value, me)
+    pub(crate) fn name_for_call_stack(self) -> String {
+        (self.avalue.vtable.starlark_value.name_for_call_stack)(self.value)
     }
 
     #[inline]

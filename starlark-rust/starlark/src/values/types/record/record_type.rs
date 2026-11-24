@@ -342,7 +342,6 @@ impl<'v> StarlarkType<'v> for RecordTypeView<'v> {
 
     fn invoke(
         this: Self,
-        me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
@@ -384,7 +383,7 @@ impl<'v> StarlarkType<'v> for RecordTypeView<'v> {
                         }
                     };
                 }
-                Ok(eval.heap().alloc_record(me, values))
+                Ok(eval.heap().alloc_record(this.into(), values))
             })
         })
     }

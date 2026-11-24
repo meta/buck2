@@ -188,13 +188,12 @@ impl<'v> StarlarkDeserialize<'v> for Partial<'v> {
 
 #[starlark_value(type = FUNCTION_TYPE)]
 impl<'v> StarlarkValue<'v> for Partial<'v> {
-    fn name_for_call_stack(_this: &Self, _me: Value<'v>) -> String {
+    fn name_for_call_stack(_this: &Self) -> String {
         "partial".to_owned()
     }
 
     fn invoke(
         this: &Self,
-        _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {

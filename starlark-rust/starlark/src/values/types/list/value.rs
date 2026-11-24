@@ -476,8 +476,8 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
         Ok(heap.alloc_list(&res).to_value())
     }
 
-    unsafe fn iterate(&self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        unsafe { Ok(with_list!(self, |l| l.new_iter(me))) }
+    unsafe fn iterate(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        unsafe { Ok(with_list!(self, |l| l.new_iter((*self).into()))) }
     }
 
     unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {

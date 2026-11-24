@@ -160,7 +160,6 @@ impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
 
     fn invoke(
         this: Self,
-        me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
@@ -170,7 +169,7 @@ impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
                 return Err(buck2_error::Error::from(DynamicActionCallableError::NotFrozen).into());
             }
         };
-        let me = FrozenValueTyped::new_err(me)?;
+        let me = FrozenValueTyped::new_err(this.to_value())?;
         let attr_values: DynamicAttrValues<'v> =
             this.signature.parser(args, eval, |parser, _eval| {
                 let mut attr_values = Vec::with_capacity(this.attrs.len());

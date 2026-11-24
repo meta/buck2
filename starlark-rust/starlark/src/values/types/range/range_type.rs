@@ -33,6 +33,7 @@ use crate::values::Heap;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
 use crate::values::index::convert_index;
 use crate::values::index::convert_slice_indices;
 
@@ -220,8 +221,8 @@ impl<'v> StarlarkValue<'v> for Range {
         Ok(heap.alloc(range).to_value())
     }
 
-    unsafe fn iterate(_this: &Self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(me)
+    unsafe fn iterate(this: ValueOf<'v, Self>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(this.to_value())
     }
 
     unsafe fn iter_next(this: &Self, index: usize, heap: Heap<'v>) -> Option<Value<'v>> {

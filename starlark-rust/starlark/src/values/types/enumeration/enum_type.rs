@@ -357,7 +357,6 @@ impl<'v> StarlarkType<'v> for EnumTypeView<'v> {
     //   https://www.internalfb.com/tasks/?t=183515013
     fn invoke(
         this: Self,
-        _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> crate::Result<Value<'v>> {
@@ -394,8 +393,8 @@ impl<'v> StarlarkType<'v> for EnumTypeView<'v> {
         Ok(elements.get_index(i).map(|x| *x.1).unwrap().to_value())
     }
 
-    unsafe fn iterate(_this: Self, me: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        Ok(me)
+    unsafe fn iterate(this: Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        Ok(this.into())
     }
 
     unsafe fn iter_size_hint(this: Self, index: usize) -> (usize, Option<usize>) {

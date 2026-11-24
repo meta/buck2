@@ -1243,7 +1243,7 @@ impl<'v> BcInstr<'v> for InstrIter {
         ),
     ) -> InstrControl<'v, 'b> {
         let over = frame.get_bc_slot(*over);
-        let iter = match over.get_ref().iterate(over, eval.heap()) {
+        let iter = match over.get_ref().iterate(eval.heap()) {
             Ok(iter) => iter,
             Err(e) => return InstrControl::Err(e),
         };

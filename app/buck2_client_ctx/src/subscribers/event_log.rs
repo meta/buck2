@@ -14,46 +14,53 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use buck2_common::argv::SanitizedArgv;
+use buck2_event_log::write::EventLogFiles;
 use buck2_event_log::write::WriteEventLog;
 use buck2_events::BuckEvent;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPathBuf;
 use buck2_fs::working_dir::AbsWorkingDir;
 
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::ticker::Tick;
 
-/// This EventLog lets us to events emitted by Buck and log them to a file. The events are
-/// serialized as JSON and logged one per line.
+/// Writes the events of a command to its event log, and to the copies of the log that the
+/// command's arguments ask for.
+///
+/// The log is opened before the copies: opening it removes the old logs of its directory, and
+/// that is every file there, so a copy in that directory has to be created after. The copies
+/// are ended before the log, which waits for its upload when it is ended.
 pub(crate) struct EventLog {
-    writer: WriteEventLog,
+    log: WriteEventLog,
+    copies: Option<WriteEventLog>,
 }
 
 impl EventLog {
+    /// `log` is the command's event log, and `copies` its copies, if any.
     pub(crate) fn new(
-        logdir: AbsNormPathBuf,
+        log: EventLogFiles,
+        copies: Option<EventLogFiles>,
         working_dir: AbsWorkingDir,
-        extra_path: Option<AbsPathBuf>,
-        extra_user_event_log_path: Option<AbsPathBuf>,
         sanitized_argv: SanitizedArgv,
-        command_name: String,
         start_time: SystemTime,
         log_size_counter_bytes: Option<Arc<AtomicU64>>,
-        retained_event_logs: usize,
     ) -> EventLog {
-        Self {
-            writer: WriteEventLog::new(
-                logdir,
-                working_dir,
-                extra_path,
-                extra_user_event_log_path,
-                sanitized_argv,
-                command_name,
+        // Few commands have copies: only then is anything cloned.
+        let copies = copies.map(|files| {
+            WriteEventLog::new(
+                files,
+                working_dir.clone(),
+                sanitized_argv.clone(),
                 start_time,
-                log_size_counter_bytes,
-                retained_event_logs,
-            ),
-        }
+                log_size_counter_bytes.clone(),
+            )
+        });
+        let log = WriteEventLog::new(
+            log,
+            working_dir,
+            sanitized_argv,
+            start_time,
+            log_size_counter_bytes,
+        );
+        Self { log, copies }
     }
 }
 
@@ -64,7 +71,11 @@ impl EventSubscriber for EventLog {
     }
 
     async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
-        Ok(self.writer.write_events(events).await?)
+        self.log.write_events(events).await?;
+        if let Some(copies) = &mut self.copies {
+            copies.write_events(events).await?;
+        }
+        Ok(())
     }
 
     async fn handle_tailer_stderr(&mut self, _stderr: &str) -> buck2_error::Result<()> {
@@ -85,17 +96,28 @@ impl EventSubscriber for EventLog {
         &mut self,
         result: &buck2_cli_proto::CommandResult,
     ) -> buck2_error::Result<()> {
-        Ok(self.writer.write_result(result).await?)
+        self.log.write_result(result).await?;
+        if let Some(copies) = &mut self.copies {
+            copies.write_result(result).await?;
+        }
+        Ok(())
     }
 
     /// Flush all log files during on tick to avoid buffering data in memory which we might lose if
     /// we hit an error.
     async fn tick(&mut self, _tick: &Tick) -> buck2_error::Result<()> {
-        Ok(self.writer.flush_files().await?)
+        self.log.flush_files().await?;
+        if let Some(copies) = &mut self.copies {
+            copies.flush_files().await?;
+        }
+        Ok(())
     }
 
     async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
-        self.writer.exit().await;
+        if let Some(copies) = &mut self.copies {
+            copies.exit().await;
+        }
+        self.log.exit().await;
         Ok(())
     }
 }

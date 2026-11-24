@@ -17,6 +17,7 @@ use std::time::SystemTime;
 use buck2_cli_proto::*;
 use buck2_common::argv::SanitizedArgv;
 use buck2_error::BuckErrorContext;
+use buck2_error::internal_error;
 use buck2_events::BuckEvent;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPathBuf;
@@ -44,55 +45,53 @@ use crate::writer::EventLogType;
 use crate::writer::NamedEventLogWriter;
 use crate::writer::SerializeForLog;
 
-enum LogWriterState {
-    Unopened {
+/// The files that a `WriteEventLog` writes.
+pub enum EventLogFiles {
+    /// The command's event log in `logdir`, which is uploaded while it is written. The oldest
+    /// logs in `logdir` are removed to leave `retained_event_logs` with this one.
+    Command {
         logdir: AbsNormPathBuf,
-        extra_path: Option<AbsPathBuf>,
-        extra_user_event_log_path: Option<AbsPathBuf>,
+        command_name: String,
+        retained_event_logs: usize,
     },
-    Opened {
-        writers: Vec<NamedEventLogWriter>,
+    /// Copies of the event log at paths the user chose: of all of it, and of its user events.
+    Copies {
+        event_log: Option<AbsPathBuf>,
+        user_event_log: Option<AbsPathBuf>,
     },
+}
+
+enum LogWriterState {
+    Unopened { files: EventLogFiles },
+    Opened { writers: Vec<NamedEventLogWriter> },
     Closed,
 }
 
 pub struct WriteEventLog {
     state: LogWriterState,
     sanitized_argv: SanitizedArgv,
-    command_name: String,
     working_dir: AbsWorkingDir,
     start_time: SystemTime,
     /// Allocation cache. Must be cleaned before use.
     buf: Vec<u8>,
     log_size_counter_bytes: Option<Arc<AtomicU64>>,
-    retained_event_logs: usize,
 }
 
 impl WriteEventLog {
     pub fn new(
-        logdir: AbsNormPathBuf,
+        files: EventLogFiles,
         working_dir: AbsWorkingDir,
-        extra_path: Option<AbsPathBuf>,
-        extra_user_event_log_path: Option<AbsPathBuf>,
         sanitized_argv: SanitizedArgv,
-        command_name: String,
         start_time: SystemTime,
         log_size_counter_bytes: Option<Arc<AtomicU64>>,
-        retained_event_logs: usize,
     ) -> Self {
         Self {
-            state: LogWriterState::Unopened {
-                logdir,
-                extra_path,
-                extra_user_event_log_path,
-            },
+            state: LogWriterState::Unopened { files },
             sanitized_argv,
-            command_name,
             working_dir,
             start_time,
             buf: Vec::new(),
             log_size_counter_bytes,
-            retained_event_logs,
         }
     }
 
@@ -150,73 +149,80 @@ impl WriteEventLog {
         }
     }
 
-    async fn ensure_log_writers_opened(&mut self, event: &BuckEvent) -> buck2_error::Result<()> {
-        let (logdir, maybe_extra_path, maybe_extra_user_event_log_path) = match &self.state {
-            LogWriterState::Unopened {
+    /// Opens the log files and writes their header, when the first event arrives.
+    async fn open_log_writers(&mut self, event: &BuckEvent) -> buck2_error::Result<()> {
+        let LogWriterState::Unopened { files } = &self.state else {
+            return Err(internal_error!("Event log is opened once"));
+        };
+        let writers = match files {
+            EventLogFiles::Command {
                 logdir,
-                extra_path,
-                extra_user_event_log_path,
-            } => (logdir, extra_path, extra_user_event_log_path),
-            LogWriterState::Opened { .. } => return Ok(()),
-            LogWriterState::Closed => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
-                    "Received events after logs were closed"
-                ));
+                command_name,
+                retained_event_logs,
+            } => {
+                tokio::fs::create_dir_all(logdir)
+                    .await
+                    .with_buck_error_context(|| {
+                        format!("Error creating event log directory: `{logdir}`")
+                    })?;
+                remove_old_logs(logdir, *retained_event_logs).await;
+
+                let encoding = Encoding::PROTO_ZSTD;
+                let file_name = &get_logfile_name(event, encoding, command_name)?;
+                let path = EventLogPathBuf {
+                    path: logdir.as_abs_path().join(file_name),
+                    encoding,
+                };
+                vec![
+                    start_persist_event_log_subprocess(
+                        path,
+                        event.trace_id()?.clone(),
+                        self.log_size_counter_bytes.clone(),
+                    )
+                    .await?,
+                ]
+            }
+            EventLogFiles::Copies {
+                event_log,
+                user_event_log,
+            } => {
+                let mut writers = Vec::new();
+                // Gzipped JSON if the path has no extension that says otherwise.
+                if let Some(event_log) = event_log {
+                    writers.push(
+                        open_event_log_for_writing(
+                            EventLogPathBuf::infer_opt(event_log)?.unwrap_or_else(|| {
+                                EventLogPathBuf {
+                                    path: event_log.clone(),
+                                    encoding: Encoding::JSON_GZIP,
+                                }
+                            }),
+                            self.log_size_counter_bytes.clone(),
+                            EventLogType::System,
+                        )
+                        .await?,
+                    );
+                }
+                // JSON lines with no compression if the path has no extension that says
+                // otherwise.
+                if let Some(user_event_log) = user_event_log {
+                    writers.push(
+                        open_event_log_for_writing(
+                            EventLogPathBuf::infer_opt(user_event_log)?.unwrap_or_else(|| {
+                                EventLogPathBuf {
+                                    path: user_event_log.clone(),
+                                    encoding: Encoding::JSON,
+                                }
+                            }),
+                            self.log_size_counter_bytes.clone(),
+                            EventLogType::User,
+                        )
+                        .await?,
+                    );
+                }
+                writers
             }
         };
-        tokio::fs::create_dir_all(logdir)
-            .await
-            .with_buck_error_context(|| {
-                format!("Error creating event log directory: `{logdir}`")
-            })?;
-        remove_old_logs(logdir, self.retained_event_logs).await;
-
-        let encoding = Encoding::PROTO_ZSTD;
-        let file_name = &get_logfile_name(event, encoding, &self.command_name)?;
-        let path = EventLogPathBuf {
-            path: logdir.as_abs_path().join(file_name),
-            encoding,
-        };
-        let writer = start_persist_event_log_subprocess(
-            path,
-            event.trace_id()?.clone(),
-            self.log_size_counter_bytes.clone(),
-        )
-        .await?;
-        let mut writers = vec![writer];
-
-        // Also open the user's log file, if any as provided, with no encoding.
-        if let Some(extra_path) = maybe_extra_path {
-            writers.push(
-                open_event_log_for_writing(
-                    EventLogPathBuf::infer_opt(extra_path)?.unwrap_or_else(|| EventLogPathBuf {
-                        path: extra_path.clone(),
-                        encoding: Encoding::JSON_GZIP,
-                    }),
-                    self.log_size_counter_bytes.clone(),
-                    EventLogType::System,
-                )
-                .await?,
-            );
-        }
-
-        // Also open the user's simple log file, if any as provided, json-line formatted with no compression if no extensions are detected.
-        if let Some(extra_user_event_log_path) = maybe_extra_user_event_log_path {
-            writers.push(
-                open_event_log_for_writing(
-                    EventLogPathBuf::infer_opt(extra_user_event_log_path)?.unwrap_or_else(|| {
-                        EventLogPathBuf {
-                            path: extra_user_event_log_path.clone(),
-                            encoding: Encoding::JSON,
-                        }
-                    }),
-                    self.log_size_counter_bytes.clone(),
-                    EventLogType::User,
-                )
-                .await?,
-            );
-        }
 
         self.state = LogWriterState::Opened { writers };
         self.log_invocation(event.trace_id()?).await
@@ -337,20 +343,17 @@ async fn open_event_log_for_writing(
 
 impl WriteEventLog {
     pub async fn write_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
-        let mut event_refs = Vec::new();
-        let mut first = true;
-        for event in events {
-            if first {
-                self.ensure_log_writers_opened(event).await?;
-                first = false;
-            }
-
-            event_refs.push(StreamValueForWrite::Event(event.event()));
-        }
-
-        if event_refs.is_empty() {
+        let Some(first) = events.first() else {
             return Ok(());
+        };
+        if let LogWriterState::Unopened { .. } = &self.state {
+            self.open_log_writers(first).await?;
         }
+
+        let event_refs: Vec<_> = events
+            .iter()
+            .map(|event| StreamValueForWrite::Event(event.event()))
+            .collect();
 
         self.write_ln(&event_refs).await
     }
@@ -596,12 +599,10 @@ mod tests {
                     expanded_argv: ExpandedArgv::from_literals(vec!["buck2".to_owned()]),
                 }
                 .no_need_to_sanitize(),
-                command_name: "testtest".to_owned(),
                 working_dir: AbsWorkingDir::current_dir()?,
+                start_time: SystemTime::UNIX_EPOCH,
                 buf: Vec::new(),
                 log_size_counter_bytes: None,
-                start_time: SystemTime::UNIX_EPOCH,
-                retained_event_logs: 5,
             })
         }
     }

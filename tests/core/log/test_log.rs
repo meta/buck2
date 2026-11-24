@@ -74,6 +74,32 @@ async fn test_last_log_all(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A copy of the event log can be in the log directory, where the command removes old logs to
+/// make room for its own log. Here it keeps none of them.
+#[buck_test]
+async fn test_copy_of_the_event_log_in_the_log_directory(buck: &Buck) -> anyhow::Result<()> {
+    let log_dir = buck.cwd().join("buck-out").join("v2").join("log");
+    let copy = log_dir.join("copy.json-lines");
+    let copy_arg = copy.to_string_lossy();
+
+    buck.uquery(&[
+        "--setting=event_log.retained_logs=1",
+        "--event-log",
+        &copy_arg,
+        "//:EEE",
+    ])
+    .await?;
+
+    assert!(copy.exists(), "The copy is where it was asked for");
+    let copy = std::fs::read_to_string(&copy)?;
+    let last: Value = serde_json::from_str(copy.lines().last().unwrap())?;
+    assert!(
+        last.get("Result").is_some(),
+        "The copy ends with the result"
+    );
+    Ok(())
+}
+
 #[buck_test]
 async fn test_log_command_with_trace_id(buck: &Buck, tmp_path: &Path) -> anyhow::Result<()> {
     let build_file_path = tmp_path.join("b");

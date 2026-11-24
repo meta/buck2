@@ -19,6 +19,7 @@ use buck2_common::invocation_paths::DEFAULT_ISOLATION_DIR;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_error::ErrorTag;
 use buck2_error::ExitCode;
+use buck2_event_log::write::EventLogFiles;
 use buck2_event_observer::span_tracker::EventTimestamp;
 use buck2_settings::BuckconfigSource;
 use buck2_settings::BuildMetrics;
@@ -123,9 +124,14 @@ fn update_events_ctx<T: StreamingCommand>(
         }
 
         if !event_log_opts.no_event_log {
-            let event_log_subscriber =
-                get_event_log_subscriber(cmd, ctx, log_size_counter_bytes.clone(), paths);
-            subscribers.push(event_log_subscriber);
+            subscribers.push(Box::new(EventLog::new(
+                command_event_log::<T>(ctx, paths),
+                event_log_copies(cmd, ctx),
+                ctx.working_dir.clone(),
+                cmd.sanitize_argv(ctx.argv.clone()),
+                ctx.start_time,
+                log_size_counter_bytes.clone(),
+            )));
         }
     }
     if let Some(build_id_writer) = get_build_id_writer(cmd.event_log_opts(), ctx) {
@@ -338,35 +344,33 @@ impl<T: StreamingCommand> BuckSubcommand for T {
     }
 }
 
-/// Given the command arguments, conditionally create an event log.
-fn get_event_log_subscriber<T: StreamingCommand>(
-    cmd: &T,
+/// The event log of the command, in the log directory.
+fn command_event_log<T: StreamingCommand>(
     ctx: &ClientCommandContext,
-    log_size_counter_bytes: Option<Arc<AtomicU64>>,
     paths: &InvocationPaths,
-) -> Box<dyn EventSubscriber> {
-    let event_log_opts = cmd.event_log_opts();
-    let sanitized_argv = cmd.sanitize_argv(ctx.argv.clone());
-    let user_event_log = cmd.user_event_log();
-
-    let logdir = paths.log_dir();
-    let log = EventLog::new(
-        logdir,
-        ctx.working_dir.clone(),
-        event_log_opts
-            .event_log
-            .as_ref()
-            .map(|p| p.resolve(&ctx.working_dir)),
-        user_event_log.as_ref().map(|p| p.resolve(&ctx.working_dir)),
-        sanitized_argv,
-        T::COMMAND_NAME.to_owned(),
-        ctx.start_time,
-        log_size_counter_bytes,
-        ctx.buck_settings()
+) -> EventLogFiles {
+    EventLogFiles::Command {
+        logdir: paths.log_dir(),
+        command_name: T::COMMAND_NAME.to_owned(),
+        retained_event_logs: ctx
+            .buck_settings()
             .map(|settings| settings.invocation.event_log.retained_logs())
             .unwrap_or_else(|_| buck2_settings::EventLog::default().retained_logs()),
-    );
-    Box::new(log)
+    }
+}
+
+/// The copies of the event log that the command's arguments ask for, if any.
+fn event_log_copies<T: StreamingCommand>(
+    cmd: &T,
+    ctx: &ClientCommandContext,
+) -> Option<EventLogFiles> {
+    let resolve = |path: &Option<PathArg>| path.as_ref().map(|p| p.resolve(&ctx.working_dir));
+    let event_log = resolve(&cmd.event_log_opts().event_log);
+    let user_event_log = resolve(cmd.user_event_log());
+    (event_log.is_some() || user_event_log.is_some()).then_some(EventLogFiles::Copies {
+        event_log,
+        user_event_log,
+    })
 }
 
 fn get_build_id_writer(

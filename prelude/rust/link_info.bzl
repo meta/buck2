@@ -188,6 +188,10 @@ RustProcMacroArchInfo = provider(
 RustLinkStrategyInfo = record(
     # Path to the rlib, rmeta, dylib, etc.
     outputs = field(dict[MetadataKind, Artifact]),
+    # The full metadata of an `outputs` rlib that only embeds a metadata stub
+    # (rustc's `-Zembed-metadata=no`). rustc needs it passed as a second
+    # `--extern` for the same crate.
+    split_metadata = field(dict[MetadataKind, Artifact] | None, None),
     # Same as `outputs`, but wrapped in a 1-element transitive set.
     singleton_tset = field(dict[MetadataKind, TransitiveDeps]),
     # Transitive dependencies which are relevant to the consumer. Proc macros are tracked

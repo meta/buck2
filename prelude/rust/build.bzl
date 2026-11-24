@@ -1224,11 +1224,13 @@ def dependency_args(
                 )
             variant = dep.info.arch_variants[scalar_arch]
             artifact = variant.dylib
+            split_metadata = None
             singleton_tset = variant.singleton_tset
             transitive_artifacts = None
         elif isinstance(dep.info, RustProcMacroInfo):
             asserts.false(arch)
             artifact = dep.info.dylib
+            split_metadata = None
             singleton_tset = dep.info.singleton_tset
             transitive_artifacts = None
         else:
@@ -1246,6 +1248,7 @@ def dependency_args(
                         dep.dep.label, dep_metadata_kind.value, toolchain_info.rustc_target_triple or "unknown"
                     )
                 )
+            split_metadata = (strategy.split_metadata or {}).get(dep_metadata_kind)
             singleton_tset = strategy.singleton_tset[dep_metadata_kind]
             transitive_artifacts = strategy.transitive_deps[dep_metadata_kind]
 
@@ -1271,6 +1274,8 @@ def dependency_args(
                     transitive_deps.append(arch_info.arch_variants[arch].singleton_tset)
 
         args.add(extern_arg(dep.flags, crate, artifact))
+        if split_metadata:
+            args.add(extern_arg(dep.flags, crate, split_metadata))
         crate_targets.append((crate, dep.dep.label))
 
         # Because deps of this *target* can also be transitive deps of this

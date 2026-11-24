@@ -40,6 +40,7 @@ use crate::package_visibility::PackageVisibility;
 use crate::paths::Paths;
 use crate::resource_control::ResourceControl;
 use crate::section::Section;
+use crate::source::Source;
 use crate::starlark::Starlark;
 use crate::target_platforms::TargetPlatforms;
 
@@ -222,6 +223,7 @@ buck_settings! {
     dice {
         execution_platforms: ExecutionPlatforms,
         paths: Paths,
+        source: Source,
         starlark: Starlark,
         target_platforms: TargetPlatforms,
     }

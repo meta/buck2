@@ -18,12 +18,10 @@ use buck2_artifact::artifact::artifact_type::ArtifactKind;
 use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::file_ops::metadata::RawSymlink;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::cells::cell_path::CellPath;
@@ -42,6 +40,8 @@ use buck2_execute::directory::INTERNER;
 use buck2_execute::directory::extract_artifact_value;
 use buck2_execute::directory::insert_artifact;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_settings::Source;
+use buck2_settings::dice::HasDiceBuckSettings;
 use buck2_util::size_assert;
 use buck2_util::time_span::TimeSpan;
 use derive_more::Display;
@@ -415,17 +415,11 @@ async fn path_artifact_value(
         } => {
             // TODO (T126181780): This should have a limit on recursion.
             let target_artifact_value = path_artifact_value(ctx, target.dupe(), label).await?;
-            let root_cell = ctx.get_cell_resolver().await?.root_cell();
+            let root_config = ctx.get_legacy_root_config_on_dice().await?;
             let use_correct_source_symlink_reading = ctx
-                .parse_legacy_config_property(
-                    root_cell,
-                    BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "use_correct_source_symlink_reading",
-                    },
-                )
+                .dice_settings::<Source>()
                 .await?
-                .unwrap_or(true);
+                .correct_symlink_reading(&mut root_config.view(ctx))?;
             // In the case where this is a source artifact like `dir/link/foo`, where the symlink is
             // actually at `link`, `ArtifactValue` doesn't have a representation for the kind of
             // thing that'd require, so we read through the symlink instead. We could enhance

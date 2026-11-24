@@ -15,5 +15,6 @@
  * limitations under the License.
  */
 
+mod declared_types;
 mod markdown;
 mod rustdocs;

@@ -32,6 +32,8 @@ use crate::docs::DocString;
 use crate::docs::DocType;
 use crate::docs::multipage::RenderConfig;
 use crate::typing::Ty;
+use crate::typing::TyBasic;
+use crate::typing::recursive::TyRecursive;
 use crate::typing::ty::TypeRenderConfig;
 
 /// What to render from a [`DocString`].
@@ -252,7 +254,8 @@ pub(super) fn render_members<'a>(
     docs: &Option<DocString>,
     prefix: &str,
     members: impl IntoIterator<Item = (&'a str, DocMember)>,
-    after_summary: Option<String>,
+    after_summary: impl IntoIterator<Item = String>,
+    after_members: Option<String>,
     render_config: &RenderConfig,
 ) -> String {
     let summary = render_doc_string(DSOpts::Combined, docs)
@@ -265,7 +268,11 @@ pub(super) fn render_members<'a>(
         .map(|(child, member)| {
             render_doc_member(&format!("{prefix}{child}"), &member, render_config)
         });
-    let member_details: Vec<_> = after_summary.into_iter().chain(member_details).collect();
+    let member_details: Vec<_> = after_summary
+        .into_iter()
+        .chain(member_details)
+        .chain(after_members)
+        .collect();
     let members_details = member_details.join("\n\n---\n\n");
 
     let header = if name == "" {
@@ -277,10 +284,13 @@ pub(super) fn render_members<'a>(
     format!("{header}{summary}\n\n{members_details}")
 }
 
+/// `relations` is the section that ends the page, after the members: what
+/// [`render_implemented_by`] or [`render_implements`] gives.
 pub(super) fn render_doc_type(
     name: &str,
     prefix: &str,
     t: &DocType,
+    relations: Option<String>,
     render_config: &RenderConfig,
 ) -> String {
     let constructor = t
@@ -292,9 +302,56 @@ pub(super) fn render_doc_type(
         &t.docs,
         prefix,
         t.members.iter().map(|(n, m)| (&**n, m.clone())),
-        constructor,
+        constructor
+            .into_iter()
+            .chain(render_definition(t, render_config)),
+        relations,
         render_config,
     )
+}
+
+/// The section of a recursive type's page that says what the type is: its name and the type
+/// expression the name stands for.
+fn render_definition(t: &DocType, render_config: &RenderConfig) -> Option<String> {
+    let recursive = match t.ty.iter_union() {
+        [TyBasic::Custom(c)] => c.0.as_any().downcast_ref::<TyRecursive>()?,
+        _ => return None,
+    };
+    let definition = render_code_block(
+        &format!(
+            "{} = {}",
+            t.ty,
+            recursive
+                .recursive()
+                .unfolded()
+                .display_with(&render_config.type_config)
+        ),
+        &render_config.type_config,
+    );
+    Some(format!("## Definition\n\n{definition}"))
+}
+
+/// The section of a predicate type's page that lists the types that are of it, each given as
+/// it is to be printed.
+pub(super) fn render_implemented_by(types: &[String]) -> Option<String> {
+    if types.is_empty() {
+        return None;
+    }
+    let types = types.iter().map(|t| format!("- {t}")).join("\n");
+    Some(format!("## Implemented by\n\n{types}"))
+}
+
+/// The section of a type's page that lists the predicate types it is of, each given as it is
+/// to be printed.
+pub(super) fn render_implements(predicates: &[String]) -> Option<String> {
+    if predicates.is_empty() {
+        return None;
+    }
+    let predicates = predicates.iter().map(|p| format!("- {p}")).join("\n");
+    Some(format!(
+        "## Implements\n\nA value of this type is accepted where one of these is wanted.\n\n\
+         {predicates}"
+    ))
 }
 
 /// Used by LSP.
@@ -322,12 +379,14 @@ pub fn render_doc_item(name: &str, item: &DocItem, render_config: &RenderConfig)
                     .map(|m| (&**n, m))
             }),
             None,
+            None,
             render_config,
         ),
         DocItem::Type(o) => render_doc_type(
             &format!("`{name}` type"),
             &format!("{name}."),
             o,
+            None,
             render_config,
         ),
         DocItem::Member(DocMember::Function(f)) => render_function(name, f, true, render_config),
@@ -403,9 +462,7 @@ fn render_strings_with_code_blocks(contents: &str, render_config: &TypeRenderCon
 fn render_code_block(contents: &str, render_config: &TypeRenderConfig) -> String {
     match render_config {
         TypeRenderConfig::Default => format!("```python\n{contents}\n```"),
-        TypeRenderConfig::LinkedType {
-            render_linked_ty_starlark_value: _,
-        } => {
+        TypeRenderConfig::LinkedType { .. } => {
             format!(r#"<pre class="language-python"><code>{contents}</code></pre>"#)
         }
     }
@@ -425,6 +482,7 @@ impl DocModule {
                 .iter()
                 .filter_map(|(n, m)| m.try_as_member().map(|m| (&**n, m))),
             None,
+            None,
             render_config,
         )
     }
@@ -434,9 +492,10 @@ impl DocType {
     pub(super) fn render_markdown_page_for_multipage_render(
         &self,
         name: &str,
+        relations: Option<String>,
         render_config: &RenderConfig,
     ) -> String {
-        render_doc_type(name, &format!("{name}."), self, render_config)
+        render_doc_type(name, &format!("{name}."), self, relations, render_config)
     }
 }
 

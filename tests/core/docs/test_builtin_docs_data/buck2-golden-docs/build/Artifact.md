@@ -10,3 +10,4 @@
 ## Artifact.short\_path
 ## Artifact.with\_associated\_artifacts
 ## Artifact.without\_associated\_artifacts
+## Implements

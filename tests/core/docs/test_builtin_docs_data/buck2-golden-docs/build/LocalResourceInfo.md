@@ -4,3 +4,4 @@
 ## LocalResourceInfo.resource\_env\_vars
 ## LocalResourceInfo.setup
 ## LocalResourceInfo.setup\_timeout\_seconds
+## Implements

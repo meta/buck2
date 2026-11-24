@@ -3,3 +3,4 @@
 # PlatformInfo
 ## PlatformInfo.configuration
 ## PlatformInfo.label
+## Implements

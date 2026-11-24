@@ -93,8 +93,12 @@ impl TyPredicate {
         TyPredicate { predicate }
     }
 
+    pub(crate) fn predicate(&self) -> Predicate {
+        self.predicate
+    }
+
     /// Whether the nominal type is a member: its block says so, or the declaration names it.
-    fn has_member(&self, ty: TyStarlarkValue) -> bool {
+    pub(crate) fn has_member(&self, ty: TyStarlarkValue) -> bool {
         ty.implemented_predicates().contains(&self.predicate)
             || self.predicate.upstream_members().contains(&ty)
     }

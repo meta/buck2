@@ -165,7 +165,10 @@ impl TyBasic {
     ) -> fmt::Result {
         match self {
             TyBasic::Any => write!(f, "{}", TypingAny::TYPE),
-            TyBasic::StarlarkValue(x) => x.fmt_with_config(f, config),
+            TyBasic::StarlarkValue(x) => match config.link(self) {
+                Some(link) => f.write_str(&link),
+                None => Display::fmt(x, f),
+            },
             TyBasic::Iter(x) => {
                 if x.is_any() {
                     write!(f, "typing.Iterable")
@@ -195,7 +198,10 @@ impl TyBasic {
                 }
             }
             TyBasic::Type => write!(f, "type"),
-            TyBasic::Custom(c) => Display::fmt(c, f),
+            TyBasic::Custom(c) => match config.link(self) {
+                Some(link) => f.write_str(&link),
+                None => Display::fmt(c, f),
+            },
             TyBasic::Set(x) => write!(f, "set[{}]", x.display_with(config)),
         }
     }

@@ -3,3 +3,4 @@
 # TransitionInfo
 ## TransitionInfo.attrs
 ## TransitionInfo.impl
+## Implements

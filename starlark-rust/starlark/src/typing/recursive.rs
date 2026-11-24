@@ -89,6 +89,10 @@ impl TyRecursive {
     pub(crate) fn new(recursive: RecursiveType) -> TyRecursive {
         TyRecursive { recursive }
     }
+
+    pub(crate) fn recursive(&self) -> RecursiveType {
+        self.recursive
+    }
 }
 
 impl Display for TyRecursive {

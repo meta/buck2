@@ -23,9 +23,14 @@ use crate::docs::DocItem;
 use crate::docs::DocModule;
 use crate::docs::DocType;
 use crate::docs::markdown::LayoutRenderConfig;
+use crate::docs::markdown::render_implemented_by;
+use crate::docs::markdown::render_implements;
 use crate::typing::Ty;
 use crate::typing::TyBasic;
 use crate::typing::TyStarlarkValue;
+use crate::typing::TyUser;
+use crate::typing::predicate::TyPredicate;
+use crate::typing::recursive::TyRecursive;
 use crate::typing::ty::TypeRenderConfig;
 
 pub struct RenderConfig {
@@ -102,14 +107,50 @@ struct PageRender<'a> {
 }
 
 impl<'a> PageRender<'a> {
-    fn render_markdown(&self, render_config: &RenderConfig) -> String {
+    /// `relations` is the section of a type's page that says how the type and the predicate
+    /// types of the pages rendered with it relate.
+    fn render_markdown(&self, relations: Option<String>, render_config: &RenderConfig) -> String {
         match self.page {
             DocPageRef::Module(doc_module) => {
                 doc_module.render_markdown_page_for_multipage_render(&self.name, render_config)
             }
-            DocPageRef::Type(doc_type) => {
-                doc_type.render_markdown_page_for_multipage_render(&self.name, render_config)
+            DocPageRef::Type(doc_type) => doc_type.render_markdown_page_for_multipage_render(
+                &self.name,
+                relations,
+                render_config,
+            ),
+        }
+    }
+
+    /// The type of this page, if a mention of the type in a signature is a link to the page: a
+    /// nominal type or a declared one.
+    fn linked_ty(&self) -> Option<&Ty> {
+        let ty = self.ty.as_ref()?;
+        let linked = match ty.iter_union() {
+            [TyBasic::StarlarkValue(_)] => true,
+            [TyBasic::Custom(c)] => {
+                c.0.as_any().is::<TyPredicate>() || c.0.as_any().is::<TyRecursive>()
             }
+            _ => false,
+        };
+        linked.then_some(ty)
+    }
+
+    /// The predicate type this is the page of, if it is the page of one.
+    fn predicate(&self) -> Option<&TyPredicate> {
+        match self.ty.as_ref()?.iter_union() {
+            [TyBasic::Custom(c)] => c.0.as_any().downcast_ref::<TyPredicate>(),
+            _ => None,
+        }
+    }
+
+    /// The nominal type of this page's type: the type itself, or the base of a `TyUser`, whose
+    /// values the values of the `TyUser` are. The type of a buck2 provider is such a `TyUser`.
+    fn nominal(&self) -> Option<TyStarlarkValue> {
+        match self.ty.as_ref()?.iter_union() {
+            [TyBasic::StarlarkValue(x)] => Some(*x),
+            [TyBasic::Custom(c)] => c.0.as_any().downcast_ref::<TyUser>().map(TyUser::base),
+            _ => None,
         }
     }
 }
@@ -121,6 +162,7 @@ impl<'a> PageRender<'a> {
 /// which will need consideration if this is to be materialized to a filesystem.
 struct MultipageRender<'a> {
     page_renders: Vec<PageRender<'a>>,
+    linked_ty_mapper: Option<fn(&str, &str) -> String>,
     render_config: RenderConfig,
 }
 
@@ -142,25 +184,24 @@ impl<'a> MultipageRender<'a> {
         if let Some(linked_ty_mapper) = linked_ty_mapper {
             let mut ty_to_path_map = HashMap::new();
             for page in res.iter() {
-                if let Some(ty) = &page.ty {
+                if let Some(ty) = page.linked_ty() {
                     ty_to_path_map.insert(ty.dupe(), page.path.clone());
                 }
             }
 
-            let render_linked_ty_starlark_value = move |ty: &TyStarlarkValue| {
-                let type_name = ty.to_string();
-                match ty_to_path_map.get(&Ty::basic(TyBasic::StarlarkValue(ty.dupe()))) {
-                    Some(type_path) => linked_ty_mapper(type_path, &type_name),
-                    _ => type_name.to_owned(),
-                }
+            let render_linked_ty = move |ty: &TyBasic| {
+                ty_to_path_map
+                    .get(&Ty::basic(ty.dupe()))
+                    .map(|type_path| linked_ty_mapper(type_path, &ty.to_string()))
             };
 
             type_render_config = TypeRenderConfig::LinkedType {
-                render_linked_ty_starlark_value: Box::new(render_linked_ty_starlark_value),
+                render_linked_ty: Box::new(render_linked_ty),
             };
         }
         Self {
             page_renders: res,
+            linked_ty_mapper,
             render_config: RenderConfig {
                 type_config: type_render_config,
                 layout_config: if render_signature_at_bottom {
@@ -176,8 +217,82 @@ impl<'a> MultipageRender<'a> {
     fn render_markdown_pages(&self) -> HashMap<String, String> {
         self.page_renders
             .iter()
-            .map(|page| (page.path.clone(), page.render_markdown(&self.render_config)))
+            .map(|page| {
+                (
+                    page.path.clone(),
+                    page.render_markdown(self.relations(page), &self.render_config),
+                )
+            })
             .collect()
+    }
+
+    /// A page by its name, as a link to it where types are linked.
+    fn page_ref(&self, page: &PageRender<'a>) -> String {
+        match self.linked_ty_mapper {
+            Some(linked_ty_mapper) => linked_ty_mapper(&page.path, &page.name),
+            None => format!("`{}`", page.name),
+        }
+    }
+
+    /// How the type of `page` and the predicate types among the pages relate. A predicate
+    /// type's page lists the pages of the types that are of it, a type's page the predicate
+    /// types it is of.
+    ///
+    /// There is no list of the members of a predicate type to read this from. Each type says
+    /// which predicate types it is of, and a predicate type names its upstream members, so
+    /// both lists are found by asking that of every pair of pages. A member that has no page
+    /// here is not listed, but for an upstream one, which the predicate type knows by name.
+    fn relations(&self, page: &PageRender<'a>) -> Option<String> {
+        if let Some(predicate) = page.predicate() {
+            let mut members: Vec<(String, String)> = self
+                .page_renders
+                .iter()
+                .filter(|member| member.nominal().is_some_and(|ty| predicate.has_member(ty)))
+                .map(|member| (member.name.clone(), self.page_ref(member)))
+                .collect();
+            let documented = |ty: &TyStarlarkValue| {
+                self.page_renders
+                    .iter()
+                    .any(|member| member.nominal() == Some(*ty))
+            };
+            members.extend(
+                predicate
+                    .predicate()
+                    .upstream_members()
+                    .into_iter()
+                    .filter(|ty| !documented(ty))
+                    .map(|ty| (ty.to_string(), format!("`{ty}`"))),
+            );
+            members.sort();
+            let members: Vec<String> = members.into_iter().map(|(_name, member)| member).collect();
+            render_implemented_by(&members)
+        } else if let Some(ty) = page.nominal() {
+            // The predicate types that have a page, which are the ones that can be linked.
+            let mut predicates: Vec<(String, String)> = self
+                .page_renders
+                .iter()
+                .filter(|other| other.predicate().is_some_and(|p| p.has_member(ty)))
+                .map(|other| (other.name.clone(), self.page_ref(other)))
+                .collect();
+            // The ones the type says it is of that have no page.
+            predicates.extend(
+                ty.implemented_predicates()
+                    .into_iter()
+                    .filter(|predicate| {
+                        !self.page_renders.iter().any(|other| {
+                            other
+                                .predicate()
+                                .is_some_and(|p| p.predicate() == *predicate)
+                        })
+                    })
+                    .map(|predicate| (predicate.name().to_owned(), format!("`{predicate}`"))),
+            );
+            predicates.sort();
+            let predicates: Vec<String> = predicates.into_iter().map(|(_name, p)| p).collect();
+            render_implements(&predicates)
+        } else {
+            None
+        }
     }
 }
 

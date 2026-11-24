@@ -2,3 +2,4 @@
 
 # ResolvedStringWithMacros
 ## ResolvedStringWithMacros.startswith
+## Implements

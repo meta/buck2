@@ -525,9 +525,21 @@ pub enum TypeRenderConfig {
     Default,
     /// Uses for linked type in doc
     LinkedType {
-        /// The function to render linked type element
-        render_linked_ty_starlark_value: Box<dyn Fn(&TyStarlarkValue) -> String>,
+        /// A type that has a page, as a link to it; `None` for a type that has none, which is
+        /// then rendered by its name. Asked for the types that can have a page: a nominal type
+        /// and a custom one, such as a declared type.
+        render_linked_ty: Box<dyn Fn(&TyBasic) -> Option<String>>,
     },
+}
+
+impl TypeRenderConfig {
+    /// `ty` as a link to its page, if links are rendered and it has one.
+    pub(crate) fn link(&self, ty: &TyBasic) -> Option<String> {
+        match self {
+            TypeRenderConfig::Default => None,
+            TypeRenderConfig::LinkedType { render_linked_ty } => render_linked_ty(ty),
+        }
+    }
 }
 
 pub(crate) struct TyDisplay<'a> {

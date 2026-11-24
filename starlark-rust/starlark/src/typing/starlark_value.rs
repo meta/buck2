@@ -38,7 +38,6 @@ use crate::typing::TypingUnOp;
 use crate::typing::error::TypingError;
 use crate::typing::error::TypingNoContextError;
 use crate::typing::error::TypingNoContextOrInternalError;
-use crate::typing::ty::TypeRenderConfig;
 use crate::values::StarlarkType;
 use crate::values::StarlarkValue;
 use crate::values::dict::value::FrozenDict;
@@ -237,7 +236,11 @@ impl Debug for TyStarlarkValue {
 
 impl Display for TyStarlarkValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        self.fmt_with_config(f, &TypeRenderConfig::Default)
+        f.write_str(match self.vtable.type_name {
+            "string" => "str",
+            "NoneType" => "None",
+            name => name,
+        })
     }
 }
 
@@ -497,26 +500,6 @@ impl TyStarlarkValue {
             matcher.str()
         } else {
             matcher.alloc(StarlarkTypeIdMatcher::new(self))
-        }
-    }
-
-    pub(crate) fn fmt_with_config(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-        config: &TypeRenderConfig,
-    ) -> fmt::Result {
-        let type_name = match self.vtable.type_name {
-            "string" => "str",
-            "NoneType" => "None",
-            name => name,
-        };
-        match config {
-            TypeRenderConfig::Default => write!(f, "{type_name}"),
-            TypeRenderConfig::LinkedType {
-                render_linked_ty_starlark_value,
-            } => {
-                write!(f, "{}", render_linked_ty_starlark_value(self))
-            }
         }
     }
 }

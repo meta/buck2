@@ -7,3 +7,4 @@
 ## OutputArtifact.is\_source
 ## OutputArtifact.owner
 ## OutputArtifact.short\_path
+## Implements

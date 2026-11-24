@@ -34,3 +34,4 @@
 ## str.strip
 ## str.title
 ## str.upper
+## Implements

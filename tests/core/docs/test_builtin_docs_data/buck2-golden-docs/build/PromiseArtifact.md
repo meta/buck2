@@ -10,3 +10,4 @@
 ## PromiseArtifact.short\_path
 ## PromiseArtifact.with\_associated\_artifacts
 ## PromiseArtifact.without\_associated\_artifacts
+## Implements

@@ -68,7 +68,6 @@ impl Timeout {
     Eq
 )]
 pub struct HttpConfig {
-    /// Stays a buckconfig key: a list, which settings do not carry yet.
     #[cfg(fbcode_build)]
     pub proxy_env_allowlist: ProxyHostAllowlist,
     connect_timeout_ms: Option<u64>,
@@ -84,11 +83,8 @@ impl HttpConfig {
         let mut buckconfig = config;
         Ok(Self {
             #[cfg(fbcode_build)]
-            proxy_env_allowlist: config
-                .parse_list::<String>(BuckconfigKeyRef {
-                    section: "http",
-                    property: "proxy_env_allowlist",
-                })?
+            proxy_env_allowlist: http
+                .proxy_env_allowlist(&mut buckconfig)?
                 .unwrap_or_default()
                 .try_into()?,
             connect_timeout_ms: http.connect_timeout_ms(&mut buckconfig)?,

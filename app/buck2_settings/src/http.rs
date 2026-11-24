@@ -52,4 +52,12 @@ pub struct Http {
         overridable_in(CommandLine, LocalSettings)
     )]
     max_concurrent_requests: Option<usize>,
+    /// In internal builds, the hosts that are reached through the proxy
+    /// named in the daemon's environment: exact hostnames or IP addresses.
+    /// Every other host is reached directly.
+    #[setting(
+        buckconfig_fallback = "http.proxy_env_allowlist",
+        overridable_in(CommandLine, LocalSettings)
+    )]
+    proxy_env_allowlist: Option<Vec<String>>,
 }

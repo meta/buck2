@@ -45,7 +45,6 @@ use starlark::type_matcher;
 use starlark::typing::Ty;
 use starlark::typing::TyCallable;
 use starlark::typing::TyStarlarkValue;
-use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
@@ -539,10 +538,6 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
 #[starlark_value(skip_vtable)]
 impl<'v> StarlarkValue<'v> for UserProviderCallable<'v> {
     type Type = UserProviderCallableView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn ProviderCallableLike>(self);
-    }
 }
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative, StarlarkPagable)]
@@ -585,10 +580,6 @@ impl<'v> ProviderCallableLike for FrozenUserProviderCallable<'v> {
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenUserProviderCallable<'v> {
     type Type = UserProviderCallableView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn ProviderCallableLike>(self);
-    }
 }
 
 fn provider_field_parse_type<'v>(

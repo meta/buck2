@@ -188,3 +188,23 @@ fn test_provider_non_unique_fields() {
         "non-unique field names",
     )
 }
+
+/// `providers` of a dependency attribute lists provider types.
+#[test]
+fn test_dep_attr_providers_are_provider_types() {
+    let mut tester = provider_tester();
+    tester
+        .run_starlark_bzl_test(indoc!(
+            r#"
+            FooInfo = provider(fields = ["x"])
+            attrs.dep(providers = [DefaultInfo, FooInfo])
+            def test():
+                pass
+            "#
+        ))
+        .unwrap();
+    tester.run_starlark_bzl_test_expecting_error(
+        "attrs.dep(providers = [DefaultInfo, 1])\n",
+        "Type of parameter `providers` doesn't match, expected `list[ProviderCallable] | tuple[ProviderCallable, ...]`, actual `list (repr: [DefaultInfo, 1])`",
+    );
+}

@@ -651,11 +651,6 @@ impl ProviderCodegen {
                         #callable_globals_static_name.function().invoke(args, eval)
                     }
 
-                    fn provide(&'v self, demand: &mut starlark::values::Demand<'_, 'v>) {
-                        demand.provide_value::<
-                            &dyn buck2_interpreter::types::provider::callable::ProviderCallableLike>(self);
-                    }
-
                     fn eval_type(&self) -> Option<starlark::typing::Ty> {
                         Some(BUILTIN_PROVIDER_TY.instance())
                     }

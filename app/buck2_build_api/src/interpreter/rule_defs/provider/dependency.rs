@@ -18,6 +18,7 @@ use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProviderName;
 use buck2_error::BuckErrorContext;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
@@ -120,16 +121,15 @@ impl<'v> StarlarkValue<'v> for Dependency<'v> {
         Some(DEPENDENCY_METHODS.methods())
     }
 
-    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        self.provider_collection
-            .to_value()
-            .at(index, heap)
+    fn at(&self, index: &'v dyn ProviderCallableLike) -> starlark::Result<Value<'v>> {
+        self.collection()
+            .require(index)
             .with_buck_error_context(|| format!("Error accessing dependencies of `{}`", self.label))
             .map_err(Into::into)
     }
 
-    fn is_in(&self, other: Value<'v>) -> starlark::Result<bool> {
-        self.provider_collection.to_value().is_in(other)
+    fn is_in(&self, other: &'v dyn ProviderCallableLike) -> starlark::Result<bool> {
+        Ok(self.collection().has(other)?)
     }
 
     fn equals(&self, other: &Self) -> bool {
@@ -255,7 +255,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn get<'v>(
         this: &Dependency<'v>,
-        index: Value<'v>,
+        index: &'v dyn ProviderCallableLike,
     ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkProvider>>> {
         Ok(this.collection().get(index).with_buck_error_context(|| {
             format!("Error accessing dependencies of `{}`", this.label)

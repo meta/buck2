@@ -25,7 +25,7 @@ use buck2_error::BuckErrorOptionContext;
 use buck2_hash::BuckMutInsertionMap;
 use buck2_hash::buck_mut_insertion_map;
 use buck2_interpreter::testing::Buck2TestHeapName;
-use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
+use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use buck2_interpreter_for_build::attrs::coerce;
 use buck2_interpreter_for_build::attrs::coerce::testing;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
@@ -38,6 +38,7 @@ use starlark::environment::Globals;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Module;
 use starlark::values::FrozenValueTyped;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::dict::DictRef;
 
@@ -189,18 +190,12 @@ pub(crate) fn resolution_ctx_with_providers<'v>(
             ];
 
             let provider_ids = ProviderIdSet::from(vec![
-                foo_info
-                    .as_ref()
-                    .value()
-                    .as_provider_callable()
+                <&dyn ProviderCallableLike>::unpack_value_opt(foo_info.as_ref().value())
                     .unwrap()
                     .id()
                     .unwrap()
                     .dupe(),
-                bar_info
-                    .as_ref()
-                    .value()
-                    .as_provider_callable()
+                <&dyn ProviderCallableLike>::unpack_value_opt(bar_info.as_ref().value())
                     .unwrap()
                     .id()
                     .unwrap()

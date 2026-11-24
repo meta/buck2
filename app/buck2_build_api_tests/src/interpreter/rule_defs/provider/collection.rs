@@ -148,6 +148,51 @@ fn provider_collection_at_reports_the_missing_provider() -> buck2_error::Result<
     Ok(())
 }
 
+/// A collection is asked by a provider type. A provider itself, the usual slip, is not one.
+#[test]
+fn provider_collection_is_asked_by_a_provider_type() -> buck2_error::Result<()> {
+    let mut tester = provider_collection_tester()?;
+    for (ask, error) in [
+        (
+            "col[foo1]",
+            r#"Expected `ProviderCallable`, but got `Provider (repr: FooInfo(foo="foo1"))`"#,
+        ),
+        (
+            "foo1 in col",
+            r#"Expected `ProviderCallable`, but got `Provider (repr: FooInfo(foo="foo1"))`"#,
+        ),
+        (
+            "col.get(foo1)",
+            r#"Type of parameter `index` doesn't match, expected `ProviderCallable`, actual `Provider (repr: FooInfo(foo="foo1"))`"#,
+        ),
+        (
+            "col[\"FooInfo\"]",
+            r#"Expected `ProviderCallable`, but got `string (repr: "FooInfo")`"#,
+        ),
+    ] {
+        let content = format!(
+            "load(\"//provider:defs2.bzl\", \"foo1\")\ncol = create_collection([foo1, DefaultInfo()])\n{ask}\n"
+        );
+        expect_error(tester.run_starlark_bzl_test(&content), &content, error);
+    }
+
+    // In a function, the typechecker says so before anything runs.
+    let content = indoc!(
+        r#"
+            load("//provider:defs2.bzl", "foo1")
+            def test():
+                col = create_collection([foo1, DefaultInfo()])
+                col[foo1]
+            "#
+    );
+    expect_error(
+        tester.run_starlark_bzl_test(content),
+        content,
+        "Type `ProviderCollection` does not have [] operator or [] cannot accept `Provider`",
+    );
+    Ok(())
+}
+
 #[test]
 fn returns_default_info() -> buck2_error::Result<()> {
     let mut tester = provider_collection_tester()?;

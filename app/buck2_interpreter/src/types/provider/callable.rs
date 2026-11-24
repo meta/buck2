@@ -11,16 +11,10 @@
 use std::sync::Arc;
 
 use buck2_core::provider::id::ProviderId;
-use starlark::any::ProvidesStaticType;
 use starlark::starlark_predicate_type;
-use starlark::values::Value;
 
 pub trait ProviderCallableLike {
     fn id(&self) -> buck2_error::Result<&Arc<ProviderId>>;
-}
-
-unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn ProviderCallableLike {
-    type StaticType = &'static dyn ProviderCallableLike;
 }
 
 // There is no global of this name, and so no `.bzl` file can write the type: an honest type for
@@ -36,14 +30,4 @@ starlark_predicate_type! {
     pub StarlarkProviderCallable<'v>;
     name "ProviderCallable";
     get &'v dyn ProviderCallableLike;
-}
-
-pub trait ValueAsProviderCallableLike<'v> {
-    fn as_provider_callable(&self) -> Option<&'v dyn ProviderCallableLike>;
-}
-
-impl<'v> ValueAsProviderCallableLike<'v> for Value<'v> {
-    fn as_provider_callable(&self) -> Option<&'v dyn ProviderCallableLike> {
-        self.request_value::<&dyn ProviderCallableLike>()
-    }
 }

@@ -21,7 +21,7 @@ use buck2_core::provider::label::ProvidersName;
 use buck2_error::internal_error;
 use buck2_hash::BuckMutInsertionMap;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
-use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
+use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use display_container::fmt_container;
 use dupe::Dupe;
 use either::Either;
@@ -99,12 +99,6 @@ enum ProviderCollectionError {
         "requested sub target named `{0}` of target `{1}` is not available. Available subtargets are: `{2:?}`"
     )]
     RequestedInvalidSubTarget(ProviderName, ConfiguredProvidersLabel, Vec<String>),
-    #[error(
-        "provider collection operation {0} parameter type must be a provider type \
-        but not and instance of provider (for example, `RunInfo` or user defined provider type), \
-        got `{1}`"
-    )]
-    AtTypeNotProvider(GetOp, &'static str),
     #[error(
         "provider collection does not have a key `{0}`, available keys are: {}",
         format_provider_keys_for_error(_1)
@@ -238,17 +232,6 @@ impl<'v> Serialize for ProviderCollection<'v> {
     }
 }
 
-/// Provider collection access operator.
-#[derive(derive_more::Display, Debug)]
-enum GetOp {
-    #[display("[]")]
-    At,
-    #[display("in")]
-    In,
-    #[display(".get")]
-    Get,
-}
-
 impl<'v> ProviderCollection<'v> {
     /// Create most of the collection but don't do final assembly, or validate DefaultInfo here.
     /// This is an internal detail
@@ -348,33 +331,48 @@ impl<'v> ProviderCollection<'v> {
         Ok(ProviderCollection { providers })
     }
 
-    /// Common implementation of `[]`, `in`, and `.get`.
-    fn get_impl(
+    /// The provider that `callable` makes if the collection has one, otherwise the id of what
+    /// it makes: the common part of `[]`, `in`, and `.get`.
+    fn lookup(
         &self,
-        index: Value<'v>,
-        op: GetOp,
+        callable: &'v dyn ProviderCallableLike,
     ) -> buck2_error::Result<Either<Value<'v>, &'v ProviderId>> {
-        match index.as_provider_callable() {
-            Some(callable) => {
-                let provider_id = callable.id()?.as_ref();
-                match self.providers.get(provider_id) {
-                    Some(v) => Ok(Either::Left(v.read()?.to_value())),
-                    None => Ok(Either::Right(provider_id)),
-                }
-            }
-            None => Err(ProviderCollectionError::AtTypeNotProvider(op, index.get_type()).into()),
+        let provider_id = callable.id()?.as_ref();
+        match self.providers.get(provider_id) {
+            Some(v) => Ok(Either::Left(v.read()?.to_value())),
+            None => Ok(Either::Right(provider_id)),
         }
     }
 
-    /// `.get` function implementation.
+    /// `collection.get(callable)`.
     pub(crate) fn get(
         &self,
-        index: Value<'v>,
+        callable: &'v dyn ProviderCallableLike,
     ) -> buck2_error::Result<NoneOr<ValueOf<'v, StarlarkProvider>>> {
-        match self.get_impl(index, GetOp::Get)? {
+        match self.lookup(callable)? {
             Either::Left(v) => Ok(NoneOr::Other(ValueOf::new_err(v)?)),
             Either::Right(_) => Ok(NoneOr::None),
         }
+    }
+
+    /// `collection[callable]`.
+    pub(crate) fn require(
+        &self,
+        callable: &'v dyn ProviderCallableLike,
+    ) -> buck2_error::Result<Value<'v>> {
+        match self.lookup(callable)? {
+            Either::Left(v) => Ok(v),
+            Either::Right(provider_id) => Err(ProviderCollectionError::AtNotFound(
+                provider_id.name.clone(),
+                self.providers.keys().map(|k| k.name.clone()).collect(),
+            )
+            .into()),
+        }
+    }
+
+    /// `callable in collection`.
+    pub(crate) fn has(&self, callable: &'v dyn ProviderCallableLike) -> buck2_error::Result<bool> {
+        Ok(self.lookup(callable)?.is_left())
     }
 }
 
@@ -403,7 +401,7 @@ impl ProviderCollection<'static> {
 fn provider_collection_methods(builder: &mut MethodsBuilder) {
     fn get<'v>(
         this: &ProviderCollection<'v>,
-        index: Value<'v>,
+        index: &'v dyn ProviderCallableLike,
     ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkProvider>>> {
         Ok(this.get(index)?)
     }
@@ -411,21 +409,12 @@ fn provider_collection_methods(builder: &mut MethodsBuilder) {
 
 #[starlark_value(type = "ProviderCollection", frozen_vtable, alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for ProviderCollection<'v> {
-    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        match self.get_impl(index, GetOp::At)? {
-            Either::Left(v) => Ok(v),
-            Either::Right(provider_id) => Err(buck2_error::Error::from(
-                ProviderCollectionError::AtNotFound(
-                    provider_id.name.clone(),
-                    self.providers.keys().map(|k| k.name.clone()).collect(),
-                ),
-            )
-            .into()),
-        }
+    fn at(&self, index: &'v dyn ProviderCallableLike) -> starlark::Result<Value<'v>> {
+        Ok(self.require(index)?)
     }
 
-    fn is_in(&self, other: Value<'v>) -> starlark::Result<bool> {
-        Ok(self.get_impl(other, GetOp::In)?.is_left())
+    fn is_in(&self, other: &'v dyn ProviderCallableLike) -> starlark::Result<bool> {
+        Ok(self.has(other)?)
     }
 
     fn get_methods() -> Option<&'static Methods>
@@ -689,7 +678,7 @@ impl<'f> FrozenProviderCollectionValueRef<'f> {
 }
 
 pub mod tester {
-    use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
+    use buck2_interpreter::types::provider::callable::ProviderCallableLike;
     use dupe::Dupe;
     use starlark::environment::GlobalsBuilder;
     use starlark::values::Heap;
@@ -737,14 +726,9 @@ pub mod tester {
 
         fn contains_provider<'v>(
             collection: Value<'v>,
-            provider: Value<'v>,
+            provider: &'v dyn ProviderCallableLike,
         ) -> starlark::Result<bool> {
-            let id = provider
-                .as_provider_callable()
-                .unwrap()
-                .id()
-                .unwrap()
-                .dupe();
+            let id = provider.id().unwrap().dupe();
 
             assert!(collection.is_frozen(), "a frozen value");
             let res = collection

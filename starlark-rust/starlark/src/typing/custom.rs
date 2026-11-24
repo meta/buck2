@@ -110,8 +110,12 @@ pub trait TyCustomImpl:
         true
     }
     /// Additional types that this type intersects with.
-    fn intersects_with(&self, _other: &TyBasic) -> bool {
-        false
+    fn intersects_with(
+        &self,
+        _other: &TyBasic,
+        _ctx: TypingOracleCtx,
+    ) -> Result<bool, InternalError> {
+        Ok(false)
     }
     /// Create runtime type matcher for values.
     fn matcher<T: TypeMatcherAlloc>(&self, factory: T) -> T::Result;
@@ -134,7 +138,11 @@ pub(crate) trait TyCustomDyn:
         args: &TyCallArgs,
         oracle: TypingOracleCtx,
     ) -> Result<Ty, TypingOrInternalError>;
-    fn is_intersects_with_dyn(&self, other: &TyBasic) -> bool;
+    fn is_intersects_with_dyn(
+        &self,
+        other: &TyBasic,
+        ctx: TypingOracleCtx,
+    ) -> Result<bool, InternalError>;
     fn as_callable_dyn(&self) -> Option<TyCallable>;
     fn as_function_dyn(&self) -> Option<&TyFunction>;
     fn iter_item_dyn(&self) -> Result<Ty, TypingNoContextError>;
@@ -204,8 +212,12 @@ impl<T: TyCustomImpl> TyCustomDyn for T {
         self.as_callable()
     }
 
-    fn is_intersects_with_dyn(&self, other: &TyBasic) -> bool {
-        self.intersects_with(other)
+    fn is_intersects_with_dyn(
+        &self,
+        other: &TyBasic,
+        ctx: TypingOracleCtx,
+    ) -> Result<bool, InternalError> {
+        self.intersects_with(other, ctx)
     }
 
     fn as_function_dyn(&self) -> Option<&TyFunction> {
@@ -298,7 +310,7 @@ impl TyCustom {
         other: &TyBasic,
         ctx: TypingOracleCtx,
     ) -> Result<bool, InternalError> {
-        if self.0.is_intersects_with_dyn(other) {
+        if self.0.is_intersects_with_dyn(other, ctx)? {
             return Ok(true);
         }
         match other {

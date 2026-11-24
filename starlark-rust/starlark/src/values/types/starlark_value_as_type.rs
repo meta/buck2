@@ -50,6 +50,8 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::predicate::StarlarkPredicate;
 use crate::values::predicate::predicate_ty;
+use crate::values::recursive_type::StarlarkRecursiveType;
+use crate::values::recursive_type::recursive_ty;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::typing::TypeType;
 use crate::values::typing::ty::AbstractType;
@@ -236,6 +238,32 @@ impl<T> StarlarkValueAsType<T> {
                             ),
                             members: SmallMap::new(),
                             ty: predicate_ty::<T>(),
+                            constructor: None,
+                        })
+                    },
+                ))
+            },
+            PhantomData,
+        )
+    }
+
+    /// The type object of the recursive type `T`, documented by what its declaration says.
+    pub const fn new_recursive() -> Self
+    where
+        T: StarlarkRecursiveType + AsTypeStaticRegistered,
+    {
+        StarlarkValueAsType(
+            &const {
+                AllocStaticSimple::alloc(StarlarkValueAsTypeStarlarkValue(
+                    recursive_ty::<T>,
+                    || {
+                        DocItem::Type(DocType {
+                            docs: DocString::from_docstring(
+                                DocStringKind::Rust,
+                                T::RECURSIVE_TYPE.docs(),
+                            ),
+                            members: SmallMap::new(),
+                            ty: recursive_ty::<T>(),
                             constructor: None,
                         })
                     },

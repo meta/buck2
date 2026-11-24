@@ -39,6 +39,7 @@ use crate::typing::call_args::TyCallArgs;
 use crate::typing::callable::TyCallable;
 use crate::typing::custom::TyCustomDyn;
 use crate::typing::custom::TyCustomImpl;
+use crate::typing::error::InternalError;
 use crate::typing::error::TypingNoContextError;
 use crate::typing::error::TypingNoContextOrInternalError;
 use crate::typing::error::TypingOrInternalError;
@@ -148,8 +149,12 @@ impl TyCustomImpl for TyPredicate {
         Ok(Ty::any())
     }
 
-    fn intersects_with(&self, other: &TyBasic) -> bool {
-        match other {
+    fn intersects_with(
+        &self,
+        other: &TyBasic,
+        _ctx: TypingOracleCtx,
+    ) -> Result<bool, InternalError> {
+        Ok(match other {
             TyBasic::StarlarkValue(other) => self.has_member(*other),
             TyBasic::Custom(other) => match other.0.as_any().downcast_ref::<TyUser>() {
                 // A `TyUser` that names this type as a supertype says so itself. One that is
@@ -160,7 +165,7 @@ impl TyCustomImpl for TyPredicate {
                 None => false,
             },
             _ => false,
-        }
+        })
     }
 
     fn matcher<T: TypeMatcherAlloc>(&self, factory: T) -> T::Result {

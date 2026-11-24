@@ -168,6 +168,7 @@ pub(crate) mod iter;
 pub(crate) mod layout;
 pub mod predicate;
 pub(crate) mod recursive_repr_or_json_guard;
+pub mod recursive_type;
 mod stack_guard;
 pub(crate) mod starlark_type_id;
 pub(crate) mod thin_box_slice_value;

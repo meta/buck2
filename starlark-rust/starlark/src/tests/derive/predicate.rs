@@ -16,13 +16,15 @@
  */
 
 //! A predicate type and its members: a type with one representation, a type with two, an
-//! upstream member, and a `TyUser` that names the predicate type as a supertype.
+//! upstream member, and a `TyUser` that names the predicate type as a supertype. And a
+//! recursive type over the predicate type.
 
 use std::sync::OnceLock;
 
 use allocative::Allocative;
 use derive_more::Display;
 use dupe::Dupe;
+use either::Either;
 use starlark_derive::NoSerialize;
 use starlark_derive::StarlarkPagable;
 use starlark_derive::StarlarkRepresentations;
@@ -36,6 +38,7 @@ use crate::docs::DocItem;
 use crate::docs::DocMember;
 use crate::environment::GlobalsBuilder;
 use crate::starlark_predicate_type;
+use crate::starlark_recursive_type;
 use crate::starlark_simple_value;
 use crate::typing::Ty;
 use crate::typing::TyStarlarkValue;
@@ -49,9 +52,14 @@ use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
+use crate::values::list::AllocList;
+use crate::values::list::ListOf;
+use crate::values::list::ListType;
 use crate::values::predicate::StarlarkPredicate;
 use crate::values::starlark_value_as_type::StarlarkValueAsType;
 use crate::values::string::StarlarkStr;
+use crate::values::tuple::TupleType;
+use crate::values::types::list::value::ListData;
 use crate::values::types::type_instance_id::TypeInstanceId;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 use crate::values::typing::type_compiled::matchers::IsAny;
@@ -70,6 +78,20 @@ starlark_predicate_type! {
     name "Shape";
     get &'v dyn ShapeLike<'v>;
     upstream_member StarlarkStr;
+}
+
+starlark_recursive_type! {
+    /// A shape, or a list of these.
+    StarlarkShapes<'v>;
+    name "Shapes";
+    is Either<StarlarkShape, ListType<StarlarkShapes>>;
+}
+
+starlark_recursive_type! {
+    /// A flag, or a tuple of these: no value is both this and `Shapes`.
+    StarlarkFlags<'v>;
+    name "Flags";
+    is Either<bool, TupleType<StarlarkFlags>>;
 }
 
 /// A member that cannot say so itself.
@@ -263,6 +285,28 @@ fn shape_globals(globals: &mut GlobalsBuilder) {
 
     fn sides<'v>(shape: ValueOf<'v, StarlarkShape>) -> starlark::Result<i32> {
         Ok(shape.sides() as i32)
+    }
+
+    const Shapes: StarlarkValueAsType<StarlarkShapes> = StarlarkShapes::global();
+
+    const Flags: StarlarkValueAsType<StarlarkFlags> = StarlarkFlags::global();
+
+    fn count_shapes<'v>(shapes: ValueOf<'v, StarlarkShapes>) -> starlark::Result<i32> {
+        fn count<'v>(
+            shapes: Either<&'v dyn ShapeLike<'v>, ListOf<'v, StarlarkShapes>>,
+        ) -> starlark::Result<i32> {
+            match shapes {
+                Either::Left(_) => Ok(1),
+                Either::Right(list) => {
+                    let mut n = 0;
+                    for item in list.iter() {
+                        n += count(item?.try_get()?)?;
+                    }
+                    Ok(n)
+                }
+            }
+        }
+        count(shapes.try_get()?)
     }
 
     /// The handle is a parameter as well.
@@ -539,5 +583,144 @@ fn test_pagable_round_trip() {
     Heap::temp(|heap| {
         assert!(matcher.matches(heap.alloc_simple(Square).to_value()));
         assert!(!matcher.matches(heap.alloc_simple(Blot).to_value()));
+    });
+}
+
+/// A recursive type is what its expression is: here a shape, or a list of what the name stands
+/// for, to any depth.
+#[test]
+fn test_recursive_type() {
+    let ty = StarlarkShapes::starlark_type_repr();
+    assert_eq!("Shapes", ty.to_string());
+    assert_eq!(1, ty.iter_union().len());
+
+    let mut a = Assert::new();
+    a.globals_add(shape_globals);
+    a.pass(
+        r#"
+assert_eq(1, count_shapes(square()))
+assert_eq(1, count_shapes("ab"))
+assert_eq(0, count_shapes([]))
+assert_eq(2, count_shapes([square(), "ab"]))
+assert_eq(4, count_shapes([square(), [triangle(), [polygon(5)]], "ab"]))
+assert_true(isinstance(square(), Shapes))
+assert_true(isinstance([[square()], "ab"], Shapes))
+assert_false(isinstance(1, Shapes))
+assert_false(isinstance([square(), 1], Shapes))
+assert_false(isinstance([[blot()]], Shapes))
+"#,
+    );
+    a.fail(
+        "noop(count_shapes)([square(), [blot()]])",
+        "Type of parameter `shapes` doesn't match, expected `Shapes`, actual `list",
+    );
+}
+
+/// The typechecker takes for the name what it takes for the expression: a list is taken if
+/// its items are, and a list of unknown items is.
+#[test]
+fn test_recursive_type_typechecker() {
+    let mut a = Assert::new();
+    a.globals_add(shape_globals);
+    a.pass(
+        r#"
+def takes(x: Shapes):
+    pass
+
+def test(x, xs: list, shape: Shape, shapes: Shapes):
+    count_shapes(square())
+    count_shapes("ab")
+    count_shapes([square()])
+    count_shapes([[triangle()], "ab"])
+    count_shapes(x)
+    count_shapes([x])
+    count_shapes(xs)
+    count_shapes(shape)
+    count_shapes([shape])
+    count_shapes(shapes)
+    count_shapes([shapes])
+    takes([outline()])
+    sides(shapes)
+"#,
+    );
+    a.fail(
+        r#"
+def test():
+    count_shapes(1)
+"#,
+        "Expected type `Shapes` but got `int`",
+    );
+    a.fail(
+        r#"
+def test():
+    count_shapes([1])
+"#,
+        "Expected type `Shapes` but got `list[int]`",
+    );
+    a.fail(
+        r#"
+def test():
+    count_shapes([[blot()]])
+"#,
+        "Expected type `Shapes` but got `list[list[blot]]`",
+    );
+    a.fail(
+        r#"
+def test():
+    count_shapes({"a": square()})
+"#,
+        "Expected type `Shapes` but got `dict[str, square]`",
+    );
+}
+
+/// What the typechecker does not know of a recursive type: what is done with a value of it is
+/// not checked, and two recursive types are taken for each other, even these two, which share
+/// no value.
+#[test]
+fn test_recursive_type_typechecker_approximations() {
+    let mut a = Assert::new();
+    a.globals_add(shape_globals);
+    a.pass(
+        r#"
+def takes(x: Shapes):
+    pass
+
+def test(shapes: Shapes, flags: Flags):
+    shapes.anything
+    shapes()
+    for _ in shapes:
+        pass
+    takes(flags)
+
+assert_false(isinstance(True, Shapes))
+assert_false(isinstance((True, (False, True)), Shapes))
+assert_true(isinstance((True, (False, True)), Flags))
+assert_false(isinstance([], Flags))
+"#,
+    );
+}
+
+/// The value that stands for a recursive type is documented by the declaration.
+#[test]
+fn test_recursive_type_docs() {
+    let DocItem::Type(doc) = StarlarkShapes::global().to_value().documentation() else {
+        panic!("a recursive type is documented as a type");
+    };
+    assert_eq!("A shape, or a list of these.", doc.docs.unwrap().summary);
+    assert_eq!(StarlarkShapes::starlark_type_repr(), doc.ty);
+}
+
+/// A recursive type whose expression looks into a list is checked when it is made and again
+/// when it is read: the list may have changed.
+#[test]
+fn test_recursive_type_is_not_stable() {
+    Heap::temp(|heap| {
+        let list = heap.alloc(AllocList([heap.alloc_simple(Square).to_value()]));
+        let shapes = ValueOf::<StarlarkShapes>::new(list.to_value()).unwrap();
+        assert!(shapes.try_get().is_ok());
+        ListData::from_value_mut(list.to_value())
+            .unwrap()
+            .push(heap.alloc_simple(Blot).to_value(), heap);
+        assert!(shapes.try_get().is_err());
     });
 }

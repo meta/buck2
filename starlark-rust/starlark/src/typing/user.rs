@@ -34,6 +34,7 @@ use crate::typing::call_args::TyCallArgs;
 use crate::typing::callable::TyCallable;
 use crate::typing::custom::TyCustomDyn;
 use crate::typing::custom::TyCustomImpl;
+use crate::typing::error::InternalError;
 use crate::typing::error::TypingNoContextError;
 use crate::typing::error::TypingNoContextOrInternalError;
 use crate::typing::error::TypingOrInternalError;
@@ -319,13 +320,17 @@ impl TyCustomImpl for TyUser {
         x == y
     }
 
-    fn intersects_with(&self, other: &TyBasic) -> bool {
+    fn intersects_with(
+        &self,
+        other: &TyBasic,
+        _ctx: TypingOracleCtx,
+    ) -> Result<bool, InternalError> {
         if let TyBasic::StarlarkValue(other) = other {
             if self.base == *other {
-                return true;
+                return Ok(true);
             }
         }
-        self.supertypes.iter().any(|x| x == other)
+        Ok(self.supertypes.iter().any(|x| x == other))
     }
 }
 

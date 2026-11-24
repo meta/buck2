@@ -14,13 +14,16 @@ def _impl(ctx):
         cmd_args(
             "sh",
             "-c",
-            '(setsid sleep 300 </dev/null &>/dev/null &) && echo done > "$1"',
+            # The orphan is named `sh` until it execs `setsid`, and `setsid` until that execs
+            # `sleep`: the command exits only once it is `sleep`.
+            'setsid sleep 300 </dev/null >/dev/null 2>&1 & until [ "$(cat /proc/$!/comm)" = sleep ]; do :; done; echo done > "$1"',
             "--",
             out.as_output(),
         ),
         env = {"CACHE_BUSTER": _cache_buster},
         category = "spawn_orphan",
         local_only = True,
+        timeout_seconds = 60,
     )
     return [DefaultInfo(default_output = out)]
 

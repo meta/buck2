@@ -40,17 +40,14 @@ async fn test_orphan_pids_killed(buck: &Buck) -> anyhow::Result<()> {
         "Expected at least one orphan process, got: {orphan_processes:?}"
     );
 
-    // The orphan should be either 'setsid' or 'sleep' that escaped the process group.
-    // setsid execs into sleep, so depending on timing we might see either one.
+    // The orphan is the `sleep` that escaped the process group.
     let comms: Vec<&str> = orphan_processes
         .iter()
         .map(|p| p["comm"].as_str().unwrap())
         .collect();
     assert!(
-        comms
-            .iter()
-            .any(|c| c.contains("setsid") || c.contains("sleep")),
-        "Expected to find a 'setsid' or 'sleep' orphan process, got comms: {comms:?}"
+        comms.contains(&"sleep"),
+        "Expected to find a 'sleep' orphan process, got comms: {comms:?}"
     );
     Ok(())
 }

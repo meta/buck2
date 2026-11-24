@@ -24,7 +24,10 @@ use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
 use dupe::Dupe;
 use nix::fcntl::OFlag;
+use nix::sys::signal::kill;
 use nix::sys::stat::Mode;
+use nix::unistd::Pid;
+use nix::unistd::getpgid;
 
 use crate::OrphanProcessInfo;
 use crate::cgroup_files::CgroupFile;
@@ -44,6 +47,55 @@ enum CgroupError {
 
 fn is_process_gone_error(error: &std::io::Error) -> bool {
     error.raw_os_error() == Some(nix::libc::ESRCH)
+}
+
+/// The name of the process `pid`: `None` when `/proc` has no such process, and empty when the name
+/// cannot be read for another reason.
+///
+/// Synchronous on purpose: this is a small procfs file, read only for the processes that a command
+/// left behind.
+fn process_name(pid: u32) -> Option<String> {
+    match std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+        Ok(name) => Some(name.trim().to_owned()),
+        // `ENOENT` when the process is gone at the open, `ESRCH` when it goes before the read.
+        Err(e) if matches!(e.raw_os_error(), Some(nix::libc::ENOENT | nix::libc::ESRCH)) => None,
+        Err(_) => Some(String::new()),
+    }
+}
+
+/// Whether the kill of the process group `group` reached the process `pid`: it is in the group,
+/// and the caller may signal it. A kill of a group skips the members that the caller may not
+/// signal, such as one that runs as another user.
+fn killed_with_group(pid: u32, group: u32) -> bool {
+    // 0 is how `cgroup.procs` lists a process of another pid namespace, and it means the caller to
+    // `getpgid` and `kill`.
+    let Some(pid) = i32::try_from(pid).ok().filter(|pid| *pid != 0) else {
+        return false;
+    };
+    let pid = Pid::from_raw(pid);
+    getpgid(Some(pid)).is_ok_and(|pgid| u32::try_from(pgid.as_raw()) == Ok(group))
+        // No signal is sent: this asks whether the caller may signal the process.
+        && kill(pid, None).is_ok()
+}
+
+/// Of the processes `pids` found in a cgroup after its command ended, those that outlived the
+/// command, with their names.
+///
+/// That leaves out a process that is gone by now, and the processes that the kill of
+/// `killed_group`, done just before, reached: they are still exiting.
+fn orphans_among(
+    pids: impl IntoIterator<Item = u32>,
+    killed_group: Option<u32>,
+) -> Vec<OrphanProcessInfo> {
+    pids.into_iter()
+        .filter(|pid| !killed_group.is_some_and(|group| killed_with_group(*pid, group)))
+        .filter_map(|pid| {
+            Some(OrphanProcessInfo {
+                pid,
+                comm: process_name(pid)?,
+            })
+        })
+        .collect()
 }
 
 /// Resource constraints inherited from ancestor cgroups in the hierarchy.
@@ -298,8 +350,14 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
 
     /// Kill all remaining processes in the cgroup and return information about what was killed.
     ///
+    /// `killed_group` is the process group that the caller killed just before, if any. The
+    /// processes that the kill reached are still exiting, and are not reported.
+    ///
     /// The kill behavior is "race free," ie no risk of racing against forks or whatever. However, the output reporting is not race free.
-    pub async fn kill_remaining_pids(&self) -> buck2_error::Result<Vec<OrphanProcessInfo>> {
+    pub async fn kill_remaining_pids(
+        &self,
+        killed_group: Option<u32>,
+    ) -> buck2_error::Result<Vec<OrphanProcessInfo>> {
         let procs = CgroupFile::open(
             self.dir.dupe(),
             FileNameBuf::unchecked_new("cgroup.procs"),
@@ -313,16 +371,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
             .filter_map(|l| l.parse().ok())
             .collect();
 
-        let orphans: Vec<OrphanProcessInfo> = pids
-            .into_iter()
-            .map(|pid| {
-                let comm =
-                    fs_util::read_to_string(AbsPath::new(&format!("/proc/{}/comm", pid)).unwrap())
-                        .map(|s| s.trim().to_owned())
-                        .unwrap_or_default();
-                OrphanProcessInfo { pid, comm }
-            })
-            .collect();
+        let orphans = orphans_among(pids, killed_group);
 
         let f = CgroupFile::open(
             self.dir.dupe(),
@@ -929,6 +978,7 @@ impl Cgroup<NoMemoryMonitoring, CgroupKindInternal> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::CommandExt;
     use std::os::unix::process::ExitStatusExt;
     use std::time::Duration;
     use std::time::Instant;
@@ -939,6 +989,8 @@ mod tests {
     use dupe::Dupe;
 
     use super::is_process_gone_error;
+    use super::orphans_among;
+    use super::process_name;
     use crate::cgroup::Cgroup;
     use crate::cgroup::MemoryPressureHandle;
     use crate::cgroup_files::CgroupFile;
@@ -1217,7 +1269,7 @@ mod tests {
 
         assert_eq!(cgroup.read_pid_count().await.unwrap(), 1);
 
-        let orphans = cgroup.kill_remaining_pids().await.unwrap();
+        let orphans = cgroup.kill_remaining_pids(None).await.unwrap();
         assert!(!orphans.is_empty(), "Should have found orphan processes");
         assert_eq!(orphans[0].pid, child.id());
         assert_eq!(orphans[0].comm, "sleep");
@@ -1230,6 +1282,51 @@ mod tests {
         assert_eq!(status.signal(), Some(9));
 
         // Killing again should report no remaining PIDs.
-        assert!(cgroup.kill_remaining_pids().await.unwrap().is_empty());
+        assert!(cgroup.kill_remaining_pids(None).await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_process_name() {
+        if !cfg!(target_os = "linux") {
+            return;
+        }
+        assert!(process_name(std::process::id()).is_some_and(|name| !name.is_empty()));
+
+        let mut gone = background_command("true").spawn().unwrap();
+        gone.wait().unwrap();
+        assert_eq!(process_name(gone.id()), None);
+    }
+
+    #[test]
+    fn test_orphans_among_leaves_out_a_killed_group_and_gone_processes() {
+        if !cfg!(target_os = "linux") {
+            return;
+        }
+        let sleep_in_own_group = || {
+            let mut cmd = background_command("sleep");
+            cmd.arg("300").process_group(0);
+            cmd.spawn().unwrap()
+        };
+        let mut in_group = sleep_in_own_group();
+        let mut elsewhere = sleep_in_own_group();
+        let mut gone = background_command("true").spawn().unwrap();
+        gone.wait().unwrap();
+
+        let pids = [in_group.id(), elsewhere.id(), gone.id()];
+        let reported = |killed_group| -> Vec<u32> {
+            orphans_among(pids, killed_group)
+                .into_iter()
+                .map(|orphan| orphan.pid)
+                .collect()
+        };
+        let with_group_killed = reported(Some(in_group.id()));
+        let with_nothing_killed = reported(None);
+
+        for child in [&mut in_group, &mut elsewhere] {
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+        assert_eq!(with_group_killed, [elsewhere.id()]);
+        assert_eq!(with_nothing_killed, [in_group.id(), elsewhere.id()]);
     }
 }

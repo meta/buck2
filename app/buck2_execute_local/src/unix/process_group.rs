@@ -93,6 +93,7 @@ impl ProcessCommandImpl {
                 inner,
                 cgroup: self.cgroup,
                 kill_detached_descendants: self.kill_detached_descendants,
+                killed_group: None,
             }),
             Err(e) => Err((e.into(), self)),
         }
@@ -103,6 +104,8 @@ pub(crate) struct ProcessGroupImpl {
     inner: Child,
     cgroup: Option<Cgroup<NoMemoryMonitoring, CgroupKindLeaf>>,
     kill_detached_descendants: bool,
+    /// The id of the process group, once `kill` has killed it.
+    killed_group: Option<u32>,
 }
 
 impl ProcessGroupImpl {
@@ -134,7 +137,7 @@ impl ProcessGroupImpl {
                 res = &mut child => {
                     // Kill any remaining PIDs in the cgroup that outlived the main process.
                     let orphans = if let Some(cgroup) = self.cgroup.as_ref() {
-                        cgroup.kill_remaining_pids().await?
+                        cgroup.kill_remaining_pids(self.killed_group).await?
                     } else {
                         Vec::new()
                     };
@@ -213,7 +216,9 @@ impl ProcessGroupImpl {
             return Ok(());
         }
         buck2_process_kill::kill_group(pid)
-            .with_buck_error_context(|| format!("Failed to kill process group {pid}"))
+            .with_buck_error_context(|| format!("Failed to kill process group {pid}"))?;
+        self.killed_group = u32::try_from(pid).ok();
+        Ok(())
     }
 }
 
@@ -255,6 +260,31 @@ mod tests {
 
     fn pid_of(child: &StdChild) -> i32 {
         child.id().try_into().expect("pid should fit an i32")
+    }
+
+    #[tokio::test]
+    async fn test_kill_records_the_group_it_killed() {
+        let mut cmd = background_command("sleep");
+        cmd.arg("1000");
+        let Ok(mut group) = ProcessCommandImpl::new(cmd, None, false)
+            .await
+            .unwrap()
+            .spawn()
+        else {
+            panic!("should spawn sleep");
+        };
+        let pid = group.id().expect("the command is running");
+        let leader = nix::unistd::Pid::from_raw(pid.try_into().unwrap());
+        assert_eq!(
+            nix::unistd::getpgid(Some(leader)).unwrap(),
+            leader,
+            "the command leads its own process group"
+        );
+        assert_eq!(group.killed_group, None);
+
+        group.kill(None).await.unwrap();
+        assert_eq!(group.killed_group, Some(pid));
+        group.wait(futures::stream::pending()).await.unwrap();
     }
 
     #[tokio::test]

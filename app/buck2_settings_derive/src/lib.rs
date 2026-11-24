@@ -68,7 +68,10 @@ use syn::spanned::Spanned;
 ///   value means "fall back to buckconfig".
 /// - `buckconfig_fallback = "section.property"`: the buckconfig key read,
 ///   before the defaults apply, when no layer set the key, for keys whose
-///   values still live in buckconfigs. The accessor then takes a
+///   values still live in buckconfigs. Add one only when migrating a
+///   buckconfig key that already exists in use. A new setting that
+///   never lived in a buckconfig should not get a fallback. The accessor
+///   then takes a
 ///   `&mut dyn BuckconfigSource` and returns a `Result`, so every call site
 ///   says which config the fallback is read from, and dropping the fallback
 ///   later breaks exactly those call sites. `oss_buckconfig_fallback` is the

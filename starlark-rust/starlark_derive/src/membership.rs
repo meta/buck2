@@ -147,7 +147,7 @@ pub(crate) fn membership_items(
             #[inline]
             fn provide_predicate_handle(
                 #this: Self::Get,
-                #demand: &mut starlark::values::Demand<'_, #lt>,
+                #demand: &mut starlark::__derive_refs::Demand<'_, #lt>,
             ) {
                 #( #provide )*
             }

@@ -66,7 +66,6 @@ use crate::values::ValueError;
 use crate::values::ValueIdentity;
 use crate::values::ValueTyped;
 use crate::values::bool::value::VALUE_FALSE_TRUE;
-use crate::values::demand::request_value_impl;
 use crate::values::dict::Dict;
 use crate::values::dict::value::DictGen;
 use crate::values::dict::value::VALUE_EMPTY_FROZEN_DICT;
@@ -1095,11 +1094,6 @@ impl<'v> Value<'v> {
         };
         result.sort();
         result
-    }
-
-    /// Request a value provided by [`StarlarkValue::provide`].
-    pub fn request_value<T: AnyLifetime<'v>>(self) -> Option<T> {
-        request_value_impl(self)
     }
 
     #[cold]

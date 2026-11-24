@@ -202,7 +202,7 @@ fn is_representation_item(item: &syn::ImplItem) -> bool {
         syn::ImplItem::Type(t) => t.ident == "Type",
         syn::ImplItem::Fn(f) => matches!(
             f.sig.ident.to_string().as_str(),
-            "provide" | "type_matches_value" | "as_type_compiled_dyn" | "is_special" | "get_typed"
+            "type_matches_value" | "as_type_compiled_dyn" | "is_special" | "get_typed"
         ),
         _ => false,
     }

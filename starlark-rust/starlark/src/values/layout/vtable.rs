@@ -769,11 +769,6 @@ impl<'v> AValueDynFull<'v> {
         )
     }
 
-    #[inline]
-    pub(crate) fn provide(self, demand: &mut Demand<'_, 'v>) {
-        (self.avalue.vtable.starlark_value.provide)(self.avalue.value, self.value, demand)
-    }
-
     /// Whether the value's type is a member of some predicate type by its own block.
     #[inline]
     pub(crate) fn has_predicate_handles(self) -> bool {

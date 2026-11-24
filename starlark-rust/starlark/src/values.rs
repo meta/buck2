@@ -73,7 +73,6 @@ pub use crate::values::alloc_value::AllocFrozenValue;
 pub use crate::values::alloc_value::AllocValue;
 pub use crate::values::deferred::Deferred;
 pub use crate::values::deferred::DeferredWord;
-pub use crate::values::demand::Demand;
 pub use crate::values::error::ValueError;
 pub use crate::values::freeze::Freeze;
 pub use crate::values::freeze::FreezePreservesType;

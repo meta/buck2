@@ -1169,20 +1169,6 @@ pub trait StarlarkValue<'v>:
         false
     }
 
-    /// Dynamically provide values based on type.
-    ///
-    /// Value can be fetched using [`Value::request_value`].
-    ///
-    /// The API is based on
-    /// [std::any::Provider](https://doc.rust-lang.org/std/any/trait.Provider.html).
-    ///
-    /// This lives on the representation rather than on [`StarlarkType`]: what it provides are
-    /// references into the representation's memory, for the heap's lifetime, which the receiver
-    /// of a `StarlarkType` method, built for the call, cannot give out.
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        let _ = demand;
-    }
-
     /// Whether `value` is of the type this value denotes, for the representations of `type`.
     ///
     /// This lives on the representation rather than on [`StarlarkType`]: it runs on every runtime

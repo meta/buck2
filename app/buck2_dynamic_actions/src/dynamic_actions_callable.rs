@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 
 use allocative::Allocative;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_build_api::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
+use buck2_build_api::interpreter::rule_defs::provider::StarlarkProvider;
 use buck2_error::BuckErrorContext;
 use buck2_hash::BuckMutInsertionMap;
 use dupe::Dupe;
@@ -85,7 +85,7 @@ impl StarlarkCallableParamSpec for DynamicActionsCallbackParamSpec {
     }
 }
 
-pub type DynamicActionsCallbackReturnType = ListType<AbstractProvider>;
+pub type DynamicActionsCallbackReturnType = ListType<StarlarkProvider>;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]

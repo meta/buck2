@@ -26,7 +26,6 @@ use starlark::collections::StarlarkHasher;
 use starlark::eval::Evaluator;
 use starlark::eval::ParametersParser;
 use starlark::typing::Ty;
-use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::StarlarkPagable;
@@ -141,10 +140,6 @@ impl<'v> StarlarkValue<'v> for UserProvider<'v> {
             v.write_hash(hasher)?;
         }
         Ok(())
-    }
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn ProviderLike>(self);
     }
 
     #[starlark(implements = StarlarkProvider)]

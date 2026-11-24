@@ -53,7 +53,7 @@ use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::path_format;
 use crate::interpreter::rule_defs::cmd_args::path_format_absolute;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
-use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
+use crate::interpreter::rule_defs::provider::ProviderLike;
 use crate::interpreter::rule_defs::transitive_set::TransitiveSetJsonProjection;
 
 /// A wrapper with a Serialize instance so we can pass down the necessary context.
@@ -145,7 +145,7 @@ pub enum JsonUnpack<'v> {
     CellPath(ValueOf<'v, StarlarkCellPath>),
     Artifact(JsonArtifact<'v>),
     CommandLine(CommandLineArg<'v>),
-    Provider(ValueAsProviderLike<'v>),
+    Provider(&'v dyn ProviderLike<'v>),
     TaggedValue(ValueOf<'v, StarlarkTaggedValue<'v>>),
     BxlSelectConcat(ValueOf<'v, StarlarkSelectConcat>),
     BxlSelectDict(ValueOf<'v, StarlarkSelectDict>),
@@ -279,7 +279,7 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
                 }
             }
             JsonUnpack::Provider(x) => {
-                serializer.collect_map(x.0.items().iter().map(|(k, v)| (k, self.with_value(*v))))
+                serializer.collect_map(x.items().iter().map(|(k, v)| (k, self.with_value(*v))))
             }
             JsonUnpack::TaggedValue(x) => self.with_value(x.value()).serialize(serializer),
             JsonUnpack::BxlSelectConcat(x) => x.serialize(serializer),
@@ -389,7 +389,7 @@ pub fn visit_json_artifacts<'v>(
         }
         JsonUnpack::CommandLine(x) => x.get().visit_artifacts(visitor)?,
         JsonUnpack::Provider(x) => {
-            for (_, v) in x.0.items() {
+            for (_, v) in x.items() {
                 visit_json_artifacts(v, visitor)?;
             }
         }

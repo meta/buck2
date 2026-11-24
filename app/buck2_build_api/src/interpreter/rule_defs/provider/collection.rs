@@ -67,7 +67,8 @@ use crate::actions::impls::json::SerializeOrFail;
 use crate::interpreter::rule_defs::provider::DefaultInfo;
 use crate::interpreter::rule_defs::provider::DefaultInfoCallable;
 use crate::interpreter::rule_defs::provider::FrozenBuiltinProviderLike;
-use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
+use crate::interpreter::rule_defs::provider::ProviderLike;
+use crate::interpreter::rule_defs::provider::StarlarkProvider;
 
 fn format_provider_keys_for_error(keys: &[String]) -> String {
     format!(
@@ -269,13 +270,13 @@ impl<'v> ProviderCollection<'v> {
 
         let mut providers = BuckMutInsertionMap::with_capacity(list.len());
         for value in list.iter() {
-            match ValueAsProviderLike::unpack_value(value)? {
+            match <&dyn ProviderLike>::unpack_value_opt(value) {
                 Some(provider) => {
-                    if let Some(existing_value) = providers
-                        .insert(CollectionKey(provider.0.id().dupe()), Deferred::new(value))
+                    if let Some(existing_value) =
+                        providers.insert(CollectionKey(provider.id().dupe()), Deferred::new(value))
                     {
                         return Err(ProviderCollectionError::CollectionSpecifiedProviderTwice {
-                            provider_name: provider.0.id().name.clone(),
+                            provider_name: provider.id().name.clone(),
                             original_repr: existing_value.read()?.to_repr(),
                             new_repr: value.to_repr(),
                         }
@@ -369,7 +370,7 @@ impl<'v> ProviderCollection<'v> {
     pub(crate) fn get(
         &self,
         index: Value<'v>,
-    ) -> buck2_error::Result<NoneOr<ValueOf<'v, ValueAsProviderLike<'v>>>> {
+    ) -> buck2_error::Result<NoneOr<ValueOf<'v, StarlarkProvider>>> {
         match self.get_impl(index, GetOp::Get)? {
             Either::Left(v) => Ok(NoneOr::Other(ValueOf::new_err(v)?)),
             Either::Right(_) => Ok(NoneOr::None),
@@ -403,7 +404,7 @@ fn provider_collection_methods(builder: &mut MethodsBuilder) {
     fn get<'v>(
         this: &ProviderCollection<'v>,
         index: Value<'v>,
-    ) -> starlark::Result<NoneOr<ValueOf<'v, ValueAsProviderLike<'v>>>> {
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkProvider>>> {
         Ok(this.get(index)?)
     }
 }

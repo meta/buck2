@@ -524,10 +524,6 @@ impl ProviderCodegen {
             impl<'v> starlark::values::StarlarkValue<'v> for #name<'v> {
                 #(#attrs)*
                 #(#memberships)*
-                fn provide(&'v self, demand: &mut starlark::values::Demand<'_, 'v>) {
-                    demand.provide_value::<
-                        &dyn buck2_build_api::interpreter::rule_defs::provider::ProviderLike>(self);
-                }
                 fn equals(&self, other: &Self) -> starlark::Result<bool> {
                     #(
                         if !#self_values.equals(#other_values)? {

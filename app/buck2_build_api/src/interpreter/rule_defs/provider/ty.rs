@@ -10,6 +10,5 @@
 
 //! Compile type typechecking for providers.
 
-pub mod abstract_provider;
 pub(crate) mod provider;
 pub(crate) mod provider_callable;

@@ -5,7 +5,6 @@
 ## ExecutionPlatformInfo
 ## ExecutionPlatformRegistrationInfo
 ## InstallInfo
-## Provider
 ## anon\_rule
 ## dedupe
 ## deprecation

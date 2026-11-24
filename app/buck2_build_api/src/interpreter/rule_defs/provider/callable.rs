@@ -66,6 +66,7 @@ use starlark::values::dict::DictType;
 use starlark::values::list::ListRef;
 use starlark::values::list_or_tuple::ListOrTupleType;
 use starlark::values::starlark_value;
+use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 use starlark::values::string::StarlarkStr;
 use starlark::values::typing::TypeCompiled;
 use starlark::values::typing::TypeInstanceId;
@@ -73,9 +74,9 @@ use starlark::values::typing::TypeMatcher;
 use starlark::values::typing::TypeMatcherDyn;
 use starlark::values::typing::TypeMatcherFactory;
 
+use crate::interpreter::rule_defs::provider::StarlarkProvider;
 use crate::interpreter::rule_defs::provider::doc::ProviderMembersSource;
 use crate::interpreter::rule_defs::provider::doc::provider_callable_documentation;
-use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 use crate::interpreter::rule_defs::provider::ty::provider::ty_provider;
 use crate::interpreter::rule_defs::provider::ty::provider_callable::ty_provider_callable;
 use crate::interpreter::rule_defs::provider::user::UserProvider;
@@ -590,8 +591,9 @@ fn provider_field_parse_type<'v>(
 }
 
 #[starlark_module]
-#[starlark_types(AbstractProvider as Provider no_docs)]
 pub fn register_provider(builder: &mut GlobalsBuilder) {
+    const Provider: StarlarkValueAsType<StarlarkProvider> = StarlarkProvider::global();
+
     /// Create a field definition object which can be passed to `provider` type constructor.
     fn provider_field<'v>(
         #[starlark(require=pos)] ty: Value<'v>,

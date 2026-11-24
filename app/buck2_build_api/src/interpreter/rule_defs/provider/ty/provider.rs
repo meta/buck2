@@ -14,11 +14,8 @@ use starlark::typing::TyStarlarkValue;
 use starlark::typing::TyUser;
 use starlark::typing::TyUserFields;
 use starlark::typing::TyUserParams;
-use starlark::values::StarlarkTypeExpr;
 use starlark::values::typing::TypeInstanceId;
 use starlark::values::typing::TypeMatcherFactory;
-
-use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
 /// Type of provider instance, builtin or user.
 pub(crate) fn ty_provider(
@@ -34,7 +31,6 @@ pub(crate) fn ty_provider(
         base,
         type_instance_id,
         TyUserParams {
-            supertypes: AbstractProvider::starlark_type_repr().iter_union().to_vec(),
             matcher,
             fields: TyUserFields {
                 known: fields,

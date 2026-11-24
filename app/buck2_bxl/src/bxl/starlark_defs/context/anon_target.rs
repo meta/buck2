@@ -23,8 +23,8 @@ use buck2_build_api::anon_target::AnonTargetDyn;
 use buck2_build_api::bxl::anon_target::EVAL_BXL_FOR_ANON_TARGET;
 use buck2_build_api::bxl::types::BxlFunctionLabel;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
+use buck2_build_api::interpreter::rule_defs::provider::StarlarkProvider;
 use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
-use buck2_build_api::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 use buck2_common::events::HasEvents;
 use buck2_common::scope::scope_and_collect_with_dice;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
@@ -112,7 +112,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
         #[starlark(require = named)] r#impl: StarlarkCallableChecked<
             'v,
             BxlAnonCallbackParamSpec,
-            ListType<AbstractProvider>,
+            ListType<StarlarkProvider>,
         >,
         #[starlark(require = named)] attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
         #[starlark(require = named, default = "")] doc: &str,

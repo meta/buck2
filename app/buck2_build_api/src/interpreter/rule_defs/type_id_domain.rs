@@ -25,8 +25,6 @@ pub enum Buck2TypeIdDomain {
     /// A builtin (Rust-defined) provider type — both its instance and callable
     /// types; the role is disambiguated by the identity passed to `from_identity`.
     BuiltinProvider,
-    /// The singleton `Provider` type that matches any provider instance.
-    ProviderSingleton,
     /// A BXL `bxl.TargetSet[...]` type; the identity is the node kind.
     BxlTargetSet,
 }
@@ -37,7 +35,6 @@ impl TypeIdDomain for Buck2TypeIdDomain {
             Buck2TypeIdDomain::UserProvider => "buck2.user_provider",
             Buck2TypeIdDomain::TransitiveSet => "buck2.transitive_set",
             Buck2TypeIdDomain::BuiltinProvider => "buck2.builtin_provider",
-            Buck2TypeIdDomain::ProviderSingleton => "buck2.provider_singleton",
             Buck2TypeIdDomain::BxlTargetSet => "buck2.bxl_target_set",
         }
     }

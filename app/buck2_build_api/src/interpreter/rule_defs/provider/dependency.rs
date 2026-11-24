@@ -39,7 +39,7 @@ use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark_map::StarlarkHasher;
 
-use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
+use crate::interpreter::rule_defs::provider::StarlarkProvider;
 use crate::interpreter::rule_defs::provider::collection::ProviderCollection;
 use crate::interpreter::rule_defs::provider::execution_platform::StarlarkExecutionPlatformResolution;
 
@@ -256,7 +256,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
     fn get<'v>(
         this: &Dependency<'v>,
         index: Value<'v>,
-    ) -> starlark::Result<NoneOr<ValueOf<'v, ValueAsProviderLike<'v>>>> {
+    ) -> starlark::Result<NoneOr<ValueOf<'v, StarlarkProvider>>> {
         Ok(this.collection().get(index).with_buck_error_context(|| {
             format!("Error accessing dependencies of `{}`", this.label)
         })?)

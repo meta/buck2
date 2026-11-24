@@ -56,29 +56,22 @@
 //! Often internally we'd have the analysis result (`ProviderCollection`) and want to get the
 //! provider out of their so there's a convenience function for that: `MyProvider::from_providers(collect)`.
 
-use std::convert::Infallible;
 // TODO(cjhopman): That last one would be more discoverable if we moved it onto the
 // `FrozenProviderCollectionValue` itself so you could do `collection.get::<MyProvider>()`.
 use std::fmt::Debug;
 use std::sync::Arc;
 
 use buck2_core::provider::id::ProviderId;
+use buck2_interpreter::late_binding_ty::ProviderReprLate;
 use starlark::any::IsStaticType;
-use starlark::any::ProvidesStaticType;
 use starlark::starlark_predicate_type;
-use starlark::typing::Ty;
 use starlark::values::StarlarkTypeExpr;
-use starlark::values::StarlarkTypeExprStable;
 use starlark::values::StarlarkValue;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueOf;
-use starlark::values::type_expr::UnionPayload;
 
 use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
 use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfoCallable;
 use crate::interpreter::rule_defs::provider::collection::ProviderCollection;
-use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
 pub mod builtin;
 pub mod callable;
@@ -109,8 +102,10 @@ pub trait FrozenBuiltinProviderLike:
     fn builtin_provider_id() -> &'static Arc<ProviderId>;
 }
 
-unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn ProviderLike<'v> {
-    type StaticType = &'static dyn ProviderLike<'static>;
+pub(crate) fn init_provider_ty() {
+    ProviderReprLate::init(StarlarkProvider::starlark_type_repr(), |value| {
+        StarlarkProvider::matches(value)
+    })
 }
 
 starlark_predicate_type! {
@@ -122,44 +117,4 @@ starlark_predicate_type! {
     pub StarlarkProvider<'v>;
     name "Provider";
     get &'v dyn ProviderLike<'v>;
-}
-
-pub struct ValueAsProviderLike<'v>(pub(crate) &'v dyn ProviderLike<'v>);
-
-impl<'v> StarlarkTypeExpr<'v> for ValueAsProviderLike<'v> {
-    type Get = Self;
-
-    fn starlark_type_repr() -> Ty {
-        AbstractProvider::starlark_type_repr()
-    }
-
-    fn get(value: Value<'v>) -> Option<Self> {
-        ValueAsProviderLike::unpack(value)
-    }
-}
-
-impl<'v> StarlarkTypeExprStable<'v> for ValueAsProviderLike<'v> {}
-
-impl<'v> UnionPayload<'v> for ValueAsProviderLike<'v> {
-    type Expr = Self;
-
-    fn from_value(value: Value<'v>) -> Option<Self> {
-        <Self as StarlarkTypeExpr<'v>>::get(value)
-    }
-}
-
-impl<'v> ValueAsProviderLike<'v> {
-    pub(crate) fn unpack(value: Value<'v>) -> Option<Self> {
-        Some(ValueAsProviderLike(value.request_value()?))
-    }
-}
-
-impl<'v> UnpackValue<'v> for ValueAsProviderLike<'v> {
-    type Type = Self;
-    type Error = Infallible;
-
-    #[inline]
-    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
-        Ok(get)
-    }
 }

@@ -41,6 +41,7 @@ pub mod metadata;
 mod package_visibility;
 pub mod parser;
 mod path;
+mod paths;
 pub mod report;
 mod resource_control;
 #[cfg(fbcode_build)]
@@ -78,6 +79,7 @@ pub use package_visibility::PackageVisibilityDefaultIntersection;
 pub use parser::ResolvedSettings;
 pub use parser::SettingOrigin;
 pub use parser::SettingsLayerReport;
+pub use paths::Paths;
 pub use report::SettingsReport;
 pub use resource_control::ResourceControl;
 pub use section::Section;

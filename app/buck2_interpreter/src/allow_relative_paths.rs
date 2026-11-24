@@ -17,11 +17,11 @@ use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::legacy_configs::view::LegacyBuckConfigView;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use buck2_core::pattern::parse_package::parse_cell_path;
+use buck2_settings::Paths;
+use buck2_settings::dice::HasDiceBuckSettings;
 use dice::DiceComputations;
 use dice::EqualityBehavior;
 use dice::Key;
@@ -86,12 +86,10 @@ impl<'d> HasAllowRelativePaths<'d> for DiceComputations<'d> {
                 let cell_resolver = ctx.get_cell_resolver().await?;
                 let cell_alias_resolver = cell_resolver.root_cell_cell_alias_resolver();
 
-                let allowed_relative_dirs_for_current_dir = config
-                    .view(ctx)
-                    .parse_list::<String>(BuckconfigKeyRef {
-                        section: "buck2",
-                        property: "directories_to_allow_relative_paths",
-                    })?
+                let allowed_relative_dirs_for_current_dir = ctx
+                    .dice_settings::<Paths>()
+                    .await?
+                    .allow_relative_in(&mut config.view(ctx))?
                     .unwrap_or_default()
                     .into_iter()
                     .filter_map(|dir| {

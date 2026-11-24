@@ -37,6 +37,7 @@ use crate::metadata::SectionReport;
 use crate::metadata::SectionScope;
 use crate::metadata::SettingsSection;
 use crate::package_visibility::PackageVisibility;
+use crate::paths::Paths;
 use crate::resource_control::ResourceControl;
 use crate::section::Section;
 use crate::starlark::Starlark;
@@ -219,6 +220,7 @@ buck_settings! {
     }
     dice {
         execution_platforms: ExecutionPlatforms,
+        paths: Paths,
         starlark: Starlark,
     }
 }

@@ -33,6 +33,16 @@ retained_logs = 20
 A file sets only the keys it names. Every other key keeps the value it gets
 from the other sources.
 
+A setting can be a list, written as a TOML array:
+
+```toml
+[paths]
+allow_relative_in = ["root//foo", "root//bar"]
+```
+
+A source that sets a list sets all of it. Lists from different sources are not
+joined.
+
 ## Where a value comes from
 
 A setting takes its value from the highest of these sources that sets it:
@@ -70,7 +80,8 @@ as a string otherwise.
 
 Settings that used to be `.buckconfig` keys can still read the old key. Such a
 setting uses the `.buckconfig` value only when no settings file and no
-`--setting` flag sets it.
+`--setting` flag sets it. A list setting reads the old key as one
+comma-separated value.
 
 ## Scopes
 

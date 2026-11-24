@@ -1,0 +1,2 @@
+[paths]
+allow_relative_in = ["//foo"]

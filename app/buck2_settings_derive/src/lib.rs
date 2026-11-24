@@ -46,7 +46,9 @@ use syn::spanned::Spanned;
 /// ```
 ///
 /// Every field is an `Option<T>` holding what the settings layers set, `None`
-/// when no layer did, and carries one `#[setting(...)]` with:
+/// when no layer did. A list is an `Option<Vec<T>>`, written as a TOML array;
+/// a higher layer replaces the whole list. Each field carries one
+/// `#[setting(...)]` with:
 ///
 /// - `overridable_in(...)`, required: which override sources may set the
 ///   key, from `CommandLine` and `LocalSettings`. The repository file and
@@ -64,7 +66,8 @@ use syn::spanned::Spanned;
 ///   says which config the fallback is read from, and dropping the fallback
 ///   later breaks exactly those call sites. `oss_buckconfig_fallback` is the
 ///   same for a fallback only open source builds still read. `T` must
-///   implement `FromStr`.
+///   implement `FromStr`; for a list its elements must, and the buckconfig
+///   value is split on commas, buckconfig having no lists of its own.
 /// - `accessor = <name>`: the accessor's name when the field's name is taken
 ///   by a hand-written one.
 ///
@@ -283,11 +286,20 @@ fn docs(attrs: &[Attribute]) -> String {
 }
 
 fn option_inner(ty: &Type) -> Option<&Type> {
+    single_type_argument(ty, "Option")
+}
+
+fn vec_inner(ty: &Type) -> Option<&Type> {
+    single_type_argument(ty, "Vec")
+}
+
+/// `T` of a type written as `wrapper<T>`.
+fn single_type_argument<'a>(ty: &'a Type, wrapper: &str) -> Option<&'a Type> {
     let Type::Path(path) = ty else {
         return None;
     };
     let segment = path.path.segments.last()?;
-    if segment.ident != "Option" {
+    if segment.ident != wrapper {
         return None;
     }
     let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
@@ -351,6 +363,9 @@ fn expand(
                 )
             })?
             .clone();
+        // As written in the declaration; token streams print with spaces
+        // around punctuation.
+        let type_name = quote!(#inner).to_string().replace(' ', "");
         let setting = parse_setting_args(&field.attrs, &name)?;
         field.attrs.retain(|attr| !attr.path().is_ident("setting"));
         let doc_attrs: Vec<Attribute> = field
@@ -448,13 +463,17 @@ fn expand(
             }
             Some((_, section, property, oss_only)) => {
                 // Internal builds never read an OSS-only fallback.
+                let read_fallback = match vec_inner(&inner) {
+                    Some(element) => quote! {
+                        ::buck2_settings::buckconfig::read_fallback_list::<#element>
+                    },
+                    None => quote!(::buck2_settings::buckconfig::read_fallback::<#inner>),
+                };
                 let read = quote! {
                     if #oss_only && cfg!(fbcode_build) {
                         ::core::option::Option::None
                     } else {
-                        ::buck2_settings::buckconfig::read_fallback::<#inner>(
-                            buckconfig, #section, #property,
-                        )?
+                        #read_fallback(buckconfig, #section, #property)?
                     }
                 };
                 accessors.push(quote! {
@@ -491,7 +510,7 @@ fn expand(
             ::buck2_settings::metadata::SettingKeyMetadata {
                 name: #name_str,
                 doc: #doc,
-                type_name: stringify!(#inner),
+                type_name: #type_name,
                 overridable_in: &[#(::buck2_settings::metadata::OverrideSource::#sources),*],
                 internal_default: #internal_thunk,
                 oss_default: #oss_thunk,

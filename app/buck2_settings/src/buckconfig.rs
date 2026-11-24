@@ -54,3 +54,62 @@ where
         )
     })
 }
+
+/// [`read_fallback`] for a list setting. Buckconfig has no lists, so the
+/// value is one string, split on commas the way buckconfig list reads split
+/// it: elements are taken verbatim, surrounding whitespace included.
+#[doc(hidden)]
+pub fn read_fallback_list<T: FromStr>(
+    source: &mut dyn BuckconfigSource,
+    section: &str,
+    property: &str,
+) -> buck2_error::Result<Option<Vec<T>>>
+where
+    T::Err: Display,
+{
+    let Some(raw) = source.get(section, property)? else {
+        return Ok(None);
+    };
+    raw.split(',')
+        .map(|element| {
+            element.parse::<T>().map_err(|error| {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid element `{element}` in buckconfig `{section}.{property}`: {error}"
+                )
+            })
+        })
+        .collect::<buck2_error::Result<Vec<T>>>()
+        .map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct One(&'static str);
+
+    impl BuckconfigSource for One {
+        fn get(&mut self, _section: &str, _property: &str) -> buck2_error::Result<Option<String>> {
+            Ok(Some(self.0.to_owned()))
+        }
+    }
+
+    #[test]
+    fn list_fallback_splits_like_buckconfig() -> buck2_error::Result<()> {
+        assert_eq!(
+            read_fallback_list::<String>(&mut One("a, b,c"), "s", "p")?,
+            Some(vec!["a".to_owned(), " b".to_owned(), "c".to_owned()])
+        );
+        assert_eq!(
+            read_fallback_list::<String>(&mut One(""), "s", "p")?,
+            Some(vec![String::new()])
+        );
+        assert_eq!(
+            read_fallback_list::<u32>(&mut NoBuckconfig, "s", "p")?,
+            None
+        );
+        assert!(read_fallback_list::<u32>(&mut One("1,x"), "s", "p").is_err());
+        Ok(())
+    }
+}

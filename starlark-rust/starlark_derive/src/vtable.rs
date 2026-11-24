@@ -45,13 +45,36 @@ struct Gen {
 /// a type parameter `T`; which trait bounds it depends on the dispatch.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Dispatch {
-    /// A `StarlarkType` method with a receiver: `T` is the representation, the entry gets the
-    /// receiver from `T::with_receiver` and calls the method on `T::Type`.
-    ViaRepresentation,
     /// A `StarlarkType` function without a receiver: `T` is the type itself.
     OnType,
     /// A `StarlarkValue` method: `T` is the representation and the method is called on it.
     OnRepresentation,
+    /// A `StarlarkType` function whose first parameter is the type's `Get`: `T` is the
+    /// representation, the entry makes the `Get` with `T::get_typed` and calls the function on
+    /// `T::Type`.
+    ViaGet,
+}
+
+/// `ty` is spelled `Self::Get`.
+pub(crate) fn is_self_get(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Path(path) => {
+            path.qself.is_none()
+                && path.path.segments.len() == 2
+                && path.path.segments[0].ident == "Self"
+                && path.path.segments[1].ident == "Get"
+        }
+        _ => false,
+    }
+}
+
+/// The parameter is the receiver of a method: `&self` of a `StarlarkValue` method, or a first
+/// parameter of type `Self::Get` of a `StarlarkType` method.
+fn is_receiver(param: &FnArg) -> bool {
+    match param {
+        FnArg::Receiver(_) => true,
+        FnArg::Typed(p) => is_self_get(&p.ty),
+    }
 }
 
 struct VTableEntry {
@@ -131,11 +154,11 @@ impl Gen {
 
     /// Parse `StarlarkValue` method parameter into vtable `fn` parameters and unpack exprs.
     fn vtable_entry_param(&self, span: Span, param: &FnArg) -> syn::Result<Vec<VTableFnParam>> {
-        match param {
-            // The receiver arrives twice: as the payload pointer, which is what a type with one
-            // representation needs, and as the `Value`, which a view needs to carry. Lifetimes
-            // are erased like every other parameter's.
-            FnArg::Receiver(_) => Ok(vec![
+        if is_receiver(param) {
+            // The receiver arrives twice: as the payload pointer, which is what a method of the
+            // representation takes, and as the `Value`, which the type's `Get` is made from.
+            // Lifetimes are erased like every other parameter's.
+            return Ok(vec![
                 VTableFnParam {
                     span,
                     name: syn::parse_quote_spanned! {span=>
@@ -160,7 +183,10 @@ impl Gen {
                         ValueTyped::<T>::new_unchecked(std::mem::transmute::<Value<'_>, Value<'_>>(this))
                     },
                 },
-            ]),
+            ]);
+        }
+        match param {
+            FnArg::Receiver(_) => unreachable!("handled above"),
             FnArg::Typed(p) => {
                 let name: &Ident = match &*p.pat {
                     Pat::Ident(p) => &p.ident,
@@ -231,16 +257,14 @@ impl Gen {
                     },
                 )
             }
-            Dispatch::ViaRepresentation => {
-                let [payload, value, args @ ..] = field_init_args.as_slice() else {
+            Dispatch::ViaGet => {
+                let [_payload, value, args @ ..] = field_init_args.as_slice() else {
                     unreachable!("a method with a receiver has a receiver");
                 };
                 (
                     quote! { StarlarkValue<'v2> },
                     syn::parse_quote_spanned! {method.sig.span()=>
-                        T::with_receiver(#payload, #value, |receiver| {
-                            <T::Type as StarlarkType<'v2>>::#fn_name(receiver, #(#args),*)
-                        })
+                        <T::Type as StarlarkType<'v2>>::#fn_name(T::get_typed(#value), #(#args),*)
                     },
                 )
             }
@@ -311,7 +335,7 @@ impl Gen {
         }
 
         let dispatch = match m.sig.inputs.first() {
-            Some(FnArg::Receiver(_)) => Dispatch::ViaRepresentation,
+            Some(param) if is_receiver(param) => Dispatch::ViaGet,
             _ => Dispatch::OnType,
         };
         Ok(Some(self.vtable_entry(m, dispatch)?))
@@ -331,7 +355,7 @@ impl Gen {
         for item in &mut trait_item.items {
             match item {
                 TraitItem::Fn(m) => {
-                    let has_receiver = matches!(m.sig.inputs.first(), Some(FnArg::Receiver(_)));
+                    let has_receiver = m.sig.inputs.first().is_some_and(is_receiver);
                     if let Some(entry) = self.process_starlark_value_vtable_fn(m)? {
                         let VTableEntry {
                             field,

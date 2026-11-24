@@ -31,24 +31,24 @@ use crate::module::util::is_type_name;
 /// What a method that may be written typed takes and returns as the trait declares it.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Shape {
-    /// `(&self, Value) -> Result<bool>`.
+    /// `(Self::Get, Value) -> Result<bool>`.
     Equals,
-    /// `(&self, Value) -> Result<Ordering>`.
+    /// `(Self::Get, Value) -> Result<Ordering>`.
     Compare,
-    /// `(&self, &mut StarlarkHasher) -> Result<()>`.
+    /// `(Self::Get, &mut StarlarkHasher) -> Result<()>`.
     WriteHash,
-    /// `add`, `radd`, `mul`, `rmul`: `(&self, Value, Heap) -> Option<Result<Value>>`, where
+    /// `add`, `radd`, `mul`, `rmul`: `(Self::Get, Value, Heap) -> Option<Result<Value>>`, where
     /// `None` gives the other operand its turn.
     OperatorOrNone,
-    /// The other binary operators: `(&self, Value, Heap) -> Result<Value>`.
+    /// The other binary operators: `(Self::Get, Value, Heap) -> Result<Value>`.
     Operator,
-    /// `plus`, `minus`, `bit_not`: `(&self, Heap) -> Result<Value>`.
+    /// `plus`, `minus`, `bit_not`: `(Self::Get, Heap) -> Result<Value>`.
     UnaryOperator,
-    /// `(&self, Value, Heap) -> Result<Value>`.
+    /// `(Self::Get, Value, Heap) -> Result<Value>`.
     At,
-    /// `(&self, Value) -> Result<bool>`.
+    /// `(Self::Get, Value) -> Result<bool>`.
     IsIn,
-    /// `(&self) -> Result<i32>`.
+    /// `(Self::Get) -> Result<i32>`.
     Length,
 }
 
@@ -96,54 +96,54 @@ impl Method {
     fn forms(&self) -> String {
         let name = &self.name;
         match self.shape {
-            Shape::Equals => "`fn equals(&self, other: Operand) -> bool`, where `Operand` is an \
+            Shape::Equals => "`fn equals(this: &Self, other: Operand) -> bool`, where `Operand` is an \
                  `UnpackValue` such as `&Self`, the result may also be `starlark::Result<bool>`, \
-                 and `fn equals(&self, other: Value<'v>) -> starlark::Result<bool>` is the \
+                 and `fn equals(this: &Self, other: Value<'v>) -> starlark::Result<bool>` is the \
                  trait's own form"
                 .to_owned(),
-            Shape::Compare => "`fn compare(&self, other: Operand) -> Ordering`, where `Operand` \
+            Shape::Compare => "`fn compare(this: &Self, other: Operand) -> Ordering`, where `Operand` \
                  is an `UnpackValue` such as `&Self`, the result may also be \
                  `starlark::Result<Ordering>`, and \
-                 `fn compare(&self, other: Value<'v>) -> starlark::Result<Ordering>` is the \
+                 `fn compare(this: &Self, other: Value<'v>) -> starlark::Result<Ordering>` is the \
                  trait's own form"
                 .to_owned(),
-            Shape::WriteHash => "`fn write_hash(&self, hasher: &mut StarlarkHasher)` for a type \
+            Shape::WriteHash => "`fn write_hash(this: &Self, hasher: &mut StarlarkHasher)` for a type \
                  whose values all hash, or the trait's own form \
-                 `fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()>`"
+                 `fn write_hash(this: &Self, hasher: &mut StarlarkHasher) -> starlark::Result<()>`"
                 .to_owned(),
             Shape::OperatorOrNone => format!(
-                "`fn {name}(&self, other: Operand, heap: Heap<'v>) -> Made`, where `Operand` is \
+                "`fn {name}(this: &Self, other: Operand, heap: Heap<'v>) -> Made`, where `Operand` is \
                  an `UnpackValue` such as `&Self`, `Made` is an `AllocValue` or a \
                  `starlark::Result` of one, and `heap` may be left out; \
-                 `fn {name}(&self, other: Value<'v>, heap: Heap<'v>) -> \
+                 `fn {name}(this: &Self, other: Value<'v>, heap: Heap<'v>) -> \
                  Option<starlark::Result<Value<'v>>>` is the trait's own form"
             ),
             Shape::Operator => format!(
-                "`fn {name}(&self, other: Operand, heap: Heap<'v>) -> Made`, where `Operand` is \
+                "`fn {name}(this: &Self, other: Operand, heap: Heap<'v>) -> Made`, where `Operand` is \
                  an `UnpackValue` such as `&Self`, `Made` is an `AllocValue` or a \
                  `starlark::Result` of one, and `heap` may be left out; \
-                 `fn {name}(&self, other: Value<'v>, heap: Heap<'v>) -> \
+                 `fn {name}(this: &Self, other: Value<'v>, heap: Heap<'v>) -> \
                  starlark::Result<Value<'v>>` is the trait's own form"
             ),
             Shape::UnaryOperator => format!(
-                "`fn {name}(&self, heap: Heap<'v>) -> Made`, where `Made` is an `AllocValue` or \
+                "`fn {name}(this: &Self, heap: Heap<'v>) -> Made`, where `Made` is an `AllocValue` or \
                  a `starlark::Result` of one, and `heap` may be left out; \
-                 `fn {name}(&self, heap: Heap<'v>) -> starlark::Result<Value<'v>>` is the \
+                 `fn {name}(this: &Self, heap: Heap<'v>) -> starlark::Result<Value<'v>>` is the \
                  trait's own form"
             ),
-            Shape::At => "`fn at(&self, index: Index, heap: Heap<'v>) -> Made`, where `Index` is \
+            Shape::At => "`fn at(this: &Self, index: Index, heap: Heap<'v>) -> Made`, where `Index` is \
                  an `UnpackValue` such as `i32`, `Made` is an `AllocValue` or a \
                  `starlark::Result` of one, and `heap` may be left out; \
-                 `fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>>` \
+                 `fn at(this: &Self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>>` \
                  is the trait's own form"
                 .to_owned(),
-            Shape::IsIn => "`fn is_in(&self, other: Operand) -> bool`, where `Operand` is an \
+            Shape::IsIn => "`fn is_in(this: &Self, other: Operand) -> bool`, where `Operand` is an \
                  `UnpackValue` such as `&str`, the result may also be `starlark::Result<bool>`, \
-                 and `fn is_in(&self, other: Value<'v>) -> starlark::Result<bool>` is the \
+                 and `fn is_in(this: &Self, other: Value<'v>) -> starlark::Result<bool>` is the \
                  trait's own form"
                 .to_owned(),
-            Shape::Length => "`fn length(&self) -> i32` for a length that cannot fail, or the \
-                 trait's own form `fn length(&self) -> starlark::Result<i32>`"
+            Shape::Length => "`fn length(this: &Self) -> i32` for a length that cannot fail, or the \
+                 trait's own form `fn length(this: &Self) -> starlark::Result<i32>`"
                 .to_owned(),
         }
     }
@@ -356,7 +356,13 @@ pub(crate) fn derive_from_typed(
             kind: syn::ReceiverKind::Reference(_, None, None),
             ..
         }) => {}
-        receiver => return method.error(receiver, "the receiver of a typed method is `&self`"),
+        syn::FnArg::Typed(_) => {}
+        receiver => {
+            return method.error(
+                receiver,
+                "the receiver of a typed method is a parameter named `this`, or `&self`",
+            );
+        }
     }
     if !sig.generics.params.is_empty() || sig.generics.where_clause.is_some() {
         return method.error(&sig.generics, "a typed method has no generics");
@@ -387,7 +393,7 @@ pub(crate) fn derive_from_typed(
             };
             let derived = syn::parse_quote! {
                 #( #attrs )*
-                fn #name(&self, #other: starlark::values::Value<#lt>) -> starlark::Result<bool> {
+                fn #name(#receiver, #other: starlark::values::Value<#lt>) -> starlark::Result<bool> {
                     #call
                 }
             };
@@ -401,7 +407,7 @@ pub(crate) fn derive_from_typed(
             let derived = syn::parse_quote! {
                 #( #attrs )*
                 fn #name(
-                    &self,
+                    #receiver,
                     #other: starlark::values::Value<#lt>,
                 ) -> starlark::Result<std::cmp::Ordering> {
                     #call
@@ -420,7 +426,7 @@ pub(crate) fn derive_from_typed(
             let derived = syn::parse_quote! {
                 #( #attrs )*
                 fn #name(
-                    &self,
+                    #receiver,
                     #hasher: &mut starlark::collections::StarlarkHasher,
                 ) -> starlark::Result<()> {
                     #call
@@ -453,7 +459,7 @@ pub(crate) fn derive_from_typed(
             let derived = syn::parse_quote! {
                 #( #attrs )*
                 fn #name(
-                    &self,
+                    #receiver,
                     #other: starlark::values::Value<#lt>,
                     #heap: starlark::values::Heap<#lt>,
                 ) -> #derived_result {
@@ -480,7 +486,7 @@ pub(crate) fn derive_from_typed(
             let derived = syn::parse_quote! {
                 #( #attrs )*
                 fn #name(
-                    &self,
+                    #receiver,
                     #untyped_index: starlark::values::Value<#lt>,
                     #heap: starlark::values::Heap<#lt>,
                 ) -> starlark::Result<starlark::values::Value<#lt>> {
@@ -500,7 +506,7 @@ pub(crate) fn derive_from_typed(
             };
             let derived = syn::parse_quote! {
                 #( #attrs )*
-                fn #name(&self, #other: starlark::values::Value<#lt>) -> starlark::Result<bool> {
+                fn #name(#receiver, #other: starlark::values::Value<#lt>) -> starlark::Result<bool> {
                     #call
                 }
             };
@@ -515,7 +521,7 @@ pub(crate) fn derive_from_typed(
             };
             let derived = syn::parse_quote! {
                 #( #attrs )*
-                fn #name(&self) -> starlark::Result<i32> {
+                fn #name(#receiver) -> starlark::Result<i32> {
                     #call
                 }
             };
@@ -530,7 +536,7 @@ pub(crate) fn derive_from_typed(
             let derived = syn::parse_quote! {
                 #( #attrs )*
                 fn #name(
-                    &self,
+                    #receiver,
                     #heap: starlark::values::Heap<#lt>,
                 ) -> starlark::Result<starlark::values::Value<#lt>> {
                     #call

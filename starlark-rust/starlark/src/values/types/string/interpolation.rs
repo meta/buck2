@@ -188,6 +188,10 @@ impl<'a> Iterator for PercentFormatParser<'a> {
     }
 }
 
+// Its one caller is `str`'s `%`, which is inlined into its vtable entry. Out of line, the
+// `String` made here goes through memory once more on its way to the heap: 19 instructions on
+// `"%s-%s" % (1, "x")`.
+#[inline]
 pub(crate) fn percent(format: &str, value: Value) -> crate::Result<String> {
     // NOTE(nga): use could reuse `Evaluator::string_pool` here, but
     //   * we don't have access to `Evaluator` in `StarlarkValue::percent`

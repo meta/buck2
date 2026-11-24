@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 
 use quote::quote;
+use syn::spanned::Spanned;
 
 use crate::membership::memberships_impl;
 use crate::membership::take_memberships;
@@ -25,6 +26,7 @@ use crate::typed_behaviour::Typing;
 use crate::typed_behaviour::always_hashes_impl;
 use crate::typed_behaviour::derive_from_typed;
 use crate::v_lifetime::find_v_lifetime;
+use crate::vtable::is_self_get;
 use crate::vtable::vtable_has_field_name;
 
 pub(crate) fn derive_starlark_value(
@@ -630,8 +632,8 @@ impl ImplStarlarkValue {
             ));
         }
         Ok(Some(syn::parse2(quote! {
-            fn bit_or(&self, other: starlark::values::Value<'v>, heap: starlark::values::Heap<'v>) -> starlark::Result<starlark::values::Value<'v>> {
-                starlark::values::typing::macro_refs::starlark_value_bit_or_for_type(self, other, heap)
+            fn bit_or(this: Self::Get, other: starlark::values::Value<'v>, heap: starlark::values::Heap<'v>) -> starlark::Result<starlark::values::Value<'v>> {
+                starlark::values::typing::macro_refs::starlark_value_bit_or_for_type::<Self>(this, other, heap)
             }
         })?))
     }
@@ -885,6 +887,11 @@ impl ImplStarlarkValue {
                 }
             }
         }
+        for item in &mut items {
+            if let syn::ImplItem::Fn(f) = item {
+                self.bind_receiver(f)?;
+            }
+        }
         let mut type_impl = self.input.clone();
         if self.impl_of == ImplOf::Value {
             let (_, for_token) = type_impl.trait_.take().expect("checked to be a trait impl");
@@ -909,15 +916,16 @@ impl ImplStarlarkValue {
         );
         let has_fn_flags = self.has_fn_flags(&type_impl)?;
         type_impl.items.extend(has_fn_flags);
-        if self.impl_of == ImplOf::Type {
-            // A view's methods are the bodies of each representation's vtable entries, which
-            // build the view with a constant variant; inlined there, the dispatch on the variant
-            // folds away and the code is what one `impl` per representation would have been.
-            for item in &mut type_impl.items {
-                if let syn::ImplItem::Fn(f) = item {
-                    if !f.attrs.iter().any(|a| a.path().is_ident("inline")) {
-                        f.attrs.push(syn::parse_quote! { #[inline] });
-                    }
+        // A method is the body of a vtable entry and is hinted into it. For a view, each
+        // representation's entry builds the view with a constant variant; inlined there, the
+        // dispatch on the variant folds away and the code is what one `impl` per representation
+        // would have been. For a type that is its own representation the entry is the method's
+        // one caller, and left out of line it is a frame around a call wherever the result
+        // comes back through memory: 7 instructions on `x in range(..)`.
+        for item in &mut type_impl.items {
+            if let syn::ImplItem::Fn(f) = item {
+                if !f.attrs.iter().any(|a| a.path().is_ident("inline")) {
+                    f.attrs.push(syn::parse_quote! { #[inline] });
                 }
             }
         }
@@ -945,22 +953,6 @@ impl ImplStarlarkValue {
         }
     }
 
-    /// `with_receiver` for a representation of another type: the type is its own `Get`, so
-    /// the receiver is what `get_typed` gives.
-    fn with_receiver_via_get_typed(&self) -> syn::ImplItem {
-        let lt = &self.lifetime_param;
-        syn::parse_quote! {
-            #[inline]
-            fn with_receiver<StarlarkWithReceiverResult>(
-                _payload: &#lt Self,
-                this: starlark::values::ValueTyped<#lt, Self>,
-                f: impl FnOnce(&Self::Type) -> StarlarkWithReceiverResult,
-            ) -> StarlarkWithReceiverResult {
-                f(&<Self as starlark::values::StarlarkValue<#lt>>::get_typed(this))
-            }
-        }
-    }
-
     /// `get_typed` for a representation that is its own type: the handle to the
     /// representation is the type's `Get`. A block that writes a `Get` of its own writes
     /// `get_typed` as well.
@@ -979,19 +971,123 @@ impl ImplStarlarkValue {
         }))
     }
 
-    /// `with_receiver` for a representation that is its own type: the payload.
-    fn with_receiver_identity(&self) -> syn::ImplItem {
-        let lt = &self.lifetime_param;
-        syn::parse_quote! {
-            #[inline]
-            fn with_receiver<StarlarkWithReceiverResult>(
-                payload: &#lt Self,
-                _this: starlark::values::ValueTyped<#lt, Self>,
-                f: impl FnOnce(&Self::Type) -> StarlarkWithReceiverResult,
-            ) -> StarlarkWithReceiverResult {
-                f(payload)
-            }
+    /// A method of the block as the method of `StarlarkType`, which takes the type's `Get`.
+    ///
+    /// The method's first parameter is its receiver. It is named `this` and declared with any
+    /// type that converts from the type; the body runs with it bound from the `Get`. A
+    /// receiver declared `Self::Get` is the trait's own, and the method stays as written.
+    ///
+    /// A method may also still be written with `&self`. Its body runs with `self` bound to
+    /// the representation, for a type that is its own representation, or to the view.
+    fn bind_receiver(&self, f: &mut syn::ImplItemFn) -> syn::Result<()> {
+        if WITHOUT_RECEIVER.iter().any(|name| f.sig.ident == name) {
+            return Ok(());
         }
+        let lt = &self.lifetime_param;
+        let (binding, this, rename_self): (syn::Stmt, syn::Ident, Option<syn::Ident>) = match f
+            .sig
+            .inputs
+            .first()
+        {
+            Some(syn::FnArg::Receiver(syn::Receiver {
+                mutability: None,
+                kind: syn::ReceiverKind::Reference(_, None, None),
+                self_token,
+                ..
+            })) => {
+                let span = self_token.span;
+                let this = syn::Ident::new("__starlark_this", span);
+                let this_self = syn::Ident::new("__starlark_self", span);
+                let binding = match self.impl_of {
+                    ImplOf::Value => syn::parse_quote! {
+                        let #this_self: &#lt Self =
+                            starlark::__derive_refs::behaviour::receiver::<Self, _>(#this);
+                    },
+                    ImplOf::Type => syn::parse_quote! {
+                        let #this_self: &Self = &#this;
+                    },
+                };
+                (binding, this, Some(this_self))
+            }
+            Some(syn::FnArg::Typed(param)) if is_named_this(&param.pat) => {
+                if is_self_get(&param.ty) {
+                    return Ok(());
+                }
+                let this = syn::Ident::new("__starlark_this", param.pat.span());
+                let pat = &param.pat;
+                let ty = &param.ty;
+                // Spanned to the parameter, which is what a receiver type that does not
+                // convert from the type is an error about.
+                let binding = syn::parse_quote_spanned! { param.span() =>
+                    let #pat: #ty = starlark::__derive_refs::behaviour::receiver::<Self, _>(#this);
+                };
+                (binding, this, None)
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &f.sig,
+                    "the first parameter of a `StarlarkType` method is its receiver: a parameter \
+                     named `this` of a type that converts from the type, such as `this: &Self`",
+                ));
+            }
+        };
+        fn replace_self(
+            tokens: proc_macro2::TokenStream,
+            with: &syn::Ident,
+        ) -> proc_macro2::TokenStream {
+            tokens
+                .into_iter()
+                .map(|tt| match tt {
+                    proc_macro2::TokenTree::Ident(i) if i == "self" => {
+                        let mut with = with.clone();
+                        with.set_span(i.span());
+                        proc_macro2::TokenTree::Ident(with)
+                    }
+                    proc_macro2::TokenTree::Group(g) => {
+                        let mut new =
+                            proc_macro2::Group::new(g.delimiter(), replace_self(g.stream(), with));
+                        new.set_span(g.span());
+                        proc_macro2::TokenTree::Group(new)
+                    }
+                    tt => tt,
+                })
+                .collect()
+        }
+        f.sig.inputs[0] = syn::parse_quote! { #this: Self::Get };
+        let block = &f.block;
+        let body = match &rename_self {
+            Some(this_self) => replace_self(quote! { #block }, this_self),
+            None => quote! { #block },
+        };
+        f.block = syn::parse_quote! {
+            {
+                #binding
+                #body
+            }
+        };
+        Ok(())
+    }
+}
+
+/// The functions of `StarlarkType` that are not about a value. Every other function of the trait
+/// takes the value as its first parameter.
+const WITHOUT_RECEIVER: &[&str] = &[
+    "get",
+    "get_type_value_static",
+    "get_type_starlark_repr",
+    "get_methods",
+    "attr_ty",
+    "bin_op_signatures",
+    "rbin_op_signatures",
+    "un_op_result",
+    "at_signature",
+];
+
+/// The parameter is named `this`, with or without the underscores of an unused one.
+fn is_named_this(pat: &syn::Pat) -> bool {
+    match pat {
+        syn::Pat::Ident(pat) => pat.ident.to_string().trim_start_matches('_') == "this",
+        _ => false,
     }
 }
 
@@ -1051,13 +1147,11 @@ fn derive_starlark_value_impl(
         } else {
             Some(impl_starlark_value.get_typed_via_from())
         };
-        let with_receiver = impl_starlark_value.with_receiver_via_get_typed();
         rep_impl.items.splice(
             0..0,
             [please_use_starlark_type_macro]
                 .into_iter()
-                .chain(get_typed)
-                .chain([with_receiver]),
+                .chain(get_typed),
         );
         return Ok(quote! {
             #rep_impl
@@ -1073,13 +1167,11 @@ fn derive_starlark_value_impl(
         type Type = Self;
     };
     let get_typed = impl_starlark_value.get_typed_identity()?;
-    let with_receiver = impl_starlark_value.with_receiver_identity();
     rep_impl.items.splice(
         0..0,
         [please_use_starlark_type_macro, type_self]
             .into_iter()
-            .chain(get_typed)
-            .chain([with_receiver]),
+            .chain(get_typed),
     );
 
     Ok(quote! {

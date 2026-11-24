@@ -30,17 +30,17 @@ use crate::values::StarlarkValue;
 macro_rules! export_hello_attribute {
     () => {
         fn get_attr(
-            &self,
+            this: starlark::values::ValueTyped<'v, Self>,
             attr: &str,
             heap: starlark::values::Heap<'v>,
         ) -> Option<starlark::values::Value<'v>> {
             match attr {
-                "hello" => Some(heap.alloc(&self.hello).to_value()),
+                "hello" => Some(heap.alloc(&this.hello).to_value()),
                 _ => None,
             }
         }
 
-        fn dir_attr(&self) -> Vec<String> {
+        fn dir_attr(_this: starlark::values::ValueTyped<'v, Self>) -> Vec<String> {
             vec!["hello".to_owned()]
         }
     };

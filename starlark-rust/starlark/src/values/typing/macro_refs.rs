@@ -29,13 +29,13 @@ enum TypingMacroRefsError {
 
 /// Implementation of `bit_or` for `StarlarkType` implementations which are types.
 pub fn starlark_value_bit_or_for_type<'v, S: StarlarkType<'v>>(
-    this: &S,
+    this: S::Get,
     other: Value<'v>,
     heap: Heap<'v>,
 ) -> crate::Result<Value<'v>> {
-    let Some(this) = this.eval_type() else {
+    let Some(this) = S::eval_type(this) else {
         let mut repr = String::new();
-        this.collect_repr(&mut repr);
+        S::collect_repr(this, &mut repr);
         return Err(crate::Error::new_other(TypingMacroRefsError::LhsNotType(
             repr,
         )));

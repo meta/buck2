@@ -138,7 +138,9 @@ pub(crate) fn memberships_impl(
         quote! {
             starlark::values::predicate::Membership::new::<#predicate, #rep>(|#this| {
                 let #name = |#param| -> #result #body;
-                #name(<#rep as starlark::values::StarlarkValue<#lt>>::get_typed(#this))
+                #name(starlark::__derive_refs::behaviour::receiver::<Self, _>(
+                    <#rep as starlark::values::StarlarkValue<#lt>>::get_typed(#this),
+                ))
             })
         }
     });

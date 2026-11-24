@@ -35,8 +35,10 @@ use crate::values::Heap;
 use crate::values::StarlarkType;
 use crate::values::StarlarkTypeExpr;
 use crate::values::UnpackValue;
+use crate::values::UnpackValueErrorInfallible;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
 use crate::values::expected_type_error;
 use crate::values::unpack_then;
 
@@ -93,6 +95,23 @@ impl<'v, T: AllocValue<'v>> TypedOperatorResult<'v> for crate::Result<T> {
             Ok(x) => Ok(heap.alloc(x).to_value()),
             Err(e) => Err(e),
         }
+    }
+}
+
+/// The receiver of a [`StarlarkType`] method as the Rust type the method declares it with: a
+/// conversion from the type, such as `&Self`, `ValueOf<'v, Self>` or the type's view.
+///
+/// `this` is a value of the type, so nothing is checked, and the conversion cannot fail.
+#[inline(always)]
+pub fn receiver<'v, T, X>(this: T::Get) -> X
+where
+    T: StarlarkType<'v>,
+    X: UnpackValue<'v, Type = T>,
+    X::Error: UnpackValueErrorInfallible,
+{
+    match X::unpack(ValueOf::new_unchecked(this.into()), this) {
+        Ok(x) => x,
+        Err(e) => X::Error::into_infallible(e),
     }
 }
 

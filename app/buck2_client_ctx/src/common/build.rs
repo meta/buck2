@@ -157,9 +157,8 @@ pub struct CommonBuildOptions {
     eager_dep_files: bool,
 
     /// Record, in the event log, each executed action's direct dependencies, for analysis after
-    /// the build. Equivalent to `-c buck2.log_action_graph=true`, except that changing a config
-    /// value makes the daemon recheck its whole build graph on the next command, and this flag
-    /// does not.
+    /// the build. Equivalent to `--setting event_log.action_graph=true`.
+    // FIXME(jakobdegen): delete this flag in favor of the setting.
     #[clap(long, hide = true)]
     log_action_graph: bool,
 

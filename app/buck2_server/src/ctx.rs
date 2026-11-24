@@ -536,9 +536,7 @@ impl<'a> ServerCommandContext<'a> {
             write_action_cache: WriteActionCacheMode::Off,
             write_action_cache_populate: RolloutFraction::none(),
             cross_config_lookup_on_stale_entry: false,
-            // The request's flag; `make_user_computation_data` ORs in `buck2.log_action_graph`.
-            // A flag for one command leaves buckconfig unchanged, so the daemon doesn't recheck
-            // its config-dependent state.
+            // The request's flag; `make_user_computation_data` ORs in `event_log.action_graph`.
             log_action_graph: self
                 .build_options
                 .as_ref()
@@ -1131,12 +1129,9 @@ impl DiceCommandUpdater<'_, '_> {
             .dep_files
             .cross_config_lookup_on_stale_entry(&mut buckconfig)?;
 
-        run_action_knobs.log_action_graph |= root_config
-            .parse::<bool>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_action_graph",
-            })?
-            .unwrap_or(false);
+        run_action_knobs.log_action_graph |= invocation_settings
+            .event_log
+            .action_graph(&mut buckconfig)?;
 
         let output_trees_download_config = OutputTreesDownloadConfig::new(
             remote_execution.output_trees_download_max_concurrent_bytes(&mut buckconfig)?,

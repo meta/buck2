@@ -159,7 +159,8 @@ Layers, lowest priority first:
   local       /repo/.bucksettings.local.toml  (absent)
 
 [event_log]  invocation scope, version 0
-  retained_logs = 20  (local /home/user/.bucksettings.local.toml)
+  retained_logs = 20    (local /home/user/.bucksettings.local.toml)
+  action_graph = false  (default)
 
 [log_download]  daemon scope, version 0
   log_use_manifold = true  (repository)

@@ -10,11 +10,19 @@
 
 use buck2_settings_derive::buck_settings_section;
 
-/// The event log the client writes for each command.
+/// The event log of a command: what goes into it and how many are kept.
 #[buck_settings_section(name = "event_log", version = 0, scope = invocation)]
 pub struct EventLog {
     /// How many event logs are kept on disk, counting the one about to be
     /// written.
     #[setting(default = 12, overridable_in(CommandLine, LocalSettings))]
     retained_logs: Option<usize>,
+    /// Whether the log records each executed action's direct dependencies,
+    /// for `buck2 log graph`.
+    #[setting(
+        buckconfig_fallback = "buck2.log_action_graph",
+        default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
+    action_graph: Option<bool>,
 }

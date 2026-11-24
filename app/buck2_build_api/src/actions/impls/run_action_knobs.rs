@@ -54,8 +54,8 @@ pub struct RunActionKnobs {
     /// `dep_files.cross_config_lookup_on_stale_entry`.
     pub cross_config_lookup_on_stale_entry: bool,
 
-    /// Record the action graph in the event log, from the request's `--log-action-graph` or the
-    /// `buck2.log_action_graph` config.
+    /// Record the action graph in the event log, from the request's `--log-action-graph` or
+    /// `event_log.action_graph`.
     pub log_action_graph: bool,
 }
 

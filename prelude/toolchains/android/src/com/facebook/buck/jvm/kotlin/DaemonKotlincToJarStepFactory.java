@@ -249,8 +249,13 @@ public class DaemonKotlincToJarStepFactory extends BaseCompileToJarStepFactory<K
 
       // Reduced SO-ABI classpath for the applicability plugin (rfsoa +
       // source_only_abi_deps only). Distinct from compilationClasspath which
-      // contains the full dep set during library builds.
-      ImmutableList<AbsPath> applicabilityClasspath = extraParams.getApplicabilityClasspath();
+      // contains the full dep set during library builds. KSP classes are the
+      // rule's own output.
+      ImmutableList<AbsPath> applicabilityClasspath =
+          ImmutableList.<AbsPath>builder()
+              .addAll(kspClasspaths)
+              .addAll(extraParams.getApplicabilityClasspath())
+              .build();
 
       KotlinCStepsBuilder.prepareKotlinCompilation(
           buckOut,

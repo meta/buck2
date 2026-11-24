@@ -745,6 +745,13 @@ def _rust_binary_common(
             ]
         if link_result.linked_object.linker_argsfile != None:
             sub_targets["linker.argsfile"] = [DefaultInfo(default_output = link_result.linked_object.linker_argsfile)]
+        if link_result.gc_sections_data != None:
+            sub_targets["gc-sections"] = [
+                DefaultInfo(
+                    default_output = link_result.gc_sections_data.gc_sections,
+                    other_outputs = [link_result.gc_sections_data.binary],
+                )
+            ]
 
     # TODO(agallagher) There appears to be pre-existing soname conflicts
     # when building this (when using link groups), which prevents using

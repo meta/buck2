@@ -66,6 +66,9 @@ INCREMENTAL_SWIFT_COMPILE_MAX_NUM_THREADS = 6
 # is clearer.
 INCREMENTAL_SWIFT_COMPILE_BATCH_SIZE = 25
 
+_SWIFT_INCREMENTAL_DIR = "__swift_incremental__"
+_SWIFT_MODULE_INCREMENTAL_DIR = "__swift_module_incremental__"
+
 def should_build_swift_incrementally(ctx: AnalysisContext) -> bool:
     toolchain = get_swift_toolchain_info(ctx)
 
@@ -122,7 +125,9 @@ def get_incremental_swiftmodule_compilation_flags(ctx: AnalysisContext, srcs: li
         # When skipping incremental outputs, we write the contents of the
         # output_file_map in the swift wrapper and need to ensure this is
         # an output file (vs being an input in normal cases)
-        output_map_artifact = ctx.actions.declare_output("__swift_module_incremental__/output_file_map.json", has_content_based_path = uses_content_based_paths)
+        output_map_artifact = ctx.actions.declare_output(
+            _SWIFT_MODULE_INCREMENTAL_DIR + "/output_file_map.json", has_content_based_path = uses_content_based_paths
+        )
         cmd.add(
             "-Xwrapper",
             "-skip-incremental-outputs",
@@ -249,7 +254,7 @@ def _get_incremental_compilation_flags_and_objects(
         # When skipping incremental outputs, we write the contents of the
         # output_file_map in the swift wrapper and need to ensure this is
         # an output file (vs being an input in normal cases)
-        output_map_artifact = ctx.actions.declare_output("__swift_incremental__/output_file_map.json", has_content_based_path = uses_content_based_paths)
+        output_map_artifact = ctx.actions.declare_output(_SWIFT_INCREMENTAL_DIR + "/output_file_map.json", has_content_based_path = uses_content_based_paths)
         cmd.add(
             "-Xwrapper",
             "-skip-incremental-outputs",
@@ -296,13 +301,15 @@ def _get_output_file_map(ctx: AnalysisContext, srcs: list[CxxSrcWithFlags]) -> _
 
         for src in srcs:
             file_name = src.file.basename
-            output_artifact = ctx.actions.declare_output("__swift_incremental__/objects/" + file_name + ".o", has_content_based_path = uses_content_based_paths)
+            output_artifact = ctx.actions.declare_output(
+                _SWIFT_INCREMENTAL_DIR + "/objects/" + file_name + ".o", has_content_based_path = uses_content_based_paths
+            )
             artifacts.append(output_artifact)
             all_outputs.append(output_artifact)
     else:
         # swift-driver doesn't respect extension for root swiftdeps file and it always has to be `.priors`.
         module_swiftdeps = ctx.actions.declare_output(
-            "__swift_incremental__/swiftdeps/module-build-record.priors", has_content_based_path = uses_content_based_paths
+            _SWIFT_INCREMENTAL_DIR + "/swiftdeps/module-build-record.priors", has_content_based_path = uses_content_based_paths
         )
         output_file_map = {
             "": {
@@ -317,11 +324,13 @@ def _get_output_file_map(ctx: AnalysisContext, srcs: list[CxxSrcWithFlags]) -> _
 
         for src in srcs:
             file_name = src.file.basename
-            output_artifact = ctx.actions.declare_output("__swift_incremental__/objects/" + file_name + ".o", has_content_based_path = uses_content_based_paths)
+            output_artifact = ctx.actions.declare_output(
+                _SWIFT_INCREMENTAL_DIR + "/objects/" + file_name + ".o", has_content_based_path = uses_content_based_paths
+            )
             artifacts.append(output_artifact)
             all_outputs.append(output_artifact)
             swiftdeps_artifact = ctx.actions.declare_output(
-                "__swift_incremental__/swiftdeps/" + file_name + ".swiftdeps", has_content_based_path = uses_content_based_paths
+                _SWIFT_INCREMENTAL_DIR + "/swiftdeps/" + file_name + ".swiftdeps", has_content_based_path = uses_content_based_paths
             )
             output_file_map[src.file] = {
                 "object": output_artifact,
@@ -330,7 +339,9 @@ def _get_output_file_map(ctx: AnalysisContext, srcs: list[CxxSrcWithFlags]) -> _
             swiftdeps.append(swiftdeps_artifact)
             all_outputs.append(swiftdeps_artifact)
             if toolchain.use_depsfiles and not get_incremental_file_hashing_enabled(ctx) and not get_incremental_split_actions(ctx):
-                deps_artifact = ctx.actions.declare_output("__swift_incremental__/objects/" + file_name + ".d", has_content_based_path = uses_content_based_paths)
+                deps_artifact = ctx.actions.declare_output(
+                    _SWIFT_INCREMENTAL_DIR + "/objects/" + file_name + ".d", has_content_based_path = uses_content_based_paths
+                )
                 depfiles.append(deps_artifact)
                 all_outputs.append(deps_artifact)
 
@@ -354,7 +365,7 @@ def _get_swiftmodule_output_file_map(ctx: AnalysisContext, srcs: list[CxxSrcWith
         )
 
     module_swiftdeps = ctx.actions.declare_output(
-        "__swift_module_incremental__/swiftdeps/module-build-record.priors", has_content_based_path = uses_content_based_paths
+        _SWIFT_MODULE_INCREMENTAL_DIR + "/swiftdeps/module-build-record.priors", has_content_based_path = uses_content_based_paths
     )
     output_file_map = {
         "": {
@@ -365,7 +376,7 @@ def _get_swiftmodule_output_file_map(ctx: AnalysisContext, srcs: list[CxxSrcWith
     # For incremental swiftmodule generation, we need to capture the set of
     # incremental output files they produce.
     per_source_dir = ctx.actions.declare_output(
-        "__swift_module_incremental__/per_source_incremental", dir = True, has_content_based_path = uses_content_based_paths
+        _SWIFT_MODULE_INCREMENTAL_DIR + "/per_source_incremental", dir = True, has_content_based_path = uses_content_based_paths
     )
     for src in srcs:
         file_name = src.file.basename

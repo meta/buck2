@@ -242,6 +242,10 @@ pub enum ErrorKind {
     Fail(anyhow::Error),
     /// Starlark call stack overflow.
     StackOverflow(anyhow::Error),
+    /// The evaluation used more heap than the limit set on the evaluator.
+    HeapLimitExceeded(anyhow::Error),
+    /// The evaluation ran for more ticks than the limit set on the evaluator.
+    TickLimitExceeded(anyhow::Error),
     /// An error approximately associated with a value.
     ///
     /// Includes unsupported operations, missing attributes, things of that sort.
@@ -278,6 +282,8 @@ impl ErrorKind {
         match self {
             Self::Fail(e)
             | Self::StackOverflow(e)
+            | Self::HeapLimitExceeded(e)
+            | Self::TickLimitExceeded(e)
             | Self::Value(e)
             | Self::Function(e)
             | Self::Scope(e)
@@ -296,6 +302,8 @@ impl ErrorKind {
         match self {
             Self::Fail(_) => None,
             Self::StackOverflow(_) => None,
+            Self::HeapLimitExceeded(_) => None,
+            Self::TickLimitExceeded(_) => None,
             Self::Value(_) => None,
             Self::Function(_) => None,
             Self::RuntimeType(_, _) => None,
@@ -315,6 +323,8 @@ impl ErrorKind {
         match self {
             Self::Fail(e) => Self::Fail(e.context(context)),
             Self::StackOverflow(e) => Self::StackOverflow(e.context(context)),
+            Self::HeapLimitExceeded(e) => Self::HeapLimitExceeded(e.context(context)),
+            Self::TickLimitExceeded(e) => Self::TickLimitExceeded(e.context(context)),
             Self::Value(e) => Self::Value(e.context(context)),
             Self::Function(e) => Self::Function(e.context(context)),
             Self::RuntimeType(kind, e) => Self::RuntimeType(kind, e.context(context)),
@@ -340,6 +350,8 @@ impl ErrorKind {
             | ErrorKind::Freeze(e)
             | ErrorKind::Parser(e)
             | ErrorKind::StackOverflow(e)
+            | ErrorKind::HeapLimitExceeded(e)
+            | ErrorKind::TickLimitExceeded(e)
             | ErrorKind::DeferredRead(e)
             | ErrorKind::Native(e)
             | ErrorKind::Other(e) => ErrorKind::Internal(e),
@@ -357,6 +369,8 @@ impl ErrorKind {
             | ErrorKind::Freeze(e)
             | ErrorKind::Parser(e)
             | ErrorKind::StackOverflow(e)
+            | ErrorKind::HeapLimitExceeded(e)
+            | ErrorKind::TickLimitExceeded(e)
             | ErrorKind::RuntimeType(_, e)
             | ErrorKind::DeferredRead(e)
             | ErrorKind::Native(e)
@@ -371,6 +385,8 @@ impl fmt::Debug for ErrorKind {
             Self::Fail(s) => write!(f, "fail:{s}"),
             Self::Value(e) => fmt::Debug::fmt(e, f),
             Self::StackOverflow(e) => fmt::Debug::fmt(e, f),
+            Self::HeapLimitExceeded(e) => fmt::Debug::fmt(e, f),
+            Self::TickLimitExceeded(e) => fmt::Debug::fmt(e, f),
             Self::Function(e) => fmt::Debug::fmt(e, f),
             Self::RuntimeType(_, e) => fmt::Debug::fmt(e, f),
             Self::Scope(e) => fmt::Debug::fmt(e, f),
@@ -389,6 +405,8 @@ impl fmt::Display for ErrorKind {
         match self {
             Self::Fail(s) => write!(f, "fail:{s}"),
             Self::StackOverflow(e) => fmt::Display::fmt(e, f),
+            Self::HeapLimitExceeded(e) => fmt::Display::fmt(e, f),
+            Self::TickLimitExceeded(e) => fmt::Display::fmt(e, f),
             Self::Value(e) => fmt::Display::fmt(e, f),
             Self::Function(e) => fmt::Display::fmt(e, f),
             Self::RuntimeType(_, e) => fmt::Display::fmt(e, f),

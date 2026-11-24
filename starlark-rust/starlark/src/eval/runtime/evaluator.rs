@@ -20,6 +20,7 @@ use std::mem;
 use std::mem::MaybeUninit;
 
 use dupe::Dupe;
+use starlark_syntax::ErrorKind;
 use starlark_syntax::eval_exception::EvalException;
 use starlark_syntax::frame::Frame;
 use starlark_syntax::internal_error;
@@ -1024,8 +1025,8 @@ impl<'v, 'a, 'e: 'a> Evaluator<'v, 'a, 'e> {
         let current = self.heap().peak_allocated_bytes() + self.module_env.frozen_heap_used_bytes();
 
         if current > limit {
-            Some(ResourceCheckResult::Exceeded(crate::Error::new_other(
-                EvaluatorError::HeapLimitExceeded(limit),
+            Some(ResourceCheckResult::Exceeded(crate::Error::new_kind(
+                ErrorKind::HeapLimitExceeded(EvaluatorError::HeapLimitExceeded(limit).into()),
             )))
         } else if current > (limit / 2) {
             Some(ResourceCheckResult::Warn {
@@ -1079,8 +1080,8 @@ impl<'v, 'a, 'e: 'a> Evaluator<'v, 'a, 'e> {
         let current = self.get_total_tick_count();
 
         if current > limit {
-            Some(ResourceCheckResult::Exceeded(crate::Error::new_other(
-                EvaluatorError::TickLimitExceeded(limit),
+            Some(ResourceCheckResult::Exceeded(crate::Error::new_kind(
+                ErrorKind::TickLimitExceeded(EvaluatorError::TickLimitExceeded(limit).into()),
             )))
         } else if current > (limit / 2) {
             Some(ResourceCheckResult::Warn {
@@ -1235,6 +1236,8 @@ pub(crate) fn before_stmt(
 
 #[cfg(test)]
 mod tests {
+    use starlark_syntax::ErrorKind;
+
     use crate::environment::Globals;
     use crate::environment::Module;
     use crate::eval::Evaluator;
@@ -1269,13 +1272,11 @@ mod tests {
                 &Dialect::Standard,
             )
             .unwrap();
-            let err = eval.eval_module(ast, &globals);
-
-            let expected = "Heap memory limit";
-            let err_msg = format!("{err:#?}");
-            if !err_msg.contains(expected) {
-                panic!("Error:\n{err:#?}\nExpected:\n{expected:?}")
-            }
+            let err = eval.eval_module(ast, &globals).unwrap_err();
+            assert!(
+                matches!(err.kind(), ErrorKind::HeapLimitExceeded(_)),
+                "{err:#?}"
+            );
 
             Ok(())
         })
@@ -1337,13 +1338,11 @@ mod tests {
                 &Dialect::Standard,
             )
             .unwrap();
-            let err = eval.eval_module(ast, &globals);
-
-            let expected = "ticks has been exceeded";
-            let err_msg = format!("{err:#?}");
-            if !err_msg.contains(expected) {
-                panic!("Error:\n{err:#?}\nExpected:\n{expected:?}")
-            }
+            let err = eval.eval_module(ast, &globals).unwrap_err();
+            assert!(
+                matches!(err.kind(), ErrorKind::TickLimitExceeded(_)),
+                "{err:#?}"
+            );
 
             Ok(())
         })

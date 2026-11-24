@@ -1128,6 +1128,8 @@ message SetLogFilterRequest {
 
 message SetLogFilterResponse {}
 
+message ClientEventResponse {}
+
 // A wrapper for SubscriptionRequest. We *could* use SubscriptionRequest
 // directly, but this lets us have the daemon potentially send data to the CLI
 // as a side channel.
@@ -1247,6 +1249,11 @@ service DaemonApi {
 
   // Update the daemon's log filter.
   rpc SetLogFilter(SetLogFilterRequest) returns (SetLogFilterResponse);
+
+  // Adds an event that the client of a running command made to the events of
+  // that command, which the event names by its trace id. Does nothing if the
+  // command is over.
+  rpc ClientEvent(buck.data.BuckEvent) returns (ClientEventResponse);
 
   // Interact with daemon I/O tracing.
   rpc TraceIo(TraceIoRequest) returns (stream MultiCommandProgress);

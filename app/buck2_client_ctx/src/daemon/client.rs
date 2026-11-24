@@ -217,7 +217,7 @@ impl Drop for BuckdLifecycleLock {
 /// doesn't need to deal with tonic::Response/Request and this may provide functions
 /// that take more primitive types than the protobuf structure itself.
 pub struct BuckdClient {
-    client: DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
+    pub(crate) client: DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
     constraints: buck2_cli_proto::DaemonConstraints,
     pub(crate) daemon_dir: DaemonDir,
 }

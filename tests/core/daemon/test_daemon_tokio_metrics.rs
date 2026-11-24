@@ -13,19 +13,24 @@ use serde_json::Value;
 
 /// Returns the Snapshot payloads from the most recent invocation's log.
 async fn snapshot_events(buck: &Buck) -> anyhow::Result<Vec<Value>> {
+    instant_events(buck, "Snapshot").await
+}
+
+/// Returns the payloads of the instant events of one kind from the most recent invocation's log.
+async fn instant_events(buck: &Buck, kind: &str) -> anyhow::Result<Vec<Value>> {
     let out = buck.log(&["show"]).await?;
-    let mut snapshots = Vec::new();
+    let mut events = Vec::new();
     for line in out.stdout.lines() {
         if line.is_empty() {
             continue;
         }
         let event: Value = serde_json::from_str(line)?;
         let instant = &event["Event"]["data"]["Instant"]["data"];
-        if let Some(snapshot) = instant.get("Snapshot") {
-            snapshots.push(snapshot.clone());
+        if let Some(payload) = instant.get(kind) {
+            events.push(payload.clone());
         }
     }
-    Ok(snapshots)
+    Ok(events)
 }
 
 fn append_tokio_workers_config(buck: &Buck) -> anyhow::Result<()> {
@@ -111,6 +116,27 @@ async fn test_snapshot_events_carry_tokio_runtime_stats(buck: &Buck) -> anyhow::
             .any(|w| counter_fields.iter().any(|f| w.get(f).is_some())),
         "expected some worker to expose any of {counter_fields:?}, got {workers:?}"
     );
+    Ok(())
+}
+
+/// The client answers a `Snapshot` with a snapshot of itself, which is among the command's
+/// events and in the invocation record.
+#[buck_test(write_invocation_record = true)]
+async fn test_snapshot_events_are_answered_by_the_client(buck: &Buck) -> anyhow::Result<()> {
+    let res = buck.targets(&[":"]).await?;
+    let client_snapshots = instant_events(buck, "ClientSnapshot").await?;
+    assert!(!client_snapshots.is_empty());
+    for client_snapshot in &client_snapshots {
+        assert!(
+            client_snapshot["daemon_snapshot_delay_ms"].is_i64(),
+            "{client_snapshot}"
+        );
+    }
+    if cfg!(target_os = "linux") {
+        let record = res.invocation_record()?;
+        assert!(record["max_client_cpu_percents"].is_u64(), "{record:?}");
+        assert!(record["avg_client_cpu_percents"].is_u64(), "{record:?}");
+    }
     Ok(())
 }
 

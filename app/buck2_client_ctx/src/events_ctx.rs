@@ -37,6 +37,7 @@ use tokio::runtime::Runtime;
 
 use crate::client_cpu_tracker::ClientCpuTracker;
 use crate::client_ctx::AgentAdvice;
+use crate::client_snapshots::ClientSnapshots;
 use crate::command_outcome::CommandOutcome;
 use crate::console_interaction_stream::ConsoleInteraction;
 use crate::console_interaction_stream::ConsoleInteractionStream;
@@ -142,6 +143,8 @@ pub struct DaemonEventsCtx<'a> {
     pub(crate) inner: &'a mut EventsCtx,
     tailers: FileTailers,
     ticker: Ticker,
+    /// `None` if the events are not those of a command that a daemon is running.
+    client_snapshots: Option<ClientSnapshots>,
 }
 
 impl<'a> DaemonEventsCtx<'a> {
@@ -165,6 +168,7 @@ impl<'a> DaemonEventsCtx<'a> {
             inner: events_ctx,
             tailers,
             ticker: Ticker::new(TICKS_PER_SECOND),
+            client_snapshots: Some(ClientSnapshots::new(client)),
         })
     }
 
@@ -173,6 +177,7 @@ impl<'a> DaemonEventsCtx<'a> {
             inner: events_ctx,
             tailers: FileTailers::empty(),
             ticker: Ticker::new(TICKS_PER_SECOND),
+            client_snapshots: None,
         }
     }
 
@@ -212,6 +217,12 @@ impl<'a> DaemonEventsCtx<'a> {
             match next {
                 StreamValue::Event(event) => {
                     let event = event.try_into()?;
+                    if let Some(client_snapshots) = &mut self.client_snapshots
+                        && let Some(snapshot) = client_snapshots.received(&event)
+                        && let Some(recorder) = &mut self.inner.recorder
+                    {
+                        recorder.client_snapshot(&snapshot);
+                    }
                     events.push(event);
                 }
                 StreamValue::PartialResult(partial_res) => {

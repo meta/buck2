@@ -58,6 +58,7 @@ use buck2_error::BuckErrorContext;
 use buck2_error::BuckErrorOptionContext;
 use buck2_error::ErrorTag;
 use buck2_error::buck2_error;
+use buck2_events::BuckEvent;
 use buck2_events::Event;
 use buck2_events::daemon_id::DaemonId;
 use buck2_events::dispatch::EventDispatcher;
@@ -131,6 +132,7 @@ use tonic::service::InterceptorLayer;
 
 use crate::active_commands::ActiveCommand;
 use crate::active_commands::ActiveCommandStateWriter;
+use crate::active_commands::send_event_to_command;
 use crate::clean_stale::clean_stale_command;
 use crate::command_observer::ObservedCommand;
 use crate::ctx::ServerCommandContext;
@@ -2614,6 +2616,18 @@ impl DaemonApi for BuckdServer {
             },
         )
         .await
+    }
+
+    async fn client_event(
+        &self,
+        req: Request<buck2_data::BuckEvent>,
+    ) -> Result<Response<ClientEventResponse>, Status> {
+        // The event of a command that is over is dropped. A client sends one for the last
+        // `Snapshot` of its command, which the daemon makes as the command ends.
+        BuckEvent::try_from(Box::new(req.into_inner()))
+            .and_then(send_event_to_command)
+            .map_err(|e| Status::invalid_argument(format!("{e:#}")))?;
+        Ok(Response::new(ClientEventResponse {}))
     }
 
     async fn set_log_filter(

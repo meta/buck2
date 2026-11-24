@@ -460,6 +460,9 @@ message InstantEvent {
 
     // A settings value seen by this daemon for the first time.
     BuckSettingsObserved buck_settings_observed = 70;
+
+    // What the client of the command said about itself.
+    ClientSnapshot client_snapshot = 74;
   }
 }
 
@@ -588,6 +591,21 @@ message BuckSettingsObserved {
   string hash = 1;
   // The settings as JSON, in the same form `buck2 status` prints.
   string settings_json = 2;
+}
+
+// What the client of a command says about itself, each time it receives a
+// `Snapshot`. The client makes the event, with its own time, and sends it to
+// the daemon, which adds it to the events of the command, so that an event
+// log holds it whichever of the two writes the log.
+message ClientSnapshot {
+  // How long the `Snapshot` took from when the daemon made it to when the
+  // client received it, by the clocks of the two. Negative if the client's
+  // clock is behind the daemon's by more than that.
+  optional int64 daemon_snapshot_delay_ms = 1;
+  // The client's user + system CPU time as a percentage of wall time, which is
+  // above 100 on several cores, since the `Snapshot` it received before this
+  // one.
+  optional uint32 cpu_percents = 2;
 }
 
 message EndOfTestResults {
@@ -3639,6 +3657,11 @@ message InvocationRecord {
   // Max delay between time a server generates an event and time the client
   // observes it.
   optional uint64 max_event_client_delay_ms = 33;
+  // The client's user + system CPU time as a percentage of wall time, which is
+  // above 100 on several cores: the highest and the average over the intervals
+  // between the snapshots it received.
+  optional uint32 max_client_cpu_percents = 778;
+  optional uint32 avg_client_cpu_percents = 779;
   // Stateful max for malloc_bytes_active over the lifetime of invocation.
   optional uint64 max_malloc_bytes_active = 34;
   // Stateful max for malloc_bytes_allocated over the lifetime of invocation.

@@ -119,6 +119,30 @@ pub fn note_client_soft_error(soft_error: SoftError) {
     CLIENT_SOFT_ERRORS.lock().unwrap().push(soft_error);
 }
 
+/// The client's CPU use over the command, as its `ClientSnapshot`s have it.
+#[derive(Default)]
+struct ClientCpuPercents {
+    max: u32,
+    sum: u64,
+    count: u64,
+}
+
+impl ClientCpuPercents {
+    fn add(&mut self, percents: u32) {
+        self.max = max(self.max, percents);
+        self.sum += u64::from(percents);
+        self.count += 1;
+    }
+
+    fn max(&self) -> Option<u32> {
+        (self.count > 0).then_some(self.max)
+    }
+
+    fn avg(&self) -> Option<u32> {
+        self.sum.checked_div(self.count).map(|avg| avg as u32)
+    }
+}
+
 pub struct InvocationRecorder {
     write_to_path: Option<AbsPathBuf>,
     command_name: Option<&'static str>,
@@ -172,6 +196,7 @@ pub struct InvocationRecorder {
     test_info: Option<String>,
     eligible_for_full_hybrid: bool,
     max_event_client_delay: Option<Duration>,
+    client_cpu: ClientCpuPercents,
     max_malloc_bytes_active: Option<u64>,
     max_malloc_bytes_allocated: Option<u64>,
     run_command_failure_count: u64,
@@ -409,6 +434,7 @@ impl InvocationRecorder {
             test_info: None,
             eligible_for_full_hybrid: false,
             max_event_client_delay: None,
+            client_cpu: ClientCpuPercents::default(),
             max_malloc_bytes_active: None,
             max_malloc_bytes_allocated: None,
             run_command_failure_count: 0,
@@ -1190,6 +1216,8 @@ impl InvocationRecorder {
             test_info: self.test_info.take(),
             eligible_for_full_hybrid: Some(self.eligible_for_full_hybrid),
             max_event_client_delay_ms: self.max_event_client_delay.and_then(duration_as_millis),
+            max_client_cpu_percents: self.client_cpu.max(),
+            avg_client_cpu_percents: self.client_cpu.avg(),
             max_malloc_bytes_active: self.max_malloc_bytes_active.take(),
             max_malloc_bytes_allocated: self.max_malloc_bytes_allocated.take(),
             run_command_failure_count: Some(self.run_command_failure_count),
@@ -2214,6 +2242,13 @@ impl InvocationRecorder {
         }
     }
 
+    /// Counts what the client measured of itself.
+    pub(crate) fn client_snapshot(&mut self, snapshot: &buck2_data::ClientSnapshot) {
+        if let Some(percents) = snapshot.cpu_percents {
+            self.client_cpu.add(percents);
+        }
+    }
+
     fn handle_snapshot(
         &mut self,
         update: &buck2_data::Snapshot,
@@ -3046,6 +3081,7 @@ mod tests {
 
     use crate::exit_result::ExecEnvironment;
     use crate::exit_result::ExitResult;
+    use crate::subscribers::recorder::ClientCpuPercents;
     use crate::subscribers::recorder::InvocationRecorder;
     use crate::subscribers::recorder::merge_build_phase_ends;
     use crate::subscribers::recorder::truncate_stderr;
@@ -3208,6 +3244,18 @@ mod tests {
                 ))),
             }),
         ))
+    }
+
+    #[test]
+    fn test_client_cpu_percents_summary() {
+        let mut client_cpu = ClientCpuPercents::default();
+        assert_eq!(client_cpu.max(), None);
+        assert_eq!(client_cpu.avg(), None);
+
+        client_cpu.add(20);
+        client_cpu.add(60);
+        assert_eq!(client_cpu.max(), Some(60));
+        assert_eq!(client_cpu.avg(), Some(40));
     }
 
     fn record_of(event: &buck2_events::BuckEvent) -> buck2_data::InvocationRecord {

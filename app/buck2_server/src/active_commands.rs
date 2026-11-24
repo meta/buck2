@@ -18,6 +18,7 @@ use buck2_event_observer::span_tracker;
 use buck2_event_observer::span_tracker::RootData;
 use buck2_event_observer::span_tracker::Roots;
 use buck2_events::BuckEvent;
+use buck2_events::Event;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::span::SpanId;
 use buck2_hash::BuckMutMap;
@@ -82,6 +83,16 @@ pub fn broadcast_instant_event<E: Into<buck2_data::instant_event::Data> + Clone>
     }
 
     has_subscribers
+}
+
+/// Adds `event` to the events of the active command that it names by its trace id. Does
+/// nothing if there is none.
+pub fn send_event_to_command(event: BuckEvent) -> buck2_error::Result<()> {
+    let trace_id = event.trace_id()?;
+    if let Some(command) = ACTIVE_COMMANDS.lock().get(&trace_id) {
+        command.dispatcher.sink().send(Event::Buck(event));
+    }
+    Ok(())
 }
 
 /// Sends an event only to the active command that owns `context`.

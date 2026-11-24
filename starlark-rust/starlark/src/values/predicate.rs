@@ -65,7 +65,8 @@
 //! most types and one for most of the rest, and a value is of the predicate type if the list
 //! of its vtable has an entry for it. The entry is the conversion for that representation, so
 //! the handle is one call away. The members named in the declaration are known by their
-//! representation.
+//! representation: a string before the list is read, since it is told by its tag, and the
+//! others after it.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -87,6 +88,7 @@ use crate::values::StarlarkTypeExpr;
 use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueTyped;
+use crate::values::string::StarlarkStr;
 
 /// A predicate type as data: what its declaration says, for the typechecker, the runtime
 /// matcher and the documentation. There is one per predicate type, a `static`.
@@ -205,6 +207,9 @@ pub unsafe trait StarlarkPredicate: for<'v> StarlarkTypeExpr<'v> + 'static {
     /// The type as data.
     const PREDICATE: Predicate;
 
+    /// Whether the declaration names members: whether it has an `upstream_member`.
+    const NAMES_MEMBERS: bool;
+
     /// The handle to `value` if it is one of the members named in the declaration.
     fn upstream_handle<'v>(value: Value<'v>) -> Option<<Self as StarlarkTypeExpr<'v>>::Get>;
 }
@@ -295,9 +300,12 @@ pub trait Memberships<'v, R: StarlarkValue<'v>> {
     const MEMBERSHIPS: &'static [Membership<R::StaticType>] = &[];
 }
 
-/// The handle of the predicate type `P` to `value`, if `value` is of it: as one of the members
-/// named in the declaration of `P`, tried in the order written there, or else by the
-/// membership of its type in `P`.
+// `predicate_handle` does not read the memberships of a string.
+const _: () = assert!(<StarlarkStr as Memberships<'static, StarlarkStr>>::MEMBERSHIPS.is_empty());
+
+/// The handle of the predicate type `P` to `value`, if `value` is of it: by the membership of
+/// its type in `P`, or else as one of the members named in the declaration of `P`, tried in
+/// the order written there.
 ///
 /// This is the one check of the type: `P`'s [`get`](StarlarkTypeExpr::get) is this, and the
 /// matcher of its `Ty` asks `get`.
@@ -305,8 +313,13 @@ pub trait Memberships<'v, R: StarlarkValue<'v>> {
 pub fn predicate_handle<'v, P: StarlarkPredicate>(
     value: Value<'v>,
 ) -> Option<<P as StarlarkTypeExpr<'v>>::Get> {
-    if let Some(handle) = P::upstream_handle(value) {
-        return Some(handle);
+    // No value is more often asked whether it is of a predicate type than a string. It is
+    // told by its tag, without reading its vtable, and it has no memberships, so it is of the
+    // type only if the declaration names it. Of the tests for the members named there, which
+    // are inlined here, the one for a string is all that is left. A type whose declaration
+    // names nobody does not look for strings.
+    if P::NAMES_MEMBERS && value.is_str() {
+        return P::upstream_handle(value);
     }
     for membership in value.get_ref().vtable().starlark_value.memberships {
         if is_predicate(membership.predicate, P::PREDICATE) {
@@ -328,7 +341,21 @@ pub fn predicate_handle<'v, P: StarlarkPredicate>(
             return Some(handle(value));
         }
     }
-    None
+    if P::NAMES_MEMBERS {
+        upstream_handle_out_of_line::<P>(value)
+    } else {
+        None
+    }
+}
+
+/// [`StarlarkPredicate::upstream_handle`], as a call: where a value is neither a string nor
+/// of a type that says it is a member, which is the rare case, the tests for the members
+/// named in the declaration are not worth their size in every check.
+#[inline(never)]
+fn upstream_handle_out_of_line<'v, P: StarlarkPredicate>(
+    value: Value<'v>,
+) -> Option<<P as StarlarkTypeExpr<'v>>::Get> {
+    P::upstream_handle(value)
 }
 
 /// Declares a [predicate type](crate::values::predicate).
@@ -360,7 +387,8 @@ pub fn predicate_handle<'v, P: StarlarkPredicate>(
 ///   cannot name it. It is named by a representation that implements the trait, in the crate
 ///   that implements the trait for it. These are not the members of the type: every other
 ///   member says that it is one in its own block, with `#[starlark(implements = ...)]`. A
-///   value is tested against the upstream members first, in the order written.
+///   value of a type that does not say so is tested against the upstream members, in the
+///   order written.
 ///
 /// This declares the marker as a [`StarlarkTypeExpr`](crate::values::StarlarkTypeExpr) whose
 /// `Get` is the handle, makes the handle a parameter binding and a payload of a
@@ -417,7 +445,11 @@ macro_rules! starlark_predicate_type {
                 PREDICATE
             };
 
-            #[inline]
+            const NAMES_MEMBERS: bool =
+                !<[&str]>::is_empty(&[$(::std::stringify!($upstream)),*]);
+
+            // `predicate_handle` says where this is inlined and where it is not.
+            #[inline(always)]
             fn upstream_handle<$lt>(
                 value: $crate::values::Value<$lt>,
             ) -> ::std::option::Option<$handle> {

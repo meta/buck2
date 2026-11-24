@@ -61,6 +61,7 @@ use crate::values::layout::value_alloc_size::ValueAllocSize;
 use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::traits::StarlarkValueVTable;
 use crate::values::traits::StarlarkValueVTableGet;
+use crate::values::typing::type_compiled::compiled::TypeCompiledDyn;
 
 /// Untyped raw pointer to `StarlarkValue` without vtable.
 ///
@@ -755,6 +756,15 @@ impl<'v> AValueDynFull<'v> {
             self.avalue.value,
             self.value,
             value,
+            Private,
+        )
+    }
+
+    #[inline]
+    pub(crate) fn as_type_compiled_dyn(self) -> Option<&'v dyn TypeCompiledDyn> {
+        (self.avalue.vtable.starlark_value.as_type_compiled_dyn)(
+            self.avalue.value,
+            self.value,
             Private,
         )
     }

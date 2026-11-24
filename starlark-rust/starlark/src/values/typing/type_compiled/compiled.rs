@@ -45,7 +45,6 @@ use crate::private::Private;
 use crate::typing::Ty;
 use crate::values::AllocStaticSimple;
 use crate::values::AllocValue;
-use crate::values::Demand;
 use crate::values::Freeze;
 use crate::values::FrozenHeap;
 use crate::values::Heap;
@@ -95,15 +94,12 @@ enum TypingError {
     StringLiteralNotAllowed(String),
 }
 
-pub(crate) trait TypeCompiledDyn: Debug + Allocative + Send + Sync + 'static {
+// Public so that `StarlarkValue::as_type_compiled_dyn` can name it, and in a private module so
+// that nothing outside this crate can.
+pub trait TypeCompiledDyn: Debug + Allocative + Send + Sync + 'static {
     fn as_ty_dyn(&self) -> &Ty;
     fn is_runtime_wildcard_dyn(&self) -> bool;
     fn to_frozen_dyn<'f>(&self, heap: FrozenHeap<'f>) -> TypeCompiled<'f>;
-}
-
-// TODO(nga): derive.
-unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn TypeCompiledDyn {
-    type StaticType = &'static dyn TypeCompiledDyn;
 }
 
 impl<T> TypeCompiledDyn for TypeCompiledImplAsStarlarkValue<T>
@@ -223,7 +219,8 @@ impl<'v> StarlarkType<'v> for TypeCompiled<'v> {
 
     fn get(value: Value<'v>) -> Option<Self> {
         value
-            .request_value::<&dyn TypeCompiledDyn>()
+            .get_ref()
+            .as_type_compiled_dyn()
             .is_some()
             .then_some(TypeCompiled(value))
     }
@@ -233,7 +230,7 @@ impl<'v> StarlarkType<'v> for TypeCompiled<'v> {
     }
 
     fn equals(&self, other: Value<'v>) -> crate::Result<bool> {
-        let Some(other) = other.request_value::<&dyn TypeCompiledDyn>() else {
+        let Some(other) = other.get_ref().as_type_compiled_dyn() else {
             return Ok(false);
         };
         Ok(self.as_ty() == other.as_ty_dyn())
@@ -270,8 +267,8 @@ where
         self.type_compiled_impl.matches(value)
     }
 
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_ref_static::<dyn TypeCompiledDyn>(self);
+    fn as_type_compiled_dyn(&'v self, _private: Private) -> Option<&'v dyn TypeCompiledDyn> {
+        Some(self)
     }
 }
 
@@ -346,7 +343,8 @@ impl<'v> TypeCompiled<'v> {
 
     fn downcast(self) -> anyhow::Result<&'v dyn TypeCompiledDyn> {
         self.0
-            .request_value::<&dyn TypeCompiledDyn>()
+            .get_ref()
+            .as_type_compiled_dyn()
             .ok_or_else(|| anyhow::anyhow!("Not TypeCompiledImpl (internal error)"))
     }
 
@@ -543,7 +541,7 @@ impl<'v> TypeCompiled<'v> {
 
     /// Evaluate type annotation at runtime.
     pub fn new(ty: Value<'v>, heap: Heap<'v>) -> anyhow::Result<Self> {
-        if ty.request_value::<&dyn TypeCompiledDyn>().is_some() {
+        if ty.get_ref().as_type_compiled_dyn().is_some() {
             // This branch is optimization: `TypeCompiledAsStarlarkValue` implements `eval_type`,
             // but this branch avoids copying the type.
             Ok(TypeCompiled(ty))
@@ -573,7 +571,7 @@ impl<'v> TypeCompiled<'v> {
                     ts.try_map(|t| Self::ty_from_value(*t, invalid))?,
                 )),
             }
-        } else if let Some(t) = ty.request_value::<&dyn TypeCompiledDyn>() {
+        } else if let Some(t) = ty.get_ref().as_type_compiled_dyn() {
             Ok(t.as_ty_dyn().clone())
         } else {
             match ty.get_ref().eval_type() {

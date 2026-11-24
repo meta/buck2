@@ -56,14 +56,6 @@ impl<'a, 'v> Demand<'a, 'v> {
         }
     }
 
-    /// Similar to `provide_value`, but does not require implementing `ProvidesStaticType`.
-    pub(crate) fn provide_ref_static<T: 'static + ?Sized>(&mut self, value: &'v T) {
-        if self.type_id_of_t == TypeId::of::<&'static T>() {
-            // SAFETY: check checked type.
-            unsafe { *(self.option as *mut Option<&'v T>) = Some(value) };
-        }
-    }
-
     /// A demand for the handle of the predicate type `P`.
     fn for_predicate<P: StarlarkPredicate>(
         option: &mut Option<<P as StarlarkTypeExpr<'v>>::Get>,

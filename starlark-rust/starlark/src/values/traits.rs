@@ -75,6 +75,7 @@ use crate::values::error::ControlError;
 use crate::values::function::FUNCTION_TYPE;
 use crate::values::layout::vtable::StarlarkValueRawPtr;
 use crate::values::predicate::Predicate;
+use crate::values::typing::type_compiled::compiled::TypeCompiledDyn;
 
 /// A trait for values which are more complex - because they are either mutable
 /// (e.g. using [`RefCell`](std::cell::RefCell)), or contain references to other values.
@@ -1190,5 +1191,16 @@ pub trait StarlarkValue<'v>:
     #[doc(hidden)]
     fn type_matches_value(&self, _value: Value<'v>, _private: Private) -> bool {
         unreachable!("`type_matches_value` should only be called on special types")
+    }
+
+    /// This value as a compiled type, for the representations of `type`; `None` for a value of
+    /// any other type.
+    ///
+    /// This lives on the representation rather than on [`StarlarkType`]: a representation of
+    /// `type` is generic over its matcher, and only it can erase the matcher. The view of
+    /// `type` is made from a `Value` and does not know which matcher it has.
+    #[doc(hidden)]
+    fn as_type_compiled_dyn(&'v self, _private: Private) -> Option<&'v dyn TypeCompiledDyn> {
+        None
     }
 }

@@ -399,12 +399,18 @@ impl Gen {
 
         // The `StarlarkValue` methods with vtable entries all the same; `StarlarkValue` says why
         // each is not a `StarlarkType` method.
-        let representation_methods: [TraitItemFn; 2] = [
+        let representation_methods: [TraitItemFn; 3] = [
             syn::parse_quote! {
                 fn provide(&'v self, demand: &mut Demand<'_, 'v>);
             },
             syn::parse_quote! {
                 fn type_matches_value(&self, value: Value<'v>, private: Private) -> bool;
+            },
+            syn::parse_quote! {
+                fn as_type_compiled_dyn(
+                    &'v self,
+                    private: Private,
+                ) -> Option<&'v dyn TypeCompiledDyn>;
             },
         ];
         for method in &representation_methods {

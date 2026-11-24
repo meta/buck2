@@ -38,21 +38,20 @@
 //! is the trait object, so `ValueOf<'v, StarlarkCmdArgsLike>` is a parameter, a field and a
 //! handle, and `StarlarkCmdArgsLike::global()` is the value that names the type in Starlark.
 //!
-//! A type is a member by a conversion from its handle to the predicate's, written in its own
-//! `#[starlark_value]` block:
+//! A type is a member by a conversion from a value of it to the predicate's handle, written in
+//! its own `#[starlark_value]` block:
 //!
 //! ```ignore
 //! #[starlark(implements = StarlarkCmdArgsLike)]
-//! fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
-//!     this.as_ref()
+//! fn cmd_args_like(this: &Self) -> &'v dyn CommandLineArgLike<'v> {
+//!     this
 //! }
 //! ```
 //!
-//! The parameter is the type's [`Get`](crate::values::StarlarkType::Get): `ValueTyped<'v, Self>`
-//! for a type with one representation, the view itself, by value, for a type with several. The
-//! result is the predicate's handle, which lives as long as the heap, and that is why the
-//! conversion starts from the handle and not from `&self`. A type is a member once, for every
-//! representation.
+//! The parameter is written as the [receiver](crate::values::StarlarkType#the-receiver) of a
+//! method is: `this: &Self` for a type with one representation, the view itself, by value, for
+//! a type with several. The result is the predicate's handle, which lives as long as the heap,
+//! as the `&Self` does. A type is a member once, for every representation.
 //!
 //! A type that cannot name the trait, because it is defined upstream of it, is named in the
 //! declaration instead, as `StarlarkStr` is above, in the crate that implements the trait for

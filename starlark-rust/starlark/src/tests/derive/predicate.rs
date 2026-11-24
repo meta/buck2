@@ -145,8 +145,8 @@ impl<'v> ShapeLike<'v> for Square {
 #[starlark_value(type = "square")]
 impl<'v> StarlarkValue<'v> for Square {
     #[starlark(implements = StarlarkShape)]
-    fn shape(this: ValueTyped<'v, Self>) -> &'v dyn ShapeLike<'v> {
-        this.as_ref()
+    fn shape(this: &Self) -> &'v dyn ShapeLike<'v> {
+        this
     }
 }
 
@@ -255,8 +255,8 @@ impl<'v> PaintedLike<'v> for Paint {
 #[starlark_value(type = "paint")]
 impl<'v> StarlarkValue<'v> for Paint {
     #[starlark(implements = StarlarkPainted)]
-    fn painted(this: ValueTyped<'v, Self>) -> &'v dyn PaintedLike<'v> {
-        this.as_ref()
+    fn painted(this: &Self) -> &'v dyn PaintedLike<'v> {
+        this
     }
 }
 
@@ -282,8 +282,8 @@ impl<'v> OtherShapeLike<'v> for Oval {
 #[starlark_value(type = "oval")]
 impl<'v> StarlarkValue<'v> for Oval {
     #[starlark(implements = StarlarkOtherShape)]
-    fn other_shape(this: ValueTyped<'v, Self>) -> &'v dyn OtherShapeLike<'v> {
-        this.as_ref()
+    fn other_shape(this: &Self) -> &'v dyn OtherShapeLike<'v> {
+        this
     }
 }
 

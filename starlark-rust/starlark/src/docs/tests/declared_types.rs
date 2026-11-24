@@ -54,7 +54,6 @@ use crate::typing::TyUser;
 use crate::typing::TyUserParams;
 use crate::values::StarlarkValue;
 use crate::values::ValueOf;
-use crate::values::ValueTyped;
 use crate::values::list::ListType;
 use crate::values::starlark_value_as_type::StarlarkValueAsType;
 use crate::values::string::StarlarkStr;
@@ -133,8 +132,8 @@ impl Weighs for Crate {
 #[starlark_value(type = "crate")]
 impl<'v> StarlarkValue<'v> for Crate {
     #[starlark(implements = StarlarkWeighable)]
-    fn weighable(this: ValueTyped<'v, Self>) -> &'v dyn Weighs {
-        this.as_ref()
+    fn weighable(this: &Self) -> &'v dyn Weighs {
+        this
     }
 }
 
@@ -177,8 +176,8 @@ impl<'v> StarlarkValue<'v> for Parcel {
     }
 
     #[starlark(implements = StarlarkWeighable)]
-    fn weighable(this: ValueTyped<'v, Self>) -> &'v dyn Weighs {
-        this.as_ref()
+    fn weighable(this: &Self) -> &'v dyn Weighs {
+        this
     }
 }
 

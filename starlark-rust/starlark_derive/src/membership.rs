@@ -19,8 +19,8 @@
 //!
 //! ```ignore
 //! #[starlark(implements = StarlarkCmdArgsLike)]
-//! fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
-//!     this.as_ref()
+//! fn cmd_args_like(this: &Self) -> &'v dyn CommandLineArgLike<'v> {
+//!     this
 //! }
 //! ```
 //!
@@ -34,8 +34,7 @@ use quote::quote;
 pub(crate) struct Membership {
     /// The predicate type, as written in the attribute.
     predicate: syn::Path,
-    name: syn::Ident,
-    /// The function's one parameter: the type's `Get`.
+    /// The function's one parameter: a value of the type, as a method's receiver.
     param: syn::PatType,
     /// The function's result: the predicate's handle.
     result: syn::Type,
@@ -60,9 +59,9 @@ impl syn::parse::Parse for Implements {
     }
 }
 
-const SHAPE: &str = "a membership is `fn name(this: Get) -> Handle`: a conversion from the \
-    type's own handle (`ValueTyped<'v, Self>` for a type with one representation, `Self` for a \
-    view) to the predicate type's";
+const SHAPE: &str = "a membership is `fn name(this: Receiver) -> Handle`: a conversion from a \
+    value of the type, taken as a method takes its receiver (`this: &Self` for a type with one \
+    representation, `this: Self` for a view), to the predicate type's handle";
 
 fn membership(f: &syn::ImplItemFn, predicate: syn::Path) -> syn::Result<Membership> {
     let sig = &f.sig;
@@ -79,7 +78,6 @@ fn membership(f: &syn::ImplItemFn, predicate: syn::Path) -> syn::Result<Membersh
     };
     Ok(Membership {
         predicate,
-        name: sig.ident.clone(),
         param,
         result: (**result).clone(),
         body: f.block.clone(),
@@ -130,17 +128,19 @@ pub(crate) fn memberships_impl(
     let entries = memberships.iter().map(|m| {
         let Membership {
             predicate,
-            name,
             param,
             result,
             body,
         } = m;
+        let syn::PatType { pat, ty, .. } = param;
+        // The conversion's parameter is bound as a method's receiver is, so that it is written
+        // the same way and a `&Self` lives as long as the heap, as the handle it gives must.
         quote! {
-            starlark::values::predicate::Membership::new::<#predicate, #rep>(|#this| {
-                let #name = |#param| -> #result #body;
-                #name(starlark::__derive_refs::behaviour::receiver::<Self, _>(
+            starlark::values::predicate::Membership::new::<#predicate, #rep>(|#this| -> #result {
+                let #pat: #ty = starlark::__derive_refs::behaviour::receiver::<Self, _>(
                     <#rep as starlark::values::StarlarkValue<#lt>>::get_typed(#this),
-                ))
+                );
+                #body
             })
         }
     });

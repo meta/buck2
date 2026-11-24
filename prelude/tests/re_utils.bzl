@@ -176,6 +176,7 @@ def _get_re_executors(
     use_case = re_props_copy.pop("use_case")
     listing_capabilities = re_props_copy.pop("listing_capabilities", None)
     remote_cache_enabled = re_props_copy.pop("remote_cache_enabled", None)
+    allow_cache_uploads = re_props_copy.pop("allow_cache_uploads", None) or False
     remote_enabled = re_props_copy.pop("remote_enabled", True)
     re_dependencies = re_props_copy.pop("dependencies", [])
     re_gang_workers = re_props_copy.pop("gang_workers", [])
@@ -206,6 +207,7 @@ def _get_re_executors(
         remote_execution_properties = capabilities,
         remote_execution_use_case = use_case or "tpx-default",
         remote_cache_enabled = remote_cache_enabled,
+        allow_cache_uploads = allow_cache_uploads,
         remote_execution_dependencies = re_dependencies,
         remote_execution_gang_workers = re_gang_workers,
         remote_execution_resource_units = re_resource_units,
@@ -222,6 +224,7 @@ def _get_re_executors(
             remote_execution_properties = listing_capabilities if listing_capabilities != None else capabilities,
             remote_execution_use_case = use_case or "tpx-default",
             remote_cache_enabled = remote_cache_enabled,
+            allow_cache_uploads = allow_cache_uploads,
             remote_execution_resource_units = re_listing_resource_units,
             remote_execution_dynamic_image = re_dynamic_image,
             meta_internal_extra_params = meta_internal_extra_params,

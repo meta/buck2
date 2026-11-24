@@ -232,15 +232,27 @@ def _maybe_filter_resources(ctx: AnalysisContext, resources: list[AndroidResourc
     res_infos_with_no_res = []
     skip_crunch_pngs = getattr(ctx.attrs, "skip_crunch_pngs", None) or False
     is_voltron_language_pack_enabled = getattr(ctx.attrs, "is_voltron_language_pack_enabled", False)
-    for i, resource in enumerate(resources):
+
+    # Name each res dir by a hash of its owner and its short path, numbered only among the res dirs
+    # that share both, so that adding or removing an unrelated resource does not rename it.
+    # Starlark's hash() of a string is deterministic, and the count keeps names unique even if two
+    # owners' hashes collide.
+    res_to_name = {}
+    name_counts = {}
+    for resource in resources:
         if resource.res == None:
             res_infos_with_no_res.append(resource)
         else:
-            filtered_res = ctx.actions.declare_output("filtered_res_{}".format(i), dir = True, has_content_based_path = True)
+            key = "{}/{}".format(hash(str(resource.raw_target)) & 0xFFFFFFFF, resource.res.short_path)
+            count = name_counts.get(key, 0)
+            name_counts[key] = count + 1
+            name = "{}_{}".format(key, count)
+            res_to_name[resource.res] = name
+            filtered_res = ctx.actions.declare_output("filtered_res/{}".format(name), dir = True, has_content_based_path = True)
             res_to_out_res_dir[resource.res] = filtered_res
 
             if is_voltron_language_pack_enabled:
-                filtered_res_for_voltron = ctx.actions.declare_output("filtered_res_for_voltron_{}".format(i), dir = True, has_content_based_path = True)
+                filtered_res_for_voltron = ctx.actions.declare_output("filtered_res_for_voltron/{}".format(name), dir = True, has_content_based_path = True)
                 voltron_res_to_out_res_dir[resource.res] = filtered_res_for_voltron
 
     filter_resources_cmd = cmd_args(android_toolchain.filter_resources[RunInfo])
@@ -331,7 +343,7 @@ def _maybe_filter_resources(ctx: AnalysisContext, resources: list[AndroidResourc
     )
 
     filtered_resource_infos = []
-    for i, resource in enumerate(resources):
+    for resource in resources:
         if resource.res == None:
             continue
 
@@ -341,7 +353,7 @@ def _maybe_filter_resources(ctx: AnalysisContext, resources: list[AndroidResourc
             filtered_res,
             android_toolchain,
             skip_crunch_pngs = skip_crunch_pngs,
-            identifier = "filtered_res_{}".format(i),
+            identifier = "filtered_res/{}".format(res_to_name[resource.res]),
         )
         filtered_resource = AndroidResourceInfo(
             raw_target = resource.raw_target,

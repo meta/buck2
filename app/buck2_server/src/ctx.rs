@@ -1016,11 +1016,13 @@ impl DiceCommandUpdater<'_, '_> {
         &self,
         root_config: &LegacyBuckConfig,
     ) -> buck2_error::Result<UserComputationData> {
-        let config_threads = root_config
-            .parse(BuckconfigKeyRef {
-                section: "build",
-                property: "threads",
-            })?
+        let invocation_settings = &self.cmd_ctx.buck_settings.invocation;
+        // Unset invocation settings fall back to the command's own parse of the root buckconfig.
+        let mut buckconfig = root_config;
+
+        let config_threads = invocation_settings
+            .execution
+            .threads(&mut buckconfig)?
             .unwrap_or(0);
 
         let concurrency = self
@@ -1028,10 +1030,10 @@ impl DiceCommandUpdater<'_, '_> {
             .or_else(|| parse_concurrency(config_threads))
             .unwrap_or_else(buck2_util::threads::available_parallelism_fresh);
 
-        if let Some(max_lines) = root_config.parse(BuckconfigKeyRef {
-            section: "ui",
-            property: "thread_line_limit",
-        })? {
+        if let Some(max_lines) = invocation_settings
+            .console
+            .thread_line_limit(&mut buckconfig)?
+        {
             self.cmd_ctx
                 .events()
                 .instant_event(buck2_data::ConsolePreferences { max_lines });
@@ -1060,12 +1062,9 @@ impl DiceCommandUpdater<'_, '_> {
             })?
             .unwrap_or(false);
 
-        let persistent_worker_shutdown_timeout_s = root_config
-            .parse::<u32>(BuckconfigKeyRef {
-                section: "build",
-                property: "persistent_worker_shutdown_timeout_s",
-            })?
-            .or(Some(10));
+        let persistent_worker_shutdown_timeout_s = invocation_settings
+            .execution
+            .persistent_worker_shutdown_timeout_s(&mut buckconfig)?;
 
         let re_cancel_on_estimated_queue_time_exceeds = root_config
             .parse::<u64>(BuckconfigKeyRef {
@@ -1116,8 +1115,6 @@ impl DiceCommandUpdater<'_, '_> {
             self.cmd_ctx.base_context.daemon.memory_tracker.is_some(),
         ));
 
-        let invocation_settings = &self.cmd_ctx.buck_settings.invocation;
-        let mut buckconfig = root_config;
         let tests_inherit_client_coding_agent_metadata = invocation_settings
             .test
             .inherit_client_coding_agent_metadata(&mut buckconfig)?;
@@ -1241,7 +1238,7 @@ impl DiceCommandUpdater<'_, '_> {
         };
         data.set_detailed_aggregated_metrics_events_holder();
 
-        let worker_pool = Arc::new(WorkerPool::new(persistent_worker_shutdown_timeout_s));
+        let worker_pool = Arc::new(WorkerPool::new(Some(persistent_worker_shutdown_timeout_s)));
 
         let critical_path_backend = root_config
             .parse(BuckconfigKeyRef {

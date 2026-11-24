@@ -22,10 +22,12 @@ use crate::agent_materialization::AgentMaterialization;
 use crate::agent_recursive_patterns::AgentRecursivePatterns;
 use crate::analysis::Analysis;
 use crate::buckconfig::BuckconfigSource;
+use crate::console::Console;
 use crate::daemon::Daemon;
 use crate::digest::Digest;
 use crate::event_forwarding::EventForwarding;
 use crate::event_log::EventLog;
+use crate::execution::Execution;
 use crate::execution_platforms::ExecutionPlatforms;
 use crate::health_check::HealthCheck;
 use crate::http::Http;
@@ -218,7 +220,9 @@ buck_settings! {
         agent_interactive: AgentInteractive,
         agent_materialization: AgentMaterialization,
         agent_recursive_patterns: AgentRecursivePatterns,
+        console: Console,
         event_log: EventLog,
+        execution: Execution,
         health_check: HealthCheck,
         test: Test,
     }

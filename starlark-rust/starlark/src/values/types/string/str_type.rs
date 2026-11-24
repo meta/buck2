@@ -52,6 +52,8 @@ use crate::values::StringValue;
 use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
+use crate::values::ValueOf;
+use crate::values::ValueTyped;
 use crate::values::index::apply_slice;
 use crate::values::none::NoneOr;
 use crate::values::string::interpolation;
@@ -333,11 +335,14 @@ impl<'v> StarlarkValue<'v> for StarlarkStr {
         }
     }
 
-    fn add(this: &Self, other: StringValue<'v>, heap: Heap<'v>) -> StringValue<'v> {
+    fn add(this: ValueTyped<'v, Self>, other: StringValue<'v>, heap: Heap<'v>) -> StringValue<'v> {
+        let other_str = other.as_str();
         if this.is_empty() {
             other
+        } else if other_str.is_empty() {
+            ValueOf::from_representation(this)
         } else {
-            heap.alloc_str_concat(this, other.as_str())
+            heap.alloc_str_concat(&this, other_str)
         }
     }
 
@@ -540,6 +545,20 @@ len("😿") == 1
 ("z" in "abc") == False
 "#,
         );
+    }
+
+    #[test]
+    fn test_add_empty_is_the_other_string() {
+        Heap::temp(|heap| {
+            let abc = heap.alloc_str("abc").to_value();
+            let empty = heap.alloc_str("").to_value();
+            // The method is called through the vtable: `Value::add` has its own case for two
+            // strings and does not get to it.
+            let abc_empty = abc.get_ref().add(empty, heap).unwrap().unwrap();
+            assert!(abc_empty.ptr_eq(abc));
+            let empty_abc = empty.get_ref().add(abc, heap).unwrap().unwrap();
+            assert!(empty_abc.ptr_eq(abc));
+        });
     }
 
     #[test]

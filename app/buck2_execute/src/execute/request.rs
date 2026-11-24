@@ -29,8 +29,6 @@ use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 pub use buck2_data::NetworkAccess;
 use buck2_data::local_command::EnvironmentRule;
 use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
 use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
 use buck2_error::buck2_error;
 use buck2_hash::BuckFixedSortedMap;
@@ -263,11 +261,7 @@ impl CommandExecutionPaths {
             None => input_directory,
         };
 
-        let input_files_bytes = if buck2_core::faster_directories::is_enabled() {
-            input_directory.size()
-        } else {
-            Self::calculate_inputs_size_bytes(&input_directory)
-        };
+        let input_files_bytes = input_directory.size();
 
         Ok(Self {
             inputs,
@@ -276,18 +270,6 @@ impl CommandExecutionPaths {
             output_paths,
             input_files_bytes,
         })
-    }
-
-    fn calculate_inputs_size_bytes(input_directory: &ActionImmutableDirectory) -> u64 {
-        let mut input_files_bytes = 0;
-
-        for entry in input_directory.unordered_walk_leaves().without_paths() {
-            if let ActionDirectoryMember::File(f) = entry {
-                input_files_bytes += f.digest.size();
-            }
-        }
-
-        input_files_bytes
     }
 
     pub fn add_outputs_as_inputs(

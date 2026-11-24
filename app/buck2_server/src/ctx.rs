@@ -1179,16 +1179,6 @@ impl DiceCommandUpdater<'_, '_> {
         let output_trees_download_config =
             OutputTreesDownloadConfig::new(output_trees_download_semaphore_size);
 
-        buck2_core::faster_directories::VALUE.store(
-            root_config
-                .parse::<bool>(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "faster_directories",
-                })?
-                .unwrap_or(true),
-            std::sync::atomic::Ordering::Relaxed,
-        );
-
         let dice = self
             .cmd_ctx
             .base_context

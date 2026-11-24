@@ -269,10 +269,6 @@ where
     ///
     /// In other words, this cannot be used to "replace" any existing things in the directory
     pub fn merge_with_compatible_leaves(&mut self, other: Self) -> Result<(), DirectoryMergeError> {
-        if !buck2_core::faster_directories::is_enabled() {
-            return self.merge(other);
-        }
-
         let v = std::mem::replace(self, DirectoryBuilder::empty_non_exhaustive());
         let v = v
             .merge_inner(other, true)
@@ -282,17 +278,12 @@ where
     }
 
     pub fn merge(&mut self, other: Self) -> Result<(), DirectoryMergeError> {
-        if buck2_core::faster_directories::is_enabled() {
-            let v = std::mem::replace(self, DirectoryBuilder::empty_non_exhaustive());
-            let v = v
-                .merge_inner(other, false)
-                .map_err(|path| DirectoryMergeError::CannotTraverseLeaf { path })?;
-            *self = v;
-            Ok(())
-        } else {
-            self.merge_inner_old(other)
-                .map_err(|path| DirectoryMergeError::CannotTraverseLeaf { path })
-        }
+        let v = std::mem::replace(self, DirectoryBuilder::empty_non_exhaustive());
+        let v = v
+            .merge_inner(other, false)
+            .map_err(|path| DirectoryMergeError::CannotTraverseLeaf { path })?;
+        *self = v;
+        Ok(())
     }
 
     fn merge_inner(
@@ -426,51 +417,6 @@ where
                 }
             },
         )
-    }
-
-    /// Old implementation of `merge_inner`, preserved for a/b test
-    fn merge_inner_old(&mut self, mut other: Self) -> Result<(), PathAccumulator> {
-        let joined_exhaustiveness = self.root_exhaustiveness().join(other.root_exhaustiveness());
-
-        if let (Self::Immutable(d1), Self::Immutable(d2)) = (&*self, &other) {
-            if d1.fingerprint() == d2.fingerprint() {
-                // Same content: keep whichever side's marking already is the join, if any.
-                let e1 = d1.exhaustiveness_hash();
-                let e2 = d2.exhaustiveness_hash();
-                if e1.covers(e2) {
-                    return Ok(());
-                }
-                if e2.covers(e1) {
-                    *self = other;
-                    return Ok(());
-                }
-                // Neither marking dominates: fall through and join pointwise.
-            }
-        }
-
-        let other = std::mem::take(other.as_mut());
-
-        let entries = self.as_mut();
-
-        for (k, v) in other.into_iter() {
-            match entries.entry(k) {
-                Entry::Occupied(mut entry) => match (entry.get_mut(), v) {
-                    (DirectoryEntry::Dir(d), DirectoryEntry::Dir(o)) => {
-                        d.merge_inner_old(o).map_err(|e| e.with(entry.key()))?;
-                    }
-                    (entry, DirectoryEntry::Leaf(o)) => {
-                        *entry = DirectoryEntry::Leaf(o);
-                    }
-                    _ => return Err(PathAccumulator::new(entry.key())),
-                },
-                Entry::Vacant(entry) => {
-                    entry.insert(v);
-                }
-            }
-        }
-
-        self.set_root_exhaustiveness(joined_exhaustiveness);
-        Ok(())
     }
 }
 
@@ -1358,16 +1304,11 @@ mod tests {
             (exhaustive.clone(), scaffold.clone()),
             (scaffold.clone(), exhaustive.clone()),
         ] {
-            let mut merged = l.clone().into_builder();
-            merged.merge(r.clone().into_builder()).unwrap();
+            let mut merged = l.into_builder();
+            merged.merge(r.into_builder()).unwrap();
             let merged = merged.fingerprint(&TestHasher);
             assert!(merged.exhaustiveness_hash().is_uniformly_exhaustive());
             assert_eq!(merged.fingerprint(), exhaustive.fingerprint());
-
-            let mut merged_old = l.into_builder();
-            merged_old.merge_inner_old(r.into_builder()).unwrap();
-            let merged_old = merged_old.fingerprint(&TestHasher);
-            assert!(merged_old.exhaustiveness_hash().is_uniformly_exhaustive());
         }
     }
 

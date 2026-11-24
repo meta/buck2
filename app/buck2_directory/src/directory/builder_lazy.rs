@@ -40,9 +40,6 @@ where
     H: DirectoryDigest,
     L: Clone + PartialEq + Eq,
 {
-    // In use without fast directories
-    builder: DirectoryBuilder<L, H>,
-    // In use with fast directories
     to_merge: Vec<SharedDirectory<L, H>>,
     to_insert: Vec<(
         ForwardRelativePathBuf,
@@ -57,7 +54,6 @@ where
 {
     pub fn empty() -> Self {
         Self {
-            builder: DirectoryBuilder::empty_non_exhaustive(),
             to_merge: Vec::new(),
             to_insert: Vec::new(),
         }
@@ -69,13 +65,8 @@ where
     /// directory, but the fast paths in the directory builder can only be hit with shared
     /// directories.
     pub fn merge(&mut self, dir: SharedDirectory<L, H>) -> Result<(), DirectoryMergeError> {
-        if buck2_core::faster_directories::is_enabled() {
-            self.to_merge.push(dir);
-            Ok(())
-        } else {
-            self.builder
-                .merge_with_compatible_leaves(dir.into_builder())
-        }
+        self.to_merge.push(dir);
+        Ok(())
     }
 
     pub fn insert(
@@ -83,14 +74,8 @@ where
         path: ForwardRelativePathBuf,
         entry: DirectoryEntry<SharedDirectory<L, H>, L>,
     ) -> Result<(), DirectoryInsertError> {
-        if buck2_core::faster_directories::is_enabled() {
-            self.to_insert.push((path, entry));
-            Ok(())
-        } else {
-            self.builder
-                .insert(&path, entry.map_dir(|d| d.into_builder()))
-                .map(|_| ())
-        }
+        self.to_insert.push((path, entry));
+        Ok(())
     }
 
     pub fn finalize(self) -> buck2_error::Result<DirectoryBuilder<L, H>> {
@@ -111,7 +96,7 @@ where
 
         // Merge items from largest to smallest, improving the ability to reuse fingerprinted
         // directories
-        let mut builder = self.builder;
+        let mut builder = DirectoryBuilder::empty_non_exhaustive();
         for d in to_merge {
             builder.merge_with_compatible_leaves(d.into_builder())?;
         }

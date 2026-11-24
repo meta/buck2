@@ -85,20 +85,24 @@ def build_junit_test(
 
     cmd.append(cmd_args(ctx.attrs.java_agents, format = "-javaagent:{}"))
 
-    classpath = (
-        [
-            java_test_toolchain.test_runner_library_jar,
-        ]
-        + [
-            get_all_java_packaging_deps_tset(ctx, java_packaging_infos = [tests_java_packaging_info]).project_as_args("full_jar_args", ordering = "bfs"),
-        ]
-        + extra_classpath_entries
-    )
+    labels = ctx.attrs.labels or []
+
+    packaging_deps = get_all_java_packaging_deps_tset(ctx, java_packaging_infos = [tests_java_packaging_info])
+    if "flatten_test_classpath" in labels:
+        classpath = _flat_classpath(ctx, packaging_deps, [java_test_toolchain.test_runner_library_jar], extra_classpath_entries)
+    else:
+        classpath = (
+            [
+                java_test_toolchain.test_runner_library_jar,
+            ]
+            + [
+                packaging_deps.project_as_args("full_jar_args", ordering = "bfs"),
+            ]
+            + extra_classpath_entries
+        )
 
     if ctx.attrs.unbundled_resources_root:
         classpath.append(ctx.attrs.unbundled_resources_root)
-
-    labels = ctx.attrs.labels or []
 
     # Setup RE executors based on the `remote_execution` param.
     re_executors = get_re_executors_from_props(ctx)
@@ -213,6 +217,22 @@ def build_junit_test(
         supports_test_execution_caching = ctx.attrs.supports_test_execution_caching,
     )
     return test_info
+
+def _flat_classpath(
+    ctx: AnalysisContext, packaging_deps: TransitiveSet | None, leading_entries: list[Artifact], extra_classpath_entries: list[Artifact]
+) -> list[Artifact]:
+    # Remote execution lays out an action's inputs one directory at a time, and each jar
+    # brings several directories of its own. One directory of copies keeps the same jars,
+    # in the same order, behind a single directory.
+    jars = list(leading_entries)
+    if packaging_deps:
+        jars.extend([dep.jar for dep in packaging_deps.traverse(ordering = "bfs") if dep.jar])
+    jars.extend(extra_classpath_entries)
+
+    entries = {"{}_{}".format(i, jar.basename): jar for i, jar in enumerate(jars)}
+
+    flat = ctx.actions.copied_dir("flat_classpath", entries, has_content_based_path = False)
+    return [flat.project(name) for name in entries]
 
 def _get_native_libs_env(ctx: AnalysisContext) -> dict:
     if not ctx.attrs.use_cxx_libraries:

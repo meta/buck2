@@ -33,7 +33,6 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
-use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -334,8 +333,8 @@ impl<'v> StarlarkValue<'v> for ResolvedStringWithMacros<'v> {
     }
 
     #[starlark(implements = StarlarkCmdArgsLike)]
-    fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
-        this.as_ref()
+    fn cmd_args_like(this: &Self) -> &'v dyn CommandLineArgLike<'v> {
+        this
     }
 }
 

@@ -58,7 +58,6 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
-use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 use crate::actions::impls::declare_writes::declare_writes;
@@ -315,8 +314,8 @@ starlark_complex_value!(pub(crate) StarlarkWriteJsonCommandLineArg);
 #[starlark_value(type = "WriteJsonCliArgs")]
 impl<'v> StarlarkValue<'v> for StarlarkWriteJsonCommandLineArg<'v> {
     #[starlark(implements = StarlarkCmdArgsLike)]
-    fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
-        this.as_ref()
+    fn cmd_args_like(this: &Self) -> &'v dyn CommandLineArgLike<'v> {
+        this
     }
 }
 

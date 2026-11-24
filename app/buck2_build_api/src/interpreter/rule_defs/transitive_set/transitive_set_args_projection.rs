@@ -209,8 +209,8 @@ where
     }
 
     #[starlark(implements = StarlarkCmdArgsLike)]
-    fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
-        this.as_ref()
+    fn cmd_args_like(this: &Self) -> &'v dyn CommandLineArgLike<'v> {
+        this
     }
 }
 

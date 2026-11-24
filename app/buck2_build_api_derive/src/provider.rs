@@ -509,9 +509,9 @@ impl ProviderCodegen {
                 quote::quote_spanned! { self.span=>
                     #[starlark(implements = #predicate)]
                     fn #member(
-                        this: starlark::values::ValueTyped<'v, Self>,
+                        this: &Self,
                     ) -> <#predicate as starlark::values::StarlarkTypeExpr<'v>>::Get {
-                        this.as_ref()
+                        this
                     }
                 }
             });
@@ -658,9 +658,9 @@ impl ProviderCodegen {
 
                     #[starlark(implements = buck2_interpreter::types::provider::callable::StarlarkProviderCallable)]
                     fn provider_callable(
-                        this: starlark::values::ValueTyped<'v, Self>,
+                        this: &Self,
                     ) -> &'v dyn buck2_interpreter::types::provider::callable::ProviderCallableLike {
-                        this.as_ref()
+                        this
                     }
 
                     #documentation_function

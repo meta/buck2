@@ -23,7 +23,6 @@ use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
-use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 use super::StarlarkTaggedValue;
@@ -67,8 +66,8 @@ impl<'v> StarlarkValue<'v> for StarlarkTaggedCommandLine<'v> {
     }
 
     #[starlark(implements = StarlarkCmdArgsLike)]
-    fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
-        this.as_ref()
+    fn cmd_args_like(this: &Self) -> &'v dyn CommandLineArgLike<'v> {
+        this
     }
 }
 

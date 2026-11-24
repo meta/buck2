@@ -32,7 +32,6 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 use crate::interpreter::rule_defs::provider::ProviderLike;
@@ -147,8 +146,8 @@ impl<'v> StarlarkValue<'v> for UserProvider<'v> {
     }
 
     #[starlark(implements = StarlarkProvider)]
-    fn provider(this: ValueTyped<'v, Self>) -> &'v dyn ProviderLike<'v> {
-        this.as_ref()
+    fn provider(this: &Self) -> &'v dyn ProviderLike<'v> {
+        this
     }
 }
 

@@ -42,6 +42,7 @@ load("@prelude//android:voltron.bzl", "ROOT_MODULE", "all_targets_in_root_module
     # @oss-disable[end= ]: "is_late_gatorade_enabled",
     # @oss-disable[end= ]: "is_monogatorade_enabled",
     # @oss-disable[end= ]: "middle_gatorade_merge_args",
+    # @oss-disable[end= ]: "monogatorade_bind_bolted_anchor_map",
     # @oss-disable[end= ]: "monogatorade_redex_stand_ins",
     # @oss-disable[end= ]: "monogatorade_whole_app",
     # @oss-disable[end= ]: "relink_for_native_libs",
@@ -3131,6 +3132,7 @@ def _bolt_libraries(
                 native_cmd_entries = native_cmd_entries,
                 platform = platform,
             )
+            # @oss-disable[end= ]: monogatorade_bind_bolted_anchor_map(ctx, cxx_toolchain, platform, original_shared_library, bolted_libraries[soname].lib.output)
 
     return bolted_libraries_by_platform, pre_bolt_libraries_by_platform
 

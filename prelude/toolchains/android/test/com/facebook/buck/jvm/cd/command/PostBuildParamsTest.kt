@@ -64,6 +64,18 @@ class PostBuildParamsTest {
   }
 
   @Test
+  fun `class names file replaces a read-only file from an earlier build`() {
+    val jar = writeJar("lib.jar", "com/a/B.class")
+    val output = tempFolder.root.toPath().resolve("class_names.txt")
+    Files.write(output, "stale\n".toByteArray())
+    output.toFile().setReadOnly()
+
+    postBuildParams(output).maybeWriteClassNamesFile(jarParameters(jar))
+
+    assertEquals("com/a/B\n", String(Files.readAllBytes(output), Charsets.UTF_8))
+  }
+
+  @Test
   fun `nothing is written without a class names file`() {
     postBuildParams(null).maybeWriteClassNamesFile(null)
 

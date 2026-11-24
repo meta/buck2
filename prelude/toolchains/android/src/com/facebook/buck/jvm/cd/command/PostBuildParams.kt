@@ -12,6 +12,7 @@ package com.facebook.buck.jvm.cd.command
 
 import com.facebook.buck.cd.model.common.PostBuildParams as PostBuildParamsProto
 import com.facebook.buck.jvm.java.JarParameters
+import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.zip.ZipFile
@@ -49,6 +50,7 @@ class PostBuildParams(
               .filter { it.endsWith(".class") }
               .joinToString("") { it.removeSuffix(".class") + "\n" }
         }
+    Files.deleteIfExists(classNamesFile)
     classNamesFile.toFile().writeText(names)
   }
 

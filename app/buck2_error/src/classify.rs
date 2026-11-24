@@ -445,6 +445,7 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::DiceChangedToInvalid => rank!(tier0),
         ErrorTag::DiceInjectedKeyGotInvalidation => rank!(tier0),
         ErrorTag::DiceDuplicateActivationData => rank!(tier0),
+        ErrorTag::DicePageInFailed => rank!(tier0),
         // A dependency cycle between the user's keys.
         ErrorTag::DiceCycle => rank!(input),
         // "Resource temporarily unavailable"

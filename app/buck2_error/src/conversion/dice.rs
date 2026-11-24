@@ -23,7 +23,7 @@ impl From<dice_error::DiceError> for crate::Error {
             DiceErrorImpl::InjectedKeyGotInvalidation(_) => {
                 ErrorTag::DiceInjectedKeyGotInvalidation
             }
-            DiceErrorImpl::PageInFailed { .. } => ErrorTag::Tier0,
+            DiceErrorImpl::PageInFailed { .. } => ErrorTag::DicePageInFailed,
             DiceErrorImpl::DuplicateActivationData => ErrorTag::DiceDuplicateActivationData,
             DiceErrorImpl::Cycle(_) => ErrorTag::DiceCycle,
         };
@@ -36,5 +36,21 @@ impl From<PagableStorageBackendParseError> for crate::Error {
     #[track_caller]
     fn from(value: PagableStorageBackendParseError) -> Self {
         crate::conversion::from_any_with_tag(value, ErrorTag::Input)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ErrorTag;
+
+    #[test]
+    fn page_in_failure_is_categorized_by_its_tag() {
+        let error = dice_error::DiceError::page_in_failed(
+            "SomeKey".to_owned(),
+            anyhow::anyhow!("no row").into(),
+        );
+        let error = crate::Error::from(error);
+        assert!(error.has_tag(ErrorTag::DicePageInFailed));
+        assert_eq!(error.category_key(), "DICE_PAGE_IN_FAILED");
     }
 }

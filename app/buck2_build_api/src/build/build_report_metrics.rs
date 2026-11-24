@@ -9,12 +9,13 @@
  */
 
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::cells::name::CellName;
 use buck2_data::ToProtoMessage;
 use buck2_error::internal_error;
 use buck2_events::dispatch::instant_event;
 use buck2_hash::BuckMutSet;
+use buck2_settings::BuckconfigSource;
+use buck2_settings::SketchedProvider;
+use buck2_settings::dice::HasInvocationBuckSettings;
 use dice::DiceComputations;
 use dupe::Dupe;
 
@@ -34,65 +35,40 @@ pub struct BuildReportMetricsConfig {
 }
 
 impl BuildReportMetricsConfig {
-    pub async fn from_buckconfig(
-        ctx: &mut DiceComputations<'_>,
-        root_cell: CellName,
-    ) -> buck2_error::Result<Self> {
+    /// What the command's `build_metrics` settings ask for.
+    pub async fn new(ctx: &mut DiceComputations<'_>) -> buck2_error::Result<Self> {
+        let invocation_settings = ctx.per_transaction_data().get_invocation_buck_settings();
+        let settings = &invocation_settings.build_metrics;
+        let root_config = ctx.get_legacy_root_config_on_dice().await?;
+        let buckconfig: &mut dyn BuckconfigSource = &mut root_config.view(ctx);
         let graph_properties = GraphPropertiesOptions {
-            configured_graph_size: bool_property(ctx, root_cell, "log_configured_graph_size")
-                .await?,
-            configured_graph_sketch: bool_property(ctx, root_cell, "log_configured_graph_sketch")
-                .await?,
-            total_configured_graph_sketch: bool_property(
-                ctx,
-                root_cell,
-                "log_total_configured_graph_sketch",
-            )
-            .await?,
-            retained_analysis_memory_sketch: bool_property(
-                ctx,
-                root_cell,
-                "log_retained_analysis_memory_sketch",
-            )
-            .await?,
-            peak_analysis_memory_sketch: bool_property(
-                ctx,
-                root_cell,
-                "log_peak_analysis_memory_sketch",
-            )
-            .await?,
-            peak_load_memory_sketch: bool_property(ctx, root_cell, "log_peak_load_memory_sketch")
-                .await?,
-            action_graph_sketch: bool_property(ctx, root_cell, "log_action_graph_sketch").await?,
-            artifact_count_sketch: bool_property(ctx, root_cell, "log_artifact_count_sketch")
-                .await?,
-            artifact_size_sketch: bool_property(ctx, root_cell, "log_artifact_size_sketch").await?,
-            log_sketch_cardinalities: bool_property(ctx, root_cell, "log_sketch_cardinalities")
-                .await?,
+            configured_graph_size: settings.configured_graph_size(buckconfig)?,
+            configured_graph_sketch: settings.configured_graph_sketch(buckconfig)?,
+            total_configured_graph_sketch: settings.total_configured_graph_sketch(buckconfig)?,
+            retained_analysis_memory_sketch: settings
+                .retained_analysis_memory_sketch(buckconfig)?,
+            peak_analysis_memory_sketch: settings.peak_analysis_memory_sketch(buckconfig)?,
+            peak_load_memory_sketch: settings.peak_load_memory_sketch(buckconfig)?,
+            action_graph_sketch: settings.action_graph_sketch(buckconfig)?,
+            artifact_count_sketch: settings.artifact_count_sketch(buckconfig)?,
+            artifact_size_sketch: settings.artifact_size_sketch(buckconfig)?,
+            log_sketch_cardinalities: settings.sketch_cardinalities(buckconfig)?,
         };
 
-        let providers_to_skip_in_artifact_path_sketch = ctx
-            .parse_legacy_config_list_property::<SkipProvider>(
-                root_cell,
-                BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "providers_to_skip_in_artifact_path_sketch",
-                },
-            )
-            .await?
+        let providers_to_skip_in_artifact_path_sketch = settings
+            .artifact_sketch_skip_providers(buckconfig)?
             .unwrap_or_default()
             .into_iter()
-            .map(SkipProvider::into_build_provider_type)
+            .map(|provider| match provider {
+                SketchedProvider::Build => BuildProviderType::Default,
+                SketchedProvider::Run => BuildProviderType::Run,
+                SketchedProvider::Test => BuildProviderType::Test,
+            })
             .collect();
 
         Ok(Self {
             graph_properties,
-            detailed_aggregated_metrics: bool_property(
-                ctx,
-                root_cell,
-                "detailed_aggregated_metrics",
-            )
-            .await?,
+            detailed_aggregated_metrics: settings.detailed_aggregated(buckconfig)?,
             providers_to_skip_in_artifact_path_sketch,
         })
     }
@@ -190,55 +166,4 @@ pub async fn compute_build_report_supplemental_data(
         action_graph_sketch_result,
         artifact_path_sketch_result,
     })
-}
-
-async fn bool_property(
-    ctx: &mut DiceComputations<'_>,
-    root_cell: CellName,
-    property: &'static str,
-) -> buck2_error::Result<bool> {
-    Ok(ctx
-        .parse_legacy_config_property(
-            root_cell,
-            BuckconfigKeyRef {
-                section: "buck2",
-                property,
-            },
-        )
-        .await?
-        .unwrap_or_default())
-}
-
-enum SkipProvider {
-    Build,
-    Run,
-    Test,
-}
-
-impl SkipProvider {
-    fn into_build_provider_type(self) -> BuildProviderType {
-        match self {
-            Self::Build => BuildProviderType::Default,
-            Self::Run => BuildProviderType::Run,
-            Self::Test => BuildProviderType::Test,
-        }
-    }
-}
-
-#[derive(Debug, buck2_error::Error)]
-#[error("Invalid skip provider: `{0}`. Valid values are: [`build`, `run`, `test`]")]
-#[buck2(input)]
-struct SkipProviderParseError(String);
-
-impl std::str::FromStr for SkipProvider {
-    type Err = SkipProviderParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim() {
-            "build" => Ok(Self::Build),
-            "run" => Ok(Self::Run),
-            "test" => Ok(Self::Test),
-            other => Err(SkipProviderParseError(other.to_owned())),
-        }
-    }
 }

@@ -506,9 +506,7 @@ async fn test_inner(
         .build_opts
         .as_ref()
         .internal_error("should have build options")?;
-    let build_report_metrics_config =
-        BuildReportMetricsConfig::from_buckconfig(&mut ctx.ctx(), cell_resolver.root_cell())
-            .await?;
+    let build_report_metrics_config = BuildReportMetricsConfig::new(&mut ctx.ctx()).await?;
     let graph_properties = build_report_metrics_config.graph_properties;
 
     let timeout = request
@@ -658,7 +656,7 @@ async fn test_inner(
     let serialized_build_report = if build_opts.unstable_print_build_report {
         let artifact_fs = ctx.ctx().get_artifact_fs().await?;
         let build_report_opts =
-            build_report_opts(&mut ctx.ctx(), &cell_resolver, build_opts, graph_properties).await?;
+            build_report_opts(&mut ctx.ctx(), build_opts, graph_properties).await?;
 
         write_build_report(
             build_report_opts,

@@ -126,7 +126,7 @@ async fn test_build_report_skip_unconfigured(buck: &Buck, tmp_path: &Path) -> an
         "test_build_report_skip_unconfigured",
         &[
             "//:ok",
-            "-c",
+            "--setting",
             "build_report.print_unconfigured_section=false",
         ],
         false,

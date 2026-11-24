@@ -20,6 +20,8 @@ use buck2_common::invocation_paths::InvocationPaths;
 use buck2_error::ErrorTag;
 use buck2_error::ExitCode;
 use buck2_event_observer::span_tracker::EventTimestamp;
+use buck2_settings::BuckconfigSource;
+use buck2_settings::BuildMetrics;
 use dupe::Dupe;
 
 use crate::client_ctx::AgentAdvice;
@@ -397,7 +399,7 @@ fn get_build_graph_stats<T: StreamingCommand>(
     cmd: &T,
     ctx: &ClientCommandContext,
 ) -> Option<Box<dyn EventSubscriber>> {
-    if should_handle_build_graph_stats(cmd) {
+    if should_handle_build_graph_stats(cmd, ctx) {
         Some(Box::new(BuildGraphStats::new(
             ctx.fbinit(),
             ctx.trace_id.dupe(),
@@ -407,10 +409,73 @@ fn get_build_graph_stats<T: StreamingCommand>(
     }
 }
 
-fn should_handle_build_graph_stats<T: StreamingCommand>(cmd: &T) -> bool {
+/// The `--config section.property=value` flags of a command, read as a buckconfig. The client
+/// has not loaded the repository's buckconfig files when it decides what to subscribe to, so
+/// this is all of buckconfig that a setting's fallback can see here.
+struct ConfigFlags<'a>(&'a [String]);
+
+impl BuckconfigSource for ConfigFlags<'_> {
+    fn get(&mut self, section: &str, property: &str) -> buck2_error::Result<Option<String>> {
+        Ok(self
+            .0
+            .iter()
+            .rev()
+            .find_map(|flag| {
+                let (key, value) = flag.split_once('=')?;
+                (key.split_once('.') == Some((section, property))).then_some(value)
+            })
+            // An empty value unsets the key.
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned))
+    }
+}
+
+fn should_handle_build_graph_stats<T: StreamingCommand>(
+    cmd: &T,
+    ctx: &ClientCommandContext,
+) -> bool {
     // Currently, we only care about graph size info in BuildResponse which build command produces
-    cmd.build_config_opts()
-        .config_values
-        .contains(&"buck2.log_configured_graph_size=true".to_owned())
-        && cmd.logging_name() == "build"
+    if cmd.logging_name() != "build" {
+        return false;
+    }
+    let default_settings;
+    let build_metrics = match ctx.buck_settings() {
+        Ok(settings) => &settings.invocation.build_metrics,
+        // Outside of a repository there are no settings files; the flags still count.
+        Err(_) => {
+            default_settings = BuildMetrics::default();
+            &default_settings
+        }
+    };
+    build_metrics
+        .configured_graph_size(&mut ConfigFlags(&cmd.build_config_opts().config_values))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_flags_read_the_last_flag_for_a_key() -> buck2_error::Result<()> {
+        let flags = [
+            "buck2.log_configured_graph_size=false".to_owned(),
+            "buck2.other=1".to_owned(),
+            "buck2.log_configured_graph_size=true".to_owned(),
+        ];
+        let mut flags = ConfigFlags(&flags);
+        assert_eq!(
+            flags.get("buck2", "log_configured_graph_size")?.as_deref(),
+            Some("true")
+        );
+        assert_eq!(flags.get("buck2", "missing")?, None);
+        assert_eq!(
+            ConfigFlags(&["a.b=1".to_owned(), "a.b=".to_owned()]).get("a", "b")?,
+            None
+        );
+        assert_eq!(flags.get("other", "log_configured_graph_size")?, None);
+        // The setting falls back to the flag.
+        assert!(BuildMetrics::default().configured_graph_size(&mut flags)?);
+        Ok(())
+    }
 }

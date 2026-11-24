@@ -58,8 +58,8 @@ async fn test_build_report_contains_per_target_build_metrics(
     buck.test(&[
         "//:ok",
         "--build-default-info",
-        "-c",
-        "buck2.detailed_aggregated_metrics=true",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
         "--build-report",
         &report.to_string_lossy(),
     ])
@@ -106,22 +106,22 @@ async fn test_build_and_test_reports_have_matching_sketches(
     let build_report = tmp_path.join("build-report.json");
     let test_report = tmp_path.join("test-report.json");
     let configs = [
-        "-c",
-        "buck2.log_configured_graph_size=true",
-        "-c",
-        "buck2.log_configured_graph_sketch=true",
-        "-c",
-        "buck2.log_retained_analysis_memory_sketch=true",
-        "-c",
-        "buck2.log_action_graph_sketch=true",
-        "-c",
-        "buck2.log_artifact_count_sketch=true",
-        "-c",
-        "buck2.log_artifact_size_sketch=true",
-        "-c",
-        "buck2.log_sketch_cardinalities=true",
-        "-c",
-        "buck2.providers_to_skip_in_artifact_path_sketch=build,run",
+        "--setting",
+        "build_metrics.configured_graph_size=true",
+        "--setting",
+        "build_metrics.configured_graph_sketch=true",
+        "--setting",
+        "build_metrics.retained_analysis_memory_sketch=true",
+        "--setting",
+        "build_metrics.action_graph_sketch=true",
+        "--setting",
+        "build_metrics.artifact_count_sketch=true",
+        "--setting",
+        "build_metrics.artifact_size_sketch=true",
+        "--setting",
+        "build_metrics.sketch_cardinalities=true",
+        "--setting",
+        r#"build_metrics.artifact_sketch_skip_providers=["build", "run"]"#,
     ];
 
     let build_report_arg = build_report.to_string_lossy();

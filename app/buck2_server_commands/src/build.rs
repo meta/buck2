@@ -188,8 +188,6 @@ async fn build(
         Arc::new(TimeoutLivelinessObserver::new(timeout)) as Arc<dyn LivelinessObserver>
     });
 
-    let cell_resolver = ctx.ctx().get_cell_resolver().await?;
-
     let parsed_patterns_with_modifiers: Vec<
         ParsedPatternWithModifiers<ConfiguredProvidersPatternExtra>,
     > = parse_patterns_with_modifiers_from_cli_args(&mut ctx.ctx(), &request.target_patterns, cwd)
@@ -246,9 +244,7 @@ async fn build(
         .with_buck_error_context(|| "Invalid final_artifact_uploads")
         .unwrap();
 
-    let build_report_metrics_config =
-        BuildReportMetricsConfig::from_buckconfig(&mut ctx.ctx(), cell_resolver.root_cell())
-            .await?;
+    let build_report_metrics_config = BuildReportMetricsConfig::new(&mut ctx.ctx()).await?;
     let graph_properties = build_report_metrics_config.graph_properties;
 
     let (streaming_build_result_tx, streaming_build_result_rx) =
@@ -368,13 +364,8 @@ async fn process_build_result(
     .await?;
 
     let serialized_build_report = if build_opts.unstable_print_build_report {
-        let build_report_opts = build_report_opts(
-            &mut ctx.ctx(),
-            &cell_resolver,
-            build_opts,
-            graph_properties_opts,
-        )
-        .await?;
+        let build_report_opts =
+            build_report_opts(&mut ctx.ctx(), build_opts, graph_properties_opts).await?;
 
         write_build_report(
             build_report_opts,

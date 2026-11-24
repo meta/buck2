@@ -927,7 +927,10 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
 
         existing_state
             .ctx()
-            .maybe_enable_detailed_aggregated_metrics(&cells_and_configs.root_config)?;
+            .maybe_enable_detailed_aggregated_metrics(
+                &self.cmd_ctx.buck_settings.invocation.build_metrics,
+                &mut &cells_and_configs.root_config,
+            )?;
 
         let cell_resolver = cells_and_configs.cell_resolver;
 
@@ -1039,12 +1042,9 @@ impl DiceCommandUpdater<'_, '_> {
 
         let enable_miniperf = invocation_settings.execution.miniperf(&mut buckconfig)?;
 
-        let log_configured_graph_size = root_config
-            .parse::<bool>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "log_configured_graph_size",
-            })?
-            .unwrap_or(false);
+        let log_configured_graph_size = invocation_settings
+            .build_metrics
+            .configured_graph_size(&mut buckconfig)?;
 
         let persistent_worker_shutdown_timeout_s = invocation_settings
             .execution

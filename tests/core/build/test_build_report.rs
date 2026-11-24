@@ -212,8 +212,8 @@ async fn test_build_report_format(buck: &Buck, tmp_path: &Path) -> anyhow::Resul
             "//:rule1",
             "//:rule2",
             "//:rule2[out1]",
-            "-c",
-            "buck2.log_configured_graph_size=true",
+            "--setting",
+            "build_metrics.configured_graph_size=true",
         ],
     )
     .await
@@ -230,7 +230,7 @@ async fn test_build_report_format_skip_unconfigured(
         "test_build_report_format_skip_unconfigured",
         &[
             "//:rule1",
-            "-c",
+            "--setting",
             "build_report.print_unconfigured_section=false",
         ],
     )
@@ -289,8 +289,8 @@ async fn test_build_report_format_configured_graph_sketch(
             "//:rule1",
             "//:dir1",
             "//subdir:rule",
-            "-c",
-            "buck2.log_configured_graph_sketch=true",
+            "--setting",
+            "build_metrics.configured_graph_sketch=true",
         ],
     )
     .await
@@ -309,8 +309,8 @@ async fn test_build_report_format_total_configured_graph_sketch(
             "//:rule1",
             "//:dir1",
             "//subdir:rule",
-            "-c",
-            "buck2.log_total_configured_graph_sketch=true",
+            "--setting",
+            "build_metrics.total_configured_graph_sketch=true",
         ],
     )
     .await
@@ -329,8 +329,8 @@ async fn test_build_report_format_action_graph_sketch(
             "//:rule1",
             "//:dir1",
             "//subdir:rule",
-            "-c",
-            "buck2.log_action_graph_sketch=true",
+            "--setting",
+            "build_metrics.action_graph_sketch=true",
         ],
     )
     .await
@@ -348,12 +348,12 @@ async fn test_build_report_format_all_sketches(buck: &Buck, tmp_path: &Path) -> 
             "//subdir:rule",
             // Let's look at something more interesting than unspecified platform
             "--target-platforms=root//:platform",
-            "-c",
-            "buck2.log_configured_graph_sketch=true",
-            "-c",
-            "buck2.log_total_configured_graph_sketch=true",
-            "-c",
-            "buck2.log_action_graph_sketch=true",
+            "--setting",
+            "build_metrics.configured_graph_sketch=true",
+            "--setting",
+            "build_metrics.total_configured_graph_sketch=true",
+            "--setting",
+            "build_metrics.action_graph_sketch=true",
         ],
     )
     .await
@@ -371,7 +371,7 @@ async fn test_streaming_build_report_format_skip_unconfigured(
         "test_build_report_format_skip_unconfigured",
         &[
             "//:rule1",
-            "-c",
+            "--setting",
             "build_report.print_unconfigured_section=false",
         ],
     )
@@ -435,8 +435,8 @@ async fn test_build_report_contains_metrics(buck: &Buck, tmp_path: &Path) -> any
 
     buck.build(&[
         "//:rule1",
-        "-c",
-        "buck2.detailed_aggregated_metrics=true",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
         "--build-report",
         report.to_str().unwrap(),
     ])
@@ -468,8 +468,8 @@ async fn test_build_report_contains_per_target_build_metrics(
     buck.build(&[
         "//:rule1",
         "//:rule2",
-        "-c",
-        "buck2.detailed_aggregated_metrics=true",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
         "--build-report",
         report.to_str().unwrap(),
     ])
@@ -762,7 +762,7 @@ async fn test_streaming_build_report_in_progress_without_unconfigured_section(
         "//:does_not_exist",
         "--streaming-build-report",
         streaming_report.to_str().unwrap(),
-        "-c",
+        "--setting",
         "build_report.print_unconfigured_section=false",
     ])
     .await
@@ -871,8 +871,8 @@ async fn test_build_report_re_platform_names(buck: &Buck, tmp_path: &Path) -> an
 
     buck.build(&[
         "//:run_action",
-        "-c",
-        "buck2.detailed_aggregated_metrics=true",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
         "--build-report",
         report.to_str().unwrap(),
     ])

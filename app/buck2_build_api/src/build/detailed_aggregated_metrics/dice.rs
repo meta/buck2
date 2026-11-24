@@ -10,8 +10,6 @@
 
 use std::future::Future;
 
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
@@ -21,6 +19,8 @@ use buck2_error::internal_error;
 use buck2_events::dispatch::span_async_simple;
 use buck2_hash::BuckMutSet;
 use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use buck2_settings::BuckconfigSource;
+use buck2_settings::BuildMetrics;
 use dice::DiceComputations;
 use dice::DiceData;
 use dice::DiceDataBuilder;
@@ -51,11 +51,13 @@ pub trait HasDetailedAggregatedMetrics {
     ) -> buck2_error::Result<()>;
     fn top_level_target(&self, spec: TopLevelTargetSpec) -> buck2_error::Result<()>;
     fn take_per_build_events(&self) -> buck2_error::Result<PerBuildEvents>;
-    /// Enable the tracker if `config` requests a consumer of it. Call at command
-    /// start; latches on for the daemon's lifetime.
+    /// Enable the tracker if `settings` request a consumer of it; `buckconfig` is where their
+    /// buckconfig fallbacks are read. Call at command start; latches on for the daemon's
+    /// lifetime.
     fn maybe_enable_detailed_aggregated_metrics(
         &self,
-        config: &LegacyBuckConfig,
+        settings: &BuildMetrics,
+        buckconfig: &mut dyn BuckconfigSource,
     ) -> buck2_error::Result<()>;
     fn compute_detailed_metrics(
         &mut self,
@@ -105,9 +107,12 @@ impl HasDetailedAggregatedMetrics for DiceComputations<'_> {
 
     fn maybe_enable_detailed_aggregated_metrics(
         &self,
-        config: &LegacyBuckConfig,
+        settings: &BuildMetrics,
+        buckconfig: &mut dyn BuckconfigSource,
     ) -> buck2_error::Result<()> {
-        if detailed_aggregated_metrics_requested(config)? {
+        // The two consumers of the tracker. (Artifact sketches compute from DICE directly and
+        // don't read it.)
+        if settings.detailed_aggregated(buckconfig)? || settings.action_graph_sketch(buckconfig)? {
             get_detailed_aggregated_metrics_handle(self)?.enable();
         }
         Ok(())
@@ -221,23 +226,6 @@ fn get_detailed_aggregated_metrics_handle<'a>(
     ctx.global_data()
         .get::<DetailedAggregatedMetricsHandle>()
         .map_err(|e| internal_error!("global data invalid: {}", e))
-}
-
-/// Whether `config` requests a tracker consumer. (Artifact-path sketches compute
-/// from DICE directly and don't read the tracker.)
-fn detailed_aggregated_metrics_requested(config: &LegacyBuckConfig) -> buck2_error::Result<bool> {
-    for property in ["detailed_aggregated_metrics", "log_action_graph_sketch"] {
-        if config
-            .parse::<bool>(BuckconfigKeyRef {
-                section: "buck2",
-                property,
-            })?
-            .unwrap_or(false)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 fn get_per_build_events_holder<'a>(

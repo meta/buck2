@@ -29,7 +29,6 @@ use buck2_artifact::artifact::artifact_dyn::ArtifactDyn;
 use buck2_cli_proto::CommonBuildOptions;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_core::cells::CellResolver;
 use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::configuration::data::ConfigurationData;
@@ -60,6 +59,7 @@ use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_hash::BuckMutInsertionSet;
 use buck2_hash::BuckMutMap;
 use buck2_hash::BuckMutSet;
+use buck2_settings::dice::HasInvocationBuckSettings;
 use buck2_sketches::DependencyGraphSketch;
 use buck2_wrapper_common::invocation_id::TraceId;
 use derivative::Derivative;
@@ -1180,22 +1180,16 @@ fn report_providers_name(label: &ConfiguredProvidersLabel) -> String {
 
 pub async fn build_report_opts<'a>(
     ctx: &mut DiceComputations<'a>,
-    cell_resolver: &CellResolver,
     build_opts: &CommonBuildOptions,
     graph_properties_opts: GraphPropertiesOptions,
 ) -> buck2_error::Result<BuildReportOpts> {
     let esto = &build_opts.unstable_build_report_filename;
+    let settings = ctx.per_transaction_data().get_invocation_buck_settings();
+    let root_config = ctx.get_legacy_root_config_on_dice().await?;
     let build_report_opts = BuildReportOpts {
-        print_unconfigured_section: ctx
-            .parse_legacy_config_property(
-                cell_resolver.root_cell(),
-                BuckconfigKeyRef {
-                    section: "build_report",
-                    property: "print_unconfigured_section",
-                },
-            )
-            .await?
-            .unwrap_or(true),
+        print_unconfigured_section: settings
+            .build_report
+            .print_unconfigured_section(&mut root_config.view(ctx))?,
         unstable_include_failures_build_report: build_opts.unstable_include_failures_build_report,
         unstable_include_package_project_relative_paths: build_opts
             .unstable_include_package_project_relative_paths,
@@ -1412,13 +1406,8 @@ async fn process_streaming_build_result(
     let cell_resolver = ctx.ctx().get_cell_resolver().await?;
     let artifact_fs = ctx.ctx().get_artifact_fs().await?;
 
-    let build_report_opts = build_report_opts(
-        &mut ctx.ctx(),
-        &cell_resolver,
-        build_opts,
-        graph_properties_opts,
-    )
-    .await?;
+    let build_report_opts =
+        build_report_opts(&mut ctx.ctx(), build_opts, graph_properties_opts).await?;
 
     stream_build_report(
         build_report_opts,
@@ -1446,15 +1435,8 @@ async fn init_streaming_build_report(
     build_opts: &CommonBuildOptions,
     graph_properties_opts: GraphPropertiesOptions,
 ) -> buck2_error::Result<()> {
-    let cell_resolver = ctx.ctx().get_cell_resolver().await?;
-
-    let build_report_opts = build_report_opts(
-        &mut ctx.ctx(),
-        &cell_resolver,
-        build_opts,
-        graph_properties_opts,
-    )
-    .await?;
+    let build_report_opts =
+        build_report_opts(&mut ctx.ctx(), build_opts, graph_properties_opts).await?;
 
     initialize_streaming_build_report(build_report_opts, project_root, cwd)?;
 

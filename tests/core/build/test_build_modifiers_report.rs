@@ -224,12 +224,10 @@ async fn test_build_modifiers_that_lead_to_same_configured(buck: &Buck) -> anyho
         .build(&[
             mac_first,
             arm_first,
-            "-c",
-            "buck2.detailed_aggregated_metrics=true",
-            "-c",
-            "buck2.log_configured_graph_sketch=true",
-            "-c",
-            "buck2.log_configured_graph_unconfigured_sketch=true",
+            "--setting",
+            "build_metrics.detailed_aggregated=true",
+            "--setting",
+            "build_metrics.configured_graph_sketch=true",
         ])
         .await?;
 

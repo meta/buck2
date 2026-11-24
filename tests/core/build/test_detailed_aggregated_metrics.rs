@@ -62,8 +62,12 @@ fn field<'a>(object: &'a Value, key: &str) -> &'a Value {
 
 #[buck_test]
 async fn test_disabled(buck: &Buck) -> anyhow::Result<()> {
-    buck.build(&["//:foo4", "-c", "buck2.detailed_aggregated_metrics=false"])
-        .await?;
+    buck.build(&[
+        "//:foo4",
+        "--setting",
+        "build_metrics.detailed_aggregated=false",
+    ])
+    .await?;
     let message = get_detailed_metrics(buck).await?;
     assert!(message.is_none());
     Ok(())
@@ -71,8 +75,12 @@ async fn test_disabled(buck: &Buck) -> anyhow::Result<()> {
 
 #[buck_test]
 async fn test_enabled(buck: &Buck) -> anyhow::Result<()> {
-    buck.build(&["//:foo4", "-c", "buck2.detailed_aggregated_metrics=true"])
-        .await?;
+    buck.build(&[
+        "//:foo4",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
+    ])
+    .await?;
     let message = get_detailed_metrics(buck).await?.expect("metrics");
     let (all_targets_metrics, per_target_metrics) = parse_metrics(&message);
     let foo4 = per_target_metrics["root//:foo4"];
@@ -86,8 +94,8 @@ async fn test_enabled(buck: &Buck) -> anyhow::Result<()> {
 async fn test_incomplete_graph(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "//:foo4",
-        "-c",
-        "buck2.detailed_aggregated_metrics=true",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
         "-c",
         "user.dyn_input_good=0",
     ])
@@ -107,8 +115,12 @@ async fn test_incomplete_graph(buck: &Buck) -> anyhow::Result<()> {
 
 #[buck_test]
 async fn test_wall_clock_completion(buck: &Buck) -> anyhow::Result<()> {
-    buck.build(&["//:foo4", "-c", "buck2.detailed_aggregated_metrics=true"])
-        .await?;
+    buck.build(&[
+        "//:foo4",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
+    ])
+    .await?;
     let message = get_detailed_metrics(buck).await?.expect("metrics");
     let (_all_targets_metrics, per_target_metrics) = parse_metrics(&message);
     let wall_clock = field(
@@ -124,8 +136,8 @@ async fn test_wall_clock_completion(buck: &Buck) -> anyhow::Result<()> {
 async fn test_wall_clock_completion_on_timeout(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "//:slow",
-        "-c",
-        "buck2.detailed_aggregated_metrics=true",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
         "--overall-timeout",
         "1s",
     ])
@@ -147,8 +159,8 @@ async fn test_wall_clock_completion_on_timeout(buck: &Buck) -> anyhow::Result<()
 async fn test_wall_clock_completion_on_failure(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "//:foo4",
-        "-c",
-        "buck2.detailed_aggregated_metrics=true",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
         "-c",
         "user.dyn_input_good=0",
     ])
@@ -170,8 +182,8 @@ async fn test_amortization(buck: &Buck) -> anyhow::Result<()> {
     buck.build(&[
         "//:foo4",
         "//:foo5",
-        "-c",
-        "buck2.detailed_aggregated_metrics=true",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
     ])
     .await?;
     let message = get_detailed_metrics(buck).await?.expect("metrics");
@@ -206,8 +218,12 @@ async fn test_enabled_after_analysis_soft_errors(buck: &Buck) -> anyhow::Result<
     // command can't produce complete metrics, so we expect a soft error and empty
     // metrics rather than partial ones.
     buck.build(&["//:foo4"]).await?;
-    buck.build(&["//:foo4", "-c", "buck2.detailed_aggregated_metrics=true"])
-        .await?;
+    buck.build(&[
+        "//:foo4",
+        "--setting",
+        "build_metrics.detailed_aggregated=true",
+    ])
+    .await?;
     let log = buck.log(&["show"]).await?.stdout;
     assert!(log.contains("detailed_aggregated_metrics_enabled_after_analysis"));
     let message = get_detailed_metrics(buck).await?.expect("metrics");

@@ -319,6 +319,7 @@ def create_compile_cmds(
             pre,
             headers_tag,
             ext,
+            add_coverage_instrumentation_compiler_flags = add_coverage_instrumentation_compiler_flags,
             filename_prefix = filename_prefix,
         )
         cxx_compile_cmd_by_ext[ext] = cmd
@@ -2729,6 +2730,19 @@ def get_compiler_type(ctx: AnalysisContext, ext: CxxExtension) -> typing.Any:
     compiler_info = _get_compiler_info(toolchain, ext)
     return compiler_info.compiler_type
 
+def _has_coverage_instrumentation_flags(impl_params: CxxRuleConstructorParams) -> bool:
+    # Targets that spell coverage instrumentation as plain compiler flags
+    # (e.g. needed_coverage `__coverage` variants) bypass the
+    # `add_coverage_instrumentation_compiler_flags` plumbing.
+    for flag in impl_params.compiler_flags:
+        if "-fprofile-instr-generate" in str(flag):
+            return True
+    for flags in impl_params.lang_compiler_flags.values():
+        for flag in flags:
+            if "-fprofile-instr-generate" in str(flag):
+                return True
+    return False
+
 def _generate_base_compile_command(
     actions: AnalysisActions,
     target_label: Label,
@@ -2737,6 +2751,7 @@ def _generate_base_compile_command(
     pre: CPreprocessorInfo,
     headers_tag: ArtifactTag,
     ext: CxxExtension,
+    add_coverage_instrumentation_compiler_flags: bool = False,
     filename_prefix: str = "",
 ) -> CxxCompileCommand:
     """
@@ -2756,7 +2771,14 @@ def _generate_base_compile_command(
     # arch-specific (and the fat assembler's fbcc wrapper misdetects the
     # trampoline compiler, emitting a cc1 invocation the clang driver
     # rejects), and the fat construction toolchain has no HIP compiler.
-    use_group_toolchain = group_toolchain != None and ext.value not in (".c", ".s", ".sx", ".S", ".asm", ".asmpp", ".hip")
+    # Coverage-instrumented compiles also stay scalar: fat objects record
+    # no coverage data that coverage checkers can attribute to the target.
+    use_group_toolchain = (
+        group_toolchain != None
+        and not add_coverage_instrumentation_compiler_flags
+        and not _has_coverage_instrumentation_flags(impl_params)
+        and ext.value not in (".c", ".s", ".sx", ".S", ".asm", ".asmpp", ".hip")
+    )
     if use_group_toolchain:
         toolchain = group_toolchain
         compiler_info = _get_compiler_info(toolchain, ext)

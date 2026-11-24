@@ -80,6 +80,7 @@ tempfile.workspace = true
 termios.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+nix.workspace = true
 termios.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]

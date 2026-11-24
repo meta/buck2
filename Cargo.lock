@@ -1444,6 +1444,7 @@ dependencies = [
  "libc",
  "lsp-server",
  "memmap2",
+ "nix 0.31.3",
  "object 0.40.0",
  "pretty_assertions",
  "prost",

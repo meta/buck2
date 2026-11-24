@@ -492,6 +492,8 @@ pub struct EventsCtx {
     // Internal commands triggered by other commands should not log an invocation record.
     pub log_invocation_record: bool,
     pub daemon_pid: Option<i64>,
+    #[cfg(target_os = "macos")]
+    daemon_exit_monitor: Option<crate::subscribers::oom_macos::DaemonExitMonitor>,
     // The daemon process's cgroup path as read from /proc/{pid}/cgroup by the client. Unlike the
     // `daemon_cgroup_path` the daemon reports about itself, this is available even when the daemon
     // isn't running with resource control.
@@ -518,6 +520,8 @@ impl EventsCtx {
             command_report_path: None,
             log_invocation_record: true,
             daemon_pid: None,
+            #[cfg(target_os = "macos")]
+            daemon_exit_monitor: None,
             cgroup_path_of_buck2_daemon: None,
             daemon_start_instant: None,
             used_superconsole: false,
@@ -525,9 +529,24 @@ impl EventsCtx {
         }
     }
 
+    /// Starts watching for the daemon's exit, which `daemon_oom_reason` reads the cause of. To
+    /// be called while the daemon is known to be alive, before it is sent a command.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn monitor_daemon_exit(&mut self, pid: i64) {
+        // An in-process daemon exits with this client, which is then not there to ask why.
+        if pid == i64::from(std::process::id()) {
+            return;
+        }
+        self.daemon_exit_monitor = crate::subscribers::oom_macos::DaemonExitMonitor::try_new(pid)
+            .inspect_err(|error| {
+                tracing::debug!("Failed to monitor daemon PID {pid} for OOM: {error}");
+            })
+            .ok();
+    }
+
     /// Describes why the daemon is believed to have been OOM-killed, if it was.
     ///
-    /// The evidence is read from `dmesg`, so this never reports anything off Linux.
+    /// The evidence is read from `dmesg`.
     #[cfg(target_os = "linux")]
     pub(crate) async fn daemon_oom_reason(&self) -> buck2_error::Result<Option<String>> {
         let Some(pid) = self.daemon_pid else {
@@ -542,7 +561,16 @@ impl EventsCtx {
         Ok(evidence.map(|evidence| evidence.to_string()))
     }
 
-    #[cfg(not(target_os = "linux"))]
+    /// The evidence is the kernel's account of the daemon's exit.
+    #[cfg(target_os = "macos")]
+    pub(crate) async fn daemon_oom_reason(&self) -> buck2_error::Result<Option<String>> {
+        let Some(monitor) = &self.daemon_exit_monitor else {
+            return Ok(None);
+        };
+        Ok(monitor.oom_reason().await)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     pub(crate) async fn daemon_oom_reason(&self) -> buck2_error::Result<Option<String>> {
         Ok(None)
     }

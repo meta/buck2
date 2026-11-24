@@ -10,6 +10,7 @@
 
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -59,6 +60,27 @@ fn output_path(result: &BuckOutput, target: &str) -> anyhow::Result<String> {
         .with_context(|| format!("No output for `{target}`:\n{}", result.stdout))
 }
 
+/// Canonicalizes a buck2 output path, retrying transient failures.
+///
+/// Right after a build, opening a just-materialized output can briefly fail
+/// (on Windows, `Access is denied`, os error 5), so retry for a few seconds
+/// before giving up.
+async fn canonicalize_output(path: &Path) -> anyhow::Result<PathBuf> {
+    let mut attempts = 0;
+    loop {
+        match std::fs::canonicalize(path) {
+            Ok(canonical) => return Ok(canonical),
+            Err(_) if attempts < 50 => {
+                attempts += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            Err(e) => {
+                return Err(e).with_context(|| format!("Canonicalizing `{}`", path.display()));
+            }
+        }
+    }
+}
+
 async fn build_target_with_different_platforms_and_verify_output_paths_are_identical(
     buck: &Buck,
     target: &str,
@@ -86,8 +108,8 @@ async fn build_target_with_different_platforms_and_verify_output_paths_are_ident
     assert!(!path1.contains("output_artifact"));
     assert_ne!(path1, path2);
 
-    let actual1 = std::fs::canonicalize(buck.cwd().join(&path1))?;
-    let actual2 = std::fs::canonicalize(buck.cwd().join(&path2))?;
+    let actual1 = canonicalize_output(&buck.cwd().join(&path1)).await?;
+    let actual2 = canonicalize_output(&buck.cwd().join(&path2)).await?;
 
     assert!(actual1.exists());
     assert!(actual2.exists());
@@ -258,8 +280,8 @@ async fn test_run_remote_with_content_based_path(buck: &Buck) -> anyhow::Result<
     assert!(!path1.contains("output_artifact"));
     assert_ne!(path1, path2);
 
-    let actual1 = std::fs::canonicalize(buck.cwd().join(&path1))?;
-    let actual2 = std::fs::canonicalize(buck.cwd().join(&path2))?;
+    let actual1 = canonicalize_output(&buck.cwd().join(&path1)).await?;
+    let actual2 = canonicalize_output(&buck.cwd().join(&path2)).await?;
 
     assert!(actual1.exists());
     assert!(actual2.exists());
@@ -721,7 +743,7 @@ async fn test_output_symlink_is_updated(buck: &Buck) -> anyhow::Result<()> {
         .await?;
     let path1 = output_path(&result1, target)?;
 
-    let actual1 = std::fs::canonicalize(buck.cwd().join(&path1))?;
+    let actual1 = canonicalize_output(&buck.cwd().join(&path1)).await?;
     assert!(actual1.exists());
     assert_eq!(std::fs::read_to_string(&actual1)?, "hello world");
 
@@ -737,7 +759,7 @@ async fn test_output_symlink_is_updated(buck: &Buck) -> anyhow::Result<()> {
 
     assert_eq!(path2, path1);
 
-    let actual2 = std::fs::canonicalize(buck.cwd().join(&path2))?;
+    let actual2 = canonicalize_output(&buck.cwd().join(&path2)).await?;
     assert!(actual2.exists());
     assert_ne!(actual2, actual1);
     assert_eq!(std::fs::read_to_string(&actual2)?, "goodbye world");

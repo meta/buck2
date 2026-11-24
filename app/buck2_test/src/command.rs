@@ -456,7 +456,6 @@ async fn test_inner(
             (test_executor, test_executor_args)
         }
         None => {
-            // If no v2_test_executor config was set, fall back to the internal test runner.
             let test_executor = std::env::current_exe()?;
             let test_executor_args = vec!["internal-test-runner".to_owned()];
             (test_executor, test_executor_args)

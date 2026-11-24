@@ -13,10 +13,12 @@ use buck2_settings_derive::buck_settings_section;
 /// How `buck2 test` runs tests.
 #[buck_settings_section(name = "test", version = 0, scope = invocation)]
 pub struct Test {
-    /// The test executor: a target to build and run, or a path to a binary.
-    /// Unset or empty uses the executor built into buck2.
+    /// The path of the test executor, where a leading `$BUCK2_BINARY_DIR/`
+    /// is the directory of the buck2 binary. Empty uses the executor built
+    /// into buck2, and so does unset in open source.
     #[setting(
         buckconfig_fallback = "test.v2_test_executor",
+        internal_default = "$BUCK2_BINARY_DIR/buck2-tpx".to_owned(),
         overridable_in(CommandLine, LocalSettings)
     )]
     executor: Option<String>,

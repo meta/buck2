@@ -294,7 +294,8 @@ impl Buck {
 
     /// `buck2 test <args>`. The test results go to `testOutput.xml` in the working directory unless
     /// `args` name another file with `--xml`. With `BUCK2_TPX` set, the tests run with that test
-    /// executor; under tpx, which is the default in Meta's repository, disabled tests run too.
+    /// executor, and with buck2's built-in one if it is empty; under tpx, which is the default in
+    /// Meta's build, disabled tests run too.
     pub fn test(&self, args: &[&str]) -> BuckCommand<'_> {
         let separator = args.iter().position(|a| *a == "--").unwrap_or(args.len());
         let (buck_args, test_args) = args.split_at(separator);
@@ -310,11 +311,15 @@ impl Buck {
         let executor = self
             .env_var("BUCK2_TPX")
             .map(|e| e.to_string_lossy().into_owned());
-        if let Some(executor) = &executor {
-            argv.extend([
+        match executor.as_deref() {
+            // An empty `--config` value would unset the key and leave the default executor,
+            // which is tpx in Meta's build. An empty setting names the built-in executor.
+            Some("") => argv.extend(["--setting".into(), "test.executor=\"\"".into()]),
+            Some(executor) => argv.extend([
                 "--config".into(),
                 format!("test.v2_test_executor={executor}").into(),
-            ]);
+            ]),
+            None => {}
         }
         argv.extend(buck_args.iter().map(OsString::from));
         argv.push("--".into());
@@ -754,6 +759,25 @@ mod tests {
                 "test",
                 "--config",
                 "test.v2_test_executor=/bin/runner",
+                "//:t",
+                "--xml",
+                "out.xml",
+                "--"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_an_empty_test_executor_names_the_built_in_one() {
+        let mut buck = buck(false);
+        buck.set_env("BUCK2_TPX", "");
+        assert_eq!(
+            argv(buck.test(&["//:t", "--xml", "out.xml"])),
+            [
+                "/bin/buck2",
+                "test",
+                "--setting",
+                "test.executor=\"\"",
                 "//:t",
                 "--xml",
                 "out.xml",

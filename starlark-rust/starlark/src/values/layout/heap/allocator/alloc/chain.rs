@@ -162,14 +162,14 @@ impl ChunkChain {
 
     /// Clear the content invoking provided callback to release the chunks.
     pub(crate) fn clear_with(&mut self, chunk_drop: &mut impl FnMut(ChunkPart)) {
-        if let Some(chunk) = mem::take(&mut self.chunk) {
+        while let Some(chunk) = self.chunk.take() {
             assert!(chunk.len() >= ChunkChain::HEADER_SIZE);
             let mut prev_chain = chunk.begin().cast::<ChunkChainData>();
+            // SAFETY: `chunk` owns the initialized header. Move its predecessor
+            // into `self` before releasing the allocation, keeping the rest of
+            // the chain owned if `chunk_drop` panics.
             unsafe {
-                prev_chain.as_mut().prev.clear_with(chunk_drop);
-
-                debug_assert!(prev_chain.as_ref().prev.chunk.is_none());
-                // This is no-op, because `clear_with` has replaced the chunk with `None`.
+                self.chunk = mem::take(&mut prev_chain.as_mut().prev.chunk);
                 ptr::drop_in_place::<ChunkChainData>(prev_chain.as_ptr());
             }
             chunk_drop(chunk);
@@ -180,8 +180,13 @@ impl ChunkChain {
         ChunkChainIterator { next: Some(self) }
     }
 
-    pub(crate) fn depth(&self) -> usize {
-        self.iter().count().saturating_sub(1)
+    /// Number of chunks in the chain, or `limit` if it has more: a chain can be
+    /// thousands of chunks long.
+    pub(crate) fn depth_up_to(&self, limit: usize) -> usize {
+        self.iter()
+            .take(limit.saturating_add(1))
+            .count()
+            .saturating_sub(1)
     }
 
     pub(crate) fn allocated_bytes(&self) -> usize {
@@ -228,6 +233,7 @@ mod tests {
     use crate::values::layout::heap::allocator::alloc::chain::SPLIT_AT_ZERO_TEST;
     use crate::values::layout::heap::allocator::alloc::chunk_part::ChunkPart;
     use crate::values::layout::heap::repr::AValueHeader;
+    use crate::wasm::is_wasm;
 
     #[test]
     fn test_default() {
@@ -272,6 +278,30 @@ mod tests {
             drop_count += 1;
         });
         assert_eq!(3, drop_count);
+    }
+
+    #[test]
+    fn test_drop_deep_chain_on_small_stack() {
+        if is_wasm() {
+            // Threads don't work in wasm.
+            return;
+        }
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let mut chain = ChunkChain::default();
+                // A stack frame per chunk would need more than the stack has.
+                for _ in 0..250_000 {
+                    chain = ChunkChain::new(
+                        ChunkPart::alloc_at_least(AlignedSize::new_bytes(64)),
+                        chain,
+                    );
+                }
+                drop(chain);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]
@@ -337,21 +367,48 @@ mod tests {
         assert_eq!(chain_len, rem.len());
     }
 
+    #[cfg(panic = "unwind")]
+    #[test]
+    fn test_clear_with_panic_does_not_leak() {
+        use crate::values::layout::heap::allocator::alloc::chunk::Chunk;
+
+        let chunks = (0..3)
+            .map(|_| Chunk::alloc_at_least(AlignedSize::new_bytes(64)))
+            .collect::<Vec<_>>();
+        let mut chain = ChunkChain::default();
+        for chunk in &chunks {
+            chain = ChunkChain::new(ChunkPart::new(chunk.clone()), chain);
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            chain.clear_with(&mut |_| panic!("chunk drop callback"));
+        }));
+        assert!(result.is_err());
+        // The chunks the callback has not seen are still the chain's to drop.
+        assert_eq!(2, chain.depth_up_to(usize::MAX));
+        drop(chain);
+        for chunk in &chunks {
+            assert_eq!(1, chunk.ref_count());
+        }
+    }
+
     #[test]
     fn test_depth() {
         let chain = ChunkChain::default();
-        assert_eq!(0, chain.depth());
+        assert_eq!(0, chain.depth_up_to(usize::MAX));
 
         let chain = ChunkChain::new(
             ChunkPart::alloc_at_least(AlignedSize::new_bytes(10 * AValueHeader::ALIGN)),
             chain,
         );
-        assert_eq!(1, chain.depth());
+        assert_eq!(1, chain.depth_up_to(usize::MAX));
 
         let chain = ChunkChain::new(
             ChunkPart::alloc_at_least(AlignedSize::new_bytes(20 * AValueHeader::ALIGN)),
             chain,
         );
-        assert_eq!(2, chain.depth());
+        assert_eq!(2, chain.depth_up_to(usize::MAX));
+        assert_eq!(2, chain.depth_up_to(2));
+        assert_eq!(1, chain.depth_up_to(1));
+        assert_eq!(0, chain.depth_up_to(0));
     }
 }

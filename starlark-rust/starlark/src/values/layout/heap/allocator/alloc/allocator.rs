@@ -25,6 +25,7 @@ use std::ptr::NonNull;
 use crate::values::layout::aligned_size::AlignedSize;
 use crate::values::layout::heap::allocator::alloc::chain::ChunkChain;
 use crate::values::layout::heap::allocator::alloc::chain::ChunkChainIterator;
+use crate::values::layout::heap::allocator::alloc::per_thread::MAX_CHUNK_DOUBLINGS;
 use crate::values::layout::heap::allocator::alloc::per_thread::thread_local_alloc_at_least;
 use crate::values::layout::heap::allocator::alloc::per_thread::thread_local_release;
 use crate::values::layout::heap::allocator::api::AllocatedChunk;
@@ -108,7 +109,8 @@ impl ChunkAllocator {
         thread_local_release(after);
 
         let required_len = len + ChunkChain::HEADER_SIZE;
-        let next_chunk = thread_local_alloc_at_least(required_len, rem_chain.depth());
+        let depth = rem_chain.depth_up_to(MAX_CHUNK_DOUBLINGS);
+        let next_chunk = thread_local_alloc_at_least(required_len, depth);
 
         let next_chain = ChunkChain::new(next_chunk, rem_chain);
 
@@ -209,12 +211,16 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
+    use crate::values::FrozenHeap;
     use crate::values::layout::aligned_size::AlignedSize;
     use crate::values::layout::heap::allocator::alloc::allocator::ChunkAllocator;
     use crate::values::layout::heap::allocator::alloc::chunk::Chunk;
     use crate::values::layout::heap::allocator::api::ArenaAllocator;
     use crate::values::layout::heap::repr::AValueHeader;
     use crate::values::layout::value_alloc_size::ValueAllocSize;
+    use crate::values::list::AllocList;
+    use crate::values::list::ListRef;
+    use crate::wasm::is_wasm;
 
     #[test]
     fn test_small() {
@@ -251,6 +257,40 @@ mod tests {
         allocator.alloc(ValueAllocSize::new(
             AlignedSize::new_bytes(128 << 10) - Chunk::HEADER_SIZE,
         ));
+    }
+
+    #[test]
+    fn test_chunks_stop_growing_at_cap() {
+        if is_wasm() {
+            // Threads don't work in wasm.
+            return;
+        }
+        // A new thread has an empty chunk cache, so every chunk is a fresh one.
+        std::thread::spawn(|| {
+            let allocator = ChunkAllocator::default();
+            let size = ValueAllocSize::new(AlignedSize::new_bytes(1024));
+            // The doubling chunks hold under 2 MiB between them.
+            for _ in 0..8 * 1024 {
+                allocator.alloc(size);
+            }
+            let chunks = unsafe { allocator.iter_allocated_chunks_rev().collect::<Vec<_>>() };
+            assert!(chunks.iter().all(|chunk| chunk.len() <= 1024 * 1024));
+            assert!(chunks.len() > 6, "the last 6 MiB need a chunk per MiB");
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn test_frozen_list_larger_than_chunk_cap() {
+        FrozenHeap::temp(|heap| {
+            let value = heap.alloc(AllocList(0..1_000_000i32)).to_value();
+            let list = ListRef::from_value(value).unwrap();
+            assert_eq!(1_000_000, list.content().len());
+            for (i, value) in list.content().iter().enumerate() {
+                assert_eq!(Some(i as i32), value.unpack_i32());
+            }
+        });
     }
 
     fn random_iteration(i: u32) {

@@ -174,6 +174,13 @@ impl Chunk {
         }
     }
 
+    /// Allocate a chunk which holds exactly `len`.
+    pub(crate) fn alloc_exact(len: AlignedSize) -> Chunk {
+        Chunk {
+            ptr: ChunkData::alloc_ref_count_1(len),
+        }
+    }
+
     #[inline]
     pub(crate) fn ref_count(&self) -> u32 {
         self.data().ref_count.load(atomic::Ordering::Relaxed)

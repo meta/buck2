@@ -61,6 +61,12 @@ impl ChunkPart {
         ChunkPart::new(Chunk::alloc_at_least(len))
     }
 
+    /// Allocate a chunk part to store exactly `len`.
+    #[inline]
+    pub(crate) fn alloc_exact(len: AlignedSize) -> ChunkPart {
+        ChunkPart::new(Chunk::alloc_exact(len))
+    }
+
     #[inline]
     pub(crate) fn len(&self) -> AlignedSize {
         self.end.unchecked_sub(self.begin)

@@ -90,7 +90,7 @@ load(
     "get_apple_bundle_part_relative_destination_path",
     "get_bundle_dir_name",
 )
-load(":apple_bundle_resources.bzl", "AppleBundleResourcePartListOutput", "get_apple_bundle_resource_part_list")
+load(":apple_bundle_resources.bzl", "AppleBundleResourcePartListOutput", "get_apple_bundle_resource_part_list", "is_watch_app_bundle")
 load(
     ":apple_bundle_types.bzl",
     "AppleBinaryExtraOutputsInfo",
@@ -734,6 +734,7 @@ def _xcode_populate_attributes(ctx, processed_info_plist: Artifact, info_plist_r
         XcodeDataInfoKeys.PRODUCT_NAME: get_product_name(ctx),
         XcodeDataInfoKeys.SDK: get_apple_sdk_name(ctx),
         XcodeDataInfoKeys.APP_EXTENSION_DEPENDENCIES: _app_extension_deps(ctx),
+        XcodeDataInfoKeys.WATCH_APP_DEPENDENCIES: _watch_app_deps(ctx),
     }
 
     apple_xcode_data_add_xctoolchain(ctx, data)
@@ -799,6 +800,16 @@ def _app_extension_deps(ctx: AnalysisContext) -> list[str]:
         if apple_bundle_info and paths.split_extension(apple_bundle_info.bundle.short_path)[1] == ".appex":
             app_extension_deps.append(str(dep.label.raw_target()))
     return app_extension_deps
+
+def _watch_app_deps(ctx: AnalysisContext) -> list[str]:
+    # The watch apps the bundle embeds under `Watch/` (a watch app's extensions are listed among
+    # its own `APP_EXTENSION_DEPENDENCIES`).
+    watch_app_deps = []
+    for dep in ctx.attrs.deps:
+        apple_bundle_info = dep.get(AppleBundleInfo)
+        if apple_bundle_info and is_watch_app_bundle(apple_bundle_info):
+            watch_app_deps.append(str(dep.label.raw_target()))
+    return watch_app_deps
 
 def generate_install_data(ctx: AnalysisContext, plist_path: str, populate_rule_specific_attributes_func: [typing.Callable, None] = None, **kwargs) -> Artifact:
     data = {

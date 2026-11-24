@@ -45,6 +45,7 @@ XcodeDataInfoKeys = struct(
     XCTOOLCHAIN_BUNDLE_ID = "xctoolchain_bundle_id",
     XCTOOLCHAIN_BUNDLE_TARGET = "xctoolchain_bundle_target",
     TEST_TARGET_REFS_IN_CURRENT_TARGET = "test_target_refs_in_current_target",
+    WATCH_APP_DEPENDENCIES = "watch_app_dependencies",
 )
 
 def generate_xcode_data(

@@ -391,6 +391,10 @@ def _copy_first_level_bundles(
 
     return bundle_parts, codesign_manifest_parts, signing_context_parts
 
+def is_watch_app_bundle(bundle_info: AppleBundleInfo) -> bool:
+    # A watch app is a `watchapp` `.app`; its extensions are `watchapp` `.appex` bundles.
+    return bundle_info.bundle_type == AppleBundleTypeWatchApp and paths.split_extension(bundle_info.bundle.short_path)[1] == ".app"
+
 def _copied_bundle_spec(bundle_info: AppleBundleInfo) -> [None, AppleBundlePart]:
     bundle = bundle_info.bundle
     bundle_extension = paths.split_extension(bundle.short_path)[1]
@@ -399,7 +403,7 @@ def _copied_bundle_spec(bundle_info: AppleBundleInfo) -> [None, AppleBundlePart]
         codesign_on_copy = True
     elif bundle_extension == ".app":
         app_destination_type = "plugins"
-        if bundle_info.bundle_type == AppleBundleTypeWatchApp:
+        if is_watch_app_bundle(bundle_info):
             app_destination_type = "watchapp"
         elif bundle_info.bundle_type == AppleBundleTypeAppClip:
             app_destination_type = "appclips"

@@ -29,7 +29,7 @@ load(
     "parse_prebuilt_native_library_symbols",
     "prebuilt_native_library_symbols",
 )
-load("@prelude//android:relinker_linker_outputs.bzl", "get_extra_relinker_args")
+load("@prelude//android:relinker_linker_outputs.bzl", "get_extra_relinker_args", "preinline_ir_relink_args")
 load("@prelude//android:util.bzl", "EnhancementContext", "merge_extra_linker_args", "merge_linker_args_for_platform")
 load("@prelude//android:voltron.bzl", "ROOT_MODULE", "all_targets_in_root_module", "get_apk_module_graph_info", "is_root_module")
 # @oss-disable[end= ]: load(
@@ -1399,9 +1399,11 @@ _NativeLibSubtargetArtifacts = record(
     unrelinked = Artifact | None,
     linker_command = Artifact | None,
     linker_argsfile = Artifact | None,
-    # Pre-inline module IR (.ll) emitted by the relink when the `preinline-ir`
-    # extra relinker output is enabled; a comment-only `.ll` otherwise. Surfaced
-    # as the `[preinline_ir]` sub-target so tooling (evt) can fetch it.
+    # Pre-inline module IR (.ll) of the relink: written by the relink itself
+    # when the `preinline-ir` extra relinker output is enabled, else by a
+    # second link of the same inputs that runs only when requested. A
+    # comment-only `.ll` for a library that does not ship as relinked.
+    # Surfaced as the `[preinline_ir]` sub-target so tooling (evt) can fetch it.
     preinline_ir = Artifact | None,
 )
 
@@ -1700,7 +1702,7 @@ def _link_library_subtargets(
                         # placeholder that is not IR at all.
                         ctx.actions.write(
                             outputs[lib_outputs.preinline_ir],
-                            "; no pre-inline IR for {}: the `preinline_ir` relinker output was not enabled for this library (constraint off, or soname absent from `gator.preinline_ir_sonames`)".format(
+                            "; no pre-inline IR for {}: the library that ships is not the output of a relink, or the `preinline_ir` modifier is on and `gator.preinline_ir_sonames` does not name it".format(
                                 soname
                             ),
                         )
@@ -3256,21 +3258,22 @@ def relink_libraries(
                 [LinkArgs(flags = [cmd_args(relinker_version_script, format = "-Wl,--version-script={}")])]
             )
 
-            extra_args = {} # @oss-enable
-            # @oss-disable[end= ]: extra_args = add_gatorade_relinker_args(ctx, cxx_toolchain, output_path, soname, platform)
-            relinker_output_args = get_extra_relinker_args(ctx, output_path, soname)
-            extra_args = merge_extra_linker_args([extra_args, relinker_output_args])
-            shared_lib = create_shared_lib(
+            relink_extra_args = partial(_relink_extra_args, ctx, cxx_toolchain, soname, platform)
+            link = partial(
+                create_shared_lib,
                 ctx,
-                output_path = output_path,
                 soname = soname,
                 link_args = relinker_link_args,
                 cxx_toolchain = cxx_toolchain,
                 shared_lib_deps = original_shared_library.shlib_deps,
                 label = original_shared_library.label,
                 can_be_asset = original_shared_library.can_be_asset,
-                **extra_args,
             )
+            extra_args = merge_extra_linker_args([
+                relink_extra_args(output_path),
+                preinline_ir_relink_args(ctx, output_path, relink_extra_args, link),
+            ])
+            shared_lib = link(output_path = output_path, **extra_args)
             needed_symbols_from_this = extract_undefined_symbols(ctx, cxx_toolchain, shared_lib.lib.output)
             unioned_needed_symbols_file = ctx.actions.declare_output(output_path + ".all_needed_symbols", has_content_based_path = False)
             union_needed_symbols(ctx.actions, unioned_needed_symbols_file, needed_symbols_for_this + [needed_symbols_from_this])
@@ -3280,6 +3283,17 @@ def relink_libraries(
             record_link_command(native_cmd_entries, "relink", platform, soname, shared_lib.lib)
 
     return relinked_libraries_by_platform
+
+def _relink_extra_args(
+    ctx: AnalysisContext,
+    cxx_toolchain: CxxToolchainInfo,
+    soname: str,
+    platform: str,
+    output_path: str,
+) -> dict[str, typing.Any]:
+    gatorade_args = {} # @oss-enable
+    # @oss-disable[end= ]: gatorade_args = add_gatorade_relinker_args(ctx, cxx_toolchain, output_path, soname, platform)
+    return merge_extra_linker_args([gatorade_args, get_extra_relinker_args(ctx, output_path, soname)])
 
 def _relink_for_native_libs(
     ctx: AnalysisContext,

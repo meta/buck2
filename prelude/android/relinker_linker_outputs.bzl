@@ -13,6 +13,8 @@ Reads from ctx.attrs.extra_relinker_outputs attribute (not buck config directly)
 Buck config is read at macro level and translated to attribute value.
 """
 
+load("@prelude//:paths.bzl", "paths")
+load("@prelude//android:util.bzl", "merge_extra_linker_args")
 load("@prelude//linking:link_info.bzl", "ExtraLinkerOutputs")
 load("@prelude//utils:arglike.bzl", "ArgLike")  # @unused Used as a type
 
@@ -97,21 +99,22 @@ def _cir_opt_report_flags_factory() -> typing.Callable:
 
     return factory
 
-def _get_extra_relinker_output_types(ctx: AnalysisContext) -> list[str]:
-    """Get list of enabled extra relinker output types from attribute."""
-    return getattr(ctx.attrs, "extra_relinker_outputs", [])
-
-def get_extra_relinker_args(ctx: AnalysisContext, output_path: str, soname: str = "") -> dict[str, typing.Any]:
-    """Get extra linker outputs factory dict for all enabled relinker outputs.
+def _get_extra_relinker_output_types(ctx: AnalysisContext, soname: str) -> list[str]:
+    """Get list of enabled extra relinker output types for one library.
 
     `soname` scopes the (multi-GB) pre-inline IR dump: when `preinline_ir_sonames`
     is set, only libraries in that allowlist emit the dump output+flag, so a whole
     -app build does not dump every library. An empty allowlist keeps legacy
     behavior (every relinked library dumps)."""
-    output_types = _get_extra_relinker_output_types(ctx)
+    output_types = getattr(ctx.attrs, "extra_relinker_outputs", [])
     allowlist = getattr(ctx.attrs, "preinline_ir_sonames", [])
     if allowlist and "preinline-ir" in output_types and soname not in allowlist:
         output_types = [t for t in output_types if t != "preinline-ir"]
+    return output_types
+
+def get_extra_relinker_args(ctx: AnalysisContext, output_path: str, soname: str = "") -> dict[str, typing.Any]:
+    """Get extra linker outputs factory dict for all enabled relinker outputs."""
+    output_types = _get_extra_relinker_output_types(ctx, soname)
     if not output_types:
         return {}
 
@@ -148,3 +151,42 @@ def get_extra_relinker_args(ctx: AnalysisContext, output_path: str, soname: str 
         "extra_linker_outputs_factory": combined_outputs_factory,
         "extra_linker_outputs_flags_factory": combined_flags_factory,
     }
+
+def preinline_ir_relink_args(
+    ctx: AnalysisContext,
+    output_path: str,
+    relink_extra_args: typing.Callable,
+    link: typing.Callable,
+) -> dict[str, typing.Any]:
+    """Declares a second link of a relinked library that also writes the
+    library's pre-inline module IR, and returns extra linker args that make
+    the relink provide that IR as its `preinline-ir` extra output.
+
+    The second link takes the same link args and extra linker args as the
+    relink, with its outputs under its own path, plus
+    `-full-lto-postlink-preinline-ir-dump`. The returned args add a provider
+    and no artifact or flag, so the relink keeps its command line, inputs
+    and outputs: its action and the library it writes do not change. Buck
+    runs the second link only when something requests the IR, such as the
+    library's `[preinline_ir]` sub-target.
+
+    `relink_extra_args(path)` gives the relink's extra linker args with
+    their outputs under `path`. `link(output_path = path, **extra_args)`
+    declares the relink's link. Returns {} in a build with the
+    `preinline-ir` extra relinker output (the `preinline_ir` modifier):
+    there the relinks that `preinline_ir_sonames` names write the IR
+    themselves, and no library gets a second link."""
+    if "preinline-ir" in getattr(ctx.attrs, "extra_relinker_outputs", []):
+        return {}
+    dump_path = paths.join("preinline-ir-relinks", output_path)
+    dump_args = {
+        "extra_linker_outputs_factory": _preinline_ir_outputs_factory(dump_path),
+        "extra_linker_outputs_flags_factory": _preinline_ir_flags_factory(),
+    }
+    dump_link = link(output_path = dump_path, **merge_extra_linker_args([relink_extra_args(dump_path), dump_args]))
+    preinline_ir = dump_link.extra_outputs["preinline-ir"]
+
+    def outputs_factory(_ctx: AnalysisContext) -> ExtraLinkerOutputs:
+        return ExtraLinkerOutputs(providers = {"preinline-ir": preinline_ir})
+
+    return {"extra_linker_outputs_factory": outputs_factory}

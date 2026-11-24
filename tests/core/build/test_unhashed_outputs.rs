@@ -186,8 +186,8 @@ async fn test_conflict_with_content_based_paths(buck: &Buck) -> anyhow::Result<(
     let res = buck
         .build(&[
             "//conflict/shared_name:subtarget",
-            "--config",
-            "buck2.create_unhashed_links=false",
+            "--setting",
+            "buck_out.unhashed_links=false",
         ])
         .await?;
     let subtarget_output = res
@@ -201,8 +201,8 @@ async fn test_conflict_with_content_based_paths(buck: &Buck) -> anyhow::Result<(
     //
     buck.build(&[
         "//conflict:shared_name",
-        "--config",
-        "buck2.create_unhashed_links=false",
+        "--setting",
+        "buck_out.unhashed_links=false",
     ])
     .await?;
     // TODO(jtbraun): this should instead ensure the symlink does NOT exist, and the content_based_path does and is a folder

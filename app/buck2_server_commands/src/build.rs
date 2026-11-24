@@ -40,7 +40,6 @@ use buck2_cli_proto::build_request::Uploads;
 use buck2_cli_proto::build_request::build_providers::Action as BuildProviderAction;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::liveliness_observer::LivelinessObserver;
 use buck2_common::liveliness_observer::TimeoutLivelinessObserver;
 use buck2_common::pattern::parse_from_cli::parse_patterns_with_modifiers_from_cli_args;
@@ -404,18 +403,17 @@ async fn process_build_result(
         provider_artifacts.extend(&mut outputs);
     }
 
-    let should_create_unhashed_links = ctx
-        .ctx()
-        .parse_legacy_config_property(
-            cell_resolver.root_cell(),
-            BuckconfigKeyRef {
-                section: "buck2",
-                property: "create_unhashed_links",
-            },
-        )
-        .await?;
+    let should_create_unhashed_links = {
+        let mut dice = ctx.ctx();
+        let root_config = dice.get_legacy_root_config_on_dice().await?;
+        server_ctx
+            .buck_settings()
+            .invocation
+            .buck_out
+            .unhashed_links(&mut root_config.view(&mut dice))?
+    };
 
-    if should_create_unhashed_links.unwrap_or(false) {
+    if should_create_unhashed_links {
         span_async(buck2_data::CreateOutputSymlinksStart {}, async {
             let lock = ctx
                 .per_transaction_data()

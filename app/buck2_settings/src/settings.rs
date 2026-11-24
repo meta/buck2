@@ -22,6 +22,7 @@ use crate::agent_interactive::AgentInteractive;
 use crate::agent_materialization::AgentMaterialization;
 use crate::agent_recursive_patterns::AgentRecursivePatterns;
 use crate::analysis::Analysis;
+use crate::buck_out::BuckOut;
 use crate::buckconfig::BuckconfigSource;
 use crate::console::Console;
 use crate::daemon::Daemon;
@@ -225,6 +226,7 @@ buck_settings! {
         agent_interactive: AgentInteractive,
         agent_materialization: AgentMaterialization,
         agent_recursive_patterns: AgentRecursivePatterns,
+        buck_out: BuckOut,
         console: Console,
         dep_files: DepFiles,
         event_log: EventLog,

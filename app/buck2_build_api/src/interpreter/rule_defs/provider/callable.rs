@@ -517,7 +517,8 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
                 field_docs: &vec![None; fields.len()],
                 field_types: &return_types,
             },
-            callable.ty_callable.dupe(),
+            // The page is the provider's: the fields are those of an instance.
+            callable.ty_provider.dupe(),
             self.docs(),
         )
     }

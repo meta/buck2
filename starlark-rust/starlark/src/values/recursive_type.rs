@@ -233,12 +233,25 @@ macro_rules! starlark_recursive_type {
 
         impl $crate::values::recursive_type::StarlarkRecursiveType for $marker {
             const RECURSIVE_TYPE: $crate::values::recursive_type::RecursiveType = {
+                // Functions with the marker's lifetime, which the expression may name.
+                fn matches<$lt>(value: $crate::values::Value<$lt>) -> bool {
+                    <$marker as $crate::values::StarlarkTypeExpr<$lt>>::get(value).is_some()
+                }
+                // `expect` would be unfulfilled in other crates, where clippy does not look
+                // into this macro.
+                #[allow(
+                    clippy::extra_unused_lifetimes,
+                    reason = "only the body names the lifetime"
+                )]
+                fn unfolded<$lt>() -> $crate::typing::Ty {
+                    <$unfolded as $crate::values::StarlarkTypeExpr<$lt>>::starlark_type_repr()
+                }
                 $crate::__derive_refs::static_value!(
                     RECURSIVE_TYPE: $crate::values::recursive_type::RecursiveTypeInfo = &$crate::values::recursive_type::RecursiveTypeInfo::new(
                         $name,
                         ::std::concat!($($docs, "\n"),*),
-                        |value| <$marker as $crate::values::StarlarkTypeExpr>::get(value).is_some(),
-                        || <$unfolded as $crate::values::StarlarkTypeExpr>::starlark_type_repr(),
+                        matches,
+                        unfolded,
                     ),
                     $crate::values::recursive_type::RecursiveTypeInfoStaticEntry
                 );

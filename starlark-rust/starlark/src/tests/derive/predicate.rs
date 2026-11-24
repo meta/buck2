@@ -52,6 +52,7 @@ use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
+use crate::values::int::IntView;
 use crate::values::list::AllocList;
 use crate::values::list::ListOf;
 use crate::values::list::ListType;
@@ -90,6 +91,13 @@ starlark_recursive_type! {
     StarlarkFlags<'v>;
     name "Flags";
     is Either<bool, TupleType<StarlarkFlags>>;
+}
+
+starlark_recursive_type! {
+    /// An integer, or a list of these. The expression names the marker's lifetime.
+    StarlarkInts<'v>;
+    name "Ints";
+    is Either<IntView<'v>, ListType<StarlarkInts>>;
 }
 
 /// What something painted is used through.
@@ -826,6 +834,19 @@ fn test_recursive_type_docs() {
     };
     assert_eq!("A shape, or a list of these.", doc.docs.unwrap().summary);
     assert_eq!(StarlarkShapes::starlark_type_repr(), doc.ty);
+}
+
+/// The expression of a recursive type may name the marker's lifetime, as a view does.
+#[test]
+fn test_recursive_type_expression_names_its_lifetime() {
+    assert_eq!("Ints", StarlarkInts::starlark_type_repr().to_string());
+    assert_eq!("Ints", StarlarkInts::global().to_value().to_string());
+    Heap::temp(|heap| {
+        let nested = heap.alloc(AllocList([heap.alloc(AllocList([1i32, 2]))]));
+        assert!(ValueOf::<StarlarkInts>::new(nested.to_value()).is_some());
+        assert!(ValueOf::<StarlarkInts>::new(heap.alloc(1i32).to_value()).is_some());
+        assert!(ValueOf::<StarlarkInts>::new(heap.alloc("s").to_value()).is_none());
+    });
 }
 
 /// A recursive type whose expression looks into a list is checked when it is made and again

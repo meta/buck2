@@ -112,12 +112,12 @@ impl<'v> StarlarkValue<'v> for ArtifactTag {
         Some(ARTIFACT_TAG_METHODS.methods())
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self == other
+    fn equals(this: &Self, other: &Self) -> bool {
+        this == other
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        Hash::hash(self, hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        Hash::hash(this, hasher);
     }
 }
 

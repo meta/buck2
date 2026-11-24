@@ -251,13 +251,13 @@ impl<'v> StarlarkSelector<'v> {
 
 #[starlark_value(type = "Select")]
 impl<'v> StarlarkValue<'v> for StarlarkSelector<'v> {
-    fn to_bool(&self) -> bool {
+    fn to_bool(_this: &Self) -> bool {
         true
     }
 
-    fn radd(&self, left: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
+    fn radd(this: &Self, left: Value<'v>, heap: Heap<'v>) -> Option<starlark::Result<Value<'v>>> {
         let right = heap
-            .alloc(match self {
+            .alloc(match this {
                 StarlarkSelector::Primary(x) => StarlarkSelector::Primary(*x),
                 StarlarkSelector::Sum(x, y) => StarlarkSelector::Sum(x.to_value(), y.to_value()),
             })

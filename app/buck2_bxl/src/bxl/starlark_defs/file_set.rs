@@ -124,35 +124,35 @@ starlark_simple_value!(StarlarkFileSet);
 
 #[starlark_value(type = "bxl.FileSet")]
 impl<'v> StarlarkValue<'v> for StarlarkFileSet {
-    fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(self
+    fn iterate_collect(this: &Self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+        Ok(this
             .0
             .iter()
             .map(|cell_path| heap.alloc(StarlarkFileNode(*cell_path)).to_value())
             .collect())
     }
 
-    fn length(&self) -> starlark::Result<i32> {
-        i32::try_from(self.0.len()).map_err(starlark::Error::new_other)
+    fn length(this: &Self) -> starlark::Result<i32> {
+        i32::try_from(this.0.len()).map_err(starlark::Error::new_other)
     }
 
-    fn sub(&self, other: &Self) -> starlark::Result<StarlarkFileSet> {
-        let difference = self.0.difference(&other.0)?;
+    fn sub(this: &Self, other: &Self) -> starlark::Result<StarlarkFileSet> {
+        let difference = this.0.difference(&other.0)?;
         Ok(Self(difference))
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.0 == other.0
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.0 == other.0
     }
 
-    fn bit_or(&self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+    fn bit_or(this: &Self, other: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let other = other.downcast_ref_err::<Self>()?;
-        let union = self.0.union(&other.0);
+        let union = this.0.union(&other.0);
         Ok(heap.alloc(Self(union)).to_value())
     }
 
-    fn bit_and(&self, other: &Self) -> starlark::Result<StarlarkFileSet> {
-        let intersect = self.0.intersect(&other.0)?;
+    fn bit_and(this: &Self, other: &Self) -> starlark::Result<StarlarkFileSet> {
+        let intersect = this.0.intersect(&other.0)?;
         Ok(Self(intersect))
     }
 
@@ -264,8 +264,8 @@ impl fmt::Display for StarlarkReadDirSet {
 
 #[starlark_value(type = "bxl.ReadDirSet")]
 impl<'v> StarlarkValue<'v> for StarlarkReadDirSet {
-    fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(self
+    fn iterate_collect(this: &Self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+        Ok(this
             .children()?
             .into_iter()
             .map(|cell_path| heap.alloc(StarlarkFileNode(cell_path)).to_value())

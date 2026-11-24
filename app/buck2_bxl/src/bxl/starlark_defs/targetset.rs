@@ -204,40 +204,40 @@ where
         Some(STARLARK_TARGET_SET_METHODS.methods())
     }
 
-    fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(Node::alloc_all(self.0.iter(), heap))
+    fn iterate_collect(this: &Self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+        Ok(Node::alloc_all(this.0.iter(), heap))
     }
 
-    fn at(&self, index: i32, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+    fn at(this: &Self, index: i32, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         if let Ok(i) = usize::try_from(index) {
-            if let Some(node) = self.0.get_index(i) {
+            if let Some(node) = this.0.get_index(i) {
                 return Ok(node.dupe().alloc(heap));
             }
         }
         Err(ValueError::IndexOutOfBound(index).into())
     }
 
-    fn length(&self) -> starlark::Result<i32> {
-        self.0.len().try_into().map_err(starlark::Error::new_other)
+    fn length(this: &Self) -> starlark::Result<i32> {
+        this.0.len().try_into().map_err(starlark::Error::new_other)
     }
 
     // The operators take a set of the same node kind and give one. The typechecker reads that
     // off `Self`, whose type is the kind's `TyUser` (`get_type_starlark_repr` above).
-    fn add(&self, other: &Self) -> Self {
-        Self(self.0.union(&other.0))
+    fn add(this: &Self, other: &Self) -> Self {
+        Self(this.0.union(&other.0))
     }
 
-    fn sub(&self, other: &Self) -> starlark::Result<Self> {
-        let difference = self.0.difference(&other.0)?;
+    fn sub(this: &Self, other: &Self) -> starlark::Result<Self> {
+        let difference = this.0.difference(&other.0)?;
         Ok(Self(difference))
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.0 == other.0
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.0 == other.0
     }
 
-    fn bit_and(&self, other: &Self) -> starlark::Result<Self> {
-        let intersect = self.0.intersect(&other.0)?;
+    fn bit_and(this: &Self, other: &Self) -> starlark::Result<Self> {
+        let intersect = this.0.intersect(&other.0)?;
         Ok(Self(intersect))
     }
 }
@@ -311,11 +311,11 @@ impl StarlarkTargetSetType {
 
 #[starlark_value(type = "bxl.TargetSet")]
 impl<'v> StarlarkValue<'v> for StarlarkTargetSetType {
-    fn eval_type(&self) -> Option<Ty> {
+    fn eval_type(_this: &Self) -> Option<Ty> {
         Some(Self::any_kind_ty())
     }
 
-    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+    fn at(_this: &Self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let node_ty = TypeCompiled::new(index, heap)?;
         let node_ty = node_ty.as_ty();
         if *node_ty == TargetNode::starlark_ty() {
@@ -332,7 +332,7 @@ impl<'v> StarlarkValue<'v> for StarlarkTargetSetType {
         }
     }
 
-    fn documentation(&self) -> DocItem {
+    fn documentation(_this: &Self) -> DocItem {
         // All node kinds share one methods table, so its docs describe every target set.
         DocItem::Type(
             STARLARK_TARGET_SET_METHODS

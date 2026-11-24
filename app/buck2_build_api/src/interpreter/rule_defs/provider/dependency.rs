@@ -121,23 +121,23 @@ impl<'v> StarlarkValue<'v> for Dependency<'v> {
         Some(DEPENDENCY_METHODS.methods())
     }
 
-    fn at(&self, index: &'v dyn ProviderCallableLike) -> starlark::Result<Value<'v>> {
-        self.collection()
+    fn at(this: &Self, index: &'v dyn ProviderCallableLike) -> starlark::Result<Value<'v>> {
+        this.collection()
             .require(index)
-            .with_buck_error_context(|| format!("Error accessing dependencies of `{}`", self.label))
+            .with_buck_error_context(|| format!("Error accessing dependencies of `{}`", this.label))
             .map_err(Into::into)
     }
 
-    fn is_in(&self, other: &'v dyn ProviderCallableLike) -> starlark::Result<bool> {
-        Ok(self.collection().has(other)?)
+    fn is_in(this: &Self, other: &'v dyn ProviderCallableLike) -> starlark::Result<bool> {
+        Ok(this.collection().has(other)?)
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.label().inner() == other.label().inner()
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.label().inner() == other.label().inner()
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.label().inner().hash(hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.label().inner().hash(hasher);
     }
 }
 

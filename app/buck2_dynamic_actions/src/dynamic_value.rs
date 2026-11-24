@@ -41,12 +41,12 @@ starlark::methods_static!(DYNAMIC_VALUE_METHODS = dynamic_value_methods);
 
 #[starlark_value(type = "DynamicValue")]
 impl<'v> StarlarkValue<'v> for StarlarkDynamicValue {
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.dynamic_value.hash(hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.dynamic_value.hash(hasher);
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.dynamic_value == other.dynamic_value
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.dynamic_value == other.dynamic_value
     }
 
     // used for docs of `DynamicValue`

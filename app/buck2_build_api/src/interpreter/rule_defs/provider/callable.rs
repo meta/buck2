@@ -420,11 +420,11 @@ impl<'v> UserProviderCallableView<'v> {
 #[starlark_value(type = "ProviderCallable")]
 impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
     fn export_as(
-        &self,
+        this: Self,
         variable_name: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        let UserProviderCallableView::Unfrozen(this) = self else {
+        let UserProviderCallableView::Unfrozen(this) = &this else {
             return Ok(());
         };
         // First export wins
@@ -482,25 +482,25 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
     }
 
     fn invoke(
-        &self,
+        this: Self,
         _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        match self.callable() {
+        match this.callable() {
             Some(callable) => callable.invoke(args, eval),
             None => Err(buck2_error::Error::from(ProviderCallableError::NotBound).into()),
         }
     }
 
-    fn eval_type(&self) -> Option<Ty> {
-        self.callable().map(|named| named.ty_provider.dupe())
+    fn eval_type(this: Self) -> Option<Ty> {
+        this.callable().map(|named| named.ty_provider.dupe())
     }
 
-    fn documentation(&self) -> DocItem {
-        let fields = self.fields();
+    fn documentation(this: Self) -> DocItem {
+        let fields = this.fields();
         let return_types = vec![Ty::any(); fields.len()];
-        let Some(callable) = self.callable() else {
+        let Some(callable) = this.callable() else {
             // This shouldn't really happen, we mostly don't even ask for documentation on
             // non-frozen things
             return DocItem::Member(DocMember::Property(DocProperty {
@@ -519,12 +519,12 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
             },
             // The page is the provider's: the fields are those of an instance.
             callable.ty_provider.dupe(),
-            self.docs(),
+            this.docs(),
         )
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        self.callable().map(|named| named.ty_callable.dupe())
+    fn typechecker_ty(this: Self) -> Option<Ty> {
+        this.callable().map(|named| named.ty_callable.dupe())
     }
 
     #[starlark(implements = StarlarkProviderCallable)]

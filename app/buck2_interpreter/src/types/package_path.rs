@@ -67,16 +67,16 @@ impl<'v> StarlarkValue<'v> for StarlarkPackagePath {
         Some(PACKAGE_PATH_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.hash(hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.hash(hasher);
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.pkg == other.pkg
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.pkg == other.pkg
     }
 
-    fn compare(&self, other: &Self) -> std::cmp::Ordering {
-        self.pkg.cmp(&other.pkg)
+    fn compare(this: &Self, other: &Self) -> std::cmp::Ordering {
+        this.pkg.cmp(&other.pkg)
     }
 }
 

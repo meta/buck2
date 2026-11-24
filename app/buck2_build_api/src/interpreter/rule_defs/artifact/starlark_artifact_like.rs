@@ -178,12 +178,12 @@ impl<'v> StarlarkType<'v> for StarlarkArtifactView<'v> {
         }
     }
 
-    fn equals(&self, other: ArtifactOrOutputArtifact<'v>) -> bool {
-        StarlarkArtifactLike::equals(self.as_input_artifact_like(), other)
+    fn equals(this: Self, other: ArtifactOrOutputArtifact<'v>) -> bool {
+        StarlarkArtifactLike::equals(this.as_input_artifact_like(), other)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        StarlarkArtifactLike::write_hash(self.as_input_artifact_like(), hasher)
+    fn write_hash(this: Self, hasher: &mut StarlarkHasher) {
+        StarlarkArtifactLike::write_hash(this.as_input_artifact_like(), hasher)
     }
 }
 

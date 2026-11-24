@@ -60,12 +60,12 @@ impl<'v> StarlarkValue<'v> for StarlarkCellPath {
         Some(CELL_PATH_METHODS.methods())
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        other.0 == self.0
+    fn equals(this: &Self, other: &Self) -> bool {
+        other.0 == this.0
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.0.hash(hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.0.hash(hasher);
     }
 }
 

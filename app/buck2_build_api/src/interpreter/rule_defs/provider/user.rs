@@ -103,28 +103,28 @@ impl<'v> Display for UserProvider<'v> {
 
 #[starlark_value(type = "Provider")]
 impl<'v> StarlarkValue<'v> for UserProvider<'v> {
-    fn dir_attr(&self) -> Vec<String> {
-        self.callable_data().fields.keys().cloned().collect()
+    fn dir_attr(this: &Self) -> Vec<String> {
+        this.callable_data().fields.keys().cloned().collect()
     }
 
-    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.field(Hashed::new(attribute))
+    fn get_attr(this: &Self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.field(Hashed::new(attribute))
     }
 
-    fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.field(attribute)
+    fn get_attr_hashed(this: &Self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
+        this.field(attribute)
     }
 
-    fn equals(&self, other: &Self) -> starlark::Result<bool> {
-        if self.callable_data().provider_id != other.callable_data().provider_id {
+    fn equals(this: &Self, other: &Self) -> starlark::Result<bool> {
+        if this.callable_data().provider_id != other.callable_data().provider_id {
             return Ok(false);
         }
-        if self.attributes.len() != other.attributes.len() {
+        if this.attributes.len() != other.attributes.len() {
             // If provider ids are equal, then providers point to the same provider callable,
             // and lengths should be equal. So this code is unreachable.
             return Ok(false);
         }
-        for ((k1, v1), (k2, v2)) in self.iter_items().zip(other.iter_items()) {
+        for ((k1, v1), (k2, v2)) in this.iter_items().zip(other.iter_items()) {
             if k1 != k2 {
                 // If provider ids are equal, then providers point to the same provider callable,
                 // and keys should be equal. So this code is unreachable.
@@ -137,9 +137,9 @@ impl<'v> StarlarkValue<'v> for UserProvider<'v> {
         Ok(true)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        self.callable_data().provider_id.hash(hasher);
-        for (k, v) in self.iter_items() {
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+        this.callable_data().provider_id.hash(hasher);
+        for (k, v) in this.iter_items() {
             k.hash(hasher);
             v.write_hash(hasher)?;
         }

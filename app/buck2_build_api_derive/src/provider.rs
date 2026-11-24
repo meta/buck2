@@ -350,7 +350,7 @@ impl ProviderCodegen {
         if self.args.methods_func.is_some() {
             let methods_static_name = self.methods_static_name()?;
             return Ok(syn::parse_quote_spanned! {self.span=>
-                fn documentation(&self) -> starlark::docs::DocItem {
+                fn documentation(_this: &Self) -> starlark::docs::DocItem {
                     let docstring = #provider_docstring;
                     buck2_build_api::interpreter::rule_defs::provider::doc::provider_callable_documentation(
                         Some(#create_func),
@@ -366,7 +366,7 @@ impl ProviderCodegen {
         let field_docstrings = fields.iter().map(|f| &f.docstring).collect::<Vec<_>>();
         let field_types = fields.iter().map(|f| f.field_type_ty()).collect::<Vec<_>>();
         Ok(syn::parse_quote_spanned! {self.span=>
-            fn documentation(&self) -> starlark::docs::DocItem {
+            fn documentation(_this: &Self) -> starlark::docs::DocItem {
                 let docstring = #provider_docstring;
                 let field_names: [&str; _] = [
                     #(#field_names),*
@@ -418,7 +418,7 @@ impl ProviderCodegen {
         let creator_func = &self.args.creator_func;
         Ok(syn::parse_quote_spanned! {
             self.span=>
-            fn typechecker_ty(&self) -> Option<starlark::typing::Ty> {
+            fn typechecker_ty(_this: &Self) -> Option<starlark::typing::Ty> {
                 Some(BUILTIN_PROVIDER_TY.callable(#creator_func))
             }
         })
@@ -453,7 +453,7 @@ impl ProviderCodegen {
         let name = self.name()?;
         let name_str = self.name_str()?;
         let field_names = self.field_names()?;
-        let self_values = self.field_values(syn::parse_quote_spanned! { self.span=> self })?;
+        let self_values = self.field_values(syn::parse_quote_spanned! { self.span=> this })?;
         let other_values = self.field_values(syn::parse_quote_spanned! { self.span=> other })?;
         let starlark_value_attr: syn::Attribute = syn::parse_quote_spanned! { self.span=>
             #[starlark::values::starlark_value(type = #name_str)]
@@ -478,7 +478,7 @@ impl ProviderCodegen {
                     vec![
                         syn::parse_quote_spanned! { self.span=>
                             fn get_attr(
-                                &self,
+                                this: &Self,
                                 attribute: &str,
                                 _heap: starlark::values::Heap<'v>,
                             ) -> Option<starlark::values::Value<'v>> {
@@ -489,7 +489,7 @@ impl ProviderCodegen {
                             }
                         },
                         syn::parse_quote_spanned! { self.span=>
-                            fn dir_attr(&self) -> Vec<String> {
+                            fn dir_attr(_this: &Self) -> Vec<String> {
                                 vec![#(#field_names.to_owned()),*]
                             }
                         },
@@ -525,7 +525,7 @@ impl ProviderCodegen {
             impl<'v> starlark::values::StarlarkValue<'v> for #name<'v> {
                 #(#attrs)*
                 #(#memberships)*
-                fn equals(&self, other: &Self) -> starlark::Result<bool> {
+                fn equals(this: &Self, other: &Self) -> starlark::Result<bool> {
                     #(
                         if !#self_values.equals(#other_values)? {
                             return Ok(false);
@@ -644,7 +644,7 @@ impl ProviderCodegen {
                 impl<'v> starlark::values::StarlarkValue<'v> for #callable_name
                 {
                     fn invoke(
-                        &self,
+                        _this: &Self,
                         _me: starlark::values::Value<'v>,
                         args: &starlark::eval::Arguments<'v, '_>,
                         eval: &mut starlark::eval::Evaluator<'v, '_, '_>,
@@ -652,7 +652,7 @@ impl ProviderCodegen {
                         #callable_globals_static_name.function().invoke(args, eval)
                     }
 
-                    fn eval_type(&self) -> Option<starlark::typing::Ty> {
+                    fn eval_type(_this: &Self) -> Option<starlark::typing::Ty> {
                         Some(BUILTIN_PROVIDER_TY.instance())
                     }
 

@@ -854,11 +854,11 @@ impl<'v> StarlarkRuleCallableView<'v> {
 #[starlark_value(type = "Rule")]
 impl<'v> StarlarkType<'v> for StarlarkRuleCallableView<'v> {
     fn export_as(
-        &self,
+        this: Self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        if let StarlarkRuleCallableView::Unfrozen(this) = self {
+        if let StarlarkRuleCallableView::Unfrozen(this) = &this {
             *this.id.borrow_mut() = Some(StarlarkRuleType {
                 path: this.rule_path.clone(),
                 name: variable_name.to_owned(),
@@ -868,12 +868,12 @@ impl<'v> StarlarkType<'v> for StarlarkRuleCallableView<'v> {
     }
 
     fn invoke(
-        &self,
+        this: Self,
         _me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let this = match self {
+        let this = match this {
             StarlarkRuleCallableView::Frozen(this) => this,
             StarlarkRuleCallableView::Unfrozen(_) => {
                 return Err(buck2_error::Error::from(RuleError::RuleCalledBeforeFreezing).into());
@@ -912,15 +912,15 @@ impl<'v> StarlarkType<'v> for StarlarkRuleCallableView<'v> {
         })
     }
 
-    fn documentation(&self) -> DocItem {
-        match self {
+    fn documentation(this: Self) -> DocItem {
+        match this {
             StarlarkRuleCallableView::Unfrozen(this) => this.documentation_impl(),
             StarlarkRuleCallableView::Frozen(this) => this.rule_docs.clone(),
         }
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        match self {
+    fn typechecker_ty(this: Self) -> Option<Ty> {
+        match this {
             StarlarkRuleCallableView::Unfrozen(this) => Some(this.ty.clone()),
             StarlarkRuleCallableView::Frozen(this) => Some(this.ty.clone()),
         }

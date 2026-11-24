@@ -234,12 +234,12 @@ impl<'v> StarlarkType<'v> for StarlarkOutputArtifactView<'v> {
         Some(OUTPUT_ARTIFACT_METHODS.methods())
     }
 
-    fn equals(&self, other: ArtifactOrOutputArtifact<'v>) -> bool {
-        StarlarkArtifactLike::equals(self.as_artifact_like(), other)
+    fn equals(this: Self, other: ArtifactOrOutputArtifact<'v>) -> bool {
+        StarlarkArtifactLike::equals(this.as_artifact_like(), other)
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        StarlarkArtifactLike::write_hash(self.as_artifact_like(), hasher)
+    fn write_hash(this: Self, hasher: &mut StarlarkHasher) {
+        StarlarkArtifactLike::write_hash(this.as_artifact_like(), hasher)
     }
 
     #[starlark(implements = StarlarkCmdArgsLike)]

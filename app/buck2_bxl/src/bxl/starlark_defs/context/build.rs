@@ -79,8 +79,8 @@ impl<'v> StarlarkProvidersArtifactIterable<'v> {
 
 #[starlark_value(type = "bxl.BuiltArtifactsIterable")]
 impl<'v> StarlarkValue<'v> for StarlarkProvidersArtifactIterable<'v> {
-    fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(self
+    fn iterate_collect(this: &Self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+        Ok(this
             .iter()
             .map(|artifact| {
                 heap.alloc(StarlarkArtifact::new(artifact.dupe()))
@@ -89,17 +89,17 @@ impl<'v> StarlarkValue<'v> for StarlarkProvidersArtifactIterable<'v> {
             .collect())
     }
 
-    fn at(&self, index: i32) -> starlark::Result<StarlarkArtifact> {
+    fn at(this: &Self, index: i32) -> starlark::Result<StarlarkArtifact> {
         if let Ok(i) = usize::try_from(index) {
-            if let Some(artifact) = self.iter().nth(i) {
+            if let Some(artifact) = this.iter().nth(i) {
                 return Ok(StarlarkArtifact::new(artifact.dupe()));
             }
         }
         Err(ValueError::IndexOutOfBound(index).into())
     }
 
-    fn length(&self) -> starlark::Result<i32> {
-        i32::try_from(self.iter().count()).map_err(starlark::Error::new_other)
+    fn length(this: &Self) -> starlark::Result<i32> {
+        i32::try_from(this.iter().count()).map_err(starlark::Error::new_other)
     }
 }
 
@@ -134,24 +134,24 @@ impl<'v> StarlarkFailedArtifactIterable<'v> {
 
 #[starlark_value(type = "bxl.FailedArtifactsIterable")]
 impl<'v> StarlarkValue<'v> for StarlarkFailedArtifactIterable<'v> {
-    fn iterate_collect(&self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(self
+    fn iterate_collect(this: &Self, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+        Ok(this
             .iter()
             .map(|e| heap.alloc(format!("{e}")).to_value())
             .collect())
     }
 
-    fn at(&self, index: i32) -> starlark::Result<String> {
+    fn at(this: &Self, index: i32) -> starlark::Result<String> {
         if let Ok(i) = usize::try_from(index) {
-            if let Some(e) = self.iter().nth(i) {
+            if let Some(e) = this.iter().nth(i) {
                 return Ok(format!("{e}"));
             }
         }
         Err(ValueError::IndexOutOfBound(index).into())
     }
 
-    fn length(&self) -> starlark::Result<i32> {
-        i32::try_from(self.iter().count()).map_err(starlark::Error::new_other)
+    fn length(this: &Self) -> starlark::Result<i32> {
+        i32::try_from(this.iter().count()).map_err(starlark::Error::new_other)
     }
 }
 

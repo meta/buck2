@@ -95,9 +95,9 @@ enum AnalysisPluginsError {
 
 #[starlark_value(type = "AnalysisPlugins")]
 impl<'v> StarlarkValue<'v> for AnalysisPlugins<'v> {
-    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+    fn at(this: &Self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let kind = (PLUGIN_KIND_FROM_VALUE.get()?)(index)?;
-        match self.plugins.get(&kind) {
+        match this.plugins.get(&kind) {
             Some(v) => Ok(v.to_value()),
             None => {
                 Err(buck2_error::Error::from(AnalysisPluginsError::PluginKindNotUsed(kind)).into())
@@ -105,9 +105,9 @@ impl<'v> StarlarkValue<'v> for AnalysisPlugins<'v> {
         }
     }
 
-    fn is_in(&self, other: Value<'v>) -> starlark::Result<bool> {
+    fn is_in(this: &Self, other: Value<'v>) -> starlark::Result<bool> {
         let kind = (PLUGIN_KIND_FROM_VALUE.get()?)(other)?;
-        Ok(self.plugins.contains_key(&kind))
+        Ok(this.plugins.contains_key(&kind))
     }
 }
 

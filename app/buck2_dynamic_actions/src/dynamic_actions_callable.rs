@@ -147,11 +147,11 @@ pub enum DynamicActionsCallableView<'v> {
 #[starlark_value(type = "DynamicActionCallable")]
 impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
     fn export_as(
-        &self,
+        this: Self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        if let DynamicActionsCallableView::Unfrozen(this) = self {
+        if let DynamicActionsCallableView::Unfrozen(this) = &this {
             // First wins.
             this.name.get_or_init(|| variable_name.to_owned());
         }
@@ -159,12 +159,12 @@ impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
     }
 
     fn invoke(
-        &self,
+        this: Self,
         me: Value<'v>,
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let this = match self {
+        let this = match this {
             DynamicActionsCallableView::Frozen(this) => this,
             DynamicActionsCallableView::Unfrozen(_) => {
                 return Err(buck2_error::Error::from(DynamicActionCallableError::NotFrozen).into());
@@ -195,8 +195,8 @@ impl<'v> StarlarkType<'v> for DynamicActionsCallableView<'v> {
             .to_value())
     }
 
-    fn typechecker_ty(&self) -> Option<Ty> {
-        match self {
+    fn typechecker_ty(this: Self) -> Option<Ty> {
+        match this {
             DynamicActionsCallableView::Frozen(this) => Some(this.self_ty.dupe()),
             DynamicActionsCallableView::Unfrozen(this) => Some(this.self_ty.dupe()),
         }

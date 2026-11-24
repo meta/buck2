@@ -413,36 +413,36 @@ impl<'v> StarlarkValue<'v> for StarlarkActionSubError {
         Some(ACTION_SUB_ERROR_METHODS.methods())
     }
 
-    fn set_attr(&self, attribute: &str, new_value: Value<'v>) -> starlark::Result<()> {
+    fn set_attr(this: &Self, attribute: &str, new_value: Value<'v>) -> starlark::Result<()> {
         match attribute {
             "category" => {
                 let new_category = new_value.unpack_str_err()?;
-                *self.category.borrow_mut() = new_category.to_owned();
+                *this.category.borrow_mut() = new_category.to_owned();
                 Ok(())
             }
             "show_in_stderr" => {
                 let new_show_in_stderr = new_value
                     .unpack_bool()
                     .expect("show_in_stderr expected bool");
-                *self.show_in_stderr.borrow_mut() = new_show_in_stderr;
+                *this.show_in_stderr.borrow_mut() = new_show_in_stderr;
                 Ok(())
             }
             "subcategory" => {
                 let new_subcategory = new_value.unpack_str_err()?;
-                *self.subcategory.borrow_mut() = Some(new_subcategory.to_owned());
+                *this.subcategory.borrow_mut() = Some(new_subcategory.to_owned());
                 Ok(())
             }
             "remediation" => {
                 let new_remediation = new_value.unpack_str_err()?;
-                *self.remediation.borrow_mut() = Some(new_remediation.to_owned());
+                *this.remediation.borrow_mut() = Some(new_remediation.to_owned());
                 Ok(())
             }
-            _ => ValueError::unsupported(self, &format!(".{attribute}=")),
+            _ => ValueError::unsupported(this, &format!(".{attribute}=")),
         }
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.eq(other)
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.eq(other)
     }
 }
 

@@ -167,11 +167,11 @@ pub(crate) enum BxlFunctionView<'v> {
 #[starlark_value(type = "bxl")]
 impl<'v> StarlarkType<'v> for BxlFunctionView<'v> {
     fn export_as(
-        &self,
+        this: Self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        if let BxlFunctionView::Unfrozen(this) = self {
+        if let BxlFunctionView::Unfrozen(this) = &this {
             *this.id.borrow_mut() = Some(BxlFunctionLabel {
                 bxl_path: this.bxl_path.clone(),
                 name: variable_name.to_owned(),

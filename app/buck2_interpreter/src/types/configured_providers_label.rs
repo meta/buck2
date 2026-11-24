@@ -103,12 +103,12 @@ where
         Some(CONFIGURED_PROVIDERS_LABEL_METHODS.methods())
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.label == other.label
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.label == other.label
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.label.hash(hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.label.hash(hasher);
     }
 }
 
@@ -269,12 +269,12 @@ where
         Some(PROVIDERS_LABEL_METHODS.methods())
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.label == other.label
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.label == other.label
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.label.hash(hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.label.hash(hasher);
     }
 }
 

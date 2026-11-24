@@ -326,10 +326,10 @@ impl<'v> StarlarkValue<'v> for ResolvedStringWithMacros<'v> {
         Some(RESOLVED_STRING_WITH_MACROS_METHODS.methods())
     }
 
-    fn equals(&self, other: Either<&Self, &str>) -> bool {
+    fn equals(this: &Self, other: Either<&Self, &str>) -> bool {
         match other {
-            Either::Left(other) => *self == *other,
-            Either::Right(s) => self.downcast_str() == Some(s),
+            Either::Left(other) => *this == *other,
+            Either::Right(s) => this.downcast_str() == Some(s),
         }
     }
 

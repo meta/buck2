@@ -339,8 +339,8 @@ impl<'v> StarlarkValue<'v> for StarlarkSelectConcat {
         Some(SELECT_CONCAT_METHODS.methods())
     }
 
-    fn length(&self) -> starlark::Result<i32> {
-        Ok(self.items()?.len() as i32)
+    fn length(this: &Self) -> starlark::Result<i32> {
+        Ok(this.items()?.len() as i32)
     }
 }
 

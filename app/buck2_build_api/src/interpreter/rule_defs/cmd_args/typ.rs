@@ -1421,15 +1421,15 @@ impl<'v> StarlarkValue<'v> for StarlarkCommandLineInputs {
         Some(COMMAND_LINE_INPUTS_METHODS.methods())
     }
 
-    fn length(&self) -> starlark::Result<i32> {
-        self.inputs
+    fn length(this: &Self) -> starlark::Result<i32> {
+        this.inputs
             .len()
             .try_into()
             .map_err(starlark::Error::new_other)
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.inputs.eq_unordered(&other.inputs)
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.inputs.eq_unordered(&other.inputs)
     }
 }
 

@@ -90,16 +90,16 @@ impl<'v> StarlarkValue<'v> for StarlarkTargetLabel {
         Some(TARGET_LABEL_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.hash(hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.hash(hasher);
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.label == other.label
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.label == other.label
     }
 
-    fn compare(&self, other: &Self) -> std::cmp::Ordering {
-        self.label.cmp(&other.label)
+    fn compare(this: &Self, other: &Self) -> std::cmp::Ordering {
+        this.label.cmp(&other.label)
     }
 }
 
@@ -217,16 +217,16 @@ impl<'v> StarlarkValue<'v> for StarlarkConfiguredTargetLabel {
         Some(CONFIGURED_TARGET_LABEL_METHODS.methods())
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) {
-        self.hash(hasher);
+    fn write_hash(this: &Self, hasher: &mut StarlarkHasher) {
+        this.hash(hasher);
     }
 
-    fn equals(&self, other: &Self) -> bool {
-        self.label == other.label
+    fn equals(this: &Self, other: &Self) -> bool {
+        this.label == other.label
     }
 
-    fn compare(&self, other: &Self) -> std::cmp::Ordering {
-        self.label.cmp(&other.label)
+    fn compare(this: &Self, other: &Self) -> std::cmp::Ordering {
+        this.label.cmp(&other.label)
     }
 }
 

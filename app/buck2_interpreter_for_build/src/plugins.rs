@@ -129,11 +129,11 @@ pub enum StarlarkPluginKindView<'v> {
 #[starlark_value(type = "PluginKind")]
 impl<'v> StarlarkType<'v> for StarlarkPluginKindView<'v> {
     fn export_as(
-        &self,
+        this: Self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        let StarlarkPluginKindView::Unfrozen(this) = self else {
+        let StarlarkPluginKindView::Unfrozen(this) = &this else {
             return Ok(());
         };
         let mut inner = this.0.borrow_mut();

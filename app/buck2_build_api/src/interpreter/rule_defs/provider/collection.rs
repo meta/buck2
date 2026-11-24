@@ -409,12 +409,12 @@ fn provider_collection_methods(builder: &mut MethodsBuilder) {
 
 #[starlark_value(type = "ProviderCollection", frozen_vtable, alloc = by_hand)]
 impl<'v> StarlarkValue<'v> for ProviderCollection<'v> {
-    fn at(&self, index: &'v dyn ProviderCallableLike) -> starlark::Result<Value<'v>> {
-        Ok(self.require(index)?)
+    fn at(this: &Self, index: &'v dyn ProviderCallableLike) -> starlark::Result<Value<'v>> {
+        Ok(this.require(index)?)
     }
 
-    fn is_in(&self, other: &'v dyn ProviderCallableLike) -> starlark::Result<bool> {
-        Ok(self.has(other)?)
+    fn is_in(this: &Self, other: &'v dyn ProviderCallableLike) -> starlark::Result<bool> {
+        Ok(this.has(other)?)
     }
 
     fn get_methods() -> Option<&'static Methods>

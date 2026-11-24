@@ -291,11 +291,11 @@ impl<'v> TransitiveSetDefinitionView<'v> {
 #[starlark_value(type = "TransitiveSetDefinition")]
 impl<'v> StarlarkType<'v> for TransitiveSetDefinitionView<'v> {
     fn export_as(
-        &self,
+        this: Self,
         variable_name: &str,
         _: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        let TransitiveSetDefinitionView::Unfrozen(this) = self else {
+        let TransitiveSetDefinitionView::Unfrozen(this) = &this else {
             return Ok(());
         };
         // First export wins
@@ -327,17 +327,17 @@ impl<'v> StarlarkType<'v> for TransitiveSetDefinitionView<'v> {
         Ok(())
     }
 
-    fn dir_attr(&self) -> Vec<String> {
+    fn dir_attr(_this: Self) -> Vec<String> {
         vec!["type".to_owned()]
     }
 
-    fn has_attr(&self, attribute: &str, _heap: Heap<'v>) -> bool {
+    fn has_attr(_this: Self, attribute: &str, _heap: Heap<'v>) -> bool {
         attribute == "type"
     }
 
-    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+    fn get_attr(this: Self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         if attribute == "type" {
-            let typ = self
+            let typ = this
                 .exported()
                 .map_or("TransitiveSetDefinition", |exported| {
                     exported.id.name.as_str()
@@ -348,16 +348,16 @@ impl<'v> StarlarkType<'v> for TransitiveSetDefinitionView<'v> {
         }
     }
 
-    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        let exported = self
+    fn write_hash(this: Self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+        let exported = this
             .exported()
             .internal_error("cannot hash a transitive_set_definition without id")?;
         exported.id.hash(hasher);
         Ok(())
     }
 
-    fn eval_type(&self) -> Option<Ty> {
-        self.exported().map(|exported| exported.set_ty.dupe())
+    fn eval_type(this: Self) -> Option<Ty> {
+        this.exported().map(|exported| exported.set_ty.dupe())
     }
 }
 

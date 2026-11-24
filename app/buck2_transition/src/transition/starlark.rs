@@ -162,11 +162,11 @@ pub(crate) enum TransitionView<'v> {
 #[starlark_value(type = "Transition")]
 impl<'v> StarlarkType<'v> for TransitionView<'v> {
     fn export_as(
-        &self,
+        this: Self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        let TransitionView::Unfrozen(this) = self else {
+        let TransitionView::Unfrozen(this) = &this else {
             return Ok(());
         };
         let mut id = this.id.borrow_mut();

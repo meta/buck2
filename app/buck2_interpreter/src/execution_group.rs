@@ -141,11 +141,11 @@ pub enum StarlarkExecutionGroupView<'v> {
 #[starlark_value(type = "ExecGroup")]
 impl<'v> StarlarkType<'v> for StarlarkExecutionGroupView<'v> {
     fn export_as(
-        &self,
+        this: Self,
         variable_name: &str,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
-        let StarlarkExecutionGroupView::Unfrozen(this) = self else {
+        let StarlarkExecutionGroupView::Unfrozen(this) = &this else {
             return Ok(());
         };
         let mut inner = this.0.borrow_mut();

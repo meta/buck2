@@ -96,8 +96,8 @@ starlark_complex_value!(pub TransitiveSetTraversal);
 
 #[starlark_value(type = "TransitiveSetIterator")]
 impl<'v> StarlarkValue<'v> for TransitiveSetTraversal<'v> {
-    fn iterate_collect(&self, _heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        Ok(self.inner.collect_values(self.ordering)?)
+    fn iterate_collect(this: &Self, _heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+        Ok(this.inner.collect_values(this.ordering)?)
     }
 }
 
@@ -126,8 +126,8 @@ starlark_complex_value!(pub TransitiveSetProjectionTraversal);
 
 #[starlark_value(type = "TransitiveSetArgsProjectionIterator")]
 impl<'v> StarlarkValue<'v> for TransitiveSetProjectionTraversal<'v> {
-    fn iterate_collect(&self, _heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
-        let set = self.transitive_set.as_ref();
-        Ok(set.collect_projection_values(self.ordering, self.projection)?)
+    fn iterate_collect(this: &Self, _heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+        let set = this.transitive_set.as_ref();
+        Ok(set.collect_projection_values(this.ordering, this.projection)?)
     }
 }

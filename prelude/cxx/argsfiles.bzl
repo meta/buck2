@@ -14,6 +14,10 @@ CompileArgsfile = record(
     file = field(Artifact),
     # This argsfile as a command form that would use the argsfile (includes dependent inputs).
     cmd_form = field(cmd_args),
+    # `cmd_form`, with the header units of the preprocessor as dependent inputs too. For
+    # commands that load them, by also using a header units argsfile for the same preprocessor,
+    # whose own `cmd_form` leaves them out. None for argsfiles that are not `_mk_argsfiles`'s.
+    cmd_form_with_header_units = field(cmd_args | None, None),
     # Command form for the NVCC dry run: the argsfile, the argsfiles it
     # references and the header maps the flags name, but not the header trees
     # or other artifacts behind the flags. Only built for CUDA sources.

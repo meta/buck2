@@ -1004,6 +1004,8 @@ def _get_shared_compile_command_args(
         dryrun_form = cxx_compile_cmd.argsfile.cmd_form_cuda_dryrun
         expect(dryrun_form != None, "compile argsfile has no CUDA dry-run form")
         before_src.add(dryrun_form)
+    elif use_header_units == UseHeaderUnitsMode("pcm") and cxx_compile_cmd.header_units_argsfile:
+        before_src.add(cxx_compile_cmd.argsfile.cmd_form_with_header_units)
     else:
         before_src.add(cxx_compile_cmd.argsfile.cmd_form)
 
@@ -1664,6 +1666,10 @@ module "{}" {{
             ext = CxxExtension(".cpp"),
             has_content_based_path = True,
             filename_prefix = "export{}_".format(group_name),
+            # These are the header units of this target's earlier groups, which are not in
+            # the set that the precompile takes its other inputs from.
+            with_inputs = True,
+            is_precompile = True,
         )
 
     args.extend(["-xc++-user-header", "-fmodule-header"])
@@ -1722,7 +1728,7 @@ def _precompile_single_cxx(
         cmd.add(cxx_cmd.header_units_argsfile.cmd_form)
     if src_compile_cmd.extra_argsfile:
         cmd.add(src_compile_cmd.extra_argsfile.cmd_form)
-    cmd.add(cxx_cmd.argsfile.cmd_form)
+    cmd.add(cxx_cmd.argsfile.cmd_form_with_header_units if cxx_cmd.header_units_argsfile else cxx_cmd.argsfile.cmd_form)
     cmd.add(src_compile_cmd.args)
     cmd.add("-o", module.as_output())
 
@@ -1760,7 +1766,7 @@ def _precompile_single_cxx(
             check_cmd.add(cxx_cmd.header_units_argsfile.cmd_form)
         if src_compile_cmd.extra_argsfile:
             check_cmd.add(src_compile_cmd.extra_argsfile.cmd_form)
-        check_cmd.add(cxx_cmd.argsfile.cmd_form)
+        check_cmd.add(cxx_cmd.argsfile.cmd_form_with_header_units if cxx_cmd.header_units_argsfile else cxx_cmd.argsfile.cmd_form)
 
         # Add all precompile args except --precompile and -DFACEBOOK_CPP_HEADER_UNIT=1
         check_cmd.add(src_compile_cmd.check_args)
@@ -1851,6 +1857,7 @@ def precompile_cxx(
             has_content_based_path = True,
             filename_prefix = "pre_",
             stub = False,
+            is_precompile = True,
         )
         header_unit_stubs_argsfile = _mk_header_units_argsfile(
             actions,
@@ -2290,6 +2297,11 @@ def _mk_argsfiles(
     argsfiles = []
     args_list = []
 
+    # What a command takes as inputs for `args_list`: the same arguments, less the projections
+    # of the preprocessor set. Their artifacts come from the one projection that `mk_cmd_form`
+    # is given (see `CPreprocessorTSet` for why it is one).
+    inputs_list = []
+
     # The arguments by contributing layer, for `CompileArgsfile.layers` (Xcode argsfiles alone), as
     # Buck's compile has them: the Xcode argsfiles' substitutions are for a project built with Apple's
     # clang, and a project built with the toolchain's own compiler needs the flags they rewrite.
@@ -2394,6 +2406,7 @@ def _mk_argsfiles(
 
         argsfiles.append(compiler_info_argsfile)
         args_list.append(compiler_info_flags)
+        inputs_list.append(compiler_info_flags)
         add_layer("toolchain", compiler_info_flags)
 
     make_toolchain_argsfile()
@@ -2418,6 +2431,7 @@ def _mk_argsfiles(
             )
         argsfiles.append(compiler_type_argsfile_artifact)
         args_list.append(compiler_type_flags)
+        inputs_list.append(compiler_type_flags)
         add_layer("compiler_type", compiler_type_flags)
 
     make_compiler_type_argsfile()
@@ -2453,6 +2467,7 @@ def _mk_argsfiles(
 
         argsfiles.append(argsfile_with_artifacts(argsfile, projection))
         args_list.append(projection)
+        inputs_list.append(projection)
         add_layer("cxx_flags", projection)
 
     make_cxx_flags_argsfile()
@@ -2469,6 +2484,7 @@ def _mk_argsfiles(
         # and the modulemap to use, so we need to get the final outcome.
         if preprocessor.set.reduce("uses_modules"):
             deps_args.append(headers_tag.tag_artifacts(preprocessor.set.project_as_args("modular_args")))
+            inputs_list.append(headers_tag.tag_artifacts(preprocessor.set.project_as_args("modular_args")))
 
         # filename example: .cpp.deps_cxx_args, .cpp.deps_cxx_args_redacted
         deps_argsfile_for_compiler, deps_argsfile_for_buck_action_rerun = mk_argsfile_for_dep_file_filtering(filename_prefix + "deps_cxx_args", deps_args)
@@ -2502,6 +2518,7 @@ def _mk_argsfiles(
         target_argsfile_filename = filename_prefix + "target_cxx_args"
         argsfiles.append(mk_argsfile(target_argsfile_filename, target_args))
         args_list.append(target_args)
+        inputs_list.append(target_args)
         add_layer("target", target_args)
 
     make_target_argsfile()
@@ -2567,6 +2584,7 @@ def _mk_argsfiles(
                 hidden = specs_file_for_buck_action_rerun,
             )
             file_prefix_specs.append(specs_file)
+            inputs_list.append(prefix_ref)
         else:
             prefix_ref = file_prefix_args
 
@@ -2602,16 +2620,28 @@ def _mk_argsfiles(
     )
 
     args = create_cmd_args(is_nasm, is_xcode_argsfile, args_list)
-    input_args = [args, file_args]
+    input_args = [inputs_list, file_args]
     if argsfile_for_buck_action_rerun != None:
         input_args.append(argsfile_for_buck_action_rerun)
 
     argsfile_format = "-@{}" if is_nasm else "@{}"
-    cmd_form = cmd_args(
-        headers_tag.tag_artifacts(argsfile),
-        format = argsfile_format,
-        hidden = input_args,
-    )
+
+    def mk_cmd_form(preprocessor_inputs_projection: str) -> cmd_args:
+        preprocessor_inputs = preprocessor.set.project_as_args(preprocessor_inputs_projection)
+        if not is_precompile:
+            preprocessor_inputs = headers_tag.tag_artifacts(preprocessor_inputs)
+        return cmd_args(
+            headers_tag.tag_artifacts(argsfile),
+            format = argsfile_format,
+            hidden = input_args + [preprocessor_inputs],
+        )
+
+    if is_precompile:
+        cmd_form = mk_cmd_form("precompile_args")
+        cmd_form_with_header_units = mk_cmd_form("precompile_header_units_args")
+    else:
+        cmd_form = mk_cmd_form("args")
+        cmd_form_with_header_units = mk_cmd_form("header_units_args")
 
     # The NVCC dry run expands the flags and reads header maps, nothing else behind them.
     cmd_form_cuda_dryrun = None
@@ -2624,6 +2654,7 @@ def _mk_argsfiles(
     return CompileArgsfile(
         file = argsfile,
         cmd_form = cmd_form,
+        cmd_form_with_header_units = cmd_form_with_header_units,
         cmd_form_cuda_dryrun = cmd_form_cuda_dryrun,
         args = args,
         args_without_file_prefix_args = args_without_file_prefix_args,
@@ -2640,10 +2671,16 @@ def _mk_header_units_argsfile(
     has_content_based_path: bool = False,
     stub: bool = False,
     headers_tag: ArtifactTag | None = None,
+    with_inputs: bool = False,
+    is_precompile: bool = False,
 ) -> CompileArgsfile | None:
     """
     Generate and return an argsfile artifact containing all header unit options, and
     command args that utilize the argsfile.
+
+    The command args carry the header units as inputs only `with_inputs`. Without, the
+    command takes them from `CompileArgsfile.cmd_form_with_header_units` of the
+    `_mk_argsfiles` argsfile for the same preprocessor.
     """
     if not preprocessor.set:
         return None
@@ -2668,7 +2705,12 @@ def _mk_header_units_argsfile(
         "-Wno-ambiguous-macro",
     ])
 
-    projection_name = "header_unit_stubs_args" if stub else "header_units_args"
+    if stub:
+        projection_name = "header_unit_stubs_args"
+    elif is_precompile:
+        projection_name = "precompile_header_units_args"
+    else:
+        projection_name = "header_units_args"
     args.add(preprocessor.set.project_as_args(projection_name))
     if headers_tag == None:
         file_args = cmd_args(args, quote = "shell")
@@ -2678,7 +2720,7 @@ def _mk_header_units_argsfile(
             allow_args = True,
             has_content_based_path = has_content_based_path,
         )
-        cmd_form = cmd_args(argsfile, format = "@{}", hidden = file_args)
+        cmd_form = cmd_args(argsfile, format = "@{}", hidden = file_args if with_inputs else [])
     else:
         # We write two versions of the file:
         # - The first is a tagged file with the optionally content-based paths, which
@@ -2707,7 +2749,7 @@ def _mk_header_units_argsfile(
         cmd_form = cmd_args(
             headers_tag.tag_artifacts(argsfile),
             format = "@{}",
-            hidden = [headers_tag.tag_artifacts(file_args), redacted_argsfile],
+            hidden = [redacted_argsfile] + ([headers_tag.tag_artifacts(file_args)] if with_inputs else []),
         )
 
     return CompileArgsfile(

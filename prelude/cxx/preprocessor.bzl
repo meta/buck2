@@ -46,9 +46,11 @@ SystemIncludeDirs = record(
 CPreprocessorArgs = record(
     # The arguments, [arglike things]
     args = field(list[typing.Any], []),
-    # -fdebug-prefix-map args that map symlinks to source file location
+    # -fdebug-prefix-map args that map symlinks to source file location. Compiles don't take
+    # inputs from these, so they may only name artifacts that `args` carries.
     file_prefix_args = field(list[typing.Any], []),
-    # -fcoverage-prefix-map args (clang-only, separated so non-clang compilers can skip them)
+    # -fcoverage-prefix-map args (clang-only, separated so non-clang compilers can skip them).
+    # As for `file_prefix_args`, they may only name artifacts that `args` carries.
     coverage_prefix_args = field(list[typing.Any], []),
     # Arguments used for module precompilation, replacing args
     precompile_args = field(list[typing.Any], []),
@@ -130,8 +132,11 @@ def _cpreprocessor_precompile_args(pres: list[CPreprocessor]):
 def _cpreprocessor_header_maps(pres: list[CPreprocessor]):
     return cmd_args(hidden = [pre.args.header_maps for pre in pres])
 
-def _cpreprocessor_header_units_args_impl(pres: list[CPreprocessor], stub: bool):
-    args = cmd_args()
+def _cpreprocessor_header_units_args_impl(pres: list[CPreprocessor], stub: bool, precompile: bool = False):
+    # A command that loads header units takes all its inputs from the set through this
+    # projection (see `CPreprocessorTSet`), so it also carries what `args` or
+    # `precompile_args` does.
+    args = cmd_args(hidden = [] if stub else [pre.args.precompile_args if precompile else pre.args.args for pre in pres])
     for pre in pres:
         for h in pre.header_units:
             artifact = h.stub if stub else h.module
@@ -148,6 +153,9 @@ def _cpreprocessor_header_units_args(pres: list[CPreprocessor]):
 
 def _cpreprocessor_header_unit_stubs_args(pres: list[CPreprocessor]):
     return _cpreprocessor_header_units_args_impl(pres, stub = True)
+
+def _cpreprocessor_precompile_header_units_args(pres: list[CPreprocessor]):
+    return _cpreprocessor_header_units_args_impl(pres, stub = False, precompile = True)
 
 def _cpreprocessor_has_header_units_args(children: list[bool], pres: [list[CPreprocessor], None]):
     if pres:
@@ -196,6 +204,14 @@ def _cpreprocessor_uses_modules(children: list[bool], pres: [list[CPreprocessor]
 # Set of [CPreprocessor]. Most nodes have just a single value, but we
 # allow > 1 for cxx compilation commands where it we do want > 1 (one for
 # exported pp info and one for not-exported).
+#
+# A command should take its inputs from a single projection of a set. Buck builds the directory
+# of a projection's artifacts once per set, but unions the directories of the projections that
+# a command takes inputs from once per command, and that union is expensive for projections of
+# the same set: a target's header trees and header units are outputs under the same
+# directories, so their trees interleave all the way down. A command that needs the artifacts
+# of several projections takes its inputs from one that carries them all, as the header units
+# projections do, and uses the others only to render argsfiles.
 CPreprocessorTSet = transitive_set(
     args_projections = {
         "args": _cpreprocessor_args,
@@ -207,6 +223,7 @@ CPreprocessorTSet = transitive_set(
         "include_dirs": _cpreprocessor_include_dirs,
         "modular_args": _cpreprocessor_modular_args,
         "precompile_args": _cpreprocessor_precompile_args,
+        "precompile_header_units_args": _cpreprocessor_precompile_header_units_args,
     },
     reductions = {
         "has_file_prefix_args": _cpreprocessor_has_file_prefix_args,

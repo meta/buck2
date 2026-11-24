@@ -1009,6 +1009,13 @@ impl<'v, 'a, 'e: 'a> Evaluator<'v, 'a, 'e> {
         Ok(())
     }
 
+    /// The heap size that `set_max_heap_size` limits: what was in use at its peak on the heap
+    /// that evaluation allocates on, plus what is in use on the module's frozen heap.
+    #[inline]
+    pub fn get_peak_heap_size(&self) -> usize {
+        self.heap().peak_allocated_bytes() + self.module_env.frozen_heap_used_bytes()
+    }
+
     /// Check if the heap size limit has been exceeded
     ///
     /// Returns `None` if no limit is set
@@ -1016,7 +1023,7 @@ impl<'v, 'a, 'e: 'a> Evaluator<'v, 'a, 'e> {
     pub fn check_heap_size_limit(&mut self) -> Option<ResourceCheckResult> {
         let limit = self.max_heap_size?;
 
-        let current = self.heap().peak_allocated_bytes() + self.module_env.frozen_heap_used_bytes();
+        let current = self.get_peak_heap_size();
 
         if current > limit {
             Some(ResourceCheckResult::Exceeded(crate::Error::new_kind(

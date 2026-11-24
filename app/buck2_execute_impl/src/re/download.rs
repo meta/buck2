@@ -582,13 +582,7 @@ impl CasDownloader<'_> {
 
             start = Instant::now();
             for (dir, tree) in output_spec.output_directories().iter().zip(trees) {
-                let entry = re_tree_to_directory(
-                    &tree,
-                    &expires,
-                    self.digest_config,
-                    self.output_trees_download_config
-                        .fingerprint_re_output_trees_eagerly(),
-                )?;
+                let entry = re_tree_to_directory(&tree, &expires, self.digest_config)?;
                 input_dir.insert(
                     re_forward_path(dir.path.as_str())?,
                     DirectoryEntry::Dir(entry),

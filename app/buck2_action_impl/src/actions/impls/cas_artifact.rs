@@ -464,7 +464,6 @@ impl CasArtifactAction {
         cas_download_info: &CasDownloadInfo,
         directory_kind: DirectoryKind,
         digest_config: DigestConfig,
-        fingerprint_eagerly: bool,
     ) -> buck2_error::Result<ArtifactValue> {
         // TODO: should honor the semaphore here from OutputTreesDownloadConfig.
 
@@ -508,13 +507,8 @@ impl CasArtifactAction {
         // NOTE: We assign a zero timestamp here because we didn't check the nodes in the tree,
         // just the tree itself. Perhaps we should, but some of the prospective users for this
         // have very large trees so that might not be wise.
-        let dir = re_tree_to_directory(
-            &tree,
-            &Timestamp::UNIX_EPOCH,
-            digest_config,
-            fingerprint_eagerly,
-        )
-        .buck_error_context("Invalid directory")?;
+        let dir = re_tree_to_directory(&tree, &Timestamp::UNIX_EPOCH, digest_config)
+            .buck_error_context("Invalid directory")?;
 
         Ok(ArtifactValue::new(
             ActionDirectoryEntry::Dir(
@@ -718,8 +712,6 @@ impl Action for CasArtifactAction {
                         cas_download_info.as_ref(),
                         directory_kind,
                         ctx.digest_config(),
-                        ctx.output_trees_download_config()
-                            .fingerprint_re_output_trees_eagerly(),
                     ),
                 )
                 .await?

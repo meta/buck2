@@ -40,6 +40,15 @@ where
     inner: Arc<BuckDashMap<H, Weak<SharedDirectoryInner<L, H>>>>,
 }
 
+impl<L, H> Default for DashMapDirectoryInterner<L, H>
+where
+    H: DirectoryDigest,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<L, H> DashMapDirectoryInterner<L, H>
 where
     H: DirectoryDigest,

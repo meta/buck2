@@ -758,10 +758,11 @@ impl RunAction {
                 BuckMutInsertionSet::default(),
                 action_execution_ctx.fs(),
                 action_execution_ctx.digest_config(),
-                action_execution_ctx
-                    .run_action_knobs()
-                    .action_paths_interner
-                    .as_ref(),
+                Some(
+                    &action_execution_ctx
+                        .run_action_knobs()
+                        .action_paths_interner,
+                ),
             )?;
 
             let worker_key = if worker.supports_bazel_remote_persistent_worker_protocol {
@@ -866,10 +867,11 @@ impl RunAction {
                 BuckMutInsertionSet::default(),
                 action_execution_ctx.fs(),
                 action_execution_ctx.digest_config(),
-                action_execution_ctx
-                    .run_action_knobs()
-                    .action_paths_interner
-                    .as_ref(),
+                Some(
+                    &action_execution_ctx
+                        .run_action_knobs()
+                        .action_paths_interner,
+                ),
             )?;
             Some(RemoteWorkerSpec {
                 id: remote_worker.id,
@@ -1079,7 +1081,7 @@ impl RunAction {
                 .collect(),
             ctx.fs(),
             ctx.digest_config(),
-            ctx.run_action_knobs().action_paths_interner.as_ref(),
+            Some(&ctx.run_action_knobs().action_paths_interner),
         )?;
 
         Ok((
@@ -1370,7 +1372,7 @@ impl RunAction {
                             output_paths_as_inputs,
                             fs,
                             digest_config,
-                            ctx.run_action_knobs().action_paths_interner.as_ref(),
+                            Some(&ctx.run_action_knobs().action_paths_interner),
                         )?;
                         let override_prepared_action = ctx.prepare_action(&override_req, true)?;
                         (override_req, override_prepared_action)

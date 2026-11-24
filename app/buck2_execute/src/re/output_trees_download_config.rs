@@ -22,14 +22,10 @@ pub struct OutputTreesDownloadSemaphore {
 #[derive(Clone, Dupe)]
 pub struct OutputTreesDownloadConfig {
     semaphore: Option<Arc<OutputTreesDownloadSemaphore>>,
-    fingerprint_re_output_trees_eagerly: bool,
 }
 
 impl OutputTreesDownloadConfig {
-    pub fn new(
-        max_concurrent_bytes: Option<u32>,
-        fingerprint_re_output_trees_eagerly: bool,
-    ) -> Self {
+    pub fn new(max_concurrent_bytes: Option<u32>) -> Self {
         Self {
             semaphore: max_concurrent_bytes.map(|size| {
                 Arc::new(OutputTreesDownloadSemaphore {
@@ -37,15 +33,10 @@ impl OutputTreesDownloadConfig {
                     max_concurrent_bytes: size,
                 })
             }),
-            fingerprint_re_output_trees_eagerly,
         }
     }
 
     pub fn semaphore(&self) -> Option<&OutputTreesDownloadSemaphore> {
         self.semaphore.as_ref().map(|s| s.as_ref())
-    }
-
-    pub fn fingerprint_re_output_trees_eagerly(&self) -> bool {
-        self.fingerprint_re_output_trees_eagerly
     }
 }

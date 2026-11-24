@@ -2062,10 +2062,12 @@ impl BuckTestOrchestrator<'_> {
                 outputs,
                 fs,
                 digest_config,
-                dice.per_transaction_data()
-                    .get_run_action_knobs()
-                    .action_paths_interner
-                    .as_ref(),
+                Some(
+                    &dice
+                        .per_transaction_data()
+                        .get_run_action_knobs()
+                        .action_paths_interner,
+                ),
             )?,
             env,
         );
@@ -2322,10 +2324,12 @@ impl BuckTestOrchestrator<'_> {
             buck_mut_insertion_set![],
             fs,
             digest_config,
-            dice.per_transaction_data()
-                .get_run_action_knobs()
-                .action_paths_interner
-                .as_ref(),
+            Some(
+                &dice
+                    .per_transaction_data()
+                    .get_run_action_knobs()
+                    .action_paths_interner,
+            ),
         )?;
         let mut execution_request = CommandExecutionRequest::new(vec![], cmd, paths, env);
         execution_request =

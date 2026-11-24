@@ -531,7 +531,7 @@ impl<'a> ServerCommandContext<'a> {
                 .use_network_action_output_cache,
             eager_dep_files,
             default_allow_cache_upload: false,
-            action_paths_interner: None,
+            action_paths_interner: DashMapDirectoryInterner::new(),
             write_cas_probe: false,
             defer_write_actions: false,
             write_action_cache: WriteActionCacheMode::Off,
@@ -1130,16 +1130,6 @@ impl DiceCommandUpdater<'_, '_> {
             })?
             .unwrap_or(false);
 
-        if root_config
-            .parse::<bool>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "share_action_paths",
-            })?
-            .unwrap_or(true)
-        {
-            run_action_knobs.action_paths_interner = Some(DashMapDirectoryInterner::new());
-        }
-
         // A write whose content the CAS already has is declared as a CAS download, so its bytes
         // then exist nowhere but the CAS. That pays only when the content would not have gone to
         // the output path right away (`defer_write_actions`); a hit trades a write for a download
@@ -1186,17 +1176,8 @@ impl DiceCommandUpdater<'_, '_> {
             property: "output_trees_download_semaphore_size",
         })?;
 
-        let fingerprint_re_output_trees_eagerly = root_config
-            .parse::<bool>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "fingerprint_re_output_trees_eagerly",
-            })?
-            .unwrap_or(true);
-
-        let output_trees_download_config = OutputTreesDownloadConfig::new(
-            output_trees_download_semaphore_size,
-            fingerprint_re_output_trees_eagerly,
-        );
+        let output_trees_download_config =
+            OutputTreesDownloadConfig::new(output_trees_download_semaphore_size);
 
         buck2_core::faster_directories::VALUE.store(
             root_config

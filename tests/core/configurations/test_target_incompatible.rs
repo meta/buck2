@@ -101,8 +101,10 @@ async fn error_on_dep_only_incompatible(
     target_pattern: &str,
     soft_error: bool,
 ) -> anyhow::Result<()> {
-    let config = format!("buck2.error_on_dep_only_incompatible=//some/...,{target_pattern}");
-    let args = ["-c", &config, "//dep_incompatible:dep_incompatible"];
+    let setting = format!(
+        r#"target_compatibility.error_on_dep_only_incompatible=["//some/...", "{target_pattern}"]"#
+    );
+    let args = ["--setting", &setting, "//dep_incompatible:dep_incompatible"];
     if soft_error {
         check_dep_only_incompatible_soft_err(buck, &args).await?;
     } else {
@@ -169,8 +171,8 @@ async fn test_error_on_dep_only_incompatible_conf(buck: &Buck) {
 #[buck_test(allow_soft_errors = true)]
 async fn test_error_on_dep_only_incompatible_excluded(buck: &Buck) -> anyhow::Result<()> {
     let args = [
-        "-c",
-        "buck2.error_on_dep_only_incompatible_excluded=//dep_incompatible:dep_incompatible_conf2",
+        "--setting",
+        r#"target_compatibility.error_on_dep_only_incompatible_excluded=["//dep_incompatible:dep_incompatible_conf2"]"#,
         "//dep_incompatible:dep_incompatible_conf2",
     ];
     check_dep_only_incompatible_soft_err(buck, &args).await
@@ -180,8 +182,8 @@ async fn test_error_on_dep_only_incompatible_excluded(buck: &Buck) -> anyhow::Re
 async fn test_dep_only_incompatible_custom_soft_errors_with_exclusions(
     buck: &Buck,
 ) -> anyhow::Result<()> {
-    let config = "buck2.dep_only_incompatible_info=//dep_incompatible/dep_only_incompatible_info:dep_only_incompatible_info_with_exclusions";
-    buck.cquery(&["//dep_incompatible:dep_incompatible", "-c", config])
+    let setting = "target_compatibility.dep_only_incompatible_info=//dep_incompatible/dep_only_incompatible_info:dep_only_incompatible_info_with_exclusions";
+    buck.cquery(&["//dep_incompatible:dep_incompatible", "--setting", setting])
         .await?;
     let result = buck.log(&["show"]).await?;
     assert!(result.stdout.contains("Soft Error: soft_error_one"));
@@ -189,8 +191,8 @@ async fn test_dep_only_incompatible_custom_soft_errors_with_exclusions(
 
     buck.cquery(&[
         "//dep_incompatible:transitive_dep_incompatible",
-        "-c",
-        config,
+        "--setting",
+        setting,
     ])
     .await?;
     let result = buck.log(&["show"]).await?;

@@ -1,0 +1,5 @@
+[target_compatibility]
+error_on_dep_only_incompatible = [
+    "//dep_incompatible:dep_incompatible_conf1",
+    "//dep_incompatible:dep_incompatible_conf2",
+]

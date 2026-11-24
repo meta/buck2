@@ -23,8 +23,6 @@ use buck2_build_signals::node_key::BuildSignalsNodeKey;
 use buck2_build_signals::node_key::BuildSignalsNodeKeyImpl;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::legacy_configs::view::LegacyBuckConfigView;
 use buck2_configuration_providers::dep_only_incompatible_info::DepOnlyIncompatibleCustomSoftErrors;
 use buck2_configuration_providers::dep_only_incompatible_info::DepOnlyIncompatibleInfo;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
@@ -86,6 +84,8 @@ use buck2_node::package_visibility::HasPackageVisibilityDefaultIntersection;
 use buck2_node::rule::RuleExecutionGroup;
 use buck2_node::rule::RuleIncomingTransition;
 use buck2_settings::PackageVisibilityDefaultIntersection;
+use buck2_settings::TargetCompatibility;
+use buck2_settings::dice::HasDiceBuckSettings;
 use buck2_util::arc_str::ArcStr;
 use derive_more::Display;
 use dice::Demand;
@@ -101,7 +101,6 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use itertools::Itertools;
 use pagable::Pagable;
-use pagable::StaticStr;
 use pagable::pagable_typetag;
 
 use crate::configuration::compute_platform_cfgs;
@@ -1711,51 +1710,47 @@ impl ConfiguredTargetNodeCalculationImpl for ConfiguredTargetNodeCalculationInst
     }
 }
 
-pagable::static_str!(SECTION_BUCK2 = "buck2");
-pagable::static_str!(PROPERTY_ERROR_ON_DEP_ONLY_INCOMPATIBLE = "error_on_dep_only_incompatible");
-pagable::static_str!(
-    PROPERTY_ERROR_ON_DEP_ONLY_INCOMPATIBLE_EXCLUDED = "error_on_dep_only_incompatible_excluded"
-);
+/// One of the two pattern lists that decide whether a target that is incompatible only
+/// through a dependency is an error.
+#[derive(
+    Clone, Copy, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable
+)]
+enum DepOnlyIncompatiblePatterns {
+    #[display("error_on_dep_only_incompatible")]
+    Error,
+    #[display("error_on_dep_only_incompatible_excluded")]
+    Excluded,
+}
 
 async fn check_error_on_incompatible_dep(
     ctx: &mut DiceComputations<'_>,
     target_label: &TargetLabel,
 ) -> buck2_error::Result<bool> {
-    if check_target_enabled_for_config(
+    if matches_dep_only_incompatible_patterns(
         ctx,
         target_label,
-        SECTION_BUCK2,
-        PROPERTY_ERROR_ON_DEP_ONLY_INCOMPATIBLE_EXCLUDED,
+        DepOnlyIncompatiblePatterns::Excluded,
     )
     .await?
     {
         return Ok(false);
     }
-    check_target_enabled_for_config(
-        ctx,
-        target_label,
-        SECTION_BUCK2,
-        PROPERTY_ERROR_ON_DEP_ONLY_INCOMPATIBLE,
-    )
-    .await
+    matches_dep_only_incompatible_patterns(ctx, target_label, DepOnlyIncompatiblePatterns::Error)
+        .await
 }
 
-async fn check_target_enabled_for_config(
+async fn matches_dep_only_incompatible_patterns(
     ctx: &mut DiceComputations<'_>,
     target_label: &TargetLabel,
-    section: StaticStr,
-    property: StaticStr,
+    patterns: DepOnlyIncompatiblePatterns,
 ) -> buck2_error::Result<bool> {
     #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-    #[display("ConfigPatternCalculation({section}, {property})")]
+    #[display("DepOnlyIncompatiblePatternsKey({_0})")]
     #[pagable_typetag(dice::DiceKeyDyn)]
-    struct ConfigPatternCalculation {
-        section: StaticStr,
-        property: StaticStr,
-    }
+    struct DepOnlyIncompatiblePatternsKey(DepOnlyIncompatiblePatterns);
 
     #[async_trait]
-    impl Key for ConfigPatternCalculation {
+    impl Key for DepOnlyIncompatiblePatternsKey {
         type Value = buck2_error::Result<Vec<ParsedPattern<TargetPatternExtra>>>;
 
         async fn compute(
@@ -1767,13 +1762,17 @@ async fn check_target_enabled_for_config(
             let root_cell = cell_resolver.root_cell();
             let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
             let root_conf = ctx.get_legacy_root_config_on_dice().await?;
-            let patterns: Vec<String> = root_conf
-                .view(ctx)
-                .parse_list(BuckconfigKeyRef {
-                    section: &self.section,
-                    property: &self.property,
-                })?
-                .unwrap_or_default();
+            let settings = ctx.dice_settings::<TargetCompatibility>().await?;
+            let mut buckconfig = root_conf.view(ctx);
+            let patterns = match self.0 {
+                DepOnlyIncompatiblePatterns::Error => {
+                    settings.error_on_dep_only_incompatible(&mut buckconfig)?
+                }
+                DepOnlyIncompatiblePatterns::Excluded => {
+                    settings.error_on_dep_only_incompatible_excluded(&mut buckconfig)?
+                }
+            }
+            .unwrap_or_default();
 
             let mut result = Vec::new();
             for pattern in patterns {
@@ -1800,10 +1799,7 @@ async fn check_target_enabled_for_config(
     }
 
     let patterns = ctx
-        .compute(&ConfigPatternCalculation {
-            section: section.into(),
-            property: property.into(),
-        })
+        .compute(&DepOnlyIncompatiblePatternsKey(patterns))
         .await?
         .as_ref()
         .duped_err()?;
@@ -1837,10 +1833,10 @@ async fn get_dep_only_incompatible_custom_soft_error(
             let root_cell = cell_resolver.root_cell();
             let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
             let root_conf = ctx.get_legacy_root_config_on_dice().await?;
-            let Some(target) = root_conf.view(ctx).parse::<String>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "dep_only_incompatible_info",
-            })?
+            let Some(target) = ctx
+                .dice_settings::<TargetCompatibility>()
+                .await?
+                .dep_only_incompatible_info(&mut root_conf.view(ctx))?
             else {
                 return Ok(None);
             };

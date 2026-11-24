@@ -13,8 +13,3 @@ nano_prelude = bundled
 
 [build]
 execution_platforms = root//exec_dep:execution_platforms
-
-[buck2]
-error_on_dep_only_incompatible = \
-    //dep_incompatible:dep_incompatible_conf1, \
-    //dep_incompatible:dep_incompatible_conf2

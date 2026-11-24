@@ -48,6 +48,7 @@ use crate::resource_control::ResourceControl;
 use crate::section::Section;
 use crate::source::Source;
 use crate::starlark::Starlark;
+use crate::target_compatibility::TargetCompatibility;
 use crate::target_platforms::TargetPlatforms;
 use crate::test::Test;
 use crate::write_actions::WriteActions;
@@ -241,6 +242,7 @@ buck_settings! {
         paths: Paths,
         source: Source,
         starlark: Starlark,
+        target_compatibility: TargetCompatibility,
         target_platforms: TargetPlatforms,
     }
 }

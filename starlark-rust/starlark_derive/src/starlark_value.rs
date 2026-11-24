@@ -390,6 +390,22 @@ impl ImplStarlarkValue {
                 });
             }
         }
+        // The vtable entries of `repr` and `str` read these two flags to choose between the
+        // method and the representation's `Display`, and a macro may define either method.
+        if self.has_macro_item() {
+            for name in ["collect_repr", "collect_str"] {
+                let written = fixed_trait
+                    .items
+                    .iter()
+                    .any(|item| matches!(item, syn::ImplItem::Fn(f) if f.sig.ident == name));
+                if !written {
+                    let has_name = vtable_has_field_name(&quote::format_ident!("{}", name));
+                    flags.push(syn::parse_quote! {
+                        const #has_name: bool = true;
+                    });
+                }
+            }
+        }
         Ok(flags)
     }
 

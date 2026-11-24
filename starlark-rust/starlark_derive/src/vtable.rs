@@ -276,12 +276,32 @@ impl Gen {
                 let [value, args @ ..] = field_init_args.as_slice() else {
                     unreachable!("a method with a receiver has a receiver");
                 };
-                (
-                    quote! { StarlarkValue<'v2> },
+                // `repr` and `str` of a type that writes neither are the `Display` of the
+                // representation, which the entry names statically. The trait's default has
+                // only the `Get` and reaches that `Display` through the value's vtable, which
+                // measured 18 more instructions on `"%s-%s" % (1, "x")`.
+                let call: syn::Expr = if fn_name == "collect_repr" || fn_name == "collect_str" {
+                    let str_first = (fn_name == "collect_str").then(|| {
+                        quote_spanned! {method.sig.span()=>
+                            if <T::Type as StarlarkType<'v2>>::HAS_collect_str {
+                                <T::Type as StarlarkType<'v2>>::collect_str(T::get_typed(#value), #(#args),*)
+                            } else
+                        }
+                    });
+                    syn::parse_quote_spanned! {method.sig.span()=>
+                        #str_first if <T::Type as StarlarkType<'v2>>::HAS_collect_repr {
+                            <T::Type as StarlarkType<'v2>>::collect_repr(T::get_typed(#value), #(#args),*)
+                        } else {
+                            let payload: &T = #value.as_ref();
+                            std::fmt::Write::write_fmt(#(#args),*, format_args!("{}", payload)).unwrap()
+                        }
+                    }
+                } else {
                     syn::parse_quote_spanned! {method.sig.span()=>
                         <T::Type as StarlarkType<'v2>>::#fn_name(T::get_typed(#value), #(#args),*)
-                    },
-                )
+                    }
+                };
+                (quote! { StarlarkValue<'v2> }, call)
             }
         };
         let init = syn::parse_quote_spanned! {method.sig.span()=>

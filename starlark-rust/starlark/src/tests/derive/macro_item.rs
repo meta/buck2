@@ -81,3 +81,48 @@ fn test_attribute_from_item_macro() {
     a.eq("dir(example)", "[\"hello\"]");
     a.eq("def f():\n    return example.hello\nf()", "\"world\"");
 }
+
+macro_rules! shout_repr {
+    () => {
+        fn collect_repr(this: starlark::values::ValueTyped<'v, Self>, collector: &mut String) {
+            collector.push_str(&this.hello.to_uppercase());
+        }
+    };
+}
+
+#[derive(
+    Debug,
+    Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("{:?}", self)]
+struct Shouting {
+    hello: String,
+}
+starlark_simple_value!(Shouting);
+
+#[starlark_value(type = "shouting")]
+impl<'v> StarlarkValue<'v> for Shouting {
+    shout_repr!();
+}
+
+/// `repr` and `str` are the method an item macro defines, not the `Display` they are of a
+/// block that defines neither.
+#[test]
+fn test_repr_from_item_macro() {
+    let mut a = Assert::new();
+    a.globals_add(|builder| {
+        builder.set(
+            "shouting",
+            Shouting {
+                hello: "world".to_owned(),
+            },
+        )
+    });
+
+    a.eq("repr(shouting)", "\"WORLD\"");
+    a.eq("str(shouting)", "\"WORLD\"");
+}

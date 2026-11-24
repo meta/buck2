@@ -34,6 +34,7 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -45,6 +46,7 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::InputProperties;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
@@ -339,6 +341,11 @@ impl<'v> StarlarkValue<'v> for ResolvedStringWithMacros<'v> {
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike>(self);
+    }
+
+    #[starlark(implements = StarlarkCmdArgsLike)]
+    fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
+        this.as_ref()
     }
 }
 

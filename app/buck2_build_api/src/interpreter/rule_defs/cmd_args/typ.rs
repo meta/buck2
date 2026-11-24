@@ -60,6 +60,7 @@ use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
+use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 use starlark::values::string::StarlarkStr;
 use starlark::values::tuple::TupleType;
 
@@ -71,6 +72,7 @@ use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkO
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::builder::CommandLineBuilder;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 use crate::interpreter::rule_defs::cmd_args::compute_relative_to_path;
 use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptions;
@@ -716,6 +718,11 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(CMD_ARGS_METHODS.methods())
     }
+
+    #[starlark(implements = StarlarkCmdArgsLike)]
+    fn cmd_args_like(this: Self) -> &'v dyn CommandLineArgLike<'v> {
+        this.as_command_line_arg_like()
+    }
 }
 
 #[starlark_value]
@@ -1112,6 +1119,8 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
 
 #[starlark_module]
 pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
+    const CmdArgsLike: StarlarkValueAsType<StarlarkCmdArgsLike> = StarlarkCmdArgsLike::global();
+
     #[starlark(as_type = FrozenStarlarkCmdArgs)]
     /// The `cmd_args` type is created by this function and is consumed by `ctx.actions.run`.
     /// The type is a mutable collection of strings and artifact values.

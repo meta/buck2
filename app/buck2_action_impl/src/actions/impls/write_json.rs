@@ -32,6 +32,7 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use buck2_build_api::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_build_signals::env::WaitingData;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
@@ -60,6 +61,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 use crate::actions::impls::declare_writes::declare_writes;
@@ -317,6 +319,11 @@ starlark_complex_value!(pub(crate) StarlarkWriteJsonCommandLineArg);
 impl<'v> StarlarkValue<'v> for StarlarkWriteJsonCommandLineArg<'v> {
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike>(self);
+    }
+
+    #[starlark(implements = StarlarkCmdArgsLike)]
+    fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
+        this.as_ref()
     }
 }
 

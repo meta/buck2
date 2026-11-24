@@ -52,6 +52,7 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 /// Thin wrapper around `OutputArtifact`.
@@ -241,6 +242,14 @@ impl<'v> StarlarkType<'v> for StarlarkOutputArtifactView<'v> {
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) {
         StarlarkArtifactLike::write_hash(self.as_artifact_like(), hasher)
+    }
+
+    #[starlark(implements = StarlarkCmdArgsLike)]
+    fn cmd_args_like(this: Self) -> &'v dyn CommandLineArgLike<'v> {
+        match this {
+            StarlarkOutputArtifactView::Unfrozen(x) => x.as_ref(),
+            StarlarkOutputArtifactView::Frozen(x) => x.as_ref(),
+        }
     }
 }
 

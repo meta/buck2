@@ -9,6 +9,7 @@
  */
 
 mod builder;
+pub mod cmd_args_like;
 pub mod command_line_arg_like_type;
 mod options;
 pub(crate) mod regex;

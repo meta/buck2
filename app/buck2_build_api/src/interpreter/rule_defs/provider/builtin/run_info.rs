@@ -32,6 +32,7 @@ use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgsView;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueUnpack;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 /// Provider that signals a rule is runnable and defines how to execute it.
@@ -71,7 +72,7 @@ use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command
 ///         ),
 ///     ]
 /// ```
-#[internal_provider(run_info_creator)]
+#[internal_provider(run_info_creator, implements = StarlarkCmdArgsLike)]
 #[derive(
     Clone,
     Debug,

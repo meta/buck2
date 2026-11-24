@@ -41,6 +41,7 @@ use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkO
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 
 pub trait StarlarkArtifactLike<'v>: Display {
     fn with_filename(
@@ -166,6 +167,15 @@ starlark::methods_static!(STARLARK_ARTIFACT_METHODS = artifact_methods);
 impl<'v> StarlarkType<'v> for StarlarkArtifactView<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(STARLARK_ARTIFACT_METHODS.methods())
+    }
+
+    #[starlark(implements = StarlarkCmdArgsLike)]
+    fn cmd_args_like(this: Self) -> &'v dyn CommandLineArgLike<'v> {
+        match this {
+            StarlarkArtifactView::Artifact(x) => x.as_ref(),
+            StarlarkArtifactView::DeclaredArtifact(x) => x.as_ref(),
+            StarlarkArtifactView::PromiseArtifact(x) => x.as_ref(),
+        }
     }
 
     fn equals(&self, other: ArtifactOrOutputArtifact<'v>) -> bool {

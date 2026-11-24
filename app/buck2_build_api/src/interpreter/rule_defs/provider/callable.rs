@@ -23,6 +23,7 @@ use buck2_hash::BuckMutInsertionMap;
 use buck2_hash::BuckMutInsertionSet;
 use buck2_interpreter::build_context::starlark_path_from_build_context;
 use buck2_interpreter::types::provider::callable::ProviderCallableLike;
+use buck2_interpreter::types::provider::callable::StarlarkProviderCallable;
 use dupe::Dupe;
 use either::Either;
 use itertools::Itertools;
@@ -524,6 +525,14 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
 
     fn typechecker_ty(&self) -> Option<Ty> {
         self.callable().map(|named| named.ty_callable.dupe())
+    }
+
+    #[starlark(implements = StarlarkProviderCallable)]
+    fn provider_callable(this: Self) -> &'v dyn ProviderCallableLike {
+        match this {
+            UserProviderCallableView::Frozen(x) => x.as_ref(),
+            UserProviderCallableView::Unfrozen(x) => x.as_ref(),
+        }
     }
 }
 

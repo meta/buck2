@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use buck2_core::provider::id::ProviderId;
 use starlark::any::ProvidesStaticType;
+use starlark::starlark_predicate_type;
 use starlark::values::Value;
 
 pub trait ProviderCallableLike {
@@ -20,6 +21,21 @@ pub trait ProviderCallableLike {
 
 unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn ProviderCallableLike {
     type StaticType = &'static dyn ProviderCallableLike;
+}
+
+// There is no global of this name, and so no `.bzl` file can write the type: an honest type for
+// `FooInfo` would say which provider it makes, and what Starlark code gets to write for that
+// is not decided. Signatures and error messages print the name all the same.
+starlark_predicate_type! {
+    /// A provider type: what makes providers of one kind, and what a provider is asked for by.
+    ///
+    /// `DefaultInfo` is one, and so is `FooInfo` for a `FooInfo = provider(..)` of a `.bzl`
+    /// file. It is what `dep[FooInfo]` is indexed with and what
+    /// `attrs.dep(providers = [FooInfo])` lists. What calling one gives, `FooInfo(..)`, is
+    /// a `Provider`.
+    pub StarlarkProviderCallable<'v>;
+    name "ProviderCallable";
+    get &'v dyn ProviderCallableLike;
 }
 
 pub trait ValueAsProviderCallableLike<'v> {

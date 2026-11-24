@@ -660,6 +660,13 @@ impl ProviderCodegen {
                         Some(BUILTIN_PROVIDER_TY.instance())
                     }
 
+                    #[starlark(implements = buck2_interpreter::types::provider::callable::StarlarkProviderCallable)]
+                    fn provider_callable(
+                        this: starlark::values::ValueTyped<'v, Self>,
+                    ) -> &'v dyn buck2_interpreter::types::provider::callable::ProviderCallableLike {
+                        this.as_ref()
+                    }
+
                     #documentation_function
                     #typechecker_ty_function
                 }

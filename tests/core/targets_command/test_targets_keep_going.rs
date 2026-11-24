@@ -9,6 +9,7 @@
  */
 
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::filter_events;
 use serde_json::Value;
 
 const TARGETS: [&str; 6] = [
@@ -34,7 +35,10 @@ fn targets_and_errors(stdout: &str) -> anyhow::Result<(Vec<String>, Vec<Value>)>
 
 #[buck_test]
 async fn test_keep_going_json(buck: &Buck) -> anyhow::Result<()> {
-    let result = buck.targets(&["//...", "--json", "--keep-going"]).await?;
+    let result = buck
+        .targets(&["//...", "--json", "--keep-going"])
+        .env("BUCK2_DEBUG_RAWOUTPUT_CHUNK_SIZE", "7")
+        .await?;
     let (targets, errors) = targets_and_errors(&result.stdout)?;
 
     assert_eq!(targets, TARGETS);
@@ -46,6 +50,10 @@ async fn test_keep_going_json(buck: &Buck) -> anyhow::Result<()> {
             .unwrap()
             .contains("test_error")
     );
+
+    // Large target lists must use chunked stdout instead of a single gRPC response.
+    let response = filter_events(buck, &["Result", "result", "targets_response"]).await?;
+    assert_eq!(response[0]["serialized_targets_output"], "");
     Ok(())
 }
 

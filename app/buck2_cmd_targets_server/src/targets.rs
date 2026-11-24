@@ -44,12 +44,6 @@ use crate::targets::fmt::create_formatter;
 use crate::targets::resolve_alias::targets_resolve_aliases;
 use crate::targets::streaming::targets_streaming;
 
-#[derive(PartialEq, Eq)]
-enum OutputType {
-    Stdout,
-    File,
-}
-
 trait Compressor: Write + Send {
     fn finish(self: Box<Self>) -> buck2_error::Result<()>;
 }
@@ -93,14 +87,14 @@ impl<T: Write + Send> Compressor for zstd::Encoder<'_, T> {
 fn outputter<'a, W: Write + Send + 'a>(
     request: &TargetsRequest,
     stdout: W,
-) -> buck2_error::Result<(OutputType, Box<dyn Compressor + 'a>)> {
-    let (output_type, output): (_, Box<dyn Compressor>) = match &request.output {
-        None => (OutputType::Stdout, Box::new(UncompressedCompressor(stdout))),
+) -> buck2_error::Result<Box<dyn Compressor + 'a>> {
+    let output: Box<dyn Compressor> = match &request.output {
+        None => Box::new(UncompressedCompressor(stdout)),
         Some(file) => {
             let file = BufWriter::new(File::create(file).with_buck_error_context(|| {
                 format!("Failed to open file `{file}` for `targets` output ")
             })?);
-            (OutputType::File, Box::new(UncompressedCompressor(file)))
+            Box::new(UncompressedCompressor(file))
         }
     };
 
@@ -111,7 +105,7 @@ fn outputter<'a, W: Write + Send + 'a>(
         Compression::Gzip => Box::new(GzEncoder::new(output, Default::default())),
         Compression::Zstd => Box::new(zstd::Encoder::new(output, 9)?),
     };
-    Ok((output_type, output))
+    Ok(output)
 }
 
 pub async fn targets_command(
@@ -171,13 +165,10 @@ async fn targets(
     dice: DiceTransaction,
     request: &TargetsRequest,
 ) -> buck2_error::Result<TargetsResponse> {
-    let (output_type, mut output) = outputter(request, stdout)?;
+    let mut output = outputter(request, stdout)?;
     let mut res = targets_with_output(server_ctx, dice, request, &mut output).await;
     match &mut res {
-        Ok(response)
-            if !response.serialized_targets_output.is_empty()
-                && output_type == OutputType::File =>
-        {
+        Ok(response) if !response.serialized_targets_output.is_empty() => {
             output.write_all(response.serialized_targets_output.as_bytes())?;
             response.serialized_targets_output.clear();
         }

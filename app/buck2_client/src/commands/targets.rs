@@ -442,7 +442,7 @@ async fn targets(
     events_ctx: &mut EventsCtx,
     target_request: TargetsRequest,
 ) -> ExitResult {
-    let response = buckd
+    buckd
         .with_flushing()
         .targets(
             target_request,
@@ -451,8 +451,5 @@ async fn targets(
             &mut StdoutPartialResultHandler,
         )
         .await??;
-    if !response.serialized_targets_output.is_empty() {
-        buck2_client_ctx::print!("{}", response.serialized_targets_output)?;
-    }
     ExitResult::success()
 }

@@ -572,7 +572,8 @@ impl CommandKind {
                 )
                 .into();
         }
-        thread::scope(|scope| {
+        let no_buckd = common_opts.no_buckd;
+        let result = thread::scope(|scope| {
             // Spawn a thread to have stack size independent on linker/environment.
             match thread_spawn_scoped("buck2-main", scope, move || {
                 self.exec_no_daemon(
@@ -590,7 +591,13 @@ impl CommandKind {
                 },
                 Err(e) => ExitResult::bail(format_args!("Failed to start main thread: {e}")),
             }
-        })
+        });
+        if no_buckd {
+            // A `--no-buckd` daemon runs in this process, which ends with `_exit` or `exec`.
+            // Neither writes a PGO profile.
+            buck2_util::pgo::flush_pgo_profile();
+        }
+        result
     }
 
     fn exec_no_daemon(

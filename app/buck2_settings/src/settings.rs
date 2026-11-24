@@ -35,6 +35,7 @@ use crate::execution_platforms::ExecutionPlatforms;
 use crate::health_check::HealthCheck;
 use crate::http::Http;
 use crate::hydration::Hydration;
+use crate::labels::Labels;
 use crate::log_download::LogDownload;
 use crate::materializer::Materializer;
 use crate::metadata::SectionMetadata;
@@ -239,6 +240,7 @@ buck_settings! {
     }
     dice {
         execution_platforms: ExecutionPlatforms,
+        labels: Labels,
         paths: Paths,
         source: Source,
         starlark: Starlark,

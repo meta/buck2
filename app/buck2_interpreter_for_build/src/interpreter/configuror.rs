@@ -72,9 +72,7 @@ pub struct BuildInterpreterConfiguror {
     host_info: HostInfo,
     record_target_call_stack: bool,
     skip_targets_with_duplicate_names: bool,
-    /// Whether to infer a target name when a pattern in a build or bzl file does
-    /// not provide one, making `//foo/bar` equivalent to `//foo/bar:bar`.
-    /// Controlled by the `buck2.infer_target_names` buckconfig.
+    /// `labels.infer_target_names`.
     infer_target_names: InferTargetNames,
     /// For test.
     additional_globals: Option<AdditionalGlobalsFn>,
@@ -101,7 +99,7 @@ impl BuildInterpreterConfiguror {
         }))
     }
 
-    pub(crate) fn infer_target_names(&self) -> InferTargetNames {
+    pub fn infer_target_names(&self) -> InferTargetNames {
         self.infer_target_names
     }
 

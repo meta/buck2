@@ -12,12 +12,12 @@ use buck2_e2e::prelude::*;
 
 // Turns `//lib/greeting` into `//lib/greeting:greeting` during coercion in
 // build/bzl files. Off by default.
-const ENABLE: &str = "buck2.infer_target_names=true";
+const ENABLE: &str = "labels.infer_target_names=true";
 
 #[buck_test]
 async fn test_eponymous_dep_in_build_file_rejected_by_default(buck: &Buck) {
     // `//:consumer` depends on the abbreviated `//lib/greeting`. Without the
-    // buckconfig this is a coercion error, matching historical behavior.
+    // setting this is a coercion error, matching historical behavior.
     let res = buck
         .uquery(&["deps(root//:consumer)", "--console=none", "-v0"])
         .await
@@ -27,10 +27,10 @@ async fn test_eponymous_dep_in_build_file_rejected_by_default(buck: &Buck) {
 
 #[buck_test]
 async fn test_eponymous_dep_in_build_file_inferred_when_enabled(buck: &Buck) -> anyhow::Result<()> {
-    // With the buckconfig, `//lib/greeting` is inferred to be
+    // With the setting, `//lib/greeting` is inferred to be
     // `//lib/greeting:greeting`, which is a real target, so the query succeeds.
     let res = buck
-        .uquery(&["deps(root//:consumer)", "-c", ENABLE])
+        .uquery(&["deps(root//:consumer)", "--setting", ENABLE])
         .await?;
     assert!(res.stdout.contains("root//lib/greeting:greeting"));
     Ok(())
@@ -39,7 +39,7 @@ async fn test_eponymous_dep_in_build_file_inferred_when_enabled(buck: &Buck) -> 
 #[buck_test]
 async fn test_eponymous_source_in_build_file_rejected_by_default(buck: &Buck) {
     // `attrs.source()` takes either a path or a label, so it coerces separately
-    // from `attrs.dep()`. Without the buckconfig, `//lib/greeting` fails as both
+    // from `attrs.dep()`. Without the setting, `//lib/greeting` fails as both
     // a label without an explicit target name and as a non-relative path.
     buck.uquery(&["deps(root//source:src_consumer)", "--console=none", "-v0"])
         .await
@@ -51,10 +51,10 @@ async fn test_eponymous_source_in_build_file_rejected_by_default(buck: &Buck) {
 async fn test_eponymous_source_in_build_file_inferred_when_enabled(
     buck: &Buck,
 ) -> anyhow::Result<()> {
-    // With the buckconfig, the source attr coerces to the eponymous label rather
+    // With the setting, the source attr coerces to the eponymous label rather
     // than being (mis)treated as a path.
     let res = buck
-        .uquery(&["deps(root//source:src_consumer)", "-c", ENABLE])
+        .uquery(&["deps(root//source:src_consumer)", "--setting", ENABLE])
         .await?;
     assert!(res.stdout.contains("root//lib/greeting:greeting"));
     Ok(())
@@ -64,7 +64,7 @@ async fn test_eponymous_source_in_build_file_inferred_when_enabled(
 async fn test_eponymous_attr_default_in_bzl_rejected_by_default(buck: &Buck) {
     // The `//bzl_default` rule declares `attrs.dep(default = "//lib/greeting")`.
     // The default is coerced while evaluating the .bzl module, so it errors
-    // without the buckconfig.
+    // without the setting.
     let res = buck
         .uquery(&["root//bzl_default:", "--console=none", "-v0"])
         .await
@@ -79,10 +79,10 @@ async fn test_eponymous_attr_default_in_bzl_rejected_by_default(buck: &Buck) {
 async fn test_eponymous_attr_default_in_bzl_inferred_when_enabled(
     buck: &Buck,
 ) -> anyhow::Result<()> {
-    // With the buckconfig, the eponymous attr default resolves and shows up as a
+    // With the setting, the eponymous attr default resolves and shows up as a
     // dependency of the target.
     let res = buck
-        .uquery(&["deps(root//bzl_default:target)", "-c", ENABLE])
+        .uquery(&["deps(root//bzl_default:target)", "--setting", ENABLE])
         .await?;
     assert!(res.stdout.contains("root//lib/greeting:greeting"));
     Ok(())

@@ -931,13 +931,14 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
 
         let cell_resolver = cells_and_configs.cell_resolver;
 
-        let infer_target_names = if cells_and_configs
-            .root_config
-            .parse::<bool>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "infer_target_names",
-            })?
-            .unwrap_or(false)
+        // Part of the interpreter configuror, which is injected below, so a change is tracked
+        // through that.
+        let infer_target_names = if self
+            .cmd_ctx
+            .buck_settings
+            .dice_sections()
+            .labels
+            .infer_target_names(&mut &cells_and_configs.root_config)?
         {
             InferTargetNames::Yes
         } else {

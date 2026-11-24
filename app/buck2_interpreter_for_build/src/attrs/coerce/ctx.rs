@@ -85,9 +85,7 @@ pub struct BuildAttrCoercionContext {
     enclosing_package: Option<(PackageLabel, PackageListing)>,
     /// This defines the limited scope in which we allow parsing patterns beginning with `../`
     current_dir_with_allowed_relative_dirs: CellPathWithAllowedRelativeDir,
-    /// Whether to infer a target name when a pattern does not provide one,
-    /// making `//foo/bar` equivalent to `//foo/bar:bar`. Controlled by the
-    /// `buck2.infer_target_names` buckconfig.
+    /// `labels.infer_target_names`.
     infer_target_names: InferTargetNames,
     /// Allocator for `label_cache`.
     alloc: Bump,

@@ -29,13 +29,13 @@ load("@prelude//utils:lazy.bzl", "lazy")
 
 _SelectionCriteria = record(
     include_build_target_patterns = field(list[BuildTargetPattern], []),
-    include_regular_expressions = field(list[regex], []),
+    include_regular_expressions = field(list[BuckRegex], []),
     exclude_build_target_patterns = field(list[BuildTargetPattern], []),
-    exclude_regular_expressions = field(list[regex], []),
+    exclude_regular_expressions = field(list[BuckRegex], []),
     # The regular expressions as the scrubber and the dSYM allowlist tool match
     # them, against debug map paths instead of labels.
-    include_path_regular_expressions = field(list[regex], []),
-    exclude_path_regular_expressions = field(list[regex], []),
+    include_path_regular_expressions = field(list[BuckRegex], []),
+    exclude_path_regular_expressions = field(list[BuckRegex], []),
 )
 
 AppleSelectiveDebuggingInfo = provider(
@@ -654,11 +654,11 @@ def _debug_map_path(label: Label, artifact: Artifact) -> str:
     return "{}/{}/__{}__/{}".format(label.cell, label.package, label.name, artifact.short_path)
 
 # Like the scrubber, drops the cell from an expression that starts with one.
-def _path_regex(expression: str) -> regex:
+def _path_regex(expression: str) -> BuckRegex:
     double_slash_index = expression.find("//")
     return regex(expression[double_slash_index + 1 :] if double_slash_index != -1 else expression, fancy = True)
 
-def _check_if_label_matches_patterns_or_expressions(label: Label, patterns: list[BuildTargetPattern], expressions: list[regex]) -> bool:
+def _check_if_label_matches_patterns_or_expressions(label: Label, patterns: list[BuildTargetPattern], expressions: list[BuckRegex]) -> bool:
     for pattern in patterns:
         if pattern.matches(label):
             return True

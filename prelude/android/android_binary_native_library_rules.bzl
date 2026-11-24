@@ -3395,7 +3395,7 @@ def _needed_libraries(ctx: AnalysisContext, objdump: typing.Any, name: str, lib:
 
 def create_relinker_version_script(
     actions: AnalysisActions,
-    relinker_allowlist: list[regex],
+    relinker_allowlist: list[BuckRegex],
     output: Artifact,
     provided_symbols: Artifact,
     needed_symbols: list[Artifact],

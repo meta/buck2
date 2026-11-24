@@ -971,7 +971,8 @@ impl<'v, 'a, 'e: 'a> Evaluator<'v, 'a, 'e> {
         Ok(())
     }
 
-    /// Sets maximum size of the starlark heap in bytes.
+    /// Sets maximum size of the starlark heap in bytes. The size is of what is in use on the
+    /// heap, as opposed to the memory that the heap holds to allocate from.
     ///
     /// Evaluation will fail with an error after the limit is exceeded.
     ///
@@ -1020,8 +1021,7 @@ impl<'v, 'a, 'e: 'a> Evaluator<'v, 'a, 'e> {
     pub fn check_heap_size_limit(&mut self) -> Option<ResourceCheckResult> {
         let limit = self.max_heap_size?;
 
-        let current =
-            self.heap().peak_allocated_bytes() + self.module_env.frozen_heap_allocated_bytes();
+        let current = self.heap().peak_allocated_bytes() + self.module_env.frozen_heap_used_bytes();
 
         if current > limit {
             Some(ResourceCheckResult::Exceeded(crate::Error::new_other(
@@ -1240,6 +1240,7 @@ mod tests {
     use crate::eval::Evaluator;
     use crate::syntax::AstModule;
     use crate::syntax::Dialect;
+    use crate::values::layout::heap::name::StarlarkTestHeapName;
 
     #[test]
     fn test_heap_memory_limit() -> crate::Result<()> {
@@ -1278,6 +1279,36 @@ mod tests {
 
             Ok(())
         })
+    }
+
+    /// The limit is on what a heap has in use. The memory that it holds for that comes in
+    /// chunks, and the chunk of a frozen heap can be a big one that an earlier heap on the
+    /// thread left behind.
+    #[test]
+    fn test_heap_memory_limit_counts_bytes_in_use() -> crate::Result<()> {
+        fn eval_module<'v>(
+            module: &Module<'v>,
+            content: &str,
+            limit: Option<usize>,
+        ) -> crate::Result<()> {
+            let mut eval = Evaluator::new(module);
+            if let Some(limit) = limit {
+                eval.set_max_heap_size(limit).unwrap();
+            }
+            let ast = AstModule::parse("test.bzl", content.to_owned(), &Dialect::Standard).unwrap();
+            eval.eval_module(ast, &Globals::standard())?;
+            Ok(())
+        }
+
+        Module::with_temp_heap(|module| {
+            eval_module(&module, "x = [1] * (1 << 20)", None)?;
+            module
+                .freeze_named(StarlarkTestHeapName::frozen_heap_name())
+                .unwrap();
+            crate::Result::Ok(())
+        })?;
+
+        Module::with_temp_heap(|module| eval_module(&module, "x = 1 + 1", Some(100000)))
     }
 
     #[test]

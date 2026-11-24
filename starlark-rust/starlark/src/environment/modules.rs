@@ -471,8 +471,8 @@ impl<'v> Module<'v> {
         &self.heaps
     }
 
-    pub(crate) fn frozen_heap_allocated_bytes(&self) -> usize {
-        self.heaps.frozen_heap_allocated_bytes()
+    pub(crate) fn frozen_heap_used_bytes(&self) -> usize {
+        self.heaps.frozen_heap_used_bytes()
     }
 
     /// Iterate through all the names defined in this module.

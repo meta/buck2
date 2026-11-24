@@ -172,10 +172,16 @@ impl<'v> Heap<'v> {
         self.0.arena.borrow().allocated_bytes()
     }
 
-    /// Peak memory allocated to this heap, even if the value is now lower
-    /// as a result of a subsequent garbage collection.
+    /// The most bytes that have been in use on this heap, even if fewer are now as a result of
+    /// a subsequent garbage collection. Unlike `allocated_bytes`, that leaves out
+    /// `available_bytes`: the heap gets its memory in chunks, of up to gigabytes, and what it
+    /// holds says little about what it uses.
     pub fn peak_allocated_bytes(self) -> usize {
-        cmp::max(self.allocated_bytes(), self.0.peak_allocated.get())
+        let arena = self.0.arena.borrow();
+        cmp::max(
+            arena.allocated_bytes() - arena.available_bytes(),
+            self.0.peak_allocated.get(),
+        )
     }
 
     /// Number of bytes allocated by the heap but not yet filled.

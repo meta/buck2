@@ -109,8 +109,8 @@ impl<'v> ModuleHeaps<'v> {
         (edge, seal_edge)
     }
 
-    pub(crate) fn frozen_heap_allocated_bytes(&self) -> usize {
-        self.frozen().allocated_bytes()
+    pub(crate) fn frozen_heap_used_bytes(&self) -> usize {
+        self.frozen().used_bytes()
     }
 
     fn frozen(&self) -> &OwnedFrozenHeap {

@@ -168,6 +168,12 @@ impl OwnedFrozenHeap {
         self.arena.allocated_bytes()
     }
 
+    /// The bytes that are in use on this heap: `allocated_bytes` less the part of that which
+    /// is not filled.
+    pub(crate) fn used_bytes(&self) -> usize {
+        self.arena.allocated_bytes() - self.arena.available_bytes()
+    }
+
     /// Whether anything has been allocated on this heap.
     pub(crate) fn has_allocations(&self) -> bool {
         !self.arena.is_empty()

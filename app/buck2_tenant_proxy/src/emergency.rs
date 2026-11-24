@@ -28,7 +28,8 @@ pub fn emergency_exit() -> ! {
     );
 
     let helper = (|| -> buck2_error::Result<()> {
-        let mut command = buck2_util::process::background_command(std::env::current_exe()?);
+        let mut command =
+            buck2_util::process::background_command(buck2_wrapper_common::current_exe_for_exec()?);
         command
             .args([
                 "daemon",

@@ -44,6 +44,8 @@ pub mod win;
 pub use cleanall::cleanall_stale;
 pub use process::async_background_command;
 pub use process::background_command;
+pub use process::current_exe_for_exec;
+pub use process::restore_process_name_after_exec;
 
 pub const BUCK2_WRAPPER_ENV_VAR: &str = "BUCK2_WRAPPER";
 /// Identifies the launching wrapper only when it matches the client's direct parent.

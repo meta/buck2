@@ -1284,6 +1284,66 @@ async fn test_unidaemon_concurrent_first_commands_share_a_generation(
     Ok(())
 }
 
+/// DotSlash's cache cleaner removes a stale artifact directory whole, binary included, while
+/// the shared daemon started from it lives on. The daemon must still launch proxies for new
+/// tenants, and clients must be able to work, evict and re-register through them.
+#[buck_test(data_dir = "test_daemon_data", skip_for_os = ["windows", "darwin"])]
+async fn test_unidaemon_registers_tenants_after_daemon_binary_directory_is_removed(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let artifact_dir = tmp_path.join("artifact");
+    std::fs::create_dir(&artifact_dir)?;
+    let copy = artifact_dir.join("buck2");
+    std::fs::copy(buck.executable(), &copy)?;
+    assert!(
+        std::fs::read(&copy)?.starts_with(b"\x7fELF"),
+        "the test runs buck2 from a copy of the binary, not of a launcher: {}",
+        buck.executable().display()
+    );
+    let tenants = unidaemon_checkouts(buck, tmp_path, false)?;
+    let mut starter = tenants[0].clone();
+    starter.set_executable(&copy);
+    let result = async {
+        starter.build(&["//:tenant_value"]).await?;
+        let daemon = daemon_pid(&starter).await?;
+        std::fs::remove_dir_all(&artifact_dir)?;
+        assert!(!artifact_dir.exists());
+        // From here on only the daemon holds the removed binary; clients run the original, as
+        // DotSlash re-fetches a client's binary on demand.
+
+        // The daemon launches a proxy for the new tenant from its unlinked binary, and the
+        // client builds, queries and evicts through that proxy. The proxy is named after the
+        // binary, not after the `/proc/self/exe` link it was exec'd through.
+        assert_tenant_value(&tenants[1], "two").await?;
+        assert_eq!(daemon_pid(&tenants[1]).await?, daemon);
+        assert_eq!(isolations(&debug_tenants(&tenants[1]).await?)?.len(), 2);
+        let proxy_info: Value = serde_json::from_str(&std::fs::read_to_string(
+            proxy_slot(&tenants[1]).join("buckd.info"),
+        )?)?;
+        let proxy = proxy_info["pid"].as_u64().context("proxy pid")?;
+        assert_eq!(
+            std::fs::read_to_string(format!("/proc/{proxy}/comm"))?.trim_end(),
+            "buck2"
+        );
+        tenants[1].kill().await?;
+        assert_eq!(isolations(&debug_tenants(&tenants[0]).await?)?.len(), 1);
+
+        // Re-registering launches a second proxy after the removal.
+        assert_tenant_value(&tenants[1], "two").await?;
+        assert_eq!(daemon_pid(&tenants[1]).await?, daemon);
+        assert_eq!(isolations(&debug_tenants(&tenants[1]).await?)?.len(), 2);
+
+        // The first tenant's proxy, started before the removal, keeps serving.
+        assert_tenant_value(&tenants[0], "one").await?;
+        anyhow::Ok(())
+    }
+    .await;
+    let killed = kill_all([&tenants[0], &tenants[1]]).await;
+    result?;
+    killed
+}
+
 /// A client of the same release stops its tenant through the tenant's proxy, as a released
 /// client does, with its own longer budget: the command returns once the eviction has
 /// completed, and the proxy has removed its connection files.

@@ -224,7 +224,8 @@ fn spawn(
         .as_deref()
         .ok_or_else(|| buck2_error!(ErrorTag::Input, "Proxy lacks startup configuration"))?;
     let descriptor = child_socket.as_raw_fd();
-    let mut command = buck2_util::process::background_command(std::env::current_exe()?);
+    let mut command =
+        buck2_util::process::background_command(buck2_wrapper_common::current_exe_for_exec()?);
     command
         .current_dir(&spec.tenant.project_root)
         .args([

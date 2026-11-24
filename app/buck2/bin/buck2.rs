@@ -154,6 +154,8 @@ fn exec_with_logging(
 // it must be single-threaded. Commands that want to be multi-threaded/async
 // will start up their own tokio runtime.
 fn main() -> ! {
+    buck2_wrapper_common::restore_process_name_after_exec();
+
     // Enable sampling early so the side table exists before the daemon forks
     // (fork copies the heap). The dump watcher is started later, post-fork, in
     // buck2_daemon — threads do not survive the daemonizing fork.

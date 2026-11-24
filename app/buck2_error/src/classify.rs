@@ -492,6 +492,8 @@ fn tag_metadata(tag: ErrorTag) -> TagMetadata {
         ErrorTag::InputPathNotADirectory => rank!(input),
         ErrorTag::StarlarkFail => rank!(input),
         ErrorTag::StarlarkStackOverflow => rank!(input),
+        ErrorTag::StarlarkHeapLimit => rank!(input),
+        ErrorTag::StarlarkTickLimit => rank!(input),
         ErrorTag::StarlarkValue => rank!(input),
         ErrorTag::StarlarkFunction => rank!(input),
         ErrorTag::StarlarkScope => rank!(input),

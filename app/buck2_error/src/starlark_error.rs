@@ -135,6 +135,8 @@ fn from_starlark_impl(
     let tag = match e.kind() {
         starlark_syntax::ErrorKind::Fail(_) => crate::ErrorTag::StarlarkFail,
         starlark_syntax::ErrorKind::StackOverflow(_) => crate::ErrorTag::StarlarkStackOverflow,
+        starlark_syntax::ErrorKind::HeapLimitExceeded(_) => crate::ErrorTag::StarlarkHeapLimit,
+        starlark_syntax::ErrorKind::TickLimitExceeded(_) => crate::ErrorTag::StarlarkTickLimit,
         starlark_syntax::ErrorKind::Value(_) => crate::ErrorTag::StarlarkValue,
         starlark_syntax::ErrorKind::Function(_) => crate::ErrorTag::StarlarkFunction,
         starlark_syntax::ErrorKind::RuntimeType(kind, _) => {
@@ -167,6 +169,8 @@ fn from_starlark_impl(
     let variant_name = match e.kind() {
         starlark_syntax::ErrorKind::Fail(_) => "StarlarkError::Fail",
         starlark_syntax::ErrorKind::StackOverflow(_) => "StarlarkError::StackOverflow",
+        starlark_syntax::ErrorKind::HeapLimitExceeded(_) => "StarlarkError::HeapLimitExceeded",
+        starlark_syntax::ErrorKind::TickLimitExceeded(_) => "StarlarkError::TickLimitExceeded",
         starlark_syntax::ErrorKind::Internal(_) => "StarlarkError::Internal",
         starlark_syntax::ErrorKind::DeferredRead(_) => "StarlarkError::DeferredRead",
         starlark_syntax::ErrorKind::Value(_) => "StarlarkError::Value",
@@ -188,6 +192,8 @@ fn from_starlark_impl(
     match e.into_kind() {
         starlark_syntax::ErrorKind::Fail(e)
         | starlark_syntax::ErrorKind::StackOverflow(e)
+        | starlark_syntax::ErrorKind::HeapLimitExceeded(e)
+        | starlark_syntax::ErrorKind::TickLimitExceeded(e)
         | starlark_syntax::ErrorKind::Internal(e)
         | starlark_syntax::ErrorKind::Value(e)
         | starlark_syntax::ErrorKind::Function(e)

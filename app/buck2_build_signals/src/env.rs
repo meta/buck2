@@ -9,7 +9,6 @@
  */
 
 use std::future::Future;
-use std::str::FromStr;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -167,29 +166,12 @@ pub enum WaitingCategory {
 
 #[derive(Copy, Clone, Dupe, derive_more::Display, Allocative)]
 pub enum CriticalPathBackendName {
-    /// This is the default backend.
     #[display("longest-path-graph")]
     LongestPathGraph,
+    /// Computes no critical path; logs the graph one would be computed from, for tests that
+    /// check its nodes and edges. `BUCK2_TEST_CRITICAL_PATH_LOGGING_BACKEND` selects it.
     #[display("logging")]
     Logging,
-}
-
-impl FromStr for CriticalPathBackendName {
-    type Err = buck2_error::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "longest-path-graph" {
-            return Ok(Self::LongestPathGraph);
-        } else if s == "logging" {
-            return Ok(Self::Logging);
-        }
-
-        Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "Invalid backend name: `{}`",
-            s
-        ))
-    }
 }
 
 pub struct BuildSignalsContext {

@@ -10,7 +10,6 @@
 
 use std::collections::BTreeSet;
 use std::collections::HashMap;
-use std::io::Write;
 
 use anyhow::Context;
 use buck2_e2e::json::Json;
@@ -130,15 +129,9 @@ async fn critical_path_helper(buck: &Buck) -> anyhow::Result<Vec<Value>> {
     }
 }
 
-fn set_critical_path_backend(buck: &Buck, backend: &str) -> std::io::Result<()> {
-    std::fs::OpenOptions::new()
-        .append(true)
-        .open(buck.cwd().join(".buckconfig"))?
-        .write_all(format!("[buck2]\ncritical_path_backend2 = {backend}\n").as_bytes())
-}
-
-fn use_logging_backend(buck: &Buck) -> std::io::Result<()> {
-    set_critical_path_backend(buck, "logging")
+/// Has the daemon log the graph the critical path is computed from, in place of computing one.
+fn use_logging_backend(buck: &mut Buck) {
+    buck.set_env("BUCK2_TEST_CRITICAL_PATH_LOGGING_BACKEND", "true");
 }
 
 /// The `UnstableE2eData` events of the last command.
@@ -216,8 +209,7 @@ fn truthy(value: &Value) -> bool {
 }
 
 #[buck_test]
-async fn test_critical_path_longest_path_graph(buck: &Buck) -> anyhow::Result<()> {
-    set_critical_path_backend(buck, "longest-path-graph")?;
+async fn test_critical_path(buck: &Buck) -> anyhow::Result<()> {
     do_critical_path(buck).await
 }
 
@@ -343,8 +335,8 @@ async fn test_critical_path_csv(buck: &Buck) -> anyhow::Result<()> {
 // calculations. It can be a lot easier to understand bugs and behavior here than
 // only inspecting the final critical path output (like other tests).
 #[buck_test]
-async fn test_dynamic_input_events(buck: &Buck) -> anyhow::Result<()> {
-    use_logging_backend(buck)?;
+async fn test_dynamic_input_events(buck: &mut Buck) -> anyhow::Result<()> {
+    use_logging_backend(buck);
 
     buck.build(&["//:check_dynamic_input", "--no-remote-cache"])
         .await?;
@@ -620,8 +612,8 @@ async fn test_critical_path_test_entries(buck: &Buck) -> anyhow::Result<()> {
 // going through EnsureTransitiveSetProjectionKey), the critical path dependency should
 // still not be just BuildKey -- it should include the analysis that produces the tset.
 #[buck_test]
-async fn test_critical_path_tset_final_materialization(buck: &Buck) -> anyhow::Result<()> {
-    use_logging_backend(buck)?;
+async fn test_critical_path_tset_final_materialization(buck: &mut Buck) -> anyhow::Result<()> {
+    use_logging_backend(buck);
 
     buck.build(&["//:tset_top", "--no-remote-cache"]).await?;
     let events = data_with_key(
@@ -677,8 +669,8 @@ async fn test_critical_path_tset_final_materialization(buck: &Buck) -> anyhow::R
 }
 
 #[buck_test]
-async fn test_cross_package_load_edge(buck: &Buck) -> anyhow::Result<()> {
-    use_logging_backend(buck)?;
+async fn test_cross_package_load_edge(buck: &mut Buck) -> anyhow::Result<()> {
+    use_logging_backend(buck);
 
     buck.build(&["//:cross_pkg", "--no-remote-cache"]).await?;
     let events = unstable_e2e_data(buck).await?;
@@ -708,8 +700,8 @@ async fn test_cross_package_load_edge(buck: &Buck) -> anyhow::Result<()> {
 }
 
 #[buck_test]
-async fn test_build_package_cycle_has_no_load_cycle(buck: &Buck) -> anyhow::Result<()> {
-    use_logging_backend(buck)?;
+async fn test_build_package_cycle_has_no_load_cycle(buck: &mut Buck) -> anyhow::Result<()> {
+    use_logging_backend(buck);
     buck.build(&["//:pkg_cycle_top", "--no-remote-cache"])
         .await?;
     let edges = discovery_edges(buck).await?;
@@ -723,8 +715,8 @@ async fn test_build_package_cycle_has_no_load_cycle(buck: &Buck) -> anyhow::Resu
 }
 
 #[buck_test]
-async fn test_uquery_load_edge(buck: &Buck) -> anyhow::Result<()> {
-    use_logging_backend(buck)?;
+async fn test_uquery_load_edge(buck: &mut Buck) -> anyhow::Result<()> {
+    use_logging_backend(buck);
     buck.uquery(&["deps(//:cross_pkg)"]).await?;
     let edges = discovery_edges(buck).await?;
     // No tracked computation requests root//sub here: the deps traversal does, while
@@ -737,8 +729,8 @@ async fn test_uquery_load_edge(buck: &Buck) -> anyhow::Result<()> {
 }
 
 #[buck_test]
-async fn test_uquery_package_cycle_has_no_load_cycle(buck: &Buck) -> anyhow::Result<()> {
-    use_logging_backend(buck)?;
+async fn test_uquery_package_cycle_has_no_load_cycle(buck: &mut Buck) -> anyhow::Result<()> {
+    use_logging_backend(buck);
     buck.uquery(&["deps(//:pkg_cycle_top)"]).await?;
     let edges = discovery_edges(buck).await?;
     assert_no_load_cycle(&edges);
@@ -750,8 +742,10 @@ async fn test_uquery_package_cycle_has_no_load_cycle(buck: &Buck) -> anyhow::Res
 }
 
 #[buck_test]
-async fn test_uquery_preloaded_package_has_no_discovery_edge(buck: &Buck) -> anyhow::Result<()> {
-    use_logging_backend(buck)?;
+async fn test_uquery_preloaded_package_has_no_discovery_edge(
+    buck: &mut Buck,
+) -> anyhow::Result<()> {
+    use_logging_backend(buck);
     // The literal //sub:preloaded_literal loads root//sub alongside root//, before the
     // traversal expands //:preloaded_top, so nothing discovered root//sub.
     buck.uquery(&["deps(set(//:preloaded_top //sub:preloaded_literal))"])
@@ -765,8 +759,8 @@ async fn test_uquery_preloaded_package_has_no_discovery_edge(buck: &Buck) -> any
 }
 
 #[buck_test]
-async fn test_configuration_dep_load_edge(buck: &Buck) -> anyhow::Result<()> {
-    use_logging_backend(buck)?;
+async fn test_configuration_dep_load_edge(buck: &mut Buck) -> anyhow::Result<()> {
+    use_logging_backend(buck);
 
     buck.build(&["//:cfg_dep_pkg", "--no-remote-cache"]).await?;
     let events = unstable_e2e_data(buck).await?;

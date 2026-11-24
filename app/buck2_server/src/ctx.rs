@@ -1202,12 +1202,15 @@ impl DiceCommandUpdater<'_, '_> {
 
         let worker_pool = Arc::new(WorkerPool::new(Some(persistent_worker_shutdown_timeout_s)));
 
-        let critical_path_backend = root_config
-            .parse(BuckconfigKeyRef {
-                section: "buck2",
-                property: "critical_path_backend2",
-            })?
-            .unwrap_or(CriticalPathBackendName::LongestPathGraph);
+        let critical_path_backend = if buck2_env!(
+            "BUCK2_TEST_CRITICAL_PATH_LOGGING_BACKEND",
+            bool,
+            applicability = testing
+        )? {
+            CriticalPathBackendName::Logging
+        } else {
+            CriticalPathBackendName::LongestPathGraph
+        };
 
         let override_use_case =
             root_config.parse::<RemoteExecutorUseCase>(RE_USE_CASE_OVERRIDE_KEY)?;

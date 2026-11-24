@@ -12942,8 +12942,3 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
-
-[[patch.unused]]
-name = "bindgen"
-version = "0.72.1"
-source = "git+https://github.com/jsgf/rust-bindgen?rev=4d385d21c160e6ee1f443aeb7e00528a1dc7fd44#4d385d21c160e6ee1f443aeb7e00528a1dc7fd44"

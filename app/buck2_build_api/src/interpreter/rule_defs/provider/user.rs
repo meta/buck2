@@ -33,9 +33,11 @@ use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueTyped;
 use starlark::values::starlark_value;
 
 use crate::interpreter::rule_defs::provider::ProviderLike;
+use crate::interpreter::rule_defs::provider::StarlarkProvider;
 use crate::interpreter::rule_defs::provider::callable::UserProviderCallableData;
 use crate::interpreter::rule_defs::provider::callable::UserProviderCallableDataValue;
 
@@ -143,6 +145,11 @@ impl<'v> StarlarkValue<'v> for UserProvider<'v> {
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn ProviderLike>(self);
+    }
+
+    #[starlark(implements = StarlarkProvider)]
+    fn provider(this: ValueTyped<'v, Self>) -> &'v dyn ProviderLike<'v> {
+        this.as_ref()
     }
 }
 

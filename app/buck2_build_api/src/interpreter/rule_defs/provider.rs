@@ -65,6 +65,7 @@ use std::sync::Arc;
 use buck2_core::provider::id::ProviderId;
 use starlark::any::IsStaticType;
 use starlark::any::ProvidesStaticType;
+use starlark::starlark_predicate_type;
 use starlark::typing::Ty;
 use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkTypeExprStable;
@@ -110,6 +111,17 @@ pub trait FrozenBuiltinProviderLike:
 
 unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn ProviderLike<'v> {
     type StaticType = &'static dyn ProviderLike<'static>;
+}
+
+starlark_predicate_type! {
+    /// A provider: what a rule returns to say something about its target to the rules that
+    /// depend on it.
+    ///
+    /// `DefaultInfo(..)` is one, and so is `FooInfo(..)` for a `FooInfo = provider(..)` of a
+    /// `.bzl` file. `DefaultInfo` and `FooInfo` themselves are not: they make providers.
+    pub StarlarkProvider<'v>;
+    name "Provider";
+    get &'v dyn ProviderLike<'v>;
 }
 
 pub struct ValueAsProviderLike<'v>(pub(crate) &'v dyn ProviderLike<'v>);

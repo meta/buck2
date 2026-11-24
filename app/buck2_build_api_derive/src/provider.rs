@@ -21,8 +21,8 @@ pub(crate) struct InternalProviderArgs {
     /// A `#[starlark_module]` of methods for the provider, replacing the generated attribute
     /// lookup; it must then define the attributes itself.
     methods_func: Option<syn::Ident>,
-    /// The predicate types the provider is a member of, each of whose handles is a trait
-    /// object of a trait the provider implements.
+    /// The predicate types the provider is a member of besides `Provider`, each of whose
+    /// handles is a trait object of a trait the provider implements.
     implements: Vec<syn::Path>,
 }
 
@@ -496,11 +496,12 @@ impl ProviderCodegen {
                 ),
             };
         // The provider has one representation, so its handle to a predicate type is the
-        // provider itself as the trait object.
-        let memberships = self
-            .args
-            .implements
-            .iter()
+        // provider itself as the trait object. Every provider is a `Provider`.
+        let provider: syn::Path = syn::parse_quote_spanned! { self.span=>
+            buck2_build_api::interpreter::rule_defs::provider::StarlarkProvider
+        };
+        let memberships = std::iter::once(&provider)
+            .chain(&self.args.implements)
             .enumerate()
             .map(|(i, predicate)| {
                 let member = format_ident!("member_{}", i);

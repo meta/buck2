@@ -27,6 +27,9 @@ mod provider;
 /// - `creator_func` (required): The name of the function to create the provider
 /// - `methods = <func>` (optional): Custom methods function name. If not provided,
 ///   attribute accessors for all fields are auto-generated.
+/// - `implements = <predicate type>` (optional, repeatable): a predicate type the provider is
+///   a member of, whose handle is a trait object of a trait the provider implements. Every
+///   provider is a member of `Provider` without saying so.
 ///
 /// # Field Types
 ///

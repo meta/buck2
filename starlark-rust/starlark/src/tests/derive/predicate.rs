@@ -43,7 +43,6 @@ use crate::starlark_simple_value;
 use crate::typing::Ty;
 use crate::typing::TyStarlarkValue;
 use crate::typing::TyUser;
-use crate::typing::TyUserFields;
 use crate::typing::TyUserParams;
 use crate::values::Heap;
 use crate::values::StarlarkType;
@@ -62,8 +61,6 @@ use crate::values::tuple::TupleType;
 use crate::values::types::list::value::ListData;
 use crate::values::types::type_instance_id::TypeInstanceId;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
-use crate::values::typing::type_compiled::matchers::IsAny;
-use crate::values::typing::type_compiled::type_matcher_factory::TypeMatcherFactory;
 
 /// What a shape is used through.
 trait ShapeLike<'v> {
@@ -226,43 +223,6 @@ impl<'v> StarlarkValue<'v> for Outline {
     }
 }
 
-/// Not a member, with a static type that stands for more than its base's values, as `Provider`
-/// stands for the values of every provider type: some of them may be members.
-#[derive(
-    Debug,
-    Display,
-    ProvidesStaticType,
-    NoSerialize,
-    Allocative,
-    StarlarkPagable
-)]
-#[display("figure")]
-struct Figure;
-starlark_simple_value!(Figure);
-
-#[starlark_value(type = "figure")]
-impl<'v> StarlarkValue<'v> for Figure {
-    fn get_type_starlark_repr() -> Ty {
-        static TY: OnceLock<Ty> = OnceLock::new();
-        TY.get_or_init(|| {
-            Ty::custom(
-                TyUser::new(
-                    "Figure".to_owned(),
-                    TyStarlarkValue::new::<Figure>(),
-                    TypeInstanceId::for_test(&"figure"),
-                    TyUserParams {
-                        matcher: Some(TypeMatcherFactory::new(IsAny)),
-                        fields: TyUserFields::unknown(),
-                        ..TyUserParams::default()
-                    },
-                )
-                .unwrap(),
-            )
-        })
-        .dupe()
-    }
-}
-
 /// Not a member at all.
 #[derive(
     Debug,
@@ -328,10 +288,6 @@ fn shape_globals(globals: &mut GlobalsBuilder) {
 
     fn outline() -> starlark::Result<Outline> {
         Ok(Outline)
-    }
-
-    fn figure() -> starlark::Result<Figure> {
-        Ok(Figure)
     }
 
     fn blot() -> starlark::Result<Blot> {
@@ -453,9 +409,9 @@ noop(by_annotation)(1)
     );
 }
 
-/// The typechecker takes a nominal type that says it is a member, one the declaration lists,
-/// a `TyUser` that names the type as a supertype or is abstract, and anything it does not know
-/// the type of; it does not take a nominal type that is none of these.
+/// The typechecker takes a nominal type that says it is a member, an upstream member, a
+/// `TyUser` that names the type as a supertype, and anything it does not know the type of; it
+/// does not take a nominal type that is none of these.
 #[test]
 fn test_typechecker() {
     let mut a = Assert::new();
@@ -471,7 +427,6 @@ def test(x, s: str, shape: Shape):
     sides(polygon(5))
     sides(s)
     sides(outline())
-    sides(figure())
     sides(x)
     sides(shape)
     takes(square())

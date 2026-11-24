@@ -199,13 +199,6 @@ impl TyUser {
     pub(crate) fn base(&self) -> TyStarlarkValue {
         self.base
     }
-
-    /// Whether the type stands for more than values of its base, as `Provider` does for the
-    /// values of every provider type: such a type has a matcher of its own and does not know
-    /// its fields.
-    pub(crate) fn is_abstract(&self) -> bool {
-        self.matcher.is_some() && self.fields.unknown
-    }
 }
 
 impl PartialEq for TyUser {

@@ -158,10 +158,8 @@ impl TyCustomImpl for TyPredicate {
             TyBasic::StarlarkValue(other) => self.has_member(*other),
             TyBasic::Custom(other) => match other.0.as_any().downcast_ref::<TyUser>() {
                 // A `TyUser` that names this type as a supertype says so itself. One that is
-                // made of a member's values is a member, and an abstract one, whose values are
-                // not its base's, may hold a member's. The abstract rule is for `Provider`,
-                // and goes when `Provider` is a predicate type itself.
-                Some(other) => other.is_abstract() || self.has_member(other.base()),
+                // made of a member's values is a member.
+                Some(other) => self.has_member(other.base()),
                 None => false,
             },
             _ => false,

@@ -85,6 +85,7 @@ import org.jetbrains.kotlin.fir.types.ConeTypeParameterType
 import org.jetbrains.kotlin.fir.types.FirErrorTypeRef
 import org.jetbrains.kotlin.fir.types.FirResolvedTypeRef
 import org.jetbrains.kotlin.fir.types.coneType
+import org.jetbrains.kotlin.fir.types.customAnnotations
 import org.jetbrains.kotlin.fir.types.resolvedType
 import org.jetbrains.kotlin.fir.unwrapFakeOverrides
 import org.jetbrains.kotlin.fir.visitors.FirVisitorVoid
@@ -303,15 +304,16 @@ class InlineBodyKeepability(
 
   /**
    * Shapes that the ABI cannot carry as one plain method body: members of value classes or
-   * interfaces, and, in the body (see [Visitor]), anonymous objects and local declarations,
-   * callable references, local classes numbered after an earlier same-named declaration, `when`
-   * over an enum and `entries` of a library enum (classes generated next to the caller), non-Kotlin
-   * annotations (compiler plugins rewrite annotated code), reads of own `const val`s whose value
-   * did not survive (unresolvable initializers) and own inline properties, calls to own inline
-   * functions that are not kept, and own declarations the ABI does not carry with the same
-   * signature (private ones, and protected ones reached through a synthetic accessor). Default
-   * argument values are checked by the same visitor as ordinary body expressions instead (safe ones
-   * are kept with real values; the backend emits the `$default` bridge from them).
+   * interfaces, and, in the body (see [Visitor]), anonymous objects and local declarations, local
+   * classes numbered after an earlier same-named declaration, `when` over an enum and `entries` of
+   * a library enum (classes generated next to the caller), callable references to declarations the
+   * ABI does not carry, non-Kotlin annotations (compiler plugins rewrite annotated code), reads of
+   * own `const val`s whose value did not survive (unresolvable initializers) and own inline
+   * properties, calls to own inline functions that are not kept, and own declarations the ABI does
+   * not carry with the same signature (private ones, and protected ones reached through a synthetic
+   * accessor). Default argument values are checked by the same visitor as ordinary body expressions
+   * instead (safe ones are kept with real values; the backend emits the `$default` bridge from
+   * them).
    */
   private fun hasLowerableShape(function: FirFunction): Boolean =
       shapeRejectReason(function) == null
@@ -521,12 +523,22 @@ class InlineBodyKeepability(
         when (element) {
           is FirAnonymousObject,
           is FirRegularClass,
-          is FirTypeAlias,
-          is FirCallableReferenceAccess -> false
+          is FirTypeAlias -> false
           // Lambdas generate a synthetic class in the ABI jar, which is self-contained: the
           // visitor above already checks the lambda's contents with the same rules as the body,
           // and the backend emits the class exactly as the full compile does.
           is FirAnonymousFunction -> true
+          // Callable references are lowered like lambdas: the reference class (or adapter) is
+          // named after the enclosing function and emitted from the same IR as in the full
+          // compile. The referenced declaration must survive in the ABI with the same signature,
+          // and must not be composable: the Compose plugin rewrites composable signatures, which
+          // the reference class lowered in the ABI action would not match.
+          is FirCallableReferenceAccess ->
+              (element.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol.let {
+                it is FirCallableSymbol<*> &&
+                    isLowerableCallee(it.unwrapFakeOverrides()) &&
+                    !hasComposeSignature(it.unwrapFakeOverrides())
+              }
           is FirFunction -> element === function
           is FirAnnotation ->
               annotationFqn(element)?.let { isKeepableAnnotation(it, pluginTriggerAnnotations) } ==
@@ -538,6 +550,30 @@ class InlineBodyKeepability(
               }
           else -> true
         }
+
+    private fun hasComposeSignature(callable: FirCallableSymbol<*>): Boolean {
+      val declaration = callable.fir
+      if (declaration.annotations.any { isComposeAnnotation(it) }) return true
+      val types = buildList {
+        add(declaration.returnTypeRef.coneType)
+        declaration.receiverParameter?.typeRef?.coneType?.let(::add)
+        (declaration as? FirFunction)?.valueParameters?.forEach { add(it.returnTypeRef.coneType) }
+      }
+      return types.any { hasComposeAnnotation(it) }
+    }
+
+    private fun hasComposeAnnotation(type: ConeKotlinType): Boolean =
+        when (type) {
+          is ConeFlexibleType -> hasComposeAnnotation(type.lowerBound)
+          else ->
+              type.customAnnotations.any { isComposeAnnotation(it) } ||
+                  (type as? ConeClassLikeType)?.typeArguments.orEmpty().any {
+                    (it as? ConeKotlinTypeProjection)?.type?.let(::hasComposeAnnotation) == true
+                  }
+        }
+
+    private fun isComposeAnnotation(annotation: FirAnnotation): Boolean =
+        annotationFqn(annotation)?.startsWith("androidx.compose.") == true
 
     private fun annotationFqn(element: FirAnnotation): String? =
         element.annotationTypeRef.coneTypeOrNull?.classId?.asSingleFqName()?.asString()

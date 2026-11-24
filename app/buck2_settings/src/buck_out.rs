@@ -17,7 +17,8 @@ pub struct BuckOut {
     /// without the configuration hash.
     #[setting(
         buckconfig_fallback = "buck2.create_unhashed_links",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     unhashed_links: Option<bool>,

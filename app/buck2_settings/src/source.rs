@@ -18,7 +18,8 @@ pub struct Source {
     /// what it points to.
     #[setting(
         buckconfig_fallback = "buck2.use_correct_source_symlink_reading",
-        default = true,
+        internal_default = true,
+        oss_default = true,
         overridable_in(CommandLine, LocalSettings)
     )]
     correct_symlink_reading: Option<bool>,

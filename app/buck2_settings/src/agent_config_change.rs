@@ -22,7 +22,11 @@ use buck2_settings_derive::buck_settings_section;
 #[buck_settings_section(name = "agent_config_change", version = 0, scope = invocation)]
 pub struct AgentConfigChange {
     /// The guard's only switch.
-    #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     enabled: Option<bool>,
 }
 

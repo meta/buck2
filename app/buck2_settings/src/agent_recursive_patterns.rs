@@ -19,7 +19,11 @@ pub struct AgentRecursivePatterns {
     /// Stops an AI agent's direct `buck2 build` or `buck2 test` of a
     /// recursive pattern such as `//dir/...` until the agent acknowledges
     /// that it needs the whole scope.
-    #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     enabled: Option<bool>,
 }
 

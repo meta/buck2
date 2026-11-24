@@ -33,7 +33,8 @@ pub struct Test {
     /// Seconds a test that buck2 runs itself may take.
     #[setting(
         buckconfig_fallback = "test.timeout_default_s",
-        default = 600,
+        internal_default = 600,
+        oss_default = 600,
         overridable_in(CommandLine, LocalSettings)
     )]
     default_timeout_s: Option<u64>,
@@ -41,7 +42,8 @@ pub struct Test {
     /// of the tests it runs, where the command line does not say.
     #[setting(
         buckconfig_fallback = "buck2.test_builds_targets",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     build_targets: Option<bool>,
@@ -57,7 +59,8 @@ pub struct Test {
     /// left outside its process group, such as daemons.
     #[setting(
         buckconfig_fallback = "buck2.kill_detached_test_processes",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     kill_detached_processes: Option<bool>,
@@ -65,7 +68,8 @@ pub struct Test {
     /// register cleanup that outlives it.
     #[setting(
         buckconfig_fallback = "buck2.local_resource_cleanup_registration",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     local_resource_cleanup_registration: Option<bool>,
@@ -73,7 +77,8 @@ pub struct Test {
     /// started the command.
     #[setting(
         buckconfig_fallback = "buck2.tests_inherit_client_coding_agent_metadata",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     inherit_client_coding_agent_metadata: Option<bool>,

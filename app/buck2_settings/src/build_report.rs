@@ -17,7 +17,8 @@ pub struct BuildReport {
     /// not split by configuration, next to its `configured` map.
     #[setting(
         buckconfig_fallback = "build_report.print_unconfigured_section",
-        default = true,
+        internal_default = true,
+        oss_default = true,
         overridable_in(CommandLine, LocalSettings)
     )]
     print_unconfigured_section: Option<bool>,

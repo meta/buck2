@@ -18,7 +18,8 @@ pub struct Labels {
     /// for `//foo/bar:bar`.
     #[setting(
         oss_buckconfig_fallback = "buck2.infer_target_names",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     infer_target_names: Option<bool>,

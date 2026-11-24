@@ -36,7 +36,8 @@ pub struct Http {
     /// Whether HTTP/2 is negotiated.
     #[setting(
         buckconfig_fallback = "http.http2",
-        default = true,
+        internal_default = true,
+        oss_default = true,
         overridable_in(CommandLine, LocalSettings)
     )]
     http2: Option<bool>,

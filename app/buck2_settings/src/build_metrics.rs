@@ -68,7 +68,8 @@ pub struct BuildMetrics {
     /// dependency graph.
     #[setting(
         buckconfig_fallback = "buck2.log_configured_graph_size",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     configured_graph_size: Option<bool>,
@@ -76,7 +77,8 @@ pub struct BuildMetrics {
     /// graph.
     #[setting(
         buckconfig_fallback = "buck2.log_configured_graph_sketch",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     configured_graph_sketch: Option<bool>,
@@ -84,49 +86,56 @@ pub struct BuildMetrics {
     /// targets together.
     #[setting(
         buckconfig_fallback = "buck2.log_total_configured_graph_sketch",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     total_configured_graph_sketch: Option<bool>,
     /// A sketch of the memory that analysis retains.
     #[setting(
         buckconfig_fallback = "buck2.log_retained_analysis_memory_sketch",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     retained_analysis_memory_sketch: Option<bool>,
     /// A sketch of the peak memory of analysis.
     #[setting(
         buckconfig_fallback = "buck2.log_peak_analysis_memory_sketch",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     peak_analysis_memory_sketch: Option<bool>,
     /// A sketch of the peak memory of loading build files.
     #[setting(
         buckconfig_fallback = "buck2.log_peak_load_memory_sketch",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     peak_load_memory_sketch: Option<bool>,
     /// For each top-level target, a sketch of its action graph.
     #[setting(
         buckconfig_fallback = "buck2.log_action_graph_sketch",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     action_graph_sketch: Option<bool>,
     /// For each top-level target, a sketch of its artifacts by count.
     #[setting(
         buckconfig_fallback = "buck2.log_artifact_count_sketch",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     artifact_count_sketch: Option<bool>,
     /// For each top-level target, a sketch of its artifacts by size.
     #[setting(
         buckconfig_fallback = "buck2.log_artifact_size_sketch",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     artifact_size_sketch: Option<bool>,
@@ -141,7 +150,8 @@ pub struct BuildMetrics {
     /// `<field>_cardinality` field that holds its estimated cardinality.
     #[setting(
         buckconfig_fallback = "buck2.log_sketch_cardinalities",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     sketch_cardinalities: Option<bool>,
@@ -149,7 +159,8 @@ pub struct BuildMetrics {
     /// behind all of them together.
     #[setting(
         buckconfig_fallback = "buck2.detailed_aggregated_metrics",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     detailed_aggregated: Option<bool>,

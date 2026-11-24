@@ -14,6 +14,10 @@ use buck2_settings_derive::buck_settings_section;
 #[buck_settings_section(name = "analysis", version = 1, scope = daemon)]
 pub struct Analysis {
     /// Whether each analysis keeps the list of anon targets it requested.
-    #[setting(default = true, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = true,
+        oss_default = true,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     record_requested_anon_targets: Option<bool>,
 }

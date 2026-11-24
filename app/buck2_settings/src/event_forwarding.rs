@@ -17,7 +17,7 @@ pub struct EventForwarding {
     /// Whether the daemon starts the helper for each command that carries an event forwarding
     /// key.
     // Enforcement control: nothing local may turn it on.
-    #[setting(default = false, overridable_in())]
+    #[setting(internal_default = false, oss_default = false, overridable_in())]
     enabled: Option<bool>,
     /// The helper program: an absolute path, or a path relative to the project root.
     // Enforcement control: nothing local may point it at another program.

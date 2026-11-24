@@ -48,11 +48,16 @@ pub struct WriteActions {
     /// Whether a write action asks the CAS for its content first and declares
     /// a CAS download instead of a write when it is there. Only takes effect
     /// where the materializer defers writes.
-    #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     cas_probe: Option<bool>,
     /// How write actions use the action cache: `off`, `verify` or `use`.
     #[setting(
-        default = WriteActionCacheMode::Off,
+        internal_default = WriteActionCacheMode::Off,
+        oss_default = WriteActionCacheMode::Off,
         overridable_in(CommandLine, LocalSettings)
     )]
     cache: Option<WriteActionCacheMode>,
@@ -61,7 +66,8 @@ pub struct WriteActions {
     /// cache fills in steps that are the same on every host. A write within
     /// the share goes through the cache whatever `cache` says.
     #[setting(
-        default = RolloutFraction::none(),
+        internal_default = RolloutFraction::none(),
+        oss_default = RolloutFraction::none(),
         overridable_in(CommandLine, LocalSettings)
     )]
     cache_populate: Option<RolloutFraction>,

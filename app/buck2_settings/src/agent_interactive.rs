@@ -17,12 +17,17 @@ use buck2_settings_derive::buck_settings_section;
 #[buck_settings_section(name = "agent_interactive", version = 1, scope = invocation)]
 pub struct AgentInteractive {
     /// The master switch: no guard of this section runs without it.
-    #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     enabled: Option<bool>,
     /// Guards `buck2 killall`, which discards every daemon's state and can
     /// interrupt other work.
     #[setting(
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings),
         accessor = killall_switch
     )]
@@ -30,7 +35,8 @@ pub struct AgentInteractive {
     /// Guards `buck2 clean`, which removes build state and outputs that later
     /// commands would reuse.
     #[setting(
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings),
         accessor = clean_switch
     )]
@@ -38,7 +44,8 @@ pub struct AgentInteractive {
     /// Guards starting a daemon for a new isolation directory, which costs
     /// memory and starts without the existing daemon's state.
     #[setting(
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings),
         accessor = new_isolation_dir_switch
     )]

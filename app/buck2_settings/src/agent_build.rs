@@ -19,7 +19,11 @@ pub struct AgentBuild {
     /// Stops an AI agent's direct `buck2 build` that asks for no outputs when
     /// the rule of a target has a check or test to recommend instead, until
     /// the agent acknowledges the advice.
-    #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     enabled: Option<bool>,
 }
 

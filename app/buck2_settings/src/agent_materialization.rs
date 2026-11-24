@@ -16,6 +16,10 @@ use buck2_settings_derive::buck_settings_section;
 #[buck_settings_section(name = "agent_materialization", version = 0, scope = invocation)]
 pub struct AgentMaterialization {
     /// Whether such a build leaves its final outputs unmaterialized.
-    #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     enabled: Option<bool>,
 }

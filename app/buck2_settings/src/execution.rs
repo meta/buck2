@@ -24,7 +24,8 @@ pub struct Execution {
     /// before its process group gets `SIGKILL`.
     #[setting(
         buckconfig_fallback = "build.persistent_worker_shutdown_timeout_s",
-        default = 10,
+        internal_default = 10,
+        oss_default = 10,
         overridable_in(CommandLine, LocalSettings)
     )]
     persistent_worker_shutdown_timeout_s: Option<u32>,
@@ -33,7 +34,8 @@ pub struct Execution {
     /// some virtual machines.
     #[setting(
         buckconfig_fallback = "buck2.miniperf2",
-        default = true,
+        internal_default = true,
+        oss_default = true,
         overridable_in(CommandLine, LocalSettings)
     )]
     miniperf: Option<bool>,

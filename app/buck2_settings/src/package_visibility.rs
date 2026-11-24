@@ -52,7 +52,8 @@ pub struct PackageVisibility {
     /// fails those dependencies.
     // Enforcement control: overrides must not be able to weaken it.
     #[setting(
-        default = PackageVisibilityDefaultIntersection::Off,
+        internal_default = PackageVisibilityDefaultIntersection::Off,
+        oss_default = PackageVisibilityDefaultIntersection::Off,
         overridable_in()
     )]
     default_intersection: Option<PackageVisibilityDefaultIntersection>,

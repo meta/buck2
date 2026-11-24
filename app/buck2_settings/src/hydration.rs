@@ -47,25 +47,42 @@ pub enum PageOutOnIdleIsolationDirScope {
 pub struct Hydration {
     /// Whether DICE values can be paged out to on-disk storage. Implied by
     /// `page_out_on_idle`.
-    #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     enable_paging: Option<bool>,
     /// Whether values read back from disk (registered actions, analysis
     /// results and, in Meta-internal builds, Starlark fields) are decoded
     /// when they are first used, instead of all at once.
-    #[setting(default = true, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = true,
+        oss_default = true,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     defer_field_reads: Option<bool>,
     /// Whether the daemon pages DICE out when it goes idle.
-    #[setting(default = false, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     page_out_on_idle: Option<bool>,
     /// Which daemons page out when idle: `all`, or `non_default` to leave the
     /// daemon of the default isolation directory alone.
     #[setting(
-        default = PageOutOnIdleIsolationDirScope::All,
+        internal_default = PageOutOnIdleIsolationDirScope::All,
+        oss_default = PageOutOnIdleIsolationDirScope::All,
         overridable_in(CommandLine, LocalSettings)
     )]
     page_out_on_idle_isolation_dir_scope: Option<PageOutOnIdleIsolationDirScope>,
     /// Idle page-out runs only when at least this many GiB of disk are free.
-    #[setting(default = 100, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = 100,
+        oss_default = 100,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     page_out_min_free_disk_gb: Option<u64>,
     /// Which values a page-out writes. `once_per_value` writes each value
     /// once, so a value recomputed or read back from disk stays backed by a
@@ -73,7 +90,8 @@ pub struct Hydration {
     /// key out at most once: a value recomputed or read back afterwards stays
     /// in memory.
     #[setting(
-        default = PageOutPolicy::OncePerValue,
+        internal_default = PageOutPolicy::OncePerValue,
+        oss_default = PageOutPolicy::OncePerValue,
         overridable_in(CommandLine, LocalSettings)
     )]
     page_out_policy: Option<PageOutPolicy>,
@@ -84,20 +102,26 @@ pub struct Hydration {
     /// first, and `on_idle_lru` leaves writes in memory for a later idle
     /// reclaim.
     #[setting(
-        default = EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
+        internal_default = EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
+        oss_default = EvictionPolicy::OnMemoryPressure(EvictionStrategy::Default),
         overridable_in(CommandLine, LocalSettings)
     )]
     eviction_policy: Option<EvictionPolicy>,
     /// The on-disk backend for pagable DICE storage: `sqlite`, `sled`, or
     /// `noop`, which serializes values and discards them.
     #[setting(
-        default = PagableStorageBackend::Sqlite,
+        internal_default = PagableStorageBackend::Sqlite,
+        oss_default = PagableStorageBackend::Sqlite,
         overridable_in(CommandLine, LocalSettings)
     )]
     pagable_storage_backend: Option<PagableStorageBackend>,
     /// Whether the SQLite backend reads a shard's key file into the page cache
     /// whole once key lookups in it have started going to disk.
-    #[setting(default = true, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = true,
+        oss_default = true,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     key_read_ahead: Option<bool>,
 }
 

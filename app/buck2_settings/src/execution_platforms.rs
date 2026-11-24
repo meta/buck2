@@ -27,7 +27,8 @@ pub struct ExecutionPlatforms {
     /// folded into the platform's constraints.
     #[setting(
         buckconfig_fallback = "buck2.preserve_exec_platform_marker",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     preserve_marker: Option<bool>,

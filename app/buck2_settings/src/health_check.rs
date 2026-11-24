@@ -18,7 +18,8 @@ pub struct HealthCheck {
     // FIXME(jakobdegen): drop the fallback once fbsource sets this in `.bucksettings.toml`.
     #[setting(
         buckconfig_fallback = "buck2_health_check.enable_health_checks",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     enabled: Option<bool>,

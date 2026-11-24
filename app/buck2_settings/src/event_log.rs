@@ -15,13 +15,18 @@ use buck2_settings_derive::buck_settings_section;
 pub struct EventLog {
     /// How many event logs are kept on disk, counting the one about to be
     /// written.
-    #[setting(default = 12, overridable_in(CommandLine, LocalSettings))]
+    #[setting(
+        internal_default = 12,
+        oss_default = 12,
+        overridable_in(CommandLine, LocalSettings)
+    )]
     retained_logs: Option<usize>,
     /// Whether the log records each executed action's direct dependencies,
     /// for `buck2 log graph`.
     #[setting(
         buckconfig_fallback = "buck2.log_action_graph",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     action_graph: Option<bool>,

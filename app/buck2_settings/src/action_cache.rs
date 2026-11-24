@@ -17,7 +17,8 @@ pub struct ActionCache {
     /// locally: the default of a run action's `allow_cache_upload`.
     #[setting(
         buckconfig_fallback = "buck2.default_allow_cache_upload",
-        default = false,
+        internal_default = false,
+        oss_default = false,
         overridable_in(CommandLine, LocalSettings)
     )]
     default_allow_upload: Option<bool>,

@@ -30,7 +30,6 @@ use crate::typing::TyBasic;
 use crate::typing::TyStarlarkValue;
 use crate::typing::TyUser;
 use crate::typing::predicate::TyPredicate;
-use crate::typing::recursive::TyRecursive;
 use crate::typing::ty::TypeRenderConfig;
 
 pub struct RenderConfig {
@@ -123,14 +122,14 @@ impl<'a> PageRender<'a> {
     }
 
     /// The type of this page, if a mention of the type in a signature is a link to the page: a
-    /// nominal type or a declared one.
+    /// type that prints as its name, which is then the text of the link. A page can be of a
+    /// type that prints as more than that, as a function type prints as its signature, and a
+    /// mention of such a type is left as it prints.
     fn linked_ty(&self) -> Option<&Ty> {
         let ty = self.ty.as_ref()?;
         let linked = match ty.iter_union() {
             [TyBasic::StarlarkValue(_)] => true,
-            [TyBasic::Custom(c)] => {
-                c.0.as_any().is::<TyPredicate>() || c.0.as_any().is::<TyRecursive>()
-            }
+            [TyBasic::Custom(c)] => c.as_name().is_some_and(|name| name == c.to_string()),
             _ => false,
         };
         linked.then_some(ty)

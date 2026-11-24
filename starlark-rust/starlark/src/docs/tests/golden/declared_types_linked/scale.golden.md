@@ -8,7 +8,9 @@
 
 ## pack
 
-<pre class="language-python"><code>def pack(thing: <a to="/path/to/Crate">crate</a>) -> Parcel</code></pre>
+<pre class="language-python"><code>def pack(
+    thing: <a to="/path/to/Crate">crate</a>,
+) -> <a to="/path/to/Parcel">Parcel</a></code></pre>
 
 ---
 

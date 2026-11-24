@@ -29,10 +29,16 @@ use starlark_derive::NoSerialize;
 use starlark_derive::StarlarkPagable;
 use starlark_derive::starlark_module;
 use starlark_derive::starlark_value;
+use starlark_map::small_map::SmallMap;
 use starlark_syntax::golden_test_template::golden_test_template;
 
 use crate as starlark;
 use crate::any::ProvidesStaticType;
+use crate::docs::DocItem;
+use crate::docs::DocMember;
+use crate::docs::DocModule;
+use crate::docs::DocProperty;
+use crate::docs::DocType;
 use crate::docs::markdown::render_doc_item_no_link;
 use crate::docs::multipage::DocModuleInfo;
 use crate::docs::multipage::render_markdown_multipage;
@@ -41,6 +47,7 @@ use crate::environment::GlobalsBuilder;
 use crate::starlark_predicate_type;
 use crate::starlark_recursive_type;
 use crate::starlark_simple_value;
+use crate::typing::ParamSpec;
 use crate::typing::Ty;
 use crate::typing::TyStarlarkValue;
 use crate::typing::TyUser;
@@ -311,6 +318,49 @@ fn predicate_type_without_a_page_is_named() {
     );
     assert!(
         pages[""].contains("<code>def weigh(thing: Weighable) -> int</code>"),
+        "{}",
+        pages[""]
+    );
+}
+
+/// A page whose type prints as more than its name is not linked from a signature: the text of
+/// the link would be the whole type.
+#[test]
+fn type_that_prints_as_more_than_its_name_is_not_linked() {
+    let callback = Ty::function(ParamSpec::empty(), Ty::none());
+    let docs = DocModule {
+        docs: None,
+        members: SmallMap::from_iter([
+            (
+                "Callback".to_owned(),
+                DocItem::Type(DocType {
+                    docs: None,
+                    members: SmallMap::new(),
+                    ty: callback.dupe(),
+                    constructor: None,
+                }),
+            ),
+            (
+                "on_done".to_owned(),
+                DocItem::Member(DocMember::Property(DocProperty {
+                    docs: None,
+                    typ: callback,
+                })),
+            ),
+        ]),
+    };
+    let pages = render_markdown_multipage(
+        vec![DocModuleInfo {
+            module: &docs,
+            name: "callbacks".to_owned(),
+            page_path: "".to_owned(),
+        }],
+        Some(link),
+        false,
+    );
+    assert!(pages.contains_key("Callback"));
+    assert!(
+        pages[""].contains("<code>on_done: def() -> None</code>"),
         "{}",
         pages[""]
     );

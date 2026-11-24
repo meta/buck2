@@ -20,8 +20,12 @@ import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.FirSession
+import org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess
 import org.jetbrains.kotlin.fir.declarations.FirAnonymousFunction
 import org.jetbrains.kotlin.fir.declarations.FirAnonymousObject
+import org.jetbrains.kotlin.fir.declarations.FirDeclaration
+import org.jetbrains.kotlin.fir.declarations.FirDeclarationDataKey
+import org.jetbrains.kotlin.fir.declarations.FirDeclarationDataRegistry
 import org.jetbrains.kotlin.fir.declarations.FirDeclarationOrigin
 import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.declarations.FirFunction
@@ -36,6 +40,7 @@ import org.jetbrains.kotlin.fir.declarations.utils.isConst
 import org.jetbrains.kotlin.fir.declarations.utils.isInline
 import org.jetbrains.kotlin.fir.declarations.utils.isInlineOrValue
 import org.jetbrains.kotlin.fir.expressions.FirAnnotation
+import org.jetbrains.kotlin.fir.expressions.FirAnonymousFunctionExpression
 import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirErrorExpression
 import org.jetbrains.kotlin.fir.expressions.FirExpression
@@ -49,6 +54,7 @@ import org.jetbrains.kotlin.fir.expressions.FirResolvedQualifier
 import org.jetbrains.kotlin.fir.expressions.FirVarargArgumentsExpression
 import org.jetbrains.kotlin.fir.expressions.FirWhenExpression
 import org.jetbrains.kotlin.fir.expressions.FirWrappedArgumentExpression
+import org.jetbrains.kotlin.fir.expressions.resolvedArgumentMapping
 import org.jetbrains.kotlin.fir.references.FirErrorNamedReference
 import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.resolve.providers.firProvider
@@ -84,6 +90,44 @@ import org.jetbrains.kotlin.fir.unwrapFakeOverrides
 import org.jetbrains.kotlin.fir.visitors.FirVisitorVoid
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
+
+private object EmptiedBodyHadLocalClassesKey : FirDeclarationDataKey()
+
+/**
+ * Set on a declaration whose unresolved body the ABI pipeline emptied when that body had local
+ * classes (see [hasLocalClassShapes]), which keepability can no longer see in the body itself.
+ */
+var FirDeclaration.emptiedBodyHadLocalClasses: Boolean? by
+    FirDeclarationDataRegistry.data(EmptiedBodyHadLocalClassesKey)
+
+/**
+ * Whether [element] declares something the JVM backend numbers as a local class of its enclosing
+ * declaration (`Outer$name$1`): an anonymous object, a lambda (inlined and invokedynamic ones take
+ * a number too), a callable reference or a local class, including in a body emptied before body
+ * resolution. Works on raw and on resolved FIR.
+ */
+fun hasLocalClassShapes(element: FirElement): Boolean {
+  var found = false
+  element.accept(
+      object : FirVisitorVoid() {
+        override fun visitElement(element: FirElement) {
+          if (found) return
+          if (
+              element is FirAnonymousFunction ||
+                  element is FirAnonymousObject ||
+                  element is FirCallableReferenceAccess ||
+                  (element is FirRegularClass && element.symbol.classId.isLocal) ||
+                  (element is FirDeclaration && element.emptiedBodyHadLocalClasses == true)
+          ) {
+            found = true
+            return
+          }
+          element.acceptChildren(this)
+        }
+      },
+  )
+  return found
+}
 
 /**
  * Decides whether the body of a non-private inline function can be kept in the source-only ABI.
@@ -129,8 +173,16 @@ class InlineBodyKeepability(
     verdicts[function]?.let {
       return it
     }
-    // Inline functions cannot call each other in a cycle, so a cycle strips.
-    if (!inProgress.add(function)) return false
+    // A re-entrant query runs through the local-class numbering check: the check queries an
+    // earlier same-named declaration whose own evaluation calls back into this function (an
+    // overload that delegates to this one, for example). Calls alone cannot cycle, since the
+    // compiler rejects recursive inline functions.
+    // With lowerableOnly, answer optimistically. If the earlier declaration is genuinely keepable,
+    // its body reaches the ABI and this function's classes number correctly; if it is not, abi-gen
+    // reports the earlier declaration as its own error, failing the build before a misnumbered
+    // body ships. Without lowerableOnly (applicability) no numbering check runs, so a cycle strips
+    // as before.
+    if (!inProgress.add(function)) return lowerableOnly
     val result =
         try {
           compute(function)
@@ -152,7 +204,98 @@ class InlineBodyKeepability(
     val visitor = Visitor(function)
     function.accept(visitor)
     visitor.rejectDetail?.let { rejectDetails[function] = it }
+    if (visitor.keepable && lowerableOnly) {
+      localClassNumberingRejectReason(function)?.let {
+        rejectDetails[function] = it
+        return false
+      }
+    }
     return visitor.keepable
+  }
+
+  /**
+   * The JVM backend numbers the classes of a function's anonymous objects, lambdas and callable
+   * references (`Outer$name$1`) with one counter per enclosing name, in declaration order, and an
+   * inlined or invokedynamic lambda takes a number too. A same-named declaration earlier in the
+   * same container therefore takes the first numbers; its body reaches the ABI only when it is a
+   * kept inline function, so otherwise the kept body's classes would be numbered from 1 instead of
+   * matching the classes its callers' full compile names. A body without classes of its own (see
+   * [hasOwnLocalClasses]) names no numbered class, so nothing before it matters.
+   */
+  private fun localClassNumberingRejectReason(function: FirFunction): String? {
+    val name = (function.symbol as? FirNamedFunctionSymbol)?.name ?: return null
+    if (!hasOwnLocalClasses(function)) return null
+    for (declaration in containerDeclarations(function)) {
+      if (declaration === function) return null
+      val sameName =
+          when (declaration) {
+            is FirFunction -> (declaration.symbol as? FirNamedFunctionSymbol)?.name == name
+            is FirProperty -> declaration.name == name
+            else -> false
+          }
+      if (!sameName || !hasLocalClassShapes(declaration)) continue
+      if (declaration is FirFunction && declaration.isInline && isKeepable(declaration)) continue
+      return "not lowerable: an earlier `$name` takes the first numbers of its local classes"
+    }
+    return null
+  }
+
+  /**
+   * Whether the compiled [function] has numbered classes of its own: anonymous objects, callable
+   * references, local classes, and lambdas that are not inlined. A lambda passed to a parameter of
+   * an inline function that is not `noinline` is inlined into the body and gets no class. It still
+   * takes a number (see [hasLocalClassShapes]), but the number shows only in the debug name of its
+   * marker variable (`$i$a$-all-Outer$name$2`), so it is not counted here.
+   */
+  private fun hasOwnLocalClasses(function: FirFunction): Boolean {
+    val inlinedLambdas = HashSet<FirAnonymousFunction>()
+    function.accept(
+        object : FirVisitorVoid() {
+          override fun visitElement(element: FirElement) {
+            if (element is FirFunctionCall) collectInlinedLambdas(element, inlinedLambdas)
+            element.acceptChildren(this)
+          }
+        },
+    )
+    var found = false
+    function.accept(
+        object : FirVisitorVoid() {
+          override fun visitElement(element: FirElement) {
+            if (found) return
+            if (
+                (element is FirAnonymousFunction && element !in inlinedLambdas) ||
+                    element is FirAnonymousObject ||
+                    element is FirCallableReferenceAccess ||
+                    (element is FirRegularClass && element.symbol.classId.isLocal) ||
+                    (element is FirDeclaration && element.emptiedBodyHadLocalClasses == true)
+            ) {
+              found = true
+              return
+            }
+            element.acceptChildren(this)
+          }
+        },
+    )
+    return found
+  }
+
+  private fun collectInlinedLambdas(call: FirFunctionCall, into: MutableSet<FirAnonymousFunction>) {
+    val callee =
+        (call.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol
+            as? FirNamedFunctionSymbol ?: return
+    if (!callee.fir.isInline) return
+    for ((argument, parameter) in call.resolvedArgumentMapping ?: return) {
+      if (parameter.isNoinline) continue
+      val expression = (argument as? FirWrappedArgumentExpression)?.expression ?: argument
+      (expression as? FirAnonymousFunctionExpression)?.let { into += it.anonymousFunction }
+    }
+  }
+
+  @OptIn(DirectDeclarationsAccess::class)
+  private fun containerDeclarations(function: FirFunction): List<FirDeclaration> {
+    val classId = function.symbol.callableId?.classId
+    if (classId != null) return regularClass(classId)?.declarations.orEmpty()
+    return session.firProvider.getFirCallableContainerFile(function.symbol)?.declarations.orEmpty()
   }
 
   /** Why [isKeepable] last failed for [function], if it recorded one. */
@@ -161,14 +304,14 @@ class InlineBodyKeepability(
   /**
    * Shapes that the ABI cannot carry as one plain method body: members of value classes or
    * interfaces, and, in the body (see [Visitor]), anonymous objects and local declarations,
-   * callable references, `when` over an enum and `entries` of a library enum (classes generated
-   * next to the caller), non-Kotlin annotations (compiler plugins rewrite annotated code), reads of
-   * own `const val`s whose value did not survive (unresolvable initializers) and own inline
-   * properties, calls to own inline functions that are not kept, and own declarations the ABI does
-   * not carry with the same signature (private ones, and protected ones reached through a synthetic
-   * accessor). Default argument values are checked by the same visitor as ordinary body expressions
-   * instead (safe ones are kept with real values; the backend emits the `$default` bridge from
-   * them).
+   * callable references, local classes numbered after an earlier same-named declaration, `when`
+   * over an enum and `entries` of a library enum (classes generated next to the caller), non-Kotlin
+   * annotations (compiler plugins rewrite annotated code), reads of own `const val`s whose value
+   * did not survive (unresolvable initializers) and own inline properties, calls to own inline
+   * functions that are not kept, and own declarations the ABI does not carry with the same
+   * signature (private ones, and protected ones reached through a synthetic accessor). Default
+   * argument values are checked by the same visitor as ordinary body expressions instead (safe ones
+   * are kept with real values; the backend emits the `$default` bridge from them).
    */
   private fun hasLowerableShape(function: FirFunction): Boolean =
       shapeRejectReason(function) == null

@@ -13,6 +13,8 @@
 
 package com.facebook
 
+import com.facebook.buck.jvm.kotlin.compilerplugins.common.emptiedBodyHadLocalClasses
+import com.facebook.buck.jvm.kotlin.compilerplugins.common.hasLocalClassShapes
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.FirSession
@@ -111,7 +113,11 @@ private fun emptyNonAbiBodies(declarations: List<FirDeclaration>) {
 }
 
 private fun FirFunction.emptyUnresolvedBody() {
+  val body = body
   if (body.isUnresolved()) {
+    // The JVM backend numbers local classes per enclosing name, so a kept inline body's local
+    // classes depend on those of an earlier same-named declaration (see InlineBodyKeepability).
+    if (hasLocalClassShapes(body!!)) emptiedBodyHadLocalClasses = true
     replaceBody(buildEmptyExpressionBlock())
   }
 }

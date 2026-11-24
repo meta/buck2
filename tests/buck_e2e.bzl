@@ -224,6 +224,7 @@ def buck_e2e_test(
             "xplat/buck2/**",
             "xplat/toolchains/**",
             "!xplat/toolchains/gator/**",
+            "!xplat/toolchains/android/ndk/**",
             "fbcode/hermetic_infra/fdb/**",
             "tools/build_defs/**",
             "!tools/build_defs/llvm/**",

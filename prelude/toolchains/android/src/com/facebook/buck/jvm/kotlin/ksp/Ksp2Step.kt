@@ -68,6 +68,9 @@ class Ksp2Step(
     private val friendPaths: Collection<AbsPath> = emptyList(),
 ) : IsolatedStep {
 
+  /** Whether this step runs on Remote Execution, read as `KotlinCDCommand` reads its platform. */
+  private val executesRemotely: Boolean = System.getenv(INSIDE_RE_WORKER_ENV) != null
+
   private val noOpDetector = Ksp2NoOpDetector()
 
   /** What the processor's [KspInertShortcut] did in this step, for telemetry; null without one. */
@@ -206,8 +209,9 @@ class Ksp2Step(
     }
     val shortcut = (lookup as? KspInertShortcut.Lookup.Found)?.shortcut
     val answer = (lookup as? KspInertShortcut.Lookup.Found)?.answer
-    // The resource's mode, lowered by the answer's.
-    val shortcutMode = (lookup as? KspInertShortcut.Lookup.Found)?.mode
+    // The resource's mode, lowered by the answer's, and `shadow` for `skip` outside Remote
+    // Execution.
+    val shortcutMode = (lookup as? KspInertShortcut.Lookup.Found)?.mode(executesRemotely)
     if (shortcut != null && answer != null) {
       val outcome =
           answer.declined?.let { "declined: ${it.take(200)}" } ?: shortcutMode!!.name.lowercase()
@@ -432,6 +436,8 @@ class Ksp2Step(
     private val LOG: Logger = Logger.get(Ksp2Step::class.java)
 
     private const val PROCESSOR_OUTPUT_EXTRAS_KEY = "ksp2_processor_generated_files"
+
+    private const val INSIDE_RE_WORKER_ENV = "INSIDE_RE_WORKER"
 
     private const val CPU_EXTRAS_KEY = "ksp2_cpu"
 

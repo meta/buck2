@@ -229,6 +229,23 @@ class KspInertShortcutTest {
   }
 
   @Test
+  fun `a local step runs skip as shadow and keeps every other mode`() {
+    // resource mode, answer mode, mode on Remote Execution, mode locally
+    for ((resource, answer, remote, local) in
+        listOf(
+            listOf("skip", null, "SKIP", "SHADOW"),
+            listOf("skip", "skip", "SKIP", "SHADOW"),
+            listOf("verify", null, "VERIFY", "VERIFY"),
+            listOf("shadow", null, "SHADOW", "SHADOW"),
+            listOf("skip", "shadow", "SHADOW", "SHADOW"),
+        )) {
+      val found = foundMode(resource!!, answer) as KspInertShortcut.Lookup.Found
+      assertEquals("$resource + $answer remote", remote, found.mode(executesRemotely = true).name)
+      assertEquals("$resource + $answer local", local, found.mode(executesRemotely = false).name)
+    }
+  }
+
+  @Test
   fun `an answer without a mode runs in the resource's`() {
     for ((name, mode) in
         listOf(

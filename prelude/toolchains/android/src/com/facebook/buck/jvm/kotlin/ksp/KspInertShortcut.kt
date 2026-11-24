@@ -220,6 +220,13 @@ private constructor(
       /** The mode the step runs in: the resource's, lowered by the answer's. */
       val mode: Mode
         get() = shortcut.mode.loweredTo(answer.mode)
+
+      /**
+       * [mode] for a step that runs on Remote Execution when [executesRemotely], else locally,
+       * where `skip` runs as `shadow`: local executions of one action can share output directories.
+       */
+      fun mode(executesRemotely: Boolean): Mode =
+          if (executesRemotely || mode != Mode.SKIP) mode else Mode.SHADOW
     }
   }
 

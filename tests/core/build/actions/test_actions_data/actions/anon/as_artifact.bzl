@@ -96,7 +96,6 @@ def _default_output_impl(ctx: AnalysisContext) -> list[Provider]:
 _default_output = rule(impl = _default_output_impl, attrs = {})
 
 def _check_default_output_impl(ctx: AnalysisContext) -> list[Provider]:
-    _assert_eq(isinstance(ctx.attrs.src, PromiseArtifact), True)
     _assert_eq(ctx.attrs.src.short_path, "dir/hello.out")
 
     def check_is_artifact(_artifact: Artifact):

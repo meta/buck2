@@ -9,7 +9,6 @@
 - <Link to="/docs/api/build/Label">Label</Link>
 - <Link to="/docs/api/build/OutputArtifact">OutputArtifact</Link>
 - <Link to="/docs/api/build/ProjectRoot">ProjectRoot</Link>
-- <Link to="/docs/api/build/PromiseArtifact">PromiseArtifact</Link>
 - <Link to="/docs/api/build/ResolvedStringWithMacros">ResolvedStringWithMacros</Link>
 - <Link to="/docs/api/build/RunInfo">RunInfo</Link>
 - <Link to="/docs/api/build/TaggedCommandLine">TaggedCommandLine</Link>

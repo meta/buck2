@@ -23,7 +23,6 @@ use dupe::Dupe;
 use dupe::OptionDupedExt;
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
-use starlark::environment::GlobalsBuilder;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
@@ -293,9 +292,3 @@ impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
 impl<'v> StarlarkValue<'v> for StarlarkPromiseArtifact {
     type Type = StarlarkArtifactView<'v>;
 }
-
-#[starlark_module]
-#[starlark_types(
-    StarlarkPromiseArtifact as PromiseArtifact
-)]
-pub(crate) fn register_promise_artifact(globals: &mut GlobalsBuilder) {}

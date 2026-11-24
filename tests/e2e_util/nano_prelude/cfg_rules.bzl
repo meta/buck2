@@ -134,6 +134,7 @@ def _execution_platform(ctx):
                 remote_cache_enabled = ctx.attrs.remote_cache_enabled,
                 allow_cache_uploads = ctx.attrs.allow_cache_uploads,
                 max_cache_upload_mebibytes = 1,
+                network_access = ctx.attrs.network_access,
             ),
         ),
     ]
@@ -143,6 +144,7 @@ execution_platform = rule(
     attrs = {
         "allow_cache_uploads": attrs.bool(default = False),
         "local_enabled": attrs.bool(default = True),
+        "network_access": attrs.option(attrs.string(), default = None),
         "platform": attrs.dep(providers = [PlatformInfo]),
         "remote_cache_enabled": attrs.option(attrs.bool(), default = None),
         "remote_enabled": attrs.bool(default = False),

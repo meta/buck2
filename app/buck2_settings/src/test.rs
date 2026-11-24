@@ -82,4 +82,19 @@ pub struct Test {
         overridable_in(CommandLine, LocalSettings)
     )]
     inherit_client_coding_agent_metadata: Option<bool>,
+    /// Whether a test that ran locally and passed writes its result to the
+    /// action cache, where the test supports test execution caching and its
+    /// executor reads the remote cache and allows cache uploads. Only a run
+    /// that was cut off from the network is written: one whose executor
+    /// restricts `network_access`, on Linux, the only platform that isolates
+    /// local commands. Failed, timed out, cancelled and repeated runs are
+    /// never written. Other inputs the action does not declare, such as files
+    /// the test reads outside them or variables it inherits from the machine,
+    /// are not checked: whoever sets this vouches for them.
+    #[setting(
+        internal_default = false,
+        oss_default = false,
+        overridable_in(CommandLine, LocalSettings)
+    )]
+    upload_passing_local_results: Option<bool>,
 }

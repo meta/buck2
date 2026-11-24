@@ -4,3 +4,5 @@
 ## ConstraintSettingInfo.default
 ## ConstraintSettingInfo.label
 ## Implements
+A value of this type is accepted where one of these is wanted.
+- <Link to="/docs/api/build/Provider">Provider</Link>

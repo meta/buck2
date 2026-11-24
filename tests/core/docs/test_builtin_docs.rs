@@ -28,6 +28,25 @@ fn md_files(dir: &Path, found: &mut Vec<PathBuf>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// What of a page is pinned: its headings, and all of the sections that the docs generator
+/// writes about declared types. The rest of a page is prose.
+fn pinned(text: &str) -> String {
+    const GENERATED: [&str; 3] = ["## Implements", "## Implemented by", "## Definition"];
+    let mut pinned = Vec::new();
+    let mut in_generated = false;
+    for line in text.lines() {
+        if line.starts_with("# ") || line.starts_with("## ") {
+            in_generated = GENERATED.contains(&line);
+            pinned.push(line);
+        } else if line == "---" {
+            in_generated = false;
+        } else if in_generated && !line.is_empty() {
+            pinned.push(line);
+        }
+    }
+    pinned.join("\n")
+}
+
 #[buck_test]
 async fn test_builtin_docs_golden(buck: &Buck) -> anyhow::Result<()> {
     let output = buck
@@ -48,17 +67,19 @@ async fn test_builtin_docs_golden(buck: &Buck) -> anyhow::Result<()> {
         .into_iter()
         .map(|file| {
             let text = std::fs::read_to_string(&file)?;
-            let s = text
-                .lines()
-                .filter(|x| x.starts_with("# ") || x.starts_with("## "))
-                .collect::<Vec<_>>()
-                .join("\n");
-
             let rel_path = file.strip_prefix(&output)?;
-            Ok((rel_path.to_string_lossy().replace('\\', "/"), s))
+            Ok((rel_path.to_string_lossy().replace('\\', "/"), pinned(&text)))
         })
         .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
 
     golden_dir(&outputs, "buck2-golden-docs");
+
+    // A signature links the name of a declared type as it links any type that has a page.
+    let cmd_args = std::fs::read_to_string(output.join("build").join("cmd_args.md"))?;
+    assert!(
+        cmd_args
+            .contains(r#"\*args: <Link to="/docs/api/build/CmdArgsInput">CmdArgsInput</Link>,"#),
+        "{cmd_args}"
+    );
     Ok(())
 }

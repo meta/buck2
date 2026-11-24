@@ -2,3 +2,4 @@
 
 # CmdArgsInput
 ## Definition
+<pre class="language-python"><code>CmdArgsInput = list[<Link to="/docs/api/build/CmdArgsInput">CmdArgsInput</Link>] | <Link to="/docs/api/build/CmdArgsLike">CmdArgsLike</Link></code></pre>

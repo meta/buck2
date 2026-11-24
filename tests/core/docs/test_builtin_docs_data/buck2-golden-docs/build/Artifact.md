@@ -11,3 +11,5 @@
 ## Artifact.with\_associated\_artifacts
 ## Artifact.without\_associated\_artifacts
 ## Implements
+A value of this type is accepted where one of these is wanted.
+- <Link to="/docs/api/build/CmdArgsLike">CmdArgsLike</Link>

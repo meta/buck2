@@ -112,8 +112,9 @@ starlark_predicate_type! {
     /// A provider: what a rule returns to say something about its target to the rules that
     /// depend on it.
     ///
-    /// `DefaultInfo(..)` is one, and so is `FooInfo(..)` for a `FooInfo = provider(..)` of a
-    /// `.bzl` file. `DefaultInfo` and `FooInfo` themselves are not: they make providers.
+    /// Every provider is one: `DefaultInfo(..)` and the other builtin ones, and `FooInfo(..)`
+    /// for a `FooInfo = provider(..)` of a `.bzl` file. `DefaultInfo` and `FooInfo` themselves
+    /// are not providers but the types of providers: calling one makes a provider of that type.
     pub StarlarkProvider<'v>;
     name "Provider";
     get &'v dyn ProviderLike<'v>;

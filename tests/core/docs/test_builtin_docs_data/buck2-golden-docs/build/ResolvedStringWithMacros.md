@@ -3,3 +3,5 @@
 # ResolvedStringWithMacros
 ## ResolvedStringWithMacros.startswith
 ## Implements
+A value of this type is accepted where one of these is wanted.
+- <Link to="/docs/api/build/CmdArgsLike">CmdArgsLike</Link>

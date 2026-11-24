@@ -7,3 +7,5 @@
 ## WorkerInfo.streaming
 ## WorkerInfo.supports\_bazel\_remote\_persistent\_worker\_protocol
 ## Implements
+A value of this type is accepted where one of these is wanted.
+- <Link to="/docs/api/build/Provider">Provider</Link>

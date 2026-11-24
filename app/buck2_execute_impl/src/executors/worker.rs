@@ -1151,6 +1151,7 @@ mod worker_handle_tests {
     use tracing::span::Attributes;
     use tracing::span::Id;
     use tracing::span::Record;
+    use tracing::subscriber::Interest;
 
     use super::WorkerClient;
     use super::WorkerDiagnostics;
@@ -1481,6 +1482,51 @@ mod worker_handle_tests {
         }
     }
 
+    /// Runs `f` with `recorder` as this thread's subscriber.
+    ///
+    /// tracing caches each callsite's interest once, computed from the subscribers registered
+    /// at the time, and while only one is registered, from the current thread's. A test that
+    /// drops a `WorkerHandle` with no subscriber of its own can so be the first to reach the
+    /// receipt callsite while a recorder is the only subscriber: `NoSubscriber` answers
+    /// `never`, and the recorder's thread then skips the event before the recorder sees it.
+    /// The process-wide fallback installed here answers `sometimes` instead, so that every
+    /// event asks the thread's subscriber.
+    fn recording(recorder: WorkerReceiptRecorder, f: impl FnOnce()) {
+        static FALLBACK: std::sync::Once = std::sync::Once::new();
+        FALLBACK.call_once(|| {
+            // Another global subscriber is as good: only `NoSubscriber` answers `never`.
+            let _ignored = tracing::subscriber::set_global_default(AskEveryTime);
+        });
+        tracing::subscriber::with_default(recorder, f);
+    }
+
+    /// Records nothing, and asks to be consulted for every event.
+    struct AskEveryTime;
+
+    impl Subscriber for AskEveryTime {
+        fn register_callsite(&self, _metadata: &'static Metadata<'static>) -> Interest {
+            Interest::sometimes()
+        }
+
+        fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+            false
+        }
+
+        fn new_span(&self, _span: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &Id, _values: &Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+        fn event(&self, _event: &Event<'_>) {}
+
+        fn enter(&self, _span: &Id) {}
+
+        fn exit(&self, _span: &Id) {}
+    }
+
     impl Subscriber for WorkerReceiptRecorder {
         fn enabled(&self, metadata: &Metadata<'_>) -> bool {
             metadata.target() != "buck2_worker_diagnostic" || !self.diagnostics_disabled
@@ -1515,7 +1561,7 @@ mod worker_handle_tests {
     #[tokio::test]
     async fn test_worker_handle_drop_receipt_is_payload_free() {
         let recorder = WorkerReceiptRecorder::default();
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recording(recorder.clone(), || {
             let channel = Channel::from_static("http://127.0.0.1:1").connect_lazy();
             let (handle, _child_alive) = test_handle(WorkerClient::single(channel));
             drop(handle);
@@ -1539,7 +1585,7 @@ mod worker_handle_tests {
         let (tx, mut rx) = tokio::sync::oneshot::channel();
         waiters.insert(7, tx);
         let (observer, guard) = LivelinessGuard::create_sync();
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recording(recorder.clone(), || {
             let mut reader = WorkerResponseReader::new(diagnostics);
             reader.response(Err(Status::unknown("SYNTHETIC_PRIVATE_PAYLOAD")), &waiters);
             reader.response(Err(Status::unknown("SYNTHETIC_PRIVATE_PAYLOAD")), &waiters);
@@ -1608,7 +1654,7 @@ mod worker_handle_tests {
         let waiters = WorkerResponseWaiters::default();
         let (tx, _rx) = tokio::sync::oneshot::channel();
         waiters.insert(7, tx);
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recording(recorder.clone(), || {
             let mut reader = WorkerResponseReader::new(WorkerDiagnostics::new());
             reader.response(Err(Status::unknown("SYNTHETIC_PRIVATE_PAYLOAD")), &waiters);
             reader.response(Err(Status::unknown("SYNTHETIC_PRIVATE_PAYLOAD")), &waiters);
@@ -1628,7 +1674,7 @@ mod worker_handle_tests {
         let waiters = WorkerResponseWaiters::default();
         let (tx, mut rx) = tokio::sync::oneshot::channel();
         waiters.insert(7, tx);
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recording(recorder.clone(), || {
             let mut reader = WorkerResponseReader::new(diagnostics);
             reader.response(
                 Ok(ExecuteResponseStream {
@@ -1670,7 +1716,7 @@ mod worker_handle_tests {
     #[tokio::test]
     async fn test_worker_handle_receipt_preserves_arc_and_owner_guard_lifetime() {
         let recorder = WorkerReceiptRecorder::default();
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recording(recorder.clone(), || {
             let channel = Channel::from_static("http://127.0.0.1:1").connect_lazy();
             let (child_observer, _child_guard) = LivelinessGuard::create();
             let (owner_observer, owner_guard) = LivelinessGuard::create_sync();
@@ -1735,7 +1781,7 @@ mod worker_handle_tests {
             "future-dropped-before-return",
         ] {
             let recorder = WorkerReceiptRecorder::default();
-            tracing::subscriber::with_default(recorder.clone(), || {
+            recording(recorder.clone(), || {
                 let mut fixture = WorkerStreamFixture::new();
                 if outcome == "send-failed" {
                     fixture.commands.close();
@@ -1821,7 +1867,7 @@ mod worker_handle_tests {
     #[test]
     fn test_worker_cancelled_receiver_observations_do_not_clean_waiters() {
         let recorder = WorkerReceiptRecorder::default();
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recording(recorder.clone(), || {
             let mut fixture = WorkerStreamFixture::new();
             let diagnostics = match &fixture.client {
                 WorkerClient::Stream { diagnostics, .. } => *diagnostics,
@@ -1856,7 +1902,7 @@ mod worker_handle_tests {
     #[test]
     fn test_worker_clones_share_ordinal_and_instances_distinguish_request_zero() {
         let recorder = WorkerReceiptRecorder::default();
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recording(recorder.clone(), || {
             let mut first = WorkerStreamFixture::new();
             let mut cloned = first.client.clone();
             let mut second = WorkerStreamFixture::new();
@@ -1904,7 +1950,7 @@ mod worker_handle_tests {
                 "SYNTHETIC_PRIVATE_PAYLOAD"
             )),
         ];
-        tracing::subscriber::with_default(recorder.clone(), || {
+        recording(recorder.clone(), || {
             for result in &results {
                 diagnostics.exit_observed(result);
             }

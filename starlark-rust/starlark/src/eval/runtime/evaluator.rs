@@ -106,8 +106,6 @@ enum EvaluatorError {
     ZeroCallstackSize,
     #[error("Evaluation cancelled")]
     Cancelled,
-    #[error("Max heap size is already set")]
-    HeapSizeAlreadySet,
     #[error("Max heap size cannot be zero")]
     ZeroHeapSize,
     #[error(
@@ -116,8 +114,6 @@ This error is usually emitted some time after the limit is actually exceeded, so
 be informative."
     )]
     HeapLimitExceeded(usize),
-    #[error("Max tick count is already set")]
-    TickLimitAlreadySet,
     #[error("Max tick count cannot be zero")]
     ZeroTickLimit,
     #[error("Execution duration limit of {0} ticks has been exceeded")]
@@ -975,7 +971,8 @@ impl<'v, 'a, 'e: 'a> Evaluator<'v, 'a, 'e> {
     /// Sets maximum size of the starlark heap in bytes. The size is of what is in use on the
     /// heap, as opposed to the memory that the heap holds to allocate from.
     ///
-    /// Evaluation will fail with an error after the limit is exceeded.
+    /// Evaluation will fail with an error after the limit is exceeded. The limit can be replaced,
+    /// including by a native function while evaluation is running.
     ///
     /// Putting aside that starlark-rust should in general not be considered secure against truly
     /// malicious code, this check in particular is best-effort and should absolutely not be treated
@@ -1008,9 +1005,6 @@ impl<'v, 'a, 'e: 'a> Evaluator<'v, 'a, 'e> {
         if heap_size == 0 {
             return Err(EvaluatorError::ZeroHeapSize.into());
         }
-        if self.max_heap_size.is_some() {
-            return Err(EvaluatorError::HeapSizeAlreadySet.into());
-        }
         self.max_heap_size = Some(heap_size);
         Ok(())
     }
@@ -1040,7 +1034,8 @@ impl<'v, 'a, 'e: 'a> Evaluator<'v, 'a, 'e> {
 
     /// Set a limit on the tick count of this starlark evaluation.
     ///
-    /// Evaluation will fail with an error after the limit is exceeded.
+    /// Evaluation will fail with an error after the limit is exceeded. The limit can be replaced,
+    /// including by a native function while evaluation is running.
     ///
     /// Appropriate values for this parameter can be found by running representative evaluations and
     /// inspecting `get_total_tick_count` at the end.
@@ -1063,9 +1058,6 @@ impl<'v, 'a, 'e: 'a> Evaluator<'v, 'a, 'e> {
     pub fn set_max_tick_count(&mut self, tick_count: u64) -> anyhow::Result<()> {
         if tick_count == 0 {
             return Err(EvaluatorError::ZeroTickLimit.into());
-        }
-        if self.max_tick_count.is_some() {
-            return Err(EvaluatorError::TickLimitAlreadySet.into());
         }
         self.max_tick_count = Some(tick_count);
         Ok(())
@@ -1236,14 +1228,29 @@ pub(crate) fn before_stmt(
 
 #[cfg(test)]
 mod tests {
+    use starlark_derive::starlark_module;
     use starlark_syntax::ErrorKind;
 
+    use crate as starlark;
     use crate::environment::Globals;
+    use crate::environment::GlobalsBuilder;
     use crate::environment::Module;
     use crate::eval::Evaluator;
     use crate::syntax::AstModule;
     use crate::syntax::Dialect;
     use crate::values::layout::heap::name::StarlarkTestHeapName;
+    use crate::values::none::NoneType;
+
+    const ALLOCATE: &str =
+        "def allocate():\n    x = [str(i) * 100 for i in range(10000)]\nallocate()";
+
+    #[starlark_module]
+    fn raise_heap_limit(builder: &mut GlobalsBuilder) {
+        fn raise_heap_limit(eval: &mut Evaluator) -> anyhow::Result<NoneType> {
+            eval.set_max_heap_size(1 << 30)?;
+            Ok(NoneType)
+        }
+    }
 
     #[test]
     fn test_heap_memory_limit() -> crate::Result<()> {
@@ -1267,8 +1274,7 @@ mod tests {
             let ast = AstModule::parse(
                 "test.bzl",
                 // Allocate many strings to exceed heap limit
-                "def allocate():\n    x = [str(i) * 100 for i in range(10000)]\nallocate()"
-                    .to_owned(),
+                ALLOCATE.to_owned(),
                 &Dialect::Standard,
             )
             .unwrap();
@@ -1310,6 +1316,25 @@ mod tests {
         })?;
 
         Module::with_temp_heap(|module| eval_module(&module, "x = 1 + 1", Some(100000)))
+    }
+
+    #[test]
+    fn test_heap_memory_limit_replaced_during_evaluation() -> crate::Result<()> {
+        let globals = GlobalsBuilder::standard().with(raise_heap_limit).build();
+        Module::with_temp_heap(|module| {
+            let mut eval = Evaluator::new(&module);
+            eval.set_max_heap_size(10000).unwrap();
+
+            let ast = AstModule::parse(
+                "test.bzl",
+                format!("raise_heap_limit()\n{ALLOCATE}"),
+                &Dialect::Standard,
+            )
+            .unwrap();
+            eval.eval_module(ast, &globals)?;
+
+            Ok(())
+        })
     }
 
     #[test]

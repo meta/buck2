@@ -23,7 +23,7 @@ pub struct DepFiles {
     #[setting(
         buckconfig_fallback = "buck2.cross_config_lookup_on_stale_entry",
         internal_default = false,
-        oss_default = false,
+        oss_default = true,
         overridable_in(CommandLine, LocalSettings)
     )]
     cross_config_lookup_on_stale_entry: Option<bool>,

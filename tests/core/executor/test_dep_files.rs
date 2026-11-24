@@ -1371,7 +1371,12 @@ async fn test_dep_file_hit_across_configurations_with_stale_entry(
     test_dep_file_hit_across_configurations_with_stale_entry_impl(buck, true).await
 }
 
-#[buck_test(setup_eden = false, data_dir = "dep_files", skip_for_os = ["windows"])]
+#[buck_test(
+    setup_eden = false,
+    data_dir = "dep_files",
+    skip_for_os = ["windows"],
+    meta_only = "pins the internal default: cross-config lookup is on by default in open source builds",
+)]
 async fn test_no_dep_file_hit_across_configurations_with_stale_entry_by_default(
     buck: &Buck,
 ) -> anyhow::Result<()> {

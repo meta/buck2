@@ -115,6 +115,27 @@ def _make_path_user_writable(path: str) -> None:
         make_path_user_writable(path)
 
 
+# A token is a run of backslash escapes and characters other than the
+# separators shlex.split uses: space, tab, CR and LF.
+_DEPENDENCY_TOKEN = re.compile(r"(?:\\.|[^ \t\r\n\\])+", re.DOTALL)
+_PLAIN_DEPENDENCY_TOKEN = re.compile(r"[^ \t\r\n]+")
+_ESCAPED_CHARACTER = re.compile(r"\\(.)", re.DOTALL)
+
+
+def _split_dependencies(inputs: str) -> list[str]:
+    # The compiler escapes only spaces and "#" in paths, with a backslash, so
+    # without quotes this matches shlex.split, which is much slower on large
+    # dependency lists.
+    if '"' in inputs or "'" in inputs:
+        return shlex.split(inputs)
+    if "\\" not in inputs:
+        return _PLAIN_DEPENDENCY_TOKEN.findall(inputs)
+    return [
+        _ESCAPED_CHARACTER.sub(r"\1", token)
+        for token in _DEPENDENCY_TOKEN.findall(inputs)
+    ]
+
+
 def _rewrite_dependency_file(command, out_path):
     if not out_path:
         raise RuntimeError("-emit-dependencies requires -dependencies-file-output")
@@ -136,7 +157,7 @@ def _rewrite_dependency_file(command, out_path):
             # tracked.
             output, inputs = line.split(" : ")
             if output.endswith(".swiftmodule") or output.endswith(".o"):
-                dependencies = shlex.split(inputs)
+                dependencies = _split_dependencies(inputs)
                 break
 
     # Sanity check that we only track relative paths

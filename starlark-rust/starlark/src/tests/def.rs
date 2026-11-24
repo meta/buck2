@@ -229,7 +229,7 @@ fn test_context_captured() {
 
 #[test]
 fn test_lambda_errors() {
-    // Test from https://github.com/facebook/starlark-rust/issues/36
+    // Test from https://github.com/meta/starlark-rust/issues/36
     assert::fail("lambda a,a:a", "duplicated parameter name");
 }
 

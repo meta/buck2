@@ -7,7 +7,7 @@ authors = ["Facebook"]
 edition.workspace = true
 description = "Map implementation with starlark-rust specific optimizations"
 documentation = "https://docs.rs/starlark_map"
-repository = "https://github.com/facebook/starlark-rust"
+repository = "https://github.com/meta/starlark-rust"
 license = "Apache-2.0"
 
 [dependencies]

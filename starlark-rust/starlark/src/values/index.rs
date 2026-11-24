@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn test_slice_i32_min_stride_no_panic() {
-        // Regression for https://github.com/facebook/starlark-rust/issues/230
+        // Regression for https://github.com/meta/starlark-rust/issues/230
         // i32::MIN stride previously panicked on abs()
         Heap::temp(|heap| {
             let xs = [1, 2, 3];

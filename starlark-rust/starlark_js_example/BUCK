@@ -23,7 +23,7 @@ rust_library(
                 "description": "Example of running starlark-rust interpreter in browser",
                 "license": "Apache-2.0",
                 "publish": False,
-                "repository": "https://github.com/facebook/starlark-rust",
+                "repository": "https://github.com/meta/starlark-rust",
                 "version": "0.0.0",
             },
         },

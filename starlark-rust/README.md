@@ -1,12 +1,12 @@
 # Starlark in Rust
 
-[![GitHub link](https://img.shields.io/badge/GitHub-facebook%2Fstarlark--rust-blue.svg)](https://github.com/facebook/starlark-rust)
+[![GitHub link](https://img.shields.io/badge/GitHub-meta%2Fstarlark--rust-blue.svg)](https://github.com/meta/starlark-rust)
 [![crates.io version](https://img.shields.io/crates/v/starlark.svg)](https://crates.io/crates/starlark)
 [![docs.rs availability](https://img.shields.io/docsrs/starlark?label=docs.rs)](https://docs.rs/starlark/)
-[![Build status](https://img.shields.io/github/actions/workflow/status/facebook/starlark-rust/ci.yml?branch=main)](https://github.com/facebook/starlark-rust/actions)
+[![Build status](https://img.shields.io/github/actions/workflow/status/meta/starlark-rust/ci.yml?branch=main)](https://github.com/meta/starlark-rust/actions)
 
 There are several copies of this repo on GitHub,
-[facebook/starlark-rust](https://github.com/facebook/starlark-rust) is the
+[meta/starlark-rust](https://github.com/meta/starlark-rust) is the
 canonical one.
 
 This project provides a Rust implementation of the
@@ -113,15 +113,15 @@ In this section we outline where we don't comply with the
 - We have plenty of extensions, e.g. type annotations, recursion, top-level
   `for`.
 - We don't yet support later additions to Starlark, such as
-  [bytes](https://github.com/facebook/starlark-rust/issues/4).
+  [bytes](https://github.com/meta/starlark-rust/issues/4).
 - In some cases creating circular data structures may lead to stack overflows.
 
 ## Making a release
 
-1. Check the [GitHub Actions](https://github.com/facebook/starlark-rust/actions)
+1. Check the [GitHub Actions](https://github.com/meta/starlark-rust/actions)
    are green.
 2. Update `CHANGELOG.md` with the changes since the last release.
-   [This link](https://github.com/facebook/starlark-rust/compare/v0.4.0...main)
+   [This link](https://github.com/meta/starlark-rust/compare/v0.4.0...main)
    can help (update to compare against the last release).
 3. Update the version numbers of the two `Cargo.toml` files. Bump them by 0.0.1
    if there are no incompatible changes, or 0.1.0 if there are. Bump the
@@ -131,7 +131,7 @@ In this section we outline where we don't comply with the
 5. Run `cargo publish --allow-dirty --dry-run`, then without the `--dry-run`, in
    each of the component directories in the [order above](#components).
 6. Create a
-   [GitHub release](https://github.com/facebook/starlark-rust/releases/new) with
+   [GitHub release](https://github.com/meta/starlark-rust/releases/new) with
    `v0.X.Y`, using the `starlark` version as the name.
 
 ## License

@@ -14,7 +14,7 @@ rust_library(
                 "description": "Derive helpers for the starlark package.",
                 "documentation": "https://docs.rs/starlark_derive",
                 "license": "Apache-2.0",
-                "repository": "https://github.com/facebook/starlark-rust",
+                "repository": "https://github.com/meta/starlark-rust",
                 "version": "0.14.2",
             },
         },

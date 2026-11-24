@@ -4,14 +4,14 @@
     "extensionKind": [
         "workspace"
     ],
-    "author": "Facebook",
+    "author": "Meta",
     "license": "Apache2",
     "version": "1.0.0",
     "repository": {
         "type": "git",
-        "url": "https://github.com/facebook/starlark-rust"
+        "url": "https://github.com/meta/starlark-rust"
     },
-    "publisher": "facebook",
+    "publisher": "meta",
     "categories": [],
     "keywords": [
         "multi-root ready"

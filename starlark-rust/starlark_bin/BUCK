@@ -29,7 +29,7 @@ buck_rust_binary(
                 "keywords": ["starlark", "skylark", "language", "interpreter"],
                 "license": "Apache-2.0",
                 "name": "starlark_bin",
-                "repository": "https://github.com/facebook/starlark-rust",
+                "repository": "https://github.com/meta/starlark-rust",
                 "version": "0.14.2",
             },
         },

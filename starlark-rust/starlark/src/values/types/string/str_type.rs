@@ -523,7 +523,7 @@ len("😿") == 1
 "abc"[1:-1] == "b" # Remove the first and the last element
 "banana"[1::2] == "aaa" # Select one element out of 2, skipping the first
 "banana"[4::-2] == "nnb" # Select one element out of 2 in reverse order, starting at index 4
-"242"[ -0:-2:-1] == "" # From https://github.com/facebook/starlark-rust/issues/35
+"242"[ -0:-2:-1] == "" # From https://github.com/meta/starlark-rust/issues/35
 "#,
             );
         });

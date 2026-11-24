@@ -1,0 +1,2 @@
+# Over half a gigabyte in the daemon while the package loads.
+HOG = [str(i) * 20 for i in range(3000000)]

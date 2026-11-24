@@ -23,6 +23,15 @@ buck2_core_tests(
                 "//buck2/tests/core/common:unidaemon",
             ],
         },
+        "test_daemon_killed_for_memory": {
+            "compatible_with": [
+                "ovr_config//os:macos",
+            ],
+            "deps": [
+                "fbsource//third-party/rust:libc",
+                "fbsource//third-party/rust:uuid",
+            ],
+        },
         "test_daemon_killed_on_checkout_removal": {
             "deps": ["fbsource//third-party/rust:regex"],
         },

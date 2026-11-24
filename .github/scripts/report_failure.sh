@@ -20,7 +20,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/annotations.sh"
 what=$1
 shift
 
-log=$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/report-failure.XXXXXX")
+# Without a file to keep the output in there is no report; the command still runs.
+log=$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/report-failure.XXXXXX") || exec "$@"
 "$@" 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 if [[ $status -eq 0 ]]; then
@@ -28,8 +29,8 @@ if [[ $status -eq 0 ]]; then
 fi
 
 # Why the command with the output $1 failed: the group of the log it was in,
-# the first action that buck2 says failed, with the start of what the action
-# printed, and the end of the output.
+# the first action that buck2 says failed or the first error of cargo or rustc,
+# with the start of what follows it, and the end of the output.
 why() {
   awk '
     BEGIN { color = sprintf("%c", 27) "\\[[0-9;]*m" }
@@ -40,7 +41,7 @@ why() {
     }
     /^::group::/ { group = substr($0, 10) }
     /^::endgroup::/ { group = "" }
-    first == 0 && /Action failed: / { first = NR }
+    first == 0 && (/Action failed: / || /^error(\[[A-Z0-9]+\])?: /) { first = NR }
     END {
       if (group != "") print "In: " group
       start = NR - 39

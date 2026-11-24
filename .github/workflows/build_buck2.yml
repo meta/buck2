@@ -135,7 +135,8 @@ jobs:
           else
             CARGO=cargo
           fi
-          $CARGO build --release --bin buck2 --bin rust-project --bin starlark_fmt --target ${{ matrix.target.triple }}
+          bash .github/scripts/report_failure.sh "release build for ${{ matrix.target.triple }}" \
+            "$CARGO" build --release --bin buck2 --bin rust-project --bin starlark_fmt --target ${{ matrix.target.triple }}
       - name: Sanity check with examples/with_prelude
         if: ${{ !matrix.target.cross }}
         shell: bash

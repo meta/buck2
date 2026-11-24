@@ -522,6 +522,12 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
         equals_small_map(&self.content(), &other.content(), |x, y| x.equals(*y))
     }
 
+    // `at` and `is_in` take a `Value`, so they are not typed methods, which the macro inlines
+    // into each representation's vtable entry by itself; and they are too big for the hint.
+    // Out of line they are one copy that dispatches on the representation, behind an entry per
+    // representation that only says which it is: 8 more instructions on `d[k]` and 17 more on
+    // `k in d`, with the `starlark` crate built as one codegen unit.
+    #[inline(always)]
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         match self.content().get_hashed_by_value(index.get_hashed()?) {
             Some(v) => Ok(v.to_value()),
@@ -535,6 +541,7 @@ impl<'v> StarlarkType<'v> for DictView<'v> {
         self.content().len() as i32
     }
 
+    #[inline(always)]
     fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
         Ok(self
             .content()

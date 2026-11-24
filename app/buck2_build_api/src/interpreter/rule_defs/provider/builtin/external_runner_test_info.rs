@@ -430,7 +430,6 @@ fn validate_external_runner_test_info<'v>(
 
 #[starlark_module]
 fn external_runner_test_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = ExternalRunnerTestInfo<'static>)]
     fn ExternalRunnerTestInfo<'v>(
         #[starlark(require = named)] r#type: StringValue<'v>,
         #[starlark(require = named, default = NoneOr::None)] command: NoneOr<TestCommand<'v>>,

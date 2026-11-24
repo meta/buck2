@@ -78,7 +78,6 @@ pub struct DepOnlyIncompatibleInfo<'v> {
 
 #[starlark_module]
 fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = DepOnlyIncompatibleInfo<'static>)]
     fn DepOnlyIncompatibleInfo<'v>(
         #[starlark(require = named)] custom_soft_errors: ValueOf<
             'v,

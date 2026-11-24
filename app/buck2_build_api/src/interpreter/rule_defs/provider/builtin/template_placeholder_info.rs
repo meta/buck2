@@ -117,7 +117,6 @@ impl<'v> TemplatePlaceholderInfo<'v> {
 
 #[starlark_module]
 fn template_placeholder_info_creator(builder: &mut GlobalsBuilder) {
-    #[starlark(as_type = TemplatePlaceholderInfo<'static>)]
     fn TemplatePlaceholderInfo<'v>(
         #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
         unkeyed_variables: ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>,

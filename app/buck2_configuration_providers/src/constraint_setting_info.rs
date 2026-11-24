@@ -82,7 +82,6 @@ impl<'v> ConstraintSettingInfo<'v> {
 
 #[starlark_module]
 fn constraint_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = ConstraintSettingInfo<'static>)]
     fn ConstraintSettingInfo<'v>(
         #[starlark(require = named)] label: ValueOf<'v, StarlarkTargetLabel>,
         #[starlark(require = named, default = NoneOr::None)] default: NoneOr<

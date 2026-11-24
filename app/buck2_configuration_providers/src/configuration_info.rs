@@ -179,7 +179,6 @@ fn copy_dict<'v, K: StarlarkTypeExpr<'v>, V: StarlarkTypeExpr<'v>>(
 
 #[starlark_module]
 fn configuration_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = ConfigurationInfo<'static>)]
     fn ConfigurationInfo<'v>(
         #[starlark(require = named)] constraints: Constraints<'v>,
         #[starlark(require = named)] values: Buckconfigs<'v>,

@@ -71,7 +71,6 @@ fn next_id() -> u64 {
 
 #[starlark_module]
 fn worker_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = WorkerInfo<'static>)]
     fn WorkerInfo<'v>(
         #[starlark(default = AllocList::EMPTY)] exe: Value<'v>,
         #[starlark(default = NoneOr::None)] env: NoneOr<

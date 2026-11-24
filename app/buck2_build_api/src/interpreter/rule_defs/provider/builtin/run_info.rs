@@ -91,7 +91,6 @@ pub type OwnedRunInfo = OwnedFrozen<ValueTyped<'static, RunInfo<'static>>>;
 
 #[starlark_module]
 fn run_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = RunInfo<'static>)]
     fn RunInfo<'v>(
         // TODO(nga): make the argument either named or positional.
         #[starlark(default = StarlarkCommandLineValueUnpack::List(ValueOf::empty_list()))]

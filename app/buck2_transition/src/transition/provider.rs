@@ -78,7 +78,6 @@ pub(crate) type OwnedTransitionInfo = OwnedFrozen<ValueTyped<'static, Transition
 
 #[starlark_module]
 fn transition_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = TransitionInfo<'static>)]
     fn TransitionInfo<'v>(
         #[starlark(require = named)] r#impl: StarlarkCallableChecked<
             'v,

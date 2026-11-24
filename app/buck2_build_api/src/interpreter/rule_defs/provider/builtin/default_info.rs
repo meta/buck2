@@ -308,7 +308,6 @@ enum DefaultOutputError {
 
 #[starlark_module]
 fn default_info_creator(builder: &mut GlobalsBuilder) {
-    #[starlark(as_type = DefaultInfo<'static>)]
     fn DefaultInfo<'v>(
         // TODO(nga): parameters must be named only.
         #[starlark(default = NoneOr::None)] default_output: NoneOr<

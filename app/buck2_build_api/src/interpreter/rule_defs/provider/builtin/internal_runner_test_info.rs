@@ -501,7 +501,6 @@ fn validate_internal_runner_test_info<'v>(
 
 #[starlark_module]
 fn internal_runner_test_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = InternalRunnerTestInfo<'static>)]
     fn InternalRunnerTestInfo<'v>(
         r#type: StringValue<'v>,
         parse_test_listing: ValueOf<

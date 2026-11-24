@@ -101,7 +101,6 @@ fn validate_local_resource_info<'v>(info: &LocalResourceInfo<'v>) -> buck2_error
 
 #[starlark_module]
 fn local_resource_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = LocalResourceInfo<'static>)]
     fn LocalResourceInfo<'v>(
         #[starlark(require = named)] setup: StarlarkCommandLineValueUnpack<'v>,
         #[starlark(require = named)] resource_env_vars: ValueOf<

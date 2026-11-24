@@ -43,7 +43,6 @@ pub struct DepOnlyIncompatibleRollout<'v> {
 
 #[starlark_module]
 fn dep_only_incompatible_custom_soft_error_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = DepOnlyIncompatibleRollout<'static>)]
     fn DepOnlyIncompatibleRollout<'v>(
         #[starlark(require = named)] target_patterns: ValueOf<'v, ListType<StarlarkStr>>,
         #[starlark(require = named)] exclusions: ValueOf<'v, ListType<StarlarkStr>>,

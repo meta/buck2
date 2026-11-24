@@ -110,7 +110,6 @@ fn validate_validation_info<'v>(info: &ValidationInfo<'v>) -> buck2_error::Resul
 
 #[starlark_module]
 fn validation_info_creator(globals: &mut GlobalsBuilder) {
-    #[starlark(as_type = ValidationInfo<'static>)]
     fn ValidationInfo<'v>(
         #[starlark(require = named)] validations: ValueOf<'v, ListType<StarlarkValidationSpec<'v>>>,
         heap: Heap<'v>,

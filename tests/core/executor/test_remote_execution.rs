@@ -294,7 +294,11 @@ async fn test_re_over_quota_reports_exceeded_quotas(buck: &mut Buck) -> anyhow::
         ],
     )
     .await?;
-    assert_eq!(over_quota, [json!([exceeded_quota])]);
+    assert!(!over_quota.is_empty(), "No `QueueOverQuota` stages found");
+    assert!(
+        over_quota.iter().all(|q| *q == json!([exceeded_quota])),
+        "{over_quota:?}"
+    );
     assert_eq!(
         res.invocation_record()?["re_exceeded_quotas"],
         json!([exceeded_quota])

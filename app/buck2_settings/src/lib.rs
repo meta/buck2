@@ -49,6 +49,7 @@ mod rollouts;
 mod section;
 pub mod settings;
 mod starlark;
+mod target_platforms;
 pub mod telemetry;
 
 pub use agent_build::AgentBuild;
@@ -89,3 +90,4 @@ pub use settings::DaemonBuckSettings;
 pub use settings::DiceBuckSettings;
 pub use settings::InvocationBuckSettings;
 pub use starlark::Starlark;
+pub use target_platforms::TargetPlatforms;

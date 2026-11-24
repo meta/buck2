@@ -41,6 +41,7 @@ use crate::paths::Paths;
 use crate::resource_control::ResourceControl;
 use crate::section::Section;
 use crate::starlark::Starlark;
+use crate::target_platforms::TargetPlatforms;
 
 /// Assembles `BuckSettings` from the sections, each listed under its scope.
 ///
@@ -222,6 +223,7 @@ buck_settings! {
         execution_platforms: ExecutionPlatforms,
         paths: Paths,
         starlark: Starlark,
+        target_platforms: TargetPlatforms,
     }
 }
 

@@ -12,7 +12,6 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
@@ -28,6 +27,8 @@ use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_node::super_package::SuperPackage;
 use buck2_node::target_calculation::CONFIGURED_TARGET_CALCULATION;
 use buck2_node::target_calculation::ConfiguredTargetCalculationImpl;
+use buck2_settings::TargetPlatforms;
+use buck2_settings::dice::HasDiceBuckSettings;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::EqualityBehavior;
@@ -67,16 +68,12 @@ async fn get_target_platform_detector<'d>(
             let root_cell = resolver.root_cell();
             let cell_alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
 
+            let root_config = ctx.get_legacy_root_config_on_dice().await?;
             Ok(
                 match ctx
-                    .get_legacy_config_property(
-                        root_cell,
-                        BuckconfigKeyRef {
-                            section: "parser",
-                            property: "target_platform_detector_spec",
-                        },
-                    )
+                    .dice_settings::<TargetPlatforms>()
                     .await?
+                    .detector_spec(&mut root_config.view(ctx))?
                 {
                     None => TargetPlatformDetector::empty(),
                     Some(spec) => TargetPlatformDetector::parse_spec(

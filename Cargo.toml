@@ -431,7 +431,7 @@ multimap = "0.10.1"
 nix = { version = "0.31.3", features = ["dir", "event", "hostname", "inotify", "ioctl", "mman", "mount", "net", "poll", "ptrace", "reboot", "resource", "sched", "signal", "term", "time", "user", "zerocopy"] }
 nom = "8"
 nom-language = "0.1"
-notify = "9.0.0-rc.6"
+notify = "9.0.0"
 num-bigint = { version = "0.5.1", features = ["rand_0_10", "serde"] }
 num-traits = { version = "0.2.19", default-features = false }
 num_cpus = "1.16"

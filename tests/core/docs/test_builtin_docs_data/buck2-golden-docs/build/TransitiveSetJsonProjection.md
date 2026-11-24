@@ -1,6 +1,0 @@
-# This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
-
-# TransitiveSetJsonProjection
-## TransitiveSetJsonProjection.projection\_name
-## TransitiveSetJsonProjection.transitive\_set
-## TransitiveSetJsonProjection.traverse

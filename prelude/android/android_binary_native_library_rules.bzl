@@ -418,7 +418,7 @@ def get_android_binary_native_library_info(
     #  - early runs at analysis scope: early_gatorade_libraries fills this {relpath: artifact} map,
     #    and early_gatorade_products is built from it below.
     #  - middle reuses middle_gatorade_products, declared below and materialized inside the dynamic
-    #    lambda when the middle phase runs.
+    #    lambda when the middle phase or monogatorade runs.
     #  - late runs inside the nested Gatorade dynamics, so its dir is declared here, appended to
     #    dynamic_outputs, and bound inside (empty when the phase is off).
     early_gatorade_product_mapping = {}
@@ -467,7 +467,9 @@ def get_android_binary_native_library_info(
                 prebuilt_dir_symbols_by_platform[platform] = symbols
 
     middle_gatorade_products = None
-    if enable_relinker and has_native_merging and "middle" in getattr(ctx.attrs, "gatorade_phases", []):
+    writes_middle_gatorade_products = "middle" in getattr(ctx.attrs, "gatorade_phases", [])
+    # @oss-disable[end= ]: writes_middle_gatorade_products = writes_middle_gatorade_products or is_monogatorade_enabled(ctx)
+    if enable_relinker and has_native_merging and writes_middle_gatorade_products:
         middle_gatorade_products = ctx.actions.declare_output(
             "middle_gatorade_products",
             dir = True,
@@ -1300,8 +1302,8 @@ def get_android_binary_native_library_info(
     # TARGET[<phase>] Gatorade-phase product sub-targets: building one runs that phase and outputs
     # the artifacts its gatorade invocation(s) produce (a symlinked_dir, like [native_libs]). Early's
     # products were collected at analysis scope; middle/late were bound inside the dynamic lambda.
-    # middle_gatorade_products is only declared when the middle phase runs, so otherwise the
-    # sub-target resolves to an empty dir.
+    # middle_gatorade_products is only declared when the middle phase or monogatorade runs, so
+    # otherwise the sub-target resolves to an empty dir.
     early_gatorade_products = ctx.actions.symlinked_dir("early_gatorade_products", early_gatorade_product_mapping, has_content_based_path = False)
     gatorade_phase_products = {
         "early_gatorade": early_gatorade_products,

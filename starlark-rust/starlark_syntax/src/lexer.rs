@@ -1660,6 +1660,7 @@ mod tests {
     use crate::lexer::lex_exactly_one_identifier;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_token_int_from_str_radix_long() {
         // Lengths on either side of where the digits are split, in bases that get split.
         let n = BIG_INT_SPLIT_DIGITS;

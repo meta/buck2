@@ -154,10 +154,9 @@ impl Gen {
 
     /// Parse `StarlarkValue` method parameter into vtable `fn` parameters and unpack exprs.
     fn vtable_entry_param(&self, span: Span, param: &FnArg) -> syn::Result<Vec<VTableFnParam>> {
-        if is_receiver(param) {
-            // The receiver arrives twice: as the payload pointer, which is what a method of the
-            // representation takes, and as the `Value`, which the type's `Get` is made from.
-            // Lifetimes are erased like every other parameter's.
+        if let FnArg::Receiver(_) = param {
+            // A method of the representation is called on the payload. The `Value` comes along
+            // for its lifetime, which the result of such a method may borrow for.
             return Ok(vec![
                 VTableFnParam {
                     span,
@@ -184,6 +183,22 @@ impl Gen {
                     },
                 },
             ]);
+        }
+        if is_receiver(param) {
+            // The type's `Get` is made from the `Value`. Lifetimes are erased like every other
+            // parameter's.
+            return Ok(vec![VTableFnParam {
+                span,
+                name: syn::parse_quote_spanned! {span=>
+                    this
+                },
+                ty: syn::parse_quote_spanned! {span=>
+                    Value<'v>
+                },
+                unpack: syn::parse_quote_spanned! {span=>
+                    ValueTyped::<T>::new_unchecked(std::mem::transmute::<Value<'_>, Value<'_>>(this))
+                },
+            }]);
         }
         match param {
             FnArg::Receiver(_) => unreachable!("handled above"),
@@ -258,7 +273,7 @@ impl Gen {
                 )
             }
             Dispatch::ViaGet => {
-                let [_payload, value, args @ ..] = field_init_args.as_slice() else {
+                let [value, args @ ..] = field_init_args.as_slice() else {
                     unreachable!("a method with a receiver has a receiver");
                 };
                 (

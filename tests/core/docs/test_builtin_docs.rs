@@ -81,5 +81,12 @@ async fn test_builtin_docs_golden(buck: &Buck) -> anyhow::Result<()> {
             .contains(r#"\*args: <Link to="/docs/api/build/CmdArgsInput">CmdArgsInput</Link>,"#),
         "{cmd_args}"
     );
+
+    // A provider's page says how to make one.
+    let install_info = std::fs::read_to_string(output.join("build").join("InstallInfo.md"))?;
+    assert!(
+        install_info.contains("<code>def InstallInfo("),
+        "{install_info}"
+    );
     Ok(())
 }

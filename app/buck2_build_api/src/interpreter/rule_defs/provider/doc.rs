@@ -8,11 +8,14 @@
  * above-listed licenses.
  */
 
+use itertools::Itertools;
+use starlark::docs::DocFunction;
 use starlark::docs::DocItem;
 use starlark::docs::DocMember;
 use starlark::docs::DocProperty;
 use starlark::docs::DocString;
 use starlark::docs::DocType;
+use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::typing::Ty;
 
@@ -34,8 +37,10 @@ pub enum ProviderMembersSource<'a> {
     },
 }
 
-/// The documentation of a provider type: a type, with the fields of a provider as its members.
+/// The documentation of a provider type: a type, with the fields of a provider as its members
+/// and the function that `creator` sets, if there is one, as its constructor.
 pub fn provider_callable_documentation(
+    creator: Option<for<'a> fn(&'a mut GlobalsBuilder)>,
     members_source: ProviderMembersSource<'_>,
     self_ty: Ty,
     overall: &Option<DocString>,
@@ -81,6 +86,24 @@ pub fn provider_callable_documentation(
             .into_iter()
             .map(|(a, b)| (a, DocMember::Property(b)))
             .collect(),
-        constructor: None,
+        constructor: creator.map(creator_documentation),
     })
+}
+
+/// The documentation of the one function that a provider's creator sets.
+fn creator_documentation(creator: for<'a> fn(&'a mut GlobalsBuilder)) -> DocFunction {
+    let docs = GlobalsBuilder::new().with(creator).build().documentation();
+    match docs.members.into_iter().exactly_one() {
+        Ok((_, DocItem::Member(DocMember::Function(function)))) => function,
+        // A function that says `as_type` documents itself as a type that it is the constructor
+        // of.
+        Ok((
+            _,
+            DocItem::Type(DocType {
+                constructor: Some(function),
+                ..
+            }),
+        )) => function,
+        _ => panic!("a provider's creator sets one function"),
+    }
 }

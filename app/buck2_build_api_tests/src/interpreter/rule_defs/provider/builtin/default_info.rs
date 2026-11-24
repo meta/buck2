@@ -8,14 +8,44 @@
  * above-listed licenses.
  */
 
+use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::DefaultInfoCallable;
 use buck2_build_api::interpreter::rule_defs::provider::callable::register_provider;
 use buck2_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
 use buck2_build_api::interpreter::rule_defs::register_rule_defs;
 use buck2_core::bzl::ImportPath;
 use buck2_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
+use starlark::docs::DocItem;
+use starlark::values::StarlarkType;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
+
+/// The docs of a provider say how to make one: the type has the provider's constructor, whose
+/// parameters need not be fields.
+#[test]
+fn default_info_documents_its_constructor() {
+    let DocItem::Type(ty) = StarlarkType::documentation(&DefaultInfoCallable::new()) else {
+        panic!("provider documentation should be a type");
+    };
+    let constructor = ty
+        .constructor
+        .expect("a builtin provider has a constructor");
+    let params: Vec<&str> = constructor
+        .params
+        .pos_or_named
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(
+        [
+            "default_output",
+            "default_outputs",
+            "other_outputs",
+            "sub_targets"
+        ],
+        params.as_slice()
+    );
+}
 
 #[test]
 fn default_info_is_available() -> buck2_error::Result<()> {

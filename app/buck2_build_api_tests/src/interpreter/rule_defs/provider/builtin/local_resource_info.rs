@@ -80,7 +80,7 @@ fn test_validation_1() {
     expect_error(
         tester.run_starlark_bzl_test(test),
         test,
-        "Expected type `list | CmdArgsLike` but got",
+        "Expected type `CmdArgsInput` but got",
     );
 }
 

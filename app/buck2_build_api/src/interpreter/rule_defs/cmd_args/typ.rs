@@ -11,6 +11,7 @@
 use std::cell::Ref;
 use std::cell::RefCell;
 use std::cell::RefMut;
+use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -46,6 +47,7 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkRepresentations;
 use starlark::values::StarlarkType;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkValue;
 use starlark::values::StaticFreezePlan;
 use starlark::values::StringValue;
@@ -57,11 +59,16 @@ use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::list::AllocList;
+use starlark::values::list::ListOf;
+use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::starlark_value;
 use starlark::values::starlark_value_as_type::StarlarkValueAsType;
 use starlark::values::string::StarlarkStr;
+use starlark::values::tuple::TupleOf;
+use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::TupleType;
+use starlark::values::type_expr::UnionPayload;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
@@ -71,6 +78,7 @@ use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkO
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::builder::CommandLineBuilder;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsInput;
 use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use crate::interpreter::rule_defs::cmd_args::compute_relative_to_path;
 use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptions;
@@ -854,11 +862,130 @@ impl<'v> StarlarkCmdArgs<'v> {
     }
 }
 
-#[derive(UnpackValue)]
+/// The first value that is neither a list nor a `CmdArgsLike` among `values` and, depth first,
+/// the items of their lists.
+fn first_wrong_item<'v>(values: &[Value<'v>]) -> Option<Value<'v>> {
+    values
+        .iter()
+        .find_map(|value| match ListRef::from_value(*value) {
+            Some(list) => first_wrong_item(list.content()),
+            None if CommandLineArg::new(*value).is_some() => None,
+            None => Some(*value),
+        })
+}
+
+/// The error for a value that is not a [`StarlarkCmdArgsInput`] because of one of `values`:
+/// it names the first that is wrong, itself or inside a list. That says more than the list it
+/// is in, which is what the type's own error would name.
+#[cold]
+fn wrong_item_error<'v>(values: &[Value<'v>]) -> Option<starlark::Error> {
+    ValueOf::<StarlarkCmdArgsInput>::new_err(first_wrong_item(values)?).err()
+}
+
+/// The error for the parameter `value`, which is not of the type `T`: [`wrong_item_error`] if
+/// the reason is among `items`, what `value` holds if it is a list or a tuple, and otherwise
+/// the error of any parameter of the type.
+#[cold]
+fn wrong_param_error<'v, T: StarlarkTypeExpr<'v>>(
+    value: Value<'v>,
+    param_name: &str,
+    items: Option<&[Value<'v>]>,
+) -> starlark::Error {
+    if let Some(e) = items.and_then(wrong_item_error) {
+        return e;
+    }
+    match ValueOf::<T>::unpack_named_param(value, param_name) {
+        Err(e) => e,
+        Ok(_) => unreachable!("the value is not of the type"),
+    }
+}
+
+/// A [`StarlarkCmdArgsInput`] read one level in: the list, whose items `cmd_args` reads the same
+/// way as it copies them out, or the one argument.
 pub enum StarlarkCommandLineValueUnpack<'v> {
-    // This should be `list[Self]`, but we cannot express it.
-    List(ValueOf<'v, ListType<Value<'v>>>),
+    List(ValueOf<'v, ListType<StarlarkCmdArgsInput>>),
     CommandLineArg(CommandLineArg<'v>),
+}
+
+impl<'v> UnpackValue<'v> for StarlarkCommandLineValueUnpack<'v> {
+    type Type = StarlarkCmdArgsInput;
+    type Error = Infallible;
+
+    #[inline]
+    fn unpack(
+        value: ValueOf<'v, StarlarkCmdArgsInput>,
+        get: Either<ListOf<'v, StarlarkCmdArgsInput>, &'v dyn CommandLineArgLike<'v>>,
+    ) -> Result<Self, Infallible> {
+        Ok(match get {
+            Either::Left(list) => StarlarkCommandLineValueUnpack::List(list.handle()),
+            // The value was just read as a `StarlarkCmdArgsLike`.
+            Either::Right(_) => StarlarkCommandLineValueUnpack::CommandLineArg(
+                ValueOf::new_unchecked(value.to_value()),
+            ),
+        })
+    }
+
+    // The two functions below are the provided ones but for the error, which names the item
+    // that is wrong, where the type's own would name the list it is in. They have the shape
+    // of the provided ones on purpose: written with `unpack_value_opt` and a `match`, a
+    // conversion measured 19 instructions more.
+
+    #[inline(always)]
+    fn unpack_value_err(value: Value<'v>) -> starlark::Result<Self> {
+        Self::unpack_value(value)?.ok_or_else(|| match wrong_item_error(&[value]) {
+            Some(e) => e,
+            None => unreachable!("the value is not a `StarlarkCmdArgsInput`"),
+        })
+    }
+
+    #[inline]
+    fn unpack_named_param(value: Value<'v>, param_name: &str) -> starlark::Result<Self> {
+        Self::unpack_value(value)?.ok_or_else(|| {
+            wrong_param_error::<StarlarkCmdArgsInput>(
+                value,
+                param_name,
+                ListRef::from_value(value).map(|list| list.content()),
+            )
+        })
+    }
+}
+
+impl<'v> UnionPayload<'v> for StarlarkCommandLineValueUnpack<'v> {
+    type Expr = StarlarkCmdArgsInput;
+
+    #[inline]
+    fn from_value(value: Value<'v>) -> Option<Self> {
+        Self::unpack_value_opt(value)
+    }
+}
+
+/// The positional arguments of `cmd_args()`. They are bound through this conversion, and not
+/// as the `ValueOf` it holds, for its error.
+struct CmdArgsPositional<'v>(ValueOf<'v, TupleType<StarlarkCmdArgsInput>>);
+
+impl<'v> UnpackValue<'v> for CmdArgsPositional<'v> {
+    type Type = TupleType<StarlarkCmdArgsInput>;
+    type Error = Infallible;
+
+    #[inline]
+    fn unpack(
+        value: ValueOf<'v, TupleType<StarlarkCmdArgsInput>>,
+        _get: TupleOf<'v, StarlarkCmdArgsInput>,
+    ) -> Result<Self, Infallible> {
+        Ok(CmdArgsPositional(value))
+    }
+
+    /// The provided function but for the error, as for one argument.
+    #[inline]
+    fn unpack_named_param(value: Value<'v>, param_name: &str) -> starlark::Result<Self> {
+        Self::unpack_value(value)?.ok_or_else(|| {
+            wrong_param_error::<TupleType<StarlarkCmdArgsInput>>(
+                value,
+                param_name,
+                TupleRef::from_value(value).map(|tuple| tuple.content()),
+            )
+        })
+    }
 }
 
 impl<'v> StarlarkCommandLineData<'v> {
@@ -1092,6 +1219,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
 #[starlark_module]
 pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
     const CmdArgsLike: StarlarkValueAsType<StarlarkCmdArgsLike> = StarlarkCmdArgsLike::global();
+    const CmdArgsInput: StarlarkValueAsType<StarlarkCmdArgsInput> = StarlarkCmdArgsInput::global();
 
     #[starlark(as_type = FrozenStarlarkCmdArgs)]
     /// The `cmd_args` type is created by this function and is consumed by `ctx.actions.run`.
@@ -1192,7 +1320,7 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
     /// Replaces all parts matching pattern regular expression (or regular expressions)
     /// in each argument with replacement strings.
     fn cmd_args<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkCommandLineValueUnpack<'v>>>,
+        #[starlark(args)] args: CmdArgsPositional<'v>,
         hidden: Option<StarlarkCommandLineValueUnpack<'v>>,
         delimiter: Option<StringValue<'v>>,
         format: Option<StringValue<'v>>,
@@ -1252,8 +1380,8 @@ pub fn register_cmd_args(builder: &mut GlobalsBuilder) {
             }
             builder.options_mut().replacements = replace_regex.into();
         }
-        for v in args.items() {
-            builder.add_value_typed(v)?;
+        for v in args.0.try_items::<StarlarkCommandLineValueUnpack>() {
+            builder.add_value_typed(v?)?;
         }
         if let Some(hidden) = hidden {
             builder.add_hidden(hidden)?;

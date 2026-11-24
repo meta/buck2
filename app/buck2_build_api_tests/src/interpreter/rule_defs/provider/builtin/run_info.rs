@@ -103,7 +103,7 @@ fn run_info_validates_types_1() {
     let mut tester = run_info_tester();
     tester.run_starlark_bzl_test_expecting_error(
         content_bad_args1,
-        "Expected type `list | CmdArgsLike` but got",
+        "Expected type `CmdArgsInput` but got",
     );
 }
 
@@ -118,7 +118,7 @@ fn run_info_validates_types_2() {
     let mut tester = run_info_tester();
     tester.run_starlark_bzl_test_expecting_error(
         content_bad_args2,
-        "Expected type `list | CmdArgsLike` but got",
+        "Expected type `CmdArgsInput` but got",
     );
 }
 

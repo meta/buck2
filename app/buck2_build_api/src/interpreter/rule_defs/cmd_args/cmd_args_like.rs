@@ -13,7 +13,10 @@ use buck2_interpreter::types::cell_root::CellRoot;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_interpreter::types::project_root::StarlarkProjectRoot;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use either::Either;
 use starlark::starlark_predicate_type;
+use starlark::starlark_recursive_type;
+use starlark::values::list::ListType;
 use starlark::values::string::StarlarkStr;
 
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -38,4 +41,15 @@ starlark_predicate_type! {
     upstream_member StarlarkConfiguredProvidersLabel;
     upstream_member CellRoot;
     upstream_member StarlarkProjectRoot;
+}
+
+starlark_recursive_type! {
+    /// What `cmd_args` takes: a value that can be put on a command line, or a list of these.
+    ///
+    /// The lists may hold lists, to any depth. `cmd_args()` and `cmd_args.add()` copy the
+    /// items out when they are called, so a list that changes afterwards does not change
+    /// the command line.
+    pub StarlarkCmdArgsInput<'v>;
+    name "CmdArgsInput";
+    is Either<ListType<StarlarkCmdArgsInput>, StarlarkCmdArgsLike>;
 }

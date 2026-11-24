@@ -220,18 +220,28 @@ fn command_line_builder() -> buck2_error::Result<()> {
 
     tester.run_starlark_bzl_test(content)?;
 
-    let content_invalid_type_1 = r#"cmd_args().add({"not": "an arg"})"#;
-    let content_invalid_type_3 = r#"cmd_args().add([{"not": "an arg"}])"#;
+    // The error names the value that is wrong, not the list it is in, wherever the list is given.
+    for content in [
+        r#"cmd_args().add({"not": "an arg"})"#,
+        r#"cmd_args().add([{"not": "an arg"}])"#,
+        r#"cmd_args().add("a", ["b", [{"not": "an arg"}]])"#,
+        r#"cmd_args([{"not": "an arg"}])"#,
+        r#"cmd_args("a", ["b", [{"not": "an arg"}]])"#,
+        r#"cmd_args(hidden = [{"not": "an arg"}])"#,
+    ] {
+        expect_error(
+            tester.run_starlark_bzl_test(content),
+            content,
+            r#"Expected `CmdArgsInput`, but got `dict (repr: {"not": "an arg"})`"#,
+        );
+    }
 
+    // A parameter that is wrong itself is reported as the parameter.
+    let content_invalid_param = r#"cmd_args(hidden = {"not": "an arg"})"#;
     expect_error(
-        tester.run_starlark_bzl_test(content_invalid_type_1),
-        content_invalid_type_1,
-        "Expected `list | CmdArgsLike`, but got",
-    );
-    expect_error(
-        tester.run_starlark_bzl_test(content_invalid_type_3),
-        content_invalid_type_3,
-        "Expected `list | CmdArgsLike`, but got",
+        tester.run_starlark_bzl_test(content_invalid_param),
+        content_invalid_param,
+        r#"Type of parameter `hidden` doesn't match, expected `CmdArgsInput`, actual `dict (repr: {"not": "an arg"})`"#,
     );
 
     Ok(())

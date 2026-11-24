@@ -39,12 +39,33 @@
 //! handle, and `StarlarkCmdArgsLike::global()` is the value that names the type in Starlark.
 //!
 //! A type is a member by a conversion from its handle to the predicate's, written in its own
-//! `#[starlark_value]` block ([`StarlarkType::provide_predicate_handle`] shows one). A type
-//! that cannot name the trait, because it is defined upstream of it, is named in the
+//! `#[starlark_value]` block:
+//!
+//! ```ignore
+//! #[starlark(implements = StarlarkCmdArgsLike)]
+//! fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
+//!     this.as_ref()
+//! }
+//! ```
+//!
+//! The parameter is the type's [`Get`](crate::values::StarlarkType::Get): `ValueTyped<'v, Self>`
+//! for a type with one representation, the view itself, by value, for a type with several. The
+//! result is the predicate's handle, which lives as long as the heap, and that is why the
+//! conversion starts from the handle and not from `&self`. A type is a member once, for every
+//! representation.
+//!
+//! A type that cannot name the trait, because it is defined upstream of it, is named in the
 //! declaration instead, as `StarlarkStr` is above, in the crate that implements the trait for
 //! it. Either way a membership is declared where the trait is implemented, once.
 //!
-//! [`StarlarkType::provide_predicate_handle`]: crate::values::StarlarkType::provide_predicate_handle
+//! # The check
+//!
+//! "Is this value of the predicate type, and what is its handle" is [`predicate_handle`]. The
+//! vtable of a representation lists the [`Membership`]s of its type, which is no entry for
+//! most types and one for most of the rest, and a value is of the predicate type if the list
+//! of its vtable has an entry for it. The entry is the conversion for that representation, so
+//! the handle is one call away. The members named in the declaration are known by their
+//! representation.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -53,6 +74,9 @@ use std::fmt::Display;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::marker::PhantomData;
+use std::mem;
+use std::ptr;
 
 use pagable::StaticValue;
 
@@ -60,11 +84,17 @@ use crate::typing::Ty;
 use crate::typing::TyStarlarkValue;
 use crate::typing::predicate::TyPredicate;
 use crate::values::StarlarkTypeExpr;
+use crate::values::StarlarkValue;
 use crate::values::Value;
-use crate::values::demand::request_predicate_handle;
+use crate::values::ValueTyped;
 
 /// A predicate type as data: what its declaration says, for the typechecker, the runtime
-/// matcher and the documentation. There is one per predicate type, and it is compared by name.
+/// matcher and the documentation. There is one per predicate type, a `static`.
+///
+/// Two are equal, and ordered, by name. The order has to be the same in every process: a `Ty`
+/// that holds one is sorted, and one is written out as its place among all of them. Which
+/// predicate type a [`Membership`] is in is another question, answered by which static it
+/// is.
 pub struct PredicateInfo {
     name: &'static str,
     docs: &'static str,
@@ -156,10 +186,22 @@ impl Ord for PredicateInfo {
     }
 }
 
+/// Whether the two are one predicate type: the same static.
+#[inline]
+pub(crate) fn is_predicate(a: Predicate, b: Predicate) -> bool {
+    ptr::eq(a.0, b.0)
+}
+
 /// A predicate type. [`starlark_predicate_type!`](crate::starlark_predicate_type) implements
 /// this for the marker it declares, together with [`StarlarkTypeExpr`]; there is nothing to
 /// write by hand.
-pub trait StarlarkPredicate: for<'v> StarlarkTypeExpr<'v> + 'static {
+///
+/// # Safety
+///
+/// [`PREDICATE`](Self::PREDICATE) is a `static` that is this type's alone: no other type's
+/// `PREDICATE` is that static. A [`Membership`] is recognised as one in this type by it, and
+/// its handle is then read as this type's [`Get`](StarlarkTypeExpr::Get).
+pub unsafe trait StarlarkPredicate: for<'v> StarlarkTypeExpr<'v> + 'static {
     /// The type as data.
     const PREDICATE: Predicate;
 
@@ -172,9 +214,90 @@ pub fn predicate_ty<P: StarlarkPredicate>() -> Ty {
     Ty::custom(TyPredicate::new(P::PREDICATE))
 }
 
-/// The handle of the predicate type `P` to `value`, if `value` is of it: the members named in
-/// the declaration first, in the order written there, then what the type of `value` says in
-/// its own block.
+/// Stands for the representation in the type of a [`Membership`] that a vtable holds: the
+/// vtable is of one representation, and its type does not say which.
+pub(crate) enum AnyRepresentation {}
+
+/// A membership of a type in a predicate type, for one representation `R` of the type: the
+/// predicate type, and the conversion from a value of the representation to the predicate
+/// type's handle.
+///
+/// The vtable of a representation holds the memberships of its type, which
+/// [`#[starlark_value]`](crate::values::starlark_value) makes from the conversions of the
+/// type's block ([`Memberships`]). [`predicate_handle`] finds a value's membership there.
+///
+/// The parameter is the static type of the representation. It says whose values the
+/// conversion takes, which is all that is left of the conversion's type here.
+// `repr(C)`: the layout does not depend on the parameter, see `in_vtable`.
+#[repr(C)]
+pub struct Membership<R: ?Sized + 'static> {
+    predicate: Predicate,
+    /// A `fn(ValueTyped<'v, Rep>) -> <P as StarlarkTypeExpr<'v>>::Get`, where `Rep` is the
+    /// representation whose static type is `R` and `P` is the predicate type of `predicate`.
+    /// It is never called as the type written here.
+    handle: unsafe fn(),
+    representation: PhantomData<fn(&R)>,
+}
+
+impl<R: ?Sized + 'static> Membership<R> {
+    /// The membership in `P` of the type that `Rep` is a representation of, with the
+    /// conversion from a value of `Rep` to the handle of `P`.
+    #[doc(hidden)]
+    pub const fn new<'v, P, Rep>(
+        handle: fn(ValueTyped<'v, Rep>) -> <P as StarlarkTypeExpr<'v>>::Get,
+    ) -> Membership<R>
+    where
+        P: StarlarkPredicate,
+        Rep: StarlarkValue<'v, StaticType = R>,
+    {
+        Membership {
+            predicate: P::PREDICATE,
+            // SAFETY: Function pointers are one size, and nothing calls this one before
+            // `predicate_handle` has given it its type back.
+            handle: unsafe {
+                mem::transmute::<
+                    fn(ValueTyped<'v, Rep>) -> <P as StarlarkTypeExpr<'v>>::Get,
+                    unsafe fn(),
+                >(handle)
+            },
+            representation: PhantomData,
+        }
+    }
+
+    /// The predicate type this is a membership in.
+    pub(crate) fn predicate(&self) -> Predicate {
+        self.predicate
+    }
+
+    /// The memberships of a representation, as its vtable holds them.
+    pub(crate) const fn in_vtable(
+        memberships: &'static [Membership<R>],
+    ) -> &'static [Membership<AnyRepresentation>] {
+        // SAFETY: `R` is the parameter of a `PhantomData` and nothing else, so with `repr(C)`
+        // the two types have one layout.
+        unsafe {
+            &*(memberships as *const [Membership<R>] as *const [Membership<AnyRepresentation>])
+        }
+    }
+}
+
+/// The memberships of a type in predicate types, as held by its representation `R`.
+///
+/// [`#[starlark_value]`](crate::values::starlark_value) implements this for every type, from
+/// the functions of the type's block that are marked `#[starlark(implements = ..)]`: each
+/// becomes one [`Membership`] per representation, which first makes the type's
+/// [`Get`](crate::values::StarlarkType::Get) of the representation's handle
+/// ([`get_typed`](StarlarkValue::get_typed)) and then is the function. There is nothing to
+/// write by hand.
+pub trait Memberships<'v, R: StarlarkValue<'v>> {
+    /// The memberships, which the vtable of `R` holds.
+    #[doc(hidden)]
+    const MEMBERSHIPS: &'static [Membership<R::StaticType>] = &[];
+}
+
+/// The handle of the predicate type `P` to `value`, if `value` is of it: as one of the members
+/// named in the declaration of `P`, tried in the order written there, or else by the
+/// membership of its type in `P`.
 ///
 /// This is the one check of the type: `P`'s [`get`](StarlarkTypeExpr::get) is this, and the
 /// matcher of its `Ty` asks `get`.
@@ -182,10 +305,30 @@ pub fn predicate_ty<P: StarlarkPredicate>() -> Ty {
 pub fn predicate_handle<'v, P: StarlarkPredicate>(
     value: Value<'v>,
 ) -> Option<<P as StarlarkTypeExpr<'v>>::Get> {
-    match P::upstream_handle(value) {
-        Some(handle) => Some(handle),
-        None => request_predicate_handle::<P>(value),
+    if let Some(handle) = P::upstream_handle(value) {
+        return Some(handle);
     }
+    for membership in value.get_ref().vtable().starlark_value.memberships {
+        if is_predicate(membership.predicate, P::PREDICATE) {
+            // SAFETY: Only `Membership::new` makes a membership, typed by the representation
+            // whose values its function takes, and a vtable takes the `Memberships` of its
+            // own representation. This one is in the vtable of `value`, so it was made as
+            // `new::<Q, Rep>`, where `Rep` is the representation of `value` and
+            // `Q::PREDICATE` is the static that `P::PREDICATE` is. Two predicate types do not
+            // share that static, by the contract of `StarlarkPredicate`, so `Q` is `P`. The
+            // function is then a `fn(ValueTyped<'a, Rep>) -> <P as StarlarkTypeExpr<'a>>::Get`,
+            // and `ValueTyped` is a transparent `Value` that is a `Rep`, which `value` is.
+            // The brand `'a` the function was written for is not the one of `value`, as for
+            // every entry of a vtable (see `AValueVTable::new`).
+            let handle = unsafe {
+                mem::transmute::<unsafe fn(), fn(Value<'v>) -> <P as StarlarkTypeExpr<'v>>::Get>(
+                    membership.handle,
+                )
+            };
+            return Some(handle(value));
+        }
+    }
+    None
 }
 
 /// Declares a [predicate type](crate::values::predicate).
@@ -259,7 +402,8 @@ macro_rules! starlark_predicate_type {
             type Reinfect<'lt> = $marker;
         }
 
-        impl $crate::values::predicate::StarlarkPredicate for $marker {
+        // SAFETY: the static is declared here, for this marker.
+        unsafe impl $crate::values::predicate::StarlarkPredicate for $marker {
             const PREDICATE: $crate::values::predicate::Predicate = {
                 $crate::__derive_refs::static_value!(
                     PREDICATE: $crate::values::predicate::PredicateInfo = &$crate::values::predicate::PredicateInfo::new(

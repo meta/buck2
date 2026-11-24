@@ -25,8 +25,7 @@
 //! ```
 //!
 //! Such a function is not a member of `StarlarkType`. The functions of a block become the
-//! trait's `provide_predicate_handle`, which holds each as a closure and provides what it
-//! returns, and `implemented_predicates`, which lists the predicate types.
+//! type's `Memberships` impl, which holds each as the conversion of a `Membership`.
 
 use proc_macro2::Span;
 use quote::quote;
@@ -116,19 +115,19 @@ pub(crate) fn take_memberships(items: &mut Vec<syn::ImplItem>) -> syn::Result<Ve
     }
 }
 
-/// `provide_predicate_handle` and `implemented_predicates` for the memberships of a block;
-/// nothing, which leaves the trait's defaults, if it has none.
-pub(crate) fn membership_items(
+/// The `Memberships` impl of the type of a block: one `Membership` for each of the block's
+/// memberships, made for the representation the impl is generic over. A type without
+/// memberships has the impl as well, with the trait's empty list.
+pub(crate) fn memberships_impl(
     memberships: &[Membership],
+    input: &syn::ItemImpl,
     lt: &syn::Lifetime,
-) -> Vec<syn::ImplItem> {
-    if memberships.is_empty() {
-        return Vec::new();
-    }
-    // Not visible to the conversions, which are closures in the function's body.
+) -> proc_macro2::TokenStream {
+    // Not visible to the conversions, which are closures in the functions that hold them.
     let this = syn::Ident::new("this", Span::mixed_site());
-    let demand = syn::Ident::new("demand", Span::mixed_site());
-    let provide = memberships.iter().map(|m| {
+    // The representation the impl is generic over.
+    let rep = syn::Ident::new("StarlarkRepresentation", Span::mixed_site());
+    let entries = memberships.iter().map(|m| {
         let Membership {
             predicate,
             name,
@@ -137,27 +136,34 @@ pub(crate) fn membership_items(
             body,
         } = m;
         quote! {
-            let #name = |#param| -> #result #body;
-            #demand.provide_handle::<#predicate>(|| #name(#this));
+            starlark::values::predicate::Membership::new::<#predicate, #rep>(|#this| {
+                let #name = |#param| -> #result #body;
+                #name(<#rep as starlark::values::StarlarkValue<#lt>>::get_typed(#this))
+            })
         }
     });
-    let predicates = memberships.iter().map(|m| &m.predicate);
-    vec![
-        syn::parse_quote! {
-            #[inline]
-            fn provide_predicate_handle(
-                #this: Self::Get,
-                #demand: &mut starlark::__derive_refs::Demand<'_, #lt>,
-            ) {
-                #( #provide )*
-            }
-        },
-        syn::parse_quote! {
-            fn implemented_predicates() -> std::vec::Vec<starlark::values::predicate::Predicate> {
-                std::vec::Vec::from([
-                    #( <#predicates as starlark::values::predicate::StarlarkPredicate>::PREDICATE ),*
-                ])
-            }
-        },
-    ]
+    let list = (!memberships.is_empty()).then(|| {
+        quote! {
+            const MEMBERSHIPS: &'static [starlark::values::predicate::Membership<
+                <#rep as starlark::values::ProvidesStaticType<#lt>>::StaticType,
+            >] = &[ #( #entries ),* ];
+        }
+    });
+    let self_ty = &input.self_ty;
+    let mut generics = input.generics.clone();
+    generics.params.push(syn::parse_quote! { #rep });
+    generics
+        .make_where_clause()
+        .predicates
+        .push(syn::parse_quote! {
+            #rep: starlark::values::StarlarkValue<#lt, Type = #self_ty>
+        });
+    let (impl_generics, _, where_clause) = generics.split_for_impl();
+    quote! {
+        impl #impl_generics starlark::values::predicate::Memberships<#lt, #rep> for #self_ty
+        #where_clause
+        {
+            #list
+        }
+    }
 }

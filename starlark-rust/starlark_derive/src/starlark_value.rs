@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use quote::quote;
 
-use crate::membership::membership_items;
+use crate::membership::memberships_impl;
 use crate::membership::take_memberships;
 use crate::typed_behaviour::Typing;
 use crate::typed_behaviour::always_hashes_impl;
@@ -905,8 +905,7 @@ impl ImplStarlarkValue {
                 .chain(self.bin_op_signatures(&typed))
                 .chain(self.rbin_op_signatures(&typed))
                 .chain(self.un_op_result(&typed))
-                .chain(self.at_signature(&typed))
-                .chain(membership_items(&memberships, lt)),
+                .chain(self.at_signature(&typed)),
         );
         let has_fn_flags = self.has_fn_flags(&type_impl)?;
         type_impl.items.extend(has_fn_flags);
@@ -922,10 +921,13 @@ impl ImplStarlarkValue {
                 }
             }
         }
+        let memberships = memberships_impl(&memberships, &self.input, lt);
         Ok(quote! {
             #type_impl
 
             #always_hashes
+
+            #memberships
         })
     }
 

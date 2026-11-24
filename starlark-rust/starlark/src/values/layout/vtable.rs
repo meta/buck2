@@ -51,7 +51,6 @@ use crate::values::StarlarkValue;
 use crate::values::StringValue;
 use crate::values::Tracer;
 use crate::values::Value;
-use crate::values::demand::Demand;
 use crate::values::int::pointer_i32::PointerI32;
 use crate::values::layout::avalue::AValue;
 use crate::values::layout::const_type_id::ConstTypeId;
@@ -766,25 +765,6 @@ impl<'v> AValueDynFull<'v> {
             self.avalue.value,
             self.value,
             Private,
-        )
-    }
-
-    /// Whether the value's type is a member of some predicate type by its own block.
-    #[inline]
-    pub(crate) fn has_predicate_handles(self) -> bool {
-        self.avalue
-            .vtable
-            .starlark_value
-            .ty
-            .HAS_provide_predicate_handle
-    }
-
-    #[inline]
-    pub(crate) fn provide_predicate_handle(self, demand: &mut Demand<'_, 'v>) {
-        (self.avalue.vtable.starlark_value.provide_predicate_handle)(
-            self.avalue.value,
-            self.value,
-            demand,
         )
     }
 }

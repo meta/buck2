@@ -52,10 +52,6 @@ enum Dispatch {
     OnType,
     /// A `StarlarkValue` method: `T` is the representation and the method is called on it.
     OnRepresentation,
-    /// A `StarlarkType` function that takes the type's `Get` in place of a receiver: `T` is the
-    /// representation, the entry makes the `Get` with `T::get_typed` and calls the function on
-    /// `T::Type`.
-    ViaGet,
 }
 
 struct VTableEntry {
@@ -248,22 +244,6 @@ impl Gen {
                     },
                 )
             }
-            Dispatch::ViaGet => {
-                let [_payload, value, args @ ..] = field_init_args.as_slice() else {
-                    unreachable!("a method with a receiver has a receiver");
-                };
-                // A type that does not write the function has an entry that does nothing,
-                // which is the same code for every such type.
-                let has_name = vtable_has_field_name(fn_name);
-                (
-                    quote! { StarlarkValue<'v2> },
-                    syn::parse_quote_spanned! {method.sig.span()=>
-                        if <T::Type as StarlarkType<'v2>>::#has_name {
-                            <T::Type as StarlarkType<'v2>>::#fn_name(T::get_typed(#value), #(#args),*)
-                        }
-                    },
-                )
-            }
         };
         let init = syn::parse_quote_spanned! {method.sig.span()=>
             #fn_name: {
@@ -421,20 +401,17 @@ impl Gen {
             value_uninits.push(init_for_uninitialized);
         }
 
-        // `StarlarkType::provide_predicate_handle` takes the type's `Get`, which a vtable entry
-        // cannot name; its entry is declared here with the receiver the entry is called with.
-        // Only a value whose type has `HAS_provide_predicate_handle` is asked.
-        let via_get: TraitItemFn = syn::parse_quote! {
-            fn provide_predicate_handle(&self, demand: &mut Demand<'_, 'v>);
-        };
-        let VTableEntry {
-            field,
-            init,
-            init_for_uninitialized,
-        } = self.vtable_entry(&via_get, Dispatch::ViaGet)?;
-        value_fields.push(field);
-        value_inits.push(init);
-        value_uninits.push(init_for_uninitialized);
+        // The memberships of the type in predicate types, for this representation. They are
+        // data, not an entry to call: `predicate_handle` reads them.
+        value_fields.push(Self::parse_named_field(quote! {
+            pub(crate) memberships: &'static [Membership<AnyRepresentation>]
+        })?);
+        value_inits.push(syn::parse_quote! {
+            memberships: Membership::in_vtable(<T::Type as Memberships<'v, T>>::MEMBERSHIPS)
+        });
+        value_uninits.push(syn::parse_quote! {
+            memberships: &[]
+        });
 
         Ok(quote_spanned! {
             self.trait_item.span() =>

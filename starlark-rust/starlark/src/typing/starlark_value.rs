@@ -44,7 +44,11 @@ use crate::values::dict::value::FrozenDict;
 use crate::values::float::StarlarkFloat;
 use crate::values::list::value::FrozenList;
 use crate::values::none::NoneType;
+use crate::values::predicate::AnyRepresentation;
+use crate::values::predicate::Membership;
+use crate::values::predicate::Memberships;
 use crate::values::predicate::Predicate;
+use crate::values::predicate::is_predicate;
 use crate::values::set::value::FrozenSet;
 use crate::values::starlark_type_id::StarlarkTypeId;
 use crate::values::string::str_type::StarlarkStr;
@@ -69,6 +73,9 @@ pub struct TyStarlarkValueVTable {
     type_name: &'static str,
     vtable: StarlarkTypeVTable,
     starlark_type_id: StarlarkTypeId,
+    /// What the vtable of a representation holds: the typechecker reads the list that the
+    /// runtime check reads.
+    memberships: &'static [Membership<AnyRepresentation>],
 }
 
 // `StarlarkTypeVTable` contains function pointers which don't implement `Ord`,
@@ -131,12 +138,14 @@ impl<T: ?Sized> HasTyVTable for T {}
 pub struct TyStarlarkValueVTableGet<'v, T: StarlarkValue<'v>>(PhantomData<&'v T>);
 
 impl<'v, T: StarlarkValue<'v>> TyStarlarkValueVTableGet<'v, T> {
-    /// Everything here is the type's, so the representations of a type hold equal vtables.
+    /// Everything here is the type's, so the representations of a type hold equal vtables,
+    /// but for the conversions of `memberships`, which nothing calls from here.
     #[doc(hidden)]
     pub const VTABLE: TyStarlarkValueVTable = TyStarlarkValueVTable {
         type_name: <T::Type as StarlarkType<'v>>::TYPE,
         vtable: StarlarkTypeVTableGet::<T::Type>::VTABLE,
         starlark_type_id: StarlarkTypeId::of::<T>(),
+        memberships: Membership::in_vtable(<T::Type as Memberships<'v, T>>::MEMBERSHIPS),
     };
 }
 
@@ -425,7 +434,19 @@ impl TyStarlarkValue {
 
     /// The predicate types the type says it is a member of.
     pub(crate) fn implemented_predicates(self) -> Vec<Predicate> {
-        (self.vtable.vtable.implemented_predicates)()
+        self.vtable
+            .memberships
+            .iter()
+            .map(|membership| membership.predicate())
+            .collect()
+    }
+
+    /// Whether the type says it is a member of the predicate type.
+    pub(crate) fn implements(self, predicate: Predicate) -> bool {
+        self.vtable
+            .memberships
+            .iter()
+            .any(|membership| is_predicate(membership.predicate(), predicate))
     }
 
     pub(crate) fn attr_from_methods(self, name: &str) -> Result<Ty, TypingNoContextError> {

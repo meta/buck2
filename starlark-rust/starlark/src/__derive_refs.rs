@@ -63,8 +63,6 @@ pub use crate::typing::starlark_value::HasTyVTable;
 pub use crate::typing::starlark_value::TyStarlarkValueVTable;
 pub use crate::typing::starlark_value::TyStarlarkValueVTableGet;
 pub use crate::typing::starlark_value::TyStarlarkValueVTableStaticEntry;
-// Re-export for the `provide_predicate_handle` that `#[starlark_value]` writes.
-pub use crate::values::demand::Demand;
 pub use crate::values::layout::avalues::array::AValueAnyArray;
 pub use crate::values::layout::avalues::simple::AValueFrozen;
 pub use crate::values::layout::vtable::AValueVTable;

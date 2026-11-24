@@ -157,7 +157,6 @@ pub use crate::values::value_of::ValueOf;
 mod alloc_value;
 mod comparison;
 pub(crate) mod deferred;
-pub(crate) mod demand;
 pub(crate) mod error;
 mod freeze;
 pub(crate) mod freeze_dynamic;

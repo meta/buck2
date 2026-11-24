@@ -85,7 +85,7 @@ public class KaptStepsBuilder {
    *
    * <p>This method will do nothing if there are no relevant annotation processors to run.
    */
-  public static void prepareKaptProcessorsIfNeeded(
+  public static ImmutableList<AbsPath> prepareKaptProcessorsIfNeeded(
       BuildTargetValue invokingRule,
       AbsPath rootCellPath,
       ImmutableList.Builder<IsolatedStep> steps,
@@ -117,7 +117,7 @@ public class KaptStepsBuilder {
       LanguageVersion kotlinLanguageVersion) {
     // We don't need the Kapt processor to run for source-only-abi
     if (invokingRule.isSourceOnlyAbi()) {
-      return;
+      return ImmutableList.of();
     }
 
     // We need to generate the KAPT generation folder anyway, to help IntelliJ with red symbols.
@@ -130,7 +130,7 @@ public class KaptStepsBuilder {
 
     // No annotation processors for KAPT
     if (kaptAnnotationProcessors.isEmpty()) {
-      return;
+      return ImmutableList.of();
     }
 
     // KAPT folders
@@ -294,6 +294,7 @@ public class KaptStepsBuilder {
     sourceWithStubsAndKaptAndKspOutputBuilder.add(kaptGenOutput);
     sourceWithStubsAndKaptOutputBuilder.add(kaptGenOutput);
     javacSourceBuilder.add(kaptGenOutput);
+    return ImmutableList.of(rootCellPath.resolve(kaptClassesOutput));
   }
 
   private static String getKapt4Flag(LanguageVersion kotlinLanguageVersion) {

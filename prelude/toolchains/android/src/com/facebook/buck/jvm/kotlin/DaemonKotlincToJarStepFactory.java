@@ -167,36 +167,37 @@ public class DaemonKotlincToJarStepFactory extends BaseCompileToJarStepFactory<K
 
       ImmutableList<AbsPath> kotlinHomeLibraries = extraParams.getKotlinHomeLibraries();
 
-      KaptStepsBuilder.prepareKaptProcessorsIfNeeded(
-          invokingRule,
-          buildCellRootPath,
-          steps,
-          buildTargetValueExtraParams,
-          extraParams.getJvmTarget(),
-          extraParams.getStandardLibraryClassPath(),
-          extraParams.getAnnotationProcessingClassPath(),
-          outputDirectory,
-          annotationGenFolder,
-          javacSourceBuilder,
-          reportsOutput,
-          parameters.getShouldTrackClassUsage(),
-          postKotlinCompilationSteps,
-          annotationProcessorParams,
-          extraParams.getExtraKotlincArguments(),
-          sourceFilePaths,
-          pathToSrcsList,
-          allClasspaths,
-          kotlinHomeLibraries,
-          kotlinc,
-          compilerOutputPaths,
-          buckOut,
-          extraParams.getKotlinCompilerPlugins(),
-          kotlinPluginGeneratedFullPath,
-          moduleName,
-          kotlinCDAnalytics,
-          sourceWithStubsAndKaptAndKspOutputBuilder,
-          sourceWithStubsAndKaptOutputBuilder,
-          extraParams.getLanguageVersion());
+      ImmutableList<AbsPath> kaptClasspaths =
+          KaptStepsBuilder.prepareKaptProcessorsIfNeeded(
+              invokingRule,
+              buildCellRootPath,
+              steps,
+              buildTargetValueExtraParams,
+              extraParams.getJvmTarget(),
+              extraParams.getStandardLibraryClassPath(),
+              extraParams.getAnnotationProcessingClassPath(),
+              outputDirectory,
+              annotationGenFolder,
+              javacSourceBuilder,
+              reportsOutput,
+              parameters.getShouldTrackClassUsage(),
+              postKotlinCompilationSteps,
+              annotationProcessorParams,
+              extraParams.getExtraKotlincArguments(),
+              sourceFilePaths,
+              pathToSrcsList,
+              allClasspaths,
+              kotlinHomeLibraries,
+              kotlinc,
+              compilerOutputPaths,
+              buckOut,
+              extraParams.getKotlinCompilerPlugins(),
+              kotlinPluginGeneratedFullPath,
+              moduleName,
+              kotlinCDAnalytics,
+              sourceWithStubsAndKaptAndKspOutputBuilder,
+              sourceWithStubsAndKaptOutputBuilder,
+              extraParams.getLanguageVersion());
       ImmutableList.Builder<AbsPath> compilationClasspathBuilder =
           buildCompilationClasspath(parameters, extraParams);
 
@@ -249,11 +250,12 @@ public class DaemonKotlincToJarStepFactory extends BaseCompileToJarStepFactory<K
 
       // Reduced SO-ABI classpath for the applicability plugin (rfsoa +
       // source_only_abi_deps only). Distinct from compilationClasspath which
-      // contains the full dep set during library builds. KSP classes are the
-      // rule's own output.
+      // contains the full dep set during library builds. KSP and KAPT classes are
+      // the rule's own output.
       ImmutableList<AbsPath> applicabilityClasspath =
           ImmutableList.<AbsPath>builder()
               .addAll(kspClasspaths)
+              .addAll(kaptClasspaths)
               .addAll(extraParams.getApplicabilityClasspath())
               .build();
 
@@ -271,12 +273,17 @@ public class DaemonKotlincToJarStepFactory extends BaseCompileToJarStepFactory<K
           kotlinOutputDirectory,
           sourceWithStubsAndKaptAndKspOutputBuilder,
           pathToSrcsList,
-          ImmutableList.<AbsPath>builder().addAll(kspClasspaths).addAll(allClasspaths).build(),
+          ImmutableList.<AbsPath>builder()
+              .addAll(kspClasspaths)
+              .addAll(kaptClasspaths)
+              .addAll(allClasspaths)
+              .build(),
           reportsOutput,
           kotlinc,
           kosabiPluginOptions,
           ImmutableList.<AbsPath>builder()
               .addAll(kspClasspaths)
+              .addAll(kaptClasspaths)
               .addAll(compilationClasspathBuilder.build())
               .build(),
           applicabilityClasspath,

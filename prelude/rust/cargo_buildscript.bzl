@@ -135,7 +135,7 @@ def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact, arch: str | None = Non
         language = ctx.attrs._exec_os_type[OsLookup].script,
     )
 
-    return cmd_args(shim, hidden = shim) if arch != None else cmd_args(shim, relative_to = cwd)
+    return cmd_args(shim, hidden = shim)
 
 def _make_cc_shim(ctx: AnalysisContext, name: str, cmd: cmd_args) -> cmd_args:
     """
@@ -291,8 +291,6 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
     rule_env["CARGO_PKG_NAME"] = ctx.attrs.package_name
     rule_env["CARGO_PKG_VERSION"] = ctx.attrs.version
     rule_env["OUT_DIR"] = out_dir.as_output()
-    if arch_toolchain_info == None:
-        rule_env["RUSTC"] = _make_rustc_shim(ctx, cwd)
     rule_env["RUSTC_LINKER"] = "/bin/false"
     rule_env["RUST_BACKTRACE"] = "1"
 
@@ -390,11 +388,6 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
         cmd = cmd_args(cxx_toolchain_info.linker_info.archiver),
     )
 
-    # Environment variables specified in the target's attributes get priority
-    # over all the above.
-    for k, v in ctx.attrs.env.items():
-        rule_env[k] = cmd_args(v, relative_to = cwd)
-
     # A target that blanks CC leaves cc-rs with a `<target>-gcc` PATH lookup
     # when cross-compiling, which exists nowhere. Re-export the shim as
     # TARGET_CC, which cc-rs only consults when HOST != TARGET, below any
@@ -415,12 +408,16 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
     ):
         rule_env["TARGET_CC"] = cc_shim
 
+    # Artifact paths in `rule_env` are relative to the project root. The single-arch build script
+    # runs in `cwd`, so its RUSTC and target env need to be translated. The dual-arch trampoline
+    # makes paths absolute itself.
     if arch_toolchain_info == None:
         if ctx.attrs.buildscript == None:
             fail("{} scalar build script is missing its executable".format(ctx.label))
+        cwd_env = {"RUSTC": _make_rustc_shim(ctx, cwd)} | ctx.attrs.env
         ctx.actions.run(
             cmd_args(ctx.attrs.runner[RunInfo], cmd_args("--buildscript=", ctx.attrs.buildscript[RunInfo], delimiter = ""), base_cmd),
-            env = rule_env,
+            env = rule_env | {k: cmd_args(v, relative_to = cwd) for k, v in cwd_env.items()},
             category = "buildscript",
         )
     else:
@@ -433,6 +430,7 @@ def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
         for arch, variant in arch_toolchain_info.arch_variants.items():
             env = (
                 rule_env
+                | ctx.attrs.env
                 | variant.plain_env
                 | variant.path_env
                 | {

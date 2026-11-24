@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-//! With `buck2.write_action_cache` on, a write action asks the action cache for its content under a
+//! With `write_actions.cache` on, a write action asks the action cache for its content under a
 //! key that is a hash of its command line. A hit declares the output as a CAS download without
 //! rendering the content, and nothing is written until something needs the file. A miss renders the
 //! content and produces it the way a run action's output comes to be: written to its path when the
 //! machine has room for local work, uploaded to the CAS and declared from there when it does not. A
-//! write whose key falls within `buck2.write_action_cache_populate`, under an executor that publishes
+//! write whose key falls within `write_actions.cache_populate`, under an executor that publishes
 //! local results (`allow_cache_uploads`), goes through the cache whatever the mode says, and a miss
 //! first uploads the content and records the entry for later builds. Under `verify` every write is
 //! rendered and declared as without the cache, and a hit is only compared against it.
@@ -103,10 +103,15 @@ const GOLDEN_KEYS: [(&str, &str); 2] = [
 async fn test_miss_is_written_when_there_is_room_for_it(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     let content_config = format!("test.content={content}");
-    let configs = ["-c", &content_config, "-c", "buck2.write_action_cache=use"];
+    let configs = [
+        "-c",
+        &content_config,
+        "--setting",
+        "write_actions.cache=use",
+    ];
 
     // One write in an otherwise idle build is made locally, and nothing asks the CAS about
-    // it: `write_cas_probe` is on in this repo, and the miss does not probe.
+    // it: `write_actions.cas_probe` is on in this repo, and the miss does not probe.
     let res = buck.build(&args(&["//:write"], &configs)).await?;
     let output = res.build_report()?.output_for_target("//:write")?;
     assert_eq!(
@@ -133,7 +138,12 @@ async fn test_miss_is_written_when_there_is_room_for_it(buck: &Buck) -> anyhow::
 async fn test_miss_is_uploaded_when_there_is_no_room_for_it(buck: &Buck) -> anyhow::Result<()> {
     let content = random_string();
     let content_config = format!("test.content={content}");
-    let configs = ["-c", &content_config, "-c", "buck2.write_action_cache=use"];
+    let configs = [
+        "-c",
+        &content_config,
+        "--setting",
+        "write_actions.cache=use",
+    ];
     // The gate the hybrid executor runs local commands behind, with no room at all.
     let env = ("BUCK2_TEST_LOW_PASS_FILTER_CAPACITY", "0");
 
@@ -174,7 +184,7 @@ async fn test_recorded_content_is_not_written_again(buck: &Buck) -> anyhow::Resu
 
     let res = buck
         .build(&args(
-            &["//:write", "-c", "buck2.write_action_cache_populate=1"],
+            &["//:write", "--setting", "write_actions.cache_populate=1"],
             &configs,
         ))
         .await?;
@@ -201,8 +211,8 @@ async fn test_recorded_content_is_not_written_again(buck: &Buck) -> anyhow::Resu
             &[
                 target,
                 "--materializations=none",
-                "-c",
-                "buck2.write_action_cache=use",
+                "--setting",
+                "write_actions.cache=use",
             ],
             &configs,
         ))
@@ -218,7 +228,7 @@ async fn test_recorded_content_is_not_written_again(buck: &Buck) -> anyhow::Resu
 
     // ...until something needs the file, which then comes out of the CAS.
     buck.build(&args(
-        &[target, "-c", "buck2.write_action_cache=use"],
+        &[target, "--setting", "write_actions.cache=use"],
         &configs,
     ))
     .await?;
@@ -237,8 +247,8 @@ async fn test_different_content_is_a_miss(buck: &Buck) -> anyhow::Result<()> {
         "//:write",
         "-c",
         &format!("test.content={recorded}"),
-        "-c",
-        "buck2.write_action_cache_populate=1",
+        "--setting",
+        "write_actions.cache_populate=1",
     ])
     .await?;
     buck.kill().await?;
@@ -251,8 +261,8 @@ async fn test_different_content_is_a_miss(buck: &Buck) -> anyhow::Result<()> {
             target,
             "-c",
             &format!("test.content={content}"),
-            "-c",
-            "buck2.write_action_cache=use",
+            "--setting",
+            "write_actions.cache=use",
         ])
         .await?;
     let output = res.build_report()?.output_for_target(target)?;
@@ -278,7 +288,7 @@ async fn test_verify_checks_a_hit_against_the_render(buck: &Buck) -> anyhow::Res
     let configs = ["-c", content_config.as_str()];
 
     buck.build(&args(
-        &["//:write", "-c", "buck2.write_action_cache_populate=1"],
+        &["//:write", "--setting", "write_actions.cache_populate=1"],
         &configs,
     ))
     .await?;
@@ -289,7 +299,7 @@ async fn test_verify_checks_a_hit_against_the_render(buck: &Buck) -> anyhow::Res
     let target = "//:write_again";
     let res = buck
         .build(&args(
-            &[target, "-c", "buck2.write_action_cache=verify"],
+            &[target, "--setting", "write_actions.cache=verify"],
             &configs,
         ))
         .await?;
@@ -315,7 +325,11 @@ async fn test_transitive_set_projection_is_served(buck: &Buck) -> anyhow::Result
 
     let res = buck
         .build(&args(
-            &["//:write_tset", "-c", "buck2.write_action_cache_populate=1"],
+            &[
+                "//:write_tset",
+                "--setting",
+                "write_actions.cache_populate=1",
+            ],
             &configs,
         ))
         .await?;
@@ -333,8 +347,8 @@ async fn test_transitive_set_projection_is_served(buck: &Buck) -> anyhow::Result
             &[
                 target,
                 "--materializations=none",
-                "-c",
-                "buck2.write_action_cache=use",
+                "--setting",
+                "write_actions.cache=use",
             ],
             &configs,
         ))
@@ -348,7 +362,7 @@ async fn test_transitive_set_projection_is_served(buck: &Buck) -> anyhow::Result
     assert!(!output.exists());
 
     buck.build(&args(
-        &[target, "-c", "buck2.write_action_cache=use"],
+        &[target, "--setting", "write_actions.cache=use"],
         &configs,
     ))
     .await?;
@@ -366,10 +380,10 @@ async fn test_a_key_outside_the_share_is_a_plain_write(buck: &Buck) -> anyhow::R
             "//:write",
             "-c",
             &format!("test.content={content}"),
-            "-c",
-            "buck2.write_action_cache=off",
-            "-c",
-            "buck2.write_action_cache_populate=0.000000001",
+            "--setting",
+            "write_actions.cache=off",
+            "--setting",
+            "write_actions.cache_populate=0.000000001",
         ])
         .await?;
     assert_eq!(counter(&res, "write_action_cache_hits")?, 0);
@@ -389,15 +403,15 @@ async fn test_nothing_is_recorded_where_local_results_are_not_published(
         content_config.as_str(),
         "-c",
         "test.allow_cache_uploads=false",
-        "-c",
-        "buck2.write_action_cache_populate=1",
+        "--setting",
+        "write_actions.cache_populate=1",
     ];
 
     // The share covers every key, but the executor publishes no local results: with the mode
     // off the cache is not asked...
     let res = buck
         .build(&args(
-            &["//:write", "-c", "buck2.write_action_cache=off"],
+            &["//:write", "--setting", "write_actions.cache=off"],
             &configs,
         ))
         .await?;
@@ -407,7 +421,7 @@ async fn test_nothing_is_recorded_where_local_results_are_not_published(
     // ...and under `use` it is asked, and the miss is not recorded.
     let res = buck
         .build(&args(
-            &["//:write_again", "-c", "buck2.write_action_cache=use"],
+            &["//:write_again", "--setting", "write_actions.cache=use"],
             &configs,
         ))
         .await?;
@@ -426,8 +440,8 @@ async fn test_keys_are_golden(buck: &Buck) -> anyhow::Result<()> {
         "//:write_tset",
         "-c",
         "test.content=golden",
-        "-c",
-        "buck2.write_action_cache=verify",
+        "--setting",
+        "write_actions.cache=verify",
     ])
     .env("BUCK2_TEST_WRITE_ACTION_CACHE_KEY_DUMP", &dump)
     .await?;

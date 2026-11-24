@@ -9,8 +9,8 @@
  */
 
 //! Content an action can make, a write or a copy of a source file, that the CAS already holds is
-//! declared as CAS content instead of being made. A write asks behind the `write_cas_probe`
-//! knob; a copy of a source file asks under the disk-state core, which would otherwise make the
+//! declared as CAS content instead of being made. A write asks when `write_actions.cas_probe` is
+//! on; a copy of a source file asks under the disk-state core, which would otherwise make the
 //! copy now. What the CAS lacks comes to be as `produce` says.
 
 use std::sync::Arc;

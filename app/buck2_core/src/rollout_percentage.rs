@@ -11,9 +11,12 @@
 use std::ffi::OsString;
 use std::str::FromStr;
 
+use allocative::Allocative;
 use buck2_error::buck2_error;
 use dupe::Dupe;
 use os_str_bytes::OsStrBytes;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// Returns true or false for percentage-based feature rollouts based on a configuration string.
 /// Configurations supported today are random and hostname.
@@ -135,10 +138,38 @@ impl FromStr for Inner {
 
 /// A share of a keyed population, for rolling a feature out key by key rather than host by host.
 /// `includes(key)` answers the same for a key wherever it is asked, so a rollout at a fraction
-/// covers the same keys on every host, and raising the fraction only adds keys. Parsed from a
-/// float in [0, 1].
-#[derive(Copy, Clone, Dupe, Debug, Default, PartialEq)]
+/// covers the same keys on every host, and raising the fraction only adds keys. A float in
+/// [0, 1].
+#[derive(
+    Copy,
+    Clone,
+    Dupe,
+    Debug,
+    Default,
+    PartialEq,
+    Allocative,
+    Serialize,
+    Deserialize
+)]
+#[serde(try_from = "f64", into = "f64")]
 pub struct RolloutFraction(f64);
+
+// Never NaN: every way to make one checks the range.
+impl Eq for RolloutFraction {}
+
+impl TryFrom<f64> for RolloutFraction {
+    type Error = buck2_error::Error;
+
+    fn try_from(val: f64) -> Result<Self, Self::Error> {
+        Ok(Self(rate(val)?))
+    }
+}
+
+impl From<RolloutFraction> for f64 {
+    fn from(fraction: RolloutFraction) -> f64 {
+        fraction.0
+    }
+}
 
 impl RolloutFraction {
     pub fn none() -> Self {
@@ -165,21 +196,6 @@ impl RolloutFraction {
         let point = u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap());
         // `point` is uniform over the u64s; as a fraction of 2^64 it is uniform over [0, 1).
         (point as f64 / 2f64.powi(64)) < self.0
-    }
-}
-
-impl FromStr for RolloutFraction {
-    type Err = buck2_error::Error;
-
-    fn from_str(val: &str) -> Result<Self, Self::Err> {
-        let val: f64 = val.parse().map_err(|_| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "RolloutFraction must be a float within [0,1] (got: {})",
-                val
-            )
-        })?;
-        Ok(Self(rate(val)?))
     }
 }
 
@@ -270,22 +286,14 @@ mod tests {
     }
 
     #[test]
-    fn test_fraction_parse() {
-        assert_eq!(
-            "0".parse::<RolloutFraction>().unwrap(),
-            RolloutFraction::none()
-        );
-        assert_eq!(
-            "1".parse::<RolloutFraction>().unwrap(),
-            RolloutFraction::all()
-        );
-        assert_eq!(
-            "0.25".parse::<RolloutFraction>().unwrap(),
-            RolloutFraction(0.25)
-        );
-        assert_matches!(RolloutFraction::from_str("1.5"), Err(..));
-        assert_matches!(RolloutFraction::from_str("true"), Err(..));
-        assert_matches!(RolloutFraction::from_str(""), Err(..));
+    fn test_fraction_deserialize_checks_the_range() {
+        let parse = serde_json::from_str::<RolloutFraction>;
+        assert_eq!(parse("0").unwrap(), RolloutFraction::none());
+        assert_eq!(parse("1").unwrap(), RolloutFraction::all());
+        assert_eq!(parse("0.25").unwrap(), RolloutFraction(0.25));
+        assert_matches!(parse("1.5"), Err(..));
+        assert_matches!(parse("-0.1"), Err(..));
+        assert_matches!(parse("true"), Err(..));
     }
 
     #[test]

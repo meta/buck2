@@ -1360,11 +1360,14 @@ async fn test_dep_file_hit_across_configurations_with_stale_entry_impl(
     setup_eden = false,
     data_dir = "dep_files",
     skip_for_os = ["windows"],
-    extra_buck_config = [("buck2", "cross_config_lookup_on_stale_entry", "true")],
 )]
 async fn test_dep_file_hit_across_configurations_with_stale_entry(
     buck: &Buck,
 ) -> anyhow::Result<()> {
+    std::fs::write(
+        buck.cwd().join(".bucksettings.toml"),
+        "[dep_files]\ncross_config_lookup_on_stale_entry = true\n",
+    )?;
     test_dep_file_hit_across_configurations_with_stale_entry_impl(buck, true).await
 }
 

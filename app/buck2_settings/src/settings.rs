@@ -25,6 +25,7 @@ use crate::analysis::Analysis;
 use crate::buckconfig::BuckconfigSource;
 use crate::console::Console;
 use crate::daemon::Daemon;
+use crate::dep_files::DepFiles;
 use crate::digest::Digest;
 use crate::event_forwarding::EventForwarding;
 use crate::event_log::EventLog;
@@ -48,6 +49,7 @@ use crate::source::Source;
 use crate::starlark::Starlark;
 use crate::target_platforms::TargetPlatforms;
 use crate::test::Test;
+use crate::write_actions::WriteActions;
 
 /// Assembles `BuckSettings` from the sections, each listed under its scope.
 ///
@@ -224,11 +226,13 @@ buck_settings! {
         agent_materialization: AgentMaterialization,
         agent_recursive_patterns: AgentRecursivePatterns,
         console: Console,
+        dep_files: DepFiles,
         event_log: EventLog,
         execution: Execution,
         health_check: HealthCheck,
         remote_execution: RemoteExecution,
         test: Test,
+        write_actions: WriteActions,
     }
     dice {
         execution_platforms: ExecutionPlatforms,

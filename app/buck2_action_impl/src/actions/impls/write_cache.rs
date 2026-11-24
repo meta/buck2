@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-//! Write actions served from the action cache (`buck2.write_action_cache`).
+//! Write actions served from the action cache (`write_actions.cache`).
 //!
 //! A write's content is a function of its command line, so a strong hash of that command line
 //! (`CommandLineBuilder::new_hashing`) keys an action cache entry whose one output is the

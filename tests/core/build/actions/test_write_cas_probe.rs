@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-//! With `buck2.write_cas_probe` on, a write action asks the CAS for its content before writing it.
+//! With `write_actions.cas_probe` on, a write action asks the CAS for its content before writing it.
 //! When the CAS has the content with enough TTL left, the output is declared as a CAS download and
 //! nothing is written until something needs the file; otherwise the write is made here while the
 //! machine has room for local work and uploaded when it has not. Under the disk-state materializer
@@ -418,7 +418,7 @@ async fn test_copied_dir_uploads_the_files_the_cas_lacks_when_there_is_no_room(
 #[buck_test(write_invocation_record = true, skip_for_materializer = ["deferred"], meta_only = "remote execution")]
 async fn test_copies_probe_whatever_the_write_knob_says(buck: &Buck) -> anyhow::Result<()> {
     // The knob is the write's: with it off, a write is made without asking...
-    let knob_off = ["-c", "buck2.write_cas_probe=false"];
+    let knob_off = ["--setting", "write_actions.cas_probe=false"];
     written_without_a_probe(buck, &knob_off).await?;
 
     // ...while a copy of a source file still asks, since what a hit spares under the

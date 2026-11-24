@@ -79,7 +79,6 @@ use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
 use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
 use buck2_core::rollout_percentage::RolloutFraction;
-use buck2_core::rollout_percentage::RolloutPercentage;
 use buck2_core::soft_error;
 use buck2_core::warn_user;
 use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
@@ -1123,32 +1122,14 @@ impl DiceCommandUpdater<'_, '_> {
         // the knob's (`buck2_action_impl`'s `cas_probe::probes_copies`).
         let repo = self.cmd_ctx.base_context.repo();
         run_action_knobs.defer_write_actions = repo.materializer_defers_writes;
-        run_action_knobs.write_cas_probe = root_config
-            .parse::<RolloutPercentage>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "write_cas_probe",
-            })?
-            .unwrap_or_else(RolloutPercentage::never)
-            .roll()
-            && repo.materializer_defers_writes;
-        run_action_knobs.write_action_cache = root_config
-            .parse::<WriteActionCacheMode>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "write_action_cache",
-            })?
-            .unwrap_or_default();
-        run_action_knobs.write_action_cache_populate = root_config
-            .parse::<RolloutFraction>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "write_action_cache_populate",
-            })?
-            .unwrap_or_else(RolloutFraction::none);
-        run_action_knobs.cross_config_lookup_on_stale_entry = root_config
-            .parse::<bool>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "cross_config_lookup_on_stale_entry",
-            })?
-            .unwrap_or(false);
+        let write_actions = &invocation_settings.write_actions;
+        run_action_knobs.write_cas_probe =
+            write_actions.cas_probe() && repo.materializer_defers_writes;
+        run_action_knobs.write_action_cache = write_actions.cache();
+        run_action_knobs.write_action_cache_populate = write_actions.cache_populate();
+        run_action_knobs.cross_config_lookup_on_stale_entry = invocation_settings
+            .dep_files
+            .cross_config_lookup_on_stale_entry(&mut buckconfig)?;
 
         run_action_knobs.log_action_graph |= root_config
             .parse::<bool>(BuckconfigKeyRef {

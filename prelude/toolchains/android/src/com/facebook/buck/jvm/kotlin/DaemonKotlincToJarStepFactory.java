@@ -222,27 +222,30 @@ public class DaemonKotlincToJarStepFactory extends BaseCompileToJarStepFactory<K
           kotlinCDAnalytics,
           extraParams.getLanguageVersion());
 
-      prepareKspProcessorsIfNeeded(
-          extraParams,
-          invokingRule,
-          buildCellRootPath,
-          steps,
-          postKotlinCompilationSteps,
-          buildTargetValueExtraParams,
-          outputDirectory,
-          annotationGenFolder,
-          javacSourceBuilder,
-          reportsOutput,
-          parameters.getShouldTrackClassUsage(),
-          allClasspaths,
-          kotlinPluginGeneratedFullPath,
-          annotationProcessorParams,
-          sourceWithStubsAndKaptOutputBuilder.build(),
-          compilerOutputPaths,
-          sourceWithStubsAndKaptAndKspOutputBuilder,
-          compilationClasspathBuilder.build(),
-          moduleName,
-          kotlinCDAnalytics);
+      ImmutableList<AbsPath> kspClasspaths =
+          prepareKspProcessorsIfNeeded(
+                  extraParams,
+                  invokingRule,
+                  buildCellRootPath,
+                  steps,
+                  postKotlinCompilationSteps,
+                  buildTargetValueExtraParams,
+                  outputDirectory,
+                  annotationGenFolder,
+                  javacSourceBuilder,
+                  reportsOutput,
+                  parameters.getShouldTrackClassUsage(),
+                  allClasspaths,
+                  kotlinPluginGeneratedFullPath,
+                  annotationProcessorParams,
+                  sourceWithStubsAndKaptOutputBuilder.build(),
+                  compilerOutputPaths,
+                  sourceWithStubsAndKaptAndKspOutputBuilder,
+                  compilationClasspathBuilder.build(),
+                  moduleName,
+                  kotlinCDAnalytics)
+              .map(ImmutableList::of)
+              .orElse(ImmutableList.of());
 
       // Reduced SO-ABI classpath for the applicability plugin (rfsoa +
       // source_only_abi_deps only). Distinct from compilationClasspath which
@@ -263,11 +266,14 @@ public class DaemonKotlincToJarStepFactory extends BaseCompileToJarStepFactory<K
           kotlinOutputDirectory,
           sourceWithStubsAndKaptAndKspOutputBuilder,
           pathToSrcsList,
-          allClasspaths,
+          ImmutableList.<AbsPath>builder().addAll(kspClasspaths).addAll(allClasspaths).build(),
           reportsOutput,
           kotlinc,
           kosabiPluginOptions,
-          compilationClasspathBuilder.build(),
+          ImmutableList.<AbsPath>builder()
+              .addAll(kspClasspaths)
+              .addAll(compilationClasspathBuilder.build())
+              .build(),
           applicabilityClasspath,
           postKotlinCompilationFailureSteps,
           classpathSnapshots,

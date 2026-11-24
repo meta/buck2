@@ -37,6 +37,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import java.util.List;
+import java.util.Optional;
 
 @Nullsafe(Nullsafe.Mode.LOCAL)
 public class KspStepsBuilder {
@@ -51,7 +52,7 @@ public class KspStepsBuilder {
           "KSP:com.facebook.metagen.processor.kspmetagen.MetagenKspProcessorProvider");
 
   /** Initialize all the folders, steps and parameters needed to run KSP plugins for this rule. */
-  public static void prepareKspProcessorsIfNeeded(
+  public static Optional<AbsPath> prepareKspProcessorsIfNeeded(
       KotlinExtraParams extraParams,
       BuildTargetValue invokingRule,
       AbsPath rootPath,
@@ -82,7 +83,7 @@ public class KspStepsBuilder {
     steps.addAll(MakeCleanDirectoryIsolatedStep.of(kspAnnotationGenFolder));
 
     if (kspAnnotationProcessors.isEmpty()) {
-      return;
+      return Optional.empty();
     }
 
     steps.add(new MkdirIsolatedStep(outputDirectory));
@@ -172,6 +173,7 @@ public class KspStepsBuilder {
     sourceBuilderWithKspOutputs.add(kspGenOutput);
 
     javacSourceBuilder.add(kspGenOutput);
+    return Optional.of(rootPath.resolve(kspClassesOutput));
   }
 
   static ImmutableList<IsolatedStep> createKspOutputStagingSteps(

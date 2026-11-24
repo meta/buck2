@@ -17,6 +17,7 @@ use std::slice;
 
 use crate::arrays::Arrays;
 use crate::hint::likely;
+use crate::insertion_map::extent::Extent;
 use crate::insertion_map::index;
 use crate::insertion_map::index::TAIL;
 use crate::insertion_map::index::Table;
@@ -132,6 +133,26 @@ impl<K, V> Raw<K, V> {
         self.base.cast()
     }
 
+    /// Where the count of vacated slots is. Only an allocation with a header and an index has
+    /// one.
+    #[inline]
+    pub(crate) fn front(&self) -> *mut usize {
+        debug_assert!(self.header && layout::has_index(self.cap));
+        // SAFETY: such an allocation ends with the count.
+        unsafe { self.base.add(layout::front_offset::<K, V>(self.cap)).cast() }
+    }
+
+    /// Write the header of an allocation whose first `len` slots hold the entries.
+    #[inline]
+    pub(crate) unsafe fn init_header(&self, len: usize) {
+        unsafe {
+            self.header().write(Header {
+                extent: Extent::new(len),
+                cap: self.cap,
+            });
+        }
+    }
+
     /// The index. Exclusive access is the caller's to guarantee.
     #[inline]
     pub(crate) unsafe fn index<'a>(&self) -> Index<'a> {
@@ -164,11 +185,48 @@ impl<K, V> Raw<K, V> {
         &self,
         len: usize,
         hash: u32,
+        eq: impl FnMut(usize) -> bool,
+    ) -> Option<usize> {
+        // SAFETY: `len` is the number of initialized entries, as `Raw` requires of its callers,
+        // and an extent of a plain length has no vacated slots.
+        unsafe { self.find_within(Extent::new(len), false, hash, eq) }
+    }
+
+    /// Slot of the entry with this hash for which `eq` holds, among the entries `extent`
+    /// describes.
+    ///
+    /// # Safety
+    ///
+    /// `extent` is the one in this allocation's header.
+    #[inline(always)]
+    pub(crate) unsafe fn find_in_extent(
+        &self,
+        extent: Extent,
+        hash: u32,
+        eq: impl FnMut(usize) -> bool,
+    ) -> Option<usize> {
+        // SAFETY: `extent` is this allocation's, as this function requires: the slots before
+        // its end have initialized hashes, and slots are vacated only with an index.
+        unsafe { self.find_within(extent, true, hash, eq) }
+    }
+
+    /// # Safety
+    ///
+    /// The slots before the end of `extent` have initialized hashes, and `eq` is only asked
+    /// about slots that hold an entry. `extent` has vacated slots only if `may_have_vacated`
+    /// and the allocation has an index.
+    #[inline(always)]
+    unsafe fn find_within(
+        &self,
+        extent: Extent,
+        may_have_vacated: bool,
+        hash: u32,
         mut eq: impl FnMut(usize) -> bool,
     ) -> Option<usize> {
-        // SAFETY: `len` entries are initialized, per the caller.
-        let hashes = unsafe { self.arrays().hashes(len) };
         if !layout::has_index(self.cap) {
+            // SAFETY: without an index no slots are vacated, so the extent is the length, and
+            // that many hashes are initialized.
+            let hashes = unsafe { self.arrays().hashes(extent.len()) };
             let mut i = 0;
             while i < hashes.len() {
                 i += find_hash(&hashes[i..], hash)?;
@@ -179,6 +237,13 @@ impl<K, V> Raw<K, V> {
             }
             return None;
         }
+        let end = if may_have_vacated {
+            extent.end()
+        } else {
+            extent.len()
+        };
+        // SAFETY: the hash of a vacated slot stays initialized, and the index points at none.
+        let hashes = unsafe { self.arrays().hashes(end) };
         let region = layout::index_region::<K, V>(self.cap, self.header);
         // SAFETY: as in `index`; a lookup only reads it.
         unsafe {
@@ -258,14 +323,14 @@ impl<K, V> Raw<K, V> {
         }
     }
 
-    /// Check that the index agrees with the first `len` entries.
+    /// Check that the index agrees with the entries at `front..end`.
     #[cfg(test)]
-    pub(crate) unsafe fn assert_index_consistent(&self, len: usize) {
-        let hashes = unsafe { self.arrays().hashes(len) };
+    pub(crate) unsafe fn assert_index_consistent(&self, front: usize, end: usize) {
+        let hashes = unsafe { self.arrays().hashes(end) };
         match unsafe { self.index() } {
             Index::None => {}
-            Index::Narrow(table) => table.check(hashes),
-            Index::Wide(table) => table.check(hashes),
+            Index::Narrow(table) => table.check_from(hashes, front),
+            Index::Wide(table) => table.check_from(hashes, front),
         }
     }
 }

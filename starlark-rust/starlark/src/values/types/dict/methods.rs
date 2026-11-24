@@ -221,9 +221,6 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn popitem<'v>(this: Value<'v>) -> anyhow::Result<(Value<'v>, Value<'v>)> {
         let mut this = DictMut::from_value(this)?;
 
-        // TODO(nga): this implementation is O(N).
-        //   https://github.com/bazelbuild/starlark/issues/286
-
         match this.aref.content.shift_remove_index(0) {
             Some((k, v)) => Ok((k, v)),
             None => Err(anyhow::anyhow!("Cannot .popitem() on an empty dictionary")),

@@ -12,6 +12,7 @@
 //! [`MiniFixedInsertionMap`](crate::MiniFixedInsertionMap): entries dense in insertion order in
 //! one allocation, with a position index after them once there are enough of them to need one.
 
+pub(crate) mod extent;
 pub(crate) mod index;
 pub(crate) mod layout;
 pub(crate) mod raw;

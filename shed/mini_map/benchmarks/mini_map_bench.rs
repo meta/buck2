@@ -156,6 +156,13 @@ fn lookups<K: Key>(bench: &Bench, n: usize) {
     lookup(bench, &label(map, "get_index_of, hit"), &hits, |k| {
         mutable.get_index_of(k.key())
     });
+    lookup(bench, &label(map, "contains_key, hit"), &hits, |k| {
+        mutable.contains_key(k.key())
+    });
+    lookup(bench, &label(map, "contains_key, miss"), &misses, |k| {
+        mutable.contains_key(k.key())
+    });
+    bench.row(&label(map, "len"), 1, || black_box(&mutable).len());
     bench.row(&label(map, "iter, summing values"), n, || {
         mutable.iter().map(|(_, v)| *v).sum::<u64>()
     });

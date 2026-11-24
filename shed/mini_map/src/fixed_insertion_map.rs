@@ -22,7 +22,6 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
 use std::mem;
-use std::ptr;
 use std::ptr::NonNull;
 
 use allocative::Allocative;
@@ -177,7 +176,7 @@ pub unsafe fn drop_in_place<K, V>(ptr: NonNull<u8>, len: usize) {
 unsafe fn finish<K, V>(raw: Raw<K, V>, len: usize) {
     if is_large(len) {
         unsafe {
-            ptr::write(raw.header(), Header { len, cap: len });
+            raw.init_header(len);
             raw.index_rebuild(len);
         }
     }
@@ -244,7 +243,8 @@ impl<K, V> MiniFixedInsertionMap<K, V> {
                 // SAFETY: the packed byte says this allocation is in the large regime, so it
                 // starts with the header.
                 let header = unsafe { *self.base().as_ptr().cast::<Header>() };
-                header.len
+                // Immutable map: no slots are ever vacated, so the extent is the plain length.
+                header.extent.len()
             }
             small => small as usize,
         }
@@ -967,11 +967,13 @@ impl<'a, K, V> MiniFixedInsertionMapView<'a, K, V> {
     #[cfg(test)]
     pub(crate) fn assert_invariants(&self) {
         // SAFETY: `len` entries are initialized.
-        unsafe { self.raw.assert_index_consistent(self.len) };
+        unsafe { self.raw.assert_index_consistent(0, self.len) };
         if is_large(self.len) {
             // SAFETY: large maps have a header.
             let header = unsafe { *self.raw.header() };
-            assert_eq!(self.len, header.len);
+            // Immutable map: no slots are ever vacated, so the extent is the plain length.
+            assert!(!header.extent.has_vacated());
+            assert_eq!(self.len, header.extent.len());
             assert_eq!(self.len, header.cap);
         }
     }

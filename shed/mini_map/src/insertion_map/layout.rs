@@ -11,11 +11,18 @@
 //! The byte layout of an insertion map's single allocation.
 //!
 //! ```text
-//! mutable, any capacity:            Header [u32; cap] [K; cap] [V; cap] [index]
+//! mutable, up to NO_INDEX_THRESHOLD:  Header [u32; cap] [K; cap] [V; cap]
+//! mutable, more than that:          Header [u32; cap] [K; cap] [V; cap] [index] front
 //! fixed, 1 ..= NO_INDEX_THRESHOLD:         [u32; n]   [K; n]   [V; n]
-//! fixed, more than that:            Header [u32; n]   [K; n]   [V; n]   [index]
+//! fixed, more than that:            Header [u32; n]   [K; n]   [V; n]   [index] front
 //! empty:                            no allocation at all
 //! ```
+//!
+//! `front` is one `usize`, the number of vacated slots before the first entry of a mutable map.
+//! Only an allocation with a header and an index has room for it, and it holds a value only
+//! while the header's [`Extent`] says slots are vacated; a fixed map never uses it. Dropping it
+//! from the fixed layout is an option if those 8 bytes are wanted back: `freeze` would shrink
+//! the allocation by that word instead of handing it over as it is.
 //!
 //! The index is present exactly when the capacity exceeds [`NO_INDEX_THRESHOLD`], and is two
 //! arrays: a tag byte per slot followed by a [`TAIL`]-byte mirror of the first slots, then a
@@ -29,6 +36,7 @@
 use std::alloc::Layout;
 use std::marker::PhantomData;
 
+use crate::insertion_map::extent::Extent;
 use crate::insertion_map::index::Pos;
 use crate::insertion_map::index::TAIL;
 
@@ -45,7 +53,7 @@ pub(crate) const NO_INDEX_THRESHOLD: usize = 16;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct Header {
-    pub(crate) len: usize,
+    pub(crate) extent: Extent,
     pub(crate) cap: usize,
 }
 
@@ -144,7 +152,11 @@ pub(crate) fn offsets<K, V>(cap: usize, header: bool) -> Offsets<K, V> {
         region.tags
     } else {
         align = max(align, POSITION_ALIGN);
-        region.positions + region.slots * position_size(region.wide)
+        if header {
+            front_offset::<K, V>(cap) + size_of::<usize>()
+        } else {
+            region.positions + region.slots * position_size(region.wide)
+        }
     };
     // SAFETY: `align` is a power of two, being the maximum of several, and `end` is below
     // `isize::MAX` with room to round up, by the bound on `cap`.
@@ -195,6 +207,18 @@ pub(crate) fn index_region<K, V>(cap: usize, header: bool) -> IndexRegion {
     }
 }
 
+/// Where the count of vacated slots is, in an allocation led by a [`Header`] whose capacity
+/// calls for an index: after the positions.
+#[inline]
+pub(crate) fn front_offset<K, V>(cap: usize) -> usize {
+    debug_assert!(has_index(cap));
+    let region = index_region::<K, V>(cap, true);
+    align_up(
+        region.positions + region.slots * position_size(region.wide),
+        align_of::<usize>(),
+    )
+}
+
 /// [`offsets`] for an allocation about to be made; panics if `cap` is more than can be laid out.
 pub(crate) fn checked_offsets<K, V>(cap: usize, header: bool) -> Offsets<K, V> {
     assert!(cap <= max_cap::<K, V>(), "insertion map capacity overflow");
@@ -223,6 +247,23 @@ mod tests {
     }
 
     #[test]
+    fn only_an_indexed_allocation_stores_front() {
+        let cap = NO_INDEX_THRESHOLD;
+        assert_eq!(
+            size_of::<Header>() + (4 + 8 + 8) * cap,
+            offsets::<u64, u64>(cap, true).layout.size()
+        );
+        let cap = NO_INDEX_THRESHOLD + 1;
+        let region = index_region::<u64, u64>(cap, true);
+        let front = front_offset::<u64, u64>(cap);
+        assert!(front >= region.positions + 4 * region.slots);
+        assert_eq!(
+            front + size_of::<usize>(),
+            offsets::<u64, u64>(cap, true).layout.size()
+        );
+    }
+
+    #[test]
     fn index_is_never_more_than_two_thirds_full() {
         for cap in [NO_INDEX_THRESHOLD + 1, 50, 100, 1000, 1 << 20] {
             let slots = index_slots(cap);
@@ -239,7 +280,9 @@ mod tests {
         assert_eq!(index_slots(1000), region.slots);
         let size = offsets::<u8, u8>(1000, true).layout.size();
         let positions_end = region.positions + 4 * region.slots;
-        assert!(positions_end <= size && size < positions_end + POSITION_ALIGN);
+        let front = front_offset::<u8, u8>(1000);
+        assert!(positions_end <= front && front < positions_end + POSITION_ALIGN);
+        assert_eq!(front + size_of::<usize>(), size);
         let big = <u32 as Pos>::MAX_CAP + 1;
         assert!(index_region::<u8, u8>(big, true).wide);
     }
@@ -275,6 +318,13 @@ mod tests {
                     .unwrap();
                     let (acc, positions) = acc.extend(positions).unwrap();
                     (acc, Some(positions))
+                };
+                let acc = if header && slots != 0 {
+                    let (acc, front) = acc.extend(Layout::new::<usize>()).unwrap();
+                    assert_eq!(front, front_offset::<K, V>(cap));
+                    acc
+                } else {
+                    acc
                 };
                 let expected = acc.pad_to_align();
 

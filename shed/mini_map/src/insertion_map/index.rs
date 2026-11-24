@@ -391,10 +391,17 @@ impl<P: Pos> Table<'_, P> {
     /// Check that the table agrees with the stored hashes, slot by slot.
     #[cfg(test)]
     pub(crate) fn check(&self, hashes: &[u32]) {
+        self.check_from(hashes, 0)
+    }
+
+    /// Check that the table agrees with the stored hashes from position `front` on, and holds
+    /// no position before it.
+    #[cfg(test)]
+    pub(crate) fn check_from(&self, hashes: &[u32], front: usize) {
         let slots = self.positions.len();
         let occupied = self.tags[..slots].iter().filter(|&&t| t != EMPTY).count();
         assert_eq!(
-            hashes.len(),
+            hashes.len() - front,
             occupied,
             "index holds a different number of entries"
         );
@@ -412,7 +419,7 @@ impl<P: Pos> Table<'_, P> {
                 );
             }
         }
-        for (pos, &hash) in hashes.iter().enumerate() {
+        for (pos, &hash) in hashes.iter().enumerate().skip(front) {
             assert_eq!(
                 Some(pos),
                 find(self.tags, self.positions, hashes, hash, |p| p == pos),

@@ -17,7 +17,6 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::marker::PhantomData;
 use std::mem;
-use std::ptr;
 use std::ptr::NonNull;
 
 use allocative::Allocative;
@@ -36,6 +35,7 @@ use crate::arrays::DeallocGuard;
 use crate::arrays::InitGuard;
 use crate::arrays::alloc_block;
 use crate::hashed::Hashed;
+use crate::insertion_map::extent::Extent;
 use crate::insertion_map::layout;
 use crate::insertion_map::layout::Header;
 use crate::insertion_map::layout::Offsets;
@@ -59,7 +59,10 @@ pub use crate::mut_insertion_map::iter::ValuesMut;
 
 /// What an empty map points at, so that reading the length never needs a branch. Never written:
 /// every mutation first checks for a capacity of zero and allocates.
-static EMPTY: Header = Header { len: 0, cap: 0 };
+static EMPTY: Header = Header {
+    extent: Extent::new(0),
+    cap: 0,
+};
 
 /// Smallest capacity a growing map allocates, matching `Vec` for small elements.
 const MIN_NON_ZERO_CAP: usize = 4;
@@ -146,18 +149,66 @@ impl<K, V> MiniMutInsertionMap<K, V> {
         self.raw().arrays()
     }
 
-    /// Set the length. The map must have an allocation.
     #[inline]
-    unsafe fn set_len(&self, len: usize) {
+    fn end(&self) -> usize {
+        self.extent().end()
+    }
+
+    #[inline]
+    fn extent(&self) -> Extent {
+        self.header().extent
+    }
+
+    /// `then` of the number of vacated slots before the first entry and the number of entries.
+    #[inline(always)]
+    fn front_and_len<R>(&self, then: impl FnOnce(usize, usize) -> R) -> R {
+        // SAFETY: read only while slots are vacated. Only an allocation with an index has
+        // vacated slots, and it stores the count while it does.
+        self.extent()
+            .front_and_len(|| unsafe { *self.raw().front() }, then)
+    }
+
+    #[inline]
+    fn front(&self) -> usize {
+        self.front_and_len(|front, _| front)
+    }
+
+    #[inline]
+    fn bounds(&self) -> (usize, usize, usize) {
+        (self.front(), self.end(), self.capacity())
+    }
+
+    #[inline]
+    fn entries(&self) -> (Arrays<K, V>, usize) {
+        // SAFETY: `front <= end <= cap`, so the offset stays inside the arrays.
+        self.front_and_len(|front, len| (unsafe { self.arrays().offset(front) }, len))
+    }
+
+    /// Set which slots hold the entries. The map must have an allocation.
+    #[inline]
+    unsafe fn set_bounds(&self, front: usize, end: usize) {
+        debug_assert!(self.capacity() > 0);
+        let extent = Extent::from_bounds(front, end, |front| {
+            debug_assert!(layout::has_index(self.capacity()));
+            // SAFETY: an allocation with an index has room for the count.
+            unsafe { *self.raw().front() = front };
+        });
+        // SAFETY: not `EMPTY`, per the caller, so this is this map's own header.
+        unsafe { (*self.ptr.as_ptr()).extent = extent };
+    }
+
+    /// Set the slot after the last entry. The map must have an allocation.
+    #[inline]
+    unsafe fn set_end(&self, end: usize) {
         debug_assert!(self.capacity() > 0);
         // SAFETY: not `EMPTY`, per the caller, so this is this map's own header.
-        unsafe { (*self.ptr.as_ptr()).len = len };
+        unsafe { (*self.ptr.as_ptr()).extent = self.extent().with_end(end) };
     }
 
     /// Move the entries to a fresh allocation with room for exactly `new_cap >= len` entries, or
     /// to no allocation at all when that is zero.
     fn relocate(&mut self, new_cap: usize) {
-        let len = self.len();
+        let (entries, len) = self.entries();
         debug_assert!(new_cap >= len);
         let old = self.raw();
         if new_cap == 0 {
@@ -169,8 +220,8 @@ impl<K, V> MiniMutInsertionMap<K, V> {
             // are moved rather than copied because the old block is freed without dropping them.
             unsafe {
                 let new = Raw::new(ptr, new_cap, true);
-                ptr::write(new.header(), Header { len, cap: new_cap });
-                new.arrays().copy_from(old.arrays(), len);
+                new.init_header(len);
+                new.arrays().copy_from(entries, len);
                 new.index_rebuild(len);
             }
             self.ptr = ptr.cast();
@@ -184,19 +235,38 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     /// Make room for `additional` more entries.
     #[inline]
     fn grow_for(&mut self, additional: usize) {
-        let required = self
-            .len()
+        let (front, end, cap) = self.bounds();
+        let required = (end - front)
             .checked_add(additional)
             .expect("capacity overflow");
-        let cap = self.capacity();
-        if required > cap {
-            self.grow_to(required.max(cap * 2).max(MIN_NON_ZERO_CAP));
+        if required > cap - front {
+            self.make_room(required);
         }
     }
 
     #[cold]
-    fn grow_to(&mut self, new_cap: usize) {
-        self.relocate(new_cap);
+    fn make_room(&mut self, required: usize) {
+        let (front, end, cap) = self.bounds();
+        if required <= cap && front >= end - front {
+            self.compact();
+        } else {
+            self.relocate(required.max(cap * 2).max(MIN_NON_ZERO_CAP));
+        }
+    }
+
+    fn compact(&mut self) {
+        let (front, end, _) = self.bounds();
+        if front == 0 {
+            return;
+        }
+        let raw = self.raw();
+        // SAFETY: a map with vacated slots has an allocation. The entries at `front..end` move
+        // down to start at slot zero, and every position in the index moves with them.
+        unsafe {
+            raw.arrays().shift(front, 0, end - front);
+            raw.index_map_positions(|p| p - front);
+            self.set_bounds(0, end - front);
+        }
     }
 
     /// Verify that the map is internally consistent.
@@ -205,9 +275,12 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     where
         K: Eq,
     {
-        assert!(self.len() <= self.capacity());
-        // SAFETY: `len` entries are initialized.
-        unsafe { self.raw().assert_index_consistent(self.len()) };
+        let (front, end, cap) = self.bounds();
+        assert!(front <= end && end <= cap);
+        assert!(front == 0 || (front < end && layout::has_index(cap)));
+        assert_eq!(front > 0, self.extent().has_vacated());
+        // SAFETY: the entries at `front..end` are initialized.
+        unsafe { self.raw().assert_index_consistent(front, end) };
         for (i, (k, _)) in self.iter_hashed().enumerate() {
             assert_eq!(Some(i), self.get_index_of_hashed(k));
         }
@@ -233,15 +306,17 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     /// Key references iterator.
     #[inline]
     pub fn keys(&self) -> Keys<'_, K, V> {
+        let (entries, len) = self.entries();
         // SAFETY: `len` entries are initialized and borrowed for `'_`.
-        Keys::new(unsafe { self.arrays().keys(self.len()) })
+        Keys::new(unsafe { entries.keys(len) })
     }
 
     /// Value references iterator.
     #[inline]
     pub fn values(&self) -> Values<'_, K, V> {
+        let (entries, len) = self.entries();
         // SAFETY: as in `keys`.
-        Values::new(unsafe { self.arrays().values(self.len()) })
+        Values::new(unsafe { entries.values(len) })
     }
 
     /// Key owned iterator.
@@ -259,14 +334,15 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     /// Mutable value references iterator.
     #[inline]
     pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
+        let (entries, len) = self.entries();
         // SAFETY: as in `keys`, and `&mut self` makes the borrow exclusive.
-        ValuesMut::new(unsafe { self.arrays().values_mut(self.len()) })
+        ValuesMut::new(unsafe { entries.values_mut(len) })
     }
 
     /// Entry references iterator.
     #[inline]
     pub fn iter(&self) -> Iter<'_, K, V> {
-        let (arrays, len) = (self.arrays(), self.len());
+        let (arrays, len) = self.entries();
         // SAFETY: as in `keys`.
         unsafe { Iter::new(arrays.keys(len), arrays.values(len)) }
     }
@@ -274,7 +350,7 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     /// Entry references with hashes iterator.
     #[inline]
     pub fn iter_hashed(&self) -> IterHashed<'_, K, V> {
-        let (arrays, len) = (self.arrays(), self.len());
+        let (arrays, len) = self.entries();
         // SAFETY: as in `keys`.
         unsafe { IterHashed::new(arrays.keys(len), arrays.values(len), arrays.hashes(len)) }
     }
@@ -288,7 +364,7 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     /// Mutable entry references iterator.
     #[inline]
     pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
-        let (arrays, len) = (self.arrays(), self.len());
+        let (arrays, len) = self.entries();
         // SAFETY: as in `values_mut`; keys and values are disjoint regions.
         unsafe { IterMut::new(arrays.keys(len), arrays.values_mut(len)) }
     }
@@ -299,14 +375,14 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     /// if keys are mutated inconsistently (hash or equality changes).
     #[inline]
     pub fn iter_mut_unchecked(&mut self) -> IterMutUnchecked<'_, K, V> {
-        let (arrays, len) = (self.arrays(), self.len());
+        let (arrays, len) = self.entries();
         // SAFETY: as in `iter_mut`.
         unsafe { IterMutUnchecked::new(arrays.keys_mut(len), arrays.values_mut(len)) }
     }
 
     /// Give up the allocation to an iterator that moves the entries out of it.
     fn into_owned_entries(self) -> OwnedEntries<K, V> {
-        let len = self.len();
+        let (entries, len) = self.entries();
         let raw = self.raw();
         let block = if raw.cap() > 0 {
             Some((raw.base(), raw.layout()))
@@ -316,7 +392,7 @@ impl<K, V> MiniMutInsertionMap<K, V> {
         mem::forget(self);
         // SAFETY: the map held `len` entries in these arrays and is forgotten, so the iterator is
         // their only owner, and `block` is the allocation they are in.
-        unsafe { OwnedEntries::new(raw.arrays(), len, block) }
+        unsafe { OwnedEntries::new(entries, len, block) }
     }
 
     /// Query the map by a prehashed key.
@@ -376,7 +452,7 @@ impl<K, V> MiniMutInsertionMap<K, V> {
         let arrays = raw.arrays();
         let i = self.find_in(raw, arrays, key.hash(), move |k| key.key().equivalent(k))?;
         // SAFETY: `i` is the position of an entry.
-        Some(unsafe { (i, arrays.key(i), arrays.value(i)) })
+        Some(unsafe { (self.index_of_slot(raw, i), arrays.key(i), arrays.value(i)) })
     }
 
     /// Position of the entry with this hash for which `eq` holds, in `raw`, which must be this
@@ -399,7 +475,7 @@ impl<K, V> MiniMutInsertionMap<K, V> {
         mut eq: impl FnMut(&K) -> bool,
     ) -> Option<usize> {
         // SAFETY: `len` entries are initialized, and `find` only hands out their positions.
-        unsafe { raw.find(self.len(), hash.get(), move |i| eq(arrays.key(i))) }
+        unsafe { raw.find_in_extent(self.extent(), hash.get(), move |i| eq(arrays.key(i))) }
     }
 
     #[inline(always)]
@@ -409,7 +485,18 @@ impl<K, V> MiniMutInsertionMap<K, V> {
         eq: impl FnMut(&K) -> bool,
     ) -> Option<usize> {
         let raw = self.raw();
-        self.find_in(raw, raw.arrays(), hash, eq)
+        let i = self.find_in(raw, raw.arrays(), hash, eq)?;
+        Some(self.index_of_slot(raw, i))
+    }
+
+    /// The index among the entries of the one in slot `slot`, which a lookup in `raw`, this
+    /// map's allocation, found.
+    #[inline(always)]
+    fn index_of_slot(&self, raw: Raw<K, V>, slot: usize) -> usize {
+        // SAFETY: read only while slots are vacated. Only an allocation with an index has
+        // vacated slots, and it stores the count while it does.
+        self.extent()
+            .front_and_len(|| unsafe { *raw.front() }, |front, _| slot - front)
     }
 
     /// Find the index of the given hashed key.
@@ -433,10 +520,10 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     /// Find an entry by an index.
     #[inline]
     pub fn get_index(&self, index: usize) -> Option<(&K, &V)> {
-        if index >= self.len() {
+        let (arrays, len) = self.entries();
+        if index >= len {
             return None;
         }
-        let arrays = self.arrays();
         // SAFETY: `index < len`.
         Some(unsafe { (arrays.key(index), arrays.value(index)) })
     }
@@ -524,20 +611,23 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     /// Insert an entry into the map without checking for a duplicate key.
     #[inline]
     pub fn insert_hashed_unique_unchecked(&mut self, key: Hashed<K>, val: V) -> (&K, &mut V) {
-        let len = self.len();
-        if len == self.capacity() {
+        let mut extent = self.extent();
+        if extent.end() == self.capacity() {
             self.grow_for(1);
+            extent = self.extent();
         }
+        let (end, extended) = extent.extend();
         let hash = key.hash().get();
         let raw = self.raw();
         let arrays = raw.arrays();
-        // SAFETY: slot `len` is within capacity and unused; the index, if any, has room for one
-        // more by construction of its size.
+        // SAFETY: slot `end` is within capacity and unused; the index, if any, has room for one
+        // more by construction of its size. A map that grew has an allocation, so the header is
+        // its own.
         unsafe {
-            arrays.write(len, hash, key.into_key(), val);
-            raw.index_insert(hash, len);
-            self.set_len(len + 1);
-            (arrays.key(len), arrays.value_mut(len))
+            arrays.write(end, hash, key.into_key(), val);
+            raw.index_insert(hash, end);
+            (*self.ptr.as_ptr()).extent = extended;
+            (arrays.key(end), arrays.value_mut(end))
         }
     }
 
@@ -577,23 +667,31 @@ impl<K, V> MiniMutInsertionMap<K, V> {
         self.insert_hashed_unique_unchecked(Hashed::new(key), val)
     }
 
-    /// Take entry `i` out, shifting the ones after it down.
+    /// Take entry `i` out. The entries after it shift down, unless it is the first entry of a
+    /// map with an index, whose slot is left vacated instead.
     fn remove_at(&mut self, i: usize) -> (Hashed<K>, V) {
-        let len = self.len();
-        debug_assert!(i < len);
+        let (front, end, cap) = self.bounds();
+        debug_assert!(i < end - front);
+        let slot = front + i;
         let raw = self.raw();
         let arrays = raw.arrays();
-        // SAFETY: `i < len`. The index is updated while the hashes it refers to are still in
-        // place, then the entries above `i` move down by one, which is what the renumbering
-        // anticipates.
+        // SAFETY: `slot` holds an entry. The index is updated while the hashes it refers to are
+        // still in place. Then either the slot is left out of `front..end`, or the entries above
+        // it move down by one, which is what the renumbering anticipates.
         unsafe {
-            let (hash, key, value) = arrays.read(i);
-            raw.index_remove(len, hash, i);
-            if i + 1 < len {
-                raw.index_map_positions(|p| if p > i { p - 1 } else { p });
-                arrays.shift(i + 1, i, len - i - 1);
+            let (hash, key, value) = arrays.read(slot);
+            raw.index_remove(end, hash, slot);
+            if end - front == 1 {
+                self.set_bounds(0, 0);
+            } else if slot + 1 == end {
+                self.set_end(end - 1);
+            } else if i == 0 && layout::has_index(cap) {
+                self.set_bounds(front + 1, end);
+            } else {
+                raw.index_map_positions(|p| if p > slot { p - 1 } else { p });
+                arrays.shift(slot + 1, slot, end - slot - 1);
+                self.set_end(end - 1);
             }
-            self.set_len(len - 1);
             (
                 Hashed::new_unchecked(ShortHash::new_unchecked(hash), key),
                 value,
@@ -698,13 +796,13 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     /// Is the map empty?
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.extent().is_empty()
     }
 
     /// Get the number of elements in the map.
     #[inline]
     pub fn len(&self) -> usize {
-        self.header().len
+        self.front_and_len(|_, len| len)
     }
 
     /// Remove all elements from the map.
@@ -712,7 +810,7 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     /// Retain the capacity.
     #[inline]
     pub fn clear(&mut self) {
-        let len = self.len();
+        let (entries, len) = self.entries();
         if len == 0 {
             return;
         }
@@ -720,9 +818,9 @@ impl<K, V> MiniMutInsertionMap<K, V> {
         // SAFETY: `len` entries are initialized. The length and index go first so that an entry
         // whose drop panics leaves a consistent, if leaky, empty map.
         unsafe {
-            self.set_len(0);
+            self.set_bounds(0, 0);
             raw.index_clear();
-            raw.arrays().drop_entries(len);
+            entries.drop_entries(len);
         }
     }
 
@@ -731,15 +829,17 @@ impl<K, V> MiniMutInsertionMap<K, V> {
     where
         K: Ord,
     {
-        let len = self.len();
+        let (entries, len) = self.entries();
+        // Checked first so that the index is rebuilt only when something moved.
+        // SAFETY: `len` entries are initialized.
+        if unsafe { entries.keys(len) }.is_sorted() {
+            return;
+        }
+        self.compact();
         let raw = self.raw();
         let arrays = raw.arrays();
         // SAFETY: `len` entries are initialized, and `keys` is not used once anything moves.
         let keys = unsafe { arrays.keys(len) };
-        // Checked first so that the index is rebuilt only when something moved.
-        if keys.is_sorted() {
-            return;
-        }
         // The order is worked out on positions and applied afterwards: a key comparison that
         // panics then finds nothing moved and the index still right, and the entries move once
         // each instead of once per comparison across three arrays.
@@ -771,8 +871,7 @@ impl<K, V> MiniMutInsertionMap<K, V> {
         K: PartialEq,
         V: PartialEq,
     {
-        let (a, b) = (self.arrays(), other.arrays());
-        let (n, m) = (self.len(), other.len());
+        let ((a, n), (b, m)) = (self.entries(), other.entries());
         // SAFETY: each map has its `len` entries initialized.
         unsafe {
             // The stored hashes settle almost every inequality without touching a key.
@@ -810,12 +909,13 @@ impl<K, V> MiniMutInsertionMap<K, V> {
 
     /// Reverse the iteration order of the map.
     pub fn reverse(&mut self) {
-        let len = self.len();
+        let (front, end, _) = self.bounds();
         let raw = self.raw();
-        // SAFETY: `len` entries are initialized; reversing moves no entry to a different hash.
+        // SAFETY: the entries at `front..end` are initialized; reversing moves no entry to a
+        // different hash.
         unsafe {
-            raw.arrays().reverse(len);
-            raw.index_map_positions(|p| len - 1 - p);
+            raw.arrays().offset(front).reverse(end - front);
+            raw.index_map_positions(|p| front + end - 1 - p);
         }
     }
 
@@ -828,6 +928,7 @@ impl<K, V> MiniMutInsertionMap<K, V> {
         if original_len == 0 {
             return;
         }
+        self.compact();
         let raw = self.raw();
         let arrays = raw.arrays();
 
@@ -854,7 +955,7 @@ impl<K, V> MiniMutInsertionMap<K, V> {
                     self.raw
                         .arrays()
                         .shift(scanned, self.kept, self.original_len - scanned);
-                    (*self.raw.header()).len = len;
+                    (*self.raw.header()).extent = Extent::new(len);
                     self.raw.index_rebuild(len);
                 }
             }
@@ -894,6 +995,8 @@ impl<K, V> MiniMutInsertionMap<K, V> {
         }
         if layout::has_index(len) {
             self.shrink_to_fit();
+            // A fixed map reads the extent as its length.
+            assert!(!self.extent().has_vacated());
             let ptr = self.ptr.cast::<u8>();
             mem::forget(self);
             // SAFETY: with the capacity equal to the length, the allocation has exactly the
@@ -903,12 +1006,11 @@ impl<K, V> MiniMutInsertionMap<K, V> {
             let offsets = layout::checked_offsets::<K, V>(len, false);
             let ptr = alloc_block(offsets.layout);
             let old = self.raw();
+            let (entries, _) = self.entries();
             // SAFETY: freshly allocated with the small fixed layout; the entries are moved, and
             // the old block is freed without dropping them.
             unsafe {
-                Raw::new(ptr, len, false)
-                    .arrays()
-                    .copy_from(old.arrays(), len);
+                Raw::new(ptr, len, false).arrays().copy_from(entries, len);
                 alloc::dealloc(old.base().as_ptr(), old.layout());
             }
             mem::forget(self);
@@ -928,8 +1030,9 @@ impl<K, V> MiniMutInsertionMap<K, V> {
             ptr: raw.base(),
             layout: raw.layout(),
         };
+        let (entries, len) = self.entries();
         // SAFETY: `len` entries are initialized and owned by this map.
-        unsafe { raw.arrays().drop_entries(self.len()) };
+        unsafe { entries.drop_entries(len) };
     }
 }
 
@@ -979,7 +1082,7 @@ impl<K: Clone, V: Clone> Clone for MiniMutInsertionMap<K, V> {
         }
         // SAFETY: all `len` entries are written.
         unsafe {
-            ptr::write(new.header(), Header { len, cap: len });
+            new.init_header(len);
             new.index_rebuild(len);
         }
         mem::forget(guard);
@@ -1249,10 +1352,10 @@ impl<K, V> From<MiniMutInsertionMap<K, V>> for MiniFixedInsertionMap<K, V> {
 impl<K: Allocative, V: Allocative> Allocative for MiniMutInsertionMap<K, V> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        let (len, cap) = (self.len(), self.capacity());
+        let cap = self.capacity();
         if cap > 0 {
             let offsets = self.offsets();
-            let arrays = self.arrays();
+            let (arrays, len) = self.entries();
             let mut visitor =
                 visitor.enter_unique(allocative::Key::new("ptr"), size_of::<*const u8>());
             visitor.visit_simple(allocative::Key::new("header"), size_of::<Header>());
@@ -1780,6 +1883,315 @@ mod tests {
         assert_eq!(None, m.get(&5));
         assert_eq!(Some(&60), m.get(&6));
         m.assert_invariants();
+    }
+
+    /// A map of `n` entries `i => i * 10` whose first `removed` have been taken out.
+    fn without_first(n: u32, removed: u32) -> MiniMutInsertionMap<u32, u32> {
+        let mut map = (0..n)
+            .map(|i| (i, i * 10))
+            .collect::<MiniMutInsertionMap<_, _>>();
+        for i in 0..removed {
+            assert_eq!(Some((i, i * 10)), map.shift_remove_index(0));
+        }
+        map.assert_invariants();
+        map
+    }
+
+    fn keys_of(map: &MiniMutInsertionMap<u32, u32>) -> Vec<u32> {
+        map.keys().copied().collect()
+    }
+
+    #[test]
+    fn test_shift_remove_first_drains_in_order() {
+        for n in [1, 5, 40, 500] {
+            let mut map = without_first(n, 0);
+            let cap = map.capacity();
+            for i in 0..n {
+                assert_eq!(Some((&i, &(i * 10))), map.first());
+                assert_eq!(Some((n - 1 - i) as usize), map.get_index_of(&(n - 1)));
+                assert_eq!(Some((i, i * 10)), map.shift_remove_index(0));
+                assert_eq!(None, map.get(&i));
+                assert_eq!((n - 1 - i) as usize, map.len());
+                if i % 37 == 0 {
+                    map.assert_invariants();
+                }
+            }
+            assert!(map.is_empty());
+            assert_eq!(None, map.shift_remove_index(0));
+            assert_eq!(cap, map.capacity(), "draining does not reallocate");
+            map.assert_invariants();
+            // An emptied map has all of its capacity back.
+            for i in 0..cap as u32 {
+                map.insert(i, i);
+            }
+            assert_eq!(cap, map.capacity());
+            map.assert_invariants();
+        }
+    }
+
+    #[test]
+    fn test_shift_remove_first_then_insert_reuses_slots() {
+        let mut map = MiniMutInsertionMap::new();
+        for i in 0..100u32 {
+            map.insert(i, i * 10);
+        }
+        for i in 100..20_000u32 {
+            assert_eq!(Some((i - 100, (i - 100) * 10)), map.shift_remove_index(0));
+            assert_eq!(None, map.insert(i, i * 10));
+            if i % 997 == 0 {
+                map.assert_invariants();
+                assert_eq!((i - 99..=i).collect::<Vec<_>>(), keys_of(&map));
+            }
+        }
+        assert_eq!(100, map.len());
+        assert!(
+            map.capacity() <= 400,
+            "capacity {} grew with the number of removals",
+            map.capacity()
+        );
+    }
+
+    #[test]
+    fn test_shift_remove_first_then_reinsert_same_key() {
+        let mut map = without_first(100, 0);
+        for round in 0..1000u32 {
+            let (k, v) = map.shift_remove_index(0).unwrap();
+            assert_eq!(round % 100, k);
+            assert_eq!(None, map.get(&k));
+            assert_eq!(None, map.insert(k, v));
+            assert_eq!(Some((99, &k, &v)), map.get_full(&k));
+        }
+        map.assert_invariants();
+        assert_eq!((0..100).collect::<Vec<_>>(), keys_of(&map));
+    }
+
+    #[test]
+    fn test_reads_after_shift_remove_first() {
+        let mut map = without_first(100, 10);
+        let expected = (10..100).map(|i| (i, i * 10)).collect::<Vec<_>>();
+        assert_eq!(90, map.len());
+        assert_eq!(
+            expected,
+            map.iter().map(|(k, v)| (*k, *v)).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            expected,
+            map.iter_hashed()
+                .map(|(k, v)| (**k.key(), *v))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            expected,
+            map.iter_mut().map(|(k, v)| (*k, *v)).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            expected.iter().map(|(_, v)| *v).collect::<Vec<_>>(),
+            map.values().copied().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            expected.iter().map(|(_, v)| *v).collect::<Vec<_>>(),
+            map.values_mut().map(|v| *v).collect::<Vec<_>>()
+        );
+        assert_eq!(Some((&10, &100)), map.first());
+        assert_eq!(Some((&99, &990)), map.last());
+        assert_eq!(Some((&10, &100)), map.get_index(0));
+        assert_eq!(Some((&99, &990)), map.get_index(89));
+        assert_eq!(None, map.get_index(90));
+        assert_eq!(None, map.get_index_of(&9));
+        assert_eq!(Some(0), map.get_index_of(&10));
+        assert_eq!(Some((89, &99, &990)), map.get_full(&99));
+        assert_eq!(Some(&500), map.get(&50));
+        assert!(!map.contains_key(&0));
+
+        let fresh = expected
+            .iter()
+            .copied()
+            .collect::<MiniMutInsertionMap<_, _>>();
+        assert!(map.eq_ordered(&fresh));
+        assert!(fresh.eq_ordered(&map));
+        assert!(map.eq_unordered(&fresh));
+        assert!(map == fresh);
+
+        let clone = map.clone();
+        clone.assert_invariants();
+        assert!(clone.eq_ordered(&map));
+
+        assert_eq!(expected, map.into_iter().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_removals_after_shift_remove_first() {
+        let mut map = without_first(100, 10);
+        assert_eq!(Some((15, 150)), map.shift_remove_index(5));
+        assert_eq!(Some(5), map.get_index_of(&16));
+        assert_eq!(Some(990), map.shift_remove(&99));
+        assert_eq!(Some((98, 980)), map.pop());
+        assert_eq!(Some((10, 100)), map.shift_remove_entry(&10));
+        map.assert_invariants();
+        assert_eq!(
+            (11..98).filter(|i| *i != 15).collect::<Vec<_>>(),
+            keys_of(&map)
+        );
+
+        // Down to one entry, removed as the last one and as the first one.
+        for last_by_pop in [false, true] {
+            let mut map = without_first(100, 99);
+            assert_eq!(1, map.len());
+            let cap = map.capacity();
+            let removed = if last_by_pop {
+                map.pop()
+            } else {
+                map.shift_remove_index(0)
+            };
+            assert_eq!(Some((99, 990)), removed);
+            map.assert_invariants();
+            for i in 0..cap as u32 {
+                map.insert(i, i);
+            }
+            assert_eq!(cap, map.capacity());
+        }
+    }
+
+    #[test]
+    fn test_whole_map_operations_after_shift_remove_first() {
+        let mut map = without_first(100, 10);
+        map.reverse();
+        map.assert_invariants();
+        assert_eq!((10..100).rev().collect::<Vec<_>>(), keys_of(&map));
+
+        assert_eq!(Some((99, 990)), map.shift_remove_index(0));
+        map.sort_keys();
+        map.assert_invariants();
+        assert_eq!((10..99).collect::<Vec<_>>(), keys_of(&map));
+
+        assert_eq!(Some((10, 100)), map.shift_remove_index(0));
+        map.sort_keys();
+        map.assert_invariants();
+        assert_eq!((11..99).collect::<Vec<_>>(), keys_of(&map));
+
+        map.retain(|k, _| k % 2 == 0);
+        map.assert_invariants();
+        assert_eq!((12..99).step_by(2).collect::<Vec<_>>(), keys_of(&map));
+
+        let mut map = without_first(100, 10);
+        map.clear();
+        map.assert_invariants();
+        assert!(map.is_empty());
+        map.insert(7, 70);
+        assert_eq!(vec![7], keys_of(&map));
+
+        let mut map = without_first(100, 10);
+        map.shrink_to_fit();
+        map.assert_invariants();
+        assert_eq!(90, map.capacity());
+        assert_eq!((10..100).collect::<Vec<_>>(), keys_of(&map));
+
+        let mut map = without_first(100, 10);
+        map.reserve(1000);
+        map.assert_invariants();
+        assert!(map.capacity() >= 1090);
+        assert_eq!((10..100).collect::<Vec<_>>(), keys_of(&map));
+
+        // Few enough entries left to need no index once frozen, and enough to keep one.
+        for removed in [10, 90] {
+            let fixed = without_first(100, removed).freeze();
+            assert_eq!((100 - removed) as usize, fixed.len());
+            assert_eq!(
+                (removed..100).map(|i| (i, i * 10)).collect::<Vec<_>>(),
+                fixed.iter().map(|(k, v)| (*k, *v)).collect::<Vec<_>>()
+            );
+            assert_eq!(None, fixed.get(&0));
+            assert_eq!(Some(&990), fixed.get(&99));
+        }
+    }
+
+    #[test]
+    fn test_shift_remove_first_drops_each_entry_once() {
+        let tracker = Rc::new(());
+        let build = || {
+            (0..100)
+                .map(|i| (i, tracker.clone()))
+                .collect::<MiniMutInsertionMap<u32, Rc<()>>>()
+        };
+
+        let mut map = build();
+        for removed in 1..=10 {
+            drop(map.shift_remove_index(0));
+            assert_eq!(101 - removed, Rc::strong_count(&tracker));
+        }
+        drop(map);
+        assert_eq!(1, Rc::strong_count(&tracker));
+
+        let mut map = build();
+        for _ in 0..10 {
+            map.shift_remove_index(0);
+        }
+        map.clear();
+        assert_eq!(1, Rc::strong_count(&tracker));
+
+        let mut map = build();
+        for _ in 0..10 {
+            map.shift_remove_index(0);
+        }
+        let clone = map.clone();
+        assert_eq!(181, Rc::strong_count(&tracker));
+        drop(map.into_iter().take(5).collect::<Vec<_>>());
+        assert_eq!(91, Rc::strong_count(&tracker));
+        drop(clone.freeze());
+        assert_eq!(1, Rc::strong_count(&tracker));
+    }
+
+    /// Every operation that adds or removes entries, in a pseudo-random order, against a `Vec`.
+    #[test]
+    fn test_removals_and_insertions_match_vec() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move |bound: u32| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % u64::from(bound)) as u32
+        };
+        for max_len in [20usize, 300] {
+            let mut map = MiniMutInsertionMap::<u32, u32>::new();
+            let mut model: Vec<(u32, u32)> = Vec::new();
+            for step in 0..20_000u32 {
+                let grow = model.len() < max_len / 2 || (model.len() < max_len && next(2) == 0);
+                match (grow, next(8)) {
+                    (true, _) | (false, 0) => {
+                        let key = next(2 * max_len as u32);
+                        let old = map.insert(key, step);
+                        match model.iter_mut().find(|(k, _)| *k == key) {
+                            Some(entry) => assert_eq!(Some(mem::replace(&mut entry.1, step)), old),
+                            None => {
+                                assert_eq!(None, old);
+                                model.push((key, step));
+                            }
+                        }
+                    }
+                    (false, 1..=4) => {
+                        let removed = map.shift_remove_index(0);
+                        assert_eq!((!model.is_empty()).then(|| model.remove(0)), removed);
+                    }
+                    (false, 5) => assert_eq!(model.pop(), map.pop()),
+                    (false, 6) => {
+                        let i = next(max_len as u32) as usize;
+                        let expected = (i < model.len()).then(|| model.remove(i));
+                        assert_eq!(expected, map.shift_remove_index(i));
+                    }
+                    (false, _) => {
+                        let key = next(2 * max_len as u32);
+                        let i = model.iter().position(|(k, _)| *k == key);
+                        assert_eq!(i, map.get_index_of(&key));
+                        assert_eq!(i.map(|i| model.remove(i)), map.shift_remove_entry(&key));
+                    }
+                }
+                assert_eq!(model.len(), map.len());
+                if step % 101 == 0 {
+                    map.assert_invariants();
+                    assert_eq!(model, map.iter().map(|(k, v)| (*k, *v)).collect::<Vec<_>>());
+                }
+            }
+        }
     }
 
     #[test]

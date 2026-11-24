@@ -380,7 +380,7 @@ def generate_rustdoc_test(
     )
     if ctx.attrs.doc_deps or ctx.attrs.doc_named_deps:
         # Doctests depend on the doc deps too, which `compile_ctx.crate_identities` does not cover.
-        crate_identities(ctx, doc_dep_ctx, toolchain_info)
+        crate_identities(ctx, doc_dep_ctx)
     transitive_srcs = ctx.actions.tset(
         RustSourcesTSet,
         value = compile_ctx.symlinked_srcs,
@@ -1745,14 +1745,7 @@ def _compute_common_args(
         "--crate-type={}".format(crate_type.value),
         "-Crelocation-model={}".format(params.reloc_model.value),
         "--edition={}".format(edition),
-        "-Cmetadata={}".format(
-            _metadata(
-                compile_ctx,
-                ctx.label,
-                is_rustdoc_test,
-                _host_agnostic_proc_macro(crate_type, emit, is_rustdoc_test, incremental_enabled),
-            )[0]
-        ),
+        "-Cmetadata={}".format(_metadata(ctx.label, is_rustdoc_test)[0]),
         # JSON diagnostics are for `rustc_action.py`; commands run at test time
         # print rendered text directly.
         ["--error-format=json", "--json=diagnostic-rendered-ansi"] if not (is_rustdoc_test or is_miri_run) else [],
@@ -1821,21 +1814,11 @@ def rust_compile_invalidation_inputs(
 def _host_agnostic_proc_macro(crate_type: CrateType, emit: Emit, is_rustdoc_test: bool, incremental_enabled: bool) -> bool:
     return crate_type == CrateType("proc-macro") and emit != Emit("clippy") and not is_rustdoc_test and not incremental_enabled
 
-# Returns the full label and its hash. The full label is used for `-Cmetadata`
-# which provided the primary disambiguator for two otherwise identically named
-# crates. The hash is added to the filename to give them a lower likelihood of
-# duplicate names, but it doesn't matter if they collide.
-def _metadata(
-    compile_ctx: CompileContext,
-    label: Label,
-    is_rustdoc_test: bool,
-    host_agnostic_proc_macro: bool,
-) -> (str, str):
-    if host_agnostic_proc_macro:
-        configuration_hash = compile_ctx.toolchain_info.proc_macro_configuration_hash or label.configured_target().config().hash
-        metadata = "{}#{}".format(label.raw_target(), configuration_hash)
-    else:
-        metadata = crate_metadata(compile_ctx.toolchain_info, label)
+# Returns the crate's `-Cmetadata` and a hash of it. The hash is added to the
+# filename to give two otherwise identically named crates a lower likelihood
+# of duplicate names, but it doesn't matter if they collide.
+def _metadata(label: Label, is_rustdoc_test: bool) -> (str, str):
+    metadata = crate_metadata(label)
 
     if is_rustdoc_test:
         metadata = "doctest/" + metadata
@@ -1998,15 +1981,7 @@ def _rustc_emit(
         # Don't support profiles with predeclared outputs
         crate_name_and_extra_for_profile = None
     else:
-        extra_hash = (
-            "-"
-            + _metadata(
-                compile_ctx,
-                ctx.label,
-                False,
-                _host_agnostic_proc_macro(crate_type, emit, False, incremental_enabled),
-            )[1]
-        )
+        extra_hash = "-" + _metadata(ctx.label, False)[1]
         emit_args.add("-Cextra-filename={}".format(extra_hash))
         crate_name_and_extra_for_profile = simple_crate + extra_hash
 

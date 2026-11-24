@@ -225,13 +225,6 @@ rust_toolchain_attrs = {
     "measureme_crox": provider_field(RunInfo | None, default = None),
     # Constructs an upload command for the given chrome trace
     "make_trace_upload": provider_field(typing.Callable[[Artifact], RunInfo] | None, default = None),
-    # Suffix to append onto all -Cmetadata arguments to differentiate the same
-    # crate in different configurations
-    "configuration_hash": provider_field(str | None, default = None),
-    # Optional configuration hash used only for proc-macro crates. Toolchains
-    # may remove execution-only constraints here without weakening identity for
-    # ordinary target crates.
-    "proc_macro_configuration_hash": provider_field(str | None, default = None),
     # Error handler used to categorize rust errors encountered by users
     "rust_error_handler": provider_field(typing.Any, default = None),
     # LLVM remarks filter (e.g., "all", "inline") - used with -Cremark flag

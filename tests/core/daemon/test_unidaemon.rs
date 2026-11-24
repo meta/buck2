@@ -1523,7 +1523,7 @@ async fn unidaemon_corruption_recovery_scope(
         std::fs::write(
             &config,
             std::fs::read_to_string(&config)?.replace("execution_platforms = root//:platforms", "")
-                + "\n[buck2]\nrestarter = true\nforkserver = true\n",
+                + "\n[buck2]\nrestarter = true\n",
         )?;
         std::fs::write(tenant.cwd().join("restart-source"), "materializer recovery")?;
         let targets = tenant.cwd().join("TARGETS.fixture");

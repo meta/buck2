@@ -152,7 +152,7 @@ use crate::daemon::disk_state::delete_unknown_disk_state;
 use crate::daemon::disk_state::maybe_initialize_dep_file_sqlite_db;
 use crate::daemon::disk_state::maybe_initialize_incremental_sqlite_db;
 use crate::daemon::disk_state::maybe_initialize_materializer_sqlite_db;
-use crate::daemon::forkserver::maybe_launch_forkserver;
+use crate::daemon::forkserver::launch_forkserver;
 use crate::daemon::io_provider::create_io_provider;
 use crate::daemon::panic::DaemonStatePanicDiceDump;
 use crate::daemon::server::BuckdServerInitPreferences;
@@ -2565,8 +2565,7 @@ impl DaemonState {
             // the materializer creating buck-out first. One daemon-global forkserver serves every
             // repo; requests carry an absolute cwd.
             tracing::info!("Launching forkserver...");
-            let forkserver = maybe_launch_forkserver(
-                root_config,
+            let forkserver = launch_forkserver(
                 &invocation_paths,
                 memory_tracker.as_ref().map(|m| &m.cgroup_tree),
                 &invocation_paths.isolation,

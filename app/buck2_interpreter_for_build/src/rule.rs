@@ -26,7 +26,7 @@ use buck2_interpreter::late_binding_ty::ProviderReprLate;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
 use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
-use buck2_interpreter::types::transition::ValueAsTransition;
+use buck2_interpreter::types::transition::TransitionValue;
 use buck2_node::attrs::attr::Attribute;
 use buck2_node::attrs::spec::AttributeId;
 use buck2_node::attrs::spec::AttributeSpec;
@@ -246,7 +246,7 @@ impl<'v> StarlarkRuleCallable<'v> {
     fn new(
         implementation: RuleImpl<'v>,
         attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
-        cfg: Option<ValueAsTransition>,
+        cfg: Option<&dyn TransitionValue>,
         supports_incoming_transition: Option<bool>,
         doc: &str,
         is_configuration_rule: bool,
@@ -1039,7 +1039,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             Either<ListType<ProviderReprLate>, StarlarkPromise<'static>>,
         >,
         #[starlark(require = named)] attrs: ValueOf<'v, DictType<StarlarkStr, StarlarkAttribute>>,
-        #[starlark(require = named)] cfg: Option<ValueAsTransition<'v>>,
+        #[starlark(require = named)] cfg: Option<&'v dyn TransitionValue>,
         #[starlark(require = named)] supports_incoming_transition: Option<bool>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = false)] is_configuration_rule: bool,

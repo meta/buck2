@@ -8,69 +8,23 @@
  * above-listed licenses.
  */
 
-use std::convert::Infallible;
 use std::sync::Arc;
 
 use buck2_core::configuration::transition::id::TransitionId;
-use starlark::any::ProvidesStaticType;
-use starlark::typing::Ty;
-use starlark::values::StarlarkTypeExpr;
-use starlark::values::StarlarkTypeExprStable;
-use starlark::values::UnpackValue;
-use starlark::values::Value;
-use starlark::values::ValueOf;
-use starlark::values::type_expr::UnionPayload;
-
-use crate::late_binding_ty::TransitionReprLate;
+use starlark::starlark_predicate_type;
 
 /// Implemented by starlark transition objects.
 pub trait TransitionValue {
     fn transition_id(&self) -> buck2_error::Result<Arc<TransitionId>>;
 }
 
-unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn TransitionValue {
-    type StaticType = &'static dyn TransitionValue;
-}
-
-/// A value that is a transition, in whichever representation the transition crate gives it.
-pub struct ValueAsTransition<'v>(pub &'v dyn TransitionValue);
-
-impl<'v> StarlarkTypeExpr<'v> for ValueAsTransition<'v> {
-    type Get = Self;
-
-    fn starlark_type_repr() -> Ty {
-        TransitionReprLate::ty()
-    }
-
-    fn get(value: Value<'v>) -> Option<Self> {
-        value
-            .request_value::<&dyn TransitionValue>()
-            .map(ValueAsTransition)
-    }
-}
-
-impl<'v> StarlarkTypeExprStable<'v> for ValueAsTransition<'v> {}
-
-impl<'v> UnionPayload<'v> for ValueAsTransition<'v> {
-    type Expr = Self;
-
-    fn from_value(value: Value<'v>) -> Option<Self> {
-        <Self as StarlarkTypeExpr<'v>>::get(value)
-    }
-}
-
-impl<'v> UnpackValue<'v> for ValueAsTransition<'v> {
-    type Type = Self;
-    type Error = Infallible;
-
-    #[inline]
-    fn unpack(_value: ValueOf<'v, Self>, get: Self) -> Result<Self, Infallible> {
-        Ok(get)
-    }
-}
-
-impl ValueAsTransition<'_> {
-    pub fn transition_id(&self) -> buck2_error::Result<Arc<TransitionId>> {
-        self.0.transition_id()
-    }
+// There is no global of this name, and so no `.bzl` file can write the type: transition objects
+// are meant to go away, and a name that files write would have to outlive them. Signatures and
+// error messages print the name all the same.
+starlark_predicate_type! {
+    /// A transition: what `transition(..)` returns, a change of the configuration that a
+    /// dependency or a target is built in.
+    pub StarlarkTransition<'v>;
+    name "Transition";
+    get &'v dyn TransitionValue;
 }

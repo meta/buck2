@@ -23,7 +23,7 @@ use buck2_hash::BuckMutSet;
 use buck2_interpreter::build_context::starlark_path_from_build_context;
 use buck2_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
 use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_TRANSITION_GLOBALS;
-use buck2_interpreter::late_binding_ty::TransitionReprLate;
+use buck2_interpreter::types::transition::StarlarkTransition;
 use buck2_interpreter::types::transition::TransitionValue;
 use derive_more::Display;
 use dupe::Dupe;
@@ -42,7 +42,6 @@ use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
 use starlark::util::ArcStr;
-use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
@@ -180,24 +179,24 @@ impl<'v> StarlarkType<'v> for TransitionView<'v> {
         }
         Ok(())
     }
+
+    #[starlark(implements = StarlarkTransition)]
+    fn transition(this: Self) -> &'v dyn TransitionValue {
+        match this {
+            TransitionView::Unfrozen(x) => x.as_ref(),
+            TransitionView::Frozen(x) => x.as_ref(),
+        }
+    }
 }
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for Transition<'v> {
     type Type = TransitionView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn TransitionValue>(self);
-    }
 }
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenTransition<'v> {
     type Type = TransitionView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn TransitionValue>(self);
-    }
 }
 
 impl<'v> Freeze<'v> for Transition<'v> {
@@ -383,7 +382,4 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
 
 pub(crate) fn init_register_transition() {
     REGISTER_BUCK2_TRANSITION_GLOBALS.init(register_transition_function);
-    TransitionReprLate::init(TransitionView::starlark_type_repr(), |value| {
-        TransitionView::matches(value)
-    });
 }

@@ -18,7 +18,7 @@ use buck2_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
 use buck2_interpreter::execution_group::StarlarkExecutionGroupView;
 use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use buck2_interpreter::types::provider::callable::StarlarkProviderCallable;
-use buck2_interpreter::types::transition::ValueAsTransition;
+use buck2_interpreter::types::transition::TransitionValue;
 use buck2_node::attrs::attr::Attribute;
 use buck2_node::attrs::attr_type::AttrType;
 use buck2_node::attrs::attr_type::configuration_dep::ConfigurationDepKind;
@@ -290,7 +290,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             'v,
             ListOrTupleType<StarlarkProviderCallable>,
         >,
-        #[starlark(require = named)] cfg: Option<Either<StringValue<'v>, ValueAsTransition<'v>>>,
+        #[starlark(require = named)] cfg: Option<Either<StringValue<'v>, &'v dyn TransitionValue>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -347,7 +347,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
             'v,
             ListOrTupleType<StarlarkProviderCallable>,
         >,
-        #[starlark(require = named)] cfg: ValueAsTransition<'v>,
+        #[starlark(require = named)] cfg: &'v dyn TransitionValue,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,

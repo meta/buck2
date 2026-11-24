@@ -303,7 +303,7 @@ mod unwind_tests {
     use crate::values::Value;
     use crate::values::layout::heap::module_heaps::ModuleHeaps;
     use crate::values::list::AllocList;
-    use crate::values::list::ListRef;
+    use crate::values::list::StarlarkList;
 
     /// The value heap can hold pointers into the frozen heap before it is sealed, so a panic
     /// inside the sealing closure must still seal it.
@@ -325,7 +325,7 @@ mod unwind_tests {
             // Reading the string back would not reliably catch a use after free, so check that
             // the builder was sealed into the value heap's references.
             assert_eq!(heap.referenced_heaps().len(), references_before + 1);
-            let list = ListRef::from_value(list).unwrap();
+            let list = StarlarkList::from_value(list).unwrap();
             assert_eq!(list.content()[0].unpack_str(), Some(expected.as_str()));
         })
     }

@@ -255,7 +255,6 @@ mod tests {
     use crate::values::dict::AllocDict;
     use crate::values::dict::DictType;
     use crate::values::list::AllocList;
-    use crate::values::list::ListType;
     use crate::values::list::StarlarkList;
     use crate::values::none::NoneOr;
     use crate::values::none::NoneType;
@@ -358,8 +357,8 @@ mod tests {
             agrees::<StarlarkStr>(&vs);
             agrees::<IntView>(&vs);
             agrees::<Value>(&vs);
-            agrees::<ListType<IntView>>(&vs);
-            agrees::<ListType<StarlarkStr>>(&vs);
+            agrees::<StarlarkList<IntView>>(&vs);
+            agrees::<StarlarkList<StarlarkStr>>(&vs);
             agrees::<DictType<IntView, StarlarkStr>>(&vs);
             agrees::<DictType<StarlarkStr, IntView>>(&vs);
             agrees::<TupleType<IntView>>(&vs);

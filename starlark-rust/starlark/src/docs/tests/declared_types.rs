@@ -54,7 +54,7 @@ use crate::typing::TyUser;
 use crate::typing::TyUserParams;
 use crate::values::StarlarkValue;
 use crate::values::ValueOf;
-use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 use crate::values::starlark_value_as_type::StarlarkValueAsType;
 use crate::values::string::StarlarkStr;
 use crate::values::types::type_instance_id::TypeInstanceId;
@@ -79,7 +79,7 @@ starlark_recursive_type! {
     /// What a scale takes: something that can be weighed, or a list of these.
     StarlarkLoad<'v>;
     name "Load";
-    is Either<StarlarkWeighable, ListType<StarlarkLoad>>;
+    is Either<StarlarkWeighable, StarlarkList<'v, StarlarkLoad>>;
 }
 
 impl Weighs for StarlarkStr {

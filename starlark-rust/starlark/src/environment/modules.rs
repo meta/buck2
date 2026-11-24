@@ -736,7 +736,7 @@ mod tests {
     use crate::values::Value;
     use crate::values::layout::heap::name::StarlarkTestHeapName;
     use crate::values::list::AllocList;
-    use crate::values::list::ListRef;
+    use crate::values::list::StarlarkList;
     use crate::values::starlark_value;
 
     #[test]
@@ -794,7 +794,7 @@ x = f(1)
         );
         assert_eq!(
             0,
-            ListRef::from_value(module.get("BAR").unwrap().as_ref().value())
+            StarlarkList::from_value(module.get("BAR").unwrap().as_ref().value())
                 .unwrap()
                 .len()
         );
@@ -807,7 +807,7 @@ x = f(1)
     }
 
     fn assert_list_of_string(list: Value, expected: &str) {
-        let list = ListRef::from_value(list).unwrap();
+        let list = StarlarkList::from_value(list).unwrap();
         assert_eq!(list.content()[0].unpack_str(), Some(expected));
     }
 

@@ -26,7 +26,7 @@ use crate::values::StringValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::int::IntView;
-use crate::values::list_or_tuple::ListOrTupleType;
+use crate::values::list_or_tuple::StarlarkListOrTuple;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
 use crate::values::typing::StarlarkCallable;
@@ -38,7 +38,7 @@ fn test_starlark_module() {
     fn global(builder: &mut GlobalsBuilder) {
         fn cc_binary<'v>(
             name: &str,
-            srcs: ValueOf<'v, ListOrTupleType<StarlarkStr>>,
+            srcs: ValueOf<'v, StarlarkListOrTuple<'v, StarlarkStr>>,
         ) -> anyhow::Result<String> {
             // real implementation may write it to a global variable
             let srcs = srcs.try_to_vec::<&str>().map_err(|e| e.into_anyhow())?;

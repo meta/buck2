@@ -44,7 +44,7 @@ use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::DictType;
-use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
 use crate::values::tuple::TupleType;
@@ -172,9 +172,9 @@ fn module(builder: &mut GlobalsBuilder) {
     fn with_defaults<'v>(
         #[starlark(default = ValueOf::empty_list())] explicit_default: ValueOf<
             'v,
-            ListType<StarlarkStr>,
+            StarlarkList<'v, StarlarkStr>,
         >,
-        hidden_default: Option<ValueOf<'v, ListType<StarlarkStr>>>,
+        hidden_default: Option<ValueOf<'v, StarlarkList<'v, StarlarkStr>>>,
         #[starlark(default = "my_default")] string_default: &str,
     ) -> anyhow::Result<NoneType> {
         let _unused = (explicit_default, hidden_default, string_default);

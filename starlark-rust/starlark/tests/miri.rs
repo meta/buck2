@@ -37,7 +37,7 @@ use starlark::values::FrozenHeapName;
 use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::list::AllocList;
-use starlark::values::list::ListRef;
+use starlark::values::list::StarlarkList;
 use starlark::values::tuple::AllocTuple;
 use starlark::values::tuple::TupleRef;
 
@@ -75,9 +75,9 @@ fn none_type() {
 fn list_allocation() {
     Heap::temp(|heap| {
         let value = heap.alloc(AllocList([1i32, 2, 3])).to_value();
-        let list = ListRef::from_value(value).unwrap();
+        let list = StarlarkList::from_value(value).unwrap();
         assert_eq!(list.len(), 3);
-        assert_eq!(list[1].unpack_i32(), Some(2));
+        assert_eq!(list.content()[1].unpack_i32(), Some(2));
     });
 }
 

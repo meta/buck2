@@ -171,7 +171,7 @@ mod tests {
     use crate::values::ValueTyped;
     use crate::values::layout::heap::edge::HeapEdge;
     use crate::values::list::AllocList;
-    use crate::values::list::ListRef;
+    use crate::values::list::StarlarkList;
     use crate::values::none::NoneType;
     use crate::values::tuple::AllocTuple;
     use crate::values::tuple::value::Tuple;
@@ -195,8 +195,8 @@ mod tests {
                 let list2 = inner.alloc(AllocList([v2])).to_value();
                 assert!(v1.ptr_eq(none.to_value()));
                 assert!(v2.ptr_eq(none.to_value()));
-                assert!(ListRef::from_value(list1).unwrap().content()[0].is_none());
-                assert!(ListRef::from_value(list2).unwrap().content()[0].is_none());
+                assert!(StarlarkList::from_value(list1).unwrap().content()[0].is_none());
+                assert!(StarlarkList::from_value(list2).unwrap().content()[0].is_none());
             });
         });
     }

@@ -43,7 +43,7 @@ use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::dict::DictType;
 use crate::values::list::AllocList;
-use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
 use crate::values::tuple::TupleType;
@@ -83,7 +83,7 @@ fn globals(builder: &mut GlobalsBuilder) {
     fn simple<'v>(
         arg_int: i32,
         arg_bool: bool,
-        arg_vec: ValueOf<'v, ListType<StarlarkStr>>,
+        arg_vec: ValueOf<'v, StarlarkList<'v, StarlarkStr>>,
         arg_dict: ValueOf<'v, DictType<StarlarkStr, (bool, IntView<'v>)>>,
     ) -> anyhow::Result<NoneType> {
         unimplemented!()

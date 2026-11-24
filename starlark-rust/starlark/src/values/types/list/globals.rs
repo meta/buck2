@@ -39,8 +39,8 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::function::SpecialBuiltinFunction;
 use crate::values::list::AllocList;
-use crate::values::list::ListRef;
 use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 use crate::values::list::value::FrozenList;
 use crate::values::typing::StarlarkIter;
 
@@ -118,7 +118,7 @@ pub(crate) fn register_list(globals: &mut GlobalsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOf<'v, ListType<Value<'v>>>> {
         Ok(if let Some(a) = a {
-            if let Some(xs) = ListRef::from_value(a.to_value()) {
+            if let Some(xs) = StarlarkList::from_value(a.to_value()) {
                 heap.alloc_list(xs.content())
             } else {
                 let it = a.to_value().iterate(heap)?;

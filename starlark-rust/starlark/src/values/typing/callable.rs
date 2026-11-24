@@ -58,7 +58,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
-use crate::values::list::ListRef;
+use crate::values::list::StarlarkList;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
 use crate::values::typing::TypeCompiled;
@@ -117,10 +117,10 @@ See also [`typing.Callable` in the Python documentation][1].
         heap: Heap<'v>,
         _private: Private,
     ) -> crate::Result<Value<'v>> {
-        let param_types = <&ListRef>::unpack_value_err(param_types)?;
+        let param_types = <StarlarkList>::unpack_value_err(param_types)?;
         let ret = TypeCompiled::new(ret, heap)?.as_ty().dupe();
         let param_types: Vec<Ty> = param_types
-            .iter()
+            .values()
             .map(|p| Ok(TypeCompiled::new(p, heap)?.as_ty().dupe()))
             .collect::<anyhow::Result<Vec<_>>>()?;
 

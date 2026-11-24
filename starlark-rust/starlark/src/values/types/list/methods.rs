@@ -28,17 +28,25 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
-use crate::values::list::ListRef;
 use crate::values::list::StarlarkList;
 use crate::values::none::NoneOr;
 use crate::values::none::NoneType;
 use crate::values::types::list::value::ListData;
 use crate::values::typing::StarlarkIter;
 
-// A method that reads the list takes the receiver as `&ListRef`, the items, or as a plain value
-// that its body reads as a list. A receiver typed `StarlarkList` is converted before the
-// arguments are, and the method then tells the list's representations apart a second time where
-// it reads the list: that measured 5 to 7 instructions a call.
+/// The error of `index` and `remove` for an item the list does not have. Out of line, with its
+/// arguments by value: formatted in the method, the list and the item are stored for the
+/// formatter on every call.
+#[cold]
+#[inline(never)]
+fn not_found<'v>(needle: Value<'v>, list: Value<'v>, what: &str) -> starlark::Error {
+    anyhow::anyhow!("Element '{}' not found in {}'{}'", needle, what, list).into()
+}
+
+// The methods take the receiver as a plain value and read it as a list in their bodies. A
+// receiver typed `StarlarkList` is converted before the arguments are, and the method then
+// tells the list's representations apart a second time where it reads the list: that measured
+// 5 to 7 instructions a call.
 #[starlark_module]
 pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
     /// [list.append](
@@ -152,21 +160,24 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
     /// ```
     #[starlark(speculative_exec_safe)]
     fn index<'v>(
-        this: &ListRef<'v>,
+        this: Value<'v>,
         #[starlark(require = pos)] needle: Value<'v>,
         #[starlark(require = pos, default = NoneOr::None)] start: NoneOr<i32>,
         #[starlark(require = pos, default = NoneOr::None)] end: NoneOr<i32>,
     ) -> starlark::Result<i32> {
+        let list = <StarlarkList>::unpack_value_err(this)?;
+        // `equals` runs no Starlark code, so the list does not change under the slice.
+        let content = list.content();
         let (start, end) =
-            convert_indices(this.len() as i32, start.into_option(), end.into_option());
-        if let Some(haystack) = this.get(start..end) {
+            convert_indices(content.len() as i32, start.into_option(), end.into_option());
+        if let Some(haystack) = content.get(start..end) {
             for (i, x) in haystack.iter().enumerate() {
                 if x.equals(needle)? {
                     return Ok((i + start) as i32);
                 }
             }
         }
-        Err(anyhow::anyhow!("Element '{}' not found in '{}'", needle, this).into())
+        Err(not_found(needle, this, ""))
     }
 
     /// [list.insert](
@@ -273,14 +284,6 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
         this: Value<'v>,
         #[starlark(require = pos)] needle: Value<'v>,
     ) -> starlark::Result<NoneType> {
-        // Out of line, with its arguments by value: formatted here, the list and the item are
-        // stored for the formatter on every call.
-        #[cold]
-        #[inline(never)]
-        fn not_found<'v>(needle: Value<'v>, list: Value<'v>) -> starlark::Error {
-            anyhow::anyhow!("Element '{}' not found in list '{}'", needle, list).into()
-        }
-
         let list = <StarlarkList>::unpack_value_err(this)?;
         // `equals` runs no Starlark code, so the list does not change under the slice.
         let mut position = None;
@@ -293,7 +296,7 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
             }
         }
         let Some(position) = position else {
-            return Err(not_found(needle, this));
+            return Err(not_found(needle, this, "list "));
         };
         list.mutable()?.remove(position);
         Ok(NoneType)
@@ -329,6 +332,15 @@ mod tests {
     fn test_index() {
         // Should fail, but should not panic.
         assert::fail("[True].index(True, 1, 0)", "not found");
+    }
+
+    /// The errors of `index` and `remove` print the list as `repr` does: a list that contains
+    /// itself is cut short where it comes round.
+    #[test]
+    fn test_index_error_prints_a_list_that_contains_itself() {
+        let prog = "a = []\na.append(a)\n";
+        assert::fail(&format!("{prog}a.index(1)"), "not found in '[[...]]'");
+        assert::fail(&format!("{prog}a.remove(1)"), "not found in list '[[...]]'");
     }
 
     #[test]

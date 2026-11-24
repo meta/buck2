@@ -27,7 +27,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::dict::DictRef;
 use crate::values::dict::value::FrozenDict;
-use crate::values::list::ListRef;
+use crate::values::list::StarlarkList;
 use crate::values::list::value::FrozenList;
 use crate::values::set::refs::SetRef;
 use crate::values::set::value::FrozenSet;
@@ -95,9 +95,9 @@ unsafe impl<I: TypeMatcher> TypeMatcherRegistered for IsListOf<I> {}
 
 impl<I: TypeMatcher> TypeMatcher for IsListOf<I> {
     fn matches(&self, value: Value) -> bool {
-        match ListRef::from_value(value) {
+        match StarlarkList::from_value(value) {
             None => false,
-            Some(list) => list.iter().all(|v| self.0.matches(v)),
+            Some(list) => list.content().iter().all(|v| self.0.matches(*v)),
         }
     }
 }

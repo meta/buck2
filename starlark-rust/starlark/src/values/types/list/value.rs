@@ -56,7 +56,6 @@ use crate::values::comparison::equals_slice;
 use crate::values::error::ValueError;
 use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
-use crate::values::list::ListRef;
 use crate::values::list::ListType;
 use crate::values::list::StarlarkList;
 
@@ -464,16 +463,14 @@ impl<'v> StarlarkType<'v> for StarlarkList<'v> {
         !this.is_empty()
     }
 
-    // TODO(containers): the operand is `&ListRef` and not `Self` because of what the compiler
-    // keeps in registers for each: with `Self`, a pair of items that are one value measured
-    // one instruction more, and a pair that is not, three fewer.
-    fn equals(this: Self, other: &ListRef<'v>) -> crate::Result<bool> {
-        equals_slice(this.content(), other.content(), |x, y| x.equals(*y))
+    // The operand's items are read before the list's own, here and in `compare` and `add`: the
+    // compiler then tells the operand's representations apart once, where its type is tested,
+    // and not again after the list is read (measured: 2 instructions).
+    fn equals(this: Self, other: Self) -> crate::Result<bool> {
+        let other = other.content();
+        equals_slice(this.content(), other, |x, y| x.equals(*y))
     }
 
-    // The operand's items are read before the list's own, here and in `add`: the compiler then
-    // tells the operand's representations apart once, where its type is tested, and not again
-    // after the list is read (measured: 2 instructions).
     fn compare(this: Self, other: Self) -> crate::Result<Ordering> {
         let other = other.content();
         compare_slice(this.content(), other, |x, y| x.compare(*y))

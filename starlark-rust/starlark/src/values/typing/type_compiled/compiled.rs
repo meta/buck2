@@ -60,7 +60,7 @@ use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::dict::DictRef;
-use crate::values::list::ListRef;
+use crate::values::list::StarlarkList;
 use crate::values::none::NoneType;
 use crate::values::types::tuple::value::Tuple;
 use crate::values::typing::type_compiled::factory::TYPE_COMPILED_BOOL;
@@ -582,7 +582,7 @@ impl<'v> TypeCompiled<'v> {
         } else if let Some(t) = Tuple::from_value(ty) {
             let elems = t.content().try_map(|t| Self::ty_from_value(*t, invalid))?;
             Ok(Ty::tuple(elems))
-        } else if let Some(t) = ListRef::from_value(ty) {
+        } else if let Some(t) = StarlarkList::from_value(ty) {
             match t.content() {
                 [] | [_] => Err(TypingError::List.into()),
                 // A union type, can match any
@@ -619,7 +619,7 @@ impl<'v> TypeCompiled<'v> {
 fn invalid_type_annotation<'v>(ty: Value<'v>, heap: Heap<'v>) -> TypingError {
     if DictRef::from_value(ty).is_some() {
         TypingError::Dict
-    } else if ListRef::from_value(ty).is_some() {
+    } else if StarlarkList::from_value(ty).is_some() {
         TypingError::List
     } else if let Some(name) = ty
         .get_attr("type", heap)

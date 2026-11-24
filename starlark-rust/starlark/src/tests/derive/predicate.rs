@@ -54,8 +54,7 @@ use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::int::IntView;
 use crate::values::list::AllocList;
-use crate::values::list::ListOf;
-use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 use crate::values::predicate::StarlarkPredicate;
 use crate::values::starlark_value_as_type::StarlarkValueAsType;
 use crate::values::string::StarlarkStr;
@@ -83,7 +82,7 @@ starlark_recursive_type! {
     /// A shape, or a list of these.
     StarlarkShapes<'v>;
     name "Shapes";
-    is Either<StarlarkShape, ListType<StarlarkShapes>>;
+    is Either<StarlarkShape, StarlarkList<'v, StarlarkShapes>>;
 }
 
 starlark_recursive_type! {
@@ -97,7 +96,7 @@ starlark_recursive_type! {
     /// An integer, or a list of these. The expression names the marker's lifetime.
     StarlarkInts<'v>;
     name "Ints";
-    is Either<IntView<'v>, ListType<StarlarkInts>>;
+    is Either<IntView<'v>, StarlarkList<'v, StarlarkInts>>;
 }
 
 /// What something painted is used through.
@@ -361,7 +360,7 @@ fn shape_globals(globals: &mut GlobalsBuilder) {
 
     fn count_shapes<'v>(shapes: ValueOf<'v, StarlarkShapes>) -> starlark::Result<i32> {
         fn count<'v>(
-            shapes: Either<&'v dyn ShapeLike<'v>, ListOf<'v, StarlarkShapes>>,
+            shapes: Either<&'v dyn ShapeLike<'v>, StarlarkList<'v, StarlarkShapes>>,
         ) -> starlark::Result<i32> {
             match shapes {
                 Either::Left(_) => Ok(1),

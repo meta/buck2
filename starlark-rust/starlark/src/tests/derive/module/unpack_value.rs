@@ -33,7 +33,7 @@ use crate::values::StarlarkValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::dict::DictType;
-use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 use crate::values::set::SetType;
 use crate::values::types::int::view::IntView;
 
@@ -44,13 +44,13 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), format!("{}", v.get())))
     }
     fn with_int_list<'v>(
-        v: ValueOf<'v, ListType<IntView<'v>>>,
+        v: ValueOf<'v, StarlarkList<'v, IntView<'v>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v.try_to_vec::<IntView>().unwrap().iter().join(", ");
         Ok((v.to_value(), repr))
     }
     fn with_list_list<'v>(
-        v: ValueOf<'v, ListType<ListType<IntView<'v>>>>,
+        v: ValueOf<'v, StarlarkList<'v, StarlarkList<'v, IntView<'v>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
             .iter()
@@ -60,7 +60,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), repr))
     }
     fn with_dict_list<'v>(
-        v: ValueOf<'v, ListType<DictType<IntView<'v>, IntView<'v>>>>,
+        v: ValueOf<'v, StarlarkList<'v, DictType<IntView<'v>, IntView<'v>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
             .iter()
@@ -85,7 +85,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), repr))
     }
     fn with_list_dict<'v>(
-        v: ValueOf<'v, DictType<IntView<'v>, ListType<IntView<'v>>>>,
+        v: ValueOf<'v, DictType<IntView<'v>, StarlarkList<'v, IntView<'v>>>>,
     ) -> anyhow::Result<(Value<'v>, String)> {
         let repr = v
             .iter()
@@ -118,7 +118,7 @@ fn validate_module(builder: &mut GlobalsBuilder) {
         Ok((v.to_value(), repr))
     }
     fn with_either<'v>(
-        v: Either<i32, Either<&str, ValueOf<'v, ListType<IntView<'v>>>>>,
+        v: Either<i32, Either<&str, ValueOf<'v, StarlarkList<'v, IntView<'v>>>>>,
     ) -> anyhow::Result<String> {
         match v {
             Either::Left(i) => Ok(i.to_string()),
@@ -162,7 +162,7 @@ fn nominal_module(builder: &mut GlobalsBuilder) {
         Ok(by_deref.to_string())
     }
 
-    fn with_nominal_list<'v>(v: ValueOf<'v, ListType<Nominal>>) -> anyhow::Result<usize> {
+    fn with_nominal_list<'v>(v: ValueOf<'v, StarlarkList<'v, Nominal>>) -> anyhow::Result<usize> {
         Ok(v.iter().count())
     }
 }

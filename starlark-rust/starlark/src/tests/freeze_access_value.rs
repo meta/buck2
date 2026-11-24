@@ -20,7 +20,7 @@ use crate::values::FreezeResult;
 use crate::values::Freezer;
 use crate::values::Value;
 use crate::values::list::AllocList;
-use crate::values::list::ListRef;
+use crate::values::list::StarlarkList;
 
 struct Test<V> {
     field: V,
@@ -33,9 +33,15 @@ impl<'v> Freeze<'v> for Test<Value<'v>> {
         let test = Test {
             field: self.field.freeze(freezer)?,
         };
-        let members = ListRef::from_value(test.field).unwrap();
-        assert_eq!(members[0].unpack_num().unwrap().as_int().unwrap(), 1);
-        assert_eq!(members[1].unpack_num().unwrap().as_int().unwrap(), 2);
+        let members = StarlarkList::from_value(test.field).unwrap();
+        assert_eq!(
+            members.content()[0].unpack_num().unwrap().as_int().unwrap(),
+            1
+        );
+        assert_eq!(
+            members.content()[1].unpack_num().unwrap().as_int().unwrap(),
+            2
+        );
         Ok(test)
     }
 }

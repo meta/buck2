@@ -71,7 +71,7 @@ use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueTyped;
 use crate::values::function::BoundMethod;
-use crate::values::list::ListRef;
+use crate::values::list::StarlarkList;
 use crate::values::range::Range;
 use crate::values::string::interpolation::parse_percent_s_one;
 use crate::values::tuple::AllocTuple;
@@ -494,9 +494,10 @@ impl<'f> IrSpanned<'f, ExprCompiled<'f>> {
         match &self.node {
             ExprCompiled::List(xs) if xs.len() <= MAX_LEN => Some(ExprShortList::Exprs(xs)),
             ExprCompiled::Value(v) => {
-                let list = ListRef::from_value(*v)?;
-                if list.len() <= MAX_LEN {
-                    Some(ExprShortList::Constants(list.content()))
+                // A constant of the compiled code: nothing changes it under the slice.
+                let content = StarlarkList::from_value(*v)?.repr().content();
+                if content.len() <= MAX_LEN {
+                    Some(ExprShortList::Constants(content))
                 } else {
                     None
                 }
@@ -868,7 +869,7 @@ impl<'f> ExprCompiled<'f> {
             Some(ExprCompiled::Value(heap.alloc(*v).to_value()))
         } else if let Some(v) = v.downcast_ref::<Range>() {
             Some(ExprCompiled::Value(heap.alloc(*v).to_value()))
-        } else if let Some(v) = ListRef::from_value(v) {
+        } else if let Some(v) = StarlarkList::from_value(v) {
             // When spec-safe function returned a non-frozen list,
             // we try to convert that list to a list of constants instruction.
             // Every item becomes an expression, so like long strings,

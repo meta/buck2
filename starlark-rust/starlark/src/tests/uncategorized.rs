@@ -56,8 +56,8 @@ use crate::values::ValueOf;
 use crate::values::ValueTyped;
 use crate::values::dict::DictType;
 use crate::values::layout::heap::name::StarlarkTestHeapName;
-use crate::values::list::ListOf;
-use crate::values::list_or_tuple::ListOrTupleType;
+use crate::values::list::StarlarkList;
+use crate::values::list_or_tuple::StarlarkListOrTuple;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
 use crate::values::tuple::TupleOf;
@@ -315,7 +315,7 @@ fn test_radd() {
     starlark_simple_value!(Select);
 
     impl<'v> UnpackValue<'v> for Select {
-        type Type = Either<Select, ListOrTupleType<IntView<'v>>>;
+        type Type = Either<Select, StarlarkListOrTuple<'v, IntView<'v>>>;
         type Error = crate::Error;
 
         fn unpack(
@@ -326,7 +326,10 @@ fn test_radd() {
                 Either::Left(x) => Ok(x.as_ref().clone()),
                 Either::Right(items) => Ok(Select(
                     items
-                        .map_either(ListOf::try_items::<IntView>, TupleOf::try_items::<IntView>)
+                        .map_either(
+                            StarlarkList::try_items::<IntView>,
+                            TupleOf::try_items::<IntView>,
+                        )
                         .map(|x| x?.to_integer())
                         .collect::<crate::Result<_>>()?,
                 )),
@@ -359,7 +362,7 @@ fn test_radd() {
     #[starlark_module]
     fn module(build: &mut GlobalsBuilder) {
         fn select<'v>(
-            xs: ValueOf<'v, ListOrTupleType<IntView<'v>>>,
+            xs: ValueOf<'v, StarlarkListOrTuple<'v, IntView<'v>>>,
             heap: Heap<'v>,
         ) -> anyhow::Result<ValueOf<'v, Select>> {
             let select = Select(

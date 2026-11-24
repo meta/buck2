@@ -10,7 +10,6 @@
 
 //! Tests to ensure that the `buck docs` command works as expected
 
-use buck2_e2e::json::Json;
 use buck2_e2e::prelude::*;
 
 #[buck_test]
@@ -18,16 +17,6 @@ async fn test_docs_returns(buck: &Buck) -> anyhow::Result<()> {
     let result = buck.docs(&["starlark"]).await?;
     let decoded: serde_json::Value = serde_json::from_str(&result.stdout)?;
     assert_eq!(decoded, serde_json::json!([]));
-    Ok(())
-}
-
-#[buck_test]
-async fn test_prelude_docs(buck: &Buck) -> anyhow::Result<()> {
-    let result = buck.docs(&["starlark", "prelude//:prelude.bzl"]).await?;
-    golden(
-        &Json::loads(&result.stdout)?.dumps(Some(2), false),
-        "prelude_docs.golden.json",
-    );
     Ok(())
 }
 

@@ -207,6 +207,18 @@ RustLinkStrategyInfo = record(
     rust_debug_info = ArtifactTSet | None,
 )
 
+# A crate in a Rust dependency graph.
+RustCrateIdentity = record(
+    # The crate's `-Cmetadata`, which is what rustc and the linker know it by. See
+    # `crate_metadata`.
+    metadata = field(str),
+    # The target it is built from.
+    label = field(ConfiguredTargetLabel),
+)
+
+# Set of RustCrateIdentity
+RustCrateIdentities = transitive_set()
+
 # Set of list[(ConfiguredTargetLabel, MergedLinkInfo)]
 RustNativeLinkDeps = transitive_set()
 
@@ -224,6 +236,9 @@ RustLinkInfo = provider(
         "crate": CrateName,
         # strategies - information about each LinkStrategy as RustLinkStrategyInfo
         "strategies": dict[LinkStrategy, RustLinkStrategyInfo],
+        # This crate and its transitive Rust dependencies, other than proc macros. See
+        # `crate_identities`.
+        "crate_identities": RustCrateIdentities,
         # Rust interacts with the native link graph in a non-standard way.
         #
         # The first difference is in the re-export behavior of Rust compared to C++. The native link
@@ -494,6 +509,58 @@ def _native_link_dependencies(ctx: AnalysisContext, dep_ctx: DepCollectionContex
 # This is intended to be used to access the Rust -> Rust link providers
 def _rust_non_proc_macro_link_infos(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> list[RustLinkInfo]:
     return [d.info for d in resolve_rust_deps(ctx, dep_ctx) if isinstance(d.info, RustLinkInfo)]
+
+# The `-Cmetadata` that `label` is compiled with for the crates that depend on it.
+#
+# This string is the crate's identity: rustc tells two crates of one name apart by it, and it
+# goes into the name of every symbol the crate defines. Whatever it leaves out is thereby
+# declared not to matter. Two compilations of a target that differ only in such things are the
+# same crate, with the same symbol names, and must not meet in one dependency graph (see
+# `crate_identities`).
+#
+# A target is a different crate in every configuration, except that the toolchain's
+# `configuration_hash` can leave differences between configurations out.
+def crate_metadata(toolchain_info: RustToolchainInfo, label: Label) -> str:
+    configuration_hash = toolchain_info.configuration_hash or label.configured_target().config().hash
+    return "{}#{}".format(label.raw_target(), configuration_hash)
+
+def crate_identities(ctx: AnalysisContext, dep_ctx: DepCollectionContext, toolchain_info: RustToolchainInfo) -> RustCrateIdentities:
+    """
+    This crate and its transitive Rust dependencies, other than proc macros
+    (which are loaded into the compiler, not linked).
+
+    Fails if two of them have the same `-Cmetadata`. Those are two compilations
+    that rustc and the linker take for one crate. Both define all of its
+    symbols, and nothing makes the definitions agree: the two differ in
+    whatever `crate_metadata` leaves out. A link that is given both keeps one
+    definition of each symbol and silently drops the other.
+
+    Nothing checks this for C++ libraries, or for Rust crates that only a C++
+    target brings together. Here it is an error at the lowest target that
+    depends on both.
+    """
+    identities = ctx.actions.tset(
+        RustCrateIdentities,
+        value = RustCrateIdentity(
+            metadata = crate_metadata(toolchain_info, ctx.label),
+            label = ctx.label.configured_target(),
+        ),
+        children = [info.crate_identities for info in _rust_non_proc_macro_link_infos(ctx, dep_ctx)],
+    )
+
+    seen = {}
+    for crate in identities.traverse():
+        other = seen.setdefault(crate.metadata, crate)
+        if other.label != crate.label:
+            target = crate.label.raw_target()
+            fail(
+                "`{}` depends on two compilations of the Rust crate `{}`:\n  {}\n  {}\n".format(ctx.label, target, other.label, crate.label)
+                + "Both are compiled with `-Cmetadata={}`, so rustc and the linker take them for one crate, ".format(crate.metadata)
+                + "but nothing makes what they produce the same. A Rust dependency graph can contain each crate only once. "
+                + "To see how the two are reached, run `buck2 cquery \"allpaths('{}', '{}')\"`.".format(ctx.label.raw_target(), target)
+            )
+
+    return identities
 
 def inherited_exported_link_deps(ctx: AnalysisContext, dep_ctx: DepCollectionContext) -> RustExportedLinkDeps:
     return ctx.actions.tset(

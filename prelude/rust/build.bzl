@@ -133,6 +133,8 @@ load(
     "TransitiveDeps",
     "attr_crate",
     "attr_simple_crate_for_filenames",
+    "crate_identities",
+    "crate_metadata",
     "executable_shared_lib_arguments_from_shared_library_info",
     "get_available_proc_macros",
     "inherited_external_debug_info",
@@ -376,6 +378,9 @@ def generate_rustdoc_test(
         panic_runtime = compile_ctx.dep_ctx.panic_runtime,
         linker_deps = compile_ctx.dep_ctx.linker_deps,
     )
+    if ctx.attrs.doc_deps or ctx.attrs.doc_named_deps:
+        # Doctests depend on the doc deps too, which `compile_ctx.crate_identities` does not cover.
+        crate_identities(ctx, doc_dep_ctx, toolchain_info)
     transitive_srcs = ctx.actions.tset(
         RustSourcesTSet,
         value = compile_ctx.symlinked_srcs,
@@ -1826,11 +1831,11 @@ def _metadata(
     is_rustdoc_test: bool,
     host_agnostic_proc_macro: bool,
 ) -> (str, str):
-    raw_target = str(label.raw_target())
-    configuration_hash = (
-        compile_ctx.toolchain_info.proc_macro_configuration_hash if host_agnostic_proc_macro else compile_ctx.toolchain_info.configuration_hash
-    ) or label.configured_target().config().hash
-    metadata = "{}#{}".format(raw_target, configuration_hash)
+    if host_agnostic_proc_macro:
+        configuration_hash = compile_ctx.toolchain_info.proc_macro_configuration_hash or label.configured_target().config().hash
+        metadata = "{}#{}".format(label.raw_target(), configuration_hash)
+    else:
+        metadata = crate_metadata(compile_ctx.toolchain_info, label)
 
     if is_rustdoc_test:
         metadata = "doctest/" + metadata

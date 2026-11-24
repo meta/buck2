@@ -1040,6 +1040,7 @@ def _advanced_unstable_link_providers(
         RustLinkInfo(
             crate = crate,
             strategies = rust_artifacts,
+            crate_identities = compile_ctx.crate_identities,
             native_link_deps = ctx.actions.tset(
                 RustNativeLinkDeps,
                 children = [
@@ -1095,6 +1096,7 @@ def _stable_link_providers(
     rust_link_info = RustLinkInfo(
         crate = crate,
         strategies = rust_artifacts,
+        crate_identities = compile_ctx.crate_identities,
         native_link_deps = native_link_deps,
         exported_link_deps = exported_link_deps,
         shared_libs = shared_libs,

@@ -444,7 +444,9 @@ def cxx_toolchain_infos(
         as_compiler_info = as_compiler_info,
         asm_compiler_info = asm_compiler_info,
         binary_utilities_info = binary_utilities_info,
-        bolt_enabled = bolt_enabled,
+        # Normalize at this funnel: every Starlark toolchain constructor goes
+        # through here, so bolt_enabled must imply a configured BOLT tool.
+        bolt_enabled = bolt_enabled and binary_utilities_info != None and binary_utilities_info.bolt != None,
         cell_to_path_prefix_map = cell_to_path_prefix_map,
         c_compiler_info = c_compiler_info,
         clang_remarks = clang_remarks,

@@ -25,7 +25,16 @@ CxxBoltOutput = record(
 
 def cxx_use_bolt(ctx: AnalysisContext) -> bool:
     cxx_toolchain_info = get_cxx_toolchain_info(ctx)
-    return cxx_toolchain_info.bolt_enabled and ctx.attrs.bolt_profile != None
+    # A toolchain with no BOLT tool (e.g. bolt=None on a transitioned exec
+    # platform) must never select BOLT, even if bolt_enabled was set without
+    # the tool. This is the consumption-side invariant for every toolchain
+    # constructor, not just config_backed.
+    return (
+        cxx_toolchain_info.bolt_enabled
+        and cxx_toolchain_info.binary_utilities_info != None
+        and cxx_toolchain_info.binary_utilities_info.bolt != None
+        and ctx.attrs.bolt_profile != None
+    )
 
 def bolt(
     ctx: AnalysisContext,

@@ -155,13 +155,13 @@ them in JSONL format by passing the path into `buck2 log show`.
 
 The JSON schema is derived from the protobuf types, and the log itself could be
 quite large. [jq](https://jqlang.github.io/jq/) can be useful to find specific
-things. For example, this jq script shows the max event delay between a snapshot
-event creation on the daemon side, and when the client receives it.
+things. For example, this jq script shows the most memory the daemon used during
+the command.
 
 ```sh
 buck2 log show | jq -s '
   map(
-    .Event.data.Instant.data.Snapshot.this_event_client_delay_ms
+    .Event.data.Instant.data.Snapshot.buck2_rss
       | select(. != null)
   ) | max'
 ```

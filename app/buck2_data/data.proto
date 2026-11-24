@@ -1631,11 +1631,7 @@ message Snapshot {
   // times.
   uint64 file_digest_interner_paged_entries = 471;
 
-  // Delay between time snapshot is created and time it is received
-  // by the client.
-  optional int64 this_event_client_delay_ms = 2001;
-  // Client average user + system CPU time since last snapshot processed.
-  optional uint32 client_cpu_percents = 2002;
+  reserved 2001, 2002;
 
   // Memory usage of the buck2 daemon's slice from cgroup (if available)
   optional UnixCgroupMemoryStats allprocs_cgroup = 2003;

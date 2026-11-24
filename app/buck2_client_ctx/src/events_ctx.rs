@@ -35,7 +35,6 @@ use futures::stream;
 use futures::stream::FuturesUnordered;
 use tokio::runtime::Runtime;
 
-use crate::client_cpu_tracker::ClientCpuTracker;
 use crate::client_ctx::AgentAdvice;
 use crate::client_snapshots::ClientSnapshots;
 use crate::command_outcome::CommandOutcome;
@@ -485,7 +484,6 @@ fn convert_result<R: TryFrom<command_result::Result, Error = command_result::Res
 pub struct EventsCtx {
     pub recorder: Option<Box<InvocationRecorder>>,
     pub(crate) subscribers: Vec<Box<dyn EventSubscriber>>,
-    client_cpu_tracker: ClientCpuTracker,
     // buck_log_dir and command_report_path are used to write the command report.
     // Ensuring a command report is always written would require either simplifying
     // how the isolation dir is determined, or writing to a different path.
@@ -516,7 +514,6 @@ impl EventsCtx {
         Self {
             subscribers,
             recorder: recorder.map(Box::new),
-            client_cpu_tracker: ClientCpuTracker::new(),
             buck_log_dir: None,
             command_report_path: None,
             log_invocation_record: true,
@@ -609,34 +606,18 @@ impl EventsCtx {
     ) -> buck2_error::Result<()> {
         let events = events
             .into_iter()
-            .map(|mut event| {
-                let timestamp = event.timestamp();
-                if let buck2_data::buck_event::Data::Instant(instant_event) = event.data_mut() {
+            .map(|event| {
+                if let buck2_data::buck_event::Data::Instant(instant_event) = event.data() {
                     if let RestartState::Watching(restarter) = &mut self.restart_state
                         && let Some(data) = &instant_event.data
                     {
                         restarter.handle_event(data);
                     }
-                    match &mut instant_event.data {
-                        Some(buck2_data::instant_event::Data::Snapshot(snapshot)) => {
-                            let now = SystemTime::now();
-                            // `None` on overflow.
-                            let this_event_client_delay_ms = match now.duration_since(timestamp) {
-                                Ok(duration) => i64::try_from(duration.as_millis()).ok(),
-                                Err(e) => i64::try_from(e.duration().as_millis())
-                                    .ok()
-                                    .and_then(|x| x.checked_neg()),
-                            };
-                            snapshot.this_event_client_delay_ms = this_event_client_delay_ms;
-
-                            snapshot.client_cpu_percents =
-                                self.client_cpu_tracker.tick_cpu_time_percents();
-                        }
-                        Some(buck2_data::instant_event::Data::DaemonShutdown(msg)) => {
-                            *shutdown = Some(msg.clone());
-                        }
-                        _ => {}
-                    };
+                    if let Some(buck2_data::instant_event::Data::DaemonShutdown(msg)) =
+                        &instant_event.data
+                    {
+                        *shutdown = Some(msg.clone());
+                    }
                 }
                 Arc::new(event)
             })

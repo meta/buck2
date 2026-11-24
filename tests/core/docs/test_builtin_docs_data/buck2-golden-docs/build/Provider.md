@@ -8,7 +8,10 @@
 - <Link to="/docs/api/build/DefaultInfo">DefaultInfo</Link>
 - <Link to="/docs/api/build/DepOnlyIncompatibleInfo">DepOnlyIncompatibleInfo</Link>
 - <Link to="/docs/api/build/DepOnlyIncompatibleRollout">DepOnlyIncompatibleRollout</Link>
+- <Link to="/docs/api/build/ExecutionPlatformInfo">ExecutionPlatformInfo</Link>
+- <Link to="/docs/api/build/ExecutionPlatformRegistrationInfo">ExecutionPlatformRegistrationInfo</Link>
 - <Link to="/docs/api/build/ExternalRunnerTestInfo">ExternalRunnerTestInfo</Link>
+- <Link to="/docs/api/build/InstallInfo">InstallInfo</Link>
 - <Link to="/docs/api/build/InternalRunnerTestInfo">InternalRunnerTestInfo</Link>
 - <Link to="/docs/api/build/LocalResourceInfo">LocalResourceInfo</Link>
 - <Link to="/docs/api/build/PlatformInfo">PlatformInfo</Link>

@@ -342,17 +342,15 @@ impl ProviderCodegen {
         }
     }
 
-    /// The `documentation()` of the provider's callable: the constructor plus the fields.
+    /// The `documentation()` of the provider's callable: the provider's type, with its fields.
     fn documentation_function(&self) -> syn::Result<syn::ImplItemFn> {
         let provider_docstring = self.get_docstring_impl(&self.input.attrs);
-        let create_func = &self.args.creator_func;
         if self.args.methods_func.is_some() {
             let methods_static_name = self.methods_static_name()?;
             return Ok(syn::parse_quote_spanned! {self.span=>
                 fn documentation(&self) -> starlark::docs::DocItem {
                     let docstring = #provider_docstring;
                     buck2_build_api::interpreter::rule_defs::provider::doc::provider_callable_documentation(
-                        Some(#create_func),
                         buck2_build_api::interpreter::rule_defs::provider::doc::ProviderMembersSource::FromMethods(#methods_static_name.methods()),
                         BUILTIN_PROVIDER_TY.instance(),
                         &docstring,
@@ -377,7 +375,6 @@ impl ProviderCodegen {
                     #(#field_types),*
                 ];
                 buck2_build_api::interpreter::rule_defs::provider::doc::provider_callable_documentation(
-                    Some(#create_func),
                     buck2_build_api::interpreter::rule_defs::provider::doc::ProviderMembersSource::FromFields {
                         fields: &field_names,
                         field_docs: &field_docs,

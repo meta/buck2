@@ -2,9 +2,6 @@
 
 # Build APIs
 ## DefaultExecGroup
-## ExecutionPlatformInfo
-## ExecutionPlatformRegistrationInfo
-## InstallInfo
 ## anon\_rule
 ## dedupe
 ## deprecation

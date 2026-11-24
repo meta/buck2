@@ -510,7 +510,6 @@ impl<'v> StarlarkType<'v> for UserProviderCallableView<'v> {
         };
         let field_names: Vec<_> = fields.keys().map(|x| x.as_str()).collect();
         provider_callable_documentation(
-            None,
             ProviderMembersSource::FromFields {
                 fields: &field_names,
                 // TODO(nga): types.

@@ -22,10 +22,10 @@ use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
 use buck2_build_api::actions::execute::action_executor::ActionOutputs;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SingletonCommandLineSink;
 use buck2_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
 use buck2_build_signals::env::WaitingData;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
@@ -110,7 +110,7 @@ impl WriteMacrosToFileAction {
         inner: UnregisteredWriteMacrosToFileAction,
     ) -> buck2_error::Result<Self> {
         let is_command_line = contents.by_ref(|v| -> buck2_error::Result<bool> {
-            Ok(ValueAsCommandLineLike::unpack_value(*v)?.is_some())
+            Ok(<&dyn CommandLineArgLike>::unpack_value(*v)?.is_some())
         })?;
         if outputs.is_empty() {
             Err(WriteMacrosActionValidationError::NoOutputsSpecified.into())
@@ -145,9 +145,8 @@ impl Action for WriteMacrosToFileAction {
 
         let mut visitor = CommandLineContentBasedInputVisitor::new();
         self.contents.by_ref(|v| -> buck2_error::Result<()> {
-            ValueAsCommandLineLike::unpack_value(*v)?
+            <&dyn CommandLineArgLike>::unpack_value(*v)?
                 .unwrap()
-                .0
                 .visit_write_to_file_macros(&mut visitor, &BuckMutMap::default())
         })?;
         Ok(Cow::Owned(
@@ -190,7 +189,7 @@ impl Action for WriteMacrosToFileAction {
                 let mut macro_writer = MacroToFileWriter::new(&fs, &mut output_contents);
 
                 self.contents.by_ref(|v| -> buck2_error::Result<()> {
-                    let command_line = ValueAsCommandLineLike::unpack_value(*v)?.unwrap().0;
+                    let command_line = <&dyn CommandLineArgLike>::unpack_value(*v)?.unwrap();
 
                     if self.inner.use_dep_files_placeholder_for_content_based_paths {
                         command_line.visit_write_to_file_macros(

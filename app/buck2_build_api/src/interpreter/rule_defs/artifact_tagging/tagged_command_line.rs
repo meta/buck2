@@ -16,10 +16,10 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_complex_value;
 use starlark::starlark_module;
-use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
+use starlark::values::StarlarkTypeExpr;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
@@ -33,8 +33,6 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 
 #[derive(
     Debug,
@@ -68,10 +66,6 @@ impl<'v> StarlarkValue<'v> for StarlarkTaggedCommandLine<'v> {
         Some(TAGGED_COMMAND_LINE_METHODS.methods())
     }
 
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike>(self);
-    }
-
     #[starlark(implements = StarlarkCmdArgsLike)]
     fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
         this.as_ref()
@@ -86,14 +80,8 @@ impl<'v> StarlarkValue<'v> for StarlarkTaggedCommandLine<'v> {
 fn tagged_command_line_methods(_: &mut MethodsBuilder) {}
 
 impl<'v> CommandLineArgLike<'v> for StarlarkTaggedCommandLine<'v> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkTaggedCommandLine::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
-        ValueAsCommandLineLike::unpack_value_err(self.inner.value())?
-            .0
-            .add_to_command_line(fmt)
+        <&dyn CommandLineArgLike>::unpack_value_err(self.inner.value())?.add_to_command_line(fmt)
     }
 
     fn visit_artifacts(
@@ -102,14 +90,13 @@ impl<'v> CommandLineArgLike<'v> for StarlarkTaggedCommandLine<'v> {
     ) -> buck2_error::Result<()> {
         let mut visitor = self.inner.wrap_visitor(visitor);
 
-        ValueAsCommandLineLike::unpack_value_err(self.inner.value())?
-            .0
+        <&dyn CommandLineArgLike>::unpack_value_err(self.inner.value())?
             .visit_artifacts(&mut visitor)
     }
 
     fn contains_arg_attr(&self) -> bool {
-        ValueAsCommandLineLike::unpack(self.inner.value())
-            .is_some_and(|inner| inner.0.contains_arg_attr())
+        <StarlarkCmdArgsLike as StarlarkTypeExpr>::get(self.inner.value())
+            .is_some_and(|inner| inner.contains_arg_attr())
     }
 
     fn visit_write_to_file_macros(
@@ -117,8 +104,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkTaggedCommandLine<'v> {
         visitor: &mut dyn WriteToFileMacroVisitor,
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> buck2_error::Result<()> {
-        ValueAsCommandLineLike::unpack_value_err(self.inner.value())?
-            .0
+        <&dyn CommandLineArgLike>::unpack_value_err(self.inner.value())?
             .visit_write_to_file_macros(visitor, artifact_path_mapping)
     }
 }

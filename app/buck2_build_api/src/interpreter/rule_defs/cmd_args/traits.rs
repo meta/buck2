@@ -22,15 +22,12 @@ use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProv
 use buck2_interpreter::types::project_root::StarlarkProjectRoot;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use starlark::any::ProvidesStaticType;
-use starlark::typing::Ty;
-use starlark::values::StarlarkValue;
 use starlark::values::string::StarlarkStr;
 
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::builder::CommandLineBuilder;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 use crate::interpreter::rule_defs::resolved_macro::ResolvedMacro;
 
 /// How an input reaches the action. Leaves report the default; each enclosing
@@ -210,9 +207,6 @@ impl ArtifactPathMapper for ArtifactPathMapperImpl<'_> {
 
 /// Implemented by anything that can show up in a command line
 pub trait CommandLineArgLike<'v> {
-    /// Call `command_line_arg_like_impl!` to register the type with the interpreter typechecker.
-    fn register_me(&self);
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()>;
 
     fn visit_artifacts(
@@ -237,10 +231,6 @@ unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn CommandLineArgLike<'v> {
 }
 
 impl<'v> CommandLineArgLike<'v> for &str {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(Ty::string());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         fmt.push_str(self);
         Ok(())
@@ -260,10 +250,6 @@ impl<'v> CommandLineArgLike<'v> for &str {
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkStr {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkStr::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         fmt.push_str(self.as_str());
         Ok(())
@@ -283,10 +269,6 @@ impl<'v> CommandLineArgLike<'v> for StarlarkStr {
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkTargetLabel {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkTargetLabel::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         fmt.push_string(self.to_string());
         Ok(())
@@ -306,10 +288,6 @@ impl<'v> CommandLineArgLike<'v> for StarlarkTargetLabel {
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkConfiguredProvidersLabel {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkConfiguredProvidersLabel::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         fmt.push_string(self.to_string());
         Ok(())
@@ -329,10 +307,6 @@ impl<'v> CommandLineArgLike<'v> for StarlarkConfiguredProvidersLabel {
 }
 
 impl<'v> CommandLineArgLike<'v> for CellRoot {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(CellRoot::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         fmt.push_cell_path(self.cell_path())?;
         Ok(())
@@ -352,10 +326,6 @@ impl<'v> CommandLineArgLike<'v> for CellRoot {
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkProjectRoot {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkProjectRoot::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         fmt.push_project_path(ProjectRelativePath::empty().to_owned())?;
         Ok(())

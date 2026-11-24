@@ -30,11 +30,11 @@ use buck2_build_api::actions::impls::write_action_cache_stats::WriteActionCacheS
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineSink;
 use buck2_build_api::interpreter::rule_defs::cmd_args::InputProperties;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_build_signals::env::WaitingData;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::buck2_env;
@@ -168,7 +168,7 @@ impl WriteAction {
         };
 
         let is_command_line = contents.by_ref(|v| -> buck2_error::Result<bool> {
-            Ok(ValueAsCommandLineLike::unpack_value(*v)?.is_some())
+            Ok(<&dyn CommandLineArgLike>::unpack_value(*v)?.is_some())
         })?;
         if !is_command_line {
             return Err(WriteActionValidationError::ContentsNotCommandLineValue(
@@ -384,9 +384,7 @@ impl Action for WriteAction {
 
         let mut visitor = CommandLineContentBasedInputVisitor::new();
         self.contents.by_ref(|v| -> buck2_error::Result<()> {
-            ValueAsCommandLineLike::unpack_value_err(*v)?
-                .0
-                .visit_artifacts(&mut visitor)
+            <&dyn CommandLineArgLike>::unpack_value_err(*v)?.visit_artifacts(&mut visitor)
         })?;
         let mut content_based_inputs = visitor.content_based_inputs;
         if let Some(macro_files) = &self.inner.macro_files {
@@ -510,9 +508,7 @@ impl WriteCommandLineOptions<'_> {
             self.absolute,
             macro_files,
         );
-        ValueAsCommandLineLike::unpack_value_err(content)?
-            .0
-            .add_to_command_line(&mut builder)
+        <&dyn CommandLineArgLike>::unpack_value_err(content)?.add_to_command_line(&mut builder)
     }
 }
 

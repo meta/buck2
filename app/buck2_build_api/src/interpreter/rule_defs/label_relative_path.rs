@@ -9,18 +9,12 @@
  */
 
 use buck2_interpreter::types::cell_path::StarlarkCellPath;
-use starlark::values::StarlarkValue;
 
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 impl<'v> CommandLineArgLike<'v> for StarlarkCellPath {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkCellPath::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         fmt.push_cell_path(self.0)?;
         Ok(())

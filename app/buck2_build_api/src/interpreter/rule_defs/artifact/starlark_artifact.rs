@@ -22,7 +22,6 @@ use dupe::OptionDupedExt;
 use serde::Serialize;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
-use starlark::values::Demand;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
@@ -46,7 +45,6 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::InputProperties;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 /// A wrapper for an `Artifact` that is guaranteed to be bound, such as outputs
 /// from dependencies, or source files.
@@ -243,10 +241,6 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkArtifact {
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkArtifact {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkArtifact::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         fmt.push_artifact(&self.artifact)?;
         Ok(())
@@ -285,8 +279,4 @@ impl<'v> CommandLineArgLike<'v> for StarlarkArtifact {
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkArtifact {
     type Type = StarlarkArtifactView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike>(self);
-    }
 }

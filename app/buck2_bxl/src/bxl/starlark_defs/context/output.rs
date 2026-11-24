@@ -26,7 +26,6 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::S
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineInputs;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_common::events::HasEvents;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::project::ProjectRoot;
@@ -590,7 +589,7 @@ enum EnsureMultipleArtifactsArg<'v> {
     ProvidersArtifactIterable(ValueOf<'v, StarlarkProvidersArtifactIterable<'v>>),
     BxlBuildResult(ValueOf<'v, StarlarkBxlBuildResult>),
     Dict(ValueOf<'v, DictType<Value<'v>, StarlarkBxlBuildResult>>),
-    CmdLine(ValueAsCommandLineLike<'v>),
+    CmdLine(&'v dyn CommandLineArgLike<'v>),
 }
 
 /// The output stream for bxl to print values to the console as their result
@@ -901,7 +900,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                 //   If we pass random string to this function,
                 //   it will be interpreted as a command line without inputs,
                 //   and this function will return empty `EnsuredArtifactGroup`.
-                let inputs = get_cmd_line_inputs(cmd_line.0)?;
+                let inputs = get_cmd_line_inputs(cmd_line)?;
                 let mut result = Vec::new();
 
                 for artifact_group in &inputs.inputs {

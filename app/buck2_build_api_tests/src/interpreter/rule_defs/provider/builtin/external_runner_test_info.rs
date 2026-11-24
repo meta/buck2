@@ -75,7 +75,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", command = "foo")
         "#
         ),
-        "Expected type `None | list[Artifact",
+        "Expected type `None | list[CmdArgsLike] | tuple[CmdArgsLike, ...]` but got `str`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(
@@ -95,7 +95,7 @@ fn test_validation() -> buck2_error::Result<()> {
             ExternalRunnerTestInfo(type = "foo", env = "foo")
         "#
         ),
-        "Expected type `None | dict[str, Artifact",
+        "Expected type `None | dict[str, CmdArgsLike]` but got `str`",
     );
 
     tester.run_starlark_bzl_test_expecting_error(

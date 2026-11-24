@@ -31,9 +31,10 @@ async fn test_project_as_args_with_optional_args(buck: &Buck) {
     let rule = "//:combined_optional_args";
 
     // TODO(ianc) Allow project_as_args to skip nodes that return None
-    buck.build(&[rule]).await.expect_failure().assert_stderr_matches(
-        r"error: Expected `Artifact \| CellPath \| CellRoot \| Label \| OutputArtifact \| ProjectRoot \| ResolvedStringWithMacros \| TaggedCommandLine \| TargetLabel \| TransitiveSetArgsProjection \| WriteJsonCliArgs \| cmd_args \| str \| RunInfo`, but got `NoneType \(repr: None\)`",
-    );
+    buck.build(&[rule])
+        .await
+        .expect_failure()
+        .assert_stderr_matches(r"error: Expected `CmdArgsLike`, but got `NoneType \(repr: None\)`");
 }
 
 #[buck_test]

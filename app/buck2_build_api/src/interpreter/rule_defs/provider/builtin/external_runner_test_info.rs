@@ -38,7 +38,7 @@ use crate::analysis::extra_v::AnalysisExtraValue;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use crate::interpreter::rule_defs::command_executor_config::StarlarkCommandExecutorConfig;
 use crate::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use crate::interpreter::rule_defs::required_test_local_resource::StarlarkRequiredTestLocalResource;
@@ -64,11 +64,11 @@ pub struct ExternalRunnerTestInfo<'v> {
 
     /// The command for this test. The external test runner is what gives meaning to this
     /// command.
-    command: Option<ValueOf<'v, ListOrTupleType<ValueAsCommandLineLike<'v>>>>,
+    command: Option<ValueOf<'v, ListOrTupleType<StarlarkCmdArgsLike>>>,
 
     /// The environment for this test. Here again, the external test runner is what gives this
     /// meaning.
-    env: Option<ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>>,
+    env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
 
     /// The labels for this test.
     labels: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,
@@ -226,7 +226,7 @@ pub enum TestCommandMember<'v> {
 impl<'v> TestCommandMember<'v> {
     /// A literal is a `str`, or a resolved macro that amounts to one; the test runner sees those
     /// verbatim and everything else through a handle.
-    fn new(arg: ValueOf<'v, ValueAsCommandLineLike<'v>>) -> Self {
+    fn new(arg: ValueOf<'v, StarlarkCmdArgsLike>) -> Self {
         let value = arg.to_value();
         if let Some(s) = value.unpack_str() {
             return Self::Literal(s);
@@ -237,7 +237,7 @@ impl<'v> TestCommandMember<'v> {
         {
             return Self::Literal(s);
         }
-        Self::Arglike(arg.get().0)
+        Self::Arglike(arg.get())
     }
 
     pub fn add_to_command_line(
@@ -254,8 +254,8 @@ impl<'v> TestCommandMember<'v> {
 // The field types `ExternalRunnerTestInfo` and `InternalRunnerTestInfo` share, and the readers
 // over them. (The provider macro reads field types syntactically, so the structs spell them out.)
 
-pub(super) type TestCommand<'v> = ValueOf<'v, ListOrTupleType<ValueAsCommandLineLike<'v>>>;
-pub(super) type TestEnv<'v> = ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>;
+pub(super) type TestCommand<'v> = ValueOf<'v, ListOrTupleType<StarlarkCmdArgsLike>>;
+pub(super) type TestEnv<'v> = ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>;
 pub(super) type StrSeq<'v> = ValueOf<'v, ListOrTupleType<StarlarkStr>>;
 pub(super) type ExecutorOverrides<'v> =
     ValueOf<'v, DictType<StarlarkStr, StarlarkCommandExecutorConfig>>;
@@ -278,7 +278,7 @@ pub(super) fn env_entries<'v>(
 ) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> + 'v {
     env.into_iter().flat_map(|env| env.iter()).map(|entry| {
         let (key, value) = entry?;
-        Ok((key.as_str(), value.get().0))
+        Ok((key.as_str(), value.get()))
     })
 }
 

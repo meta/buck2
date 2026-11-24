@@ -26,7 +26,6 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
@@ -53,7 +52,6 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 /// Thin wrapper around `OutputArtifact`.
 ///
@@ -256,19 +254,11 @@ impl<'v> StarlarkType<'v> for StarlarkOutputArtifactView<'v> {
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkOutputArtifact<'v> {
     type Type = StarlarkOutputArtifactView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);
-    }
 }
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkOutputArtifact<'v> {
     type Type = StarlarkOutputArtifactView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);
-    }
 }
 
 /// An artifact marked as an output of an action.
@@ -322,10 +312,6 @@ fn output_artifact_methods(builder: &mut MethodsBuilder) {
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkOutputArtifact<'v> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkOutputArtifact::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(
         &self,
         _fmt: &mut CommandLineBuilder<'v, '_>,
@@ -359,10 +345,6 @@ impl<'v> CommandLineArgLike<'v> for StarlarkOutputArtifact<'v> {
 }
 
 impl<'v> CommandLineArgLike<'v> for FrozenStarlarkOutputArtifact<'v> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(FrozenStarlarkOutputArtifact::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         // We do not need to use the ArtifactPathMapper here as output artifacts are always
         // resolved to a known path since their content hash is not yet available.

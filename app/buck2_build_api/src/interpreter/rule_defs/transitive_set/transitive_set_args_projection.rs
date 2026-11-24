@@ -22,7 +22,6 @@ use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
-use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
@@ -46,8 +45,6 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::InputProperties;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::transitive_set::TransitiveSet;
 use crate::interpreter::rule_defs::transitive_set::traversal::TransitiveSetOrdering;
 use crate::interpreter::rule_defs::transitive_set::traversal::TransitiveSetProjectionTraversal;
@@ -115,10 +112,6 @@ impl<'v> TransitiveSetArgsProjection<'v> {
             List(&'v [Value<'v>]),
         }
         impl<'v> CommandLineArgLike<'v> for Impl<'v> {
-            fn register_me(&self) {
-                // No need because this is not proper implementation.
-            }
-
             fn add_to_command_line(
                 &self,
                 fmt: &mut CommandLineBuilder<'v, '_>,
@@ -127,8 +120,7 @@ impl<'v> TransitiveSetArgsProjection<'v> {
                     Impl::Item(v) => v.add_to_command_line(fmt),
                     Impl::List(items) => {
                         for v in *items {
-                            ValueAsCommandLineLike::unpack_value_err(*v)?
-                                .0
+                            <&dyn CommandLineArgLike>::unpack_value_err(*v)?
                                 .add_to_command_line(fmt)?;
                         }
                         Ok(())
@@ -141,9 +133,8 @@ impl<'v> TransitiveSetArgsProjection<'v> {
                     Impl::Item(v) => v.contains_arg_attr(),
                     Impl::List(items) => {
                         for v in *items {
-                            if ValueAsCommandLineLike::unpack_value_err(*v)
+                            if <&dyn CommandLineArgLike>::unpack_value_err(*v)
                                 .unwrap()
-                                .0
                                 .contains_arg_attr()
                             {
                                 return true;
@@ -163,8 +154,7 @@ impl<'v> TransitiveSetArgsProjection<'v> {
                     Impl::Item(v) => v.visit_write_to_file_macros(visitor, artifact_path_mapping),
                     Impl::List(items) => {
                         for v in *items {
-                            ValueAsCommandLineLike::unpack_value_err(*v)?
-                                .0
+                            <&dyn CommandLineArgLike>::unpack_value_err(*v)?
                                 .visit_write_to_file_macros(visitor, artifact_path_mapping)?;
                         }
                         Ok(())
@@ -180,8 +170,7 @@ impl<'v> TransitiveSetArgsProjection<'v> {
                     Impl::Item(v) => v.visit_artifacts(visitor),
                     Impl::List(items) => {
                         for v in *items {
-                            ValueAsCommandLineLike::unpack_value_err(*v)?
-                                .0
+                            <&dyn CommandLineArgLike>::unpack_value_err(*v)?
                                 .visit_artifacts(visitor)?;
                         }
                         Ok(())
@@ -193,13 +182,13 @@ impl<'v> TransitiveSetArgsProjection<'v> {
         let value = v.to_value();
         if let Some(values) = ListRef::from_value(value) {
             for v in values.content() {
-                ValueAsCommandLineLike::unpack_value_err(*v)?;
+                <&dyn CommandLineArgLike>::unpack_value_err(*v)?;
             }
             Ok(Impl::List(values.content()))
         } else {
-            Ok(Impl::Item(
-                ValueAsCommandLineLike::unpack_value_err(value)?.0,
-            ))
+            Ok(Impl::Item(<&dyn CommandLineArgLike>::unpack_value_err(
+                value,
+            )?))
         }
     }
 }
@@ -219,10 +208,6 @@ where
         Some(TRANSITIVE_SET_ARGS_PROJECTION_METHODS.methods())
     }
 
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike>(self);
-    }
-
     #[starlark(implements = StarlarkCmdArgsLike)]
     fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
         this.as_ref()
@@ -230,10 +215,6 @@ where
 }
 
 impl<'v> CommandLineArgLike<'v> for TransitiveSetArgsProjection<'v> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(TransitiveSetArgsProjection::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         let set = self.transitive_set.as_ref();
 

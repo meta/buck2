@@ -1099,7 +1099,6 @@ dependencies = [
  "internment",
  "inventory",
  "itertools 0.15.0",
- "linkme",
  "mini_vec",
  "multimap",
  "pagable",

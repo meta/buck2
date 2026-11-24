@@ -24,7 +24,6 @@ use dupe::OptionDupedExt;
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
 use starlark::environment::GlobalsBuilder;
-use starlark::values::Demand;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkPagable;
 use starlark::values::StarlarkValue;
@@ -52,7 +51,6 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::InputProperties;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -260,10 +258,6 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkPromiseArtifact {
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkPromiseArtifact::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         match self.artifact.get() {
             Some(v) => {
@@ -298,10 +292,6 @@ impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkPromiseArtifact {
     type Type = StarlarkArtifactView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike>(self);
-    }
 }
 
 #[starlark_module]

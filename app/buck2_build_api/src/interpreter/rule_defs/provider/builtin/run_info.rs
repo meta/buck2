@@ -18,7 +18,6 @@ use starlark::eval::Evaluator;
 use starlark::values::Freeze;
 use starlark::values::OwnedFrozen;
 use starlark::values::StarlarkPagable;
-use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
@@ -33,7 +32,6 @@ use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgsView;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueUnpack;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 /// Provider that signals a rule is runnable and defines how to execute it.
 ///
@@ -109,10 +107,6 @@ fn run_info_creator(globals: &mut GlobalsBuilder) {
 }
 
 impl<'v> CommandLineArgLike<'v> for RunInfo<'v> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(RunInfo::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         self.args
             .get()

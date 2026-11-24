@@ -31,8 +31,8 @@ use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
 use buck2_build_api::actions::impls::run_action_knobs::WriteActionCacheMode;
 use buck2_build_api::actions::impls::write_action_cache_stats::WRITE_ACTION_CACHE_STATS;
 use buck2_build_api::actions::impls::write_action_cache_stats::WriteActionCacheStats;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
@@ -374,8 +374,7 @@ pub(crate) fn key(
         hash_str(&mut hasher, root);
     }
 
-    ValueAsCommandLineLike::unpack_value_err(contents)?
-        .0
+    <&dyn CommandLineArgLike>::unpack_value_err(contents)?
         .add_to_command_line(&mut CommandLineBuilder::new_hashing(&mut hasher))?;
 
     hasher.write_u8(inputs.is_executable as u8);

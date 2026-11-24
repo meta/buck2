@@ -327,7 +327,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
     ///   such as the path separator. Pass the group of the actions that read the output. Defaults
     ///   to the default execution group.
     ///
-    /// The content is often a string, but can be any `ArgLike` value. This is occasionally useful
+    /// The content is often a string, but can be any `CmdArgsLike` value. This is occasionally useful
     /// for generating scripts to run as a part of another action. `cmd_args` in the content are
     /// newline separated unless another delimiter is explicitly specified.
     fn write<'v>(
@@ -418,7 +418,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
 
         let (content_cli, written_macro_count, mut associated_artifacts) = match content {
             WriteContentArg::CommandLineArg(content) => {
-                let content_arg = content.get().0;
+                let content_arg = content.get();
                 let count = count_write_to_file_macros(allow_args, content_arg)?;
                 let associated_artifacts = get_cli_inputs(with_inputs, content_arg)?;
                 (content, count, associated_artifacts)

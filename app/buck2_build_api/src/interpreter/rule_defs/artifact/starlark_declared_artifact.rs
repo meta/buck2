@@ -25,7 +25,6 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
-use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FreezeResult;
@@ -56,7 +55,6 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::InputProperties;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 /// A wrapper for an artifact that has been declared in the user's implementation function.
 ///
@@ -242,10 +240,6 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkDeclaredArtifact<'v> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkDeclaredArtifact::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(
         &self,
         _fmt: &mut CommandLineBuilder<'v, '_>,
@@ -318,8 +312,4 @@ impl<'v> Freeze<'v> for StarlarkDeclaredArtifact<'v> {
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkDeclaredArtifact<'v> {
     type Type = StarlarkArtifactView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike>(self);
-    }
 }

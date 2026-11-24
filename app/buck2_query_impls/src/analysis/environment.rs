@@ -25,7 +25,6 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::InputProperties;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::TemplatePlaceholderInfo;
 use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
 use buck2_core::configuration::compatibility::MaybeCompatible;
@@ -327,13 +326,13 @@ async fn get_template_info_provider_artifacts(
                     let mut cmd_visitor = SimpleCommandLineArtifactVisitor::new();
                     if let either::Either::Left(command_line_arg) = template_info {
                         CommandLineArgLike::visit_artifacts(
-                            command_line_arg.get().0,
+                            command_line_arg.get(),
                             &mut cmd_visitor,
                         )?;
                     } else if let either::Either::Right(map) = template_info {
                         for (_, command_line_arg) in map.iter() {
                             CommandLineArgLike::visit_artifacts(
-                                command_line_arg.get().0,
+                                command_line_arg.get(),
                                 &mut cmd_visitor,
                             )?;
                         }
@@ -463,8 +462,7 @@ pub(crate) async fn get_from_template_placeholder_info(
                                     ) {
                                     }
                                 }
-                                ValueAsCommandLineLike::unpack_value_err(v)?
-                                    .0
+                                <&dyn CommandLineArgLike>::unpack_value_err(v)?
                                     .visit_artifacts(&mut Visitor(&mut artifacts, target.dupe()))?;
                             }
 

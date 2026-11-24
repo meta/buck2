@@ -39,7 +39,7 @@ use strong_hash::StrongHash;
 
 use crate::interpreter::rule_defs::artifact_tagging::StarlarkTaggedCommandLine;
 use crate::interpreter::rule_defs::artifact_tagging::StarlarkTaggedValue;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 
 /// ArtifactTag allows wrapping input and output artifacts in a command line with tags. Those tags
 /// will be made visible to artifact visitors. The tags themselves don't have meaning on their own,
@@ -151,11 +151,13 @@ fn artifact_tag_methods(_: &mut MethodsBuilder) {
     > {
         let value = StarlarkTaggedValue::new(inner, this.dupe());
 
-        Ok(if ValueAsCommandLineLike::unpack_value(inner)?.is_some() {
-            Either::Right(heap.alloc(StarlarkTaggedCommandLine::new(value)))
-        } else {
-            Either::Left(heap.alloc(value))
-        })
+        Ok(
+            if <&dyn CommandLineArgLike>::unpack_value(inner)?.is_some() {
+                Either::Right(heap.alloc(StarlarkTaggedCommandLine::new(value)))
+            } else {
+                Either::Left(heap.alloc(value))
+            },
+        )
     }
 
     /// Tag only input artifacts with this tag (outputs are not tagged).
@@ -179,11 +181,13 @@ fn artifact_tag_methods(_: &mut MethodsBuilder) {
     > {
         let value = StarlarkTaggedValue::inputs_only(inner, this.dupe());
 
-        Ok(if ValueAsCommandLineLike::unpack_value(inner)?.is_some() {
-            Either::Right(heap.alloc(StarlarkTaggedCommandLine::new(value)))
-        } else {
-            Either::Left(heap.alloc(value))
-        })
+        Ok(
+            if <&dyn CommandLineArgLike>::unpack_value(inner)?.is_some() {
+                Either::Right(heap.alloc(StarlarkTaggedCommandLine::new(value)))
+            } else {
+                Either::Left(heap.alloc(value))
+            },
+        )
     }
 }
 

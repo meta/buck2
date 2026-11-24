@@ -32,7 +32,6 @@ rust_library(
         "fbsource//third-party/rust:internment",
         "fbsource//third-party/rust:inventory",
         "fbsource//third-party/rust:itertools",
-        "fbsource//third-party/rust:linkme",
         "fbsource//third-party/rust:multimap",
         "fbsource//third-party/rust:ref-cast",
         "fbsource//third-party/rust:regex",

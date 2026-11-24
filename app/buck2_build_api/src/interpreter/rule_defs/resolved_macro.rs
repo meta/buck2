@@ -27,7 +27,6 @@ use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_complex_value;
-use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FrozenValueTyped;
 use starlark::values::NoSerialize;
@@ -47,7 +46,6 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::InputProperties;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
 use crate::interpreter::rule_defs::resolve_query_macro::ResolvedQueryMacro;
@@ -125,7 +123,7 @@ impl<'v> ResolvedMacro<'v> {
             }
             Self::ArgLike(command_line_like) => {
                 fmt.push_scope_delimiter(" ");
-                command_line_like.get().0.add_to_command_line(fmt)?;
+                command_line_like.get().add_to_command_line(fmt)?;
                 fmt.pop_scope();
             }
             Self::Query(value) => value.add_to_arg(fmt)?,
@@ -156,7 +154,7 @@ impl<'v> ResolvedMacro<'v> {
                 }
             }
             Self::ArgLike(command_line_like) => {
-                command_line_like.get().0.visit_artifacts(visitor)?;
+                command_line_like.get().visit_artifacts(visitor)?;
             }
             Self::Query(value) => value.visit_artifacts(visitor)?,
             Self::Source(artifact) => visitor.visit_input(
@@ -255,10 +253,6 @@ impl<'v> ResolvedStringWithMacros<'v> {
 }
 
 impl<'v> CommandLineArgLike<'v> for ResolvedStringWithMacros<'v> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(ResolvedStringWithMacros::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         fmt.push_scope_delimiter("");
         for part in &*self.parts {
@@ -337,10 +331,6 @@ impl<'v> StarlarkValue<'v> for ResolvedStringWithMacros<'v> {
             Either::Left(other) => *self == *other,
             Either::Right(s) => self.downcast_str() == Some(s),
         }
-    }
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike>(self);
     }
 
     #[starlark(implements = StarlarkCmdArgsLike)]

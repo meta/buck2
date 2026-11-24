@@ -48,7 +48,7 @@ use starlark::values::typing::StarlarkCallable;
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use crate::interpreter::rule_defs::command_executor_config::StarlarkCommandExecutorConfig;
 use crate::interpreter::rule_defs::provider::builtin::external_runner_test_info::ExecutorOverrides;
 use crate::interpreter::rule_defs::provider::builtin::external_runner_test_info::LocalResources;
@@ -90,16 +90,16 @@ pub struct InternalRunnerTestInfo<'v> {
     test_type: StringValue<'v>,
 
     /// The command for this test. The test runner is what gives meaning to this command.
-    command: Option<ValueOf<'v, ListOrTupleType<ValueAsCommandLineLike<'v>>>>,
+    command: Option<ValueOf<'v, ListOrTupleType<StarlarkCmdArgsLike>>>,
 
     /// The command used for test discovery (listing). This is the command that runs the test
     /// binary with framework-specific listing flags (e.g., `["binary", "--gtest_list_tests"]`
     /// for GTest). The internal runner uses this for the listing step, while `command` is used
     /// for execution.
-    listing_command: ValueOf<'v, ListOrTupleType<ValueAsCommandLineLike<'v>>>,
+    listing_command: ValueOf<'v, ListOrTupleType<StarlarkCmdArgsLike>>,
 
     /// The environment for this test.
-    env: Option<ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>>,
+    env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
 
     /// The labels for this test.
     labels: Option<ValueOf<'v, ListOrTupleType<StarlarkStr>>>,

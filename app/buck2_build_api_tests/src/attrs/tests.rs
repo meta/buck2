@@ -9,8 +9,8 @@
  */
 
 use buck2_analysis::attrs::resolve::configured_attr::ConfiguredAttrExt;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_common::package_listing::listing::testing::PackageListingExt;
@@ -1074,9 +1074,8 @@ fn test_user_placeholders() -> buck2_error::Result<()> {
                     let artifact_path_mapping = BuckMutMap::default();
                     let mut fmt =
                         CommandLineBuilder::new(&mut cli, &artifact_path_mapping, &executor_fs);
-                    ValueAsCommandLineLike::unpack_value_err(v)
+                    <&dyn CommandLineArgLike>::unpack_value_err(v)
                         .unwrap()
-                        .0
                         .add_to_command_line(&mut fmt)
                         .unwrap();
                     cli.join(" ")

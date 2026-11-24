@@ -43,7 +43,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArt
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::InputProperties;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use crate::interpreter::rule_defs::provider::ProviderCollection;
 
 /// A provider that all rules' implementations must return
@@ -142,7 +142,7 @@ pub struct DefaultInfo<'v> {
     /// but _not_ when it's depended on as as a "source" (i.e., `attrs.source()`).
     /// `ArtifactTraversable` can be an `Artifact` (which yields itself), or
     /// `cmd_args`, which expand to all their inputs.
-    other_outputs: ValueOf<'v, ListType<ValueAsCommandLineLike<'v>>>,
+    other_outputs: ValueOf<'v, ListType<StarlarkCmdArgsLike>>,
 }
 
 fn validate_default_info<'v>(info: &DefaultInfo<'v>) -> buck2_error::Result<()> {
@@ -277,7 +277,7 @@ impl<'v> DefaultInfo<'v> {
         }
 
         for output in self.other_outputs.iter() {
-            output?.get().0.visit_artifacts(&mut Visitor(processor))?;
+            output?.get().visit_artifacts(&mut Visitor(processor))?;
         }
         Ok(())
     }
@@ -318,7 +318,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             ValueOf<'v, ListType<StarlarkArtifactView<'v>>>,
         >,
         #[starlark(default = ValueOf::new_unchecked(Value::new_empty_list()))]
-        other_outputs: ValueOf<'v, ListType<ValueAsCommandLineLike<'v>>>,
+        other_outputs: ValueOf<'v, ListType<StarlarkCmdArgsLike>>,
         #[starlark(default = ValueOf::empty_dict())] sub_targets: ValueOf<
             'v,
             DictType<StarlarkStr, Value<'v>>,

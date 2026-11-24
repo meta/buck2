@@ -19,10 +19,10 @@ use buck2_build_api::actions::impls::json::JsonUnpack;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineSink;
 use buck2_build_api::interpreter::rule_defs::cmd_args::InputProperties;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_execute::artifact::fs::ExecutorFs;
 use derive_more::Display;
@@ -97,8 +97,7 @@ impl<'v> StarlarkDepFileFingerprint<'v> {
                 json::visit_json_artifacts(self.content, visitor)
             }
             DepFileFingerprintFormat::Args { macro_files, .. } => {
-                ValueAsCommandLineLike::unpack_value_err(self.content)?
-                    .0
+                <&dyn CommandLineArgLike>::unpack_value_err(self.content)?
                     .visit_artifacts(visitor)?;
                 if let Some(files) = macro_files {
                     for artifact in files {

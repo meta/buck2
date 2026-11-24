@@ -52,8 +52,8 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::Requires;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SingletonCommandLineSink;
 use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use buck2_build_api::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::path_format;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use buck2_build_signals::env::WaitingCategory;
 use buck2_build_signals::env::WaitingData;
@@ -347,7 +347,7 @@ pub(crate) struct StarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) dep_file_fingerprints: MiniBoxSlice<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-    pub(crate) env: Option<ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>>,
+    pub(crate) env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
     pub(crate) worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) category: StringValue<'v>,
@@ -368,7 +368,7 @@ pub(crate) struct FrozenStarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, FrozenStarlarkCmdArgs<'v>>,
     pub(crate) dep_file_fingerprints: MiniBoxSlice<ValueTyped<'v, StarlarkDepFileFingerprint<'v>>>,
-    pub(crate) env: Option<ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>>,
+    pub(crate) env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
     pub(crate) worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTyped<'v, WorkerInfo<'v>>>,
     pub(crate) category: StringValue<'v>,
@@ -607,7 +607,7 @@ impl RunAction {
                 .iter()
                 .map(|entry| {
                     let (k, v) = entry?;
-                    Ok((k.as_str(), v.get().0))
+                    Ok((k.as_str(), v.get()))
                 })
                 .collect::<buck2_error::Result<Vec<_>>>()?,
         };
@@ -2051,17 +2051,17 @@ mod tests {
             )?;
             let (profiling, module, _) = finished_eval.freeze_and_finish(module)?;
             let args = module.get("args").expect("args should be defined");
-            let args = ValueAsCommandLineLike::unpack_value_err(args.as_ref().value())?;
+            let args = <&dyn CommandLineArgLike>::unpack_value_err(args.as_ref().value())?;
 
             let mut path_visitor = SkipHiddenCommandLineArtifactVisitor::new();
-            args.0.visit_artifacts(&mut path_visitor)?;
+            args.visit_artifacts(&mut path_visitor)?;
             assert_eq!(
                 path_visitor.inputs.into_iter().collect::<Vec<_>>(),
                 vec![ArtifactGroup::Artifact(visible.dupe())],
             );
 
             let mut dependency_visitor = SimpleCommandLineArtifactVisitor::new();
-            args.0.visit_artifacts(&mut dependency_visitor)?;
+            args.visit_artifacts(&mut dependency_visitor)?;
             assert_eq!(
                 dependency_visitor.inputs.into_iter().collect::<Vec<_>>(),
                 vec![

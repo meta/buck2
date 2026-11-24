@@ -54,7 +54,7 @@ fn stringifies_correctly() -> buck2_error::Result<()> {
     expect_error(
         tester.run_starlark_bzl_test(contents),
         contents,
-        "Expected `Artifact | CellPath | CellRoot",
+        "Expected `CmdArgsLike`, but got",
     );
 
     Ok(())
@@ -226,12 +226,12 @@ fn command_line_builder() -> buck2_error::Result<()> {
     expect_error(
         tester.run_starlark_bzl_test(content_invalid_type_1),
         content_invalid_type_1,
-        "Expected `Artifact | CellPath | CellRoot",
+        "Expected `list | CmdArgsLike`, but got",
     );
     expect_error(
         tester.run_starlark_bzl_test(content_invalid_type_3),
         content_invalid_type_3,
-        "Expected `Artifact | CellPath | CellRoot",
+        "Expected `list | CmdArgsLike`, but got",
     );
 
     Ok(())

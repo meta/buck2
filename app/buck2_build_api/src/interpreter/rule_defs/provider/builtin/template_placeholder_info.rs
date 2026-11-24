@@ -27,8 +27,8 @@ use starlark::values::dict::DictType;
 use starlark::values::string::StarlarkStr;
 
 use crate as buck2_build_api;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 
 /// A provider that is used for expansions in string attribute templates
 ///
@@ -64,18 +64,18 @@ use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 )]
 #[repr(C)]
 pub struct TemplatePlaceholderInfo<'v> {
-    unkeyed_variables: ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
+    unkeyed_variables: ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>,
     keyed_variables: ValueOf<
         'v,
         DictType<
             StarlarkStr,
-            Either<ValueAsCommandLineLike<'v>, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
+            Either<StarlarkCmdArgsLike, DictType<StarlarkStr, StarlarkCmdArgsLike>>,
         >,
     >,
 }
 
 fn collect_variables<'v>(
-    variables: ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
+    variables: ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>,
 ) -> buck2_error::Result<BuckMutInsertionMap<StringValue<'v>, CommandLineArg<'v>>> {
     variables
         .iter()
@@ -120,16 +120,13 @@ fn template_placeholder_info_creator(builder: &mut GlobalsBuilder) {
     #[starlark(as_type = TemplatePlaceholderInfo<'static>)]
     fn TemplatePlaceholderInfo<'v>(
         #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
-        unkeyed_variables: ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
+        unkeyed_variables: ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>,
         #[starlark(default = ValueOf::new_unchecked(Value::new_empty_dict()))]
         keyed_variables: ValueOf<
             'v,
             DictType<
                 StarlarkStr,
-                Either<
-                    ValueAsCommandLineLike<'v>,
-                    DictType<StarlarkStr, ValueAsCommandLineLike<'v>>,
-                >,
+                Either<StarlarkCmdArgsLike, DictType<StarlarkStr, StarlarkCmdArgsLike>>,
             >,
         >,
         heap: Heap<'v>,

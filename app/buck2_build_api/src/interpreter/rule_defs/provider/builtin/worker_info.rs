@@ -34,7 +34,7 @@ use crate as buck2_build_api;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgsView;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 
 /// Provider that signals that a rule is a worker tool
 #[internal_provider(worker_info_creator)]
@@ -53,7 +53,7 @@ pub struct WorkerInfo<'v> {
     // Command to spawn a new worker
     pub exe: ValueOf<'v, StarlarkCmdArgsView<'v>>,
     /// Environment for the command that spawns the worker.
-    env: Option<ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>>,
+    env: Option<ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>>,
     // Maximum number of concurrent commands to execute on a worker instance without queuing
     pub concurrency: Option<ValueOf<'v, IntView<'v>>>,
     // Whether to always run actions using this worker via the streaming API
@@ -75,7 +75,7 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
     fn WorkerInfo<'v>(
         #[starlark(default = AllocList::EMPTY)] exe: Value<'v>,
         #[starlark(default = NoneOr::None)] env: NoneOr<
-            ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
+            ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] concurrency: NoneOr<
             ValueOf<'v, IntView<'v>>,
@@ -112,7 +112,7 @@ impl<'v> WorkerInfo<'v> {
         env.iter()
             .map(|entry| {
                 let (key, value) = entry?;
-                Ok((key.as_str(), value.get().0))
+                Ok((key.as_str(), value.get()))
             })
             .collect()
     }

@@ -50,7 +50,6 @@ futures.workspace = true
 internment.workspace = true
 inventory.workspace = true
 itertools.workspace = true
-linkme.workspace = true
 mini_vec.workspace = true
 multimap.workspace = true
 pagable.workspace = true

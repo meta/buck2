@@ -10,7 +10,7 @@
 
 use starlark::values::ValueOf;
 
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 
 /// A value checked to be command-line-like: what `cmd_args` holds.
-pub type CommandLineArg<'v> = ValueOf<'v, ValueAsCommandLineLike<'v>>;
+pub type CommandLineArg<'v> = ValueOf<'v, StarlarkCmdArgsLike>;

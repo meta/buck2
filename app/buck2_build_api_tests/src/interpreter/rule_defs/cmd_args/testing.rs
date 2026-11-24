@@ -10,10 +10,10 @@
 
 use std::hash::Hasher;
 
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineInputs;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_build_api::interpreter::rule_defs::register_rule_defs;
 use buck2_core::execution_types::executor_config::PathSeparatorKind;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
@@ -59,11 +59,9 @@ fn get_command_line(value: Value) -> buck2_error::Result<Vec<String>> {
     let artifact_path_mapping = BuckMutMap::default();
     let mut fmt = CommandLineBuilder::new(&mut cli, &artifact_path_mapping, &executor_fs);
 
-    match ValueAsCommandLineLike::unpack_value(value)? {
-        Some(v) => v.0.add_to_command_line(&mut fmt),
-        None => ValueAsCommandLineLike::unpack_value_err(value)?
-            .0
-            .add_to_command_line(&mut fmt),
+    match <&dyn CommandLineArgLike>::unpack_value(value)? {
+        Some(v) => v.add_to_command_line(&mut fmt),
+        None => <&dyn CommandLineArgLike>::unpack_value_err(value)?.add_to_command_line(&mut fmt),
     }?;
     Ok(cli)
 }
@@ -80,9 +78,7 @@ pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
         let mut cli = Vec::<String>::new();
         let artifact_path_mapping = BuckMutMap::default();
         let mut fmt = CommandLineBuilder::new(&mut cli, &artifact_path_mapping, &executor_fs);
-        ValueAsCommandLineLike::unpack_value_err(value)?
-            .0
-            .add_to_command_line(&mut fmt)?;
+        <&dyn CommandLineArgLike>::unpack_value_err(value)?.add_to_command_line(&mut fmt)?;
         assert_eq!(1, cli.len());
         Ok(cli.first().unwrap().clone())
     }
@@ -103,8 +99,7 @@ pub(crate) fn command_line_stringifier(builder: &mut GlobalsBuilder) {
     /// `CommandLineBuilder::new_hashing`'s hash of a command line, in hex.
     fn hash_cli_args<'v>(value: Value<'v>) -> starlark::Result<String> {
         let mut hasher = Blake3StrongHasher::new();
-        ValueAsCommandLineLike::unpack_value_err(value)?
-            .0
+        <&dyn CommandLineArgLike>::unpack_value_err(value)?
             .add_to_command_line(&mut CommandLineBuilder::new_hashing(&mut hasher))?;
         Ok(hasher.finalize().to_hex().to_string())
     }
@@ -119,7 +114,7 @@ pub(crate) fn inputs_helper(builder: &mut GlobalsBuilder) {
         let mut visitor = SimpleCommandLineArtifactVisitor::new();
         for v in values.try_items() {
             let v = v?;
-            let cli = ValueAsCommandLineLike::unpack_value_err(v)?.0;
+            let cli = <&dyn CommandLineArgLike>::unpack_value_err(v)?;
             cli.visit_artifacts(&mut visitor)?;
         }
 

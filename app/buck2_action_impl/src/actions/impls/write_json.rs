@@ -26,14 +26,12 @@ use buck2_build_api::actions::impls::json;
 use buck2_build_api::actions::impls::json::JsonUnpack;
 use buck2_build_api::actions::impls::json::validate_json;
 use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::command_line_arg_like_impl;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_build_signals::env::WaitingData;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::category::CategoryRef;
@@ -52,7 +50,6 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_complex_value;
 use starlark::starlark_module;
-use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::NoSerialize;
 use starlark::values::OwnedFrozen;
@@ -317,10 +314,6 @@ starlark_complex_value!(pub(crate) StarlarkWriteJsonCommandLineArg);
 
 #[starlark_value(type = "WriteJsonCliArgs")]
 impl<'v> StarlarkValue<'v> for StarlarkWriteJsonCommandLineArg<'v> {
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike>(self);
-    }
-
     #[starlark(implements = StarlarkCmdArgsLike)]
     fn cmd_args_like(this: ValueTyped<'v, Self>) -> &'v dyn CommandLineArgLike<'v> {
         this.as_ref()
@@ -337,23 +330,15 @@ impl<'v> StarlarkWriteJsonCommandLineArg<'v> {
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkWriteJsonCommandLineArg<'v> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkWriteJsonCommandLineArg::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
-        ValueAsCommandLineLike::unpack_value_err(self.artifact)?
-            .0
-            .add_to_command_line(fmt)
+        <&dyn CommandLineArgLike>::unpack_value_err(self.artifact)?.add_to_command_line(fmt)
     }
 
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
     ) -> buck2_error::Result<()> {
-        ValueAsCommandLineLike::unpack_value_err(self.artifact)?
-            .0
-            .visit_artifacts(visitor)?;
+        <&dyn CommandLineArgLike>::unpack_value_err(self.artifact)?.visit_artifacts(visitor)?;
         json::visit_json_artifacts(self.content, visitor)
     }
 

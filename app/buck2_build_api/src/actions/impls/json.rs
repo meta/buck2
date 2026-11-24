@@ -44,6 +44,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInp
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifactView;
 use crate::interpreter::rule_defs::artifact_tagging::StarlarkTaggedValue;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
@@ -52,7 +53,6 @@ use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::path_format;
 use crate::interpreter::rule_defs::cmd_args::path_format_absolute;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
-use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
 use crate::interpreter::rule_defs::transitive_set::TransitiveSetJsonProjection;
 
@@ -265,7 +265,7 @@ impl<'a, 'v> Serialize for SerializeValue<'a, 'v> {
                             // rejected here and needs to be updated if that changes.
                             None,
                         );
-                        err(x.get().0.add_to_command_line(&mut fmt))?;
+                        err(x.get().add_to_command_line(&mut fmt))?;
 
                         // We change the type, based on the value - singleton = String, otherwise list.
                         // That's a little annoying (type based on value), but otherwise there would be
@@ -385,11 +385,9 @@ pub fn visit_json_artifacts<'v>(
             // The _x function requires that the artifact is already bound, but we may need to visit artifacts
             // before that happens. Treating it like an opaque command_line works as we want for any artifact
             // type.
-            ValueAsCommandLineLike::unpack_value_err(v)?
-                .0
-                .visit_artifacts(visitor)?;
+            <&dyn CommandLineArgLike>::unpack_value_err(v)?.visit_artifacts(visitor)?;
         }
-        JsonUnpack::CommandLine(x) => x.get().0.visit_artifacts(visitor)?,
+        JsonUnpack::CommandLine(x) => x.get().visit_artifacts(visitor)?,
         JsonUnpack::Provider(x) => {
             for (_, v) in x.0.items() {
                 visit_json_artifacts(v, visitor)?;

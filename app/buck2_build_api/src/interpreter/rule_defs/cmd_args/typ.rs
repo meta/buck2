@@ -38,7 +38,6 @@ use starlark::environment::MethodsBuilder;
 use starlark::eval::Arguments;
 use starlark::static_starlark_value;
 use starlark::values::AllocValue;
-use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
@@ -73,7 +72,6 @@ use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::builder::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
-use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 use crate::interpreter::rule_defs::cmd_args::compute_relative_to_path;
 use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptions;
 use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptionsRef;
@@ -286,15 +284,11 @@ impl<'v, F: Fields<'v>> FieldsRef<'v, F> {
 }
 
 impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkCmdArgs::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         match self.0.options() {
             None => {
                 for item in self.0.items() {
-                    item.get().0.add_to_command_line(fmt)?;
+                    item.get().add_to_command_line(fmt)?;
                 }
                 Ok(())
             }
@@ -304,7 +298,7 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
                     fmt.push_scope(&options)?;
                 }
                 for item in self.0.items() {
-                    item.get().0.add_to_command_line(fmt)?;
+                    item.get().add_to_command_line(fmt)?;
                 }
                 if options.changes_builder() {
                     fmt.pop_scope();
@@ -324,7 +318,7 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
         ) -> buck2_error::Result<()> {
             for item in items {
                 visitor.push_frame()?;
-                item.get().0.visit_artifacts(visitor)?;
+                item.get().visit_artifacts(visitor)?;
                 visitor.pop_frame();
             }
 
@@ -471,12 +465,8 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
     }
 
     fn contains_arg_attr(&self) -> bool {
-        self.0.items().iter().any(|x| x.get().0.contains_arg_attr())
-            || self
-                .0
-                .hidden()
-                .iter()
-                .any(|x| x.get().0.contains_arg_attr())
+        self.0.items().iter().any(|x| x.get().contains_arg_attr())
+            || self.0.hidden().iter().any(|x| x.get().contains_arg_attr())
     }
 
     fn visit_write_to_file_macros(
@@ -499,12 +489,10 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
 
         for item in self.0.items() {
             item.get()
-                .0
                 .visit_write_to_file_macros(visitor, artifact_path_mapping)?;
         }
         for item in self.0.hidden() {
             item.get()
-                .0
                 .visit_write_to_file_macros(visitor, artifact_path_mapping)?;
         }
         Ok(())
@@ -728,26 +716,14 @@ impl<'v> StarlarkType<'v> for StarlarkCmdArgsView<'v> {
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for StarlarkCmdArgs<'v> {
     type Type = StarlarkCmdArgsView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike>(self);
-    }
 }
 
 #[starlark_value(frozen_vtable)]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkCmdArgs<'v> {
     type Type = StarlarkCmdArgsView<'v>;
-
-    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
-        demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);
-    }
 }
 
 impl<'v> CommandLineArgLike<'v> for StarlarkCmdArgs<'v> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(StarlarkCmdArgs::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         FieldsRef(self.0.borrow(), PhantomData).add_to_command_line(fmt)
     }
@@ -774,10 +750,6 @@ impl<'v> CommandLineArgLike<'v> for StarlarkCmdArgs<'v> {
 }
 
 impl<'v> CommandLineArgLike<'v> for FrozenStarlarkCmdArgs<'v> {
-    fn register_me(&self) {
-        command_line_arg_like_impl!(FrozenStarlarkCmdArgs::get_type_starlark_repr());
-    }
-
     fn add_to_command_line(&self, fmt: &mut CommandLineBuilder<'v, '_>) -> buck2_error::Result<()> {
         FieldsRef(self, PhantomData).add_to_command_line(fmt)
     }

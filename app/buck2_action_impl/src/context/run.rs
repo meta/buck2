@@ -25,7 +25,7 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::Requires;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueUnpack;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use buck2_build_api::interpreter::rule_defs::cmd_args::cmd_args_like::StarlarkCmdArgsLike;
 use buck2_build_api::interpreter::rule_defs::command_executor_config::parse_custom_re_image;
 use buck2_build_api::interpreter::rule_defs::command_executor_config::parse_meta_internal_extra_params;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
@@ -262,7 +262,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named)] category: StringValue<'v>,
         #[starlark(require = named, default = NoneOr::None)] identifier: NoneOr<StringValue<'v>>,
         #[starlark(require = named)] env: Option<
-            ValueOf<'v, DictType<StarlarkStr, ValueAsCommandLineLike<'v>>>,
+            ValueOf<'v, DictType<StarlarkStr, StarlarkCmdArgsLike>>,
         >,
         #[starlark(require = named, default = false)] local_only: bool,
         #[starlark(require = named, default = false)] prefer_local: bool,
@@ -486,7 +486,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             None => None,
             Some(env) => {
                 for entry in env.iter() {
-                    entry?.1.get().0.visit_artifacts(&mut artifact_visitor)?;
+                    entry?.1.get().visit_artifacts(&mut artifact_visitor)?;
                 }
                 Some(env)
             }

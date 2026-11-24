@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use buck2_build_api::actions::query::ActionQueryNode;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactView;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::package::PackageLabel;
 use buck2_core::pattern::parse_package::parse_package;
@@ -203,12 +203,12 @@ pub(crate) fn register_artifact_function(builder: &mut GlobalsBuilder) {
     ///     ctx.output.print(path)
     /// ```
     fn get_paths_without_materialization<'v>(
-        #[starlark(require=pos)] cmd_line: ValueAsCommandLineLike<'v>,
+        #[starlark(require=pos)] cmd_line: &'v dyn CommandLineArgLike<'v>,
         #[starlark(require=pos)] ctx: ValueOf<'v, BxlContext<'v>>,
         #[starlark(require = named, default = false)] abs: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let inputs = get_cmd_line_inputs(cmd_line.0)?;
+        let inputs = get_cmd_line_inputs(cmd_line)?;
         let mut result = Vec::new();
 
         for artifact_group in &inputs.inputs {

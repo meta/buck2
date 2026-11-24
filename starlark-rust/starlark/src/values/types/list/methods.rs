@@ -24,15 +24,21 @@ use starlark_syntax::convert_indices::convert_indices;
 use crate as starlark;
 use crate::environment::MethodsBuilder;
 use crate::values::Heap;
+use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
 use crate::values::list::ListRef;
+use crate::values::list::StarlarkList;
 use crate::values::none::NoneOr;
 use crate::values::none::NoneType;
 use crate::values::types::list::value::ListData;
 use crate::values::typing::StarlarkIter;
 
+// A method that reads the list takes the receiver as `&ListRef`, the items, or as a plain value
+// that its body reads as a list. A receiver typed `StarlarkList` is converted before the
+// arguments are, and the method then tells the list's representations apart a second time where
+// it reads the list: that measured 5 to 7 instructions a call.
 #[starlark_module]
 pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
     /// [list.append](
@@ -267,37 +273,30 @@ pub(crate) fn list_methods(builder: &mut MethodsBuilder) {
         this: Value<'v>,
         #[starlark(require = pos)] needle: Value<'v>,
     ) -> starlark::Result<NoneType> {
-        // Written in two separate blocks so we ensure we give up the
-        // immutable borrow before making the mutable borrow.
-        let position = {
-            let this = ListRef::from_value(this).unwrap();
-            let mut position = None;
-            for (i, v) in this.iter().enumerate() {
-                // Starlark equality can fail (e.g. on recursive values); report that rather
-                // than treating the element as unequal.
-                if v.equals(needle)? {
-                    position = Some(i);
-                    break;
-                }
-            }
-            match position {
-                Some(i) => i,
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "Element '{}' not found in list '{}'",
-                        needle,
-                        this
-                    )
-                    .into());
-                }
-            }
-        };
-        {
-            // now mutate it with no further value calls
-            let this = ListData::from_value_mut(this)?;
-            this.remove(position);
-            Ok(NoneType)
+        // Out of line, with its arguments by value: formatted here, the list and the item are
+        // stored for the formatter on every call.
+        #[cold]
+        #[inline(never)]
+        fn not_found<'v>(needle: Value<'v>, list: Value<'v>) -> starlark::Error {
+            anyhow::anyhow!("Element '{}' not found in list '{}'", needle, list).into()
         }
+
+        let list = <StarlarkList>::unpack_value_err(this)?;
+        // `equals` runs no Starlark code, so the list does not change under the slice.
+        let mut position = None;
+        for (i, v) in list.content().iter().enumerate() {
+            // Starlark equality can fail (e.g. on recursive values); report that rather
+            // than treating the element as unequal.
+            if v.equals(needle)? {
+                position = Some(i);
+                break;
+            }
+        }
+        let Some(position) = position else {
+            return Err(not_found(needle, this));
+        };
+        list.mutable()?.remove(position);
+        Ok(NoneType)
     }
 }
 

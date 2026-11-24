@@ -29,6 +29,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueOf;
 use crate::values::list::ListRef;
+use crate::values::list::StarlarkList;
 use crate::values::tuple::TupleType;
 use crate::values::type_expr::StarlarkTypeExpr;
 use crate::values::type_expr::StarlarkTypeExprStable;
@@ -73,22 +74,50 @@ impl<'v, T: StarlarkTypeExpr<'v>> UnpackValue<'v> for ListType<T> {
     }
 }
 
-/// A type that `[]` belongs to: [`ListType`] and
-/// [`ListOrTupleType`](crate::values::list_or_tuple::ListOrTupleType).
+/// A type that `[]` belongs to: [`StarlarkList`] and
+/// [`StarlarkListOrTuple`](crate::values::list_or_tuple::StarlarkListOrTuple), and
+/// [`ListType`] and [`ListOrTupleType`](crate::values::list_or_tuple::ListOrTupleType).
 pub trait EmptyListType: sealed::Sealed {}
 
 impl<T> EmptyListType for ListType<T> {}
 impl<T> EmptyListType for Either<ListType<T>, TupleType<T>> {}
+impl<'v, T> EmptyListType for StarlarkList<'v, T> {}
+impl<'v, T> EmptyListType for Either<StarlarkList<'v, T>, TupleType<T>> {}
 
 mod sealed {
     use either::Either;
 
     use crate::values::list::ListType;
+    use crate::values::list::StarlarkList;
     use crate::values::tuple::TupleType;
 
     pub trait Sealed {}
     impl<T> Sealed for ListType<T> {}
     impl<T> Sealed for Either<ListType<T>, TupleType<T>> {}
+    impl<'v, T> Sealed for StarlarkList<'v, T> {}
+    impl<'v, T> Sealed for Either<StarlarkList<'v, T>, TupleType<T>> {}
+}
+
+/// A handle to a `list[T]` under either of its two names is a handle under the other, for
+/// code that has one and is given the other while [`ListType`] still exists.
+impl<'v, T: StarlarkTypeExpr<'v>> From<ValueOf<'v, ListType<T>>>
+    for ValueOf<'v, StarlarkList<'v, T>>
+{
+    #[inline]
+    fn from(list: ValueOf<'v, ListType<T>>) -> Self {
+        // The same type under its other name.
+        ValueOf::new_unchecked(list.to_value())
+    }
+}
+
+impl<'v, T: StarlarkTypeExpr<'v>> From<ValueOf<'v, StarlarkList<'v, T>>>
+    for ValueOf<'v, ListType<T>>
+{
+    #[inline]
+    fn from(list: ValueOf<'v, StarlarkList<'v, T>>) -> Self {
+        // The same type under its other name.
+        ValueOf::new_unchecked(list.to_value())
+    }
 }
 
 impl<'v, T: StarlarkTypeExpr<'v> + EmptyListType> ValueOf<'v, T> {

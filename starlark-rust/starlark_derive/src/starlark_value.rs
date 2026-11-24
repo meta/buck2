@@ -47,6 +47,10 @@ struct StarlarkValueAttrs {
     typ: Option<syn::Expr>,
     vtable: VtableMode,
     alloc: AllocMode,
+    /// `type_expr = by_hand`: the type writes its own `StarlarkTypeExpr` and `UnionPayload`
+    /// impls. A container does: its Rust type is generic over the item type and is the
+    /// `StarlarkType` at one instantiation only.
+    type_expr_by_hand: bool,
 }
 
 /// How the representation is allocated, which decides the `AllocRepresentation` and
@@ -125,6 +129,7 @@ impl syn::parse::Parse for StarlarkValueAttrs {
             typ,
             vtable: VtableMode::Default,
             alloc: AllocMode::Default,
+            type_expr_by_hand: false,
         };
 
         loop {
@@ -164,10 +169,17 @@ impl syn::parse::Parse for StarlarkValueAttrs {
                     ));
                 };
                 attrs.set_alloc_mode(&name, mode)?;
+            } else if name == "type_expr" {
+                input.parse::<syn::Token![=]>()?;
+                let kind = input.parse::<syn::Ident>()?;
+                if kind != "by_hand" {
+                    return Err(syn::Error::new_spanned(kind, "`type_expr` is `by_hand`"));
+                }
+                attrs.type_expr_by_hand = true;
             } else {
                 return Err(syn::Error::new_spanned(
                     name,
-                    "unknown attribute, allowed attributes are `skip_vtable`, `no_freeze`, `frozen_vtable`, `alloc = ...`",
+                    "unknown attribute, allowed attributes are `skip_vtable`, `no_freeze`, `frozen_vtable`, `alloc = ...`, `type_expr = by_hand`",
                 ));
             }
         }
@@ -378,7 +390,20 @@ impl ImplStarlarkValue {
     /// The type as a type expression: the `StarlarkTypeExpr` impl that `StarlarkType` has as
     /// its supertrait. Its `Get` and `get` are `get_items`, the block's own or the default;
     /// its `Ty` is the type's.
-    fn type_expr_impl(&self, get_items: Vec<syn::ImplItem>) -> proc_macro2::TokenStream {
+    fn type_expr_impl(
+        &self,
+        get_items: Vec<syn::ImplItem>,
+    ) -> syn::Result<proc_macro2::TokenStream> {
+        if self.attrs.type_expr_by_hand {
+            return match get_items.first() {
+                None => Ok(quote! {}),
+                Some(item) => Err(syn::Error::new_spanned(
+                    item,
+                    "with `type_expr = by_hand` the type's `Get` and `get` are in the \
+                     `StarlarkTypeExpr` impl it writes",
+                )),
+            };
+        }
         let lt = &self.lifetime_param;
         let (impl_generics, _, where_clause) = self.input.generics.split_for_impl();
         let self_ty = &self.input.self_ty;
@@ -387,7 +412,7 @@ impl ImplStarlarkValue {
         } else {
             get_items
         };
-        quote! {
+        Ok(quote! {
             impl #impl_generics starlark::values::StarlarkTypeExpr<#lt> for #self_ty
             #where_clause
             {
@@ -398,7 +423,7 @@ impl ImplStarlarkValue {
                     <Self as starlark::values::StarlarkType<#lt>>::get_type_starlark_repr()
                 }
             }
-        }
+        })
     }
 
     fn get_type_value_static(&self) -> syn::Result<syn::ImplItem> {
@@ -901,7 +926,7 @@ impl ImplStarlarkValue {
         let lt = &self.lifetime_param;
         let (get_items, mut items): (Vec<syn::ImplItem>, Vec<syn::ImplItem>) =
             items.into_iter().partition(is_get_item);
-        let type_expr_impl = self.type_expr_impl(get_items);
+        let type_expr_impl = self.type_expr_impl(get_items)?;
         let memberships = take_memberships(&mut items)?;
         let mut always_hashes = None;
         let mut typed = TypedMethods::new();
@@ -1160,7 +1185,11 @@ fn derive_starlark_value_impl(
             ));
         }
         let type_impl = impl_starlark_value.type_impl(input.items.clone())?;
-        let union_payload = impl_starlark_value.union_payload_is_self();
+        let union_payload = if impl_starlark_value.attrs.type_expr_by_hand {
+            None
+        } else {
+            Some(impl_starlark_value.union_payload_is_self())
+        };
         return Ok(quote! { #type_impl #union_payload });
     }
 

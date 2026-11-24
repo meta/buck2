@@ -22,6 +22,7 @@ pub(crate) mod globals;
 mod list_type;
 pub(crate) mod methods;
 mod refs;
+mod starlark_list;
 pub(crate) mod value;
 
 pub use crate::values::types::list::alloc::AllocList;
@@ -29,3 +30,5 @@ pub use crate::values::types::list::list_type::EmptyListType;
 pub use crate::values::types::list::list_type::ListOf;
 pub use crate::values::types::list::list_type::ListType;
 pub use crate::values::types::list::refs::ListRef;
+pub use crate::values::types::list::starlark_list::ListValues;
+pub use crate::values::types::list::starlark_list::StarlarkList;

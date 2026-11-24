@@ -218,6 +218,10 @@ pub fn derive_starlark_representations(input: proc_macro::TokenStream) -> proc_m
 ///   is `complex` (the unfrozen heap; both with `frozen_vtable`), `frozen_vtable` alone is
 ///   `frozen` (the frozen heap). `by_hand` writes nothing, for a representation that is built
 ///   from a recipe rather than by value.
+/// - `type_expr = by_hand`: do not write the type's `StarlarkTypeExpr` impl, nor make it a
+///   union payload. For a type that writes them itself because its Rust type is generic and
+///   only one instantiation is the `StarlarkType`: `StarlarkList<'v, T>` is `list[T]` for
+///   every `T` and the type `list` at `T = Value<'v>`.
 ///
 /// At most one of `skip_vtable`, `no_freeze`, `frozen_vtable` may be given, and at most one
 /// of `no_freeze` and `alloc`.

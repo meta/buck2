@@ -29,8 +29,8 @@ use std::slice;
 
 use allocative::Allocative;
 use display_container::fmt_container;
+use dupe::Dupe;
 use serde::Serialize;
-use starlark_derive::StarlarkRepresentations;
 use starlark_derive::Trace;
 use starlark_derive::starlark_value;
 
@@ -58,6 +58,7 @@ use crate::values::index::apply_slice;
 use crate::values::index::convert_index;
 use crate::values::list::ListRef;
 use crate::values::list::ListType;
+use crate::values::list::StarlarkList;
 
 #[derive(Clone, Default, Trace, Debug, ProvidesStaticType, Allocative)]
 #[repr(transparent)]
@@ -139,7 +140,8 @@ impl<'v> ListData<'v> {
     }
 
     /// Return an error if there's at least one iterator over the list.
-    fn check_can_mutate(&self) -> anyhow::Result<()> {
+    #[inline]
+    pub(crate) fn check_can_mutate(&self) -> anyhow::Result<()> {
         if unlikely(self.content.get().as_ref().iter_count_is_non_zero()) {
             return Err(ValueError::MutationDuringIteration.into());
         }
@@ -369,22 +371,22 @@ pub(crate) fn display_list(xs: &[Value], f: &mut fmt::Formatter<'_>) -> fmt::Res
 
 starlark::methods_static!(LIST_METHODS = crate::values::types::list::methods::list_methods);
 
-/// A `list` in either of its representations.
-#[derive(Debug, Clone, Copy, StarlarkRepresentations)]
-pub(crate) enum ListView<'v> {
+/// Which of its representations a list is, with the representation.
+#[derive(Debug, Clone, Copy, Dupe)]
+pub(crate) enum ListRepr<'v> {
     Frozen(ValueTyped<'v, ListGen<FrozenListData<'v>>>),
     Unfrozen(ValueTyped<'v, ListGen<ListData<'v>>>),
 }
 
 /// `$e` with `$x` bound to the representation's `ListLike`.
 macro_rules! with_list {
-    ($self:expr, |$x:ident| $e:expr) => {
-        match $self {
-            ListView::Frozen($x) => {
+    ($repr:expr, |$x:ident| $e:expr) => {
+        match $repr {
+            ListRepr::Frozen($x) => {
                 let $x = &$x.as_ref().0;
                 $e
             }
-            ListView::Unfrozen($x) => {
+            ListRepr::Unfrozen($x) => {
                 let $x = &$x.as_ref().0;
                 $e
             }
@@ -392,35 +394,60 @@ macro_rules! with_list {
     };
 }
 
-impl<'v> ListView<'v> {
-    #[inline]
-    fn content(self) -> &'v [Value<'v>] {
-        with_list!(self, |l| l.content())
+impl<'v> ListRepr<'v> {
+    /// `value` as a list, if it is one. The representation is told by whether the value is
+    /// frozen, so one representation is tested, not both in turn.
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
+    pub(crate) fn of_value(value: Value<'v>) -> Option<Self> {
+        if value.is_frozen() {
+            ValueTyped::new(value).map(ListRepr::Frozen)
+        } else {
+            ValueTyped::new(value).map(ListRepr::Unfrozen)
+        }
     }
 
-    /// A list of the items `times` times over: `list * times` and `times * list`.
-    // Inlined into `mul` and `rmul`, as `Tuple::repeated` is.
-    #[inline(always)]
-    fn repeated(self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
-        let content = self.content();
-        let mut result = Vec::with_capacity(content.len() * cmp::max(0, times) as usize);
-        for _ in 0..times {
-            result.extend(content.iter());
+    #[inline]
+    pub(crate) fn to_value(self) -> Value<'v> {
+        match self {
+            ListRepr::Frozen(x) => x.to_value(),
+            ListRepr::Unfrozen(x) => x.to_value(),
         }
-        heap.alloc_list(&result)
+    }
+
+    /// The items as they are now. The slice does not follow a list that changes: what holds
+    /// it across code that can change the list reads stale items.
+    #[inline]
+    pub(crate) fn content(self) -> &'v [Value<'v>] {
+        with_list!(self, |l| l.content())
     }
 }
 
-#[starlark_value(type = ListData::TYPE)]
-impl<'v> StarlarkType<'v> for ListView<'v> {
+/// A list of the items of `list` `times` times over: `list * times` and `times * list`.
+// Inlined into `mul` and `rmul`, as `Tuple::repeated` is.
+#[inline(always)]
+fn repeated<'v>(
+    list: StarlarkList<'v>,
+    times: i32,
+    heap: Heap<'v>,
+) -> ValueOf<'v, ListType<Value<'v>>> {
+    let content = list.content();
+    let mut result = Vec::with_capacity(content.len() * cmp::max(0, times) as usize);
+    for _ in 0..times {
+        result.extend(content.iter());
+    }
+    heap.alloc_list(&result)
+}
+
+#[starlark_value(type = ListData::TYPE, type_expr = by_hand)]
+impl<'v> StarlarkType<'v> for StarlarkList<'v> {
     fn get_methods() -> Option<&'static Methods> {
         Some(LIST_METHODS.methods())
     }
 
-    fn collect_repr(&self, s: &mut String) {
+    fn collect_repr(this: Self, s: &mut String) {
         // Fast path as repr() for lists is quite hot
         s.push('[');
-        for (i, v) in self.content().iter().enumerate() {
+        for (i, v) in this.content().iter().enumerate() {
             if i != 0 {
                 s.push_str(", ");
             }
@@ -429,34 +456,41 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
         s.push(']');
     }
 
-    fn collect_repr_cycle(&self, collector: &mut String) {
+    fn collect_repr_cycle(_this: Self, collector: &mut String) {
         collector.push_str("[...]");
     }
 
-    fn to_bool(&self) -> bool {
-        !self.content().is_empty()
+    fn to_bool(this: Self) -> bool {
+        !this.is_empty()
     }
 
-    fn equals(&self, other: &ListRef<'v>) -> crate::Result<bool> {
-        equals_slice(self.content(), &other.content, |x, y| x.equals(*y))
+    // TODO(containers): the operand is `&ListRef` and not `Self` because of what the compiler
+    // keeps in registers for each: with `Self`, a pair of items that are one value measured
+    // one instruction more, and a pair that is not, three fewer.
+    fn equals(this: Self, other: &ListRef<'v>) -> crate::Result<bool> {
+        equals_slice(this.content(), other.content(), |x, y| x.equals(*y))
     }
 
-    fn compare(&self, other: &ListRef<'v>) -> crate::Result<Ordering> {
-        compare_slice(self.content(), &other.content, |x, y| x.compare(*y))
+    // The operand's items are read before the list's own, here and in `add`: the compiler then
+    // tells the operand's representations apart once, where its type is tested, and not again
+    // after the list is read (measured: 2 instructions).
+    fn compare(this: Self, other: Self) -> crate::Result<Ordering> {
+        let other = other.content();
+        compare_slice(this.content(), other, |x, y| x.compare(*y))
     }
 
-    fn at(&self, index: i32) -> crate::Result<Value<'v>> {
-        let content = self.content();
+    fn at(this: Self, index: i32) -> crate::Result<Value<'v>> {
+        let content = this.content();
         let i = convert_index(index, content.len() as i32)? as usize;
         Ok(content[i])
     }
 
-    fn length(&self) -> i32 {
-        self.content().len() as i32
+    fn length(this: Self) -> i32 {
+        this.len() as i32
     }
 
-    fn is_in(&self, other: Value<'v>) -> crate::Result<bool> {
-        for x in self.content().iter() {
+    fn is_in(this: Self, other: Value<'v>) -> crate::Result<bool> {
+        for x in this.content().iter() {
             if x.equals(other)? {
                 return Ok(true);
             }
@@ -465,49 +499,50 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
     }
 
     fn slice(
-        &self,
+        this: Self,
         start: Option<Value>,
         stop: Option<Value>,
         stride: Option<Value>,
         heap: Heap<'v>,
     ) -> crate::Result<Value<'v>> {
-        let xs = self.content();
+        let xs = this.content();
         let res = apply_slice(xs, start, stop, stride)?;
         Ok(heap.alloc_list(&res).to_value())
     }
 
-    unsafe fn iterate(&self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        unsafe { Ok(with_list!(self, |l| l.new_iter((*self).into()))) }
+    unsafe fn iterate(this: Self, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        unsafe { Ok(with_list!(this.repr(), |l| l.new_iter(this.to_value()))) }
     }
 
-    unsafe fn iter_size_hint(&self, index: usize) -> (usize, Option<usize>) {
-        unsafe { with_list!(self, |l| l.iter_size_hint(index)) }
+    unsafe fn iter_size_hint(this: Self, index: usize) -> (usize, Option<usize>) {
+        unsafe { with_list!(this.repr(), |l| l.iter_size_hint(index)) }
     }
 
-    unsafe fn iter_next(&self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
-        unsafe { with_list!(self, |l| l.iter_next(index)) }
+    unsafe fn iter_next(this: Self, index: usize, _heap: Heap<'v>) -> Option<Value<'v>> {
+        unsafe { with_list!(this.repr(), |l| l.iter_next(index)) }
     }
 
-    unsafe fn iter_stop(&self) {
-        unsafe { with_list!(self, |l| l.iter_stop()) }
+    unsafe fn iter_stop(this: Self) {
+        unsafe { with_list!(this.repr(), |l| l.iter_stop()) }
     }
 
-    fn add(&self, other: &ListRef<'v>, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
-        heap.alloc_list_concat(self.content(), other.content())
+    fn add(this: Self, other: Self, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        let other = other.content();
+        heap.alloc_list_concat(this.content(), other)
     }
 
-    fn mul(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
-        self.repeated(times, heap)
+    fn mul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        repeated(this, times, heap)
     }
 
-    fn rmul(&self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
-        self.repeated(times, heap)
+    fn rmul(this: Self, times: i32, heap: Heap<'v>) -> ValueOf<'v, ListType<Value<'v>>> {
+        repeated(this, times, heap)
     }
 
-    fn set_at(&self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
+    fn set_at(this: Self, index: Value<'v>, alloc_value: Value<'v>) -> crate::Result<()> {
         let index = i32::unpack_value_err(index)?;
-        let i = convert_index(index, self.content().len() as i32)? as usize;
-        with_list!(self, |l| l.set_at(i, alloc_value))
+        let i = convert_index(index, this.len() as i32)? as usize;
+        with_list!(this.repr(), |l| l.set_at(i, alloc_value))
     }
 
     fn get_type_starlark_repr() -> Ty {
@@ -517,7 +552,7 @@ impl<'v> StarlarkType<'v> for ListView<'v> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for ListGen<ListData<'v>> {
-    type Type = ListView<'v>;
+    type Type = StarlarkList<'v>;
 
     fn is_special(_: Private) -> bool
     where
@@ -529,7 +564,7 @@ impl<'v> StarlarkValue<'v> for ListGen<ListData<'v>> {
 
 #[starlark_value]
 impl<'v> StarlarkValue<'v> for ListGen<FrozenListData<'v>> {
-    type Type = ListView<'v>;
+    type Type = StarlarkList<'v>;
 
     fn is_special(_: Private) -> bool
     where

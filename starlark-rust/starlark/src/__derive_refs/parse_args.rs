@@ -22,6 +22,7 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::dict::AllocDict;
+use crate::values::unpack_then;
 
 /// Collect `N` arguments.
 ///
@@ -56,10 +57,26 @@ pub fn parse_positional_kwargs_alloc<'v, 'a, const R: usize, const O: usize>(
     Ok((required, optional, kwargs))
 }
 
-/// Utility for checking a `this` parameter matches what you expect.
-#[inline]
+/// Converts the receiver of a method to the type the method declares for it.
+///
+/// The conversion is inlined into the method and its failure is kept out of line. A method
+/// that was reached through a value has a receiver of its type, so the failure is cold; and
+/// [`unpack_named_param`](UnpackValue::unpack_named_param), which builds the error with its
+/// context, is not inlined for most receiver types, so that going through it cost a call
+/// that returns its result through memory: 35 to 70 instructions per method call. The cold
+/// path converts again through it, which keeps its errors.
+///
+/// It is written with `unpack_then`: a `match` on the result of `T::unpack` here measured
+/// five instructions more for a `&str` receiver, a check of the string's pointer for null.
+#[inline(always)]
 pub fn check_this<'v, T: UnpackValue<'v>>(this: Value<'v>) -> crate::Result<T> {
-    T::unpack_named_param(this, "this")
+    #[cold]
+    #[inline(never)]
+    fn error<'v, T: UnpackValue<'v>>(this: Value<'v>) -> crate::Result<T> {
+        T::unpack_named_param(this, "this")
+    }
+
+    unpack_then(this, Ok, || error(this), |_| error(this))
 }
 
 /// Utility for checking a required parameter matches what you expect.

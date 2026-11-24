@@ -432,6 +432,40 @@ def get_compiling_deps_tset(
         return children[0]
     return actions.tset(JavaCompilingDepsTSet, children = children)
 
+def compile_time_read_marker_output(compile_time_read_marker: Dependency) -> JavaClasspathEntry:
+    """The library output of a toolchain's `compile_time_read_marker`."""
+    marker = compile_time_read_marker[JavaLibraryInfo].library_output
+    expect(marker != None, "compile_time_read_marker {} has no library output".format(compile_time_read_marker.label))
+    return marker
+
+def add_compile_time_read_marker(
+    actions: AnalysisActions,
+    additional_classpath_entries: JavaCompilingDepsTSet | None,
+    compile_time_read_marker: Dependency | None,
+) -> JavaCompilingDepsTSet | None:
+    """
+    `additional_classpath_entries` plus a toolchain's `compile_time_read_marker`, as an entry of both
+    the full and the source-only ABI compile classpath. The marker's deps are not added.
+    """
+    if compile_time_read_marker == None:
+        return additional_classpath_entries
+    marker = compile_time_read_marker_output(compile_time_read_marker)
+    return get_compiling_deps_tset(
+        actions,
+        additional_classpath_entries = [additional_classpath_entries] if additional_classpath_entries else [],
+        value = JavaClasspathEntry(
+            full_library = marker.full_library,
+            abi = marker.abi,
+            abi_as_dir = marker.abi_as_dir,
+            # Source-only ABI compiles read the annotations of the annotation classes on their
+            # classpath too.
+            required_for_source_only_abi = True,
+            abi_jar_snapshot = marker.abi_jar_snapshot,
+            full_library_compiler_depth = marker.full_library_compiler_depth,
+            abi_compiler_depth = marker.abi_compiler_depth,
+        ),
+    )
+
 def single_library_compiling_deps_wrapper(actions: AnalysisActions, compiling_deps_tset: [JavaCompilingDepsTSet, None]) -> [JavaCompilingDepsTSetWrapper, None]:
     if compiling_deps_tset:
         return actions.tset(JavaCompilingDepsTSetWrapper, value = compiling_deps_tset)

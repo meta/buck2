@@ -14,6 +14,8 @@ KotlinToolchainInfo = provider(
         "annotation_processing_jar": provider_field(typing.Any, default = None),
         "class_loader_bootstrapper": provider_field(typing.Any, default = None),
         "compile_kotlin": provider_field(typing.Any, default = None),
+        # The Kotlin compiles' counterpart of `JavaToolchainInfo.compile_time_read_marker`.
+        "compile_time_read_marker": provider_field(Dependency | None, default = None),
         "dep_files": provider_field(typing.Any, default = None),
         "enable_incremental_compilation": provider_field(typing.Any, default = None),
         # Whether incremental kotlinc rounds compile in full when the compiler arguments change

@@ -28,6 +28,7 @@ load(
     "JavaPackagingDepTSet",
     "JavaPackagingInfo",
     "JavaProviders",
+    "add_compile_time_read_marker",
     "create_java_library_providers",
     "create_native_providers",
     "get_compiling_deps_tset",
@@ -427,6 +428,10 @@ def build_kotlin_library(
         _check_exported_deps(ctx.attrs.exported_deps, "exported_deps")
         _check_exported_deps(ctx.attrs.exported_provided_deps, "exported_provided_deps")
         deps = ctx.attrs.deps + deps_query + ctx.attrs.exported_deps + ctx.attrs.provided_deps + provided_deps_query + ctx.attrs.exported_provided_deps
+
+        # For the Kotlin compiles below. The javac compile of the classic protocol gets the Java toolchain's
+        # marker from `build_java_library` instead.
+        kotlin_classpath_entries = add_compile_time_read_marker(ctx.actions, additional_classpath_entries, kotlin_toolchain.compile_time_read_marker)
         annotation_processor_properties = create_annotation_processor_properties(
             ctx,
             ctx.attrs.plugins + ctx.attrs.non_exec_dep_plugins_deprecated,
@@ -453,7 +458,7 @@ def build_kotlin_library(
                 (deps or []) + [kotlin_toolchain.kotlin_stdlib],
                 annotation_processor_properties,
                 ksp_annotation_processor_properties,
-                additional_classpath_entries,
+                kotlin_classpath_entries,
                 bootclasspath_for_kotlinc,
                 effective_kotlin_compiler_plugins,
                 target_level,
@@ -467,7 +472,7 @@ def build_kotlin_library(
                     (deps or []) + [kotlin_toolchain.kotlin_stdlib],
                     annotation_processor_properties,
                     ksp_annotation_processor_properties,
-                    additional_classpath_entries,
+                    kotlin_classpath_entries,
                     bootclasspath_for_kotlinc,
                     semanticdb_plugin,
                     target_level,
@@ -529,7 +534,7 @@ def build_kotlin_library(
             common_kotlincd_kwargs = {
                 "abi_generation_mode": abi_generation_mode,
                 "actions": ctx.actions,
-                "additional_classpath_entries": additional_classpath_entries,
+                "additional_classpath_entries": kotlin_classpath_entries,
                 "annotation_processor_properties": AnnotationProcessorProperties(
                     annotation_processors = annotation_processor_properties.annotation_processors + ksp_annotation_processor_properties.annotation_processors,
                     annotation_processor_params = annotation_processor_properties.annotation_processor_params
@@ -609,7 +614,7 @@ def build_kotlin_library(
                     kotlin_toolchain,
                     srcs,
                     deps,
-                    additional_classpath_entries,
+                    kotlin_classpath_entries,
                     bootclasspath_for_kotlinc,
                     generated_sources,
                     annotation_processor_properties,

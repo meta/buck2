@@ -9,6 +9,7 @@
 load(
     "@prelude//java:java_providers.bzl",
     "JavaPackagingDep",  # @unused Used as type
+    "compile_time_read_marker_output",
 )
 load("@prelude//java:java_toolchain.bzl", "JavaToolchainInfo")
 load("@prelude//java/utils:java_more_utils.bzl", "get_path_separator_for_exec_os")
@@ -158,6 +159,12 @@ def get_proguard_output(
     if ctx.attrs.proguard_config:
         proguard_configs.append(ctx.attrs.proguard_config)
     proguard_configs.extend(additional_proguard_configs)
+
+    # Packaged annotations can carry the compile-only `@CompileTimeRead` marker; ProGuard must
+    # resolve it without packaging it.
+    compile_time_read_marker = ctx.attrs._java_toolchain[JavaToolchainInfo].compile_time_read_marker
+    if compile_time_read_marker != None:
+        additional_jars = additional_jars + [compile_time_read_marker_output(compile_time_read_marker).full_library]
 
     if skip_proguard:
         input_jars_to_output_jars = {input_jar: input_jar for input_jar in input_jars.keys()}

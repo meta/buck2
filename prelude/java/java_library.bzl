@@ -25,6 +25,7 @@ load(
     "JavaLibraryInfo",
     "JavaPackagingDepTSet",
     "JavaProviders",
+    "add_compile_time_read_marker",
     "create_abi",
     "create_java_library_providers",
     "create_native_providers",
@@ -730,6 +731,7 @@ def build_java_library(
     plugin_params = create_plugin_params(ctx, ctx.attrs.plugins + ctx.attrs.non_exec_dep_plugins_deprecated) if run_annotation_processors else None
     manifest_file = ctx.attrs.manifest_file
     source_level, target_level = get_java_version_attributes(ctx)
+    java_toolchain = ctx.attrs._java_toolchain[JavaToolchainInfo]
 
     outputs = None
     common_compile_kwargs = None
@@ -739,7 +741,7 @@ def build_java_library(
 
         common_compile_kwargs = {
             "abi_generation_mode": abi_generation_mode,
-            "additional_classpath_entries": additional_classpath_entries,
+            "additional_classpath_entries": add_compile_time_read_marker(ctx.actions, additional_classpath_entries, java_toolchain.compile_time_read_marker),
             "additional_compiled_srcs": additional_compiled_srcs,
             "annotation_processor_properties": annotation_processor_properties,
             "custom_jdk_info": custom_jdk_info,
@@ -767,7 +769,6 @@ def build_java_library(
 
         outputs = compile_to_jar(ctx, plugin_params = plugin_params, extra_arguments = extra_arguments, **common_compile_kwargs)
 
-    java_toolchain = ctx.attrs._java_toolchain[JavaToolchainInfo]
     if common_compile_kwargs and srcs and not ctx.attrs._is_building_android_binary:
         extra_sub_targets = _nullsafe_subtarget(ctx, extra_sub_targets, common_compile_kwargs)
         if not java_toolchain.is_bootstrap_toolchain:

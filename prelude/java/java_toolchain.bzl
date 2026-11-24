@@ -28,6 +28,11 @@ JavaToolchainInfo = provider(
         "class_abi_generator": provider_field(typing.Any, default = None),
         "class_loader_bootstrapper": provider_field(typing.Any, default = None),
         "compile_and_package": provider_field(typing.Any, default = None),
+        # A `java_library` holding one marker annotation class that every library compile of this toolchain
+        # gets on its classpath, its source-only ABI classpath included, and never packages: annotation
+        # classes carry the marker, and a compile that reads them needs its class. The library must not
+        # have deps.
+        "compile_time_read_marker": provider_field(Dependency | None, default = None),
         "compiler_class_to_source_map": provider_field(typing.Any, default = None),
         "cp_snapshot_generator": provider_field(typing.Any, default = None),
         "dep_files": provider_field(typing.Any, default = None),

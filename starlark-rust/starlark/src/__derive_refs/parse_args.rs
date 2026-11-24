@@ -22,7 +22,6 @@ use crate::values::UnpackValue;
 use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::dict::AllocDict;
-use crate::values::unpack_then;
 
 /// Collect `N` arguments.
 ///
@@ -58,39 +57,33 @@ pub fn parse_positional_kwargs_alloc<'v, 'a, const R: usize, const O: usize>(
 }
 
 /// Converts the receiver of a method to the type the method declares for it.
-///
-/// The conversion is inlined into the method and its failure is kept out of line. A method
-/// that was reached through a value has a receiver of its type, so the failure is cold; and
-/// [`unpack_named_param`](UnpackValue::unpack_named_param), which builds the error with its
-/// context, is not inlined for most receiver types, so that going through it cost a call
-/// that returns its result through memory: 35 to 70 instructions per method call. The cold
-/// path converts again through it, which keeps its errors.
-///
-/// It is written with `unpack_then`: a `match` on the result of `T::unpack` here measured
-/// five instructions more for a `&str` receiver, a check of the string's pointer for null.
 #[inline(always)]
 pub fn check_this<'v, T: UnpackValue<'v>>(this: Value<'v>) -> crate::Result<T> {
-    #[cold]
-    #[inline(never)]
-    fn error<'v, T: UnpackValue<'v>>(this: Value<'v>) -> crate::Result<T> {
-        T::unpack_named_param(this, "this")
-    }
+    T::unpack_named_param(this, "this")
+}
 
-    unpack_then(this, Ok, || error(this), |_| error(this))
+/// Not generic and out of line: `check_required` is inlined into every native function, once
+/// per parameter.
+#[cold]
+#[inline(never)]
+fn missing_required(name: &str) -> crate::Error {
+    ValueError::MissingRequired(name.to_owned()).into()
 }
 
 /// Utility for checking a required parameter matches what you expect.
-#[inline]
+#[inline(always)]
 pub fn check_required<'v, T: UnpackValue<'v>>(
     name: &str,
     x: Option<Value<'v>>,
 ) -> crate::Result<T> {
-    let x = x.ok_or_else(|| ValueError::MissingRequired(name.to_owned()))?;
-    T::unpack_named_param(x, name)
+    match x {
+        Some(x) => T::unpack_named_param(x, name),
+        None => Err(missing_required(name)),
+    }
 }
 
 /// Utility for checking an optional parameter matches what you expect.
-#[inline]
+#[inline(always)]
 pub fn check_optional<'v, T: UnpackValue<'v>>(
     name: &str,
     x: Option<Value<'v>>,
@@ -101,17 +94,20 @@ pub fn check_optional<'v, T: UnpackValue<'v>>(
     }
 }
 
-#[inline]
+#[inline(always)]
 pub fn check_defaulted<'v, T: UnpackValue<'v>>(
     name: &str,
     x: Option<Value<'v>>,
     default: impl FnOnce() -> T,
 ) -> crate::Result<T> {
-    Ok(check_optional(name, x)?.unwrap_or_else(default))
+    match x {
+        None => Ok(default()),
+        Some(x) => T::unpack_named_param(x, name),
+    }
 }
 
 /// We already know the parameter is set, so we just unpack it.
-#[inline]
+#[inline(always)]
 pub fn check_unpack<'v, T: UnpackValue<'v>>(name: &str, x: Value<'v>) -> crate::Result<T> {
     T::unpack_named_param(x, name)
 }

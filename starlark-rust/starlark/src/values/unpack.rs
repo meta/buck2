@@ -20,9 +20,7 @@
 use std::convert::Infallible;
 use std::fmt::Debug;
 
-use anyhow::Context;
 use either::Either;
-use starlark_syntax::StarlarkResultExt;
 
 use crate::typing::Ty;
 use crate::values::StarlarkType;
@@ -332,10 +330,11 @@ pub trait UnpackValue<'v>: Sized {
 
     /// [`unpack_value`](Self::unpack_value), with an error about the named parameter's type
     /// instead of `None`.
-    #[inline]
+    #[inline(always)] // A step of a conversion: see `unpack_then`.
     fn unpack_named_param(value: Value<'v>, param_name: &str) -> crate::Result<Self> {
         #[cold]
-        fn error<'v>(value: Value<'v>, param_name: &str, ty: fn() -> Ty) -> crate::Error {
+        #[inline(never)]
+        fn not_of_type<'v>(value: Value<'v>, param_name: &str, ty: fn() -> Ty) -> crate::Error {
             #[derive(thiserror::Error, Debug)]
             #[error("Type of parameter `{0}` doesn't match, expected `{1}`, actual `{2}`")]
             struct IncorrectParameterTypeNamedWithExpected(String, Ty, String);
@@ -350,16 +349,32 @@ pub trait UnpackValue<'v>: Sized {
             )
         }
 
-        Self::unpack_value(value)
-            .into_anyhow_result()
-            .with_context(|| {
-                format!(
+        #[cold]
+        #[inline(never)]
+        fn failed(e: crate::Error, param_name: &str, ty: fn() -> Ty) -> crate::Error {
+            e.into_anyhow()
+                .context(format!(
                     "Error unpacking value for parameter `{}` of type `{}",
                     param_name,
-                    Self::Type::starlark_type_repr()
-                )
-            })?
-            .ok_or_else(|| error(value, param_name, Self::Type::starlark_type_repr))
+                    ty()
+                ))
+                .into()
+        }
+
+        // The errors are built out of line by functions that are not generic, and the
+        // conversion's own error gets its context there: this is inlined into every native
+        // function once per parameter, and `with_context` on the result here is a call that
+        // returns the converted value through memory, which measured 25 to 75 instructions
+        // per argument.
+        match Self::unpack_value(value) {
+            Ok(Some(x)) => Ok(x),
+            Ok(None) => Err(not_of_type(
+                value,
+                param_name,
+                Self::Type::starlark_type_repr,
+            )),
+            Err(e) => Err(failed(e, param_name, Self::Type::starlark_type_repr)),
+        }
     }
 }
 

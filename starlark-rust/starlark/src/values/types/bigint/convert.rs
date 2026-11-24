@@ -226,15 +226,20 @@ mod tests {
             "takes_i32(1 << 100)",
             &[
                 "Integer value is too big to fit in i32: 1267650600228229401496703205376",
-                "Error unpacking value for parameter `_i`",
+                "Error unpacking value for parameter `_i` of type `int",
             ],
         );
         a.fails(
             "takes_i64(1 << 100)",
             &[
                 "Integer value is too big to fit in i64: 1267650600228229401496703205376",
-                "Error unpacking value for parameter `_i`",
+                "Error unpacking value for parameter `_i` of type `int",
             ],
+        );
+        a.disable_static_typechecking();
+        a.fails(
+            "takes_i32('x')",
+            &["Type of parameter `_i` doesn't match, expected `int`, actual `string (repr: \"x\")`"],
         );
     }
 }

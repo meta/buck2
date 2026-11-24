@@ -28,4 +28,13 @@ pub struct Execution {
         overridable_in(CommandLine, LocalSettings)
     )]
     persistent_worker_shutdown_timeout_s: Option<u32>,
+    /// Whether local actions run under miniperf, which counts the instructions
+    /// they execute. Turn it off where perf counters are unavailable, as in
+    /// some virtual machines.
+    #[setting(
+        buckconfig_fallback = "buck2.miniperf2",
+        default = true,
+        overridable_in(CommandLine, LocalSettings)
+    )]
+    miniperf: Option<bool>,
 }

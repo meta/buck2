@@ -1039,13 +1039,7 @@ impl DiceCommandUpdater<'_, '_> {
                 .instant_event(buck2_data::ConsolePreferences { max_lines });
         }
 
-        let enable_miniperf = root_config
-            .parse::<RolloutPercentage>(BuckconfigKeyRef {
-                section: "buck2",
-                property: "miniperf2",
-            })?
-            .unwrap_or_else(RolloutPercentage::always)
-            .roll();
+        let enable_miniperf = invocation_settings.execution.miniperf(&mut buckconfig)?;
 
         let log_configured_graph_size = root_config
             .parse::<bool>(BuckconfigKeyRef {

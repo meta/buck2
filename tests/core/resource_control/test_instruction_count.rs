@@ -44,8 +44,8 @@ async fn test_instruction_count_disabled(buck: &Buck) -> anyhow::Result<()> {
     let helper_bin_flags = helper_bin_flags(buck);
     buck.build(&[
         "root//:three_billion_instructions",
-        "-c",
-        "buck2.miniperf2=false",
+        "--setting",
+        "execution.miniperf=false",
         "--no-remote-cache",
         "--local-only",
         "-c",
@@ -87,8 +87,8 @@ async fn test_instruction_count_enabled(buck: &Buck) -> anyhow::Result<()> {
     let helper_bin_flags = helper_bin_flags(buck);
     buck.build(&[
         "root//:three_billion_instructions",
-        "-c",
-        "buck2.miniperf2=true",
+        "--setting",
+        "execution.miniperf=true",
         "--no-remote-cache",
         "--local-only",
         "-c",

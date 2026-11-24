@@ -15,7 +15,6 @@ use buck2_build_api::interpreter::rule_defs::provider::builtin::internal_runner_
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_run_info::WorkerRunInfoCallable;
 use starlark::docs::DocItem;
 use starlark::docs::DocMember;
-use starlark::values::StarlarkType;
 
 fn field_type(doc: DocItem, field: &str) -> String {
     let DocItem::Type(ty) = doc else {
@@ -34,21 +33,33 @@ fn field_type(doc: DocItem, field: &str) -> String {
 
 #[test]
 fn test_optional_fields_are_documented_as_optional() {
-    let external = StarlarkType::documentation(&ExternalRunnerTestInfoCallable::new());
+    let external = starlark::values::Heap::temp(|heap| {
+        heap.alloc(ExternalRunnerTestInfoCallable::new())
+            .to_value()
+            .documentation()
+    });
     assert_eq!(
         "CommandExecutorConfig | None",
         field_type(external.clone(), "default_executor")
     );
     assert_eq!("None | WorkerInfo", field_type(external, "worker"));
 
-    let internal = StarlarkType::documentation(&InternalRunnerTestInfoCallable::new());
+    let internal = starlark::values::Heap::temp(|heap| {
+        heap.alloc(InternalRunnerTestInfoCallable::new())
+            .to_value()
+            .documentation()
+    });
     assert_eq!(
         "CommandExecutorConfig | None",
         field_type(internal.clone(), "default_executor")
     );
     assert_eq!("None | WorkerInfo", field_type(internal, "worker"));
 
-    let worker_run = StarlarkType::documentation(&WorkerRunInfoCallable::new());
+    let worker_run = starlark::values::Heap::temp(|heap| {
+        heap.alloc(WorkerRunInfoCallable::new())
+            .to_value()
+            .documentation()
+    });
     assert_eq!(
         "None | WorkerInfo",
         field_type(worker_run.clone(), "remote_worker")

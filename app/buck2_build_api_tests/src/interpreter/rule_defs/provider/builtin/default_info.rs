@@ -16,7 +16,6 @@ use buck2_core::bzl::ImportPath;
 use buck2_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
 use starlark::docs::DocItem;
-use starlark::values::StarlarkType;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
 
@@ -24,7 +23,11 @@ use crate::interpreter::rule_defs::artifact::testing::artifactory;
 /// parameters need not be fields.
 #[test]
 fn default_info_documents_its_constructor() {
-    let DocItem::Type(ty) = StarlarkType::documentation(&DefaultInfoCallable::new()) else {
+    let DocItem::Type(ty) = starlark::values::Heap::temp(|heap| {
+        heap.alloc(DefaultInfoCallable::new())
+            .to_value()
+            .documentation()
+    }) else {
         panic!("provider documentation should be a type");
     };
     let constructor = ty

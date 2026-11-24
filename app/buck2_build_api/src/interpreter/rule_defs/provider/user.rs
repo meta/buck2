@@ -73,6 +73,11 @@ impl<'v> UserProvider<'v> {
         &self.callable.as_ref().value
     }
 
+    fn field(&self, name: Hashed<&str>) -> Option<Value<'v>> {
+        let index = self.callable_data().fields.get_index_of_hashed(name)?;
+        Some(self.attributes[index])
+    }
+
     fn iter_items(&self) -> impl Iterator<Item = (&str, Value<'v>)> {
         let callable_data = self.callable_data();
         assert_eq!(callable_data.fields.len(), self.attributes.len());
@@ -103,12 +108,11 @@ impl<'v> StarlarkValue<'v> for UserProvider<'v> {
     }
 
     fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
-        self.get_attr_hashed(Hashed::new(attribute), _heap)
+        self.field(Hashed::new(attribute))
     }
 
     fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
-        let index = self.callable_data().fields.get_index_of_hashed(attribute)?;
-        Some(self.attributes[index])
+        self.field(attribute)
     }
 
     fn equals(&self, other: &Self) -> starlark::Result<bool> {

@@ -362,7 +362,6 @@ pub(crate) fn register_string_with_macros(globals: &mut GlobalsBuilder) {}
 mod tests {
 
     use starlark::values::Heap;
-    use starlark::values::StarlarkType;
 
     use super::*;
 
@@ -376,7 +375,9 @@ mod tests {
     #[test]
     fn test_equals_matching_string() {
         Heap::temp(|heap| {
-            let resolved = make_string_resolved("-matching-flag");
+            let resolved = heap
+                .alloc(make_string_resolved("-matching-flag"))
+                .to_value();
             let str_val = heap.alloc("-matching-flag").to_value();
             assert_eq!(resolved.equals(str_val).unwrap(), true);
         });
@@ -385,7 +386,9 @@ mod tests {
     #[test]
     fn test_equals_non_matching_string() {
         Heap::temp(|heap| {
-            let resolved = make_string_resolved("-resolved-flag");
+            let resolved = heap
+                .alloc(make_string_resolved("-resolved-flag"))
+                .to_value();
             let str_val = heap.alloc("-str-flag").to_value();
             assert_eq!(resolved.equals(str_val).unwrap(), false);
         });
@@ -394,7 +397,9 @@ mod tests {
     #[test]
     fn test_equals_resolved_string_vs_resolved_string() {
         Heap::temp(|heap| {
-            let resolved = make_string_resolved("-resolved-flag");
+            let resolved = heap
+                .alloc(make_string_resolved("-resolved-flag"))
+                .to_value();
             let other_val = heap
                 .alloc(make_string_resolved("-resolved-flag"))
                 .to_value();
@@ -405,7 +410,7 @@ mod tests {
     #[test]
     fn test_equals_resolved_string_vs_non_string_value() {
         Heap::temp(|heap| {
-            let resolved = make_string_resolved("-Wno-error");
+            let resolved = heap.alloc(make_string_resolved("-Wno-error")).to_value();
             let int_val = heap.alloc(42i32).to_value();
             assert_eq!(resolved.equals(int_val).unwrap(), false);
         });
@@ -414,13 +419,15 @@ mod tests {
     #[test]
     fn test_equals_resolved_macro_vs_non_string_value() {
         Heap::temp(|heap| {
-            let resolved = ResolvedStringWithMacros::new(
-                vec![ResolvedStringWithMacrosPart::Macro(
-                    false,
-                    ResolvedMacro::Query(ResolvedQueryMacro::Targets(Default::default())),
-                )],
-                None,
-            );
+            let resolved = heap
+                .alloc(ResolvedStringWithMacros::new(
+                    vec![ResolvedStringWithMacrosPart::Macro(
+                        false,
+                        ResolvedMacro::Query(ResolvedQueryMacro::Targets(Default::default())),
+                    )],
+                    None,
+                ))
+                .to_value();
             let int_val = heap.alloc(42i32).to_value();
             assert_eq!(resolved.equals(int_val).unwrap(), false);
         });

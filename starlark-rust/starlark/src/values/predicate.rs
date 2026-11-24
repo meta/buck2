@@ -290,7 +290,7 @@ impl<R: ?Sized + 'static> Membership<R> {
 /// [`#[starlark_value]`](crate::values::starlark_value) implements this for every type, from
 /// the functions of the type's block that are marked `#[starlark(implements = ..)]`: each
 /// becomes one [`Membership`] per representation, which first makes the type's
-/// [`Get`](crate::values::StarlarkType::Get) of the representation's handle
+/// [`Get`](crate::values::StarlarkTypeExpr::Get) of the representation's handle
 /// ([`get_typed`](StarlarkValue::get_typed)) and then is the function. There is nothing to
 /// write by hand.
 pub trait Memberships<'v, R: StarlarkValue<'v>> {

@@ -197,6 +197,15 @@ struct ImplStarlarkValue {
     attrs: StarlarkValueAttrs,
 }
 
+/// The `type Get` or the `fn get` of a block: the items of the type as a type expression.
+fn is_get_item(item: &syn::ImplItem) -> bool {
+    match item {
+        syn::ImplItem::Type(t) => t.ident == "Get",
+        syn::ImplItem::Fn(f) => f.sig.ident == "get",
+        _ => false,
+    }
+}
+
 /// An item of an `impl StarlarkValue` block that stays on the representation. Everything else
 /// is the type's behaviour.
 fn is_representation_item(item: &syn::ImplItem) -> bool {
@@ -327,22 +336,20 @@ impl ImplStarlarkValue {
         }
     }
 
-    /// `type Get` and `fn get`: the handle a value of the type is read through. A type whose
-    /// representations are not a derived view writes its own.
+    /// Whether the block writes the type's `Get` and `get` itself, as a type does whose
+    /// representations are not a derived view.
+    fn writes_get(&self) -> bool {
+        self.input.items.iter().any(is_get_item)
+    }
+
+    /// `type Get` and `fn get` for a block that does not write them: the handle a value of
+    /// the type is read through.
     ///
     /// `get` is `#[inline(always)]` as every step of a conversion is; `unpack_then` in
     /// `starlark` says why.
-    fn get_items(&self) -> syn::Result<Vec<syn::ImplItem>> {
+    fn default_get_items(&self) -> Vec<syn::ImplItem> {
         let lt = &self.lifetime_param;
-        let written = self.input.items.iter().any(|item| match item {
-            syn::ImplItem::Type(t) => t.ident == "Get",
-            syn::ImplItem::Fn(f) => f.sig.ident == "get",
-            _ => false,
-        });
-        if written {
-            return Ok(Vec::new());
-        }
-        let items: Vec<syn::ImplItem> = match self.impl_of {
+        match self.impl_of {
             ImplOf::Value => vec![
                 syn::parse_quote! {
                     type Get = starlark::values::ValueTyped<#lt, Self>;
@@ -365,8 +372,33 @@ impl ImplStarlarkValue {
                     }
                 },
             ],
+        }
+    }
+
+    /// The type as a type expression: the `StarlarkTypeExpr` impl that `StarlarkType` has as
+    /// its supertrait. Its `Get` and `get` are `get_items`, the block's own or the default;
+    /// its `Ty` is the type's.
+    fn type_expr_impl(&self, get_items: Vec<syn::ImplItem>) -> proc_macro2::TokenStream {
+        let lt = &self.lifetime_param;
+        let (impl_generics, _, where_clause) = self.input.generics.split_for_impl();
+        let self_ty = &self.input.self_ty;
+        let get_items = if get_items.is_empty() {
+            self.default_get_items()
+        } else {
+            get_items
         };
-        Ok(items)
+        quote! {
+            impl #impl_generics starlark::values::StarlarkTypeExpr<#lt> for #self_ty
+            #where_clause
+            {
+                #( #get_items )*
+
+                #[inline]
+                fn starlark_type_repr() -> starlark::typing::Ty {
+                    <Self as starlark::values::StarlarkType<#lt>>::get_type_starlark_repr()
+                }
+            }
+        }
     }
 
     fn get_type_value_static(&self) -> syn::Result<syn::ImplItem> {
@@ -865,8 +897,11 @@ impl ImplStarlarkValue {
     /// The `impl StarlarkType` for `self_ty`: `items`, a method written with a typed signature
     /// replaced by the trait's method derived from it, plus the generated members. Next to it,
     /// what the typed methods say about the type.
-    fn type_impl(&self, mut items: Vec<syn::ImplItem>) -> syn::Result<proc_macro2::TokenStream> {
+    fn type_impl(&self, items: Vec<syn::ImplItem>) -> syn::Result<proc_macro2::TokenStream> {
         let lt = &self.lifetime_param;
+        let (get_items, mut items): (Vec<syn::ImplItem>, Vec<syn::ImplItem>) =
+            items.into_iter().partition(is_get_item);
+        let type_expr_impl = self.type_expr_impl(get_items);
         let memberships = take_memberships(&mut items)?;
         let mut always_hashes = None;
         let mut typed = TypedMethods::new();
@@ -921,7 +956,6 @@ impl ImplStarlarkValue {
             0..0,
             [self.const_type()?, self.get_type_value_static()?]
                 .into_iter()
-                .chain(self.get_items()?)
                 .chain(self.get_type_starlark_repr()?)
                 .chain(self.attr_ty()?)
                 .chain(self.bit_or()?)
@@ -949,6 +983,8 @@ impl ImplStarlarkValue {
         Ok(quote! {
             #type_impl
 
+            #type_expr_impl
+
             #always_hashes
 
             #memberships
@@ -963,7 +999,7 @@ impl ImplStarlarkValue {
             #[inline]
             fn get_typed(
                 this: starlark::values::ValueTyped<#lt, Self>,
-            ) -> <Self::Type as starlark::values::StarlarkType<#lt>>::Get {
+            ) -> <Self::Type as starlark::values::StarlarkTypeExpr<#lt>>::Get {
                 <Self::Type as std::convert::From<starlark::values::ValueTyped<#lt, Self>>>::from(this)
             }
         }
@@ -973,7 +1009,7 @@ impl ImplStarlarkValue {
     /// representation is the type's `Get`. A block that writes a `Get` of its own writes
     /// `get_typed` as well.
     fn get_typed_identity(&self) -> syn::Result<Option<syn::ImplItem>> {
-        if self.get_items()?.is_empty() {
+        if self.writes_get() {
             return Ok(None);
         }
         let lt = &self.lifetime_param;
@@ -981,7 +1017,7 @@ impl ImplStarlarkValue {
             #[inline]
             fn get_typed(
                 this: starlark::values::ValueTyped<#lt, Self>,
-            ) -> <Self::Type as starlark::values::StarlarkType<#lt>>::Get {
+            ) -> <Self::Type as starlark::values::StarlarkTypeExpr<#lt>>::Get {
                 this
             }
         }))

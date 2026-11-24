@@ -32,7 +32,8 @@ use crate::values::ValueOf;
 ///
 /// The implementers are the statically nameable part of Starlark's type language, realized in
 /// Rust's: a nominal type is its [`StarlarkType`] impl (a single-representation type is its
-/// own, a type with several representations is its view, `bool` is the Rust `bool`),
+/// own, a type with several representations is its view, `bool` is the Rust `bool`), for
+/// which [`#[starlark_value]`](crate::values::starlark_value) writes this impl,
 /// `list[T]` is [`ListType<T>`](crate::values::list::ListType) and the other containers
 /// likewise, `A | B` is `Either<A, B>` or a `#[derive(UnpackValue)]` enum, `None | T` is
 /// [`NoneOr<T>`](crate::values::none::NoneOr), `typing.Any` is [`Value`], and so on. Each
@@ -59,6 +60,9 @@ pub trait StarlarkTypeExpr<'v>: Sized {
     /// (the [`ValueOf`] handle together with what the read found, such as
     /// [`ListOf`](crate::values::list::ListOf)), `Option<T::Get>` for `NoneOr<T>`,
     /// `Either<A::Get, B::Get>` for a union.
+    ///
+    /// For a [`StarlarkType`] it is a handle: it is copied freely and converts back into the
+    /// value it was read from. It is what the type's methods take as their receiver.
     type Get;
 
     /// `value` as this type's [`Get`](Self::Get), if it is of this type: exactly what a Starlark
@@ -94,19 +98,6 @@ pub trait StarlarkTypeExprStable<'v>: StarlarkTypeExpr<'v> {}
 /// It is what lets a handle hash its value without a `Result`:
 /// [`ValueOf::write_hash`](crate::values::ValueOf::write_hash).
 pub trait StarlarkTypeExprHashable<'v>: StarlarkTypeExpr<'v> {}
-
-impl<'v, T: StarlarkType<'v>> StarlarkTypeExpr<'v> for T {
-    type Get = <T as StarlarkType<'v>>::Get;
-
-    fn starlark_type_repr() -> Ty {
-        <T as StarlarkType<'v>>::get_type_starlark_repr()
-    }
-
-    #[inline(always)] // A step of a conversion: see `unpack_then`.
-    fn get(value: Value<'v>) -> Option<Self::Get> {
-        <T as StarlarkType<'v>>::get(value)
-    }
-}
 
 impl<'v, T: StarlarkType<'v>> StarlarkTypeExprStable<'v> for T {}
 

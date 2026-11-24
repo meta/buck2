@@ -65,6 +65,7 @@ use crate::typing::TypingBinOp;
 use crate::typing::TypingUnOp;
 use crate::values::FreezeDynamic;
 use crate::values::Heap;
+use crate::values::StarlarkTypeExpr;
 use crate::values::StringValue;
 use crate::values::Trace;
 use crate::values::Value;
@@ -216,11 +217,16 @@ impl<'v, V> ComplexValue<'v> for V where V: StarlarkValue<'v> + Trace<'v> + Free
 /// representations, and each representation names the view as its
 /// [`Type`](StarlarkValue::Type).
 ///
+/// A type is a type expression: [`StarlarkTypeExpr`] is a supertrait, and its
+/// [`Get`](StarlarkTypeExpr::Get) and [`get`](StarlarkTypeExpr::get) are how a value is read
+/// as the type. `#[starlark_value]` writes that impl next to this one; a block that reads
+/// its values in a way of its own writes `type Get` and `fn get` in the block.
+///
 /// # The receiver
 ///
 /// A method that acts on a value takes it as its first parameter, which this trait declares as
-/// the type's [`Get`](Self::Get). In a block the parameter is named `this`, and its type is
-/// the author's choice among the conversions from the type that cannot fail, that is, the
+/// the type's [`Get`](StarlarkTypeExpr::Get). In a block the parameter is named `this`, and
+/// its type is the author's choice among the conversions from the type that cannot fail, that is, the
 /// [`UnpackValue`](crate::values::UnpackValue)s whose `Type` is the type and whose `Error` is
 /// uninhabited:
 ///
@@ -247,7 +253,14 @@ impl<'v, V> ComplexValue<'v> for V where V: StarlarkValue<'v> + Trace<'v> + Free
 /// implementations other than the default are never run.
 #[starlark_internal_vtable]
 #[allow(non_upper_case_globals, non_snake_case)] // For generated members.
-pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Sized {
+pub trait StarlarkType<'v>:
+    'v
+    + StarlarkTypeExpr<'v, Get: Copy + Into<Value<'v>>>
+    + ProvidesStaticType<'v>
+    + Debug
+    + Display
+    + Sized
+{
     /// Return a string describing the type of self, as returned by the type()
     /// function.
     ///
@@ -266,21 +279,6 @@ pub trait StarlarkType<'v>: 'v + ProvidesStaticType<'v> + Debug + Display + Size
     fn get_type_value_static() -> StringValue<'static> {
         panic!("This function is implemented by #[starlark_value] proc macro")
     }
-
-    /// What a value of this type is read through: `ValueTyped<'v, Self>` for a type with one
-    /// representation, the view itself for a type with several. It is a handle: it is copied
-    /// freely and converts back into the value it was read from.
-    ///
-    /// This can be only implemented by the [`#[starlark_value]`](crate::values::starlark_value)
-    /// proc macro.
-    type Get: Copy + Into<Value<'v>>;
-
-    /// `value` as this type's [`Get`](Self::Get), if it is of this type.
-    ///
-    /// This can be only implemented by the [`#[starlark_value]`](crate::values::starlark_value)
-    /// proc macro.
-    #[starlark_internal_vtable(skip)]
-    fn get(value: Value<'v>) -> Option<Self::Get>;
 
     /// The type as a user would write it in a type annotation. This often will be the same as
     /// [`Self::TYPE`], but in some instances it might be slightly different than what is
@@ -1116,7 +1114,7 @@ pub trait StarlarkValue<'v>:
     /// member of, and how a value of this representation is used as one.
     type Type: StarlarkType<'v> + Memberships<'v, Self>;
 
-    /// This value as its type's [`Get`](StarlarkType::Get): what [`get`](StarlarkType::get)
+    /// This value as its type's [`Get`](StarlarkTypeExpr::Get): what [`get`](StarlarkTypeExpr::get)
     /// gives for a value of this representation, for a caller that already knows the
     /// representation. That is the handle itself for a type with one representation, and the
     /// type's view of this representation for a type with several.
@@ -1124,7 +1122,7 @@ pub trait StarlarkValue<'v>:
     /// [`#[starlark_value]`](crate::values::starlark_value) writes this, except for a type
     /// that writes its own `Get` and for a representation whose type is not a view that
     /// `#[derive(StarlarkRepresentations)]` wrote; those write it by hand.
-    fn get_typed(this: ValueTyped<'v, Self>) -> <Self::Type as StarlarkType<'v>>::Get;
+    fn get_typed(this: ValueTyped<'v, Self>) -> <Self::Type as StarlarkTypeExpr<'v>>::Get;
 
     /// [`StarlarkType::TYPE`] of [`Type`](Self::Type), for code generic over representations.
     const TYPE: &'static str = <Self::Type as StarlarkType<'v>>::TYPE;

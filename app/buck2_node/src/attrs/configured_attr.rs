@@ -249,7 +249,7 @@ impl AttrDisplayWithContext for ConfiguredAttr {
             ConfiguredAttr::Tuple(v) => AttrDisplayWithContext::fmt(v, ctx, f),
             ConfiguredAttr::Dict(v) => AttrDisplayWithContext::fmt(v, ctx, f),
             ConfiguredAttr::None => write!(f, "None"),
-            ConfiguredAttr::OneOf(box l, _) => AttrDisplayWithContext::fmt(l, ctx, f),
+            ConfiguredAttr::OneOf(deref!(l), _) => AttrDisplayWithContext::fmt(l, ctx, f),
             ConfiguredAttr::Visibility(v) => Display::fmt(v, f),
             ConfiguredAttr::WithinView(v) => Display::fmt(v, f),
             ConfiguredAttr::ExplicitConfiguredDep(e) => Display::fmt(e, f),

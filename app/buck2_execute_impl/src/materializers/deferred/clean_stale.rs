@@ -2230,16 +2230,17 @@ impl<T: IoHandler> StaleFinder<'_, T> {
                 ArtifactTree::Tree(subtree) if file_type.is_dir() => {
                     queue.push((path, subtree));
                 }
-                ArtifactTree::Data(box ArtifactMaterializationData {
-                    stage:
-                        ArtifactMaterializationStage::Materialized {
+                ArtifactTree::Data(
+                    deref!(ArtifactMaterializationData {
+                        stage: ArtifactMaterializationStage::Materialized {
                             active: false,
                             last_access_time,
                             metadata,
                             ..
                         },
-                    ..
-                }) if *last_access_time < self.keep_since_time => {
+                        ..
+                    }),
+                ) if *last_access_time < self.keep_since_time => {
                     // This is something we can invalidate.
                     tracing::trace!(path = %path, file_type = ?file_type, "marking as stale");
                     self.found_paths.push(FoundPath::Tracked {
@@ -2248,17 +2249,18 @@ impl<T: IoHandler> StaleFinder<'_, T> {
                         state: TrackedState::Stale(StaleOrigin::Ttl),
                     });
                 }
-                ArtifactTree::Data(box ArtifactMaterializationData {
-                    classification,
-                    stage:
-                        ArtifactMaterializationStage::Materialized {
+                ArtifactTree::Data(
+                    deref!(ArtifactMaterializationData {
+                        classification,
+                        stage: ArtifactMaterializationStage::Materialized {
                             active: false,
                             last_access_time,
                             metadata,
                             ..
                         },
-                    ..
-                }) => {
+                        ..
+                    }),
+                ) => {
                     tracing::trace!(path = %path, file_type = ?file_type, "marking as retained");
                     self.found_paths.push(FoundPath::Tracked {
                         path,
@@ -2269,17 +2271,18 @@ impl<T: IoHandler> StaleFinder<'_, T> {
                         },
                     });
                 }
-                ArtifactTree::Data(box ArtifactMaterializationData {
-                    classification,
-                    stage:
-                        ArtifactMaterializationStage::Materialized {
+                ArtifactTree::Data(
+                    deref!(ArtifactMaterializationData {
+                        classification,
+                        stage: ArtifactMaterializationStage::Materialized {
                             metadata,
                             last_access_time,
                             rematerialization_method,
                             ..
                         },
-                    ..
-                }) => {
+                        ..
+                    }),
+                ) => {
                     tracing::trace!(path = %path, file_type = ?file_type, "marking as active retained");
                     let unmaterialization_eligibility =
                         if *classification == ArtifactClassification::FinalOutput {

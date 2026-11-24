@@ -119,13 +119,13 @@ impl AnonTargetAttrResolution for AnonTargetAttr {
                 Ok(ctx.heap().alloc(AllocDict(res)).to_value())
             }
             AnonTargetAttr::None => Ok(Value::new_none()),
-            AnonTargetAttr::OneOf(box l, _) => l.resolve_single(pkg, anon_resolution_ctx),
+            AnonTargetAttr::OneOf(deref!(l), _) => l.resolve_single(pkg, anon_resolution_ctx),
             AnonTargetAttr::Dep(d) => Ok(DepAttrType::resolve_single(&mut ctx, d)?),
             AnonTargetAttr::Artifact(d) => {
                 Ok(ctx.heap().alloc(StarlarkArtifact::new(d.dupe())).to_value())
             }
             AnonTargetAttr::Arg(a) => Ok(a.resolve(&mut ctx, pkg)?),
-            AnonTargetAttr::PromiseArtifact(box promise_artifact_attr) => {
+            AnonTargetAttr::PromiseArtifact(deref!(promise_artifact_attr)) => {
                 let promise_id = promise_artifact_attr.id.dupe();
                 // We validated that the analysis contains the promise artifact id earlier
                 let artifact = anon_resolution_ctx

@@ -140,7 +140,7 @@ fn resolve_configured_macro<'v>(
             // A RunInfo is an arg-like value.
             Ok(ResolvedMacro::ArgLike(CommandLineArg::new_err(run_info)?))
         }
-        ConfiguredMacro::InGroup(box (inner, _)) => resolve_configured_macro(inner, ctx, pkg),
+        ConfiguredMacro::InGroup(deref!((inner, _))) => resolve_configured_macro(inner, ctx, pkg),
         ConfiguredMacro::Source(p) => {
             let buck_path = SourcePath::new(pkg.dupe(), p.path().dupe());
             Ok(ResolvedMacro::Source(SourceArtifact::new(buck_path).into()))
@@ -151,7 +151,7 @@ fn resolve_configured_macro<'v>(
             })?;
             Ok(ResolvedMacro::ArgLike(provider))
         }
-        ConfiguredMacro::UserKeyedPlaceholder(box (name, label, arg)) => {
+        ConfiguredMacro::UserKeyedPlaceholder(deref!((name, label, arg))) => {
             let providers = ctx.get_dep(label)?;
             let placeholder_info = providers
                 .builtin_provider::<TemplatePlaceholderInfo>()?

@@ -93,7 +93,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
             // SourceLabel is special since it is the only type that can be expand to many
             ConfiguredAttr::SourceLabel(src) => SourceAttrType::resolve_label(ctx, src),
             // OneOf could contain a SourceLabel
-            ConfiguredAttr::OneOf(box l, _) => l.resolve(pkg, ctx),
+            ConfiguredAttr::OneOf(deref!(l), _) => l.resolve(pkg, ctx),
             _ => Ok(vec![self.resolve_single(pkg, ctx)?]),
         }
     }
@@ -136,7 +136,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
                 Ok(ctx.heap().alloc(AllocDict(res)).to_value())
             }
             ConfiguredAttr::None => Ok(Value::new_none()),
-            ConfiguredAttr::OneOf(box l, _) => l.resolve_single(pkg, ctx),
+            ConfiguredAttr::OneOf(deref!(l), _) => l.resolve_single(pkg, ctx),
             a @ (ConfiguredAttr::Visibility(_) | ConfiguredAttr::WithinView(_)) => {
                 // TODO(nga): rule implementations should not need visibility attribute.
                 //   But adding it here to preserve existing behavior.
@@ -221,7 +221,7 @@ fn configured_attr_to_value<'v>(
             heap.alloc(AllocDict(res)).to_value()
         }
         ConfiguredAttr::None => Value::new_none(),
-        ConfiguredAttr::OneOf(box l, _) => configured_attr_to_value(l, pkg, heap)?,
+        ConfiguredAttr::OneOf(deref!(l), _) => configured_attr_to_value(l, pkg, heap)?,
         ConfiguredAttr::Visibility(VisibilitySpecification(specs))
         | ConfiguredAttr::WithinView(WithinViewSpecification(specs)) => match specs {
             VisibilityPatternList::Public => heap.alloc(AllocList(["PUBLIC"])).to_value(),

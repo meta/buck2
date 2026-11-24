@@ -31,7 +31,7 @@ impl ToJsonWithContext for ConfiguredAttr {
             ConfiguredAttr::Tuple(list) => list.to_json(ctx),
             ConfiguredAttr::Dict(dict) => dict.to_json(ctx),
             ConfiguredAttr::None => Ok(serde_json::Value::Null),
-            ConfiguredAttr::OneOf(box l, _) => l.to_json(ctx),
+            ConfiguredAttr::OneOf(deref!(l), _) => l.to_json(ctx),
             ConfiguredAttr::Visibility(v) => Ok(v.to_json()),
             ConfiguredAttr::WithinView(v) => Ok(v.to_json()),
             ConfiguredAttr::ExplicitConfiguredDep(e) => e.to_json(),

@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-#![feature(box_patterns)]
+#![feature(deref_patterns)]
 #![feature(try_blocks)]
 
 pub mod analysis;

@@ -284,7 +284,7 @@ impl StrongHashWithoutConfig for MacroBase<ConfiguredProvidersLabel> {
                 "Source".strong_hash(state);
                 path.strong_hash(state);
             }
-            Self::InGroup(box (inner, group)) => {
+            Self::InGroup(deref!((inner, group))) => {
                 "InGroup".strong_hash(state);
                 inner.strong_hash_without_config(state);
                 group.strong_hash(state);
@@ -301,7 +301,7 @@ impl MacroBase<ConfiguredProvidersLabel> {
     ) -> buck2_error::Result<()> {
         // macros can't reference repo inputs (they only reference the outputs of other targets)
         match self {
-            MacroBase::UserKeyedPlaceholder(box (_, l, _)) => traversal.dep(l),
+            MacroBase::UserKeyedPlaceholder(deref!((_, l, _))) => traversal.dep(l),
             MacroBase::Location {
                 label,
                 dep_kind: MacroDepKind::Exec,
@@ -330,7 +330,7 @@ impl MacroBase<ConfiguredProvidersLabel> {
             }
             MacroBase::Query(query_macro) => query_macro.traverse(traversal),
             MacroBase::UserUnkeyedPlaceholder(_) => Ok(()),
-            MacroBase::InGroup(box (inner, group)) => match inner {
+            MacroBase::InGroup(deref!((inner, group))) => match inner {
                 MacroBase::Location {
                     label,
                     dep_kind: MacroDepKind::Exec,
@@ -407,7 +407,7 @@ impl MacroBase<ProvidersLabel> {
             UnconfiguredMacro::UserUnkeyedPlaceholder(var_name) => {
                 ConfiguredMacro::UserUnkeyedPlaceholder(var_name.clone())
             }
-            UnconfiguredMacro::UserKeyedPlaceholder(box (var_name, target, arg)) => {
+            UnconfiguredMacro::UserKeyedPlaceholder(deref!((var_name, target, arg))) => {
                 ConfiguredMacro::UserKeyedPlaceholder(Box::new((
                     var_name.clone(),
                     ctx.configure_target(target),
@@ -418,7 +418,7 @@ impl MacroBase<ProvidersLabel> {
                 ConfiguredMacro::Query(Box::new(query.configure(ctx)?))
             }
             UnconfiguredMacro::Source(path) => ConfiguredMacro::Source(path.clone()),
-            UnconfiguredMacro::InGroup(box (inner, group)) => {
+            UnconfiguredMacro::InGroup(deref!((inner, group))) => {
                 return inner.configure(ctx, Some(group));
             }
         })
@@ -430,7 +430,7 @@ impl MacroBase<ProvidersLabel> {
         pkg: Option<PackageLabel>,
     ) -> buck2_error::Result<()> {
         match self {
-            MacroBase::UserKeyedPlaceholder(box (_, l, _)) => traversal.dep(l),
+            MacroBase::UserKeyedPlaceholder(deref!((_, l, _))) => traversal.dep(l),
             MacroBase::Location {
                 label,
                 dep_kind: MacroDepKind::Exec,
@@ -462,7 +462,7 @@ impl MacroBase<ProvidersLabel> {
                 Ok(())
             }
             MacroBase::UserUnkeyedPlaceholder(_) => Ok(()),
-            MacroBase::InGroup(box (inner, _)) => inner.traverse(traversal, pkg),
+            MacroBase::InGroup(deref!((inner, _))) => inner.traverse(traversal, pkg),
         }
     }
 }
@@ -602,9 +602,9 @@ impl<P: ProvidersLabelMaybeConfigured> Display for MacroBase<P> {
             }
             MacroBase::Query(query) => Display::fmt(query, f),
             MacroBase::Source(path) => write!(f, "src {}", path.path()),
-            MacroBase::InGroup(box (inner, _)) => Display::fmt(inner, f),
+            MacroBase::InGroup(deref!((inner, _))) => Display::fmt(inner, f),
             MacroBase::UserUnkeyedPlaceholder(var) => write!(f, "{var}"),
-            MacroBase::UserKeyedPlaceholder(box (macro_type, target, arg)) => write!(
+            MacroBase::UserKeyedPlaceholder(deref!((macro_type, target, arg))) => write!(
                 f,
                 "{} {}{}",
                 macro_type,
@@ -1501,7 +1501,7 @@ impl CoercedAttrArenaBuilder {
                 exec_dep: *exec_dep,
             },
             MacroBase::UserUnkeyedPlaceholder(name) => MacroParts::UserUnkeyedPlaceholder(name),
-            MacroBase::UserKeyedPlaceholder(box (var, label, arg)) => {
+            MacroBase::UserKeyedPlaceholder(deref!((var, label, arg))) => {
                 MacroParts::UserKeyedPlaceholder {
                     var,
                     label,

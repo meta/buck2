@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-#![feature(box_patterns)]
+#![feature(deref_patterns)]
 #![allow(clippy::len_without_is_empty)]
 
 pub mod attrs;

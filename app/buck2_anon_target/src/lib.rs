@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-#![feature(box_patterns)]
+#![feature(deref_patterns)]
 
 use std::sync::Once;
 

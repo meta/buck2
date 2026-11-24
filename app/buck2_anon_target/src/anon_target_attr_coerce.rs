@@ -214,7 +214,7 @@ fn check_tool_macro_platforms(
             continue;
         };
         let tool_resolution = match macro_ {
-            MacroBase::InGroup(box (_, group)) => {
+            MacroBase::InGroup(deref!((_, group))) => {
                 configured_by.resolution_for_group(&ExecutionGroup::Named(group.dupe()))?
             }
             MacroBase::Exe { exec_dep: true, .. }
@@ -241,7 +241,7 @@ fn check_tool_macro_platforms(
 /// `$(exe //pkg:tool)` and the like, without the tool's configuration.
 fn tool_macro_display(macro_: &MacroBase<ConfiguredProvidersLabel>) -> String {
     match macro_ {
-        MacroBase::InGroup(box (inner, _)) => tool_macro_display(inner),
+        MacroBase::InGroup(deref!((inner, _))) => tool_macro_display(inner),
         MacroBase::Exe { label, .. } => format!("$(exe {})", label.unconfigured()),
         MacroBase::Location {
             label,

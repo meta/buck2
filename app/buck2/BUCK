@@ -163,12 +163,11 @@ _BUCK2_BIN_DEPS = (
     )
 )
 
-_BUCK2_BIN_ATTRS = dict(
-    srcs = ["bin/buck2.rs"],
-    allow_cache_upload = True,
-    crate = "buck2",
-    crate_root = "bin/buck2.rs",
-    env = {
+_BUCK2_BIN_ATTRS = {
+    "allow_cache_upload": True,
+    "crate": "buck2",
+    "crate_root": "bin/buck2.rs",
+    "env": {
         # This is only set for release builds.
         "BUCK2_RELEASE_TIMESTAMP": read_config("buck", "release_timestamp", ""),
         # This config value is set by the upload script, and controls the output of `--version`. We
@@ -178,20 +177,38 @@ _BUCK2_BIN_ATTRS = dict(
         # This config value is set by the upload script, and controls the output of `--internal-version` on windows
         "BUCK2_WIN_INTERNAL_VERSION": read_config("buck", "win_internal_version", ""),
     },
-    # @oss-disable[end= ]: pgo = "//buck2/facebook/pgo:pgo",
-    unittests = False,
-)
+    # @oss-disable[end= ]: "pgo": "//buck2/facebook/pgo:pgo",
+    "srcs": ["bin/buck2.rs"],
+    "unittests": False,
+}
 
-buck_rust_binary(name = "buck2-bin", rustc_flags = _BUCK2_BIN_RUSTC_FLAGS, deps = _BUCK2_BIN_DEPS, **_BUCK2_BIN_ATTRS)
+buck_rust_binary(
+    name = "buck2-bin",
+    srcs = _BUCK2_BIN_ATTRS["srcs"],
+    allow_cache_upload = _BUCK2_BIN_ATTRS["allow_cache_upload"],
+    crate = _BUCK2_BIN_ATTRS["crate"],
+    crate_root = _BUCK2_BIN_ATTRS["crate_root"],
+    env = _BUCK2_BIN_ATTRS["env"],
+    # @oss-disable[end= ]: pgo = _BUCK2_BIN_ATTRS["pgo"],
+    rustc_flags = _BUCK2_BIN_RUSTC_FLAGS,
+    unittests = _BUCK2_BIN_ATTRS["unittests"],
+    deps = _BUCK2_BIN_DEPS,
+)
 
 # The binary that buck2's own end-to-end tests run. It lets the `BUCK2_SETTINGS_OVERRIDE`
 # file set any Buck setting; see `buck2_settings::enable_test_settings_layer`. Never ship it.
 buck_rust_binary(
     name = "buck2_e2e-bin",
+    srcs = _BUCK2_BIN_ATTRS["srcs"],
+    allow_cache_upload = _BUCK2_BIN_ATTRS["allow_cache_upload"],
     autocargo = {"ignore_rule": True},
+    crate = _BUCK2_BIN_ATTRS["crate"],
+    crate_root = _BUCK2_BIN_ATTRS["crate_root"],
+    env = _BUCK2_BIN_ATTRS["env"],
+    # @oss-disable[end= ]: pgo = _BUCK2_BIN_ATTRS["pgo"],
     rustc_flags = _BUCK2_BIN_RUSTC_FLAGS + ["--cfg=buck2_test_settings"],
+    unittests = _BUCK2_BIN_ATTRS["unittests"],
     deps = _BUCK2_BIN_DEPS + ["//buck2/app/buck2_settings:buck2_settings"],
-    **_BUCK2_BIN_ATTRS,
 )
 
 platform_utils = None # @oss-enable

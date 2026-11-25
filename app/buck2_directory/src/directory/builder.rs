@@ -383,7 +383,7 @@ where
         let mut swapped_out = None;
         match self {
             Self::Immutable(ImmutableDirectory::Shared(left)) => {
-                if left.ptr_eq(right) {
+                if left.ptr_eq(right) || (leaf_compatible && left.known_to_contain(right)) {
                     // Identity includes the exhaustiveness markings.
                     return Ok(());
                 }
@@ -405,7 +405,11 @@ where
                     // Merge the smaller directory into the larger one, since the work is linear
                     // in the size of the side that gets merged in. Only with compatible leaves,
                     // as otherwise this would change which side's leaves win.
-                    swapped_out = Some(mem::replace(left, right.dupe()));
+                    let smaller = mem::replace(left, right.dupe());
+                    if right.known_to_contain(&smaller) {
+                        return Ok(());
+                    }
+                    swapped_out = Some(smaller);
                 }
             }
             Self::Immutable(ImmutableDirectory::Exclusive(_)) => {
@@ -422,11 +426,27 @@ where
         }
 
         let right = swapped_out.as_ref().unwrap_or(right);
+        // A merge that leaves a shared `self` as it is gets remembered below.
+        let left_before = match &*self {
+            Self::Immutable(ImmutableDirectory::Shared(left)) if leaf_compatible => {
+                Some(left.allocation_ptr())
+            }
+            _ => None,
+        };
+
         for (name, entry) in right.entries() {
             self.merge_shared_entry(name, entry, leaf_compatible)?;
         }
 
         self.set_root_exhaustiveness(joined_exhaustiveness);
+
+        if let Self::Immutable(ImmutableDirectory::Shared(left)) = &*self
+            && left_before == Some(left.allocation_ptr())
+        {
+            // Subdirectories recur all over the dependency graph, in the same few versions, so
+            // the same two tend to meet again, here and in other merges.
+            left.record_contains(right);
+        }
         Ok(())
     }
 
@@ -443,7 +463,7 @@ where
                 // `self` stays shared.
                 let merged = match (left.get(needle), right) {
                     (Some(DirectoryEntry::Dir(l)), DirectoryEntry::Dir(r)) => {
-                        if l.ptr_eq(r) {
+                        if l.ptr_eq(r) || (leaf_compatible && l.known_to_contain(r)) {
                             // Identity includes the subtree's exhaustiveness markings.
                             return Ok(());
                         }
@@ -1386,6 +1406,64 @@ mod tests {
                 "{leaves:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_merge_remembers_only_what_changed_nothing() {
+        let interner = DashMapDirectoryInterner::new();
+        let shared = |leaves: &[&str]| {
+            let mut d = TestDirectoryBuilder::empty_non_exhaustive();
+            for leaf in leaves {
+                d.insert(path(leaf), DirectoryEntry::Leaf(NopEntry))
+                    .unwrap();
+            }
+            d.fingerprint(&TestHasher).shared(&interner)
+        };
+        let container = shared(&["a/a", "a/b", "b/b"]);
+        let contained = shared(&["a/a", "b/b"]);
+        let overlapping = shared(&["a/a", "c/c"]);
+
+        // Without compatible leaves, nothing is remembered.
+        let merged = container
+            .dupe()
+            .into_builder()
+            .merge_inner(contained.dupe().into_builder(), false)
+            .unwrap();
+        assert_matches!(
+            merged,
+            DirectoryBuilder::Immutable(ImmutableDirectory::Shared(d)) if d.ptr_eq(&container)
+        );
+        assert!(!container.known_to_contain(&contained));
+
+        let mut merged = container.dupe().into_builder();
+        merged
+            .merge_shared_with_compatible_leaves(&contained)
+            .unwrap();
+        assert_matches!(
+            &merged,
+            DirectoryBuilder::Immutable(ImmutableDirectory::Shared(d)) if d.ptr_eq(&container)
+        );
+        assert!(container.known_to_contain(&contained));
+        assert!(!contained.known_to_contain(&container));
+
+        // A merge that adds something is not remembered.
+        merged
+            .merge_shared_with_compatible_leaves(&overlapping)
+            .unwrap();
+        assert!(!container.known_to_contain(&overlapping));
+
+        // What is remembered is used: the result is the same as without it.
+        let mut again = container.dupe().into_builder();
+        again
+            .merge_shared_with_compatible_leaves(&contained)
+            .unwrap();
+        again
+            .merge_shared_with_compatible_leaves(&overlapping)
+            .unwrap();
+        assert_eq!(
+            again.fingerprint(&TestHasher).fingerprint(),
+            shared(&["a/a", "a/b", "b/b", "c/c"]).fingerprint()
+        );
     }
 
     #[test]

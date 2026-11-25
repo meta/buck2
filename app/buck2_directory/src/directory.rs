@@ -10,6 +10,7 @@
 
 pub mod builder;
 pub mod builder_lazy;
+mod containment_cache;
 pub mod dashmap_directory_interner;
 #[allow(clippy::module_inception)]
 pub mod directory;

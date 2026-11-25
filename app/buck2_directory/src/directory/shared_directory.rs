@@ -218,6 +218,27 @@ where
     pub fn ptr_eq(&self, other: &SharedDirectory<L, H>) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
+
+    /// Whether `record_contains` remembers that merging `other` into this directory, assuming
+    /// compatible leaves, yields this very directory, exhaustiveness markings included.
+    ///
+    /// `false` says nothing: most pairs that it holds for were never recorded, and those that
+    /// were get forgotten.
+    pub(super) fn known_to_contain(&self, other: &SharedDirectory<L, H>) -> bool {
+        self.inner
+            .interner
+            .containment()
+            .contains(&self.inner, &other.inner)
+    }
+
+    /// Records that merging `other` into this directory, assuming compatible leaves, yielded
+    /// this very directory.
+    pub(super) fn record_contains(&self, other: &SharedDirectory<L, H>) {
+        self.inner
+            .interner
+            .containment()
+            .insert(&self.inner, &other.inner)
+    }
 }
 
 impl<L, H> SharedDirectory<L, H>

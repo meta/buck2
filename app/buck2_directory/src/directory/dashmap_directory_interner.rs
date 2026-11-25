@@ -9,6 +9,7 @@
  */
 
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::Weak;
 
 use allocative::Allocative;
@@ -19,6 +20,7 @@ use dupe::Clone_;
 use dupe::Dupe;
 use dupe::Dupe_;
 
+use crate::directory::containment_cache::ContainmentCache;
 use crate::directory::exhaustiveness::ExhaustivenessHash;
 use crate::directory::shared_directory::SharedDirectory;
 use crate::directory::shared_directory::SharedDirectoryData;
@@ -38,7 +40,19 @@ where
     H: DirectoryDigest,
 {
     inner: Arc<BuckDashMap<H, Weak<SharedDirectoryInner<L, H>>>>,
+    /// Which of this interner's directories are known to contain which, see
+    /// `SharedDirectory::known_to_contain`. Created on first use.
+    containment: Arc<OnceLock<ContainmentCache<SharedDirectoryInner<L, H>>>>,
 }
+
+/// The size of an interner's containment cache: 2^21 slots of three words, 48 MB.
+///
+/// This is deliberately far more than a build needs, so that how well the cache works does not
+/// depend on how large the build is. In a cached build of 340K actions, 2^16 slots saved 96% of
+/// what a cache without a size limit saved, and 2^20 slots all of it.
+///
+/// Miri gets a table that is quick to create, and small enough for its tests to replace entries.
+const CONTAINMENT_CACHE_SLOTS_LOG2: u32 = if cfg!(miri) { 4 } else { 21 };
 
 impl<L, H> Default for DashMapDirectoryInterner<L, H>
 where
@@ -56,7 +70,13 @@ where
     pub fn new() -> Self {
         Self {
             inner: Arc::new(BuckDashMap::default()),
+            containment: Arc::new(OnceLock::new()),
         }
+    }
+
+    pub(crate) fn containment(&self) -> &ContainmentCache<SharedDirectoryInner<L, H>> {
+        self.containment
+            .get_or_init(|| ContainmentCache::new(CONTAINMENT_CACHE_SLOTS_LOG2))
     }
 
     pub fn len(&self) -> usize {

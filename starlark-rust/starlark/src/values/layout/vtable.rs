@@ -334,7 +334,10 @@ impl AValueVTable {
     /// The type's table of members, for a type that names one.
     #[inline(always)]
     pub(crate) fn members(&'static self) -> Option<&'static MemberTable> {
-        self.starlark_value.ty.members
+        match self.starlark_value.ty.members {
+            Some(members) => Some(members.table()),
+            None => None,
+        }
     }
 
     /// The table of members that a type without [`members`](Self::members) builds at run

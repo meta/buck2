@@ -233,7 +233,7 @@ impl DocType {
     pub fn from_starlark_value<T: StarlarkValue<'static>>() -> DocType {
         let ty = T::get_type_starlark_repr();
         if let Some(members) = <T::Type as StarlarkType<'static>>::MEMBERS {
-            return members.documentation(ty);
+            return members.table().documentation(ty);
         }
         match T::get_methods() {
             Some(methods) => methods.documentation(ty),

@@ -518,8 +518,8 @@ impl ImplStarlarkValue {
         (
             before,
             vec![syn::parse_quote! {
-                const MEMBERS: std::option::Option<&'static starlark::environment::MemberTable> =
-                    std::option::Option::Some(&#members);
+                const MEMBERS: std::option::Option<starlark::environment::MemberTableRef> =
+                    std::option::Option::Some(starlark::environment::MemberTableRef::new(&#members));
             }],
         )
     }

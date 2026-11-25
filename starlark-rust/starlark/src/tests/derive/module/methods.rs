@@ -24,6 +24,8 @@ use starlark_derive::starlark_value;
 use crate as starlark;
 use crate::any::ProvidesStaticType;
 use crate::assert::Assert;
+use crate::environment::LateMemberTable;
+use crate::environment::MemberTableRef;
 use crate::environment::MethodsBuilder;
 use crate::eval::Arguments;
 use crate::eval::Evaluator;
@@ -138,4 +140,44 @@ fn test_a_type_has_the_members_of_two_modules() {
         "x.a_method_with_a_name_of_more_than_sixteen_bytez()",
         "no attribute",
     );
+}
+
+#[derive(
+    Debug,
+    derive_more::Display,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative,
+    StarlarkPagable
+)]
+#[display("{:?}", self)]
+struct LateModules;
+
+static LATE_MODULES_MEMBERS: LateMemberTable<8> = LateMemberTable::new();
+
+#[starlark_value(type = "late_modules")]
+impl<'v> StarlarkValue<'v> for LateModules {
+    const MEMBERS: Option<MemberTableRef> = Some(LATE_MODULES_MEMBERS.table());
+}
+
+#[test]
+fn test_a_type_has_the_members_of_modules_added_when_the_program_starts() {
+    static ADD: std::sync::Once = std::sync::Once::new();
+    ADD.call_once(|| {
+        // SAFETY: Only this test uses the type, and it has not used it yet.
+        unsafe {
+            LATE_MODULES_MEMBERS.extend(&FIRST_METHODS_MEMBERS);
+            LATE_MODULES_MEMBERS.extend(&SECOND_METHODS_MEMBERS);
+        }
+    });
+    let mut a = Assert::new();
+    a.globals_add(|g| g.set("x", LateModules));
+    a.eq("1", "x.one");
+    a.eq("5", "x.two(x = 5)");
+    a.eq("16", "x.a_method_with_a_name_of_more_than_sixteen_bytes()");
+    a.eq(
+        "['a_method_with_a_name_of_more_than_sixteen_bytes', 'one', 'two']",
+        "dir(x)",
+    );
+    a.fail("x.six", "no attribute `six`");
 }

@@ -163,7 +163,8 @@ impl KnownMethods {
         }
 
         fn add<T: StarlarkValue<'static>>(methods: &mut HashMap<&'static str, KnownMethod>) {
-            let type_members = <T::Type as StarlarkType<'static>>::MEMBERS;
+            let type_members =
+                <T::Type as StarlarkType<'static>>::MEMBERS.map(|members| members.table());
             // Asking a type for its run-time table builds it, and a type with a static table
             // is never read through that one.
             let type_methods = match type_members {

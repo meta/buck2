@@ -343,11 +343,11 @@ pub trait StarlarkType<'v>:
     /// ```
     ///
     /// The vtable holds the table, and a lookup of `x.name` reads it from there, without a
-    /// call. When migrating from `StarlarkAttrs`, remove field-level `#[starlark(skip)]`
+    /// call. A type whose modules are not in scope where it is defined has a
+    /// [`LateMemberTable`](crate::environment::LateMemberTable) here. When migrating from `StarlarkAttrs`, remove field-level `#[starlark(skip)]`
     /// and `#[starlark(clone)]` attributes. Omit getters for skipped fields, and
     /// return borrowed or preallocated values instead of cloning expensive fields.
-    #[doc(hidden)]
-    const MEMBERS: Option<&'static crate::environment::MemberTable> = None;
+    const MEMBERS: Option<crate::environment::MemberTableRef> = None;
 
     /// Return the documentation for this value.
     ///

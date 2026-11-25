@@ -439,7 +439,7 @@ impl Gen {
         // The type's table of methods and attributes. It is data, not an entry to call: a
         // lookup reads the pointer and probes the table.
         ty_fields.push(Self::parse_named_field(quote! {
-            pub(crate) members: Option<&'static crate::environment::MemberTable>
+            pub(crate) members: Option<crate::environment::MemberTableRef>
         })?);
         ty_inits.push(syn::parse_quote! { members: T::MEMBERS });
         ty_uninits.push(syn::parse_quote! { members: None });

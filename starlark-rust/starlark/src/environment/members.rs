@@ -17,6 +17,9 @@
 
 //! The methods and attributes of a type as static data.
 
+use std::cell::UnsafeCell;
+use std::ptr::NonNull;
+
 use dupe::Dupe;
 use starlark_map::Hashed;
 use starlark_map::StarlarkHashValue;
@@ -402,6 +405,115 @@ impl<const S: usize> MemberTable<[Member; S]> {
     }
 }
 
+/// A type's table of members, as [`StarlarkType::MEMBERS`](crate::values::StarlarkType::MEMBERS)
+/// holds it.
+///
+/// It is a pointer and not a `&'static MemberTable` because of [`LateMemberTable`]: a reference
+/// in a constant would say that the table is never written.
+#[derive(Clone, Copy)]
+pub struct MemberTableRef(NonNull<MemberTable>);
+
+// SAFETY: It points to a `static`, which is only written as `LateMemberTable::extend` allows.
+unsafe impl Send for MemberTableRef {}
+// SAFETY: As above.
+unsafe impl Sync for MemberTableRef {}
+
+impl MemberTableRef {
+    /// `#[starlark_value(methods = ..)]` writes this.
+    #[doc(hidden)]
+    pub const fn new(table: &'static MemberTable) -> MemberTableRef {
+        MemberTableRef(NonNull::from_ref(table))
+    }
+
+    #[inline(always)]
+    pub(crate) fn table(self) -> &'static MemberTable {
+        // SAFETY: It points to a `static`, and a `LateMemberTable` is not written while it is
+        // read.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+/// The table of members of a type whose modules of methods are declared in crates that depend
+/// on the crate of the type, so that it cannot be a constant where the type is defined.
+///
+/// The table is a `static` with room for `S` members' slots, empty until the modules are added
+/// when the program starts. It is read like any other table, with no test for whether it has
+/// been filled: before it is, the type has no methods.
+///
+/// ```ignore
+/// pub static FOO_MEMBERS: LateMemberTable<64> = LateMemberTable::new();
+///
+/// #[starlark_value(type = "foo")]
+/// impl<'v> StarlarkValue<'v> for Foo {
+///     const MEMBERS: Option<MemberTableRef> = Some(FOO_MEMBERS.table());
+/// }
+///
+/// // In a crate that depends on the one above, as the program starts:
+/// unsafe { FOO_MEMBERS.extend(&FOO_METHODS_MEMBERS) };
+/// ```
+///
+/// where `FOO_METHODS_MEMBERS` is the static that `#[starlark_module]` declares next to a
+/// module `foo_methods`.
+pub struct LateMemberTable<const S: usize>(UnsafeCell<MemberTable<[Member; S]>>);
+
+// SAFETY: The table is written only by `extend`, whose caller answers for nothing else reading
+// or writing it then.
+unsafe impl<const S: usize> Sync for LateMemberTable<S> {}
+
+impl<const S: usize> LateMemberTable<S> {
+    /// An empty table. `S` is a power of two and at least twice the number of members the
+    /// table is going to have.
+    pub const fn new() -> LateMemberTable<S> {
+        LateMemberTable(UnsafeCell::new(MemberTable::of(
+            None,
+            [Member::EMPTY; S],
+            0,
+        )))
+    }
+
+    /// The table, for the type's `MEMBERS`.
+    pub const fn table(&'static self) -> MemberTableRef {
+        let table: *mut MemberTable = self.0.get();
+        // SAFETY: A pointer to a `static` is not null.
+        MemberTableRef(unsafe { NonNull::new_unchecked(table) })
+    }
+
+    /// Adds the members of `module` after the ones the table has.
+    ///
+    /// # Safety
+    ///
+    /// Nothing reads the table during the call, and no member that was found in it before the
+    /// call is used after. Both hold where the program starts, before any Starlark is
+    /// evaluated.
+    pub unsafe fn extend(&'static self, module: &'static MemberTable) {
+        // SAFETY: The caller says that nothing else has access to the table now.
+        let table = unsafe { &mut *self.0.get() };
+        let mut members = [Member::EMPTY; S];
+        let mut len = 0;
+        for member in table.declared().into_iter().chain(module.declared()) {
+            assert!(len < S, "a `LateMemberTable` with too few slots");
+            members[len] = *member;
+            len += 1;
+        }
+        let docstring = module.docstring.or(table.docstring);
+        *table = MemberTable::of(docstring, members, len);
+    }
+}
+
+impl<S: ?Sized + AsRef<[Member]>> MemberTable<S> {
+    /// The members, in the order they were declared.
+    fn declared(&self) -> Vec<&Member> {
+        let mut members: Vec<&Member> = self
+            .slots
+            .as_ref()
+            .iter()
+            .filter(|member| !matches!(member.kind, MemberKind::Empty))
+            .collect();
+        members.sort_by_key(|member| member.index);
+        members
+    }
+}
+
 impl MemberTable {
     #[inline(always)]
     fn slot(&'static self, hash: StarlarkHashValue) -> &'static Member {
@@ -438,13 +550,7 @@ impl MemberTable {
 
     /// The members, in the order they were declared.
     pub fn members(&'static self) -> Vec<&'static Member> {
-        let mut members: Vec<&'static Member> = self
-            .slots
-            .iter()
-            .filter(|member| !matches!(member.kind, MemberKind::Empty))
-            .collect();
-        members.sort_by_key(|member| member.index);
-        members
+        self.declared()
     }
 
     /// The documentation written on the module the table was declared by.

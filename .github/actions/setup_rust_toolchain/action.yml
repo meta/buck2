@@ -4,15 +4,23 @@ inputs:
   components:
     description: Comma-separated rustup components to install alongside it
     default: ""
+  targets:
+    description: Comma-separated target triples to install alongside the host's
+    default: ""
 runs:
   using: composite
   steps:
-  - uses: SebRollen/toml-action@v1.2.0
+  # Up to the closing quote: a checkout on Windows can end the line with a
+  # carriage return.
+  - name: Read the channel from rust-toolchain.toml
     id: read_rust_toolchain
-    with:
-      file: rust-toolchain.toml
-      field: toolchain.channel
+    run: |-
+      channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
+      test -n "$channel"
+      echo "value=$channel" >> "$GITHUB_OUTPUT"
+    shell: bash
   - uses: dtolnay/rust-toolchain@v1
     with:
       toolchain: ${{ steps.read_rust_toolchain.outputs.value }}
       components: ${{ inputs.components }}
+      targets: ${{ inputs.targets }}

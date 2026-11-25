@@ -13,7 +13,7 @@ runs:
       test -n "$rev"
       echo "rev=$rev" >> "$GITHUB_OUTPUT"
     shell: bash
-  - uses: actions/cache/restore@v4
+  - uses: actions/cache/restore@v6
     id: reindeer_cache
     with:
       path: ${{ runner.temp }}/reindeer
@@ -25,7 +25,7 @@ runs:
     shell: bash
   # Only `main` writes the cache (see build_debug); a pull request that built
   # Reindeer gets it from `main` once a run there has cached the same commit.
-  - uses: actions/cache/save@v4
+  - uses: actions/cache/save@v6
     if: steps.reindeer_cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
     with:
       path: ${{ runner.temp }}/reindeer

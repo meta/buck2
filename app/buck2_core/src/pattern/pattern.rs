@@ -267,6 +267,16 @@ impl ParsedPattern<TargetPatternExtra> {
             }
         }
     }
+
+    /// Whether some target of the package can match.
+    pub fn matches_package(&self, package: PackageLabel) -> bool {
+        match self {
+            ParsedPattern::Target(pkg, _, TargetPatternExtra) | ParsedPattern::Package(pkg) => {
+                *pkg == package
+            }
+            ParsedPattern::Recursive(cell_path) => package.as_cell_path().starts_with(*cell_path),
+        }
+    }
 }
 
 impl ParsedPattern<ProvidersPatternExtra> {
@@ -541,6 +551,16 @@ impl ParsedPatternPredicate<TargetPatternExtra> {
             ParsedPatternPredicate::AnyOf(patterns) => {
                 patterns.iter().any(|pattern| pattern.matches(target))
             }
+        }
+    }
+
+    /// Whether some target of the package can match.
+    pub fn matches_package(&self, package: PackageLabel) -> bool {
+        match self {
+            ParsedPatternPredicate::Any => true,
+            ParsedPatternPredicate::AnyOf(patterns) => patterns
+                .iter()
+                .any(|pattern| pattern.matches_package(package.dupe())),
         }
     }
 }
@@ -1272,6 +1292,7 @@ mod tests {
     use crate::pattern::pattern::InferTargetNames;
     use crate::pattern::pattern::Modifiers;
     use crate::pattern::pattern::ParsedPattern;
+    use crate::pattern::pattern::ParsedPatternPredicate;
     use crate::pattern::pattern::ParsedPatternWithModifiers;
     use crate::pattern::pattern::TargetParsingRel;
     use crate::pattern::pattern::TargetPatternParseError;
@@ -2709,6 +2730,33 @@ mod tests {
                 "(cfg)",
                 Some("(exec_cfg)")
             )),
+        );
+    }
+
+    #[test]
+    fn test_matches_package() {
+        let package = |label: &str| PackageLabel::testing_parse(label);
+        let target = ParsedPattern::Target(
+            package("root//a"),
+            TargetName::testing_new("t"),
+            TargetPatternExtra,
+        );
+        let whole = ParsedPattern::<TargetPatternExtra>::Package(package("root//b"));
+        let recursive = ParsedPattern::<TargetPatternExtra>::Recursive(
+            package("root//c").as_cell_path().to_owned(),
+        );
+        assert!(target.matches_package(package("root//a")));
+        assert!(!target.matches_package(package("root//a/sub")));
+        assert!(whole.matches_package(package("root//b")));
+        assert!(!whole.matches_package(package("root//b/sub")));
+        assert!(recursive.matches_package(package("root//c")));
+        assert!(recursive.matches_package(package("root//c/sub")));
+        assert!(!recursive.matches_package(package("root//cc")));
+        let any = ParsedPatternPredicate::AnyOf(vec![target, recursive]);
+        assert!(any.matches_package(package("root//c/d")));
+        assert!(!any.matches_package(package("root//b")));
+        assert!(
+            ParsedPatternPredicate::<TargetPatternExtra>::Any.matches_package(package("root//b"))
         );
     }
 }

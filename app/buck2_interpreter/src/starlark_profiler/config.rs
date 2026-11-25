@@ -13,6 +13,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_common::pattern::parse_from_cli::parse_patterns_from_cli_args_typed;
+use buck2_core::package::PackageLabel;
 use buck2_core::pattern::package::PackagePredicate;
 use buck2_core::pattern::pattern::ParsedPatternPredicate;
 use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
@@ -89,6 +90,52 @@ enum StarlarkProfilerConfigurationResolved {
     ProfileAnalysis(ProfileMode, ParsedPatternPredicate<TargetPatternExtra>),
     ProfileBxl(ProfileMode),
     ProfilePattern(ProfileMode, ProfileRegex),
+}
+
+impl StarlarkProfilerConfigurationResolved {
+    fn mode_for(&self, kind: &StarlarkEvalKind) -> StarlarkProfileMode {
+        let mode = match self {
+            Self::None => None,
+            Self::ProfileLastLoading(mode, packages) => match kind {
+                StarlarkEvalKind::LoadBuildFile(package) if packages.matches(package.dupe()) => {
+                    Some(mode)
+                }
+                _ => None,
+            },
+            Self::ProfileAnalysis(mode, patterns) => match kind {
+                StarlarkEvalKind::Analysis(target) if patterns.matches(target.unconfigured()) => {
+                    Some(mode)
+                }
+                _ => None,
+            },
+            Self::ProfileBxl(mode) => match kind {
+                StarlarkEvalKind::Bxl(..) => Some(mode),
+                _ => None,
+            },
+            Self::ProfilePattern(mode, pattern) => pattern.matches(kind).then_some(mode),
+        };
+        match mode {
+            Some(mode) => StarlarkProfileMode::Profile(mode.dupe()),
+            None => StarlarkProfileMode::None,
+        }
+    }
+
+    /// False only if `mode_for` profiles no evaluation in the scope.
+    fn may_profile(&self, scope: &ProfiledEvalScope) -> bool {
+        match self {
+            Self::None => false,
+            Self::ProfileLastLoading(_, packages) => match scope {
+                ProfiledEvalScope::LoadBuildFile(package) => packages.matches(package.dupe()),
+                _ => false,
+            },
+            Self::ProfileAnalysis(_, patterns) => match scope {
+                ProfiledEvalScope::Analysis(package) => patterns.matches_package(package.dupe()),
+                _ => false,
+            },
+            Self::ProfileBxl(_) => matches!(scope, ProfiledEvalScope::Bxl),
+            Self::ProfilePattern(..) => true,
+        }
+    }
 }
 
 #[derive(
@@ -225,42 +272,10 @@ impl ProjectionKey for StarlarkProfileModeForKind {
         configuration: &buck2_error::Result<Arc<StarlarkProfilerConfigurationResolved>>,
         _ctx: &DiceProjectionComputations,
     ) -> buck2_error::Result<StarlarkProfileMode> {
-        match &**(configuration.as_ref().map_err(|e| e.dupe())?) {
-            StarlarkProfilerConfigurationResolved::None => Ok(StarlarkProfileMode::None),
-            StarlarkProfilerConfigurationResolved::ProfileLastLoading(mode, patterns) => {
-                match &self.0 {
-                    StarlarkEvalKind::LoadBuildFile(v) => {
-                        if patterns.matches(v.dupe()) {
-                            Ok(StarlarkProfileMode::Profile(mode.dupe()))
-                        } else {
-                            Ok(StarlarkProfileMode::None)
-                        }
-                    }
-                    _ => Ok(StarlarkProfileMode::None),
-                }
-            }
-            StarlarkProfilerConfigurationResolved::ProfileAnalysis(mode, patterns) => {
-                match &self.0 {
-                    StarlarkEvalKind::Analysis(target)
-                        if patterns.matches(target.unconfigured()) =>
-                    {
-                        Ok(StarlarkProfileMode::Profile(mode.dupe()))
-                    }
-                    _ => Ok(StarlarkProfileMode::None),
-                }
-            }
-            StarlarkProfilerConfigurationResolved::ProfileBxl(mode) => match &self.0 {
-                StarlarkEvalKind::Bxl(..) => Ok(StarlarkProfileMode::Profile(mode.dupe())),
-                _ => Ok(StarlarkProfileMode::None),
-            },
-            StarlarkProfilerConfigurationResolved::ProfilePattern(mode, pattern) => {
-                if pattern.matches(&self.0) {
-                    Ok(StarlarkProfileMode::Profile(mode.dupe()))
-                } else {
-                    Ok(StarlarkProfileMode::None)
-                }
-            }
-        }
+        Ok(configuration
+            .as_ref()
+            .map_err(|e| e.dupe())?
+            .mode_for(&self.0))
     }
 
     fn equality_behavior() -> EqualityBehavior<Self::Value> {
@@ -333,16 +348,252 @@ impl SetStarlarkProfilerInstrumentation for DiceTransactionUpdater {
     }
 }
 
+/// What a profiling configuration can single out about an evaluation: its
+/// kind and, for a build file or an analysis, its package.
+#[derive(
+    Debug,
+    derive_more::Display,
+    Clone,
+    Dupe,
+    Eq,
+    PartialEq,
+    Hash,
+    Allocative,
+    Pagable
+)]
+#[display("{:?}", self)]
+enum ProfiledEvalScope {
+    LoadBuildFile(PackageLabel),
+    Analysis(PackageLabel),
+    Bxl,
+    Other,
+}
+
+impl ProfiledEvalScope {
+    fn of(kind: &StarlarkEvalKind) -> Self {
+        match kind {
+            StarlarkEvalKind::LoadBuildFile(package) => Self::LoadBuildFile(package.dupe()),
+            StarlarkEvalKind::Analysis(target) => Self::Analysis(target.pkg().dupe()),
+            StarlarkEvalKind::Bxl(_) => Self::Bxl,
+            StarlarkEvalKind::Load(_)
+            | StarlarkEvalKind::LoadPackageFile(_)
+            | StarlarkEvalKind::Transition(_)
+            | StarlarkEvalKind::AnonTarget(_)
+            | StarlarkEvalKind::DynamicOutput(_)
+            | StarlarkEvalKind::BxlDynamic(_)
+            | StarlarkEvalKind::Unknown(_) => Self::Other,
+        }
+    }
+}
+
+/// Whether the current command's profiling configuration can profile the
+/// evaluations of a scope.
+#[derive(
+    Debug,
+    derive_more::Display,
+    Clone,
+    Dupe,
+    Eq,
+    PartialEq,
+    Hash,
+    Allocative,
+    Pagable
+)]
+#[display("{:?}", self)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct StarlarkProfilingScopeKey(ProfiledEvalScope);
+
+#[async_trait]
+impl Key for StarlarkProfilingScopeKey {
+    type Value = bool;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        match ctx.compute(&StarlarkProfilerConfigurationResolvedKey).await {
+            Ok(Ok(configuration)) => configuration.may_profile(&self.0),
+            // The error is reported by `StarlarkProfileModeForKind`.
+            Ok(Err(_)) | Err(_) => true,
+        }
+    }
+
+    fn equality_behavior() -> EqualityBehavior<Self::Value> {
+        EqualityBehavior::Compare(|x, y| x == y)
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        PagableValueSerialize::<Self::Value>::new()
+    }
+}
+
 #[async_trait]
 impl GetStarlarkProfilerInstrumentation for DiceComputations<'_> {
     async fn get_starlark_profiler_mode(
         &mut self,
         eval_kind: &StarlarkEvalKind,
     ) -> buck2_error::Result<StarlarkProfileMode> {
+        if !*self
+            .compute(&StarlarkProfilingScopeKey(ProfiledEvalScope::of(eval_kind)))
+            .await?
+        {
+            return Ok(StarlarkProfileMode::None);
+        }
+
         let cfg = self
             .compute_opaque(&StarlarkProfilerConfigurationResolvedKey)
             .await?;
 
         Ok(self.projection(&cfg, StarlarkProfileModeForKind::ref_cast(eval_kind))??)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use allocative::Allocative;
+    use buck2_core::bzl::ImportPath;
+    use buck2_core::configuration::data::ConfigurationData;
+    use buck2_core::configuration::transition::id::TransitionId;
+    use buck2_core::deferred::dyn_eval_kind_key::DynEvalKindKey;
+    use buck2_core::pattern::package::PackagePattern;
+    use buck2_core::pattern::pattern::ParsedPattern;
+    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+    use buck2_core::target::name::TargetName;
+    use buck2_util::arc_str::ThinArcStr;
+
+    use super::*;
+    use crate::paths::module::OwnedStarlarkModulePath;
+
+    fn package(label: &str) -> PackageLabel {
+        PackageLabel::testing_parse(label)
+    }
+
+    #[derive(
+        Debug,
+        derive_more::Display,
+        Hash,
+        Eq,
+        PartialEq,
+        Allocative,
+        strong_hash::StrongHash,
+        Pagable
+    )]
+    #[display("test_key")]
+    #[pagable_typetag(DynEvalKindKey)]
+    struct TestKey;
+
+    fn kinds() -> Vec<StarlarkEvalKind> {
+        let analysis = |label| {
+            StarlarkEvalKind::Analysis(ConfiguredTargetLabel::testing_parse(
+                label,
+                ConfigurationData::testing_new(),
+            ))
+        };
+        vec![
+            analysis("root//a:t"),
+            analysis("root//a:u"),
+            analysis("root//b/x:y"),
+            analysis("root//c:z"),
+            analysis("root//d:w"),
+            StarlarkEvalKind::LoadBuildFile(package("root//a")),
+            StarlarkEvalKind::LoadBuildFile(package("root//b/x")),
+            StarlarkEvalKind::LoadBuildFile(package("root//d")),
+            StarlarkEvalKind::LoadPackageFile(package("root//a")),
+            StarlarkEvalKind::Load(Arc::new(OwnedStarlarkModulePath::LoadFile(
+                ImportPath::testing_new("root//a:defs.bzl"),
+            ))),
+            StarlarkEvalKind::Transition(Arc::new(TransitionId::MagicObject {
+                path: ImportPath::testing_new("root//a:defs.bzl"),
+                name: "transition".to_owned(),
+            })),
+            StarlarkEvalKind::AnonTarget(Arc::new(TestKey)),
+            StarlarkEvalKind::DynamicOutput(Arc::new(TestKey)),
+            StarlarkEvalKind::Bxl(Arc::new(TestKey)),
+            StarlarkEvalKind::BxlDynamic(ThinArcStr::from("dynamic")),
+            StarlarkEvalKind::Unknown(ThinArcStr::from("unknown")),
+        ]
+    }
+
+    fn configurations() -> Vec<StarlarkProfilerConfigurationResolved> {
+        let mode = ProfileMode::Statement;
+        let under = |label: &str| package(label).as_cell_path().to_owned();
+        let regex = |patterns: &[&str]| {
+            ProfileRegex::new(&patterns.iter().map(|p| p.to_string()).collect::<Vec<_>>()).unwrap()
+        };
+        vec![
+            StarlarkProfilerConfigurationResolved::None,
+            StarlarkProfilerConfigurationResolved::ProfileLastLoading(
+                mode.dupe(),
+                PackagePredicate::Any,
+            ),
+            StarlarkProfilerConfigurationResolved::ProfileLastLoading(
+                mode.dupe(),
+                PackagePredicate::AnyOf(vec![
+                    PackagePattern::Package(package("root//a")),
+                    PackagePattern::Recursive(under("root//b")),
+                ]),
+            ),
+            StarlarkProfilerConfigurationResolved::ProfileAnalysis(
+                mode.dupe(),
+                ParsedPatternPredicate::Any,
+            ),
+            StarlarkProfilerConfigurationResolved::ProfileAnalysis(
+                mode.dupe(),
+                ParsedPatternPredicate::AnyOf(vec![
+                    ParsedPattern::Target(
+                        package("root//a"),
+                        TargetName::testing_new("t"),
+                        TargetPatternExtra,
+                    ),
+                    ParsedPattern::Package(package("root//c")),
+                    ParsedPattern::Recursive(under("root//b")),
+                ]),
+            ),
+            StarlarkProfilerConfigurationResolved::ProfileBxl(mode.dupe()),
+            StarlarkProfilerConfigurationResolved::ProfilePattern(
+                mode.dupe(),
+                regex(&["analysis/a/.*"]),
+            ),
+            StarlarkProfilerConfigurationResolved::ProfilePattern(
+                mode.dupe(),
+                regex(&["load_bzl/.*", "unknown"]),
+            ),
+            StarlarkProfilerConfigurationResolved::ProfilePattern(mode.dupe(), regex(&[".*"])),
+        ]
+    }
+
+    #[test]
+    fn test_scope_covers_every_profiled_evaluation() {
+        let mut profiled = 0;
+        for configuration in configurations() {
+            for kind in kinds() {
+                if configuration.mode_for(&kind) != StarlarkProfileMode::None {
+                    profiled += 1;
+                    assert!(
+                        configuration.may_profile(&ProfiledEvalScope::of(&kind)),
+                        "{configuration:?} profiles `{kind}` but its scope says no"
+                    );
+                }
+            }
+        }
+        // Per configuration above: 0 + 3 + 2 + 5 + 3 + 1 + 2 + 2 + 16.
+        assert_eq!(profiled, 34);
+    }
+
+    #[test]
+    fn test_scope_is_per_package() {
+        let configurations = configurations();
+        let [_, _, loading, _, analysis, bxl, ..] = configurations.as_slice() else {
+            unreachable!()
+        };
+        assert!(loading.may_profile(&ProfiledEvalScope::LoadBuildFile(package("root//b/x"))));
+        assert!(!loading.may_profile(&ProfiledEvalScope::LoadBuildFile(package("root//d"))));
+        assert!(!loading.may_profile(&ProfiledEvalScope::Analysis(package("root//a"))));
+        assert!(analysis.may_profile(&ProfiledEvalScope::Analysis(package("root//a"))));
+        assert!(!analysis.may_profile(&ProfiledEvalScope::Analysis(package("root//d"))));
+        assert!(!analysis.may_profile(&ProfiledEvalScope::LoadBuildFile(package("root//a"))));
+        assert!(bxl.may_profile(&ProfiledEvalScope::Bxl));
+        assert!(!bxl.may_profile(&ProfiledEvalScope::Analysis(package("root//a"))));
     }
 }

@@ -2,6 +2,6 @@ stub(name = "ddd")
 
 stub(name = "test", deps = [":ddd"])
 
-stub(name = "xxx")
+stub(name = "xxx", visibility = ["PUBLIC"])
 stub(name = "yyy")
 stub(name = "zzz")

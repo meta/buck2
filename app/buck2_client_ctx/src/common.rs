@@ -430,10 +430,12 @@ pub struct CommonStarlarkOptions {
     /// The profile results will be written to individual .profile files in `<ROOT_OUTPUT>/<data+time>-<uuid>/` where ROOT_OUTPUT comes from
     /// the --profile-patterns-output flag. In that directory there will also be a file listing all the identifiers that were profiled.
     ///
-    /// Enabling/disabling profiling of an evaluation will invalidate the results of that evaluation and it will be recomputed. In some
-    /// cases, this will cause other work to also need to be redone (for example, invalidating the result of loading PACKAGE files
-    /// causes all consumers to be recomputed). But if you keep profiling options consistent between commands, only the work that is
-    /// otherwise invalidated will be redone (and only for those would profiling results be created).
+    /// Switching between no profiling and `--profile-patterns` invalidates every cached Starlark evaluation (loads, analyses,
+    /// BXL); later commands redo the ones they need. Changing the patterns between two commands that pass it invalidates
+    /// only the evaluations whose profiling changes. In some cases this will cause other work to also need to be redone (for
+    /// example, invalidating the result of loading PACKAGE files causes all consumers to be recomputed). But if you keep
+    /// profiling options consistent between commands, only the work that is otherwise invalidated will be redone (and only
+    /// for those would profiling results be created).
     ///
     /// You must also pass --profile-patterns-mode and --profile-patterns-output.
     #[clap(

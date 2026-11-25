@@ -8,10 +8,13 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
+use anyhow::Context;
 use buck2_e2e::BuckCommand;
 use buck2_e2e::prelude::*;
+use buck2_e2e::utils::filter_events;
 
 /// Declares tests that each call `$helper` with the test's `buck` and `tmp_path` and the given
 /// arguments, one test per case of the Python test's `parametrize`.
@@ -124,6 +127,81 @@ profiler_tests!(profile_analysis_last {
     #[buck_test] fn test_profile_analysis_last_typecheck("typecheck");
     #[buck_test] fn test_profile_analysis_last_coverage("coverage");
 });
+
+/// The build files loaded and the targets analyzed by the last command.
+async fn loads_and_analyses(buck: &Buck) -> anyhow::Result<(Vec<String>, BTreeSet<String>)> {
+    let mut loads = Vec::new();
+    let mut analyses = BTreeSet::new();
+    for span in filter_events(buck, &["Event", "data", "SpanEnd", "data"]).await? {
+        if let Some(load) = span.get("Load") {
+            let module = load["module_id"].as_str().context("A load has a module")?;
+            loads.push(module.to_owned());
+        }
+        if let Some(analysis) = span.get("Analysis") {
+            let label = &analysis["target"]["StandardTarget"]["label"];
+            let package = label["package"].as_str().context("A label has a package")?;
+            let name = label["name"].as_str().context("A label has a name")?;
+            analyses.insert(format!("{package}:{name}"));
+        }
+    }
+    Ok((loads, analyses))
+}
+
+/// Profiling the analysis of one target in a warm daemon, then building
+/// normally, re-runs the analyses of that target's package and of what
+/// depends on them, leaves an unrelated package alone, and reloads nothing.
+#[buck_test]
+async fn test_profile_analysis_then_build_redoes_the_package_and_its_consumers(
+    buck: &Buck,
+    tmp_path: &Path,
+) -> anyhow::Result<()> {
+    let build_file = "root//simple:TARGETS.fixture".to_owned();
+    let targets = [
+        "//simple:test",
+        "//simple:xxx",
+        "//consumer:top",
+        "//separate:elsewhere",
+    ];
+
+    buck.build(&targets).await?;
+    let (loads, analyses) = loads_and_analyses(buck).await?;
+    assert!(loads.contains(&build_file), "{loads:?}");
+    for target in [
+        "root//simple:test",
+        "root//simple:xxx",
+        "root//consumer:top",
+        "root//separate:elsewhere",
+    ] {
+        assert!(analyses.contains(target), "{target}: {analyses:?}");
+    }
+
+    let profile = tmp_path.join("profile");
+    buck.profile(&[
+        "analysis",
+        "--mode",
+        "statement",
+        "//simple:test",
+        "--output",
+        profile.to_str().unwrap(),
+    ])
+    .await?;
+    assert!(profile.exists());
+
+    buck.build(&targets).await?;
+    let (loads, analyses_again) = loads_and_analyses(buck).await?;
+    assert!(loads.is_empty(), "{loads:?}");
+    let redone: BTreeSet<String> = analyses
+        .into_iter()
+        .filter(|target| target.starts_with("root//simple:") || target == "root//consumer:top")
+        .collect();
+    assert_eq!(analyses_again, redone);
+
+    buck.build(&targets).await?;
+    let (loads, analyses_again) = loads_and_analyses(buck).await?;
+    assert!(loads.is_empty(), "{loads:?}");
+    assert!(analyses_again.is_empty(), "{analyses_again:?}");
+    Ok(())
+}
 
 async fn profile_analysis_recursive(
     buck: &Buck,

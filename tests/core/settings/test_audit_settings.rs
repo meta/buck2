@@ -155,7 +155,7 @@ async fn test_text_report(buck: &Buck) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[buck_test]
+#[buck_test(meta_only = "open source builds allow every override, so there is no policy to bypass")]
 async fn test_test_settings_bypass_override_policy(buck: &mut Buck) -> anyhow::Result<()> {
     // `default_intersection` allows no overrides.
     let failed = buck

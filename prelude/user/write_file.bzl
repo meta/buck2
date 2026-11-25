@@ -40,16 +40,52 @@ def _impl(ctx: AnalysisContext):
 
 registration_spec = RuleRegistrationSpec(
     name = "write_file",
+    doc = """
+        Writes a text file from lines given in the build file.
+
+        ```python
+        write_file(
+            name = "version",
+            out = "version.txt",
+            content = [
+                "1.2.3",
+                "stable",
+            ],
+        )
+        ```
+    """,
     impl = _impl,
     attrs = buck.labels_arg()
     | buck.contacts_arg()
     | buck.has_content_based_path_attr()
     | {
         # API based on https://github.com/bazelbuild/bazel-skylib/blob/main/docs/write_file_doc.md.
-        "content": attrs.list(attrs.string(), default = []),
-        "is_executable": attrs.bool(default = False),
-        "newline": attrs.enum(["auto", "unix", "windows"], default = "auto"),
-        "out": attrs.string(),
+        "content": attrs.list(
+            attrs.string(),
+            default = [],
+            doc = """
+                The lines of the file. Each one is written with a line ending after it.
+            """,
+        ),
+        "is_executable": attrs.bool(
+            default = False,
+            doc = """
+                Whether the file is executable. If it is, `buck2 run` runs it.
+            """,
+        ),
+        "newline": attrs.enum(
+            ["auto", "unix", "windows"],
+            default = "auto",
+            doc = """
+                The line ending: `unix` is `\\n` and `windows` is `\\r\\n`. `auto` is the one
+                of the platform that the target is built for.
+            """,
+        ),
+        "out": attrs.string(
+            doc = """
+                The name of the file.
+            """,
+        ),
         "_auto_newline": attrs.default_only(
             attrs.string(
                 default = select({

@@ -42,6 +42,19 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
 
 registration_spec = RuleRegistrationSpec(
     name = "extract_archive",
+    doc = """
+        Extracts an archive into a directory. The archive is a file in the
+        repository or the output of another target; `http_archive` is the rule
+        for one that is downloaded.
+
+        ```python
+        extract_archive(
+            name = "assets",
+            src = "assets.tar.gz",
+            strip_prefix = "assets-1.0",
+        )
+        ```
+    """,
     impl = _impl,
     attrs = remote_common.unarchive_args()
     | {

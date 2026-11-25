@@ -198,3 +198,60 @@ async fn test_ctargets_output_attribute(buck: &Buck) -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// Runs `ctargets` with its stdout sent in 7-byte chunks and returns that stdout. It must be what
+/// an unchunked run prints, and the final response must not carry it as well.
+async fn chunked_stdout(buck: &Buck, args: &[&str]) -> anyhow::Result<String> {
+    let unchunked = buck.ctargets(args).await?;
+    buck.kill().await?;
+    let chunked = buck
+        .ctargets(args)
+        .env("BUCK2_DEBUG_RAWOUTPUT_CHUNK_SIZE", "7")
+        .await?;
+    assert_eq!(chunked.stdout, unchunked.stdout);
+
+    let log = buck.log(&["show"]).await?;
+    let result: Value = serde_json::from_str(log.stdout.lines().last().unwrap())?;
+    assert_eq!(
+        result["Result"]["result"]["configured_targets_response"]["serialized_targets_output"],
+        ""
+    );
+    Ok(chunked.stdout)
+}
+
+#[buck_test]
+async fn test_ctargets_chunked_stdout(buck: &Buck) -> anyhow::Result<()> {
+    let stdout = chunked_stdout(buck, &["root//:", "--target-platforms=root//:p"]).await?;
+    assert_eq!(stdout.lines().count(), 3);
+    Ok(())
+}
+
+#[buck_test]
+async fn test_ctargets_chunked_stdout_json(buck: &Buck) -> anyhow::Result<()> {
+    let stdout = chunked_stdout(buck, &["root//:", "--json"]).await?;
+    let outputs: Vec<Value> = serde_json::from_str(&stdout)?;
+    assert_eq!(outputs.len(), 3);
+    Ok(())
+}
+
+#[buck_test]
+async fn test_ctargets_chunked_stdout_console_none(buck: &Buck) -> anyhow::Result<()> {
+    let args = ["root//:", "--target-platforms=root//:p", "--console=none"];
+    let stdout = chunked_stdout(buck, &args).await?;
+    assert_eq!(stdout.lines().count(), 3);
+    Ok(())
+}
+
+#[buck_test]
+async fn test_ctargets_chunked_stdout_keep_going(buck: &Buck) -> anyhow::Result<()> {
+    let args = ["root//:gum", "root//missing:gum", "--json", "--keep-going"];
+    let stdout = chunked_stdout(buck, &args).await?;
+    let outputs: Vec<Value> = serde_json::from_str(&stdout)?;
+    let [error, target] = outputs.as_slice() else {
+        panic!("expected one error and one target: {outputs:?}");
+    };
+    assert_eq!(attribute(error, "buck.package"), "root//missing");
+    attribute(error, "buck.error");
+    assert_eq!(attribute(target, "name"), "gum");
+    Ok(())
+}

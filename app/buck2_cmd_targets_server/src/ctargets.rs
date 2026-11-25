@@ -22,7 +22,6 @@ use buck2_node::load_patterns::MissingTargetBehavior;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
 use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use buck2_server_ctx::template::ServerCommandTemplate;
 use buck2_server_ctx::template::run_server_command;
@@ -36,7 +35,7 @@ use crate::targets::fmt::create_configured_formatter;
 
 pub async fn configured_targets_command(
     server_ctx: &dyn ServerCommandContextTrait,
-    partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
+    partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
     req: ConfiguredTargetsRequest,
 ) -> buck2_error::Result<ConfiguredTargetsResponse> {
     run_server_command(
@@ -56,12 +55,12 @@ impl ServerCommandTemplate for ConfiguredTargetsServerCommand {
     type StartEvent = buck2_data::ConfiguredTargetsCommandStart;
     type EndEvent = buck2_data::ConfiguredTargetsCommandEnd;
     type Response = ConfiguredTargetsResponse;
-    type PartialResult = NoPartialResult;
+    type PartialResult = buck2_cli_proto::StdoutBytes;
 
     async fn command(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        _partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
+        mut partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
     ) -> buck2_error::Result<ConfiguredTargetsResponse> {
         // TODO(nga): this should accept `ConfiguredTargetPatternExtra`. And handle the universe.
@@ -208,8 +207,12 @@ impl ServerCommandTemplate for ConfiguredTargetsServerCommand {
             server_ctx.stderr()?.write_all(stderr_output.as_bytes())?;
         }
 
+        let mut stdout = partial_result_dispatcher.as_writer();
+        stdout.write_all(serialized_targets_output.as_bytes())?;
+        stdout.flush()?;
+
         Ok(ConfiguredTargetsResponse {
-            serialized_targets_output,
+            serialized_targets_output: String::new(),
         })
     }
 }

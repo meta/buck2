@@ -90,7 +90,7 @@ pub trait TargetsServerCommands: Send + Sync + 'static {
     async fn ctargets(
         &self,
         ctx: &dyn ServerCommandContextTrait,
-        partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
+        partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
         req: buck2_cli_proto::ConfiguredTargetsRequest,
     ) -> buck2_error::Result<buck2_cli_proto::ConfiguredTargetsResponse>;
 }

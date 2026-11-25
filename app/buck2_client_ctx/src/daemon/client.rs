@@ -598,7 +598,7 @@ impl FlushingBuckdClient<'_> {
         ctargets,
         ConfiguredTargetsRequest,
         ConfiguredTargetsResponse,
-        NoPartialResult
+        buck2_cli_proto::StdoutBytes
     );
     stream_method!(build, BuildRequest, BuildResponse, NoPartialResult);
     stream_method!(bxl, BxlRequest, BxlResponse, buck2_cli_proto::StdoutBytes);

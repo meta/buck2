@@ -58,6 +58,40 @@ def buck_command(args: argparse.Namespace) -> str:
     return buck + " --client-metadata id=buck2_gen_docs"
 
 
+def without_undescribed_private_attributes(page: str) -> str:
+    """
+    A rule page whose signature leaves out the attributes that have a name
+    starting with `_` and no description. Rules use these for their own
+    defaults, such as the toolchain they take, and a target does not normally
+    set them.
+    """
+    lines = page.splitlines()
+    described = {m.group(1) for m in (re.match(r"\* `(\w+)`", x) for x in lines) if m}
+    out = []
+    in_signature = False
+    skipping = False
+    for line in lines:
+        if line.startswith("```"):
+            in_signature = line == "```python" and out[-2:] == [
+                "### Function Signature",
+                "",
+            ]
+            skipping = False
+        elif in_signature:
+            # An attribute starts a line at this indentation. The lines up to
+            # the next attribute are the rest of its value.
+            attribute = re.match(r"    (\w+)(:| =)", line)
+            if attribute:
+                name = attribute.group(1)
+                skipping = name.startswith("_") and name not in described
+            elif line == "    *," or not line.startswith("    "):
+                skipping = False
+            if skipping:
+                continue
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
 def rule_summary(page: str) -> str:
     """
     The first sentence of the description of a rule page, for a table cell.
@@ -146,7 +180,7 @@ def generate_prelude_rules_docs(buck: str) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             if path.name == "index.md":
                 continue
-            page = read_file(orig)
+            page = without_undescribed_private_attributes(read_file(orig))
             write_file(dest, page)
             rules.setdefault(directory, []).append(
                 (path.stem, directory, rule_summary(page))

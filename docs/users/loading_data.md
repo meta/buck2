@@ -18,7 +18,7 @@ some_rule(
 This is useful for example if the data being loaded is generated outside of the
 build process, but is necessary for the build itself - like URLs and checksums
 being passed into
-[`http_archive`](https://buck2.build/docs/prelude/rules/core/http_archive/).
+[`http_archive`](../prelude/rules/core/http_archive.md).
 
 The file name must end in `.toml` or `.json`, and `load()` can only import the
 name `value` from these files. For TOML, `value` is always going to be a

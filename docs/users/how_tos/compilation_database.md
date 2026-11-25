@@ -37,7 +37,7 @@ your repository:
 ```python
 # `comp_db.bxl`
 
-load("@prelude//cxx/tools/compilation_database.bxl:generate", "generate")
+load("@prelude//cxx/tools:compilation_database.bxl", "generate")
 
 gen = generate
 ```
@@ -48,7 +48,7 @@ ln -sf $(buck2 bxl comp_db.bxl:gen -- --targets ...) $(git rev-parse --show-topl
 
 Providing better ergonomics for BXL scripts (such as enabling something like
 `buck2 comp_db`) is being discussed
-[here](https://github.com/facebook/buck2/issues/86).
+[here](https://github.com/meta/buck2/issues/86).
 
 ## Tools jumping to `buck-out`
 

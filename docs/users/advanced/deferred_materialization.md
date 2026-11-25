@@ -37,17 +37,17 @@ At Meta, artifacts get periodically refreshed, but open source RE backends do no
 
 ## On-disk state
 
-Buck2 can also optionally track its state on disk in a SQLite database. This
-allows Buck2 to remember what files are on disk across restarts.
+Buck2 tracks its state on disk in a SQLite database. This allows Buck2 to
+remember what files are on disk across restarts.
 
 This can allow Buck2 to avoid re-downloading outputs from your Remote Execution
 backend if they are already on disk.
 
-To enable, add this to your Buckconfig:
+It is enabled by default. To disable, add this to your Buckconfig:
 
 ```ini
 [buck2]
-sqlite_materializer_state = true
+sqlite_materializer_state = false
 ```
 
 ## Deferring Write Actions
@@ -74,7 +74,7 @@ exist in buck-out but not in the materalizer state.
 Unlike `buck2 clean` this does not fully wipe buck-out but it should not
 negatively impact build performance if you are building and rebasing regularly.
 
-Enabling this requires enabling [on-disk state](#on-disk-state) and
+Enabling this requires [on-disk state](#on-disk-state) and
 [deferred write actions](#deferring-write-actions), and adding this to your
 Buckconfig:
 
@@ -88,7 +88,7 @@ It can be further configured by changing these default values:
 ```ini
 [buck2]
 # one week
-clean_stale_artifact_ttl_hours = 24 * 7
+clean_stale_artifact_ttl_hours = 168
 clean_stale_period_hours = 24
 clean_stale_start_offset_hours = 12
 ```

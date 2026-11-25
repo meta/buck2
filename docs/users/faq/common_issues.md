@@ -25,19 +25,15 @@ The resultant path is relative to the root of the repo (such as
 `~/repo_root/...`). For the full path use `--show-full-output` or
 `--show-full-simple-output`.
 
-Note: in Buck1, the path is relative to the enclosing cell (such as
-`~/repo_root/cell/...`).
-
 <FbInternalOnly>
-For Meta, repo_root = fbsource, cell = fbcode/fbobjc/...
+For Meta, repo_root = fbsource.
 </FbInternalOnly>
 
 ## Why is Buck2 hanging?
 
 If Buck2 seems to be doing nothing, it could be caused be a cycle in your
 dependencies, which may cause Buck2 to hang (Buck2 does implement a form of
-cycle detection, but it unfortunately has false negatives). You can confirm this
-by running Buck1, which will report cycles properly.
+cycle detection, but it unfortunately has false negatives).
 
 ## How do I get the commands Buck2 executed so I can reproduce them in isolation?
 

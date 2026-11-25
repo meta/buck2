@@ -117,14 +117,10 @@ your team.
 
 ### External projects using Buck2
 
-- [System Initiative](https://www.systeminit.com/) build their DevOps product
-  [using Buck2](https://nickgerace.dev/post/system-initiative-the-second-wave-of-devops/#under-the-hood),
-  with their own custom prelude.
+- The archived [System Initiative](https://github.com/systeminit/si) repository
+  builds a DevOps product with Buck2 and a custom prelude.
 - [Rust `cxx` library](https://github.com/dtolnay/cxx) has examples and tests
   with a wide variety of build systems, including Buck2.
-- [`ocamlrep` library](https://github.com/facebook/ocamlrep) allows for interop
-  between OCaml and Rust code, and can be
-  [built with Buck2](https://github.com/facebook/ocamlrep/blob/main/README-BUCK.md).
 - [`buck2-nix`](https://github.com/thoughtpolice/buck2-nix) is an experiment to
   integrate Buck2, [Sapling](https://sapling-scm.com) and
   [Nix](https://nixos.org) together in a harmonious way.

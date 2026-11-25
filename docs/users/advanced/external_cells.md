@@ -28,7 +28,7 @@ add the cell to the `cells` section of your `.buckconfig` like normal:
 The external cell's files won't actually be generated in the repo. However, you
 still need to provide a path for it - this path influences the handling of tree
 files, since those cross cell boundaries. It's also used for
-`expand-external-cells`, more on that below.
+`expand-external-cell`, more on that below.
 
 Next, add an entry to the `external_cells` buckconfig section that specifies the
 "origin" of the external cell given an alias. This tells buck2 where you want to
@@ -58,7 +58,7 @@ prelude.
 
 The `git` origin indicates that an external cell's content should be loaded from
 some git repo. It accepts two additional configuration parameters, `git_origin`
-and `commit`, like this:
+and `commit_hash`, like this:
 
 ```ini
 [cells]
@@ -73,7 +73,9 @@ and `commit`, like this:
   commit_hash = <sha1sum>
 ```
 
-The `commit_hash` value must be a sha1, it cannot be eg a branch name.
+The `commit_hash` value must be a full commit hash, it cannot be eg a branch
+name. It must be a sha1, unless `object_format = sha256` is set in the same
+section.
 
 ### The `disabled` origin
 

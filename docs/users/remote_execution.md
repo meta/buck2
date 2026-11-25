@@ -51,7 +51,7 @@ digest_algorithms = BLAKE3
 ## RE platform configuration
 
 Next, your build will need an
-[execution platform](https://buck2.build/docs/concepts/glossary/#execution-platform)
+[execution platform](../concepts/glossary.md#execution-platform)
 that specifies how and where actions should be executed. For a sample platform
 definition that sets up an execution platform to utilize RE, take a look at the
 [EngFlow example](https://github.com/facebook/buck2/blob/main/examples/remote_execution/engflow/platforms/defs.bzl),
@@ -60,7 +60,7 @@ or the
 [BuildBuddy example](https://github.com/facebook/buck2/blob/main/examples/remote_execution/buildbuddy/platforms/defs.bzl).
 
 To enable remote execution, configure the following fields in
-[CommandExecutorConfig](https://buck2.build/docs/api/build/globals/#commandexecutorconfig)
+[CommandExecutorConfig](../api/build/CommandExecutorConfig.md)
 as follows:
 
 - `remote_enabled` - set to `True`.

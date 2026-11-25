@@ -82,5 +82,4 @@ breakage, investigate what caused the issue.
 **Cycle in dependencies**: If buck2 seems to be doing nothing (e.g. CPU usage is
 0%), one of the reasons could be a cycle in your dependencies, which may cause
 buck2 to hang (buck2 does implement a form of cycle detection, but it
-unfortunately has false negatives). You can confirm this by running buck1, which
-will report cycles properly.
+unfortunately has false negatives).

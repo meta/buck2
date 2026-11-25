@@ -149,8 +149,8 @@ with system toolchains, such as building ASM files.
 ### Example Configuration
 
 ```python
-load("@prelude///toolchains/go:system_go_bootstrap_toolchain.bzl", "system_go_bootstrap_toolchain")
-load("@prelude///toolchains/go:system_go_toolchain.bzl", "system_go_toolchain")
+load("@prelude//toolchains/go:system_go_bootstrap_toolchain.bzl", "system_go_bootstrap_toolchain")
+load("@prelude//toolchains/go:system_go_toolchain.bzl", "system_go_toolchain")
 
 system_go_toolchain(
     name = "go",

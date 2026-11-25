@@ -40,7 +40,7 @@ queried with `buck2 aquery`.
 A single input or output of an [action](#action). These are files that
 participate as inputs or outputs of a build and can be source files or build
 outputs. For more information, see the
-[Artifact API](https://buck2.build/docs/api/build/Artifact/).
+[Artifact API](../api/build/Artifact.md).
 
 ## Attribute
 
@@ -198,7 +198,7 @@ are executed from the project root.
 Data returned from a [rule](#rule) function. It's the only way that information
 from this rule is available to other rules that depend on it (see
 [dependency](#dependency)). For more information, see
-[Providers](https://buck2.build/docs/rule_authors/writing_rules/#providers).
+[Providers](../rule_authors/writing_rules.md#providers).
 
 ## Platform
 

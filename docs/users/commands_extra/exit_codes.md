@@ -19,6 +19,8 @@ such as shell scripts.
 | 5         | DaemonPreempted    | `--preemptible` commands only. Buck2 daemon preempted the command as another came in.                                 |
 | 6         | Timeout            | Command execution exceeded time limit                                                                                 |
 | 11        | ConnectError       | Buck2 client failed to connect to Buck2 daemon                                                                        |
+| 12        | FatalOom           | Buck2 daemon was killed by an OOM killer                                                                              |
 | 32        | TestError          | Buck2 Test only. Build succeeded but at least 1 test failed                                                           |
-| 64        | TestNothing        | Buck2 Test only. Build succeeded but no test were ran (Either no tests defined or tests are skipped)                  |
-| 129-192   | SignalInterruption | The code is computed as 128 + signal number. If Buck2 exited due to SIGINT(2) for example, the exit code would be 130 |
+| 64        | TestNothing        | Buck2 Test only. No tests ran (none defined, or all skipped). The open source test runner exits with 0 instead        |
+| 130       | ClientIoBrokenPipe | Buck2 client could not write to stdout or stderr because the pipe was closed                                          |
+| 141       | SignalInterrupt    | Buck2 client was interrupted by SIGINT (Ctrl-C)                                                                       |

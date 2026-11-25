@@ -90,8 +90,11 @@ For example, to build for linux/amd64, the following commands are equivalent
 ```sh
 $ GOOS=linux GOARCH=amd64 go build example.com/foo/bar
 $ buck2 build --target-platforms root//platforms:linux_x86_64 root//foo/bar:bar
-$ buck2 build -m config//os:linux -m config//arch:x86_64 root//foo/bar:bar
+$ buck2 build -m config//os:linux -m config//cpu:x86_64 root//foo/bar:bar
 ```
+
+The `-m` flags work once the project has
+[enabled modifiers](../../how_tos/modifiers_setup.md).
 
 ### Test options like `-test.bench`
 

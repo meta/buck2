@@ -53,12 +53,11 @@ buck2 cquery "set( ':main' 'myclass:' )"
 
 ### How do I get the attribute names and values for the targets returned by a query?
 
-Add the `--output-attribute <ATTRIBUTE>` or `--output-all-attributes` option to
-the command line, followed by regular expressions that represent the attributes
-of interest.
+Add the `--output-attribute <ATTRIBUTE>` option to the command line, once for
+each attribute of interest, or add the `--output-all-attributes` option.
 
 ```sh
-buck2 cquery "deps(foo:bar)" --output-attribute 'name' 'exported_headers'
+buck2 cquery "deps(foo:bar)" --output-attribute name --output-attribute exported_headers
 ```
 
 The `--output-attribute` option enables you to specify which attributes Buck2
@@ -71,15 +70,18 @@ example query above might look something like the following.
 
 ```json
 {
-  "root_cell//foo/bar/lib:lib": {
+  "root_cell//foo/bar/lib:lib (prelude//platforms:default#a8ac7ec86a6bee54)": {
     "exported_headers": ["App/util.h"],
     "name": "lib"
   },
-  "root_cell//foo/bar:app": {"exported_headers": ["App/lib.h"], "name": "app"}
+  "root_cell//foo/bar:app (prelude//platforms:default#a8ac7ec86a6bee54)": {
+    "exported_headers": ["App/lib.h"],
+    "name": "app"
+  }
 }
 ```
 
-### How do I perform a query** \***inside**\* **of a rule?
+### How do I perform a query inside of a rule?
 
 Buck2 supports certain string parameter macros to be used when defining a
 target. You can use the query macros as such:
@@ -109,12 +111,14 @@ argument represents the targets of interest. This can be a single
 [build target](../../concepts/build_target) or
 [build target pattern](../../concepts/target_pattern), or a set of these. The
 optional second argument is the _depth_ of the search for dependencies from the
-specified targets. For example, `1`, as shown in the example above, returns only
-the direct dependencies. If you do not provide this argument, the output is the
-complete set of transitive dependencies. How do I find the reverse-dependencies
-for a target, that is, the targets that** \***depend on**\* **a specified
-target? Use the `buck2 cquery rdeps()` (reverse dependencies) operator. The
-following example, returns the targets in the
+specified targets. For example, `1`, as shown in the example above, returns the
+targets and their direct dependencies. If you do not provide this argument, the
+output is the complete set of transitive dependencies.
+
+### How do I find the reverse-dependencies for a target, that is, the targets that depend on a specified target?
+
+Use the `buck2 cquery rdeps()` (reverse dependencies) operator. The following
+example, returns the targets in the
 [transitive closure](https://en.wikipedia.org/wiki/Transitive_closure) of
 `foo:bar` that depend directly on `example:baz`.
 

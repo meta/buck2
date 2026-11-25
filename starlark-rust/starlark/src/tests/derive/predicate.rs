@@ -58,7 +58,7 @@ use crate::values::list::StarlarkList;
 use crate::values::predicate::StarlarkPredicate;
 use crate::values::starlark_value_as_type::StarlarkValueAsType;
 use crate::values::string::StarlarkStr;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::types::list::value::ListData;
 use crate::values::types::type_instance_id::TypeInstanceId;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
@@ -89,7 +89,7 @@ starlark_recursive_type! {
     /// A flag, or a tuple of these: no value is both this and `Shapes`.
     StarlarkFlags<'v>;
     name "Flags";
-    is Either<bool, TupleType<StarlarkFlags>>;
+    is Either<bool, StarlarkTuple<'v, StarlarkFlags>>;
 }
 
 starlark_recursive_type! {

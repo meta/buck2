@@ -39,7 +39,7 @@ use starlark::values::Value;
 use starlark::values::list::AllocList;
 use starlark::values::list::StarlarkList;
 use starlark::values::tuple::AllocTuple;
-use starlark::values::tuple::TupleRef;
+use starlark::values::tuple::StarlarkTuple;
 
 #[test]
 fn hello_world() {
@@ -85,7 +85,7 @@ fn list_allocation() {
 fn tuple_allocation() {
     Heap::temp(|heap| {
         let value = heap.alloc(AllocTuple([1i32, 2])).to_value();
-        let tuple = TupleRef::from_value(value).unwrap();
+        let tuple = StarlarkTuple::from_value(value).unwrap();
         assert_eq!(tuple.content().len(), 2);
         assert_eq!(tuple.content()[1].unpack_i32(), Some(2));
     });

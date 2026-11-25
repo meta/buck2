@@ -74,7 +74,7 @@ where
 mod tests {
     use crate::values::FrozenHeap;
     use crate::values::Heap;
-    use crate::values::tuple::TupleRef;
+    use crate::values::tuple::StarlarkTuple;
     use crate::values::tuple::alloc::AllocTuple;
 
     #[test]
@@ -84,18 +84,18 @@ mod tests {
             let b = heap
                 .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|_| false)))
                 .to_value();
-            assert_eq!(0, TupleRef::from_value(a).unwrap().content().len());
+            assert_eq!(0, StarlarkTuple::from_value(a).unwrap().len());
             assert!(a.ptr_eq(b));
 
             // Fixed length iterator.
             let c = heap.alloc(AllocTuple([1, 2])).to_value();
-            assert_eq!(2, TupleRef::from_value(c).unwrap().content().len());
+            assert_eq!(2, StarlarkTuple::from_value(c).unwrap().len());
 
             // Iterator of unknown length.
             let d = heap
                 .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|c| *c > 1)))
                 .to_value();
-            assert_eq!(2, TupleRef::from_value(d).unwrap().content().len());
+            assert_eq!(2, StarlarkTuple::from_value(d).unwrap().len());
         });
     }
 
@@ -106,18 +106,18 @@ mod tests {
             let b = heap
                 .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|_| false)))
                 .to_value();
-            assert_eq!(0, TupleRef::from_value(a).unwrap().content().len());
+            assert_eq!(0, StarlarkTuple::from_value(a).unwrap().len());
             assert!(a.ptr_eq(b));
 
             // Fixed length iterator.
             let c = heap.alloc(AllocTuple([1, 2])).to_value();
-            assert_eq!(2, TupleRef::from_value(c).unwrap().content().len());
+            assert_eq!(2, StarlarkTuple::from_value(c).unwrap().len());
 
             // Iterator of unknown length.
             let d = heap
                 .alloc(AllocTuple([1, 2, 3].iter().copied().filter(|c| *c > 1)))
                 .to_value();
-            assert_eq!(2, TupleRef::from_value(d).unwrap().content().len());
+            assert_eq!(2, StarlarkTuple::from_value(d).unwrap().len());
         });
     }
 }

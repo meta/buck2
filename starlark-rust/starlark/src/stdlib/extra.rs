@@ -29,7 +29,7 @@ use crate::values::ValueOf;
 use crate::values::list::AllocList;
 use crate::values::none::NoneOr;
 use crate::values::none::NoneType;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::typing::StarlarkCallable;
 use crate::values::typing::iter::StarlarkIter;
 
@@ -135,7 +135,7 @@ impl PrintHandler for StderrPrintHandler {
 pub fn print(builder: &mut GlobalsBuilder) {
     /// Print some values to the output.
     fn print<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
         #[starlark(require = named, default = " ")] sep: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
@@ -150,7 +150,7 @@ pub fn print(builder: &mut GlobalsBuilder) {
 #[starlark_module]
 pub fn pprint(builder: &mut GlobalsBuilder) {
     fn pprint<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         // In practice most users may want to put the print somewhere else, but this does for now

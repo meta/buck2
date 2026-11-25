@@ -263,7 +263,6 @@ mod tests {
     use crate::values::none::NoneType;
     use crate::values::string::str_type::StarlarkStr;
     use crate::values::tuple::StarlarkTuple;
-    use crate::values::tuple::TupleType;
     use crate::values::type_expr::StarlarkTypeExpr;
     use crate::values::type_expr::StarlarkTypeExprHashable;
     use crate::values::types::bytes::value::StarlarkBytes;
@@ -348,7 +347,7 @@ mod tests {
         always_hashes::<Def>();
         always_hashes::<Either<bool, StarlarkStr>>();
         always_hashes::<(StarlarkStr, NoneType)>();
-        always_hashes::<TupleType<StarlarkBytes>>();
+        always_hashes::<StarlarkTuple<StarlarkBytes>>();
     }
 
     #[test]
@@ -364,7 +363,7 @@ mod tests {
             agrees::<StarlarkList<StarlarkStr>>(&vs);
             agrees::<DictType<IntView, StarlarkStr>>(&vs);
             agrees::<DictType<StarlarkStr, IntView>>(&vs);
-            agrees::<TupleType<IntView>>(&vs);
+            agrees::<StarlarkTuple<IntView>>(&vs);
             agrees::<(IntView, IntView)>(&vs);
             agrees::<(IntView, StarlarkStr)>(&vs);
             agrees::<NoneOr<StarlarkStr>>(&vs);

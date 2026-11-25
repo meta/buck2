@@ -21,7 +21,7 @@ use crate as starlark;
 use crate::assert::Assert;
 use crate::environment::GlobalsBuilder;
 use crate::values::ValueOf;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::types::int::view::IntView;
 
 #[starlark_module]
@@ -39,7 +39,7 @@ fn named_positional_functions(globals: &mut GlobalsBuilder) {
     }
 
     fn named_after_args<'v>(
-        #[starlark(args)] star_args: ValueOf<'v, TupleType<IntView<'v>>>,
+        #[starlark(args)] star_args: ValueOf<'v, StarlarkTuple<'v, IntView<'v>>>,
         x: i32,
     ) -> anyhow::Result<i32> {
         Ok(x + star_args
@@ -50,7 +50,7 @@ fn named_positional_functions(globals: &mut GlobalsBuilder) {
 
     // Same as above, but with explicit redundant annotation.
     fn named_after_args_explicitly_marked<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<IntView<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v, IntView<'v>>>,
         #[starlark(require = named)] x: i32,
     ) -> anyhow::Result<i32> {
         Ok(x + args

@@ -32,7 +32,7 @@ use crate::values::Value;
 use crate::values::ValueError;
 use crate::values::ValueOf;
 use crate::values::list::AllocList;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::typing::StarlarkIter;
 use crate::values::typing::never::StarlarkNever;
 use crate::values::typing::ty::AbstractType;
@@ -122,7 +122,7 @@ pub(crate) fn register_other(builder: &mut GlobalsBuilder) {
     /// # "#, "oops 1 False");
     /// ```
     fn fail<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
     ) -> starlark::Result<StarlarkNever> {
         let mut s = String::new();
         for x in args.items() {

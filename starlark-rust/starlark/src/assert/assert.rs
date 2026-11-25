@@ -49,7 +49,7 @@ use crate::values::layout::heap::name::StarlarkTestHeapName;
 use crate::values::list::AllocList;
 use crate::values::none::NoneType;
 use crate::values::structs::AllocStruct;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::typing::type_compiled::compiled::TypeCompiled;
 
 fn mk_environment() -> GlobalsBuilder {
@@ -206,7 +206,7 @@ pub(crate) fn test_functions(builder: &mut GlobalsBuilder) {
     ///
     /// This function is unknown to optimizer, so it can be used in optimizer tests.
     fn noop<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
         #[starlark(kwargs)] kwargs: Value<'v>,
     ) -> anyhow::Result<Value<'v>> {
         let _ = kwargs;

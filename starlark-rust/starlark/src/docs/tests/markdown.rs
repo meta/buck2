@@ -47,7 +47,7 @@ use crate::values::dict::DictType;
 use crate::values::list::StarlarkList;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::types::int::view::IntView;
 
 fn docs_golden_test(test_file_name: &str, doc: DocItem) -> String {
@@ -200,7 +200,7 @@ fn submodule(builder: &mut GlobalsBuilder) {
     }
 
     fn starlark_args<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<StarlarkStr>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v, StarlarkStr>>,
     ) -> anyhow::Result<NoneType> {
         let _ignore = args;
         Ok(NoneType)

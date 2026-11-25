@@ -46,7 +46,7 @@ use crate::values::list::AllocList;
 use crate::values::list::StarlarkList;
 use crate::values::none::NoneType;
 use crate::values::string::StarlarkStr;
-use crate::values::tuple::TupleType;
+use crate::values::tuple::StarlarkTuple;
 use crate::values::types::int::view::IntView;
 
 #[derive(
@@ -100,7 +100,7 @@ fn globals(builder: &mut GlobalsBuilder) {
 
     #[allow(unused_variables)]
     fn args_kwargs<'v>(
-        #[starlark(args)] args: ValueOf<'v, TupleType<Value<'v>>>,
+        #[starlark(args)] args: ValueOf<'v, StarlarkTuple<'v>>,
         #[starlark(kwargs)] kwargs: Value<'v>,
     ) -> anyhow::Result<NoneType> {
         unimplemented!()

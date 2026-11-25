@@ -97,8 +97,8 @@ where
         // Merge items from largest to smallest, improving the ability to reuse fingerprinted
         // directories
         let mut builder = DirectoryBuilder::empty_non_exhaustive();
-        for d in to_merge {
-            builder.merge_with_compatible_leaves(d.into_builder())?;
+        for d in &to_merge {
+            builder.merge_shared_with_compatible_leaves(d)?;
         }
 
         for (p, e) in to_insert {

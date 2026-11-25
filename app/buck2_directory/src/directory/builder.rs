@@ -277,6 +277,15 @@ where
         Ok(())
     }
 
+    /// `merge_with_compatible_leaves` for a shared directory that the caller keeps.
+    pub fn merge_shared_with_compatible_leaves(
+        &mut self,
+        other: &SharedDirectory<L, H>,
+    ) -> Result<(), DirectoryMergeError> {
+        self.merge_shared(other, true)
+            .map_err(|path| DirectoryMergeError::CannotTraverseLeaf { path })
+    }
+
     pub fn merge(&mut self, other: Self) -> Result<(), DirectoryMergeError> {
         let v = std::mem::replace(self, DirectoryBuilder::empty_non_exhaustive());
         let v = v
@@ -291,6 +300,13 @@ where
         mut other: Self,
         leaf_compatible: bool,
     ) -> Result<Self, PathAccumulator> {
+        if let Self::Immutable(ImmutableDirectory::Shared(other)) = &other
+            && !matches!(self, Self::Immutable(ImmutableDirectory::Exclusive(_)))
+        {
+            self.merge_shared(other, leaf_compatible)?;
+            return Ok(self);
+        }
+
         // The result's exhaustiveness marking is the pointwise join of both sides' markings.
         // The join being symmetric is also what keeps the LHS/RHS swap optimization below
         // sound.
@@ -351,33 +367,147 @@ where
         Ok(self)
     }
 
+    /// `merge_inner` with a shared directory, in place. Where the two sides already agree it
+    /// clones nothing and takes no references.
+    fn merge_shared(
+        &mut self,
+        right: &SharedDirectory<L, H>,
+        leaf_compatible: bool,
+    ) -> Result<(), PathAccumulator> {
+        // As in `merge_inner`, the pointwise join of both sides' markings.
+        let joined_exhaustiveness = self
+            .root_exhaustiveness()
+            .join(right.exhaustiveness_hash().own_exhaustiveness());
+
+        // The left side as it was, if the sides get swapped.
+        let mut swapped_out = None;
+        match self {
+            Self::Immutable(ImmutableDirectory::Shared(left)) => {
+                if left.ptr_eq(right) {
+                    // Identity includes the exhaustiveness markings.
+                    return Ok(());
+                }
+                if left.fingerprint() == right.fingerprint() {
+                    // Same content: keep whichever side's marking already is the join, if any.
+                    let e1 = left.exhaustiveness_hash();
+                    let e2 = right.exhaustiveness_hash();
+                    if e1.covers(e2) {
+                        return Ok(());
+                    }
+                    if e2.covers(e1) {
+                        *left = right.dupe();
+                        return Ok(());
+                    }
+                    // Neither marking dominates: fall through and join pointwise.
+                } else if leaf_compatible
+                    && left.inner.data.entries.len() < right.inner.data.entries.len()
+                {
+                    // Merge the smaller directory into the larger one, since the work is linear
+                    // in the size of the side that gets merged in. Only with compatible leaves,
+                    // as otherwise this would change which side's leaves win.
+                    swapped_out = Some(mem::replace(left, right.dupe()));
+                }
+            }
+            Self::Immutable(ImmutableDirectory::Exclusive(_)) => {
+                let this = mem::replace(self, DirectoryBuilder::empty_non_exhaustive());
+                *self = this.merge_inner(right.dupe().into_builder(), leaf_compatible)?;
+                return Ok(());
+            }
+            Self::Mutable { entries, .. } if entries.is_empty() => {
+                *self = right.dupe().into_builder();
+                self.set_root_exhaustiveness(joined_exhaustiveness);
+                return Ok(());
+            }
+            Self::Mutable { .. } => {}
+        }
+
+        let right = swapped_out.as_ref().unwrap_or(right);
+        for (name, entry) in right.entries() {
+            self.merge_shared_entry(name, entry, leaf_compatible)?;
+        }
+
+        self.set_root_exhaustiveness(joined_exhaustiveness);
+        Ok(())
+    }
+
     fn merge_shared_entry(
         &mut self,
-        needle: &FileName,
+        name: &FileNameBuf,
         right: &DirectoryEntry<SharedDirectory<L, H>, L>,
         leaf_compatible: bool,
     ) -> Result<(), PathAccumulator> {
-        if let Self::Immutable(ImmutableDirectory::Shared(left)) = self {
-            match (left.get(needle), right) {
-                (Some(DirectoryEntry::Dir(left)), DirectoryEntry::Dir(right))
-                    if left.ptr_eq(right) =>
-                {
-                    // Identity includes the subtree's exhaustiveness markings.
-                    return Ok(());
-                }
-                (Some(DirectoryEntry::Leaf(_)), DirectoryEntry::Leaf(_)) if leaf_compatible => {
-                    return Ok(());
-                }
-                _ => {}
+        let needle: &FileName = name;
+        match self {
+            Self::Immutable(ImmutableDirectory::Shared(left)) => {
+                // What the entry becomes. Returns early wherever it stays as it is, so that
+                // `self` stays shared.
+                let merged = match (left.get(needle), right) {
+                    (Some(DirectoryEntry::Dir(l)), DirectoryEntry::Dir(r)) => {
+                        if l.ptr_eq(r) {
+                            // Identity includes the subtree's exhaustiveness markings.
+                            return Ok(());
+                        }
+                        let mut merged = l.dupe().into_builder();
+                        merged
+                            .merge_shared(r, leaf_compatible)
+                            .map_err(|e| e.with(needle))?;
+                        if let Self::Immutable(ImmutableDirectory::Shared(m)) = &merged
+                            && (m.ptr_eq(l)
+                                || (m.fingerprint() == l.fingerprint()
+                                    && m.exhaustiveness_hash() == l.exhaustiveness_hash()))
+                        {
+                            return Ok(());
+                        }
+                        DirectoryEntry::Dir(merged)
+                    }
+                    (Some(DirectoryEntry::Leaf(l)), DirectoryEntry::Leaf(r)) => {
+                        if leaf_compatible || l == r {
+                            return Ok(());
+                        }
+                        DirectoryEntry::Leaf(r.clone())
+                    }
+                    (Some(DirectoryEntry::Leaf(_)), DirectoryEntry::Dir(_)) => {
+                        return Err(PathAccumulator::new(needle));
+                    }
+                    (Some(DirectoryEntry::Dir(_)), DirectoryEntry::Leaf(r)) => {
+                        DirectoryEntry::Leaf(r.clone())
+                    }
+                    (None, r) => r.clone().map_dir(SharedDirectory::into_builder),
+                };
+                self.as_mut().insert(name.clone(), merged);
+                Ok(())
             }
+            Self::Mutable { entries, .. } => match (entries.get_mut(needle), right) {
+                (Some(DirectoryEntry::Dir(l)), DirectoryEntry::Dir(r)) => l
+                    .merge_shared(r, leaf_compatible)
+                    .map_err(|e| e.with(needle)),
+                (Some(l @ DirectoryEntry::Dir(_)), DirectoryEntry::Leaf(r)) => {
+                    *l = DirectoryEntry::Leaf(r.clone());
+                    Ok(())
+                }
+                (Some(DirectoryEntry::Leaf(l)), DirectoryEntry::Leaf(r)) => {
+                    if !leaf_compatible {
+                        *l = r.clone();
+                    }
+                    Ok(())
+                }
+                (Some(DirectoryEntry::Leaf(_)), DirectoryEntry::Dir(_)) => {
+                    Err(PathAccumulator::new(needle))
+                }
+                (None, r) => {
+                    entries.insert(
+                        name.clone(),
+                        r.clone().map_dir(SharedDirectory::into_builder),
+                    );
+                    Ok(())
+                }
+            },
+            Self::Immutable(ImmutableDirectory::Exclusive(_)) => self.merge_entry(
+                name.clone(),
+                right.clone().map_dir(SharedDirectory::into_builder),
+                leaf_compatible,
+            ),
         }
-
-        // Clone only when the existing entry does not already prove this merge is a no-op.
-        self.merge_entry(
-            needle.to_owned(),
-            right.clone().map_dir(SharedDirectory::into_builder),
-            leaf_compatible,
-        )
     }
 
     fn merge_entry(
@@ -852,11 +982,13 @@ mod tests {
     use buck2_fs::paths::file_name::FileName;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use dupe::Dupe;
 
     use crate::directory::builder::DirectoryBuilder;
     use crate::directory::builder::DirectoryInsertError;
     use crate::directory::builder::DirectoryMergeError;
     use crate::directory::builder::DirectoryMkdirError;
+    use crate::directory::builder_lazy::LazyDirectoryBuilder;
     use crate::directory::dashmap_directory_interner::DashMapDirectoryInterner;
     use crate::directory::directory::Directory;
     use crate::directory::directory_hasher::DirectoryDigester;
@@ -1163,6 +1295,97 @@ mod tests {
         let digester = CountingDigester(Cell::new(0), TestHasher);
         merged.fingerprint(&digester);
         assert_eq!(0, digester.0.get());
+    }
+
+    /// A small deterministic generator, so that a failure reproduces.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D) % n
+        }
+
+        /// Leaf paths of varying depth that never put a leaf where another has a directory.
+        fn leaves(&mut self) -> Vec<String> {
+            (0..self.below(12))
+                .map(|_| match self.below(3) {
+                    0 => format!("f{}", self.below(3)),
+                    1 => format!("d{}/f{}", self.below(3), self.below(3)),
+                    _ => format!("d{}/d{}/f{}", self.below(3), self.below(3), self.below(3)),
+                })
+                .collect()
+        }
+    }
+
+    #[test]
+    fn test_merging_shared_directories_matches_inserting_their_leaves() {
+        // One interner throughout, so that later rounds meet directories of earlier ones.
+        let interner = DashMapDirectoryInterner::new();
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+
+        for _ in 0..if cfg!(miri) { 20 } else { 2000 } {
+            let leaves: Vec<Vec<String>> = (0..1 + rng.below(5)).map(|_| rng.leaves()).collect();
+
+            let mut expected = TestDirectoryBuilder::empty_non_exhaustive();
+            for leaf in leaves.iter().flatten() {
+                expected
+                    .insert(path(leaf), DirectoryEntry::Leaf(NopEntry))
+                    .unwrap();
+            }
+            let expected = expected.fingerprint(&TestHasher);
+
+            let shared: Vec<_> = leaves
+                .iter()
+                .map(|leaves| {
+                    let mut d = TestDirectoryBuilder::empty_non_exhaustive();
+                    for leaf in leaves {
+                        d.insert(path(leaf), DirectoryEntry::Leaf(NopEntry))
+                            .unwrap();
+                    }
+                    d.fingerprint(&TestHasher).shared(&interner)
+                })
+                .collect();
+
+            let mut merged = TestDirectoryBuilder::empty_non_exhaustive();
+            for d in &shared {
+                merged.merge_shared_with_compatible_leaves(d).unwrap();
+            }
+            assert_eq!(
+                merged.fingerprint(&TestHasher).fingerprint(),
+                expected.fingerprint(),
+                "{leaves:?}"
+            );
+
+            for leaf_compatible in [false, true] {
+                let mut merged = TestDirectoryBuilder::empty_non_exhaustive();
+                for d in &shared {
+                    merged = merged
+                        .merge_inner(d.dupe().into_builder(), leaf_compatible)
+                        .unwrap();
+                }
+                assert_eq!(
+                    merged.fingerprint(&TestHasher).fingerprint(),
+                    expected.fingerprint(),
+                    "{leaves:?}"
+                );
+            }
+
+            let mut lazy = LazyDirectoryBuilder::empty();
+            for d in &shared {
+                lazy.merge(d.dupe()).unwrap();
+            }
+            assert_eq!(
+                lazy.finalize()
+                    .unwrap()
+                    .fingerprint(&TestHasher)
+                    .fingerprint(),
+                expected.fingerprint(),
+                "{leaves:?}"
+            );
+        }
     }
 
     #[test]

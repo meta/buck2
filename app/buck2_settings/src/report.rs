@@ -127,6 +127,7 @@ impl SettingsReport {
             let (kind, path) = match &layer.origin {
                 SettingOrigin::Repository(path) => ("repository", Some(path)),
                 SettingOrigin::Local(path) => ("local", Some(path)),
+                SettingOrigin::Test(path) => ("test", Some(path)),
                 SettingOrigin::Rollout(path) => ("rollouts", Some(path)),
                 SettingOrigin::CommandLine => ("--setting", None),
                 // Not a layer.
@@ -177,6 +178,7 @@ impl SettingsReport {
                 let origin = match &setting.origin {
                     Some(SettingOrigin::Repository(_)) => "repository".to_owned(),
                     Some(SettingOrigin::Local(path)) => format!("local {}", path.display()),
+                    Some(SettingOrigin::Test(path)) => format!("test {}", path.display()),
                     Some(SettingOrigin::Rollout(_)) => "rollouts".to_owned(),
                     Some(SettingOrigin::CommandLine) => "--setting".to_owned(),
                     Some(SettingOrigin::Buckconfig(key)) => format!("buckconfig {key}"),

@@ -33,7 +33,6 @@ pub(super) enum SettingSource {
     /// Wrapper-cached rollout settings.
     Rollout,
     /// The test settings file; see [`crate::enable_test_settings_layer`].
-    #[expect(dead_code, reason = "constructed once the test settings layer lands")]
     Test,
     Override(OverrideSource),
 }

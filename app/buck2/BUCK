@@ -98,7 +98,8 @@ rust_library(
     }),
 )
 
-# Shared flags, deps, and attributes for the buck2 binaries.
+# `buck2-bin` and `buck2_e2e-bin` differ only in the `buck2_test_settings` cfg, which affects only
+# `bin/buck2.rs`: the libraries are built once and shared by both.
 _BUCK2_BIN_RUSTC_FLAGS = (["--cfg=buck2_memfrag"] if _memfrag else []) + select({
     ":buck2_client_only_setting[build]": ["--cfg=client_only"],
     "DEFAULT": [],
@@ -182,6 +183,16 @@ _BUCK2_BIN_ATTRS = dict(
 )
 
 buck_rust_binary(name = "buck2-bin", rustc_flags = _BUCK2_BIN_RUSTC_FLAGS, deps = _BUCK2_BIN_DEPS, **_BUCK2_BIN_ATTRS)
+
+# The binary that buck2's own end-to-end tests run. It lets the `BUCK2_SETTINGS_OVERRIDE`
+# file set any Buck setting; see `buck2_settings::enable_test_settings_layer`. Never ship it.
+buck_rust_binary(
+    name = "buck2_e2e-bin",
+    autocargo = {"ignore_rule": True},
+    rustc_flags = _BUCK2_BIN_RUSTC_FLAGS + ["--cfg=buck2_test_settings"],
+    deps = _BUCK2_BIN_DEPS + ["//buck2/app/buck2_settings:buck2_settings"],
+    **_BUCK2_BIN_ATTRS,
+)
 
 platform_utils = None # @oss-enable
 

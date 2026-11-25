@@ -150,13 +150,20 @@ It's a modification of a constraint from the existing
 unified way to specify build settings on a [project](#project),
 [target](#target), and command line level. It is intended to replace
 [target platforms](#target-platform) and most use cases of
-[.buckconfigs](#buckconfig).
+[.buckconfigs](#buckconfig). See [Configuration modifiers](modifiers.md).
 
 ## Package
 
 A directory that contains a Buck2 [BUCK file](#buck-file) and all source files
 belonging to the same directory as the BUCK file, or any of its subdirectories
 that do not contain a BUCK file themselves.
+
+## PACKAGE file
+
+A file named `PACKAGE` that sets defaults, such as visibility and
+[modifiers](#modifiers), for the targets in its directory and the directories
+below it. It does not define a [package](#package). See
+[PACKAGE Files](package_files.md).
 
 ## Prelude
 

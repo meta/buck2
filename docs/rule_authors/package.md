@@ -1,7 +1,11 @@
 ---
 id: package_files
-title: PACKAGE Files
+title: PACKAGE File API
 ---
+
+This page describes the functions that a `PACKAGE` file can call. For what
+`PACKAGE` files are and when to use one, see
+[PACKAGE Files](../concepts/package_files.md).
 
 `PACKAGE` files are per-directory configuration files which are accessible from
 Starlark rules/macros. It supports things like per-directory properties, reading

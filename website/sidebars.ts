@@ -80,6 +80,7 @@ export const sidebars: SidebarsConfig = {
         'concepts/architecture',
         'concepts/build_rule',
         'concepts/build_file',
+        'concepts/package_files',
         'concepts/build_target',
         'concepts/target_pattern',
         'concepts/buck_query_language',
